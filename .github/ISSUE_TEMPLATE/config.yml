@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: OpenID Connect Specification
+    url: https://openid.net/specs/openid-connect-core-1_0.html
+    about: Reference the official OpenID Connect Core 1.0 specification
+  - name: Conformance Suite Documentation
+    url: https://openid.net/certification/testing/
+    about: OpenID Foundation Conformance Testing documentation
+  - name: Project Documentation
+    url: https://github.com/sgrastar/hibana/blob/main/README.md
+    about: Read the Hibana project documentation
