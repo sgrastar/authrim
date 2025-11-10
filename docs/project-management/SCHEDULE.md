@@ -6,6 +6,13 @@
 **Goal**: Obtain OpenID Certified™ Basic OP Profile certification
 **Tech Stack**: Cloudflare Workers, Hono, Durable Objects, KV Storage, JOSE
 
+**Related Documents:**
+- [Task Breakdown](./TASKS.md) - Detailed task list (440+ items)
+- [Kickoff Checklist](./KICKOFF.md) - Week 1 setup guide
+- [GitHub Workflow](./GITHUB_WORKFLOW.md) - Issue tracking guide
+- [Technical Specifications](../architecture/technical-specs.md) - System architecture
+- [Conformance Overview](../conformance/overview.md) - Certification strategy
+
 ---
 
 ## Overall Timeline (6-Month Plan)

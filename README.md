@@ -82,35 +82,48 @@ It aims to pass the **OpenID Certified™ Basic OP Profile** while remaining sma
 
 ## Getting Started
 
+### For New Contributors
+
+**Recommended Reading Order:**
+
+1. Start with [Documentation Index](./docs/README.md) - Overview of all documentation
+2. Read [Project Schedule](./docs/project-management/SCHEDULE.md) - Understand the 6-month timeline
+3. Review [Kickoff Checklist](./docs/project-management/KICKOFF.md) - Week 1 setup tasks
+4. Check [Technical Specifications](./docs/architecture/technical-specs.md) - Understand the architecture
+
 ### For Developers
 
-1. **Read Project Documentation**
-   - [Project Schedule](./docs/project-management/SCHEDULE.md) - 6-month timeline and milestones
-   - [Task Breakdown](./docs/project-management/TASKS.md) - Detailed task-by-task checklist
-   - [Kickoff Checklist](./docs/project-management/KICKOFF.md) - Week 1 immediate action items
-   - [GitHub Workflow](./docs/project-management/GITHUB_WORKFLOW.md) - Issue tracking setup guide
-   - [Documentation Index](./docs/README.md) - Complete documentation overview
+**Development Setup:**
 
-2. **Set Up Development Environment**
+1. **Clone and Install**
    ```bash
-   # Install dependencies
+   git clone https://github.com/sgrastar/hibana.git
+   cd hibana
    pnpm install
-
-   # Configure Cloudflare Workers
-   cp wrangler.toml.example wrangler.toml
-
-   # Start local development server
-   pnpm dev
    ```
 
-3. **Set Up GitHub Issue Tracking**
+2. **Configure Cloudflare Workers**
+   ```bash
+   # Copy example configuration (when available)
+   cp wrangler.toml.example wrangler.toml
+
+   # Edit wrangler.toml with your settings
+   ```
+
+3. **Start Development Server**
+   ```bash
+   pnpm dev
+   # Server will start at http://localhost:8787
+   ```
+
+4. **Set Up GitHub Issue Tracking** (Optional)
    ```bash
    # Create labels, milestones, and issues
    ./scripts/setup-github.sh
    ./scripts/create-phase1-issues.sh
    ```
 
-   See [GitHub Workflow Guide](./docs/project-management/GITHUB_WORKFLOW.md) for detailed instructions.
+   See [GitHub Workflow Guide](./docs/project-management/GITHUB_WORKFLOW.md) for details.
 
 ### Project Management
 
@@ -144,11 +157,12 @@ pnpm dlx wrangler publish
 | :-------------- | :--------------------------------------------------------------------------------- | :-------------------------------------------------------------- |
 | `PRIVATE_KEY`   | RSA private key in PEM (PKCS#8) format used for signing ID Tokens (RS256).         | `"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"` |
 | `STATE_KV`      | Cloudflare KV namespace binding for authorization codes, state, and nonce storage. | `"state-kv-namespace-id"`                                       |
-| `ISSUER_DOMAIN` | The public domain representing this OP (used for `iss` and Discovery).             | `"id.example.dev"`                                              |
+| `ISSUER_DOMAIN` | The public domain representing this OP (used for `iss` and Discovery).             | `"id.example.dev"` (production: `"id.hibana.dev"`)              |
 | `JWKS_KID`      | The Key ID (kid) for the JWK published at `/.well-known/jwks.json`.                | `"edge-key-1"`                                                  |
 | `TOKEN_TTL`     | Token lifetime in seconds for issued ID tokens.                                    | `600`                                                           |
 
 > All variables can be configured via `wrangler.toml` under `[vars]` or via Cloudflare Dashboard > Workers > Settings > Variables.
+> **Note**: In documentation, `id.example.dev` is used for examples. The production deployment will use `id.hibana.dev`.
 
 ---
 
