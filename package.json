@@ -15,7 +15,8 @@
     "lint:fix": "eslint src test --ext .ts --fix",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate-keys": "tsx scripts/generate-keys.ts"
   },
   "keywords": [
     "openid-connect",
@@ -36,8 +37,10 @@
     "@types/node": "^20.11.5",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
+    "@vitest/coverage-v8": "^1.6.1",
     "eslint": "^8.56.0",
     "prettier": "^3.2.4",
+    "tsx": "^4.20.6",
     "typescript": "^5.3.3",
     "vitest": "^1.2.1",
     "wrangler": "^3.22.4"

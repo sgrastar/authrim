@@ -103,76 +103,76 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 ### Week 3: Cloudflare Services Integration (Nov 24-30)
 
 #### 3.1 KV Storage Setup
-- [ ] Create KV namespace via Wrangler CLI
-- [ ] Configure KV bindings in `wrangler.toml`
-- [ ] Create KV utility functions:
-  - [ ] `storeAuthCode()` - Store authorization code
-  - [ ] `getAuthCode()` - Retrieve authorization code
-  - [ ] `deleteAuthCode()` - Delete used code
-  - [ ] `storeState()` - Store state parameter
-  - [ ] `storeNonce()` - Store nonce parameter
-- [ ] Add TTL configuration (120s for codes, 300s for state/nonce)
-- [ ] Test KV operations locally
+- [x] Create KV namespace via Wrangler CLI
+- [x] Configure KV bindings in `wrangler.toml`
+- [x] Create KV utility functions:
+  - [x] `storeAuthCode()` - Store authorization code
+  - [x] `getAuthCode()` - Retrieve authorization code
+  - [x] `deleteAuthCode()` - Delete used code
+  - [x] `storeState()` - Store state parameter
+  - [x] `storeNonce()` - Store nonce parameter
+- [x] Add TTL configuration (120s for codes, 300s for state/nonce)
+- [x] Test KV operations locally
 
 #### 3.2 JOSE Library Integration
-- [ ] Install and configure `jose` library
-- [ ] Create key generation utilities:
-  - [ ] `generateRSAKeyPair()` - Generate RS256 key pair
-  - [ ] `exportPublicJWK()` - Export public key as JWK
-  - [ ] `exportPrivateKey()` - Export private key (PEM format)
-- [ ] Test JWT signing and verification
-- [ ] Test JWK export format
+- [x] Install and configure `jose` library
+- [x] Create key generation utilities:
+  - [x] `generateRSAKeyPair()` - Generate RS256 key pair
+  - [x] `exportPublicJWK()` - Export public key as JWK
+  - [x] `exportPrivateKey()` - Export private key (PEM format)
+- [x] Test JWT signing and verification
+- [x] Test JWK export format
 
 #### 3.3 Durable Objects Planning
-- [ ] Design Durable Object schema for key storage
-- [ ] Create `KeyManager` Durable Object class
-- [ ] Implement key rotation logic (planned for Phase 4)
-- [ ] Document Durable Objects architecture
+- [x] Design Durable Object schema for key storage
+- [x] Create `KeyManager` Durable Object class
+- [x] Implement key rotation logic (planned for Phase 4)
+- [x] Document Durable Objects architecture
 
 #### 3.4 Secret Management
-- [ ] Generate RSA key pair for development
-- [ ] Store private key in Wrangler secrets
-- [ ] Create script to rotate keys
-- [ ] Document secret management process
+- [x] Generate RSA key pair for development
+- [x] Store private key in Wrangler secrets
+- [x] Create script to rotate keys
+- [x] Document secret management process
 
 ---
 
 ### Week 4: Authentication & Testing Framework (Dec 1-7)
 
 #### 4.1 JWT Token Utilities
-- [ ] Create `src/utils/jwt.ts`:
-  - [ ] `createIDToken()` - Generate ID token with claims
-  - [ ] `createAccessToken()` - Generate access token
-  - [ ] `verifyToken()` - Verify JWT signature
-  - [ ] `parseToken()` - Parse JWT without verification
-- [ ] Add proper error handling for JWT operations
-- [ ] Test with different claim sets
+- [x] Create `src/utils/jwt.ts`:
+  - [x] `createIDToken()` - Generate ID token with claims
+  - [x] `createAccessToken()` - Generate access token
+  - [x] `verifyToken()` - Verify JWT signature
+  - [x] `parseToken()` - Parse JWT without verification
+- [x] Add proper error handling for JWT operations
+- [x] Test with different claim sets
 
 #### 4.2 Validation Utilities
-- [ ] Create `src/utils/validation.ts`:
-  - [ ] `validateClientId()` - Validate client_id format
-  - [ ] `validateRedirectUri()` - Validate redirect_uri
-  - [ ] `validateScope()` - Validate scope parameter
-  - [ ] `validateState()` - Validate state parameter
-  - [ ] `validateNonce()` - Validate nonce parameter
-  - [ ] `validateGrantType()` - Validate grant_type
-- [ ] Add regex patterns for validation
-- [ ] Test edge cases
+- [x] Create `src/utils/validation.ts`:
+  - [x] `validateClientId()` - Validate client_id format
+  - [x] `validateRedirectUri()` - Validate redirect_uri
+  - [x] `validateScope()` - Validate scope parameter
+  - [x] `validateState()` - Validate state parameter
+  - [x] `validateNonce()` - Validate nonce parameter
+  - [x] `validateGrantType()` - Validate grant_type
+- [x] Add regex patterns for validation
+- [x] Test edge cases
 
 #### 4.3 Testing Framework Setup
-- [ ] Configure Vitest for unit testing
-- [ ] Create test utilities:
-  - [ ] Mock Cloudflare Workers environment
-  - [ ] Mock KV storage
-  - [ ] Test data generators
-- [ ] Write sample tests for utilities
-- [ ] Set up test coverage reporting
+- [x] Configure Vitest for unit testing
+- [x] Create test utilities:
+  - [x] Mock Cloudflare Workers environment
+  - [x] Mock KV storage
+  - [x] Test data generators
+- [x] Write sample tests for utilities
+- [x] Set up test coverage reporting
 
 #### 4.4 Integration Test Setup
-- [ ] Install testing dependencies for e2e tests
-- [ ] Create test fixtures (mock RP)
-- [ ] Set up local Cloudflare Workers testing environment
-- [ ] Create integration test skeleton
+- [x] Install testing dependencies for e2e tests
+- [x] Create test fixtures (mock RP)
+- [x] Set up local Cloudflare Workers testing environment
+- [x] Create integration test skeleton
 
 ---
 
