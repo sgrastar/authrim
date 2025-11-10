@@ -46,3 +46,8 @@ logs/
 # Temporary files
 tmp/
 temp/
+
+# Cryptographic keys (NEVER commit these!)
+.keys/
+*.pem
+*.key

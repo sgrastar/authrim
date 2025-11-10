@@ -103,37 +103,37 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 ### Week 3: Cloudflare Services Integration (Nov 24-30)
 
 #### 3.1 KV Storage Setup
-- [ ] Create KV namespace via Wrangler CLI
-- [ ] Configure KV bindings in `wrangler.toml`
-- [ ] Create KV utility functions:
-  - [ ] `storeAuthCode()` - Store authorization code
-  - [ ] `getAuthCode()` - Retrieve authorization code
-  - [ ] `deleteAuthCode()` - Delete used code
-  - [ ] `storeState()` - Store state parameter
-  - [ ] `storeNonce()` - Store nonce parameter
-- [ ] Add TTL configuration (120s for codes, 300s for state/nonce)
-- [ ] Test KV operations locally
+- [x] Create KV namespace via Wrangler CLI
+- [x] Configure KV bindings in `wrangler.toml`
+- [x] Create KV utility functions:
+  - [x] `storeAuthCode()` - Store authorization code
+  - [x] `getAuthCode()` - Retrieve authorization code
+  - [x] `deleteAuthCode()` - Delete used code
+  - [x] `storeState()` - Store state parameter
+  - [x] `storeNonce()` - Store nonce parameter
+- [x] Add TTL configuration (120s for codes, 300s for state/nonce)
+- [x] Test KV operations locally
 
 #### 3.2 JOSE Library Integration
-- [ ] Install and configure `jose` library
-- [ ] Create key generation utilities:
-  - [ ] `generateRSAKeyPair()` - Generate RS256 key pair
-  - [ ] `exportPublicJWK()` - Export public key as JWK
-  - [ ] `exportPrivateKey()` - Export private key (PEM format)
-- [ ] Test JWT signing and verification
-- [ ] Test JWK export format
+- [x] Install and configure `jose` library
+- [x] Create key generation utilities:
+  - [x] `generateRSAKeyPair()` - Generate RS256 key pair
+  - [x] `exportPublicJWK()` - Export public key as JWK
+  - [x] `exportPrivateKey()` - Export private key (PEM format)
+- [x] Test JWT signing and verification
+- [x] Test JWK export format
 
 #### 3.3 Durable Objects Planning
-- [ ] Design Durable Object schema for key storage
-- [ ] Create `KeyManager` Durable Object class
-- [ ] Implement key rotation logic (planned for Phase 4)
-- [ ] Document Durable Objects architecture
+- [x] Design Durable Object schema for key storage
+- [x] Create `KeyManager` Durable Object class
+- [x] Implement key rotation logic (planned for Phase 4)
+- [x] Document Durable Objects architecture
 
 #### 3.4 Secret Management
-- [ ] Generate RSA key pair for development
-- [ ] Store private key in Wrangler secrets
-- [ ] Create script to rotate keys
-- [ ] Document secret management process
+- [x] Generate RSA key pair for development
+- [x] Store private key in Wrangler secrets
+- [x] Create script to rotate keys
+- [x] Document secret management process
 
 ---
 

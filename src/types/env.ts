@@ -15,8 +15,7 @@ export interface Env {
   STATE_EXPIRY: string;
   NONCE_EXPIRY: string;
 
-  // Secrets (to be added later)
-  // PRIVATE_KEY_PEM?: string;
-  // PUBLIC_KEY_JWK?: string;
-  // KEY_ID?: string;
+  // Secrets (cryptographic keys)
+  PRIVATE_KEY_PEM?: string;
+  KEY_ID?: string;
 }
