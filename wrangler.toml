@@ -1,0 +1,56 @@
+name = "hibana"
+main = "src/index.ts"
+compatibility_date = "2024-01-15"
+node_compat = true
+
+# Account ID (to be filled in later)
+# account_id = ""
+
+# KV Namespaces for state, nonce, and authorization code storage
+[[kv_namespaces]]
+binding = "AUTH_CODES"
+id = "auth_codes_namespace"
+preview_id = "auth_codes_preview"
+
+[[kv_namespaces]]
+binding = "STATE_STORE"
+id = "state_store_namespace"
+preview_id = "state_store_preview"
+
+[[kv_namespaces]]
+binding = "NONCE_STORE"
+id = "nonce_store_namespace"
+preview_id = "nonce_store_preview"
+
+[[kv_namespaces]]
+binding = "CLIENTS"
+id = "clients_namespace"
+preview_id = "clients_preview"
+
+# Environment variables
+[vars]
+ISSUER_URL = "http://localhost:8787"
+TOKEN_EXPIRY = "3600"
+CODE_EXPIRY = "120"
+STATE_EXPIRY = "300"
+NONCE_EXPIRY = "300"
+
+# Development environment
+[env.development]
+name = "hibana-dev"
+vars = { ISSUER_URL = "http://localhost:8787" }
+
+# Production environment
+[env.production]
+name = "hibana-prod"
+# vars = { ISSUER_URL = "https://id.hibana.dev" }
+
+# Build configuration
+[build]
+command = "npm run build"
+
+# Durable Objects (for key rotation - Phase 4)
+# [[durable_objects.bindings]]
+# name = "KEY_MANAGER"
+# class_name = "KeyManager"
+# script_name = "hibana"
