@@ -1,8 +1,13 @@
 # hibana – Protocol Flow Specification (for AI reasoning)
 
 ## 1. Overview
-This document describes the **end-to-end protocol flow** of the `hibana` OpenID Connect Provider (OP).  
-The purpose is to enable automated systems (AI / LLM) to reason about hibana’s behavior, data flow, and compliance with OIDC Core 1.0 and OAuth 2.0 specifications.
+This document describes the **end-to-end protocol flow** of the `hibana` OpenID Connect Provider (OP).
+The purpose is to enable automated systems (AI / LLM) to reason about hibana's behavior, data flow, and compliance with OIDC Core 1.0 and OAuth 2.0 specifications.
+
+**Related Documents:**
+- [Technical Specifications](./technical-specs.md) - System architecture and endpoint specifications
+- [Conformance Test Plan](../conformance/test-plan.md) - Testing requirements and validation
+- [Conformance Overview](../conformance/overview.md) - Certification strategy
 
 ---
 
@@ -42,15 +47,13 @@ The implementation currently supports **Authorization Code Flow** only.
 - **Endpoint:** `/authorize`
 - **Input Parameters:**
 ```
-
 response_type=code
 client_id=<client-id>
 redirect_uri=<redirect-url>
 scope=openid
 state=<random>
 nonce=<random> (optional)
-
-````
+```
 - **Actions:**
 1. Validate required params.
 2. Generate an authorization `code` (UUID/nanoid).
@@ -65,13 +68,11 @@ nonce=<random> (optional)
 ### Step 3: Token Exchange
 - **Endpoint:** `/token`
 - **Input:** HTTP POST with:
-````
-
+```
 grant_type=authorization_code
 code=<code>
 client_id=<client-id>
 redirect_uri=<redirect-uri>
-
 ```
 - **Actions:**
 1. Validate `code` against KV.
@@ -90,12 +91,10 @@ redirect_uri=<redirect-uri>
 
 - **ID Token Signing:**
 ```
-
 alg = RS256
 kid = edge-key-1
 private_key = from Durable Object / Secret
-
-````
+```
 - **Output (JSON):**
 ```json
 {
@@ -104,7 +103,7 @@ private_key = from Durable Object / Secret
   "token_type": "Bearer",
   "expires_in": 600
 }
-````
+```
 
 ---
 

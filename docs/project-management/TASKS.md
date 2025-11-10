@@ -1,5 +1,15 @@
 # Hibana Task Breakdown
 
+This document provides a comprehensive, week-by-week breakdown of all tasks required to build and certify the Hibana OpenID Connect Provider.
+
+**Related Documents:**
+- [Project Schedule](./SCHEDULE.md) - High-level timeline and milestones
+- [Kickoff Checklist](./KICKOFF.md) - Week 1 immediate actions
+- [Technical Specifications](../architecture/technical-specs.md) - What we're building
+- [Conformance Test Plan](../conformance/test-plan.md) - How we'll validate compliance
+
+---
+
 ## Phase 1: Foundation (Nov 10 - Dec 15, 2025)
 
 ### Week 1: Project Structure & Environment Setup (Nov 10-16)
