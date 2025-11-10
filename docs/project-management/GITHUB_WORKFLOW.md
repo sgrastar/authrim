@@ -2,6 +2,11 @@
 
 This guide explains how to set up GitHub issues, labels, milestones, and project boards for the Hibana project.
 
+**Related Documents:**
+- [Project Schedule](./SCHEDULE.md) - Timeline for creating issues
+- [Task Breakdown](./TASKS.md) - Detailed tasks to convert into issues
+- [Kickoff Checklist](./KICKOFF.md) - Week 1 setup tasks
+
 ---
 
 ## Quick Setup (Automated)

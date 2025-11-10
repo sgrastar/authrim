@@ -6,6 +6,12 @@ This checklist covers all immediate tasks needed to kickoff the Hibana project a
 **Target Completion**: November 16, 2025
 **Milestone**: M1 - Foundation Complete (Dec 15, 2025)
 
+**Related Documents:**
+- [Project Schedule](./SCHEDULE.md) - Complete 6-month timeline
+- [Task Breakdown](./TASKS.md) - Detailed week-by-week tasks (440+ items)
+- [GitHub Workflow](./GITHUB_WORKFLOW.md) - Issue tracking setup
+- [Technical Specifications](../architecture/technical-specs.md) - Architecture overview
+
 ---
 
 ## Prerequisites

@@ -2,6 +2,9 @@
 
 Complete documentation for the Hibana OpenID Connect Provider project.
 
+> **Quick Navigation**: Use the search function (Ctrl+F / Cmd+F) or jump to:
+> [Project Management](#-project-management) | [Architecture](#️-architecture--specifications) | [Conformance Testing](#-conformance-testing) | [Finding Information](#-finding-information)
+
 ---
 
 ## 📋 Project Management
@@ -142,6 +145,15 @@ When adding or updating documentation:
 3. **Link appropriately**: Update this index when adding new documents
 4. **Keep it current**: Update status and dates as project progresses
 5. **Be consistent**: Follow existing formatting and style
+6. **Add cross-references**: Link to related documents at the beginning of each file
+7. **Use examples**: Include `id.example.dev` for examples, `id.hibana.dev` for production references
+
+### Documentation Quality Standards
+
+- All markdown files must be properly formatted
+- Code blocks must use correct syntax highlighting
+- All internal links must be tested and working
+- Documents should be understandable without reading others (but with helpful cross-references)
 
 ---
 

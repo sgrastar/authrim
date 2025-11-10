@@ -1,8 +1,14 @@
 # hibana – Technical Specification (for AI analysis)
 
 ## 1. Project Overview
-**hibana** is a lightweight, standards-compliant **OpenID Connect Provider (OP)** implemented entirely on **Cloudflare Workers** using **Hono** as the routing framework.  
+**hibana** is a lightweight, standards-compliant **OpenID Connect Provider (OP)** implemented entirely on **Cloudflare Workers** using **Hono** as the routing framework.
 It demonstrates that an individual developer can deploy a fully functional, globally distributed OpenID Provider (OIDC OP) at the edge.
+
+**Related Documents:**
+- [Protocol Flow](./protocol-flow.md) - End-to-end OIDC flow specification
+- [Conformance Test Plan](../conformance/test-plan.md) - Testing and validation strategy
+- [Project Schedule](../project-management/SCHEDULE.md) - Development timeline
+- [Task Breakdown](../project-management/TASKS.md) - Detailed implementation tasks
 
 ---
 
@@ -27,12 +33,10 @@ It demonstrates that an individual developer can deploy a fully functional, glob
 
 ### 3.2 Logical Flow Diagram
 ```
-
 User → /authorize → [hibana OP] → redirect_uri (with code)
 ↳ /token → returns { access_token, id_token }
 ↳ /userinfo → user claims (static or dynamic)
-
-````
+```
 
 ### 3.3 Deployment Characteristics
 - Global edge execution (multi-region, low latency)
@@ -72,7 +76,7 @@ Example response:
   "grant_types_supported": ["authorization_code"],
   "id_token_signing_alg_values_supported": ["RS256"]
 }
-````
+```
 
 ---
 
