@@ -1,0 +1,75 @@
+name: Feature Implementation
+description: Track implementation of a new feature or endpoint
+title: "[Feature]: "
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to track implementation of new features or endpoints.
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      description: Which project phase does this belong to?
+      options:
+        - Phase 1 - Foundation
+        - Phase 2 - Core Implementation
+        - Phase 3 - Testing & Validation
+        - Phase 4 - Extended Features
+        - Phase 5 - Certification Prep
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature?
+      options:
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe what needs to be implemented
+      placeholder: What feature or endpoint needs to be built?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: What conditions must be met for this to be complete?
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
+
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Implementation Tasks
+      description: Break down the work into specific tasks
+      placeholder: |
+        - [ ] Task 1
+        - [ ] Task 2
+    validations:
+      required: false
+
+  - type: input
+    id: related
+    attributes:
+      label: Related Issues
+      description: Link to related issues (e.g., #123, #456)
+      placeholder: "#123"
+    validations:
+      required: false

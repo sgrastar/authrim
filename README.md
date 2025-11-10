@@ -80,6 +80,52 @@ It aims to pass the **OpenID Certified™ Basic OP Profile** while remaining sma
 
 ---
 
+## Getting Started
+
+### For Developers
+
+1. **Read Project Documentation**
+   - [PROJECT_SCHEDULE.md](./PROJECT_SCHEDULE.md) - 6-month timeline and milestones
+   - [TASK_BREAKDOWN.md](./TASK_BREAKDOWN.md) - Detailed task-by-task checklist
+   - [KICKOFF_CHECKLIST.md](./KICKOFF_CHECKLIST.md) - Week 1 immediate action items
+
+2. **Set Up Development Environment**
+   ```bash
+   # Install dependencies
+   pnpm install
+
+   # Configure Cloudflare Workers
+   cp wrangler.toml.example wrangler.toml
+
+   # Start local development server
+   pnpm dev
+   ```
+
+3. **Set Up GitHub Issue Tracking**
+   ```bash
+   # Create labels, milestones, and issues
+   ./scripts/setup-github.sh
+   ./scripts/create-phase1-issues.sh
+   ```
+
+   See [GITHUB_SETUP.md](./GITHUB_SETUP.md) for detailed instructions.
+
+### Project Management
+
+This project uses GitHub Issues, Milestones, and Projects for task management:
+
+- **Milestones**: M1-M5 tracking major project phases
+- **Labels**: Organized by phase, type, priority, and component
+- **Issues**: Week-by-week task tracking with checklists
+- **Project Board**: Kanban-style workflow (Backlog → In Progress → Done)
+
+**Quick Links**:
+- [View Issues](https://github.com/sgrastar/hibana/issues)
+- [View Milestones](https://github.com/sgrastar/hibana/milestones)
+- [View Project Board](https://github.com/sgrastar/hibana/projects)
+
+---
+
 ## Deployment
 
 ```bash
@@ -87,19 +133,6 @@ pnpm install
 pnpm build
 pnpm dlx wrangler publish
 ```
-
-こちらがREADMEの「Environment variables」セクション以降の完全版です👇
-
----
-
-````markdown
-## Deployment
-
-```bash
-pnpm install
-pnpm build
-pnpm dlx wrangler publish
-````
 
 ---
 

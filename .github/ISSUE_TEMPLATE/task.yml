@@ -1,0 +1,82 @@
+name: Task / Chore
+description: Track a general task or chore (docs, refactoring, setup, etc.)
+title: "[Task]: "
+labels: ["type:task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for documentation, refactoring, setup tasks, or general chores.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: What type of task is this?
+      options:
+        - Documentation
+        - Refactoring
+        - Setup/Configuration
+        - Testing
+        - CI/CD
+        - Security
+        - Performance
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      description: Which project phase does this belong to?
+      options:
+        - Phase 1 - Foundation
+        - Phase 2 - Core Implementation
+        - Phase 3 - Testing & Validation
+        - Phase 4 - Extended Features
+        - Phase 5 - Certification Prep
+        - Ongoing
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this task?
+      options:
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe what needs to be done
+      placeholder: What task needs to be completed?
+    validations:
+      required: true
+
+  - type: textarea
+    id: checklist
+    attributes:
+      label: Task Checklist
+      description: Break down the work into specific steps
+      placeholder: |
+        - [ ] Step 1
+        - [ ] Step 2
+        - [ ] Step 3
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional Notes
+      description: Any additional context or notes
+    validations:
+      required: false
