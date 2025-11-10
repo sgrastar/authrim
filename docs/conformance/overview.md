@@ -1,10 +1,15 @@
 # hibana – Conformance Overview
 
 ## 1. Vision
-**hibana** is a lightweight, edge-native OpenID Connect Provider designed to show that  
+**hibana** is a lightweight, edge-native OpenID Connect Provider designed to show that
 a single developer can operate a fully compliant identity provider — safely, globally, and at minimal cost.
 
-Its conformance goal is not only certification, but **to redefine what “compliant infrastructure” means in the era of serverless computing.**
+Its conformance goal is not only certification, but **to redefine what "compliant infrastructure" means in the era of serverless computing.**
+
+**Related Documents:**
+- [Test Plan](./test-plan.md) - Detailed conformance testing mapping
+- [Protocol Flow](../architecture/protocol-flow.md) - OIDC flow implementation
+- [Technical Specs](../architecture/technical-specs.md) - System architecture details
 
 ---
 

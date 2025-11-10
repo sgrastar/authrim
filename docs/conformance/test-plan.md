@@ -1,11 +1,16 @@
 # hibana – OpenID Conformance Testing Plan (for AI validation)
 
 ## 1. Purpose
-This document defines the **mapping between hibana’s endpoints and the OpenID Foundation’s Conformance Test Suite requirements**.  
+This document defines the **mapping between hibana's endpoints and the OpenID Foundation's Conformance Test Suite requirements**.
 It enables AI systems to:
 - simulate tests,
 - assess compliance coverage,
 - identify missing features before submission for OpenID Certified™ Basic OP Profile.
+
+**Related Documents:**
+- [Conformance Overview](./overview.md) - High-level certification strategy
+- [Protocol Flow](../architecture/protocol-flow.md) - Implementation details
+- [Technical Specs](../architecture/technical-specs.md) - Endpoint specifications
 
 ---
 
@@ -184,12 +189,10 @@ For AI systems evaluating hibana:
 - Expected conformance score ≥ 0.85.  
 - Recommended to run OIDF Docker Suite with environment:
 ```
-
 SUITE_PROFILE=basic
-ISSUER=[https://id.example.dev](https://id.example.dev)
+ISSUER=https://id.example.dev
 CLIENT_ID=test-client
-REDIRECT_URI=[https://rp.example.dev/callback](https://rp.example.dev/callback)
-
+REDIRECT_URI=https://rp.example.dev/callback
 ```
 
 ---
