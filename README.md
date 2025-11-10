@@ -85,9 +85,11 @@ It aims to pass the **OpenID Certified™ Basic OP Profile** while remaining sma
 ### For Developers
 
 1. **Read Project Documentation**
-   - [PROJECT_SCHEDULE.md](./PROJECT_SCHEDULE.md) - 6-month timeline and milestones
-   - [TASK_BREAKDOWN.md](./TASK_BREAKDOWN.md) - Detailed task-by-task checklist
-   - [KICKOFF_CHECKLIST.md](./KICKOFF_CHECKLIST.md) - Week 1 immediate action items
+   - [Project Schedule](./docs/project-management/SCHEDULE.md) - 6-month timeline and milestones
+   - [Task Breakdown](./docs/project-management/TASKS.md) - Detailed task-by-task checklist
+   - [Kickoff Checklist](./docs/project-management/KICKOFF.md) - Week 1 immediate action items
+   - [GitHub Workflow](./docs/project-management/GITHUB_WORKFLOW.md) - Issue tracking setup guide
+   - [Documentation Index](./docs/README.md) - Complete documentation overview
 
 2. **Set Up Development Environment**
    ```bash
@@ -108,7 +110,7 @@ It aims to pass the **OpenID Certified™ Basic OP Profile** while remaining sma
    ./scripts/create-phase1-issues.sh
    ```
 
-   See [GITHUB_SETUP.md](./GITHUB_SETUP.md) for detailed instructions.
+   See [GitHub Workflow Guide](./docs/project-management/GITHUB_WORKFLOW.md) for detailed instructions.
 
 ### Project Management
 
