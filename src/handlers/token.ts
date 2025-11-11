@@ -1,27 +1,298 @@
 import type { Context } from 'hono';
 import type { Env } from '../types/env';
+import { validateGrantType, validateAuthCode, validateClientId, validateRedirectUri } from '../utils/validation';
+import { getAuthCode, deleteAuthCode } from '../utils/kv';
+import { createIDToken, createAccessToken } from '../utils/jwt';
+import { importPKCS8 } from 'jose';
 
 /**
  * Token Endpoint Handler
  * https://openid.net/specs/openid-connect-core-1_0.html#TokenEndpoint
  *
  * Exchanges authorization codes for ID tokens and access tokens
- * Implementation planned for Week 8
  */
 export async function tokenHandler(c: Context<{ Bindings: Env }>) {
-  // TODO: Week 8 - Implement token exchange logic
-  // 1. Parse and validate request body (grant_type, code, client_id, redirect_uri, client_secret)
-  // 2. Validate authorization code from KV
-  // 3. Generate ID token with proper claims
-  // 4. Generate access token
-  // 5. Delete authorization code (single use)
-  // 6. Return token response
+  // Verify Content-Type is application/x-www-form-urlencoded
+  const contentType = c.req.header('Content-Type');
+  if (!contentType || !contentType.includes('application/x-www-form-urlencoded')) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Content-Type must be application/x-www-form-urlencoded',
+      },
+      400
+    );
+  }
 
-  return c.json(
-    {
-      error: 'not_implemented',
-      error_description: 'Token endpoint will be implemented in Week 8',
-    },
-    501
-  );
+  // Parse form data
+  let formData: Record<string, string>;
+  try {
+    const body = await c.req.parseBody();
+    formData = Object.fromEntries(
+      Object.entries(body).map(([key, value]) => [key, String(value)])
+    );
+  } catch (error) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Failed to parse request body',
+      },
+      400
+    );
+  }
+
+  const grant_type = formData.grant_type;
+  const code = formData.code;
+  const client_id = formData.client_id;
+  const redirect_uri = formData.redirect_uri;
+  const code_verifier = formData.code_verifier;
+
+  // Validate grant_type
+  const grantTypeValidation = validateGrantType(grant_type);
+  if (!grantTypeValidation.valid) {
+    return c.json(
+      {
+        error: 'unsupported_grant_type',
+        error_description: grantTypeValidation.error,
+      },
+      400
+    );
+  }
+
+  // Validate authorization code
+  const codeValidation = validateAuthCode(code);
+  if (!codeValidation.valid) {
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: codeValidation.error,
+      },
+      400
+    );
+  }
+
+  // Validate client_id
+  const clientIdValidation = validateClientId(client_id);
+  if (!clientIdValidation.valid) {
+    return c.json(
+      {
+        error: 'invalid_client',
+        error_description: clientIdValidation.error,
+      },
+      400
+    );
+  }
+
+  // Validate redirect_uri
+  const allowHttp = c.env.ALLOW_HTTP_REDIRECT === 'true';
+  const redirectUriValidation = validateRedirectUri(redirect_uri, allowHttp);
+  if (!redirectUriValidation.valid) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: redirectUriValidation.error,
+      },
+      400
+    );
+  }
+
+  // Retrieve authorization code data from KV
+  const authCodeData = await getAuthCode(c.env, code!);
+  if (!authCodeData) {
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'Authorization code is invalid or expired',
+      },
+      400
+    );
+  }
+
+  // Verify client_id matches
+  if (authCodeData.client_id !== client_id) {
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'Authorization code was issued to a different client',
+      },
+      400
+    );
+  }
+
+  // Verify redirect_uri matches
+  if (authCodeData.redirect_uri !== redirect_uri) {
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'redirect_uri does not match the one used in authorization request',
+      },
+      400
+    );
+  }
+
+  // Verify PKCE if code_challenge was used in authorization request
+  if (authCodeData.code_challenge) {
+    if (!code_verifier) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'code_verifier is required for PKCE',
+        },
+        400
+      );
+    }
+
+    // Verify code_verifier against code_challenge
+    const isValid = await verifyPKCE(code_verifier, authCodeData.code_challenge);
+    if (!isValid) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Invalid code_verifier',
+        },
+        400
+      );
+    }
+  }
+
+  // Delete authorization code (single use)
+  await deleteAuthCode(c.env, code!);
+
+  // Load private key for signing tokens
+  const privateKeyPEM = c.env.PRIVATE_KEY_PEM;
+  const keyId = c.env.KEY_ID || 'default';
+
+  if (!privateKeyPEM) {
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Server configuration error',
+      },
+      500
+    );
+  }
+
+  let privateKey;
+  try {
+    privateKey = await importPKCS8(privateKeyPEM, 'RS256');
+  } catch (error) {
+    console.error('Failed to import private key:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to load signing key',
+      },
+      500
+    );
+  }
+
+  // Token expiration
+  const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
+
+  // Generate ID Token
+  const idTokenClaims = {
+    iss: c.env.ISSUER_URL,
+    sub: authCodeData.sub,
+    aud: client_id!,
+    nonce: authCodeData.nonce,
+  };
+
+  // Add optional claims based on scope
+  const scopes = authCodeData.scope.split(' ');
+  const profileClaims: Record<string, unknown> = {};
+
+  if (scopes.includes('profile')) {
+    // For MVP, use static profile data
+    // In production, fetch from user database
+    profileClaims.name = 'Test User';
+    profileClaims.preferred_username = 'testuser';
+  }
+
+  if (scopes.includes('email')) {
+    // For MVP, use static email data
+    profileClaims.email = 'test@example.com';
+    profileClaims.email_verified = true;
+  }
+
+  let idToken: string;
+  try {
+    idToken = await createIDToken(
+      { ...idTokenClaims, ...profileClaims },
+      privateKey,
+      keyId,
+      expiresIn
+    );
+  } catch (error) {
+    console.error('Failed to create ID token:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create ID token',
+      },
+      500
+    );
+  }
+
+  // Generate Access Token
+  const accessTokenClaims = {
+    iss: c.env.ISSUER_URL,
+    sub: authCodeData.sub,
+    aud: c.env.ISSUER_URL, // For MVP, access token audience is the issuer
+    scope: authCodeData.scope,
+    client_id: client_id!,
+  };
+
+  let accessToken: string;
+  try {
+    accessToken = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
+  } catch (error) {
+    console.error('Failed to create access token:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create access token',
+      },
+      500
+    );
+  }
+
+  // Return token response
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+
+  return c.json({
+    access_token: accessToken,
+    token_type: 'Bearer',
+    expires_in: expiresIn,
+    id_token: idToken,
+  });
+}
+
+/**
+ * Verify PKCE code_verifier against code_challenge
+ * https://tools.ietf.org/html/rfc7636#section-4.6
+ *
+ * @param codeVerifier - Code verifier from token request
+ * @param codeChallenge - Code challenge from authorization request
+ * @returns Promise<boolean> - True if verification succeeds
+ */
+async function verifyPKCE(codeVerifier: string, codeChallenge: string): Promise<boolean> {
+  // Validate code_verifier format (43-128 characters, base64url)
+  const base64urlPattern = /^[A-Za-z0-9_-]{43,128}$/;
+  if (!base64urlPattern.test(codeVerifier)) {
+    return false;
+  }
+
+  // Hash code_verifier with SHA-256
+  const encoder = new TextEncoder();
+  const data = encoder.encode(codeVerifier);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+
+  // Convert to base64url
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const base64 = btoa(String.fromCharCode(...hashArray));
+  const base64url = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+  // Compare with code_challenge
+  return base64url === codeChallenge;
 }
