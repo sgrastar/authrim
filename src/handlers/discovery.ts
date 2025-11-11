@@ -26,5 +26,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic', 'none'],
   };
 
+  // Add cache headers for better performance
+  c.header('Cache-Control', 'public, max-age=3600');
+  c.header('Vary', 'Accept-Encoding');
+
   return c.json(metadata);
 }
