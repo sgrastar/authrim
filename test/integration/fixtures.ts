@@ -128,6 +128,7 @@ export async function createMockEnv(): Promise<Env> {
     NONCE_EXPIRY: '300',
     KEY_ID: 'test-key',
     PRIVATE_KEY_PEM: keySet.privatePEM,
+    PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
   };
 }
 
