@@ -1,6 +1,15 @@
 /**
  * Test setup and utilities
- * This file will be used to configure the test environment
+ * Configures global variables for Cloudflare Workers environment
  */
 
-// Test setup will be added here in Week 4
+import { webcrypto } from 'crypto';
+
+// Make crypto available globally for tests (Cloudflare Workers compatibility)
+if (!globalThis.crypto) {
+  Object.defineProperty(globalThis, 'crypto', {
+    value: webcrypto,
+    writable: false,
+    configurable: true,
+  });
+}

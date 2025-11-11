@@ -1,6 +1,11 @@
 import type { Context } from 'hono';
 import type { Env } from '../types/env';
-import { validateGrantType, validateAuthCode, validateClientId, validateRedirectUri } from '../utils/validation';
+import {
+  validateGrantType,
+  validateAuthCode,
+  validateClientId,
+  validateRedirectUri,
+} from '../utils/validation';
 import { getAuthCode, deleteAuthCode } from '../utils/kv';
 import { createIDToken, createAccessToken, calculateAtHash } from '../utils/jwt';
 import { importPKCS8 } from 'jose';
@@ -29,9 +34,9 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
   try {
     const body = await c.req.parseBody();
     formData = Object.fromEntries(
-      Object.entries(body).map(([key, value]) => [key, String(value)])
+      Object.entries(body).map(([key, value]) => [key, typeof value === 'string' ? value : ''])
     );
-  } catch (error) {
+  } catch {
     return c.json(
       {
         error: 'invalid_request',
@@ -210,7 +215,7 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     sub: authCodeData.sub,
     aud: c.env.ISSUER_URL, // For MVP, access token audience is the issuer
     scope: authCodeData.scope,
-    client_id: client_id!,
+    client_id: client_id,
   };
 
   let accessToken: string;
@@ -247,7 +252,7 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
   const idTokenClaims = {
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
-    aud: client_id!,
+    aud: client_id,
     nonce: authCodeData.nonce,
     at_hash: atHash, // OIDC spec requirement for code flow
   };

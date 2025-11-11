@@ -111,7 +111,9 @@ describe('Authorization Code Flow', () => {
       expect(userinfoData).toHaveProperty('sub');
       // For MVP, sub is randomly generated in authorize handler
       // In production, this would match the authenticated user
-      expect(userinfoData.sub).toMatch(/^user-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+      expect(userinfoData.sub).toMatch(
+        /^user-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      );
     });
 
     it.skip('should validate authorization request parameters', async () => {
