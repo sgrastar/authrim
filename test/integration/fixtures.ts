@@ -221,7 +221,16 @@ export function parseIdToken(idToken: string): any {
   }
 
   const payload = parts[1];
-  const decoded = Buffer.from(payload, 'base64url').toString('utf-8');
+  if (!payload) {
+    throw new Error('Invalid JWT payload');
+  }
+
+  // Convert base64url to base64 (Workers-compatible)
+  const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+
+  // Decode using atob (available in test environment)
+  const decoded = atob(base64);
+
   return JSON.parse(decoded);
 }
 
