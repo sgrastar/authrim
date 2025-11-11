@@ -90,6 +90,7 @@ describe('KV Utilities', () => {
         client_id: 'test-client',
         redirect_uri: 'http://localhost:3000/callback',
         scope: 'openid profile',
+        sub: 'user-123', // User identifier
         timestamp: Date.now(),
       };
 
@@ -110,6 +111,7 @@ describe('KV Utilities', () => {
         client_id: 'test-client',
         redirect_uri: 'http://localhost:3000/callback',
         scope: 'openid',
+        sub: 'user-123',
         timestamp: Date.now(),
       };
 
@@ -126,6 +128,7 @@ describe('KV Utilities', () => {
         client_id: 'test-client',
         redirect_uri: 'http://localhost:3000/callback',
         scope: 'openid',
+        sub: 'user-123',
         nonce: 'test-nonce-123',
         timestamp: Date.now(),
       };

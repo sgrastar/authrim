@@ -18,4 +18,7 @@ export interface Env {
   // Secrets (cryptographic keys)
   PRIVATE_KEY_PEM?: string;
   KEY_ID?: string;
+
+  // Admin secrets for Durable Objects management
+  KEY_MANAGER_SECRET?: string;
 }

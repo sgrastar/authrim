@@ -14,6 +14,7 @@ export interface AuthCodeData {
   client_id: string;
   redirect_uri: string;
   scope: string;
+  sub: string; // Subject (user identifier) - required for token issuance
   nonce?: string;
   timestamp: number;
   code_challenge?: string;
