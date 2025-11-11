@@ -10,21 +10,21 @@
 
 ### Required Metadata Fields
 
-- [ ] `issuer` - Must match the issuer value in issued tokens
-- [ ] `authorization_endpoint` - Full URL to `/authorize`
-- [ ] `token_endpoint` - Full URL to `/token`
-- [ ] `jwks_uri` - Full URL to `/.well-known/jwks.json`
-- [ ] `response_types_supported` - Must include `["code"]`
-- [ ] `subject_types_supported` - Must include `["public"]`
-- [ ] `id_token_signing_alg_values_supported` - Must include `["RS256"]`
+- [x] `issuer` - Must match the issuer value in issued tokens
+- [x] `authorization_endpoint` - Full URL to `/authorize`
+- [x] `token_endpoint` - Full URL to `/token`
+- [x] `jwks_uri` - Full URL to `/.well-known/jwks.json`
+- [x] `response_types_supported` - Must include `["code"]`
+- [x] `subject_types_supported` - Must include `["public"]`
+- [x] `id_token_signing_alg_values_supported` - Must include `["RS256"]`
 
 ### Optional but Recommended Fields
 
-- [ ] `userinfo_endpoint` - Full URL to `/userinfo`
-- [ ] `scopes_supported` - List of supported scopes
-- [ ] `claims_supported` - List of supported claims
-- [ ] `grant_types_supported` - Should include `["authorization_code"]`
-- [ ] `token_endpoint_auth_methods_supported` - Authentication methods
+- [x] `userinfo_endpoint` - Full URL to `/userinfo`
+- [x] `scopes_supported` - List of supported scopes
+- [x] `claims_supported` - List of supported claims
+- [x] `grant_types_supported` - Should include `["authorization_code"]`
+- [x] `token_endpoint_auth_methods_supported` - Authentication methods
 
 ### Validation Tests
 
@@ -37,7 +37,8 @@ curl http://localhost:8787/.well-known/openid-configuration | jq
 # Content-Type: application/json
 ```
 
-**Result:** [x] Pass / [ ] Fail
+**Result:** ✓ Pass
+
 **Notes:**
 - Status: 200 OK
 - すべての必須フィールドが含まれている: issuer, authorization_endpoint, token_endpoint, jwks_uri, response_types_supported: ["code"], subject_types_supported: ["public"], id_token_signing_alg_values_supported: ["RS256"]
@@ -67,7 +68,8 @@ curl http://localhost:8787/.well-known/jwks.json | jq
 # Content-Type: application/json
 ```
 
-**Result:** [ ] Pass / [x] Fail
+**Result:** ✗ Fail
+
 **Notes:**
 - Status: 200 OK
 - レスポンスは返されるが、keys配列が空: {"keys": []}
@@ -80,14 +82,14 @@ curl http://localhost:8787/.well-known/jwks.json | jq
 
 ### Required Parameters
 
-- [ ] `response_type` - Must be "code"
-- [ ] `client_id` - Client identifier
-- [ ] `redirect_uri` - Callback URL
+- [x] `response_type` - Must be "code"
+- [x] `client_id` - Client identifier
+- [x] `redirect_uri` - Callback URL
 - [ ] `scope` - Must include "openid"
 
 ### Optional Parameters
 
-- [ ] `state` - CSRF protection (recommended)
+- [x] `state` - CSRF protection (recommended)
 - [ ] `nonce` - Replay protection (recommended)
 - [ ] `code_challenge` - PKCE (required for public clients)
 - [ ] `code_challenge_method` - Must be "S256"
@@ -102,7 +104,8 @@ curl -i "http://localhost:8787/authorize?response_type=code&client_id=test-clien
 # Location: https://example.com/callback?code=...&state=test-state
 ```
 
-**Result:** [x] Pass / [ ] Fail
+**Result:** ✓ Pass
+
 **Notes:**
 - Status: 302 Found
 - 正しく認可コードとstateパラメータを含むリダイレクトを返す
@@ -116,7 +119,8 @@ curl -i "http://localhost:8787/authorize?response_type=code&redirect_uri=https:/
 # Error: invalid_request or invalid_client
 ```
 
-**Result:** [x] Pass / [ ] Fail
+**Result:** ✓ Pass
+
 **Notes:**
 - Status: 400 Bad Request
 - 正しくエラーを返す: {"error":"invalid_request","error_description":"client_id is required"}
@@ -129,7 +133,8 @@ curl -i "http://localhost:8787/authorize?response_type=token&client_id=test-clie
 # Error: unsupported_response_type
 ```
 
-**Result:** [~] Pass / [ ] Fail (部分的成功)
+**Result:** ~ Partial (部分的成功)
+
 **Notes:**
 - Status: 400 Bad Request
 - エラーは返すが、error_descriptionが"Unsupported response_type: token"となっているのは正しいが、errorコードが"invalid_request"（"unsupported_response_type"が望ましい）
@@ -142,7 +147,8 @@ curl -i "http://localhost:8787/authorize?response_type=code&client_id=test-clien
 # Error: invalid_scope
 ```
 
-**Result:** [ ] Pass / [x] Fail
+**Result:** ✗ Fail
+
 **Notes:**
 - Status: 500 Internal Server Error
 - **問題**: 400 Bad Requestであるべきところ500エラーを返す
@@ -189,7 +195,8 @@ curl -X POST http://localhost:8787/token \
 # Response includes: access_token, token_type, expires_in, id_token
 ```
 
-**Result:** [ ] Pass / [x] Fail
+**Result:** ✗ Fail
+
 **Notes:**
 - Status: 500 Internal Server Error
 - **重大な問題**: サーバー設定エラーによりトークンを発行できない
@@ -209,7 +216,8 @@ curl -X POST http://localhost:8787/token \
 # Error: invalid_grant
 ```
 
-**Result:** [x] Pass / [ ] Fail
+**Result:** ✓ Pass
+
 **Notes:**
 - Status: 400 Bad Request
 - 正しくエラーを返す: {"error":"invalid_grant","error_description":"code format is invalid"}
@@ -228,7 +236,8 @@ curl -X POST http://localhost:8787/token \
 # Error: invalid_grant (code already used)
 ```
 
-**Result:** [ ] Pass / [ ] Fail (実行不可)
+**Result:** - Not Tested (実行不可)
+
 **Notes:**
 - トークンエンドポイントがサーバーエラーを返すため、コード再利用防止のテストを実行できない
 
@@ -245,7 +254,8 @@ curl -X POST http://localhost:8787/token \
 # Error: invalid_grant
 ```
 
-**Result:** [x] Pass / [ ] Fail
+**Result:** ✓ Pass
+
 **Notes:**
 - Status: 400 Bad Request
 - 正しくエラーを返す: {"error":"invalid_grant","error_description":"redirect_uri does not match the one used in authorization request"}
@@ -297,7 +307,8 @@ echo $ID_TOKEN | cut -d. -f2 | base64 -d | jq
 # Verify: iss, sub, aud, exp, iat present
 ```
 
-**Result:** [ ] Pass / [ ] Fail (実行不可)
+**Result:** - Not Tested (実行不可)
+
 **Notes:**
 - トークンエンドポイントからID Tokenを取得できないため、テスト実行不可
 - Test 4.1でトークン取得に失敗
@@ -308,7 +319,8 @@ echo $ID_TOKEN | cut -d. -f2 | base64 -d | jq
 # Public key from /.well-known/jwks.json
 ```
 
-**Result:** [ ] Pass / [ ] Fail (実行不可)
+**Result:** - Not Tested (実行不可)
+
 **Notes:**
 - JWKSが空のため、署名検証テスト実行不可
 - ID Tokenも取得できない
@@ -338,7 +350,8 @@ curl http://localhost:8787/userinfo \
 # Response: JSON with user claims including 'sub'
 ```
 
-**Result:** [ ] Pass / [ ] Fail (実行不可)
+**Result:** - Not Tested (実行不可)
+
 **Notes:**
 - トークンエンドポイントからアクセストークンを取得できないため、テスト実行不可
 
@@ -350,7 +363,8 @@ curl -i http://localhost:8787/userinfo
 # Header: WWW-Authenticate: Bearer
 ```
 
-**Result:** [x] Pass / [ ] Fail
+**Result:** ✓ Pass
+
 **Notes:**
 - Status: 401 Unauthorized
 - WWW-Authenticateヘッダーが含まれている: "Bearer"
@@ -365,7 +379,8 @@ curl -i http://localhost:8787/userinfo \
 # Error: invalid_token
 ```
 
-**Result:** [ ] Pass / [x] Fail
+**Result:** ✗ Fail
+
 **Notes:**
 - Status: 500 Internal Server Error
 - **問題**: 401 Unauthorizedであるべきところ500エラーを返す
@@ -377,9 +392,9 @@ curl -i http://localhost:8787/userinfo \
 
 ### OAuth 2.0 Errors
 
-- [ ] `invalid_request` - Malformed request
+- [x] `invalid_request` - Malformed request
 - [ ] `invalid_client` - Invalid client_id
-- [ ] `invalid_grant` - Invalid authorization code
+- [x] `invalid_grant` - Invalid authorization code
 - [ ] `unsupported_grant_type` - Unsupported grant type
 - [ ] `invalid_scope` - Invalid or unsupported scope
 
@@ -402,7 +417,8 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 # - state: if provided in request
 ```
 
-**Result:** [x] Pass / [ ] Fail
+**Result:** ✓ Pass
+
 **Notes:**
 - Status: 400 Bad Request
 - エラーレスポンスの形式は正しい:
@@ -433,8 +449,8 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 
 ### State Parameter
 
-- [ ] State parameter returned in redirect
-- [ ] State parameter matches original request
+- [x] State parameter returned in redirect
+- [x] State parameter matches original request
 
 ### Nonce Parameter
 
@@ -449,7 +465,8 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 # Expected: invalid_grant error
 ```
 
-**Result:** [ ] Pass / [ ] Fail (実行不可)
+**Result:** - Not Tested (実行不可)
+
 **Notes:**
 - トークンエンドポイントがサーバーエラーを返すため、有効期限のテストを実行できない
 - 実用的な時間内でのテストが困難
@@ -460,7 +477,8 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 # Expected: Second attempt fails with invalid_grant
 ```
 
-**Result:** [ ] Pass / [ ] Fail (実行不可)
+**Result:** - Not Tested (実行不可)
+
 **Notes:**
 - トークンエンドポイントがサーバーエラーを返すため、コード再利用防止のテストを実行できない
 - バリデーションロジックの確認はTest 4.2, 4.4で部分的に確認済み
