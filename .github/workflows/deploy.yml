@@ -1,9 +1,12 @@
 name: Deploy to Cloudflare Workers
 
+# Deployment workflow is currently disabled
+# To re-enable automatic deployment, uncomment the 'push' trigger below
 on:
-  push:
-    branches:
-      - main
+  # push:
+  #   branches:
+  #     - main
+  workflow_dispatch:  # Allow manual triggering from GitHub Actions UI
 
 jobs:
   deploy:
