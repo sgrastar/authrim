@@ -91,7 +91,7 @@ export function validateRedirectUri(
   let url: URL;
   try {
     url = new URL(redirectUri);
-  } catch (error) {
+  } catch {
     return {
       valid: false,
       error: 'redirect_uri is not a valid URL',

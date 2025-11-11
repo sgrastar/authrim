@@ -150,10 +150,7 @@ describe('KeyManager Durable Object', () => {
     it('should reject requests when KEY_MANAGER_SECRET is not configured', async () => {
       const envNoSecret = createMockEnv(undefined);
       envNoSecret.KEY_MANAGER_SECRET = undefined;
-      const kmNoSecret = new KeyManager(
-        state as unknown as DurableObjectState,
-        envNoSecret
-      );
+      const kmNoSecret = new KeyManager(state as unknown as DurableObjectState, envNoSecret);
 
       const request = createRequest('/active', 'GET', 'any-token');
       const response = await kmNoSecret.fetch(request);

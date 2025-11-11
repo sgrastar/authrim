@@ -27,8 +27,12 @@ export class OIDCError extends Error {
     super(error_description || error);
     this.name = 'OIDCError';
     this.error = error;
-    this.error_description = error_description;
-    this.error_uri = error_uri;
+    if (error_description !== undefined) {
+      this.error_description = error_description;
+    }
+    if (error_uri !== undefined) {
+      this.error_uri = error_uri;
+    }
     this.statusCode = statusCode;
 
     // Maintains proper stack trace for where our error was thrown (only available on V8)
@@ -64,7 +68,7 @@ export class OIDCError extends Error {
 /**
  * Handle OIDC error and return JSON response
  */
-export function handleOIDCError(c: Context, error: OIDCError): Response {
+export function handleOIDCError(_c: Context, error: OIDCError): Response {
   // Log error for debugging
   console.error(`OIDC Error [${error.statusCode}]:`, {
     error: error.error,
@@ -72,28 +76,61 @@ export function handleOIDCError(c: Context, error: OIDCError): Response {
     stack: error.stack,
   });
 
-  return c.json(error.toJSON(), error.statusCode);
+  // Use Response constructor directly to avoid type issues with c.json()
+  return new Response(JSON.stringify(error.toJSON()), {
+    status: error.statusCode,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
 }
 
 /**
  * Handle token endpoint error
  * Includes no-cache headers as per OAuth 2.0 spec
  */
-export function handleTokenError(c: Context, error: OIDCError): Response {
-  c.header('Cache-Control', 'no-store');
-  c.header('Pragma', 'no-cache');
-  return handleOIDCError(c, error);
+export function handleTokenError(_c: Context, error: OIDCError): Response {
+  // Log error for debugging
+  console.error(`OIDC Error [${error.statusCode}]:`, {
+    error: error.error,
+    description: error.error_description,
+    stack: error.stack,
+  });
+
+  return new Response(JSON.stringify(error.toJSON()), {
+    status: error.statusCode,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      Pragma: 'no-cache',
+    },
+  });
 }
 
 /**
  * Handle UserInfo endpoint error
  * Includes WWW-Authenticate header as per OAuth 2.0 Bearer Token spec
  */
-export function handleUserInfoError(c: Context, error: OIDCError): Response {
+export function handleUserInfoError(_c: Context, error: OIDCError): Response {
+  // Log error for debugging
+  console.error(`OIDC Error [${error.statusCode}]:`, {
+    error: error.error,
+    description: error.error_description,
+    stack: error.stack,
+  });
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
   if (error.statusCode === HTTP_STATUS.UNAUTHORIZED) {
-    c.header('WWW-Authenticate', `Bearer error="${error.error}"`);
+    headers['WWW-Authenticate'] = `Bearer error="${error.error}"`;
   }
-  return handleOIDCError(c, error);
+
+  return new Response(JSON.stringify(error.toJSON()), {
+    status: error.statusCode,
+    headers,
+  });
 }
 
 /**
