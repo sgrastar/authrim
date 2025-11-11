@@ -98,7 +98,11 @@ describe('JWKS Handler', () => {
 
     it('should use provided key ID', async () => {
       const keySet = await generateKeySet('custom-key-id-123', 2048);
-      const env = createMockEnv(testPrivateKey, 'custom-key-id-123', JSON.stringify(keySet.publicJWK));
+      const env = createMockEnv(
+        testPrivateKey,
+        'custom-key-id-123',
+        JSON.stringify(keySet.publicJWK)
+      );
       const response = await app.request(
         '/.well-known/jwks.json',
         {
