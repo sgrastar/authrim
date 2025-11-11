@@ -14,6 +14,7 @@ export interface Env {
   CODE_EXPIRY: string;
   STATE_EXPIRY: string;
   NONCE_EXPIRY: string;
+  ALLOW_HTTP_REDIRECT?: string; // Allow http:// redirect URIs for development
 
   // Secrets (cryptographic keys)
   PRIVATE_KEY_PEM?: string;
