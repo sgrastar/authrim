@@ -10,7 +10,7 @@ let testPrivateKey: string;
 /**
  * Create a mock environment for testing
  */
-function createMockEnv(privateKey?: string, keyId?: string): Env {
+function createMockEnv(privateKey?: string, keyId?: string, publicJWK?: string): Env {
   return {
     ISSUER_URL: 'https://test.example.com',
     TOKEN_EXPIRY: '3600',
@@ -19,6 +19,7 @@ function createMockEnv(privateKey?: string, keyId?: string): Env {
     NONCE_EXPIRY: '600',
     PRIVATE_KEY_PEM: privateKey,
     KEY_ID: keyId,
+    PUBLIC_JWK_JSON: publicJWK,
   } as Env;
 }
 
