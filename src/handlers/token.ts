@@ -1,6 +1,11 @@
 import type { Context } from 'hono';
 import type { Env } from '../types/env';
-import { validateGrantType, validateAuthCode, validateClientId, validateRedirectUri } from '../utils/validation';
+import {
+  validateGrantType,
+  validateAuthCode,
+  validateClientId,
+  validateRedirectUri,
+} from '../utils/validation';
 import { getAuthCode, deleteAuthCode } from '../utils/kv';
 import { createIDToken, createAccessToken, calculateAtHash } from '../utils/jwt';
 import { importPKCS8 } from 'jose';
@@ -29,10 +34,7 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
   try {
     const body = await c.req.parseBody();
     formData = Object.fromEntries(
-      Object.entries(body).map(([key, value]) => [
-        key,
-        typeof value === 'string' ? value : '',
-      ])
+      Object.entries(body).map(([key, value]) => [key, typeof value === 'string' ? value : ''])
     );
   } catch {
     return c.json(

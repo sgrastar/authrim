@@ -60,9 +60,7 @@ function validateEnvironment(env: Env): void {
 
   // Throw aggregated errors
   if (errors.length > 0) {
-    throw new Error(
-      `Environment validation failed:\n${errors.map((e) => `  - ${e}`).join('\n')}`
-    );
+    throw new Error(`Environment validation failed:\n${errors.map((e) => `  - ${e}`).join('\n')}`);
   }
 }
 

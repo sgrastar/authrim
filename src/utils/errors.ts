@@ -102,7 +102,7 @@ export function handleTokenError(_c: Context, error: OIDCError): Response {
     headers: {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
-      'Pragma': 'no-cache',
+      Pragma: 'no-cache',
     },
   });
 }
