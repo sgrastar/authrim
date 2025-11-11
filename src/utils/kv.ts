@@ -19,6 +19,9 @@ export interface AuthCodeData {
   timestamp: number;
   code_challenge?: string;
   code_challenge_method?: string;
+  jti?: string; // JWT ID of the access token (for revocation on code reuse)
+  used?: boolean; // Whether the authorization code has been used (for detecting reuse attacks)
+  claims?: string; // Requested claims (JSON string, per OIDC Core 5.5)
 }
 
 /**
@@ -69,6 +72,35 @@ export async function getAuthCode(env: Env, code: string): Promise<AuthCodeData 
  */
 export async function deleteAuthCode(env: Env, code: string): Promise<void> {
   await env.AUTH_CODES.delete(code);
+}
+
+/**
+ * Mark authorization code as used and store associated token JTI
+ * This allows detection of authorization code reuse attacks (RFC 6749 Section 4.1.2)
+ *
+ * @param env - Cloudflare environment bindings
+ * @param code - Authorization code
+ * @param data - Updated authorization code data with jti and used flag
+ * @returns Promise<void>
+ */
+export async function markAuthCodeAsUsed(
+  env: Env,
+  code: string,
+  data: AuthCodeData
+): Promise<void> {
+  const ttl = parseInt(env.CODE_EXPIRY, 10);
+  const expirationTtl = ttl;
+
+  await env.AUTH_CODES.put(
+    code,
+    JSON.stringify({
+      ...data,
+      used: true,
+    }),
+    {
+      expirationTtl,
+    }
+  );
 }
 
 /**
@@ -186,4 +218,35 @@ export async function getClient(
     console.error('Failed to parse client data:', error);
     return null;
   }
+}
+
+/**
+ * Revoke an access token by adding its JTI to the revocation list
+ *
+ * Per RFC 6749 Section 4.1.2: When an authorization code is used more than once,
+ * the authorization server SHOULD revoke all tokens previously issued based on that code.
+ *
+ * @param env - Cloudflare environment bindings
+ * @param jti - JWT ID of the token to revoke
+ * @param expiresIn - Token expiration time in seconds (TTL for revocation list entry)
+ * @returns Promise<void>
+ */
+export async function revokeToken(env: Env, jti: string, expiresIn: number): Promise<void> {
+  // Store revoked token JTI with same TTL as token expiration
+  // After token expires naturally, no need to keep it in revocation list
+  await env.REVOKED_TOKENS.put(jti, 'revoked', {
+    expirationTtl: expiresIn,
+  });
+}
+
+/**
+ * Check if an access token has been revoked
+ *
+ * @param env - Cloudflare environment bindings
+ * @param jti - JWT ID of the token to check
+ * @returns Promise<boolean> - True if token is revoked
+ */
+export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
+  const result = await env.REVOKED_TOKENS.get(jti);
+  return result !== null;
 }

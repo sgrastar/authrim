@@ -9,23 +9,28 @@ compatibility_flags = ["nodejs_compat"]
 # KV Namespaces for state, nonce, and authorization code storage
 [[kv_namespaces]]
 binding = "AUTH_CODES"
-id = "auth_codes_namespace"
-preview_id = "auth_codes_preview"
+id = "YOUR_AUTH_CODES_ID"
+preview_id = "YOUR_AUTH_CODES_PREVIEW_ID"
 
 [[kv_namespaces]]
 binding = "STATE_STORE"
-id = "state_store_namespace"
-preview_id = "state_store_preview"
+id = "YOUR_STATE_STORE_ID"
+preview_id = "YOUR_STATE_STORE_PREVIEW_ID"
 
 [[kv_namespaces]]
 binding = "NONCE_STORE"
-id = "nonce_store_namespace"
-preview_id = "nonce_store_preview"
+id = "YOUR_NONCE_STORE_ID"
+preview_id = "YOUR_NONCE_STORE_PREVIEW_ID"
 
 [[kv_namespaces]]
 binding = "CLIENTS"
-id = "clients_namespace"
-preview_id = "clients_preview"
+id = "YOUR_CLIENTS_ID"
+preview_id = "YOUR_CLIENTS_PREVIEW_ID"
+
+[[kv_namespaces]]
+binding = "REVOKED_TOKENS"
+id = "YOUR_REVOKED_TOKENS_ID"
+preview_id = "YOUR_REVOKED_TOKENS_PREVIEW_ID"
 
 # Environment variables
 [vars]
@@ -34,7 +39,7 @@ TOKEN_EXPIRY = "3600"
 CODE_EXPIRY = "120"
 STATE_EXPIRY = "300"
 NONCE_EXPIRY = "300"
-KEY_ID = "dev-key-1762856717737-4b94f4"
+KEY_ID = "dev-key-TIMESTAMP-XXXXXXX"
 
 # Development environment
 [env.development]
@@ -44,7 +49,7 @@ vars = { ISSUER_URL = "http://localhost:8787" }
 # Production environment
 [env.production]
 name = "hibana-prod"
-# vars = { ISSUER_URL = "https://id.hibana.dev" }
+# vars = { ISSUER_URL = "https://hibana.YOUR_SUBDOMAIN.workers.dev" }
 
 # Build configuration
 [build]

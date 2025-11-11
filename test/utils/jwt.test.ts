@@ -95,7 +95,7 @@ describe('JWT Utilities', () => {
 
   describe('createAccessToken', () => {
     it('should create valid access token', async () => {
-      const claims: Omit<AccessTokenClaims, 'iat' | 'exp'> = {
+      const claims: Omit<AccessTokenClaims, 'iat' | 'exp' | 'jti'> = {
         iss: issuer,
         sub: 'user123',
         aud: clientId,
@@ -103,15 +103,18 @@ describe('JWT Utilities', () => {
         client_id: clientId,
       };
 
-      const token = await createAccessToken(claims, privateKey, kid, 3600);
+      const result = await createAccessToken(claims, privateKey, kid, 3600);
 
-      expect(token).toBeDefined();
-      expect(typeof token).toBe('string');
-      expect(token.split('.').length).toBe(3);
+      expect(result).toBeDefined();
+      expect(result.token).toBeDefined();
+      expect(result.jti).toBeDefined();
+      expect(typeof result.token).toBe('string');
+      expect(typeof result.jti).toBe('string');
+      expect(result.token.split('.').length).toBe(3);
     });
 
     it('should include scope in access token', async () => {
-      const claims: Omit<AccessTokenClaims, 'iat' | 'exp'> = {
+      const claims: Omit<AccessTokenClaims, 'iat' | 'exp' | 'jti'> = {
         iss: issuer,
         sub: 'user123',
         aud: clientId,
@@ -119,10 +122,11 @@ describe('JWT Utilities', () => {
         client_id: clientId,
       };
 
-      const token = await createAccessToken(claims, privateKey, kid);
-      const parsed = parseToken(token);
+      const result = await createAccessToken(claims, privateKey, kid);
+      const parsed = parseToken(result.token);
 
       expect(parsed.scope).toBe('openid profile email');
+      expect(parsed.jti).toBe(result.jti);
     });
   });
 
@@ -269,7 +273,7 @@ describe('JWT Utilities', () => {
     });
 
     it('should create and verify access token successfully', async () => {
-      const claims: Omit<AccessTokenClaims, 'iat' | 'exp'> = {
+      const claims: Omit<AccessTokenClaims, 'iat' | 'exp' | 'jti'> = {
         iss: issuer,
         sub: 'user123',
         aud: clientId,
@@ -277,11 +281,12 @@ describe('JWT Utilities', () => {
         client_id: clientId,
       };
 
-      const token = await createAccessToken(claims, privateKey, kid);
-      const verified = await verifyToken(token, publicKey, issuer, clientId);
+      const result = await createAccessToken(claims, privateKey, kid);
+      const verified = await verifyToken(result.token, publicKey, issuer, clientId);
 
       expect(verified.sub).toBe('user123');
       expect(verified.scope).toBe('openid profile email');
+      expect(verified.jti).toBe(result.jti);
     });
   });
 });

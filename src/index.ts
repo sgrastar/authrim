@@ -111,7 +111,9 @@ app.get('/.well-known/openid-configuration', discoveryHandler);
 app.get('/.well-known/jwks.json', jwksHandler);
 
 // Authorization endpoint
+// OIDC Core 3.1.2.1: MUST support both GET and POST methods
 app.get('/authorize', authorizeHandler);
+app.post('/authorize', authorizeHandler);
 
 // Token endpoint
 app.post('/token', tokenHandler);

@@ -227,6 +227,80 @@ describe('Authorization Code Flow', () => {
       expect(data.error).toBe('invalid_grant');
     });
 
+    it('should revoke access token when authorization code is reused', async () => {
+      // RFC 6749 Section 4.1.2: When code is reused, previously issued tokens should be revoked
+      const app = (await import('../../src/index')).default;
+      const client = testClients.confidential;
+      const state = generateState();
+
+      // Step 1: Get authorization code
+      const authUrl = buildAuthorizationUrl({
+        issuer: env.ISSUER_URL,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        scope: 'openid profile email',
+        state,
+        nonce: generateNonce(),
+      });
+
+      const authRes = await app.fetch(new Request(authUrl), env);
+      const location = authRes.headers.get('location');
+      const parsed = parseAuthorizationResponse(location!);
+
+      // Step 2: Use code first time and get access token
+      const tokenBody1 = buildTokenRequestBody({
+        grant_type: 'authorization_code',
+        code: parsed.code!,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        client_secret: client.client_secret,
+      });
+
+      const tokenRes1 = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody1,
+      }), env);
+
+      expect(tokenRes1.status).toBe(200);
+      const tokenData1 = await tokenRes1.json();
+      const accessToken = tokenData1.access_token;
+
+      // Step 3: Verify access token works
+      const userinfoRes1 = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }), env);
+      expect(userinfoRes1.status).toBe(200);
+
+      // Step 4: Try to reuse the same code (this should trigger token revocation)
+      const tokenBody2 = buildTokenRequestBody({
+        grant_type: 'authorization_code',
+        code: parsed.code!,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        client_secret: client.client_secret,
+      });
+
+      const tokenRes2 = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody2,
+      }), env);
+
+      expect(tokenRes2.status).toBe(400);
+      const data = await tokenRes2.json();
+      expect(data.error).toBe('invalid_grant');
+
+      // Step 5: Verify original access token is now revoked
+      const userinfoRes2 = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }), env);
+
+      expect(userinfoRes2.status).toBe(401);
+      const userinfoError = await userinfoRes2.json();
+      expect(userinfoError.error).toBe('invalid_token');
+    });
+
     it('should include nonce in ID token', async () => {
       const app = (await import('../../src/index')).default;
       const client = testClients.confidential;
@@ -425,6 +499,264 @@ describe('Authorization Code Flow', () => {
       expect(userinfoData).toHaveProperty('preferred_username');
       expect(userinfoData).toHaveProperty('email');
       expect(userinfoData).toHaveProperty('email_verified');
+    });
+  });
+
+  describe('Claims Parameter Support', () => {
+    it('should return name claim when requested via claims parameter without profile scope', async () => {
+      const app = (await import('../../src/index')).default;
+      const client = testClients.confidential;
+
+      // Build claims parameter requesting name
+      const claimsParam = JSON.stringify({
+        userinfo: {
+          name: { essential: true }
+        }
+      });
+
+      // Get authorization code with claims parameter but WITHOUT profile scope
+      const authUrl = buildAuthorizationUrl({
+        issuer: env.ISSUER_URL,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        scope: 'openid', // Note: no profile scope
+        state: generateState(),
+        claims: claimsParam,
+      });
+
+      const authRes = await app.fetch(new Request(authUrl), env);
+      expect(authRes.status).toBe(302);
+
+      const location = authRes.headers.get('location');
+      const parsed = parseAuthorizationResponse(location!);
+      expect(parsed.code).toBeDefined();
+
+      // Exchange authorization code for tokens
+      const tokenBody = buildTokenRequestBody({
+        grant_type: 'authorization_code',
+        code: parsed.code!,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        client_secret: client.client_secret,
+      });
+
+      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody,
+      }), env);
+
+      expect(tokenRes.status).toBe(200);
+      const tokenData = await tokenRes.json();
+
+      // Get userinfo
+      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      }), env);
+
+      expect(userinfoRes.status).toBe(200);
+      const userinfoData = await userinfoRes.json();
+
+      // Should have name even without profile scope because it was requested via claims parameter
+      expect(userinfoData).toHaveProperty('name');
+      expect(userinfoData.name).toBe('Test User');
+
+      // Should NOT have other profile claims
+      expect(userinfoData).not.toHaveProperty('family_name');
+      expect(userinfoData).not.toHaveProperty('email');
+    });
+
+    it('should return email claim when requested via claims parameter without email scope', async () => {
+      const app = (await import('../../src/index')).default;
+      const client = testClients.confidential;
+
+      // Build claims parameter requesting email
+      const claimsParam = JSON.stringify({
+        userinfo: {
+          email: null,
+          email_verified: null
+        }
+      });
+
+      // Get authorization code with claims parameter but WITHOUT email scope
+      const authUrl = buildAuthorizationUrl({
+        issuer: env.ISSUER_URL,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        scope: 'openid', // Note: no email scope
+        state: generateState(),
+        claims: claimsParam,
+      });
+
+      const authRes = await app.fetch(new Request(authUrl), env);
+      const location = authRes.headers.get('location');
+      const parsed = parseAuthorizationResponse(location!);
+
+      // Exchange for tokens
+      const tokenBody = buildTokenRequestBody({
+        grant_type: 'authorization_code',
+        code: parsed.code!,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        client_secret: client.client_secret,
+      });
+
+      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody,
+      }), env);
+
+      const tokenData = await tokenRes.json();
+
+      // Get userinfo
+      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      }), env);
+
+      const userinfoData = await userinfoRes.json();
+
+      // Should have email claims even without email scope
+      expect(userinfoData).toHaveProperty('email');
+      expect(userinfoData).toHaveProperty('email_verified');
+
+      // Should NOT have profile claims
+      expect(userinfoData).not.toHaveProperty('name');
+    });
+
+    it('should reject invalid claims JSON', async () => {
+      const app = (await import('../../src/index')).default;
+      const client = testClients.confidential;
+
+      // Invalid JSON in claims parameter
+      const invalidClaims = 'not-valid-json';
+
+      const authUrl = buildAuthorizationUrl({
+        issuer: env.ISSUER_URL,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        scope: 'openid',
+        state: generateState(),
+        claims: invalidClaims,
+      });
+
+      const authRes = await app.fetch(new Request(authUrl), env);
+      expect(authRes.status).toBe(302);
+
+      const location = authRes.headers.get('location');
+      const parsed = parseAuthorizationResponse(location!);
+
+      // Should redirect with error
+      expect(parsed.error).toBe('invalid_request');
+      expect(parsed.error_description).toBe('claims parameter must be valid JSON');
+    });
+
+    it('should reject claims parameter with invalid structure', async () => {
+      const app = (await import('../../src/index')).default;
+      const client = testClients.confidential;
+
+      // Claims parameter must be an object, not an array
+      const invalidClaims = JSON.stringify([]);
+
+      const authUrl = buildAuthorizationUrl({
+        issuer: env.ISSUER_URL,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        scope: 'openid',
+        state: generateState(),
+        claims: invalidClaims,
+      });
+
+      const authRes = await app.fetch(new Request(authUrl), env);
+      const location = authRes.headers.get('location');
+      const parsed = parseAuthorizationResponse(location!);
+
+      expect(parsed.error).toBe('invalid_request');
+      expect(parsed.error_description).toBe('claims parameter must be a JSON object');
+    });
+
+    it('should reject claims parameter with invalid section', async () => {
+      const app = (await import('../../src/index')).default;
+      const client = testClients.confidential;
+
+      // Invalid section name
+      const invalidClaims = JSON.stringify({
+        invalid_section: {
+          name: null
+        }
+      });
+
+      const authUrl = buildAuthorizationUrl({
+        issuer: env.ISSUER_URL,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        scope: 'openid',
+        state: generateState(),
+        claims: invalidClaims,
+      });
+
+      const authRes = await app.fetch(new Request(authUrl), env);
+      const location = authRes.headers.get('location');
+      const parsed = parseAuthorizationResponse(location!);
+
+      expect(parsed.error).toBe('invalid_request');
+      expect(parsed.error_description).toContain('Invalid claims section');
+    });
+
+    it('should return all profile claims when profile scope is granted even with claims parameter', async () => {
+      const app = (await import('../../src/index')).default;
+      const client = testClients.confidential;
+
+      // Request only name via claims parameter
+      const claimsParam = JSON.stringify({
+        userinfo: {
+          name: null
+        }
+      });
+
+      // But also grant profile scope
+      const authUrl = buildAuthorizationUrl({
+        issuer: env.ISSUER_URL,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        scope: 'openid profile', // profile scope granted
+        state: generateState(),
+        claims: claimsParam,
+      });
+
+      const authRes = await app.fetch(new Request(authUrl), env);
+      const location = authRes.headers.get('location');
+      const parsed = parseAuthorizationResponse(location!);
+
+      // Exchange for tokens
+      const tokenBody = buildTokenRequestBody({
+        grant_type: 'authorization_code',
+        code: parsed.code!,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        client_secret: client.client_secret,
+      });
+
+      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody,
+      }), env);
+
+      const tokenData = await tokenRes.json();
+
+      // Get userinfo
+      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      }), env);
+
+      const userinfoData = await userinfoRes.json();
+
+      // Should have ALL profile claims because profile scope is granted
+      expect(userinfoData).toHaveProperty('name');
+      expect(userinfoData).toHaveProperty('family_name');
+      expect(userinfoData).toHaveProperty('given_name');
+      expect(userinfoData).toHaveProperty('preferred_username');
     });
   });
 

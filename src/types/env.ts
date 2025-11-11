@@ -7,6 +7,7 @@ export interface Env {
   STATE_STORE: KVNamespace;
   NONCE_STORE: KVNamespace;
   CLIENTS: KVNamespace;
+  REVOKED_TOKENS: KVNamespace;
 
   // Environment Variables
   ISSUER_URL: string;

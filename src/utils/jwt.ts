@@ -33,8 +33,10 @@ export interface AccessTokenClaims extends JWTPayload {
   aud: string; // Audience (client_id or resource server)
   exp: number; // Expiration time
   iat: number; // Issued at time
+  jti: string; // JWT ID (unique token identifier for revocation)
   scope: string; // Granted scopes
   client_id: string; // Client identifier
+  claims?: string; // Requested claims (JSON string, per OIDC Core 5.5)
 }
 
 /**
@@ -70,23 +72,27 @@ export async function createIDToken(
  * @param privateKey - Private key for signing
  * @param kid - Key ID
  * @param expiresIn - Token expiration time in seconds (default: 3600)
- * @returns Promise<string> - Signed JWT
+ * @returns Promise<{ token: string; jti: string }> - Signed JWT and its unique identifier
  */
 export async function createAccessToken(
-  claims: Omit<AccessTokenClaims, 'iat' | 'exp'>,
+  claims: Omit<AccessTokenClaims, 'iat' | 'exp' | 'jti'>,
   privateKey: KeyLike,
   kid: string,
   expiresIn: number = 3600
-): Promise<string> {
+): Promise<{ token: string; jti: string }> {
   const now = Math.floor(Date.now() / 1000);
+  const jti = crypto.randomUUID(); // Generate unique token identifier
 
-  return await new SignJWT({
+  const token = await new SignJWT({
     ...claims,
     iat: now,
     exp: now + expiresIn,
+    jti,
   })
     .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
     .sign(privateKey);
+
+  return { token, jti };
 }
 
 /**

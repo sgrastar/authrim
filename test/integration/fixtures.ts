@@ -123,6 +123,7 @@ export async function createMockEnv(): Promise<Env> {
     STATE_STORE: new MockKVNamespace() as unknown as KVNamespace,
     NONCE_STORE: new MockKVNamespace() as unknown as KVNamespace,
     CLIENTS: new MockKVNamespace() as unknown as KVNamespace,
+    REVOKED_TOKENS: new MockKVNamespace() as unknown as KVNamespace,
     ISSUER_URL: 'http://localhost:8787',
     TOKEN_EXPIRY: '3600',
     CODE_EXPIRY: '120',
@@ -159,6 +160,7 @@ export function buildAuthorizationUrl(params: {
   state?: string;
   nonce?: string;
   response_type?: string;
+  claims?: string;
 }): string {
   const url = new URL(`${params.issuer}/authorize`);
   url.searchParams.set('client_id', params.client_id);
@@ -172,6 +174,10 @@ export function buildAuthorizationUrl(params: {
 
   if (params.nonce) {
     url.searchParams.set('nonce', params.nonce);
+  }
+
+  if (params.claims) {
+    url.searchParams.set('claims', params.claims);
   }
 
   return url.toString();
