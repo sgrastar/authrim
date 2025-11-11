@@ -6,7 +6,7 @@ import {
   validateClientId,
   validateRedirectUri,
 } from '../utils/validation';
-import { getAuthCode, deleteAuthCode } from '../utils/kv';
+import { getAuthCode, markAuthCodeAsUsed, revokeToken } from '../utils/kv';
 import { createIDToken, createAccessToken, calculateAtHash } from '../utils/jwt';
 import { importPKCS8 } from 'jose';
 
@@ -48,9 +48,39 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
 
   const grant_type = formData.grant_type;
   const code = formData.code;
-  const client_id = formData.client_id;
   const redirect_uri = formData.redirect_uri;
   const code_verifier = formData.code_verifier;
+
+  // Extract client credentials from either form data or Authorization header
+  // Supports both client_secret_post and client_secret_basic authentication
+  let client_id = formData.client_id;
+  let client_secret = formData.client_secret;
+
+  // Check for HTTP Basic authentication (client_secret_basic)
+  const authHeader = c.req.header('Authorization');
+  if (authHeader && authHeader.startsWith('Basic ')) {
+    try {
+      const base64Credentials = authHeader.substring(6);
+      const credentials = atob(base64Credentials);
+      const [basicClientId, basicClientSecret] = credentials.split(':', 2);
+
+      // Use Basic auth credentials if form data doesn't provide them
+      if (!client_id && basicClientId) {
+        client_id = basicClientId;
+      }
+      if (!client_secret && basicClientSecret) {
+        client_secret = basicClientSecret;
+      }
+    } catch {
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: 'Invalid Authorization header format',
+        },
+        401
+      );
+    }
+  }
 
   // Validate grant_type
   const grantTypeValidation = validateGrantType(grant_type);
@@ -108,6 +138,26 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
       {
         error: 'invalid_grant',
         error_description: 'Authorization code is invalid or expired',
+      },
+      400
+    );
+  }
+
+  // Check if authorization code has already been used (code reuse attack detection)
+  // Per RFC 6749 Section 4.1.2: The authorization server MUST revoke tokens issued with the reused code
+  if (authCodeData.used && authCodeData.jti) {
+    console.warn(
+      `Authorization code reuse detected! Code: ${code}, previously issued token JTI: ${authCodeData.jti}`
+    );
+
+    // Revoke the previously issued access token
+    const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
+    await revokeToken(c.env, authCodeData.jti, expiresIn);
+
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'Authorization code has already been used',
       },
       400
     );
@@ -192,25 +242,21 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
   // Token expiration
   const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
 
-  // Add optional claims based on scope
-  const scopes = authCodeData.scope.split(' ');
-  const profileClaims: Record<string, unknown> = {};
-
-  if (scopes.includes('profile')) {
-    // For MVP, use static profile data
-    // In production, fetch from user database
-    profileClaims.name = 'Test User';
-    profileClaims.preferred_username = 'testuser';
-  }
-
-  if (scopes.includes('email')) {
-    // For MVP, use static email data
-    profileClaims.email = 'test@example.com';
-    profileClaims.email_verified = true;
-  }
+  // Note: For Authorization Code Flow (response_type=code), scope-based claims
+  // (profile, email, etc.) should be returned from the UserInfo endpoint, NOT in the ID token.
+  // Only response_type=id_token (Implicit Flow) should include these claims in the ID token.
+  // See OpenID Connect Core 5.4: "The Claims requested by the profile, email, address, and
+  // phone scope values are returned from the UserInfo Endpoint"
 
   // Generate Access Token FIRST (needed for at_hash in ID token)
-  const accessTokenClaims = {
+  const accessTokenClaims: {
+    iss: string;
+    sub: string;
+    aud: string;
+    scope: string;
+    client_id: string;
+    claims?: string;
+  } = {
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
     aud: c.env.ISSUER_URL, // For MVP, access token audience is the issuer
@@ -218,9 +264,17 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     client_id: client_id,
   };
 
+  // Add claims parameter if it was requested during authorization
+  if (authCodeData.claims) {
+    accessTokenClaims.claims = authCodeData.claims;
+  }
+
   let accessToken: string;
+  let tokenJti: string;
   try {
-    accessToken = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
+    const result = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
+    accessToken = result.token;
+    tokenJti = result.jti;
   } catch (error) {
     console.error('Failed to create access token:', error);
     return c.json(
@@ -259,8 +313,10 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
 
   let idToken: string;
   try {
+    // For Authorization Code Flow, ID token should only contain standard claims
+    // Scope-based claims (profile, email) are returned from UserInfo endpoint
     idToken = await createIDToken(
-      { ...idTokenClaims, ...profileClaims },
+      idTokenClaims,
       privateKey,
       keyId,
       expiresIn
@@ -276,9 +332,14 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  // Delete authorization code (single use)
-  // NOTE: Only delete after successful token generation to allow retry on transient errors
-  await deleteAuthCode(c.env, code!);
+  // Mark authorization code as used and store token JTI for revocation on code reuse
+  // Per RFC 6749 Section 4.1.2: Authorization codes are single-use
+  // We mark it as used instead of deleting to detect reuse attacks
+  // NOTE: Only mark as used after successful token generation to allow retry on transient errors
+  await markAuthCodeAsUsed(c.env, code!, {
+    ...authCodeData,
+    jti: tokenJti,
+  });
 
   // Return token response
   c.header('Cache-Control', 'no-store');
@@ -302,9 +363,11 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
  * @returns Promise<boolean> - True if verification succeeds
  */
 async function verifyPKCE(codeVerifier: string, codeChallenge: string): Promise<boolean> {
-  // Validate code_verifier format (43-128 characters, base64url)
-  const base64urlPattern = /^[A-Za-z0-9_-]{43,128}$/;
-  if (!base64urlPattern.test(codeVerifier)) {
+  // Validate code_verifier format (43-128 characters, unreserved characters per RFC 7636)
+  // RFC 7636 Section 4.1: code_verifier = 43*128unreserved
+  // unreserved = ALPHA / DIGIT / "-" / "." / "_" / "~"
+  const codeVerifierPattern = /^[A-Za-z0-9\-._~]{43,128}$/;
+  if (!codeVerifierPattern.test(codeVerifier)) {
     return false;
   }
 

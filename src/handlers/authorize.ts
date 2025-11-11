@@ -16,17 +16,55 @@ import type { AuthCodeData } from '../utils/kv';
  * https://openid.net/specs/openid-connect-core-1_0.html#AuthorizationEndpoint
  *
  * Handles authorization requests and returns authorization codes
+ * Per OIDC Core 3.1.2.1: MUST support both GET and POST methods
  */
 export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
-  // Parse query parameters
-  const response_type = c.req.query('response_type');
-  const client_id = c.req.query('client_id');
-  const redirect_uri = c.req.query('redirect_uri');
-  const scope = c.req.query('scope');
-  const state = c.req.query('state');
-  const nonce = c.req.query('nonce');
-  const code_challenge = c.req.query('code_challenge');
-  const code_challenge_method = c.req.query('code_challenge_method');
+  // Parse parameters from either GET (query string) or POST (form body)
+  // OIDC Core 3.1.2.1: Authorization Servers MUST support the use of the HTTP GET and POST methods
+  let response_type: string | undefined;
+  let client_id: string | undefined;
+  let redirect_uri: string | undefined;
+  let scope: string | undefined;
+  let state: string | undefined;
+  let nonce: string | undefined;
+  let code_challenge: string | undefined;
+  let code_challenge_method: string | undefined;
+  let claims: string | undefined;
+
+  if (c.req.method === 'POST') {
+    // Parse POST body (application/x-www-form-urlencoded)
+    try {
+      const body = await c.req.parseBody();
+      response_type = typeof body.response_type === 'string' ? body.response_type : undefined;
+      client_id = typeof body.client_id === 'string' ? body.client_id : undefined;
+      redirect_uri = typeof body.redirect_uri === 'string' ? body.redirect_uri : undefined;
+      scope = typeof body.scope === 'string' ? body.scope : undefined;
+      state = typeof body.state === 'string' ? body.state : undefined;
+      nonce = typeof body.nonce === 'string' ? body.nonce : undefined;
+      code_challenge = typeof body.code_challenge === 'string' ? body.code_challenge : undefined;
+      code_challenge_method = typeof body.code_challenge_method === 'string' ? body.code_challenge_method : undefined;
+      claims = typeof body.claims === 'string' ? body.claims : undefined;
+    } catch {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Failed to parse request body',
+        },
+        400
+      );
+    }
+  } else {
+    // Parse GET query parameters
+    response_type = c.req.query('response_type');
+    client_id = c.req.query('client_id');
+    redirect_uri = c.req.query('redirect_uri');
+    scope = c.req.query('scope');
+    state = c.req.query('state');
+    nonce = c.req.query('nonce');
+    code_challenge = c.req.query('code_challenge');
+    code_challenge_method = c.req.query('code_challenge_method');
+    claims = c.req.query('claims');
+  }
 
   // Validate response_type
   const responseTypeValidation = validateResponseType(response_type);
@@ -84,6 +122,69 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const nonceValidation = validateNonce(nonce);
   if (!nonceValidation.valid) {
     return redirectWithError(c, redirect_uri!, 'invalid_request', nonceValidation.error, state);
+  }
+
+  // Validate claims parameter (optional, per OIDC Core 5.5)
+  if (claims) {
+    try {
+      const parsedClaims = JSON.parse(claims);
+
+      // Validate claims structure
+      if (typeof parsedClaims !== 'object' || parsedClaims === null || Array.isArray(parsedClaims)) {
+        return redirectWithError(
+          c,
+          redirect_uri!,
+          'invalid_request',
+          'claims parameter must be a JSON object',
+          state
+        );
+      }
+
+      // Validate that claims object contains valid sections (userinfo and/or id_token)
+      const validSections = ['userinfo', 'id_token'];
+      const claimsSections = Object.keys(parsedClaims);
+
+      if (claimsSections.length === 0) {
+        return redirectWithError(
+          c,
+          redirect_uri!,
+          'invalid_request',
+          'claims parameter must contain at least one of: userinfo, id_token',
+          state
+        );
+      }
+
+      for (const section of claimsSections) {
+        if (!validSections.includes(section)) {
+          return redirectWithError(
+            c,
+            redirect_uri!,
+            'invalid_request',
+            `Invalid claims section: ${section}. Must be one of: ${validSections.join(', ')}`,
+            state
+          );
+        }
+
+        // Validate section contains an object
+        if (typeof parsedClaims[section] !== 'object' || parsedClaims[section] === null) {
+          return redirectWithError(
+            c,
+            redirect_uri!,
+            'invalid_request',
+            `claims.${section} must be an object`,
+            state
+          );
+        }
+      }
+    } catch (error) {
+      return redirectWithError(
+        c,
+        redirect_uri!,
+        'invalid_request',
+        'claims parameter must be valid JSON',
+        state
+      );
+    }
   }
 
   // Validate PKCE parameters if provided
@@ -145,6 +246,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (code_challenge && code_challenge_method) {
     authCodeData.code_challenge = code_challenge;
     authCodeData.code_challenge_method = code_challenge_method;
+  }
+  if (claims) {
+    authCodeData.claims = claims;
   }
 
   try {
