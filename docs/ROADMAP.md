@@ -125,51 +125,72 @@ Legend:
 - ✅ Scope-based claim filtering
 - ✅ Proper error responses (401, WWW-Authenticate)
 
-#### Week 10-12: Polish & Testing ⏳
-- ⏳ Error handling enhancement
-- ⏳ Input validation hardening
-- ⏳ Integration tests (10 skipped → enabled)
-- ⏳ Code review & refactoring
+#### Week 10-12: Polish & Testing ✅
+- ✅ Error handling enhancement
+- ✅ Input validation hardening
+- ✅ Integration tests (24 tests total)
+- ✅ Code review & refactoring
+- ✅ **Token revocation on code reuse** (RFC 6749 Section 4.1.2)
+- ✅ **Claims parameter support** (OIDC Core 5.5)
+- ✅ **Authorization endpoint POST method** (OIDC Core 3.1.2.1)
+- ✅ **PKCE validation fix** (all RFC 7636 characters)
+- ✅ **Address and phone scope support** (OIDC Core 5.4)
 
 **Deliverables:**
-- ✅ 158 passing tests (21 Authorization + others)
+- ✅ 178 passing tests (24 Authorization + others)
 - ✅ All core OIDC endpoints functional
-- ✅ PKCE support (RFC 7636)
+- ✅ PKCE support (RFC 7636) - complete
+- ✅ Claims parameter support (essential claims)
+- ✅ Token revocation on code reuse
+- ✅ All standard scopes (openid, profile, email, address, phone)
 - ✅ Comprehensive test coverage
 
 ---
 
-## Phase 3: Testing & Validation ⏳ NEXT
+## Phase 3: Testing & Validation ⏳ IN PROGRESS
 
-**Timeline:** Feb 1 - Mar 15, 2026 (6 weeks)
+**Timeline:** Feb 1 - Mar 15, 2026 (6 weeks) - **Started early (Nov 2025)**
 
 **Goal:** Pass OpenID Conformance Suite (≥85%)
 
-### Week 13: Conformance Suite Setup
-- [ ] Docker & Docker Compose installation
-- [ ] OpenID Conformance Suite repository clone
-- [ ] Configuration for Basic OP profile
-- [ ] Initial test run
-- [ ] Issue identification & prioritization
+### Week 13: Conformance Suite Setup ✅
+- ✅ OpenID Conformance Suite online access
+- ✅ Configuration for Basic OP profile
+- ✅ Initial test runs completed
+- ✅ Issue identification & prioritization
+- ✅ Test results documentation started
 
-### Week 14-17: Conformance Fixes
-- [ ] Discovery & metadata compliance
-- [ ] Core flow compliance (authorize, token, userinfo)
-- [ ] JWT/JWK format compliance
-- [ ] OAuth 2.0 error response compliance
-- [ ] Edge case handling (clock skew, nonce, replay)
+### Week 14-17: Conformance Fixes ✅ (Major items complete)
+- ✅ Discovery & metadata compliance
+  - ✅ Added address and phone to scopes_supported
+  - ✅ Added all claims to claims_supported
+- ✅ Core flow compliance (authorize, token, userinfo)
+  - ✅ Token revocation on code reuse (RFC 6749 Section 4.1.2)
+  - ✅ Claims parameter support (OIDC Core 5.5)
+  - ✅ Authorization endpoint POST method (OIDC Core 3.1.2.1)
+  - ✅ PKCE validation (all RFC 7636 characters)
+  - ✅ Address and phone scope implementation
+- ✅ JWT/JWK format compliance
+- ✅ OAuth 2.0 error response compliance
+- ⏳ Edge case handling (clock skew, nonce, replay)
 
-### Week 18: Final Validation
-- [ ] Complete conformance test run
-- [ ] Test report generation
-- [ ] Documentation of results
-- [ ] Action plan for remaining issues
+### Week 18: Final Validation ⏳
+- ✅ Test report generation (docs/conformance/test-results/report-20251112.md)
+- ✅ Documentation of results
+- ✅ Action plan for remaining issues (Phase 4-6 roadmap)
+- [ ] Complete conformance test run (final)
+- [ ] Performance benchmarks validation
 
 **Success Criteria:**
-- [ ] ≥85% conformance score
-- [ ] All critical tests passing
-- [ ] No security vulnerabilities
+- ⏳ ≥85% conformance score (in progress, major features complete)
+- ✅ All critical tests passing (token revocation, claims, POST, PKCE)
+- ✅ No security vulnerabilities
 - [ ] Performance benchmarks met
+
+**Current Status (2025-11-12):**
+- ✅ **PASSED Tests:** token revocation, claims parameter, POST method, PKCE, address/phone scope
+- ⚠️ **Remaining (Phase 4-6):** Refresh token, Request Object (JAR), Session management, prompt/max_age parameters
+- 📊 **Test Coverage:** 178 unit/integration tests (100% pass rate)
 
 ---
 
@@ -191,7 +212,7 @@ Legend:
 - [ ] Automatic key rotation
 - [ ] Multiple active keys support
 - [ ] JWKS endpoint update for multi-key
-- [ ] Extended claim support (address, phone)
+- ✅ Extended claim support (address, phone) - **Completed early (Nov 2025)**
 - [ ] Nonce enforcement (configurable)
 
 ### Week 23-24: Security & Performance
@@ -609,14 +630,17 @@ Legend:
 ## 📊 Success Metrics by Phase
 
 ### Phase 1-2: Foundation + API ✅
-- ✅ 158 tests passing
+- ✅ 178 tests passing (all passing)
 - ✅ 0 TypeScript errors
 - ✅ <100ms p95 latency (local)
 - ✅ All core endpoints functional
+- ✅ Token revocation on code reuse
+- ✅ Claims parameter support (essential claims)
+- ✅ All standard scopes (openid, profile, email, address, phone)
 
-### Phase 3: Conformance ⏳
-- [ ] ≥85% OpenID Conformance score
-- [ ] All critical security tests passing
+### Phase 3: Conformance ⏳ (Major progress)
+- ⏳ ≥85% OpenID Conformance score (in progress, major features complete)
+- ✅ All critical security tests passing (token revocation, PKCE, claims)
 - [ ] <50ms p95 latency (edge)
 
 ### Phase 4: Extensions ⏳
@@ -673,6 +697,9 @@ By August 2026, Hibana will be:
 | 2025-12-15 | Phase 1 complete | Foundation finished early |
 | 2026-01-31 | Phase 2 complete | API implementation finished |
 | 2026-01-31 | Added Phase 6-7 | User request for UI/CLI |
+| 2025-11-12 | Phase 3 started early | Conformance testing in progress |
+| 2025-11-12 | Major conformance features complete | Token revocation, claims parameter, POST method, PKCE fix, address/phone scope |
+| 2025-11-12 | 178 tests passing | Added 20+ new integration tests |
 
 ---
 
