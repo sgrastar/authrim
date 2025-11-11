@@ -294,13 +294,13 @@ export class KeyManager {
     return new Response(
       JSON.stringify({
         error: 'Unauthorized',
-        message: 'Valid authentication token required'
+        message: 'Valid authentication token required',
       }),
       {
         status: 401,
         headers: {
           'Content-Type': 'application/json',
-          'WWW-Authenticate': 'Bearer realm="KeyManager"'
+          'WWW-Authenticate': 'Bearer realm="KeyManager"',
         },
       }
     );
