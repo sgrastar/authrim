@@ -1,4 +1,4 @@
-# Hibana 🔥
+# Hibana 💥
 
 > **One-command identity infrastructure for the modern web**
 
@@ -315,7 +315,7 @@ See [LICENSE](./LICENSE) for details.
 
 ---
 
-> **Hibana** 🔥 — *A spark of identity on the edge.*
+> **Hibana** 💥 — *A spark of identity on the edge.*
 >
 > **Status:** Phase 2 Complete (Core API) | **Next:** Phase 3 (Conformance Testing)
 >

@@ -73,8 +73,13 @@ export const testUsers: Record<string, MockUser> = {
 
 /**
  * Create a mock Cloudflare environment for testing
+ * Note: This function is async because it needs to generate test keys
  */
-export function createMockEnv(): Env {
+export async function createMockEnv(): Promise<Env> {
+  // Generate a test key pair
+  const { generateKeySet } = await import('../../src/utils/keys');
+  const keySet = await generateKeySet('test-key', 2048);
+
   // Mock KV namespace implementation
   class MockKVNamespace implements KVNamespace {
     private store: Map<string, { value: string; expiration?: number }> = new Map();
@@ -121,7 +126,8 @@ export function createMockEnv(): Env {
     CODE_EXPIRY: '120',
     STATE_EXPIRY: '300',
     NONCE_EXPIRY: '300',
-    KEY_ID: 'test-key-id',
+    KEY_ID: 'test-key',
+    PRIVATE_KEY_PEM: keySet.privatePEM,
   };
 }
 
