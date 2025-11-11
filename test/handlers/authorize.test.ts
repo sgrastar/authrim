@@ -210,7 +210,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(400);
       const body = await response.json();
-      expect(body.error).toBe('invalid_request');
+      expect(body.error).toBe('unsupported_response_type');
       expect(body.error_description).toContain('response_type');
     });
 
@@ -223,7 +223,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(400);
       const body = await response.json();
-      expect(body.error).toBe('invalid_request');
+      expect(body.error).toBe('unsupported_response_type');
       expect(body.error_description).toContain('response_type');
     });
 

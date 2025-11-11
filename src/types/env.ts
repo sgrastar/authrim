@@ -18,6 +18,7 @@ export interface Env {
 
   // Secrets (cryptographic keys)
   PRIVATE_KEY_PEM?: string;
+  PUBLIC_JWK_JSON?: string; // Public JWK as JSON string
   KEY_ID?: string;
 
   // Admin secrets for Durable Objects management
