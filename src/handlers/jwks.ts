@@ -34,6 +34,10 @@ export async function jwksHandler(c: Context<{ Bindings: Env }>) {
       e: publicJWK.e,
     };
 
+    // Add cache headers for better performance
+    c.header('Cache-Control', 'public, max-age=3600');
+    c.header('Vary', 'Accept-Encoding');
+
     return c.json({
       keys: [jwk],
     });
