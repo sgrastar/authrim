@@ -71,25 +71,26 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Validate scope
   const scopeValidation = validateScope(scope);
   if (!scopeValidation.valid) {
-    return redirectWithError(redirect_uri!, 'invalid_scope', scopeValidation.error, state);
+    return redirectWithError(c, redirect_uri!, 'invalid_scope', scopeValidation.error, state);
   }
 
   // Validate state (optional)
   const stateValidation = validateState(state);
   if (!stateValidation.valid) {
-    return redirectWithError(redirect_uri!, 'invalid_request', stateValidation.error, state);
+    return redirectWithError(c, redirect_uri!, 'invalid_request', stateValidation.error, state);
   }
 
   // Validate nonce (optional)
   const nonceValidation = validateNonce(nonce);
   if (!nonceValidation.valid) {
-    return redirectWithError(redirect_uri!, 'invalid_request', nonceValidation.error, state);
+    return redirectWithError(c, redirect_uri!, 'invalid_request', nonceValidation.error, state);
   }
 
   // Validate PKCE parameters if provided
   if (code_challenge) {
     if (!code_challenge_method) {
       return redirectWithError(
+        c,
         redirect_uri!,
         'invalid_request',
         'code_challenge_method is required when code_challenge is provided',
@@ -100,6 +101,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Only support S256 for security (plain is deprecated)
     if (code_challenge_method !== 'S256') {
       return redirectWithError(
+        c,
         redirect_uri!,
         'invalid_request',
         'Unsupported code_challenge_method. Only S256 is supported',
@@ -111,6 +113,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     const base64urlPattern = /^[A-Za-z0-9_-]{43,128}$/;
     if (!base64urlPattern.test(code_challenge)) {
       return redirectWithError(
+        c,
         redirect_uri!,
         'invalid_request',
         'Invalid code_challenge format',
@@ -149,6 +152,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   } catch (error) {
     console.error('Failed to store authorization code:', error);
     return redirectWithError(
+      c,
       redirect_uri!,
       'server_error',
       'Failed to process authorization request',
@@ -172,6 +176,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
  * https://tools.ietf.org/html/rfc6749#section-4.1.2.1
  */
 function redirectWithError(
+  c: Context<{ Bindings: Env }>,
   redirectUri: string,
   error: string,
   errorDescription?: string,
@@ -186,5 +191,5 @@ function redirectWithError(
     url.searchParams.set('state', state);
   }
 
-  return Response.redirect(url.toString(), 302);
+  return c.redirect(url.toString(), 302);
 }
