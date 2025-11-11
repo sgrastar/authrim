@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import type { Env } from '../types/env';
 import { validateGrantType, validateAuthCode, validateClientId, validateRedirectUri } from '../utils/validation';
 import { getAuthCode, deleteAuthCode } from '../utils/kv';
-import { createIDToken, createAccessToken } from '../utils/jwt';
+import { createIDToken, createAccessToken, calculateAtHash } from '../utils/jwt';
 import { importPKCS8 } from 'jose';
 
 /**
@@ -155,10 +155,8 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
-  // Delete authorization code (single use)
-  await deleteAuthCode(c.env, code!);
-
   // Load private key for signing tokens
+  // NOTE: Key loading moved BEFORE code deletion to avoid losing code on key loading failure
   const privateKeyPEM = c.env.PRIVATE_KEY_PEM;
   const keyId = c.env.KEY_ID || 'default';
 
@@ -189,14 +187,6 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
   // Token expiration
   const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
 
-  // Generate ID Token
-  const idTokenClaims = {
-    iss: c.env.ISSUER_URL,
-    sub: authCodeData.sub,
-    aud: client_id!,
-    nonce: authCodeData.nonce,
-  };
-
   // Add optional claims based on scope
   const scopes = authCodeData.scope.split(' ');
   const profileClaims: Record<string, unknown> = {};
@@ -214,26 +204,7 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     profileClaims.email_verified = true;
   }
 
-  let idToken: string;
-  try {
-    idToken = await createIDToken(
-      { ...idTokenClaims, ...profileClaims },
-      privateKey,
-      keyId,
-      expiresIn
-    );
-  } catch (error) {
-    console.error('Failed to create ID token:', error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to create ID token',
-      },
-      500
-    );
-  }
-
-  // Generate Access Token
+  // Generate Access Token FIRST (needed for at_hash in ID token)
   const accessTokenClaims = {
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
@@ -256,6 +227,54 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
+  // Calculate at_hash for ID Token
+  // https://openid.net/specs/openid-connect-core-1_0.html#CodeIDToken
+  let atHash: string;
+  try {
+    atHash = await calculateAtHash(accessToken);
+  } catch (error) {
+    console.error('Failed to calculate at_hash:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to calculate token hash',
+      },
+      500
+    );
+  }
+
+  // Generate ID Token with at_hash
+  const idTokenClaims = {
+    iss: c.env.ISSUER_URL,
+    sub: authCodeData.sub,
+    aud: client_id!,
+    nonce: authCodeData.nonce,
+    at_hash: atHash, // OIDC spec requirement for code flow
+  };
+
+  let idToken: string;
+  try {
+    idToken = await createIDToken(
+      { ...idTokenClaims, ...profileClaims },
+      privateKey,
+      keyId,
+      expiresIn
+    );
+  } catch (error) {
+    console.error('Failed to create ID token:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create ID token',
+      },
+      500
+    );
+  }
+
+  // Delete authorization code (single use)
+  // NOTE: Only delete after successful token generation to allow retry on transient errors
+  await deleteAuthCode(c.env, code!);
+
   // Return token response
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
@@ -265,6 +284,7 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     token_type: 'Bearer',
     expires_in: expiresIn,
     id_token: idToken,
+    scope: authCodeData.scope, // OAuth 2.0 spec: include scope for clarity
   });
 }
 
