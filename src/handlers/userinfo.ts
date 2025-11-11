@@ -1,8 +1,8 @@
 import type { Context } from 'hono';
 import type { Env } from '../types/env';
-import type { KeyLike } from 'jose';
+import type { KeyLike, JWK } from 'jose';
 import { verifyToken } from '../utils/jwt';
-import { importPKCS8, exportJWK, importJWK } from 'jose';
+import { importJWK } from 'jose';
 
 /**
  * Cached public key for token verification
@@ -13,17 +13,16 @@ let cachedKeyId: string | null = null;
 
 /**
  * Get or create cached public key for token verification
- * This optimization reduces cryptographic operations from 3 to 1 per request
+ * This optimization reduces cryptographic operations
  */
-async function getPublicKey(privateKeyPEM: string, keyId: string): Promise<KeyLike> {
+async function getPublicKey(publicJWKJson: string, keyId: string): Promise<KeyLike> {
   // Return cached key if available and key ID matches
   if (cachedPublicKey && cachedKeyId === keyId) {
     return cachedPublicKey;
   }
 
-  // Import private key and derive public key
-  const privateKey = await importPKCS8(privateKeyPEM, 'RS256');
-  const publicJWK = await exportJWK(privateKey);
+  // Parse and import public JWK
+  const publicJWK: JWK = JSON.parse(publicJWKJson);
   const importedKey = await importJWK(publicJWK, 'RS256');
 
   // Type guard: ensure we have a KeyLike, not Uint8Array
@@ -84,10 +83,10 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Verify access token
-  const privateKeyPEM = c.env.PRIVATE_KEY_PEM;
+  const publicJWKJson = c.env.PUBLIC_JWK_JSON;
   const keyId = c.env.KEY_ID || 'default';
 
-  if (!privateKeyPEM) {
+  if (!publicJWKJson) {
     return c.json(
       {
         error: 'server_error',
@@ -99,9 +98,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
 
   let publicKey: KeyLike;
   try {
-    // Get cached public key or derive from private key
-    // This optimization reduces 3 crypto operations to 1 per request
-    publicKey = await getPublicKey(privateKeyPEM, keyId);
+    // Get cached public key from environment variable
+    publicKey = await getPublicKey(publicJWKJson, keyId);
   } catch (error) {
     console.error('Failed to load verification key:', error);
     return c.json(
