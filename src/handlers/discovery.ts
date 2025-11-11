@@ -22,21 +22,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     id_token_signing_alg_values_supported: ['RS256'],
     subject_types_supported: ['public'],
     scopes_supported: ['openid', 'profile', 'email'],
-    claims_supported: [
-      'sub',
-      'iss',
-      'aud',
-      'exp',
-      'iat',
-      'name',
-      'email',
-      'email_verified',
-    ],
-    token_endpoint_auth_methods_supported: [
-      'client_secret_post',
-      'client_secret_basic',
-      'none',
-    ],
+    claims_supported: ['sub', 'iss', 'aud', 'exp', 'iat', 'name', 'email', 'email_verified'],
+    token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic', 'none'],
   };
 
   return c.json(metadata);

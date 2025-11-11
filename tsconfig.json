@@ -44,15 +44,15 @@
     },
 
     /* Cloudflare Workers */
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types", "@types/node"]
   },
   "include": [
-    "src/**/*",
-    "test/**/*"
+    "src/**/*"
   ],
   "exclude": [
     "node_modules",
     "dist",
-    ".wrangler"
+    ".wrangler",
+    "test"
   ]
 }
