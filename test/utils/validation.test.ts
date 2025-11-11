@@ -130,7 +130,7 @@ describe('Validation Utilities', () => {
     });
 
     it('should reject invalid scope values', () => {
-      const result = validateScope('openid invalid-scope');
+      const result = validateScope('openid invalid-scope', false);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Invalid scope');
     });

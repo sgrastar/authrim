@@ -678,4 +678,4 @@ By August 2026, Hibana will be:
 
 > **Next Update:** March 15, 2026 (Post Phase 3)
 >
-> 🔥 **Hibana** - Building the future of identity infrastructure, one phase at a time.
+> 💥 **Hibana** - Building the future of identity infrastructure, one phase at a time.
