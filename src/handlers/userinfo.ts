@@ -22,7 +22,7 @@ async function getPublicKey(publicJWKJson: string, keyId: string): Promise<KeyLi
   }
 
   // Parse and import public JWK
-  const publicJWK: JWK = JSON.parse(publicJWKJson);
+  const publicJWK = JSON.parse(publicJWKJson) as JWK;
   const importedKey = await importJWK(publicJWK, 'RS256');
 
   // Type guard: ensure we have a KeyLike, not Uint8Array
