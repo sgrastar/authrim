@@ -6,11 +6,12 @@ import { generateKeySet } from '../../src/utils/keys';
 
 // Store generated test key
 let testPrivateKey: string;
+let testPublicJWK: string;
 
 /**
  * Create a mock environment for testing
  */
-function createMockEnv(privateKey?: string, keyId?: string): Env {
+function createMockEnv(privateKey?: string, keyId?: string, publicJWK?: string): Env {
   return {
     ISSUER_URL: 'https://test.example.com',
     TOKEN_EXPIRY: '3600',
@@ -19,6 +20,7 @@ function createMockEnv(privateKey?: string, keyId?: string): Env {
     NONCE_EXPIRY: '600',
     PRIVATE_KEY_PEM: privateKey,
     KEY_ID: keyId,
+    PUBLIC_JWK_JSON: publicJWK,
   } as Env;
 }
 
@@ -29,6 +31,7 @@ describe('JWKS Handler', () => {
   beforeAll(async () => {
     const keySet = await generateKeySet('test-key', 2048);
     testPrivateKey = keySet.privatePEM;
+    testPublicJWK = JSON.stringify(keySet.publicJWK);
   });
 
   beforeEach(() => {
@@ -38,7 +41,7 @@ describe('JWKS Handler', () => {
 
   describe('JWKS Endpoint', () => {
     it('should return valid JWKS with configured key', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id');
+      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -73,7 +76,7 @@ describe('JWKS Handler', () => {
     });
 
     it('should include correct JWK fields', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id');
+      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -94,7 +97,12 @@ describe('JWKS Handler', () => {
     });
 
     it('should use provided key ID', async () => {
-      const env = createMockEnv(testPrivateKey, 'custom-key-id-123');
+      const keySet = await generateKeySet('custom-key-id-123', 2048);
+      const env = createMockEnv(
+        testPrivateKey,
+        'custom-key-id-123',
+        JSON.stringify(keySet.publicJWK)
+      );
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -110,7 +118,8 @@ describe('JWKS Handler', () => {
     });
 
     it('should use default key ID when not provided', async () => {
-      const env = createMockEnv(testPrivateKey, undefined);
+      const keySet = await generateKeySet('default', 2048);
+      const env = createMockEnv(testPrivateKey, undefined, JSON.stringify(keySet.publicJWK));
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -128,7 +137,7 @@ describe('JWKS Handler', () => {
 
   describe('Cache Headers', () => {
     it('should include Cache-Control header', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id');
+      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -144,7 +153,7 @@ describe('JWKS Handler', () => {
     });
 
     it('should include Vary header', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id');
+      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -161,7 +170,7 @@ describe('JWKS Handler', () => {
 
   describe('JWK Structure', () => {
     it('should include RSA modulus (n)', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id');
+      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -179,7 +188,7 @@ describe('JWKS Handler', () => {
     });
 
     it('should include RSA exponent (e)', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id');
+      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -198,7 +207,7 @@ describe('JWKS Handler', () => {
     });
 
     it('should not include private key material', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id');
+      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -221,8 +230,8 @@ describe('JWKS Handler', () => {
   });
 
   describe('Error Handling', () => {
-    it('should handle invalid private key gracefully', async () => {
-      const env = createMockEnv('invalid-pem-key', 'test-key-id');
+    it('should handle invalid JWK JSON gracefully', async () => {
+      const env = createMockEnv(testPrivateKey, 'test-key-id', 'invalid-json{');
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -238,7 +247,7 @@ describe('JWKS Handler', () => {
     });
 
     it('should return JSON content type for errors', async () => {
-      const env = createMockEnv('invalid-pem-key', 'test-key-id');
+      const env = createMockEnv(testPrivateKey, 'test-key-id', 'invalid-json{');
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -253,7 +262,7 @@ describe('JWKS Handler', () => {
 
   describe('JWKS Compliance', () => {
     it('should return proper JSON content type', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id');
+      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -266,7 +275,7 @@ describe('JWKS Handler', () => {
     });
 
     it('should return valid JSON structure', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id');
+      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
       const response = await app.request(
         '/.well-known/jwks.json',
         {
@@ -283,7 +292,7 @@ describe('JWKS Handler', () => {
     });
 
     it('should return 200 OK status on success', async () => {
-      const env = createMockEnv(testPrivateKey, 'test-key-id');
+      const env = createMockEnv(testPrivateKey, 'test-key-id', testPublicJWK);
       const response = await app.request(
         '/.well-known/jwks.json',
         {
