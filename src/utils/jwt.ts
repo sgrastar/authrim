@@ -161,3 +161,53 @@ export async function importPrivateKeyFromPEM(pem: string): Promise<KeyLike> {
 export async function importPublicKeyFromJWK(jwk: JWK): Promise<KeyLike> {
   return (await importJWK(jwk, 'RS256')) as KeyLike;
 }
+
+/**
+ * Calculate at_hash (Access Token Hash) for ID Token
+ * https://openid.net/specs/openid-connect-core-1_0.html#CodeIDToken
+ *
+ * The at_hash is the base64url encoding of the left-most half of the hash
+ * of the octets of the ASCII representation of the access_token value.
+ *
+ * @param accessToken - Access token to hash
+ * @param algorithm - Hash algorithm (default: SHA-256 for RS256)
+ * @returns Promise<string> - base64url encoded hash
+ */
+export async function calculateAtHash(
+  accessToken: string,
+  algorithm: 'SHA-256' | 'SHA-384' | 'SHA-512' = 'SHA-256'
+): Promise<string> {
+  // Convert access token to bytes
+  const encoder = new TextEncoder();
+  const data = encoder.encode(accessToken);
+
+  // Hash the access token
+  const hashBuffer = await crypto.subtle.digest(algorithm, data);
+
+  // Take the left-most half of the hash
+  const halfLength = hashBuffer.byteLength / 2;
+  const leftHalf = hashBuffer.slice(0, halfLength);
+
+  // Convert to base64url
+  const hashArray = Array.from(new Uint8Array(leftHalf));
+  const base64 = btoa(String.fromCharCode(...hashArray));
+  const base64url = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+  return base64url;
+}
+
+/**
+ * Calculate c_hash (Code Hash) for ID Token
+ * Used in implicit and hybrid flows
+ *
+ * @param code - Authorization code to hash
+ * @param algorithm - Hash algorithm (default: SHA-256 for RS256)
+ * @returns Promise<string> - base64url encoded hash
+ */
+export async function calculateCHash(
+  code: string,
+  algorithm: 'SHA-256' | 'SHA-384' | 'SHA-512' = 'SHA-256'
+): Promise<string> {
+  // Same calculation as at_hash
+  return calculateAtHash(code, algorithm);
+}
