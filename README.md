@@ -261,16 +261,41 @@ We welcome contributions! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guideline
 
 ## 📦 Deployment
 
+### Quick Deploy to Cloudflare Workers
+
+Deploy Hibana to Cloudflare's global edge network and get a production-ready OpenID Provider with a public URL.
+
 ```bash
-# Install dependencies
+# 1. Install dependencies
 npm install
 
-# Build TypeScript
+# 2. Set up RSA keys
+./scripts/setup-dev.sh
+
+# 3. Build TypeScript
 npm run build
 
-# Deploy to Cloudflare
+# 4. Deploy to Cloudflare
 npm run deploy
 ```
+
+**After deployment, you'll get:**
+- 🌍 **Public URL**: `https://hibana.{your-subdomain}.workers.dev`
+- ✅ **Live Endpoints**:
+  - Discovery: `/.well-known/openid-configuration`
+  - JWKS: `/.well-known/jwks.json`
+  - Authorization: `/authorize`
+  - Token: `/token`
+  - UserInfo: `/userinfo`
+
+📖 **See [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for detailed setup instructions**
+
+### GitHub Actions (CI/CD)
+
+Automatic deployment is configured for the `main` branch:
+- ✅ Tests run on every push
+- 🚀 Deploys to Cloudflare Workers on merge to main
+- 🔐 Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets
 
 **Future (Phase 7):**
 ```bash
