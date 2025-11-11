@@ -22,8 +22,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     grant_types_supported: ['authorization_code'],
     id_token_signing_alg_values_supported: ['RS256'],
     subject_types_supported: ['public'],
-    scopes_supported: ['openid', 'profile', 'email'],
+    scopes_supported: ['openid', 'profile', 'email', 'address', 'phone'],
     claims_supported: [
+      // Standard claims (always present)
       'sub',
       'iss',
       'aud',
@@ -31,10 +32,29 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'iat',
       'nonce',
       'at_hash',
+      // Profile scope claims (OIDC Core 5.4)
       'name',
+      'family_name',
+      'given_name',
+      'middle_name',
+      'nickname',
       'preferred_username',
+      'profile',
+      'picture',
+      'website',
+      'gender',
+      'birthdate',
+      'zoneinfo',
+      'locale',
+      'updated_at',
+      // Email scope claims
       'email',
       'email_verified',
+      // Address scope claims
+      'address',
+      // Phone scope claims
+      'phone_number',
+      'phone_number_verified',
     ],
     token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic', 'none'],
     code_challenge_methods_supported: ['S256'],
