@@ -43,6 +43,7 @@ export interface TokenRequest {
   client_id: string;
   redirect_uri: string;
   client_secret?: string;
+  code_verifier?: string; // PKCE code verifier
 }
 
 /**
@@ -90,8 +91,11 @@ export interface AuthCodeMetadata {
   client_id: string;
   redirect_uri: string;
   scope: string;
+  sub: string; // Subject (user identifier) - required for token issuance
   nonce?: string;
   timestamp: number;
+  code_challenge?: string;
+  code_challenge_method?: 'S256' | 'plain';
 }
 
 /**
