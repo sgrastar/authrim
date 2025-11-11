@@ -31,9 +31,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Validate response_type
   const responseTypeValidation = validateResponseType(response_type);
   if (!responseTypeValidation.valid) {
+    // OAuth 2.0 spec: use 'unsupported_response_type' for invalid response_type
     return c.json(
       {
-        error: 'invalid_request',
+        error: 'unsupported_response_type',
         error_description: responseTypeValidation.error,
       },
       400
