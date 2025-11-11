@@ -20,7 +20,7 @@ export async function jwksHandler(c: Context<{ Bindings: Env }>) {
 
   try {
     // Parse the public JWK from environment variable
-    const publicJWK: JWK = JSON.parse(publicJWKJson);
+    const publicJWK = JSON.parse(publicJWKJson) as JWK;
 
     // Add cache headers for better performance
     c.header('Cache-Control', 'public, max-age=3600');
