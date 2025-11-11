@@ -76,9 +76,11 @@ export const testUsers: Record<string, MockUser> = {
  * Note: This function is async because it needs to generate test keys
  */
 export async function createMockEnv(): Promise<Env> {
-  // Generate a test key pair
+  // Generate a test key pair with unique key ID for each test
+  // This prevents key caching issues in the userinfo handler
+  const uniqueKeyId = `test-key-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
   const { generateKeySet } = await import('../../src/utils/keys');
-  const keySet = await generateKeySet('test-key', 2048);
+  const keySet = await generateKeySet(uniqueKeyId, 2048);
 
   // Mock KV namespace implementation
   class MockKVNamespace implements KVNamespace {
@@ -126,7 +128,7 @@ export async function createMockEnv(): Promise<Env> {
     CODE_EXPIRY: '120',
     STATE_EXPIRY: '300',
     NONCE_EXPIRY: '300',
-    KEY_ID: 'test-key',
+    KEY_ID: uniqueKeyId,
     PRIVATE_KEY_PEM: keySet.privatePEM,
     PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
   };

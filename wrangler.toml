@@ -34,7 +34,7 @@ TOKEN_EXPIRY = "3600"
 CODE_EXPIRY = "120"
 STATE_EXPIRY = "300"
 NONCE_EXPIRY = "300"
-KEY_ID = "dev-key-1762854833262-57qj63"
+KEY_ID = "dev-key-1762856717737-4b94f4"
 
 # Development environment
 [env.development]
