@@ -24,12 +24,12 @@ It aims to pass the **OpenID Certified™ Basic OP Profile** while remaining sma
 
 | Specification | Status | Reference |
 |:--|:--|:--|
-| **OpenID Connect Core 1.0** | ✅ *Partially implemented (authorization code flow)* | [openid-connect-core-1_0.html](https://openid.net/specs/openid-connect-core-1_0.html) |
+| **OpenID Connect Core 1.0** | 🚧 *In Progress (utilities ready, endpoints planned for Week 7-9)* | [openid-connect-core-1_0.html](https://openid.net/specs/openid-connect-core-1_0.html) |
 | **OpenID Connect Discovery 1.0** | ✅ *Fully implemented (`/.well-known/openid-configuration`)* | [openid-connect-discovery-1_0.html](https://openid.net/specs/openid-connect-discovery-1_0.html) |
-| **OpenID Connect Dynamic Client Registration 1.0** | ⚙️ *Planned / Optional Extension* | [openid-connect-registration-1_0.html](https://openid.net/specs/openid-connect-registration-1_0.html) |
-| **OpenID Connect Session Management 1.0** | ❌ *Not implemented (no iframe/session state support yet)* | [openid-connect-session-1_0.html](https://openid.net/specs/openid-connect-session-1_0.html) |
+| **OpenID Connect Dynamic Client Registration 1.0** | 🚧 *Planned (Phase 4)* | [openid-connect-registration-1_0.html](https://openid.net/specs/openid-connect-registration-1_0.html) |
+| **OpenID Connect Session Management 1.0** | ❌ *Not planned for initial release* | [openid-connect-session-1_0.html](https://openid.net/specs/openid-connect-session-1_0.html) |
 | **RFC 7517 / 7519** – JSON Web Key / JSON Web Token | ✅ *Implemented via JOSE (RS256 signing)* | [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517), [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519) |
-| **RFC 6749 / 6750** – OAuth 2.0 Authorization Framework | ✅ *Implemented (Authorization Code Flow with Bearer Token)* | [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749), [RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750) |
+| **RFC 6749 / 6750** – OAuth 2.0 Authorization Framework | 🚧 *Utilities ready, endpoints in progress* | [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749), [RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750) |
 
 ---
 
@@ -37,12 +37,12 @@ It aims to pass the **OpenID Certified™ Basic OP Profile** while remaining sma
 
 | Endpoint | Description | Status |
 |:--|:--|:--|
-| `/.well-known/openid-configuration` | Discovery document | ✅ |
-| `/.well-known/jwks.json` | Public JSON Web Key Set | ✅ |
-| `/authorize` | Authorization endpoint (code flow) | ✅ |
-| `/token` | Token endpoint (ID token + access token) | ✅ |
-| `/userinfo` | UserInfo endpoint (static user data) | ✅ |
-| `/register` | Dynamic client registration | ⚙️ Planned |
+| `/.well-known/openid-configuration` | Discovery document | ✅ Implemented |
+| `/.well-known/jwks.json` | Public JSON Web Key Set | ✅ Implemented |
+| `/authorize` | Authorization endpoint (code flow) | 🚧 Planned (Week 7) |
+| `/token` | Token endpoint (ID token + access token) | 🚧 Planned (Week 8) |
+| `/userinfo` | UserInfo endpoint (static user data) | 🚧 Planned (Week 9) |
+| `/register` | Dynamic client registration | 🚧 Planned (Phase 4) |
 | `/check_session_iframe` | Session management | ❌ Not yet implemented |
 
 ---

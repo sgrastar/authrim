@@ -126,9 +126,12 @@ export function parseToken(token: string): JWTPayload {
   }
 
   const payload = parts[1];
+  if (!payload) {
+    throw new Error('Invalid JWT payload');
+  }
   const decoded = Buffer.from(payload, 'base64url').toString('utf-8');
 
-  return JSON.parse(decoded);
+  return JSON.parse(decoded) as JWTPayload;
 }
 
 /**
@@ -148,5 +151,5 @@ export async function importPrivateKeyFromPEM(pem: string): Promise<KeyLike> {
  * @returns Promise<KeyLike>
  */
 export async function importPublicKeyFromJWK(jwk: JWK): Promise<KeyLike> {
-  return await importJWK(jwk, 'RS256');
+  return (await importJWK(jwk, 'RS256')) as KeyLike;
 }

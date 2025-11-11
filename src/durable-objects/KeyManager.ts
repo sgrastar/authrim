@@ -16,7 +16,7 @@
  * during the transition period.
  */
 
-import type { JWK, KeyLike } from 'jose';
+import type { JWK } from 'jose';
 import { generateKeySet } from '../utils/keys';
 
 /**
@@ -152,9 +152,7 @@ export class KeyManager {
     }
 
     return (
-      this.keyManagerState!.keys.find(
-        (k) => k.kid === this.keyManagerState!.activeKeyId
-      ) || null
+      this.keyManagerState!.keys.find((k) => k.kid === this.keyManagerState!.activeKeyId) || null
     );
   }
 
@@ -203,8 +201,7 @@ export class KeyManager {
    * Clean up expired keys based on retention period
    */
   private async cleanupExpiredKeys(): Promise<void> {
-    const retentionMillis =
-      this.keyManagerState!.config.retentionPeriodDays * 24 * 60 * 60 * 1000;
+    const retentionMillis = this.keyManagerState!.config.retentionPeriodDays * 24 * 60 * 60 * 1000;
     const cutoffTime = Date.now() - retentionMillis;
 
     // Keep only active key and keys within retention period
@@ -225,8 +222,7 @@ export class KeyManager {
 
     const rotationIntervalMillis =
       this.keyManagerState!.config.rotationIntervalDays * 24 * 60 * 60 * 1000;
-    const timeSinceLastRotation =
-      Date.now() - this.keyManagerState!.lastRotation;
+    const timeSinceLastRotation = Date.now() - this.keyManagerState!.lastRotation;
 
     return timeSinceLastRotation >= rotationIntervalMillis;
   }
@@ -325,7 +321,7 @@ export class KeyManager {
       // POST /config - Update configuration
       if (path === '/config' && request.method === 'POST') {
         const body = await request.json();
-        await this.updateConfig(body);
+        await this.updateConfig(body as Partial<KeyRotationConfig>);
 
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -335,13 +331,10 @@ export class KeyManager {
       return new Response('Not Found', { status: 404 });
     } catch (error) {
       console.error('KeyManager error:', error);
-      return new Response(
-        JSON.stringify({ error: 'Internal Server Error' }),
-        {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
+      return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
   }
 }
