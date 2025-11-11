@@ -1,6 +1,6 @@
 name = "hibana"
 main = "src/index.ts"
-compatibility_date = "2024-01-15"
+compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
 # Account ID (to be filled in later)
