@@ -28,11 +28,7 @@ export interface AuthCodeData {
  * @param data - Authorization code metadata
  * @returns Promise<void>
  */
-export async function storeAuthCode(
-  env: Env,
-  code: string,
-  data: AuthCodeData
-): Promise<void> {
+export async function storeAuthCode(env: Env, code: string, data: AuthCodeData): Promise<void> {
   const ttl = parseInt(env.CODE_EXPIRY, 10);
   const expirationTtl = ttl; // TTL in seconds
 
@@ -48,10 +44,7 @@ export async function storeAuthCode(
  * @param code - Authorization code to retrieve
  * @returns Promise<AuthCodeData | null>
  */
-export async function getAuthCode(
-  env: Env,
-  code: string
-): Promise<AuthCodeData | null> {
+export async function getAuthCode(env: Env, code: string): Promise<AuthCodeData | null> {
   const data = await env.AUTH_CODES.get(code);
 
   if (!data) {
@@ -73,10 +66,7 @@ export async function getAuthCode(
  * @param code - Authorization code to delete
  * @returns Promise<void>
  */
-export async function deleteAuthCode(
-  env: Env,
-  code: string
-): Promise<void> {
+export async function deleteAuthCode(env: Env, code: string): Promise<void> {
   await env.AUTH_CODES.delete(code);
 }
 
@@ -88,11 +78,7 @@ export async function deleteAuthCode(
  * @param clientId - Client ID that initiated the request
  * @returns Promise<void>
  */
-export async function storeState(
-  env: Env,
-  state: string,
-  clientId: string
-): Promise<void> {
+export async function storeState(env: Env, state: string, clientId: string): Promise<void> {
   const ttl = parseInt(env.STATE_EXPIRY, 10);
 
   await env.STATE_STORE.put(state, clientId, {
@@ -107,10 +93,7 @@ export async function storeState(
  * @param state - State parameter to validate
  * @returns Promise<string | null> - Returns client_id if valid, null otherwise
  */
-export async function getState(
-  env: Env,
-  state: string
-): Promise<string | null> {
+export async function getState(env: Env, state: string): Promise<string | null> {
   return await env.STATE_STORE.get(state);
 }
 
@@ -121,10 +104,7 @@ export async function getState(
  * @param state - State parameter to delete
  * @returns Promise<void>
  */
-export async function deleteState(
-  env: Env,
-  state: string
-): Promise<void> {
+export async function deleteState(env: Env, state: string): Promise<void> {
   await env.STATE_STORE.delete(state);
 }
 
@@ -136,11 +116,7 @@ export async function deleteState(
  * @param clientId - Client ID that initiated the request
  * @returns Promise<void>
  */
-export async function storeNonce(
-  env: Env,
-  nonce: string,
-  clientId: string
-): Promise<void> {
+export async function storeNonce(env: Env, nonce: string, clientId: string): Promise<void> {
   const ttl = parseInt(env.NONCE_EXPIRY, 10);
 
   await env.NONCE_STORE.put(nonce, clientId, {
@@ -155,10 +131,7 @@ export async function storeNonce(
  * @param nonce - Nonce parameter to validate
  * @returns Promise<string | null> - Returns client_id if valid, null otherwise
  */
-export async function getNonce(
-  env: Env,
-  nonce: string
-): Promise<string | null> {
+export async function getNonce(env: Env, nonce: string): Promise<string | null> {
   return await env.NONCE_STORE.get(nonce);
 }
 
@@ -169,10 +142,7 @@ export async function getNonce(
  * @param nonce - Nonce parameter to delete
  * @returns Promise<void>
  */
-export async function deleteNonce(
-  env: Env,
-  nonce: string
-): Promise<void> {
+export async function deleteNonce(env: Env, nonce: string): Promise<void> {
   await env.NONCE_STORE.delete(nonce);
 }
 

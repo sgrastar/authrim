@@ -54,7 +54,8 @@ export function validateClientId(clientId: string | undefined): ValidationResult
   if (!clientIdPattern.test(clientId)) {
     return {
       valid: false,
-      error: 'client_id contains invalid characters (use only alphanumeric, hyphens, and underscores)',
+      error:
+        'client_id contains invalid characters (use only alphanumeric, hyphens, and underscores)',
     };
   }
 
@@ -150,7 +151,10 @@ export function validateScope(scope: string | undefined): ValidationResult {
     };
   }
 
-  const scopes = scope.trim().split(/\s+/).filter(s => s.length > 0);
+  const scopes = scope
+    .trim()
+    .split(/\s+/)
+    .filter((s) => s.length > 0);
 
   if (scopes.length === 0) {
     return {
@@ -168,14 +172,7 @@ export function validateScope(scope: string | undefined): ValidationResult {
   }
 
   // Valid scopes according to OpenID Connect spec
-  const validScopes = [
-    'openid',
-    'profile',
-    'email',
-    'address',
-    'phone',
-    'offline_access',
-  ];
+  const validScopes = ['openid', 'profile', 'email', 'address', 'phone', 'offline_access'];
 
   // Check for invalid scopes
   const invalidScopes = scopes.filter((s) => !validScopes.includes(s));
@@ -304,9 +301,7 @@ export function validateGrantType(grantType: string | undefined): ValidationResu
  * @param responseType - Response type to validate
  * @returns ValidationResult
  */
-export function validateResponseType(
-  responseType: string | undefined
-): ValidationResult {
+export function validateResponseType(responseType: string | undefined): ValidationResult {
   if (!responseType) {
     return {
       valid: false,
@@ -363,8 +358,7 @@ export function validateAuthCode(code: string | undefined): ValidationResult {
   }
 
   // UUID v4 format validation
-  const uuidPattern =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (!uuidPattern.test(code)) {
     return {
       valid: false,
@@ -408,7 +402,8 @@ export function validateToken(token: string | undefined): ValidationResult {
   // Check if parts are base64url encoded
   const base64urlPattern = /^[A-Za-z0-9_-]+$/;
   for (let i = 0; i < parts.length; i++) {
-    if (!base64urlPattern.test(parts[i])) {
+    const part = parts[i];
+    if (!part || !base64urlPattern.test(part)) {
       return {
         valid: false,
         error: `token part ${i + 1} is not valid base64url`,

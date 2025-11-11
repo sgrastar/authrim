@@ -184,9 +184,7 @@ describe('JWT Utilities', () => {
 
       const token = await createIDToken(claims, privateKey, kid);
 
-      await expect(
-        verifyToken(token, publicKey, issuer, 'wrong-audience')
-      ).rejects.toThrow();
+      await expect(verifyToken(token, publicKey, issuer, 'wrong-audience')).rejects.toThrow();
     });
   });
 
