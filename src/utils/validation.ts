@@ -134,9 +134,13 @@ export function validateRedirectUri(
  * Must contain 'openid' and only valid scope values
  *
  * @param scope - Space-separated scope string
+ * @param allowCustomScopes - Allow custom scopes (for resource server integration)
  * @returns ValidationResult
  */
-export function validateScope(scope: string | undefined): ValidationResult {
+export function validateScope(
+  scope: string | undefined,
+  allowCustomScopes: boolean = true
+): ValidationResult {
   if (!scope) {
     return {
       valid: false,
@@ -171,16 +175,26 @@ export function validateScope(scope: string | undefined): ValidationResult {
     };
   }
 
-  // Valid scopes according to OpenID Connect spec
-  const validScopes = ['openid', 'profile', 'email', 'address', 'phone', 'offline_access'];
+  // Standard OIDC scopes
+  const standardScopes = ['openid', 'profile', 'email', 'address', 'phone', 'offline_access'];
 
-  // Check for invalid scopes
-  const invalidScopes = scopes.filter((s) => !validScopes.includes(s));
-  if (invalidScopes.length > 0) {
-    return {
-      valid: false,
-      error: `Invalid scope(s): ${invalidScopes.join(', ')}`,
-    };
+  if (!allowCustomScopes) {
+    // Strict mode: only allow standard scopes
+    const invalidScopes = scopes.filter((s) => !standardScopes.includes(s));
+    if (invalidScopes.length > 0) {
+      return {
+        valid: false,
+        error: `Invalid scope(s): ${invalidScopes.join(', ')}. Only standard OIDC scopes are allowed.`,
+      };
+    }
+  } else {
+    // Permissive mode: allow custom scopes but warn about unknown standard scopes
+    const unknownScopes = scopes.filter((s) => !standardScopes.includes(s));
+    if (unknownScopes.length > 0) {
+      // Log warning for monitoring, but don't fail validation
+      // This allows custom resource server scopes (e.g., 'api:read', 'admin:write')
+      console.warn(`Non-standard scopes requested: ${unknownScopes.join(', ')}`);
+    }
   }
 
   return { valid: true };

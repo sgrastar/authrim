@@ -13,13 +13,18 @@ export interface OIDCProviderMetadata {
   userinfo_endpoint: string;
   jwks_uri: string;
   response_types_supported: string[];
+  response_modes_supported?: string[];
   grant_types_supported: string[];
   id_token_signing_alg_values_supported: string[];
   subject_types_supported: string[];
   scopes_supported: string[];
   claims_supported: string[];
   token_endpoint_auth_methods_supported?: string[];
+  code_challenge_methods_supported?: string[];
   registration_endpoint?: string;
+  revocation_endpoint?: string;
+  introspection_endpoint?: string;
+  end_session_endpoint?: string;
 }
 
 /**
@@ -48,6 +53,7 @@ export interface TokenRequest {
 
 /**
  * Token Response
+ * https://tools.ietf.org/html/rfc6749#section-5.1
  */
 export interface TokenResponse {
   access_token: string;
@@ -55,10 +61,12 @@ export interface TokenResponse {
   token_type: 'Bearer';
   expires_in: number;
   scope?: string;
+  refresh_token?: string;
 }
 
 /**
  * ID Token Claims
+ * https://openid.net/specs/openid-connect-core-1_0.html#IDToken
  */
 export interface IDTokenClaims {
   iss: string;
@@ -66,11 +74,43 @@ export interface IDTokenClaims {
   aud: string;
   exp: number;
   iat: number;
+  auth_time?: number;
   nonce?: string;
-  // Additional claims
+  at_hash?: string;
+  c_hash?: string;
+  acr?: string;
+  amr?: string[];
+  azp?: string;
+  // Standard profile claims
   name?: string;
+  given_name?: string;
+  family_name?: string;
+  middle_name?: string;
+  nickname?: string;
+  preferred_username?: string;
+  profile?: string;
+  picture?: string;
+  website?: string;
+  gender?: string;
+  birthdate?: string;
+  zoneinfo?: string;
+  locale?: string;
+  updated_at?: number;
+  // Standard email claims
   email?: string;
   email_verified?: boolean;
+  // Standard phone claims
+  phone_number?: string;
+  phone_number_verified?: boolean;
+  // Standard address claim
+  address?: {
+    formatted?: string;
+    street_address?: string;
+    locality?: string;
+    region?: string;
+    postal_code?: string;
+    country?: string;
+  };
 }
 
 /**
