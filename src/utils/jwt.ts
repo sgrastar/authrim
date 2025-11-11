@@ -116,6 +116,9 @@ export async function verifyToken(
 /**
  * Parse JWT token without verification (use with caution!)
  *
+ * WARNING: This function does NOT verify the token signature.
+ * Only use for extracting claims from already verified tokens.
+ *
  * @param token - JWT token to parse
  * @returns Decoded payload (unverified)
  */
@@ -129,7 +132,12 @@ export function parseToken(token: string): JWTPayload {
   if (!payload) {
     throw new Error('Invalid JWT payload');
   }
-  const decoded = Buffer.from(payload, 'base64url').toString('utf-8');
+
+  // Convert base64url to base64 (Workers-compatible)
+  const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+
+  // Decode using atob (available in Workers runtime)
+  const decoded = atob(base64);
 
   return JSON.parse(decoded) as JWTPayload;
 }

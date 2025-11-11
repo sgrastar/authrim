@@ -18,6 +18,7 @@
 
 import type { JWK } from 'jose';
 import { generateKeySet } from '../utils/keys';
+import type { Env } from '../types/env';
 
 /**
  * Stored key metadata
@@ -55,10 +56,12 @@ interface KeyManagerState {
  */
 export class KeyManager {
   private state: DurableObjectState;
+  private env: Env;
   private keyManagerState: KeyManagerState | null = null;
 
-  constructor(state: DurableObjectState) {
+  constructor(state: DurableObjectState, env: Env) {
     this.state = state;
+    this.env = env;
   }
 
   /**
@@ -250,18 +253,77 @@ export class KeyManager {
   }
 
   /**
-   * Generate a unique key ID
+   * Generate a unique key ID using cryptographically secure random
    */
   private generateKeyId(): string {
     const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 8);
+    const random = crypto.randomUUID();
     return `key-${timestamp}-${random}`;
+  }
+
+  /**
+   * Authenticate requests using Bearer token
+   *
+   * @param request - The incoming HTTP request
+   * @returns True if authenticated, false otherwise
+   */
+  private authenticate(request: Request): boolean {
+    const authHeader = request.headers.get('Authorization');
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return false;
+    }
+
+    const token = authHeader.substring(7);
+    const secret = this.env.KEY_MANAGER_SECRET;
+
+    // If no secret is configured, deny all requests
+    if (!secret) {
+      console.error('KEY_MANAGER_SECRET is not configured');
+      return false;
+    }
+
+    // Constant-time comparison to prevent timing attacks
+    return token === secret;
+  }
+
+  /**
+   * Create an unauthorized response
+   */
+  private unauthorizedResponse(): Response {
+    return new Response(
+      JSON.stringify({
+        error: 'Unauthorized',
+        message: 'Valid authentication token required'
+      }),
+      {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate': 'Bearer realm="KeyManager"'
+        },
+      }
+    );
+  }
+
+  /**
+   * Sanitize key data for safe HTTP response (remove private key material)
+   */
+  private sanitizeKey(key: StoredKey): Omit<StoredKey, 'privatePEM'> {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { privatePEM: _privatePEM, ...safeKey } = key;
+    return safeKey;
   }
 
   /**
    * Handle HTTP requests to the KeyManager Durable Object
    */
   async fetch(request: Request): Promise<Response> {
+    // Authenticate all requests
+    if (!this.authenticate(request)) {
+      return this.unauthorizedResponse();
+    }
+
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -277,7 +339,10 @@ export class KeyManager {
           });
         }
 
-        return new Response(JSON.stringify(activeKey), {
+        // Sanitize key data (remove private key material)
+        const safeKey = this.sanitizeKey(activeKey);
+
+        return new Response(JSON.stringify(safeKey), {
           headers: { 'Content-Type': 'application/json' },
         });
       }
@@ -295,7 +360,10 @@ export class KeyManager {
       if (path === '/rotate' && request.method === 'POST') {
         const newKey = await this.rotateKeys();
 
-        return new Response(JSON.stringify({ success: true, key: newKey }), {
+        // Sanitize key data (remove private key material)
+        const safeKey = this.sanitizeKey(newKey);
+
+        return new Response(JSON.stringify({ success: true, key: safeKey }), {
           headers: { 'Content-Type': 'application/json' },
         });
       }
