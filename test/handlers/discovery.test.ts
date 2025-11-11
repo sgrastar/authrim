@@ -29,9 +29,13 @@ describe('Discovery Handler', () => {
   describe('OpenID Connect Discovery Endpoint', () => {
     it('should return valid OIDC metadata', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       expect(response.status).toBe(200);
       expect(response.headers.get('Content-Type')).toContain('application/json');
@@ -57,9 +61,13 @@ describe('Discovery Handler', () => {
       const env = createMockEnv();
       env.ISSUER_URL = 'https://custom.example.com';
 
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const metadata = await response.json();
       expect(metadata.issuer).toBe('https://custom.example.com');
@@ -71,9 +79,13 @@ describe('Discovery Handler', () => {
 
     it('should return correct response types', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const metadata = await response.json();
       expect(metadata.response_types_supported).toEqual(['code']);
@@ -81,9 +93,13 @@ describe('Discovery Handler', () => {
 
     it('should return correct grant types', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const metadata = await response.json();
       expect(metadata.grant_types_supported).toEqual(['authorization_code']);
@@ -91,9 +107,13 @@ describe('Discovery Handler', () => {
 
     it('should support RS256 signing algorithm', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const metadata = await response.json();
       expect(metadata.id_token_signing_alg_values_supported).toEqual(['RS256']);
@@ -101,9 +121,13 @@ describe('Discovery Handler', () => {
 
     it('should support public subject type', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const metadata = await response.json();
       expect(metadata.subject_types_supported).toEqual(['public']);
@@ -111,9 +135,13 @@ describe('Discovery Handler', () => {
 
     it('should include standard OIDC scopes', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const metadata = await response.json();
       expect(metadata.scopes_supported).toContain('openid');
@@ -123,9 +151,13 @@ describe('Discovery Handler', () => {
 
     it('should include standard OIDC claims', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const metadata = await response.json();
       expect(metadata.claims_supported).toContain('sub');
@@ -139,9 +171,13 @@ describe('Discovery Handler', () => {
 
     it('should support multiple token endpoint auth methods', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const metadata = await response.json();
       expect(metadata.token_endpoint_auth_methods_supported).toContain('client_secret_post');
@@ -153,9 +189,13 @@ describe('Discovery Handler', () => {
   describe('Cache Headers', () => {
     it('should include Cache-Control header', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const cacheControl = response.headers.get('Cache-Control');
       expect(cacheControl).toBeDefined();
@@ -165,9 +205,13 @@ describe('Discovery Handler', () => {
 
     it('should include Vary header', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const vary = response.headers.get('Vary');
       expect(vary).toBeDefined();
@@ -178,9 +222,13 @@ describe('Discovery Handler', () => {
   describe('OIDC Compliance', () => {
     it('should have matching issuer in all endpoint URLs', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const metadata = await response.json();
       const issuer = metadata.issuer;
@@ -193,18 +241,26 @@ describe('Discovery Handler', () => {
 
     it('should return proper JSON content type', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       expect(response.headers.get('Content-Type')).toContain('application/json');
     });
 
     it('should return 200 OK status', async () => {
       const env = createMockEnv();
-      const response = await app.request('/.well-known/openid-configuration', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       expect(response.status).toBe(200);
     });

@@ -39,9 +39,13 @@ describe('JWKS Handler', () => {
   describe('JWKS Endpoint', () => {
     it('should return valid JWKS with configured key', async () => {
       const env = createMockEnv(testPrivateKey, 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       expect(response.status).toBe(200);
       expect(response.headers.get('Content-Type')).toContain('application/json');
@@ -54,9 +58,13 @@ describe('JWKS Handler', () => {
 
     it('should return empty key set when no private key configured', async () => {
       const env = createMockEnv(undefined, undefined);
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       expect(response.status).toBe(200);
       const jwks = await response.json();
@@ -66,9 +74,13 @@ describe('JWKS Handler', () => {
 
     it('should include correct JWK fields', async () => {
       const env = createMockEnv(testPrivateKey, 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const jwks = await response.json();
       const jwk = jwks.keys[0];
@@ -83,9 +95,13 @@ describe('JWKS Handler', () => {
 
     it('should use provided key ID', async () => {
       const env = createMockEnv(testPrivateKey, 'custom-key-id-123');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const jwks = await response.json();
       const jwk = jwks.keys[0];
@@ -95,9 +111,13 @@ describe('JWKS Handler', () => {
 
     it('should use default key ID when not provided', async () => {
       const env = createMockEnv(testPrivateKey, undefined);
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const jwks = await response.json();
       const jwk = jwks.keys[0];
@@ -109,9 +129,13 @@ describe('JWKS Handler', () => {
   describe('Cache Headers', () => {
     it('should include Cache-Control header', async () => {
       const env = createMockEnv(testPrivateKey, 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const cacheControl = response.headers.get('Cache-Control');
       expect(cacheControl).toBeDefined();
@@ -121,9 +145,13 @@ describe('JWKS Handler', () => {
 
     it('should include Vary header', async () => {
       const env = createMockEnv(testPrivateKey, 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const vary = response.headers.get('Vary');
       expect(vary).toBeDefined();
@@ -134,9 +162,13 @@ describe('JWKS Handler', () => {
   describe('JWK Structure', () => {
     it('should include RSA modulus (n)', async () => {
       const env = createMockEnv(testPrivateKey, 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const jwks = await response.json();
       const jwk = jwks.keys[0];
@@ -148,9 +180,13 @@ describe('JWKS Handler', () => {
 
     it('should include RSA exponent (e)', async () => {
       const env = createMockEnv(testPrivateKey, 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const jwks = await response.json();
       const jwk = jwks.keys[0];
@@ -163,9 +199,13 @@ describe('JWKS Handler', () => {
 
     it('should not include private key material', async () => {
       const env = createMockEnv(testPrivateKey, 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const jwks = await response.json();
       const jwk = jwks.keys[0];
@@ -183,9 +223,13 @@ describe('JWKS Handler', () => {
   describe('Error Handling', () => {
     it('should handle invalid private key gracefully', async () => {
       const env = createMockEnv('invalid-pem-key', 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       expect(response.status).toBe(500);
       const error = await response.json();
@@ -195,9 +239,13 @@ describe('JWKS Handler', () => {
 
     it('should return JSON content type for errors', async () => {
       const env = createMockEnv('invalid-pem-key', 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       expect(response.headers.get('Content-Type')).toContain('application/json');
     });
@@ -206,18 +254,26 @@ describe('JWKS Handler', () => {
   describe('JWKS Compliance', () => {
     it('should return proper JSON content type', async () => {
       const env = createMockEnv(testPrivateKey, 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       expect(response.headers.get('Content-Type')).toContain('application/json');
     });
 
     it('should return valid JSON structure', async () => {
       const env = createMockEnv(testPrivateKey, 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       const jwks = await response.json();
 
@@ -228,9 +284,13 @@ describe('JWKS Handler', () => {
 
     it('should return 200 OK status on success', async () => {
       const env = createMockEnv(testPrivateKey, 'test-key-id');
-      const response = await app.request('/.well-known/jwks.json', {
-        method: 'GET',
-      }, env);
+      const response = await app.request(
+        '/.well-known/jwks.json',
+        {
+          method: 'GET',
+        },
+        env
+      );
 
       expect(response.status).toBe(200);
     });
