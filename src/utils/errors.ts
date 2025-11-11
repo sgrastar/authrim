@@ -27,8 +27,12 @@ export class OIDCError extends Error {
     super(error_description || error);
     this.name = 'OIDCError';
     this.error = error;
-    this.error_description = error_description;
-    this.error_uri = error_uri;
+    if (error_description !== undefined) {
+      this.error_description = error_description;
+    }
+    if (error_uri !== undefined) {
+      this.error_uri = error_uri;
+    }
     this.statusCode = statusCode;
 
     // Maintains proper stack trace for where our error was thrown (only available on V8)
@@ -72,7 +76,7 @@ export function handleOIDCError(c: Context, error: OIDCError): Response {
     stack: error.stack,
   });
 
-  return c.json(error.toJSON(), error.statusCode);
+  return c.json(error.toJSON(), error.statusCode as any);
 }
 
 /**
