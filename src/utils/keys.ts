@@ -22,9 +22,7 @@ export interface RSAKeyPair {
  * @param modulusLength - RSA key size in bits (default: 2048)
  * @returns Promise<RSAKeyPair>
  */
-export async function generateRSAKeyPair(
-  modulusLength: number = 2048
-): Promise<RSAKeyPair> {
+export async function generateRSAKeyPair(modulusLength: number = 2048): Promise<RSAKeyPair> {
   const { publicKey, privateKey } = await generateKeyPair('RS256', {
     modulusLength,
   });
@@ -39,10 +37,7 @@ export async function generateRSAKeyPair(
  * @param kid - Key ID (optional)
  * @returns Promise<JWK>
  */
-export async function exportPublicJWK(
-  publicKey: KeyLike,
-  kid?: string
-): Promise<JWK> {
+export async function exportPublicJWK(publicKey: KeyLike, kid?: string): Promise<JWK> {
   const jwk = await exportJWK(publicKey);
 
   // Add standard JWK parameters
