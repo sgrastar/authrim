@@ -85,12 +85,12 @@ curl http://localhost:8787/.well-known/jwks.json | jq
 - [x] `response_type` - Must be "code"
 - [x] `client_id` - Client identifier
 - [x] `redirect_uri` - Callback URL
-- [x] `scope` - Must include "openid"
+- [ ] `scope` - Must include "openid"
 
 ### Optional Parameters
 
 - [x] `state` - CSRF protection (recommended)
-- [x] `nonce` - Replay protection (recommended)
+- [ ] `nonce` - Replay protection (recommended)
 - [ ] `code_challenge` - PKCE (required for public clients)
 - [ ] `code_challenge_method` - Must be "S256"
 
@@ -160,10 +160,10 @@ curl -i "http://localhost:8787/authorize?response_type=code&client_id=test-clien
 
 ### Required Parameters
 
-- [x] `grant_type` - Must be "authorization_code"
-- [x] `code` - Authorization code from `/authorize`
-- [x] `redirect_uri` - Must match authorization request
-- [x] `client_id` - Client identifier
+- [ ] `grant_type` - Must be "authorization_code"
+- [ ] `code` - Authorization code from `/authorize`
+- [ ] `redirect_uri` - Must match authorization request
+- [ ] `client_id` - Client identifier
 
 ### Optional Parameters
 
@@ -331,7 +331,7 @@ echo $ID_TOKEN | cut -d. -f2 | base64 -d | jq
 
 ### Required Headers
 
-- [x] `Authorization: Bearer <access_token>`
+- [ ] `Authorization: Bearer <access_token>`
 
 ### Response Claims
 
@@ -393,7 +393,7 @@ curl -i http://localhost:8787/userinfo \
 ### OAuth 2.0 Errors
 
 - [x] `invalid_request` - Malformed request
-- [x] `invalid_client` - Invalid client_id
+- [ ] `invalid_client` - Invalid client_id
 - [x] `invalid_grant` - Invalid authorization code
 - [ ] `unsupported_grant_type` - Unsupported grant type
 - [ ] `invalid_scope` - Invalid or unsupported scope
