@@ -5,6 +5,40 @@ import { verifyToken } from '../utils/jwt';
 import { importPKCS8, exportJWK, importJWK } from 'jose';
 
 /**
+ * Cached public key for token verification
+ * Cloudflare Workers isolate caches this at module level
+ */
+let cachedPublicKey: KeyLike | null = null;
+let cachedKeyId: string | null = null;
+
+/**
+ * Get or create cached public key for token verification
+ * This optimization reduces cryptographic operations from 3 to 1 per request
+ */
+async function getPublicKey(privateKeyPEM: string, keyId: string): Promise<KeyLike> {
+  // Return cached key if available and key ID matches
+  if (cachedPublicKey && cachedKeyId === keyId) {
+    return cachedPublicKey;
+  }
+
+  // Import private key and derive public key
+  const privateKey = await importPKCS8(privateKeyPEM, 'RS256');
+  const publicJWK = await exportJWK(privateKey);
+  const importedKey = await importJWK(publicJWK, 'RS256');
+
+  // Type guard: ensure we have a KeyLike, not Uint8Array
+  if (importedKey instanceof Uint8Array) {
+    throw new Error('Unexpected key type: expected KeyLike, got Uint8Array');
+  }
+
+  // Cache the key for future requests
+  cachedPublicKey = importedKey;
+  cachedKeyId = keyId;
+
+  return importedKey;
+}
+
+/**
  * UserInfo Endpoint Handler
  * https://openid.net/specs/openid-connect-core-1_0.html#UserInfo
  *
@@ -51,6 +85,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
 
   // Verify access token
   const privateKeyPEM = c.env.PRIVATE_KEY_PEM;
+  const keyId = c.env.KEY_ID || 'default';
+
   if (!privateKeyPEM) {
     return c.json(
       {
@@ -63,16 +99,9 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
 
   let publicKey: KeyLike;
   try {
-    // Import private key and export public key for verification
-    const privateKey = await importPKCS8(privateKeyPEM, 'RS256');
-    const publicJWK = await exportJWK(privateKey);
-    // Re-import as public key for verification
-    const importedKey = await importJWK(publicJWK, 'RS256');
-    // Type guard: ensure we have a KeyLike, not Uint8Array
-    if (importedKey instanceof Uint8Array) {
-      throw new Error('Unexpected key type');
-    }
-    publicKey = importedKey;
+    // Get cached public key or derive from private key
+    // This optimization reduces 3 crypto operations to 1 per request
+    publicKey = await getPublicKey(privateKeyPEM, keyId);
   } catch (error) {
     console.error('Failed to load verification key:', error);
     return c.json(
