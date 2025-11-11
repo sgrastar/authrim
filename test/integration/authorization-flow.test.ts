@@ -760,6 +760,176 @@ describe('Authorization Code Flow', () => {
     });
   });
 
+  describe('Additional Scope Support', () => {
+    it('should return address claims when address scope is granted', async () => {
+      const app = (await import('../../src/index')).default;
+      const client = testClients.confidential;
+
+      // Get authorization code with address scope
+      const authUrl = buildAuthorizationUrl({
+        issuer: env.ISSUER_URL,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        scope: 'openid address',
+        state: generateState(),
+      });
+
+      const authRes = await app.fetch(new Request(authUrl), env);
+      const location = authRes.headers.get('location');
+      const parsed = parseAuthorizationResponse(location!);
+
+      // Exchange for tokens
+      const tokenBody = buildTokenRequestBody({
+        grant_type: 'authorization_code',
+        code: parsed.code!,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        client_secret: client.client_secret,
+      });
+
+      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody,
+      }), env);
+
+      const tokenData = await tokenRes.json();
+
+      // Get userinfo
+      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      }), env);
+
+      expect(userinfoRes.status).toBe(200);
+      const userinfoData = await userinfoRes.json();
+
+      // Should have address claims
+      expect(userinfoData).toHaveProperty('address');
+      expect(userinfoData.address).toHaveProperty('formatted');
+      expect(userinfoData.address).toHaveProperty('street_address');
+      expect(userinfoData.address).toHaveProperty('locality');
+      expect(userinfoData.address).toHaveProperty('region');
+      expect(userinfoData.address).toHaveProperty('postal_code');
+      expect(userinfoData.address).toHaveProperty('country');
+
+      // Should NOT have profile or email claims
+      expect(userinfoData).not.toHaveProperty('name');
+      expect(userinfoData).not.toHaveProperty('email');
+    });
+
+    it('should return phone claims when phone scope is granted', async () => {
+      const app = (await import('../../src/index')).default;
+      const client = testClients.confidential;
+
+      // Get authorization code with phone scope
+      const authUrl = buildAuthorizationUrl({
+        issuer: env.ISSUER_URL,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        scope: 'openid phone',
+        state: generateState(),
+      });
+
+      const authRes = await app.fetch(new Request(authUrl), env);
+      const location = authRes.headers.get('location');
+      const parsed = parseAuthorizationResponse(location!);
+
+      // Exchange for tokens
+      const tokenBody = buildTokenRequestBody({
+        grant_type: 'authorization_code',
+        code: parsed.code!,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        client_secret: client.client_secret,
+      });
+
+      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody,
+      }), env);
+
+      const tokenData = await tokenRes.json();
+
+      // Get userinfo
+      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      }), env);
+
+      expect(userinfoRes.status).toBe(200);
+      const userinfoData = await userinfoRes.json();
+
+      // Should have phone claims
+      expect(userinfoData).toHaveProperty('phone_number');
+      expect(userinfoData).toHaveProperty('phone_number_verified');
+      expect(userinfoData.phone_number).toBe('+81 90-1234-5678');
+      expect(userinfoData.phone_number_verified).toBe(true);
+
+      // Should NOT have profile or email claims
+      expect(userinfoData).not.toHaveProperty('name');
+      expect(userinfoData).not.toHaveProperty('email');
+    });
+
+    it('should return all claims when all scopes are granted', async () => {
+      const app = (await import('../../src/index')).default;
+      const client = testClients.confidential;
+
+      // Get authorization code with all scopes
+      const authUrl = buildAuthorizationUrl({
+        issuer: env.ISSUER_URL,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        scope: 'openid profile email address phone',
+        state: generateState(),
+      });
+
+      const authRes = await app.fetch(new Request(authUrl), env);
+      const location = authRes.headers.get('location');
+      const parsed = parseAuthorizationResponse(location!);
+
+      // Exchange for tokens
+      const tokenBody = buildTokenRequestBody({
+        grant_type: 'authorization_code',
+        code: parsed.code!,
+        client_id: client.client_id,
+        redirect_uri: client.redirect_uris[0],
+        client_secret: client.client_secret,
+      });
+
+      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody,
+      }), env);
+
+      const tokenData = await tokenRes.json();
+
+      // Get userinfo
+      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      }), env);
+
+      expect(userinfoRes.status).toBe(200);
+      const userinfoData = await userinfoRes.json();
+
+      // Should have profile claims
+      expect(userinfoData).toHaveProperty('name');
+      expect(userinfoData).toHaveProperty('family_name');
+
+      // Should have email claims
+      expect(userinfoData).toHaveProperty('email');
+      expect(userinfoData).toHaveProperty('email_verified');
+
+      // Should have address claims
+      expect(userinfoData).toHaveProperty('address');
+      expect(userinfoData.address).toHaveProperty('formatted');
+
+      // Should have phone claims
+      expect(userinfoData).toHaveProperty('phone_number');
+      expect(userinfoData).toHaveProperty('phone_number_verified');
+    });
+  });
+
   describe('Helper Functions Test', () => {
     it('should build valid authorization URL', () => {
       const client = testClients.confidential;

@@ -219,6 +219,16 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     updated_at: Math.floor(Date.now() / 1000),
     email: 'test@example.com',
     email_verified: true,
+    phone_number: '+81 90-1234-5678',
+    phone_number_verified: true,
+    address: {
+      formatted: '1-2-3 Shibuya, Shibuya-ku, Tokyo 150-0002, Japan',
+      street_address: '1-2-3 Shibuya',
+      locality: 'Shibuya-ku',
+      region: 'Tokyo',
+      postal_code: '150-0002',
+      country: 'Japan',
+    },
   };
 
   // Profile scope claims (OIDC Core 5.4)
@@ -259,6 +269,33 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   } else {
     // Include individual email claims if explicitly requested via claims parameter
     for (const claim of emailClaims) {
+      if (claim in requestedUserinfoClaims && claim in userData) {
+        userClaims[claim] = userData[claim as keyof typeof userData];
+      }
+    }
+  }
+
+  // Address scope claims (OIDC Core 5.4)
+  if (scopes.includes('address')) {
+    userClaims.address = userData.address;
+  } else if ('address' in requestedUserinfoClaims) {
+    userClaims.address = userData.address;
+  }
+
+  // Phone scope claims (OIDC Core 5.4)
+  const phoneClaims = ['phone_number', 'phone_number_verified'];
+
+  // Add phone claims if phone scope is granted OR if explicitly requested
+  if (scopes.includes('phone')) {
+    // Include all phone claims when phone scope is granted
+    for (const claim of phoneClaims) {
+      if (claim in userData) {
+        userClaims[claim] = userData[claim as keyof typeof userData];
+      }
+    }
+  } else {
+    // Include individual phone claims if explicitly requested via claims parameter
+    for (const claim of phoneClaims) {
       if (claim in requestedUserinfoClaims && claim in userData) {
         userClaims[claim] = userData[claim as keyof typeof userData];
       }
