@@ -4,7 +4,6 @@
 
 A lightweight, serverless **OpenID Connect Provider** that deploys to **Cloudflare's global edge network** in under 5 minutes.
 
-[![OpenID Certified](https://img.shields.io/badge/OpenID-Certified-green?logo=openid)](https://openid.net/certification/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange?logo=cloudflare)](https://workers.cloudflare.com/)
