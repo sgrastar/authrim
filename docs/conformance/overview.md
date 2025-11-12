@@ -36,7 +36,7 @@ Its conformance goal is not only certification, but **to redefine what "complian
 | **Discovery 1.0** | ✅ Implemented | Metadata endpoint and issuer consistency. |
 | **OAuth 2.0** | ✅ Implemented | RFC 6749 / 6750 compatible, Bearer token flow. |
 | **JWT / JWK** | ✅ Implemented | RFC 7517 / 7519, RS256 with fixed key ID. |
-| **Dynamic Registration** | ⚙️ Planned | `/register` endpoint (Phase 3). |
+| **Dynamic Registration** | ✅ Implemented | `/register` endpoint (RFC 7591, Phase 4 complete). |
 | **Session Management** | ❌ Not implemented | Will be explored in Phase 3+. |
 
 ---
@@ -57,11 +57,11 @@ Its conformance goal is not only certification, but **to redefine what "complian
 
 | Milestone | Deliverable | Timeline |
 |:--|:--|:--|
-| ✅ M1 | Core endpoints + Discovery operational | Complete |
-| 🧪 M2 | Local conformance suite tests passing | In progress |
-| ⚙️ M3 | Add Dynamic Client Registration | Planned |
-| ⚙️ M4 | Session Management iframe support | Planned |
-| 🏁 M5 | Submit to OIDF for Basic OP certification | Target Q2 2026 |
+| ✅ M1 | Core endpoints + Discovery operational | Complete (Nov 2025) |
+| ✅ M2 | Local conformance suite tests passing | Complete (95.8% Phase 3, Nov 2025) |
+| ✅ M3 | Add Dynamic Client Registration | Complete (Phase 4, Nov 2025) |
+| ⏳ M4 | Advanced features (PAR, DPoP, Refresh Token) | Planned (Phase 4-5) |
+| 🏁 M5 | Submit to OIDF for Basic OP certification | Target: ≥95% conformance, Q2 2026 |
 
 ---
 
