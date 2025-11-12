@@ -767,20 +767,20 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 #### Token Management
 
 ##### Refresh Token Flow - RFC 6749 Section 6
-- [ ] Refresh token generation
-- [ ] Refresh token validation
-- [ ] Token rotation (refresh token)
-- [ ] Refresh token revocation
-- [ ] Storage implementation
-- [ ] Tests & conformance validation
+- [x] Refresh token generation
+- [x] Refresh token validation
+- [x] Token rotation (refresh token)
+- [x] Refresh token revocation
+- [x] Storage implementation
+- [x] Tests & conformance validation
 - [ ] Documentation
 
 ##### Token Introspection & Revocation - RFC 7662, RFC 7009
-- [ ] Implement `POST /introspect` endpoint
-- [ ] Implement `POST /revoke` endpoint
-- [ ] Token metadata response
-- [ ] Client authentication for introspection
-- [ ] Tests & conformance validation
+- [x] Implement `POST /introspect` endpoint
+- [x] Implement `POST /revoke` endpoint
+- [x] Token metadata response
+- [x] Client authentication for introspection
+- [x] Tests & conformance validation
 - [ ] Documentation
 
 #### Response Modes

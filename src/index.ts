@@ -13,6 +13,8 @@ import { tokenHandler } from './handlers/token';
 import { userinfoHandler } from './handlers/userinfo';
 import { registerHandler } from './handlers/register';
 import { parHandler } from './handlers/par';
+import { introspectHandler } from './handlers/introspect';
+import { revokeHandler } from './handlers/revoke';
 
 /**
  * Validates required environment variables at startup
@@ -34,6 +36,7 @@ function validateEnvironment(env: Env): void {
     { name: 'CODE_EXPIRY', value: env.CODE_EXPIRY },
     { name: 'STATE_EXPIRY', value: env.STATE_EXPIRY },
     { name: 'NONCE_EXPIRY', value: env.NONCE_EXPIRY },
+    { name: 'REFRESH_TOKEN_EXPIRY', value: env.REFRESH_TOKEN_EXPIRY },
   ];
 
   for (const field of expiryFields) {
@@ -53,6 +56,7 @@ function validateEnvironment(env: Env): void {
     { name: 'STATE_STORE', value: env.STATE_STORE },
     { name: 'NONCE_STORE', value: env.NONCE_STORE },
     { name: 'CLIENTS', value: env.CLIENTS },
+    { name: 'REFRESH_TOKENS', value: env.REFRESH_TOKENS },
   ];
 
   for (const ns of kvNamespaces) {
@@ -194,6 +198,18 @@ app.get('/as/par', (c) => {
     error_description: 'PAR endpoint only accepts POST requests',
   }, 405);
 });
+
+// Token Introspection endpoint - RFC 7662
+app.post('/introspect', rateLimitMiddleware({
+  ...RateLimitProfiles.strict,
+  endpoints: ['/introspect'],
+}), introspectHandler);
+
+// Token Revocation endpoint - RFC 7009
+app.post('/revoke', rateLimitMiddleware({
+  ...RateLimitProfiles.strict,
+  endpoints: ['/revoke'],
+}), revokeHandler);
 
 // 404 handler
 app.notFound((c) => {
