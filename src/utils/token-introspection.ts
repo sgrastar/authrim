@@ -14,7 +14,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '../types/env';
-import type { KeyLike, JWTPayload } from 'jose';
+import type { KeyLike, JWTPayload, JWK } from 'jose';
 import { importJWK } from 'jose';
 import { verifyToken } from './jwt';
 import { isTokenRevoked } from './kv';
@@ -75,7 +75,7 @@ async function getPublicKey(publicJWKJson: string, keyId: string): Promise<KeyLi
     return cachedPublicKey;
   }
 
-  const publicJWK = JSON.parse(publicJWKJson);
+  const publicJWK = JSON.parse(publicJWKJson) as JWK;
   const importedKey = await importJWK(publicJWK, 'RS256');
 
   if (importedKey instanceof Uint8Array) {
