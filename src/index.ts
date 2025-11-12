@@ -12,6 +12,7 @@ import { authorizeHandler } from './handlers/authorize';
 import { tokenHandler } from './handlers/token';
 import { userinfoHandler } from './handlers/userinfo';
 import { registerHandler } from './handlers/register';
+import { parHandler } from './handlers/par';
 
 /**
  * Validates required environment variables at startup
@@ -179,6 +180,20 @@ app.post('/userinfo', userinfoHandler);
 
 // Dynamic Client Registration endpoint
 app.post('/register', registerHandler);
+
+// PAR (Pushed Authorization Request) endpoint - RFC 9126
+app.post('/as/par', rateLimitMiddleware({
+  ...RateLimitProfiles.strict,
+  endpoints: ['/as/par'],
+}), parHandler);
+
+// PAR endpoint should reject non-POST methods
+app.get('/as/par', (c) => {
+  return c.json({
+    error: 'invalid_request',
+    error_description: 'PAR endpoint only accepts POST requests',
+  }, 405);
+});
 
 // 404 handler
 app.notFound((c) => {
