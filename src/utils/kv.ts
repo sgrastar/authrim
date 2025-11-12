@@ -250,3 +250,67 @@ export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
   const result = await env.REVOKED_TOKENS.get(jti);
   return result !== null;
 }
+
+/**
+ * Refresh Token Data structure
+ */
+export interface RefreshTokenData {
+  jti: string;
+  client_id: string;
+  sub: string;
+  scope: string;
+  iat: number;
+  exp: number;
+}
+
+/**
+ * Store refresh token in KV
+ *
+ * @param env - Cloudflare environment bindings
+ * @param jti - Refresh token JTI (unique identifier)
+ * @param data - Refresh token metadata
+ * @returns Promise<void>
+ */
+export async function storeRefreshToken(
+  env: Env,
+  jti: string,
+  data: RefreshTokenData
+): Promise<void> {
+  const ttl = parseInt(env.REFRESH_TOKEN_EXPIRY, 10);
+  await env.REFRESH_TOKENS.put(jti, JSON.stringify(data), {
+    expirationTtl: ttl,
+  });
+}
+
+/**
+ * Retrieve refresh token metadata from KV
+ *
+ * @param env - Cloudflare environment bindings
+ * @param jti - Refresh token JTI
+ * @returns Promise<RefreshTokenData | null>
+ */
+export async function getRefreshToken(env: Env, jti: string): Promise<RefreshTokenData | null> {
+  const data = await env.REFRESH_TOKENS.get(jti);
+
+  if (!data) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(data) as RefreshTokenData;
+  } catch (error) {
+    console.error('Failed to parse refresh token data:', error);
+    return null;
+  }
+}
+
+/**
+ * Delete refresh token from KV (revocation or rotation)
+ *
+ * @param env - Cloudflare environment bindings
+ * @param jti - Refresh token JTI
+ * @returns Promise<void>
+ */
+export async function deleteRefreshToken(env: Env, jti: string): Promise<void> {
+  await env.REFRESH_TOKENS.delete(jti);
+}
