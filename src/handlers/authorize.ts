@@ -17,6 +17,7 @@ import type { AuthCodeData } from '../utils/kv';
  *
  * Handles authorization requests and returns authorization codes
  * Per OIDC Core 3.1.2.1: MUST support both GET and POST methods
+ * RFC 9126: Supports request_uri parameter for PAR
  */
 export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Parse parameters from either GET (query string) or POST (form body)
@@ -30,11 +31,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let code_challenge: string | undefined;
   let code_challenge_method: string | undefined;
   let claims: string | undefined;
+  let request_uri: string | undefined;
 
   if (c.req.method === 'POST') {
     // Parse POST body (application/x-www-form-urlencoded)
     try {
       const body = await c.req.parseBody();
+      request_uri = typeof body.request_uri === 'string' ? body.request_uri : undefined;
       response_type = typeof body.response_type === 'string' ? body.response_type : undefined;
       client_id = typeof body.client_id === 'string' ? body.client_id : undefined;
       redirect_uri = typeof body.redirect_uri === 'string' ? body.redirect_uri : undefined;
@@ -55,6 +58,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   } else {
     // Parse GET query parameters
+    request_uri = c.req.query('request_uri');
     response_type = c.req.query('response_type');
     client_id = c.req.query('client_id');
     redirect_uri = c.req.query('redirect_uri');
@@ -64,6 +68,70 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     code_challenge = c.req.query('code_challenge');
     code_challenge_method = c.req.query('code_challenge_method');
     claims = c.req.query('claims');
+  }
+
+  // RFC 9126: If request_uri is present, fetch parameters from PAR storage
+  if (request_uri) {
+    // Validate request_uri format
+    if (!request_uri.startsWith('urn:ietf:params:oauth:request_uri:')) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Invalid request_uri format',
+        },
+        400
+      );
+    }
+
+    // Retrieve request parameters from KV storage
+    const requestData = await c.env.STATE_STORE.get(`request_uri:${request_uri}`);
+
+    if (!requestData) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Invalid or expired request_uri',
+        },
+        400
+      );
+    }
+
+    try {
+      const parsedData = JSON.parse(requestData);
+
+      // RFC 9126: When using request_uri, client_id from query MUST match client_id from PAR
+      if (client_id && client_id !== parsedData.client_id) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'client_id mismatch',
+          },
+          400
+        );
+      }
+
+      // Load parameters from PAR request
+      response_type = parsedData.response_type;
+      client_id = parsedData.client_id;
+      redirect_uri = parsedData.redirect_uri;
+      scope = parsedData.scope;
+      state = parsedData.state;
+      nonce = parsedData.nonce;
+      code_challenge = parsedData.code_challenge;
+      code_challenge_method = parsedData.code_challenge_method;
+      claims = parsedData.claims;
+
+      // RFC 9126: request_uri is single-use, delete after retrieval
+      await c.env.STATE_STORE.delete(`request_uri:${request_uri}`);
+    } catch {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to process request_uri',
+        },
+        500
+      );
+    }
   }
 
   // Validate response_type

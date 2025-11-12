@@ -18,6 +18,10 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     userinfo_endpoint: `${issuer}/userinfo`,
     jwks_uri: `${issuer}/.well-known/jwks.json`,
     registration_endpoint: `${issuer}/register`,
+    // RFC 9126: PAR endpoint
+    pushed_authorization_request_endpoint: `${issuer}/as/par`,
+    // RFC 9126: PAR is optional (not required)
+    require_pushed_authorization_requests: false,
     response_types_supported: ['code'],
     response_modes_supported: ['query'],
     grant_types_supported: ['authorization_code'],
