@@ -734,16 +734,22 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - ✅ Token Management (Refresh Token, Introspection, Revocation) - 47+ tests, RFC 6749/7662/7009
 - ✅ PAR (Pushed Authorization Requests) - 15+ tests, RFC 9126
 - ✅ Form Post Response Mode - 19 tests, OAuth 2.0 Form Post
-- ✅ **Total: 344+ tests passing** (166+ new Phase 4 tests)
+- ✅ **DPoP (Demonstrating Proof of Possession)** - 12 tests, RFC 9449
+- ✅ **Pairwise Subject Identifiers** - 22 tests, OIDC Core 8.1
+- ✅ **Storage Foundation** - Abstract interfaces for Phase 6
+- ✅ **Total: 378+ tests passing** (200+ new Phase 4 tests)
 
 **Phase 4 Documentation:**
 - ✅ Token Management Guide (docs/features/token-management.md)
 - ✅ PAR Implementation Guide (docs/features/par.md)
 - ✅ Form Post Response Mode Guide (docs/features/form-post-response-mode.md)
+- ✅ DPoP Implementation (inline code documentation)
+- ✅ Pairwise Subject Identifiers (inline code documentation)
+- ✅ Storage Abstraction Layer (comprehensive interface documentation)
 
 ---
 
-### Phase 4 Remaining Tasks ⏳
+### Phase 4 Remaining Tasks ✅ COMPLETE
 
 #### Advanced Security Extensions
 
@@ -755,22 +761,22 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [x] Tests & conformance validation (15+ tests)
 - [x] Documentation (comprehensive guide)
 
-##### DPoP (Demonstrating Proof of Possession) - RFC 9449
-- [ ] DPoP token validation middleware
-- [ ] DPoP-bound access token generation
-- [ ] Token endpoint DPoP support
-- [ ] UserInfo endpoint DPoP support
-- [ ] Replay attack prevention
-- [ ] Tests & conformance validation
-- [ ] Documentation
+##### DPoP (Demonstrating Proof of Possession) - RFC 9449 ✅
+- [x] DPoP token validation middleware
+- [x] DPoP-bound access token generation
+- [x] Token endpoint DPoP support
+- [x] UserInfo endpoint DPoP support
+- [x] Replay attack prevention
+- [x] Tests & conformance validation (12 tests)
+- [x] Documentation (inline code documentation)
 
-##### Pairwise Subject Identifiers - OIDC Core 8.1
-- [ ] Subject type configuration (public/pairwise)
-- [ ] Pairwise identifier generation (per client)
-- [ ] Sector identifier validation
-- [ ] Storage for pairwise mappings
-- [ ] Tests & conformance validation
-- [ ] Documentation
+##### Pairwise Subject Identifiers - OIDC Core 8.1 ✅
+- [x] Subject type configuration (public/pairwise)
+- [x] Pairwise identifier generation (per client)
+- [x] Sector identifier validation
+- [x] Storage for pairwise mappings
+- [x] Tests & conformance validation (22 tests)
+- [x] Documentation (inline code documentation)
 
 #### Token Management
 
@@ -802,12 +808,12 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [x] XSS prevention with HTML escaping
 - [x] User-friendly loading UI with spinner
 
-#### Storage Foundation (Preparation for Phase 6)
-- [ ] Abstract storage interface design
-- [ ] D1 schema design (users, clients, sessions)
-- [ ] Migration system foundation
-- [ ] Storage adapter selection logic
-- [ ] Documentation
+#### Storage Foundation (Preparation for Phase 6) ✅
+- [x] Abstract storage interface design
+- [x] D1 schema design (users, clients, sessions)
+- [x] Migration system foundation (interfaces defined)
+- [x] Storage adapter selection logic (KV adapter implemented)
+- [x] Documentation (comprehensive inline documentation)
 
 ---
 
