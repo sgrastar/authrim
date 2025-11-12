@@ -93,6 +93,16 @@ export class KeyManager {
   }
 
   /**
+   * Get state with assertion that it has been initialized
+   */
+  private getState(): KeyManagerState {
+    if (!this.keyManagerState) {
+      throw new Error('KeyManager state not initialized');
+    }
+    return this.keyManagerState;
+  }
+
+  /**
    * Save state to durable storage
    */
   private async saveState(): Promise<void> {
@@ -118,7 +128,8 @@ export class KeyManager {
       isActive: false,
     };
 
-    this.keyManagerState!.keys.push(newKey);
+    const state = this.getState();
+    state.keys.push(newKey);
     await this.saveState();
 
     return newKey;
@@ -130,17 +141,18 @@ export class KeyManager {
   async setActiveKey(kid: string): Promise<void> {
     await this.initializeState();
 
-    const key = this.keyManagerState!.keys.find((k) => k.kid === kid);
+    const state = this.getState();
+    const key = state.keys.find((k) => k.kid === kid);
     if (!key) {
       throw new Error(`Key with kid ${kid} not found`);
     }
 
     // Deactivate all other keys
-    this.keyManagerState!.keys.forEach((k) => {
+    state.keys.forEach((k) => {
       k.isActive = k.kid === kid;
     });
 
-    this.keyManagerState!.activeKeyId = kid;
+    state.activeKeyId = kid;
     await this.saveState();
   }
 
@@ -150,13 +162,12 @@ export class KeyManager {
   async getActiveKey(): Promise<StoredKey | null> {
     await this.initializeState();
 
-    if (!this.keyManagerState!.activeKeyId) {
+    const state = this.getState();
+    if (!state.activeKeyId) {
       return null;
     }
 
-    return (
-      this.keyManagerState!.keys.find((k) => k.kid === this.keyManagerState!.activeKeyId) || null
-    );
+    return state.keys.find((k) => k.kid === state.activeKeyId) || null;
   }
 
   /**
@@ -165,7 +176,8 @@ export class KeyManager {
   async getAllPublicKeys(): Promise<JWK[]> {
     await this.initializeState();
 
-    return this.keyManagerState!.keys.map((k) => k.publicJWK);
+    const state = this.getState();
+    return state.keys.map((k) => k.publicJWK);
   }
 
   /**
@@ -174,7 +186,8 @@ export class KeyManager {
   async getKey(kid: string): Promise<StoredKey | null> {
     await this.initializeState();
 
-    return this.keyManagerState!.keys.find((k) => k.kid === kid) || null;
+    const state = this.getState();
+    return state.keys.find((k) => k.kid === kid) || null;
   }
 
   /**
@@ -190,7 +203,8 @@ export class KeyManager {
     await this.setActiveKey(newKey.kid);
 
     // Update last rotation timestamp
-    this.keyManagerState!.lastRotation = Date.now();
+    const state = this.getState();
+    state.lastRotation = Date.now();
 
     // Clean up expired keys
     await this.cleanupExpiredKeys();
@@ -204,13 +218,12 @@ export class KeyManager {
    * Clean up expired keys based on retention period
    */
   private async cleanupExpiredKeys(): Promise<void> {
-    const retentionMillis = this.keyManagerState!.config.retentionPeriodDays * 24 * 60 * 60 * 1000;
+    const state = this.getState();
+    const retentionMillis = state.config.retentionPeriodDays * 24 * 60 * 60 * 1000;
     const cutoffTime = Date.now() - retentionMillis;
 
     // Keep only active key and keys within retention period
-    this.keyManagerState!.keys = this.keyManagerState!.keys.filter(
-      (k) => k.isActive || k.createdAt > cutoffTime
-    );
+    state.keys = state.keys.filter((k) => k.isActive || k.createdAt > cutoffTime);
   }
 
   /**
@@ -219,13 +232,13 @@ export class KeyManager {
   async shouldRotateKeys(): Promise<boolean> {
     await this.initializeState();
 
-    if (!this.keyManagerState!.lastRotation) {
+    const state = this.getState();
+    if (!state.lastRotation) {
       return true; // No keys have been generated yet
     }
 
-    const rotationIntervalMillis =
-      this.keyManagerState!.config.rotationIntervalDays * 24 * 60 * 60 * 1000;
-    const timeSinceLastRotation = Date.now() - this.keyManagerState!.lastRotation;
+    const rotationIntervalMillis = state.config.rotationIntervalDays * 24 * 60 * 60 * 1000;
+    const timeSinceLastRotation = Date.now() - state.lastRotation;
 
     return timeSinceLastRotation >= rotationIntervalMillis;
   }
@@ -236,8 +249,9 @@ export class KeyManager {
   async updateConfig(config: Partial<KeyRotationConfig>): Promise<void> {
     await this.initializeState();
 
-    this.keyManagerState!.config = {
-      ...this.keyManagerState!.config,
+    const state = this.getState();
+    state.config = {
+      ...state.config,
       ...config,
     };
 
@@ -249,7 +263,8 @@ export class KeyManager {
    */
   async getConfig(): Promise<KeyRotationConfig> {
     await this.initializeState();
-    return this.keyManagerState!.config;
+    const state = this.getState();
+    return state.config;
   }
 
   /**

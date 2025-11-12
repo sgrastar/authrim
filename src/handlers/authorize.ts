@@ -189,23 +189,25 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // From here on, we have a valid redirect_uri, so errors should be returned via redirect
+  // Type narrowing: redirect_uri is guaranteed to be a string at this point
+  const validRedirectUri: string = redirect_uri as string;
 
   // Validate scope
   const scopeValidation = validateScope(scope);
   if (!scopeValidation.valid) {
-    return redirectWithError(c, redirect_uri!, 'invalid_scope', scopeValidation.error, state);
+    return redirectWithError(c, validRedirectUri, 'invalid_scope', scopeValidation.error, state);
   }
 
   // Validate state (optional)
   const stateValidation = validateState(state);
   if (!stateValidation.valid) {
-    return redirectWithError(c, redirect_uri!, 'invalid_request', stateValidation.error, state);
+    return redirectWithError(c, validRedirectUri, 'invalid_request', stateValidation.error, state);
   }
 
   // Validate nonce (optional)
   const nonceValidation = validateNonce(nonce);
   if (!nonceValidation.valid) {
-    return redirectWithError(c, redirect_uri!, 'invalid_request', nonceValidation.error, state);
+    return redirectWithError(c, validRedirectUri, 'invalid_request', nonceValidation.error, state);
   }
 
   // Validate response_mode (optional)
@@ -215,7 +217,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     if (!supportedResponseModes.includes(response_mode)) {
       return redirectWithError(
         c,
-        redirect_uri!,
+        validRedirectUri,
         'invalid_request',
         `Unsupported response_mode. Supported modes: ${supportedResponseModes.join(', ')}`,
         state
@@ -228,7 +230,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     if (response_type === 'code' && response_mode === 'fragment') {
       return redirectWithError(
         c,
-        redirect_uri!,
+        validRedirectUri,
         'invalid_request',
         'response_mode=fragment is not compatible with response_type=code',
         state
@@ -245,7 +247,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       if (typeof parsedClaims !== 'object' || parsedClaims === null || Array.isArray(parsedClaims)) {
         return redirectWithError(
           c,
-          redirect_uri!,
+          validRedirectUri,
           'invalid_request',
           'claims parameter must be a JSON object',
           state
@@ -259,7 +261,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       if (claimsSections.length === 0) {
         return redirectWithError(
           c,
-          redirect_uri!,
+          validRedirectUri,
           'invalid_request',
           'claims parameter must contain at least one of: userinfo, id_token',
           state
@@ -270,7 +272,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         if (!validSections.includes(section)) {
           return redirectWithError(
             c,
-            redirect_uri!,
+            validRedirectUri,
             'invalid_request',
             `Invalid claims section: ${section}. Must be one of: ${validSections.join(', ')}`,
             state
@@ -282,7 +284,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         if (typeof claimsObj[section] !== 'object' || claimsObj[section] === null) {
           return redirectWithError(
             c,
-            redirect_uri!,
+            validRedirectUri,
             'invalid_request',
             `claims.${section} must be an object`,
             state
@@ -292,7 +294,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     } catch {
       return redirectWithError(
         c,
-        redirect_uri!,
+        validRedirectUri,
         'invalid_request',
         'claims parameter must be valid JSON',
         state
@@ -305,7 +307,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     if (!code_challenge_method) {
       return redirectWithError(
         c,
-        redirect_uri!,
+        validRedirectUri,
         'invalid_request',
         'code_challenge_method is required when code_challenge is provided',
         state
@@ -316,7 +318,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     if (code_challenge_method !== 'S256') {
       return redirectWithError(
         c,
-        redirect_uri!,
+        validRedirectUri,
         'invalid_request',
         'Unsupported code_challenge_method. Only S256 is supported',
         state
@@ -328,7 +330,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     if (!base64urlPattern.test(code_challenge)) {
       return redirectWithError(
         c,
-        redirect_uri!,
+        validRedirectUri,
         'invalid_request',
         'Invalid code_challenge format',
         state
@@ -344,11 +346,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // In a real implementation, this would come from user authentication
   const sub = 'user-' + crypto.randomUUID();
 
+  // Type narrowing: client_id and scope are guaranteed to be strings at this point
+  const validClientId: string = client_id as string;
+  const validScope: string = scope as string;
+
   // Store authorization code with metadata
   const authCodeData: AuthCodeData = {
-    client_id: client_id!,
-    redirect_uri: redirect_uri!,
-    scope: scope!,
+    client_id: validClientId,
+    redirect_uri: validRedirectUri,
+    scope: validScope,
     sub,
     timestamp: Date.now(),
   };
@@ -371,7 +377,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     console.error('Failed to store authorization code:', error);
     return redirectWithError(
       c,
-      redirect_uri!,
+      validRedirectUri,
       'server_error',
       'Failed to process authorization request',
       state
@@ -385,10 +391,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (effectiveResponseMode === 'form_post') {
     // OAuth 2.0 Form Post Response Mode
     // Return HTML page with auto-submitting form
-    return createFormPostResponse(c, redirect_uri!, code, state);
+    return createFormPostResponse(c, validRedirectUri, code, state);
   } else {
     // Default: query response mode (redirect with query parameters)
-    const redirectUrl = new URL(redirect_uri!);
+    const redirectUrl = new URL(validRedirectUri);
     redirectUrl.searchParams.set('code', code);
     if (state) {
       redirectUrl.searchParams.set('state', state);

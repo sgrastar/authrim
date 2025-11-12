@@ -63,7 +63,7 @@ export class KVStorage implements IStorage {
         expiration: key.expiration,
         metadata: key.metadata as Record<string, string> | undefined,
       })),
-      cursor: result.cursor,
+      cursor: (result.cursor as string | undefined) ?? undefined,
       list_complete: result.list_complete,
     };
   }
@@ -103,7 +103,7 @@ export class KVClientRepository implements IClientRepository {
       updated_at: now,
     };
 
-    const key = `${this.prefix}${client.client_id}`;
+    const key = `${this.prefix}${String(client.client_id)}`;
     await this.storage.put(key, JSON.stringify(clientData));
 
     return clientData;
