@@ -14,7 +14,7 @@ Nov  Dec  Jan  Feb  Mar  Apr  May  Jun  Jul  Aug  Sep  Oct  Nov  Dec  Jan  Feb  
 │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
 ├─P1─┼─P2─┼─P3─┼────┼─P4─┼─P5─┼──────P6──────┼───P7───┼──────P8──────┼──────P9──────┼P10
 │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
-✅   ✅   ✅   ✅   ✅   ⏳   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🌐
+✅   ✅   ✅   ✅   ⏳   ⏳   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🌐
 
 Legend:
 ✅ Complete
@@ -32,7 +32,7 @@ Legend:
 | **M1: Foundation** | 2025-12-15 | ✅ Complete | Project setup, tooling, basic structure |
 | **M2: Core API** | 2026-01-31 | ✅ Complete | All OIDC endpoints functional |
 | **M3: Conformance** | 2026-03-15 | ✅ Complete | OpenID Conformance Suite (95.8% Phase 3) |
-| **M4: Extensions** | 2025-11-12 | ✅ Complete | Dynamic Client Registration, Rate Limiting, Security |
+| **M4: Extensions** | 2026-04-30 | ⏳ In Progress | DCR/Rate Limiting complete, PAR/DPoP/Refresh Token planned |
 | **M5: Certification** | 2026-05-31 | ⏳ Planned | OpenID Certification + JARM, MTLS |
 | **M6: Passwordless** | 2026-07-31 | 🆕 Planned | WebAuthn, Magic Link, ACR/AMR |
 | **M7: CLI & Deploy** | 2026-08-31 | 🆕 Planned | One-command deployment |
@@ -212,13 +212,13 @@ Legend:
 
 ---
 
-## Phase 4: Extended Features & Security (Partially Complete)
+## Phase 4: Extended Features & Security ⏳ IN PROGRESS
 
 **Timeline:** Mar 16 - Apr 30, 2026 (6 weeks)
 
 **Goal:** Add security extensions and prepare storage foundation
 
-**Status:** ✅ Core features completed early (Nov 2025) | ⏳ Advanced features planned
+**Status:** ✅ Core features completed early (Nov 2025) | ⏳ Advanced features in progress
 
 ---
 
@@ -1212,14 +1212,20 @@ Legend:
 - ✅ All critical security tests passing (token revocation, PKCE, claims)
 - [ ] <50ms p95 latency (edge) - deferred to Phase 4
 
-### Phase 4: Extensions ✅
+### Phase 4: Extensions ⏳
 - ✅ Dynamic Client Registration (RFC 7591) functional - 56 tests
 - ✅ Rate Limiting implemented - 44 tests
 - ✅ Security Headers & CORS - 41 tests
 - ✅ Key Rotation automated (KeyManager Durable Object)
 - ✅ Extended Claims Support (address, phone)
 - ✅ 263 total tests passing (85 new Phase 4 tests)
-- [ ] <50ms p95 latency (edge) - deferred to Phase 5
+- [ ] PAR (Pushed Authorization Requests) functional
+- [ ] DPoP (Proof of Possession) working
+- [ ] Pairwise Subject Identifiers operational
+- [ ] Refresh Token Flow functional
+- [ ] Token Introspection & Revocation working
+- [ ] Form Post Response Mode working
+- [ ] <50ms p95 latency (edge)
 
 ### Phase 5: Certification ⏳
 - [ ] OpenID Certification obtained ✨

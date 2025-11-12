@@ -76,7 +76,7 @@ OpenID Connect conformance testing strategy and test plans.
 | **Phase 1: Foundation** | ✅ Complete | All Week 1-5 tasks completed |
 | **Phase 2: Core** | ✅ Complete | All OIDC endpoints functional (178 tests) |
 | **Phase 3: Testing** | ✅ Complete | 95.8% Phase 3 conformance (23/24 tests) |
-| **Phase 4: Extended** | ✅ Partially Complete | Core features done (DCR, Rate Limiting, Security) |
+| **Phase 4: Extended** | ⏳ In Progress | Core features complete, advanced features planned |
 | **Phase 5: Certification** | 📝 Planning Complete | Certification path defined |
 
 ---
@@ -87,7 +87,7 @@ OpenID Connect conformance testing strategy and test plans.
 Phase 1: Foundation          [Nov 10 - Dec 15, 2025]  ✅ Complete (Nov 2025)
 Phase 2: Core Implementation [Dec 16 - Jan 31, 2026]  ✅ Complete (Nov 2025)
 Phase 3: Testing & Validation [Feb 1 - Mar 15, 2026]   ✅ Complete (Nov 2025)
-Phase 4: Extended Features   [Mar 16 - Apr 30, 2026]  ✅ Partially Complete (Nov 2025)
+Phase 4: Extended Features   [Mar 16 - Apr 30, 2026]  ⏳ In Progress (partial)
 Phase 5: Certification Prep  [May 1 - May 31, 2026]   ⏳ Planned
 ```
 
@@ -103,7 +103,7 @@ Phase 5: Certification Prep  [May 1 - May 31, 2026]   ⏳ Planned
 | M1 | Foundation Complete | Nov 2025 | ✅ Complete |
 | M2 | OIDC Core Complete | Nov 2025 | ✅ Complete (178 tests) |
 | M3 | Conformance Suite Passing | Nov 2025 | ✅ Complete (95.8% Phase 3) |
-| M4 | Extended Features Complete | Nov 2025 | ✅ Partially Complete (DCR, Rate Limiting) |
+| M4 | Extended Features Complete | Apr 30, 2026 | ⏳ In Progress (DCR/Rate Limiting done, PAR/DPoP/Refresh Token pending) |
 | M5 | OpenID Certified™ | May 31, 2026 | ⏳ Planned (Goal: ≥95% conformance) |
 
 ---
