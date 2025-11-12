@@ -14,7 +14,11 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
 
   if (!introspection.valid) {
     // Token validation failed - return error
-    const error = introspection.error!;
+    // Type narrowing: when valid is false, error is guaranteed to be present
+    if (!introspection.error) {
+      return c.json({ error: 'server_error', error_description: 'Unknown error' }, 500);
+    }
+    const error = introspection.error;
     c.header('WWW-Authenticate', error.wwwAuthenticate);
     return c.json(
       {
@@ -26,7 +30,11 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Token is valid - extract claims
-  const tokenClaims = introspection.claims!;
+  // Type narrowing: when valid is true, claims is guaranteed to be present
+  if (!introspection.claims) {
+    return c.json({ error: 'server_error', error_description: 'Missing claims' }, 500);
+  }
+  const tokenClaims = introspection.claims;
   const sub = tokenClaims.sub as string;
   const scope = (tokenClaims.scope as string) || '';
   const claimsParam = (tokenClaims.claims as string) || undefined;
