@@ -17,6 +17,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     token_endpoint: `${issuer}/token`,
     userinfo_endpoint: `${issuer}/userinfo`,
     jwks_uri: `${issuer}/.well-known/jwks.json`,
+    registration_endpoint: `${issuer}/register`,
     response_types_supported: ['code'],
     response_modes_supported: ['query'],
     grant_types_supported: ['authorization_code'],
