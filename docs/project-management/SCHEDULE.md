@@ -15,14 +15,19 @@
 
 ---
 
-## Overall Timeline (6-Month Plan)
+## Overall Timeline (Extended Plan)
 
 ```
-Phase 1: Foundation          [Nov 10 - Dec 15, 2025]  (5 weeks)
-Phase 2: Core Implementation [Dec 16 - Jan 31, 2026]  (6 weeks)
-Phase 3: Testing & Validation [Feb 1 - Mar 15, 2026]   (6 weeks)
-Phase 4: Extended Features   [Mar 16 - Apr 30, 2026]  (6 weeks)
-Phase 5: Certification Prep  [May 1 - May 31, 2026]   (4 weeks)
+Phase 1: Foundation                    [Nov 10 - Dec 15, 2025]     (5 weeks)
+Phase 2: Core Implementation           [Dec 16 - Jan 31, 2026]     (6 weeks)
+Phase 3: Testing & Validation          [Feb 1 - Mar 15, 2026]      (6 weeks)
+Phase 4: Extended Features             [Mar 16 - Apr 30, 2026]     (6 weeks)
+Phase 5: UI/UX Implementation          [May 1 - May 31, 2026]      (4 weeks)
+Phase 6: CLI & Automation              [Jun 12 - Aug 10, 2026]     (9 weeks)
+Phase 7: Enterprise Features           [Aug 11 - Oct 31, 2026]     (11 weeks)
+Phase 8: Verifiable Credentials        [Nov 3, 2026 - Jan 31, 2027] (13 weeks)
+Phase 9: White-Label & SaaS            [Feb 1, 2027 onwards]       (ongoing)
+Phase 10: Certification & Production   [Final Phase]               (4 weeks)
 ```
 
 ---
@@ -109,22 +114,23 @@ Phase 5: Certification Prep  [May 1 - May 31, 2026]   (4 weeks)
 
 ---
 
-### 🏁 Milestone 5: OpenID Certification Obtained
+### 🏁 Milestone 5: UI/UX Implementation Complete
 **Due Date**: May 31, 2026
-**Objective**: Officially obtain OpenID Certified™ Basic OP Profile certification
+**Objective**: Complete user interface and experience implementation
 
 **Deliverables**:
-- ✅ Production environment deployment (`https://id.hibana.dev`)
-- ✅ Certification application documentation
-- ✅ Submission to OpenID Foundation
-- ✅ Official certification obtained
-- ✅ Certified™ mark displayed
-- ✅ Release notes & announcement
+- [ ] Login/Registration screens implemented
+- [ ] OAuth consent screen functional
+- [ ] Admin dashboard created
+- [ ] User management UI complete
+- [ ] Client management UI complete
+- [ ] Data storage abstraction layer ready
 
 **Completion Criteria**:
-- OpenID Foundation certification process complete
-- Official Certified™ mark obtained
-- Public release ready
+- All authentication UI flows functional
+- Admin dashboard operational
+- Mobile-responsive design verified
+- WCAG 2.1 AA compliance achieved
 
 ---
 
@@ -183,14 +189,41 @@ Phase 5: Certification Prep  [May 1 - May 31, 2026]   (4 weeks)
 
 ---
 
-### Phase 5: Certification Preparation (May 1 - May 31, 2026)
+### Phase 5: UI/UX Implementation (May 1 - May 31, 2026)
 
 | Week | Tasks | Owner | Status |
 |:-----|:------|:------|:-------|
-| Week 26 (5/1-5/7) | Production environment setup, domain configuration | Dev | ⏳ Pending |
-| Week 27 (5/8-5/14) | Production deployment, final verification | Dev | ⏳ Pending |
-| Week 28 (5/15-5/21) | Certification application preparation, OpenID Foundation submission | Dev | ⏳ Pending |
-| Week 29 (5/22-5/31) | Certification approval waiting, release preparation, M5 achievement | Dev | ⏳ Pending |
+| Week 26 (5/1-5/7) | Login screen, user registration, consent screen implementation | Dev | ⏳ Pending |
+| Week 27 (5/8-5/14) | Session management UI, frontend stack setup | Dev | ⏳ Pending |
+| Week 28 (5/15-5/21) | Admin dashboard overview, user management UI | Dev | ⏳ Pending |
+| Week 29 (5/22-5/28) | Client management, settings & customization UI | Dev | ⏳ Pending |
+| Week 30 (5/29-5/31) | Data storage abstraction layer, M5 review | Dev | ⏳ Pending |
+
+---
+
+### Phase 6: CLI & Automation (Jun 12 - Aug 10, 2026)
+
+| Week | Tasks | Owner | Status |
+|:-----|:------|:------|:-------|
+| Week 32 (6/12-6/18) | CLI tool development, create-hibana package setup | Dev | ⏳ Pending |
+| Week 33 (6/19-6/25) | Project scaffolding, interactive setup wizard | Dev | ⏳ Pending |
+| Week 34 (6/26-7/2) | Cloudflare API integration, Worker deployment API | Dev | ⏳ Pending |
+| Week 35 (7/3-7/9) | KV/D1/DO management, DNS & custom domain setup | Dev | ⏳ Pending |
+| Week 36 (7/10-7/16) | Setup automation wizard, health checks | Dev | ⏳ Pending |
+| Week 37 (7/17-7/23) | Integration examples, environment management | Dev | ⏳ Pending |
+| Week 38 (7/24-7/30) | Production readiness, error handling | Dev | ⏳ Pending |
+| Week 39 (7/31-8/10) | Performance optimization, security hardening, NPM publishing | Dev | ⏳ Pending |
+
+---
+
+### Phase 10: Certification & Production Launch (Final Phase)
+
+| Week | Tasks | Owner | Status |
+|:-----|:------|:------|:-------|
+| Week N (TBD) | Production environment setup, domain configuration | Dev | ⏳ Pending |
+| Week N+1 (TBD) | Production deployment, final verification | Dev | ⏳ Pending |
+| Week N+2 (TBD) | Certification application preparation, OpenID Foundation submission | Dev | ⏳ Pending |
+| Week N+3 (TBD) | Certification approval waiting, release preparation, official launch | Dev | ⏳ Pending |
 
 ---
 
@@ -203,7 +236,11 @@ Phase 5: Certification Prep  [May 1 - May 31, 2026]   (4 weeks)
 | 2026-01-31 | M2: Core Features Complete |
 | 2026-03-15 | M3: Conformance Suite Passed |
 | 2026-04-30 | M4: Extended Features Complete |
-| 2026-05-31 | M5: OpenID Certification Obtained |
+| 2026-05-31 | M5: UI/UX Implementation Complete |
+| 2026-08-10 | M6: CLI & Automation Complete |
+| 2026-10-31 | M7: Enterprise Features Complete |
+| 2027-01-31 | M8: Verifiable Credentials Complete |
+| TBD | M10: OpenID Certification Obtained & Production Launch |
 
 ---
 

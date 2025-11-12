@@ -12,15 +12,15 @@
 2025                 2026                                    2027
 Nov  Dec  Jan  Feb  Mar  Apr  May  Jun  Jul  Aug  Sep  Oct  Nov  Dec  Jan  Feb  Mar+
 │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
-├─P1─┼─P2─┼─P3─┼────┼─P4─┼─P5─┼──────P6──────┼───P7───┼──────P8──────┼──────P9──────┼P10
+├─P1─┼─P2─┼─P3─┼────┼─P4─┼─P5─┼───P6────┼────P7────┼─────P8─────┼─────P9─────┼─P10
 │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
-✅   ✅   ✅   ✅   ⏳   ⏳   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🌐
+✅   ✅   ✅   ✅   ⏳   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🎓
 
 Legend:
 ✅ Complete
-⏳ Planned (Security & Certification)
-🆕 New (Passwordless, Enterprise, Next-Gen)
-🌐 Future (SaaS Platform)
+⏳ In Progress (Extended Features)
+🆕 New (UI/UX, CLI, Enterprise, Next-Gen, SaaS)
+🎓 Final (Certification & Production Launch)
 ```
 
 ---
@@ -33,12 +33,12 @@ Legend:
 | **M2: Core API** | 2026-01-31 | ✅ Complete | All OIDC endpoints functional |
 | **M3: Conformance** | 2026-03-15 | ✅ Complete | OpenID Conformance Suite (95.8% Phase 3) |
 | **M4: Extensions** | 2026-04-30 | ⏳ In Progress | DCR/Rate Limiting complete, PAR/DPoP/Refresh Token planned |
-| **M5: Certification** | 2026-05-31 | ⏳ Planned | OpenID Certification + JARM, MTLS |
-| **M6: Passwordless** | 2026-07-31 | 🆕 Planned | WebAuthn, Magic Link, ACR/AMR |
-| **M7: CLI & Deploy** | 2026-08-31 | 🆕 Planned | One-command deployment |
-| **M8: Enterprise** | 2026-11-30 | 🆕 Planned | Hybrid, Device, CIBA, Social Login |
-| **M9: Next-Gen** | 2027-02-28 | 🆕 Planned | Verifiable Credentials, OAuth 2.1 |
-| **M10: SaaS** | 2027+ | 🌐 Future | Multi-tenant platform |
+| **M5: UI/UX** | 2026-05-31 | 🆕 Planned | Login/Registration, Admin Dashboard, User Database |
+| **M6: CLI & Deploy** | 2026-08-10 | 🆕 Planned | One-command deployment |
+| **M7: Enterprise** | 2026-10-31 | 🆕 Planned | Hybrid, Device, CIBA, Social Login |
+| **M8: Next-Gen** | 2027-01-31 | 🆕 Planned | Verifiable Credentials, OAuth 2.1 |
+| **M9: SaaS** | 2027+ | 🌐 Future | Multi-tenant platform |
+| **M10: Certification** | TBD | 🎓 Final | OpenID Certification & Production Launch |
 
 ---
 
@@ -363,119 +363,62 @@ Legend:
 
 ---
 
-## Phase 5: Certification & Enterprise Security ⏳
+## Phase 5: UI/UX Implementation 🆕
 
 **Timeline:** May 1-31, 2026 (4 weeks)
-
-**Goal:** Obtain official OpenID certification + enterprise-grade security
-
-**Priority:** 認証取得に有利、エンタープライズで高評価
-
-### Week 26: Advanced Security Protocols
-
-#### JARM (JWT Secured Authorization Response Mode) - JARM Spec
-- [ ] `response_mode=jwt` support
-- [ ] `response_mode=query.jwt` support
-- [ ] `response_mode=fragment.jwt` support
-- [ ] `response_mode=form_post.jwt` support
-- [ ] Authorization response JWT signing
-- [ ] Tests & conformance validation
-- **Why:** OpenID認証で高評価、レスポンス改ざん防止
-
-#### MTLS (Mutual TLS Client Authentication) - RFC 8705
-- [ ] MTLS client certificate validation
-- [ ] Certificate-bound access tokens
-- [ ] `tls_client_auth` method support
-- [ ] `self_signed_tls_client_auth` support
-- [ ] Certificate thumbprint validation
-- [ ] Tests & conformance validation
-- **Why:** エンタープライズ必須、最高レベルのセキュリティ、金融業界標準
-
-#### JAR (JWT-Secured Authorization Request) - RFC 9101
-- [ ] `request` parameter support (JWT)
-- [ ] `request_uri` parameter support
-- [ ] Request object validation
-- [ ] Request object encryption (JWE)
-- [ ] Tests & conformance validation
-- **Why:** セキュリティ強化、リクエスト改ざん防止、OpenID認証で必須
-
-### Week 27: Client Credentials & Production Deployment
-
-#### Client Credentials Flow - RFC 6749 Section 4.4
-- [ ] `grant_type=client_credentials` support
-- [ ] Client authentication (client_secret_basic)
-- [ ] Client authentication (client_secret_post)
-- [ ] Client authentication (private_key_jwt)
-- [ ] Machine-to-machine token issuance
-- [ ] Scope-based access control
-- [ ] Tests & conformance validation
-- **Why:** 基本フロー、サーバー間認証で必須、メジャーな実装
-
-#### Production Deployment
-- [ ] Production Cloudflare account setup
-- [ ] Custom domain configuration (`id.hibana.dev`)
-- [ ] DNS records setup
-- [ ] SSL/TLS configuration (with MTLS support)
-- [ ] Production secrets generation
-- [ ] Production deployment
-- [ ] External client testing
-- [ ] Load testing & performance validation
-
-### Week 28: Certification Submission
-
-#### Pre-Submission Testing
-- [ ] Full conformance suite run (all tests)
-- [ ] PAR, DPoP, JARM, MTLS validation
-- [ ] Security audit (external)
-- [ ] Performance benchmarks
-- [ ] Documentation review
-
-#### Submission Process
-- [ ] Application preparation
-- [ ] Architecture documentation
-- [ ] Test results compilation (all phases)
-- [ ] Feature list documentation
-- [ ] Security assessment report
-- [ ] Submission to OpenID Foundation
-- [ ] Access provision for testing
-
-### Week 29: Final Preparation & Release
-
-#### Certification Review
-- [ ] Certification review feedback
-- [ ] Final adjustments (if needed)
-- [ ] Re-testing (if needed)
-- [ ] Certification approval
-
-#### Release Preparation
-- [ ] Release notes preparation
-- [ ] API documentation finalization
-- [ ] Migration guide (from Auth0/Keycloak)
-- [ ] Video tutorials
-- [ ] Blog post & announcement
-- [ ] Press kit preparation
-
-**Deliverables:**
-- [ ] JARM (JWT Secured Authorization Response) functional
-- [ ] MTLS (Mutual TLS) implemented
-- [ ] JAR (JWT-Secured Authorization Request) operational
-- [ ] Client Credentials Flow working
-- [ ] Production deployment live
-- [ ] OpenID Certification obtained ✨
-- [ ] Public announcement ready
-- [ ] Migration guides published
-
----
-
-## Phase 6: Passwordless Auth & Modern UX 🆕
-
-**Timeline:** Jun 1-30, 2026 (4 weeks)
 
 **Goal:** 最高のパスワードレス体験 + Auth0/Clerkを超えるUX
 
 **Priority:** Auth0/Clerkより優位、エッジが立つもの、現代的なUX
 
-### Week 30: Passwordless Authentication (FIDO2 + Magic Link)
+### Week 26-27: Authentication UI (May 1-14)
+
+*(Content from old Phase 6 - see TASKS.md for full details)*
+
+**Key Features:**
+- [ ] Passwordless Login Screen (Passkey + Magic Link)
+- [ ] User Registration with WebAuthn
+- [ ] OAuth Consent Screen
+- [ ] Session Management UI
+- [ ] Frontend Stack Setup (Svelte/SvelteKit or Solid.js + TailwindCSS)
+
+### Week 28-29: Admin Dashboard (May 15-28)
+
+**Key Features:**
+- [ ] Dashboard Overview (statistics, charts, activity feed)
+- [ ] User Management (list, search, CRUD operations)
+- [ ] Client Management (OAuth client CRUD, branding)
+- [ ] Settings & Customization (branding, password policy, token TTL)
+- [ ] Admin Dashboard Tech Stack (React/Svelte + shadcn/ui)
+
+### Week 30-31: Data Storage & Authentication (May 29 - Jun 11)
+
+**Key Features:**
+- [ ] Storage Abstraction Layer (KV, D1, Durable Objects adapters)
+- [ ] WebAuthn/Passkey Implementation (FIDO2)
+- [ ] Magic Link/OTP Authentication
+- [ ] User Database Implementation (D1 schema)
+- [ ] Session Management & Logout (RP-Initiated, Front/Back-Channel)
+
+**Deliverables:**
+- [ ] 🎯 **WebAuthn/Passkey fully functional** (目玉機能)
+- [ ] 🎯 **Magic Link authentication working**
+- [ ] Fully functional login/registration UI (beautiful, passwordless)
+- [ ] Complete admin dashboard (with user/client management)
+- [ ] Multi-storage backend support (KV, D1, DO)
+- [ ] Responsive, accessible interfaces (WCAG 2.1 AA)
+
+---
+
+## Phase 6: CLI & Automation 🆕
+
+**Timeline:** Jun 12 - Aug 10, 2026 (9 weeks)
+
+**Goal:** One-command deployment and management
+
+*(Content from old Phase 7 - see TASKS.md for full details)*
+
+### Week 32-33: CLI Tool Development (Jun 12-25)
 
 #### WebAuthn / Passkey (FIDO2) - W3C WebAuthn Level 2
 - [ ] WebAuthn registration flow
@@ -731,13 +674,19 @@ Legend:
 
 ---
 
-## Phase 7: CLI & Automation 🆕
+*(See TASKS.md Phase 6 for full CLI implementation details)*
 
-**Timeline:** Jul 1 - Aug 31, 2026 (8 weeks)
+---
 
-**Goal:** One-command deployment and management
+## Phase 7: Enterprise Flows & Advanced Features 🏢
 
-### Week 32-33: CLI Tool Development
+**Timeline:** Aug 11 - Oct 31, 2026 (11 weeks)
+
+**Goal:** エンタープライズフロー + 高度な認証機能
+
+*(Content from old Phase 8 - see TASKS.md for full details)*
+
+### Week 40-42: Advanced OAuth Flows (Aug 11-31)
 
 #### `create-hibana` Package
 - [ ] NPM package setup
@@ -886,15 +835,19 @@ Legend:
 
 ---
 
-## Phase 8: Enterprise Flows & Advanced Features 🏢
+*(See TASKS.md Phase 7 for full Enterprise implementation details)*
 
-**Timeline:** Sep - Nov 2026 (12 weeks)
+---
 
-**Goal:** エンタープライズフロー + 高度な認証機能
+## Phase 8: Verifiable Credentials & Next-Gen 🚀
 
-**Priority:** エンタープライズニーズ、メジャーな実装
+**Timeline:** Nov 3, 2026 - Jan 31, 2027 (13 weeks)
 
-### Week 40-42: Advanced OAuth Flows
+**Goal:** 分散ID + 次世代プロトコル
+
+*(Content from old Phase 9 - see TASKS.md for full details)*
+
+### Week 52-54: OpenID for Verifiable Credentials (Nov 3-23)
 
 #### Hybrid Flow - OIDC Core 3.3
 - [ ] `response_type=code id_token` support
@@ -1030,15 +983,19 @@ Legend:
 
 ---
 
-## Phase 9: Verifiable Credentials & Next-Gen 🚀
+*(See TASKS.md Phase 8 for full Next-Gen implementation details)*
 
-**Timeline:** Dec 2026 - Feb 2027 (12 weeks)
+---
 
-**Goal:** 分散ID + 次世代プロトコル
+## Phase 9: White-Label & SaaS Platform 🌐
 
-**Priority:** 先進的、エッジが立つ、将来性
+**Timeline:** Feb 1, 2027 onwards
 
-### Week 52-54: OpenID for Verifiable Credentials
+**Goal:** Multi-tenant SaaS platform + marketplace
+
+*(Content from old Phase 10 - see TASKS.md for full details)*
+
+### Week 64-67: Multi-Tenancy Foundation (Feb 1-28)
 
 #### OpenID4VP (Verifiable Presentations) - OpenID4VP Spec
 - [ ] Presentation request endpoint
@@ -1165,11 +1122,59 @@ Legend:
 
 ---
 
-## Phase 10: White-Label & SaaS Platform 🌐
+*(See TASKS.md Phase 9 for full SaaS platform details)*
 
-**Timeline:** Mar 2027 onwards
+---
 
-**Goal:** Multi-tenant SaaS platform + marketplace
+## Phase 10: Certification & Production Launch 🎓
+
+**Timeline:** Final Phase (TBD)
+
+**Goal:** Obtain official OpenID certification + production deployment
+
+**Priority:** 認証取得、本番公開、完成
+
+### Production Deployment
+
+- [ ] Production Cloudflare account setup
+- [ ] Custom domain configuration (`id.hibana.dev`)
+- [ ] DNS records & SSL/TLS configuration
+- [ ] Production secrets generation
+- [ ] Production deployment & verification
+
+### OpenID Certification Submission
+
+- [ ] Pre-submission testing (full conformance suite)
+- [ ] Application preparation & documentation
+- [ ] Test results compilation
+- [ ] Submission to OpenID Foundation
+- [ ] Certification review & approval
+
+### Release Preparation
+
+- [ ] Release notes & changelog
+- [ ] API documentation finalization
+- [ ] Migration guides (from Auth0/Keycloak)
+- [ ] Video tutorials & blog post
+- [ ] Official announcement
+- [ ] OpenID Certified™ mark display
+
+**Deliverables:**
+- [ ] OpenID Certification obtained ✨
+- [ ] Production deployment live (`https://id.hibana.dev`)
+- [ ] Public announcement ready
+- [ ] Migration guides published
+- [ ] Celebrate! 🎉
+
+---
+
+*(Content moved from old Phase 5 - Certification moved to final phase)*
+
+---
+
+## Previous Phase 10: White-Label & SaaS Platform 🌐 (Now Phase 9)
+
+*(See Phase 9 above for current SaaS platform timeline)*
 
 ### Multi-Tenancy
 - [ ] Tenant isolation (data, config, branding)
@@ -1345,10 +1350,11 @@ Add:
 | 2025-11-12 | Phase 10 created | SaaS Platform: Multi-tenancy, Billing, Marketplace |
 | 2025-11-12 | Timeline extended | Now covers Nov 2025 - Mar 2027+ (16+ months → 2+ years) |
 | 2025-11-12 | Success metrics updated | Added ambitious goals for each phase |
+| 2025-11-12 | **🔄 PHASE REORDERING** | Phase 5→10, Phases 6-9 shifted up: UI/UX now P5, CLI now P6, Enterprise now P7, VC now P8, SaaS now P9, Certification moved to final P10 |
 
 ---
 
-> **Last Update:** 2025-11-12 (Phase 3 COMPLETE ✅ + MAJOR ROADMAP UPDATE 🚀)
+> **Last Update:** 2025-11-12 (Phase 3 COMPLETE ✅ + PHASE REORDERING 🔄)
 > **Next Update:** 2026-04-30 (Post Phase 4)
 >
 > 💥 **Hibana** - Building the future of identity infrastructure, one phase at a time.
