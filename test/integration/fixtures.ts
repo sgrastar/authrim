@@ -6,6 +6,7 @@
  */
 
 import type { Env } from '../../src/types/env';
+import { generateSecureRandomString } from '../../src/utils/crypto';
 
 /**
  * Mock client configuration
@@ -78,7 +79,7 @@ export const testUsers: Record<string, MockUser> = {
 export async function createMockEnv(): Promise<Env> {
   // Generate a test key pair with unique key ID for each test
   // This prevents key caching issues in the userinfo handler
-  const uniqueKeyId = `test-key-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  const uniqueKeyId = `test-key-${Date.now()}-${generateSecureRandomString(8)}`;
   const { generateKeySet } = await import('../../src/utils/keys');
   const keySet = await generateKeySet(uniqueKeyId, 2048);
 
@@ -137,16 +138,18 @@ export async function createMockEnv(): Promise<Env> {
 
 /**
  * Generate random state parameter
+ * Uses cryptographically secure random generation
  */
 export function generateState(): string {
-  return `state-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+  return `state-${Date.now()}-${generateSecureRandomString(12)}`;
 }
 
 /**
  * Generate random nonce parameter
+ * Uses cryptographically secure random generation
  */
 export function generateNonce(): string {
-  return `nonce-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+  return `nonce-${Date.now()}-${generateSecureRandomString(12)}`;
 }
 
 /**
