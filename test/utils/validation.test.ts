@@ -240,8 +240,16 @@ describe('Validation Utilities', () => {
   });
 
   describe('validateAuthCode', () => {
-    it('should accept valid UUID v4 code', () => {
-      const result = validateAuthCode('550e8400-e29b-41d4-a716-446655440000');
+    it('should accept valid base64url code with 128+ characters', () => {
+      // Generate a 128-character base64url string
+      const validCode = 'a'.repeat(128);
+      const result = validateAuthCode(validCode);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept base64url code with hyphens and underscores', () => {
+      const validCode = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'.repeat(2) + 'a'.repeat(4);
+      const result = validateAuthCode(validCode);
       expect(result.valid).toBe(true);
     });
 
@@ -257,16 +265,22 @@ describe('Validation Utilities', () => {
       expect(result.error).toContain('empty');
     });
 
-    it('should reject invalid UUID format', () => {
-      const result = validateAuthCode('not-a-uuid');
+    it('should reject code with invalid characters', () => {
+      const result = validateAuthCode('a'.repeat(120) + 'invalid+/=');
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('invalid');
+      expect(result.error).toContain('base64url');
     });
 
-    it('should reject UUID v1 format', () => {
-      const result = validateAuthCode('550e8400-e29b-11d4-a716-446655440000');
+    it('should reject code that is too short', () => {
+      const result = validateAuthCode('abcdefg'); // Less than 128 characters
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('invalid');
+      expect(result.error).toContain('too short');
+    });
+
+    it('should reject code that is too long', () => {
+      const result = validateAuthCode('a'.repeat(513)); // More than 512 characters
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('too long');
     });
   });
 
