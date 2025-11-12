@@ -135,7 +135,9 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       throw new OIDCError(ERROR_CODES.INVALID_CLIENT, 'Client not found');
     }
 
-    const clientData = JSON.parse(client);
+    const clientData = JSON.parse(client) as {
+      redirect_uris: string[];
+    };
 
     // Validate redirect_uri against registered URIs
     const redirectValidation = validateRedirectUri(params.redirect_uri);
