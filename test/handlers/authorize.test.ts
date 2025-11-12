@@ -72,11 +72,10 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.has('code')).toBe(true);
       expect(redirectUrl.searchParams.get('state')).toBe('test-state');
 
-      // Verify authorization code format (UUID v4)
+      // Verify authorization code format (base64url, minimum 128 characters)
       const code = redirectUrl.searchParams.get('code');
-      expect(code).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-      );
+      expect(code).toMatch(/^[A-Za-z0-9_-]+$/); // base64url format
+      expect(code!.length).toBeGreaterThanOrEqual(128); // minimum 128 characters
     });
 
     it('should redirect without state when state is not provided', async () => {

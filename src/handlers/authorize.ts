@@ -10,6 +10,7 @@ import {
 } from '../utils/validation';
 import { storeAuthCode } from '../utils/kv';
 import type { AuthCodeData } from '../utils/kv';
+import { generateSecureRandomString } from '../utils/crypto';
 
 /**
  * Authorization Endpoint Handler
@@ -292,8 +293,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
-  // Generate authorization code (UUID v4 for cryptographic security)
-  const code = crypto.randomUUID();
+  // Generate authorization code (cryptographically secure random string, base64url format, ~128 characters)
+  // Using 96 bytes results in approximately 128 characters in base64url encoding
+  const code = generateSecureRandomString(96);
 
   // For MVP, use a static subject (user identifier)
   // In a real implementation, this would come from user authentication
