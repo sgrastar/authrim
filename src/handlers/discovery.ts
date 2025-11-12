@@ -18,13 +18,17 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     userinfo_endpoint: `${issuer}/userinfo`,
     jwks_uri: `${issuer}/.well-known/jwks.json`,
     registration_endpoint: `${issuer}/register`,
+    // RFC 7662: Token Introspection endpoint
+    introspection_endpoint: `${issuer}/introspect`,
+    // RFC 7009: Token Revocation endpoint
+    revocation_endpoint: `${issuer}/revoke`,
     // RFC 9126: PAR endpoint
     pushed_authorization_request_endpoint: `${issuer}/as/par`,
     // RFC 9126: PAR is optional (not required)
     require_pushed_authorization_requests: false,
     response_types_supported: ['code'],
     response_modes_supported: ['query'],
-    grant_types_supported: ['authorization_code'],
+    grant_types_supported: ['authorization_code', 'refresh_token'],
     id_token_signing_alg_values_supported: ['RS256'],
     subject_types_supported: ['public'],
     scopes_supported: ['openid', 'profile', 'email', 'address', 'phone'],

@@ -217,3 +217,48 @@ export async function calculateCHash(
   // Same calculation as at_hash
   return calculateAtHash(code, algorithm);
 }
+
+/**
+ * Refresh Token claims interface
+ */
+export interface RefreshTokenClaims extends JWTPayload {
+  iss: string; // Issuer
+  sub: string; // Subject (user identifier)
+  aud: string; // Audience (client_id)
+  exp: number; // Expiration time
+  iat: number; // Issued at time
+  jti: string; // JWT ID (unique token identifier)
+  scope: string; // Granted scopes
+  client_id: string; // Client identifier
+}
+
+/**
+ * Create Refresh Token (signed JWT)
+ * https://tools.ietf.org/html/rfc6749#section-6
+ *
+ * @param claims - Refresh token claims
+ * @param privateKey - Private key for signing
+ * @param kid - Key ID
+ * @param expiresIn - Token expiration time in seconds (default: 2592000 = 30 days)
+ * @returns Promise<{ token: string; jti: string }> - Signed JWT and its unique identifier
+ */
+export async function createRefreshToken(
+  claims: Omit<RefreshTokenClaims, 'iat' | 'exp' | 'jti'>,
+  privateKey: KeyLike,
+  kid: string,
+  expiresIn: number = 2592000
+): Promise<{ token: string; jti: string }> {
+  const now = Math.floor(Date.now() / 1000);
+  const jti = crypto.randomUUID(); // Generate unique token identifier
+
+  const token = await new SignJWT({
+    ...claims,
+    iat: now,
+    exp: now + expiresIn,
+    jti,
+  })
+    .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+    .sign(privateKey);
+
+  return { token, jti };
+}

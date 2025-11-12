@@ -276,7 +276,7 @@ export function validateNonce(nonce: string | undefined): ValidationResult {
 
 /**
  * Grant type validation
- * Must be 'authorization_code' for authorization code flow
+ * Supports 'authorization_code' and 'refresh_token' grant types
  *
  * @param grantType - Grant type to validate
  * @returns ValidationResult
@@ -296,7 +296,7 @@ export function validateGrantType(grantType: string | undefined): ValidationResu
     };
   }
 
-  const supportedGrantTypes = ['authorization_code'];
+  const supportedGrantTypes = ['authorization_code', 'refresh_token'];
 
   if (!supportedGrantTypes.includes(grantType)) {
     return {
