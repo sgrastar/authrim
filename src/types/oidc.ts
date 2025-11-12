@@ -211,3 +211,53 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   created_at: number;
   updated_at: number;
 }
+
+/**
+ * Refresh Token Metadata
+ * Stored in KV for refresh token management
+ */
+export interface RefreshTokenData {
+  jti: string; // Unique token ID
+  client_id: string;
+  sub: string; // Subject (user identifier)
+  scope: string;
+  iat: number; // Issued at timestamp
+  exp: number; // Expiration timestamp
+}
+
+/**
+ * Token Introspection Request
+ * https://tools.ietf.org/html/rfc7662#section-2.1
+ */
+export interface IntrospectionRequest {
+  token: string;
+  token_type_hint?: 'access_token' | 'refresh_token';
+}
+
+/**
+ * Token Introspection Response
+ * https://tools.ietf.org/html/rfc7662#section-2.2
+ */
+export interface IntrospectionResponse {
+  active: boolean;
+  scope?: string;
+  client_id?: string;
+  username?: string;
+  token_type?: string;
+  exp?: number;
+  iat?: number;
+  nbf?: number;
+  sub?: string;
+  aud?: string;
+  iss?: string;
+  jti?: string;
+}
+
+/**
+ * Token Revocation Request
+ * https://tools.ietf.org/html/rfc7009#section-2.1
+ */
+export interface RevocationRequest {
+  token: string;
+  token_type_hint?: 'access_token' | 'refresh_token';
+}
