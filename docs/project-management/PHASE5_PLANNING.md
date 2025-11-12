@@ -152,6 +152,20 @@ Phase 5では、Hibanaに以下の機能を実装します：
   - `DELETE /admin/clients/:id` - クライアント削除
   - `GET /admin/stats` - 統計情報
 
+  **ITP対応 クロスドメインSSO（2025-11-12追加）**
+  - `POST /auth/session/token` - 短命トークン発行（5分TTL、1回限り使用）
+  - `POST /auth/session/verify` - 短命トークン検証 & RPセッション確立
+  - `GET /session/status` - IdPセッション有効性確認（iframe check_session_iframe代替）
+  - `POST /session/refresh` - セッション延命（Active TTL型セッション）
+
+  **Logout機能（2025-11-12追加）**
+  - `GET /logout` - Front-channel Logout（ブラウザ→OP）
+  - `POST /logout/backchannel` - Back-channel Logout（OP→RP、RFC推奨）
+
+  **管理者セッション管理（2025-11-12追加）**
+  - `GET /admin/sessions` - セッション一覧（User/Device別）
+  - `POST /admin/sessions/:id/revoke` - 個別セッション強制ログアウト
+
 - コメント：ユーザー検索とかは？
   - **回答**: 以下のエンドポイントを追加
     - `GET /admin/users?q={query}&filter={status}&sort={field}&page={n}&limit={limit}`
@@ -170,6 +184,22 @@ Phase 5では、Hibanaに以下の機能を実装します：
     - `identity_providers`テーブル（SAML/LDAP設定格納）
     - `users.identity_provider_id`カラム（外部認証との紐付け）
     - Phase 7でSAML/LDAP実装予定
+
+- [ ] **トークン交換系API（検討中・2025-11-12追加）**
+  - **現在の実装状況**:
+    - `POST /token` (grant_type=authorization_code) ✅ 実装済み
+    - `POST /token` (grant_type=refresh_token) ✅ 実装済み
+  - **将来検討すべきトークン交換メカニズム**:
+    - **RFC 8693 Token Exchange** - 標準的なトークン交換プロトコル（最も柔軟）
+      - セッショントークン → アクセストークン（ITP対応SSO用）
+      - アクセストークン → アクセストークン（スコープ変更）
+      - IDトークン → アクセストークン（トークン変換）
+      - Delegation、Impersonation対応
+    - **専用セッション交換API** - ITP対応SSO特化のシンプルなAPI
+      - `POST /auth/session/exchange` - セッショントークンをアクセストークンに交換
+    - **Hybrid アプローチ** - RFC 8693（汎用）+ 専用API（使いやすさ）の両方をサポート
+  - **決定**: Phase 5実装時に要件を整理して最終決定
+  - **メモ**: 上記の `/auth/session/token` と `/auth/session/verify` は Token Exchange の一形態として実装可能
 
 #### 2.3 セッション管理
 - [ ] **実装方式の選定**
@@ -1077,6 +1107,24 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 - ✅ **カスタムフィールド**: Hybrid（専用テーブル + JSON）
 - ✅ **RBAC**: roles + user_roles テーブル
 - ✅ **スコープマッピング**: scope_mappings テーブル
+
+### API追加（2025-11-12）
+- 📝 **ITP対応SSO API**（4個）
+  - `POST /auth/session/token` - 短命トークン発行
+  - `POST /auth/session/verify` - 短命トークン検証
+  - `GET /session/status` - セッション有効性確認
+  - `POST /session/refresh` - セッション延命
+- 📝 **Logout API**（2個）
+  - `GET /logout` - Front-channel Logout
+  - `POST /logout/backchannel` - Back-channel Logout
+- 📝 **管理者セッション管理 API**（2個）
+  - `GET /admin/sessions` - セッション一覧
+  - `POST /admin/sessions/:id/revoke` - セッション無効化
+- 🔄 **トークン交換系 API**（検討中）
+  - RFC 8693 Token Exchange（標準、最も柔軟）
+  - 専用セッション交換API（シンプル、ITP対応SSO特化）
+  - Hybrid アプローチ（両方サポート）
+  - 決定: Phase 5実装時に要件整理
 
 ### データベーススキーマ
 - ✅ Users (with custom_attributes_json, parent_user_id)
