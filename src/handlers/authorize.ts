@@ -127,7 +127,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Validate claims parameter (optional, per OIDC Core 5.5)
   if (claims) {
     try {
-      const parsedClaims = JSON.parse(claims);
+      const parsedClaims: unknown = JSON.parse(claims);
 
       // Validate claims structure
       if (typeof parsedClaims !== 'object' || parsedClaims === null || Array.isArray(parsedClaims)) {
@@ -142,7 +142,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
       // Validate that claims object contains valid sections (userinfo and/or id_token)
       const validSections = ['userinfo', 'id_token'];
-      const claimsSections = Object.keys(parsedClaims);
+      const claimsSections = Object.keys(parsedClaims as Record<string, unknown>);
 
       if (claimsSections.length === 0) {
         return redirectWithError(
@@ -166,7 +166,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         }
 
         // Validate section contains an object
-        if (typeof parsedClaims[section] !== 'object' || parsedClaims[section] === null) {
+        const claimsObj = parsedClaims as Record<string, unknown>;
+        if (typeof claimsObj[section] !== 'object' || claimsObj[section] === null) {
           return redirectWithError(
             c,
             redirect_uri!,
@@ -176,7 +177,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           );
         }
       }
-    } catch (error) {
+    } catch {
       return redirectWithError(
         c,
         redirect_uri!,
