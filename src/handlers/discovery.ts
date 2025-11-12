@@ -27,7 +27,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // RFC 9126: PAR is optional (not required)
     require_pushed_authorization_requests: false,
     response_types_supported: ['code'],
-    response_modes_supported: ['query'],
+    response_modes_supported: ['query', 'form_post'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
     id_token_signing_alg_values_supported: ['RS256'],
     subject_types_supported: ['public'],
