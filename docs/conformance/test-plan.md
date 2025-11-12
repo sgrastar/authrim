@@ -33,7 +33,7 @@ It enables AI systems to:
 | `authorization-endpoint` | `/authorize` | ✅ Implemented | Returns `code` + `state` correctly to `redirect_uri`. |
 | `token-endpoint` | `/token` | ✅ Implemented | Exchanges `code` for `id_token` + `access_token`. |
 | `userinfo-endpoint` | `/userinfo` | ✅ Implemented | Returns valid JSON claims for Bearer token. |
-| `dynamic-client-registration` | `/register` | ⚙️ Planned | Accepts POST with metadata, returns client_id. |
+| `dynamic-client-registration` | `/register` | ✅ Implemented | Accepts POST with metadata, returns client_id (RFC 7591). |
 | `session-management` | `/check_session_iframe` | ❌ Not implemented | Out of scope for Basic OP. |
 
 ---

@@ -246,7 +246,7 @@ Hibana implements security best practices:
 - ✅ **Token expiration** - Configurable TTL
 - ✅ **HTTPS-only** - In production
 - ✅ **CSRF protection** - State parameter validation
-- ✅ **Rate limiting** - Planned (Phase 4)
+- ✅ **Rate limiting** - Implemented (Phase 4)
 
 **Responsible Disclosure:** security@hibana.dev
 
@@ -275,7 +275,7 @@ We welcome contributions! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guideline
 | **PKCE (RFC 7636)** | ✅ Implemented | [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636) |
 | **JWT (RFC 7519)** | ✅ Implemented | [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519) |
 | **JWK (RFC 7517)** | ✅ Implemented | [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517) |
-| **Dynamic Client Registration** | ⏳ Planned (Phase 4) | [Spec](https://openid.net/specs/openid-connect-registration-1_0.html) |
+| **Dynamic Client Registration (RFC 7591)** | ✅ Implemented | [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591) |
 | **Session Management** | ❌ Not planned | [Spec](https://openid.net/specs/openid-connect-session-1_0.html) |
 
 ---
@@ -286,7 +286,7 @@ We welcome contributions! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guideline
 
 **Testing:** OpenID Foundation Conformance Suite
 
-**Goal:** ≥85% conformance score by March 2026
+**Goal:** ≥95% conformance score (Phase 3: 95.8% achieved, Overall: 72.7%)
 
 ---
 
