@@ -65,6 +65,8 @@ Phase 5では、Hibanaに以下の機能を実装します：
 - [ ] **推奨**: Svelte + SvelteKit または Solid.js
   - 理由: 軽量、高速、モダン、エッジ最適化
 
+- コメント：Svelte + SvelteKitにします。Ver.5で。
+
 #### 1.2 CSSフレームワーク選定
 - [ ] **選択肢の比較**
   - **Tailwind CSS** - ユーティリティファースト、カスタマイズ容易
@@ -83,6 +85,8 @@ Phase 5では、Hibanaに以下の機能を実装します：
 - [ ] **推奨**: Tailwind CSS または UnoCSS
   - 理由: 実績、エコシステム、高速
 
+- コメント：UnoCSSにします
+
 #### 1.3 UIコンポーネントライブラリ
 - [ ] **選択肢の比較**
   - **shadcn/ui** (React) - コピペ型、カスタマイズ容易
@@ -100,6 +104,8 @@ Phase 5では、Hibanaに以下の機能を実装します：
 
 - [ ] **推奨**: Melt UI (Svelte) または Kobalte (Solid.js)
   - 理由: Headless、軽量、アクセシブル
+
+- コメント：Melt UIで。
 
 ### 2️⃣ バックエンドアーキテクチャ
 
@@ -126,6 +132,8 @@ Phase 5では、Hibanaに以下の機能を実装します：
 - [ ] **推奨**: Option C (Hybrid)
   - 理由: 最適なパフォーマンス、クリーンな分離
 
+- コメント：Option Cにします
+
 #### 2.2 API設計
 - [ ] **必要なエンドポイント追加**
   - `POST /auth/passkey/register` - Passkey登録開始
@@ -144,9 +152,13 @@ Phase 5では、Hibanaに以下の機能を実装します：
   - `DELETE /admin/clients/:id` - クライアント削除
   - `GET /admin/stats` - 統計情報
 
+- コメント：ユーザー検索とかは？
+
 - [ ] **認証方式**
   - 管理者API: Bearer Token（専用の管理者トークン）
   - セッション管理: Cookie + CSRF Token
+
+- コメント：良いとおもいますが、後々SAML/LDAP認証の余地を残して。
 
 #### 2.3 セッション管理
 - [ ] **実装方式の選定**
@@ -163,6 +175,8 @@ Phase 5では、Hibanaに以下の機能を実装します：
 
 - [ ] **推奨**: Option C (Hybrid)
   - 理由: セキュリティとパフォーマンスのバランス
+
+- コメント：異なるドメインでのSSOに対応できる形がいい。要検討
 
 ### 3️⃣ データストレージ設計
 
@@ -190,6 +204,8 @@ Phase 5では、Hibanaに以下の機能を実装します：
     - キー管理（既存のKeyManager）
     - Rate Limiting（既存実装）
     - アクティブセッション管理
+
+- コメント：まだ全然考えてないけど、AzureやAWSにも入れられるように抽象化はしてほしい。
 
 - [ ] **データモデル設計**
   - ER図作成
@@ -228,6 +244,8 @@ CREATE TABLE users (
 
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_created_at ON users(created_at);
+
+- コメント：管理者が好きなカラムを設置できるように。例えばバーコード番号など。あとアカウント間で親子関係が作れるようにしてほしい。
 
 -- Passkeys/WebAuthn Credentials Table
 CREATE TABLE passkeys (
@@ -299,6 +317,8 @@ CREATE INDEX idx_audit_log_created_at ON audit_log(created_at);
 CREATE INDEX idx_audit_log_action ON audit_log(action);
 ```
 
+- コメント：この辺のスキーマーは後から変更できるの？追加、削除、変更の制約を教えて。
+
 - [ ] **スキーマレビュー**
 - [ ] **マイグレーションスクリプト作成**
 - [ ] **シードデータ作成**
@@ -357,6 +377,8 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 - [ ] **推奨**: Option B (Resend or Postmark)
   - 理由: シンプル、信頼性、配信率高
 
+- コメント：基本Bでいいのですが、Option Aも使えるようにしてほしい。
+
 #### 4.3 OAuth同意画面フロー
 - [ ] **表示情報**
   - クライアント名・ロゴ
@@ -398,6 +420,8 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - モバイル（320px～）
   - タブレット（768px～）
   - デスクトップ（1024px～）
+
+- コメント：多言語対応か最初から実施。テンプレート的なものもいいけど、Auth0とかだと背景とかデザインとかの自由度が低いという話も聞く。自由にリンクや画像、動画、CSS,Javascriptなどが書ける環境にしたい。これは他の画面でも同様。モダンかつ自由度があるものは何か？要検討。reCapchaはCloudflareのやつを使いましょう。
 
 ##### Page 2: アカウント登録画面 (`/register`)
 - [ ] **デザイン要件**
@@ -453,6 +477,8 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - 同意/拒否処理
   - リダイレクト処理
 
+- コメント：利用規約やプライバシーポリシーの掲載ができるように。
+
 ##### Page 6: エラーページ (`/error`)
 - [ ] **デザイン要件**
   - エラーメッセージ
@@ -473,6 +499,8 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - 統計カード（ユーザー数、アクティブセッション数、今日のログイン数、クライアント数）
   - アクティビティフィード（最新のログイン、登録、エラー）
   - チャート（ログイン推移、ユーザー登録推移）
+
+- コメント：Just Ideaだけど、シムシティみたいなUIはどうかな？入り口と出口があり、どのようなパーツ（認証方式）を選ぶか、建物を設置する。RPやSAMLなど外部認証は港や空港で示す。どこを経由して、またはどこに任意で何かしらのアクションをするのか、建物をクリックすると詳細画面に。シムシティ2000みたいなUI.
 
 - [ ] **機能要件**
   - リアルタイム統計（または定期更新）
@@ -495,6 +523,8 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - ユーザー編集フォーム
   - ユーザー削除（確認ダイアログ）
   - 詳細表示（モーダル or 別ページ）
+
+- 外部からのデータインポート、ETL機能をつけたい。後でもいいけど。
 
 ##### Page 9: ユーザー詳細/編集 (`/admin/users/:id`)
 - [ ] **デザイン要件**
@@ -541,6 +571,8 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - Secret再生成
   - 削除処理
 
+- スコープはDB上の好きなスキーマを取得してclaimを作れるようにする。
+
 ##### Page 12: 設定 (`/admin/settings`)
 - [ ] **デザイン要件**
   - タブ（General, Appearance, Security, Email, Advanced）
@@ -554,6 +586,8 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - 設定保存（環境変数 or D1）
   - プレビュー機能（ログインページカスタマイズ）
   - テストメール送信
+
+- コメント：データはExportできるように。
 
 ##### Page 13: Audit Log (`/admin/audit-log`)
 - [ ] **デザイン要件**
@@ -585,6 +619,8 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
   ```
+
+- コメント：管理者のロールを設定できるようにして下さい。
 
 #### 6.2 管理者認証フロー
 - [ ] **認証方式**
@@ -628,6 +664,8 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - `/register` - 3 req/min per IP
   - `/auth/magic-link/send` - 3 req/15min per email
   - `/admin/*` - 100 req/min per session
+
+- コメント：これって誰の何を守るためのRate limitかな？
 
 ### 8️⃣ 国際化（i18n）対応
 
