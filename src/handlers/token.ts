@@ -149,6 +149,9 @@ async function handleAuthorizationCodeGrant(
     );
   }
 
+  // Type narrowing: code is guaranteed to be a string at this point
+  const validCode: string = code as string;
+
   // Validate client_id
   const clientIdValidation = validateClientId(client_id);
   if (!clientIdValidation.valid) {
@@ -175,7 +178,7 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Retrieve authorization code data from KV
-  const authCodeData = await getAuthCode(c.env, code!);
+  const authCodeData = await getAuthCode(c.env, validCode);
   if (!authCodeData) {
     return c.json(
       {
@@ -460,7 +463,7 @@ async function handleAuthorizationCodeGrant(
   // Per RFC 6749 Section 4.1.2: Authorization codes are single-use
   // We mark it as used instead of deleting to detect reuse attacks
   // NOTE: Only mark as used after successful token generation to allow retry on transient errors
-  await markAuthCodeAsUsed(c.env, code!, {
+  await markAuthCodeAsUsed(c.env, validCode, {
     ...authCodeData,
     jti: tokenJti,
   });
