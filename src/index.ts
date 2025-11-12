@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
-// import { cors } from 'hono/cors';
+import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import type { Env } from './types/env';
+import { rateLimitMiddleware, RateLimitProfiles } from './middleware/rate-limit';
 
 // Import handlers
 import { discoveryHandler } from './handlers/discovery';
@@ -10,6 +11,7 @@ import { jwksHandler } from './handlers/jwks';
 import { authorizeHandler } from './handlers/authorize';
 import { tokenHandler } from './handlers/token';
 import { userinfoHandler } from './handlers/userinfo';
+import { registerHandler } from './handlers/register';
 
 /**
  * Validates required environment variables at startup
@@ -90,10 +92,63 @@ app.use('*', async (c, next) => {
 
 // Middleware
 app.use('*', logger());
-app.use('*', secureHeaders());
 
-// CORS is disabled by default for security
-// app.use('*', cors());
+// Enhanced security headers
+app.use('*', secureHeaders({
+  contentSecurityPolicy: {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'", "'unsafe-inline'"],
+    styleSrc: ["'self'", "'unsafe-inline'"],
+    imgSrc: ["'self'", 'data:', 'https:'],
+    connectSrc: ["'self'"],
+    fontSrc: ["'self'"],
+    objectSrc: ["'none'"],
+    mediaSrc: ["'self'"],
+    frameSrc: ["'none'"],
+  },
+  strictTransportSecurity: 'max-age=63072000; includeSubDomains; preload',
+  xFrameOptions: 'DENY',
+  xContentTypeOptions: 'nosniff',
+  referrerPolicy: 'strict-origin-when-cross-origin',
+  permissionsPolicy: {
+    camera: [],
+    microphone: [],
+    geolocation: [],
+    payment: [],
+  },
+}));
+
+// CORS configuration (enabled for OIDC endpoints)
+app.use('*', cors({
+  origin: '*', // In production, configure specific allowed origins
+  allowMethods: ['GET', 'POST', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
+  maxAge: 86400, // 24 hours
+  credentials: true,
+}));
+
+// Rate limiting for sensitive endpoints
+app.use('/token', rateLimitMiddleware({
+  ...RateLimitProfiles.strict,
+  endpoints: ['/token'],
+}));
+
+app.use('/register', rateLimitMiddleware({
+  ...RateLimitProfiles.strict,
+  endpoints: ['/register'],
+}));
+
+app.use('/authorize', rateLimitMiddleware({
+  ...RateLimitProfiles.moderate,
+  endpoints: ['/authorize'],
+}));
+
+// Lenient rate limiting for public discovery endpoints
+app.use('/.well-known/*', rateLimitMiddleware({
+  ...RateLimitProfiles.lenient,
+  endpoints: ['/.well-known'],
+}));
 
 // Health check endpoint
 app.get('/health', (c) => {
@@ -121,6 +176,9 @@ app.post('/token', tokenHandler);
 // UserInfo endpoint
 app.get('/userinfo', userinfoHandler);
 app.post('/userinfo', userinfoHandler);
+
+// Dynamic Client Registration endpoint
+app.post('/register', registerHandler);
 
 // 404 handler
 app.notFound((c) => {

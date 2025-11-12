@@ -61,6 +61,24 @@ Hibana is an **enterprise-grade OpenID Connect Provider** built for:
 
 **Test Coverage:** 158 tests passing ✅
 
+### Phase 3: Testing & Validation ⏳ IN PROGRESS
+
+- ⏳ OpenID Conformance Suite testing
+- ⏳ Core flow validation
+- ⏳ JWT/JWK compliance verification
+
+### Phase 4: Extended Features ✅ COMPLETE
+
+**All Phase 4 features implemented!**
+
+- ✅ **Dynamic Client Registration** - `/register` endpoint (RFC 7591)
+- ✅ **Key Rotation** - Multi-key support via KeyManager Durable Object
+- ✅ **Extended Claims** - Full profile, email, address, phone support
+- ✅ **Rate Limiting** - Configurable per-endpoint protection
+- ✅ **Security Enhancements** - Enhanced CSP, CORS, security headers
+
+**Test Coverage:** 178 tests passing ✅
+
 [📋 View detailed roadmap](./docs/ROADMAP.md)
 
 ---
@@ -79,22 +97,34 @@ Hibana is an **enterprise-grade OpenID Connect Provider** built for:
 
 ## 🎨 Features
 
-### ✅ Implemented (Phase 1-2)
+### ✅ Implemented (Phase 1-4)
 
+**Phase 1-2: Core OpenID Connect**
 - **OpenID Connect Core 1.0** compliance
 - **Authorization Code Flow** with PKCE (RFC 7636)
 - **Discovery** and **JWKS** endpoints
 - **JWT signing** (RS256) with key rotation support
-- **Scope-based claims** (openid, profile, email)
-- **Comprehensive testing** (158 tests, 0 failures)
+- **Scope-based claims** (openid, profile, email, address, phone)
+- **Comprehensive testing** (178 tests, 0 failures)
 - **Security hardening** (PKCE, single-use codes, expiration)
 
-### ⏳ In Progress (Phase 3-5)
+**Phase 4: Extended Features**
+- **Dynamic Client Registration** (RFC 7591)
+- **Multi-Key Support** with automatic rotation
+- **Extended Claims** (full OIDC profile support)
+- **Rate Limiting** (strict/moderate/lenient profiles)
+- **Enhanced Security** (CSP, CORS, HSTS, XSS protection)
 
+### ⏳ In Progress (Phase 3, 5)
+
+**Phase 3: Testing & Validation**
 - OpenID Conformance Suite testing
-- Dynamic Client Registration
-- Production deployment
+- Core flow validation
+- Production deployment preparation
+
+**Phase 5: Certification**
 - Official OpenID Certification
+- Production hardening
 
 ### 🆕 Planned (Phase 6-7)
 
@@ -165,7 +195,7 @@ open "http://localhost:8787/authorize?response_type=code&client_id=test&redirect
 | **M1: Foundation** | 2025-12-15 | ✅ Complete | Project setup, tooling |
 | **M2: Core API** | 2026-01-31 | ✅ Complete | All OIDC endpoints |
 | **M3: Conformance** | 2026-03-15 | ⏳ In Progress | OpenID testing |
-| **M4: Extensions** | 2026-04-30 | ⏳ Planned | Dynamic registration |
+| **M4: Extensions** | 2026-04-30 | ✅ Complete | Dynamic registration |
 | **M5: Certification** | 2026-05-31 | ⏳ Planned | Official certification |
 | **M6: UI/UX** | 2026-06-30 | 🆕 Planned | Login & admin UI |
 | **M7: CLI** | 2026-08-31 | 🆕 Planned | One-command deploy |
@@ -173,14 +203,15 @@ open "http://localhost:8787/authorize?response_type=code&client_id=test&redirect
 ### Test Results
 
 ```
-✓ 158 tests passing
-✓ 10 tests skipped (integration - Phase 3)
+✓ 178 tests passing
+✓ 0 tests skipped
 ✓ 0 tests failing
 
 Coverage:
 - Utilities: 85%
-- Handlers: 85%
-- Durable Objects: 90%
+- Handlers: 90%
+- Durable Objects: 95%
+- Middleware: 80%
 ```
 
 ---

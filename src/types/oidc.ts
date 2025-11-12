@@ -146,3 +146,65 @@ export interface OAuthErrorResponse {
   error_description?: string;
   error_uri?: string;
 }
+
+/**
+ * Dynamic Client Registration Request
+ * https://openid.net/specs/openid-connect-registration-1_0.html#ClientMetadata
+ */
+export interface ClientRegistrationRequest {
+  // Required fields
+  redirect_uris: string[];
+  // Optional fields
+  client_name?: string;
+  client_uri?: string;
+  logo_uri?: string;
+  contacts?: string[];
+  tos_uri?: string;
+  policy_uri?: string;
+  jwks_uri?: string;
+  software_id?: string;
+  software_version?: string;
+  // Token endpoint authentication
+  token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post' | 'none';
+  // Grant types and response types
+  grant_types?: string[];
+  response_types?: string[];
+  // Application type
+  application_type?: 'web' | 'native';
+  // Scopes
+  scope?: string;
+}
+
+/**
+ * Dynamic Client Registration Response
+ * https://openid.net/specs/openid-connect-registration-1_0.html#RegistrationResponse
+ */
+export interface ClientRegistrationResponse {
+  client_id: string;
+  client_secret?: string;
+  client_id_issued_at?: number;
+  client_secret_expires_at?: number;
+  redirect_uris: string[];
+  client_name?: string;
+  client_uri?: string;
+  logo_uri?: string;
+  contacts?: string[];
+  tos_uri?: string;
+  policy_uri?: string;
+  jwks_uri?: string;
+  software_id?: string;
+  software_version?: string;
+  token_endpoint_auth_method?: string;
+  grant_types?: string[];
+  response_types?: string[];
+  application_type?: string;
+  scope?: string;
+}
+
+/**
+ * Stored Client Metadata
+ */
+export interface ClientMetadata extends ClientRegistrationResponse {
+  created_at: number;
+  updated_at: number;
+}
