@@ -38,6 +38,7 @@ export interface AccessTokenClaims extends JWTPayload {
   scope: string; // Granted scopes
   client_id: string; // Client identifier
   claims?: string; // Requested claims (JSON string, per OIDC Core 5.5)
+  cnf?: { jkt: string }; // DPoP confirmation (RFC 9449 Section 6)
 }
 
 /**

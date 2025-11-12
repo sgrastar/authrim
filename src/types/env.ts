@@ -24,6 +24,9 @@ export interface Env {
   PUBLIC_JWK_JSON?: string; // Public JWK as JSON string
   KEY_ID?: string;
 
+  // Pairwise subject identifier salt (OIDC Core 8.1)
+  PAIRWISE_SALT?: string;
+
   // Admin secrets for Durable Objects management
   KEY_MANAGER_SECRET?: string;
 }

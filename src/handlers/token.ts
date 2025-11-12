@@ -23,6 +23,7 @@ import {
   verifyToken,
 } from '../utils/jwt';
 import { importPKCS8, importJWK } from 'jose';
+import { extractDPoPProof, validateDPoPProof } from '../utils/dpop';
 
 /**
  * Token Endpoint Handler
@@ -284,6 +285,37 @@ async function handleAuthorizationCodeGrant(
   // Token expiration
   const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
 
+  // DPoP support (RFC 9449)
+  // Extract and validate DPoP proof if present
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+  let dpopJkt: string | undefined;
+  let tokenType: 'Bearer' | 'DPoP' = 'Bearer';
+
+  if (dpopProof) {
+    // Validate DPoP proof
+    const dpopValidation = await validateDPoPProof(
+      dpopProof,
+      'POST',
+      c.req.url,
+      undefined, // No access token yet (this is token issuance)
+      c.env.NONCE_STORE
+    );
+
+    if (!dpopValidation.valid) {
+      return c.json(
+        {
+          error: dpopValidation.error || 'invalid_dpop_proof',
+          error_description: dpopValidation.error_description || 'DPoP proof validation failed',
+        },
+        400
+      );
+    }
+
+    // DPoP proof is valid, bind access token to the public key
+    dpopJkt = dpopValidation.jkt;
+    tokenType = 'DPoP';
+  }
+
   // Note: For Authorization Code Flow (response_type=code), scope-based claims
   // (profile, email, etc.) should be returned from the UserInfo endpoint, NOT in the ID token.
   // Only response_type=id_token (Implicit Flow) should include these claims in the ID token.
@@ -298,6 +330,7 @@ async function handleAuthorizationCodeGrant(
     scope: string;
     client_id: string;
     claims?: string;
+    cnf?: { jkt: string };
   } = {
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
@@ -309,6 +342,11 @@ async function handleAuthorizationCodeGrant(
   // Add claims parameter if it was requested during authorization
   if (authCodeData.claims) {
     accessTokenClaims.claims = authCodeData.claims;
+  }
+
+  // Add DPoP confirmation (cnf) claim if DPoP is used
+  if (dpopJkt) {
+    accessTokenClaims.cnf = { jkt: dpopJkt };
   }
 
   let accessToken: string;
@@ -433,7 +471,7 @@ async function handleAuthorizationCodeGrant(
 
   return c.json({
     access_token: accessToken,
-    token_type: 'Bearer',
+    token_type: tokenType, // 'Bearer' or 'DPoP' depending on DPoP usage
     expires_in: expiresIn,
     id_token: idToken,
     refresh_token: refreshToken,
@@ -644,16 +682,59 @@ async function handleRefreshTokenGrant(
   // Token expiration
   const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
 
+  // DPoP support (RFC 9449)
+  // Extract and validate DPoP proof if present
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+  let dpopJkt: string | undefined;
+  let tokenType: 'Bearer' | 'DPoP' = 'Bearer';
+
+  if (dpopProof) {
+    // Validate DPoP proof
+    const dpopValidation = await validateDPoPProof(
+      dpopProof,
+      'POST',
+      c.req.url,
+      undefined, // No access token yet (this is token refresh)
+      c.env.NONCE_STORE
+    );
+
+    if (!dpopValidation.valid) {
+      return c.json(
+        {
+          error: dpopValidation.error || 'invalid_dpop_proof',
+          error_description: dpopValidation.error_description || 'DPoP proof validation failed',
+        },
+        400
+      );
+    }
+
+    // DPoP proof is valid, bind access token to the public key
+    dpopJkt = dpopValidation.jkt;
+    tokenType = 'DPoP';
+  }
+
   // Generate new Access Token
   let accessToken: string;
   try {
-    const accessTokenClaims = {
+    const accessTokenClaims: {
+      iss: string;
+      sub: string;
+      aud: string;
+      scope: string;
+      client_id: string;
+      cnf?: { jkt: string };
+    } = {
       iss: c.env.ISSUER_URL,
       sub: refreshTokenData.sub,
       aud: c.env.ISSUER_URL,
       scope: grantedScope,
       client_id: client_id,
     };
+
+    // Add DPoP confirmation (cnf) claim if DPoP is used
+    if (dpopJkt) {
+      accessTokenClaims.cnf = { jkt: dpopJkt };
+    }
 
     const result = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
     accessToken = result.token;
@@ -743,7 +824,7 @@ async function handleRefreshTokenGrant(
 
   return c.json({
     access_token: accessToken,
-    token_type: 'Bearer',
+    token_type: tokenType, // 'Bearer' or 'DPoP' depending on DPoP usage
     expires_in: expiresIn,
     id_token: idToken,
     refresh_token: newRefreshToken,
