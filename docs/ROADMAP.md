@@ -383,41 +383,105 @@ Legend:
 
 **Priority:** Auth0/Clerkより優位、エッジが立つもの、現代的なUX
 
-### Week 26-27: Authentication UI (May 1-14)
+**Tech Stack Decisions:**
+- **Frontend**: Svelte + SvelteKit v5
+- **CSS**: UnoCSS
+- **Components**: Melt UI (Headless, accessible)
+- **Hosting**: Cloudflare Pages (UI) + Workers (API) - Hybrid
+- **Captcha**: Cloudflare Turnstile
+- **i18n**: Paraglide (type-safe, lightweight)
 
-*(Content from old Phase 6 - see TASKS.md for full details)*
+### Week 26-27: Authentication UI (May 1-14)
 
 **Key Features:**
 - [ ] Passwordless Login Screen (Passkey + Magic Link)
+  - Email input with validation
+  - Passkey authentication flow (WebAuthn)
+  - Magic Link fallback
+  - Cloudflare Turnstile integration
 - [ ] User Registration with WebAuthn
+  - Passkey registration flow
+  - Email verification
 - [ ] OAuth Consent Screen
-- [ ] Session Management UI
-- [ ] Frontend Stack Setup (Svelte/SvelteKit or Solid.js + TailwindCSS)
+  - Client info display (logo, name, scopes)
+  - Privacy policy & ToS links
+  - Allow/Deny actions
+- [ ] Multi-language support (English, Japanese)
+- [ ] Theme System (basic branding)
+  - Custom CSS/HTML header/footer
+  - Logo, colors, fonts
+  - Background images
 
 ### Week 28-29: Admin Dashboard (May 15-28)
 
 **Key Features:**
-- [ ] Dashboard Overview (statistics, charts, activity feed)
-- [ ] User Management (list, search, CRUD operations)
-- [ ] Client Management (OAuth client CRUD, branding)
-- [ ] Settings & Customization (branding, password policy, token TTL)
-- [ ] Admin Dashboard Tech Stack (React/Svelte + shadcn/ui)
+- [ ] Dashboard Overview
+  - Statistics cards (users, sessions, logins, clients)
+  - Activity feed (recent logins, registrations, errors)
+  - Charts (login trends, user registration trends)
+- [ ] User Management
+  - User list with search/filter/sort/pagination
+  - User search API (`GET /admin/users?q=...`)
+  - CRUD operations
+  - Custom fields support (searchable + JSON)
+  - Parent-child user relationships
+- [ ] Client Management
+  - Client list with search
+  - CRUD operations (using DCR API)
+  - Custom scope mappings
+- [ ] Rate Limiting Dashboard
+  - Blocked IPs list
+  - Request counts per endpoint (charts)
+  - Anomaly detection alerts
+- [ ] Settings & Customization
+  - Branding settings (logo, colors, theme)
+  - Email provider configuration (Resend/Cloudflare/SMTP)
+  - Security settings (session timeout, rate limits)
+  - RBAC roles management
 
 ### Week 30-31: Data Storage & Authentication (May 29 - Jun 11)
 
 **Key Features:**
-- [ ] Storage Abstraction Layer (KV, D1, Durable Objects adapters)
+- [ ] Storage Abstraction Layer
+  - `IStorageAdapter` interface (KV-like + SQL-like)
+  - CloudflareAdapter (KV + D1 + DO)
+  - Multi-cloud support design (Azure, AWS, PostgreSQL)
+- [ ] D1 Database Schema
+  - Users table (with custom_attributes_json, parent_user_id)
+  - user_custom_fields table (searchable custom fields)
+  - Passkeys table
+  - Sessions table
+  - Roles & user_roles tables (RBAC)
+  - scope_mappings table (custom claim mapping)
+  - branding_settings table
+  - identity_providers table (for future SAML/LDAP)
 - [ ] WebAuthn/Passkey Implementation (FIDO2)
-- [ ] Magic Link/OTP Authentication
-- [ ] User Database Implementation (D1 schema)
-- [ ] Session Management & Logout (RP-Initiated, Front/Back-Channel)
+  - @simplewebauthn/server & browser libraries
+  - Registration & authentication flows
+  - Counter management (replay attack prevention)
+- [ ] Magic Link Authentication
+  - Token generation (cryptographically secure)
+  - Email provider adapter (Resend default)
+  - Token verification (one-time, 15min TTL)
+- [ ] Session Management
+  - Server-side session + token exchange (ITP-compliant)
+  - Cross-domain SSO support
+  - HttpOnly cookies
+  - Session revocation
+- [ ] Data Export
+  - CSV/JSON export (all tables)
+  - GDPR personal data export
 
 **Deliverables:**
 - [ ] 🎯 **WebAuthn/Passkey fully functional** (目玉機能)
 - [ ] 🎯 **Magic Link authentication working**
+- [ ] 🎯 **ITP-compliant cross-domain SSO**
 - [ ] Fully functional login/registration UI (beautiful, passwordless)
 - [ ] Complete admin dashboard (with user/client management)
 - [ ] Multi-storage backend support (KV, D1, DO)
+- [ ] RBAC implementation (roles & permissions)
+- [ ] Custom fields & scope mappings
+- [ ] Multi-language support (EN, JA)
 - [ ] Responsive, accessible interfaces (WCAG 2.1 AA)
 
 ---
@@ -504,13 +568,34 @@ Legend:
 - [ ] SAML 2.0 Bridge (OIDC → SAML)
 - [ ] LDAP/AD Integration
 - [ ] SCIM 2.0 User Provisioning (RFC 7643, RFC 7644)
+- [ ] CSV/JSON Import/Export
+- [ ] Webhook Integration
+- [ ] Bulk User Operations API
 
 ### Week 51: Advanced Security & RBAC (Oct 27 - Nov 2)
 
 **Key Features:**
 - [ ] Risk-Based Authentication
-- [ ] RBAC (Role-Based Access Control)
-- [ ] ABAC (Attribute-Based Access Control)
+- [ ] ABAC (Attribute-Based Access Control) - advanced extension
+- [ ] GDPR Automation (Right to Erasure, Data Portability)
+- [ ] Compliance Tooling (SOC 2, ISO 27001)
+
+### Week 52: Advanced UI Features
+
+**Key Features:**
+- [ ] Visual Authentication Flow Builder (SimCity-inspired UI)
+  - Drag & drop authentication flow construction
+  - Visual components (Passkey, Magic Link, Social Login as "buildings")
+  - Flow visualization (入口→認証→出口)
+- [ ] WebSDK (High-customization)
+  - Web Components architecture
+  - Custom placeholders (`<$$$LoginEmailInput$$$>`, etc.)
+  - Fully styleable
+  - Event handler support (`onLogin`, `onError`)
+- [ ] Advanced Branding & Theming
+  - Custom CSS/HTML/JavaScript injection (sandboxed)
+  - Video backgrounds support
+  - Template gallery
 
 **Deliverables:**
 - [ ] All advanced OAuth flows operational
@@ -520,7 +605,10 @@ Legend:
 - [ ] LDAP/AD integration working
 - [ ] SCIM 2.0 provisioning operational
 - [ ] Risk-based authentication active
-- [ ] RBAC/ABAC implemented
+- [ ] ABAC implemented
+- [ ] Visual Flow Builder operational
+- [ ] WebSDK published
+- [ ] GDPR compliance automation
 
 ---
 
@@ -872,6 +960,8 @@ Add:
 | 2025-11-12 | Success metrics updated | Added ambitious goals for each phase |
 | 2025-11-12 | **🔄 PHASE REORDERING** | Phase 5→10, Phases 6-9 shifted up: UI/UX now P5, CLI now P6, Enterprise now P7, VC now P8, SaaS now P9, Certification moved to final P10 |
 | 2025-11-12 | **Phase 4 COMPLETE** ✅ | All Phase 4 features implemented: Token Management, PAR, DPoP, Pairwise, Form Post, Storage Foundation (378+ tests passing) |
+| 2025-11-12 | **Phase 5 planning finalized** | Tech stack decisions: Svelte 5 + UnoCSS + Melt UI, Hybrid hosting, ITP-compliant SSO, RBAC, Custom fields, Multi-language |
+| 2025-11-12 | **Phase 7 expanded** | Added WebSDK, Visual Flow Builder (SimCity-inspired), GDPR automation, CSV/JSON import/export, Webhook integration |
 
 ---
 
