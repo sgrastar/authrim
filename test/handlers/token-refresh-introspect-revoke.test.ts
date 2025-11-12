@@ -92,8 +92,8 @@ describe('Refresh Token Flow, Introspection, and Revocation', () => {
 
   describe('Refresh Token Flow', () => {
     it('should issue refresh token on authorization code exchange', async () => {
-      // Store auth code
-      const authCode = 'test-auth-code-123';
+      // Store auth code (must be UUID format)
+      const authCode = crypto.randomUUID();
       await mockKVStores.AUTH_CODES.set(
         authCode,
         JSON.stringify({
@@ -123,9 +123,14 @@ describe('Refresh Token Flow, Introspection, and Revocation', () => {
         mockEnv
       );
 
-      expect(res.status).toBe(200);
-
       const json = await res.json();
+
+      // Debug: log error if test fails
+      if (res.status !== 200) {
+        console.log('Error response:', JSON.stringify(json, null, 2));
+      }
+
+      expect(res.status).toBe(200);
       expect(json).toHaveProperty('access_token');
       expect(json).toHaveProperty('id_token');
       expect(json).toHaveProperty('refresh_token');
@@ -135,7 +140,7 @@ describe('Refresh Token Flow, Introspection, and Revocation', () => {
 
     it('should exchange refresh token for new tokens', async () => {
       // First, get initial tokens via authorization code
-      const authCode = 'test-auth-code-456';
+      const authCode = crypto.randomUUID();
       await mockKVStores.AUTH_CODES.set(
         authCode,
         JSON.stringify({
@@ -221,7 +226,7 @@ describe('Refresh Token Flow, Introspection, and Revocation', () => {
 
     it('should support scope reduction in refresh request', async () => {
       // Get initial tokens
-      const authCode = 'test-auth-code-789';
+      const authCode = crypto.randomUUID();
       await mockKVStores.AUTH_CODES.set(
         authCode,
         JSON.stringify({
@@ -279,7 +284,7 @@ describe('Refresh Token Flow, Introspection, and Revocation', () => {
 
     it('should reject scope expansion in refresh request', async () => {
       // Get initial tokens
-      const authCode = 'test-auth-code-scope';
+      const authCode = crypto.randomUUID();
       await mockKVStores.AUTH_CODES.set(
         authCode,
         JSON.stringify({
@@ -339,7 +344,7 @@ describe('Refresh Token Flow, Introspection, and Revocation', () => {
   describe('Token Introspection', () => {
     it('should introspect active access token', async () => {
       // Get tokens first
-      const authCode = 'test-introspect-code';
+      const authCode = crypto.randomUUID();
       await mockKVStores.AUTH_CODES.set(
         authCode,
         JSON.stringify({
@@ -400,7 +405,7 @@ describe('Refresh Token Flow, Introspection, and Revocation', () => {
 
     it('should introspect active refresh token', async () => {
       // Get tokens first
-      const authCode = 'test-introspect-refresh-code';
+      const authCode = crypto.randomUUID();
       await mockKVStores.AUTH_CODES.set(
         authCode,
         JSON.stringify({
@@ -482,7 +487,7 @@ describe('Refresh Token Flow, Introspection, and Revocation', () => {
   describe('Token Revocation', () => {
     it('should revoke access token', async () => {
       // Get tokens first
-      const authCode = 'test-revoke-code';
+      const authCode = crypto.randomUUID();
       await mockKVStores.AUTH_CODES.set(
         authCode,
         JSON.stringify({
@@ -556,7 +561,7 @@ describe('Refresh Token Flow, Introspection, and Revocation', () => {
 
     it('should revoke refresh token', async () => {
       // Get tokens first
-      const authCode = 'test-revoke-refresh-code';
+      const authCode = crypto.randomUUID();
       await mockKVStores.AUTH_CODES.set(
         authCode,
         JSON.stringify({
