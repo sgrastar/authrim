@@ -4,9 +4,15 @@
  * https://datatracker.ietf.org/doc/html/rfc9449
  */
 
-import { importJWK, jwtVerify, calculateJwkThumbprint, base64url } from 'jose';
+import { importJWK, jwtVerify, calculateJwkThumbprint, base64url, type JWK } from 'jose';
 import type { DPoPClaims, DPoPValidationResult } from '../types/oidc';
 import type { KVNamespace } from '@cloudflare/workers-types';
+
+interface DPoPHeader {
+  typ: string;
+  alg: string;
+  jwk: JWK;
+}
 
 /**
  * Validates a DPoP proof JWT
@@ -46,7 +52,7 @@ export async function validateDPoPProof(
       };
     }
 
-    const header = JSON.parse(new TextDecoder().decode(base64url.decode(headerPart)));
+    const header = JSON.parse(new TextDecoder().decode(base64url.decode(headerPart))) as Partial<DPoPHeader>;
     // Payload parsing removed as we verify the entire JWT later
 
     // Validate header
@@ -75,7 +81,7 @@ export async function validateDPoPProof(
     }
 
     // Validate JWK
-    const jwk = header.jwk;
+    const jwk: JWK = header.jwk;
     if (!jwk.kty) {
       return {
         valid: false,
@@ -97,7 +103,7 @@ export async function validateDPoPProof(
     let publicKey;
     try {
       publicKey = await importJWK(jwk, header.alg);
-    } catch (error) {
+    } catch {
       return {
         valid: false,
         error: 'invalid_dpop_proof',
@@ -112,7 +118,7 @@ export async function validateDPoPProof(
         typ: 'dpop+jwt',
       });
       verifiedPayload = verified as unknown as DPoPClaims;
-    } catch (error) {
+    } catch {
       return {
         valid: false,
         error: 'invalid_dpop_proof',
