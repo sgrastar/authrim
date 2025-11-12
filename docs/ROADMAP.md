@@ -14,12 +14,11 @@ Nov  Dec  Jan  Feb  Mar  Apr  May  Jun  Jul  Aug  Sep  Oct  Nov  Dec  Jan  Feb  
 │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
 ├─P1─┼─P2─┼─P3─┼────┼─P4─┼─P5─┼───P6────┼────P7────┼─────P8─────┼─────P9─────┼─P10
 │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
-✅   ✅   ✅   ✅   ⏳   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🎓
+✅   ✅   ✅   ✅   ✅   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🎓
 
 Legend:
-✅ Complete
-⏳ In Progress (Extended Features)
-🆕 New (UI/UX, CLI, Enterprise, Next-Gen, SaaS)
+✅ Complete (Phases 1-4)
+🆕 Planned (UI/UX, CLI, Enterprise, Next-Gen, SaaS)
 🎓 Final (Certification & Production Launch)
 ```
 
@@ -32,7 +31,7 @@ Legend:
 | **M1: Foundation** | 2025-12-15 | ✅ Complete | Project setup, tooling, basic structure |
 | **M2: Core API** | 2026-01-31 | ✅ Complete | All OIDC endpoints functional |
 | **M3: Conformance** | 2026-03-15 | ✅ Complete | OpenID Conformance Suite (95.8% Phase 3) |
-| **M4: Extensions** | 2026-04-30 | ⏳ In Progress | DCR/Rate Limiting complete, PAR/DPoP/Refresh Token planned |
+| **M4: Extensions** | 2026-04-30 | ✅ Complete | All extended security features: DCR, Rate Limiting, PAR, DPoP, Pairwise, Token Management, Form Post, Storage Foundation |
 | **M5: UI/UX** | 2026-05-31 | 🆕 Planned | Login/Registration, Admin Dashboard, User Database |
 | **M6: CLI & Deploy** | 2026-08-10 | 🆕 Planned | One-command deployment |
 | **M7: Enterprise** | 2026-10-31 | 🆕 Planned | Hybrid, Device, CIBA, Social Login |
@@ -212,13 +211,13 @@ Legend:
 
 ---
 
-## Phase 4: Extended Features & Security ⏳ IN PROGRESS
+## Phase 4: Extended Features & Security ✅ COMPLETE
 
-**Timeline:** Mar 16 - Apr 30, 2026 (6 weeks)
+**Timeline:** Mar 16 - Apr 30, 2026 (6 weeks) - **Completed early (Nov 2025)**
 
 **Goal:** Add security extensions and prepare storage foundation
 
-**Status:** ✅ Core features completed early (Nov 2025) | ⏳ Advanced features in progress
+**Status:** ✅ All features completed (Nov 2025)
 
 ---
 
@@ -280,67 +279,75 @@ Legend:
 - ✅ Performance review
 - ✅ Documentation update
 
----
+#### Week 26-27: Advanced Security Extensions ✅
 
-### ⏳ PLANNED (Future Implementation)
-
-#### Advanced Security Extensions
-
-##### PAR (Pushed Authorization Requests) - RFC 9126
-- [ ] `POST /as/par` endpoint
-- [ ] Request object validation
-- [ ] Request URI generation and storage
-- [ ] Authorization endpoint PAR support
-- [ ] Tests & conformance validation
+##### PAR (Pushed Authorization Requests) - RFC 9126 ✅
+- ✅ `POST /as/par` endpoint
+- ✅ Request object validation
+- ✅ Request URI generation and storage
+- ✅ Authorization endpoint PAR support
+- ✅ Tests & conformance validation (15+ tests)
+- ✅ Documentation (comprehensive guide)
 - **Why:** セキュリティ強化、フィッシング対策、OpenID認証で高評価
 
-##### DPoP (Demonstrating Proof of Possession) - RFC 9449
-- [ ] DPoP token validation middleware
-- [ ] DPoP-bound access token generation
-- [ ] Token endpoint DPoP support
-- [ ] UserInfo endpoint DPoP support
-- [ ] Replay attack prevention
+##### DPoP (Demonstrating Proof of Possession) - RFC 9449 ✅
+- ✅ DPoP token validation middleware
+- ✅ DPoP-bound access token generation
+- ✅ Token endpoint DPoP support
+- ✅ UserInfo endpoint DPoP support
+- ✅ Replay attack prevention
+- ✅ Tests & conformance validation (12 tests)
+- ✅ Documentation (inline code documentation)
 - **Why:** エッジ環境と相性抜群、最新セキュリティ標準、トークン盗難対策
 
-##### Pairwise Subject Identifiers - OIDC Core 8.1
-- [ ] Subject type configuration (public/pairwise)
-- [ ] Pairwise identifier generation (per client)
-- [ ] Sector identifier validation
-- [ ] Storage for pairwise mappings
+##### Pairwise Subject Identifiers - OIDC Core 8.1 ✅
+- ✅ Subject type configuration (public/pairwise)
+- ✅ Pairwise identifier generation (per client)
+- ✅ Sector identifier validation
+- ✅ Storage for pairwise mappings
+- ✅ Tests & conformance validation (22 tests)
+- ✅ Documentation (inline code documentation)
 - **Why:** プライバシー保護、GDPR対応、事前準備必要
 
-#### Token Management
+#### Week 28-29: Token Management ✅
 
-##### Refresh Token Flow - RFC 6749 Section 6
-- [ ] Refresh token generation
-- [ ] Refresh token validation
-- [ ] Token rotation (refresh token)
-- [ ] Refresh token revocation
-- [ ] Tests & conformance validation
+##### Refresh Token Flow - RFC 6749 Section 6 ✅
+- ✅ Refresh token generation
+- ✅ Refresh token validation
+- ✅ Token rotation (refresh token)
+- ✅ Refresh token revocation
+- ✅ Storage implementation
+- ✅ Tests & conformance validation (47+ tests)
+- ✅ Documentation (comprehensive guide)
 - **Why:** 基本機能、メジャーな実装、UX向上
 
-##### Token Introspection & Revocation - RFC 7662, RFC 7009
-- [ ] `POST /introspect` endpoint
-- [ ] `POST /revoke` endpoint
-- [ ] Token metadata response
-- [ ] Client authentication for introspection
-- [ ] Tests & conformance validation
+##### Token Introspection & Revocation - RFC 7662, RFC 7009 ✅
+- ✅ `POST /introspect` endpoint
+- ✅ `POST /revoke` endpoint
+- ✅ Token metadata response
+- ✅ Client authentication for introspection
+- ✅ Tests & conformance validation (47+ tests)
+- ✅ Documentation (comprehensive guide)
 - **Why:** セキュリティ基礎、エンタープライズで必須
 
-#### Response Modes
+#### Week 30: Response Modes & Storage Foundation ✅
 
-##### Form Post Response Mode - OAuth 2.0 Form Post
-- [ ] `response_mode=form_post` support
-- [ ] Auto-submit HTML form generation
-- [ ] Authorization endpoint enhancement
-- [ ] Tests & conformance validation
+##### Form Post Response Mode - OAuth 2.0 Form Post ✅
+- ✅ `response_mode=form_post` support
+- ✅ Auto-submit HTML form generation
+- ✅ Authorization endpoint enhancement
+- ✅ Tests & conformance validation (19 tests)
+- ✅ Documentation (comprehensive guide)
+- ✅ XSS prevention with HTML escaping
+- ✅ User-friendly loading UI with spinner
 - **Why:** セキュリティ基礎、ブラウザ履歴に残らない
 
-#### Storage Foundation (Preparation for Phase 6)
-- [ ] Abstract storage interface design
-- [ ] D1 schema design (users, clients, sessions)
-- [ ] Migration system foundation
-- [ ] Storage adapter selection logic
+##### Storage Foundation (Preparation for Phase 6) ✅
+- ✅ Abstract storage interface design
+- ✅ D1 schema design (users, clients, sessions)
+- ✅ Migration system foundation (interfaces defined)
+- ✅ Storage adapter selection logic (KV adapter implemented)
+- ✅ Documentation (comprehensive inline documentation)
 
 ---
 
@@ -350,16 +357,21 @@ Legend:
 - ✅ **Security Headers & CORS** - 41 tests passing
 - ✅ **Extended Claims Support** - Full OIDC profile
 - ✅ **KeyManager Durable Object** - Multi-key rotation
-- ✅ **Total:** 263 tests passing (85 new Phase 4 tests)
+- ✅ **Token Management (Refresh Token, Introspection, Revocation)** - 47+ tests, RFC 6749/7662/7009
+- ✅ **PAR (Pushed Authorization Requests)** - 15+ tests, RFC 9126
+- ✅ **Form Post Response Mode** - 19 tests, OAuth 2.0 Form Post
+- ✅ **DPoP (Demonstrating Proof of Possession)** - 12 tests, RFC 9449
+- ✅ **Pairwise Subject Identifiers** - 22 tests, OIDC Core 8.1
+- ✅ **Storage Foundation** - Abstract interfaces for Phase 6
+- ✅ **Total:** 378+ tests passing (200+ new Phase 4 tests)
 
-**Planned Deliverables:**
-- [ ] PAR (Pushed Authorization Requests) functional
-- [ ] DPoP (Proof of Possession) implemented
-- [ ] Pairwise Subject Identifiers working
-- [ ] Refresh Token Flow operational
-- [ ] Token Introspection & Revocation functional
-- [ ] Form Post Response Mode working
-- [ ] Storage foundation ready for Phase 6
+**Phase 4 Documentation:**
+- ✅ Token Management Guide (docs/features/token-management.md)
+- ✅ PAR Implementation Guide (docs/features/par.md)
+- ✅ Form Post Response Mode Guide (docs/features/form-post-response-mode.md)
+- ✅ DPoP Implementation (inline code documentation)
+- ✅ Pairwise Subject Identifiers (inline code documentation)
+- ✅ Storage Abstraction Layer (comprehensive interface documentation)
 
 ---
 
@@ -724,20 +736,21 @@ Legend:
 - ✅ All critical security tests passing (token revocation, PKCE, claims)
 - [ ] <50ms p95 latency (edge) - deferred to Phase 4
 
-### Phase 4: Extensions ⏳
+### Phase 4: Extensions ✅
 - ✅ Dynamic Client Registration (RFC 7591) functional - 56 tests
 - ✅ Rate Limiting implemented - 44 tests
 - ✅ Security Headers & CORS - 41 tests
 - ✅ Key Rotation automated (KeyManager Durable Object)
 - ✅ Extended Claims Support (address, phone)
-- ✅ 263 total tests passing (85 new Phase 4 tests)
-- [ ] PAR (Pushed Authorization Requests) functional
-- [ ] DPoP (Proof of Possession) working
-- [ ] Pairwise Subject Identifiers operational
-- [ ] Refresh Token Flow functional
-- [ ] Token Introspection & Revocation working
-- [ ] Form Post Response Mode working
-- [ ] <50ms p95 latency (edge)
+- ✅ PAR (Pushed Authorization Requests) functional - 15+ tests
+- ✅ DPoP (Proof of Possession) working - 12 tests
+- ✅ Pairwise Subject Identifiers operational - 22 tests
+- ✅ Refresh Token Flow functional - 47+ tests
+- ✅ Token Introspection & Revocation working - 47+ tests
+- ✅ Form Post Response Mode working - 19 tests
+- ✅ Storage Foundation implemented
+- ✅ 378+ total tests passing (200+ new Phase 4 tests)
+- [ ] <50ms p95 latency (edge) - deferred to Phase 5
 
 ### Phase 5: Certification ⏳
 - [ ] OpenID Certification obtained ✨
@@ -858,15 +871,18 @@ Add:
 | 2025-11-12 | Timeline extended | Now covers Nov 2025 - Mar 2027+ (16+ months → 2+ years) |
 | 2025-11-12 | Success metrics updated | Added ambitious goals for each phase |
 | 2025-11-12 | **🔄 PHASE REORDERING** | Phase 5→10, Phases 6-9 shifted up: UI/UX now P5, CLI now P6, Enterprise now P7, VC now P8, SaaS now P9, Certification moved to final P10 |
+| 2025-11-12 | **Phase 4 COMPLETE** ✅ | All Phase 4 features implemented: Token Management, PAR, DPoP, Pairwise, Form Post, Storage Foundation (378+ tests passing) |
 
 ---
 
-> **Last Update:** 2025-11-12 (Phase 3 COMPLETE ✅ + PHASE REORDERING 🔄)
-> **Next Update:** 2026-04-30 (Post Phase 4)
+> **Last Update:** 2025-11-12 (Phase 4 COMPLETE ✅)
+> **Next Update:** 2026-05-31 (Post Phase 5)
 >
 > 💥 **Hibana** - Building the future of identity infrastructure, one phase at a time.
 >
 > **Current Status:**
+> - **Phase 4 COMPLETE:** All extended security features implemented ✅
+> - **Tests:** 378+ passing (200+ new Phase 4 tests)
 > - **Phase 3 Achievement:** 95.8% (23/24 tests) | **Overall Conformance:** 72.7% (24/33 tests)
 > - **Roadmap:** 10 Phases covering 60+ advanced features
 > - **Vision:** The world's best passwordless OpenID Provider on Cloudflare Edge
