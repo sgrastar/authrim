@@ -420,257 +420,37 @@ Legend:
 
 ### Week 32-33: CLI Tool Development (Jun 12-25)
 
-#### WebAuthn / Passkey (FIDO2) - W3C WebAuthn Level 2
-- [ ] WebAuthn registration flow
-- [ ] WebAuthn authentication flow
-- [ ] Passkey creation API
-- [ ] Credential storage (D1)
-- [ ] Platform authenticator support (TouchID, FaceID, Windows Hello)
-- [ ] Cross-platform authenticator support (YubiKey, etc.)
-- [ ] Conditional UI (autofill)
-- [ ] Fallback to password
-- [ ] Tests & browser compatibility
-- **Why:** 🚀 **Auth0/Clerkより優位**、最高のUX、フィッシング耐性
+**Key Features:**
+- [ ] `create-hibana` NPM package
+- [ ] Interactive setup wizard
+- [ ] Project scaffolding
+- [ ] Deployment commands
 
-#### Magic Link / OTP (Passwordless Email/SMS)
-- [ ] Magic link generation
-- [ ] Email-based authentication flow
-- [ ] OTP (One-Time Password) generation
-- [ ] SMS-based OTP (Twilio integration)
-- [ ] Link expiration & validation
-- [ ] Email template (beautiful HTML)
-- [ ] Rate limiting (email/SMS abuse prevention)
-- [ ] Tests & deliverability
-- **Why:** パスワードレス体験、シンプル、コンバージョン向上
+### Week 34-35: Cloudflare Integration (Jun 26 - Jul 9)
 
-#### Multi-Factor Authentication Strategy
-- [ ] **Primary:** WebAuthn (Passkey)
-- [ ] **Fallback 1:** Magic Link (Email)
-- [ ] **Fallback 2:** OTP (SMS)
-- [ ] **Recovery:** Password + Email verification
-- [ ] Authentication method selection UI
-- [ ] Progressive enhancement (browser support detection)
-- **Why:** 完璧なUX、すべてのユーザーに対応
+**Key Features:**
+- [ ] Cloudflare API client
+- [ ] Worker deployment API
+- [ ] KV/D1/DO management
+- [ ] DNS & custom domain setup
 
-### Week 31: Authentication Context & Localization
+### Week 36-39: Production Readiness (Jul 10 - Aug 10)
 
-#### ACR / AMR Claims (Authentication Context)
-- [ ] `acr` (Authentication Context Class Reference) support
-- [ ] `amr` (Authentication Methods References) support
-- [ ] Authentication method tracking (password, webauthn, otp, magic_link)
-- [ ] ACR values configuration (LoA 1-4)
-- [ ] ID Token ACR/AMR claims inclusion
-- [ ] `acr_values` parameter support
-- [ ] Step-up authentication
-- [ ] Tests & conformance validation
-- **Why:** 認証レベルの表現、リスクベース認証、エンタープライズで評価
-
-#### UI Localization (i18n)
-- [ ] `ui_locales` parameter support
-- [ ] Language detection (Accept-Language header)
-- [ ] Translation files (en, ja, es, fr, de, zh)
-- [ ] RTL language support (ar, he)
-- [ ] Date/time localization
-- [ ] Error message localization
-- [ ] Email template localization
-- [ ] Tests & translation coverage
-- **Why:** グローバル展開、UX向上、Auth0/Clerkと同等以上
-
-#### login_hint / prompt Parameters
-- [ ] `login_hint` parameter support (pre-fill email)
-- [ ] `prompt=none` (silent authentication)
-- [ ] `prompt=login` (force re-authentication)
-- [ ] `prompt=consent` (force consent)
-- [ ] `prompt=select_account` (account picker)
-- [ ] Tests & conformance validation
-- **Why:** UX向上、シームレスな認証体験
-
-### Week 32-33: Authentication UI & User Database
-
-#### Passwordless Login Screen
-- [ ] HTML/CSS/JS implementation (TailwindCSS)
-- [ ] **Passkey button** (primary CTA)
-- [ ] **Magic Link input** (email)
-- [ ] **Password fallback** (show/hide toggle)
-- [ ] "Remember me" checkbox
-- [ ] "Forgot password" link
-- [ ] Error message display
-- [ ] Loading states & animations
-- [ ] Responsive design (mobile-first)
-- [ ] Accessibility (WCAG 2.1 AA)
-- [ ] Dark mode support
-- **Why:** 🎨 **美しいUI**、Auth0/Clerkより優位
-
-#### User Registration
-- [ ] Passkey registration (recommended)
-- [ ] Email + Password registration (optional)
-- [ ] Email verification flow
-- [ ] Password strength indicator
-- [ ] Password policy enforcement
-- [ ] reCAPTCHA integration
-- [ ] Terms of Service checkbox
-- [ ] Email confirmation page
-- [ ] Welcome email template (HTML + Plain text)
-
-#### Consent Screen
-- [ ] OAuth consent UI
-- [ ] Scope display (human-readable, localized)
-- [ ] Client information display (logo, name, URL)
-- [ ] "Remember this choice" option
-- [ ] Allow/Deny buttons
-- [ ] Privacy policy link
-- [ ] Terms of Service link
-- [ ] Branding customization (per client)
-
-#### User Database Implementation
-- [ ] D1 schema (users, credentials, sessions)
-- [ ] User CRUD operations
-- [ ] WebAuthn credential storage
-- [ ] Password hashing (Argon2id)
-- [ ] Email verification status
-- [ ] Account status (active, suspended, deleted)
-- [ ] User metadata (created_at, updated_at, last_login)
-- [ ] Migration system
-- [ ] Seeding & fixtures
-
-**Technical Stack:**
-- Framework: Svelte/SvelteKit or Solid.js
-- Styling: TailwindCSS + shadcn/ui
-- WebAuthn: @simplewebauthn/browser + @simplewebauthn/server
-- Forms: Zod validation
-- Email: Resend or Cloudflare Email Workers
-- Build: Vite
-
-### Week 34: Session Management & Logout
-
-#### Session Management
-- [ ] Cookie-based sessions (HTTP-only, Secure, SameSite)
-- [ ] Session storage (D1 + KV hybrid)
-- [ ] Session timeout handling
-- [ ] "Keep me signed in" functionality (refresh token rotation)
-- [ ] Multi-device session management
-- [ ] Active sessions page (user-facing)
-- [ ] Device fingerprinting (security)
-- [ ] Session revocation API
-
-#### RP-Initiated Logout - OIDC RP Logout 1.0
-- [ ] `GET /logout` endpoint
-- [ ] `id_token_hint` parameter validation
-- [ ] `post_logout_redirect_uri` validation
-- [ ] Session termination
-- [ ] Logout confirmation page
-- [ ] Tests & conformance validation
-- **Why:** セッション管理の基礎、UX向上
-
-#### Front-Channel Logout - OIDC Front-Channel Logout 1.0
-- [ ] Front-channel logout iframe rendering
-- [ ] `frontchannel_logout_uri` registration
-- [ ] Logout notification to all RPs
-- [ ] Tests & conformance validation
-- **Why:** シングルサインアウト、エンタープライズで評価
-
-#### Back-Channel Logout - OIDC Back-Channel Logout 1.0
-- [ ] `POST /backchannel-logout` endpoint (RP side)
-- [ ] Logout token generation (OP side)
-- [ ] `backchannel_logout_uri` registration
-- [ ] Server-to-server logout notification
-- [ ] Tests & conformance validation
-- **Why:** セキュアなシングルサインアウト、エンタープライズ必須
-
-### Week 35-36: Admin Dashboard & Audit Log
-
-#### Dashboard Overview
-- [ ] Statistics cards (active users, logins, clients, sessions)
-- [ ] Activity feed (real-time via WebSocket/SSE)
-- [ ] Charts (login trends, geographic distribution, auth methods)
-- [ ] System health indicators
-- [ ] Quick actions panel
-- [ ] Dark mode support
-
-#### User Management
-- [ ] User list with pagination & infinite scroll
-- [ ] Search & filtering (name, email, status)
-- [ ] User detail view
-- [ ] Edit user profile
-- [ ] Password reset (admin-initiated)
-- [ ] Account suspension/activation
-- [ ] Delete user (with confirmation)
-- [ ] Bulk operations (suspend, activate, delete)
-- [ ] WebAuthn credential management
-- [ ] User authentication history
-
-#### Client Management
-- [ ] OAuth client list
-- [ ] Register new client form (with validation)
-- [ ] Client detail view
-- [ ] Edit client configuration
-- [ ] Client secret regeneration
-- [ ] Redirect URI management
-- [ ] Scope restrictions
-- [ ] Branding customization (logo, colors, per-client)
-- [ ] Client deletion
-
-#### Audit Log & Monitoring
-- [ ] Audit log viewer (filterable, searchable)
-- [ ] Event types (login, logout, token_issued, client_registered, etc.)
-- [ ] IP address tracking
-- [ ] User agent tracking
-- [ ] Geolocation (via Cloudflare)
-- [ ] Export to CSV/JSON
-- [ ] Retention policy configuration
-- [ ] Real-time monitoring dashboard
-- **Why:** セキュリティ、コンプライアンス、GDPR対応
-
-#### Settings & Customization
-- [ ] Branding settings (logo, colors, favicon)
-- [ ] Password policy configuration
-- [ ] Token expiration settings
-- [ ] Email template editor (WYSIWYG)
-- [ ] SMTP configuration (or Cloudflare Email Workers)
-- [ ] WebAuthn settings (attestation, user verification)
-- [ ] MFA settings (enforcement, methods)
-- [ ] Backup/restore (D1 export/import)
-- [ ] Rate limiting configuration
-
-**Technical Stack:**
-- Framework: React or Svelte
-- UI Components: shadcn/ui or Flowbite
-- Dashboard: Recharts or Apache ECharts
-- Tables: TanStack Table
-- Forms: React Hook Form / Svelte Forms
-- Editor: TipTap or Monaco
-- Real-time: WebSocket or Server-Sent Events
-
-### Week 37: Storage Abstraction & Scope Extensions
-
-#### Storage Adapters
-- [ ] Abstract storage interface
-- [ ] KV adapter (sessions, cache)
-- [ ] D1 adapter (users, clients, audit_log - recommended)
-- [ ] Durable Objects adapter (real-time sessions)
-- [ ] Adapter selection via config
-- [ ] Performance benchmarks (KV vs D1 vs DO)
-
-#### Scope Extensions & Custom Claims
-- [ ] Custom scope registration API
-- [ ] Scope-to-claim mapping
-- [ ] Dynamic claim generation (based on user metadata)
-- [ ] Scope grouping (e.g., "admin" = profile + email + users:read)
-- [ ] Tests & conformance validation
-- **Why:** 柔軟性、エンタープライズで必須
+**Key Features:**
+- [ ] Setup automation
+- [ ] Error handling & recovery
+- [ ] Performance optimization
+- [ ] Security hardening
+- [ ] Monitoring & observability
+- [ ] Documentation & examples
+- [ ] NPM package publishing
 
 **Deliverables:**
-- [ ] 🎯 **WebAuthn/Passkey fully functional** (目玉機能)
-- [ ] 🎯 **Magic Link authentication working**
-- [ ] 🎯 **ACR/AMR claims implemented**
-- [ ] 🎯 **ui_locales & i18n support** (6+ languages)
-- [ ] Session Management (multi-device, logout)
-- [ ] Front-Channel & Back-Channel Logout operational
-- [ ] Fully functional login/registration UI (beautiful, passwordless)
-- [ ] Complete admin dashboard (with audit log)
-- [ ] Multi-storage backend support (KV, D1, DO)
-- [ ] Responsive, accessible interfaces (WCAG 2.1 AA)
-- [ ] Custom scope extensions working
+- [ ] `create-hibana` package published
+- [ ] One-command deployment functional
+- [ ] CLI with 20+ management commands
+- [ ] Production-ready error handling
+- [ ] Complete documentation
 
 ---
 
@@ -688,150 +468,47 @@ Legend:
 
 ### Week 40-42: Advanced OAuth Flows (Aug 11-31)
 
-#### `create-hibana` Package
-- [ ] NPM package setup
-- [ ] Project template scaffolding
-- [ ] Interactive setup wizard
-- [ ] Configuration file generation
-- [ ] Dependency installation
-- [ ] Local development server
+**Key Features:**
+- [ ] Hybrid Flow (OIDC Core 3.3)
+- [ ] Device Authorization Flow (RFC 8628)
+- [ ] JWT Bearer Flow (RFC 7523)
 
-**Wizard Flow:**
-```
-? Project name: my-identity-provider
-? Cloudflare Account ID: [auto-detect or input]
-? Admin email: admin@example.com
-? Password policy: [strong/medium/basic]
-? Storage backend: [D1/KV/Durable Objects]
-? Deploy region: [auto/manual]
-? Enable MFA: [yes/no]
-? Enable social login: [yes/no]
-```
+### Week 43-44: CIBA & Advanced Encryption (Sep 1-14)
 
-#### Deployment Commands
-- [ ] `hibana deploy` - Deploy to Cloudflare
-- [ ] `hibana deploy --production` - Production deployment
-- [ ] `hibana rollback` - Rollback to previous version
-- [ ] `hibana status` - Check deployment status
-- [ ] `hibana logs` - View logs
+**Key Features:**
+- [ ] CIBA (Client Initiated Backchannel Authentication)
+- [ ] JWE (JSON Web Encryption - RFC 7516)
 
-#### Management Commands
-- [ ] `hibana user create <email>` - Create user
-- [ ] `hibana user delete <email>` - Delete user
-- [ ] `hibana user reset-password <email>` - Reset password
-- [ ] `hibana client create <name>` - Register OAuth client
-- [ ] `hibana client list` - List all clients
-- [ ] `hibana keys rotate` - Rotate signing keys
-- [ ] `hibana backup` - Backup data
-- [ ] `hibana restore <file>` - Restore from backup
+### Week 45-47: Social Login & Identity Federation (Sep 15 - Oct 5)
 
-**Technical Stack:**
-- CLI Framework: Commander.js
-- Prompts: Inquirer.js
-- Spinners: Ora
-- Colors: Chalk
-- Config: Cosmiconfig
+**Key Features:**
+- [ ] Social Login Providers (Google, GitHub, Microsoft, Apple, Facebook, Twitter, LinkedIn)
+- [ ] Identity Federation & Transformation
+- [ ] Account linking
 
-### Week 34-35: Cloudflare Integration
+### Week 48-50: Enterprise Integration (Oct 6-26)
 
-#### API Integration
-- [ ] Cloudflare API client
-- [ ] Account authentication (API token)
-- [ ] Worker deployment API
-- [ ] KV namespace creation
-- [ ] D1 database creation
-- [ ] Durable Objects binding
-- [ ] DNS record management
-- [ ] Custom domain setup
+**Key Features:**
+- [ ] SAML 2.0 Bridge (OIDC → SAML)
+- [ ] LDAP/AD Integration
+- [ ] SCIM 2.0 User Provisioning (RFC 7643, RFC 7644)
 
-#### Resource Provisioning
-- [ ] Automatic resource detection
-- [ ] Resource creation workflow
-- [ ] Resource cleanup on failure
-- [ ] Cost estimation
-- [ ] Resource tagging
+### Week 51: Advanced Security & RBAC (Oct 27 - Nov 2)
 
-#### Environment Variables
-- [ ] Automatic secret generation
-- [ ] Environment variable injection
-- [ ] Secret rotation workflow
-- [ ] `.env` file management
-
-### Week 36-37: Setup Automation
-
-#### Initial Setup Wizard
-- [ ] Welcome screen
-- [ ] Prerequisites check (Node.js, npm, Cloudflare account)
-- [ ] Cloudflare authentication
-- [ ] Configuration collection
-- [ ] Resource provisioning
-- [ ] Admin account creation
-- [ ] Email configuration (Resend/SendGrid)
-- [ ] Test email sending
-- [ ] Success screen with URLs
-
-#### Health Checks
-- [ ] Endpoint availability tests
-- [ ] JWT signing verification
-- [ ] Database connectivity check
-- [ ] Email delivery test
-- [ ] Configuration validation
-- [ ] Performance baseline
-
-#### Templates
-- [ ] Next.js integration example
-- [ ] React SPA example
-- [ ] Vue.js example
-- [ ] Svelte example
-- [ ] Express.js backend example
-- [ ] Python Flask example
-
-### Week 38-39: Production Readiness
-
-#### Error Handling
-- [ ] Global error handler
-- [ ] User-friendly error messages
-- [ ] Error logging (Sentry integration)
-- [ ] Error recovery strategies
-- [ ] Automatic retry logic
-
-#### Performance Optimization
-- [ ] Edge caching strategy
-- [ ] Static asset optimization (images, CSS, JS)
-- [ ] Database query optimization
-- [ ] Connection pooling
-- [ ] Request batching
-
-#### Security Hardening
-- [ ] Content Security Policy (CSP)
-- [ ] CSRF token generation & validation
-- [ ] XSS prevention (sanitization)
-- [ ] SQL injection prevention
-- [ ] Rate limiting (per endpoint)
-- [ ] IP blocking/allowlisting
-- [ ] Audit logging
-
-#### Monitoring & Observability
-- [ ] Metrics collection (Prometheus format)
-- [ ] Health check endpoint enhancement
-- [ ] Logging aggregation (Cloudflare Logs)
-- [ ] Alerting setup (PagerDuty/Slack)
-- [ ] Dashboard integration (Grafana)
-
-#### Documentation
-- [ ] CLI reference documentation
-- [ ] Deployment guide (step-by-step)
-- [ ] Troubleshooting guide
-- [ ] Migration guide (from other IdPs)
-- [ ] Video tutorials
-- [ ] FAQ expansion
+**Key Features:**
+- [ ] Risk-Based Authentication
+- [ ] RBAC (Role-Based Access Control)
+- [ ] ABAC (Attribute-Based Access Control)
 
 **Deliverables:**
-- [ ] `create-hibana` package published to NPM
-- [ ] One-command deployment working
-- [ ] Comprehensive CLI with 20+ commands
-- [ ] Production-ready error handling
-- [ ] Complete documentation
+- [ ] All advanced OAuth flows operational
+- [ ] CIBA & JWE implemented
+- [ ] Social Login (6+ providers)
+- [ ] SAML 2.0 bridge functional
+- [ ] LDAP/AD integration working
+- [ ] SCIM 2.0 provisioning operational
+- [ ] Risk-based authentication active
+- [ ] RBAC/ABAC implemented
 
 ---
 
@@ -849,137 +526,50 @@ Legend:
 
 ### Week 52-54: OpenID for Verifiable Credentials (Nov 3-23)
 
-#### Hybrid Flow - OIDC Core 3.3
-- [ ] `response_type=code id_token` support
-- [ ] `response_type=code token` support
-- [ ] `response_type=code id_token token` support
-- [ ] Fragment encoding for tokens
-- [ ] Nonce validation (hybrid flow specific)
-- [ ] Tests & conformance validation
-- **Why:** エンタープライズニーズ、SPAとサーバーの両方で使用
+**Key Features:**
+- [ ] OpenID4VP (Verifiable Presentations)
+- [ ] OpenID4CI (Credential Issuance)
+- [ ] OpenID4IA (Identity Assurance)
+- [ ] W3C Verifiable Credentials support
+- [ ] DID (Decentralized Identifier) resolution
 
-#### Device Authorization Flow - RFC 8628
-- [ ] `POST /device_authorization` endpoint
-- [ ] Device code generation
-- [ ] User code generation (short, human-readable)
-- [ ] `POST /device/verify` endpoint (user-facing)
-- [ ] Polling mechanism (token endpoint)
-- [ ] QR code generation
-- [ ] Tests & conformance validation
-- **Why:** IoT/TV/CLI向け、メジャーな実装、Auth0/Clerkにもある
+### Week 55-57: Federation & OAuth 2.1 (Nov 24 - Dec 14)
 
-#### JWT Bearer Flow - RFC 7523
-- [ ] `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` support
-- [ ] JWT assertion validation
-- [ ] Issuer trust configuration
-- [ ] Subject trust validation
-- [ ] Service account support
-- [ ] Tests & conformance validation
-- **Why:** サービス間連携、エンタープライズで必須
+**Key Features:**
+- [ ] OpenID Federation 1.0
+- [ ] OAuth 2.1 compliance
+- [ ] Trust chain validation
+- [ ] Security best practices enforcement
 
-### Week 43-44: CIBA & Advanced Encryption
+### Week 58-60: Privacy & Advanced Features (Dec 15, 2026 - Jan 11, 2027)
 
-#### CIBA (Client Initiated Backchannel Authentication) - CIBA Spec
-- [ ] `POST /bc-authorize` endpoint
-- [ ] Authentication request validation
-- [ ] User notification (push notification / SMS)
-- [ ] Polling mode support
-- [ ] Ping mode support (callback)
-- [ ] Push mode support (callback with token)
-- [ ] Binding message display
-- [ ] Tests & conformance validation
-- **Why:** 銀行/決済向け、モバイルアプリ認証、先進的
+**Key Features:**
+- [ ] Ephemeral Identity
+- [ ] Differential privacy
+- [ ] Granular consent management
+- [ ] GDPR automation (right to erasure, data portability)
+- [ ] Privacy dashboard
 
-#### JWE (JSON Web Encryption) - RFC 7516
-- [ ] ID Token encryption (JWE)
-- [ ] UserInfo response encryption
-- [ ] Request object encryption
-- [ ] Key management (client public keys)
-- [ ] Algorithm support (RSA-OAEP, A256GCM)
-- [ ] Tests & conformance validation
-- **Why:** データ暗号化、プライバシー保護、金融業界
+### Week 61-63: Developer Tools & Ecosystem (Jan 12-31, 2027)
 
-### Week 45-47: Social Login & Identity Federation
-
-#### Social Login Providers
-- [ ] Google OAuth integration
-- [ ] GitHub OAuth integration
-- [ ] Microsoft Azure AD / Entra ID
-- [ ] Apple Sign In
-- [ ] Facebook Login
-- [ ] Twitter/X Login
-- [ ] LinkedIn Login
-- [ ] Generic OIDC provider (federation)
-- **Why:** UX向上、ユーザー獲得、Auth0/Clerkと同等
-
-#### Identity Federation & Transformation
-- [ ] Social identity mapping (Google ID → Hibana user)
-- [ ] Account linking (same email, multiple providers)
-- [ ] Profile synchronization
-- [ ] Provider-specific claim mapping
-- [ ] Social login UI (provider selection)
-
-### Week 48-50: Enterprise Integration
-
-#### SAML 2.0 Bridge (OIDC → SAML)
-- [ ] SAML 2.0 assertion generation
-- [ ] SAML endpoint (`/saml/sso`)
-- [ ] Metadata endpoint (`/saml/metadata`)
-- [ ] Signature validation (SAML requests)
-- [ ] Encryption support (SAML assertions)
-- [ ] Tests & compatibility (Okta, Azure AD)
-- **Why:** レガシーシステム統合、エンタープライズで必須
-
-#### LDAP/AD Integration
-- [ ] LDAP authentication backend
-- [ ] Active Directory support
-- [ ] User synchronization (LDAP → D1)
-- [ ] Group mapping (LDAP groups → scopes)
-- [ ] Password validation (LDAP bind)
-- [ ] Fallback to local auth
-- **Why:** エンタープライズオンプレ統合
-
-#### SCIM 2.0 User Provisioning - RFC 7643, RFC 7644
-- [ ] `GET /scim/v2/Users` endpoint
-- [ ] `POST /scim/v2/Users` endpoint (create)
-- [ ] `PUT /scim/v2/Users/{id}` endpoint (update)
-- [ ] `DELETE /scim/v2/Users/{id}` endpoint (delete)
-- [ ] `PATCH /scim/v2/Users/{id}` endpoint
-- [ ] Group provisioning support
-- [ ] Tests & conformance validation
-- **Why:** ユーザープロビジョニング自動化、SaaS統合
-
-### Week 51: Advanced Security & RBAC
-
-#### Risk-Based Authentication
-- [ ] IP reputation checking (Cloudflare)
-- [ ] Device fingerprinting analysis
-- [ ] Geolocation-based risk scoring
-- [ ] Velocity checks (login attempts)
-- [ ] Anomaly detection (time, location)
-- [ ] Step-up authentication trigger
-- **Why:** セキュリティ向上、詐欺防止
-
-#### RBAC & ABAC
-- [ ] Role definition & assignment
-- [ ] Permission system (resource:action)
-- [ ] Attribute-based access control
-- [ ] Policy engine (OPA integration?)
-- [ ] Admin UI for role management
-- **Why:** エンタープライズで必須、柔軟なアクセス制御
+**Key Features:**
+- [ ] Mobile SDKs (iOS, Android, React Native, Flutter)
+- [ ] Infrastructure as Code (Terraform, Helm, Pulumi)
+- [ ] GraphQL API
+- [ ] Webhooks & event streaming
+- [ ] Advanced analytics & reporting
+- [ ] Compliance tooling (GDPR, SOC 2, ISO 27001)
 
 **Deliverables:**
-- [ ] Hybrid Flow operational
-- [ ] Device Authorization Flow functional
-- [ ] JWT Bearer Flow working
-- [ ] CIBA (Backchannel Auth) implemented
-- [ ] JWE (encryption) support
-- [ ] Social Login (6+ providers)
-- [ ] SAML 2.0 bridge functional
-- [ ] LDAP/AD integration working
-- [ ] SCIM 2.0 provisioning operational
-- [ ] Risk-based authentication active
-- [ ] RBAC/ABAC implemented
+- [ ] OpenID4VP/CI/IA implemented
+- [ ] OpenID Federation 1.0 functional
+- [ ] OAuth 2.1 compliance
+- [ ] Ephemeral Identity working
+- [ ] Mobile SDKs (4 platforms)
+- [ ] Infrastructure as Code (Terraform, Helm, Pulumi)
+- [ ] GraphQL API operational
+- [ ] Advanced analytics & reporting
+- [ ] Full compliance tooling
 
 ---
 
@@ -997,128 +587,45 @@ Legend:
 
 ### Week 64-67: Multi-Tenancy Foundation (Feb 1-28)
 
-#### OpenID4VP (Verifiable Presentations) - OpenID4VP Spec
-- [ ] Presentation request endpoint
-- [ ] VP Token validation
-- [ ] W3C Verifiable Credentials support
-- [ ] DID (Decentralized Identifier) resolution
-- [ ] Selective disclosure support
-- [ ] Tests & conformance validation
-- **Why:** 分散ID、Web3統合、将来性
+**Key Features:**
+- [ ] Multi-tenant architecture
+- [ ] Custom domain per tenant
+- [ ] Tenant management dashboard
+- [ ] Tenant provisioning API
+- [ ] Resource quotas per tenant
 
-#### OpenID4CI (Credential Issuance) - OpenID4CI Spec
-- [ ] Credential offer endpoint
-- [ ] Credential issuance endpoint
-- [ ] Credential format support (JWT-VC, LD-Proof)
-- [ ] Batch issuance support
-- [ ] Deferred issuance support
-- [ ] Tests & conformance validation
-- **Why:** Verifiable Credentials発行、デジタル証明書
+### Week 68-71: Billing & Monetization (Mar 1-28, 2027)
 
-#### OpenID4IA (Identity Assurance) - OpenID4IA Spec
-- [ ] Verified claims support
-- [ ] Trust framework configuration
-- [ ] Evidence attachment
-- [ ] Assurance level (AL1-AL3)
-- [ ] KYC/AML integration hooks
-- [ ] Tests & conformance validation
-- **Why:** KYC向け、金融業界、本人確認
+**Key Features:**
+- [ ] Stripe integration
+- [ ] Usage metering (MAU, API calls, storage)
+- [ ] Plan/pricing tiers (Free, Pro, Enterprise)
+- [ ] Invoice generation
+- [ ] Subscription management
 
-### Week 55-57: Federation & OAuth 2.1
+### Week 72-75: Marketplace (Mar 29 - Apr 25, 2027)
 
-#### OpenID Federation 1.0 - Federation Spec
-- [ ] Entity statement generation
-- [ ] Trust chain validation
-- [ ] Federation metadata endpoint
-- [ ] Automatic trust establishment
-- [ ] Federation registration
-- [ ] Tests & conformance validation
-- **Why:** 大規模連携、マルチテナント、エコシステム
+**Key Features:**
+- [ ] Plugin system architecture
+- [ ] Plugin marketplace
+- [ ] Third-party plugin submission
+- [ ] Plugin versioning & updates
+- [ ] Plugin revenue sharing
 
-#### OAuth 2.1 (draft) - OAuth 2.1 Draft
-- [ ] PKCE mandatory (already implemented)
-- [ ] Refresh token rotation (Phase 4)
-- [ ] Exact redirect URI matching
-- [ ] Security best practices enforcement
-- [ ] Deprecated features removal
-- [ ] Tests & conformance validation
-- **Why:** 次世代標準、セキュリティ強化
+### Week 76+: Platform Refinement & Growth (Apr 26, 2027 onwards)
 
-### Week 58-60: Privacy & Advanced Features
-
-#### Ephemeral Identity
-- [ ] Temporary user account generation
-- [ ] Anonymous authentication
-- [ ] Zero-knowledge proof integration
-- [ ] Self-destructing sessions
-- [ ] Privacy-preserving analytics
-- **Why:** プライバシー保護、匿名性、Web3
-
-#### Advanced Privacy Features
-- [ ] Differential privacy (analytics)
-- [ ] Consent management (granular)
-- [ ] Right to erasure (GDPR automation)
-- [ ] Data portability (export)
-- [ ] Privacy dashboard (user-facing)
-
-### Week 61-63: Developer Tools & Ecosystem
-
-#### Mobile SDKs
-- [ ] iOS SDK (Swift)
-- [ ] Android SDK (Kotlin)
-- [ ] React Native SDK
-- [ ] Flutter SDK
-- [ ] Example apps for each platform
-- **Why:** モバイルファースト、開発者体験
-
-#### Infrastructure as Code
-- [ ] Terraform provider
-- [ ] Kubernetes Helm charts
-- [ ] Pulumi provider
-- [ ] Docker Compose templates
-- [ ] CloudFormation templates (AWS)
-- **Why:** DevOps統合、自動化
-
-#### Developer APIs & Integrations
-- [ ] GraphQL API (in addition to REST)
-- [ ] Webhooks (user events, auth events)
-- [ ] Event streaming (Kafka/NATS integration)
-- [ ] CLI plugins (custom commands)
-- [ ] OpenAPI/Swagger spec
-- **Why:** 開発者体験、エコシステム
-
-### Advanced Analytics & Reporting
-- [ ] Advanced analytics dashboard (enhanced)
-- [ ] User behavior tracking (privacy-preserving)
-- [ ] Conversion funnels (signup, login, consent)
-- [ ] Geographic distribution heatmap
-- [ ] Device/browser statistics
-- [ ] Authentication method breakdown (Passkey vs Password vs Magic Link)
-- [ ] Custom reports builder
-- [ ] Export to CSV/PDF/JSON
-- [ ] Scheduled reports (email delivery)
-- **Why:** データドリブン意思決定、改善サイクル
-
-### Compliance & Governance
-- [ ] Compliance reports (GDPR, SOC 2, ISO 27001)
-- [ ] Data retention policies (automated enforcement)
-- [ ] User data export (GDPR Article 20)
-- [ ] User data deletion (GDPR Article 17 - Right to Erasure)
-- [ ] Privacy policy templates (multi-language)
-- [ ] Terms of Service templates
-- [ ] Cookie consent management (granular)
-- **Why:** コンプライアンス、法的要件、信頼性
+**Key Features:**
+- [ ] White-label customization
+- [ ] Advanced monitoring & SLA
+- [ ] Enterprise support features
+- [ ] Marketing & growth
 
 **Deliverables:**
-- [ ] OpenID4VP/CI/IA implemented (Verifiable Credentials)
-- [ ] OpenID Federation 1.0 functional
-- [ ] OAuth 2.1 compliance
-- [ ] Ephemeral Identity working
-- [ ] Mobile SDKs (4 platforms)
-- [ ] Infrastructure as Code (Terraform, Helm, Pulumi)
-- [ ] GraphQL API operational
-- [ ] Advanced analytics & reporting
-- [ ] Full compliance tooling (GDPR, SOC 2)
+- [ ] Multi-tenant platform operational
+- [ ] 100+ active tenants
+- [ ] Billing & monetization functional
+- [ ] Plugin marketplace live
+- [ ] White-label features complete
 
 ---
 
