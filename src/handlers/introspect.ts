@@ -101,7 +101,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   let tokenPayload;
   try {
     tokenPayload = parseToken(token);
-  } catch (error) {
+  } catch {
     // If token format is invalid, return inactive response (per RFC 7662)
     return c.json<IntrospectionResponse>({
       active: false,
@@ -131,10 +131,10 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
 
   let publicKey;
   try {
-    const jwk = JSON.parse(publicJwkJson);
+    const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
     publicKey = await importJWK(jwk, 'RS256');
-  } catch (error) {
-    console.error('Failed to import public key:', error);
+  } catch (err) {
+    console.error('Failed to import public key:', err);
     return c.json(
       {
         error: 'server_error',
