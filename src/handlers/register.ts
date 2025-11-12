@@ -16,6 +16,7 @@ import type {
   ClientMetadata,
   OAuthErrorResponse,
 } from '../types/oidc';
+import { generateSecureRandomString } from '../utils/crypto';
 
 /**
  * Validate client registration request
@@ -238,9 +239,11 @@ function validateRegistrationRequest(
 
 /**
  * Generate a cryptographically secure client ID
+ * Uses long random string (~128 characters) for enhanced security
  */
 function generateClientId(): string {
-  return `client_${crypto.randomUUID()}`;
+  // Using 96 bytes results in approximately 128 characters in base64url encoding
+  return `client_${generateSecureRandomString(96)}`;
 }
 
 /**
