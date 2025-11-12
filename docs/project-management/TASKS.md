@@ -817,67 +817,6 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-## Phase 5: Certification Preparation (May 1-31, 2026)
-
-### Week 26-27: Production Deployment (May 1-14)
-
-#### 26.1 Production Environment
-- [ ] Set up production Cloudflare account
-- [ ] Configure custom domain (`id.hibana.dev`)
-- [ ] Set up DNS records
-- [ ] Configure SSL/TLS
-
-#### 26.2 Production Configuration
-- [ ] Generate production RSA keys
-- [ ] Configure production secrets
-- [ ] Set up production KV namespaces
-- [ ] Configure environment variables
-
-#### 26.3 Deployment
-- [ ] Deploy to production
-- [ ] Verify all endpoints work
-- [ ] Test with external clients
-- [ ] Monitor for errors
-
----
-
-### Week 28: Certification Submission (May 15-21)
-
-#### 28.1 Documentation
-- [ ] Prepare certification application
-- [ ] Document deployment architecture
-- [ ] Provide test results
-- [ ] List supported features
-
-#### 28.2 Submission
-- [ ] Submit to OpenID Foundation
-- [ ] Provide test environment access
-- [ ] Respond to questions
-- [ ] Track submission status
-
----
-
-### Week 29: Final Preparation (May 22-31)
-
-#### 29.1 Certification Approval
-- [ ] Wait for certification review
-- [ ] Address any feedback
-- [ ] Obtain official certification
-
-#### 29.2 Release Preparation
-- [ ] Update README with certification mark
-- [ ] Prepare release notes
-- [ ] Create changelog
-- [ ] Plan announcement
-
-#### 29.3 Milestone 5 Achievement
-- [ ] Verify certification obtained
-- [ ] Publish release
-- [ ] Make announcement
-- [ ] Celebrate! 🎉
-
----
-
 ## Ongoing Tasks (Throughout All Phases)
 
 ### Documentation Maintenance
@@ -950,9 +889,9 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-## Phase 6: UI/UX Implementation (Jun 1-30, 2026)
+## Phase 5: UI/UX Implementation (May 1-31, 2026)
 
-### Week 26-27: Authentication UI (Jun 1-14)
+### Week 26-27: Authentication UI (May 1-14)
 
 #### 26.1 Login Screen Implementation
 - [ ] Create login page HTML/CSS structure
@@ -1011,7 +950,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 28-29: Admin Dashboard (Jun 15-28)
+### Week 28-29: Admin Dashboard (May 15-28)
 
 #### 28.1 Dashboard Overview
 - [ ] Create dashboard layout
@@ -1087,7 +1026,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 30-31: Data Storage Abstraction (Jun 29 - Jul 12)
+### Week 30-31: Data Storage Abstraction (May 29 - Jun 11)
 
 #### 30.1 Storage Adapter Design
 - [ ] Define abstract storage interface
@@ -1143,9 +1082,9 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-## Phase 7: CLI & Automation (Jul 1 - Aug 31, 2026)
+## Phase 6: CLI & Automation (Jun 12 - Aug 10, 2026)
 
-### Week 32-33: CLI Tool Development (Jul 13-26)
+### Week 32-33: CLI Tool Development (Jun 12-25)
 
 #### 32.1 `create-hibana` Package Setup
 - [ ] Initialize NPM package
@@ -1213,7 +1152,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 34-35: Cloudflare Integration (Jul 27 - Aug 9)
+### Week 34-35: Cloudflare Integration (Jun 26 - Jul 9)
 
 #### 34.1 Cloudflare API Client
 - [ ] Set up Cloudflare API SDK
@@ -1270,7 +1209,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 36-37: Setup Automation (Aug 10-23)
+### Week 36-37: Setup Automation (Jul 10-23)
 
 #### 36.1 Initial Setup Wizard
 - [ ] Create welcome screen with ASCII art
@@ -1317,7 +1256,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 38-39: Production Readiness (Aug 24-31)
+### Week 38-39: Production Readiness (Jul 24 - Aug 10)
 
 #### 38.1 Error Handling Enhancement
 - [ ] Implement global error handler
@@ -1396,9 +1335,9 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-## Phase 8: Enterprise Flows & Advanced Features 🏢 (Sep - Nov 2026)
+## Phase 7: Enterprise Flows & Advanced Features 🏢 (Aug 11 - Oct 31, 2026)
 
-### Week 40-42: Advanced OAuth Flows (Sep 1 - Sep 21)
+### Week 40-42: Advanced OAuth Flows (Aug 11-31)
 
 #### 40.1 Hybrid Flow Implementation - OIDC Core 3.3
 - [ ] Implement `response_type=code id_token` support
@@ -1450,7 +1389,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 43-44: CIBA & Advanced Encryption (Sep 22 - Oct 5)
+### Week 43-44: CIBA & Advanced Encryption (Sep 1-14)
 
 #### 43.1 CIBA (Client Initiated Backchannel Authentication) - CIBA Spec
 - [ ] Implement `POST /bc-authorize` endpoint
@@ -1493,7 +1432,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 45-47: Social Login & Identity Federation (Oct 6 - Oct 26)
+### Week 45-47: Social Login & Identity Federation (Sep 15 - Oct 5)
 
 #### 45.1 Social Login Providers Integration
 - [ ] Design social provider abstraction layer
@@ -1544,7 +1483,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 48-50: Enterprise Integration (Oct 27 - Nov 16)
+### Week 48-50: Enterprise Integration (Oct 6-26)
 
 #### 48.1 SAML 2.0 Bridge (OIDC → SAML)
 - [ ] Install and configure SAML libraries
@@ -1609,7 +1548,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 51: Advanced Security & RBAC (Nov 17-23)
+### Week 51: Advanced Security & RBAC (Oct 27 - Nov 2)
 
 #### 51.1 Risk-Based Authentication
 - [ ] Design risk scoring system
@@ -1662,9 +1601,9 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-## Phase 9: Verifiable Credentials & Next-Gen 🚀 (Dec 2026 - Feb 2027)
+## Phase 8: Verifiable Credentials & Next-Gen 🚀 (Nov 3, 2026 - Jan 31, 2027)
 
-### Week 52-54: OpenID for Verifiable Credentials (Dec 1 - Dec 21)
+### Week 52-54: OpenID for Verifiable Credentials (Nov 3-23)
 
 #### 52.1 OpenID4VP (Verifiable Presentations) - OpenID4VP Spec
 - [ ] Research W3C Verifiable Credentials data model
@@ -1714,7 +1653,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 55-57: Federation & OAuth 2.1 (Dec 22 - Jan 11)
+### Week 55-57: Federation & OAuth 2.1 (Nov 24 - Dec 14)
 
 #### 55.1 OpenID Federation 1.0 - Federation Spec
 - [ ] Research OpenID Federation specification
@@ -1745,7 +1684,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 58-60: Privacy & Advanced Features (Jan 12 - Feb 1)
+### Week 58-60: Privacy & Advanced Features (Dec 15, 2026 - Jan 11, 2027)
 
 #### 58.1 Ephemeral Identity
 - [ ] Design ephemeral user schema
@@ -1805,7 +1744,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 61-63: Developer Tools & Ecosystem (Feb 2 - Feb 22)
+### Week 61-63: Developer Tools & Ecosystem (Jan 12-31, 2027)
 
 #### 61.1 Mobile SDKs
 - [ ] Design SDK architecture
@@ -1879,9 +1818,9 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-## Phase 10: White-Label & SaaS Platform 🌐 (Mar 2027 onwards)
+## Phase 9: White-Label & SaaS Platform 🌐 (Feb 1, 2027 onwards)
 
-### Week 64-67: Multi-Tenancy Foundation (Mar 1 - Mar 28)
+### Week 64-67: Multi-Tenancy Foundation (Feb 1-28)
 
 #### 64.1 Multi-Tenant Architecture
 - [ ] Design multi-tenant data model
@@ -1946,7 +1885,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 68-71: Billing & Monetization (Mar 29 - Apr 25)
+### Week 68-71: Billing & Monetization (Mar 1-28, 2027)
 
 #### 68.1 Stripe Integration
 - [ ] Set up Stripe account
@@ -1998,7 +1937,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 72-75: Marketplace (Apr 26 - May 23)
+### Week 72-75: Marketplace (Mar 29 - Apr 25, 2027)
 
 #### 72.1 Plugin System Architecture
 - [ ] Design plugin architecture
@@ -2046,7 +1985,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-### Week 76+: Platform Refinement & Growth (May 24 onwards)
+### Week 76+: Platform Refinement & Growth (Apr 26, 2027 onwards)
 
 #### 76.1 White-Label Customization
 - [ ] Implement full white-label branding
@@ -2083,7 +2022,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-## Phase 10 Success Metrics
+## Phase 9 Success Metrics
 
 ### Multi-Tenancy
 - [ ] 100+ active tenants
@@ -2111,6 +2050,142 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
+## Phase 10: Certification & Production Launch 🎓 (Final Phase)
+
+### Advanced Security Protocols (Pre-Certification)
+
+#### 10.1 JARM (JWT Secured Authorization Response Mode) - JARM Spec
+- [ ] Implement `response_mode=jwt` support
+- [ ] Implement `response_mode=query.jwt` support
+- [ ] Implement `response_mode=fragment.jwt` support
+- [ ] Implement `response_mode=form_post.jwt` support
+- [ ] Add authorization response JWT signing
+- [ ] Implement response JWT encryption (optional)
+- [ ] Add tests & conformance validation
+- [ ] Document JARM configuration
+- **Why:** OpenID認証で高評価、レスポンス改ざん防止
+
+#### 10.2 MTLS (Mutual TLS Client Authentication) - RFC 8705
+- [ ] Implement MTLS client certificate validation
+- [ ] Add certificate-bound access tokens
+- [ ] Implement `tls_client_auth` method support
+- [ ] Implement `self_signed_tls_client_auth` support
+- [ ] Add certificate thumbprint validation
+- [ ] Implement certificate chain validation
+- [ ] Add tests & conformance validation
+- [ ] Document MTLS setup & configuration
+- **Why:** エンタープライズ必須、最高レベルのセキュリティ、金融業界標準
+
+#### 10.3 JAR (JWT-Secured Authorization Request) - RFC 9101
+- [ ] Implement `request` parameter support (JWT)
+- [ ] Implement `request_uri` parameter support
+- [ ] Add request object validation
+- [ ] Implement request object encryption (JWE)
+- [ ] Add request object signing validation
+- [ ] Implement `request_uri` pre-registration
+- [ ] Add tests & conformance validation
+- [ ] Document JAR usage & examples
+- **Why:** セキュリティ強化、リクエスト改ざん防止、OpenID認証で必須
+
+#### 10.4 Client Credentials Flow - RFC 6749 Section 4.4
+- [ ] Implement `grant_type=client_credentials` support
+- [ ] Add client authentication (client_secret_basic)
+- [ ] Add client authentication (client_secret_post)
+- [ ] Add client authentication (private_key_jwt)
+- [ ] Implement machine-to-machine token issuance
+- [ ] Add scope-based access control
+- [ ] Implement token introspection for client credentials
+- [ ] Add tests & conformance validation
+- [ ] Document client credentials setup
+- **Why:** 基本フロー、サーバー間認証で必須、メジャーな実装
+
+---
+
+### Production Deployment
+
+#### 10.5 Production Environment
+- [ ] Set up production Cloudflare account
+- [ ] Configure custom domain (`id.hibana.dev`)
+- [ ] Set up DNS records
+- [ ] Configure SSL/TLS (with MTLS support)
+
+#### 10.6 Production Configuration
+- [ ] Generate production RSA keys
+- [ ] Configure production secrets
+- [ ] Set up production KV namespaces
+- [ ] Configure environment variables
+- [ ] Set up production monitoring
+
+#### 10.7 Deployment
+- [ ] Deploy to production
+- [ ] Verify all endpoints work
+- [ ] Test with external clients
+- [ ] Load testing & performance validation
+- [ ] Monitor for errors
+
+---
+
+### OpenID Certification Submission
+
+#### 10.8 Pre-Submission Testing
+- [ ] Full conformance suite run (all tests)
+- [ ] PAR, DPoP, JARM, MTLS validation
+- [ ] Security audit (external)
+- [ ] Performance benchmarks
+- [ ] Documentation review
+
+#### 10.9 Documentation
+- [ ] Prepare certification application
+- [ ] Document deployment architecture
+- [ ] Provide test results compilation (all phases)
+- [ ] List supported features
+- [ ] Security assessment report
+
+#### 10.10 Submission
+- [ ] Submit to OpenID Foundation
+- [ ] Provide test environment access
+- [ ] Respond to questions
+- [ ] Track submission status
+
+---
+
+### Final Preparation
+
+#### 10.11 Certification Approval
+- [ ] Wait for certification review
+- [ ] Address any feedback
+- [ ] Re-testing (if needed)
+- [ ] Obtain official certification
+
+#### 10.12 Release Preparation
+- [ ] Update README with certification mark
+- [ ] Prepare release notes
+- [ ] Create changelog
+- [ ] Migration guide (from Auth0/Keycloak)
+- [ ] Video tutorials
+- [ ] Blog post & announcement
+- [ ] Press kit preparation
+
+#### 10.13 Milestone 10 Achievement
+- [ ] Verify certification obtained
+- [ ] Publish release
+- [ ] Make announcement
+- [ ] Celebrate! 🎉
+
+---
+
+**Phase 10 Deliverables:**
+- [ ] JARM (JWT Secured Authorization Response) functional
+- [ ] MTLS (Mutual TLS) implemented
+- [ ] JAR (JWT-Secured Authorization Request) operational
+- [ ] Client Credentials Flow working
+- [ ] Production deployment live (`https://id.hibana.dev`)
+- [ ] OpenID Certification obtained ✨
+- [ ] Public announcement ready
+- [ ] Migration guides published
+
+---
+
 > **Hibana** 💥 — Building standards-compliant identity infrastructure, one task at a time.
 >
 > **Updated:** 2025-11-12 — Phase 4 (Extended Features) ✅ COMPLETE
@@ -2119,3 +2194,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 > - Enhanced Security Headers & CORS
 > - Added 85 comprehensive tests (263 total tests passing)
 > - All Phase 4 milestones achieved
+>
+> **Phase Order Updated:** 2025-11-12
+> - Phase 5-9: Moved up (UI/UX → CLI → Enterprise → VC → SaaS)
+> - Phase 10: Certification & Production Launch (moved to final phase)

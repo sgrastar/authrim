@@ -15,7 +15,7 @@ A lightweight, serverless **OpenID Connect Provider** that deploys to **Cloudfla
 **Hibana** makes identity infrastructure as simple as deploying a website:
 
 ```bash
-# Future goal (Phase 7)
+# Future goal (Phase 6)
 npx create-hibana my-identity-provider
 ```
 
@@ -124,29 +124,44 @@ Hibana is an **enterprise-grade OpenID Connect Provider** built for:
 - **Rate Limiting** (strict/moderate/lenient profiles)
 - **Enhanced Security** (CSP, CORS, HSTS, XSS protection)
 
-### ⏳ Planned (Phase 5)
+### 🆕 Planned (Phase 5-9)
 
-**Phase 5: Certification Preparation**
-- Request Object (JAR) support (RFC 9101)
-- Official OpenID Certification submission
-- Production hardening & optimization
-
-### 🆕 Planned (Phase 6-7)
-
-#### UI/UX (Jun 2026)
-- 🖥️ Login & registration screens
-- 🎨 Consent screen
+**Phase 5: UI/UX Implementation** (May 2026)
+- 🖥️ Login & registration screens (Passwordless-first)
+- 🎨 OAuth consent screen
 - 📊 Admin dashboard
 - 👥 User management interface
 - 🔧 Client management interface
-- 🎨 Branding customization
+- 💾 Data storage abstraction (KV/D1/DO)
 
-#### CLI & Automation (Aug 2026)
+**Phase 6: CLI & Automation** (Jun-Aug 2026)
 - 📦 `create-hibana` NPM package
 - 🚀 One-command deployment
 - 🤖 Cloudflare integration
 - 🛠️ Management CLI (users, clients, keys)
 - 📚 Integration examples (Next.js, React, Vue, etc.)
+
+**Phase 7: Enterprise Features** (Aug-Oct 2026)
+- 🏢 Hybrid Flow, Device Flow, JWT Bearer
+- 🔐 CIBA, JWE encryption
+- 🌐 Social Login (Google, GitHub, etc.)
+- 🔗 SAML 2.0, LDAP/AD, SCIM 2.0
+
+**Phase 8: Next-Gen Protocols** (Nov 2026 - Jan 2027)
+- 🆔 Verifiable Credentials (OpenID4VP/CI/IA)
+- 🌐 OpenID Federation 1.0
+- 🔮 OAuth 2.1 compliance
+- 📱 Mobile SDKs (iOS, Android, React Native, Flutter)
+
+**Phase 9: SaaS Platform** (Feb 2027+)
+- 🌐 Multi-tenant architecture
+- 💰 Billing & monetization
+- 🛒 Plugin marketplace
+
+**Phase 10: Certification & Launch** (Final Phase)
+- ✅ OpenID Certification submission
+- 🚀 Production deployment
+- 📣 Public announcement
 
 [🗺️ Full Roadmap](./docs/ROADMAP.md) | [📋 Detailed Tasks](./docs/project-management/TASKS.md)
 
@@ -333,7 +348,7 @@ Automatic deployment is configured for the `main` branch:
 - 🚀 Deploys to Cloudflare Workers on merge to main
 - 🔐 Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets
 
-**Future (Phase 7):**
+**Future (Phase 6):**
 ```bash
 npx create-hibana my-idp
 # One command, fully automated setup
