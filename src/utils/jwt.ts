@@ -7,6 +7,7 @@
 
 import { SignJWT, jwtVerify, importPKCS8, importJWK } from 'jose';
 import type { JWK, KeyLike, JWTPayload } from 'jose';
+import { generateSecureRandomString } from './crypto';
 
 /**
  * ID Token claims interface
@@ -81,7 +82,8 @@ export async function createAccessToken(
   expiresIn: number = 3600
 ): Promise<{ token: string; jti: string }> {
   const now = Math.floor(Date.now() / 1000);
-  const jti = crypto.randomUUID(); // Generate unique token identifier
+  // Generate unique token identifier with enhanced security (~128 characters)
+  const jti = generateSecureRandomString(96);
 
   const token = await new SignJWT({
     ...claims,
@@ -249,7 +251,8 @@ export async function createRefreshToken(
   expiresIn: number = 2592000
 ): Promise<{ token: string; jti: string }> {
   const now = Math.floor(Date.now() / 1000);
-  const jti = crypto.randomUUID(); // Generate unique token identifier
+  // Generate unique token identifier with enhanced security (~128 characters)
+  const jti = generateSecureRandomString(96);
 
   const token = await new SignJWT({
     ...claims,

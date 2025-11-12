@@ -28,7 +28,7 @@ export interface AuthCodeData {
  * Store authorization code in KV with associated metadata
  *
  * @param env - Cloudflare environment bindings
- * @param code - Authorization code (UUID)
+ * @param code - Authorization code (base64url-encoded random string, ~128 characters)
  * @param data - Authorization code metadata
  * @returns Promise<void>
  */

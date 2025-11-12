@@ -15,6 +15,7 @@ import type { Env } from '../types/env';
 import { OIDCError } from '../utils/errors';
 import { ERROR_CODES, HTTP_STATUS } from '../constants';
 import { validateClientId, validateRedirectUri, validateScope } from '../utils/validation';
+import { generateSecureRandomString } from '../utils/crypto';
 
 /**
  * PAR request parameters interface
@@ -85,10 +86,12 @@ function validatePARParams(formData: Record<string, unknown>): PARRequestParams 
 
 /**
  * Generate a secure request URI
+ * Uses cryptographically secure random string (~128 characters) for enhanced security
  */
 function generateRequestUri(): string {
   // RFC 9126: request URI MUST be a URN using urn:ietf:params:oauth:request_uri: scheme
-  return `urn:ietf:params:oauth:request_uri:${crypto.randomUUID()}`;
+  // Using 96 bytes results in approximately 128 characters in base64url encoding
+  return `urn:ietf:params:oauth:request_uri:${generateSecureRandomString(96)}`;
 }
 
 /**

@@ -85,8 +85,9 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.response_types).toEqual(['code']); // Default
       expect(json.application_type).toBe('web'); // Default
 
-      // Verify client_id format
-      expect(json.client_id).toMatch(/^client_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      // Verify client_id format (base64url with prefix, ~135 characters total)
+      expect(json.client_id).toMatch(/^client_[A-Za-z0-9_-]+$/);
+      expect(json.client_id.length).toBeGreaterThanOrEqual(135); // 'client_' (7 chars) + ~128 chars
 
       // Verify client_secret is base64url encoded
       expect(json.client_secret).toMatch(/^[A-Za-z0-9_-]+$/);
