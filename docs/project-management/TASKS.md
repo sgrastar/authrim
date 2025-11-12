@@ -588,7 +588,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-## Phase 4: Extended Features (Mar 16 - Apr 30, 2026) ✅ COMPLETE
+## Phase 4: Extended Features (Mar 16 - Apr 30, 2026) ⏳ IN PROGRESS
 
 ### Week 19-20: Dynamic Client Registration (Mar 16-29) ✅
 
@@ -672,13 +672,79 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [x] Update documentation
 - [x] Prepare for production deployment
 
-**Phase 4 Completion Summary:**
+**Phase 4 Completed Features:**
 - ✅ Dynamic Client Registration (RFC 7591) - 56 tests
 - ✅ Rate Limiting Middleware - 44 tests
 - ✅ Security Headers & CORS - 41 tests
 - ✅ Extended Claims Support - Full OIDC profile
 - ✅ KeyManager Durable Object - Multi-key rotation
 - ✅ Total: 263 tests passing (85 new Phase 4 tests)
+
+---
+
+### Phase 4 Remaining Tasks ⏳
+
+#### Advanced Security Extensions
+
+##### PAR (Pushed Authorization Requests) - RFC 9126
+- [ ] Implement `POST /as/par` endpoint
+- [ ] Request object validation
+- [ ] Request URI generation and storage
+- [ ] Authorization endpoint PAR support
+- [ ] Tests & conformance validation
+- [ ] Documentation
+
+##### DPoP (Demonstrating Proof of Possession) - RFC 9449
+- [ ] DPoP token validation middleware
+- [ ] DPoP-bound access token generation
+- [ ] Token endpoint DPoP support
+- [ ] UserInfo endpoint DPoP support
+- [ ] Replay attack prevention
+- [ ] Tests & conformance validation
+- [ ] Documentation
+
+##### Pairwise Subject Identifiers - OIDC Core 8.1
+- [ ] Subject type configuration (public/pairwise)
+- [ ] Pairwise identifier generation (per client)
+- [ ] Sector identifier validation
+- [ ] Storage for pairwise mappings
+- [ ] Tests & conformance validation
+- [ ] Documentation
+
+#### Token Management
+
+##### Refresh Token Flow - RFC 6749 Section 6
+- [ ] Refresh token generation
+- [ ] Refresh token validation
+- [ ] Token rotation (refresh token)
+- [ ] Refresh token revocation
+- [ ] Storage implementation
+- [ ] Tests & conformance validation
+- [ ] Documentation
+
+##### Token Introspection & Revocation - RFC 7662, RFC 7009
+- [ ] Implement `POST /introspect` endpoint
+- [ ] Implement `POST /revoke` endpoint
+- [ ] Token metadata response
+- [ ] Client authentication for introspection
+- [ ] Tests & conformance validation
+- [ ] Documentation
+
+#### Response Modes
+
+##### Form Post Response Mode - OAuth 2.0 Form Post
+- [ ] `response_mode=form_post` support
+- [ ] Auto-submit HTML form generation
+- [ ] Authorization endpoint enhancement
+- [ ] Tests & conformance validation
+- [ ] Documentation
+
+#### Storage Foundation (Preparation for Phase 6)
+- [ ] Abstract storage interface design
+- [ ] D1 schema design (users, clients, sessions)
+- [ ] Migration system foundation
+- [ ] Storage adapter selection logic
+- [ ] Documentation
 
 ---
 
