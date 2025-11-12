@@ -30,7 +30,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     response_modes_supported: ['query', 'form_post'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
     id_token_signing_alg_values_supported: ['RS256'],
-    subject_types_supported: ['public'],
+    // OIDC Core 8: Both public and pairwise subject identifiers are supported
+    subject_types_supported: ['public', 'pairwise'],
     scopes_supported: ['openid', 'profile', 'email', 'address', 'phone'],
     claims_supported: [
       // Standard claims (always present)
@@ -67,6 +68,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     ],
     token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic', 'none'],
     code_challenge_methods_supported: ['S256'],
+    // RFC 9449: DPoP (Demonstrating Proof of Possession) support
+    dpop_signing_alg_values_supported: ['RS256', 'ES256'],
   };
 
   // Add cache headers for better performance

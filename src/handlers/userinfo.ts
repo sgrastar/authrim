@@ -4,6 +4,12 @@ import type { KeyLike, JWK } from 'jose';
 import { verifyToken } from '../utils/jwt';
 import { importJWK } from 'jose';
 import { isTokenRevoked } from '../utils/kv';
+import {
+  extractDPoPProof,
+  validateDPoPProof,
+  isDPoPBoundToken,
+  extractDPoPToken,
+} from '../utils/dpop';
 
 /**
  * Cached public key for token verification
@@ -46,22 +52,41 @@ async function getPublicKey(publicJWKJson: string, keyId: string): Promise<KeyLi
  */
 export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   let accessToken: string | undefined;
+  let isDPoP = false;
 
   // Try to extract access token from Authorization header (preferred method)
   const authHeader = c.req.header('Authorization');
   if (authHeader) {
-    const parts = authHeader.split(' ');
-    if (parts.length === 2 && parts[0] === 'Bearer') {
-      accessToken = parts[1];
+    // Check if this is a DPoP-bound token
+    if (isDPoPBoundToken(authHeader)) {
+      isDPoP = true;
+      const dpopToken = extractDPoPToken(authHeader);
+      if (!dpopToken) {
+        c.header('WWW-Authenticate', 'DPoP');
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Invalid DPoP Authorization header format. Expected: DPoP <token>',
+          },
+          401
+        );
+      }
+      accessToken = dpopToken;
     } else {
-      c.header('WWW-Authenticate', 'Bearer');
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Invalid Authorization header format. Expected: Bearer <token>',
-        },
-        401
-      );
+      // Bearer token
+      const parts = authHeader.split(' ');
+      if (parts.length === 2 && parts[0] === 'Bearer') {
+        accessToken = parts[1];
+      } else {
+        c.header('WWW-Authenticate', 'Bearer');
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Invalid Authorization header format. Expected: Bearer <token> or DPoP <token>',
+          },
+          401
+        );
+      }
     }
   }
 
@@ -138,7 +163,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       issuerUrl // For MVP, access token audience is the issuer
     );
   } catch (error) {
-    c.header('WWW-Authenticate', 'Bearer error="invalid_token"');
+    const wwwAuth = isDPoP ? 'DPoP error="invalid_token"' : 'Bearer error="invalid_token"';
+    c.header('WWW-Authenticate', wwwAuth);
     return c.json(
       {
         error: 'invalid_token',
@@ -148,13 +174,88 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
+  // DPoP validation (RFC 9449)
+  // If token is DPoP-bound, validate the DPoP proof
+  if (isDPoP) {
+    // Extract DPoP proof from header
+    const dpopProof = extractDPoPProof(c.req.raw.headers);
+    if (!dpopProof) {
+      c.header('WWW-Authenticate', 'DPoP error="invalid_dpop_proof"');
+      return c.json(
+        {
+          error: 'invalid_dpop_proof',
+          error_description: 'DPoP proof is required for DPoP-bound tokens',
+        },
+        401
+      );
+    }
+
+    // Validate DPoP proof
+    const dpopValidation = await validateDPoPProof(
+      dpopProof,
+      c.req.method,
+      c.req.url,
+      accessToken, // Include access token for ath validation
+      c.env.NONCE_STORE
+    );
+
+    if (!dpopValidation.valid) {
+      c.header('WWW-Authenticate', 'DPoP error="invalid_dpop_proof"');
+      return c.json(
+        {
+          error: dpopValidation.error || 'invalid_dpop_proof',
+          error_description: dpopValidation.error_description || 'DPoP proof validation failed',
+        },
+        401
+      );
+    }
+
+    // Verify that the DPoP proof's JWK thumbprint matches the token's cnf claim
+    const cnf = tokenClaims.cnf as { jkt?: string } | undefined;
+    if (!cnf || !cnf.jkt) {
+      c.header('WWW-Authenticate', 'DPoP error="invalid_token"');
+      return c.json(
+        {
+          error: 'invalid_token',
+          error_description: 'Access token is not DPoP-bound (missing cnf claim)',
+        },
+        401
+      );
+    }
+
+    if (cnf.jkt !== dpopValidation.jkt) {
+      c.header('WWW-Authenticate', 'DPoP error="invalid_dpop_proof"');
+      return c.json(
+        {
+          error: 'invalid_dpop_proof',
+          error_description: 'DPoP proof JWK does not match token binding',
+        },
+        401
+      );
+    }
+  } else {
+    // If Bearer token is used, ensure the token is NOT DPoP-bound
+    const cnf = tokenClaims.cnf as { jkt?: string } | undefined;
+    if (cnf && cnf.jkt) {
+      c.header('WWW-Authenticate', 'DPoP error="invalid_token"');
+      return c.json(
+        {
+          error: 'invalid_token',
+          error_description: 'This token is DPoP-bound and requires DPoP proof. Use "DPoP" token type instead of "Bearer".',
+        },
+        401
+      );
+    }
+  }
+
   // Check if token has been revoked (due to authorization code reuse)
   // Per RFC 6749 Section 4.1.2: Tokens should be revoked when code reuse is detected
   const jti = tokenClaims.jti;
   if (jti && typeof jti === 'string') {
     const revoked = await isTokenRevoked(c.env, jti);
     if (revoked) {
-      c.header('WWW-Authenticate', 'Bearer error="invalid_token"');
+      const wwwAuth = isDPoP ? 'DPoP error="invalid_token"' : 'Bearer error="invalid_token"';
+      c.header('WWW-Authenticate', wwwAuth);
       return c.json(
         {
           error: 'invalid_token',

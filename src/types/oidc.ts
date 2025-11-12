@@ -28,6 +28,8 @@ export interface OIDCProviderMetadata {
   // RFC 9126: PAR (Pushed Authorization Requests)
   pushed_authorization_request_endpoint?: string;
   require_pushed_authorization_requests?: boolean;
+  // RFC 9449: DPoP (Demonstrating Proof of Possession)
+  dpop_signing_alg_values_supported?: string[];
 }
 
 /**
@@ -61,7 +63,7 @@ export interface TokenRequest {
 export interface TokenResponse {
   access_token: string;
   id_token: string;
-  token_type: 'Bearer';
+  token_type: 'Bearer' | 'DPoP';
   expires_in: number;
   scope?: string;
   refresh_token?: string;
@@ -176,6 +178,9 @@ export interface ClientRegistrationRequest {
   application_type?: 'web' | 'native';
   // Scopes
   scope?: string;
+  // Subject type (OIDC Core 8)
+  subject_type?: 'public' | 'pairwise';
+  sector_identifier_uri?: string;
 }
 
 /**
@@ -202,6 +207,8 @@ export interface ClientRegistrationResponse {
   response_types?: string[];
   application_type?: string;
   scope?: string;
+  subject_type?: 'public' | 'pairwise';
+  sector_identifier_uri?: string;
 }
 
 /**
@@ -210,6 +217,9 @@ export interface ClientRegistrationResponse {
 export interface ClientMetadata extends ClientRegistrationResponse {
   created_at: number;
   updated_at: number;
+  // OIDC Core 8: Subject Identifier Types
+  subject_type?: 'public' | 'pairwise';
+  sector_identifier_uri?: string; // For pairwise subject type
 }
 
 /**
@@ -260,4 +270,54 @@ export interface IntrospectionResponse {
 export interface RevocationRequest {
   token: string;
   token_type_hint?: 'access_token' | 'refresh_token';
+}
+
+/**
+ * DPoP (Demonstrating Proof of Possession) JWT Header
+ * https://datatracker.ietf.org/doc/html/rfc9449#section-4.2
+ */
+export interface DPoPHeader {
+  typ: 'dpop+jwt';
+  alg: string; // Signing algorithm (e.g., 'RS256', 'ES256')
+  jwk: {
+    kty: string;
+    // RSA public key
+    n?: string;
+    e?: string;
+    // EC public key
+    crv?: string;
+    x?: string;
+    y?: string;
+  };
+}
+
+/**
+ * DPoP JWT Claims
+ * https://datatracker.ietf.org/doc/html/rfc9449#section-4.2
+ */
+export interface DPoPClaims {
+  jti: string; // Unique identifier for the DPoP proof
+  htm: string; // HTTP method (uppercase, e.g., 'POST', 'GET')
+  htu: string; // HTTP URI (without query and fragment)
+  iat: number; // Issued at timestamp
+  ath?: string; // Access token hash (base64url-encoded SHA-256 hash)
+  nonce?: string; // Server-provided nonce for replay protection
+}
+
+/**
+ * DPoP Proof Validation Result
+ */
+export interface DPoPValidationResult {
+  valid: boolean;
+  error?: string;
+  error_description?: string;
+  jwk?: {
+    kty: string;
+    n?: string;
+    e?: string;
+    crv?: string;
+    x?: string;
+    y?: string;
+  };
+  jkt?: string; // JWK Thumbprint (SHA-256, base64url-encoded)
 }
