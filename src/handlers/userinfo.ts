@@ -150,8 +150,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
 
   // Check if token has been revoked (due to authorization code reuse)
   // Per RFC 6749 Section 4.1.2: Tokens should be revoked when code reuse is detected
-  const jti = tokenClaims.jti as string | undefined;
-  if (jti) {
+  const jti = tokenClaims.jti;
+  if (jti && typeof jti === 'string') {
     const revoked = await isTokenRevoked(c.env, jti);
     if (revoked) {
       c.header('WWW-Authenticate', 'Bearer error="invalid_token"');
@@ -184,9 +184,12 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   let requestedUserinfoClaims: Record<string, { essential?: boolean; value?: unknown; values?: unknown[] } | null> = {};
   if (claimsParam) {
     try {
-      const parsedClaims = JSON.parse(claimsParam);
-      if (parsedClaims.userinfo && typeof parsedClaims.userinfo === 'object') {
-        requestedUserinfoClaims = parsedClaims.userinfo;
+      const parsedClaims: unknown = JSON.parse(claimsParam);
+      if (typeof parsedClaims === 'object' && parsedClaims !== null && 'userinfo' in parsedClaims) {
+        const claimsObj = parsedClaims as { userinfo?: unknown };
+        if (claimsObj.userinfo && typeof claimsObj.userinfo === 'object') {
+          requestedUserinfoClaims = claimsObj.userinfo as Record<string, { essential?: boolean; value?: unknown; values?: unknown[] } | null>;
+        }
       }
     } catch (error) {
       console.error('Failed to parse claims parameter:', error);
