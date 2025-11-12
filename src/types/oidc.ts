@@ -25,6 +25,9 @@ export interface OIDCProviderMetadata {
   revocation_endpoint?: string;
   introspection_endpoint?: string;
   end_session_endpoint?: string;
+  // RFC 9126: PAR (Pushed Authorization Requests)
+  pushed_authorization_request_endpoint?: string;
+  require_pushed_authorization_requests?: boolean;
 }
 
 /**
