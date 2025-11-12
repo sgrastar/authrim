@@ -33,6 +33,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let code_challenge_method: string | undefined;
   let claims: string | undefined;
   let request_uri: string | undefined;
+  let response_mode: string | undefined;
 
   if (c.req.method === 'POST') {
     // Parse POST body (application/x-www-form-urlencoded)
@@ -48,6 +49,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       code_challenge = typeof body.code_challenge === 'string' ? body.code_challenge : undefined;
       code_challenge_method = typeof body.code_challenge_method === 'string' ? body.code_challenge_method : undefined;
       claims = typeof body.claims === 'string' ? body.claims : undefined;
+      response_mode = typeof body.response_mode === 'string' ? body.response_mode : undefined;
     } catch {
       return c.json(
         {
@@ -69,6 +71,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     code_challenge = c.req.query('code_challenge');
     code_challenge_method = c.req.query('code_challenge_method');
     claims = c.req.query('claims');
+    response_mode = c.req.query('response_mode');
   }
 
   // RFC 9126: If request_uri is present, fetch parameters from PAR storage
@@ -121,6 +124,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       code_challenge = parsedData.code_challenge;
       code_challenge_method = parsedData.code_challenge_method;
       claims = parsedData.claims;
+      response_mode = parsedData.response_mode;
 
       // RFC 9126: request_uri is single-use, delete after retrieval
       await c.env.STATE_STORE.delete(`request_uri:${request_uri}`);
@@ -191,6 +195,34 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const nonceValidation = validateNonce(nonce);
   if (!nonceValidation.valid) {
     return redirectWithError(c, redirect_uri!, 'invalid_request', nonceValidation.error, state);
+  }
+
+  // Validate response_mode (optional)
+  // Supported modes: query, fragment, form_post
+  if (response_mode) {
+    const supportedResponseModes = ['query', 'fragment', 'form_post'];
+    if (!supportedResponseModes.includes(response_mode)) {
+      return redirectWithError(
+        c,
+        redirect_uri!,
+        'invalid_request',
+        `Unsupported response_mode. Supported modes: ${supportedResponseModes.join(', ')}`,
+        state
+      );
+    }
+
+    // Validate response_mode compatibility with response_type
+    // For response_type=code, only query and form_post are appropriate
+    // fragment is typically used for implicit/hybrid flows
+    if (response_type === 'code' && response_mode === 'fragment') {
+      return redirectWithError(
+        c,
+        redirect_uri!,
+        'invalid_request',
+        'response_mode=fragment is not compatible with response_type=code',
+        state
+      );
+    }
   }
 
   // Validate claims parameter (optional, per OIDC Core 5.5)
@@ -335,15 +367,25 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  // Build redirect URL with authorization code
-  const redirectUrl = new URL(redirect_uri!);
-  redirectUrl.searchParams.set('code', code);
-  if (state) {
-    redirectUrl.searchParams.set('state', state);
-  }
+  // Determine response mode (default is 'query' for response_type=code)
+  const effectiveResponseMode = response_mode || 'query';
 
-  // Redirect to client's redirect_uri
-  return c.redirect(redirectUrl.toString(), 302);
+  // Handle response based on response_mode
+  if (effectiveResponseMode === 'form_post') {
+    // OAuth 2.0 Form Post Response Mode
+    // Return HTML page with auto-submitting form
+    return createFormPostResponse(c, redirect_uri!, code, state);
+  } else {
+    // Default: query response mode (redirect with query parameters)
+    const redirectUrl = new URL(redirect_uri!);
+    redirectUrl.searchParams.set('code', code);
+    if (state) {
+      redirectUrl.searchParams.set('state', state);
+    }
+
+    // Redirect to client's redirect_uri
+    return c.redirect(redirectUrl.toString(), 302);
+  }
 }
 
 /**
@@ -367,4 +409,102 @@ function redirectWithError(
   }
 
   return c.redirect(url.toString(), 302);
+}
+
+/**
+ * Create Form Post Response
+ * OAuth 2.0 Form Post Response Mode
+ * https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html
+ *
+ * Returns an HTML page with an auto-submitting form that POSTs the
+ * authorization response parameters to the client's redirect_uri
+ */
+function createFormPostResponse(
+  c: Context<{ Bindings: Env }>,
+  redirectUri: string,
+  code: string,
+  state?: string
+): Response {
+  // Build form inputs
+  const inputs: string[] = [
+    `<input type="hidden" name="code" value="${escapeHtml(code)}" />`,
+  ];
+
+  if (state) {
+    inputs.push(`<input type="hidden" name="state" value="${escapeHtml(state)}" />`);
+  }
+
+  // Generate HTML page with auto-submitting form
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authorization</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .container {
+      text-align: center;
+      color: white;
+    }
+    .spinner {
+      width: 50px;
+      height: 50px;
+      margin: 0 auto 20px;
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .message {
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+    .note {
+      font-size: 14px;
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="spinner"></div>
+    <p class="message">Redirecting to application...</p>
+    <p class="note">Please wait</p>
+  </div>
+  <form id="auth-form" method="post" action="${escapeHtml(redirectUri)}">
+    ${inputs.join('\n    ')}
+  </form>
+  <script>
+    // Auto-submit form immediately
+    document.getElementById('auth-form').submit();
+  </script>
+</body>
+</html>`;
+
+  return c.html(html, 200);
+}
+
+/**
+ * Escape HTML special characters to prevent XSS
+ * Essential for safely embedding user-provided values in HTML
+ */
+function escapeHtml(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
