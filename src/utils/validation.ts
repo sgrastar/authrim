@@ -344,7 +344,7 @@ export function validateResponseType(responseType: string | undefined): Validati
 
 /**
  * Authorization code validation
- * Must be a valid UUID format
+ * Accepts base64url-encoded random strings (recommended minimum 128 characters)
  *
  * @param code - Authorization code to validate
  * @returns ValidationResult
@@ -371,12 +371,29 @@ export function validateAuthCode(code: string | undefined): ValidationResult {
     };
   }
 
-  // UUID v4 format validation
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  if (!uuidPattern.test(code)) {
+  // Base64url format validation (URL-safe: A-Z, a-z, 0-9, -, _)
+  // Minimum length: 128 characters (recommended for security)
+  // Maximum length: 512 characters (to prevent abuse)
+  const base64urlPattern = /^[A-Za-z0-9_-]+$/;
+
+  if (!base64urlPattern.test(code)) {
     return {
       valid: false,
-      error: 'code format is invalid',
+      error: 'code format is invalid (must be base64url format)',
+    };
+  }
+
+  if (code.length < 128) {
+    return {
+      valid: false,
+      error: 'code is too short (minimum 128 characters recommended)',
+    };
+  }
+
+  if (code.length > 512) {
+    return {
+      valid: false,
+      error: 'code is too long (maximum 512 characters)',
     };
   }
 
