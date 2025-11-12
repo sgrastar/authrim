@@ -4,7 +4,7 @@
 
 A lightweight, serverless **OpenID Connect Provider** that deploys to **Cloudflare's global edge network** in under 5 minutes.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange?logo=cloudflare)](https://workers.cloudflare.com/)
 
@@ -42,7 +42,7 @@ Hibana is an **enterprise-grade OpenID Connect Provider** built for:
 | **Cold Starts** | 0ms | N/A | N/A | 100-500ms |
 | **Global Edge** | ✅ | ✅ | ❌ | ❌ |
 | **Self-Hosted** | ✅ | ❌ | ✅ | ❌ |
-| **Open Source** | ✅ MIT | ❌ | ✅ Apache | ❌ |
+| **Open Source** | ✅ Apache 2.0 | ❌ | ✅ Apache | ❌ |
 | **Custom UI** | ✅ Full | ⚠️ Limited | ✅ Full | ⚠️ Limited |
 
 ---
@@ -274,14 +274,13 @@ Hibana implements security best practices:
 
 ## 🤝 Contributing
 
-We welcome contributions! See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
+Hibana is primarily a solo development project. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
 
-**Ways to contribute:**
-- 🐛 Report bugs
-- 💡 Suggest features
-- 📖 Improve documentation
-- 🧪 Add tests
-- 💻 Submit pull requests
+**What we accept:**
+- 🐛 Bug reports via GitHub Issues
+
+**What we don't accept:**
+- ❌ Pull requests (development is maintained solely by the original author)
 
 ---
 
@@ -375,7 +374,7 @@ Built with amazing open source tools:
 
 ## 📄 License
 
-MIT License © 2025 [sgrastar](https://github.com/sgrastar)
+Apache License 2.0 © 2025 [sgrastar](https://github.com/sgrastar)
 
 See [LICENSE](./LICENSE) for details.
 
