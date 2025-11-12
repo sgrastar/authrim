@@ -231,6 +231,56 @@ function validateRegistrationRequest(
     }
   }
 
+  // Validate subject_type (OIDC Core 8)
+  if (data.subject_type !== undefined) {
+    const validSubjectTypes = ['public', 'pairwise'];
+    if (!validSubjectTypes.includes(data.subject_type)) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: `subject_type must be one of: ${validSubjectTypes.join(', ')}`,
+        },
+      };
+    }
+  }
+
+  // Validate sector_identifier_uri (OIDC Core 8.1)
+  if (data.sector_identifier_uri !== undefined) {
+    if (typeof data.sector_identifier_uri !== 'string') {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: 'sector_identifier_uri must be a string',
+        },
+      };
+    }
+
+    try {
+      const parsed = new URL(data.sector_identifier_uri);
+
+      // sector_identifier_uri must use HTTPS
+      if (parsed.protocol !== 'https:') {
+        return {
+          valid: false,
+          error: {
+            error: 'invalid_client_metadata',
+            error_description: 'sector_identifier_uri must use HTTPS',
+          },
+        };
+      }
+    } catch {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: 'sector_identifier_uri must be a valid HTTPS URI',
+        },
+      };
+    }
+  }
+
   return {
     valid: true,
     data: data as ClientRegistrationRequest,
@@ -290,6 +340,27 @@ export async function registerHandler(
 
     const request = validation.data;
 
+    // OIDC Core 8.1: Validate pairwise subject type configuration
+    // If pairwise subject type is used with multiple redirect URIs that have different hosts,
+    // a sector_identifier_uri MUST be provided
+    const subjectType = request.subject_type || 'public'; // Default to 'public'
+    if (subjectType === 'pairwise' && request.redirect_uris.length > 1) {
+      // Import pairwise utilities dynamically (to avoid circular dependencies)
+      const { validateSectorIdentifierConsistency } = await import('../utils/pairwise');
+
+      const hasSameSector = validateSectorIdentifierConsistency(request.redirect_uris);
+      if (!hasSameSector && !request.sector_identifier_uri) {
+        return c.json(
+          {
+            error: 'invalid_client_metadata',
+            error_description:
+              'sector_identifier_uri is required when using pairwise subject type with multiple redirect URIs from different hosts',
+          },
+          400
+        );
+      }
+    }
+
     // Generate client credentials
     const clientId = generateClientId();
     const clientSecret = generateClientSecret();
@@ -325,6 +396,9 @@ export async function registerHandler(
     if (request.software_id) response.software_id = request.software_id;
     if (request.software_version) response.software_version = request.software_version;
     if (request.scope) response.scope = request.scope;
+    // OIDC Core 8: Subject type and sector identifier
+    response.subject_type = subjectType;
+    if (request.sector_identifier_uri) response.sector_identifier_uri = request.sector_identifier_uri;
 
     // Store client metadata
     const metadata: ClientMetadata = {
