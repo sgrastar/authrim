@@ -153,12 +153,23 @@ Phase 5では、Hibanaに以下の機能を実装します：
   - `GET /admin/stats` - 統計情報
 
 - コメント：ユーザー検索とかは？
+  - **回答**: 以下のエンドポイントを追加
+    - `GET /admin/users?q={query}&filter={status}&sort={field}&page={n}&limit={limit}`
+      - `q`: 検索クエリ（email, name で検索）
+      - `filter`: `verified`, `unverified`, `active`, `inactive`
+      - `sort`: `created_at`, `last_login_at`, `email`, `name`（デフォルト: `-created_at`）
+      - `page`: ページ番号（デフォルト: 1）
+      - `limit`: 1ページあたりの件数（デフォルト: 50, 最大: 100）
 
 - [ ] **認証方式**
   - 管理者API: Bearer Token（専用の管理者トークン）
   - セッション管理: Cookie + CSRF Token
 
 - コメント：良いとおもいますが、後々SAML/LDAP認証の余地を残して。
+  - **回答**: Phase 5ではBearer Token + Cookie + CSRFで実装。将来の拡張性のため以下を追加:
+    - `identity_providers`テーブル（SAML/LDAP設定格納）
+    - `users.identity_provider_id`カラム（外部認証との紐付け）
+    - Phase 7でSAML/LDAP実装予定
 
 #### 2.3 セッション管理
 - [ ] **実装方式の選定**
@@ -177,6 +188,15 @@ Phase 5では、Hibanaに以下の機能を実装します：
   - 理由: セキュリティとパフォーマンスのバランス
 
 - コメント：異なるドメインでのSSOに対応できる形がいい。要検討
+  - **決定**: **サーバー側セッション + トークン交換方式**
+    - 同一ドメイン: HttpOnly Cookie でセッション管理
+    - クロスドメインSSO: トークン交換方式
+      1. IdP側でセッション保持（KV/DO）
+      2. クライアントアプリは`/auth/session/token`にリダイレクト
+      3. IdPが短命トークン（5分TTL）を発行してクライアントへリダイレクト
+      4. クライアントがトークンを検証してセッションCookie発行
+    - **メリット**: ITP完全対応（サードパーティCookie不使用）、即座にセッション無効化可能、セキュリティ高
+    - セッションデータ: KV（短期）+ DO（強い一貫性が必要な場合）
 
 ### 3️⃣ データストレージ設計
 
@@ -206,6 +226,25 @@ Phase 5では、Hibanaに以下の機能を実装します：
     - アクティブセッション管理
 
 - コメント：まだ全然考えてないけど、AzureやAWSにも入れられるように抽象化はしてほしい。
+  - **回答**: アダプターパターンで実装
+    ```typescript
+    interface IStorageAdapter {
+      // KV-like operations
+      get(key: string): Promise<any>
+      set(key: string, value: any, ttl?: number): Promise<void>
+      delete(key: string): Promise<void>
+
+      // SQL-like operations
+      query(sql: string, params: any[]): Promise<any[]>
+      execute(sql: string, params: any[]): Promise<void>
+    }
+
+    // 実装例
+    class CloudflareAdapter implements IStorageAdapter { ... }
+    class AzureCosmosAdapter implements IStorageAdapter { ... }
+    class AWSRDSAdapter implements IStorageAdapter { ... }
+    class PostgreSQLAdapter implements IStorageAdapter { ... }
+    ```
 
 - [ ] **データモデル設計**
   - ER図作成
@@ -246,6 +285,33 @@ CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_created_at ON users(created_at);
 
 - コメント：管理者が好きなカラムを設置できるように。例えばバーコード番号など。あとアカウント間で親子関係が作れるようにしてほしい。
+  - **決定**: **Hybrid方式**（専用テーブル + JSONカラム）
+    ```sql
+    -- 親子関係
+    ALTER TABLE users ADD COLUMN parent_user_id TEXT REFERENCES users(id);
+    CREATE INDEX idx_users_parent_user_id ON users(parent_user_id);
+
+    -- カスタムフィールド（検索不要なデータ用）
+    ALTER TABLE users ADD COLUMN custom_attributes_json TEXT;
+    -- 例: '{"social_provider_data": {...}, "preferences": {...}}'
+
+    -- カスタムフィールド（検索可能にしたいデータ用）
+    CREATE TABLE user_custom_fields (
+      user_id TEXT NOT NULL,
+      field_name TEXT NOT NULL,
+      field_value TEXT,
+      field_type TEXT, -- 'string', 'number', 'date', 'boolean'
+      searchable INTEGER DEFAULT 1,
+      PRIMARY KEY (user_id, field_name),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX idx_user_custom_fields_search ON user_custom_fields(field_name, field_value);
+    ```
+  - **使い分け**:
+    - JSON: ソーシャルプロバイダーの生データ、検索不要なメタデータ
+    - 専用テーブル: 検索可能にしたいフィールド（barcode、employee_idなど）
+  - **コスト**: ほぼ同じ（D1は行数ベース課金、必要な部分だけ専用テーブル使用で最適化）
 
 -- Passkeys/WebAuthn Credentials Table
 CREATE TABLE passkeys (
@@ -318,6 +384,16 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 ```
 
 - コメント：この辺のスキーマーは後から変更できるの？追加、削除、変更の制約を教えて。
+  - **回答**: D1 (SQLite) のスキーマ変更制約
+    - ✅ **追加**: 新しいカラム追加は可能 (`ALTER TABLE ADD COLUMN`)
+    - ✅ **削除**: カラム削除は制限あり (SQLite 3.35.0+ で `DROP COLUMN` 対応、D1も対応予定)
+    - ⚠️ **変更**: カラム型変更は直接不可（新カラム作成→データコピー→旧カラム削除）
+    - ✅ **インデックス**: 追加・削除は自由（`CREATE INDEX`, `DROP INDEX`）
+  - **マイグレーション戦略**:
+    - バージョン管理されたSQLマイグレーションファイル（`migrations/001_initial.sql`等）
+    - Rollback用のダウンマイグレーション
+    - テスト環境での事前検証
+    - ゼロダウンタイムマイグレーション（Blue-Green Deployment）
 
 - [ ] **スキーマレビュー**
 - [ ] **マイグレーションスクリプト作成**
@@ -378,6 +454,19 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - 理由: シンプル、信頼性、配信率高
 
 - コメント：基本Bでいいのですが、Option Aも使えるようにしてほしい。
+  - **決定**: アダプターパターンで実装
+    ```typescript
+    interface IEmailProvider {
+      send(to: string, subject: string, html: string, from?: string): Promise<void>
+    }
+
+    class ResendProvider implements IEmailProvider { ... }
+    class PostmarkProvider implements IEmailProvider { ... }
+    class CloudflareEmailProvider implements IEmailProvider { ... }
+    class SMTPProvider implements IEmailProvider { ... }
+    ```
+  - 環境変数で切り替え: `EMAIL_PROVIDER=resend|cloudflare|smtp`
+  - Phase 5では Resend をデフォルト実装、他プロバイダーは管理画面から設定可能に
 
 #### 4.3 OAuth同意画面フロー
 - [ ] **表示情報**
@@ -422,6 +511,29 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - デスクトップ（1024px～）
 
 - コメント：多言語対応か最初から実施。テンプレート的なものもいいけど、Auth0とかだと背景とかデザインとかの自由度が低いという話も聞く。自由にリンクや画像、動画、CSS,Javascriptなどが書ける環境にしたい。これは他の画面でも同様。モダンかつ自由度があるものは何か？要検討。reCapchaはCloudflareのやつを使いましょう。
+  - **決定**:
+    - **Phase 5実装**: テーマシステム（基本カスタマイズ）
+      ```sql
+      CREATE TABLE branding_settings (
+        id TEXT PRIMARY KEY DEFAULT 'default',
+        custom_css TEXT,
+        custom_html_header TEXT,
+        custom_html_footer TEXT,
+        logo_url TEXT,
+        background_image_url TEXT,
+        primary_color TEXT DEFAULT '#3B82F6',
+        secondary_color TEXT DEFAULT '#10B981',
+        font_family TEXT DEFAULT 'Inter',
+        updated_at INTEGER NOT NULL
+      );
+      ```
+    - **Phase 7実装**: WebSDK（高度なカスタマイズ）
+      - Web Components として提供
+      - カスタマイズ可能なプレースホルダー（`<$$$LoginEmailInput$$$>`等）
+      - 完全にスタイリング可能
+      - イベントハンドラー対応
+    - **Captcha**: Cloudflare Turnstile を使用（reCAPTCHA互換、プライバシー重視）
+    - **多言語**: Phase 5から実装（英語・日本語）、Paraglide使用（型安全、軽量）
 
 ##### Page 2: アカウント登録画面 (`/register`)
 - [ ] **デザイン要件**
@@ -478,6 +590,10 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - リダイレクト処理
 
 - コメント：利用規約やプライバシーポリシーの掲載ができるように。
+  - **回答**: `oauth_clients`テーブルに既に以下が定義済み:
+    - `policy_uri` - プライバシーポリシーURL
+    - `tos_uri` - 利用規約URL
+  - これらを同意画面に表示し、ユーザーがクリックできるようにリンク表示
 
 ##### Page 6: エラーページ (`/error`)
 - [ ] **デザイン要件**
@@ -501,6 +617,13 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - チャート（ログイン推移、ユーザー登録推移）
 
 - コメント：Just Ideaだけど、シムシティみたいなUIはどうかな？入り口と出口があり、どのようなパーツ（認証方式）を選ぶか、建物を設置する。RPやSAMLなど外部認証は港や空港で示す。どこを経由して、またはどこに任意で何かしらのアクションをするのか、建物をクリックすると詳細画面に。シムシティ2000みたいなUI.
+  - **回答**: 素晴らしいアイデア！Phase 5では標準的なダッシュボードUIを実装し、Phase 7で視覚的な実験を実施。
+  - **Phase 7実装予定**:
+    - ビジュアル認証フロービルダー（SimCity風UI）
+    - ドラッグ&ドロップで認証フローを構築
+    - 各コンポーネント（Passkey、Magic Link、Social Login等）を「建物」として配置
+    - フロー全体を視覚化（入口→認証→出口）
+  - **ロードマップに記載**: Phase 7の高度な管理機能として追加
 
 - [ ] **機能要件**
   - リアルタイム統計（または定期更新）
@@ -524,7 +647,13 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - ユーザー削除（確認ダイアログ）
   - 詳細表示（モーダル or 別ページ）
 
-- 外部からのデータインポート、ETL機能をつけたい。後でもいいけど。
+- コメント：外部からのデータインポート、ETL機能をつけたい。後でもいいけど。
+  - **回答**: Phase 6または7で実装予定
+    - CSV/JSONインポート/エクスポート
+    - SCIM 2.0 プロトコル対応（Phase 7）
+    - Webhook連携
+    - バルクユーザー操作API
+  - **ロードマップに記載**: Phase 7のエンタープライズ機能として追加
 
 ##### Page 9: ユーザー詳細/編集 (`/admin/users/:id`)
 - [ ] **デザイン要件**
@@ -571,7 +700,23 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - Secret再生成
   - 削除処理
 
-- スコープはDB上の好きなスキーマを取得してclaimを作れるようにする。
+- コメント：スコープはDB上の好きなスキーマを取得してclaimを作れるようにする。
+  - **決定**:
+    ```sql
+    CREATE TABLE scope_mappings (
+      scope TEXT PRIMARY KEY,
+      claim_name TEXT NOT NULL,
+      source_table TEXT NOT NULL, -- 'users', 'user_custom_fields'
+      source_column TEXT NOT NULL, -- 'email', 'custom_attributes_json.employee_id'
+      transformation TEXT, -- 'uppercase', 'lowercase', 'hash', 'mask'
+      condition TEXT, -- SQL WHERE条件（オプション）
+      created_at INTEGER NOT NULL
+    );
+    ```
+  - **例**:
+    - `scope=employee_id` → `claim: { employee_id: users.custom_attributes_json.employee_id }`
+    - `scope=department` → `claim: { department: user_custom_fields[department] }`
+  - 管理画面でスコープとクレームのマッピングを設定可能に
 
 ##### Page 12: 設定 (`/admin/settings`)
 - [ ] **デザイン要件**
@@ -588,6 +733,14 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - テストメール送信
 
 - コメント：データはExportできるように。
+  - **回答**: 管理画面に以下を追加
+    - CSV/JSONエクスポート（全テーブル）
+    - GDPR対応（個人データエクスポート、消去権）
+    - バックアップ/リストア機能
+    - 自動バックアップ設定
+  - **Phase 5実装**: 基本的なエクスポート機能
+  - **Phase 7拡張**: GDPRオートメーション、コンプライアンスツール
+  - **ロードマップに記載**: Phase 7のコンプライアンス機能として追加
 
 ##### Page 13: Audit Log (`/admin/audit-log`)
 - [ ] **デザイン要件**
@@ -621,6 +774,31 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   ```
 
 - コメント：管理者のロールを設定できるようにして下さい。
+  - **決定**: RBAC (Role-Based Access Control) 実装
+    ```sql
+    CREATE TABLE roles (
+      id TEXT PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      description TEXT,
+      permissions_json TEXT NOT NULL, -- ['users:read', 'users:write', 'clients:read', 'clients:write', 'settings:write']
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE user_roles (
+      user_id TEXT NOT NULL,
+      role_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, role_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+    );
+    ```
+  - **デフォルトロール**:
+    - **Super Admin**: 全権限
+    - **Admin**: ユーザー・クライアント管理のみ
+    - **Viewer**: 読み取り専用
+    - **Support**: ユーザーサポート（パスワードリセット等）
+  - Phase 5では簡易RBAC実装、Phase 7でABAC（Attribute-Based Access Control）に拡張
 
 #### 6.2 管理者認証フロー
 - [ ] **認証方式**
@@ -666,6 +844,15 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - `/admin/*` - 100 req/min per session
 
 - コメント：これって誰の何を守るためのRate limitかな？
+  - **回答**: 各エンドポイントの保護目的
+    - `/login`, `/register`: **ブルートフォース攻撃**から保護（アカウント乗っ取り防止）
+    - `/auth/magic-link/send`: **メール爆撃（スパム）**から保護（メール送信コスト削減、サービス悪用防止）
+    - `/admin/*`: **DDoS攻撃**とリソース消費から保護（サービス可用性維持）
+    - `/token`, `/userinfo`: **APIアビューズ**から保護（過剰なトークン発行・情報取得防止）
+  - **管理画面実装**: Phase 5でRate Limitの統計・ログを管理画面で可視化
+    - ブロックされたIPアドレス一覧
+    - エンドポイントごとのリクエスト数グラフ
+    - 異常検知アラート
 
 ### 8️⃣ 国際化（i18n）対応
 
@@ -868,5 +1055,42 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 ---
 
 **Last Updated**: 2025-11-12
-**Status**: Draft - Awaiting Review & Decision
-**Next Review**: TBD
+**Status**: Planning Complete - Ready for Implementation
+**Next Review**: 2026-05-01 (Phase 5 Start)
+
+---
+
+## 📝 決定事項サマリー
+
+### 技術スタック
+- ✅ **Frontend**: Svelte + SvelteKit v5
+- ✅ **CSS**: UnoCSS
+- ✅ **Components**: Melt UI
+- ✅ **Hosting**: Hybrid (Cloudflare Pages + Workers)
+- ✅ **Captcha**: Cloudflare Turnstile
+- ✅ **i18n**: Paraglide
+- ✅ **Email**: Resend (default), adapter pattern for others
+
+### アーキテクチャ
+- ✅ **セッション管理**: サーバー側セッション + トークン交換（ITP完全対応）
+- ✅ **ストレージ抽象化**: IStorageAdapter interface（マルチクラウド対応）
+- ✅ **カスタムフィールド**: Hybrid（専用テーブル + JSON）
+- ✅ **RBAC**: roles + user_roles テーブル
+- ✅ **スコープマッピング**: scope_mappings テーブル
+
+### データベーススキーマ
+- ✅ Users (with custom_attributes_json, parent_user_id)
+- ✅ user_custom_fields (searchable)
+- ✅ Passkeys
+- ✅ Sessions
+- ✅ Roles & user_roles
+- ✅ scope_mappings
+- ✅ branding_settings
+- ✅ identity_providers (future SAML/LDAP)
+
+### 将来の拡張（Phase 7）
+- 📝 WebSDK（高度なカスタマイズ）
+- 📝 Visual Flow Builder（SimCity風UI）
+- 📝 GDPR automation
+- 📝 CSV/JSON import/export
+- 📝 SCIM 2.0
