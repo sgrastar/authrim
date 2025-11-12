@@ -73,7 +73,7 @@ async function checkRateLimit(
   let record: RateLimitRecord;
 
   if (recordJson) {
-    record = JSON.parse(recordJson);
+    record = JSON.parse(recordJson) as RateLimitRecord;
 
     // Check if window has expired
     if (now >= record.resetAt) {

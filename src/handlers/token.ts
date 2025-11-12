@@ -508,7 +508,7 @@ async function handleRefreshTokenGrant(
   let refreshTokenPayload;
   try {
     refreshTokenPayload = parseToken(refreshTokenValue);
-  } catch (error) {
+  } catch {
     return c.json(
       {
         error: 'invalid_grant',
@@ -566,10 +566,10 @@ async function handleRefreshTokenGrant(
 
   let publicKey;
   try {
-    const jwk = JSON.parse(publicJwkJson);
+    const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
     publicKey = await importJWK(jwk, 'RS256');
-  } catch (error) {
-    console.error('Failed to import public key:', error);
+  } catch (err) {
+    console.error('Failed to import public key:', err);
     return c.json(
       {
         error: 'server_error',
@@ -646,7 +646,6 @@ async function handleRefreshTokenGrant(
 
   // Generate new Access Token
   let accessToken: string;
-  let tokenJti: string;
   try {
     const accessTokenClaims = {
       iss: c.env.ISSUER_URL,
@@ -658,9 +657,8 @@ async function handleRefreshTokenGrant(
 
     const result = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
     accessToken = result.token;
-    tokenJti = result.jti;
-  } catch (error) {
-    console.error('Failed to create access token:', error);
+  } catch (err) {
+    console.error('Failed to create access token:', err);
     return c.json(
       {
         error: 'server_error',

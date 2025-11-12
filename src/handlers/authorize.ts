@@ -101,7 +101,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     try {
-      const parsedData = JSON.parse(requestData);
+      const parsedData = JSON.parse(requestData) as {
+        client_id: string;
+        response_type: string;
+        redirect_uri: string;
+        scope: string;
+        state?: string;
+        nonce?: string;
+        code_challenge?: string;
+        code_challenge_method?: string;
+        claims?: string;
+        response_mode?: string;
+      };
 
       // RFC 9126: When using request_uri, client_id from query MUST match client_id from PAR
       if (client_id && client_id !== parsedData.client_id) {

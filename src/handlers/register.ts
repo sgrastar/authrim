@@ -280,7 +280,7 @@ export async function registerHandler(
 ): Promise<Response> {
   try {
     // Parse request body
-    const body = await c.req.json().catch(() => null);
+    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
 
     // Validate registration request
     const validation = validateRegistrationRequest(body);
@@ -335,6 +335,8 @@ export async function registerHandler(
 
     await storeClient(c.env, clientId, metadata);
 
+    // Log client registration for debugging/auditing
+    // eslint-disable-next-line no-console
     console.log(`Client registered: ${clientId}`);
 
     return c.json(response, 201, {
