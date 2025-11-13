@@ -199,11 +199,14 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes1 = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody1,
-      }), env);
+      const tokenRes1 = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody1,
+        }),
+        env
+      );
 
       expect(tokenRes1.status).toBe(200);
 
@@ -216,11 +219,14 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes2 = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody2,
-      }), env);
+      const tokenRes2 = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody2,
+        }),
+        env
+      );
 
       expect(tokenRes2.status).toBe(400);
       const data = await tokenRes2.json();
@@ -256,20 +262,26 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes1 = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody1,
-      }), env);
+      const tokenRes1 = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody1,
+        }),
+        env
+      );
 
       expect(tokenRes1.status).toBe(200);
       const tokenData1 = await tokenRes1.json();
       const accessToken = tokenData1.access_token;
 
       // Step 3: Verify access token works
-      const userinfoRes1 = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      }), env);
+      const userinfoRes1 = await app.fetch(
+        new Request(`${env.ISSUER_URL}/userinfo`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+        env
+      );
       expect(userinfoRes1.status).toBe(200);
 
       // Step 4: Try to reuse the same code (this should trigger token revocation)
@@ -281,20 +293,26 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes2 = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody2,
-      }), env);
+      const tokenRes2 = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody2,
+        }),
+        env
+      );
 
       expect(tokenRes2.status).toBe(400);
       const data = await tokenRes2.json();
       expect(data.error).toBe('invalid_grant');
 
       // Step 5: Verify original access token is now revoked
-      const userinfoRes2 = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      }), env);
+      const userinfoRes2 = await app.fetch(
+        new Request(`${env.ISSUER_URL}/userinfo`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+        env
+      );
 
       expect(userinfoRes2.status).toBe(401);
       const userinfoError = await userinfoRes2.json();
@@ -329,11 +347,14 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody,
-      }), env);
+      const tokenRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }),
+        env
+      );
 
       const tokenData = await tokenRes.json();
 
@@ -371,11 +392,14 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody,
-      }), env);
+      const tokenRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }),
+        env
+      );
 
       expect(tokenRes.status).toBe(200);
       const tokenData = await tokenRes.json();
@@ -419,11 +443,14 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody,
-      }), env);
+      const tokenRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }),
+        env
+      );
 
       const tokenData = await tokenRes.json();
 
@@ -470,11 +497,14 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody,
-      }), env);
+      const tokenRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }),
+        env
+      );
 
       // Debug: Log error if status is not 200
       if (tokenRes.status !== 200) {
@@ -486,9 +516,12 @@ describe('Authorization Code Flow', () => {
       const tokenData = await tokenRes.json();
 
       // Request UserInfo
-      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      }), env);
+      const userinfoRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/userinfo`, {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        }),
+        env
+      );
 
       expect(userinfoRes.status).toBe(200);
       const userinfoData = await userinfoRes.json();
@@ -510,8 +543,8 @@ describe('Authorization Code Flow', () => {
       // Build claims parameter requesting name
       const claimsParam = JSON.stringify({
         userinfo: {
-          name: { essential: true }
-        }
+          name: { essential: true },
+        },
       });
 
       // Get authorization code with claims parameter but WITHOUT profile scope
@@ -540,19 +573,25 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody,
-      }), env);
+      const tokenRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }),
+        env
+      );
 
       expect(tokenRes.status).toBe(200);
       const tokenData = await tokenRes.json();
 
       // Get userinfo
-      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      }), env);
+      const userinfoRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/userinfo`, {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        }),
+        env
+      );
 
       expect(userinfoRes.status).toBe(200);
       const userinfoData = await userinfoRes.json();
@@ -574,8 +613,8 @@ describe('Authorization Code Flow', () => {
       const claimsParam = JSON.stringify({
         userinfo: {
           email: null,
-          email_verified: null
-        }
+          email_verified: null,
+        },
       });
 
       // Get authorization code with claims parameter but WITHOUT email scope
@@ -601,18 +640,24 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody,
-      }), env);
+      const tokenRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }),
+        env
+      );
 
       const tokenData = await tokenRes.json();
 
       // Get userinfo
-      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      }), env);
+      const userinfoRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/userinfo`, {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        }),
+        env
+      );
 
       const userinfoData = await userinfoRes.json();
 
@@ -682,8 +727,8 @@ describe('Authorization Code Flow', () => {
       // Invalid section name
       const invalidClaims = JSON.stringify({
         invalid_section: {
-          name: null
-        }
+          name: null,
+        },
       });
 
       const authUrl = buildAuthorizationUrl({
@@ -710,8 +755,8 @@ describe('Authorization Code Flow', () => {
       // Request only name via claims parameter
       const claimsParam = JSON.stringify({
         userinfo: {
-          name: null
-        }
+          name: null,
+        },
       });
 
       // But also grant profile scope
@@ -737,18 +782,24 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody,
-      }), env);
+      const tokenRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }),
+        env
+      );
 
       const tokenData = await tokenRes.json();
 
       // Get userinfo
-      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      }), env);
+      const userinfoRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/userinfo`, {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        }),
+        env
+      );
 
       const userinfoData = await userinfoRes.json();
 
@@ -787,18 +838,24 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody,
-      }), env);
+      const tokenRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }),
+        env
+      );
 
       const tokenData = await tokenRes.json();
 
       // Get userinfo
-      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      }), env);
+      const userinfoRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/userinfo`, {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        }),
+        env
+      );
 
       expect(userinfoRes.status).toBe(200);
       const userinfoData = await userinfoRes.json();
@@ -843,18 +900,24 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody,
-      }), env);
+      const tokenRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }),
+        env
+      );
 
       const tokenData = await tokenRes.json();
 
       // Get userinfo
-      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      }), env);
+      const userinfoRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/userinfo`, {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        }),
+        env
+      );
 
       expect(userinfoRes.status).toBe(200);
       const userinfoData = await userinfoRes.json();
@@ -896,18 +959,24 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      const tokenRes = await app.fetch(new Request(`${env.ISSUER_URL}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody,
-      }), env);
+      const tokenRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }),
+        env
+      );
 
       const tokenData = await tokenRes.json();
 
       // Get userinfo
-      const userinfoRes = await app.fetch(new Request(`${env.ISSUER_URL}/userinfo`, {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      }), env);
+      const userinfoRes = await app.fetch(
+        new Request(`${env.ISSUER_URL}/userinfo`, {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        }),
+        env
+      );
 
       expect(userinfoRes.status).toBe(200);
       const userinfoData = await userinfoRes.json();

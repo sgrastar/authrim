@@ -190,7 +190,9 @@ describe('Form Post Response Mode', () => {
 
       const redirectUrl = new URL(location!);
       expect(redirectUrl.searchParams.get('error')).toBe('invalid_request');
-      expect(redirectUrl.searchParams.get('error_description')).toContain('Unsupported response_mode');
+      expect(redirectUrl.searchParams.get('error_description')).toContain(
+        'Unsupported response_mode'
+      );
     });
 
     it('should reject fragment mode for response_type=code', async () => {
@@ -446,7 +448,7 @@ describe('Form Post Response Mode', () => {
       expect(html).toContain('id="auth-form"');
 
       // Script should reference the form ID
-      expect(html).toContain('getElementById(\'auth-form\')');
+      expect(html).toContain("getElementById('auth-form')");
     });
   });
 });

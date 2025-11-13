@@ -4,11 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  calculateAccessTokenHash,
-  isDPoPBoundToken,
-  extractDPoPToken,
-} from '../src/utils/dpop';
+import { calculateAccessTokenHash, isDPoPBoundToken, extractDPoPToken } from '../src/utils/dpop';
 
 describe('DPoP Utilities', () => {
   describe('calculateAccessTokenHash', () => {
