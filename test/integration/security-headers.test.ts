@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { Env } from '../../src/types/env';
-import app from '../../src/index';
+import type { Env } from '../packages/shared/src/types/env';
+import app from '../packages/op-discovery/src/index';
 
 // Mock environment
 const mockEnv: Env = {

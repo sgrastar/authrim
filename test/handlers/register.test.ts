@@ -5,8 +5,8 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import type { Env } from '../../src/types/env';
-import { registerHandler } from '../../src/handlers/register';
+import type { Env } from '../packages/shared/src/types/env';
+import { registerHandler } from '../packages/op-management/src/register';
 
 // Mock environment
 const mockEnv: Env = {

@@ -7,12 +7,12 @@
 
 import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
 import { Hono } from 'hono';
-import type { Env } from '../../src/types/env';
-import { tokenHandler } from '../../src/handlers/token';
-import { introspectHandler } from '../../src/handlers/introspect';
-import { revokeHandler } from '../../src/handlers/revoke';
-import { generateKeySet } from '../../src/utils/keys';
-import { generateSecureRandomString } from '../../src/utils/crypto';
+import type { Env } from '../packages/shared/src/types/env';
+import { tokenHandler } from '../packages/op-token/src/token';
+import { introspectHandler } from '../packages/op-management/src/introspect';
+import { revokeHandler } from '../packages/op-management/src/revoke';
+import { generateKeySet } from '../packages/shared/src/utils/keys';
+import { generateSecureRandomString } from '../packages/shared/src/utils/crypto';
 
 // Store generated test key
 let testPrivateKey: string;
