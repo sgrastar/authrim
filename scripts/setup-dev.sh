@@ -63,6 +63,8 @@ name = "enrai-$package"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = true
 
 # KV Namespaces
 $kv_namespaces
@@ -77,6 +79,7 @@ NONCE_EXPIRY = "300"
 REFRESH_TOKEN_EXPIRY = "2592000"
 KEY_ID = "$KEY_ID"
 ALLOW_HTTP_REDIRECT = "true"
+OPEN_REGISTRATION = "true"
 
 # Development configuration
 [dev]
