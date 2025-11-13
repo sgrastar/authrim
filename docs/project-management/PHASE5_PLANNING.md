@@ -1056,9 +1056,10 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
    - プロトタイプ作成（2-3日）
 
 3. **詳細設計**
-   - ワイヤーフレーム作成
-   - デザインシステム策定
-   - API仕様書作成
+   - ✅ ER図作成 → [database-schema.md](../architecture/database-schema.md)
+   - ✅ API仕様書作成 → [OpenAPI 3.1](../api/openapi.yaml) | [APIガイド](../api/README.md)
+   - ✅ デザインシステム策定 → [design-system.md](../design/design-system.md)
+   - ✅ ワイヤーフレーム作成 → [wireframes.md](../design/wireframes.md)
 
 4. **実装開始**
    - Week 1からタイムラインに沿って進行
@@ -1066,6 +1067,18 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 ---
 
 ## 参考資料
+
+### Hibanaドキュメント
+- **設計資料** (✅ 完成)
+  - [database-schema.md](../architecture/database-schema.md) - データベーススキーマ・ER図
+  - [openapi.yaml](../api/openapi.yaml) - OpenAPI 3.1仕様書
+  - [API README](../api/README.md) - APIガイド・クイックスタート
+  - [API_INVENTORY.md](./API_INVENTORY.md) - APIインベントリ
+  - [design-system.md](../design/design-system.md) - デザインシステム
+  - [wireframes.md](../design/wireframes.md) - UI ワイヤーフレーム（全13ページ）
+- **プロジェクト情報**
+  - [ROADMAP.md](../ROADMAP.md) - 全体ロードマップ
+  - [VISION.md](../VISION.md) - プロジェクトビジョン
 
 ### 競合分析
 - [Auth0 Login Experience](https://auth0.com/)
