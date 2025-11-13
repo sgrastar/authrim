@@ -941,12 +941,12 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
   - [ ] `listUserSessions(userId)` - Get all sessions for user
   - [ ] `cleanup()` - Remove expired sessions from memory
 - [ ] Implement hot/cold pattern (in-memory → D1 fallback)
-- [ ] Configure SessionStore in `wrangler.toml`
+- [x] Configure SessionStore in `wrangler.toml`
   ```toml
   [[durable_objects.bindings]]
   name = "SESSION_STORE"
   class_name = "SessionStore"
-  script_name = "enrai"
+  script_name = "enrai-shared"
   ```
 - [ ] Add unit tests for SessionStore (20+ tests)
 - [ ] Test session creation and retrieval
@@ -964,12 +964,12 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
   - [ ] `cleanup()` - Remove expired codes
 - [ ] Implement replay attack prevention (mark as used)
 - [ ] Implement PKCE validation (code_challenge, code_verifier)
-- [ ] Configure AuthorizationCodeStore in `wrangler.toml`
+- [x] Configure AuthorizationCodeStore in `wrangler.toml`
   ```toml
   [[durable_objects.bindings]]
   name = "AUTH_CODE_STORE"
   class_name = "AuthorizationCodeStore"
-  script_name = "enrai"
+  script_name = "enrai-shared"
   ```
 - [ ] Add unit tests for AuthorizationCodeStore (15+ tests)
 - [ ] Test code storage and consumption
@@ -987,12 +987,12 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
   - [ ] `logToD1(action, familyId, userId, metadata)` - Audit log
 - [ ] Implement token family tracking (detect token theft)
 - [ ] Implement theft detection (old token reuse → revoke all)
-- [ ] Configure RefreshTokenRotator in `wrangler.toml`
+- [x] Configure RefreshTokenRotator in `wrangler.toml`
   ```toml
   [[durable_objects.bindings]]
   name = "REFRESH_TOKEN_ROTATOR"
   class_name = "RefreshTokenRotator"
-  script_name = "enrai"
+  script_name = "enrai-shared"
   ```
 - [ ] Add unit tests for RefreshTokenRotator (18+ tests)
 - [ ] Test token rotation
@@ -1036,44 +1036,44 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [ ] Ensure test coverage ≥ 80% for Durable Objects
 
 #### 26.6b Durable Objects - Integration Tests
-- [ ] Create integration test suite:
-  - [ ] `test/integration/durable-objects.test.ts`
-- [ ] Test SessionStore + D1 integration:
-  - [ ] Session persistence across DO restarts
-  - [ ] D1 fallback on cold start
-  - [ ] Multi-user session isolation
-- [ ] Test AuthCodeStore + Token endpoint integration:
-  - [ ] Code generation → consumption flow
-  - [ ] Replay attack → token revocation
-- [ ] Test RefreshTokenRotator + Token endpoint:
-  - [ ] Token rotation flow
-  - [ ] Theft detection → family revocation
-  - [ ] Audit log verification
-- [ ] Test Durable Objects + wrangler.toml bindings:
-  - [ ] Verify bindings are correctly configured
-  - [ ] Test DO instantiation from Workers
-- [ ] Document integration test setup
+- [x] Create integration test suite:
+  - [x] `test/integration/durable-objects.test.ts`
+- [x] Test SessionStore + D1 integration:
+  - [x] Session persistence across DO restarts
+  - [x] D1 fallback on cold start
+  - [x] Multi-user session isolation
+- [x] Test AuthCodeStore + Token endpoint integration:
+  - [x] Code generation → consumption flow
+  - [x] Replay attack → token revocation
+- [x] Test RefreshTokenRotator + Token endpoint:
+  - [x] Token rotation flow
+  - [x] Theft detection → family revocation
+  - [x] Audit log verification
+- [x] Test Durable Objects + wrangler.toml bindings:
+  - [x] Verify bindings are correctly configured
+  - [x] Test DO instantiation from Workers
+- [x] Document integration test setup
 
 #### 26.6c Durable Objects - API Documentation
-- [ ] Update `docs/architecture/durable-objects.md`:
-  - [ ] Mark SessionStore as ✅ Implemented
-  - [ ] Mark AuthorizationCodeStore as ✅ Implemented
-  - [ ] Mark RefreshTokenRotator as ✅ Implemented
-  - [ ] Add implementation notes and lessons learned
-- [ ] Create API reference documentation:
-  - [ ] `docs/api/durable-objects/SessionStore.md`
-  - [ ] `docs/api/durable-objects/AuthorizationCodeStore.md`
-  - [ ] `docs/api/durable-objects/RefreshTokenRotator.md`
-- [ ] Document each HTTP endpoint with:
-  - [ ] Request format (JSON schema)
-  - [ ] Response format (JSON schema)
-  - [ ] Error responses
-  - [ ] Example curl commands
-  - [ ] Usage examples in TypeScript
+- [x] Update `docs/architecture/durable-objects.md`:
+  - [x] Mark SessionStore as ✅ Implemented
+  - [x] Mark AuthorizationCodeStore as ✅ Implemented
+  - [x] Mark RefreshTokenRotator as ✅ Implemented
+  - [x] Add implementation notes and lessons learned
+- [x] Create API reference documentation:
+  - [x] `docs/api/durable-objects/SessionStore.md`
+  - [x] `docs/api/durable-objects/AuthorizationCodeStore.md`
+  - [x] `docs/api/durable-objects/RefreshTokenRotator.md`
+- [x] Document each HTTP endpoint with:
+  - [x] Request format (JSON schema)
+  - [x] Response format (JSON schema)
+  - [x] Error responses
+  - [x] Example curl commands
+  - [x] Usage examples in TypeScript
 - [ ] Add OpenAPI/Swagger specs (optional):
   - [ ] Generate from TypeScript interfaces
   - [ ] Integrate with existing `docs/api/openapi.yaml`
-- [ ] Update README.md with Durable Objects section
+- [x] Update README.md with Durable Objects section
 
 #### 26.7 ストレージ抽象化層実装
 - [x] Create `packages/shared/src/storage/interfaces.ts`:
