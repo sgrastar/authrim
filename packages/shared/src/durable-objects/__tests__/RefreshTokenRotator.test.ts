@@ -111,7 +111,7 @@ describe('RefreshTokenRotator', () => {
       const response = await rotator.fetch(request);
       expect(response.status).toBe(201);
 
-      const body = (await response.json()) as { familyId: string; expiresAt: number };
+      const body = await response.json();
       expect(body).toHaveProperty('familyId');
       expect(body).toHaveProperty('expiresAt');
       expect(body.familyId).toMatch(/^family_/);
@@ -130,7 +130,7 @@ describe('RefreshTokenRotator', () => {
       const response = await rotator.fetch(request);
       expect(response.status).toBe(400);
 
-      const body = (await response.json()) as { error: string };
+      const body = await response.json();
       expect(body.error).toBe('invalid_request');
     });
 
@@ -148,7 +148,7 @@ describe('RefreshTokenRotator', () => {
       });
 
       const createResponse = await rotator.fetch(request);
-      const createBody = (await createResponse.json()) as { familyId: string };
+      const createBody = await createResponse.json();
       const familyId = createBody.familyId;
 
       // Get family info
@@ -156,10 +156,7 @@ describe('RefreshTokenRotator', () => {
         method: 'GET',
       });
       const infoResponse = await rotator.fetch(infoRequest);
-      const infoBody = (await infoResponse.json()) as {
-        rotationCount: number;
-        tokenCount: { current: number; previous: number };
-      };
+      const infoBody = await infoResponse.json();
 
       expect(infoBody.rotationCount).toBe(0);
       expect(infoBody.tokenCount.current).toBe(1);
@@ -197,12 +194,7 @@ describe('RefreshTokenRotator', () => {
       const response = await rotator.fetch(rotateRequest);
       expect(response.status).toBe(200);
 
-      const body = (await response.json()) as {
-        newToken: string;
-        rotationCount: number;
-        familyId: string;
-        expiresIn: number;
-      };
+      const body = await response.json();
       expect(body.newToken).toBeDefined();
       expect(body.newToken).toMatch(/^rt_/);
       expect(body.newToken).not.toBe('rt_original');
@@ -225,7 +217,7 @@ describe('RefreshTokenRotator', () => {
         }),
       });
       const createResponse = await rotator.fetch(createRequest);
-      const createBody = (await createResponse.json()) as { familyId: string };
+      const createBody = await createResponse.json();
 
       // Rotate 3 times
       let currentToken = 'rt_token_1';
@@ -241,7 +233,7 @@ describe('RefreshTokenRotator', () => {
         });
 
         const response = await rotator.fetch(rotateRequest);
-        const body = (await response.json()) as { rotationCount: number; newToken: string };
+        const body = await response.json();
 
         expect(body.rotationCount).toBe(i);
         currentToken = body.newToken;
@@ -252,10 +244,7 @@ describe('RefreshTokenRotator', () => {
         method: 'GET',
       });
       const infoResponse = await rotator.fetch(infoRequest);
-      const infoBody = (await infoResponse.json()) as {
-        rotationCount: number;
-        tokenCount: { previous: number };
-      };
+      const infoBody = await infoResponse.json();
 
       expect(infoBody.rotationCount).toBe(3);
       expect(infoBody.tokenCount.previous).toBe(3);
@@ -275,7 +264,7 @@ describe('RefreshTokenRotator', () => {
         }),
       });
       const createResponse = await rotator.fetch(createRequest);
-      const createBody = (await createResponse.json()) as { familyId: string };
+      const createBody = await createResponse.json();
 
       // Rotate twice
       const rotate1 = new Request('http://localhost/rotate', {
@@ -288,7 +277,7 @@ describe('RefreshTokenRotator', () => {
         }),
       });
       const response1 = await rotator.fetch(rotate1);
-      const body1 = (await response1.json()) as { newToken: string };
+      const body1 = await response1.json();
 
       const rotate2 = new Request('http://localhost/rotate', {
         method: 'POST',
@@ -306,7 +295,7 @@ describe('RefreshTokenRotator', () => {
         method: 'GET',
       });
       const infoResponse = await rotator.fetch(infoRequest);
-      const infoBody = (await infoResponse.json()) as { tokenCount: { previous: number } };
+      const infoBody = await infoResponse.json();
 
       expect(infoBody.tokenCount.previous).toBe(2);
     });
@@ -339,7 +328,7 @@ describe('RefreshTokenRotator', () => {
         }),
       });
       const response1 = await rotator.fetch(rotate1);
-      const body1 = (await response1.json()) as { newToken: string };
+      const body1 = await response1.json();
 
       // Second rotation (legitimate)
       const rotate2 = new Request('http://localhost/rotate', {
@@ -367,11 +356,7 @@ describe('RefreshTokenRotator', () => {
       const replayResponse = await rotator.fetch(replayAttempt);
       expect(replayResponse.status).toBe(400);
 
-      const replayBody = (await replayResponse.json()) as {
-        error: string;
-        error_description: string;
-        action: string;
-      };
+      const replayBody = await replayResponse.json();
       expect(replayBody.error).toBe('invalid_grant');
       expect(replayBody.error_description).toContain('theft detected');
       expect(replayBody.action).toBe('all_tokens_revoked');
@@ -391,7 +376,7 @@ describe('RefreshTokenRotator', () => {
         }),
       });
       const createResponse = await rotator.fetch(createRequest);
-      const createBody = (await createResponse.json()) as { familyId: string };
+      const createBody = await createResponse.json();
 
       // Rotate token
       const rotate = new Request('http://localhost/rotate', {
@@ -404,7 +389,7 @@ describe('RefreshTokenRotator', () => {
         }),
       });
       const rotateResponse = await rotator.fetch(rotate);
-      const rotateBody = (await rotateResponse.json()) as { newToken: string };
+      const rotateBody = await rotateResponse.json();
 
       // Trigger theft detection with old token
       const replayAttempt = new Request('http://localhost/rotate', {
@@ -431,7 +416,7 @@ describe('RefreshTokenRotator', () => {
       const legitResponse = await rotator.fetch(legitimateAttempt);
       expect(legitResponse.status).toBe(400);
 
-      const legitBody = (await legitResponse.json()) as { error_description: string };
+      const legitBody = await legitResponse.json();
       expect(legitBody.error_description).toContain('not found or expired');
 
       // Verify family is completely gone
@@ -473,7 +458,7 @@ describe('RefreshTokenRotator', () => {
       const response = await rotator.fetch(rotateRequest);
       expect(response.status).toBe(400);
 
-      const body = (await response.json()) as { error_description: string };
+      const body = await response.json();
       expect(body.error_description).toContain('mismatch');
     });
 
@@ -506,7 +491,7 @@ describe('RefreshTokenRotator', () => {
       const response = await rotator.fetch(rotateRequest);
       expect(response.status).toBe(400);
 
-      const body = (await response.json()) as { error_description: string };
+      const body = await response.json();
       expect(body.error_description).toContain('mismatch');
     });
   });
@@ -526,7 +511,7 @@ describe('RefreshTokenRotator', () => {
       const response = await rotator.fetch(request);
       expect(response.status).toBe(400);
 
-      const body = (await response.json()) as { error_description: string };
+      const body = await response.json();
       expect(body.error_description).toContain('not found or expired');
     });
   });
@@ -546,7 +531,7 @@ describe('RefreshTokenRotator', () => {
         }),
       });
       const createResponse = await rotator.fetch(createRequest);
-      const createBody = (await createResponse.json()) as { familyId: string };
+      const createBody = await createResponse.json();
 
       // Revoke family
       const revokeRequest = new Request('http://localhost/revoke-family', {
@@ -560,7 +545,7 @@ describe('RefreshTokenRotator', () => {
       const revokeResponse = await rotator.fetch(revokeRequest);
       expect(revokeResponse.status).toBe(200);
 
-      const revokeBody = (await revokeResponse.json()) as { success: boolean };
+      const revokeBody = await revokeResponse.json();
       expect(revokeBody.success).toBe(true);
 
       // Verify family is gone
@@ -583,7 +568,7 @@ describe('RefreshTokenRotator', () => {
       const response = await rotator.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = (await response.json()) as { success: boolean };
+      const body = await response.json();
       expect(body.success).toBe(true);
     });
   });
@@ -603,7 +588,7 @@ describe('RefreshTokenRotator', () => {
         }),
       });
       const createResponse = await rotator.fetch(createRequest);
-      const createBody = (await createResponse.json()) as { familyId: string };
+      const createBody = await createResponse.json();
 
       // Get family info
       const infoRequest = new Request(`http://localhost/family/${createBody.familyId}`, {
@@ -612,19 +597,7 @@ describe('RefreshTokenRotator', () => {
       const response = await rotator.fetch(infoRequest);
       expect(response.status).toBe(200);
 
-      const body = (await response.json()) as {
-        id: string;
-        userId: string;
-        clientId: string;
-        scope: string;
-        rotationCount: number;
-        createdAt: number;
-        lastRotation: number;
-        expiresAt: number;
-        tokenCount: unknown;
-        currentToken?: unknown;
-        previousTokens?: unknown;
-      };
+      const body = await response.json();
       expect(body).toHaveProperty('id');
       expect(body).toHaveProperty('userId', 'user_123');
       expect(body).toHaveProperty('clientId', 'client_1');
@@ -659,13 +632,7 @@ describe('RefreshTokenRotator', () => {
       const response = await rotator.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = (await response.json()) as {
-        status: string;
-        families: unknown;
-        tokens: unknown;
-        config: { defaultTtl: number; maxPreviousTokens: number };
-        timestamp: number;
-      };
+      const body = await response.json();
       expect(body).toHaveProperty('status', 'ok');
       expect(body).toHaveProperty('families');
       expect(body).toHaveProperty('tokens');
@@ -694,9 +661,7 @@ describe('RefreshTokenRotator', () => {
         method: 'GET',
       });
       const response = await rotator.fetch(statusRequest);
-      const body = (await response.json()) as {
-        families: { total: number; active: number; expired: number };
-      };
+      const body = await response.json();
 
       expect(body.families.total).toBe(1);
       expect(body.families.active).toBe(1);
@@ -718,7 +683,7 @@ describe('RefreshTokenRotator', () => {
       const response = await rotator.fetch(request);
       expect(response.status).toBe(400);
 
-      const body = (await response.json()) as { error: string };
+      const body = await response.json();
       expect(body.error).toBe('invalid_request');
     });
 
@@ -761,7 +726,7 @@ describe('RefreshTokenRotator', () => {
         }),
       });
       const createResponse = await rotator.fetch(createRequest);
-      const createBody = (await createResponse.json()) as { familyId: string };
+      const createBody = await createResponse.json();
 
       // Rotate 10 times (MAX_PREVIOUS_TOKENS is 5)
       let currentToken = 'rt_limit_test';
@@ -776,7 +741,7 @@ describe('RefreshTokenRotator', () => {
           }),
         });
         const response = await rotator.fetch(rotateRequest);
-        const body = (await response.json()) as { newToken: string };
+        const body = await response.json();
         currentToken = body.newToken;
       }
 
@@ -785,7 +750,7 @@ describe('RefreshTokenRotator', () => {
         method: 'GET',
       });
       const infoResponse = await rotator.fetch(infoRequest);
-      const infoBody = (await infoResponse.json()) as { tokenCount: { previous: number } };
+      const infoBody = await infoResponse.json();
 
       // Should only keep last 5 previous tokens
       expect(infoBody.tokenCount.previous).toBeLessThanOrEqual(5);
