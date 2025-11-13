@@ -367,7 +367,7 @@ Timeline: 7 months (Mar 2026 - Sep 2026)
 | Open Source | ✅ MIT | ❌ | ✅ | ❌ |
 
 **Enrai's Unique Value:**
-- 💥 Edge-native (Cloudflare Workers)
+- ⚡️ Edge-native (Cloudflare Workers)
 - 🚀 <50ms global latency
 - 📦 One-command deployment (planned Phase 7)
 - 🔓 Fully open source (MIT license)
