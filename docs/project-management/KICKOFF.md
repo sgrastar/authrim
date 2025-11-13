@@ -293,11 +293,11 @@ enrai/
 - [ ] Login to Wrangler: `wrangler login`
 - [ ] Create KV namespace for development:
   ```bash
-  wrangler kv:namespace create STATE_KV
+  wrangler kv namespace create STATE_KV
   ```
 - [ ] Create KV namespace for preview:
   ```bash
-  wrangler kv:namespace create STATE_KV --preview
+  wrangler kv namespace create STATE_KV --preview
   ```
 - [ ] Copy namespace IDs to `wrangler.toml`
 
@@ -484,7 +484,7 @@ After completing this checklist, proceed to:
 
 **Issue**: KV namespace errors
 - [ ] Verify KV namespace IDs in `wrangler.toml`
-- [ ] Check KV namespace exists: `wrangler kv:namespace list`
+- [ ] Check KV namespace exists: `wrangler kv namespace list`
 - [ ] Recreate namespace if needed
 
 **Issue**: Authentication/secret errors
