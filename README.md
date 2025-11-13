@@ -1,4 +1,4 @@
-# Enrai 💥
+# Enrai ⚡️
 
 > **One-command identity infrastructure for the modern web**
 
@@ -389,7 +389,7 @@ See [LICENSE](./LICENSE) for details.
 
 ---
 
-> **Enrai** 💥 — *A spark of identity on the edge.*
+> **Enrai** ⚡️ — *A spark of identity on the edge.*
 >
 > **Status:** Phase 2 Complete (Core API) | **Next:** Phase 3 (Conformance Testing)
 >
