@@ -14,7 +14,7 @@
 
 **Goal:** Obtain official OpenID certification + enterprise-grade security
 
-**Priority:** 認証取得に有利、エンタープライズで高評価
+**Priority:** Favorable for certification, highly valued by enterprises
 
 ### Week 26: Advanced Security Protocols
 
@@ -25,7 +25,7 @@
 - [ ] `response_mode=form_post.jwt` support
 - [ ] Authorization response JWT signing
 - [ ] Tests & conformance validation
-- **Why:** OpenID認証で高評価、レスポンス改ざん防止
+- **Why:** Highly rated for OpenID certification, prevents response tampering
 
 #### MTLS (Mutual TLS Client Authentication) - RFC 8705
 - [ ] MTLS client certificate validation
@@ -34,7 +34,7 @@
 - [ ] `self_signed_tls_client_auth` support
 - [ ] Certificate thumbprint validation
 - [ ] Tests & conformance validation
-- **Why:** エンタープライズ必須、最高レベルのセキュリティ、金融業界標準
+- **Why:** Enterprise essential, highest level of security, financial industry standard
 
 #### JAR (JWT-Secured Authorization Request) - RFC 9101
 - [ ] `request` parameter support (JWT)
@@ -42,7 +42,7 @@
 - [ ] Request object validation
 - [ ] Request object encryption (JWE)
 - [ ] Tests & conformance validation
-- **Why:** セキュリティ強化、リクエスト改ざん防止、OpenID認証で必須
+- **Why:** Enhanced security, prevents request tampering, required for OpenID certification
 
 ### Week 27: Client Credentials & Production Deployment
 
@@ -54,7 +54,7 @@
 - [ ] Machine-to-machine token issuance
 - [ ] Scope-based access control
 - [ ] Tests & conformance validation
-- **Why:** 基本フロー、サーバー間認証で必須、メジャーな実装
+- **Why:** Basic flow, essential for server-to-server authentication, major implementation
 
 #### Production Deployment
 - [ ] Production Cloudflare account setup
