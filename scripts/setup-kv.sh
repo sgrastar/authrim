@@ -40,11 +40,12 @@ echo ""
 # Function to create KV namespace and extract ID
 create_kv_namespace() {
     local name=$1
-    local output=$(wrangler kv:namespace create "$name" 2>&1)
+    local preview_flag=$2
+    local output=$(wrangler kv:namespace create "$name" $preview_flag 2>&1)
     local id=$(echo "$output" | grep -o 'id = "[^"]*"' | cut -d'"' -f2)
 
     if [ -z "$id" ]; then
-        echo "❌ Failed to create namespace: $name"
+        echo "❌ Failed to create namespace: $name $preview_flag"
         echo "$output"
         exit 1
     fi
@@ -111,6 +112,18 @@ update_wrangler_toml() {
     local id=$3
     local preview_id=$4
 
+    # Check if file exists
+    if [ ! -f "$file" ]; then
+        echo "    ⚠️  Warning: File not found: $file"
+        return 1
+    fi
+
+    # Check if IDs are provided
+    if [ -z "$id" ] || [ -z "$preview_id" ]; then
+        echo "    ⚠️  Warning: Empty ID provided for $binding (id: '$id', preview_id: '$preview_id')"
+        return 1
+    fi
+
     # Create a temporary file
     local temp_file=$(mktemp)
 
@@ -135,7 +148,15 @@ update_wrangler_toml() {
     { print }
     ' "$file" > "$temp_file"
 
-    mv "$temp_file" "$file"
+    # Verify the update was successful
+    if grep -q "id = \"$id\"" "$temp_file"; then
+        mv "$temp_file" "$file"
+        echo "    ✓ Updated $binding: $id / $preview_id"
+    else
+        echo "    ⚠️  Warning: Failed to update $binding in $file"
+        rm "$temp_file"
+        return 1
+    fi
 }
 
 # Update op-auth wrangler.toml
