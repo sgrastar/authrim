@@ -32,7 +32,7 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
           return Promise.resolve(existed);
         } else {
           let count = 0;
-          keyOrKeys.forEach(key => {
+          keyOrKeys.forEach((key) => {
             if (this._storage.delete(key)) count++;
           });
           return Promise.resolve(count);
@@ -81,17 +81,18 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
 }
 
 // Mock Env
-const createMockEnv = (): Env => ({
-  DB: {
-    prepare: vi.fn().mockReturnValue({
-      bind: vi.fn().mockReturnThis(),
-      first: vi.fn().mockResolvedValue(null),
-      all: vi.fn().mockResolvedValue({ results: [] }),
-      run: vi.fn().mockResolvedValue({}),
-    }),
-  } as unknown as D1Database,
-  // Add other required Env properties as needed
-} as Env);
+const createMockEnv = (): Env =>
+  ({
+    DB: {
+      prepare: vi.fn().mockReturnValue({
+        bind: vi.fn().mockReturnThis(),
+        first: vi.fn().mockResolvedValue(null),
+        all: vi.fn().mockResolvedValue({ results: [] }),
+        run: vi.fn().mockResolvedValue({}),
+      }),
+    } as unknown as D1Database,
+    // Add other required Env properties as needed
+  }) as Env;
 
 describe('SessionStore', () => {
   let sessionStore: SessionStore;
@@ -119,7 +120,12 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(201);
 
-      const body = await response.json() as { id: string; userId: string; expiresAt: number; createdAt: number };
+      const body = (await response.json()) as {
+        id: string;
+        userId: string;
+        expiresAt: number;
+        createdAt: number;
+      };
       expect(body).toHaveProperty('id');
       expect(body).toHaveProperty('userId', 'user_123');
       expect(body).toHaveProperty('expiresAt');
@@ -139,7 +145,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(400);
 
-      const body = await response.json() as { error: unknown };
+      const body = (await response.json()) as { error: unknown };
       expect(body).toHaveProperty('error');
     });
 
@@ -151,7 +157,7 @@ describe('SessionStore', () => {
           body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
         });
         const response = await sessionStore.fetch(request);
-        const body = await response.json() as { id: string };
+        const body = (await response.json()) as { id: string };
         return body.id;
       };
 
@@ -170,7 +176,7 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = await createResponse.json() as { id: string };
+      const { id } = (await createResponse.json()) as { id: string };
 
       // Retrieve session
       const getRequest = new Request(`http://localhost/session/${id}`, {
@@ -179,7 +185,7 @@ describe('SessionStore', () => {
       const getResponse = await sessionStore.fetch(getRequest);
       expect(getResponse.status).toBe(200);
 
-      const body = await getResponse.json() as { id: string; userId: string };
+      const body = (await getResponse.json()) as { id: string; userId: string };
       expect(body.id).toBe(id);
       expect(body.userId).toBe('user_123');
     });
@@ -192,7 +198,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(404);
 
-      const body = await response.json() as { error: unknown };
+      const body = (await response.json()) as { error: unknown };
       expect(body).toHaveProperty('error');
     });
 
@@ -204,7 +210,7 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: -1 }), // Already expired
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = await createResponse.json() as { id: string };
+      const { id } = (await createResponse.json()) as { id: string };
 
       // Try to retrieve expired session
       const getRequest = new Request(`http://localhost/session/${id}`, {
@@ -224,7 +230,7 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = await createResponse.json() as { id: string };
+      const { id } = (await createResponse.json()) as { id: string };
 
       // Invalidate session
       const deleteRequest = new Request(`http://localhost/session/${id}`, {
@@ -233,7 +239,7 @@ describe('SessionStore', () => {
       const deleteResponse = await sessionStore.fetch(deleteRequest);
       expect(deleteResponse.status).toBe(200);
 
-      const body = await deleteResponse.json() as { success: boolean; deleted: string };
+      const body = (await deleteResponse.json()) as { success: boolean; deleted: string };
       expect(body.success).toBe(true);
       expect(body.deleted).toBe(id);
 
@@ -253,7 +259,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json() as { success: boolean; deleted: null };
+      const body = (await response.json()) as { success: boolean; deleted: null };
       expect(body.success).toBe(true);
       expect(body.deleted).toBe(null);
     });
@@ -280,7 +286,7 @@ describe('SessionStore', () => {
       const listResponse = await sessionStore.fetch(listRequest);
       expect(listResponse.status).toBe(200);
 
-      const body = await listResponse.json() as { sessions: Array<{ userId: string }> };
+      const body = (await listResponse.json()) as { sessions: Array<{ userId: string }> };
       expect(body.sessions).toHaveLength(3);
       expect(body.sessions.every((s: { userId: string }) => s.userId === userId)).toBe(true);
     });
@@ -293,7 +299,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json() as { sessions: unknown[] };
+      const body = (await response.json()) as { sessions: unknown[] };
       expect(body.sessions).toEqual([]);
     });
 
@@ -321,7 +327,7 @@ describe('SessionStore', () => {
         method: 'GET',
       });
       const listResponse = await sessionStore.fetch(listRequest);
-      const body = await listResponse.json() as { sessions: unknown[] };
+      const body = (await listResponse.json()) as { sessions: unknown[] };
 
       // Should only have 1 active session
       expect(body.sessions).toHaveLength(1);
@@ -337,10 +343,13 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id, expiresAt: originalExpiry } = await createResponse.json() as { id: string; expiresAt: number };
+      const { id, expiresAt: originalExpiry } = (await createResponse.json()) as {
+        id: string;
+        expiresAt: number;
+      };
 
       // Wait a bit
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Extend session
       const extendRequest = new Request(`http://localhost/session/${id}/extend`, {
@@ -351,7 +360,7 @@ describe('SessionStore', () => {
       const extendResponse = await sessionStore.fetch(extendRequest);
       expect(extendResponse.status).toBe(200);
 
-      const body = await extendResponse.json() as { expiresAt: number };
+      const body = (await extendResponse.json()) as { expiresAt: number };
       expect(body.expiresAt).toBeGreaterThan(originalExpiry);
     });
 
@@ -387,7 +396,11 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json() as { status: string; sessions: unknown; timestamp: number };
+      const body = (await response.json()) as {
+        status: string;
+        sessions: unknown;
+        timestamp: number;
+      };
       expect(body).toHaveProperty('status', 'ok');
       expect(body).toHaveProperty('sessions');
       expect(body).toHaveProperty('timestamp');
