@@ -3,7 +3,11 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import type { Env } from '@enrai/shared';
-import { rateLimitMiddleware, RateLimitProfiles } from '@enrai/shared';
+import {
+  rateLimitMiddleware,
+  RateLimitProfiles,
+  initialAccessTokenMiddleware,
+} from '@enrai/shared';
 
 // Import handlers
 import { registerHandler } from './register';
@@ -51,7 +55,7 @@ app.use(
   })
 );
 
-// Rate limiting for sensitive endpoints
+// Rate limiting and Initial Access Token for registration endpoint
 app.use(
   '/register',
   rateLimitMiddleware({
@@ -59,6 +63,10 @@ app.use(
     endpoints: ['/register'],
   })
 );
+
+// Initial Access Token validation for Dynamic Client Registration (RFC 7591)
+// Can be disabled by setting OPEN_REGISTRATION=true in environment variables
+app.use('/register', initialAccessTokenMiddleware());
 
 app.use(
   '/introspect',

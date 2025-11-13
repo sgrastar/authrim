@@ -177,19 +177,59 @@ echo ""
 echo "📝 Updating wrangler.toml files..."
 echo ""
 
-# Function to update ISSUER_URL in wrangler.toml
-update_issuer_url() {
+# Function to update wrangler.toml with deployment settings
+update_wrangler_toml() {
     local file=$1
+    local use_workers_dev=$2
     local package_name=$(basename $(dirname "$file"))
 
     echo "  • Updating $package_name..."
 
+    # Update ISSUER_URL
     if [[ "$OSTYPE" == "darwin"* ]]; then
         # macOS
         sed -i '' "s|ISSUER_URL = \".*\"|ISSUER_URL = \"$PRODUCTION_URL\"|" "$file"
     else
         # Linux
         sed -i "s|ISSUER_URL = \".*\"|ISSUER_URL = \"$PRODUCTION_URL\"|" "$file"
+    fi
+
+    # Set OPEN_REGISTRATION to false for production (require Initial Access Token)
+    # Only update if the line exists, otherwise it will be added by op-management specific logic
+    if grep -q "^OPEN_REGISTRATION = " "$file"; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s|OPEN_REGISTRATION = \".*\"|OPEN_REGISTRATION = \"false\"|" "$file"
+        else
+            sed -i "s|OPEN_REGISTRATION = \".*\"|OPEN_REGISTRATION = \"false\"|" "$file"
+        fi
+    fi
+
+    # Remove existing workers_dev and preview_urls settings if present
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' '/^workers_dev = /d' "$file"
+        sed -i '' '/^preview_urls = /d' "$file"
+    else
+        sed -i '/^workers_dev = /d' "$file"
+        sed -i '/^preview_urls = /d' "$file"
+    fi
+
+    # Add new settings after compatibility_flags line
+    local new_settings=""
+    if [ "$use_workers_dev" = "true" ]; then
+        new_settings="workers_dev = true\npreview_urls = true"
+    else
+        new_settings="workers_dev = false\npreview_urls = false"
+    fi
+
+    # Insert after compatibility_flags line
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS - need to escape newlines properly
+        sed -i '' "/^compatibility_flags = /a\\
+$new_settings
+" "$file"
+    else
+        # Linux
+        sed -i "/^compatibility_flags = /a\\$new_settings" "$file"
     fi
 }
 
@@ -260,6 +300,13 @@ zone_name = \"$ZONE_NAME\""
     echo "$routes" >> "$file"
 }
 
+# Determine if we're using workers_dev based on deployment mode
+if [[ "$USE_ROUTER" == "true" ]]; then
+    USE_WORKERS_DEV="true"
+else
+    USE_WORKERS_DEV="false"
+fi
+
 # Update all package wrangler.toml files
 for toml_file in packages/*/wrangler.toml; do
     if [ -f "$toml_file" ]; then
@@ -271,7 +318,7 @@ for toml_file in packages/*/wrangler.toml; do
             continue
         fi
 
-        update_issuer_url "$toml_file"
+        update_wrangler_toml "$toml_file" "$USE_WORKERS_DEV"
 
         # Add routes for production mode (except router)
         if [[ "$USE_ROUTER" == "false" ]] && [[ "$package_name" != "router" ]]; then
