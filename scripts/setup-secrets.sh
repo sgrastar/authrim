@@ -39,6 +39,14 @@ fi
 
 echo "✅ Keys found"
 echo ""
+echo "📋 Found cryptographic keys:"
+echo "  • Private key (.keys/private.pem)"
+echo "  • Public key (.keys/public.jwk.json)"
+echo ""
+echo "These keys will be uploaded as secrets to Cloudflare Workers:"
+echo "  • PRIVATE_KEY_PEM - Used by op-token and op-discovery to sign JWTs"
+echo "  • PUBLIC_JWK_JSON - Used by op-auth and op-userinfo to verify JWTs"
+echo ""
 
 # Prepare the public JWK as compact JSON
 PUBLIC_JWK=$(cat .keys/public.jwk.json | jq -c .)
