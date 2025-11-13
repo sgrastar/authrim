@@ -398,7 +398,7 @@ CREATE INDEX idx_clients_created_at ON oauth_clients(created_at);
 
 ### 5. sessions - User Sessions
 
-**Purpose**: ITP-compliant session management (used with KV)
+**Purpose**: ITP-compliant session management (hybrid DO + D1 architecture)
 
 **Key Columns**:
 - `id`: Session ID (UUID)
@@ -408,7 +408,17 @@ CREATE INDEX idx_clients_created_at ON oauth_clients(created_at);
 **Relations**:
 - N:1 → `users` (cascade delete)
 
-**Note**: Detailed session data is stored in Cloudflare KV; this table is for indexing and management
+**⚙️ Hybrid Storage Architecture**:
+- **Active Sessions (Hot Data)**: Stored in SessionStore Durable Object (in-memory)
+  - Sub-millisecond access
+  - Immediate invalidation
+  - Real-time state management
+- **Session History/Cold Data**: Stored in D1 (this table)
+  - Persistent audit log
+  - Fallback for inactive sessions
+  - User session history queries
+
+See [storage-strategy.md](./storage-strategy.md) for details
 
 **SQL Definition**:
 ```sql
@@ -725,6 +735,26 @@ migrations/
 
 ## Storage Abstraction Layer
 
+### Hybrid Multi-Tier Architecture
+
+Enrai uses a **three-tier storage strategy** optimized for performance, cost, and consistency:
+
+```
+┌────────────────┐  ┌────────────────┐  ┌────────────────┐
+│ Durable Objects│  │   D1 Database  │  │  KV Storage    │
+├────────────────┤  ├────────────────┤  ├────────────────┤
+│ Strong         │  │ Persistent     │  │ Global Edge    │
+│ Consistency    │  │ Relational     │  │ Cache          │
+├────────────────┤  ├────────────────┤  ├────────────────┤
+│• Auth Codes    │  │• users         │  │• JWKs cache    │
+│• Sessions (hot)│  │• oauth_clients │  │• Discovery     │
+│• Token Rotation│  │• sessions (log)│  │• Client cache  │
+│• KeyManager    │  │• audit_log     │  │• Magic Links   │
+└────────────────┘  └────────────────┘  └────────────────┘
+```
+
+**See [storage-strategy.md](./storage-strategy.md) for detailed architecture**
+
 ### Multi-Cloud Support
 
 ```typescript
@@ -743,7 +773,8 @@ interface IStorageAdapter {
 class CloudflareAdapter implements IStorageAdapter {
   constructor(
     private d1: D1Database,
-    private kv: KVNamespace
+    private kv: KVNamespace,
+    private doNamespace: DurableObjectNamespace
   ) {}
   // ... implementation
 }
