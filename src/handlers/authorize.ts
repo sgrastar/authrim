@@ -47,7 +47,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       state = typeof body.state === 'string' ? body.state : undefined;
       nonce = typeof body.nonce === 'string' ? body.nonce : undefined;
       code_challenge = typeof body.code_challenge === 'string' ? body.code_challenge : undefined;
-      code_challenge_method = typeof body.code_challenge_method === 'string' ? body.code_challenge_method : undefined;
+      code_challenge_method =
+        typeof body.code_challenge_method === 'string' ? body.code_challenge_method : undefined;
       claims = typeof body.claims === 'string' ? body.claims : undefined;
       response_mode = typeof body.response_mode === 'string' ? body.response_mode : undefined;
     } catch {
@@ -244,7 +245,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const parsedClaims: unknown = JSON.parse(claims);
 
       // Validate claims structure
-      if (typeof parsedClaims !== 'object' || parsedClaims === null || Array.isArray(parsedClaims)) {
+      if (
+        typeof parsedClaims !== 'object' ||
+        parsedClaims === null ||
+        Array.isArray(parsedClaims)
+      ) {
         return redirectWithError(
           c,
           validRedirectUri,
@@ -443,9 +448,7 @@ function createFormPostResponse(
   state?: string
 ): Response {
   // Build form inputs
-  const inputs: string[] = [
-    `<input type="hidden" name="code" value="${escapeHtml(code)}" />`,
-  ];
+  const inputs: string[] = [`<input type="hidden" name="code" value="${escapeHtml(code)}" />`];
 
   if (state) {
     inputs.push(`<input type="hidden" name="state" value="${escapeHtml(state)}" />`);
