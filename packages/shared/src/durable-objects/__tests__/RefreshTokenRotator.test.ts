@@ -2,7 +2,7 @@
  * RefreshTokenRotator Durable Object Unit Tests
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { RefreshTokenRotator } from '../RefreshTokenRotator';
 import type { Env } from '../../types/env';
 

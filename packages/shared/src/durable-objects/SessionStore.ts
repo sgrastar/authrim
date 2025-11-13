@@ -88,7 +88,7 @@ export class SessionStore {
     if (this.cleanupInterval === null) {
       this.cleanupInterval = setInterval(
         () => {
-          this.cleanupExpiredSessions();
+          void this.cleanupExpiredSessions();
         },
         5 * 60 * 1000
       ) as unknown as number;

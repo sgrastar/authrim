@@ -119,7 +119,7 @@ export class RefreshTokenRotator {
   private startCleanup(): void {
     if (this.cleanupInterval === null) {
       this.cleanupInterval = setInterval(() => {
-        this.cleanupExpiredFamilies();
+        void this.cleanupExpiredFamilies();
       }, this.CLEANUP_INTERVAL) as unknown as number;
     }
   }
