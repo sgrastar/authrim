@@ -14,10 +14,17 @@ importers:
       jose:
         specifier: ^5.2.0
         version: 5.10.0
+    optionalDependencies:
+      '@esbuild/linux-x64':
+        specifier: ^0.25.12
+        version: 0.25.12
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20240117.0
         version: 4.20251111.0
+      '@esbuild/win32-x64':
+        specifier: ^0.25.12
+        version: 0.25.12
       '@eslint/js':
         specifier: ^9.39.1
         version: 9.39.1
@@ -1935,8 +1942,7 @@ snapshots:
   '@esbuild/win32-ia32@0.25.4':
     optional: true
 
-  '@esbuild/win32-x64@0.25.12':
-    optional: true
+  '@esbuild/win32-x64@0.25.12': {}
 
   '@esbuild/win32-x64@0.25.4':
     optional: true
