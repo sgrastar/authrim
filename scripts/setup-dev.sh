@@ -182,6 +182,11 @@ preview_id = "placeholder"
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "INITIAL_ACCESS_TOKENS"
+id = "placeholder"
 preview_id = "placeholder"'
 
 # Generate wrangler.toml for router (with Service Bindings)
