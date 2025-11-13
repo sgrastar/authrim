@@ -231,8 +231,13 @@ create_kv_namespace() {
     fi
 
     # Extract ID from successful creation output
-    # Wrangler outputs in JSON format: "id": "abc123..."
-    local id=$(echo "$output" | grep -o '"id"[[:space:]]*:[[:space:]]*"[a-f0-9]\{32\}"' | grep -o '[a-f0-9]\{32\}')
+    # Wrangler outputs in JSON format: "id": "abc123..." or "preview_id": "abc123..."
+    local id=""
+    if [ "$preview_flag" = "--preview" ]; then
+        id=$(echo "$output" | grep -o '"preview_id"[[:space:]]*:[[:space:]]*"[a-f0-9]\{32\}"' | grep -o '[a-f0-9]\{32\}')
+    else
+        id=$(echo "$output" | grep -o '"id"[[:space:]]*:[[:space:]]*"[a-f0-9]\{32\}"' | grep -o '[a-f0-9]\{32\}')
+    fi
 
     if [ -z "$id" ]; then
         echo "❌ Could not extract ID from wrangler output" >&2
