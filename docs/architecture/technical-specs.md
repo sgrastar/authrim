@@ -249,7 +249,7 @@ Payload:
 
 ## 11. License
 
-MIT License © 2025 [sgrastar](https://github.com/sgrastar)
+Apache License 2.0 © 2025 [sgrastar](https://github.com/sgrastar)
 
 ---
 
