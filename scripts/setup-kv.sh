@@ -41,12 +41,28 @@ echo ""
 create_kv_namespace() {
     local name=$1
     local preview_flag=$2
+
+    echo "  📝 Creating KV namespace: $name $preview_flag" >&2
     local output=$(wrangler kv:namespace create "$name" $preview_flag 2>&1)
+    local exit_code=$?
+
+    echo "  📄 Wrangler output:" >&2
+    echo "$output" >&2
+    echo "" >&2
+
+    if [ $exit_code -ne 0 ]; then
+        echo "❌ Wrangler command failed with exit code: $exit_code" >&2
+        echo "❌ Failed to create namespace: $name $preview_flag" >&2
+        exit 1
+    fi
+
     local id=$(echo "$output" | grep -o 'id = "[^"]*"' | cut -d'"' -f2)
 
     if [ -z "$id" ]; then
-        echo "❌ Failed to create namespace: $name $preview_flag"
-        echo "$output"
+        echo "❌ Could not extract ID from wrangler output" >&2
+        echo "❌ Failed to create namespace: $name $preview_flag" >&2
+        echo "Full output was:" >&2
+        echo "$output" >&2
         exit 1
     fi
 
@@ -160,7 +176,10 @@ update_wrangler_toml() {
 }
 
 # Update op-auth wrangler.toml
-echo "Updating packages/op-auth/wrangler.toml..."
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📝 Updating packages/op-auth/wrangler.toml..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 update_wrangler_toml "packages/op-auth/wrangler.toml" "AUTH_CODES" "$AUTH_CODES_ID" "$PREVIEW_AUTH_CODES_ID"
 update_wrangler_toml "packages/op-auth/wrangler.toml" "STATE_STORE" "$STATE_STORE_ID" "$PREVIEW_STATE_STORE_ID"
 update_wrangler_toml "packages/op-auth/wrangler.toml" "NONCE_STORE" "$NONCE_STORE_ID" "$PREVIEW_NONCE_STORE_ID"
@@ -169,12 +188,18 @@ update_wrangler_toml "packages/op-auth/wrangler.toml" "RATE_LIMIT" "$RATE_LIMIT_
 echo "✅ op-auth updated"
 
 # Update op-discovery wrangler.toml
-echo "Updating packages/op-discovery/wrangler.toml..."
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📝 Updating packages/op-discovery/wrangler.toml..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 update_wrangler_toml "packages/op-discovery/wrangler.toml" "RATE_LIMIT" "$RATE_LIMIT_ID" "$PREVIEW_RATE_LIMIT_ID"
 echo "✅ op-discovery updated"
 
 # Update op-management wrangler.toml
-echo "Updating packages/op-management/wrangler.toml..."
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📝 Updating packages/op-management/wrangler.toml..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 update_wrangler_toml "packages/op-management/wrangler.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
 update_wrangler_toml "packages/op-management/wrangler.toml" "REFRESH_TOKENS" "$REFRESH_TOKENS_ID" "$PREVIEW_REFRESH_TOKENS_ID"
 update_wrangler_toml "packages/op-management/wrangler.toml" "REVOKED_TOKENS" "$REVOKED_TOKENS_ID" "$PREVIEW_REVOKED_TOKENS_ID"
@@ -182,7 +207,10 @@ update_wrangler_toml "packages/op-management/wrangler.toml" "RATE_LIMIT" "$RATE_
 echo "✅ op-management updated"
 
 # Update op-token wrangler.toml
-echo "Updating packages/op-token/wrangler.toml..."
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📝 Updating packages/op-token/wrangler.toml..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 update_wrangler_toml "packages/op-token/wrangler.toml" "AUTH_CODES" "$AUTH_CODES_ID" "$PREVIEW_AUTH_CODES_ID"
 update_wrangler_toml "packages/op-token/wrangler.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
 update_wrangler_toml "packages/op-token/wrangler.toml" "REFRESH_TOKENS" "$REFRESH_TOKENS_ID" "$PREVIEW_REFRESH_TOKENS_ID"
@@ -191,7 +219,10 @@ update_wrangler_toml "packages/op-token/wrangler.toml" "RATE_LIMIT" "$RATE_LIMIT
 echo "✅ op-token updated"
 
 # Update op-userinfo wrangler.toml
-echo "Updating packages/op-userinfo/wrangler.toml..."
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📝 Updating packages/op-userinfo/wrangler.toml..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 update_wrangler_toml "packages/op-userinfo/wrangler.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
 update_wrangler_toml "packages/op-userinfo/wrangler.toml" "REVOKED_TOKENS" "$REVOKED_TOKENS_ID" "$PREVIEW_REVOKED_TOKENS_ID"
 update_wrangler_toml "packages/op-userinfo/wrangler.toml" "RATE_LIMIT" "$RATE_LIMIT_ID" "$PREVIEW_RATE_LIMIT_ID"
@@ -201,19 +232,26 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "🎉 Setup complete!"
 echo ""
-echo "Created KV namespaces:"
-echo "  • AUTH_CODES: $AUTH_CODES_ID"
-echo "  • STATE_STORE: $STATE_STORE_ID"
-echo "  • NONCE_STORE: $NONCE_STORE_ID"
-echo "  • CLIENTS: $CLIENTS_ID"
-echo "  • RATE_LIMIT: $RATE_LIMIT_ID"
-echo "  • REFRESH_TOKENS: $REFRESH_TOKENS_ID"
-echo "  • REVOKED_TOKENS: $REVOKED_TOKENS_ID"
+echo "Created KV namespaces (production / preview):"
+echo "  • AUTH_CODES: $AUTH_CODES_ID / $PREVIEW_AUTH_CODES_ID"
+echo "  • STATE_STORE: $STATE_STORE_ID / $PREVIEW_STATE_STORE_ID"
+echo "  • NONCE_STORE: $NONCE_STORE_ID / $PREVIEW_NONCE_STORE_ID"
+echo "  • CLIENTS: $CLIENTS_ID / $PREVIEW_CLIENTS_ID"
+echo "  • RATE_LIMIT: $RATE_LIMIT_ID / $PREVIEW_RATE_LIMIT_ID"
+echo "  • REFRESH_TOKENS: $REFRESH_TOKENS_ID / $PREVIEW_REFRESH_TOKENS_ID"
+echo "  • REVOKED_TOKENS: $REVOKED_TOKENS_ID / $PREVIEW_REVOKED_TOKENS_ID"
 echo ""
 echo "All wrangler.toml files have been updated with the correct namespace IDs."
 echo ""
+echo "📁 Updated files:"
+echo "  • packages/op-auth/wrangler.toml"
+echo "  • packages/op-discovery/wrangler.toml"
+echo "  • packages/op-management/wrangler.toml"
+echo "  • packages/op-token/wrangler.toml"
+echo "  • packages/op-userinfo/wrangler.toml"
+echo ""
 echo "Next steps:"
-echo "  1. Run 'npm run deploy' to deploy your workers"
-echo "  2. Or run 'npm run dev' for local development"
+echo "  1. Run 'pnpm run deploy' to deploy your workers"
+echo "  2. Or run 'pnpm run dev' for local development"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
