@@ -16,6 +16,7 @@ export * from './utils/validation';
 
 // Middleware
 export * from './middleware/rate-limit';
+export * from './middleware/initial-access-token';
 
 // Storage
 export * from './storage/interfaces';
