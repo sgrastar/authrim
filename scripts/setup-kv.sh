@@ -101,15 +101,31 @@ update_wrangler_toml() {
     local id=$3
     local preview_id=$4
 
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        sed -i '' "/binding = \"$binding\"/,/preview_id/ s/id = \"[^\"]*\"/id = \"$id\"/" "$file"
-        sed -i '' "/binding = \"$binding\"/,/preview_id/ s/preview_id = \"[^\"]*\"/preview_id = \"$preview_id\"/" "$file"
-    else
-        # Linux
-        sed -i "/binding = \"$binding\"/,/preview_id/ s/id = \"[^\"]*\"/id = \"$id\"/" "$file"
-        sed -i "/binding = \"$binding\"/,/preview_id/ s/preview_id = \"[^\"]*\"/preview_id = \"$preview_id\"/" "$file"
-    fi
+    # Create a temporary file
+    local temp_file=$(mktemp)
+
+    # Use awk to update the IDs more reliably
+    awk -v binding="$binding" -v id="$id" -v preview_id="$preview_id" '
+    BEGIN { in_block = 0 }
+    /\[\[kv_namespaces\]\]/ { in_block = 0 }
+    /binding = / {
+        if ($0 ~ binding) {
+            in_block = 1
+        }
+    }
+    in_block && /^id = / {
+        print "id = \"" id "\""
+        next
+    }
+    in_block && /^preview_id = / {
+        print "preview_id = \"" preview_id "\""
+        in_block = 0
+        next
+    }
+    { print }
+    ' "$file" > "$temp_file"
+
+    mv "$temp_file" "$file"
 }
 
 # Update op-auth wrangler.toml
