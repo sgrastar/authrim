@@ -63,6 +63,8 @@ name = "enrai-$package"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = true
 
 # KV Namespaces
 $kv_namespaces
