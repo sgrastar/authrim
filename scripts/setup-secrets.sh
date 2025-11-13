@@ -56,21 +56,20 @@ upload_secrets() {
     local package=$1
     local needs_private=$2
     local needs_public=$3
+    local worker_name="enrai-$package"
 
-    echo "📦 Uploading secrets to $package..."
-    cd "packages/$package"
+    echo "📦 Uploading secrets to $package (worker: $worker_name)..."
 
     if [ "$needs_private" = "true" ]; then
         echo "  • Uploading PRIVATE_KEY_PEM..."
-        cat ../../.keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
+        cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM --name "$worker_name"
     fi
 
     if [ "$needs_public" = "true" ]; then
         echo "  • Uploading PUBLIC_JWK_JSON..."
-        echo "$PUBLIC_JWK" | wrangler secret put PUBLIC_JWK_JSON
+        echo "$PUBLIC_JWK" | wrangler secret put PUBLIC_JWK_JSON --name "$worker_name"
     fi
 
-    cd ../..
     echo "✅ $package secrets uploaded"
     echo ""
 }
