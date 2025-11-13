@@ -37,12 +37,39 @@ echo "  • REFRESH_TOKENS - OAuth refresh tokens"
 echo "  • REVOKED_TOKENS - Revoked token list"
 echo ""
 
-# Function to create KV namespace and extract ID
+# Function to get or create KV namespace and extract ID
 create_kv_namespace() {
     local name=$1
     local preview_flag=$2
 
-    echo "  📝 Creating KV namespace: $name $preview_flag" >&2
+    # First, try to get existing namespace
+    echo "  📝 Checking for existing KV namespace: $name $preview_flag" >&2
+    local list_output=$(wrangler kv namespace list 2>&1)
+
+    # Determine the title to search for
+    local title="$name"
+    if [ "$preview_flag" = "--preview" ]; then
+        # Preview namespaces have a different title format
+        # Try to find a namespace with title containing the name and "preview"
+        local id=$(echo "$list_output" | grep -i "\"title\":.*$name" | grep -i "preview" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+        if [ -z "$id" ]; then
+            # If not found, try exact match with name
+            id=$(echo "$list_output" | grep "\"title\":\"$title\"" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+        fi
+    else
+        # For production namespaces, look for exact title match (without preview in name)
+        id=$(echo "$list_output" | grep "\"title\":\"$title\"" | grep -v -i "preview" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    fi
+
+    if [ -n "$id" ]; then
+        echo "  ✓ Found existing namespace with ID: $id" >&2
+        echo "$id"
+        return 0
+    fi
+
+    # If namespace doesn't exist, create it
+    echo "  📝 Creating new KV namespace: $name $preview_flag" >&2
     local output=$(wrangler kv namespace create "$name" $preview_flag 2>&1)
     local exit_code=$?
 
@@ -51,6 +78,20 @@ create_kv_namespace() {
     echo "" >&2
 
     if [ $exit_code -ne 0 ]; then
+        # Check if error is because namespace already exists
+        if echo "$output" | grep -q "already exists"; then
+            echo "  ⚠️  Namespace already exists, trying to fetch ID from list..." >&2
+            # Try to get the ID from the list again
+            local list_output=$(wrangler kv namespace list 2>&1)
+            local id=$(echo "$list_output" | grep "\"title\":\"$name\"" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+            if [ -n "$id" ]; then
+                echo "  ✓ Retrieved existing namespace ID: $id" >&2
+                echo "$id"
+                return 0
+            fi
+        fi
+
         echo "❌ Wrangler command failed with exit code: $exit_code" >&2
         echo "❌ Failed to create namespace: $name $preview_flag" >&2
         exit 1
@@ -66,6 +107,7 @@ create_kv_namespace() {
         exit 1
     fi
 
+    echo "  ✓ Created new namespace with ID: $id" >&2
     echo "$id"
 }
 
