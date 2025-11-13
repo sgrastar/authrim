@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
-import { authorizeHandler } from '../../src/handlers/authorize';
-import type { Env } from '../../src/types/env';
+import { authorizeHandler } from '../packages/op-auth/src/authorize';
+import type { Env } from '../packages/shared/src/types/env';
 
 /**
  * Mock KV namespace for testing

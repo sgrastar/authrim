@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import { discoveryHandler } from '../../src/handlers/discovery';
-import type { Env } from '../../src/types/env';
+import { discoveryHandler } from '../packages/op-discovery/src/discovery';
+import type { Env } from '../packages/shared/src/types/env';
 
 /**
  * Create a mock environment for testing
