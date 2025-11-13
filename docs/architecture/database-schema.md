@@ -788,19 +788,24 @@ Audit Logは匿名化（`user_id` を NULL に設定）して保持
 ## 次のステップ
 
 1. ✅ **ER図作成** - 完了
-2. 📝 **マイグレーションスクリプト作成** - 次のタスク
-3. 📝 **シードデータ作成** - デフォルトロール、テストユーザー
-4. 📝 **ストレージ抽象化層実装** - IStorageAdapter
-5. 📝 **API仕様書作成** - OpenAPI 3.1
+2. ✅ **API仕様書作成** - 完了 → [OpenAPI 3.1仕様書](../api/openapi.yaml)
+3. 📝 **デザインシステム策定** - 次のタスク
+4. 📝 **マイグレーションスクリプト作成**
+5. 📝 **シードデータ作成** - デフォルトロール、テストユーザー
+6. 📝 **ストレージ抽象化層実装** - IStorageAdapter
 
 ---
 
 ## 参考資料
 
 ### 関連ドキュメント
-- [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5詳細計画
-- [API_INVENTORY.md](../project-management/API_INVENTORY.md) - APIインベントリ
-- [ROADMAP.md](../ROADMAP.md) - 全体ロードマップ
+- **API仕様書**
+  - [openapi.yaml](../api/openapi.yaml) - OpenAPI 3.1仕様書
+  - [API README](../api/README.md) - APIガイド・クイックスタート
+  - [API_INVENTORY.md](../project-management/API_INVENTORY.md) - APIインベントリ
+- **プロジェクト計画**
+  - [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5詳細計画
+  - [ROADMAP.md](../ROADMAP.md) - 全体ロードマップ
 
 ### 標準仕様
 - [OIDC Standard Claims](https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims)
