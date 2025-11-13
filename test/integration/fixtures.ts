@@ -5,8 +5,8 @@
  * for integration testing of OIDC flows.
  */
 
-import type { Env } from '../../src/types/env';
-import { generateSecureRandomString } from '../../src/utils/crypto';
+import type { Env } from '../packages/shared/src/types/env';
+import { generateSecureRandomString } from '../packages/shared/src/utils/crypto';
 
 /**
  * Mock client configuration

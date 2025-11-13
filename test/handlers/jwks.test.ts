@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
 import { Hono } from 'hono';
-import { jwksHandler } from '../../src/handlers/jwks';
-import type { Env } from '../../src/types/env';
-import { generateKeySet } from '../../src/utils/keys';
+import { jwksHandler } from '../packages/op-discovery/src/jwks';
+import type { Env } from '../packages/shared/src/types/env';
+import { generateKeySet } from '../packages/shared/src/utils/keys';
 
 // Store generated test key
 let testPrivateKey: string;
