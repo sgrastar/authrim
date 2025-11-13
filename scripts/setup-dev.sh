@@ -59,6 +59,18 @@ generate_wrangler_toml() {
 
     local file="packages/$package/wrangler.toml"
 
+    # Check if file already exists
+    if [ -f "$file" ]; then
+        echo "  ⚠️  $file already exists"
+        read -p "    Overwrite? This will reset KV IDs, D1 bindings, and other configurations (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "    ⊗ Skipping $package (keeping existing configuration)"
+            return
+        fi
+        echo "    ✓ Overwriting $package/wrangler.toml"
+    fi
+
     cat > "$file" << TOML_EOF
 name = "enrai-$package"
 main = "src/index.ts"
@@ -94,8 +106,16 @@ TOML_EOF
 }
 
 # Generate wrangler.toml for shared package (Durable Objects)
-echo "  ✅ shared/wrangler.toml (Durable Objects)"
-cat > packages/shared/wrangler.toml << 'SHARED_TOML_EOF'
+SHARED_FILE="packages/shared/wrangler.toml"
+if [ -f "$SHARED_FILE" ]; then
+    echo "  ⚠️  $SHARED_FILE already exists"
+    read -p "    Overwrite? This will reset Durable Objects configuration (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "    ⊗ Skipping shared (keeping existing configuration)"
+    else
+        echo "    ✓ Overwriting shared/wrangler.toml"
+        cat > packages/shared/wrangler.toml << 'SHARED_TOML_EOF'
 name = "enrai-shared"
 main = "src/durable-objects/index.ts"
 compatibility_date = "2024-09-23"
@@ -122,6 +142,38 @@ class_name = "KeyManager"
 [vars]
 KEY_MANAGER_SECRET = "dev-secret-change-in-production"
 SHARED_TOML_EOF
+        echo "  ✅ shared/wrangler.toml (Durable Objects)"
+    fi
+else
+    echo "  ✅ shared/wrangler.toml (Durable Objects)"
+    cat > packages/shared/wrangler.toml << 'SHARED_TOML_EOF'
+name = "enrai-shared"
+main = "src/durable-objects/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Durable Objects definitions
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+
+[[durable_objects.bindings]]
+name = "AUTH_CODE_STORE"
+class_name = "AuthorizationCodeStore"
+
+[[durable_objects.bindings]]
+name = "REFRESH_TOKEN_ROTATOR"
+class_name = "RefreshTokenRotator"
+
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+
+# Environment variables
+[vars]
+KEY_MANAGER_SECRET = "dev-secret-change-in-production"
+SHARED_TOML_EOF
+fi
 
 # Generate wrangler.toml for op-discovery
 generate_wrangler_toml "op-discovery" 8787 '[[kv_namespaces]]

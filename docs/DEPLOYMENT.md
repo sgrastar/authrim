@@ -87,7 +87,7 @@ Enrai supports two deployment modes to ensure OpenID Connect specification compl
 - **How**: Cloudflare Routes map paths directly to specialized workers
 - **Issuer**: Your custom domain (e.g., `https://id.yourdomain.com`)
 - **Pros**: Optimal performance (no extra hop), professional URL
-- **Deploy**: `pnpm run deploy`
+- **Deploy**: `pnpm run deploy:retry`
 
 Each worker is deployed independently but shares the same issuer URL.
 
@@ -135,26 +135,23 @@ wrangler login
 ./scripts/setup-production.sh  # Choose deployment mode & configure URLs
                                # → Select option 1 (Test) or 2 (Production)
 
-# 4. Deploy Durable Objects FIRST (CRITICAL!)
-./scripts/setup-durable-objects.sh
-# This script will:
-#   - Build packages/shared automatically
-#   - Deploy Durable Objects to Cloudflare
-#   - Prompt you to wait 30 seconds for DO propagation
-
-# 5. Build all packages
+# 4. Build all packages
 pnpm run build
 
-# 6. Deploy all workers with retry logic (recommended)
+# 5. Deploy all workers with retry logic (recommended)
 pnpm run deploy:retry
-# - Deploys in correct order: shared (already deployed) → workers → router
+# - Deploys in correct order: shared (Durable Objects) → workers → router
 # - Uses sequential deployment with delays to avoid rate limits
 # - Includes automatic retries on failure
 ```
 
 **Done!** Your OpenID Provider is now live.
 
-> 💡 **Important**: Both `deploy:with-router` and `deploy:retry` now use the same sequential deployment script with retry logic. The router is conditionally deployed based on your configuration from `setup-production.sh`.
+> 💡 **Important**:
+> - Both `deploy:with-router` and `deploy:retry` now use the same sequential deployment script with retry logic
+> - The `deploy:retry` command automatically deploys the `enrai-shared` package (Durable Objects) first
+> - The router is conditionally deployed based on your configuration from `setup-production.sh`
+> - You can optionally use `./scripts/setup-durable-objects.sh` to deploy Durable Objects separately, but this is not required when using `deploy:retry`
 
 ---
 
@@ -200,6 +197,9 @@ You should see your Cloudflare account email and account ID.
 - Saves key metadata to `.keys/metadata.json`
 - Creates `.dev.vars` for local development
 - **Generates base `wrangler.toml` files for all packages**
+- **Protects existing `wrangler.toml` files** - prompts before overwriting
+
+**⚠️ Important:** If `wrangler.toml` files already exist, the script will ask for confirmation before overwriting. This prevents accidental loss of KV namespace IDs, D1 bindings, and production URLs that were configured by other setup scripts.
 
 **Output:**
 ```
@@ -464,7 +464,8 @@ This is now the **recommended deployment method** for both test and production e
 
 **What this does:**
 - Builds all packages
-- Deploys workers **sequentially** (one at a time)
+- Deploys **`enrai-shared` (Durable Objects) first**
+- Deploys other workers **sequentially** (one at a time)
 - Adds 10-second delays between deployments to avoid rate limits
 - Retries failed deployments automatically (up to 4 attempts with exponential backoff)
 - **Conditionally deploys Router Worker**:
@@ -472,6 +473,7 @@ This is now the **recommended deployment method** for both test and production e
   - ⊗ **Skipped** if `packages/router/wrangler.toml` missing (Production Environment)
 
 **Workers deployed (Test Environment):**
+- `enrai-shared` (Durable Objects - deployed first)
 - `enrai-op-discovery`
 - `enrai-op-management`
 - `enrai-op-auth`
@@ -480,6 +482,7 @@ This is now the **recommended deployment method** for both test and production e
 - `enrai` (unified entry point - Router Worker)
 
 **Workers deployed (Production Environment):**
+- `enrai-shared` (Durable Objects - deployed first)
 - `enrai-op-discovery`
 - `enrai-op-management`
 - `enrai-op-auth`
