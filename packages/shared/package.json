@@ -1,0 +1,29 @@
+{
+  "name": "@enrai/shared",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./utils/*": "./dist/utils/*.js",
+    "./types/*": "./dist/types/*.js",
+    "./middleware/*": "./dist/middleware/*.js",
+    "./storage/*": "./dist/storage/*.js",
+    "./durable-objects/*": "./dist/durable-objects/*.js",
+    "./constants": "./dist/constants.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.0.0",
+    "jose": "^5.2.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240117.0",
+    "@types/node": "^20.11.5",
+    "typescript": "^5.3.3"
+  }
+}
