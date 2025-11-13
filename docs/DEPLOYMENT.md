@@ -197,6 +197,9 @@ You should see your Cloudflare account email and account ID.
 - Saves key metadata to `.keys/metadata.json`
 - Creates `.dev.vars` for local development
 - **Generates base `wrangler.toml` files for all packages**
+- **Protects existing `wrangler.toml` files** - prompts before overwriting
+
+**⚠️ Important:** If `wrangler.toml` files already exist, the script will ask for confirmation before overwriting. This prevents accidental loss of KV namespace IDs, D1 bindings, and production URLs that were configured by other setup scripts.
 
 **Output:**
 ```
