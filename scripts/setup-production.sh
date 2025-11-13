@@ -12,6 +12,11 @@ echo ""
 
 # Prompt for production URL
 echo "📝 Please enter your production URL:"
+echo ""
+echo "   This URL will be used as the ISSUER_URL for your OpenID Provider."
+echo "   The issuer URL is the base URL that identifies your OAuth/OIDC server."
+echo "   It's used in tokens, discovery endpoints, and client configurations."
+echo ""
 echo "   Examples:"
 echo "   • https://id.yourdomain.com (custom domain)"
 echo "   • https://enrai.your-subdomain.workers.dev (workers.dev subdomain)"

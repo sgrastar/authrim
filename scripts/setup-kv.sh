@@ -26,6 +26,16 @@ fi
 
 echo "📦 Creating KV namespaces..."
 echo ""
+echo "KV namespaces are Cloudflare's key-value storage used by the workers."
+echo "We'll create both production and preview namespaces for:"
+echo "  • AUTH_CODES - OAuth authorization codes"
+echo "  • STATE_STORE - OAuth state parameters"
+echo "  • NONCE_STORE - OpenID Connect nonces"
+echo "  • CLIENTS - Registered OAuth clients"
+echo "  • RATE_LIMIT - Rate limiting counters"
+echo "  • REFRESH_TOKENS - OAuth refresh tokens"
+echo "  • REVOKED_TOKENS - Revoked token list"
+echo ""
 
 # Function to create KV namespace and extract ID
 create_kv_namespace() {
@@ -43,7 +53,7 @@ create_kv_namespace() {
 }
 
 # Create production namespaces
-echo "Creating production namespaces..."
+echo "Creating production namespaces (for live environment)..."
 AUTH_CODES_ID=$(create_kv_namespace "AUTH_CODES")
 echo "✅ AUTH_CODES: $AUTH_CODES_ID"
 
@@ -66,7 +76,7 @@ REVOKED_TOKENS_ID=$(create_kv_namespace "REVOKED_TOKENS")
 echo "✅ REVOKED_TOKENS: $REVOKED_TOKENS_ID"
 
 echo ""
-echo "Creating preview namespaces..."
+echo "Creating preview namespaces (for development/testing)..."
 
 # Create preview namespaces
 PREVIEW_AUTH_CODES_ID=$(create_kv_namespace "AUTH_CODES" "--preview")

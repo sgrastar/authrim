@@ -34,7 +34,8 @@ coverage/
 
 # Cloudflare Workers
 wrangler.toml.bak
-wrangler.toml  # Contains account-specific KV namespace IDs
+**/wrangler.toml  # Contains account-specific KV namespace IDs
+packages/*/wrangler.toml
 worker/
 
 # Logs
