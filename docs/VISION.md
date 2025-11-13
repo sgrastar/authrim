@@ -410,7 +410,7 @@ app.get('/callback', async (req, res) => {
 
 ## 🤝 Open Source Philosophy
 
-Enrai is **open source** (MIT License):
+Enrai is **open source** (Apache License 2.0):
 - ✅ Full source code available
 - ✅ Community-driven development
 - ✅ No vendor lock-in
@@ -490,7 +490,7 @@ npm run deploy
 
 ## 📄 License
 
-MIT License - Use it however you want!
+Apache License 2.0 - Use it however you want!
 
 ---
 
