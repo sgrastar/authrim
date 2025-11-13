@@ -150,7 +150,7 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Type narrowing: code is guaranteed to be a string at this point
-  const validCode: string = code as string;
+  const validCode: string = code;
 
   // Validate client_id
   const clientIdValidation = validateClientId(client_id);

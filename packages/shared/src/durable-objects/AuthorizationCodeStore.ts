@@ -298,7 +298,7 @@ export class AuthorizationCodeStore {
     try {
       // POST /code - Store authorization code
       if (path === '/code' && request.method === 'POST') {
-        const body = (await request.json()) as StoreCodeRequest;
+        const body = await request.json();
 
         // Validate required fields
         if (!body.code || !body.clientId || !body.redirectUri || !body.userId || !body.scope) {
@@ -324,7 +324,7 @@ export class AuthorizationCodeStore {
 
       // POST /code/consume - Consume authorization code
       if (path === '/code/consume' && request.method === 'POST') {
-        const body = (await request.json()) as ConsumeCodeRequest;
+        const body = await request.json();
 
         // Validate required fields
         if (!body.code || !body.clientId) {
