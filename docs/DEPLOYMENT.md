@@ -6,6 +6,7 @@ This guide walks you through deploying Enrai to Cloudflare Workers, resulting in
 
 - [Prerequisites](#prerequisites)
 - [Deployment Overview](#deployment-overview)
+- [Quick Deployment](#quick-deployment)
 - [Step-by-Step Deployment](#step-by-step-deployment)
 - [Production Configuration](#production-configuration)
 - [GitHub Actions CI/CD](#github-actions-cicd)
@@ -23,46 +24,56 @@ Before deploying Enrai, ensure you have:
 1. **Cloudflare Account** (free tier works)
    - Sign up at [cloudflare.com](https://dash.cloudflare.com/sign-up)
 
-2. **Wrangler CLI** installed globally
+2. **Wrangler CLI** installed
    ```bash
-   ppnpm install -g wrangler
+   pnpm install -g wrangler
    ```
 
-3. **Cloudflare API Token**
+3. **Cloudflare API Token** (for CI/CD)
    - Go to [Cloudflare Dashboard](https://dash.cloudflare.com/profile/api-tokens)
    - Create token with "Edit Cloudflare Workers" template
    - Save the token securely
 
-4. **Node.js 18+** and ppnpm installed
+4. **Node.js 18+** and **pnpm** installed
+   ```bash
+   node --version  # Should be 18+
+   pnpm --version  # Should be 9.0.0+
+   ```
 
 ---
 
 ## Deployment Overview
 
-When you deploy Enrai, you'll get:
+### 🌍 Architecture
 
-### 🌍 Public URL
-Your OpenID Provider will be accessible at:
-```
-https://enrai.{your-subdomain}.workers.dev
-```
+Enrai is a **monorepo** containing **5 specialized Cloudflare Workers**:
 
-Or with a custom domain:
-```
-https://id.yourdomain.com
-```
+| Worker | Package | Purpose |
+|--------|---------|---------|
+| **enrai-op-discovery** | `packages/op-discovery` | Discovery & JWKS endpoints |
+| **enrai-op-auth** | `packages/op-auth` | Authorization endpoint & PAR |
+| **enrai-op-token** | `packages/op-token` | Token endpoint |
+| **enrai-op-userinfo** | `packages/op-userinfo` | UserInfo endpoint |
+| **enrai-op-management** | `packages/op-management` | Client registration |
+
+Each worker is deployed independently but shares the same issuer URL.
 
 ### ✅ Live OpenID Connect Endpoints
+
+After deployment, all endpoints will be accessible under your configured domain:
 
 | Endpoint | URL | Description |
 |----------|-----|-------------|
 | **Discovery** | `/.well-known/openid-configuration` | OpenID Provider metadata |
 | **JWKS** | `/.well-known/jwks.json` | Public keys for token verification |
 | **Authorization** | `/authorize` | OAuth 2.0 authorization endpoint |
+| **PAR** | `/as/par` | Pushed Authorization Requests |
 | **Token** | `/token` | Token exchange endpoint |
 | **UserInfo** | `/userinfo` | User claims endpoint |
+| **Registration** | `/register` | Dynamic client registration |
 
 ### 🚀 Global Edge Deployment
+
 - Deployed to 300+ Cloudflare data centers worldwide
 - <50ms latency for most users globally
 - 0ms cold starts
@@ -70,148 +81,262 @@ https://id.yourdomain.com
 
 ---
 
+## Quick Deployment
+
+For experienced users, here's the TL;DR:
+
+```bash
+# 1. Clone and install
+git clone https://github.com/sgrastar/enrai.git
+cd enrai
+pnpm install
+
+# 2. Login to Cloudflare
+wrangler login
+
+# 3. Run setup scripts
+./scripts/setup-dev.sh        # Generate RSA keys
+./scripts/setup-kv.sh          # Create KV namespaces
+./scripts/setup-secrets.sh     # Upload secrets to Cloudflare
+./scripts/setup-production.sh  # Configure production URLs
+
+# 4. Build and deploy
+pnpm run build
+pnpm run deploy
+```
+
+**Done!** Your OpenID Provider is now live.
+
+---
+
 ## Step-by-Step Deployment
 
-### 1. Clone and Install
+### 1. Clone and Install Dependencies
 
 ```bash
 # Clone the repository
 git clone https://github.com/sgrastar/enrai.git
 cd enrai
 
-# Install dependencies
-ppnpm install
+# Install dependencies for all packages
+pnpm install
 ```
+
+This installs dependencies for the monorepo and all 5 worker packages.
 
 ### 2. Authenticate with Cloudflare
 
 ```bash
-# Login to Cloudflare
+# Login to Cloudflare (opens browser)
 wrangler login
+
+# Verify authentication
+wrangler whoami
 ```
 
-This will open a browser window for authentication.
+You should see your Cloudflare account email and account ID.
 
-### 3. Create KV Namespaces
-
-Create the required KV namespaces for storing authorization codes, state, and nonces:
-
-```bash
-# Create production KV namespaces
-wrangler kv:namespace create "AUTH_CODES"
-wrangler kv:namespace create "STATE_STORE"
-wrangler kv:namespace create "NONCE_STORE"
-wrangler kv:namespace create "CLIENTS"
-
-# Create preview KV namespaces (for development)
-wrangler kv:namespace create "AUTH_CODES" --preview
-wrangler kv:namespace create "STATE_STORE" --preview
-wrangler kv:namespace create "NONCE_STORE" --preview
-wrangler kv:namespace create "CLIENTS" --preview
-```
-
-Each command will output an ID. Save these IDs - you'll need them in the next step.
-
-### 4. Update wrangler.toml
-
-Update `wrangler.toml` with the KV namespace IDs from step 3:
-
-```toml
-# KV Namespaces for state, nonce, and authorization code storage
-[[kv_namespaces]]
-binding = "AUTH_CODES"
-id = "YOUR_AUTH_CODES_ID"
-preview_id = "YOUR_AUTH_CODES_PREVIEW_ID"
-
-[[kv_namespaces]]
-binding = "STATE_STORE"
-id = "YOUR_STATE_STORE_ID"
-preview_id = "YOUR_STATE_STORE_PREVIEW_ID"
-
-[[kv_namespaces]]
-binding = "NONCE_STORE"
-id = "YOUR_NONCE_STORE_ID"
-preview_id = "YOUR_NONCE_STORE_PREVIEW_ID"
-
-[[kv_namespaces]]
-binding = "CLIENTS"
-id = "YOUR_CLIENTS_ID"
-preview_id = "YOUR_CLIENTS_PREVIEW_ID"
-```
-
-Also update the production issuer URL:
-
-```toml
-[env.production]
-name = "enrai-prod"
-vars = { ISSUER_URL = "https://enrai.YOUR_SUBDOMAIN.workers.dev" }
-```
-
-Replace `YOUR_SUBDOMAIN` with your Cloudflare Workers subdomain.
-
-### 5. Generate RSA Keys
+### 3. Generate RSA Keys
 
 Generate cryptographic keys for signing JWT tokens:
 
 ```bash
-# Run the setup script
 ./scripts/setup-dev.sh
 ```
 
-This creates:
-- `.keys/private.pem` - Private key for signing tokens
-- `.keys/public.jwk.json` - Public key in JWK format
-- `.keys/metadata.json` - Key metadata (kid, algorithm)
+**What this does:**
+- Generates an RSA-2048 key pair
+- Saves private key to `.keys/private.pem`
+- Saves public key (JWK format) to `.keys/public.jwk.json`
+- Saves key metadata to `.keys/metadata.json`
+- Creates `.dev.vars` for local development
 
-### 6. Set Production Secrets
+**Output:**
+```
+🔐 Enrai Development Setup
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 Generating RSA keys...
+✅ .dev.vars file created successfully!
 
-Upload your private and public keys as Cloudflare secrets:
-
-```bash
-# Upload private key
-cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM --env production
-
-# Upload public JWK (as compact JSON)
-cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON --env production
+📋 Key Information:
+  • Key ID: dev-key-1731532800000-abc123
+  • Private Key: .keys/private.pem
+  • Public JWK: .keys/public.jwk.json
 ```
 
-**⚠️ IMPORTANT:** Never commit these keys to version control!
+### 4. Create KV Namespaces
+
+Create Cloudflare KV namespaces for storing state, codes, and clients:
+
+```bash
+./scripts/setup-kv.sh
+```
+
+**What this does:**
+- Creates 7 KV namespaces (production)
+- Creates 7 KV namespaces (preview)
+- Updates all `packages/*/wrangler.toml` files with namespace IDs
+
+**Namespaces created:**
+- `AUTH_CODES` - Authorization codes
+- `STATE_STORE` - OAuth state parameters
+- `NONCE_STORE` - OpenID nonces
+- `CLIENTS` - Registered clients
+- `RATE_LIMIT` - Rate limiting data
+- `REFRESH_TOKENS` - Refresh tokens
+- `REVOKED_TOKENS` - Revoked tokens
+
+**Output:**
+```
+⚡️ Enrai KV Namespace Setup
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Creating production namespaces...
+✅ AUTH_CODES: abc123def456...
+✅ STATE_STORE: def456ghi789...
+...
+✅ All wrangler.toml files updated!
+```
+
+### 5. Upload Secrets to Cloudflare
+
+Upload your private and public keys to Cloudflare Workers secrets:
+
+```bash
+./scripts/setup-secrets.sh
+```
+
+**What this does:**
+- Uploads `PRIVATE_KEY_PEM` to workers that need it (op-discovery, op-token, op-management)
+- Uploads `PUBLIC_JWK_JSON` to workers that need it (op-discovery, op-auth, op-userinfo, op-management)
+
+**Output:**
+```
+🔐 Enrai Cloudflare Secrets Setup
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 Uploading secrets to op-discovery...
+  • Uploading PRIVATE_KEY_PEM...
+  • Uploading PUBLIC_JWK_JSON...
+✅ op-discovery secrets uploaded
+...
+🎉 All secrets uploaded successfully!
+```
+
+**⚠️ IMPORTANT:** Never commit `.keys/` to version control! It's already in `.gitignore`.
+
+### 6. Configure Production URLs
+
+Set your production issuer URL in all `wrangler.toml` files:
+
+```bash
+./scripts/setup-production.sh
+```
+
+**What this does:**
+- Prompts you for your production URL
+- Updates `ISSUER_URL` in all `packages/*/wrangler.toml` files
+
+**Interactive prompt:**
+```
+🌍 Enrai Production Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 Please enter your production URL:
+   Examples:
+   • https://id.yourdomain.com (custom domain)
+   • https://enrai.your-subdomain.workers.dev (workers.dev subdomain)
+
+Production URL: https://id.example.com
+
+🔍 Configuration Summary:
+   ISSUER_URL: https://id.example.com
+
+Is this correct? (y/N): y
+```
 
 ### 7. Build the Project
 
+Build all 5 worker packages:
+
 ```bash
-ppnpm run build
+pnpm run build
+```
+
+This uses Turborepo to build all packages in parallel with caching.
+
+**Output:**
+```
+• Packages in scope: op-auth, op-discovery, op-management, op-token, op-userinfo
+• Running build in 5 packages
+op-discovery:build: cache hit, replaying logs
+op-auth:build: cache hit, replaying logs
+...
 ```
 
 ### 8. Deploy to Cloudflare Workers
 
-```bash
-# Deploy to production
-ppnpm run deploy
+Deploy all 5 workers to Cloudflare:
 
-# Or use wrangler directly
-wrangler deploy --env production
+```bash
+pnpm run deploy
+```
+
+**What this does:**
+- Deploys `enrai-op-discovery` to Cloudflare Workers
+- Deploys `enrai-op-auth` to Cloudflare Workers
+- Deploys `enrai-op-token` to Cloudflare Workers
+- Deploys `enrai-op-userinfo` to Cloudflare Workers
+- Deploys `enrai-op-management` to Cloudflare Workers
+
+**Output:**
+```
+op-discovery:deploy: Published enrai-op-discovery (0.01 sec)
+op-discovery:deploy: https://enrai-op-discovery.your-subdomain.workers.dev
+op-auth:deploy: Published enrai-op-auth (0.01 sec)
+...
 ```
 
 ### 9. Verify Deployment
 
-After deployment, Wrangler will output your Worker's URL. Test the deployment:
+Test your deployed OpenID Provider:
 
 ```bash
-# Replace with your actual Worker URL
-WORKER_URL="https://enrai.YOUR_SUBDOMAIN.workers.dev"
+# Replace with your configured ISSUER_URL
+ISSUER_URL="https://id.example.com"
 
 # Test discovery endpoint
-curl "$WORKER_URL/.well-known/openid-configuration" | jq
+curl "$ISSUER_URL/.well-known/openid-configuration" | jq
 
 # Test JWKS endpoint
-curl "$WORKER_URL/.well-known/jwks.json" | jq
+curl "$ISSUER_URL/.well-known/jwks.json" | jq
 ```
 
-**Expected results:**
-- Discovery returns OpenID configuration JSON
-- JWKS returns public keys array with RS256 keys
-- Both endpoints return HTTP 200
+**Expected discovery response:**
+```json
+{
+  "issuer": "https://id.example.com",
+  "authorization_endpoint": "https://id.example.com/authorize",
+  "token_endpoint": "https://id.example.com/token",
+  "userinfo_endpoint": "https://id.example.com/userinfo",
+  "jwks_uri": "https://id.example.com/.well-known/jwks.json",
+  "registration_endpoint": "https://id.example.com/register",
+  ...
+}
+```
+
+**Expected JWKS response:**
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "kid": "dev-key-1731532800000-abc123",
+      "alg": "RS256",
+      "n": "...",
+      "e": "AQAB"
+    }
+  ]
+}
+```
 
 ---
 
@@ -219,28 +344,33 @@ curl "$WORKER_URL/.well-known/jwks.json" | jq
 
 ### Environment Variables
 
-Configure these in `wrangler.toml`:
+Each worker's `wrangler.toml` contains environment variables:
 
 ```toml
 [vars]
-ISSUER_URL = "https://your-domain.com"  # Your OP's public URL
-TOKEN_EXPIRY = "3600"                    # Access token lifetime (seconds)
-CODE_EXPIRY = "120"                      # Authorization code lifetime (seconds)
-STATE_EXPIRY = "300"                     # State parameter lifetime (seconds)
-NONCE_EXPIRY = "300"                     # Nonce parameter lifetime (seconds)
-KEY_ID = "prod-key-TIMESTAMP"            # Key identifier
+ISSUER_URL = "https://id.example.com"  # Your OP's public URL
+TOKEN_EXPIRY = "3600"                   # Access token lifetime (seconds)
+CODE_EXPIRY = "600"                     # Authorization code lifetime (seconds)
+STATE_EXPIRY = "600"                    # State parameter lifetime (seconds)
+NONCE_EXPIRY = "600"                    # Nonce parameter lifetime (seconds)
+REFRESH_TOKEN_EXPIRY = "2592000"        # Refresh token lifetime (seconds)
 ```
+
+These can be customized per worker if needed.
 
 ### Secrets (via Wrangler)
 
-These should NEVER be in `wrangler.toml`:
+Secrets are managed separately and **never** appear in `wrangler.toml`:
+
+- `PRIVATE_KEY_PEM` - RSA private key for JWT signing
+- `PUBLIC_JWK_JSON` - RSA public key in JWK format
+
+To update secrets manually:
 
 ```bash
-# Private key for JWT signing
-wrangler secret put PRIVATE_KEY_PEM --env production
-
-# Public JWK for token verification
-wrangler secret put PUBLIC_JWK_JSON --env production
+cd packages/op-discovery
+cat ../../.keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
+echo "$(cat ../../.keys/public.jwk.json | jq -c .)" | wrangler secret put PUBLIC_JWK_JSON
 ```
 
 ---
@@ -252,8 +382,9 @@ Enrai includes pre-configured GitHub Actions workflows for automated testing and
 ### Setup GitHub Secrets
 
 Add these secrets to your GitHub repository:
-- Go to **Settings** → **Secrets and variables** → **Actions**
-- Add new repository secrets:
+
+1. Go to **Settings** → **Secrets and variables** → **Actions**
+2. Add new repository secrets:
 
 | Secret Name | Value | Where to Get It |
 |-------------|-------|-----------------|
@@ -267,10 +398,11 @@ Add these secrets to your GitHub repository:
 **Triggers:** Push to `main` or `claude/**` branches, pull requests
 
 **Actions:**
+- Installs dependencies with pnpm
 - Runs linter
 - Performs type checking
-- Executes test suite
-- Builds project
+- Executes test suite (263 tests)
+- Builds all 5 packages
 - Checks code formatting
 
 #### 2. Deploy Workflow (`.github/workflows/deploy.yml`)
@@ -279,34 +411,70 @@ Add these secrets to your GitHub repository:
 
 **Actions:**
 - Runs tests
-- Builds project
-- **Deploys to Cloudflare Workers production**
+- Builds all packages
+- **Deploys all 5 workers to Cloudflare Workers**
 
 ### Automatic Deployment Flow
 
 ```
-Push to main → Run tests → Build → Deploy to Cloudflare Workers → Live OP at public URL
+Push to main → Run tests → Build packages → Deploy to Cloudflare → Live at production URL
 ```
 
-**Note:** The deploy workflow requires the `PRIVATE_KEY_PEM` and `PUBLIC_JWK_JSON` secrets to be set in Cloudflare (see step 6 above). GitHub Actions uses the API token to deploy, but the keys must be in Cloudflare's secret store.
+**Note:** Secrets (`PRIVATE_KEY_PEM`, `PUBLIC_JWK_JSON`) and KV namespaces must be configured manually via Wrangler before the first deployment. GitHub Actions uses the API token to deploy, but cannot create secrets or KV namespaces.
 
 ---
 
 ## Post-Deployment
 
-### 1. Update Issuer URL
+### 1. Configure Custom Routing (Recommended)
 
-Ensure your `ISSUER_URL` in production matches your actual deployment URL:
+By default, each worker is deployed to its own subdomain:
+- `https://enrai-op-discovery.your-subdomain.workers.dev`
+- `https://enrai-op-auth.your-subdomain.workers.dev`
+- etc.
+
+For a unified OpenID Provider, you should:
+
+**Option A: Use Cloudflare Workers Routes**
+
+Configure routes to map all endpoints to a single domain:
 
 ```toml
-[env.production]
-vars = { ISSUER_URL = "https://enrai.YOUR_SUBDOMAIN.workers.dev" }
+# In packages/op-discovery/wrangler.toml
+[[routes]]
+pattern = "id.example.com/.well-known/*"
+zone_name = "example.com"
+
+# In packages/op-auth/wrangler.toml
+[[routes]]
+pattern = "id.example.com/authorize"
+zone_name = "example.com"
+
+[[routes]]
+pattern = "id.example.com/as/*"
+zone_name = "example.com"
+
+# In packages/op-token/wrangler.toml
+[[routes]]
+pattern = "id.example.com/token"
+zone_name = "example.com"
+
+# In packages/op-userinfo/wrangler.toml
+[[routes]]
+pattern = "id.example.com/userinfo"
+zone_name = "example.com"
+
+# In packages/op-management/wrangler.toml
+[[routes]]
+pattern = "id.example.com/register"
+zone_name = "example.com"
 ```
 
-Then redeploy:
-```bash
-wrangler deploy --env production
-```
+**Option B: Use a Cloudflare Worker Router**
+
+Create a router worker that dispatches requests to the appropriate worker based on the path.
+
+See [WORKERS.md](../WORKERS.md) for detailed routing configuration.
 
 ### 2. Test Full OAuth Flow
 
@@ -314,13 +482,15 @@ Use the deployed OP with a test client application:
 
 ```bash
 # Example authorization URL
-https://enrai.YOUR_SUBDOMAIN.workers.dev/authorize?
+https://id.example.com/authorize?
   response_type=code&
   client_id=test-client&
   redirect_uri=https://your-app.com/callback&
   scope=openid%20profile%20email&
   state=random-state&
-  nonce=random-nonce
+  nonce=random-nonce&
+  code_challenge=BASE64URL(SHA256(verifier))&
+  code_challenge_method=S256
 ```
 
 ### 3. Monitor Logs
@@ -328,12 +498,24 @@ https://enrai.YOUR_SUBDOMAIN.workers.dev/authorize?
 View logs in Cloudflare Dashboard or via Wrangler:
 
 ```bash
-# Stream real-time logs
-wrangler tail --env production
+# Stream real-time logs for a specific worker
+cd packages/op-discovery
+wrangler tail
 
 # View logs in dashboard
-# https://dash.cloudflare.com → Workers → enrai-prod → Logs
+# https://dash.cloudflare.com → Workers → Select worker → Logs
 ```
+
+### 4. Set Up Analytics
+
+Cloudflare provides analytics for each worker:
+
+- Request count
+- Error rate
+- CPU time
+- Response time (p50, p95, p99)
+
+Access via: **Cloudflare Dashboard** → **Workers & Pages** → Select worker → **Analytics**
 
 ---
 
@@ -343,29 +525,31 @@ wrangler tail --env production
 
 If your domain is managed by Cloudflare:
 
-1. Go to **Workers & Pages** → **enrai-prod** → **Settings** → **Domains & Routes**
+1. Go to **Workers & Pages** → Select worker → **Settings** → **Domains & Routes**
 2. Click **Add Custom Domain**
-3. Enter your domain (e.g., `id.yourdomain.com`)
+3. Enter your domain (e.g., `id.example.com`)
 4. Cloudflare will automatically provision SSL certificate
+
+Repeat for all 5 workers or use routes (see Post-Deployment section).
 
 ### Using External Domain
 
 1. Add a CNAME record pointing to your Worker:
    ```
-   id.yourdomain.com CNAME enrai.YOUR_SUBDOMAIN.workers.dev
+   id.example.com CNAME enrai-op-discovery.your-subdomain.workers.dev
    ```
 
 2. Add the custom domain in Cloudflare Dashboard (same as above)
 
-3. Update `ISSUER_URL` in `wrangler.toml`:
-   ```toml
-   [env.production]
-   vars = { ISSUER_URL = "https://id.yourdomain.com" }
+3. Update `ISSUER_URL` in all `wrangler.toml` files:
+   ```bash
+   ./scripts/setup-production.sh
+   # Enter: https://id.example.com
    ```
 
 4. Redeploy:
    ```bash
-   wrangler deploy --env production
+   pnpm run deploy
    ```
 
 ---
@@ -375,11 +559,12 @@ If your domain is managed by Cloudflare:
 ### 🔐 Production Security Checklist
 
 - ✅ **HTTPS Only**: Cloudflare Workers enforce HTTPS automatically
-- ✅ **Secure Secrets**: Use Wrangler secrets, never commit keys
-- ✅ **Key Rotation**: Plan to rotate RSA keys periodically (Phase 4)
+- ✅ **Secure Secrets**: Use Wrangler secrets, never commit keys to Git
+- ✅ **Key Rotation**: Supported via KeyManager Durable Object (Phase 4)
 - ✅ **PKCE**: Enabled by default for public clients
-- ✅ **Short-lived Codes**: Authorization codes expire in 120 seconds
-- ⚠️ **Rate Limiting**: Not yet implemented (planned for Phase 4)
+- ✅ **Short-lived Codes**: Authorization codes expire in 600 seconds
+- ✅ **Rate Limiting**: Implemented via KV-based rate limiter
+- ✅ **Security Headers**: CSP, HSTS, X-Frame-Options, etc.
 
 ### Private Key Protection
 
@@ -387,28 +572,30 @@ If your domain is managed by Cloudflare:
 - Commit `.keys/` directory to Git (it's in `.gitignore`)
 - Share private keys via email, Slack, etc.
 - Use the same keys in development and production
+- Store keys in environment variables in `wrangler.toml`
 
 **ALWAYS:**
-- Generate new keys for production
+- Generate separate keys for production
 - Store keys in Cloudflare secrets
 - Rotate keys periodically
+- Use key rotation via KeyManager
 
-### Recommended Key Rotation
+### Key Rotation
+
+To rotate keys:
 
 ```bash
 # 1. Generate new key pair
-ppnpm run generate-keys
+./scripts/setup-dev.sh
 
-# 2. Deploy with new KEY_ID
-# Update KEY_ID in wrangler.toml
-wrangler deploy --env production
+# 2. Upload new secrets
+./scripts/setup-secrets.sh
 
-# 3. Upload new secrets
-cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM --env production
-cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON --env production
+# 3. Deploy (KeyManager will serve both old and new keys during transition)
+pnpm run deploy
 
 # 4. Old tokens remain valid until they expire
-# 5. JWKS endpoint automatically returns new public key
+# 5. JWKS endpoint automatically returns all active keys
 ```
 
 ---
@@ -420,9 +607,10 @@ cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON --env 
 **Cause:** KV namespaces not created or IDs not updated in `wrangler.toml`
 
 **Solution:**
-1. Run the KV namespace creation commands (step 3)
-2. Update `wrangler.toml` with the correct IDs
-3. Redeploy
+```bash
+./scripts/setup-kv.sh
+pnpm run deploy
+```
 
 ### Issue: "Error: No such secret: PRIVATE_KEY_PEM"
 
@@ -430,17 +618,23 @@ cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON --env 
 
 **Solution:**
 ```bash
-cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM --env production
-cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON --env production
+./scripts/setup-secrets.sh
+```
+
+Or manually:
+```bash
+cd packages/op-discovery
+cat ../../.keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
 ```
 
 ### Issue: JWKS Endpoint Returns Empty Array
 
-**Cause:** `PUBLIC_JWK_JSON` secret not set
+**Cause:** `PUBLIC_JWK_JSON` secret not set or KeyManager not initialized
 
 **Solution:**
 ```bash
-cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON --env production
+./scripts/setup-secrets.sh
+pnpm run deploy
 ```
 
 ### Issue: Token Endpoint Returns "Server configuration error"
@@ -455,7 +649,8 @@ cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON --env 
    ```
 2. Re-upload secret:
    ```bash
-   cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM --env production
+   cd packages/op-token
+   cat ../../.keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
    ```
 
 ### Issue: GitHub Actions Deployment Fails
@@ -463,25 +658,50 @@ cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON --env 
 **Possible causes:**
 - `CLOUDFLARE_API_TOKEN` or `CLOUDFLARE_ACCOUNT_ID` secrets not set
 - API token lacks necessary permissions
-- Secrets not uploaded to Cloudflare
+- Secrets or KV namespaces not configured in Cloudflare
 
 **Solution:**
 1. Verify GitHub secrets are set correctly
 2. Ensure API token has "Edit Cloudflare Workers" permission
-3. Upload keys to Cloudflare via Wrangler (step 6)
+3. Run setup scripts manually:
+   ```bash
+   ./scripts/setup-kv.sh
+   ./scripts/setup-secrets.sh
+   ```
 
 ### Issue: "Invalid issuer" Error in Tokens
 
-**Cause:** `ISSUER_URL` mismatch between configuration and actual deployment URL
+**Cause:** `ISSUER_URL` mismatch between configuration and actual request
 
 **Solution:**
-1. Check your Worker's actual URL in Cloudflare Dashboard
-2. Update `ISSUER_URL` in `wrangler.toml`:
-   ```toml
-   [env.production]
-   vars = { ISSUER_URL = "https://your-actual-url.workers.dev" }
+1. Ensure `ISSUER_URL` is set correctly in all `wrangler.toml` files
+2. Run:
+   ```bash
+   ./scripts/setup-production.sh
+   pnpm run deploy
    ```
-3. Redeploy
+
+### Issue: 404 Not Found on Endpoints
+
+**Cause:** Workers are deployed but routes are not configured for custom domain
+
+**Solution:**
+Configure routes in `wrangler.toml` files or use workers.dev URLs directly (see [Custom Domain Setup](#custom-domain-setup))
+
+### Issue: Workers Not Communicating (Service Bindings)
+
+**Cause:** Service bindings not configured correctly
+
+**Solution:**
+Verify `wrangler.toml` service bindings:
+```toml
+# In packages/op-auth/wrangler.toml
+[[services]]
+binding = "OP_TOKEN"
+service = "enrai-op-token"
+```
+
+Ensure worker names match exactly.
 
 ---
 
@@ -489,21 +709,28 @@ cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON --env 
 
 After successful deployment:
 
-1. **Integrate with Your Application**
+1. **Test OpenID Connect Flow**
    - Use the discovery endpoint to configure your OAuth client
-   - Test the full authorization code flow
+   - Test the full authorization code flow with PKCE
+   - Verify token validation and userinfo
 
-2. **Set Up Client Registration**
-   - Currently static clients only (MVP)
-   - Dynamic client registration coming in Phase 4
+2. **Register OAuth Clients**
+   - Use the `/register` endpoint for dynamic client registration
+   - Or configure static clients in your application
 
 3. **Monitor Performance**
    - Check Cloudflare Analytics dashboard
-   - Set up alerts for errors
+   - Set up alerts for errors and performance degradation
 
 4. **Plan for Scale**
    - Cloudflare Workers free tier: 100,000 requests/day
    - Paid tier: 10M+ requests/month
+   - KV operations: 1,000 writes/day (free), 100M reads/day
+
+5. **Consider Advanced Features**
+   - Custom login UI (Phase 5)
+   - Social login integration (Phase 7)
+   - SAML 2.0 support (Phase 7)
 
 ---
 
@@ -512,7 +739,8 @@ After successful deployment:
 - [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
 - [Wrangler CLI Documentation](https://developers.cloudflare.com/workers/wrangler/)
 - [OpenID Connect Specification](https://openid.net/specs/openid-connect-core-1_0.html)
-- [Enrai Development Setup](./conformance/SETUP.md)
+- [Enrai Development Guide](../DEVELOPMENT.md)
+- [Enrai Worker Architecture](../WORKERS.md)
 
 ---
 
@@ -526,14 +754,16 @@ If you encounter issues:
    - Deployment logs
    - Error messages
    - Steps to reproduce
+   - Your environment details
 
 ---
 
 **Deployment Complete!** 🎉
 
-Your OpenID Connect Provider is now live at:
-```
-https://enrai.YOUR_SUBDOMAIN.workers.dev
-```
+Your OpenID Connect Provider is now live with:
+- ✅ 5 specialized workers deployed globally
+- ✅ Automatic HTTPS and 0ms cold starts
+- ✅ <50ms latency worldwide
+- ✅ Production-ready OpenID Connect endpoints
 
 Start integrating with your applications and enjoy global edge authentication!
