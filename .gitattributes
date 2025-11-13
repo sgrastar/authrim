@@ -1,0 +1,25 @@
+# Disable automatic CRLF conversion
+# All text files should use LF line endings
+
+# Set default behavior to automatically normalize line endings to LF
+* text=auto eol=lf
+
+# Explicitly set line endings for specific file types
+*.ts text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Denote binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
