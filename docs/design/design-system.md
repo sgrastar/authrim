@@ -959,6 +959,7 @@ export default defineConfig({
 
 - [database-schema.md](../architecture/database-schema.md) - データベーススキーマ
 - [openapi.yaml](../api/openapi.yaml) - API仕様書
+- [wireframes.md](./wireframes.md) - UI ワイヤーフレーム
 - [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5計画
 
 ---

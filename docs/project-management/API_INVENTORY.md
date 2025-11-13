@@ -255,6 +255,7 @@ POST /auth/session/exchange
 - **設計ドキュメント**
   - [database-schema.md](../architecture/database-schema.md) - データベーススキーマ・ER図
   - [design-system.md](../design/design-system.md) - デザインシステム
+  - [wireframes.md](../design/wireframes.md) - UI ワイヤーフレーム
   - [PHASE5_PLANNING.md](./PHASE5_PLANNING.md) - Phase 5詳細計画
 - **プロジェクト情報**
   - [ROADMAP.md](../ROADMAP.md) - 全体ロードマップ
