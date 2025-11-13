@@ -41,7 +41,8 @@ const SCOPE_DESCRIPTIONS: Record<string, { title: string; description: string }>
 export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     // Get session ID from query or cookie
-    const sessionId = c.req.query('session_id') || c.req.header('cookie')?.match(/session_id=([^;]+)/)?.[1];
+    const sessionId =
+      c.req.query('session_id') || c.req.header('cookie')?.match(/session_id=([^;]+)/)?.[1];
 
     if (!sessionId) {
       return c.json(

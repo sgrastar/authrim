@@ -211,12 +211,16 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
 
     const registrationInfoAny = registrationInfo as any;
     const credentialID = registrationInfoAny.credentialID || registrationInfoAny.credential?.id;
-    const credentialPublicKey = registrationInfoAny.credentialPublicKey || registrationInfoAny.credential?.publicKey;
+    const credentialPublicKey =
+      registrationInfoAny.credentialPublicKey || registrationInfoAny.credential?.publicKey;
     const counter = registrationInfoAny.counter || registrationInfoAny.credential?.counter || 0;
 
     // Convert credentialPublicKey (Uint8Array) to base64
     const publicKeyBase64 = Buffer.from(credentialPublicKey).toString('base64');
-    const credentialIDBase64 = typeof credentialID === 'string' ? credentialID : Buffer.from(credentialID).toString('base64');
+    const credentialIDBase64 =
+      typeof credentialID === 'string'
+        ? credentialID
+        : Buffer.from(credentialID).toString('base64');
 
     // Store passkey in D1
     const passkeyId = crypto.randomUUID();
