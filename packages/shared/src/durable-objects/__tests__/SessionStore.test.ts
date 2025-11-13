@@ -120,7 +120,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(201);
 
-      const body = await response.json();
+      const body = (await response.json()) as any;
       expect(body).toHaveProperty('id');
       expect(body).toHaveProperty('userId', 'user_123');
       expect(body).toHaveProperty('expiresAt');
@@ -140,7 +140,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(400);
 
-      const body = await response.json();
+      const body = (await response.json()) as any;
       expect(body).toHaveProperty('error');
     });
 
@@ -152,7 +152,7 @@ describe('SessionStore', () => {
           body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
         });
         const response = await sessionStore.fetch(request);
-        const body = await response.json();
+        const body = (await response.json()) as any;
         return body.id;
       };
 
@@ -171,7 +171,7 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = await createResponse.json();
+      const { id } = (await createResponse.json()) as any;
 
       // Retrieve session
       const getRequest = new Request(`http://localhost/session/${id}`, {
@@ -180,7 +180,7 @@ describe('SessionStore', () => {
       const getResponse = await sessionStore.fetch(getRequest);
       expect(getResponse.status).toBe(200);
 
-      const body = await getResponse.json();
+      const body = (await getResponse.json()) as any;
       expect(body.id).toBe(id);
       expect(body.userId).toBe('user_123');
     });
@@ -193,7 +193,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(404);
 
-      const body = await response.json();
+      const body = (await response.json()) as any;
       expect(body).toHaveProperty('error');
     });
 
@@ -205,7 +205,7 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: -1 }), // Already expired
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = await createResponse.json();
+      const { id } = (await createResponse.json()) as any;
 
       // Try to retrieve expired session
       const getRequest = new Request(`http://localhost/session/${id}`, {
@@ -225,7 +225,7 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = await createResponse.json();
+      const { id } = (await createResponse.json()) as any;
 
       // Invalidate session
       const deleteRequest = new Request(`http://localhost/session/${id}`, {
@@ -234,7 +234,7 @@ describe('SessionStore', () => {
       const deleteResponse = await sessionStore.fetch(deleteRequest);
       expect(deleteResponse.status).toBe(200);
 
-      const body = await deleteResponse.json();
+      const body = (await deleteResponse.json()) as any;
       expect(body.success).toBe(true);
       expect(body.deleted).toBe(id);
 
@@ -254,7 +254,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json();
+      const body = (await response.json()) as any;
       expect(body.success).toBe(true);
       expect(body.deleted).toBe(null);
     });
@@ -281,7 +281,7 @@ describe('SessionStore', () => {
       const listResponse = await sessionStore.fetch(listRequest);
       expect(listResponse.status).toBe(200);
 
-      const body = await listResponse.json();
+      const body = (await listResponse.json()) as any;
       expect(body.sessions).toHaveLength(3);
       expect(body.sessions.every((s: { userId: string }) => s.userId === userId)).toBe(true);
     });
@@ -294,7 +294,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json();
+      const body = (await response.json()) as any;
       expect(body.sessions).toEqual([]);
     });
 
@@ -322,7 +322,7 @@ describe('SessionStore', () => {
         method: 'GET',
       });
       const listResponse = await sessionStore.fetch(listRequest);
-      const body = await listResponse.json();
+      const body = (await listResponse.json()) as any;
 
       // Should only have 1 active session
       expect(body.sessions).toHaveLength(1);
@@ -338,7 +338,7 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id, expiresAt: originalExpiry } = await createResponse.json();
+      const { id, expiresAt: originalExpiry } = (await createResponse.json()) as any;
 
       // Wait a bit
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -352,7 +352,7 @@ describe('SessionStore', () => {
       const extendResponse = await sessionStore.fetch(extendRequest);
       expect(extendResponse.status).toBe(200);
 
-      const body = await extendResponse.json();
+      const body = (await extendResponse.json()) as any;
       expect(body.expiresAt).toBeGreaterThan(originalExpiry);
     });
 
