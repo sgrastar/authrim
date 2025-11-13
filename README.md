@@ -224,11 +224,11 @@ pnpm run build
 pnpm run dev
 
 # For production deployment:
-# 1. Deploy Durable Objects first (builds automatically)
-#    ./scripts/setup-durable-objects.sh
-# 2. Wait 30 seconds
-# 3. Deploy all workers
-#    pnpm run deploy:retry
+# Deploy all workers (including Durable Objects automatically)
+pnpm run deploy:retry
+# - Deploys enrai-shared (Durable Objects) first
+# - Then deploys other workers sequentially
+# - Optional: Use ./scripts/setup-durable-objects.sh to deploy DOs separately
 
 # Workers start at:
 # - op-discovery: http://localhost:8787
@@ -392,8 +392,9 @@ pnpm run build
 # 8. Deploy with retry logic (recommended)
 pnpm run deploy:with-router
 # This uses deploy-with-retry.sh for sequential deployment with delays
-# Router Worker is included if wrangler.toml exists (test mode)
-# Router Worker is skipped if wrangler.toml missing (production mode)
+# - Deploys enrai-shared (Durable Objects) first
+# - Router Worker is included if wrangler.toml exists (test mode)
+# - Router Worker is skipped if wrangler.toml missing (production mode)
 ```
 
 ### Deployment Modes
@@ -407,6 +408,7 @@ Enrai supports two deployment modes to ensure OpenID Connect specification compl
 - **Deploy**: `pnpm run deploy:with-router` (includes Router Worker)
 
 **Workers deployed:**
+- 🌍 **enrai-shared** (Durable Objects - deployed first)
 - 🌍 **enrai** (unified entry point - Router Worker)
 - 🌍 **enrai-op-discovery**, **enrai-op-auth**, **enrai-op-token**, **enrai-op-userinfo**, **enrai-op-management**
 
@@ -418,6 +420,7 @@ Enrai supports two deployment modes to ensure OpenID Connect specification compl
 - **Requires**: Cloudflare-managed domain
 
 **Workers deployed:**
+- 🌍 **enrai-shared** (Durable Objects - deployed first)
 - 🌍 **enrai-op-discovery**, **enrai-op-auth**, **enrai-op-token**, **enrai-op-userinfo**, **enrai-op-management**
 - Router Worker is automatically excluded (no wrangler.toml generated in production mode)
 
