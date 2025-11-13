@@ -20,7 +20,9 @@ export default [
       parserOptions: {
         ecmaVersion: "latest",
         sourceType: "module",
-        project: "./tsconfig.json"
+        project: [
+          "./packages/*/tsconfig.json"
+        ]
       },
       globals: {
         ...globals.node,
@@ -36,7 +38,12 @@ export default [
         TextEncoder: "readonly",
         TextDecoder: "readonly",
         DurableObjectState: "readonly",
-        KVNamespace: "readonly"
+        DurableObjectId: "readonly",
+        DurableObjectStorage: "readonly",
+        SqlStorage: "readonly",
+        KVNamespace: "readonly",
+        D1Database: "readonly",
+        Fetcher: "readonly"
       }
     },
     plugins: {

@@ -119,7 +119,7 @@ export class RefreshTokenRotator {
   private startCleanup(): void {
     if (this.cleanupInterval === null) {
       this.cleanupInterval = setInterval(() => {
-        this.cleanupExpiredFamilies();
+        void this.cleanupExpiredFamilies();
       }, this.CLEANUP_INTERVAL) as unknown as number;
     }
   }
@@ -405,7 +405,7 @@ export class RefreshTokenRotator {
     try {
       // POST /family - Create new token family
       if (path === '/family' && request.method === 'POST') {
-        const body = (await request.json()) as CreateFamilyRequest;
+        const body = await request.json();
 
         // Validate required fields
         if (!body.token || !body.userId || !body.clientId || !body.scope) {
@@ -437,7 +437,7 @@ export class RefreshTokenRotator {
 
       // POST /rotate - Rotate refresh token
       if (path === '/rotate' && request.method === 'POST') {
-        const body = (await request.json()) as RotateTokenRequest;
+        const body = await request.json();
 
         // Validate required fields
         if (!body.currentToken || !body.userId || !body.clientId) {
@@ -489,7 +489,7 @@ export class RefreshTokenRotator {
 
       // POST /revoke-family - Revoke all tokens in family
       if (path === '/revoke-family' && request.method === 'POST') {
-        const body = (await request.json()) as RevokeFamilyRequest;
+        const body = await request.json();
 
         if (!body.familyId) {
           return new Response(
