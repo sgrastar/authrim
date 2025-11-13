@@ -51,7 +51,44 @@ echo ""
 # Prepare the public JWK as compact JSON
 PUBLIC_JWK=$(cat .keys/public.jwk.json | jq -c .)
 
-# Check if wrangler.toml files exist
+# Get KEY_ID from metadata
+KEY_ID=$(cat .keys/metadata.json | jq -r '.kid')
+
+# Function to generate wrangler.toml for a worker
+generate_wrangler_toml() {
+    local package=$1
+    local port=$2
+    local kv_namespaces=$3
+
+    local file="packages/$package/wrangler.toml"
+
+    cat > "$file" << TOML_EOF
+name = "enrai-$package"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# KV Namespaces
+$kv_namespaces
+
+# Environment variables
+[vars]
+ISSUER_URL = "http://localhost:8787"
+TOKEN_EXPIRY = "3600"
+CODE_EXPIRY = "120"
+STATE_EXPIRY = "300"
+NONCE_EXPIRY = "300"
+REFRESH_TOKEN_EXPIRY = "2592000"
+KEY_ID = "$KEY_ID"
+ALLOW_HTTP_REDIRECT = "true"
+
+# Development configuration
+[dev]
+port = $port
+TOML_EOF
+}
+
+# Check if wrangler.toml files exist, generate if missing
 echo "Checking for wrangler.toml files..."
 missing_configs=()
 for package in op-discovery op-auth op-token op-userinfo op-management; do
@@ -61,13 +98,123 @@ for package in op-discovery op-auth op-token op-userinfo op-management; do
 done
 
 if [ ${#missing_configs[@]} -gt 0 ]; then
-    echo "❌ Error: Missing wrangler.toml files for: ${missing_configs[*]}"
+    echo "⚠️  Missing wrangler.toml files for: ${missing_configs[*]}"
+    echo "📝 Generating missing wrangler.toml files..."
     echo ""
-    echo "Please run './scripts/setup-dev.sh' first to generate wrangler.toml files."
-    echo "This script will generate the necessary configuration files for all workers."
-    exit 1
+
+    # Generate wrangler.toml for op-discovery (if missing)
+    if [[ ! -f "packages/op-discovery/wrangler.toml" ]]; then
+        generate_wrangler_toml "op-discovery" 8787 '[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "placeholder"
+preview_id = "placeholder"'
+        echo "  ✅ op-discovery/wrangler.toml"
+    fi
+
+    # Generate wrangler.toml for op-auth (if missing)
+    if [[ ! -f "packages/op-auth/wrangler.toml" ]]; then
+        generate_wrangler_toml "op-auth" 8788 '[[kv_namespaces]]
+binding = "AUTH_CODES"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "STATE_STORE"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "NONCE_STORE"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "CLIENTS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "placeholder"
+preview_id = "placeholder"'
+        echo "  ✅ op-auth/wrangler.toml"
+    fi
+
+    # Generate wrangler.toml for op-token (if missing)
+    if [[ ! -f "packages/op-token/wrangler.toml" ]]; then
+        generate_wrangler_toml "op-token" 8789 '[[kv_namespaces]]
+binding = "AUTH_CODES"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "REFRESH_TOKENS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "REVOKED_TOKENS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "CLIENTS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "placeholder"
+preview_id = "placeholder"'
+        echo "  ✅ op-token/wrangler.toml"
+    fi
+
+    # Generate wrangler.toml for op-userinfo (if missing)
+    if [[ ! -f "packages/op-userinfo/wrangler.toml" ]]; then
+        generate_wrangler_toml "op-userinfo" 8790 '[[kv_namespaces]]
+binding = "CLIENTS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "REVOKED_TOKENS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "placeholder"
+preview_id = "placeholder"'
+        echo "  ✅ op-userinfo/wrangler.toml"
+    fi
+
+    # Generate wrangler.toml for op-management (if missing)
+    if [[ ! -f "packages/op-management/wrangler.toml" ]]; then
+        generate_wrangler_toml "op-management" 8791 '[[kv_namespaces]]
+binding = "CLIENTS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "REFRESH_TOKENS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "REVOKED_TOKENS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "placeholder"
+preview_id = "placeholder"'
+        echo "  ✅ op-management/wrangler.toml"
+    fi
+
+    echo ""
 fi
-echo "✅ All wrangler.toml files found"
+echo "✅ All wrangler.toml files ready"
 echo ""
 
 # Function to upload secrets to a worker
