@@ -18,11 +18,11 @@ This checklist covers all immediate tasks needed to kickoff the Enrai project an
 
 ### Development Environment
 - [ ] Node.js 18+ installed
-- [ ] pnpm or npm installed
+- [ ] pnpm or pnpm installed
 - [ ] Git configured
 - [ ] Code editor installed (VS Code recommended)
 - [ ] Cloudflare account created
-- [ ] Wrangler CLI installed globally (`npm install -g wrangler`)
+- [ ] Wrangler CLI installed globally (`pnpm install -g wrangler`)
 
 ### Accounts & Access
 - [ ] GitHub repository access configured
@@ -321,7 +321,7 @@ enrai/
 
 ### Install Dependencies
 
-- [ ] Run: `pnpm install` (or `npm install`)
+- [ ] Run: `ppnpm install` (or `pnpm install`)
 - [ ] Verify all dependencies installed successfully
 - [ ] Check for any security vulnerabilities: `pnpm audit`
 

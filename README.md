@@ -91,8 +91,9 @@ Enrai is an **enterprise-grade OpenID Connect Provider** built for:
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| **Runtime** | Cloudflare Workers | Global edge deployment |
+| **Runtime** | Cloudflare Workers | Global edge deployment (5 specialized workers) |
 | **Framework** | Hono | Fast, lightweight web framework |
+| **Build** | Turborepo + pnpm | Monorepo, parallel builds, caching |
 | **Storage** | KV / D1 / Durable Objects | Flexible data persistence |
 | **Crypto** | JOSE | JWT/JWK standards (RS256) |
 | **Language** | TypeScript | Type safety, great DX |
@@ -172,7 +173,7 @@ Enrai is an **enterprise-grade OpenID Connect Provider** built for:
 ### Prerequisites
 
 - Node.js 18+
-- npm or pnpm
+- pnpm
 - Cloudflare account (free tier works)
 
 ### Quick Start (Development)
@@ -182,14 +183,25 @@ Enrai is an **enterprise-grade OpenID Connect Provider** built for:
 git clone https://github.com/sgrastar/enrai.git
 cd enrai
 
-# 2. Install dependencies
-npm install
+# 2. Install dependencies (monorepo setup)
+pnpm install
 
-# 3. Start development server
-npm run dev
+# 3. Build all packages
+pnpm run build
 
-# Server starts at http://localhost:8787
+# 4. Start all workers in parallel
+pnpm run dev
+
+# Workers start at:
+# - op-discovery: http://localhost:8787
+# - op-auth: http://localhost:8788
+# - op-token: http://localhost:8789
+# - op-userinfo: http://localhost:8790
+# - op-management: http://localhost:8791
 ```
+
+> **Note:** Enrai now uses a monorepo structure with 5 specialized workers.
+> See [WORKERS.md](./WORKERS.md) for detailed architecture.
 
 ### Test the API
 
@@ -317,35 +329,37 @@ Deploy Enrai to Cloudflare's global edge network and get a production-ready Open
 
 ```bash
 # 1. Install dependencies
-npm install
+pnpm install
 
 # 2. Set up RSA keys
 ./scripts/setup-dev.sh
 
 # 3. Build TypeScript
-npm run build
+pnpm run build
 
 # 4. Deploy to Cloudflare
-npm run deploy
+pnpm run deploy
 ```
 
-**After deployment, you'll get:**
-- 🌍 **Public URL**: `https://enrai.{your-subdomain}.workers.dev`
-- ✅ **Live Endpoints**:
-  - Discovery: `/.well-known/openid-configuration`
-  - JWKS: `/.well-known/jwks.json`
-  - Authorization: `/authorize`
-  - Token: `/token`
-  - UserInfo: `/userinfo`
+**After deployment, you'll get 5 specialized workers:**
+- 🌍 **op-discovery**: `https://enrai-op-discovery.{subdomain}.workers.dev`
+- 🌍 **op-auth**: `https://enrai-op-auth.{subdomain}.workers.dev`
+- 🌍 **op-token**: `https://enrai-op-token.{subdomain}.workers.dev`
+- 🌍 **op-userinfo**: `https://enrai-op-userinfo.{subdomain}.workers.dev`
+- 🌍 **op-management**: `https://enrai-op-management.{subdomain}.workers.dev`
+
+> **Note:** Configure routing to unify all workers under a single domain.
+> See [WORKERS.md](./WORKERS.md) for routing configuration.
 
 📖 **See [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for detailed setup instructions**
 
 ### GitHub Actions (CI/CD)
 
 Automatic deployment is configured for the `main` branch:
-- ✅ Tests run on every push
-- 🚀 Deploys to Cloudflare Workers on merge to main
+- ✅ Tests run on every push (using pnpm)
+- 🚀 Deploys all 5 workers to Cloudflare on merge to main
 - 🔐 Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets
+- ⚡ Turborepo caching for faster builds
 
 **Future (Phase 6):**
 ```bash
