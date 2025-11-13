@@ -298,7 +298,7 @@ export class AuthorizationCodeStore {
     try {
       // POST /code - Store authorization code
       if (path === '/code' && request.method === 'POST') {
-        const body = await request.json();
+        const body = (await request.json()) as Partial<StoreCodeRequest>;
 
         // Validate required fields
         if (!body.code || !body.clientId || !body.redirectUri || !body.userId || !body.scope) {
@@ -314,7 +314,7 @@ export class AuthorizationCodeStore {
           );
         }
 
-        const result = await this.storeCode(body);
+        const result = await this.storeCode(body as StoreCodeRequest);
 
         return new Response(JSON.stringify(result), {
           status: 201,
@@ -324,7 +324,7 @@ export class AuthorizationCodeStore {
 
       // POST /code/consume - Consume authorization code
       if (path === '/code/consume' && request.method === 'POST') {
-        const body = await request.json();
+        const body = (await request.json()) as Partial<ConsumeCodeRequest>;
 
         // Validate required fields
         if (!body.code || !body.clientId) {
@@ -341,7 +341,7 @@ export class AuthorizationCodeStore {
         }
 
         try {
-          const result = await this.consumeCode(body);
+          const result = await this.consumeCode(body as ConsumeCodeRequest);
 
           return new Response(JSON.stringify(result), {
             headers: { 'Content-Type': 'application/json' },
