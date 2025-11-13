@@ -57,8 +57,11 @@ pnpm run build
 echo ""
 
 # Deploy packages in order
-# Router must be deployed LAST as it depends on all other workers via Service Bindings
+# 1. Shared package (Durable Objects) must be deployed FIRST
+# 2. Other workers depend on shared package for DO bindings
+# 3. Router must be deployed LAST as it depends on all other workers via Service Bindings
 PACKAGES=(
+    "shared:packages/shared"
     "op-discovery:packages/op-discovery"
     "op-management:packages/op-management"
     "op-auth:packages/op-auth"
