@@ -82,8 +82,21 @@ if [ "$DB_EXISTS" = false ]; then
     CREATE_OUTPUT=$(wrangler d1 create "$DB_NAME" 2>&1)
     echo "$CREATE_OUTPUT"
 
-    # Extract database ID from output (supports both old and new wrangler formats)
-    DB_ID=$(echo "$CREATE_OUTPUT" | grep -oE '("database_id":|database_id =) ?"?([a-f0-9-]{36})"?' | grep -oE '[a-f0-9-]{36}')
+    # Try to extract database ID from create output (supports both old and new wrangler formats)
+    DB_ID=$(echo "$CREATE_OUTPUT" | grep -oE '("database_id":|"uuid":|database_id =) ?"?([a-f0-9-]{36})"?' | grep -oE '[a-f0-9-]{36}')
+
+    # If extraction failed, try getting it from the list command
+    if [ -z "$DB_ID" ]; then
+        DB_LIST_JSON=$(wrangler d1 list --json 2>/dev/null)
+        if [ -n "$DB_LIST_JSON" ]; then
+            DB_ID=$(echo "$DB_LIST_JSON" | grep -A 1 "\"name\": \"$DB_NAME\"" | grep -oE '"uuid": "([a-f0-9-]{36})"' | grep -oE '[a-f0-9-]{36}')
+        fi
+    fi
+
+    # Last resort: extract any UUID pattern from create output
+    if [ -z "$DB_ID" ]; then
+        DB_ID=$(echo "$CREATE_OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+    fi
 
     if [ -z "$DB_ID" ]; then
         echo "❌ Error: Could not extract database ID"
@@ -97,9 +110,24 @@ if [ "$DB_EXISTS" = false ]; then
 else
     echo "✅ Database already exists: $DB_NAME"
 
-    # Get existing database ID
-    DB_INFO=$(wrangler d1 info "$DB_NAME" 2>&1)
-    DB_ID=$(echo "$DB_INFO" | grep -oE '(id:|"database_id":) ?"?([a-f0-9-]{36})"?' | grep -oE '[a-f0-9-]{36}' | head -1)
+    # Get existing database ID - try JSON format first (most reliable)
+    DB_LIST_JSON=$(wrangler d1 list --json 2>/dev/null)
+    if [ -n "$DB_LIST_JSON" ]; then
+        # Try to extract uuid from JSON using grep (works without jq)
+        DB_ID=$(echo "$DB_LIST_JSON" | grep -A 1 "\"name\": \"$DB_NAME\"" | grep -oE '"uuid": "([a-f0-9-]{36})"' | grep -oE '[a-f0-9-]{36}')
+    fi
+
+    # Fallback to d1 info table format if JSON parsing failed
+    if [ -z "$DB_ID" ]; then
+        DB_INFO=$(wrangler d1 info "$DB_NAME" 2>&1)
+        # Extract UUID from table format (first line with UUID pattern after header)
+        DB_ID=$(echo "$DB_INFO" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -1)
+    fi
+
+    # Last fallback: try old regex patterns for legacy wrangler versions
+    if [ -z "$DB_ID" ]; then
+        DB_ID=$(echo "$DB_INFO" | grep -oE '(id:|"database_id":) ?"?([a-f0-9-]{36})"?' | grep -oE '[a-f0-9-]{36}' | head -1)
+    fi
 
     if [ -z "$DB_ID" ]; then
         echo "⚠️  Warning: Could not extract database ID from existing database"
