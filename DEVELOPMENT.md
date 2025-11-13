@@ -58,16 +58,16 @@ Create the required KV namespaces:
 
 ```bash
 # Create KV namespaces for development
-wrangler kv:namespace create "AUTH_CODES"
-wrangler kv:namespace create "STATE_STORE"
-wrangler kv:namespace create "NONCE_STORE"
-wrangler kv:namespace create "CLIENTS"
+wrangler kv namespace create "AUTH_CODES"
+wrangler kv namespace create "STATE_STORE"
+wrangler kv namespace create "NONCE_STORE"
+wrangler kv namespace create "CLIENTS"
 
 # Create preview namespaces
-wrangler kv:namespace create "AUTH_CODES" --preview
-wrangler kv:namespace create "STATE_STORE" --preview
-wrangler kv:namespace create "NONCE_STORE" --preview
-wrangler kv:namespace create "CLIENTS" --preview
+wrangler kv namespace create "AUTH_CODES" --preview
+wrangler kv namespace create "STATE_STORE" --preview
+wrangler kv namespace create "NONCE_STORE" --preview
+wrangler kv namespace create "CLIENTS" --preview
 ```
 
 Update `wrangler.toml` with the generated namespace IDs.
@@ -270,7 +270,7 @@ Pushes to the `main` branch automatically trigger deployment via GitHub Actions 
 **Solution:** Ensure KV namespaces are created and IDs are correctly set in `wrangler.toml`:
 
 ```bash
-wrangler kv:namespace list
+wrangler kv namespace list
 ```
 
 ### Issue: Private key not found
