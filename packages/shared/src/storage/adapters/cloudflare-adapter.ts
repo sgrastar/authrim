@@ -127,7 +127,9 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
     const doId = this.env.SESSION_STORE.idFromName('default');
     const doStub = this.env.SESSION_STORE.get(doId);
 
-    const response = await doStub.fetch(new Request(`http://internal/session/${sessionId}`, { method: 'GET' }));
+    const response = await doStub.fetch(
+      new Request(`http://internal/session/${sessionId}`, { method: 'GET' })
+    );
 
     if (response.status === 404) {
       return null;
@@ -237,7 +239,9 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
       return null;
     }
 
-    const result = await this.env.DB.prepare(`SELECT data FROM kv_store WHERE key = ?`).bind(key).first();
+    const result = await this.env.DB.prepare(`SELECT data FROM kv_store WHERE key = ?`)
+      .bind(key)
+      .first();
 
     if (!result) {
       return null;
@@ -250,7 +254,9 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    * Set to D1 database
    */
   private async setToD1(key: string, value: string): Promise<void> {
-    await this.env.DB.prepare(`INSERT OR REPLACE INTO kv_store (key, data) VALUES (?, ?)`).bind(key, value).run();
+    await this.env.DB.prepare(`INSERT OR REPLACE INTO kv_store (key, data) VALUES (?, ?)`)
+      .bind(key, value)
+      .run();
   }
 
   /**
@@ -268,7 +274,9 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
     const doId = this.env.AUTH_CODE_STORE.idFromName('default');
     const doStub = this.env.AUTH_CODE_STORE.get(doId);
 
-    const response = await doStub.fetch(new Request(`http://internal/code/${code}/exists`, { method: 'GET' }));
+    const response = await doStub.fetch(
+      new Request(`http://internal/code/${code}/exists`, { method: 'GET' })
+    );
 
     if (!response.ok) {
       return null;
@@ -318,7 +326,9 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
     const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName('default');
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
 
-    const response = await doStub.fetch(new Request(`http://internal/family/${familyId}`, { method: 'GET' }));
+    const response = await doStub.fetch(
+      new Request(`http://internal/family/${familyId}`, { method: 'GET' })
+    );
 
     if (response.status === 404) {
       return null;
@@ -544,9 +554,10 @@ export class ClientStore implements IClientStore {
   constructor(private adapter: CloudflareStorageAdapter) {}
 
   async get(clientId: string): Promise<ClientData | null> {
-    const results = await this.adapter.query<ClientData>('SELECT * FROM oauth_clients WHERE client_id = ?', [
-      clientId,
-    ]);
+    const results = await this.adapter.query<ClientData>(
+      'SELECT * FROM oauth_clients WHERE client_id = ?',
+      [clientId]
+    );
     return results[0] || null;
   }
 
@@ -655,7 +666,9 @@ export class SessionStore implements ISessionStore {
     const doId = this.env.SESSION_STORE.idFromName('default');
     const doStub = this.env.SESSION_STORE.get(doId);
 
-    const response = await doStub.fetch(new Request(`http://internal/session/${sessionId}`, { method: 'GET' }));
+    const response = await doStub.fetch(
+      new Request(`http://internal/session/${sessionId}`, { method: 'GET' })
+    );
 
     if (response.status === 404) {
       return null;
@@ -708,7 +721,9 @@ export class SessionStore implements ISessionStore {
     const doId = this.env.SESSION_STORE.idFromName('default');
     const doStub = this.env.SESSION_STORE.get(doId);
 
-    const response = await doStub.fetch(new Request(`http://internal/sessions/user/${userId}`, { method: 'GET' }));
+    const response = await doStub.fetch(
+      new Request(`http://internal/sessions/user/${userId}`, { method: 'GET' })
+    );
 
     if (!response.ok) {
       throw new Error(`SessionStore error: ${response.status}`);
@@ -750,16 +765,18 @@ export class PasskeyStore implements IPasskeyStore {
   constructor(private adapter: CloudflareStorageAdapter) {}
 
   async getByCredentialId(credentialId: string): Promise<Passkey | null> {
-    const results = await this.adapter.query<Passkey>('SELECT * FROM passkeys WHERE credential_id = ?', [
-      credentialId,
-    ]);
+    const results = await this.adapter.query<Passkey>(
+      'SELECT * FROM passkeys WHERE credential_id = ?',
+      [credentialId]
+    );
     return results[0] || null;
   }
 
   async listByUser(userId: string): Promise<Passkey[]> {
-    return await this.adapter.query<Passkey>('SELECT * FROM passkeys WHERE user_id = ? ORDER BY created_at DESC', [
-      userId,
-    ]);
+    return await this.adapter.query<Passkey>(
+      'SELECT * FROM passkeys WHERE user_id = ? ORDER BY created_at DESC',
+      [userId]
+    );
   }
 
   async create(passkey: Partial<Passkey>): Promise<Passkey> {
@@ -808,7 +825,9 @@ export class PasskeyStore implements IPasskeyStore {
       passkeyId,
     ]);
 
-    const results = await this.adapter.query<Passkey>('SELECT * FROM passkeys WHERE id = ?', [passkeyId]);
+    const results = await this.adapter.query<Passkey>('SELECT * FROM passkeys WHERE id = ?', [
+      passkeyId,
+    ]);
     if (!results[0]) {
       throw new Error(`Passkey not found: ${passkeyId}`);
     }
