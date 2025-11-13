@@ -91,12 +91,13 @@ Enrai is an **enterprise-grade OpenID Connect Provider** built for:
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| **Runtime** | Cloudflare Workers | Global edge deployment (5 specialized workers) |
+| **Runtime** | Cloudflare Workers | Global edge deployment (5 specialized workers + optional Router) |
 | **Framework** | Hono | Fast, lightweight web framework |
 | **Build** | Turborepo + pnpm | Monorepo, parallel builds, caching |
 | **Storage** | KV / D1 / Durable Objects | Flexible data persistence |
 | **Crypto** | JOSE | JWT/JWK standards (RS256) |
 | **Language** | TypeScript | Type safety, great DX |
+| **Routing** | Service Bindings / Routes | Unified endpoint (test/prod modes) |
 
 ---
 
@@ -204,10 +205,10 @@ pnpm run dev
 # - op-token: http://localhost:8789
 # - op-userinfo: http://localhost:8790
 # - op-management: http://localhost:8791
+# - router: http://localhost:8786 (optional, for unified endpoint)
 ```
 
-> **Note:** Enrai now uses a monorepo structure with 5 specialized workers.
-> See [WORKERS.md](./WORKERS.md) for detailed architecture.
+> **Note:** Enrai uses a monorepo structure with 5 specialized workers plus an optional Router Worker for unified endpoint access. See [WORKERS.md](./WORKERS.md) and [docs/ROUTER_SETUP.md](./docs/ROUTER_SETUP.md) for architecture details.
 
 ### Test the API
 
@@ -340,30 +341,54 @@ pnpm install
 # 2. Set up KV namespaces
 ./scripts/setup-kv.sh
 
-# 3. Set up RSA keys
+# 3. Set up RSA keys and generate wrangler.toml files
 ./scripts/setup-dev.sh
 
-# 4. Build TypeScript
+# 4. Upload secrets to Cloudflare
+./scripts/setup-secrets.sh
+
+# 5. Choose deployment mode and configure
+./scripts/setup-production.sh
+# → Select: 1) Test Environment (Router Worker)
+#       or: 2) Production Environment (Custom Domain + Routes)
+
+# 6. Build TypeScript
 pnpm run build
 
-# 5. Deploy to Cloudflare (RECOMMENDED: use deploy:retry for stable deployment)
-pnpm run deploy:retry
+# 7. Deploy based on chosen mode:
+# For Test Environment (workers.dev):
+pnpm run deploy:with-router
 
-# Or for parallel deployment (may encounter rate limits):
-# pnpm run deploy
+# For Production Environment (custom domain):
+pnpm run deploy
 ```
 
-**After deployment, you'll get 5 specialized workers:**
-- 🌍 **op-discovery**: `https://enrai-op-discovery.{subdomain}.workers.dev`
-- 🌍 **op-auth**: `https://enrai-op-auth.{subdomain}.workers.dev`
-- 🌍 **op-token**: `https://enrai-op-token.{subdomain}.workers.dev`
-- 🌍 **op-userinfo**: `https://enrai-op-userinfo.{subdomain}.workers.dev`
-- 🌍 **op-management**: `https://enrai-op-management.{subdomain}.workers.dev`
+### Deployment Modes
 
-> **Note:** Configure routing to unify all workers under a single domain.
-> See [WORKERS.md](./WORKERS.md) for routing configuration.
+Enrai supports two deployment modes to ensure OpenID Connect specification compliance:
 
-📖 **See [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for detailed setup instructions**
+#### 1️⃣ Test Environment (workers.dev + Router Worker)
+- **Unified endpoint**: `https://enrai-router.{subdomain}.workers.dev`
+- **Use case**: Development, testing, quick setup
+- **Pros**: No custom domain needed, OpenID Connect compliant ✅
+- **Deploy**: `pnpm run deploy:with-router`
+
+**Workers deployed:**
+- 🌍 **enrai-router** (unified entry point)
+- 🌍 **enrai-op-discovery**, **enrai-op-auth**, **enrai-op-token**, **enrai-op-userinfo**, **enrai-op-management**
+
+#### 2️⃣ Production Environment (Custom Domain + Routes)
+- **Custom domain**: `https://id.yourdomain.com`
+- **Use case**: Production deployments
+- **Pros**: Optimal performance, professional URL
+- **Deploy**: `pnpm run deploy`
+- **Requires**: Cloudflare-managed domain
+
+**Workers deployed:**
+- 🌍 **enrai-op-discovery**, **enrai-op-auth**, **enrai-op-token**, **enrai-op-userinfo**, **enrai-op-management**
+- Router Worker is automatically excluded
+
+> 💡 **Learn more**: See [docs/ROUTER_SETUP.md](./docs/ROUTER_SETUP.md) for detailed architecture and [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for step-by-step instructions.
 
 ### Troubleshooting Deployment
 
@@ -388,9 +413,10 @@ The `--reset` option will:
 
 Automatic deployment is configured for the `main` branch:
 - ✅ Tests run on every push (using pnpm)
-- 🚀 Deploys all 5 workers to Cloudflare on merge to main
+- 🚀 Deploys workers to Cloudflare on merge to main (mode-dependent)
 - 🔐 Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets
 - ⚡ Turborepo caching for faster builds
+- 🎯 Router Worker deployment depends on configuration
 
 **Future (Phase 6):**
 ```bash
