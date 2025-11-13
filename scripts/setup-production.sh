@@ -214,22 +214,32 @@ update_wrangler_toml() {
     fi
 
     # Add new settings after compatibility_flags line
-    local new_settings=""
     if [ "$use_workers_dev" = "true" ]; then
-        new_settings="workers_dev = true\npreview_urls = true"
-    else
-        new_settings="workers_dev = false\npreview_urls = false"
-    fi
-
-    # Insert after compatibility_flags line
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS - need to escape newlines properly
-        sed -i '' "/^compatibility_flags = /a\\
-$new_settings
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS - insert two lines separately
+            sed -i '' "/^compatibility_flags = /a\\
+workers_dev = true
 " "$file"
+            sed -i '' "/^workers_dev = /a\\
+preview_urls = true
+" "$file"
+        else
+            # Linux - insert two lines with proper newline
+            sed -i "/^compatibility_flags = /a\\workers_dev = true\\npreview_urls = true" "$file"
+        fi
     else
-        # Linux
-        sed -i "/^compatibility_flags = /a\\$new_settings" "$file"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS - insert two lines separately
+            sed -i '' "/^compatibility_flags = /a\\
+workers_dev = false
+" "$file"
+            sed -i '' "/^workers_dev = /a\\
+preview_urls = false
+" "$file"
+        else
+            # Linux - insert two lines with proper newline
+            sed -i "/^compatibility_flags = /a\\workers_dev = false\\npreview_urls = false" "$file"
+        fi
     fi
 }
 
