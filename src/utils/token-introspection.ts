@@ -107,7 +107,10 @@ function extractAccessToken(authHeader: string): {
   // Check for Bearer token
   const parts = authHeader.split(' ');
   if (parts.length === 2 && parts[0] === 'Bearer') {
-    return { token: parts[1], isDPoP: false };
+    const token = parts[1];
+    if (token) {
+      return { token, isDPoP: false };
+    }
   }
 
   return null;
