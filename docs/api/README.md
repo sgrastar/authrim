@@ -1,45 +1,45 @@
 # Enrai API Documentation 🚀
 
-**最終更新**: 2025-11-13
+**Last Updated**: 2025-11-13
 **API Version**: v1.0 (Phase 5)
 **Base URL**: `https://your-domain.com`
 
 ---
 
-## 📋 目次
+## 📋 Table of Contents
 
-1. [概要](#概要)
+1. [Overview](#overview)
 2. [API Categories](#api-categories)
-3. [認証方式](#認証方式)
-4. [レート制限](#レート制限)
-5. [エラーハンドリング](#エラーハンドリング)
-6. [OpenAPI仕様](#openapi仕様)
-7. [クイックスタート](#クイックスタート)
+3. [Authentication Methods](#authentication-methods)
+4. [Rate Limiting](#rate-limiting)
+5. [Error Handling](#error-handling)
+6. [OpenAPI Specification](#openapi-specification)
+7. [Quick Start](#quick-start)
 
 ---
 
-## 概要
+## Overview
 
-Enrai OIDC OPは、39以上のAPIエンドポイントを提供します：
+Enrai OIDC OP provides 39+ API endpoints:
 
-| カテゴリ | エンドポイント数 | ステータス |
+| Category | Endpoint Count | Status |
 |---------|----------------|-----------|
-| **OIDC Core** | 7 | ✅ Phase 2完了 |
-| **OIDC 拡張** | 4 | ✅ Phase 4完了 |
-| **認証UI** | 6 | 📝 Phase 5計画 |
-| **管理者API** | 9 | 📝 Phase 5計画 |
-| **セッション管理** | 6 | 📝 Phase 5計画 |
-| **Logout** | 2 | 📝 Phase 5計画 |
-| **トークン交換** | 2+ | 🔄 検討中 |
-| **合計** | **39+** | - |
+| **OIDC Core** | 7 | ✅ Phase 2 Complete |
+| **OIDC Extensions** | 4 | ✅ Phase 4 Complete |
+| **Auth UI** | 6 | 📝 Phase 5 Planned |
+| **Admin API** | 9 | 📝 Phase 5 Planned |
+| **Session Management** | 6 | 📝 Phase 5 Planned |
+| **Logout** | 2 | 📝 Phase 5 Planned |
+| **Token Exchange** | 2+ | 🔄 Under Consideration |
+| **Total** | **39+** | - |
 
 ---
 
 ## API Categories
 
-### 1. OIDC Core APIs ✅ 実装済み
+### 1. OIDC Core APIs ✅ Implemented
 
-標準的なOIDC OPの基本機能：
+Standard OIDC OP basic functionality:
 
 - `GET /.well-known/openid-configuration` - Discovery
 - `GET /.well-known/jwks.json` - JSON Web Key Set
@@ -47,81 +47,81 @@ Enrai OIDC OPは、39以上のAPIエンドポイントを提供します：
 - `POST /token` - Token Endpoint
 - `GET/POST /userinfo` - UserInfo Endpoint
 
-**準拠規格**: OpenID Connect Core 1.0, RFC 6749
+**Compliance**: OpenID Connect Core 1.0, RFC 6749
 
-### 2. OIDC 拡張機能 ✅ 実装済み
+### 2. OIDC Extensions ✅ Implemented
 
-エンタープライズグレードのセキュリティ機能：
+Enterprise-grade security features:
 
 - `POST /register` - Dynamic Client Registration (RFC 7591)
 - `POST /as/par` - Pushed Authorization Requests (RFC 9126)
 - `POST /introspect` - Token Introspection (RFC 7662)
 - `POST /revoke` - Token Revocation (RFC 7009)
 
-**追加機能**:
-- DPoP (RFC 9449) - トークンバインディング
-- Pairwise Subject Identifiers - プライバシー保護
+**Additional Features**:
+- DPoP (RFC 9449) - Token Binding
+- Pairwise Subject Identifiers - Privacy Protection
 - Refresh Token Rotation
 
-### 3. 認証UI関連 API 📝 Phase 5
+### 3. Auth UI APIs 📝 Phase 5
 
-パスワードレス認証のための新しいエンドポイント：
+New endpoints for passwordless authentication:
 
-- `POST /auth/passkey/register` - Passkey登録
-- `POST /auth/passkey/verify` - Passkey検証
-- `POST /auth/magic-link/send` - Magic Link送信
-- `POST /auth/magic-link/verify` - Magic Link検証
-- `GET /auth/consent` - 同意画面データ取得
-- `POST /auth/consent` - 同意確定
+- `POST /auth/passkey/register` - Register Passkey
+- `POST /auth/passkey/verify` - Verify Passkey
+- `POST /auth/magic-link/send` - Send Magic Link
+- `POST /auth/magic-link/verify` - Verify Magic Link
+- `GET /auth/consent` - Get Consent Screen Data
+- `POST /auth/consent` - Confirm Consent
 
-### 4. 管理者API 📝 Phase 5
+### 4. Admin API 📝 Phase 5
 
-ユーザー・クライアント管理のための管理者専用API：
+Admin-only APIs for user and client management:
 
-#### ユーザー管理
-- `GET /admin/users` - ユーザー一覧・検索
-- `POST /admin/users` - ユーザー作成
-- `PUT /admin/users/:id` - ユーザー更新
-- `DELETE /admin/users/:id` - ユーザー削除
+#### User Management
+- `GET /admin/users` - List/Search Users
+- `POST /admin/users` - Create User
+- `PUT /admin/users/:id` - Update User
+- `DELETE /admin/users/:id` - Delete User
 
-#### クライアント管理
-- `GET /admin/clients` - クライアント一覧
-- `POST /admin/clients` - クライアント作成
-- `PUT /admin/clients/:id` - クライアント更新
-- `DELETE /admin/clients/:id` - クライアント削除
+#### Client Management
+- `GET /admin/clients` - List Clients
+- `POST /admin/clients` - Create Client
+- `PUT /admin/clients/:id` - Update Client
+- `DELETE /admin/clients/:id` - Delete Client
 
-#### 統計
-- `GET /admin/stats` - 統計情報
+#### Statistics
+- `GET /admin/stats` - Statistics Information
 
-**認証**: Bearer Token (管理者権限必須)
+**Authentication**: Bearer Token (admin privileges required)
 
-### 5. セッション管理API 📝 Phase 5
+### 5. Session Management API 📝 Phase 5
 
-ITP対応のクロスドメインSSO：
+Cross-domain SSO with ITP support:
 
-- `POST /auth/session/token` - 短命トークン発行（5分TTL）
-- `POST /auth/session/verify` - 短命トークン検証
-- `GET /session/status` - セッション有効性確認
-- `POST /session/refresh` - セッション延命
-- `GET /admin/sessions` - セッション一覧（管理者用）
-- `POST /admin/sessions/:id/revoke` - セッション無効化（管理者用）
+- `POST /auth/session/token` - Issue Short-lived Token (5min TTL)
+- `POST /auth/session/verify` - Verify Short-lived Token
+- `GET /session/status` - Check Session Validity
+- `POST /session/refresh` - Extend Session
+- `GET /admin/sessions` - List Sessions (Admin)
+- `POST /admin/sessions/:id/revoke` - Revoke Session (Admin)
 
-**特徴**: サードパーティCookie不使用
+**Feature**: No third-party cookies
 
 ### 6. Logout API 📝 Phase 5
 
-標準的なログアウト機能：
+Standard logout functionality:
 
 - `GET /logout` - Front-channel Logout
-- `POST /logout/backchannel` - Back-channel Logout (RFC推奨)
+- `POST /logout/backchannel` - Back-channel Logout (RFC recommended)
 
 ---
 
-## 認証方式
+## Authentication Methods
 
 ### 1. OAuth 2.0 Bearer Token
 
-**対象**: `/userinfo`, `/introspect`, `/revoke`, `/admin/*`
+**Target**: `/userinfo`, `/introspect`, `/revoke`, `/admin/*`
 
 ```http
 Authorization: Bearer {access_token}
@@ -129,17 +129,17 @@ Authorization: Bearer {access_token}
 
 ### 2. Client Authentication
 
-**対象**: `/token`, `/introspect`, `/revoke`
+**Target**: `/token`, `/introspect`, `/revoke`
 
-**サポートされる方式**:
-- `client_secret_basic` - Basic認証 (デフォルト)
-- `client_secret_post` - POSTパラメータ
+**Supported Methods**:
+- `client_secret_basic` - Basic authentication (default)
+- `client_secret_post` - POST parameters
 - `client_secret_jwt` - JWT (RFC 7523)
-- `private_key_jwt` - 秘密鍵JWT
+- `private_key_jwt` - Private key JWT
 
 ### 3. Cookie + CSRF Token
 
-**対象**: 管理者セッション、同意画面
+**Target**: Admin sessions, consent screen
 
 ```http
 Cookie: session_id={session_id}
@@ -148,7 +148,7 @@ X-CSRF-Token: {csrf_token}
 
 ### 4. DPoP (RFC 9449)
 
-**対象**: 全トークンエンドポイント（オプション）
+**Target**: All token endpoints (optional)
 
 ```http
 DPoP: {dpop_proof_jwt}
@@ -156,18 +156,18 @@ DPoP: {dpop_proof_jwt}
 
 ---
 
-## レート制限
+## Rate Limiting
 
-| エンドポイント | 制限 | 期間 | 単位 |
+| Endpoint | Limit | Period | Unit |
 |--------------|------|------|------|
-| `/login` | 5 | 1分 | IP |
-| `/register` | 3 | 1分 | IP |
-| `/auth/magic-link/send` | 3 | 15分 | email |
-| `/token` | 10 | 1分 | client_id |
-| `/admin/*` | 100 | 1分 | session |
-| その他 | 60 | 1分 | IP |
+| `/login` | 5 | 1 min | IP |
+| `/register` | 3 | 1 min | IP |
+| `/auth/magic-link/send` | 3 | 15 min | email |
+| `/token` | 10 | 1 min | client_id |
+| `/admin/*` | 100 | 1 min | session |
+| Others | 60 | 1 min | IP |
 
-**レート制限超過時**:
+**When Rate Limit Exceeded**:
 ```json
 {
   "error": "rate_limit_exceeded",
@@ -176,7 +176,7 @@ DPoP: {dpop_proof_jwt}
 }
 ```
 
-**ヘッダー**:
+**Headers**:
 ```http
 X-RateLimit-Limit: 5
 X-RateLimit-Remaining: 2
@@ -185,9 +185,9 @@ X-RateLimit-Reset: 1678901234
 
 ---
 
-## エラーハンドリング
+## Error Handling
 
-### 標準エラーレスポンス
+### Standard Error Response
 
 ```json
 {
@@ -197,71 +197,71 @@ X-RateLimit-Reset: 1678901234
 }
 ```
 
-### エラーコード一覧
+### Error Code List
 
 #### OAuth 2.0 Standard Errors (RFC 6749)
 
-| エラーコード | HTTP Status | 説明 |
+| Error Code | HTTP Status | Description |
 |-------------|-------------|------|
-| `invalid_request` | 400 | リクエストパラメータが不正 |
-| `invalid_client` | 401 | クライアント認証失敗 |
-| `invalid_grant` | 400 | 認可コード/リフレッシュトークンが不正 |
-| `unauthorized_client` | 400 | クライアントが認可されていない |
-| `unsupported_grant_type` | 400 | グラントタイプがサポートされていない |
-| `invalid_scope` | 400 | スコープが不正 |
-| `access_denied` | 403 | ユーザーが同意を拒否 |
-| `server_error` | 500 | サーバー内部エラー |
-| `temporarily_unavailable` | 503 | 一時的に利用不可 |
+| `invalid_request` | 400 | Invalid request parameters |
+| `invalid_client` | 401 | Client authentication failed |
+| `invalid_grant` | 400 | Invalid authorization code/refresh token |
+| `unauthorized_client` | 400 | Client is not authorized |
+| `unsupported_grant_type` | 400 | Grant type is not supported |
+| `invalid_scope` | 400 | Invalid scope |
+| `access_denied` | 403 | User denied consent |
+| `server_error` | 500 | Internal server error |
+| `temporarily_unavailable` | 503 | Temporarily unavailable |
 
 #### OIDC Errors
 
-| エラーコード | HTTP Status | 説明 |
+| Error Code | HTTP Status | Description |
 |-------------|-------------|------|
-| `interaction_required` | 400 | ユーザー操作が必要 |
-| `login_required` | 400 | ログインが必要 |
-| `consent_required` | 400 | 同意が必要 |
-| `invalid_request_uri` | 400 | request_uriが不正 |
-| `invalid_request_object` | 400 | request JWTが不正 |
+| `interaction_required` | 400 | User interaction required |
+| `login_required` | 400 | Login required |
+| `consent_required` | 400 | Consent required |
+| `invalid_request_uri` | 400 | Invalid request_uri |
+| `invalid_request_object` | 400 | Invalid request JWT |
 
-#### Enrai独自エラー
+#### Enrai Custom Errors
 
-| エラーコード | HTTP Status | 説明 |
+| Error Code | HTTP Status | Description |
 |-------------|-------------|------|
-| `passkey_not_supported` | 400 | Passkeyがサポートされていない |
-| `magic_link_expired` | 400 | Magic Linkの有効期限切れ |
-| `session_expired` | 401 | セッションの有効期限切れ |
-| `rate_limit_exceeded` | 429 | レート制限超過 |
-| `insufficient_permissions` | 403 | 権限不足（管理者API） |
+| `passkey_not_supported` | 400 | Passkey is not supported |
+| `magic_link_expired` | 400 | Magic Link expired |
+| `session_expired` | 401 | Session expired |
+| `rate_limit_exceeded` | 429 | Rate limit exceeded |
+| `insufficient_permissions` | 403 | Insufficient permissions (Admin API) |
 
 ---
 
-## OpenAPI仕様
+## OpenAPI Specification
 
-詳細なAPI仕様は OpenAPI 3.1 形式で提供されています：
+Detailed API specifications are provided in OpenAPI 3.1 format:
 
-📄 **[openapi.yaml](./openapi.yaml)** - 完全なAPI仕様
+📄 **[openapi.yaml](./openapi.yaml)** - Complete API Specification
 
-### 仕様の使い方
+### Using the Specification
 
-#### Swagger UIで表示
+#### View with Swagger UI
 
 ```bash
-# ローカルでSwagger UIを起動
+# Start Swagger UI locally
 npx swagger-ui-watcher docs/api/openapi.yaml
 ```
 
-ブラウザで `http://localhost:8080` を開く
+Open `http://localhost:8080` in your browser
 
-#### コード生成
+#### Code Generation
 
 ```bash
-# TypeScript SDK生成
+# Generate TypeScript SDK
 npx openapi-generator-cli generate \
   -i docs/api/openapi.yaml \
   -g typescript-fetch \
   -o ./sdk/typescript
 
-# Python SDK生成
+# Generate Python SDK
 npx openapi-generator-cli generate \
   -i docs/api/openapi.yaml \
   -g python \
@@ -270,9 +270,9 @@ npx openapi-generator-cli generate \
 
 ---
 
-## クイックスタート
+## Quick Start
 
-### 1. 基本的なOIDC認証フロー
+### 1. Basic OIDC Authentication Flow
 
 ```bash
 # 1. Discovery
@@ -298,10 +298,10 @@ curl https://your-domain.com/userinfo \
   -H "Authorization: Bearer ACCESS_TOKEN"
 ```
 
-### 2. Passkey登録フロー
+### 2. Passkey Registration Flow
 
 ```bash
-# 1. Passkey登録開始
+# 1. Start Passkey Registration
 curl -X POST https://your-domain.com/auth/passkey/register \
   -H "Content-Type: application/json" \
   -d '{
@@ -309,10 +309,10 @@ curl -X POST https://your-domain.com/auth/passkey/register \
     "name": "John Doe"
   }'
 
-# 2. ブラウザでWebAuthn API実行
+# 2. Execute WebAuthn API in Browser
 # navigator.credentials.create()
 
-# 3. Passkey検証
+# 3. Verify Passkey
 curl -X POST https://your-domain.com/auth/passkey/verify \
   -H "Content-Type: application/json" \
   -d '{
@@ -320,7 +320,7 @@ curl -X POST https://your-domain.com/auth/passkey/verify \
   }'
 ```
 
-### 3. Magic Link送信
+### 3. Send Magic Link
 
 ```bash
 curl -X POST https://your-domain.com/auth/magic-link/send \
@@ -330,7 +330,7 @@ curl -X POST https://your-domain.com/auth/magic-link/send \
   }'
 ```
 
-### 4. 管理者API - ユーザー一覧取得
+### 4. Admin API - Get User List
 
 ```bash
 curl https://your-domain.com/admin/users?q=john&limit=50 \
@@ -339,42 +339,42 @@ curl https://your-domain.com/admin/users?q=john&limit=50 \
 
 ---
 
-## SDK & ライブラリ
+## SDKs & Libraries
 
-### 公式SDK（Phase 6で提供予定）
+### Official SDKs (Planned for Phase 6)
 
 - **TypeScript/JavaScript SDK** - npm: `@enrai/sdk`
 - **Python SDK** - PyPI: `enrai-sdk`
 - **Go SDK** - `github.com/enrai/go-sdk`
 - **Rust SDK** - Crates.io: `enrai-sdk`
 
-### コミュニティSDK
+### Community SDKs
 
 - **Ruby** - `enrai-ruby` (community-maintained)
 - **PHP** - `enrai-php` (community-maintained)
 
 ---
 
-## API バージョニング
+## API Versioning
 
-### 現在のバージョン
+### Current Version
 
 - **API Version**: v1.0
 - **OpenAPI Version**: 3.1.0
 - **OIDC Version**: 1.0
 - **OAuth Version**: 2.0, 2.1
 
-### バージョン管理ポリシー
+### Version Management Policy
 
-- **メジャーバージョン変更**: 破壊的変更（例: v1 → v2）
-- **マイナーバージョン変更**: 後方互換性のある新機能
-- **パッチバージョン変更**: バグフィックス
+- **Major Version Change**: Breaking changes (e.g., v1 → v2)
+- **Minor Version Change**: Backward-compatible new features
+- **Patch Version Change**: Bug fixes
 
-### 非推奨ポリシー
+### Deprecation Policy
 
-1. 非推奨の告知（6ヶ月前）
-2. 警告ヘッダー付きで稼働継続
-3. 完全削除
+1. Deprecation notice (6 months in advance)
+2. Continue operating with warning headers
+3. Complete removal
 
 ```http
 Deprecation: true
@@ -384,29 +384,29 @@ Link: <https://docs.enrai.org/migration/v2>; rel="sunset"
 
 ---
 
-## サポート & フィードバック
+## Support & Feedback
 
-### ドキュメント
+### Documentation
 
-- **メインドキュメント**: [README.md](../README.md)
-- **Phase 5計画**: [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md)
-- **APIインベントリ**: [API_INVENTORY.md](../project-management/API_INVENTORY.md)
-- **データベーススキーマ**: [database-schema.md](../architecture/database-schema.md)
+- **Main Documentation**: [README.md](../README.md)
+- **Phase 5 Planning**: [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md)
+- **API Inventory**: [API_INVENTORY.md](../project-management/API_INVENTORY.md)
+- **Database Schema**: [database-schema.md](../architecture/database-schema.md)
 
-### Issue報告
+### Issue Reporting
 
 GitHub Issues: https://github.com/sgrastar/enrai/issues
 
-### コントリビューション
+### Contributions
 
-Pull Requests歓迎: https://github.com/sgrastar/enrai/pulls
+Pull Requests Welcome: https://github.com/sgrastar/enrai/pulls
 
 ---
 
-## 変更履歴
+## Change History
 
-- **2025-11-13**: 初版作成（Phase 5設計）
-  - OIDC Core APIs (実装済み)
-  - OIDC拡張機能 (実装済み)
-  - Phase 5計画API追加
-  - OpenAPI 3.1仕様書追加
+- **2025-11-13**: Initial version (Phase 5 Design)
+  - OIDC Core APIs (implemented)
+  - OIDC Extensions (implemented)
+  - Added Phase 5 planned APIs
+  - Added OpenAPI 3.1 specification
