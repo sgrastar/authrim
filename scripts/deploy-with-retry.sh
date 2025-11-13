@@ -102,6 +102,46 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     echo "✅ All packages deployed successfully!"
+    echo ""
+
+    # Extract ISSUER_URL from wrangler.toml
+    ISSUER_URL=""
+    if [ -f "packages/op-discovery/wrangler.toml" ]; then
+        ISSUER_URL=$(grep 'ISSUER_URL = ' packages/op-discovery/wrangler.toml | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
+    fi
+
+    if [ -n "$ISSUER_URL" ]; then
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🌐 OpenID Connect Endpoints"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "ISSUER: $ISSUER_URL"
+        echo ""
+        echo "Discovery & Keys:"
+        echo "  • OpenID Configuration:  $ISSUER_URL/.well-known/openid-configuration"
+        echo "  • JWKS (Public Keys):    $ISSUER_URL/.well-known/jwks.json"
+        echo ""
+        echo "Core Endpoints:"
+        echo "  • Authorization:         $ISSUER_URL/authorize"
+        echo "  • Token:                 $ISSUER_URL/token"
+        echo "  • UserInfo:              $ISSUER_URL/userinfo"
+        echo ""
+        echo "Management:"
+        echo "  • Client Registration:   $ISSUER_URL/register"
+        echo "  • Token Introspection:   $ISSUER_URL/introspect"
+        echo "  • Token Revocation:      $ISSUER_URL/revoke"
+        echo ""
+        echo "Advanced:"
+        echo "  • PAR (Pushed AuthZ):    $ISSUER_URL/as/par"
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🧪 Quick Test:"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "curl $ISSUER_URL/.well-known/openid-configuration | jq"
+        echo ""
+    fi
+
     exit 0
 else
     echo "❌ Failed packages:"
