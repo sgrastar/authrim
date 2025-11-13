@@ -16,50 +16,62 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', logger());
 
 // Enhanced security headers
-app.use('*', secureHeaders({
-  contentSecurityPolicy: {
-    defaultSrc: ["'self'"],
-    scriptSrc: ["'self'", "'unsafe-inline'"],
-    styleSrc: ["'self'", "'unsafe-inline'"],
-    imgSrc: ["'self'", 'data:', 'https:'],
-    connectSrc: ["'self'"],
-    fontSrc: ["'self'"],
-    objectSrc: ["'none'"],
-    mediaSrc: ["'self'"],
-    frameSrc: ["'none'"],
-  },
-  strictTransportSecurity: 'max-age=63072000; includeSubDomains; preload',
-  xFrameOptions: 'DENY',
-  xContentTypeOptions: 'nosniff',
-  referrerPolicy: 'strict-origin-when-cross-origin',
-  permissionsPolicy: {
-    camera: [],
-    microphone: [],
-    geolocation: [],
-    payment: [],
-  },
-}));
+app.use(
+  '*',
+  secureHeaders({
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+    strictTransportSecurity: 'max-age=63072000; includeSubDomains; preload',
+    xFrameOptions: 'DENY',
+    xContentTypeOptions: 'nosniff',
+    referrerPolicy: 'strict-origin-when-cross-origin',
+    permissionsPolicy: {
+      camera: [],
+      microphone: [],
+      geolocation: [],
+      payment: [],
+    },
+  })
+);
 
 // CORS configuration
-app.use('*', cors({
-  origin: '*',
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-  exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
-  maxAge: 86400,
-  credentials: true,
-}));
+app.use(
+  '*',
+  cors({
+    origin: '*',
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
+    maxAge: 86400,
+    credentials: true,
+  })
+);
 
 // Rate limiting for sensitive endpoints
-app.use('/authorize', rateLimitMiddleware({
-  ...RateLimitProfiles.moderate,
-  endpoints: ['/authorize'],
-}));
+app.use(
+  '/authorize',
+  rateLimitMiddleware({
+    ...RateLimitProfiles.moderate,
+    endpoints: ['/authorize'],
+  })
+);
 
-app.use('/as/par', rateLimitMiddleware({
-  ...RateLimitProfiles.strict,
-  endpoints: ['/as/par'],
-}));
+app.use(
+  '/as/par',
+  rateLimitMiddleware({
+    ...RateLimitProfiles.strict,
+    endpoints: ['/as/par'],
+  })
+);
 
 // Health check endpoint
 app.get('/health', (c) => {
@@ -81,10 +93,13 @@ app.post('/as/par', parHandler);
 
 // PAR endpoint should reject non-POST methods
 app.get('/as/par', (c) => {
-  return c.json({
-    error: 'invalid_request',
-    error_description: 'PAR endpoint only accepts POST requests',
-  }, 405);
+  return c.json(
+    {
+      error: 'invalid_request',
+      error_description: 'PAR endpoint only accepts POST requests',
+    },
+    405
+  );
 });
 
 // 404 handler

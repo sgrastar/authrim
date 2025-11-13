@@ -132,7 +132,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   let publicKey;
   try {
     const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
-    publicKey = await importJWK(jwk, 'RS256') as KeyLike;
+    publicKey = (await importJWK(jwk, 'RS256')) as KeyLike;
   } catch (err) {
     console.error('Failed to import public key:', err);
     return c.json(

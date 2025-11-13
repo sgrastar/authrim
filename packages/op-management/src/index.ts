@@ -17,49 +17,64 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', logger());
 
 // Enhanced security headers
-app.use('*', secureHeaders({
-  contentSecurityPolicy: {
-    defaultSrc: ["'self'"],
-    scriptSrc: ["'self'"],
-    styleSrc: ["'self'"],
-    imgSrc: ["'self'", 'data:', 'https:'],
-    connectSrc: ["'self'"],
-    fontSrc: ["'self'"],
-    objectSrc: ["'none'"],
-    mediaSrc: ["'self'"],
-    frameSrc: ["'none'"],
-  },
-  strictTransportSecurity: 'max-age=63072000; includeSubDomains; preload',
-  xFrameOptions: 'DENY',
-  xContentTypeOptions: 'nosniff',
-  referrerPolicy: 'strict-origin-when-cross-origin',
-}));
+app.use(
+  '*',
+  secureHeaders({
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+    strictTransportSecurity: 'max-age=63072000; includeSubDomains; preload',
+    xFrameOptions: 'DENY',
+    xContentTypeOptions: 'nosniff',
+    referrerPolicy: 'strict-origin-when-cross-origin',
+  })
+);
 
 // CORS configuration
-app.use('*', cors({
-  origin: '*',
-  allowMethods: ['POST', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-  exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
-  maxAge: 86400,
-  credentials: true,
-}));
+app.use(
+  '*',
+  cors({
+    origin: '*',
+    allowMethods: ['POST', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
+    maxAge: 86400,
+    credentials: true,
+  })
+);
 
 // Rate limiting for sensitive endpoints
-app.use('/register', rateLimitMiddleware({
-  ...RateLimitProfiles.strict,
-  endpoints: ['/register'],
-}));
+app.use(
+  '/register',
+  rateLimitMiddleware({
+    ...RateLimitProfiles.strict,
+    endpoints: ['/register'],
+  })
+);
 
-app.use('/introspect', rateLimitMiddleware({
-  ...RateLimitProfiles.strict,
-  endpoints: ['/introspect'],
-}));
+app.use(
+  '/introspect',
+  rateLimitMiddleware({
+    ...RateLimitProfiles.strict,
+    endpoints: ['/introspect'],
+  })
+);
 
-app.use('/revoke', rateLimitMiddleware({
-  ...RateLimitProfiles.strict,
-  endpoints: ['/revoke'],
-}));
+app.use(
+  '/revoke',
+  rateLimitMiddleware({
+    ...RateLimitProfiles.strict,
+    endpoints: ['/revoke'],
+  })
+);
 
 // Health check endpoint
 app.get('/health', (c) => {
