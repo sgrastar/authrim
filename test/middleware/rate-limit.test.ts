@@ -71,21 +71,28 @@ describe('Rate Limiting Middleware', () => {
 
   describe('Basic Rate Limiting', () => {
     it('should allow requests within rate limit', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 5,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 5,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
       // Make 5 requests (within limit)
       for (let i = 0; i < 5; i++) {
-        const res = await app.request('/test', {
-          method: 'GET',
-          headers: {
-            'CF-Connecting-IP': '192.168.1.1',
+        const res = await app.request(
+          '/test',
+          {
+            method: 'GET',
+            headers: {
+              'CF-Connecting-IP': '192.168.1.1',
+            },
           },
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res.status).toBe(200);
         expect(res.headers.get('X-RateLimit-Limit')).toBe('5');
@@ -95,32 +102,43 @@ describe('Rate Limiting Middleware', () => {
     });
 
     it('should block requests exceeding rate limit', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 3,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 3,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
       // Make 3 requests (within limit)
       for (let i = 0; i < 3; i++) {
-        const res = await app.request('/test', {
-          method: 'GET',
-          headers: {
-            'CF-Connecting-IP': '192.168.1.1',
+        const res = await app.request(
+          '/test',
+          {
+            method: 'GET',
+            headers: {
+              'CF-Connecting-IP': '192.168.1.1',
+            },
           },
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res.status).toBe(200);
       }
 
       // 4th request should be rate limited
-      const res = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(429);
 
@@ -133,54 +151,73 @@ describe('Rate Limiting Middleware', () => {
     });
 
     it('should track different IPs separately', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 2,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 2,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
       // IP 1: 2 requests (should succeed)
       for (let i = 0; i < 2; i++) {
-        const res = await app.request('/test', {
-          method: 'GET',
-          headers: {
-            'CF-Connecting-IP': '192.168.1.1',
+        const res = await app.request(
+          '/test',
+          {
+            method: 'GET',
+            headers: {
+              'CF-Connecting-IP': '192.168.1.1',
+            },
           },
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res.status).toBe(200);
       }
 
       // IP 2: 2 requests (should also succeed)
       for (let i = 0; i < 2; i++) {
-        const res = await app.request('/test', {
-          method: 'GET',
-          headers: {
-            'CF-Connecting-IP': '192.168.1.2',
+        const res = await app.request(
+          '/test',
+          {
+            method: 'GET',
+            headers: {
+              'CF-Connecting-IP': '192.168.1.2',
+            },
           },
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res.status).toBe(200);
       }
 
       // IP 1: 3rd request (should be blocked)
-      const res1 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res1 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res1.status).toBe(429);
 
       // IP 2: 3rd request (should also be blocked)
-      const res2 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.2',
+      const res2 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.2',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res2.status).toBe(429);
     });
@@ -188,115 +225,159 @@ describe('Rate Limiting Middleware', () => {
 
   describe('IP Address Detection', () => {
     it('should use CF-Connecting-IP header when available', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 1,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
-      const res1 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
-          'X-Forwarded-For': '10.0.0.1',
+      const res1 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+            'X-Forwarded-For': '10.0.0.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res1.status).toBe(200);
 
       // Same CF-Connecting-IP should be rate limited
-      const res2 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
-          'X-Forwarded-For': '10.0.0.2', // Different X-Forwarded-For
+      const res2 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+            'X-Forwarded-For': '10.0.0.2', // Different X-Forwarded-For
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res2.status).toBe(429);
     });
 
     it('should fallback to X-Forwarded-For when CF-Connecting-IP not available', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 1,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
-      const res1 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'X-Forwarded-For': '10.0.0.1',
+      const res1 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'X-Forwarded-For': '10.0.0.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res1.status).toBe(200);
 
       // Same X-Forwarded-For should be rate limited
-      const res2 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'X-Forwarded-For': '10.0.0.1',
+      const res2 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'X-Forwarded-For': '10.0.0.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res2.status).toBe(429);
     });
 
     it('should handle X-Forwarded-For with multiple IPs', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 1,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
-      const res1 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'X-Forwarded-For': '192.168.1.1, 10.0.0.1, 172.16.0.1',
+      const res1 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'X-Forwarded-For': '192.168.1.1, 10.0.0.1, 172.16.0.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res1.status).toBe(200);
 
       // Same first IP should be rate limited
-      const res2 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'X-Forwarded-For': '192.168.1.1, 10.0.0.2',
+      const res2 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'X-Forwarded-For': '192.168.1.1, 10.0.0.2',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res2.status).toBe(429);
     });
 
     it('should fallback to X-Real-IP when others not available', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 1,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
-      const res1 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'X-Real-IP': '192.168.1.1',
+      const res1 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'X-Real-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res1.status).toBe(200);
 
       // Same X-Real-IP should be rate limited
-      const res2 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'X-Real-IP': '192.168.1.1',
+      const res2 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'X-Real-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res2.status).toBe(429);
     });
@@ -304,74 +385,100 @@ describe('Rate Limiting Middleware', () => {
 
   describe('Endpoint Filtering', () => {
     it('should only apply to specified endpoints', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 1,
-        windowSeconds: 60,
-        endpoints: ['/api'],
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+          endpoints: ['/api'],
+        })
+      );
 
       app.get('/api/test', (c) => c.json({ success: true }));
       app.get('/public/test', (c) => c.json({ success: true }));
 
       // First request to /api/test (should succeed)
-      const res1 = await app.request('/api/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res1 = await app.request(
+        '/api/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res1.status).toBe(200);
 
       // Second request to /api/test (should be rate limited)
-      const res2 = await app.request('/api/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res2 = await app.request(
+        '/api/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res2.status).toBe(429);
 
       // Multiple requests to /public/test (should all succeed - no rate limit)
       for (let i = 0; i < 5; i++) {
-        const res = await app.request('/public/test', {
-          method: 'GET',
-          headers: {
-            'CF-Connecting-IP': '192.168.1.1',
+        const res = await app.request(
+          '/public/test',
+          {
+            method: 'GET',
+            headers: {
+              'CF-Connecting-IP': '192.168.1.1',
+            },
           },
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res.status).toBe(200);
       }
     });
 
     it('should apply to all endpoints when endpoints filter not specified', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 1,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/api/test', (c) => c.json({ success: true }));
       app.get('/public/test', (c) => c.json({ success: true }));
 
       // First request to /api/test
-      const res1 = await app.request('/api/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res1 = await app.request(
+        '/api/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res1.status).toBe(200);
 
       // Second request to /public/test (different endpoint but same IP, should be rate limited)
-      const res2 = await app.request('/public/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res2 = await app.request(
+        '/public/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res2.status).toBe(429);
     });
@@ -379,81 +486,111 @@ describe('Rate Limiting Middleware', () => {
 
   describe('IP Whitelisting', () => {
     it('should skip rate limiting for whitelisted IPs', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 2,
-        windowSeconds: 60,
-        skipIPs: ['192.168.1.100'],
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 2,
+          windowSeconds: 60,
+          skipIPs: ['192.168.1.100'],
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
       // Whitelisted IP can make many requests
       for (let i = 0; i < 10; i++) {
-        const res = await app.request('/test', {
-          method: 'GET',
-          headers: {
-            'CF-Connecting-IP': '192.168.1.100',
+        const res = await app.request(
+          '/test',
+          {
+            method: 'GET',
+            headers: {
+              'CF-Connecting-IP': '192.168.1.100',
+            },
           },
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res.status).toBe(200);
       }
 
       // Non-whitelisted IP is rate limited normally
-      const res1 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res1 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res1.status).toBe(200);
 
-      const res2 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res2 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res2.status).toBe(200);
 
-      const res3 = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res3 = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res3.status).toBe(429);
     });
 
     it('should support multiple whitelisted IPs', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 1,
-        windowSeconds: 60,
-        skipIPs: ['192.168.1.100', '10.0.0.1'],
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+          skipIPs: ['192.168.1.100', '10.0.0.1'],
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
       // Both whitelisted IPs can make unlimited requests
       for (let i = 0; i < 5; i++) {
-        const res1 = await app.request('/test', {
-          method: 'GET',
-          headers: {
-            'CF-Connecting-IP': '192.168.1.100',
+        const res1 = await app.request(
+          '/test',
+          {
+            method: 'GET',
+            headers: {
+              'CF-Connecting-IP': '192.168.1.100',
+            },
           },
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res1.status).toBe(200);
 
-        const res2 = await app.request('/test', {
-          method: 'GET',
-          headers: {
-            'CF-Connecting-IP': '10.0.0.1',
+        const res2 = await app.request(
+          '/test',
+          {
+            method: 'GET',
+            headers: {
+              'CF-Connecting-IP': '10.0.0.1',
+            },
           },
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res2.status).toBe(200);
       }
@@ -462,19 +599,26 @@ describe('Rate Limiting Middleware', () => {
 
   describe('Rate Limit Headers', () => {
     it('should return correct rate limit headers', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 5,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 5,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
-      const res = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(200);
 
@@ -492,48 +636,66 @@ describe('Rate Limiting Middleware', () => {
     });
 
     it('should decrement X-RateLimit-Remaining on each request', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 3,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 3,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
       for (let i = 0; i < 3; i++) {
-        const res = await app.request('/test', {
-          method: 'GET',
-          headers: {
-            'CF-Connecting-IP': '192.168.1.1',
+        const res = await app.request(
+          '/test',
+          {
+            method: 'GET',
+            headers: {
+              'CF-Connecting-IP': '192.168.1.1',
+            },
           },
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res.headers.get('X-RateLimit-Remaining')).toBe(String(2 - i));
       }
     });
 
     it('should include Retry-After header when rate limited', async () => {
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 1,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
       // First request (succeeds)
-      await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       // Second request (rate limited)
-      const res = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(429);
 
@@ -569,23 +731,31 @@ describe('Rate Limiting Middleware', () => {
 
       // Make 10 requests (within strict limit)
       for (let i = 0; i < 10; i++) {
-        const res = await app.request('/test', {
-          method: 'GET',
-          headers: {
-            'CF-Connecting-IP': '192.168.1.1',
+        const res = await app.request(
+          '/test',
+          {
+            method: 'GET',
+            headers: {
+              'CF-Connecting-IP': '192.168.1.1',
+            },
           },
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res.status).toBe(200);
       }
 
       // 11th request should be blocked
-      const res = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(429);
     });
@@ -595,27 +765,40 @@ describe('Rate Limiting Middleware', () => {
     it('should fail open on KV errors (allow request)', async () => {
       // Create a KV that throws errors
       const errorKV = {
-        get: async () => { throw new Error('KV error'); },
-        put: async () => { throw new Error('KV error'); },
-        delete: async () => { throw new Error('KV error'); },
+        get: async () => {
+          throw new Error('KV error');
+        },
+        put: async () => {
+          throw new Error('KV error');
+        },
+        delete: async () => {
+          throw new Error('KV error');
+        },
       } as unknown as KVNamespace;
 
       mockEnv.STATE_STORE = errorKV;
 
-      app.use('*', rateLimitMiddleware({
-        maxRequests: 1,
-        windowSeconds: 60,
-      }));
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+        })
+      );
 
       app.get('/test', (c) => c.json({ success: true }));
 
       // Should succeed despite KV errors (fail open)
-      const res = await app.request('/test', {
-        method: 'GET',
-        headers: {
-          'CF-Connecting-IP': '192.168.1.1',
+      const res = await app.request(
+        '/test',
+        {
+          method: 'GET',
+          headers: {
+            'CF-Connecting-IP': '192.168.1.1',
+          },
         },
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(200);
     });

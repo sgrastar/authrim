@@ -74,10 +74,10 @@ export function validateSectorIdentifierConsistency(redirectUris: string[]): boo
   }
 
   try {
-    const sectorIdentifiers = redirectUris.map(uri => extractSectorIdentifier(uri));
+    const sectorIdentifiers = redirectUris.map((uri) => extractSectorIdentifier(uri));
     const firstSector = sectorIdentifiers[0];
 
-    return sectorIdentifiers.every(sector => sector === firstSector);
+    return sectorIdentifiers.every((sector) => sector === firstSector);
   } catch {
     return false;
   }

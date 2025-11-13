@@ -145,7 +145,10 @@ describe('Pairwise Subject Identifier Utilities', () => {
 
   describe('determineEffectiveSectorIdentifier', () => {
     it('should use sector_identifier_uri when provided', () => {
-      const redirectUris = ['https://app1.example.com/callback', 'https://app2.example.com/callback'];
+      const redirectUris = [
+        'https://app1.example.com/callback',
+        'https://app2.example.com/callback',
+      ];
       const sectorIdentifierUri = 'https://example.com/sector';
 
       const sector = determineEffectiveSectorIdentifier(redirectUris, sectorIdentifierUri);
