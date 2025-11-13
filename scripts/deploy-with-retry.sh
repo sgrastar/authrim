@@ -57,18 +57,29 @@ pnpm run build
 echo ""
 
 # Deploy packages in order
+# Router must be deployed LAST as it depends on all other workers via Service Bindings
 PACKAGES=(
     "op-discovery:packages/op-discovery"
     "op-management:packages/op-management"
     "op-auth:packages/op-auth"
     "op-token:packages/op-token"
     "op-userinfo:packages/op-userinfo"
+    "router:packages/router"
 )
 
 FAILED_PACKAGES=()
 FIRST_DEPLOY=true
 
 for pkg in "${PACKAGES[@]}"; do
+    IFS=':' read -r name path <<< "$pkg"
+
+    # Skip router if wrangler.toml doesn't exist (production custom domain mode)
+    if [ "$name" = "router" ] && [ ! -f "$path/wrangler.toml" ]; then
+        echo "⊗ Skipping router (wrangler.toml not found - not needed in production mode)"
+        echo ""
+        continue
+    fi
+
     # Add delay between deployments to avoid rate limits (except for first deployment)
     if [ "$FIRST_DEPLOY" = true ]; then
         FIRST_DEPLOY=false
@@ -78,7 +89,6 @@ for pkg in "${PACKAGES[@]}"; do
         echo ""
     fi
 
-    IFS=':' read -r name path <<< "$pkg"
     if ! deploy_package "$name" "$path"; then
         FAILED_PACKAGES+=("$name")
     fi
