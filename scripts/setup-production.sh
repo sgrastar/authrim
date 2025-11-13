@@ -75,7 +75,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  1) Test Environment (workers.dev + Router Worker)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "     • Single unified endpoint: https://enrai-router.$SUBDOMAIN.workers.dev"
+echo "     • Single unified endpoint: https://enrai.$SUBDOMAIN.workers.dev"
 echo "     • Uses Router Worker with Service Bindings"
 echo "     • All endpoints accessible under one domain"
 echo "     • Best for: Development, testing, quick setup"
@@ -95,7 +95,7 @@ read -p "Enter your choice (1/2): " -r DEPLOYMENT_MODE
 case $DEPLOYMENT_MODE in
     1)
         # Test Environment: Router Worker + workers.dev
-        PRODUCTION_URL="https://enrai-router.$SUBDOMAIN.workers.dev"
+        PRODUCTION_URL="https://enrai.$SUBDOMAIN.workers.dev"
         USE_ROUTER="true"
         DEPLOYMENT_TYPE="test"
         echo ""
@@ -378,7 +378,7 @@ if [[ "$USE_ROUTER" == "true" ]]; then
     echo "    • enrai-op-token.$SUBDOMAIN.workers.dev"
     echo "    • enrai-op-userinfo.$SUBDOMAIN.workers.dev"
     echo "    • enrai-op-management.$SUBDOMAIN.workers.dev"
-    echo "    • enrai-router.$SUBDOMAIN.workers.dev (main entry point)"
+    echo "    • enrai.$SUBDOMAIN.workers.dev (main entry point - Router Worker)"
     echo ""
     echo "  ℹ️  All OpenID Connect endpoints will be accessible via the Router Worker"
     echo ""
