@@ -24,7 +24,9 @@ if ! wrangler whoami &> /dev/null; then
     exit 1
 fi
 
-echo "📦 Creating KV namespaces..."
+echo "📦 KV Namespace Setup"
+echo ""
+echo "This script will create or update KV namespaces for your Enrai deployment."
 echo ""
 echo "KV namespaces are Cloudflare's key-value storage used by the workers."
 echo "We'll create both production and preview namespaces for:"
@@ -36,13 +38,81 @@ echo "  • RATE_LIMIT - Rate limiting counters"
 echo "  • REFRESH_TOKENS - OAuth refresh tokens"
 echo "  • REVOKED_TOKENS - Revoked token list"
 echo ""
+echo "⚠️  NOTE: If existing namespaces are found, you'll be asked to:"
+echo "   1) Use existing namespace (keeps all data)"
+echo "   2) Delete and recreate (WARNING: deletes all data)"
+echo "   3) Abort script"
+echo ""
+read -p "Continue? (y/N): " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "❌ Setup cancelled"
+    exit 1
+fi
+echo ""
 
-# Function to create KV namespace and extract ID
+# Function to get or create KV namespace and extract ID
 create_kv_namespace() {
     local name=$1
     local preview_flag=$2
 
-    echo "  📝 Creating KV namespace: $name $preview_flag" >&2
+    # First, try to get existing namespace
+    echo "  📝 Checking for existing KV namespace: $name $preview_flag" >&2
+    local list_output=$(wrangler kv namespace list 2>&1)
+
+    # Determine the title to search for
+    local title="$name"
+    if [ "$preview_flag" = "--preview" ]; then
+        # Preview namespaces have a different title format
+        # Try to find a namespace with title containing the name and "preview"
+        local id=$(echo "$list_output" | grep -i "\"title\":.*$name" | grep -i "preview" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+        if [ -z "$id" ]; then
+            # If not found, try exact match with name
+            id=$(echo "$list_output" | grep "\"title\":\"$title\"" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+        fi
+    else
+        # For production namespaces, look for exact title match (without preview in name)
+        id=$(echo "$list_output" | grep "\"title\":\"$title\"" | grep -v -i "preview" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    fi
+
+    if [ -n "$id" ]; then
+        echo "" >&2
+        echo "  ⚠️  Found existing namespace: $name $preview_flag" >&2
+        echo "      ID: $id" >&2
+        echo "" >&2
+        echo "  What would you like to do?" >&2
+        echo "    1) Use existing namespace (keep all data)" >&2
+        echo "    2) Delete and recreate namespace (WARNING: all data will be lost)" >&2
+        echo "    3) Abort script" >&2
+        echo "" >&2
+        read -p "  Enter your choice (1/2/3): " -r choice >&2
+
+        case $choice in
+            1)
+                echo "  ✓ Using existing namespace with ID: $id" >&2
+                echo "$id"
+                return 0
+                ;;
+            2)
+                echo "  🗑️  Deleting existing namespace: $id" >&2
+                wrangler kv namespace delete --namespace-id="$id" >&2
+                echo "  📝 Creating new namespace: $name $preview_flag" >&2
+                # Fall through to create new namespace
+                ;;
+            3)
+                echo "  ❌ Script aborted by user" >&2
+                exit 1
+                ;;
+            *)
+                echo "  ❌ Invalid choice. Aborting." >&2
+                exit 1
+                ;;
+        esac
+    fi
+
+    # Create new namespace (either first time or after deletion)
+    echo "  📝 Creating new KV namespace: $name $preview_flag" >&2
     local output=$(wrangler kv namespace create "$name" $preview_flag 2>&1)
     local exit_code=$?
 
@@ -66,6 +136,7 @@ create_kv_namespace() {
         exit 1
     fi
 
+    echo "  ✓ Created new namespace with ID: $id" >&2
     echo "$id"
 }
 
