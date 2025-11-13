@@ -2,7 +2,7 @@
 
 **Status:** Planning
 **Timeline:** May 1-31, 2026 (4 weeks)
-**Goal:** 最高のパスワードレス体験 + Auth0/Clerkを超えるUX
+**Goal:** 最高のパスワードレス体験とユーザー体験
 
 ---
 
@@ -32,7 +32,7 @@ Phase 5では、Enraiに以下の機能を実装します：
 
 ### 主要な目標
 
-1. **Auth0/Clerkを超えるUX** - より直感的で高速なUI
+1. **直感的で高速なUI** - ユーザー体験を最優先
 2. **パスワードレスファースト** - Passkey/WebAuthnを第一選択に
 3. **エッジネイティブ** - Cloudflare Workersに最適化
 4. **アクセシビリティ** - WCAG 2.1 AA準拠
