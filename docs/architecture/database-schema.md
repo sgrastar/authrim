@@ -1,4 +1,4 @@
-# Hibana Database Schema - ER Diagram 🗄️
+# Enrai Database Schema - ER Diagram 🗄️
 
 **最終更新**: 2025-11-13
 **ステータス**: Phase 5 設計
@@ -19,7 +19,7 @@
 
 ## 概要
 
-このドキュメントは、Hibana OIDC OPのデータベーススキーマを定義します。
+このドキュメントは、Enrai OIDC OPのデータベーススキーマを定義します。
 
 ### 統計サマリー
 

@@ -1,6 +1,6 @@
 # Phase 2 前提条件チェックリスト
 
-**プロジェクト:** Hibana OpenID Connect Provider
+**プロジェクト:** Enrai OpenID Connect Provider
 **作成日:** 2025-11-11
 **Phase 2期間:** Week 6-12
 **ステータス:** ✅ すべての前提条件を完全達成

@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This guide walks you through deploying Hibana to Cloudflare Workers, resulting in a production-ready OpenID Connect Provider accessible via a public URL.
+This guide walks you through deploying Enrai to Cloudflare Workers, resulting in a production-ready OpenID Connect Provider accessible via a public URL.
 
 ## 📋 Table of Contents
 
@@ -18,7 +18,7 @@ This guide walks you through deploying Hibana to Cloudflare Workers, resulting i
 
 ## Prerequisites
 
-Before deploying Hibana, ensure you have:
+Before deploying Enrai, ensure you have:
 
 1. **Cloudflare Account** (free tier works)
    - Sign up at [cloudflare.com](https://dash.cloudflare.com/sign-up)
@@ -39,12 +39,12 @@ Before deploying Hibana, ensure you have:
 
 ## Deployment Overview
 
-When you deploy Hibana, you'll get:
+When you deploy Enrai, you'll get:
 
 ### 🌍 Public URL
 Your OpenID Provider will be accessible at:
 ```
-https://hibana.{your-subdomain}.workers.dev
+https://enrai.{your-subdomain}.workers.dev
 ```
 
 Or with a custom domain:
@@ -76,8 +76,8 @@ https://id.yourdomain.com
 
 ```bash
 # Clone the repository
-git clone https://github.com/sgrastar/hibana.git
-cd hibana
+git clone https://github.com/sgrastar/enrai.git
+cd enrai
 
 # Install dependencies
 npm install
@@ -143,8 +143,8 @@ Also update the production issuer URL:
 
 ```toml
 [env.production]
-name = "hibana-prod"
-vars = { ISSUER_URL = "https://hibana.YOUR_SUBDOMAIN.workers.dev" }
+name = "enrai-prod"
+vars = { ISSUER_URL = "https://enrai.YOUR_SUBDOMAIN.workers.dev" }
 ```
 
 Replace `YOUR_SUBDOMAIN` with your Cloudflare Workers subdomain.
@@ -199,7 +199,7 @@ After deployment, Wrangler will output your Worker's URL. Test the deployment:
 
 ```bash
 # Replace with your actual Worker URL
-WORKER_URL="https://hibana.YOUR_SUBDOMAIN.workers.dev"
+WORKER_URL="https://enrai.YOUR_SUBDOMAIN.workers.dev"
 
 # Test discovery endpoint
 curl "$WORKER_URL/.well-known/openid-configuration" | jq
@@ -247,7 +247,7 @@ wrangler secret put PUBLIC_JWK_JSON --env production
 
 ## GitHub Actions CI/CD
 
-Hibana includes pre-configured GitHub Actions workflows for automated testing and deployment.
+Enrai includes pre-configured GitHub Actions workflows for automated testing and deployment.
 
 ### Setup GitHub Secrets
 
@@ -300,7 +300,7 @@ Ensure your `ISSUER_URL` in production matches your actual deployment URL:
 
 ```toml
 [env.production]
-vars = { ISSUER_URL = "https://hibana.YOUR_SUBDOMAIN.workers.dev" }
+vars = { ISSUER_URL = "https://enrai.YOUR_SUBDOMAIN.workers.dev" }
 ```
 
 Then redeploy:
@@ -314,7 +314,7 @@ Use the deployed OP with a test client application:
 
 ```bash
 # Example authorization URL
-https://hibana.YOUR_SUBDOMAIN.workers.dev/authorize?
+https://enrai.YOUR_SUBDOMAIN.workers.dev/authorize?
   response_type=code&
   client_id=test-client&
   redirect_uri=https://your-app.com/callback&
@@ -332,7 +332,7 @@ View logs in Cloudflare Dashboard or via Wrangler:
 wrangler tail --env production
 
 # View logs in dashboard
-# https://dash.cloudflare.com → Workers → hibana-prod → Logs
+# https://dash.cloudflare.com → Workers → enrai-prod → Logs
 ```
 
 ---
@@ -343,7 +343,7 @@ wrangler tail --env production
 
 If your domain is managed by Cloudflare:
 
-1. Go to **Workers & Pages** → **hibana-prod** → **Settings** → **Domains & Routes**
+1. Go to **Workers & Pages** → **enrai-prod** → **Settings** → **Domains & Routes**
 2. Click **Add Custom Domain**
 3. Enter your domain (e.g., `id.yourdomain.com`)
 4. Cloudflare will automatically provision SSL certificate
@@ -352,7 +352,7 @@ If your domain is managed by Cloudflare:
 
 1. Add a CNAME record pointing to your Worker:
    ```
-   id.yourdomain.com CNAME hibana.YOUR_SUBDOMAIN.workers.dev
+   id.yourdomain.com CNAME enrai.YOUR_SUBDOMAIN.workers.dev
    ```
 
 2. Add the custom domain in Cloudflare Dashboard (same as above)
@@ -512,7 +512,7 @@ After successful deployment:
 - [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
 - [Wrangler CLI Documentation](https://developers.cloudflare.com/workers/wrangler/)
 - [OpenID Connect Specification](https://openid.net/specs/openid-connect-core-1_0.html)
-- [Hibana Development Setup](./conformance/SETUP.md)
+- [Enrai Development Setup](./conformance/SETUP.md)
 
 ---
 
@@ -521,7 +521,7 @@ After successful deployment:
 If you encounter issues:
 
 1. Check the [Troubleshooting](#troubleshooting) section
-2. Review [GitHub Issues](https://github.com/sgrastar/hibana/issues)
+2. Review [GitHub Issues](https://github.com/sgrastar/enrai/issues)
 3. Create a new issue with:
    - Deployment logs
    - Error messages
@@ -533,7 +533,7 @@ If you encounter issues:
 
 Your OpenID Connect Provider is now live at:
 ```
-https://hibana.YOUR_SUBDOMAIN.workers.dev
+https://enrai.YOUR_SUBDOMAIN.workers.dev
 ```
 
 Start integrating with your applications and enjoy global edge authentication!

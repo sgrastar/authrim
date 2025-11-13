@@ -1,7 +1,7 @@
-# hibana – Conformance Overview
+# enrai – Conformance Overview
 
 ## 1. Vision
-**hibana** is a lightweight, edge-native OpenID Connect Provider designed to show that
+**enrai** is a lightweight, edge-native OpenID Connect Provider designed to show that
 a single developer can operate a fully compliant identity provider — safely, globally, and at minimal cost.
 
 Its conformance goal is not only certification, but **to redefine what "compliant infrastructure" means in the era of serverless computing.**
@@ -69,7 +69,7 @@ Its conformance goal is not only certification, but **to redefine what "complian
 
 | Attribute | Value |
 |:--|:--|
-| **Issuer (iss)** | `https://id.hibana.dev` |
+| **Issuer (iss)** | `https://id.enrai.org` |
 | **Profile** | Basic OpenID Provider |
 | **Conformance Suite** | `https://openid.net/certification/` |
 | **Deployment Type** | Cloudflare Workers |
@@ -88,7 +88,7 @@ Its conformance goal is not only certification, but **to redefine what "complian
 ---
 
 ## 8. Long-Term Vision
-hibana aims to become the **reference “Edge OP”**:
+enrai aims to become the **reference “Edge OP”**:
 - Zero infrastructure overhead.
 - Zero database dependencies.
 - Fully explainable OIDC compliance.
@@ -99,4 +99,4 @@ then compliance itself becomes democratized — not just centralized.
 
 ---
 
-> *hibana* — compliance as creation, not constraint.
+> *enrai* — compliance as creation, not constraint.

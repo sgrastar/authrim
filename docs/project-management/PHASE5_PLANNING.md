@@ -22,7 +22,7 @@
 
 ## 概要
 
-Phase 5では、Hibanaに以下の機能を実装します：
+Phase 5では、Enraiに以下の機能を実装します：
 
 - **🔐 パスワードレス認証UI** (Passkey + Magic Link)
 - **📝 ユーザー登録・ログインフロー**
@@ -521,7 +521,7 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 ##### Page 1: ログイン画面 (`/login`)
 - [ ] **デザイン要件**
   - クリーンでモダンなデザイン
-  - Hibanaロゴ表示
+  - Enraiロゴ表示
   - メールアドレス入力フィールド
   - 「Continue with Passkey」ボタン（メイン）
   - 「Send Magic Link」ボタン（セカンダリ）
@@ -606,7 +606,7 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 ##### Page 5: OAuth同意画面 (`/consent`)
 - [ ] **デザイン要件**
   - クライアントロゴ・名前
-  - 「{Client Name} wants to access your Hibana account」
+  - 「{Client Name} wants to access your Enrai account」
   - スコープリスト（アイコン付き）
   - ユーザー情報表示（email, name）
   - 「Allow」ボタン（プライマリ）
@@ -1068,7 +1068,7 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 
 ## 参考資料
 
-### Hibanaドキュメント
+### Enraiドキュメント
 - **設計資料** (✅ 完成)
   - [database-schema.md](../architecture/database-schema.md) - データベーススキーマ・ER図
   - [openapi.yaml](../api/openapi.yaml) - OpenAPI 3.1仕様書

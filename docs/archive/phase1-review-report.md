@@ -1,6 +1,6 @@
 # Phase 1 コードレビュー & 完了報告書
 
-**プロジェクト:** Hibana OpenID Connect Provider
+**プロジェクト:** Enrai OpenID Connect Provider
 **レビュー日:** 2025-11-11（更新）
 **レビュー対象:** Phase 1 (Week 1-5) 実装
 **ステータス:** ✅ **完了（すべての修正完了、Phase 2開始可能）**
@@ -809,4 +809,4 @@ Phase 2（Week 6-12: Core OIDC Endpoints）を開始するための準備状況�
 **更新日:** 2025-11-11
 **次回レビュー:** Phase 2完了時（Week 12終了時）
 
-🔥 **Hibana - Phase 1 完全完了！Phase 2開始準備完了！**
+🔥 **Enrai - Phase 1 完全完了！Phase 2開始準備完了！**

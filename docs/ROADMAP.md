@@ -1,4 +1,4 @@
-# Hibana Product Roadmap 🗺️
+# Enrai Product Roadmap 🗺️
 
 **Vision:** One-command identity infrastructure for the modern web
 
@@ -497,7 +497,7 @@ Legend:
 ### Week 32-33: CLI Tool Development (Jun 12-25)
 
 **Key Features:**
-- [ ] `create-hibana` NPM package
+- [ ] `create-enrai` NPM package
 - [ ] Interactive setup wizard
 - [ ] Project scaffolding
 - [ ] Deployment commands
@@ -522,7 +522,7 @@ Legend:
 - [ ] NPM package publishing
 
 **Deliverables:**
-- [ ] `create-hibana` package published
+- [ ] `create-enrai` package published
 - [ ] One-command deployment functional
 - [ ] CLI with 20+ management commands
 - [ ] Production-ready error handling
@@ -744,7 +744,7 @@ Legend:
 ### Production Deployment
 
 - [ ] Production Cloudflare account setup
-- [ ] Custom domain configuration (`id.hibana.dev`)
+- [ ] Custom domain configuration (`id.enrai.org`)
 - [ ] DNS records & SSL/TLS configuration
 - [ ] Production secrets generation
 - [ ] Production deployment & verification
@@ -768,7 +768,7 @@ Legend:
 
 **Deliverables:**
 - [ ] OpenID Certification obtained ✨
-- [ ] Production deployment live (`https://id.hibana.dev`)
+- [ ] Production deployment live (`https://id.enrai.org`)
 - [ ] Public announcement ready
 - [ ] Migration guides published
 - [ ] Celebrate! 🎉
@@ -861,7 +861,7 @@ Legend:
 - [ ] 50%+ users using Passkey (goal)
 
 ### Phase 7: CLI 🆕
-- [ ] <5 min from `npx create-hibana` to running IdP
+- [ ] <5 min from `npx create-enrai` to running IdP
 - [ ] <1 min deployment time
 - [ ] 100% automated setup
 - [ ] Zero manual configuration required
@@ -897,7 +897,7 @@ Legend:
 ## 🎯 Key Results (Overall)
 
 ### By August 2026 (Phase 7 Complete)
-Hibana will be:
+Enrai will be:
 
 1. **🏆 OpenID Certified** - Official certification obtained
 2. **🔐 Passwordless-first** - WebAuthn + Magic Link (Auth0/Clerkを超える)
@@ -968,7 +968,7 @@ Add:
 > **Last Update:** 2025-11-12 (Phase 4 COMPLETE ✅)
 > **Next Update:** 2026-05-31 (Post Phase 5)
 >
-> 💥 **Hibana** - Building the future of identity infrastructure, one phase at a time.
+> 💥 **Enrai** - Building the future of identity infrastructure, one phase at a time.
 >
 > **Current Status:**
 > - **Phase 4 COMPLETE:** All extended security features implemented ✅

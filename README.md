@@ -1,4 +1,4 @@
-# Hibana 💥
+# Enrai 💥
 
 > **One-command identity infrastructure for the modern web**
 
@@ -12,11 +12,11 @@ A lightweight, serverless **OpenID Connect Provider** that deploys to **Cloudfla
 
 ## 🎯 Vision
 
-**Hibana** makes identity infrastructure as simple as deploying a website:
+**Enrai** makes identity infrastructure as simple as deploying a website:
 
 ```bash
 # Future goal (Phase 6)
-npx create-hibana my-identity-provider
+npx create-enrai my-identity-provider
 ```
 
 **Result:** A production-ready OpenID Connect Provider with login screens, admin dashboard, and global edge deployment—all in under 5 minutes.
@@ -25,18 +25,18 @@ npx create-hibana my-identity-provider
 
 ---
 
-## ✨ What is Hibana?
+## ✨ What is Enrai?
 
-Hibana is an **enterprise-grade OpenID Connect Provider** built for:
+Enrai is an **enterprise-grade OpenID Connect Provider** built for:
 
 - 🚀 **Developers** - Simple integration, great DX
 - 🏢 **Enterprises** - Self-hosted, no vendor lock-in
 - 🌍 **Global apps** - <50ms latency worldwide
 - 💰 **Startups** - Generous free tier, no hidden costs
 
-### Why Hibana?
+### Why Enrai?
 
-| Feature | Hibana | Auth0 | Keycloak | Cognito |
+| Feature | Enrai | Auth0 | Keycloak | Cognito |
 |---------|--------|-------|----------|---------|
 | **Setup Time** | 5 min (goal) | 30 min | 2+ hours | 1+ hour |
 | **Cold Starts** | 0ms | N/A | N/A | 100-500ms |
@@ -135,7 +135,7 @@ Hibana is an **enterprise-grade OpenID Connect Provider** built for:
 - 💾 Data storage abstraction (KV/D1/DO)
 
 **Phase 6: CLI & Automation** (Jun-Aug 2026)
-- 📦 `create-hibana` NPM package
+- 📦 `create-enrai` NPM package
 - 🚀 One-command deployment
 - 🤖 Cloudflare integration
 - 🛠️ Management CLI (users, clients, keys)
@@ -179,8 +179,8 @@ Hibana is an **enterprise-grade OpenID Connect Provider** built for:
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/sgrastar/hibana.git
-cd hibana
+git clone https://github.com/sgrastar/enrai.git
+cd enrai
 
 # 2. Install dependencies
 npm install
@@ -258,7 +258,7 @@ Coverage:
 
 ## 🔐 Security
 
-Hibana implements security best practices:
+Enrai implements security best practices:
 
 - ✅ **PKCE** (Proof Key for Code Exchange) - RFC 7636
 - ✅ **Single-use authorization codes** - Replay attack prevention
@@ -268,13 +268,13 @@ Hibana implements security best practices:
 - ✅ **CSRF protection** - State parameter validation
 - ✅ **Rate limiting** - Implemented (Phase 4)
 
-**Responsible Disclosure:** security@hibana.dev
+**Responsible Disclosure:** security@enrai.org
 
 ---
 
 ## 🤝 Contributing
 
-Hibana is primarily a solo development project. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+Enrai is primarily a solo development project. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
 
 **What we accept:**
 - 🐛 Bug reports via GitHub Issues
@@ -313,7 +313,7 @@ Hibana is primarily a solo development project. See [CONTRIBUTING.md](./CONTRIBU
 
 ### Quick Deploy to Cloudflare Workers
 
-Deploy Hibana to Cloudflare's global edge network and get a production-ready OpenID Provider with a public URL.
+Deploy Enrai to Cloudflare's global edge network and get a production-ready OpenID Provider with a public URL.
 
 ```bash
 # 1. Install dependencies
@@ -330,7 +330,7 @@ npm run deploy
 ```
 
 **After deployment, you'll get:**
-- 🌍 **Public URL**: `https://hibana.{your-subdomain}.workers.dev`
+- 🌍 **Public URL**: `https://enrai.{your-subdomain}.workers.dev`
 - ✅ **Live Endpoints**:
   - Discovery: `/.well-known/openid-configuration`
   - JWKS: `/.well-known/jwks.json`
@@ -349,7 +349,7 @@ Automatic deployment is configured for the `main` branch:
 
 **Future (Phase 6):**
 ```bash
-npx create-hibana my-idp
+npx create-enrai my-idp
 # One command, fully automated setup
 ```
 
@@ -382,14 +382,14 @@ See [LICENSE](./LICENSE) for details.
 
 ## 💬 Community
 
-- 💼 **GitHub**: [sgrastar/hibana](https://github.com/sgrastar/hibana)
-- 🐛 **Issues**: [Report bugs](https://github.com/sgrastar/hibana/issues)
-- 💡 **Discussions**: [Feature requests](https://github.com/sgrastar/hibana/discussions)
-- 📧 **Email**: hello@hibana.dev
+- 💼 **GitHub**: [sgrastar/enrai](https://github.com/sgrastar/enrai)
+- 🐛 **Issues**: [Report bugs](https://github.com/sgrastar/enrai/issues)
+- 💡 **Discussions**: [Feature requests](https://github.com/sgrastar/enrai/discussions)
+- 📧 **Email**: hello@enrai.org
 
 ---
 
-> **Hibana** 💥 — *A spark of identity on the edge.*
+> **Enrai** 💥 — *A spark of identity on the edge.*
 >
 > **Status:** Phase 2 Complete (Core API) | **Next:** Phase 3 (Conformance Testing)
 >

@@ -4,7 +4,7 @@
 
 **RFC 9126** - OAuth 2.0 Pushed Authorization Requests
 
-Hibana implements Pushed Authorization Requests (PAR), an OAuth 2.0 security extension that allows clients to push authorization request parameters directly to the authorization server before redirecting the user.
+Enrai implements Pushed Authorization Requests (PAR), an OAuth 2.0 security extension that allows clients to push authorization request parameters directly to the authorization server before redirecting the user.
 
 ## Specification
 
@@ -194,7 +194,7 @@ When using PAR, the authorization endpoint accepts the `request_uri` parameter i
 
 ```http
 GET /authorize?request_uri=urn:ietf:params:oauth:request_uri:6esc_11ACC5bwc014ltc14eY22c&client_id=my_client_id HTTP/1.1
-Host: hibana.sgrastar.workers.dev
+Host: enrai.sgrastar.workers.dev
 ```
 
 #### Validation
@@ -213,7 +213,7 @@ Host: hibana.sgrastar.workers.dev
 #### Step 1: Push Authorization Request
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/as/par \
+curl -X POST https://enrai.sgrastar.workers.dev/as/par \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=my_client_id" \
   -d "response_type=code" \
@@ -234,7 +234,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/as/par \
 #### Step 2: Redirect User to Authorization Endpoint
 
 ```javascript
-const authUrl = new URL('https://hibana.sgrastar.workers.dev/authorize');
+const authUrl = new URL('https://enrai.sgrastar.workers.dev/authorize');
 authUrl.searchParams.set('request_uri', 'urn:ietf:params:oauth:request_uri:6esc_11ACC5bwc014ltc14eY22c');
 authUrl.searchParams.set('client_id', 'my_client_id');
 
@@ -251,7 +251,7 @@ CODE_VERIFIER=$(openssl rand -base64 96 | tr -d '\n' | tr '/+' '_-' | tr -d '=')
 CODE_CHALLENGE=$(echo -n $CODE_VERIFIER | openssl dgst -binary -sha256 | openssl base64 | tr -d '\n' | tr '/+' '_-' | tr -d '=')
 
 # Push authorization request with PKCE
-curl -X POST https://hibana.sgrastar.workers.dev/as/par \
+curl -X POST https://enrai.sgrastar.workers.dev/as/par \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=my_public_client" \
   -d "response_type=code" \
@@ -266,7 +266,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/as/par \
 ### Example 3: PAR with Client Authentication
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/as/par \
+curl -X POST https://enrai.sgrastar.workers.dev/as/par \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -u "my_client_id:my_client_secret" \
   -d "response_type=code" \
@@ -292,7 +292,7 @@ CLAIMS='{
   }
 }'
 
-curl -X POST https://hibana.sgrastar.workers.dev/as/par \
+curl -X POST https://enrai.sgrastar.workers.dev/as/par \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=my_client_id" \
   -d "response_type=code" \
@@ -355,7 +355,7 @@ This prevents:
 
 ### 1. Client Validation
 
-Hibana validates that:
+Enrai validates that:
 - Client exists in the client registry
 - `redirect_uri` is registered for the client
 - `response_type` is supported
@@ -397,7 +397,7 @@ PAR endpoints are advertised in the OpenID Provider metadata:
 
 ```json
 {
-  "pushed_authorization_request_endpoint": "https://hibana.sgrastar.workers.dev/as/par",
+  "pushed_authorization_request_endpoint": "https://enrai.sgrastar.workers.dev/as/par",
   "require_pushed_authorization_requests": false
 }
 ```
@@ -425,7 +425,7 @@ Currently, PAR is **optional** (`require_pushed_authorization_requests: false`).
 
 ### Test Coverage
 
-Hibana includes comprehensive tests for PAR:
+Enrai includes comprehensive tests for PAR:
 
 **Test File**: `test/par.test.ts`
 
@@ -463,7 +463,7 @@ async function authorizeWithPAR(config: {
   nonce: string;
 }) {
   // Step 1: Push authorization request
-  const parResponse = await fetch('https://hibana.sgrastar.workers.dev/as/par', {
+  const parResponse = await fetch('https://enrai.sgrastar.workers.dev/as/par', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -481,7 +481,7 @@ async function authorizeWithPAR(config: {
   const { request_uri } = await parResponse.json();
 
   // Step 2: Redirect to authorization endpoint
-  const authUrl = new URL('https://hibana.sgrastar.workers.dev/authorize');
+  const authUrl = new URL('https://enrai.sgrastar.workers.dev/authorize');
   authUrl.searchParams.set('request_uri', request_uri);
   authUrl.searchParams.set('client_id', config.clientId);
 
@@ -504,7 +504,7 @@ def authorize_with_par(
 ):
     # Step 1: Push authorization request
     par_response = requests.post(
-        'https://hibana.sgrastar.workers.dev/as/par',
+        'https://enrai.sgrastar.workers.dev/as/par',
         data={
             'client_id': client_id,
             'response_type': 'code',
@@ -524,7 +524,7 @@ def authorize_with_par(
         'client_id': client_id,
     }
 
-    auth_url = f'https://hibana.sgrastar.workers.dev/authorize?{urlencode(auth_params)}'
+    auth_url = f'https://enrai.sgrastar.workers.dev/authorize?{urlencode(auth_params)}'
 
     return auth_url
 ```

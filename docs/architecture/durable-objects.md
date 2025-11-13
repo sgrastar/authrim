@@ -2,7 +2,7 @@
 
 ## Overview
 
-Hibana uses Cloudflare Durable Objects for managing cryptographic keys and enabling zero-downtime key rotation. Durable Objects provide strongly consistent, distributed storage that is ideal for managing critical infrastructure like signing keys.
+Enrai uses Cloudflare Durable Objects for managing cryptographic keys and enabling zero-downtime key rotation. Durable Objects provide strongly consistent, distributed storage that is ideal for managing critical infrastructure like signing keys.
 
 ## KeyManager Durable Object
 
@@ -198,7 +198,7 @@ Configuration can be updated via the `/config` endpoint or by modifying the init
    - No public HTTP access to KeyManager endpoints
    - Use Cloudflare Access or Workers authentication
 
-### Usage in Hibana
+### Usage in Enrai
 
 #### Initialization
 
@@ -207,7 +207,7 @@ Configuration can be updated via the `/config` endpoint or by modifying the init
 [[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
-script_name = "hibana"
+script_name = "enrai"
 
 // In worker code
 const keyManagerId = env.KEY_MANAGER.idFromName('default');

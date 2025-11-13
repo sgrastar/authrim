@@ -1,4 +1,4 @@
-# Hibana Design System 🎨
+# Enrai Design System 🎨
 
 **最終更新**: 2025-11-13
 **バージョン**: 1.0.0
@@ -25,7 +25,7 @@
 
 ## 概要
 
-Hibana Design Systemは、**Auth0/Clerkを超えるUX**を実現するための統一されたデザイン言語です。
+Enrai Design Systemは、**Auth0/Clerkを超えるUX**を実現するための統一されたデザイン言語です。
 
 ### 設計目標
 
@@ -224,7 +224,7 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 ```html
 <!-- ヒーロー見出し -->
 <h1 class="text-4xl font-bold text-gray-900 dark:text-white">
-  Welcome to Hibana
+  Welcome to Enrai
 </h1>
 
 <!-- セクション見出し -->
@@ -955,7 +955,7 @@ export default defineConfig({
 - [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/)
 - [A11y Project](https://www.a11yproject.com/)
 
-### Hibanaドキュメント
+### Enraiドキュメント
 
 - [database-schema.md](../architecture/database-schema.md) - データベーススキーマ
 - [openapi.yaml](../api/openapi.yaml) - API仕様書
