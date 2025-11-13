@@ -61,6 +61,21 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 echo ""
 
+# Function to get namespace ID from list by exact title match
+get_namespace_id_by_title() {
+    local title=$1
+    local list_output=$2
+
+    # Try using jq if available for robust JSON parsing
+    if command -v jq &> /dev/null; then
+        echo "$list_output" | jq -r ".[] | select(.title == \"$title\") | .id" 2>/dev/null | head -1
+    else
+        # Fallback to grep-based parsing
+        # Match the entire object that contains our title
+        echo "$list_output" | grep -A 2 "\"title\"[[:space:]]*:[[:space:]]*\"$title\"" | grep "\"id\"" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1
+    fi
+}
+
 # Function to get or create KV namespace and extract ID
 create_kv_namespace() {
     local name=$1
@@ -69,21 +84,34 @@ create_kv_namespace() {
     # First, try to get existing namespace
     echo "  📝 Checking for existing KV namespace: $name $preview_flag" >&2
     local list_output=$(wrangler kv namespace list 2>&1)
+    local list_exit_code=$?
+
+    if [ $list_exit_code -ne 0 ]; then
+        echo "  ⚠️  Warning: Could not list namespaces" >&2
+        echo "$list_output" >&2
+    fi
 
     # Determine the title to search for
+    # Wrangler creates preview namespaces with suffix like "AUTH_CODES_preview_xyz"
     local title="$name"
-    if [ "$preview_flag" = "--preview" ]; then
-        # Preview namespaces have a different title format
-        # Try to find a namespace with title containing the name and "preview"
-        local id=$(echo "$list_output" | grep -i "\"title\":.*$name" | grep -i "preview" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    local id=""
 
+    if [ "$preview_flag" = "--preview" ]; then
+        # For preview namespaces, try to find any namespace with the name followed by _preview
+        if command -v jq &> /dev/null; then
+            id=$(echo "$list_output" | jq -r ".[] | select(.title | test(\"^${name}_preview\"; \"i\")) | .id" 2>/dev/null | head -1)
+        else
+            # Fallback: look for title containing the name and preview
+            id=$(echo "$list_output" | grep -i "\"title\".*$name" | grep -i "preview" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1)
+        fi
+
+        # If we didn't find a preview namespace, try exact match
         if [ -z "$id" ]; then
-            # If not found, try exact match with name
-            id=$(echo "$list_output" | grep "\"title\":\"$title\"" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+            id=$(get_namespace_id_by_title "$title" "$list_output")
         fi
     else
-        # For production namespaces, look for exact title match (without preview in name)
-        id=$(echo "$list_output" | grep "\"title\":\"$title\"" | grep -v -i "preview" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+        # For production namespaces, look for exact title match
+        id=$(get_namespace_id_by_title "$title" "$list_output")
     fi
 
     if [ -n "$id" ]; then
@@ -130,12 +158,45 @@ create_kv_namespace() {
     echo "$output" >&2
     echo "" >&2
 
+    # Check if the error is "already exists"
     if [ $exit_code -ne 0 ]; then
-        echo "❌ Wrangler command failed with exit code: $exit_code" >&2
-        echo "❌ Failed to create namespace: $name $preview_flag" >&2
-        exit 1
+        if echo "$output" | grep -q "already exists"; then
+            echo "  ⚠️  Namespace already exists, fetching ID from list..." >&2
+            # Re-fetch the list
+            list_output=$(wrangler kv namespace list 2>&1)
+
+            if [ "$preview_flag" = "--preview" ]; then
+                if command -v jq &> /dev/null; then
+                    id=$(echo "$list_output" | jq -r ".[] | select(.title | test(\"^${name}_preview\"; \"i\")) | .id" 2>/dev/null | head -1)
+                else
+                    id=$(echo "$list_output" | grep -i "\"title\".*$name" | grep -i "preview" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1)
+                fi
+
+                if [ -z "$id" ]; then
+                    id=$(get_namespace_id_by_title "$name" "$list_output")
+                fi
+            else
+                id=$(get_namespace_id_by_title "$name" "$list_output")
+            fi
+
+            if [ -n "$id" ]; then
+                echo "  ✓ Found existing namespace with ID: $id" >&2
+                echo "$id"
+                return 0
+            else
+                echo "❌ Could not find existing namespace ID" >&2
+                echo "Full list output:" >&2
+                echo "$list_output" >&2
+                exit 1
+            fi
+        else
+            echo "❌ Wrangler command failed with exit code: $exit_code" >&2
+            echo "❌ Failed to create namespace: $name $preview_flag" >&2
+            exit 1
+        fi
     fi
 
+    # Extract ID from successful creation output
     local id=$(echo "$output" | grep -o 'id = "[^"]*"' | cut -d'"' -f2)
 
     if [ -z "$id" ]; then
