@@ -10,6 +10,7 @@ import app from '../../src/index';
 const mockEnv: Env = {
   ISSUER_URL: 'https://id.example.com',
   TOKEN_EXPIRY: '3600',
+  REFRESH_TOKEN_EXPIRY: '2592000',
   CODE_EXPIRY: '120',
   STATE_EXPIRY: '300',
   NONCE_EXPIRY: '300',
@@ -37,6 +38,7 @@ n3+pAgMBAAECggEAWCE7qdP9VDlKc7ej3vLdVQU3zDRGzPK4jlw0hH6fvKPdNxKp
   NONCE_STORE: {} as KVNamespace,
   CLIENTS: {} as KVNamespace,
   REVOKED_TOKENS: {} as KVNamespace,
+  REFRESH_TOKENS: {} as KVNamespace,
 };
 
 // Mock KV storage
@@ -65,6 +67,7 @@ describe('Security Headers', () => {
     mockEnv.NONCE_STORE = createMockKV();
     mockEnv.CLIENTS = createMockKV();
     mockEnv.REVOKED_TOKENS = createMockKV();
+    mockEnv.REFRESH_TOKENS = createMockKV();
   });
 
   describe('Content Security Policy (CSP)', () => {
