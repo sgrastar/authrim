@@ -1000,6 +1000,81 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [ ] Test D1 audit logging
 - [ ] Document RefreshTokenRotator API
 
+#### 26.6a Durable Objects - Unit Tests
+- [ ] Create test files for each Durable Object:
+  - [ ] `packages/shared/src/durable-objects/__tests__/SessionStore.test.ts`
+  - [ ] `packages/shared/src/durable-objects/__tests__/AuthorizationCodeStore.test.ts`
+  - [ ] `packages/shared/src/durable-objects/__tests__/RefreshTokenRotator.test.ts`
+- [ ] SessionStore unit tests (20+ tests):
+  - [ ] Test session creation and storage
+  - [ ] Test session retrieval (hot and cold)
+  - [ ] Test session invalidation
+  - [ ] Test session expiration and cleanup
+  - [ ] Test multi-device session listing
+  - [ ] Test session extension (Active TTL)
+  - [ ] Test D1 fallback on memory miss
+  - [ ] Test concurrent session access
+- [ ] AuthorizationCodeStore unit tests (15+ tests):
+  - [ ] Test code storage and retrieval
+  - [ ] Test code consumption (one-time use)
+  - [ ] Test replay attack detection
+  - [ ] Test PKCE validation (S256 and plain)
+  - [ ] Test code expiration (60 seconds TTL)
+  - [ ] Test client validation
+  - [ ] Test DDoS protection (max 5 codes per user)
+  - [ ] Test automatic cleanup
+- [ ] RefreshTokenRotator unit tests (18+ tests):
+  - [ ] Test token family creation
+  - [ ] Test atomic token rotation
+  - [ ] Test theft detection (old token reuse)
+  - [ ] Test family revocation
+  - [ ] Test rotation count tracking
+  - [ ] Test D1 audit logging
+  - [ ] Test token expiration
+  - [ ] Test concurrent rotation attempts
+- [ ] Run all tests: `pnpm test`
+- [ ] Ensure test coverage ≥ 80% for Durable Objects
+
+#### 26.6b Durable Objects - Integration Tests
+- [ ] Create integration test suite:
+  - [ ] `test/integration/durable-objects.test.ts`
+- [ ] Test SessionStore + D1 integration:
+  - [ ] Session persistence across DO restarts
+  - [ ] D1 fallback on cold start
+  - [ ] Multi-user session isolation
+- [ ] Test AuthCodeStore + Token endpoint integration:
+  - [ ] Code generation → consumption flow
+  - [ ] Replay attack → token revocation
+- [ ] Test RefreshTokenRotator + Token endpoint:
+  - [ ] Token rotation flow
+  - [ ] Theft detection → family revocation
+  - [ ] Audit log verification
+- [ ] Test Durable Objects + wrangler.toml bindings:
+  - [ ] Verify bindings are correctly configured
+  - [ ] Test DO instantiation from Workers
+- [ ] Document integration test setup
+
+#### 26.6c Durable Objects - API Documentation
+- [ ] Update `docs/architecture/durable-objects.md`:
+  - [ ] Mark SessionStore as ✅ Implemented
+  - [ ] Mark AuthorizationCodeStore as ✅ Implemented
+  - [ ] Mark RefreshTokenRotator as ✅ Implemented
+  - [ ] Add implementation notes and lessons learned
+- [ ] Create API reference documentation:
+  - [ ] `docs/api/durable-objects/SessionStore.md`
+  - [ ] `docs/api/durable-objects/AuthorizationCodeStore.md`
+  - [ ] `docs/api/durable-objects/RefreshTokenRotator.md`
+- [ ] Document each HTTP endpoint with:
+  - [ ] Request format (JSON schema)
+  - [ ] Response format (JSON schema)
+  - [ ] Error responses
+  - [ ] Example curl commands
+  - [ ] Usage examples in TypeScript
+- [ ] Add OpenAPI/Swagger specs (optional):
+  - [ ] Generate from TypeScript interfaces
+  - [ ] Integrate with existing `docs/api/openapi.yaml`
+- [ ] Update README.md with Durable Objects section
+
 #### 26.7 ストレージ抽象化層実装
 - [ ] Create `packages/shared/src/storage/interfaces.ts`:
   - [ ] Define `IStorageAdapter` interface
