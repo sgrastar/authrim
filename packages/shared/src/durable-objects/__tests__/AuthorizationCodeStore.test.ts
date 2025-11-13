@@ -7,47 +7,68 @@ import { AuthorizationCodeStore } from '../AuthorizationCodeStore';
 import type { Env } from '../../types/env';
 
 // Mock DurableObjectState
-class MockDurableObjectState implements DurableObjectState {
-  private storage = new Map<string, unknown>();
+class MockDurableObjectState implements Partial<DurableObjectState> {
+  private _storage = new Map<string, unknown>();
   id!: DurableObjectId;
+  storage: DurableObjectStorage;
 
-  get(key: string): Promise<unknown>;
-  get<T>(key: string): Promise<T | undefined>;
-  get<T>(key: string): Promise<T | undefined> {
-    return Promise.resolve(this.storage.get(key) as T | undefined);
-  }
-
-  put(key: string, value: unknown): Promise<void>;
-  put(entries: Record<string, unknown>): Promise<void>;
-  put(keyOrEntries: string | Record<string, unknown>, value?: unknown): Promise<void> {
-    if (typeof keyOrEntries === 'string') {
-      this.storage.set(keyOrEntries, value);
-    } else {
-      Object.entries(keyOrEntries).forEach(([k, v]) => this.storage.set(k, v));
-    }
-    return Promise.resolve();
-  }
-
-  delete(key: string): Promise<boolean>;
-  delete(keys: string[]): Promise<number>;
-  delete(keyOrKeys: string | string[]): Promise<boolean | number> {
-    if (typeof keyOrKeys === 'string') {
-      const existed = this.storage.has(keyOrKeys);
-      this.storage.delete(keyOrKeys);
-      return Promise.resolve(existed);
-    } else {
-      let count = 0;
-      keyOrKeys.forEach(key => {
-        if (this.storage.delete(key)) count++;
-      });
-      return Promise.resolve(count);
-    }
-  }
-
-  list(): Promise<Map<string, unknown>>;
-  list<T>(options?: { start?: string; end?: string; limit?: number }): Promise<Map<string, T>>;
-  list<T>(): Promise<Map<string, T>> {
-    return Promise.resolve(new Map(this.storage as Map<string, T>));
+  constructor() {
+    this.storage = {
+      get: <T>(key: string): Promise<T | undefined> => {
+        return Promise.resolve(this._storage.get(key) as T | undefined);
+      },
+      put: (keyOrEntries: string | Record<string, unknown>, value?: unknown): Promise<void> => {
+        if (typeof keyOrEntries === 'string') {
+          this._storage.set(keyOrEntries, value);
+        } else {
+          Object.entries(keyOrEntries).forEach(([k, v]) => this._storage.set(k, v));
+        }
+        return Promise.resolve();
+      },
+      delete: (keyOrKeys: string | string[]): Promise<boolean | number> => {
+        if (typeof keyOrKeys === 'string') {
+          const existed = this._storage.has(keyOrKeys);
+          this._storage.delete(keyOrKeys);
+          return Promise.resolve(existed);
+        } else {
+          let count = 0;
+          keyOrKeys.forEach((key) => {
+            if (this._storage.delete(key)) count++;
+          });
+          return Promise.resolve(count);
+        }
+      },
+      deleteAll: (): Promise<void> => {
+        this._storage.clear();
+        return Promise.resolve();
+      },
+      list: <T>(): Promise<Map<string, T>> => {
+        return Promise.resolve(new Map(this._storage as Map<string, T>));
+      },
+      transaction: <T>(closure: (txn: DurableObjectStorage) => Promise<T>): Promise<T> => {
+        return closure(this.storage);
+      },
+      getAlarm: (): Promise<number | null> => {
+        return Promise.resolve(null);
+      },
+      setAlarm: (): Promise<void> => {
+        return Promise.resolve();
+      },
+      deleteAlarm: (): Promise<void> => {
+        return Promise.resolve();
+      },
+      sync: (): Promise<void> => {
+        return Promise.resolve();
+      },
+      transactionSync: <T>(closure: () => T): T => {
+        return closure();
+      },
+      sql: {} as SqlStorage,
+      kv: {} as KVNamespace,
+      getCurrentBookmark: (): string => '',
+      getBookmarkForTime: (): string => '',
+      onNextSessionRestoreBookmark: (): void => {},
+    } as unknown as DurableObjectStorage;
   }
 
   blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
@@ -60,7 +81,7 @@ class MockDurableObjectState implements DurableObjectState {
 }
 
 // Mock Env
-const createMockEnv = (): Env => ({} as Env);
+const createMockEnv = (): Env => ({}) as Env;
 
 describe('AuthorizationCodeStore', () => {
   let codeStore: AuthorizationCodeStore;
@@ -90,7 +111,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(201);
 
-      const body = await response.json();
+      const body = (await response.json()) as { success: boolean; expiresAt: number };
       expect(body.success).toBe(true);
       expect(body).toHaveProperty('expiresAt');
     });
@@ -108,7 +129,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(400);
 
-      const body = await response.json();
+      const body = (await response.json()) as { error: string };
       expect(body.error).toBe('invalid_request');
     });
 
@@ -160,7 +181,11 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(consumeRequest);
       expect(response.status).toBe(200);
 
-      const body = await response.json();
+      const body = (await response.json()) as {
+        userId: string;
+        scope: string;
+        redirectUri: string;
+      };
       expect(body.userId).toBe('user_123');
       expect(body.scope).toBe('openid profile');
       expect(body.redirectUri).toBe('https://app.example.com/callback');
@@ -205,7 +230,7 @@ describe('AuthorizationCodeStore', () => {
       const response2 = await codeStore.fetch(consume2);
       expect(response2.status).toBe(400);
 
-      const body = await response2.json();
+      const body = (await response2.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_grant');
       expect(body.error_description).toContain('already used');
     });
@@ -223,7 +248,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(400);
 
-      const body = await response.json();
+      const body = (await response.json()) as { error: string };
       expect(body.error).toBe('invalid_grant');
     });
 
@@ -254,7 +279,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(consumeRequest);
       expect(response.status).toBe(400);
 
-      const body = await response.json();
+      const body = (await response.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_grant');
       expect(body.error_description).toContain('mismatch');
     });
@@ -325,7 +350,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(consumeRequest);
       expect(response.status).toBe(400);
 
-      const body = await response.json();
+      const body = (await response.json()) as { error_description: string };
       expect(body.error_description).toContain('PKCE');
     });
 
@@ -359,7 +384,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(consumeRequest);
       expect(response.status).toBe(400);
 
-      const body = await response.json();
+      const body = (await response.json()) as { error_description: string };
       expect(body.error_description).toContain('code_verifier required');
     });
   });
@@ -399,7 +424,7 @@ describe('AuthorizationCodeStore', () => {
       const lastResponse = responses[5];
       expect(lastResponse.status).toBe(500);
 
-      const body = await lastResponse.json();
+      const body = (await lastResponse.json()) as { error_description: string };
       expect(body.error_description).toContain('Too many');
     });
   });
@@ -413,7 +438,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json();
+      const body = (await response.json()) as { status: string; codes: unknown; config: unknown };
       expect(body).toHaveProperty('status', 'ok');
       expect(body).toHaveProperty('codes');
       expect(body).toHaveProperty('config');
@@ -443,7 +468,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(checkRequest);
       expect(response.status).toBe(200);
 
-      const body = await response.json();
+      const body = (await response.json()) as { exists: boolean };
       expect(body.exists).toBe(true);
     });
 
@@ -455,7 +480,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json();
+      const body = (await response.json()) as { exists: boolean };
       expect(body.exists).toBe(false);
     });
   });
@@ -483,7 +508,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(deleteRequest);
       expect(response.status).toBe(200);
 
-      const body = await response.json();
+      const body = (await response.json()) as { deleted: string };
       expect(body.deleted).toBe('auth_code_delete');
 
       // Verify code is gone
@@ -491,7 +516,7 @@ describe('AuthorizationCodeStore', () => {
         method: 'GET',
       });
       const checkResponse = await codeStore.fetch(checkRequest);
-      const checkBody = await checkResponse.json();
+      const checkBody = (await checkResponse.json()) as { exists: boolean };
       expect(checkBody.exists).toBe(false);
     });
   });

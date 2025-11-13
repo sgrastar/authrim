@@ -2,6 +2,9 @@
  * Cloudflare Workers Environment Bindings
  */
 export interface Env {
+  // D1 Database
+  DB: D1Database;
+
   // KV Namespaces
   AUTH_CODES: KVNamespace;
   STATE_STORE: KVNamespace;
