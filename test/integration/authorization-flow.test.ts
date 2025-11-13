@@ -22,7 +22,7 @@ import {
   parseAuthorizationResponse,
   buildTokenRequestBody,
 } from './fixtures';
-import type { Env } from '../../src/types/env';
+import type { Env } from '../packages/shared/src/types/env';
 
 describe('Authorization Code Flow', () => {
   let env: Env;

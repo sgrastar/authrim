@@ -8,8 +8,8 @@ import {
   importPublicKeyFromJWK,
   type IDTokenClaims,
   type AccessTokenClaims,
-} from '../../src/utils/jwt';
-import { generateKeySet } from '../../src/utils/keys';
+} from '../packages/shared/src/utils/jwt';
+import { generateKeySet } from '../packages/shared/src/utils/keys';
 import type { KeyLike, JWK } from 'jose';
 
 describe('JWT Utilities', () => {

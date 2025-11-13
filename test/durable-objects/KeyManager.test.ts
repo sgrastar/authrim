@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { KeyManager } from '../../src/durable-objects/KeyManager';
-import type { Env } from '../../src/types/env';
+import { KeyManager } from '../packages/shared/src/durable-objects/KeyManager';
+import type { Env } from '../packages/shared/src/types/env';
 
 /**
  * Mock implementation of DurableObjectState for testing
