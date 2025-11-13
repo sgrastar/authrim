@@ -51,21 +51,55 @@ export class KVStorage implements IStorage {
   }
 
   async list(options?: ListOptions): Promise<ListResult> {
-    const result = await this.kv.list({
-      prefix: options?.prefix,
-      limit: options?.limit,
-      cursor: options?.cursor,
-    });
+    const kvOptions: {
+      prefix?: string;
+      limit?: number;
+      cursor?: string;
+    } = {};
 
-    return {
-      keys: result.keys.map((key) => ({
-        name: key.name,
-        expiration: key.expiration,
-        metadata: key.metadata as Record<string, string> | undefined,
-      })),
-      cursor: (result.cursor as string | undefined) ?? undefined,
+    if (options?.prefix !== undefined) {
+      kvOptions.prefix = options.prefix;
+    }
+    if (options?.limit !== undefined) {
+      kvOptions.limit = options.limit;
+    }
+    if (options?.cursor !== undefined) {
+      kvOptions.cursor = options.cursor;
+    }
+
+    const result = await this.kv.list(kvOptions);
+
+    const listResult: ListResult = {
+      keys: result.keys.map((key) => {
+        const mappedKey: {
+          name: string;
+          expiration?: number;
+          metadata?: Record<string, string>;
+        } = {
+          name: key.name,
+        };
+
+        if (key.expiration !== undefined) {
+          mappedKey.expiration = key.expiration;
+        }
+        if (key.metadata !== undefined) {
+          mappedKey.metadata = key.metadata as Record<string, string>;
+        }
+
+        return mappedKey;
+      }),
       list_complete: result.list_complete,
     };
+
+    // Only add cursor if not complete and cursor exists
+    if (!result.list_complete) {
+      const resultCursor = (result as { cursor?: string }).cursor;
+      if (resultCursor !== undefined) {
+        listResult.cursor = resultCursor;
+      }
+    }
+
+    return listResult;
   }
 }
 
@@ -97,11 +131,11 @@ export class KVClientRepository implements IClientRepository {
 
   async create(client: Omit<ClientData, 'created_at' | 'updated_at'>): Promise<ClientData> {
     const now = Math.floor(Date.now() / 1000);
-    const clientData: ClientData = {
+    const clientData = {
       ...client,
       created_at: now,
       updated_at: now,
-    };
+    } as ClientData;
 
     const key = `${this.prefix}${String(client.client_id)}`;
     await this.storage.put(key, JSON.stringify(clientData));

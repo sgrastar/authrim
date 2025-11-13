@@ -108,7 +108,12 @@ export function determineEffectiveSectorIdentifier(
     throw new Error('No redirect URIs registered');
   }
 
-  return extractSectorIdentifier(redirectUris[0]);
+  const firstRedirectUri = redirectUris[0];
+  if (!firstRedirectUri) {
+    throw new Error('No redirect URIs registered');
+  }
+
+  return extractSectorIdentifier(firstRedirectUri);
 }
 
 /**

@@ -25,7 +25,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         error: error.error,
         error_description: error.error_description,
       },
-      error.statusCode
+      error.statusCode as 401 | 500
     );
   }
 
