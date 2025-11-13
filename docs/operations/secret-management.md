@@ -42,7 +42,7 @@ In production, keys are stored as Cloudflare Workers secrets:
 The project includes a script to generate RSA key pairs:
 
 ```bash
-npm run generate-keys
+pnpm run generate-keys
 ```
 
 This will:
@@ -57,7 +57,7 @@ This will:
 You can specify a custom key ID:
 
 ```bash
-npm run generate-keys -- --kid=my-custom-key-1
+pnpm run generate-keys -- --kid=my-custom-key-1
 ```
 
 ### Manual Generation
@@ -120,7 +120,7 @@ During the initial phases, key rotation is manual:
 
 1. **Generate new key pair**:
    ```bash
-   npm run generate-keys -- --kid=prod-key-new
+   pnpm run generate-keys -- --kid=prod-key-new
    ```
 
 2. **Add new key to production**:
@@ -136,7 +136,7 @@ During the initial phases, key rotation is manual:
 
 4. **Deploy**:
    ```bash
-   npm run deploy
+   pnpm run deploy
    ```
 
 5. **Keep old public key available for verification** (if using Durable Objects)
@@ -230,7 +230,7 @@ See [Durable Objects Architecture](../architecture/durable-objects.md) for detai
 3. **Verify restoration**:
    ```bash
    # Test JWT signing with restored key
-   npm run test
+   pnpm run test
    ```
 
 4. **Delete decrypted file**:

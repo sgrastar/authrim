@@ -33,7 +33,7 @@ cd enrai
 ### 2. Install Dependencies
 
 ```bash
-npm install
+pnpm install
 ```
 
 This will install:
@@ -47,7 +47,7 @@ This will install:
 ### 3. Install Wrangler CLI (if not already installed globally)
 
 ```bash
-npm install -g wrangler
+pnpm install -g wrangler
 ```
 
 ## Configuration
@@ -77,7 +77,7 @@ Update `wrangler.toml` with the generated namespace IDs.
 Generate RSA keys for JWT signing (development):
 
 ```bash
-npm run generate-keys
+pnpm run generate-keys
 ```
 
 This will:
@@ -117,7 +117,7 @@ Update these as needed for your environment.
 ### Start Development Server
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 This starts Wrangler in development mode on `http://localhost:8787`.
@@ -126,28 +126,28 @@ This starts Wrangler in development mode on `http://localhost:8787`.
 
 ```bash
 # Development
-npm run dev              # Start dev server with hot reload
+pnpm run dev              # Start dev server with hot reload
 
 # Building
-npm run build            # Compile TypeScript to JavaScript
+pnpm run build            # Compile TypeScript to JavaScript
 
 # Testing
-npm run test             # Run tests once
-npm run test:watch       # Run tests in watch mode
-npm run test:coverage    # Run tests with coverage report
+pnpm run test             # Run tests once
+pnpm run test:watch       # Run tests in watch mode
+pnpm run test:coverage    # Run tests with coverage report
 
 # Code Quality
-npm run lint             # Run ESLint
-npm run lint:fix         # Fix ESLint errors automatically
-npm run format           # Format code with Prettier
-npm run format:check     # Check code formatting
-npm run typecheck        # Run TypeScript type checking
+pnpm run lint             # Run ESLint
+pnpm run lint:fix         # Fix ESLint errors automatically
+pnpm run format           # Format code with Prettier
+pnpm run format:check     # Check code formatting
+pnpm run typecheck        # Run TypeScript type checking
 
 # Deployment
-npm run deploy           # Deploy to Cloudflare Workers
+pnpm run deploy           # Deploy to Cloudflare Workers
 
 # Utilities
-npm run generate-keys    # Generate RSA key pair
+pnpm run generate-keys    # Generate RSA key pair
 ```
 
 ### Project Structure
@@ -197,19 +197,19 @@ enrai/
 ### Run All Tests
 
 ```bash
-npm run test
+pnpm run test
 ```
 
 ### Run Tests in Watch Mode
 
 ```bash
-npm run test:watch
+pnpm run test:watch
 ```
 
 ### Run Tests with Coverage
 
 ```bash
-npm run test:coverage
+pnpm run test:coverage
 ```
 
 Coverage reports are generated in `coverage/` directory.
@@ -286,7 +286,7 @@ wrangler secret put PRIVATE_KEY --env development
 **Solution:** Run type checking and fix errors:
 
 ```bash
-npm run typecheck
+pnpm run typecheck
 ```
 
 ### Issue: Tests failing
@@ -294,7 +294,7 @@ npm run typecheck
 **Solution:** Check test output for details:
 
 ```bash
-npm run test
+pnpm run test
 ```
 
 ### Issue: Port 8787 already in use

@@ -24,13 +24,13 @@ This guide explains the quickest way to start Phase 3 OpenID Conformance Testing
 cd /path/to/enrai
 
 # Install dependencies (first time only)
-npm install
+pnpm install
 
 # Generate and configure RSA keys
 ./scripts/setup-dev.sh
 
 # Start development server
-npm run dev
+pnpm run dev
 ```
 
 Verify in another terminal:
@@ -61,7 +61,7 @@ curl http://localhost:8787/.well-known/jwks.json | jq '.keys | length'
 cp -r .keys .keys.dev
 
 # Generate new keys
-npm run generate-keys
+pnpm run generate-keys
 
 # Verify generated KEY_ID
 jq -r '.kid' .keys/metadata.json
@@ -104,10 +104,10 @@ cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
 
 ```bash
 # Build TypeScript
-npm run build
+pnpm run build
 
 # Deploy to Cloudflare Workers
-npm run deploy
+pnpm run deploy
 ```
 
 **✓ Expected Output:**
@@ -247,7 +247,7 @@ curl -I $ENRAI_URL/.well-known/openid-configuration
 cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
 
 # Redeploy
-npm run deploy
+pnpm run deploy
 
 # Verify
 curl $ENRAI_URL/.well-known/jwks.json | jq
@@ -261,7 +261,7 @@ curl $ENRAI_URL/.well-known/jwks.json | jq
 cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
 
 # Redeploy
-npm run deploy
+pnpm run deploy
 ```
 
 ---
