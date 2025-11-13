@@ -791,9 +791,9 @@ Audit Logは匿名化（`user_id` を NULL に設定）して保持
 2. ✅ **API仕様書作成** - 完了 → [OpenAPI 3.1仕様書](../api/openapi.yaml)
 3. ✅ **デザインシステム策定** - 完了 → [design-system.md](../design/design-system.md)
 4. ✅ **ワイヤーフレーム作成** - 完了 → [wireframes.md](../design/wireframes.md)
-5. 📝 **マイグレーションスクリプト作成** - 次のタスク
-6. 📝 **シードデータ作成** - デフォルトロール、テストユーザー
-7. 📝 **ストレージ抽象化層実装** - IStorageAdapter
+5. ✅ **マイグレーションスクリプト作成** - 完了 → [migrations/](../../migrations/)
+6. 📝 **ストレージ抽象化層実装** - IStorageAdapter（次のタスク）
+7. 📝 **フロントエンド環境セットアップ** - SvelteKit + UnoCSS
 
 ---
 
@@ -807,6 +807,9 @@ Audit Logは匿名化（`user_id` を NULL に設定）して保持
 - **UI/UX設計**
   - [design-system.md](../design/design-system.md) - デザインシステム
   - [wireframes.md](../design/wireframes.md) - UI ワイヤーフレーム
+- **データベース**
+  - [migrations/](../../migrations/) - マイグレーションスクリプト
+  - [migrations/README.md](../../migrations/README.md) - マイグレーションガイド
 - **プロジェクト計画**
   - [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5詳細計画
   - [ROADMAP.md](../ROADMAP.md) - 全体ロードマップ
