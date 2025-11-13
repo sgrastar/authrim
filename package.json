@@ -12,6 +12,8 @@
     "test": "turbo run test",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
+    "format": "prettier --write \"packages/**/*.ts\"",
+    "format:check": "prettier --check \"packages/**/*.ts\"",
     "clean": "turbo run clean && rm -rf node_modules",
     "generate-keys": "tsx scripts/generate-keys.ts"
   },
