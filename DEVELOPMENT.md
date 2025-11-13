@@ -313,6 +313,28 @@ wrangler dev --port 8788
 
 **Solution:** Ensure TypeScript paths are correctly configured in `vitest.config.ts` and `tsconfig.json`.
 
+### Issue: esbuild platform mismatch in WSL
+
+**Error:**
+```
+Error [TransformError]: You installed esbuild for another platform than the one you're currently using.
+Specifically the "@esbuild/win32-x64" package is present but this platform needs the "@esbuild/linux-x64" package instead.
+```
+
+**Cause:** This happens when `node_modules` is installed on Windows but then accessed from WSL (Windows Subsystem for Linux), or vice versa. WSL is a Linux environment and requires Linux binaries, not Windows binaries.
+
+**Solution:** Reinstall dependencies in the WSL environment:
+
+```bash
+# Remove node_modules and lock file
+rm -rf node_modules pnpm-lock.yaml
+
+# Reinstall dependencies in WSL
+pnpm install
+```
+
+**Prevention:** Always install dependencies in the environment where you will run the code. Don't share `node_modules` between Windows and WSL.
+
 ## Debugging
 
 ### Enable Verbose Logging
