@@ -25,7 +25,7 @@
 
 ## 概要
 
-Enrai Design Systemは、**Auth0/Clerkを超えるUX**を実現するための統一されたデザイン言語です。
+Enrai Design Systemは、統一されたデザイン言語です。
 
 ### 設計目標
 

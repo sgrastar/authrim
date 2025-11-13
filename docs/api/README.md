@@ -74,8 +74,6 @@ Enrai OIDC OPは、39以上のAPIエンドポイントを提供します：
 - `GET /auth/consent` - 同意画面データ取得
 - `POST /auth/consent` - 同意確定
 
-**目標**: Auth0/Clerkを超えるUX
-
 ### 4. 管理者API 📝 Phase 5
 
 ユーザー・クライアント管理のための管理者専用API：
