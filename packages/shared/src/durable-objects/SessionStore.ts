@@ -88,7 +88,7 @@ export class SessionStore {
     if (this.cleanupInterval === null) {
       this.cleanupInterval = setInterval(
         () => {
-          this.cleanupExpiredSessions();
+          void this.cleanupExpiredSessions();
         },
         5 * 60 * 1000
       ) as unknown as number;
@@ -383,7 +383,7 @@ export class SessionStore {
 
       // POST /session - Create new session
       if (path === '/session' && request.method === 'POST') {
-        const body = (await request.json()) as CreateSessionRequest;
+        const body = await request.json();
 
         if (!body.userId || !body.ttl) {
           return new Response(JSON.stringify({ error: 'Missing required fields: userId, ttl' }), {
@@ -429,7 +429,7 @@ export class SessionStore {
       // POST /session/:id/extend - Extend session expiration
       if (path.match(/^\/session\/[^/]+\/extend$/) && request.method === 'POST') {
         const sessionId = path.split('/')[2];
-        const body = (await request.json()) as { seconds: number };
+        const body = await request.json();
 
         if (!body.seconds || body.seconds <= 0) {
           return new Response(JSON.stringify({ error: 'Invalid seconds value' }), {
