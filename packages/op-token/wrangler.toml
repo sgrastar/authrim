@@ -1,0 +1,53 @@
+name = "enrai-op-token"
+main = "dist/index.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Environment variables
+[vars]
+ISSUER_URL = "http://localhost:8787"
+TOKEN_EXPIRY = "3600"
+CODE_EXPIRY = "600"
+STATE_EXPIRY = "600"
+NONCE_EXPIRY = "600"
+REFRESH_TOKEN_EXPIRY = "2592000"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "AUTH_CODES"
+id = "auth_codes_namespace_id"
+preview_id = "preview_auth_codes_namespace_id"
+
+[[kv_namespaces]]
+binding = "CLIENTS"
+id = "clients_namespace_id"
+preview_id = "preview_clients_namespace_id"
+
+[[kv_namespaces]]
+binding = "REFRESH_TOKENS"
+id = "refresh_tokens_namespace_id"
+preview_id = "preview_refresh_tokens_namespace_id"
+
+[[kv_namespaces]]
+binding = "REVOKED_TOKENS"
+id = "revoked_tokens_namespace_id"
+preview_id = "preview_revoked_tokens_namespace_id"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "rate_limit_namespace_id"
+preview_id = "preview_rate_limit_namespace_id"
+
+# Durable Objects
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "enrai-op-discovery"
+
+[build]
+command = "npm run build"
+
+# Routes (adjust for your domain)
+# [[routes]]
+# pattern = "yourdomain.com/token"
+# zone_name = "yourdomain.com"
