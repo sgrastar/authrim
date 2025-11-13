@@ -82,8 +82,8 @@ if [ "$DB_EXISTS" = false ]; then
     CREATE_OUTPUT=$(wrangler d1 create "$DB_NAME" 2>&1)
     echo "$CREATE_OUTPUT"
 
-    # Extract database ID from output
-    DB_ID=$(echo "$CREATE_OUTPUT" | grep -o 'database_id = "[^"]*"' | cut -d'"' -f2)
+    # Extract database ID from output (supports both old and new wrangler formats)
+    DB_ID=$(echo "$CREATE_OUTPUT" | grep -oE '("database_id":|database_id =) ?"?([a-f0-9-]{36})"?' | grep -oE '[a-f0-9-]{36}')
 
     if [ -z "$DB_ID" ]; then
         echo "❌ Error: Could not extract database ID"
@@ -99,7 +99,7 @@ else
 
     # Get existing database ID
     DB_INFO=$(wrangler d1 info "$DB_NAME" 2>&1)
-    DB_ID=$(echo "$DB_INFO" | grep -o 'id: [a-f0-9-]*' | head -1 | cut -d' ' -f2)
+    DB_ID=$(echo "$DB_INFO" | grep -oE '(id:|"database_id":) ?"?([a-f0-9-]{36})"?' | grep -oE '[a-f0-9-]{36}' | head -1)
 
     if [ -z "$DB_ID" ]; then
         echo "⚠️  Warning: Could not extract database ID from existing database"
