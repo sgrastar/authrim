@@ -23,13 +23,31 @@ It demonstrates that an individual developer can deploy a fully functional, glob
 ## 3. Core Architecture
 
 ### 3.1 System Components
+
+**Phase 5 Update**: Hybrid Multi-Tier Storage Architecture
+
 | Component | Role | Cloudflare Service |
 |:--|:--|:--|
 | **Worker (Hono App)** | Handles HTTP routes, authorization, and token issuance. | Cloudflare Workers |
-| **KV Storage** | Persists authorization codes, states, and nonces (TTL-based). | Cloudflare KV |
-| **Durable Object** | Optionally stores and rotates signing keys (JWK). | Cloudflare Durable Objects |
-| **Secrets** | Stores the RSA private key for signing ID tokens. | Cloudflare Worker Secrets |
+| **Durable Objects** | Strong consistency layer for auth codes, sessions, token rotation | Cloudflare Durable Objects |
+| **D1 Database** | Persistent relational data (users, clients, audit logs) | Cloudflare D1 (SQLite) |
+| **KV Storage** | Global edge cache for public keys, discovery, static metadata | Cloudflare KV |
 | **Automatic TLS** | Ensures HTTPS for all endpoints. | Cloudflare Edge Network |
+
+**Storage Architecture**:
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Cloudflare Workers (Hono)                       │
+└─────────────────────────────────────────────────────────────────────┘
+          │                    │                    │
+          ▼                    ▼                    ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│ Durable Objects │  │   D1 Database   │  │   KV Storage    │
+│  (Consistency)  │  │  (Persistent)   │  │  (Edge Cache)   │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+```
+
+See [storage-strategy.md](./storage-strategy.md) for detailed architecture
 
 ### 3.2 Logical Flow Diagram
 ```
