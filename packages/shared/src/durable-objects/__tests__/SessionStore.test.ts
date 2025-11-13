@@ -7,51 +7,68 @@ import { SessionStore } from '../SessionStore';
 import type { Env } from '../../types/env';
 
 // Mock DurableObjectState
-class MockDurableObjectState implements DurableObjectState {
-  private storage = new Map<string, unknown>();
+class MockDurableObjectState implements Partial<DurableObjectState> {
+  private _storage = new Map<string, unknown>();
   id!: DurableObjectId;
+  storage: DurableObjectStorage;
 
   constructor() {
-    this.storage = new Map();
-  }
-
-  get(key: string): Promise<unknown>;
-  get<T>(key: string): Promise<T | undefined>;
-  get<T>(key: string): Promise<T | undefined> {
-    return Promise.resolve(this.storage.get(key) as T | undefined);
-  }
-
-  put(key: string, value: unknown): Promise<void>;
-  put(entries: Record<string, unknown>): Promise<void>;
-  put(keyOrEntries: string | Record<string, unknown>, value?: unknown): Promise<void> {
-    if (typeof keyOrEntries === 'string') {
-      this.storage.set(keyOrEntries, value);
-    } else {
-      Object.entries(keyOrEntries).forEach(([k, v]) => this.storage.set(k, v));
-    }
-    return Promise.resolve();
-  }
-
-  delete(key: string): Promise<boolean>;
-  delete(keys: string[]): Promise<number>;
-  delete(keyOrKeys: string | string[]): Promise<boolean | number> {
-    if (typeof keyOrKeys === 'string') {
-      const existed = this.storage.has(keyOrKeys);
-      this.storage.delete(keyOrKeys);
-      return Promise.resolve(existed);
-    } else {
-      let count = 0;
-      keyOrKeys.forEach(key => {
-        if (this.storage.delete(key)) count++;
-      });
-      return Promise.resolve(count);
-    }
-  }
-
-  list(): Promise<Map<string, unknown>>;
-  list<T>(options?: { start?: string; end?: string; limit?: number }): Promise<Map<string, T>>;
-  list<T>(): Promise<Map<string, T>> {
-    return Promise.resolve(new Map(this.storage as Map<string, T>));
+    this.storage = {
+      get: <T>(key: string): Promise<T | undefined> => {
+        return Promise.resolve(this._storage.get(key) as T | undefined);
+      },
+      put: (keyOrEntries: string | Record<string, unknown>, value?: unknown): Promise<void> => {
+        if (typeof keyOrEntries === 'string') {
+          this._storage.set(keyOrEntries, value);
+        } else {
+          Object.entries(keyOrEntries).forEach(([k, v]) => this._storage.set(k, v));
+        }
+        return Promise.resolve();
+      },
+      delete: (keyOrKeys: string | string[]): Promise<boolean | number> => {
+        if (typeof keyOrKeys === 'string') {
+          const existed = this._storage.has(keyOrKeys);
+          this._storage.delete(keyOrKeys);
+          return Promise.resolve(existed);
+        } else {
+          let count = 0;
+          keyOrKeys.forEach((key) => {
+            if (this._storage.delete(key)) count++;
+          });
+          return Promise.resolve(count);
+        }
+      },
+      deleteAll: (): Promise<void> => {
+        this._storage.clear();
+        return Promise.resolve();
+      },
+      list: <T>(): Promise<Map<string, T>> => {
+        return Promise.resolve(new Map(this._storage as Map<string, T>));
+      },
+      transaction: <T>(closure: (txn: DurableObjectStorage) => Promise<T>): Promise<T> => {
+        return closure(this.storage);
+      },
+      getAlarm: (): Promise<number | null> => {
+        return Promise.resolve(null);
+      },
+      setAlarm: (): Promise<void> => {
+        return Promise.resolve();
+      },
+      deleteAlarm: (): Promise<void> => {
+        return Promise.resolve();
+      },
+      sync: (): Promise<void> => {
+        return Promise.resolve();
+      },
+      transactionSync: <T>(closure: () => T): T => {
+        return closure();
+      },
+      sql: {} as SqlStorage,
+      kv: {} as KVNamespace,
+      getCurrentBookmark: (): string => '',
+      getBookmarkForTime: (): string => '',
+      onNextSessionRestoreBookmark: (): void => {},
+    } as unknown as DurableObjectStorage;
   }
 
   blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
@@ -64,17 +81,18 @@ class MockDurableObjectState implements DurableObjectState {
 }
 
 // Mock Env
-const createMockEnv = (): Env => ({
-  DB: {
-    prepare: vi.fn().mockReturnValue({
-      bind: vi.fn().mockReturnThis(),
-      first: vi.fn().mockResolvedValue(null),
-      all: vi.fn().mockResolvedValue({ results: [] }),
-      run: vi.fn().mockResolvedValue({}),
-    }),
-  } as unknown as D1Database,
-  // Add other required Env properties as needed
-} as Env);
+const createMockEnv = (): Env =>
+  ({
+    DB: {
+      prepare: vi.fn().mockReturnValue({
+        bind: vi.fn().mockReturnThis(),
+        first: vi.fn().mockResolvedValue(null),
+        all: vi.fn().mockResolvedValue({ results: [] }),
+        run: vi.fn().mockResolvedValue({}),
+      }),
+    } as unknown as D1Database,
+    // Add other required Env properties as needed
+  }) as Env;
 
 describe('SessionStore', () => {
   let sessionStore: SessionStore;
@@ -102,7 +120,12 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(201);
 
-      const body = await response.json();
+      const body = (await response.json()) as {
+        id: string;
+        userId: string;
+        expiresAt: number;
+        createdAt: number;
+      };
       expect(body).toHaveProperty('id');
       expect(body).toHaveProperty('userId', 'user_123');
       expect(body).toHaveProperty('expiresAt');
@@ -122,7 +145,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(400);
 
-      const body = await response.json();
+      const body = (await response.json()) as { error: unknown };
       expect(body).toHaveProperty('error');
     });
 
@@ -134,7 +157,7 @@ describe('SessionStore', () => {
           body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
         });
         const response = await sessionStore.fetch(request);
-        const body = await response.json();
+        const body = (await response.json()) as { id: string };
         return body.id;
       };
 
@@ -153,7 +176,7 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = await createResponse.json();
+      const { id } = (await createResponse.json()) as { id: string };
 
       // Retrieve session
       const getRequest = new Request(`http://localhost/session/${id}`, {
@@ -162,7 +185,7 @@ describe('SessionStore', () => {
       const getResponse = await sessionStore.fetch(getRequest);
       expect(getResponse.status).toBe(200);
 
-      const body = await getResponse.json();
+      const body = (await getResponse.json()) as { id: string; userId: string };
       expect(body.id).toBe(id);
       expect(body.userId).toBe('user_123');
     });
@@ -175,7 +198,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(404);
 
-      const body = await response.json();
+      const body = (await response.json()) as { error: unknown };
       expect(body).toHaveProperty('error');
     });
 
@@ -187,7 +210,7 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: -1 }), // Already expired
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = await createResponse.json();
+      const { id } = (await createResponse.json()) as { id: string };
 
       // Try to retrieve expired session
       const getRequest = new Request(`http://localhost/session/${id}`, {
@@ -207,7 +230,7 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = await createResponse.json();
+      const { id } = (await createResponse.json()) as { id: string };
 
       // Invalidate session
       const deleteRequest = new Request(`http://localhost/session/${id}`, {
@@ -216,7 +239,7 @@ describe('SessionStore', () => {
       const deleteResponse = await sessionStore.fetch(deleteRequest);
       expect(deleteResponse.status).toBe(200);
 
-      const body = await deleteResponse.json();
+      const body = (await deleteResponse.json()) as { success: boolean; deleted: string };
       expect(body.success).toBe(true);
       expect(body.deleted).toBe(id);
 
@@ -236,7 +259,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json();
+      const body = (await response.json()) as { success: boolean; deleted: null };
       expect(body.success).toBe(true);
       expect(body.deleted).toBe(null);
     });
@@ -263,7 +286,7 @@ describe('SessionStore', () => {
       const listResponse = await sessionStore.fetch(listRequest);
       expect(listResponse.status).toBe(200);
 
-      const body = await listResponse.json();
+      const body = (await listResponse.json()) as { sessions: Array<{ userId: string }> };
       expect(body.sessions).toHaveLength(3);
       expect(body.sessions.every((s: { userId: string }) => s.userId === userId)).toBe(true);
     });
@@ -276,7 +299,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json();
+      const body = (await response.json()) as { sessions: unknown[] };
       expect(body.sessions).toEqual([]);
     });
 
@@ -304,7 +327,7 @@ describe('SessionStore', () => {
         method: 'GET',
       });
       const listResponse = await sessionStore.fetch(listRequest);
-      const body = await listResponse.json();
+      const body = (await listResponse.json()) as { sessions: unknown[] };
 
       // Should only have 1 active session
       expect(body.sessions).toHaveLength(1);
@@ -320,10 +343,13 @@ describe('SessionStore', () => {
         body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id, expiresAt: originalExpiry } = await createResponse.json();
+      const { id, expiresAt: originalExpiry } = (await createResponse.json()) as {
+        id: string;
+        expiresAt: number;
+      };
 
       // Wait a bit
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Extend session
       const extendRequest = new Request(`http://localhost/session/${id}/extend`, {
@@ -334,7 +360,7 @@ describe('SessionStore', () => {
       const extendResponse = await sessionStore.fetch(extendRequest);
       expect(extendResponse.status).toBe(200);
 
-      const body = await extendResponse.json();
+      const body = (await extendResponse.json()) as { expiresAt: number };
       expect(body.expiresAt).toBeGreaterThan(originalExpiry);
     });
 
@@ -370,7 +396,11 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json();
+      const body = (await response.json()) as {
+        status: string;
+        sessions: unknown;
+        timestamp: number;
+      };
       expect(body).toHaveProperty('status', 'ok');
       expect(body).toHaveProperty('sessions');
       expect(body).toHaveProperty('timestamp');

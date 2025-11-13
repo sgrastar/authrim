@@ -86,9 +86,12 @@ export class SessionStore {
   private startCleanup(): void {
     // Cleanup every 5 minutes
     if (this.cleanupInterval === null) {
-      this.cleanupInterval = setInterval(() => {
-        this.cleanupExpiredSessions();
-      }, 5 * 60 * 1000) as unknown as number;
+      this.cleanupInterval = setInterval(
+        () => {
+          this.cleanupExpiredSessions();
+        },
+        5 * 60 * 1000
+      ) as unknown as number;
     }
   }
 
@@ -190,9 +193,7 @@ export class SessionStore {
     }
 
     try {
-      await this.env.DB.prepare('DELETE FROM sessions WHERE id = ?')
-        .bind(sessionId)
-        .run();
+      await this.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
     } catch (error) {
       console.error('SessionStore: D1 delete error:', error);
     }
