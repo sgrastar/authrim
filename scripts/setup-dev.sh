@@ -181,6 +181,40 @@ binding = "RATE_LIMIT"
 id = "placeholder"
 preview_id = "placeholder"'
 
+# Generate wrangler.toml for router (with Service Bindings)
+echo "  ✅ router/wrangler.toml (with Service Bindings)"
+cat > packages/router/wrangler.toml << 'ROUTER_TOML_EOF'
+name = "enrai-router"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Service Bindings to other workers
+[[services]]
+binding = "OP_DISCOVERY"
+service = "enrai-op-discovery"
+
+[[services]]
+binding = "OP_AUTH"
+service = "enrai-op-auth"
+
+[[services]]
+binding = "OP_TOKEN"
+service = "enrai-op-token"
+
+[[services]]
+binding = "OP_USERINFO"
+service = "enrai-op-userinfo"
+
+[[services]]
+binding = "OP_MANAGEMENT"
+service = "enrai-op-management"
+
+# Development configuration
+[dev]
+port = 8786
+ROUTER_TOML_EOF
+
 echo ""
 echo "✅ All wrangler.toml files generated!"
 echo ""

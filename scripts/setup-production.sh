@@ -67,30 +67,43 @@ fi
 
 echo ""
 
-# Prompt for production URL choice
-echo "📝 Production URL Configuration"
+# Prompt for deployment mode
+echo "📝 Deployment Mode Configuration"
 echo ""
-echo "   This URL will be used as the ISSUER_URL for your OpenID Provider."
-echo "   The issuer URL is the base URL that identifies your OAuth/OIDC server."
-echo "   It's used in tokens, discovery endpoints, and client configurations."
+echo "   Choose how you want to deploy Enrai:"
 echo ""
-echo "Choose your deployment option:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  1) Test Environment (workers.dev + Router Worker)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "     • Single unified endpoint: https://enrai-router.$SUBDOMAIN.workers.dev"
+echo "     • Uses Router Worker with Service Bindings"
+echo "     • All endpoints accessible under one domain"
+echo "     • Best for: Development, testing, quick setup"
+echo "     • OpenID Connect compliant ✅"
 echo ""
-echo "  1) Use workers.dev subdomain (recommended for testing)"
-echo "     URL: https://enrai.$SUBDOMAIN.workers.dev"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  2) Production Environment (Custom Domain + Routes)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "     • Custom domain: https://id.yourdomain.com"
+echo "     • Uses Cloudflare Routes (direct routing)"
+echo "     • Optimal performance (no extra hop)"
+echo "     • Best for: Production deployments"
+echo "     • Requires: Cloudflare-managed domain"
 echo ""
-echo "  2) Use custom domain (recommended for production)"
-echo "     You will enter your custom domain"
-echo ""
-read -p "Enter your choice (1/2): " -r choice
+read -p "Enter your choice (1/2): " -r DEPLOYMENT_MODE
 
-case $choice in
+case $DEPLOYMENT_MODE in
     1)
-        PRODUCTION_URL="https://enrai.$SUBDOMAIN.workers.dev"
+        # Test Environment: Router Worker + workers.dev
+        PRODUCTION_URL="https://enrai-router.$SUBDOMAIN.workers.dev"
+        USE_ROUTER="true"
+        DEPLOYMENT_TYPE="test"
         echo ""
-        echo "✅ Using workers.dev subdomain"
+        echo "✅ Test Environment selected"
+        echo "   Router Worker will be deployed with Service Bindings"
         ;;
     2)
+        # Production Environment: Custom Domain + Routes
         echo ""
         echo "Enter your custom domain (e.g., https://id.yourdomain.com):"
         read -p "Custom domain: " CUSTOM_DOMAIN
@@ -102,8 +115,19 @@ case $choice in
         fi
 
         PRODUCTION_URL="$CUSTOM_DOMAIN"
+        USE_ROUTER="false"
+        DEPLOYMENT_TYPE="production"
+
+        # Extract domain for routes configuration
+        DOMAIN_ONLY=$(echo "$CUSTOM_DOMAIN" | sed 's|https://||' | sed 's|/.*||')
+        # Extract zone name (last two parts of domain)
+        ZONE_NAME=$(echo "$DOMAIN_ONLY" | awk -F. '{print $(NF-1)"."$NF}')
+
         echo ""
-        echo "✅ Using custom domain"
+        echo "✅ Production Environment selected"
+        echo "   Custom domain: $CUSTOM_DOMAIN"
+        echo "   Zone name: $ZONE_NAME"
+        echo "   Cloudflare Routes will be configured"
         ;;
     *)
         echo "❌ Invalid choice. Exiting."
@@ -169,12 +193,101 @@ update_issuer_url() {
     fi
 }
 
+# Function to add routes to wrangler.toml (for production mode)
+add_routes_to_worker() {
+    local file=$1
+    local package_name=$(basename $(dirname "$file"))
+    local routes=""
+
+    case $package_name in
+        op-discovery)
+            routes="
+# Cloudflare Routes (Production)
+[[routes]]
+pattern = \"$DOMAIN_ONLY/.well-known/*\"
+zone_name = \"$ZONE_NAME\""
+            ;;
+        op-auth)
+            routes="
+# Cloudflare Routes (Production)
+[[routes]]
+pattern = \"$DOMAIN_ONLY/authorize\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/as/*\"
+zone_name = \"$ZONE_NAME\""
+            ;;
+        op-token)
+            routes="
+# Cloudflare Routes (Production)
+[[routes]]
+pattern = \"$DOMAIN_ONLY/token\"
+zone_name = \"$ZONE_NAME\""
+            ;;
+        op-userinfo)
+            routes="
+# Cloudflare Routes (Production)
+[[routes]]
+pattern = \"$DOMAIN_ONLY/userinfo\"
+zone_name = \"$ZONE_NAME\""
+            ;;
+        op-management)
+            routes="
+# Cloudflare Routes (Production)
+[[routes]]
+pattern = \"$DOMAIN_ONLY/register\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/introspect\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/revoke\"
+zone_name = \"$ZONE_NAME\""
+            ;;
+    esac
+
+    # Remove existing routes section if present
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' '/^# Cloudflare Routes/,/^zone_name = /d' "$file"
+    else
+        sed -i '/^# Cloudflare Routes/,/^zone_name = /d' "$file"
+    fi
+
+    # Append routes to the end of the file
+    echo "$routes" >> "$file"
+}
+
 # Update all package wrangler.toml files
 for toml_file in packages/*/wrangler.toml; do
     if [ -f "$toml_file" ]; then
+        package_name=$(basename $(dirname "$toml_file"))
+
+        # Skip router in production mode
+        if [[ "$USE_ROUTER" == "false" ]] && [[ "$package_name" == "router" ]]; then
+            echo "  ⊗ Skipping router (not needed in production mode)"
+            continue
+        fi
+
         update_issuer_url "$toml_file"
+
+        # Add routes for production mode (except router)
+        if [[ "$USE_ROUTER" == "false" ]] && [[ "$package_name" != "router" ]]; then
+            add_routes_to_worker "$toml_file"
+        fi
     fi
 done
+
+# Update router worker if in test mode
+if [[ "$USE_ROUTER" == "true" ]]; then
+    if [ -f "packages/router/wrangler.toml" ]; then
+        echo "  • Updating router (test mode - Service Bindings enabled)"
+        # Router doesn't need ISSUER_URL, but we ensure Service Bindings are present
+        # (already generated by setup-dev.sh)
+    fi
+fi
 
 echo ""
 echo "✅ All wrangler.toml files updated!"
@@ -204,40 +317,51 @@ echo "  • Token: $PRODUCTION_URL/token"
 echo "  • UserInfo: $PRODUCTION_URL/userinfo"
 echo ""
 
-if [[ $choice == "1" ]]; then
-    echo "📌 Workers.dev Deployment Notes:"
+if [[ "$USE_ROUTER" == "true" ]]; then
+    echo "📌 Test Environment Deployment Notes:"
     echo ""
-    echo "  Your workers will be automatically accessible at:"
+    echo "  ✅ Router Worker enabled with Service Bindings"
+    echo ""
+    echo "  Your unified endpoint will be:"
+    echo "    🌐 $PRODUCTION_URL"
+    echo ""
+    echo "  Individual workers (for debugging):"
     echo "    • enrai-op-discovery.$SUBDOMAIN.workers.dev"
     echo "    • enrai-op-auth.$SUBDOMAIN.workers.dev"
     echo "    • enrai-op-token.$SUBDOMAIN.workers.dev"
     echo "    • enrai-op-userinfo.$SUBDOMAIN.workers.dev"
     echo "    • enrai-op-management.$SUBDOMAIN.workers.dev"
+    echo "    • enrai-router.$SUBDOMAIN.workers.dev (main entry point)"
     echo ""
-    echo "  ⚠️  Note: For a unified endpoint, you'll need to set up routing."
-    echo "  See DEPLOYMENT.md for routing configuration options."
+    echo "  ℹ️  All OpenID Connect endpoints will be accessible via the Router Worker"
     echo ""
-elif [[ $choice == "2" ]]; then
-    echo "📌 Custom Domain Deployment Notes:"
+else
+    echo "📌 Production Environment Deployment Notes:"
     echo ""
-    echo "  ⚠️  IMPORTANT: After deployment, you MUST configure custom domain routing!"
+    echo "  ✅ Cloudflare Routes configured for custom domain"
     echo ""
-    echo "  Your workers will deploy to workers.dev by default, but won't be"
-    echo "  accessible on your custom domain until you configure routes."
+    echo "  Your custom domain endpoints:"
+    echo "    🌐 $PRODUCTION_URL"
     echo ""
-    echo "  See DEPLOYMENT.md section 'Custom Domain Setup' for detailed instructions."
+    echo "  ⚠️  IMPORTANT: Post-Deployment Steps Required!"
+    echo ""
+    echo "  After running 'pnpm run deploy', you MUST:"
+    echo "    1. Ensure your domain ($ZONE_NAME) is managed by Cloudflare"
+    echo "    2. Verify DNS is properly configured"
+    echo "    3. Routes will be automatically applied on deployment"
+    echo ""
+    echo "  See DEPLOYMENT.md section 'Custom Domain Setup' for details."
     echo ""
 fi
 
 echo "Next steps:"
 echo "  1. Run 'pnpm run build' to build all packages"
-echo "  2. Run 'pnpm run deploy' to deploy to Cloudflare"
-if [[ $choice == "2" ]]; then
-    echo "  3. Configure custom domain routes (see DEPLOYMENT.md)"
-    echo "  4. Test your endpoints using the URLs above"
+if [[ "$USE_ROUTER" == "true" ]]; then
+    echo "  2. Run 'pnpm run deploy:with-router' to deploy (includes Router Worker)"
 else
-    echo "  3. Test your endpoints using the URLs above"
+    echo "  2. Run 'pnpm run deploy' to deploy (Router Worker skipped)"
 fi
+echo "  3. Test your endpoints using: $PRODUCTION_URL/.well-known/openid-configuration"
 echo ""
 echo "⚠️  Prerequisites:"
 echo "  Make sure you've run these scripts first:"

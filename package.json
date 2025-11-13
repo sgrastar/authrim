@@ -8,7 +8,8 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
-    "deploy": "turbo run deploy",
+    "deploy": "turbo run deploy --filter='!@enrai/router'",
+    "deploy:with-router": "turbo run deploy",
     "deploy:retry": "./scripts/deploy-with-retry.sh",
     "test": "turbo run test",
     "lint": "turbo run lint",
