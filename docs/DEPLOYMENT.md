@@ -123,19 +123,16 @@ wrangler login
 # 4. Build and deploy
 pnpm run build
 
-# For Test Environment (workers.dev):
+# Deploy with retry logic (recommended for both modes)
 pnpm run deploy:with-router
-
-# For Production Environment (custom domain):
-pnpm run deploy
-
-# Or use retry logic for sequential deployment:
-# pnpm run deploy:retry
+# - Uses sequential deployment with delays to avoid rate limits
+# - Automatically includes Router Worker if wrangler.toml exists (test mode)
+# - Automatically skips Router Worker if wrangler.toml missing (production mode)
 ```
 
 **Done!** Your OpenID Provider is now live.
 
-> 💡 **New**: The `setup-production.sh` script now asks you to choose between Test (Router Worker) or Production (Routes) mode. See [Deployment Modes](#-deployment-modes) above.
+> 💡 **Important**: Both `deploy:with-router` and `deploy:retry` now use the same sequential deployment script with retry logic. The router is conditionally deployed based on your configuration from `setup-production.sh`.
 
 ---
 
@@ -342,54 +339,64 @@ router:build: cache hit, replaying logs
 
 ### 8. Deploy to Cloudflare Workers
 
-Deploy workers based on your chosen deployment mode:
+Deploy workers using the recommended sequential deployment with retry logic:
 
-#### For Test Environment (with Router Worker):
+#### Recommended: Deploy with Retry Logic (All Modes)
 
 ```bash
 pnpm run deploy:with-router
 ```
 
-This deploys all 6 workers including the Router Worker.
+This is now the **recommended deployment method** for both test and production environments.
 
 **What this does:**
-- Deploys `enrai-op-discovery` to Cloudflare Workers
-- Deploys `enrai-op-auth` to Cloudflare Workers
-- Deploys `enrai-op-token` to Cloudflare Workers
-- Deploys `enrai-op-userinfo` to Cloudflare Workers
-- Deploys `enrai-op-management` to Cloudflare Workers
-- Deploys `enrai-router` to Cloudflare Workers (unified entry point)
+- Builds all packages
+- Deploys workers **sequentially** (one at a time)
+- Adds 10-second delays between deployments to avoid rate limits
+- Retries failed deployments automatically (up to 4 attempts with exponential backoff)
+- **Conditionally deploys Router Worker**:
+  - ✅ **Included** if `packages/router/wrangler.toml` exists (Test Environment)
+  - ⊗ **Skipped** if `packages/router/wrangler.toml` missing (Production Environment)
 
-#### For Production Environment (without Router Worker):
+**Workers deployed (Test Environment):**
+- `enrai-op-discovery`
+- `enrai-op-management`
+- `enrai-op-auth`
+- `enrai-op-token`
+- `enrai-op-userinfo`
+- `enrai-router` (unified entry point)
+
+**Workers deployed (Production Environment):**
+- `enrai-op-discovery`
+- `enrai-op-management`
+- `enrai-op-auth`
+- `enrai-op-token`
+- `enrai-op-userinfo`
+- Router Worker is automatically skipped
+
+#### Alternative: Parallel Deployment (Legacy, Not Recommended)
 
 ```bash
 pnpm run deploy
 ```
 
-This deploys only the 5 specialized workers (Router Worker is excluded).
+**⚠️ Warning:** This uses Turbo's parallel deployment which may cause:
+- Cloudflare API rate limit errors
+- "Service unavailable" errors (code 7010)
+- Random deployment failures
 
-**What this does:**
-- Deploys `enrai-op-discovery` to Cloudflare Workers
-- Deploys `enrai-op-auth` to Cloudflare Workers
-- Deploys `enrai-op-token` to Cloudflare Workers
-- Deploys `enrai-op-userinfo` to Cloudflare Workers
-- Deploys `enrai-op-management` to Cloudflare Workers
-- Router Worker is automatically excluded via `--filter='!@enrai/router'`
+Only use this if you understand the risks. The sequential deployment (`deploy:with-router`) is **strongly recommended**.
 
-#### Alternative: Sequential deployment with retry logic
-
-```bash
-pnpm run deploy:retry
+**Output Example:**
 ```
+🚀 Starting deployment with retry logic...
 
-This script:
-- Deploys workers sequentially (not in parallel)
-- Adds 10-second delays between deployments to avoid rate limits
-- Retries failed deployments automatically (up to 4 attempts)
-- Provides detailed error reporting
+🔨 Building packages...
 
-**Output:**
-```
+• Packages in scope: @enrai/op-auth, @enrai/op-discovery, @enrai/op-management, @enrai/op-token, @enrai/op-userinfo, @enrai/router, @enrai/shared
+• Running build in 7 packages
+...
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📦 Deploying: op-discovery
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -399,8 +406,27 @@ https://enrai-op-discovery.your-subdomain.workers.dev
 
 ⏸️  Waiting 10s before next deployment to avoid rate limits...
 
-📦 Deploying: op-auth
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 Deploying: op-management
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ...
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 Deploying: router
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Published enrai-router (0.01 sec)
+https://enrai-router.your-subdomain.workers.dev
+✅ Successfully deployed: router
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 Deployment Summary
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ All packages deployed successfully!
+```
+
+**If Router Worker is not needed (Production mode):**
+```
+⊗ Skipping router (wrangler.toml not found - not needed in production mode)
 ```
 
 ### 9. Verify Deployment
@@ -529,7 +555,10 @@ Add these secrets to your GitHub repository:
 Push to main → Run tests → Build packages → Deploy to Cloudflare → Live at production URL
 ```
 
-**Note:** Secrets (`PRIVATE_KEY_PEM`, `PUBLIC_JWK_JSON`) and KV namespaces must be configured manually via Wrangler before the first deployment. GitHub Actions uses the API token to deploy, but cannot create secrets or KV namespaces.
+**Note:**
+- Secrets (`PRIVATE_KEY_PEM`, `PUBLIC_JWK_JSON`) and KV namespaces must be configured manually via Wrangler before the first deployment
+- GitHub Actions uses the API token to deploy, but cannot create secrets or KV namespaces
+- GitHub Actions deployments use sequential deployment with retry logic to avoid rate limits
 
 ---
 
@@ -881,18 +910,28 @@ Ensure worker names match exactly.
 
 **Solution:**
 
-Use the sequential deployment script with retry logic:
+Use the recommended sequential deployment with retry logic:
 ```bash
-pnpm run deploy:retry
+pnpm run deploy:with-router
 ```
 
-This script:
+This is now the **default recommended method** and automatically:
 - Deploys one worker at a time
 - Waits 10 seconds between deployments
-- Retries failed deployments automatically
+- Retries failed deployments automatically (up to 4 attempts)
 - Avoids overwhelming Cloudflare's API
+- Conditionally deploys Router Worker based on configuration
 
-**Alternative:** Increase the delay in `scripts/deploy-with-retry.sh`:
+**If you're still using the legacy parallel deployment:**
+```bash
+# Stop using this:
+pnpm run deploy
+
+# Switch to this instead:
+pnpm run deploy:with-router
+```
+
+**Alternative:** Increase the delay in `scripts/deploy-with-retry.sh` if rate limits persist:
 ```bash
 # Edit line 16 in scripts/deploy-with-retry.sh
 INTER_DEPLOY_DELAY=15    # Increase from 10 to 15 seconds

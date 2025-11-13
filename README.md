@@ -355,12 +355,11 @@ pnpm install
 # 6. Build TypeScript
 pnpm run build
 
-# 7. Deploy based on chosen mode:
-# For Test Environment (workers.dev):
+# 7. Deploy with retry logic (recommended)
 pnpm run deploy:with-router
-
-# For Production Environment (custom domain):
-pnpm run deploy
+# This uses deploy-with-retry.sh for sequential deployment with delays
+# Router Worker is included if wrangler.toml exists (test mode)
+# Router Worker is skipped if wrangler.toml missing (production mode)
 ```
 
 ### Deployment Modes
@@ -371,7 +370,7 @@ Enrai supports two deployment modes to ensure OpenID Connect specification compl
 - **Unified endpoint**: `https://enrai-router.{subdomain}.workers.dev`
 - **Use case**: Development, testing, quick setup
 - **Pros**: No custom domain needed, OpenID Connect compliant ✅
-- **Deploy**: `pnpm run deploy:with-router`
+- **Deploy**: `pnpm run deploy:with-router` (includes Router Worker)
 
 **Workers deployed:**
 - 🌍 **enrai-router** (unified entry point)
@@ -381,14 +380,36 @@ Enrai supports two deployment modes to ensure OpenID Connect specification compl
 - **Custom domain**: `https://id.yourdomain.com`
 - **Use case**: Production deployments
 - **Pros**: Optimal performance, professional URL
-- **Deploy**: `pnpm run deploy`
+- **Deploy**: `pnpm run deploy:with-router` (Router Worker skipped automatically)
 - **Requires**: Cloudflare-managed domain
 
 **Workers deployed:**
 - 🌍 **enrai-op-discovery**, **enrai-op-auth**, **enrai-op-token**, **enrai-op-userinfo**, **enrai-op-management**
-- Router Worker is automatically excluded
+- Router Worker is automatically excluded (no wrangler.toml generated in production mode)
 
 > 💡 **Learn more**: See [docs/ROUTER_SETUP.md](./docs/ROUTER_SETUP.md) for detailed architecture and [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for step-by-step instructions.
+
+### Deployment Commands
+
+All deployment commands now use sequential deployment with retry logic to avoid API rate limits:
+
+```bash
+# Recommended: Deploy with retry logic (works for both modes)
+pnpm run deploy:with-router
+
+# Alternative: Same as above (deploy:retry is an alias)
+pnpm run deploy:retry
+
+# Legacy: Parallel deployment (NOT recommended, may hit rate limits)
+pnpm run deploy
+```
+
+**Benefits of sequential deployment:**
+- ✅ Avoids Cloudflare API rate limits (1,200 requests per 5 minutes)
+- ✅ Prevents "Service unavailable" errors (code 7010)
+- ✅ Automatic retry with exponential backoff (up to 4 attempts)
+- ✅ 10-second delays between deployments
+- ✅ Conditional router deployment based on configuration
 
 ### Troubleshooting Deployment
 
@@ -399,7 +420,7 @@ If you encounter KV namespace errors during deployment:
 ./scripts/setup-kv.sh --reset
 
 # Then deploy with retry logic
-pnpm run deploy:retry
+pnpm run deploy:with-router
 ```
 
 The `--reset` option will:
