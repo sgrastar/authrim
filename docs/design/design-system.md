@@ -594,7 +594,7 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 **Lucide Icons** - Lightweight, open source, SVG
 
 ```bash
-npm install lucide-svelte
+pnpm install lucide-svelte
 ```
 
 ### よく使うアイコン

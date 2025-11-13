@@ -220,7 +220,7 @@ Support: https://github.com/enrai/enrai/issues
 
 ```javascript
 // 1. Install client library
-npm install @enrai/client
+pnpm install @enrai/client
 
 // 2. Configure
 import { EnraiClient } from '@enrai/client';
@@ -473,8 +473,8 @@ npx create-enrai my-identity-provider
 # Or clone and deploy manually
 git clone https://github.com/sgrastar/enrai.git
 cd enrai
-npm install
-npm run deploy
+pnpm install
+pnpm run deploy
 ```
 
 ---

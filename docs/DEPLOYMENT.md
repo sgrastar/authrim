@@ -25,7 +25,7 @@ Before deploying Enrai, ensure you have:
 
 2. **Wrangler CLI** installed globally
    ```bash
-   npm install -g wrangler
+   ppnpm install -g wrangler
    ```
 
 3. **Cloudflare API Token**
@@ -33,7 +33,7 @@ Before deploying Enrai, ensure you have:
    - Create token with "Edit Cloudflare Workers" template
    - Save the token securely
 
-4. **Node.js 18+** and npm installed
+4. **Node.js 18+** and ppnpm installed
 
 ---
 
@@ -80,7 +80,7 @@ git clone https://github.com/sgrastar/enrai.git
 cd enrai
 
 # Install dependencies
-npm install
+ppnpm install
 ```
 
 ### 2. Authenticate with Cloudflare
@@ -180,14 +180,14 @@ cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON --env 
 ### 7. Build the Project
 
 ```bash
-npm run build
+ppnpm run build
 ```
 
 ### 8. Deploy to Cloudflare Workers
 
 ```bash
 # Deploy to production
-npm run deploy
+ppnpm run deploy
 
 # Or use wrangler directly
 wrangler deploy --env production
@@ -397,7 +397,7 @@ If your domain is managed by Cloudflare:
 
 ```bash
 # 1. Generate new key pair
-npm run generate-keys
+ppnpm run generate-keys
 
 # 2. Deploy with new KEY_ID
 # Update KEY_ID in wrangler.toml
