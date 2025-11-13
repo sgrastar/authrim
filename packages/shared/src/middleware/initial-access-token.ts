@@ -11,9 +11,24 @@ import type { Context, MiddlewareHandler } from 'hono';
 import type { Env } from '../types/env';
 
 /**
+ * Token metadata stored in context
+ */
+interface TokenMetadata {
+  single_use?: boolean;
+  description?: string;
+}
+
+/**
+ * Variables added to Hono context
+ */
+interface ContextVariables {
+  initialAccessTokenMetadata?: TokenMetadata;
+}
+
+/**
  * Extract Bearer token from Authorization header
  */
-function extractBearerToken(authHeader: string | null): string | null {
+function extractBearerToken(authHeader: string | null | undefined): string | null {
   if (!authHeader) {
     return null;
   }
@@ -34,8 +49,11 @@ function extractBearerToken(authHeader: string | null): string | null {
  * - Token must exist in INITIAL_ACCESS_TOKENS KV store
  * - Token can be single-use (deleted after use) or reusable (kept in KV)
  */
-export function initialAccessTokenMiddleware(): MiddlewareHandler<{ Bindings: Env }> {
-  return async (c: Context<{ Bindings: Env }>, next) => {
+export function initialAccessTokenMiddleware(): MiddlewareHandler<{
+  Bindings: Env;
+  Variables: ContextVariables;
+}> {
+  return async (c: Context<{ Bindings: Env; Variables: ContextVariables }>, next) => {
     const env = c.env;
 
     // Check if open registration is enabled
@@ -94,7 +112,7 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{ Bindings: En
       }
 
       // Token is valid - check if it's single-use
-      const metadata = tokenData as { single_use?: boolean; description?: string };
+      const metadata = tokenData as TokenMetadata;
 
       if (metadata.single_use) {
         // Delete single-use token immediately

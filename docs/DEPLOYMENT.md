@@ -46,7 +46,7 @@ Before deploying Enrai, ensure you have:
 
 ### 🌍 Architecture
 
-Enrai is a **monorepo** containing **5 specialized Cloudflare Workers**:
+Enrai is a **monorepo** containing **5 specialized Cloudflare Workers** plus an optional **Router Worker**:
 
 | Worker | Package | Purpose |
 |--------|---------|---------|
@@ -55,6 +55,25 @@ Enrai is a **monorepo** containing **5 specialized Cloudflare Workers**:
 | **enrai-op-token** | `packages/op-token` | Token endpoint |
 | **enrai-op-userinfo** | `packages/op-userinfo` | UserInfo endpoint |
 | **enrai-op-management** | `packages/op-management` | Client registration |
+| **enrai-router** | `packages/router` | Unified entry point (test env only) |
+
+### 🎯 Deployment Modes
+
+Enrai supports two deployment modes to ensure OpenID Connect specification compliance:
+
+#### 1️⃣ Test Environment (workers.dev + Router Worker)
+- **Use case**: Development, testing, quick setup
+- **How**: Router Worker acts as unified entry point with Service Bindings
+- **Issuer**: `https://enrai-router.subdomain.workers.dev`
+- **Pros**: OpenID Connect compliant, no custom domain needed
+- **Deploy**: `pnpm run deploy:with-router`
+
+#### 2️⃣ Production Environment (Custom Domain + Routes)
+- **Use case**: Production deployments
+- **How**: Cloudflare Routes map paths directly to specialized workers
+- **Issuer**: Your custom domain (e.g., `https://id.yourdomain.com`)
+- **Pros**: Optimal performance (no extra hop), professional URL
+- **Deploy**: `pnpm run deploy`
 
 Each worker is deployed independently but shares the same issuer URL.
 
@@ -96,19 +115,27 @@ wrangler login
 
 # 3. Run setup scripts
 ./scripts/setup-kv.sh          # Create KV namespaces
-./scripts/setup-dev.sh        # Generate RSA keys
+./scripts/setup-dev.sh         # Generate RSA keys & wrangler.toml files
 ./scripts/setup-secrets.sh     # Upload secrets to Cloudflare
-./scripts/setup-production.sh  # Configure production URLs
+./scripts/setup-production.sh  # Choose deployment mode & configure URLs
+                               # → Select option 1 (Test) or 2 (Production)
 
 # 4. Build and deploy
 pnpm run build
-pnpm run deploy:retry         # Recommended: sequential deployment with retry logic
 
-# Or for parallel deployment (may encounter rate limits):
-# pnpm run deploy
+# For Test Environment (workers.dev):
+pnpm run deploy:with-router
+
+# For Production Environment (custom domain):
+pnpm run deploy
+
+# Or use retry logic for sequential deployment:
+# pnpm run deploy:retry
 ```
 
 **Done!** Your OpenID Provider is now live.
+
+> 💡 **New**: The `setup-production.sh` script now asks you to choose between Test (Router Worker) or Production (Routes) mode. See [Deployment Modes](#-deployment-modes) above.
 
 ---
 
@@ -248,28 +275,44 @@ Upload your private and public keys to Cloudflare Workers secrets:
 
 **⚠️ IMPORTANT:** Never commit `.keys/` to version control! It's already in `.gitignore`.
 
-### 6. Configure Production URLs
+### 6. Configure Deployment Mode
 
-Set your production issuer URL in all `wrangler.toml` files:
+Choose your deployment mode and configure URLs:
 
 ```bash
 ./scripts/setup-production.sh
 ```
 
 **What this does:**
-- Prompts you for your production URL
-- Updates `ISSUER_URL` in all `packages/*/wrangler.toml` files
+- Asks you to choose between Test or Production deployment mode
+- Configures wrangler.toml files accordingly
+- Updates `ISSUER_URL` in all worker configurations
 
 **Interactive prompt:**
 ```
-🌍 Enrai Production Configuration
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📝 Please enter your production URL:
-   Examples:
-   • https://id.yourdomain.com (custom domain)
-   • https://enrai.your-subdomain.workers.dev (workers.dev subdomain)
+📝 Deployment Mode Configuration
 
-Production URL: https://id.example.com
+   Choose how you want to deploy Enrai:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1) Test Environment (workers.dev + Router Worker)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     • Single unified endpoint: https://enrai-router.subdomain.workers.dev
+     • Uses Router Worker with Service Bindings
+     • All endpoints accessible under one domain
+     • Best for: Development, testing, quick setup
+     • OpenID Connect compliant ✅
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  2) Production Environment (Custom Domain + Routes)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     • Custom domain: https://id.yourdomain.com
+     • Uses Cloudflare Routes (direct routing)
+     • Optimal performance (no extra hop)
+     • Best for: Production deployments
+     • Requires: Cloudflare-managed domain
+
+Enter your choice (1/2):
 
 🔍 Configuration Summary:
    ISSUER_URL: https://id.example.com
@@ -279,7 +322,7 @@ Is this correct? (y/N): y
 
 ### 7. Build the Project
 
-Build all 5 worker packages:
+Build all worker packages (including Router if in test mode):
 
 ```bash
 pnpm run build
@@ -289,19 +332,53 @@ This uses Turborepo to build all packages in parallel with caching.
 
 **Output:**
 ```
-• Packages in scope: op-auth, op-discovery, op-management, op-token, op-userinfo
-• Running build in 5 packages
+• Packages in scope: op-auth, op-discovery, op-management, op-token, op-userinfo, router, shared
+• Running build in 7 packages
 op-discovery:build: cache hit, replaying logs
 op-auth:build: cache hit, replaying logs
+router:build: cache hit, replaying logs
 ...
 ```
 
 ### 8. Deploy to Cloudflare Workers
 
-Deploy all 5 workers to Cloudflare:
+Deploy workers based on your chosen deployment mode:
+
+#### For Test Environment (with Router Worker):
 
 ```bash
-# Recommended: Sequential deployment with retry logic
+pnpm run deploy:with-router
+```
+
+This deploys all 6 workers including the Router Worker.
+
+**What this does:**
+- Deploys `enrai-op-discovery` to Cloudflare Workers
+- Deploys `enrai-op-auth` to Cloudflare Workers
+- Deploys `enrai-op-token` to Cloudflare Workers
+- Deploys `enrai-op-userinfo` to Cloudflare Workers
+- Deploys `enrai-op-management` to Cloudflare Workers
+- Deploys `enrai-router` to Cloudflare Workers (unified entry point)
+
+#### For Production Environment (without Router Worker):
+
+```bash
+pnpm run deploy
+```
+
+This deploys only the 5 specialized workers (Router Worker is excluded).
+
+**What this does:**
+- Deploys `enrai-op-discovery` to Cloudflare Workers
+- Deploys `enrai-op-auth` to Cloudflare Workers
+- Deploys `enrai-op-token` to Cloudflare Workers
+- Deploys `enrai-op-userinfo` to Cloudflare Workers
+- Deploys `enrai-op-management` to Cloudflare Workers
+- Router Worker is automatically excluded via `--filter='!@enrai/router'`
+
+#### Alternative: Sequential deployment with retry logic
+
+```bash
 pnpm run deploy:retry
 ```
 
@@ -310,19 +387,6 @@ This script:
 - Adds 10-second delays between deployments to avoid rate limits
 - Retries failed deployments automatically (up to 4 attempts)
 - Provides detailed error reporting
-
-**Alternative: Parallel deployment** (faster but may hit rate limits):
-
-```bash
-pnpm run deploy
-```
-
-**What this does:**
-- Deploys `enrai-op-discovery` to Cloudflare Workers
-- Deploys `enrai-op-auth` to Cloudflare Workers
-- Deploys `enrai-op-token` to Cloudflare Workers
-- Deploys `enrai-op-userinfo` to Cloudflare Workers
-- Deploys `enrai-op-management` to Cloudflare Workers
 
 **Output:**
 ```
@@ -471,18 +535,43 @@ Push to main → Run tests → Build packages → Deploy to Cloudflare → Live 
 
 ## Post-Deployment
 
-### 1. Configure Custom Routing (Recommended)
+### 1. Verify OpenID Connect Compliance
 
-By default, each worker is deployed to its own subdomain:
+After deployment, verify that all endpoints are accessible from the issuer URL.
+
+#### For Test Environment (Router Worker):
+
+Your unified endpoint should be:
+```
+https://enrai-router.your-subdomain.workers.dev
+```
+
+All OpenID Connect endpoints are automatically routed by the Router Worker:
+- `/.well-known/openid-configuration` → Discovery Worker
+- `/.well-known/jwks.json` → Discovery Worker
+- `/authorize` → Auth Worker
+- `/token` → Token Worker
+- `/userinfo` → UserInfo Worker
+- `/register`, `/introspect`, `/revoke` → Management Worker
+
+**No additional configuration needed!** The Router Worker handles everything.
+
+Individual workers are still accessible at their own subdomains for debugging:
 - `https://enrai-op-discovery.your-subdomain.workers.dev`
 - `https://enrai-op-auth.your-subdomain.workers.dev`
 - etc.
 
-For a unified OpenID Provider, you should:
+#### For Production Environment (Custom Domain + Routes):
 
-**Option A: Use Cloudflare Workers Routes**
+Cloudflare Routes were automatically configured by `setup-production.sh` and applied during deployment.
 
-Configure routes to map all endpoints to a single domain:
+Verify routes in Cloudflare Dashboard:
+1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Select your domain
+3. Navigate to **Workers Routes**
+4. Verify routes are configured for each worker
+
+Example routes configuration (already in your wrangler.toml files):
 
 ```toml
 # In packages/op-discovery/wrangler.toml
@@ -515,11 +604,7 @@ pattern = "id.example.com/register"
 zone_name = "example.com"
 ```
 
-**Option B: Use a Cloudflare Worker Router**
-
-Create a router worker that dispatches requests to the appropriate worker based on the path.
-
-See [WORKERS.md](../WORKERS.md) for detailed routing configuration.
+> 💡 **Tip**: For more details on routing architecture, see [docs/ROUTER_SETUP.md](ROUTER_SETUP.md)
 
 ### 2. Test Full OAuth Flow
 
