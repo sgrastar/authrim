@@ -1,12 +1,19 @@
 #!/bin/bash
 
 # Deployment script with retry logic for Cloudflare API errors
+#
+# This script deploys workers SEQUENTIALLY with delays to avoid:
+# - Cloudflare API rate limits (1,200 requests per 5 minutes)
+# - Service unavailable errors (code 7010) from concurrent deployments
+# - API overload from parallel deployments
+#
 # Usage: ./scripts/deploy-with-retry.sh
 
 set -e
 
 MAX_RETRIES=4
 RETRY_DELAYS=(2 4 8 16)  # Exponential backoff in seconds
+INTER_DEPLOY_DELAY=3     # Delay between successful deployments to avoid rate limits
 
 deploy_package() {
     local package_name=$1
@@ -59,8 +66,18 @@ PACKAGES=(
 )
 
 FAILED_PACKAGES=()
+FIRST_DEPLOY=true
 
 for pkg in "${PACKAGES[@]}"; do
+    # Add delay between deployments to avoid rate limits (except for first deployment)
+    if [ "$FIRST_DEPLOY" = true ]; then
+        FIRST_DEPLOY=false
+    else
+        echo "⏸️  Waiting ${INTER_DEPLOY_DELAY}s before next deployment to avoid rate limits..."
+        sleep $INTER_DEPLOY_DELAY
+        echo ""
+    fi
+
     IFS=':' read -r name path <<< "$pkg"
     if ! deploy_package "$name" "$path"; then
         FAILED_PACKAGES+=("$name")
