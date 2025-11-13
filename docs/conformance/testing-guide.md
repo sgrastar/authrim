@@ -42,7 +42,7 @@ cd /path/to/enrai
 ./scripts/setup-dev.sh
 
 # Start development server
-npm run dev
+pnpm run dev
 ```
 
 ### 1.2 Verify Local Operation
@@ -82,7 +82,7 @@ Generate a new RSA key pair for the production environment:
 cp -r .keys .keys.dev
 
 # Generate new keys
-npm run generate-keys
+pnpm run generate-keys
 ```
 
 ### 2.2 Configure Wrangler Secrets
@@ -135,7 +135,7 @@ jq -r '.kid' .keys/metadata.json
 デプロイ前にTypeScriptをビルドします：
 
 ```bash
-npm run build
+pnpm run build
 ```
 
 エラーがないことを確認してください。
@@ -145,7 +145,7 @@ npm run build
 Cloudflare Workersにデプロイします：
 
 ```bash
-npm run deploy
+pnpm run deploy
 ```
 
 **期待される出力:**
@@ -431,7 +431,7 @@ wrangler deployments list
 
 # 最新のデプロイメントが active であることを確認
 # 必要に応じて再デプロイ
-npm run deploy
+pnpm run deploy
 ```
 
 #### 問題: JWKS endpointが空のkeys配列を返す
@@ -461,7 +461,7 @@ wrangler secret list
 cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
 
 # 再デプロイ
-npm run deploy
+pnpm run deploy
 ```
 
 #### 問題: Issuer URLの不一致
@@ -478,7 +478,7 @@ ISSUER = "https://enrai.YOUR_SUBDOMAIN.workers.dev"
 
 ```bash
 # 再デプロイ
-npm run deploy
+pnpm run deploy
 ```
 
 #### 問題: Conformance Suiteが"Unable to connect"エラーを表示
@@ -513,7 +513,7 @@ wrangler tail > logs.txt
 
 ```bash
 # 開発サーバーを起動
-npm run dev
+pnpm run dev
 
 # 別のターミナルで同じリクエストを送信
 curl -v http://localhost:8787/.well-known/openid-configuration
@@ -595,7 +595,7 @@ npm test -- --grep "token"
 
 1. **デプロイの実行**
    ```bash
-   npm run deploy
+   pnpm run deploy
    ```
 
 2. **OpenID Conformance Suiteでアカウント作成**
