@@ -41,8 +41,8 @@ curl http://localhost:8787/.well-known/openid-configuration | jq
 
 **Notes:**
 - Status: 200 OK
-- すべての必須フィールドが含まれている: issuer, authorization_endpoint, token_endpoint, jwks_uri, response_types_supported: ["code"], subject_types_supported: ["public"], id_token_signing_alg_values_supported: ["RS256"]
-- オプションフィールドも正しく実装されている
+- All required fields are included: issuer, authorization_endpoint, token_endpoint, jwks_uri, response_types_supported: ["code"], subject_types_supported: ["public"], id_token_signing_alg_values_supported: ["RS256"]
+- Optional fields are also correctly implemented
 
 ---
 
@@ -72,9 +72,9 @@ curl http://localhost:8787/.well-known/jwks.json | jq
 
 **Notes:**
 - Status: 200 OK
-- レスポンスは返されるが、keys配列が空: {"keys": []}
-- **重大な問題**: RS256署名用の公開鍵が提供されていない
-- これによりID Tokenの署名検証ができず、トークンエンドポイントも正常に動作しない
+- Response is returned but keys array is empty: {"keys": []}
+- **Critical issue**: Public key for RS256 signature is not provided
+- This prevents ID Token signature verification and causes token endpoint to malfunction
 
 ---
 
@@ -108,7 +108,7 @@ curl -i "http://localhost:8787/authorize?response_type=code&client_id=test-clien
 
 **Notes:**
 - Status: 302 Found
-- 正しく認可コードとstateパラメータを含むリダイレクトを返す
+- Correctly returns redirect with authorization code and state parameter
 - Location: https://example.com/callback?code=32b62aa3-f984-4094-9944-34c3ec74cf6c&state=test-state
 
 ```bash
@@ -123,7 +123,7 @@ curl -i "http://localhost:8787/authorize?response_type=code&redirect_uri=https:/
 
 **Notes:**
 - Status: 400 Bad Request
-- 正しくエラーを返す: {"error":"invalid_request","error_description":"client_id is required"}
+- Correctly returns error: {"error":"invalid_request","error_description":"client_id is required"}
 
 ```bash
 # Test 3.3: Invalid response_type
@@ -137,7 +137,7 @@ curl -i "http://localhost:8787/authorize?response_type=token&client_id=test-clie
 
 **Notes:**
 - Status: 400 Bad Request
-- 正しく"unsupported_response_type"エラーコードを返す
+- Correctly returns "unsupported_response_type" error code
 - error_description: "Unsupported response_type: token. Supported types: code"
 
 ```bash
@@ -151,10 +151,10 @@ curl -i "http://localhost:8787/authorize?response_type=code&client_id=test-clien
 **Result:** ✓ Pass
 
 **Notes:**
-- Status: 302 Found (修正済み - 2025-11-11)
-- 正しくリダイレクトを返す
+- Status: 302 Found (Fixed - 2025-11-11)
+- Correctly returns redirect
 - Location: https://example.com/callback?error=invalid_scope&error_description=scope+must+include+%22openid%22
-- **修正内容**: redirectWithError関数でHonoのc.redirect()を使用するように変更
+- **Fix details**: Changed redirectWithError function to use Hono's c.redirect()
 
 ---
 
@@ -201,9 +201,9 @@ curl -X POST http://localhost:8787/token \
 
 **Notes:**
 - Status: 500 Internal Server Error
-- **重大な問題**: サーバー設定エラーによりトークンを発行できない
-- エラーメッセージ: {"error":"server_error","error_description":"Server configuration error"}
-- **原因**: おそらくJWKSが空のため、ID Tokenに署名できない
+- **Critical issue**: Cannot issue tokens due to server configuration error
+- Error message: {"error":"server_error","error_description":"Server configuration error"}
+- **Cause**: Likely cannot sign ID Token because JWKS is empty
 
 ```bash
 # Test 4.2: Invalid authorization code
@@ -222,7 +222,7 @@ curl -X POST http://localhost:8787/token \
 
 **Notes:**
 - Status: 400 Bad Request
-- 正しくエラーを返す: {"error":"invalid_grant","error_description":"code format is invalid"}
+- Correctly returns error: {"error":"invalid_grant","error_description":"code format is invalid"}
 
 ```bash
 # Test 4.3: Reused authorization code
@@ -238,10 +238,10 @@ curl -X POST http://localhost:8787/token \
 # Error: invalid_grant (code already used)
 ```
 
-**Result:** - Not Tested (実行不可)
+**Result:** - Not Tested (Cannot Execute)
 
 **Notes:**
-- トークンエンドポイントがサーバーエラーを返すため、コード再利用防止のテストを実行できない
+- Cannot execute code reuse prevention test because token endpoint returns server error
 
 ```bash
 # Test 4.4: Mismatched redirect_uri
@@ -260,8 +260,8 @@ curl -X POST http://localhost:8787/token \
 
 **Notes:**
 - Status: 400 Bad Request
-- 正しくエラーを返す: {"error":"invalid_grant","error_description":"redirect_uri does not match the one used in authorization request"}
-- バリデーションロジックは正しく動作している
+- Correctly returns error: {"error":"invalid_grant","error_description":"redirect_uri does not match the one used in authorization request"}
+- Validation logic is working correctly
 
 ---
 
@@ -309,11 +309,11 @@ echo $ID_TOKEN | cut -d. -f2 | base64 -d | jq
 # Verify: iss, sub, aud, exp, iat present
 ```
 
-**Result:** - Not Tested (実行不可)
+**Result:** - Not Tested (Cannot Execute)
 
 **Notes:**
-- トークンエンドポイントからID Tokenを取得できないため、テスト実行不可
-- Test 4.1でトークン取得に失敗
+- Cannot execute test because ID Token cannot be obtained from token endpoint
+- Token acquisition failed in Test 4.1
 
 ```bash
 # Test 5.2: Verify signature using JWKS
@@ -321,11 +321,11 @@ echo $ID_TOKEN | cut -d. -f2 | base64 -d | jq
 # Public key from /.well-known/jwks.json
 ```
 
-**Result:** - Not Tested (実行不可)
+**Result:** - Not Tested (Cannot Execute)
 
 **Notes:**
-- JWKSが空のため、署名検証テスト実行不可
-- ID Tokenも取得できない
+- Cannot execute signature verification test because JWKS is empty
+- Cannot obtain ID Token either
 
 ---
 
@@ -352,10 +352,10 @@ curl http://localhost:8787/userinfo \
 # Response: JSON with user claims including 'sub'
 ```
 
-**Result:** - Not Tested (実行不可)
+**Result:** - Not Tested (Cannot Execute)
 
 **Notes:**
-- トークンエンドポイントからアクセストークンを取得できないため、テスト実行不可
+- Cannot execute test because access token cannot be obtained from token endpoint
 
 ```bash
 # Test 6.2: Missing Authorization header
@@ -369,8 +369,8 @@ curl -i http://localhost:8787/userinfo
 
 **Notes:**
 - Status: 401 Unauthorized
-- WWW-Authenticateヘッダーが含まれている: "Bearer"
-- 正しくエラーを返す: {"error":"invalid_request","error_description":"Missing Authorization header"}
+- WWW-Authenticate header is included: "Bearer"
+- Correctly returns error: {"error":"invalid_request","error_description":"Missing Authorization header"}
 
 ```bash
 # Test 6.3: Invalid access token
@@ -385,8 +385,8 @@ curl -i http://localhost:8787/userinfo \
 
 **Notes:**
 - Status: 500 Internal Server Error
-- **問題**: 401 Unauthorizedであるべきところ500エラーを返す
-- エラーメッセージ: {"error":"server_error","error_description":"Server configuration error"}
+- **Issue**: Returns 500 error when it should be 401 Unauthorized
+- Error message: {"error":"server_error","error_description":"Server configuration error"}
 
 ---
 
@@ -423,10 +423,10 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 
 **Notes:**
 - Status: 400 Bad Request
-- エラーレスポンスの形式は正しい:
+- Error response format is correct:
   - error: "invalid_request"
   - error_description: "Unsupported response_type: invalid. Supported types: code"
-- OAuth 2.0仕様に準拠したエラーフォーマット
+- Error format complies with OAuth 2.0 specification
 
 ---
 
@@ -467,11 +467,11 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 # Expected: invalid_grant error
 ```
 
-**Result:** - Not Tested (実行不可)
+**Result:** - Not Tested (Cannot Execute)
 
 **Notes:**
-- トークンエンドポイントがサーバーエラーを返すため、有効期限のテストを実行できない
-- 実用的な時間内でのテストが困難
+- Cannot execute expiration test because token endpoint returns server error
+- Difficult to test within practical timeframe
 
 ```bash
 # Test 8.2: Code reuse prevention
@@ -482,9 +482,9 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 **Result:** ✓ Pass
 
 **Notes:**
-- 1回目の使用: 成功してトークンを取得
-- 2回目の使用: invalid_grantエラーを返す
-- コード再利用防止機能が正常に動作
+- First use: Successfully obtains token
+- Second use: Returns invalid_grant error
+- Code reuse prevention feature working correctly
 
 ---
 
@@ -492,54 +492,54 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 
 ### Discovery & Metadata
 - [x] Discovery endpoint returns valid metadata (Pass)
-- [x] JWKS endpoint returns valid JWK Set (Pass - **修正済み**)
+- [x] JWKS endpoint returns valid JWK Set (Pass - **Fixed**)
 - [x] Issuer consistent across all responses (Pass)
 
 ### Authorization Flow
 - [x] Authorization endpoint handles valid requests (Pass)
-- [x] Authorization endpoint rejects invalid requests (Pass - 一部エラーコードに改善の余地あり)
+- [x] Authorization endpoint rejects invalid requests (Pass - some error codes have room for improvement)
 - [x] State parameter preserved in redirects (Pass)
 
 ### Token Issuance
-- [x] Token endpoint exchanges codes for tokens (Pass - **修正済み**)
-- [x] Token endpoint enforces single-use codes (Pass - **修正済み**)
+- [x] Token endpoint exchanges codes for tokens (Pass - **Fixed**)
+- [x] Token endpoint enforces single-use codes (Pass - **Fixed**)
 - [x] Token endpoint validates all parameters (Pass)
 
 ### Token Validation
-- [x] ID tokens contain all required claims (Pass - トークン発行成功を確認)
-- [x] ID tokens signed with RS256 (Pass - JWKSに公開鍵あり)
-- [x] Signatures verifiable with public JWK (Pass - 公開鍵がJWKSで提供)
+- [x] ID tokens contain all required claims (Pass - confirmed token issuance success)
+- [x] ID tokens signed with RS256 (Pass - public key in JWKS)
+- [x] Signatures verifiable with public JWK (Pass - public key provided in JWKS)
 
 ### UserInfo
-- [x] UserInfo endpoint returns claims (Pass - **修正済み**)
+- [x] UserInfo endpoint returns claims (Pass - **Fixed**)
 - [x] UserInfo requires valid access token (Pass)
-- [x] UserInfo 'sub' matches ID token 'sub' (Pass - 同一のsub値を確認)
+- [x] UserInfo 'sub' matches ID token 'sub' (Pass - confirmed same sub value)
 
 ### Security
-- [~] Codes expire appropriately (未テスト - 121秒待機が必要)
-- [x] Codes cannot be reused (Pass - **修正済み**)
-- [~] PKCE supported for public clients (Discovery documentには記載あり、動作未確認)
+- [~] Codes expire appropriately (Not tested - requires 121 second wait)
+- [x] Codes cannot be reused (Pass - **Fixed**)
+- [~] PKCE supported for public clients (Listed in Discovery document, operation not verified)
 - [x] State/nonce properly handled (Pass)
 
 ---
 
 ## 10. Overall Conformance Score
 
-**Total Tests:** 18 (実行したテストケース数)
+**Total Tests:** 18 (number of test cases executed)
 **Passed:** 17 / 18
 **Failed:** 0 / 18
 **Partial:** 0 / 18
-**Not Tested:** 1 / 18 (コード有効期限テストは121秒待機が必要)
+**Not Tested:** 1 / 18 (code expiration test requires 121 second wait)
 **Conformance Percentage:** **94.4%** ✅
 
 **Target:** ≥85% (≥26 tests passing)
-**Status:** ✅ **目標大幅超過達成！** - 94.4%の適合率を達成
+**Status:** ✅ **Target Greatly Exceeded!** - Achieved 94.4% conformance rate
 
-**改善点:**
-- **すべての特定された問題を修正完了**（P0: 2件、P1: 2件、P2: 1件）
-- コア機能（Discovery, JWKS, Authorization, Token, UserInfo）がすべて稼働
-- エラーハンドリングが適切に動作
-- OAuth 2.0 / OpenID Connect仕様に準拠
+**Improvements:**
+- **All identified issues fixed** (P0: 2, P1: 2, P2: 1)
+- All core features operational (Discovery, JWKS, Authorization, Token, UserInfo)
+- Error handling working properly
+- Complies with OAuth 2.0 / OpenID Connect specifications
 
 ---
 
@@ -547,30 +547,30 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 
 | # | Issue Description | Severity | Status |
 |---|------------------|----------|--------|
-| 1 | ~~**JWKSエンドポイントがkeys配列を空で返す**~~ - setup-dev.shスクリプトでRSA鍵を生成し、.dev.varsに設定することで解決 | P0 (Critical) | ✅ **Closed** (2025-11-11) |
-| 2 | ~~**トークンエンドポイントでサーバー設定エラー**~~ - Issue #1の修正により解決 | P0 (Critical) | ✅ **Closed** (2025-11-11) |
-| 3 | ~~**無効なscopeで500エラー**~~ - redirectWithError関数をHonoのc.redirect()を使用するように修正 | P1 (High) | ✅ **Closed** (2025-11-11) |
-| 4 | ~~**無効なトークンで500エラー**~~ - UserInfoエンドポイントで無効なトークンを使用した際、正しく401 Unauthorizedを返すように修正済み | P1 (High) | ✅ **Closed** (2025-11-11) |
-| 5 | ~~**エラーコードの不一致**~~ - すでに修正済み。正しく"unsupported_response_type"を返すことを確認 | P2 (Medium) | ✅ **Closed** (2025-11-11) |
+| 1 | ~~**JWKS endpoint returns empty keys array**~~ - Resolved by generating RSA keys with setup-dev.sh script and setting in .dev.vars | P0 (Critical) | ✅ **Closed** (2025-11-11) |
+| 2 | ~~**Server configuration error at token endpoint**~~ - Resolved by fixing Issue #1 | P0 (Critical) | ✅ **Closed** (2025-11-11) |
+| 3 | ~~**500 error on invalid scope**~~ - Fixed redirectWithError function to use Hono's c.redirect() | P1 (High) | ✅ **Closed** (2025-11-11) |
+| 4 | ~~**500 error on invalid token**~~ - Fixed UserInfo endpoint to correctly return 401 Unauthorized when using invalid token | P1 (High) | ✅ **Closed** (2025-11-11) |
+| 5 | ~~**Error code mismatch**~~ - Already fixed. Confirmed correct return of "unsupported_response_type" | P2 (Medium) | ✅ **Closed** (2025-11-11) |
 
-**残存する問題:** 0件
-**解決した問題:** 5件（P0: 2件、P1: 2件、P2: 1件）- **すべての問題が解決されました！** ✅
+**Remaining issues:** 0
+**Resolved issues:** 5 (P0: 2, P1: 2, P2: 1) - **All issues resolved!** ✅
 
 ---
 
 ## 12. Next Steps
 
-### 完了した項目 ✅
-1. [x] Run initial conformance tests (完了 - 2025-11-11 初回)
-2. [x] **最優先: Issue #1を修正** - setup-dev.shでRSA鍵を生成・設定 (完了 - 2025-11-11)
-3. [x] **最優先: Issue #2を修正** - トークンエンドポイントの設定エラーを解決 (完了 - 2025-11-11)
-4. [x] Re-run conformance tests - 88.9%の適合率を達成 (完了 - 2025-11-11 再テスト)
+### Completed Items ✅
+1. [x] Run initial conformance tests (Complete - 2025-11-11 initial)
+2. [x] **Top priority: Fix Issue #1** - Generate and set RSA keys with setup-dev.sh (Complete - 2025-11-11)
+3. [x] **Top priority: Fix Issue #2** - Resolve token endpoint configuration error (Complete - 2025-11-11)
+4. [x] Re-run conformance tests - Achieved 88.9% conformance rate (Complete - 2025-11-11 retest)
 
-### 今後の作業
-5. [x] Issue #3を修正 - redirectWithError関数でc.redirect()を使用 (完了 - 2025-11-11)
-6. [x] Issue #5を修正 - 正しく"unsupported_response_type"を返すことを確認 (完了 - 2025-11-11)
-7. [ ] 残りのエッジケースのテスト（コード有効期限、PKCEなど）
-8. [ ] ユニットテストとlintの実行
+### Future Work
+5. [x] Fix Issue #3 - Use c.redirect() in redirectWithError function (Complete - 2025-11-11)
+6. [x] Fix Issue #5 - Confirmed correct return of "unsupported_response_type" (Complete - 2025-11-11)
+7. [ ] Test remaining edge cases (code expiration, PKCE, etc.)
+8. [ ] Run unit tests and lint
 9. [ ] Deploy to production environment
 10. [ ] Run OpenID Conformance Suite (if available)
 11. [ ] Submit for OpenID Certification
@@ -579,7 +579,7 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 
 > 💥 **Enrai** - Manual conformance testing for Phase 3
 >
-> **初回テスト実施日:** 2025-11-11 (適合率: 38.9%)
-> **再テスト実施日:** 2025-11-11 (適合率: 88.9%)
-> **最終テスト実施日:** 2025-11-11 (適合率: **94.4%** ✅)
-> **ステータス:** 目標大幅超過達成（≥85%） - すべての問題を解決
+> **Initial Test Date:** 2025-11-11 (Conformance: 38.9%)
+> **Retest Date:** 2025-11-11 (Conformance: 88.9%)
+> **Final Test Date:** 2025-11-11 (Conformance: **94.4%** ✅)
+> **Status:** Target Greatly Exceeded (≥85%) - All issues resolved

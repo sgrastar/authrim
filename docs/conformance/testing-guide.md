@@ -1,53 +1,53 @@
 # Enrai - OpenID Conformance Testing Guide (Without Docker) 💥
 
-**目的:** Docker環境がない場合のOpenID Connect準拠テストの実施方法
-**対象:** Phase 3 - Testing & Validation
-**更新日:** 2025-11-11
+**Purpose:** How to perform OpenID Connect conformance testing without Docker environment
+**Target:** Phase 3 - Testing & Validation
+**Last Updated:** 2025-11-11
 
 ---
 
-## 概要
+## Overview
 
-このガイドでは、Docker環境がない場合にEnraiのOpenID Connect準拠性をテストする方法を説明します。OpenID FoundationのオンラインConformance Suiteを使用することで、ローカルにDockerをインストールすることなく、正式な認証テストを実施できます。
+This guide explains how to test Enrai's OpenID Connect conformance when you don't have a Docker environment. By using the OpenID Foundation's online Conformance Suite, you can perform official certification testing without installing Docker locally.
 
-**前提条件:**
-- Enraiが公開アクセス可能なURLでデプロイされていること（Cloudflare Workers）
-- HTTPSでアクセス可能であること
-- OpenID Foundationのアカウント（無料）
-
----
-
-## 目次
-
-1. [テスト環境の準備](#1-テスト環境の準備)
-2. [Cloudflare Workersへのデプロイ](#2-cloudflare-workersへのデプロイ)
-3. [OpenID Conformance Suiteの利用](#3-openid-conformance-suiteの利用)
-4. [テストの実行](#4-テストの実行)
-5. [結果の確認と記録](#5-結果の確認と記録)
-6. [トラブルシューティング](#6-トラブルシューティング)
+**Prerequisites:**
+- Enrai deployed at a publicly accessible URL (Cloudflare Workers)
+- Accessible via HTTPS
+- OpenID Foundation account (free)
 
 ---
 
-## 1. テスト環境の準備
+## Table of Contents
 
-### 1.1 デプロイ前のローカルテスト
+1. [Prepare Test Environment](#1-prepare-test-environment)
+2. [Deploy to Cloudflare Workers](#2-deploy-to-cloudflare-workers)
+3. [Use OpenID Conformance Suite](#3-use-openid-conformance-suite)
+4. [Execute Tests](#4-execute-tests)
+5. [Verify and Record Results](#5-verify-and-record-results)
+6. [Troubleshooting](#6-troubleshooting)
 
-公開デプロイの前に、ローカル環境でEnraiが正常に動作することを確認します。
+---
+
+## 1. Prepare Test Environment
+
+### 1.1 Local Testing Before Deployment
+
+Before public deployment, verify that Enrai works correctly in your local environment.
 
 ```bash
-# プロジェクトルートに移動
+# Navigate to project root
 cd /path/to/enrai
 
-# RSA鍵を生成（未実施の場合）
+# Generate RSA keys (if not already done)
 ./scripts/setup-dev.sh
 
-# 開発サーバーを起動
+# Start development server
 npm run dev
 ```
 
-### 1.2 ローカル動作確認
+### 1.2 Verify Local Operation
 
-別のターミナルで以下のコマンドを実行し、すべてのエンドポイントが正常に応答することを確認します：
+Run the following commands in another terminal to verify all endpoints respond correctly:
 
 ```bash
 # Discovery endpoint
@@ -56,48 +56,48 @@ curl http://localhost:8787/.well-known/openid-configuration | jq
 # JWKS endpoint
 curl http://localhost:8787/.well-known/jwks.json | jq
 
-# Authorization endpoint (ブラウザで開く)
+# Authorization endpoint (open in browser)
 open "http://localhost:8787/authorize?response_type=code&client_id=test&redirect_uri=http://localhost:3000/callback&scope=openid%20profile&state=test"
 ```
 
-**期待される結果:**
-- Discovery endpoint: 200 OK、有効なJSON
-- JWKS endpoint: 200 OK、RSA公開鍵を含むJWK Set
-- Authorization endpoint: 302 Found、認可コードを含むリダイレクト
+**Expected Results:**
+- Discovery endpoint: 200 OK, valid JSON
+- JWKS endpoint: 200 OK, JWK Set containing RSA public key
+- Authorization endpoint: 302 Found, redirect with authorization code
 
-すべてのエンドポイントが正常に動作することを確認したら、次のステップに進みます。
+After verifying all endpoints work correctly, proceed to the next step.
 
 ---
 
-## 2. Cloudflare Workersへのデプロイ
+## 2. Deploy to Cloudflare Workers
 
-OpenID Conformance Suiteはインターネットからアクセス可能なURLが必要です。Cloudflare Workersにデプロイして公開URLを取得します。
+The OpenID Conformance Suite requires an internet-accessible URL. Deploy to Cloudflare Workers to obtain a public URL.
 
-### 2.1 プロダクション用RSA鍵の生成
+### 2.1 Generate Production RSA Keys
 
-プロダクション環境用に新しいRSA鍵ペアを生成します：
+Generate a new RSA key pair for the production environment:
 
 ```bash
-# 既存の開発用鍵をバックアップ（オプション）
+# Backup existing development keys (optional)
 cp -r .keys .keys.dev
 
-# 新しい鍵を生成
+# Generate new keys
 npm run generate-keys
 ```
 
-### 2.2 Wrangler Secretsの設定
+### 2.2 Configure Wrangler Secrets
 
-生成した鍵をCloudflare Workersのシークレットとして設定します：
+Set the generated keys as Cloudflare Workers secrets:
 
 ```bash
-# PRIVATE_KEY_PEM を設定
+# Configure PRIVATE_KEY_PEM
 cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
 
-# PUBLIC_JWK_JSON を設定
+# Configure PUBLIC_JWK_JSON
 cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
 ```
 
-**重要:** シークレットは暗号化されて保存され、Workersランタイムでのみアクセス可能です。
+**Important:** Secrets are stored encrypted and only accessible in the Workers runtime.
 
 ### 2.3 wrangler.toml の設定確認
 

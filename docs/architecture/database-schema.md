@@ -1,51 +1,51 @@
 # Enrai Database Schema - ER Diagram 🗄️
 
-**最終更新**: 2025-11-13
-**ステータス**: Phase 5 設計
-**データベース**: Cloudflare D1 (SQLite)
+**Last Updated**: 2025-11-13
+**Status**: Phase 5 Design
+**Database**: Cloudflare D1 (SQLite)
 
 ---
 
-## 📋 目次
+## 📋 Table of Contents
 
-1. [概要](#概要)
-2. [ER図](#er図)
-3. [テーブル定義](#テーブル定義)
-4. [リレーションシップ](#リレーションシップ)
-5. [インデックス戦略](#インデックス戦略)
-6. [マイグレーション戦略](#マイグレーション戦略)
+1. [Overview](#overview)
+2. [ER Diagram](#er-diagram)
+3. [Table Definitions](#table-definitions)
+4. [Relationships](#relationships)
+5. [Index Strategy](#index-strategy)
+6. [Migration Strategy](#migration-strategy)
 
 ---
 
-## 概要
+## Overview
 
-このドキュメントは、Enrai OIDC OPのデータベーススキーマを定義します。
+This document defines the database schema for Enrai OIDC OP.
 
-### 統計サマリー
+### Statistics Summary
 
-| カテゴリ | テーブル数 | 主要リレーション |
+| Category | Number of Tables | Main Relations |
 |---------|-----------|-----------------|
-| **ユーザー管理** | 3 | users → user_custom_fields, users → passkeys |
-| **認証・セッション** | 2 | users → sessions, users → passkeys |
-| **OAuth管理** | 1 | oauth_clients (standalone) |
-| **権限管理** | 2 | users ← user_roles → roles |
-| **設定・メタデータ** | 3 | scope_mappings, branding_settings, identity_providers |
-| **監査** | 1 | audit_log (standalone) |
-| **合計** | **11** | **8個の主要リレーション** |
+| **User Management** | 3 | users → user_custom_fields, users → passkeys |
+| **Authentication & Sessions** | 2 | users → sessions, users → passkeys |
+| **OAuth Management** | 1 | oauth_clients (standalone) |
+| **Permission Management** | 2 | users ← user_roles → roles |
+| **Settings & Metadata** | 3 | scope_mappings, branding_settings, identity_providers |
+| **Audit** | 1 | audit_log (standalone) |
+| **Total** | **11** | **8 Main Relations** |
 
-### 設計原則
+### Design Principles
 
-1. **拡張性**: カスタムフィールド、外部認証プロバイダー対応
-2. **マルチクラウド対応**: ストレージ抽象化層で実装
-3. **セキュリティ**: Audit Log、RBAC、親子アカウント
-4. **パフォーマンス**: 適切なインデックス配置
-5. **GDPR対応**: カスケード削除、エクスポート機能
+1. **Extensibility**: Support for custom fields and external authentication providers
+2. **Multi-cloud Support**: Implemented through storage abstraction layer
+3. **Security**: Audit Log, RBAC, parent-child accounts
+4. **Performance**: Proper index placement
+5. **GDPR Compliance**: Cascade deletion, export functionality
 
 ---
 
-## ER図
+## ER Diagram
 
-### 全体図
+### Overall Diagram
 
 ```mermaid
 erDiagram
@@ -193,7 +193,7 @@ erDiagram
     }
 ```
 
-### コアエンティティの関係図
+### Core Entity Relationships
 
 ```mermaid
 erDiagram
@@ -232,28 +232,28 @@ erDiagram
 
 ---
 
-## テーブル定義
+## Table Definitions
 
-### 1. users - ユーザー情報
+### 1. users - User Information
 
-**目的**: OIDC標準クレームおよびカスタム属性を保存
+**Purpose**: Store OIDC standard claims and custom attributes
 
-**主要カラム**:
-- `id`: UUID、主キー
-- `email`: メールアドレス、ユニーク制約、インデックス
-- `parent_user_id`: 親子アカウント（自己参照外部キー）
-- `custom_attributes_json`: 検索不要なメタデータ（JSON）
-- `identity_provider_id`: 外部認証プロバイダーID（Phase 7で使用）
+**Key Columns**:
+- `id`: UUID, primary key
+- `email`: Email address, unique constraint, indexed
+- `parent_user_id`: Parent-child accounts (self-referencing foreign key)
+- `custom_attributes_json`: Non-searchable metadata (JSON)
+- `identity_provider_id`: External authentication provider ID (used in Phase 7)
 
-**リレーション**:
-- 1:N → `user_custom_fields` (カスケード削除)
-- 1:N → `passkeys` (カスケード削除)
-- 1:N → `sessions` (カスケード削除)
+**Relations**:
+- 1:N → `user_custom_fields` (cascade delete)
+- 1:N → `passkeys` (cascade delete)
+- 1:N → `sessions` (cascade delete)
 - N:M → `roles` (via `user_roles`)
-- 1:N → `users` (自己参照、親子関係)
-- N:1 → `identity_providers` (外部認証)
+- 1:N → `users` (self-referencing, parent-child relationship)
+- N:1 → `identity_providers` (external authentication)
 
-**SQL定義**:
+**SQL Definition**:
 ```sql
 CREATE TABLE users (
   id TEXT PRIMARY KEY,
@@ -290,20 +290,20 @@ CREATE INDEX idx_users_parent_user_id ON users(parent_user_id);
 
 ---
 
-### 2. user_custom_fields - カスタムフィールド（検索可能）
+### 2. user_custom_fields - Custom Fields (Searchable)
 
-**目的**: 管理者が定義する検索可能なカスタムフィールド（例: バーコード、社員番号）
+**Purpose**: Administrator-defined searchable custom fields (e.g., barcode, employee number)
 
-**主要カラム**:
-- `user_id` + `field_name`: 複合主キー
-- `field_value`: 検索対象の値
-- `field_type`: データ型（string, number, date, boolean）
-- `searchable`: 検索インデックスに含めるかのフラグ
+**Key Columns**:
+- `user_id` + `field_name`: Composite primary key
+- `field_value`: Searchable value
+- `field_type`: Data type (string, number, date, boolean)
+- `searchable`: Flag for inclusion in search index
 
-**リレーション**:
-- N:1 → `users` (カスケード削除)
+**Relations**:
+- N:1 → `users` (cascade delete)
 
-**SQL定義**:
+**SQL Definition**:
 ```sql
 CREATE TABLE user_custom_fields (
   user_id TEXT NOT NULL,
@@ -320,21 +320,21 @@ CREATE INDEX idx_user_custom_fields_search ON user_custom_fields(field_name, fie
 
 ---
 
-### 3. passkeys - WebAuthn/Passkey認証情報
+### 3. passkeys - WebAuthn/Passkey Authentication Credentials
 
-**目的**: ユーザーのPasskey（WebAuthn）認証情報を保存
+**Purpose**: Store user Passkey (WebAuthn) authentication credentials
 
-**主要カラム**:
-- `id`: UUID、主キー
-- `credential_id`: WebAuthn credential ID、ユニーク制約
-- `public_key`: 公開鍵（検証用）
-- `counter`: リプレイ攻撃防止用カウンター
-- `transports`: 認証器のトランスポート方式（JSON配列）
+**Key Columns**:
+- `id`: UUID, primary key
+- `credential_id`: WebAuthn credential ID, unique constraint
+- `public_key`: Public key (for verification)
+- `counter`: Counter for replay attack prevention
+- `transports`: Authenticator transport methods (JSON array)
 
-**リレーション**:
-- N:1 → `users` (カスケード削除)
+**Relations**:
+- N:1 → `users` (cascade delete)
 
-**SQL定義**:
+**SQL Definition**:
 ```sql
 CREATE TABLE passkeys (
   id TEXT PRIMARY KEY,
@@ -355,21 +355,21 @@ CREATE INDEX idx_passkeys_credential_id ON passkeys(credential_id);
 
 ---
 
-### 4. oauth_clients - OAuthクライアント
+### 4. oauth_clients - OAuth Clients
 
-**目的**: RFC 7591 (DCR) 準拠のOAuthクライアント情報
+**Purpose**: RFC 7591 (DCR) compliant OAuth client information
 
-**主要カラム**:
-- `client_id`: クライアントID（UUID推奨）
-- `client_secret`: クライアントシークレット（ハッシュ化）
-- `redirect_uris`: リダイレクトURI（JSON配列）
-- `grant_types`: 許可されたグラントタイプ（JSON配列）
-- `subject_type`: public or pairwise（プライバシー保護）
+**Key Columns**:
+- `client_id`: Client ID (UUID recommended)
+- `client_secret`: Client secret (hashed)
+- `redirect_uris`: Redirect URIs (JSON array)
+- `grant_types`: Allowed grant types (JSON array)
+- `subject_type`: public or pairwise (privacy protection)
 
-**リレーション**:
-- なし（スタンドアロン）
+**Relations**:
+- None (standalone)
 
-**SQL定義**:
+**SQL Definition**:
 ```sql
 CREATE TABLE oauth_clients (
   client_id TEXT PRIMARY KEY,
@@ -396,21 +396,21 @@ CREATE INDEX idx_clients_created_at ON oauth_clients(created_at);
 
 ---
 
-### 5. sessions - ユーザーセッション
+### 5. sessions - User Sessions
 
-**目的**: ITP対応のセッション管理（KVと併用）
+**Purpose**: ITP-compliant session management (used with KV)
 
-**主要カラム**:
-- `id`: セッションID（UUID）
-- `user_id`: ユーザーID
-- `expires_at`: 有効期限（Unix timestamp）
+**Key Columns**:
+- `id`: Session ID (UUID)
+- `user_id`: User ID
+- `expires_at`: Expiration time (Unix timestamp)
 
-**リレーション**:
-- N:1 → `users` (カスケード削除)
+**Relations**:
+- N:1 → `users` (cascade delete)
 
-**注意**: 詳細なセッションデータはCloudflare KVに保存し、このテーブルはインデックスと管理用
+**Note**: Detailed session data is stored in Cloudflare KV; this table is for indexing and management
 
-**SQL定義**:
+**SQL Definition**:
 ```sql
 CREATE TABLE sessions (
   id TEXT PRIMARY KEY,
@@ -426,25 +426,25 @@ CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 
 ---
 
-### 6. roles - ロール定義
+### 6. roles - Role Definitions
 
-**目的**: RBAC（Role-Based Access Control）のロール定義
+**Purpose**: RBAC (Role-Based Access Control) role definitions
 
-**主要カラム**:
-- `id`: ロールID（UUID）
-- `name`: ロール名（admin, viewer, support等）、ユニーク
-- `permissions_json`: 権限リスト（JSON配列）
+**Key Columns**:
+- `id`: Role ID (UUID)
+- `name`: Role name (admin, viewer, support, etc.), unique
+- `permissions_json`: Permission list (JSON array)
 
-**デフォルトロール**:
-- `super_admin`: 全権限
-- `admin`: ユーザー・クライアント管理
-- `viewer`: 読み取り専用
-- `support`: ユーザーサポート
+**Default Roles**:
+- `super_admin`: All permissions
+- `admin`: User and client management
+- `viewer`: Read-only access
+- `support`: User support
 
-**リレーション**:
+**Relations**:
 - N:M → `users` (via `user_roles`)
 
-**SQL定義**:
+**SQL Definition**:
 ```sql
 CREATE TABLE roles (
   id TEXT PRIMARY KEY,
@@ -459,18 +459,18 @@ CREATE INDEX idx_roles_name ON roles(name);
 
 ---
 
-### 7. user_roles - ユーザーとロールの紐付け
+### 7. user_roles - User-Role Associations
 
-**目的**: ユーザーとロールのN:M関係を実現
+**Purpose**: Establish N:M relationship between users and roles
 
-**主要カラム**:
-- `user_id` + `role_id`: 複合主キー
+**Key Columns**:
+- `user_id` + `role_id`: Composite primary key
 
-**リレーション**:
-- N:1 → `users` (カスケード削除)
-- N:1 → `roles` (カスケード削除)
+**Relations**:
+- N:1 → `users` (cascade delete)
+- N:1 → `roles` (cascade delete)
 
-**SQL定義**:
+**SQL Definition**:
 ```sql
 CREATE TABLE user_roles (
   user_id TEXT NOT NULL,
@@ -487,18 +487,18 @@ CREATE INDEX idx_user_roles_role_id ON user_roles(role_id);
 
 ---
 
-### 8. scope_mappings - スコープとクレームのマッピング
+### 8. scope_mappings - Scope to Claim Mappings
 
-**目的**: カスタムスコープからクレームへの動的マッピング
+**Purpose**: Dynamic mapping from custom scopes to claims
 
-**主要カラム**:
-- `scope`: スコープ名（例: employee_id, department）
-- `claim_name`: トークンに含めるクレーム名
-- `source_table`: データソーステーブル（users, user_custom_fields）
-- `source_column`: カラム名またはJSONパス
-- `transformation`: 変換関数（uppercase, lowercase, hash, mask）
+**Key Columns**:
+- `scope`: Scope name (e.g., employee_id, department)
+- `claim_name`: Claim name to include in token
+- `source_table`: Data source table (users, user_custom_fields)
+- `source_column`: Column name or JSON path
+- `transformation`: Transformation function (uppercase, lowercase, hash, mask)
 
-**使用例**:
+**Usage Example**:
 ```json
 {
   "scope": "employee_id",
@@ -509,10 +509,10 @@ CREATE INDEX idx_user_roles_role_id ON user_roles(role_id);
 }
 ```
 
-**リレーション**:
-- なし（スタンドアロン）
+**Relations**:
+- None (standalone)
 
-**SQL定義**:
+**SQL Definition**:
 ```sql
 CREATE TABLE scope_mappings (
   scope TEXT PRIMARY KEY,
@@ -529,21 +529,21 @@ CREATE INDEX idx_scope_mappings_scope ON scope_mappings(scope);
 
 ---
 
-### 9. branding_settings - ブランディング設定
+### 9. branding_settings - Branding Settings
 
-**目的**: ログイン画面などのカスタマイズ設定
+**Purpose**: Customization settings for login screens and other UI
 
-**主要カラム**:
-- `id`: 通常は `default`（単一レコード）
-- `custom_css`: カスタムCSSコード
-- `custom_html_header/footer`: カスタムHTML
-- `logo_url`: ロゴ画像URL
-- `primary_color/secondary_color`: ブランドカラー
+**Key Columns**:
+- `id`: Usually `default` (single record)
+- `custom_css`: Custom CSS code
+- `custom_html_header/footer`: Custom HTML
+- `logo_url`: Logo image URL
+- `primary_color/secondary_color`: Brand colors
 
-**リレーション**:
-- なし（シングルトン）
+**Relations**:
+- None (singleton)
 
-**SQL定義**:
+**SQL Definition**:
 ```sql
 CREATE TABLE branding_settings (
   id TEXT PRIMARY KEY DEFAULT 'default',
@@ -561,20 +561,20 @@ CREATE TABLE branding_settings (
 
 ---
 
-### 10. identity_providers - 外部認証プロバイダー
+### 10. identity_providers - External Authentication Providers
 
-**目的**: SAML/LDAP/外部OAuth等の設定（Phase 7で実装）
+**Purpose**: Settings for SAML/LDAP/external OAuth, etc. (implemented in Phase 7)
 
-**主要カラム**:
-- `id`: プロバイダーID（UUID）
+**Key Columns**:
+- `id`: Provider ID (UUID)
 - `provider_type`: saml, ldap, oauth
-- `config_json`: プロバイダー固有の設定（JSON）
-- `enabled`: 有効/無効フラグ
+- `config_json`: Provider-specific configuration (JSON)
+- `enabled`: Enabled/disabled flag
 
-**リレーション**:
-- 1:N → `users` (外部認証されたユーザー)
+**Relations**:
+- 1:N → `users` (externally authenticated users)
 
-**SQL定義**:
+**SQL Definition**:
 ```sql
 CREATE TABLE identity_providers (
   id TEXT PRIMARY KEY,
@@ -591,22 +591,22 @@ CREATE INDEX idx_identity_providers_type ON identity_providers(provider_type);
 
 ---
 
-### 11. audit_log - 監査ログ
+### 11. audit_log - Audit Log
 
-**目的**: 全操作の監査証跡
+**Purpose**: Audit trail of all operations
 
-**主要カラム**:
-- `id`: ログID（UUID）
-- `user_id`: 操作ユーザー（nullable、システム操作の場合）
-- `action`: アクション名（login, logout, create_user等）
-- `resource_type`: 対象リソースタイプ（user, client, session等）
-- `resource_id`: 対象リソースID
-- `metadata_json`: 追加コンテキスト（JSON）
+**Key Columns**:
+- `id`: Log ID (UUID)
+- `user_id`: Operating user (nullable for system operations)
+- `action`: Action name (login, logout, create_user, etc.)
+- `resource_type`: Target resource type (user, client, session, etc.)
+- `resource_id`: Target resource ID
+- `metadata_json`: Additional context (JSON)
 
-**リレーション**:
-- N:1 → `users` (nullableなので外部キー制約なし)
+**Relations**:
+- N:1 → `users` (nullable, no foreign key constraint)
 
-**SQL定義**:
+**SQL Definition**:
 ```sql
 CREATE TABLE audit_log (
   id TEXT PRIMARY KEY,
@@ -628,61 +628,61 @@ CREATE INDEX idx_audit_log_resource ON audit_log(resource_type, resource_id);
 
 ---
 
-## リレーションシップ
+## Relationships
 
-### 主要なリレーション
+### Primary Relations
 
 | From | To | Type | Cardinality | Cascade |
 |------|-----|------|-------------|---------|
-| `users` | `user_custom_fields` | 1:N | 1人のユーザーは複数のカスタムフィールドを持つ | DELETE CASCADE |
-| `users` | `passkeys` | 1:N | 1人のユーザーは複数のPasskeyを持つ | DELETE CASCADE |
-| `users` | `sessions` | 1:N | 1人のユーザーは複数のセッションを持つ | DELETE CASCADE |
-| `users` | `user_roles` | 1:N | 1人のユーザーは複数のロールを持つ | DELETE CASCADE |
-| `roles` | `user_roles` | 1:N | 1つのロールは複数のユーザーに割り当てられる | DELETE CASCADE |
-| `users` | `users` | 1:N | 親子アカウント（自己参照） | NO ACTION |
-| `identity_providers` | `users` | 1:N | 1つのプロバイダーは複数のユーザーを認証 | NO ACTION |
-| `users` | `audit_log` | 1:N | 1人のユーザーは複数のログエントリを持つ | なし（nullable） |
+| `users` | `user_custom_fields` | 1:N | One user has multiple custom fields | DELETE CASCADE |
+| `users` | `passkeys` | 1:N | One user has multiple passkeys | DELETE CASCADE |
+| `users` | `sessions` | 1:N | One user has multiple sessions | DELETE CASCADE |
+| `users` | `user_roles` | 1:N | One user has multiple roles | DELETE CASCADE |
+| `roles` | `user_roles` | 1:N | One role is assigned to multiple users | DELETE CASCADE |
+| `users` | `users` | 1:N | Parent-child accounts (self-referencing) | NO ACTION |
+| `identity_providers` | `users` | 1:N | One provider authenticates multiple users | NO ACTION |
+| `users` | `audit_log` | 1:N | One user has multiple log entries | None (nullable) |
 
-### カーディナリティの説明
+### Cardinality Explanation
 
-- **1:N (One-to-Many)**: 親エンティティは複数の子エンティティを持つ
-- **N:M (Many-to-Many)**: `user_roles` テーブルで実現
-- **自己参照**: `users.parent_user_id` → `users.id`
+- **1:N (One-to-Many)**: Parent entity has multiple child entities
+- **N:M (Many-to-Many)**: Realized through `user_roles` table
+- **Self-referencing**: `users.parent_user_id` → `users.id`
 
 ---
 
-## インデックス戦略
+## Index Strategy
 
-### 主要インデックス
+### Primary Indexes
 
-| テーブル | インデックス | 目的 |
+| Table | Index | Purpose |
 |---------|-------------|------|
-| `users` | `idx_users_email` | メールアドレスでの検索（ログイン） |
-| `users` | `idx_users_created_at` | 登録日でのソート・フィルタリング |
-| `users` | `idx_users_parent_user_id` | 親子アカウントの検索 |
-| `user_custom_fields` | `idx_user_custom_fields_search` | カスタムフィールドでの検索 |
-| `passkeys` | `idx_passkeys_user_id` | ユーザーのPasskey一覧 |
-| `passkeys` | `idx_passkeys_credential_id` | Passkey認証時の検索 |
-| `sessions` | `idx_sessions_user_id` | ユーザーのセッション一覧 |
-| `sessions` | `idx_sessions_expires_at` | 期限切れセッションのクリーンアップ |
-| `user_roles` | `idx_user_roles_user_id` | ユーザーのロール検索 |
-| `audit_log` | `idx_audit_log_user_id` | ユーザーの操作履歴 |
-| `audit_log` | `idx_audit_log_created_at` | 時系列での検索 |
-| `audit_log` | `idx_audit_log_action` | アクションタイプでのフィルタリング |
-| `audit_log` | `idx_audit_log_resource` | リソースでのフィルタリング |
+| `users` | `idx_users_email` | Search by email address (login) |
+| `users` | `idx_users_created_at` | Sort/filter by registration date |
+| `users` | `idx_users_parent_user_id` | Search parent-child accounts |
+| `user_custom_fields` | `idx_user_custom_fields_search` | Search by custom fields |
+| `passkeys` | `idx_passkeys_user_id` | List user's passkeys |
+| `passkeys` | `idx_passkeys_credential_id` | Search during passkey authentication |
+| `sessions` | `idx_sessions_user_id` | List user's sessions |
+| `sessions` | `idx_sessions_expires_at` | Clean up expired sessions |
+| `user_roles` | `idx_user_roles_user_id` | Search user's roles |
+| `audit_log` | `idx_audit_log_user_id` | User's operation history |
+| `audit_log` | `idx_audit_log_created_at` | Time-series search |
+| `audit_log` | `idx_audit_log_action` | Filter by action type |
+| `audit_log` | `idx_audit_log_resource` | Filter by resource |
 
-### パフォーマンス考慮事項
+### Performance Considerations
 
-1. **複合インデックス**: `(field_name, field_value)` で検索効率向上
-2. **カバリングインデックス**: よく使われるクエリパターンを分析して最適化
-3. **パーティショニング**: D1/SQLiteでは未サポートだが、将来PostgreSQL移行時に検討
-4. **定期的なVACUUM**: SQLiteの断片化を防ぐ
+1. **Composite Indexes**: `(field_name, field_value)` for improved search efficiency
+2. **Covering Indexes**: Optimize based on commonly used query patterns
+3. **Partitioning**: Not supported in D1/SQLite, but consider when migrating to PostgreSQL
+4. **Regular VACUUM**: Prevent SQLite fragmentation
 
 ---
 
-## マイグレーション戦略
+## Migration Strategy
 
-### バージョン管理
+### Version Control
 
 ```
 migrations/
@@ -692,15 +692,15 @@ migrations/
 └── ...
 ```
 
-### マイグレーション実行フロー
+### Migration Execution Flow
 
-1. **開発環境**: ローカルD1で実行
-2. **ステージング環境**: テストデータで検証
-3. **本番環境**: Blue-Green Deployment
+1. **Development Environment**: Run on local D1
+2. **Staging Environment**: Validate with test data
+3. **Production Environment**: Blue-Green Deployment
 
-### Rollback戦略
+### Rollback Strategy
 
-各マイグレーションにはダウンマイグレーションを用意：
+Each migration includes a down migration:
 
 ```
 migrations/
@@ -711,21 +711,21 @@ migrations/
 └── ...
 ```
 
-### スキーマ変更制約（D1/SQLite）
+### Schema Change Constraints (D1/SQLite)
 
-| 操作 | 可否 | 方法 |
+| Operation | Possible | Method |
 |------|------|------|
-| カラム追加 | ✅ 可能 | `ALTER TABLE ADD COLUMN` |
-| カラム削除 | ⚠️ 制限あり | SQLite 3.35.0+ (D1対応予定) |
-| カラム型変更 | ❌ 不可 | 新カラム作成 → データコピー → 旧カラム削除 |
-| インデックス追加/削除 | ✅ 可能 | `CREATE INDEX` / `DROP INDEX` |
-| テーブル名変更 | ✅ 可能 | `ALTER TABLE RENAME TO` |
+| Add Column | ✅ Yes | `ALTER TABLE ADD COLUMN` |
+| Drop Column | ⚠️ Limited | SQLite 3.35.0+ (D1 support planned) |
+| Change Column Type | ❌ No | Create new column → copy data → drop old column |
+| Add/Drop Index | ✅ Yes | `CREATE INDEX` / `DROP INDEX` |
+| Rename Table | ✅ Yes | `ALTER TABLE RENAME TO` |
 
 ---
 
-## ストレージ抽象化層
+## Storage Abstraction Layer
 
-### マルチクラウド対応
+### Multi-Cloud Support
 
 ```typescript
 interface IStorageAdapter {
@@ -739,7 +739,7 @@ interface IStorageAdapter {
   execute(sql: string, params: any[]): Promise<void>
 }
 
-// 実装例
+// Implementation example
 class CloudflareAdapter implements IStorageAdapter {
   constructor(
     private d1: D1Database,
@@ -753,68 +753,68 @@ class AWSRDSAdapter implements IStorageAdapter { /* ... */ }
 class PostgreSQLAdapter implements IStorageAdapter { /* ... */ }
 ```
 
-### アダプター選択
+### Adapter Selection
 
-環境変数で切り替え：
+Switch via environment variable:
 ```
 STORAGE_ADAPTER=cloudflare|azure|aws|postgres
 ```
 
 ---
 
-## データ保持ポリシー
+## Data Retention Policy
 
-### GDPR対応
+### GDPR Compliance
 
-| データタイプ | 保持期間 | 削除方法 |
+| Data Type | Retention Period | Deletion Method |
 |-------------|---------|---------|
-| ユーザーアカウント | ユーザーが削除するまで | カスケード削除 |
-| セッション | 24時間（デフォルト） | TTL自動削除 |
-| Audit Log | 90日間（設定可能） | 定期バッチ削除 |
-| Passkeys | ユーザーが削除するまで | カスケード削除 |
+| User Accounts | Until user deletes | Cascade delete |
+| Sessions | 24 hours (default) | TTL auto-delete |
+| Audit Log | 90 days (configurable) | Periodic batch delete |
+| Passkeys | Until user deletes | Cascade delete |
 
-### 削除権（Right to Erasure）
+### Right to Erasure
 
-ユーザー削除時にカスケード削除されるデータ：
+Data cascade-deleted when user is deleted:
 - `user_custom_fields`
 - `passkeys`
 - `sessions`
 - `user_roles`
 
-Audit Logは匿名化（`user_id` を NULL に設定）して保持
+Audit Log is anonymized (set `user_id` to NULL) and retained
 
 ---
 
-## 次のステップ
+## Next Steps
 
-1. ✅ **ER図作成** - 完了
-2. ✅ **API仕様書作成** - 完了 → [OpenAPI 3.1仕様書](../api/openapi.yaml)
-3. ✅ **デザインシステム策定** - 完了 → [design-system.md](../design/design-system.md)
-4. ✅ **ワイヤーフレーム作成** - 完了 → [wireframes.md](../design/wireframes.md)
-5. ✅ **マイグレーションスクリプト作成** - 完了 → [migrations/](../../migrations/)
-6. 📝 **ストレージ抽象化層実装** - IStorageAdapter（次のタスク）
-7. 📝 **フロントエンド環境セットアップ** - SvelteKit + UnoCSS
+1. ✅ **Create ER Diagram** - Complete
+2. ✅ **Create API Specification** - Complete → [OpenAPI 3.1 Specification](../api/openapi.yaml)
+3. ✅ **Design System** - Complete → [design-system.md](../design/design-system.md)
+4. ✅ **Create Wireframes** - Complete → [wireframes.md](../design/wireframes.md)
+5. ✅ **Create Migration Scripts** - Complete → [migrations/](../../migrations/)
+6. 📝 **Implement Storage Abstraction Layer** - IStorageAdapter (next task)
+7. 📝 **Frontend Environment Setup** - SvelteKit + UnoCSS
 
 ---
 
-## 参考資料
+## References
 
-### 関連ドキュメント
-- **API仕様書**
-  - [openapi.yaml](../api/openapi.yaml) - OpenAPI 3.1仕様書
-  - [API README](../api/README.md) - APIガイド・クイックスタート
-  - [API_INVENTORY.md](../project-management/API_INVENTORY.md) - APIインベントリ
-- **UI/UX設計**
-  - [design-system.md](../design/design-system.md) - デザインシステム
-  - [wireframes.md](../design/wireframes.md) - UI ワイヤーフレーム
-- **データベース**
-  - [migrations/](../../migrations/) - マイグレーションスクリプト
-  - [migrations/README.md](../../migrations/README.md) - マイグレーションガイド
-- **プロジェクト計画**
-  - [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5詳細計画
-  - [ROADMAP.md](../ROADMAP.md) - 全体ロードマップ
+### Related Documents
+- **API Specifications**
+  - [openapi.yaml](../api/openapi.yaml) - OpenAPI 3.1 Specification
+  - [API README](../api/README.md) - API Guide & Quick Start
+  - [API_INVENTORY.md](../project-management/API_INVENTORY.md) - API Inventory
+- **UI/UX Design**
+  - [design-system.md](../design/design-system.md) - Design System
+  - [wireframes.md](../design/wireframes.md) - UI Wireframes
+- **Database**
+  - [migrations/](../../migrations/) - Migration Scripts
+  - [migrations/README.md](../../migrations/README.md) - Migration Guide
+- **Project Planning**
+  - [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5 Detailed Plan
+  - [ROADMAP.md](../ROADMAP.md) - Overall Roadmap
 
-### 標準仕様
+### Standards & Specifications
 - [OIDC Standard Claims](https://openid.net/specs/openid-connect-core-1_0.html#StandardClaims)
 - [RFC 7591 - Dynamic Client Registration](https://tools.ietf.org/html/rfc7591)
 - [WebAuthn Spec](https://www.w3.org/TR/webauthn-2/)
@@ -822,5 +822,5 @@ Audit Logは匿名化（`user_id` を NULL に設定）して保持
 
 ---
 
-**変更履歴**:
-- 2025-11-13: 初版作成（Phase 5設計）
+**Change History**:
+- 2025-11-13: Initial version created (Phase 5 design)

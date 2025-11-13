@@ -1,107 +1,107 @@
 # Enrai UI Wireframes 📐
 
-**最終更新**: 2025-11-13
-**バージョン**: 1.0.0
-**ステータス**: Phase 5設計
+**Last Updated**: 2025-11-13
+**Version**: 1.0.0
+**Status**: Phase 5 Design
 
 ---
 
-## 📋 目次
+## 📋 Table of Contents
 
-1. [概要](#概要)
-2. [画面遷移図](#画面遷移図)
-3. [エンドユーザー向けページ](#エンドユーザー向けページ)
-4. [管理者向けページ](#管理者向けページ)
-5. [共通コンポーネント](#共通コンポーネント)
-6. [レスポンシブ対応](#レスポンシブ対応)
-7. [アクセシビリティ](#アクセシビリティ)
+1. [Overview](#overview)
+2. [Screen Transition Diagrams](#screen-transition-diagrams)
+3. [End-User Pages](#end-user-pages)
+4. [Admin Pages](#admin-pages)
+5. [Common Components](#common-components)
+6. [Responsive Design](#responsive-design)
+7. [Accessibility](#accessibility)
 
 ---
 
-## 概要
+## Overview
 
-このドキュメントは、Enrai OIDC OPの全13ページのワイヤーフレームを定義します。
+This document defines wireframes for all 13 pages of the Enrai OIDC OP.
 
-### ページ一覧
+### Page List
 
-| # | ページ名 | パス | カテゴリ | 優先度 |
+| # | Page Name | Path | Category | Priority |
 |---|---------|------|---------|--------|
-| 1 | ログイン | `/login` | エンドユーザー | 🔴 必須 |
-| 2 | アカウント登録 | `/register` | エンドユーザー | 🔴 必須 |
-| 3 | Magic Link送信完了 | `/magic-link-sent` | エンドユーザー | 🔴 必須 |
-| 4 | Magic Link検証 | `/verify-magic-link` | エンドユーザー | 🔴 必須 |
-| 5 | OAuth同意画面 | `/consent` | エンドユーザー | 🔴 必須 |
-| 6 | エラーページ | `/error` | エンドユーザー | 🟡 重要 |
-| 7 | 管理者ダッシュボード | `/admin` | 管理者 | 🔴 必須 |
-| 8 | ユーザー管理 | `/admin/users` | 管理者 | 🔴 必須 |
-| 9 | ユーザー詳細/編集 | `/admin/users/:id` | 管理者 | 🔴 必須 |
-| 10 | クライアント管理 | `/admin/clients` | 管理者 | 🔴 必須 |
-| 11 | クライアント詳細/編集 | `/admin/clients/:id` | 管理者 | 🟡 重要 |
-| 12 | 設定 | `/admin/settings` | 管理者 | 🟡 重要 |
-| 13 | Audit Log | `/admin/audit-log` | 管理者 | 🟢 推奨 |
+| 1 | Login | `/login` | End-User | 🔴 Required |
+| 2 | Account Registration | `/register` | End-User | 🔴 Required |
+| 3 | Magic Link Sent | `/magic-link-sent` | End-User | 🔴 Required |
+| 4 | Magic Link Verification | `/verify-magic-link` | End-User | 🔴 Required |
+| 5 | OAuth Consent Screen | `/consent` | End-User | 🔴 Required |
+| 6 | Error Page | `/error` | End-User | 🟡 Important |
+| 7 | Admin Dashboard | `/admin` | Admin | 🔴 Required |
+| 8 | User Management | `/admin/users` | Admin | 🔴 Required |
+| 9 | User Detail/Edit | `/admin/users/:id` | Admin | 🔴 Required |
+| 10 | Client Management | `/admin/clients` | Admin | 🔴 Required |
+| 11 | Client Detail/Edit | `/admin/clients/:id` | Admin | 🟡 Important |
+| 12 | Settings | `/admin/settings` | Admin | 🟡 Important |
+| 13 | Audit Log | `/admin/audit-log` | Admin | 🟢 Recommended |
 
-### 設計原則
+### Design Principles
 
-1. **シンプル & クリーン** - 余計な要素を排除
-2. **モバイルファースト** - 小画面から設計
-3. **直感的で高速なUX** - ユーザー体験を最優先
-4. **アクセシビリティ優先** - WCAG 2.1 AA準拠
-5. **一貫性** - デザインシステムに準拠
+1. **Simple & Clean** - Eliminate unnecessary elements
+2. **Mobile-First** - Design from small screens
+3. **Intuitive & Fast UX** - Prioritize user experience
+4. **Accessibility First** - WCAG 2.1 AA compliant
+5. **Consistency** - Follow design system
 
 ---
 
-## 画面遷移図
+## Screen Transition Diagrams
 
-### エンドユーザーフロー
+### End-User Flow
 
 ```mermaid
 graph TD
-    A[アプリ] -->|認証開始| B[/login ログイン]
-    B -->|新規ユーザー| C[/register 登録]
-    B -->|Passkey| D[Passkey認証]
-    B -->|Magic Link| E[/magic-link-sent 送信完了]
+    A[App] -->|Start Auth| B[/login Login]
+    B -->|New User| C[/register Register]
+    B -->|Passkey| D[Passkey Auth]
+    B -->|Magic Link| E[/magic-link-sent Sent]
 
-    C -->|Passkey登録| F[Passkey作成]
+    C -->|Passkey Register| F[Create Passkey]
     C -->|Magic Link| E
 
-    E -->|メール内リンク| G[/verify-magic-link 検証]
+    E -->|Email Link| G[/verify-magic-link Verify]
 
-    D -->|成功| H[/consent 同意画面]
-    F -->|成功| H
-    G -->|成功| H
+    D -->|Success| H[/consent Consent]
+    F -->|Success| H
+    G -->|Success| H
 
-    H -->|許可| I[アプリへリダイレクト]
-    H -->|拒否| B
+    H -->|Allow| I[Redirect to App]
+    H -->|Deny| B
 
-    B -->|エラー| J[/error エラー]
-    C -->|エラー| J
-    G -->|エラー| J
+    B -->|Error| J[/error Error]
+    C -->|Error| J
+    G -->|Error| J
 
     style B fill:#3B82F6,color:#fff
     style H fill:#10B981,color:#fff
     style J fill:#EF4444,color:#fff
 ```
 
-### 管理者フロー
+### Admin Flow
 
 ```mermaid
 graph TD
-    A[/admin ダッシュボード] -->|ユーザー管理| B[/admin/users 一覧]
-    A -->|クライアント管理| C[/admin/clients 一覧]
-    A -->|設定| D[/admin/settings]
-    A -->|ログ| E[/admin/audit-log]
+    A[/admin Dashboard] -->|User Mgmt| B[/admin/users List]
+    A -->|Client Mgmt| C[/admin/clients List]
+    A -->|Settings| D[/admin/settings]
+    A -->|Logs| E[/admin/audit-log]
 
-    B -->|詳細/編集| F[/admin/users/:id]
-    B -->|新規作成| G[ユーザー作成モーダル]
+    B -->|Detail/Edit| F[/admin/users/:id]
+    B -->|Create| G[User Create Modal]
 
-    C -->|詳細/編集| H[/admin/clients/:id]
-    C -->|新規作成| I[クライアント作成モーダル]
+    C -->|Detail/Edit| H[/admin/clients/:id]
+    C -->|Create| I[Client Create Modal]
 
-    F -->|保存| B
-    F -->|削除| B
+    F -->|Save| B
+    F -->|Delete| B
 
-    H -->|保存| C
-    H -->|削除| C
+    H -->|Save| C
+    H -->|Delete| C
 
     style A fill:#3B82F6,color:#fff
     style B fill:#10B981,color:#fff
@@ -110,13 +110,13 @@ graph TD
 
 ---
 
-## エンドユーザー向けページ
+## End-User Pages
 
-### Page 1: ログイン画面 (`/login`)
+### Page 1: Login Screen (`/login`)
 
-**目的**: パスワードレス認証（Passkey + Magic Link）
+**Purpose**: Passwordless authentication (Passkey + Magic Link)
 
-**レイアウト**:
+**Layout**:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -230,44 +230,44 @@ graph TD
 </main>
 ```
 
-**インタラクション**:
+**Interactions**:
 
-1. **メールアドレス入力**
-   - リアルタイムバリデーション（形式チェック）
-   - エラー時は赤枠 + エラーメッセージ表示
+1. **Email Address Input**
+   - Real-time validation (format check)
+   - Red border + error message on error
 
 2. **Continue with Passkey**
-   - クリック → WebAuthn API呼び出し
-   - ローディング状態表示
-   - 成功 → `/consent` へ
-   - 失敗 → エラーメッセージ表示
+   - Click → Call WebAuthn API
+   - Show loading state
+   - Success → Navigate to `/consent`
+   - Failure → Show error message
 
 3. **Send Magic Link**
-   - クリック → `/auth/magic-link/send` API呼び出し
-   - 成功 → `/magic-link-sent` へ遷移
-   - 失敗 → エラーメッセージ
+   - Click → Call `/auth/magic-link/send` API
+   - Success → Navigate to `/magic-link-sent`
+   - Failure → Show error message
 
-**状態管理**:
+**State Management**:
 
-- `loading`: boolean - API呼び出し中
-- `error`: string | null - エラーメッセージ
-- `email`: string - 入力されたメールアドレス
-- `emailValid`: boolean - メールアドレスの妥当性
+- `loading`: boolean - API call in progress
+- `error`: string | null - Error message
+- `email`: string - Entered email address
+- `emailValid`: boolean - Email validity
 
-**アクセシビリティ**:
+**Accessibility**:
 
-- フォームフィールドに適切な `<label>` と `id` の紐付け
-- エラーメッセージは `aria-describedby` で関連付け
-- キーボード操作可能（Tab, Enter）
-- ローディング状態は `aria-busy="true"`
+- Proper `<label>` and `id` binding for form fields
+- Error messages linked via `aria-describedby`
+- Keyboard navigable (Tab, Enter)
+- Loading state with `aria-busy="true"`
 
 ---
 
-### Page 2: アカウント登録画面 (`/register`)
+### Page 2: Account Registration Screen (`/register`)
 
-**目的**: 新規ユーザー登録
+**Purpose**: New user registration
 
-**レイアウト**:
+**Layout**:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -400,19 +400,19 @@ graph TD
 </main>
 ```
 
-**バリデーション**:
+**Validation**:
 
-- Email: 形式チェック、重複チェック（API呼び出し）
-- Name: 任意（空でも可）
-- Terms: 必須チェック
+- Email: Format check, duplicate check (API call)
+- Name: Optional (can be empty)
+- Terms: Required checkbox
 
 ---
 
-### Page 3: Magic Link送信完了 (`/magic-link-sent`)
+### Page 3: Magic Link Sent (`/magic-link-sent`)
 
-**目的**: Magic Link送信完了の通知
+**Purpose**: Notify that Magic Link was sent
 
-**レイアウト**:
+**Layout**:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -506,25 +506,25 @@ graph TD
 </main>
 ```
 
-**状態管理**:
+**State Management**:
 
-- `email`: string - 送信先メールアドレス
-- `countdown`: number - 再送可能までの秒数（30秒）
-- `canResend`: boolean - 再送可能か
+- `email`: string - Destination email address
+- `countdown`: number - Seconds until resend is available (30 seconds)
+- `canResend`: boolean - Whether resend is available
 
-**インタラクション**:
+**Interactions**:
 
-- カウントダウンタイマー（30秒）
-- 再送ボタン（カウントダウン終了後に有効化）
-- 再送は最大3回まで
+- Countdown timer (30 seconds)
+- Resend button (enabled after countdown)
+- Maximum 3 resends
 
 ---
 
-### Page 4: Magic Link検証 (`/verify-magic-link`)
+### Page 4: Magic Link Verification (`/verify-magic-link`)
 
-**目的**: Magic Linkトークンの検証
+**Purpose**: Verify Magic Link token
 
-**レイアウト**:
+**Layout**:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -540,7 +540,7 @@ graph TD
 │                                         │
 └─────────────────────────────────────────┘
 
-// エラー時:
+// On error:
 
 ┌─────────────────────────────────────────┐
 │                                         │
@@ -615,19 +615,19 @@ graph TD
 </main>
 ```
 
-**ロジック**:
+**Logic**:
 
-1. ページロード時に自動的にトークン検証
-2. 成功 → `/consent` へリダイレクト
-3. 失敗 → エラー表示
+1. Automatically verify token on page load
+2. Success → Redirect to `/consent`
+3. Failure → Display error
 
 ---
 
-### Page 5: OAuth同意画面 (`/consent`)
+### Page 5: OAuth Consent Screen (`/consent`)
 
-**目的**: ユーザーによる権限付与の同意
+**Purpose**: User consent for permission grants
 
-**レイアウト**:
+**Layout**:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -751,25 +751,25 @@ graph TD
 </main>
 ```
 
-**データ**:
+**Data**:
 
-- `client`: クライアント情報（名前、ロゴ、ポリシーURL）
-- `user`: 現在ログイン中のユーザー情報
-- `scopes`: 要求されるスコープと説明
+- `client`: Client information (name, logo, policy URL)
+- `user`: Currently logged-in user information
+- `scopes`: Requested scopes and descriptions
 
-**インタラクション**:
+**Interactions**:
 
-- **Allow**: 同意してリダイレクト
-- **Cancel**: 拒否してエラーでリダイレクト
-- **Not you?**: ログアウトして再ログイン
+- **Allow**: Consent and redirect
+- **Cancel**: Deny and redirect with error
+- **Not you?**: Logout and re-login
 
 ---
 
-### Page 6: エラーページ (`/error`)
+### Page 6: Error Page (`/error`)
 
-**目的**: 一般的なエラーの表示
+**Purpose**: Display general errors
 
-**レイアウト**:
+**Layout**:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -841,24 +841,24 @@ graph TD
 </main>
 ```
 
-**エラーコード**:
+**Error Codes**:
 
 - `invalid_request`
 - `access_denied`
 - `server_error`
 - `temporarily_unavailable`
 - `magic_link_expired`
-- カスタムエラーコード
+- Custom error codes
 
 ---
 
-## 管理者向けページ
+## Admin Pages
 
-### Page 7: 管理者ダッシュボード (`/admin`)
+### Page 7: Admin Dashboard (`/admin`)
 
-**目的**: システム全体の概要と統計
+**Purpose**: System overview and statistics
 
-**レイアウト**:
+**Layout**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -1042,18 +1042,18 @@ graph TD
 </div>
 ```
 
-**データ**:
+**Data**:
 
-- リアルタイムまたは定期更新（5分ごと）
-- `/admin/stats` APIから取得
+- Real-time or periodic updates (every 5 minutes)
+- Retrieved from `/admin/stats` API
 
 ---
 
-### Page 8: ユーザー管理 (`/admin/users`)
+### Page 8: User Management (`/admin/users`)
 
-**目的**: ユーザーの一覧・検索・CRUD
+**Purpose**: User list, search, and CRUD
 
-**レイアウト**:
+**Layout**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -1165,62 +1165,62 @@ graph TD
 </main>
 ```
 
-**機能**:
+**Features**:
 
-- 検索（email, name）
-- フィルター（verified/unverified, active/inactive）
-- ソート（created_at, last_login_at, email）
-- ページネーション（50件/ページ）
-
----
-
-### Page 9-13: 残りの管理者ページ
-
-残りのページ（ユーザー詳細、クライアント管理、設定、Audit Log）も同様のパターンで設計されます。詳細は省略しますが、共通要素：
-
-- サイドバーナビゲーション
-- トップバー（検索、通知、プロファイル）
-- データテーブル（検索、フィルター、ソート、ページネーション）
-- CRUD操作（作成、読み取り、更新、削除）
-- モーダルダイアログ
-- トースト通知
+- Search (email, name)
+- Filter (verified/unverified, active/inactive)
+- Sort (created_at, last_login_at, email)
+- Pagination (50 items/page)
 
 ---
 
-## 共通コンポーネント
+### Page 9-13: Remaining Admin Pages
 
-### ナビゲーション
+The remaining pages (User Detail, Client Management, Settings, Audit Log) follow similar patterns. Details are omitted, but common elements include:
 
-- トップバー（ロゴ、検索、通知、ユーザーメニュー）
-- サイドバー（管理者ページのみ）
-- モバイルメニュー（ハンバーガー）
+- Sidebar navigation
+- Top bar (search, notifications, profile)
+- Data tables (search, filter, sort, pagination)
+- CRUD operations (create, read, update, delete)
+- Modal dialogs
+- Toast notifications
 
-### フォーム要素
+---
 
-- Input（text, email, password, etc.）
+## Common Components
+
+### Navigation
+
+- Top bar (logo, search, notifications, user menu)
+- Sidebar (admin pages only)
+- Mobile menu (hamburger)
+
+### Form Elements
+
+- Input (text, email, password, etc.)
 - Textarea
 - Select / Dropdown
 - Checkbox
 - Radio
 - Toggle Switch
 
-### フィードバック
+### Feedback
 
-- Alert（success, warning, error, info）
-- Toast通知
+- Alert (success, warning, error, info)
+- Toast notifications
 - Loading Spinner
 - Skeleton Loader
 - Progress Bar
 
-### データ表示
+### Data Display
 
-- Table（ソート、ページネーション）
+- Table (sort, pagination)
 - Card
 - Badge
 - Avatar
 - Empty State
 
-### オーバーレイ
+### Overlay
 
 - Modal / Dialog
 - Dropdown Menu
@@ -1229,59 +1229,59 @@ graph TD
 
 ---
 
-## レスポンシブ対応
+## Responsive Design
 
-### ブレークポイント
+### Breakpoints
 
-| デバイス | 幅 | レイアウト |
+| Device | Width | Layout |
 |---------|-----|-----------|
-| モバイル | < 640px | 1列、スタック |
-| タブレット | 640-1024px | 2列、一部サイドバー折りたたみ |
-| デスクトップ | > 1024px | フル機能、サイドバー表示 |
+| Mobile | < 640px | 1 column, stacked |
+| Tablet | 640-1024px | 2 columns, partially collapsed sidebar |
+| Desktop | > 1024px | Full featured, sidebar visible |
 
-### モバイル最適化
+### Mobile Optimization
 
-- タッチターゲット最小44x44px
-- スワイプジェスチャー対応
-- オフキャンバスメニュー
-- 縦スクロール優先
-
----
-
-## アクセシビリティ
-
-### キーボード操作
-
-- Tab: フォーカス移動
-- Enter/Space: ボタン実行
-- Esc: モーダル閉じる
-- Arrow keys: ドロップダウンナビゲーション
-
-### スクリーンリーダー
-
-- セマンティックHTML
-- ARIA属性（role, aria-label, aria-describedby）
-- ライブリージョン（aria-live）
-- フォーカス管理
-
-### カラーコントラスト
-
-- WCAG 2.1 AA準拠
-- 4.5:1以上（通常テキスト）
-- 3:1以上（大テキスト、UI）
+- Minimum touch target 44x44px
+- Swipe gesture support
+- Off-canvas menu
+- Vertical scroll priority
 
 ---
 
-## 参考資料
+## Accessibility
 
-### 関連ドキュメント
+### Keyboard Navigation
 
-- [design-system.md](./design-system.md) - デザインシステム
-- [database-schema.md](../architecture/database-schema.md) - データベーススキーマ
-- [openapi.yaml](../api/openapi.yaml) - API仕様書
-- [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5計画
+- Tab: Focus movement
+- Enter/Space: Execute button
+- Esc: Close modal
+- Arrow keys: Dropdown navigation
 
-### デザインインスピレーション
+### Screen Readers
+
+- Semantic HTML
+- ARIA attributes (role, aria-label, aria-describedby)
+- Live regions (aria-live)
+- Focus management
+
+### Color Contrast
+
+- WCAG 2.1 AA compliant
+- 4.5:1 or higher (normal text)
+- 3:1 or higher (large text, UI)
+
+---
+
+## References
+
+### Related Documents
+
+- [design-system.md](./design-system.md) - Design System
+- [database-schema.md](../architecture/database-schema.md) - Database Schema
+- [openapi.yaml](../api/openapi.yaml) - API Specification
+- [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5 Planning
+
+### Design Inspiration
 
 - [Auth0 Universal Login](https://auth0.com/docs/universal-login)
 - [Clerk Components](https://clerk.com/docs/components/overview)
@@ -1290,5 +1290,5 @@ graph TD
 
 ---
 
-**変更履歴**:
-- 2025-11-13: 初版作成（Phase 5設計）
+**Change History**:
+- 2025-11-13: Initial version (Phase 5 Design)

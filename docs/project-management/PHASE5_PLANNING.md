@@ -2,188 +2,188 @@
 
 **Status:** Planning
 **Timeline:** May 1-31, 2026 (4 weeks)
-**Goal:** 最高のパスワードレス体験とユーザー体験
+**Goal:** Best Passwordless and User Experience
 
 ---
 
-## 📋 目次
+## 📋 Table of Contents
 
-1. [概要](#概要)
-2. [決定すべき事項リスト](#決定すべき事項リスト)
-3. [アーキテクチャ設計](#アーキテクチャ設計)
-4. [UI/UXページ一覧](#uiuxページ一覧)
-5. [管理者機能領域](#管理者機能領域)
-6. [技術スタック選定](#技術スタック選定)
-7. [データストレージ設計](#データストレージ設計)
-8. [認証フロー設計](#認証フロー設計)
-9. [タイムライン](#タイムライン)
-
----
-
-## 概要
-
-Phase 5では、Enraiに以下の機能を実装します：
-
-- **🔐 パスワードレス認証UI** (Passkey + Magic Link)
-- **📝 ユーザー登録・ログインフロー**
-- **✅ OAuth同意画面**
-- **👥 管理者ダッシュボード**
-- **💾 データストレージ抽象化層**
-
-### 主要な目標
-
-1. **直感的で高速なUI** - ユーザー体験を最優先
-2. **パスワードレスファースト** - Passkey/WebAuthnを第一選択に
-3. **エッジネイティブ** - Cloudflare Workersに最適化
-4. **アクセシビリティ** - WCAG 2.1 AA準拠
-5. **国際化対応** - 多言語サポート準備
+1. [Overview](#overview)
+2. [Decision Items List](#decision-items-list)
+3. [Architecture Design](#architecture-design)
+4. [UI/UX Page List](#uiux-page-list)
+5. [Admin Features](#admin-features)
+6. [Technology Stack Selection](#technology-stack-selection)
+7. [Data Storage Design](#data-storage-design)
+8. [Authentication Flow Design](#authentication-flow-design)
+9. [Timeline](#timeline)
 
 ---
 
-## 決定すべき事項リスト
+## Overview
 
-以下の項目を順番に検討・決定していきます：
+Phase 5 implements the following features in Enrai:
 
-### 1️⃣ フロントエンド技術スタック
+- **🔐 Passwordless Authentication UI** (Passkey + Magic Link)
+- **📝 User Registration & Login Flow**
+- **✅ OAuth Consent Screen**
+- **👥 Admin Dashboard**
+- **💾 Data Storage Abstraction Layer**
 
-#### 1.1 UIフレームワーク選定
-- [ ] **選択肢の比較**
-  - **React + Next.js** - 最も人気、エコシステム豊富、SSR対応
-  - **Vue 3 + Nuxt 3** - シンプル、学習コスト低、SSR対応
-  - **Svelte + SvelteKit** - 高速、バンドルサイズ小、モダン
-  - **Solid.js + SolidStart** - React風、高パフォーマンス、新しい
-  - **Vanilla TS + Lit** - 軽量、Web Components、依存少
+### Key Goals
 
-- [ ] **評価基準**
-  - ビルドサイズ（エッジ環境での制約）
-  - 開発速度・生産性
-  - TypeScript対応
-  - SSR/SSG対応
-  - エコシステム（ライブラリ、ツール）
-  - Cloudflare Pagesとの統合
+1. **Intuitive & Fast UI** - Prioritize user experience
+2. **Passwordless First** - Passkey/WebAuthn as primary option
+3. **Edge Native** - Optimized for Cloudflare Workers
+4. **Accessibility** - WCAG 2.1 AA compliant
+5. **Internationalization** - Prepare for multilingual support
 
-- [ ] **推奨**: Svelte + SvelteKit または Solid.js
-  - 理由: 軽量、高速、モダン、エッジ最適化
+---
 
-- コメント：Svelte + SvelteKitにします。Ver.5で。
+## Decision Items List
 
-#### 1.2 CSSフレームワーク選定
-- [ ] **選択肢の比較**
-  - **Tailwind CSS** - ユーティリティファースト、カスタマイズ容易
-  - **UnoCSS** - Tailwind互換、高速、軽量
-  - **Panda CSS** - Zero-runtime、型安全、高速
-  - **Vanilla Extract** - CSS-in-TypeScript、型安全
-  - **shadcn/ui + Tailwind** - コンポーネントライブラリ付き
+The following items will be reviewed and decided in order:
 
-- [ ] **評価基準**
-  - バンドルサイズ
-  - 開発体験（DX）
-  - ダークモード対応
-  - カスタマイズ性
-  - パフォーマンス
+### 1️⃣ Frontend Technology Stack
 
-- [ ] **推奨**: Tailwind CSS または UnoCSS
-  - 理由: 実績、エコシステム、高速
+#### 1.1 UI Framework Selection
+- [ ] **Comparison of Options**
+  - **React + Next.js** - Most popular, rich ecosystem, SSR support
+  - **Vue 3 + Nuxt 3** - Simple, low learning cost, SSR support
+  - **Svelte + SvelteKit** - Fast, small bundle size, modern
+  - **Solid.js + SolidStart** - React-like, high performance, new
+  - **Vanilla TS + Lit** - Lightweight, Web Components, few dependencies
 
-- コメント：UnoCSSにします
+- [ ] **Evaluation Criteria**
+  - Build size (constraints in edge environment)
+  - Development speed & productivity
+  - TypeScript support
+  - SSR/SSG support
+  - Ecosystem (libraries, tools)
+  - Cloudflare Pages integration
 
-#### 1.3 UIコンポーネントライブラリ
-- [ ] **選択肢の比較**
-  - **shadcn/ui** (React) - コピペ型、カスタマイズ容易
-  - **Melt UI** (Svelte) - Headless、アクセシブル
-  - **Kobalte** (Solid.js) - Headless、アクセシブル
-  - **Radix UI** (React) - Headless、アクセシブル
-  - **自作** - 完全制御、軽量
+- [ ] **Recommendation**: Svelte + SvelteKit or Solid.js
+  - Reason: Lightweight, fast, modern, edge-optimized
 
-- [ ] **評価基準**
-  - アクセシビリティ（ARIA対応）
-  - カスタマイズ性
-  - バンドルサイズ
-  - ドキュメント品質
-  - 必要なコンポーネント数
+- Comment: We'll use Svelte + SvelteKit Ver.5.
 
-- [ ] **推奨**: Melt UI (Svelte) または Kobalte (Solid.js)
-  - 理由: Headless、軽量、アクセシブル
+#### 1.2 CSS Framework Selection
+- [ ] **Comparison of Options**
+  - **Tailwind CSS** - Utility-first, easy to customize
+  - **UnoCSS** - Tailwind-compatible, fast, lightweight
+  - **Panda CSS** - Zero-runtime, type-safe, fast
+  - **Vanilla Extract** - CSS-in-TypeScript, type-safe
+  - **shadcn/ui + Tailwind** - With component library
 
-- コメント：Melt UIで。
+- [ ] **Evaluation Criteria**
+  - Bundle size
+  - Developer experience (DX)
+  - Dark mode support
+  - Customizability
+  - Performance
 
-### 2️⃣ バックエンドアーキテクチャ
+- [ ] **Recommendation**: Tailwind CSS or UnoCSS
+  - Reason: Proven track record, ecosystem, fast
 
-#### 2.1 UIホスティング方式
-- [ ] **選択肢の比較**
-  - **Option A: Cloudflare Pages** (別デプロイ)
-    - メリット: CDN最適化、独立デプロイ、静的アセット高速配信
-    - デメリット: 別管理、CORS設定必要
+- Comment: We'll use UnoCSS
 
-  - **Option B: Workers内で配信** (同一Worker)
-    - メリット: 統合管理、CORS不要、シンプル
-    - デメリット: Workerサイズ制限、静的アセット配信非効率
+#### 1.3 UI Component Library
+- [ ] **Comparison of Options**
+  - **shadcn/ui** (React) - Copy-paste type, easy to customize
+  - **Melt UI** (Svelte) - Headless, accessible
+  - **Kobalte** (Solid.js) - Headless, accessible
+  - **Radix UI** (React) - Headless, accessible
+  - **Custom** - Full control, lightweight
+
+- [ ] **Evaluation Criteria**
+  - Accessibility (ARIA support)
+  - Customizability
+  - Bundle size
+  - Documentation quality
+  - Number of required components
+
+- [ ] **Recommendation**: Melt UI (Svelte) or Kobalte (Solid.js)
+  - Reason: Headless, lightweight, accessible
+
+- Comment: We'll use Melt UI.
+
+### 2️⃣ Backend Architecture
+
+#### 2.1 UI Hosting Method
+- [ ] **Comparison of Options**
+  - **Option A: Cloudflare Pages** (Separate deployment)
+    - Pros: CDN optimization, independent deployment, fast static asset delivery
+    - Cons: Separate management, CORS configuration required
+
+  - **Option B: Serve from Workers** (Same Worker)
+    - Pros: Unified management, no CORS needed, simple
+    - Cons: Worker size limits, inefficient static asset delivery
 
   - **Option C: Hybrid** (API=Workers, UI=Pages)
-    - メリット: 各技術の強み活用、最適なパフォーマンス
-    - デメリット: 複雑、デプロイ管理
+    - Pros: Leverage strengths of each technology, optimal performance
+    - Cons: Complex, deployment management
 
-- [ ] **評価基準**
-  - パフォーマンス
-  - 管理のしやすさ
-  - コスト
-  - スケーラビリティ
+- [ ] **Evaluation Criteria**
+  - Performance
+  - Ease of management
+  - Cost
+  - Scalability
 
-- [ ] **推奨**: Option C (Hybrid)
-  - 理由: 最適なパフォーマンス、クリーンな分離
+- [ ] **Recommendation**: Option C (Hybrid)
+  - Reason: Optimal performance, clean separation
 
-- コメント：Option Cにします
+- Comment: We'll use Option C
 
-#### 2.2 API設計
-- [ ] **必要なエンドポイント追加**
-  - `POST /auth/passkey/register` - Passkey登録開始
-  - `POST /auth/passkey/verify` - Passkey検証
-  - `POST /auth/magic-link/send` - Magic Link送信
-  - `POST /auth/magic-link/verify` - Magic Link検証
-  - `GET /auth/consent` - 同意画面表示用データ取得
-  - `POST /auth/consent` - 同意確定
-  - `GET /admin/users` - ユーザー一覧
-  - `POST /admin/users` - ユーザー作成
-  - `PUT /admin/users/:id` - ユーザー更新
-  - `DELETE /admin/users/:id` - ユーザー削除
-  - `GET /admin/clients` - クライアント一覧
-  - `POST /admin/clients` - クライアント作成（既存のDCRを拡張）
-  - `PUT /admin/clients/:id` - クライアント更新
-  - `DELETE /admin/clients/:id` - クライアント削除
-  - `GET /admin/stats` - 統計情報
+#### 2.2 API Design
+- [ ] **Additional Endpoints Required**
+  - `POST /auth/passkey/register` - Start Passkey registration
+  - `POST /auth/passkey/verify` - Verify Passkey
+  - `POST /auth/magic-link/send` - Send Magic Link
+  - `POST /auth/magic-link/verify` - Verify Magic Link
+  - `GET /auth/consent` - Get consent screen data
+  - `POST /auth/consent` - Confirm consent
+  - `GET /admin/users` - List users
+  - `POST /admin/users` - Create user
+  - `PUT /admin/users/:id` - Update user
+  - `DELETE /admin/users/:id` - Delete user
+  - `GET /admin/clients` - List clients
+  - `POST /admin/clients` - Create client (extend existing DCR)
+  - `PUT /admin/clients/:id` - Update client
+  - `DELETE /admin/clients/:id` - Delete client
+  - `GET /admin/stats` - Statistics
 
-  **ITP対応 クロスドメインSSO（2025-11-12追加）**
-  - `POST /auth/session/token` - 短命トークン発行（5分TTL、1回限り使用）
-  - `POST /auth/session/verify` - 短命トークン検証 & RPセッション確立
-  - `GET /session/status` - IdPセッション有効性確認（iframe check_session_iframe代替）
-  - `POST /session/refresh` - セッション延命（Active TTL型セッション）
+  **ITP-Compatible Cross-Domain SSO (Added 2025-11-12)**
+  - `POST /auth/session/token` - Issue short-lived token (5min TTL, single-use)
+  - `POST /auth/session/verify` - Verify short-lived token & establish RP session
+  - `GET /session/status` - Check IdP session validity (iframe check_session_iframe alternative)
+  - `POST /session/refresh` - Extend session (Active TTL-based session)
 
-  **Logout機能（2025-11-12追加）**
-  - `GET /logout` - Front-channel Logout（ブラウザ→OP）
-  - `POST /logout/backchannel` - Back-channel Logout（OP→RP、RFC推奨）
+  **Logout Functionality (Added 2025-11-12)**
+  - `GET /logout` - Front-channel Logout (Browser → OP)
+  - `POST /logout/backchannel` - Back-channel Logout (OP → RP, RFC recommended)
 
-  **管理者セッション管理（2025-11-12追加）**
-  - `GET /admin/sessions` - セッション一覧（User/Device別）
-  - `POST /admin/sessions/:id/revoke` - 個別セッション強制ログアウト
+  **Admin Session Management (Added 2025-11-12)**
+  - `GET /admin/sessions` - List sessions (by User/Device)
+  - `POST /admin/sessions/:id/revoke` - Force logout individual session
 
-- コメント：ユーザー検索とかは？
-  - **回答**: 以下のエンドポイントを追加
+- Comment: What about user search?
+  - **Answer**: Add the following endpoint
     - `GET /admin/users?q={query}&filter={status}&sort={field}&page={n}&limit={limit}`
-      - `q`: 検索クエリ（email, name で検索）
+      - `q`: Search query (search by email, name)
       - `filter`: `verified`, `unverified`, `active`, `inactive`
-      - `sort`: `created_at`, `last_login_at`, `email`, `name`（デフォルト: `-created_at`）
-      - `page`: ページ番号（デフォルト: 1）
-      - `limit`: 1ページあたりの件数（デフォルト: 50, 最大: 100）
+      - `sort`: `created_at`, `last_login_at`, `email`, `name` (default: `-created_at`)
+      - `page`: Page number (default: 1)
+      - `limit`: Items per page (default: 50, max: 100)
 
-- [ ] **認証方式**
-  - 管理者API: Bearer Token（専用の管理者トークン）
-  - セッション管理: Cookie + CSRF Token
+- [ ] **Authentication Methods**
+  - Admin API: Bearer Token (dedicated admin token)
+  - Session management: Cookie + CSRF Token
 
-- コメント：良いとおもいますが、後々SAML/LDAP認証の余地を残して。
-  - **回答**: Phase 5ではBearer Token + Cookie + CSRFで実装。将来の拡張性のため以下を追加:
-    - `identity_providers`テーブル（SAML/LDAP設定格納）
-    - `users.identity_provider_id`カラム（外部認証との紐付け）
-    - Phase 7でSAML/LDAP実装予定
+- Comment: Good, but leave room for SAML/LDAP authentication later.
+  - **Answer**: Phase 5 implements Bearer Token + Cookie + CSRF. Add the following for future extensibility:
+    - `identity_providers` table (store SAML/LDAP configurations)
+    - `users.identity_provider_id` column (link to external authentication)
+    - SAML/LDAP implementation planned for Phase 7
 
 - [ ] **トークン交換系API（検討中・2025-11-12追加）**
   - **現在の実装状況**:

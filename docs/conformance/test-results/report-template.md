@@ -11,9 +11,9 @@
 
 ## Executive Summary
 
-このレポートは、EnraiのOpenID Connect Basic OP Profile準拠テストの結果をまとめたものです。
+This report summarizes the results of Enrai's OpenID Connect Basic OP Profile compliance testing.
 
-**テスト結果サマリー:**
+**Test Results Summary:**
 - **Overall Conformance Score:** XX.X%
 - **Target Score:** ≥85%
 - **Status:** ✅ Pass / ❌ Fail
@@ -82,18 +82,18 @@
 
 **Test:** `oidcc-discovery-metadata-format`
 **Result:** Pass
-**Description:** Discovery endpointが正しいメタデータ形式を返すことを確認
+**Description:** Verify that Discovery endpoint returns correct metadata format
 
 **Details:**
-- すべての必須フィールドが存在
-- Issuer URLが正しく設定されている
-- エンドポイントURLがすべて有効
+- All required fields present
+- Issuer URL is correctly configured
+- All endpoint URLs are valid
 
 #### 1.2 Issuer Consistency ✅ Pass
 
 **Test:** `oidcc-discovery-issuer-consistency`
 **Result:** Pass
-**Description:** IssuerがDiscovery documentとID Tokenで一致することを確認
+**Description:** Verify that Issuer matches between Discovery document and ID Token
 
 ---
 
@@ -103,19 +103,19 @@
 
 **Test:** `oidcc-jwks-format`
 **Result:** Pass
-**Description:** JWKS endpointが有効なJWK Setを返すことを確認
+**Description:** Verify that JWKS endpoint returns valid JWK Set
 
 **Details:**
 - `kty`: "RSA"
 - `use`: "sig"
 - `alg`: "RS256"
-- `n` と `e` が正しくbase64url エンコードされている
+- `n` and `e` are correctly base64url encoded
 
 #### 2.2 Signature Verification ✅ Pass
 
 **Test:** `oidcc-jwks-signature-verification`
 **Result:** Pass
-**Description:** JWKSの公開鍵でID Tokenの署名を検証できることを確認
+**Description:** Verify that ID Token signature can be verified with JWKS public key
 
 ---
 
@@ -125,18 +125,18 @@
 
 **Test:** `oidcc-authorization-code-flow`
 **Result:** Pass
-**Description:** 有効な認可リクエストが正しく処理されることを確認
+**Description:** Verify that valid authorization requests are processed correctly
 
 **Details:**
-- 認可コードが正しく生成される
-- State パラメータが保持される
-- Redirect URIが正しく使用される
+- Authorization code is generated correctly
+- State parameter is preserved
+- Redirect URI is used correctly
 
 #### 3.2 Parameter Validation ✅ Pass
 
 **Test:** `oidcc-authorization-parameter-validation`
 **Result:** Pass
-**Description:** 無効なパラメータが正しく拒否されることを確認
+**Description:** Verify that invalid parameters are correctly rejected
 
 ---
 
@@ -146,18 +146,18 @@
 
 **Test:** `oidcc-token-code-exchange`
 **Result:** Pass
-**Description:** 認可コードが正しくトークンに交換されることを確認
+**Description:** Verify that authorization code is correctly exchanged for tokens
 
 **Details:**
-- ID Token が発行される
-- Access Token が発行される
-- `token_type` が "Bearer" である
+- ID Token is issued
+- Access Token is issued
+- `token_type` is "Bearer"
 
 #### 4.2 ID Token Claims ✅ Pass
 
 **Test:** `oidcc-token-id-token-claims`
 **Result:** Pass
-**Description:** ID Tokenにすべての必須クレームが含まれることを確認
+**Description:** Verify that ID Token contains all required claims
 
 **Required Claims:**
 - `iss`: Issuer URL
@@ -170,7 +170,7 @@
 
 **Test:** `oidcc-token-code-reuse`
 **Result:** Pass
-**Description:** 認可コードが再利用できないことを確認
+**Description:** Verify that authorization code cannot be reused
 
 ---
 
@@ -180,13 +180,13 @@
 
 **Test:** `oidcc-userinfo-access-token`
 **Result:** Pass
-**Description:** 有効なアクセストークンでUserInfo endpointにアクセスできることを確認
+**Description:** Verify that UserInfo endpoint can be accessed with valid access token
 
 #### 5.2 Claims Consistency ✅ Pass
 
 **Test:** `oidcc-userinfo-sub-consistency`
 **Result:** Pass
-**Description:** UserInfoの `sub` がID Tokenの `sub` と一致することを確認
+**Description:** Verify that UserInfo `sub` matches ID Token `sub`
 
 ---
 
@@ -196,7 +196,7 @@
 
 **Test:** `oidcc-error-invalid-client`
 **Result:** Pass
-**Description:** 無効なclient_idが正しくエラーを返すことを確認
+**Description:** Verify that invalid client_id returns error correctly
 
 **Error Response:**
 ```json
@@ -210,7 +210,7 @@
 
 **Test:** `oidcc-error-invalid-grant`
 **Result:** Pass
-**Description:** 無効な認可コードが正しくエラーを返すことを確認
+**Description:** Verify that invalid authorization code returns error correctly
 
 **Error Response:**
 ```json
@@ -228,51 +228,51 @@
 
 **Test:** `oidcc-security-https`
 **Result:** Pass
-**Description:** すべてのエンドポイントがHTTPS経由でアクセス可能であることを確認
+**Description:** Verify that all endpoints are accessible via HTTPS
 
 #### 7.2 PKCE Support ✅ Pass
 
 **Test:** `oidcc-security-pkce`
 **Result:** Pass
-**Description:** PKCE（Proof Key for Code Exchange）がサポートされていることを確認
+**Description:** Verify that PKCE (Proof Key for Code Exchange) is supported
 
 ---
 
-## Failed Tests (もしあれば)
+## Failed Tests (if any)
 
-### [テスト名] ❌ Fail
+### [Test Name] ❌ Fail
 
 **Test:** `test-identifier`
 **Result:** Fail
-**Description:** テストの説明
+**Description:** Test description
 
-**Reason:** 失敗理由の詳細
+**Reason:** Detailed failure reason
 
 **Error Message:**
 ```
-エラーメッセージをここに記載
+Error message here
 ```
 
 **Root Cause:**
-- 原因の分析
+- Cause analysis
 
 **Action Plan:**
-- [ ] 修正手順1
-- [ ] 修正手順2
-- [ ] 再テスト
+- [ ] Fix step 1
+- [ ] Fix step 2
+- [ ] Retest
 
 ---
 
-## Warnings (もしあれば)
+## Warnings (if any)
 
-### [警告名] ⚠️ Warning
+### [Warning Name] ⚠️ Warning
 
 **Test:** `test-identifier`
 **Result:** Warning
-**Description:** 警告の説明
+**Description:** Warning description
 
 **Recommendation:**
-- 推奨される改善策
+- Recommended improvements
 
 ---
 
@@ -331,7 +331,7 @@
 - **Status:** ✅ Met / ❌ Not Met
 
 **Assessment:**
-- [コメント: 目標達成状況の評価]
+- [Comment: Assessment of goal achievement status]
 
 ### OpenID Certification Readiness (≥95%)
 
@@ -395,9 +395,9 @@
 
 ### C. Test Logs
 
-詳細なテストログは以下のファイルを参照：
+Refer to the following files for detailed test logs:
 - JSON Result: `result-YYYYMMDD-HHMM.json`
-- Cloudflare Logs: `wrangler tail` コマンドで取得
+- Cloudflare Logs: Obtained with `wrangler tail` command
 
 ### D. References
 

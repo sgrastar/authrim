@@ -14,18 +14,18 @@
 
 ## Executive Summary
 
-このドキュメントは、OpenID Foundation Conformance Suite を使用した Enrai の公式テスト結果を記録しています。
+This document records the official test results of Enrai using the OpenID Foundation Conformance Suite.
 
 ### Test Results Overview
 
 | Status | Count | Percentage | Notes |
 |--------|-------|------------|-------|
-| ✅ **PASSED** | **23** | **69.7%** | Phase 3 で実装した機能がすべて合格 |
-| 📋 **REVIEW** | 1 | 3.0% | 手動確認が必要（画像チェック等） |
-| ⚠️ **WARNING** | 1 | 3.0% | Phase 6 で対応予定 |
-| ❌ **FAILED** | 4 | 12.1% | Phase 5-6 で対応予定 |
-| 🔸 **INTERRUPTED** | 4 | 12.1% | Phase 5-6 で対応予定 |
-| ⏭️ **SKIPPED** | 1 | 3.0% | Phase 4 で対応予定（Refresh token） |
+| ✅ **PASSED** | **23** | **69.7%** | All features implemented in Phase 3 passed |
+| 📋 **REVIEW** | 1 | 3.0% | Manual verification required (image check, etc.) |
+| ⚠️ **WARNING** | 1 | 3.0% | Planned for Phase 6 |
+| ❌ **FAILED** | 4 | 12.1% | Planned for Phase 5-6 |
+| 🔸 **INTERRUPTED** | 4 | 12.1% | Planned for Phase 5-6 |
+| ⏭️ **SKIPPED** | 1 | 3.0% | Planned for Phase 4 (Refresh token) |
 | **TOTAL** | **33** | **100%** | - |
 
 ### Conformance Score Calculation
@@ -53,7 +53,7 @@
 | 1 | **oidcc-server** | dB5fiM8zxbYjIki | client_auth_type=client_secret_basic, response_type=code, response_mode=default | Basic OpenID Connect server functionality test |
 
 **Status:** ✅ PASSED
-**Significance:** 基本的な OIDC サーバー機能が正常に動作
+**Significance:** Basic OIDC server functionality operating normally
 **Tested:** Discovery, JWKS, Authorization, Token, UserInfo endpoints
 
 ---
@@ -67,7 +67,7 @@
 | 4 | **oidcc-userinfo-post-body** | Chd6gGHlJFmv8oq | POST (Body) | UserInfo endpoint with POST and Bearer token in body |
 
 **Status:** ✅ ALL PASSED
-**Significance:** UserInfo エンドポイントが GET/POST 両方のメソッドに対応
+**Significance:** UserInfo endpoint supports both GET and POST methods
 **Spec Reference:** OIDC Core 5.3.1, 5.3.2
 
 ---
@@ -84,7 +84,7 @@
 | 10 | **oidcc-ensure-other-scope-order-succeeds** | by3lOvrIjvtTBc9 | varied order | Scope order independence |
 
 **Status:** ✅ ALL PASSED
-**Significance:** すべての標準 OIDC スコープ（openid, profile, email, address, phone）を完全実装
+**Significance:** All standard OIDC scopes (openid, profile, email, address, phone) fully implemented
 **Spec Reference:** OIDC Core 5.4
 
 ---
@@ -99,8 +99,8 @@
 
 **Status:** ✅ ALL PASSED
 **Significance:**
-- RFC 6749 Section 4.1.2 完全準拠（コード再利用時のトークン失効）
-- RFC 7636 PKCE 完全サポート（すべての unreserved characters 対応）
+- Full compliance with RFC 6749 Section 4.1.2 (token revocation on code reuse)
+- Full PKCE support RFC 7636 (all unreserved characters supported)
 
 **Security Impact:** 🔒 Critical security features fully implemented
 
@@ -117,7 +117,7 @@
 | 18 | **oidcc-claims-locales** | P3xRYM4PFqsPXkZ | claims_locales | Claims localization parameter |
 
 **Status:** ✅ ALL PASSED
-**Significance:** 柔軟なパラメータ処理とローカライゼーションサポート
+**Significance:** Flexible parameter handling and localization support
 
 ---
 
@@ -129,7 +129,7 @@
 | 20 | **oidcc-display-popup** | Sj6gtUP0guS9ift | display=popup | Display mode: popup |
 
 **Status:** ✅ ALL PASSED
-**Significance:** Display パラメータを正しく処理
+**Significance:** Correctly processes display parameter
 
 ---
 
@@ -143,8 +143,8 @@
 
 **Status:** ✅ ALL PASSED
 **Significance:**
-- OIDC Core 3.1.2.1 準拠（Authorization endpoint POST method）
-- OIDC Core 5.5 準拠（Claims parameter support）
+- Compliant with OIDC Core 3.1.2.1 (Authorization endpoint POST method)
+- Compliant with OIDC Core 5.5 (Claims parameter support)
 - Multiple client authentication methods support
 
 ---
@@ -378,13 +378,13 @@ Timeline: 7 months (Mar 2026 - Sep 2026)
 
 ### Phase 3 Summary
 
-Enrai Phase 3 は、**OpenID Connect Basic OP Profile のコア機能を完全に実装**し、OpenID Foundation Conformance Suite で **23/24 テスト（95.8%）を合格**しました。
+Enrai Phase 3 has **fully implemented the core features of OpenID Connect Basic OP Profile** and **passed 23/24 tests (95.8%)** in the OpenID Foundation Conformance Suite.
 
 **Key Achievements:**
-- ✅ すべての標準 OIDC スコープ実装
-- ✅ セキュリティ重要機能100%実装（PKCE, token revocation, claims parameter）
-- ✅ 178 unit/integration tests 全合格
-- ✅ Cloudflare Workers edge deployment 実証済み
+- ✅ All standard OIDC scopes implemented
+- ✅ 100% implementation of critical security features (PKCE, token revocation, claims parameter)
+- ✅ All 178 unit/integration tests passed
+- ✅ Cloudflare Workers edge deployment proven
 
 **Next Steps:**
 - ⏭️ Phase 4: Refresh token, key rotation

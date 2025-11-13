@@ -1,115 +1,115 @@
-# Phase 2 前提条件チェックリスト
+# Phase 2 Prerequisites Checklist
 
-**プロジェクト:** Enrai OpenID Connect Provider
-**作成日:** 2025-11-11
-**Phase 2期間:** Week 6-12
-**ステータス:** ✅ すべての前提条件を完全達成
-
----
-
-## 📋 概要
-
-このドキュメントは、Phase 2（Core OIDC Endpoints実装）を開始する前に完了すべき前提条件のチェックリストです。
-
-Phase 1での実装とセキュリティ修正により、**すべての必須項目が完了**し、Phase 2の実装を開始できる状態になっています。
+**Project:** Enrai OpenID Connect Provider
+**Date Created:** 2025-11-11
+**Phase 2 Period:** Week 6-12
+**Status:** ✅ All prerequisites fully achieved
 
 ---
 
-## ✅ 必須項目（すべて完了）
+## 📋 Overview
 
-### 1. KeyManager認証機能 【✅ 完了】
+This document is a checklist of prerequisites that must be completed before starting Phase 2 (Core OIDC Endpoints Implementation).
 
-**要件:**
-- KeyManager Durable Objectの全エンドポイントに認証を実装
-- 不正アクセスを防止し、鍵管理操作を保護
+With the implementation and security fixes from Phase 1, **all required items are complete** and we are ready to begin Phase 2 implementation.
 
-**実装状況:**
-- ✅ `authenticate()`メソッド実装（`src/durable-objects/KeyManager.ts:270-288`）
-- ✅ Bearer Token認証
-- ✅ `KEY_MANAGER_SECRET`環境変数サポート
-- ✅ 全HTTPエンドポイントで認証チェック
-- ✅ テストケース追加（4テスト）
+---
 
-**検証方法:**
+## ✅ Required Items (All Complete)
+
+### 1. KeyManager Authentication Feature 【✅ Complete】
+
+**Requirements:**
+- Implement authentication for all KeyManager Durable Object endpoints
+- Prevent unauthorized access and protect key management operations
+
+**Implementation Status:**
+- ✅ `authenticate()` method implemented (`src/durable-objects/KeyManager.ts:270-288`)
+- ✅ Bearer Token authentication
+- ✅ `KEY_MANAGER_SECRET` environment variable support
+- ✅ Authentication checks on all HTTP endpoints
+- ✅ Test cases added (4 tests)
+
+**Verification Method:**
 ```bash
 npm test -- KeyManager
-# 期待結果: 19テストすべて成功
+# Expected result: All 19 tests pass
 ```
 
-**関連ファイル:**
+**Related Files:**
 - `src/durable-objects/KeyManager.ts`
-- `src/types/env.ts`（KEY_MANAGER_SECRET追加）
+- `src/types/env.ts` (KEY_MANAGER_SECRET added)
 - `test/durable-objects/KeyManager.test.ts`
 
 ---
 
-### 2. 暗号学的に安全な乱数生成 【✅ 完了】
+### 2. Cryptographically Secure Random Number Generation 【✅ Complete】
 
-**要件:**
-- 予測不可能なkey IDを生成
-- `Math.random()`を使用しない
+**Requirements:**
+- Generate unpredictable key IDs
+- Do not use `Math.random()`
 
-**実装状況:**
-- ✅ `crypto.randomUUID()`使用（`src/durable-objects/KeyManager.ts:258-262`）
-- ✅ 暗号学的に安全なUUID生成
-- ✅ タイミング攻撃耐性
+**Implementation Status:**
+- ✅ Uses `crypto.randomUUID()` (`src/durable-objects/KeyManager.ts:258-262`)
+- ✅ Cryptographically secure UUID generation
+- ✅ Timing attack resistance
 
-**検証方法:**
+**Verification Method:**
 ```bash
-# コードレビュー: generateKeyId()メソッドを確認
+# Code review: Check generateKeyId() method
 grep -n "randomUUID" src/durable-objects/KeyManager.ts
-# 期待結果: 260行目でcrypto.randomUUID()を使用
+# Expected result: crypto.randomUUID() used at line 260
 ```
 
 ---
 
-### 3. Cloudflare Workers互換実装 【✅ 完了】
+### 3. Cloudflare Workers Compatible Implementation 【✅ Complete】
 
-**要件:**
-- Node.jsの`Buffer`を使用しない
-- Workers環境で動作するBase64デコード
+**Requirements:**
+- Do not use Node.js `Buffer`
+- Base64 decoding that works in Workers environment
 
-**実装状況:**
-- ✅ `atob()`使用（`src/utils/jwt.ts:125-143`）
-- ✅ Base64URLからBase64への変換処理
-- ✅ Workers環境で正常動作
-- ✅ テストケース完備（16テスト）
+**Implementation Status:**
+- ✅ Uses `atob()` (`src/utils/jwt.ts:125-143`)
+- ✅ Base64URL to Base64 conversion handling
+- ✅ Works correctly in Workers environment
+- ✅ Complete test cases (16 tests)
 
-**検証方法:**
+**Verification Method:**
 ```bash
 npm test -- jwt
-# 期待結果: 16テストすべて成功
+# Expected result: All 16 tests pass
 
-# コードレビュー: Bufferが使用されていないことを確認
+# Code review: Confirm Buffer is not used
 grep -n "Buffer" src/utils/jwt.ts
-# 期待結果: マッチなし（コメントのみ）
+# Expected result: No matches (comments only)
 ```
 
 ---
 
-### 4. AuthCodeData型定義の完成 【✅ 完了】
+### 4. AuthCodeData Type Definition Completion 【✅ Complete】
 
-**要件:**
-- 認可コードに`sub`（ユーザー識別子）フィールドを追加
-- Phase 2のトークン発行に必要
+**Requirements:**
+- Add `sub` (user identifier) field to authorization code
+- Required for Phase 2 token issuance
 
-**実装状況:**
-- ✅ `AuthCodeData`インターフェースに`sub`追加（`src/utils/kv.ts:17`）
-- ✅ `AuthCodeMetadata`インターフェースに`sub`追加（`src/types/oidc.ts:94`）
-- ✅ コメントで必須フィールドであることを明記
-- ✅ 型安全性確保
+**Implementation Status:**
+- ✅ `sub` added to `AuthCodeData` interface (`src/utils/kv.ts:17`)
+- ✅ `sub` added to `AuthCodeMetadata` interface (`src/types/oidc.ts:94`)
+- ✅ Commented as required field
+- ✅ Type safety ensured
 
-**検証方法:**
+**Verification Method:**
 ```bash
-# 型定義を確認
+# Check type definitions
 grep -A 10 "export interface AuthCodeData" src/utils/kv.ts
-# 期待結果: subフィールドが含まれている
+# Expected result: sub field is included
 
 grep -A 10 "export interface AuthCodeMetadata" src/types/oidc.ts
-# 期待結果: subフィールドが含まれている
+# Expected result: sub field is included
 ```
 
-**型定義:**
+**Type Definition:**
 ```typescript
 export interface AuthCodeData {
   client_id: string;
@@ -125,122 +125,122 @@ export interface AuthCodeData {
 
 ---
 
-### 5. 秘密鍵露出防止 【✅ 完了】
+### 5. Private Key Exposure Prevention 【✅ Complete】
 
-**要件:**
-- HTTPレスポンスに秘密鍵（`privatePEM`）を含めない
-- ログに秘密鍵が記録されないようにする
+**Requirements:**
+- Do not include private key (`privatePEM`) in HTTP responses
+- Prevent private keys from being logged
 
-**実装状況:**
-- ✅ `sanitizeKey()`メソッド実装（`src/durable-objects/KeyManager.ts:312-316`）
-- ✅ 全HTTPエンドポイントで秘密鍵除外
-- ✅ 型安全な実装（TypeScriptの型システムで保証）
-- ✅ テストケース追加（3テスト）
+**Implementation Status:**
+- ✅ `sanitizeKey()` method implemented (`src/durable-objects/KeyManager.ts:312-316`)
+- ✅ Private key excluded from all HTTP endpoints
+- ✅ Type-safe implementation (guaranteed by TypeScript type system)
+- ✅ Test cases added (3 tests)
 
-**検証方法:**
+**Verification Method:**
 ```bash
 npm test -- KeyManager
-# 期待結果: 秘密鍵露出防止テストが成功
+# Expected result: Private key exposure prevention tests pass
 ```
 
 ---
 
-## ✅ 推奨項目（ほぼ完了）
+## ✅ Recommended Items (Nearly Complete)
 
-### 6. KeyManagerのテスト 【✅ 完了】
+### 6. KeyManager Testing 【✅ Complete】
 
-**要件:**
-- KeyManager Durable Objectの包括的なテストカバレッジ
-- 認証、鍵生成、ローテーション、エンドポイントのテスト
+**Requirements:**
+- Comprehensive test coverage for KeyManager Durable Object
+- Tests for authentication, key generation, rotation, and endpoints
 
-**実装状況:**
-- ✅ 19テストケース実装
-- ✅ 認証テスト（4テスト）
-- ✅ 鍵生成テスト（3テスト）
-- ✅ 鍵ローテーションテスト（3テスト）
-- ✅ HTTPエンドポイントテスト（6テスト）
-- ✅ 秘密鍵露出防止テスト（3テスト）
+**Implementation Status:**
+- ✅ 19 test cases implemented
+- ✅ Authentication tests (4 tests)
+- ✅ Key generation tests (3 tests)
+- ✅ Key rotation tests (3 tests)
+- ✅ HTTP endpoint tests (6 tests)
+- ✅ Private key exposure prevention tests (3 tests)
 
-**カバレッジ:** 90%
+**Coverage:** 90%
 
-**検証方法:**
+**Verification Method:**
 ```bash
 npm test -- KeyManager
-# 期待結果: ✓ test/durable-objects/KeyManager.test.ts (19 tests)
+# Expected result: ✓ test/durable-objects/KeyManager.test.ts (19 tests)
 ```
 
 ---
 
-### 7. Discovery/JWKSのテスト 【✅ 完了】
+### 7. Discovery/JWKS Testing 【✅ Complete】
 
-**要件:**
-- Discovery（`/.well-known/openid-configuration`）エンドポイントのテスト
-- JWKS（`/.well-known/jwks.json`）エンドポイントのテスト
+**Requirements:**
+- Discovery (`/.well-known/openid-configuration`) endpoint tests
+- JWKS (`/.well-known/jwks.json`) endpoint tests
 
-**実装状況:**
-- ✅ Discovery: 14テストケース
-- ✅ JWKS: 15テストケース
-- ✅ OIDCメタデータ検証
-- ✅ 必須フィールド検証
-- ✅ エラーハンドリングテスト
+**Implementation Status:**
+- ✅ Discovery: 14 test cases
+- ✅ JWKS: 15 test cases
+- ✅ OIDC metadata validation
+- ✅ Required field validation
+- ✅ Error handling tests
 
-**カバレッジ:**
+**Coverage:**
 - Discovery: 90%
 - JWKS: 85%
 
-**検証方法:**
+**Verification Method:**
 ```bash
 npm test -- discovery
 npm test -- jwks
-# 期待結果:
+# Expected result:
 # ✓ test/handlers/discovery.test.ts (14 tests)
 # ✓ test/handlers/jwks.test.ts (15 tests)
 ```
 
 ---
 
-### 8. 包括的なテストスイート 【✅ 完了】
+### 8. Comprehensive Test Suite 【✅ Complete】
 
-**要件:**
-- 全ユーティリティ関数のテスト
-- 全ハンドラのテスト（Phase 1実装分）
-- カバレッジ80%以上
+**Requirements:**
+- Tests for all utility functions
+- Tests for all handlers (Phase 1 implementation)
+- Coverage above 80%
 
-**実装状況:**
-- ✅ 137テスト成功（0失敗）
-- ✅ 8テストファイル
-- ✅ ユーティリティ: 85テスト
-- ✅ ハンドラ: 29テスト
-- ✅ Durable Objects: 19テスト
-- ✅ 統合テスト: 10テスト（Phase 2実装待ち）
+**Implementation Status:**
+- ✅ 137 tests passed (0 failed)
+- ✅ 8 test files
+- ✅ Utilities: 85 tests
+- ✅ Handlers: 29 tests
+- ✅ Durable Objects: 19 tests
+- ✅ Integration tests: 10 tests (awaiting Phase 2 implementation)
 
-**カバレッジ:**
-- ユーティリティ: 85%
-- ハンドラ（Phase 1実装分）: 85%
+**Coverage:**
+- Utilities: 85%
+- Handlers (Phase 1 implementation): 85%
 - Durable Objects: 90%
 
-**検証方法:**
+**Verification Method:**
 ```bash
 npm test
-# 期待結果:
+# Expected result:
 # Test Files  8 passed (8)
 #      Tests  137 passed | 10 skipped (147)
 ```
 
 ---
 
-### 9. キャッシュヘッダーの追加 【🟡 Phase 2で実装】
+### 9. Cache Headers Addition 【🟡 To be implemented in Phase 2】
 
-**要件:**
-- Discovery/JWKSエンドポイントに適切なキャッシュヘッダーを追加
-- パフォーマンス最適化
+**Requirements:**
+- Add appropriate cache headers to Discovery/JWKS endpoints
+- Performance optimization
 
-**実装計画:**
-- Phase 2 Week 6で実装
+**Implementation Plan:**
+- Implement in Phase 2 Week 6
 - `Cache-Control: public, max-age=3600`
 - `Vary: Accept-Encoding`
 
-**推奨実装:**
+**Recommended Implementation:**
 ```typescript
 // src/handlers/discovery.ts
 c.header('Cache-Control', 'public, max-age=3600');
@@ -249,18 +249,18 @@ c.header('Vary', 'Accept-Encoding');
 
 ---
 
-### 10. 環境変数のバリデーション 【🟡 Phase 2で実装】
+### 10. Environment Variable Validation 【🟡 To be implemented in Phase 2】
 
-**要件:**
-- アプリケーション起動時に環境変数を検証
-- 必須変数の欠落や無効な値を早期検出
+**Requirements:**
+- Validate environment variables at application startup
+- Early detection of missing required variables or invalid values
 
-**実装計画:**
-- Phase 2 Week 7で実装
-- `validateEnvironment()`関数を追加
-- 起動時にバリデーション実行
+**Implementation Plan:**
+- Implement in Phase 2 Week 7
+- Add `validateEnvironment()` function
+- Execute validation at startup
 
-**推奨実装:**
+**Recommended Implementation:**
 ```typescript
 // src/index.ts
 function validateEnvironment(env: Env): void {
@@ -270,105 +270,105 @@ function validateEnvironment(env: Env): void {
   if (!env.KEY_MANAGER_SECRET) {
     throw new Error('KEY_MANAGER_SECRET must be set');
   }
-  // ... その他の検証
+  // ... Other validations
 }
 ```
 
 ---
 
-## 📊 総合達成状況
+## 📊 Overall Achievement Status
 
-### 必須項目: 100% 完了 ✅
+### Required Items: 100% Complete ✅
 
-| # | 項目 | ステータス |
+| # | Item | Status |
 |:--|:-----|:----------|
-| 1 | KeyManager認証機能 | ✅ 完了 |
-| 2 | 暗号学的に安全な乱数生成 | ✅ 完了 |
-| 3 | Cloudflare Workers互換実装 | ✅ 完了 |
-| 4 | AuthCodeData型定義の完成 | ✅ 完了 |
-| 5 | 秘密鍵露出防止 | ✅ 完了 |
+| 1 | KeyManager Authentication Feature | ✅ Complete |
+| 2 | Cryptographically Secure Random Number Generation | ✅ Complete |
+| 3 | Cloudflare Workers Compatible Implementation | ✅ Complete |
+| 4 | AuthCodeData Type Definition Completion | ✅ Complete |
+| 5 | Private Key Exposure Prevention | ✅ Complete |
 
-### 推奨項目: 80% 完了 ✅
+### Recommended Items: 80% Complete ✅
 
-| # | 項目 | ステータス |
+| # | Item | Status |
 |:--|:-----|:----------|
-| 6 | KeyManagerのテスト | ✅ 完了 |
-| 7 | Discovery/JWKSのテスト | ✅ 完了 |
-| 8 | 包括的なテストスイート | ✅ 完了 |
-| 9 | キャッシュヘッダーの追加 | 🟡 Phase 2で実装 |
-| 10 | 環境変数のバリデーション | 🟡 Phase 2で実装 |
+| 6 | KeyManager Testing | ✅ Complete |
+| 7 | Discovery/JWKS Testing | ✅ Complete |
+| 8 | Comprehensive Test Suite | ✅ Complete |
+| 9 | Cache Headers Addition | 🟡 To be implemented in Phase 2 |
+| 10 | Environment Variable Validation | 🟡 To be implemented in Phase 2 |
 
 ---
 
-## 🚀 Phase 2 開始準備完了
+## 🚀 Phase 2 Ready to Start
 
-### すべての前提条件が達成されました！
+### All prerequisites have been achieved!
 
-**Phase 2で実装する機能:**
+**Features to implement in Phase 2:**
 
 #### Week 6-7: Authorization Endpoint
-- ✅ **準備完了:** AuthCodeData型定義（`sub`フィールド含む）
-- ✅ **準備完了:** KVストレージユーティリティ
-- ✅ **準備完了:** バリデーション関数
-- 🔨 **実装予定:** 認可エンドポイント（`/authorize`）
-- 🔨 **実装予定:** PKCEサポート
+- ✅ **Ready:** AuthCodeData type definition (including `sub` field)
+- ✅ **Ready:** KV storage utilities
+- ✅ **Ready:** Validation functions
+- 🔨 **Planned:** Authorization endpoint (`/authorize`)
+- 🔨 **Planned:** PKCE support
 
 #### Week 8-9: Token Endpoint
-- ✅ **準備完了:** JWT署名/検証機能
-- ✅ **準備完了:** KeyManager実装
-- ✅ **準備完了:** PKCE型定義
-- 🔨 **実装予定:** トークンエンドポイント（`/token`）
-- 🔨 **実装予定:** リフレッシュトークン
+- ✅ **Ready:** JWT signing/verification functionality
+- ✅ **Ready:** KeyManager implementation
+- ✅ **Ready:** PKCE type definitions
+- 🔨 **Planned:** Token endpoint (`/token`)
+- 🔨 **Planned:** Refresh token
 
 #### Week 10-11: UserInfo & Integration
-- ✅ **準備完了:** 統合テストスケルトン
-- ✅ **準備完了:** テストフレームワーク
-- 🔨 **実装予定:** UserInfoエンドポイント（`/userinfo`）
-- 🔨 **実装予定:** 統合テスト完成
+- ✅ **Ready:** Integration test skeleton
+- ✅ **Ready:** Test framework
+- 🔨 **Planned:** UserInfo endpoint (`/userinfo`)
+- 🔨 **Planned:** Complete integration tests
 
-#### Week 12: 最適化 & レビュー
-- 🔨 **実装予定:** レート制限
-- 🔨 **実装予定:** キャッシュ最適化
-- 🔨 **実装予定:** 監査ログ
-- 🔨 **実装予定:** Phase 2コードレビュー
-
----
-
-## 📝 次のステップ
-
-1. ✅ **Phase 1コードレビュー完了確認**
-2. ✅ **すべてのテストが成功することを確認**
-3. ✅ **Phase 2実装計画の確認**
-4. 🚀 **Phase 2実装開始**（Week 6: Authorization Endpoint）
+#### Week 12: Optimization & Review
+- 🔨 **Planned:** Rate limiting
+- 🔨 **Planned:** Cache optimization
+- 🔨 **Planned:** Audit logging
+- 🔨 **Planned:** Phase 2 code review
 
 ---
 
-## 🎯 成功基準
+## 📝 Next Steps
 
-Phase 2を成功させるための基準：
-
-### コード品質
-- [ ] テストカバレッジ80%以上を維持
-- [ ] すべてのテストが成功
-- [ ] TypeScript厳格モードでエラーなし
-- [ ] ESLint/Prettierエラーなし
-
-### セキュリティ
-- [ ] すべてのエンドポイントで適切な認証・認可
-- [ ] 入力バリデーションの徹底
-- [ ] セキュリティヘッダーの設定
-- [ ] レート制限の実装
-
-### OIDC準拠
-- [ ] OpenID Connect Core 1.0準拠
-- [ ] OAuth 2.0準拠
-- [ ] PKCEサポート（RFC 7636）
-- [ ] 適合性テスト通過
+1. ✅ **Confirm Phase 1 code review completion**
+2. ✅ **Verify all tests pass**
+3. ✅ **Confirm Phase 2 implementation plan**
+4. 🚀 **Start Phase 2 implementation** (Week 6: Authorization Endpoint)
 
 ---
 
-**作成者:** Claude Code
-**承認日:** 2025-11-11
-**Phase 2開始予定日:** 2025-11-12
+## 🎯 Success Criteria
 
-🔥 **Phase 2実装開始準備完了！**
+Criteria for Phase 2 success:
+
+### Code Quality
+- [ ] Maintain test coverage above 80%
+- [ ] All tests pass
+- [ ] No errors in TypeScript strict mode
+- [ ] No ESLint/Prettier errors
+
+### Security
+- [ ] Proper authentication and authorization on all endpoints
+- [ ] Thorough input validation
+- [ ] Security headers configured
+- [ ] Rate limiting implemented
+
+### OIDC Compliance
+- [ ] OpenID Connect Core 1.0 compliant
+- [ ] OAuth 2.0 compliant
+- [ ] PKCE support (RFC 7636)
+- [ ] Pass conformance tests
+
+---
+
+**Author:** Claude Code
+**Approval Date:** 2025-11-11
+**Phase 2 Start Date:** 2025-11-12
+
+🔥 **Phase 2 implementation ready to start!**
