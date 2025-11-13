@@ -9,6 +9,8 @@
 
 このドキュメントは、Hibana OIDC OPの全APIエンドポイントの現在の状態と将来計画を記録します。
 
+> 📄 **詳細なAPI仕様**: [OpenAPI 3.1仕様書](../api/openapi.yaml) | [APIガイド](../api/README.md)
+
 ### 統計サマリー
 
 | カテゴリ | 実装済み | Phase 5計画 | 検討中 | 合計 |
@@ -247,9 +249,17 @@ POST /auth/session/exchange
 - [RFC 8693 - Token Exchange](https://tools.ietf.org/html/rfc8693)
 
 ### 関連ドキュメント
-- [PHASE5_PLANNING.md](./PHASE5_PLANNING.md) - Phase 5詳細計画
-- [ROADMAP.md](../ROADMAP.md) - 全体ロードマップ
-- [../architecture/technical-specs.md](../architecture/technical-specs.md) - 技術仕様
+- **API仕様書**
+  - [openapi.yaml](../api/openapi.yaml) - OpenAPI 3.1仕様書
+  - [API README](../api/README.md) - APIガイド・クイックスタート
+- **設計ドキュメント**
+  - [database-schema.md](../architecture/database-schema.md) - データベーススキーマ・ER図
+  - [design-system.md](../design/design-system.md) - デザインシステム
+  - [wireframes.md](../design/wireframes.md) - UI ワイヤーフレーム
+  - [PHASE5_PLANNING.md](./PHASE5_PLANNING.md) - Phase 5詳細計画
+- **プロジェクト情報**
+  - [ROADMAP.md](../ROADMAP.md) - 全体ロードマップ
+  - [technical-specs.md](../architecture/technical-specs.md) - 技術仕様
 
 ---
 
@@ -257,3 +267,4 @@ POST /auth/session/exchange
 - 2025-11-12: 初版作成、Phase 4完了状態を記録
 - 2025-11-12: Phase 5計画API追加（セッション管理、Logout、管理者セッション管理）
 - 2025-11-12: トークン交換系API検討事項追加
+- 2025-11-13: OpenAPI 3.1仕様書とAPIガイドへのリンク追加
