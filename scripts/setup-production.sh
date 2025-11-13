@@ -153,13 +153,15 @@ echo ""
 echo "📝 Updating wrangler.toml files..."
 echo ""
 
-# Function to update ISSUER_URL in wrangler.toml
-update_issuer_url() {
+# Function to update wrangler.toml with deployment settings
+update_wrangler_toml() {
     local file=$1
+    local use_workers_dev=$2
     local package_name=$(basename $(dirname "$file"))
 
     echo "  • Updating $package_name..."
 
+    # Update ISSUER_URL
     if [[ "$OSTYPE" == "darwin"* ]]; then
         # macOS
         sed -i '' "s|ISSUER_URL = \".*\"|ISSUER_URL = \"$PRODUCTION_URL\"|" "$file"
@@ -167,12 +169,47 @@ update_issuer_url() {
         # Linux
         sed -i "s|ISSUER_URL = \".*\"|ISSUER_URL = \"$PRODUCTION_URL\"|" "$file"
     fi
+
+    # Remove existing workers_dev and preview_urls settings if present
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' '/^workers_dev = /d' "$file"
+        sed -i '' '/^preview_urls = /d' "$file"
+    else
+        sed -i '/^workers_dev = /d' "$file"
+        sed -i '/^preview_urls = /d' "$file"
+    fi
+
+    # Add new settings after compatibility_flags line
+    local new_settings=""
+    if [ "$use_workers_dev" = "true" ]; then
+        new_settings="workers_dev = true\npreview_urls = true"
+    else
+        new_settings="workers_dev = false\npreview_urls = false"
+    fi
+
+    # Insert after compatibility_flags line
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS - need to escape newlines properly
+        sed -i '' "/^compatibility_flags = /a\\
+$new_settings
+" "$file"
+    else
+        # Linux
+        sed -i "/^compatibility_flags = /a\\$new_settings" "$file"
+    fi
 }
+
+# Determine if we're using workers_dev based on user choice
+if [[ $choice == "1" ]]; then
+    USE_WORKERS_DEV="true"
+else
+    USE_WORKERS_DEV="false"
+fi
 
 # Update all package wrangler.toml files
 for toml_file in packages/*/wrangler.toml; do
     if [ -f "$toml_file" ]; then
-        update_issuer_url "$toml_file"
+        update_wrangler_toml "$toml_file" "$USE_WORKERS_DEV"
     fi
 done
 
