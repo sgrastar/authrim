@@ -14,7 +14,7 @@
 
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { generateKeySet } from '../src/utils/keys';
+import { generateKeySet } from '../packages/shared/src/utils/keys';
 
 async function main() {
   const args = process.argv.slice(2);
