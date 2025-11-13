@@ -22,8 +22,8 @@ info:
     name: Enrai Development Team
     url: https://github.com/sgrastar/enrai
   license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
 
 servers:
   - url: https://auth.example.com
