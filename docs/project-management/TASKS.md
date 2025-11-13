@@ -894,41 +894,41 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 ### ステージ1: インフラ基盤構築 (Week 26, Day 1-4: May 1-4)
 
 #### 26.1 D1データベースセットアップ
-- [ ] Create D1 database via Wrangler CLI
+- [x] Create D1 database via Wrangler CLI
   ```bash
   wrangler d1 create enrai-production
   ```
-- [ ] Configure D1 binding in `wrangler.toml`
-- [ ] Test D1 connectivity from Workers
-- [ ] Document D1 setup process
+- [x] Configure D1 binding in `wrangler.toml`
+- [x] Test D1 connectivity from Workers
+- [x] Document D1 setup process (setup-d1.sh script created)
 
 #### 26.2 D1 マイグレーション実行
-- [ ] Create migration files in `migrations/` directory
-  - [ ] `001_initial_schema.sql` - Core tables (users, oauth_clients, sessions)
-  - [ ] `002_add_custom_fields.sql` - user_custom_fields, parent_user_id
-  - [ ] `003_add_passkeys.sql` - passkeys table
-  - [ ] `004_add_roles.sql` - roles, user_roles tables
-  - [ ] `005_add_scope_mappings.sql` - scope_mappings table
-  - [ ] `006_add_branding.sql` - branding_settings table
-  - [ ] `007_add_identity_providers.sql` - identity_providers table (Phase 7用)
-  - [ ] `008_add_audit_log.sql` - audit_log table
-- [ ] Execute migrations locally: `wrangler d1 execute DB --local --file=./migrations/001_initial_schema.sql`
-- [ ] Execute migrations in production: `wrangler d1 execute DB --file=./migrations/001_initial_schema.sql`
-- [ ] Verify all tables created: `wrangler d1 execute DB --command "SELECT name FROM sqlite_master WHERE type='table'"`
-- [ ] Create rollback scripts for each migration
-- [ ] Test migration rollback process
-- [ ] Document migration workflow
+- [x] Create migration files in `migrations/` directory
+  - [x] `001_initial_schema.sql` - Core tables (users, oauth_clients, sessions) - All 11 tables in single file
+  - [x] `002_seed_default_data.sql` - Seed data with default roles, scope mappings, test users
+  - [ ] `003_add_passkeys.sql` - passkeys table (included in 001)
+  - [ ] `004_add_roles.sql` - roles, user_roles tables (included in 001)
+  - [ ] `005_add_scope_mappings.sql` - scope_mappings table (included in 001)
+  - [ ] `006_add_branding.sql` - branding_settings table (included in 001)
+  - [ ] `007_add_identity_providers.sql` - identity_providers table (included in 001)
+  - [ ] `008_add_audit_log.sql` - audit_log table (included in 001)
+- [x] Execute migrations locally: `wrangler d1 execute DB --local --file=./migrations/001_initial_schema.sql` (via setup-d1.sh)
+- [x] Execute migrations in production: `wrangler d1 execute DB --file=./migrations/001_initial_schema.sql` (via setup-d1.sh)
+- [x] Verify all tables created: `wrangler d1 execute DB --command "SELECT name FROM sqlite_master WHERE type='table'"` (via setup-d1.sh)
+- [ ] Create rollback scripts for each migration (optional - can recreate from scratch)
+- [ ] Test migration rollback process (optional)
+- [x] Document migration workflow (setup-d1.sh handles full workflow)
 
 #### 26.3 シードデータ投入
-- [ ] Create seed data script `migrations/seed_default_data.sql`:
-  - [ ] Insert default roles (super_admin, admin, viewer, support)
-  - [ ] Insert default branding settings
-  - [ ] Insert test admin user (for development)
-  - [ ] Insert test OAuth client (for testing)
-- [ ] Execute seed data locally
-- [ ] Execute seed data in production (optional test data)
-- [ ] Document seed data structure
-- [ ] Create script to generate test data (1000+ users for testing)
+- [x] Create seed data script `migrations/seed_default_data.sql`:
+  - [x] Insert default roles (super_admin, admin, viewer, support)
+  - [x] Insert default branding settings
+  - [x] Insert test admin user (for development)
+  - [x] Insert test OAuth client (for testing)
+- [x] Execute seed data locally (via setup-d1.sh)
+- [x] Execute seed data in production (optional test data) (via setup-d1.sh)
+- [x] Document seed data structure (comments in SQL file)
+- [ ] Create script to generate test data (1000+ users for testing) (deferred to later)
 
 #### 26.4 Durable Objects実装 - SessionStore
 - [x] Create `src/durable-objects/SessionStore.ts`
@@ -952,7 +952,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [x] Test session creation and retrieval
 - [x] Test session expiration and cleanup
 - [x] Test D1 fallback for cold sessions
-- [ ] Document SessionStore API
+- [x] Document SessionStore API (docs/api/durable-objects/SessionStore.md)
 
 #### 26.5 Durable Objects実装 - AuthorizationCodeStore
 - [x] Create `src/durable-objects/AuthorizationCodeStore.ts`
@@ -975,7 +975,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [x] Test code storage and consumption
 - [x] Test replay attack detection
 - [x] Test PKCE validation
-- [ ] Document AuthorizationCodeStore API
+- [x] Document AuthorizationCodeStore API (docs/api/durable-objects/AuthorizationCodeStore.md)
 
 #### 26.6 Durable Objects実装 - RefreshTokenRotator
 - [x] Create `src/durable-objects/RefreshTokenRotator.ts`
@@ -998,7 +998,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [x] Test token rotation
 - [x] Test theft detection
 - [x] Test D1 audit logging
-- [ ] Document RefreshTokenRotator API
+- [x] Document RefreshTokenRotator API (docs/api/durable-objects/RefreshTokenRotator.md)
 
 #### 26.6a Durable Objects - Unit Tests
 - [x] Create test files for each Durable Object:
@@ -1064,6 +1064,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
   - [x] `docs/api/durable-objects/SessionStore.md`
   - [x] `docs/api/durable-objects/AuthorizationCodeStore.md`
   - [x] `docs/api/durable-objects/RefreshTokenRotator.md`
+  - [x] `docs/api/durable-objects/KeyManager.md` (added 2025-11-13)
 - [x] Document each HTTP endpoint with:
   - [x] Request format (JSON schema)
   - [x] Response format (JSON schema)
