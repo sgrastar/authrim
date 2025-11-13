@@ -57,12 +57,14 @@ pnpm run build
 echo ""
 
 # Deploy packages in order
+# Router must be deployed LAST as it depends on all other workers via Service Bindings
 PACKAGES=(
     "op-discovery:packages/op-discovery"
     "op-management:packages/op-management"
     "op-auth:packages/op-auth"
     "op-token:packages/op-token"
     "op-userinfo:packages/op-userinfo"
+    "router:packages/router"
 )
 
 FAILED_PACKAGES=()
