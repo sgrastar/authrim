@@ -51,25 +51,45 @@ echo ""
 # Prepare the public JWK as compact JSON
 PUBLIC_JWK=$(cat .keys/public.jwk.json | jq -c .)
 
+# Check if wrangler.toml files exist
+echo "Checking for wrangler.toml files..."
+missing_configs=()
+for package in op-discovery op-auth op-token op-userinfo op-management; do
+    if [ ! -f "packages/$package/wrangler.toml" ]; then
+        missing_configs+=("$package")
+    fi
+done
+
+if [ ${#missing_configs[@]} -gt 0 ]; then
+    echo "❌ Error: Missing wrangler.toml files for: ${missing_configs[*]}"
+    echo ""
+    echo "Please run './scripts/setup-dev.sh' first to generate wrangler.toml files."
+    echo "This script will generate the necessary configuration files for all workers."
+    exit 1
+fi
+echo "✅ All wrangler.toml files found"
+echo ""
+
 # Function to upload secrets to a worker
 upload_secrets() {
     local package=$1
     local needs_private=$2
     local needs_public=$3
-    local worker_name="enrai-$package"
 
-    echo "📦 Uploading secrets to $package (worker: $worker_name)..."
+    echo "📦 Uploading secrets to $package..."
+    cd "packages/$package"
 
     if [ "$needs_private" = "true" ]; then
         echo "  • Uploading PRIVATE_KEY_PEM..."
-        cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM --name "$worker_name"
+        cat ../../.keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
     fi
 
     if [ "$needs_public" = "true" ]; then
         echo "  • Uploading PUBLIC_JWK_JSON..."
-        echo "$PUBLIC_JWK" | wrangler secret put PUBLIC_JWK_JSON --name "$worker_name"
+        echo "$PUBLIC_JWK" | wrangler secret put PUBLIC_JWK_JSON
     fi
 
+    cd ../..
     echo "✅ $package secrets uploaded"
     echo ""
 }
