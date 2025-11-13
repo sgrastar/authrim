@@ -28,7 +28,7 @@ If you prefer to set up manually:
 ### 1. Generate RSA Keys
 
 ```bash
-npm run generate-keys
+pnpm run generate-keys
 ```
 
 This creates:
@@ -65,7 +65,7 @@ KEY_ID = "dev-key-1234567890-xxxxx"
 Start the development server:
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 The server will be available at `http://localhost:8787`.
@@ -135,7 +135,7 @@ npm test
 To run tests with coverage:
 
 ```bash
-npm run test:coverage
+pnpm run test:coverage
 ```
 
 ## Troubleshooting
@@ -186,7 +186,7 @@ cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
 cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
 
 # Deploy
-npm run deploy
+pnpm run deploy
 ```
 
 ## Additional Resources
