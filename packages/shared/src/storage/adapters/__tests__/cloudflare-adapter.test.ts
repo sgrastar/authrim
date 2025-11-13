@@ -39,19 +39,25 @@ function createMockEnv(): Env {
     SESSION_STORE: {
       idFromName: vi.fn().mockReturnValue('session-do-id'),
       get: vi.fn().mockReturnValue({
-        fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'session_123' }), { status: 200 })),
+        fetch: vi
+          .fn()
+          .mockResolvedValue(new Response(JSON.stringify({ id: 'session_123' }), { status: 200 })),
       }),
     } as unknown as DurableObjectNamespace,
     AUTH_CODE_STORE: {
       idFromName: vi.fn().mockReturnValue('authcode-do-id'),
       get: vi.fn().mockReturnValue({
-        fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ exists: true }), { status: 200 })),
+        fetch: vi
+          .fn()
+          .mockResolvedValue(new Response(JSON.stringify({ exists: true }), { status: 200 })),
       }),
     } as unknown as DurableObjectNamespace,
     REFRESH_TOKEN_ROTATOR: {
       idFromName: vi.fn().mockReturnValue('refreshtoken-do-id'),
       get: vi.fn().mockReturnValue({
-        fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'family_123' }), { status: 200 })),
+        fetch: vi
+          .fn()
+          .mockResolvedValue(new Response(JSON.stringify({ id: 'family_123' }), { status: 200 })),
       }),
     } as unknown as DurableObjectNamespace,
     KEY_MANAGER: {} as DurableObjectNamespace,
@@ -121,7 +127,9 @@ describe('CloudflareStorageAdapter', () => {
 
   describe('Set Operations', () => {
     it('should set value with session: prefix to SessionStore DO', async () => {
-      const mockFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 }));
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 }));
       (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
 
       await adapter.set('session:123', JSON.stringify({ user_id: 'user_123', data: {} }));
@@ -142,7 +150,9 @@ describe('CloudflareStorageAdapter', () => {
 
   describe('Delete Operations', () => {
     it('should delete session from SessionStore DO', async () => {
-      const mockFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
       (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
 
       await adapter.delete('session:123');
@@ -256,7 +266,9 @@ describe('UserStore', () => {
       all: vi.fn().mockResolvedValue({ results: [] }),
     });
 
-    await expect(userStore.update('non_existent', { name: 'Test' })).rejects.toThrow('User not found');
+    await expect(userStore.update('non_existent', { name: 'Test' })).rejects.toThrow(
+      'User not found'
+    );
   });
 });
 
@@ -302,7 +314,9 @@ describe('ClientStore', () => {
     const client = await clientStore.create(newClient);
     expect(client.client_id).toBe('client_new');
     expect(client.created_at).toBeDefined();
-    expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO oauth_clients'));
+    expect(env.DB.prepare).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO oauth_clients')
+    );
   });
 
   it('should update existing client', async () => {
@@ -332,8 +346,22 @@ describe('ClientStore', () => {
 
   it('should list clients with pagination', async () => {
     const mockClients = [
-      { client_id: 'client_1', created_at: 1234567890, updated_at: 1234567890, redirect_uris: [], grant_types: [], response_types: [] },
-      { client_id: 'client_2', created_at: 1234567891, updated_at: 1234567891, redirect_uris: [], grant_types: [], response_types: [] },
+      {
+        client_id: 'client_1',
+        created_at: 1234567890,
+        updated_at: 1234567890,
+        redirect_uris: [],
+        grant_types: [],
+        response_types: [],
+      },
+      {
+        client_id: 'client_2',
+        created_at: 1234567891,
+        updated_at: 1234567891,
+        redirect_uris: [],
+        grant_types: [],
+        response_types: [],
+      },
     ];
     (env.DB.prepare as any).mockReturnValue({
       bind: vi.fn().mockReturnThis(),
@@ -357,8 +385,15 @@ describe('SessionStore', () => {
   });
 
   it('should get session by ID', async () => {
-    const mockSession = { id: 'session_123', user_id: 'user_123', created_at: 1234567890, expires_at: 1234567890 + 86400 };
-    const mockFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(mockSession), { status: 200 }));
+    const mockSession = {
+      id: 'session_123',
+      user_id: 'user_123',
+      created_at: 1234567890,
+      expires_at: 1234567890 + 86400,
+    };
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify(mockSession), { status: 200 }));
     (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
 
     const session = await sessionStore.get('session_123');
@@ -374,9 +409,11 @@ describe('SessionStore', () => {
   });
 
   it('should create new session', async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ id: 'session_new', expiresAt: Date.now() + 86400000 }), { status: 201 }));
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'session_new', expiresAt: Date.now() + 86400000 }), {
+        status: 201,
+      })
+    );
     (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
 
     const session = await sessionStore.create({ user_id: 'user_123', data: { amr: ['pwd'] } });
@@ -384,7 +421,9 @@ describe('SessionStore', () => {
   });
 
   it('should delete session', async () => {
-    const mockFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
     (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
 
     await sessionStore.delete('session_123');
@@ -393,10 +432,22 @@ describe('SessionStore', () => {
 
   it('should list sessions by user', async () => {
     const mockSessions = [
-      { id: 'session_1', user_id: 'user_123', created_at: 1234567890, expires_at: 1234567890 + 86400 },
-      { id: 'session_2', user_id: 'user_123', created_at: 1234567891, expires_at: 1234567891 + 86400 },
+      {
+        id: 'session_1',
+        user_id: 'user_123',
+        created_at: 1234567890,
+        expires_at: 1234567890 + 86400,
+      },
+      {
+        id: 'session_2',
+        user_id: 'user_123',
+        created_at: 1234567891,
+        expires_at: 1234567891 + 86400,
+      },
     ];
-    const mockFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ sessions: mockSessions }), { status: 200 }));
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ sessions: mockSessions }), { status: 200 }));
     (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
 
     const sessions = await sessionStore.listByUser('user_123');
@@ -404,8 +455,15 @@ describe('SessionStore', () => {
   });
 
   it('should extend session expiration', async () => {
-    const mockSession = { id: 'session_123', user_id: 'user_123', created_at: 1234567890, expires_at: 1234567890 + 86400 + 3600 };
-    const mockFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(mockSession), { status: 200 }));
+    const mockSession = {
+      id: 'session_123',
+      user_id: 'user_123',
+      created_at: 1234567890,
+      expires_at: 1234567890 + 86400 + 3600,
+    };
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify(mockSession), { status: 200 }));
     (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
 
     const extended = await sessionStore.extend('session_123', 3600);
@@ -445,8 +503,22 @@ describe('PasskeyStore', () => {
 
   it('should list passkeys by user', async () => {
     const mockPasskeys = [
-      { id: 'passkey_1', user_id: 'user_123', credential_id: 'cred_1', public_key: 'pubkey1', counter: 0, created_at: 1234567890 },
-      { id: 'passkey_2', user_id: 'user_123', credential_id: 'cred_2', public_key: 'pubkey2', counter: 0, created_at: 1234567891 },
+      {
+        id: 'passkey_1',
+        user_id: 'user_123',
+        credential_id: 'cred_1',
+        public_key: 'pubkey1',
+        counter: 0,
+        created_at: 1234567890,
+      },
+      {
+        id: 'passkey_2',
+        user_id: 'user_123',
+        credential_id: 'cred_2',
+        public_key: 'pubkey2',
+        counter: 0,
+        created_at: 1234567891,
+      },
     ];
     (env.DB.prepare as any).mockReturnValue({
       bind: vi.fn().mockReturnThis(),
@@ -500,7 +572,8 @@ describe('PasskeyStore', () => {
 describe('createStorageAdapter', () => {
   it('should create storage adapter with all stores', () => {
     const env = createMockEnv();
-    const { adapter, userStore, clientStore, sessionStore, passkeyStore } = createStorageAdapter(env);
+    const { adapter, userStore, clientStore, sessionStore, passkeyStore } =
+      createStorageAdapter(env);
 
     expect(adapter).toBeInstanceOf(CloudflareStorageAdapter);
     expect(userStore).toBeInstanceOf(UserStore);
