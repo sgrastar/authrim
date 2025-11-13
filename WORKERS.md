@@ -130,17 +130,58 @@ pnpm run deploy
 
 ## 🔗 Worker間連携
 
-現在の実装では、各Workerは独立して動作します。将来的には、Service Bindingsを使用してWorker間で通信できます:
+### 現在の実装: KV Namespace経由のデータ共有
+
+各Workerは**独立して動作**し、KV Namespaceを通じて間接的にデータを共有しています:
+
+```
+op-auth (認可コード生成) → AUTH_CODES KV → op-token (コード検証)
+op-management (クライアント登録) → CLIENTS KV → 全Worker (クライアント認証)
+op-token (トークン発行) → REFRESH_TOKENS KV → op-token (リフレッシュ)
+```
+
+**この方法のメリット:**
+- ✅ 各Workerが完全に独立してデプロイ・ロールバック可能
+- ✅ 依存関係が少なくシンプル
+- ✅ 現時点で十分なパフォーマンスと機能を実現
+
+### Service Bindingsを現在使用していない理由
+
+**技術的な制約ではなく、設計思想です:**
+
+1. **YAGNI原則 (You Aren't Gonna Need It)**
+   現在の要件ではKV Namespaceで十分に機能している
+
+2. **TypeScript型の厳密性**
+   未使用の機能は型定義に含めない方針（`packages/shared/src/types/env.ts`参照）
+
+3. **段階的な実装アプローチ**
+   必要になったときに追加する
+
+**なお、`wrangler.toml`にはすでにService Bindingsの定義が存在します（準備済み）:**
 
 ```typescript
-// wrangler.tomlの例
+// wrangler.tomlの例（既に定義済み）
 [[services]]
 binding = "OP_TOKEN"
 service = "enrai-op-token"
 
-// コード内での使用
+// コード内での使用（将来的に実装予定）
 const response = await env.OP_TOKEN.fetch(request);
 ```
+
+### 将来的なユースケース
+
+Service Bindingsが有用になる場面:
+
+1. **リアルタイムなトークン失効**
+   op-managementがトークンを失効させたとき、op-userinfoに即座に通知
+
+2. **KeyManager（Durable Object）の本格活用**
+   キーローテーション機能を複数Workerから統一的に利用
+
+3. **クライアント情報のキャッシング**
+   op-managementでクライアント更新時、他Workerのキャッシュを無効化
 
 ## 📝 設定
 
