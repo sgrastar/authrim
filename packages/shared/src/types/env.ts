@@ -14,8 +14,19 @@ export interface Env {
   REFRESH_TOKENS: KVNamespace;
   INITIAL_ACCESS_TOKENS?: KVNamespace; // For Dynamic Client Registration (RFC 7591)
 
+  // KV Namespaces for Phase 5
+  CLIENTS_CACHE?: KVNamespace; // Client metadata cache (read-through from D1)
+  JWKS_CACHE?: KVNamespace; // JWKs cache (from KeyManager DO)
+  MAGIC_LINKS?: KVNamespace; // Magic Link tokens (TTL: 15 min)
+
   // Rate Limiting
   RATE_LIMIT?: KVNamespace;
+
+  // Durable Objects
+  KEY_MANAGER: DurableObjectNamespace;
+  SESSION_STORE: DurableObjectNamespace;
+  AUTH_CODE_STORE: DurableObjectNamespace;
+  REFRESH_TOKEN_ROTATOR: DurableObjectNamespace;
 
   // Environment Variables
   ISSUER_URL: string;
