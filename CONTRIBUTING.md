@@ -1,10 +1,10 @@
-# Contributing to Hibana
+# Contributing to Enrai
 
-Thank you for your interest in Hibana!
+Thank you for your interest in Enrai!
 
 ## Development Model
 
-Hibana is primarily a **solo development project** by [sgrastar](https://github.com/sgrastar).
+Enrai is primarily a **solo development project** by [sgrastar](https://github.com/sgrastar).
 
 ### What We Accept
 
@@ -50,8 +50,8 @@ If you have questions:
 
 ## License
 
-Hibana is licensed under the Apache License 2.0. By reporting issues, you agree that any code examples or suggestions you provide may be used under this license.
+Enrai is licensed under the Apache License 2.0. By reporting issues, you agree that any code examples or suggestions you provide may be used under this license.
 
 ---
 
-Thank you for your interest in Hibana! 🔥
+Thank you for your interest in Enrai! 🔥

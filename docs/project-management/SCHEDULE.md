@@ -1,7 +1,7 @@
-# Hibana Project Schedule
+# Enrai Project Schedule
 
 ## Project Overview
-**Hibana** - A lightweight OpenID Connect Provider built on Cloudflare Workers
+**Enrai** - A lightweight OpenID Connect Provider built on Cloudflare Workers
 **Start Date**: November 10, 2025
 **Goal**: Obtain OpenID Certified™ Basic OP Profile certification
 **Tech Stack**: Cloudflare Workers, Hono, Durable Objects, KV Storage, JOSE
@@ -205,7 +205,7 @@ Phase 10: Certification & Production   [Final Phase]               (4 weeks)
 
 | Week | Tasks | Owner | Status |
 |:-----|:------|:------|:-------|
-| Week 32 (6/12-6/18) | CLI tool development, create-hibana package setup | Dev | ⏳ Pending |
+| Week 32 (6/12-6/18) | CLI tool development, create-enrai package setup | Dev | ⏳ Pending |
 | Week 33 (6/19-6/25) | Project scaffolding, interactive setup wizard | Dev | ⏳ Pending |
 | Week 34 (6/26-7/2) | Cloudflare API integration, Worker deployment API | Dev | ⏳ Pending |
 | Week 35 (7/3-7/9) | KV/D1/DO management, DNS & custom domain setup | Dev | ⏳ Pending |
@@ -290,4 +290,4 @@ Phase 10: Certification & Production   [Final Phase]               (4 weeks)
 
 ---
 
-> **Hibana** 🔥 — Proving that even a solo developer can operate a globally distributed identity provider.
+> **Enrai** 🔥 — Proving that even a solo developer can operate a globally distributed identity provider.

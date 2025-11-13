@@ -1,4 +1,4 @@
-# Hibana API インベントリ 📋
+# Enrai API インベントリ 📋
 
 **最終更新**: 2025-11-12
 **ステータス**: Phase 4完了、Phase 5計画中
@@ -7,7 +7,7 @@
 
 ## 📊 概要
 
-このドキュメントは、Hibana OIDC OPの全APIエンドポイントの現在の状態と将来計画を記録します。
+このドキュメントは、Enrai OIDC OPの全APIエンドポイントの現在の状態と将来計画を記録します。
 
 > 📄 **詳細なAPI仕様**: [OpenAPI 3.1仕様書](../api/openapi.yaml) | [APIガイド](../api/README.md)
 
@@ -171,10 +171,10 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 
 **対応可能なトークンタイプ**:
 - 標準: access_token, refresh_token, id_token, saml2, saml1, jwt
-- Hibana独自:
-  - `urn:hibana:params:oauth:token-type:session-token` - セッショントークン
-  - `urn:hibana:params:oauth:token-type:magic-link-token` - Magic Linkトークン
-  - `urn:hibana:params:oauth:token-type:passkey-assertion` - Passkey認証アサーション
+- Enrai独自:
+  - `urn:enrai:params:oauth:token-type:session-token` - セッショントークン
+  - `urn:enrai:params:oauth:token-type:magic-link-token` - Magic Linkトークン
+  - `urn:enrai:params:oauth:token-type:passkey-assertion` - Passkey認証アサーション
 
 **ユースケース**:
 - セッショントークン → アクセストークン（ITP対応SSO）

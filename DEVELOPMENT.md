@@ -1,6 +1,6 @@
 # Development Guide
 
-This guide will help you set up your development environment for Hibana.
+This guide will help you set up your development environment for Enrai.
 
 ## Table of Contents
 
@@ -26,8 +26,8 @@ Before you begin, ensure you have the following installed:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/hibana.git
-cd hibana
+git clone https://github.com/YOUR-USERNAME/enrai.git
+cd enrai
 ```
 
 ### 2. Install Dependencies
@@ -153,7 +153,7 @@ npm run generate-keys    # Generate RSA key pair
 ### Project Structure
 
 ```
-hibana/
+enrai/
 ├── .github/
 │   └── workflows/       # GitHub Actions CI/CD
 ├── docs/

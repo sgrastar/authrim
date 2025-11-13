@@ -1,5 +1,5 @@
 #!/bin/bash
-# Create Phase 1 (Foundation) issues for Hibana project
+# Create Phase 1 (Foundation) issues for Enrai project
 
 set -e
 

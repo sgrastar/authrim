@@ -1,6 +1,6 @@
-# GitHub Setup Guide for Hibana
+# GitHub Setup Guide for Enrai
 
-This guide explains how to set up GitHub issues, labels, milestones, and project boards for the Hibana project.
+This guide explains how to set up GitHub issues, labels, milestones, and project boards for the Enrai project.
 
 **Related Documents:**
 - [Project Schedule](./SCHEDULE.md) - Timeline for creating issues
@@ -119,11 +119,11 @@ If you prefer to set up manually or the scripts don't work:
 
 ### Create Labels
 
-Go to `https://github.com/your-username/hibana/labels` and create labels according to the color scheme above.
+Go to `https://github.com/your-username/enrai/labels` and create labels according to the color scheme above.
 
 ### Create Milestones
 
-Go to `https://github.com/your-username/hibana/milestones` and create the 5 milestones with their due dates.
+Go to `https://github.com/your-username/enrai/milestones` and create the 5 milestones with their due dates.
 
 ### Create Issues
 
@@ -134,7 +134,7 @@ Use the issue templates to create issues, or create them manually following the 
 1. Go to your repository's "Projects" tab
 2. Click "New Project"
 3. Choose "Board" layout
-4. Name it "Hibana Development"
+4. Name it "Enrai Development"
 5. Add columns:
    - **Backlog** - Issues not yet started
    - **Ready** - Issues ready to work on
@@ -348,4 +348,4 @@ jobs:
 
 ---
 
-> **Hibana** 🔥 — Organized development through structured issue tracking.
+> **Enrai** 🔥 — Organized development through structured issue tracking.

@@ -2,13 +2,13 @@
 
 ## Overview
 
-Hibana uses cryptographic keys for JWT signing. These keys must be managed securely throughout their lifecycle. This document describes how to generate, store, and rotate keys safely.
+Enrai uses cryptographic keys for JWT signing. These keys must be managed securely throughout their lifecycle. This document describes how to generate, store, and rotate keys safely.
 
 ## Key Types
 
 ### RSA Key Pair
 
-Hibana uses RSA-2048 key pairs with the RS256 algorithm (RSA signature with SHA-256) for signing JWT tokens.
+Enrai uses RSA-2048 key pairs with the RS256 algorithm (RSA signature with SHA-256) for signing JWT tokens.
 
 - **Private Key**: Used to sign JWT tokens (ID tokens and access tokens)
 - **Public Key**: Distributed via JWKS endpoint for token verification
@@ -108,7 +108,7 @@ Then update `wrangler.toml` with the key ID:
 [env.production]
 vars = {
   KEY_ID = "prod-key-1234567890-abc123",
-  ISSUER_URL = "https://id.hibana.dev"
+  ISSUER_URL = "https://id.enrai.org"
 }
 ```
 

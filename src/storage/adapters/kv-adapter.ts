@@ -2,7 +2,7 @@
  * KV Storage Adapter
  *
  * Implements the storage abstraction layer using Cloudflare KV
- * This is the current storage backend for Hibana (Phase 1-5)
+ * This is the current storage backend for Enrai (Phase 1-5)
  */
 
 import type {

@@ -58,7 +58,7 @@
 
 #### Production Deployment
 - [ ] Production Cloudflare account setup
-- [ ] Custom domain configuration (`id.hibana.dev`)
+- [ ] Custom domain configuration (`id.enrai.org`)
 - [ ] DNS records setup
 - [ ] SSL/TLS configuration (with MTLS support)
 - [ ] Production secrets generation

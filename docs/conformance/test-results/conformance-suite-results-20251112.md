@@ -7,14 +7,14 @@
 **Started:** 2025-11-11T14:22:56.814584450Z
 **Certification Profile:** Basic OP
 **Variant:** server_metadata=discovery, client_registration=static_client
-**Description:** Hibana OpenID Provider Basic Certification Test
-**Issuer:** https://hibana.sgrastar.workers.dev
+**Description:** Enrai OpenID Provider Basic Certification Test
+**Issuer:** https://enrai.sgrastar.workers.dev
 
 ---
 
 ## Executive Summary
 
-このドキュメントは、OpenID Foundation Conformance Suite を使用した Hibana の公式テスト結果を記録しています。
+このドキュメントは、OpenID Foundation Conformance Suite を使用した Enrai の公式テスト結果を記録しています。
 
 ### Test Results Overview
 
@@ -326,7 +326,7 @@ Timeline: 7 months (Mar 2026 - Sep 2026)
 
 ### Why 72.7% is Actually Excellent for Phase 3
 
-**Design Decision:** Hibana follows a phased implementation approach.
+**Design Decision:** Enrai follows a phased implementation approach.
 
 1. **Phase 3 Scope: Core OIDC Features**
    - Discovery, JWKS, Authorization, Token, UserInfo
@@ -353,7 +353,7 @@ Timeline: 7 months (Mar 2026 - Sep 2026)
 
 ### Feature Completeness vs. Other OpenID Providers
 
-| Feature Category | Hibana (Phase 3) | Auth0 | Keycloak | Okta |
+| Feature Category | Enrai (Phase 3) | Auth0 | Keycloak | Okta |
 |-----------------|------------------|-------|----------|------|
 | Core OIDC Flow | ✅ 100% | ✅ | ✅ | ✅ |
 | Standard Scopes | ✅ 100% | ✅ | ✅ | ✅ |
@@ -366,7 +366,7 @@ Timeline: 7 months (Mar 2026 - Sep 2026)
 | Edge Deployment | ✅ Cloudflare | ❌ | ❌ | Proprietary |
 | Open Source | ✅ MIT | ❌ | ✅ | ❌ |
 
-**Hibana's Unique Value:**
+**Enrai's Unique Value:**
 - 💥 Edge-native (Cloudflare Workers)
 - 🚀 <50ms global latency
 - 📦 One-command deployment (planned Phase 7)
@@ -378,7 +378,7 @@ Timeline: 7 months (Mar 2026 - Sep 2026)
 
 ### Phase 3 Summary
 
-Hibana Phase 3 は、**OpenID Connect Basic OP Profile のコア機能を完全に実装**し、OpenID Foundation Conformance Suite で **23/24 テスト（95.8%）を合格**しました。
+Enrai Phase 3 は、**OpenID Connect Basic OP Profile のコア機能を完全に実装**し、OpenID Foundation Conformance Suite で **23/24 テスト（95.8%）を合格**しました。
 
 **Key Achievements:**
 - ✅ すべての標準 OIDC スコープ実装
@@ -406,4 +406,4 @@ Hibana Phase 3 は、**OpenID Connect Basic OP Profile のコア機能を完全�
 - Conformance Suite: https://www.certification.openid.net/
 - Plan ID: e90FqMh4xG2mg
 - Test Version: 5.1.36
-- Issuer: https://hibana.sgrastar.workers.dev
+- Issuer: https://enrai.sgrastar.workers.dev

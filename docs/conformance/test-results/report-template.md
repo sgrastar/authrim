@@ -1,17 +1,17 @@
-# Hibana - OpenID Conformance Test Report
+# Enrai - OpenID Conformance Test Report
 
 **Test Date:** YYYY-MM-DD
 **Tester:** Your Name
-**Hibana Version:** vX.Y.Z
+**Enrai Version:** vX.Y.Z
 **Environment:** Cloudflare Workers
 **Test Suite:** OpenID Connect Basic OP Profile
-**Issuer URL:** https://hibana.YOUR_SUBDOMAIN.workers.dev
+**Issuer URL:** https://enrai.YOUR_SUBDOMAIN.workers.dev
 
 ---
 
 ## Executive Summary
 
-このレポートは、HibanaのOpenID Connect Basic OP Profile準拠テストの結果をまとめたものです。
+このレポートは、EnraiのOpenID Connect Basic OP Profile準拠テストの結果をまとめたものです。
 
 **テスト結果サマリー:**
 - **Overall Conformance Score:** XX.X%
@@ -30,12 +30,12 @@
 
 | Item | Value |
 |------|-------|
-| Issuer URL | https://hibana.YOUR_SUBDOMAIN.workers.dev |
-| Discovery Endpoint | https://hibana.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration |
-| JWKS Endpoint | https://hibana.YOUR_SUBDOMAIN.workers.dev/.well-known/jwks.json |
-| Authorization Endpoint | https://hibana.YOUR_SUBDOMAIN.workers.dev/authorize |
-| Token Endpoint | https://hibana.YOUR_SUBDOMAIN.workers.dev/token |
-| UserInfo Endpoint | https://hibana.YOUR_SUBDOMAIN.workers.dev/userinfo |
+| Issuer URL | https://enrai.YOUR_SUBDOMAIN.workers.dev |
+| Discovery Endpoint | https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration |
+| JWKS Endpoint | https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/jwks.json |
+| Authorization Endpoint | https://enrai.YOUR_SUBDOMAIN.workers.dev/authorize |
+| Token Endpoint | https://enrai.YOUR_SUBDOMAIN.workers.dev/token |
+| UserInfo Endpoint | https://enrai.YOUR_SUBDOMAIN.workers.dev/userinfo |
 
 ### Configuration
 
@@ -378,7 +378,7 @@
   "test_plan": "Basic OP",
   "client_type": "public",
   "response_type": "code",
-  "issuer": "https://hibana.YOUR_SUBDOMAIN.workers.dev",
+  "issuer": "https://enrai.YOUR_SUBDOMAIN.workers.dev",
   "signing_algorithm": "RS256"
 }
 ```
@@ -387,7 +387,7 @@
 
 | Variable | Value |
 |----------|-------|
-| ISSUER | https://hibana.YOUR_SUBDOMAIN.workers.dev |
+| ISSUER | https://enrai.YOUR_SUBDOMAIN.workers.dev |
 | KEY_ID | edge-key-1 |
 | TOKEN_TTL | 3600 |
 | CODE_TTL | 120 |
@@ -403,8 +403,8 @@
 
 - [OpenID Connect Core Specification](https://openid.net/specs/openid-connect-core-1_0.html)
 - [OpenID Conformance Testing](https://openid.net/certification/testing/)
-- [Hibana Testing Guide](../testing-guide.md)
-- [Hibana Manual Checklist](../manual-checklist.md)
+- [Enrai Testing Guide](../testing-guide.md)
+- [Enrai Manual Checklist](../manual-checklist.md)
 
 ---
 
@@ -418,7 +418,7 @@
 
 ---
 
-> 💥 **Hibana** - OpenID Conformance Test Report
+> 💥 **Enrai** - OpenID Conformance Test Report
 >
 > **Version:** vX.Y.Z
 > **Report Date:** YYYY-MM-DD

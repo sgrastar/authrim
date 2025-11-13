@@ -1,4 +1,4 @@
-# Hibana UI Wireframes 📐
+# Enrai UI Wireframes 📐
 
 **最終更新**: 2025-11-13
 **バージョン**: 1.0.0
@@ -20,7 +20,7 @@
 
 ## 概要
 
-このドキュメントは、Hibana OIDC OPの全13ページのワイヤーフレームを定義します。
+このドキュメントは、Enrai OIDC OPの全13ページのワイヤーフレームを定義します。
 
 ### ページ一覧
 
@@ -121,7 +121,7 @@ graph TD
 ```
 ┌─────────────────────────────────────────┐
 │                                         │
-│              [Hibana Logo]              │
+│              [Enrai Logo]              │
 │                                         │
 │         Sign in to your account         │
 │     Continue to access your apps        │
@@ -158,7 +158,7 @@ graph TD
 
     <!-- Logo -->
     <div class="text-center mb-8">
-      <img src="/logo.svg" alt="Hibana" class="h-12 mx-auto" />
+      <img src="/logo.svg" alt="Enrai" class="h-12 mx-auto" />
     </div>
 
     <!-- Card -->
@@ -272,7 +272,7 @@ graph TD
 ```
 ┌─────────────────────────────────────────┐
 │                                         │
-│              [Hibana Logo]              │
+│              [Enrai Logo]              │
 │                                         │
 │         Create your account             │
 │     Join thousands of users             │
@@ -315,7 +315,7 @@ graph TD
   <div class="w-full max-w-md">
 
     <div class="text-center mb-8">
-      <img src="/logo.svg" alt="Hibana" class="h-12 mx-auto" />
+      <img src="/logo.svg" alt="Enrai" class="h-12 mx-auto" />
     </div>
 
     <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 sm:p-8">
@@ -417,7 +417,7 @@ graph TD
 ```
 ┌─────────────────────────────────────────┐
 │                                         │
-│              [Hibana Logo]              │
+│              [Enrai Logo]              │
 │                                         │
 │               [✉️ Icon]                 │
 │                                         │
@@ -448,7 +448,7 @@ graph TD
   <div class="w-full max-w-md text-center">
 
     <div class="mb-8">
-      <img src="/logo.svg" alt="Hibana" class="h-12 mx-auto" />
+      <img src="/logo.svg" alt="Enrai" class="h-12 mx-auto" />
     </div>
 
     <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-8">
@@ -529,7 +529,7 @@ graph TD
 ```
 ┌─────────────────────────────────────────┐
 │                                         │
-│              [Hibana Logo]              │
+│              [Enrai Logo]              │
 │                                         │
 │          [⏳ Spinner Icon]              │
 │                                         │
@@ -544,7 +544,7 @@ graph TD
 
 ┌─────────────────────────────────────────┐
 │                                         │
-│              [Hibana Logo]              │
+│              [Enrai Logo]              │
 │                                         │
 │               [❌ Icon]                 │
 │                                         │
@@ -570,7 +570,7 @@ graph TD
   <div class="w-full max-w-md text-center">
 
     <div class="mb-8">
-      <img src="/logo.svg" alt="Hibana" class="h-12 mx-auto" />
+      <img src="/logo.svg" alt="Enrai" class="h-12 mx-auto" />
     </div>
 
     {#if loading}
@@ -632,13 +632,13 @@ graph TD
 ```
 ┌─────────────────────────────────────────┐
 │                                         │
-│              [Hibana Logo]              │
+│              [Enrai Logo]              │
 │                                         │
 │  ┌───────────────────────────────────┐ │
 │  │ [Client Logo]                     │ │
 │  │                                   │ │
 │  │  MyApp wants to access your      │ │
-│  │  Hibana account                  │ │
+│  │  Enrai account                  │ │
 │  │                                   │ │
 │  │  This will allow MyApp to:       │ │
 │  │  ✓ View your email address       │ │
@@ -673,7 +673,7 @@ graph TD
   <div class="w-full max-w-md">
 
     <div class="text-center mb-8">
-      <img src="/logo.svg" alt="Hibana" class="h-12 mx-auto" />
+      <img src="/logo.svg" alt="Enrai" class="h-12 mx-auto" />
     </div>
 
     <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
@@ -684,7 +684,7 @@ graph TD
           <img src={client.logo_uri} alt={client.client_name} class="h-16 mx-auto mb-4 rounded" />
         {/if}
         <h1 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-          {client.client_name} wants to access your Hibana account
+          {client.client_name} wants to access your Enrai account
         </h1>
       </div>
 
@@ -774,7 +774,7 @@ graph TD
 ```
 ┌─────────────────────────────────────────┐
 │                                         │
-│              [Hibana Logo]              │
+│              [Enrai Logo]              │
 │                                         │
 │               [⚠️ Icon]                 │
 │                                         │
@@ -800,7 +800,7 @@ graph TD
   <div class="w-full max-w-md text-center">
 
     <div class="mb-8">
-      <img src="/logo.svg" alt="Hibana" class="h-12 mx-auto" />
+      <img src="/logo.svg" alt="Enrai" class="h-12 mx-auto" />
     </div>
 
     <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-8">
@@ -862,7 +862,7 @@ graph TD
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ [≡] Hibana Admin                      [🔍] [🔔] [👤 Admin ▾]   │
+│ [≡] Enrai Admin                      [🔍] [🔔] [👤 Admin ▾]   │
 ├──────────┬──────────────────────────────────────────────────────┤
 │          │  Dashboard                                           │
 │ 📊 Dash  │                                                      │
@@ -899,7 +899,7 @@ graph TD
           <svg class="w-6 h-6"><!-- menu icon --></svg>
         </button>
         <h1 class="text-xl font-semibold text-gray-900 dark:text-white">
-          Hibana Admin
+          Enrai Admin
         </h1>
       </div>
       <div class="flex items-center gap-3">
@@ -1057,7 +1057,7 @@ graph TD
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ [≡] Hibana Admin                      [🔍] [🔔] [👤 Admin ▾]   │
+│ [≡] Enrai Admin                      [🔍] [🔔] [👤 Admin ▾]   │
 ├──────────┬──────────────────────────────────────────────────────┤
 │          │  Users                                               │
 │ 📊 Dash  │                                                      │

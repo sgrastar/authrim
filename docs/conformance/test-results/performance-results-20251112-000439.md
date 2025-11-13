@@ -1,8 +1,8 @@
-# Hibana Performance Benchmark Results
+# Enrai Performance Benchmark Results
 
 **Test Date:** 2025-11-12
 **Test Time:** 00:04:39
-**Issuer:** https://hibana.sgrastar.workers.dev
+**Issuer:** https://enrai.sgrastar.workers.dev
 **Test Environment:** Production (Cloudflare Workers)
 **Tester:** Automated Script
 
@@ -24,7 +24,7 @@
 
 ### Discovery Endpoint
 
-**Endpoint:** `https://hibana.sgrastar.workers.dev/.well-known/openid-configuration`
+**Endpoint:** `https://enrai.sgrastar.workers.dev/.well-known/openid-configuration`
 
 | Metric | Value | Target | Status |
 |--------|-------|--------|--------|
@@ -45,7 +45,7 @@
 
 ### JWKS Endpoint
 
-**Endpoint:** `https://hibana.sgrastar.workers.dev/.well-known/jwks.json`
+**Endpoint:** `https://enrai.sgrastar.workers.dev/.well-known/jwks.json`
 
 | Metric | Value | Target | Status |
 |--------|-------|--------|--------|
@@ -66,7 +66,7 @@
 
 ### Authorization Endpoint (Error Response)
 
-**Endpoint:** `https://hibana.sgrastar.workers.dev/authorize?response_type=code&client_id=test&redirect_uri=https://example.com/callback`
+**Endpoint:** `https://enrai.sgrastar.workers.dev/authorize?response_type=code&client_id=test&redirect_uri=https://example.com/callback`
 
 | Metric | Value | Target | Status |
 |--------|-------|--------|--------|
@@ -87,7 +87,7 @@
 
 ### UserInfo Endpoint (Error Response)
 
-**Endpoint:** `https://hibana.sgrastar.workers.dev/userinfo`
+**Endpoint:** `https://enrai.sgrastar.workers.dev/userinfo`
 
 | Metric | Value | Target | Status |
 |--------|-------|--------|--------|

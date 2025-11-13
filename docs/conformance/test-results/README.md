@@ -1,4 +1,4 @@
-# Hibana - OpenID Conformance Test Results
+# Enrai - OpenID Conformance Test Results
 
 このディレクトリには、OpenID Conformance Suiteでのテスト結果を保存します。
 
@@ -69,4 +69,4 @@ vim report-$(date +%Y%m%d).md
 
 ---
 
-> 💥 **Hibana** - Test results tracking for OpenID Conformance
+> 💥 **Enrai** - Test results tracking for OpenID Conformance

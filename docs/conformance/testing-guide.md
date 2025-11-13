@@ -1,4 +1,4 @@
-# Hibana - OpenID Conformance Testing Guide (Without Docker) 💥
+# Enrai - OpenID Conformance Testing Guide (Without Docker) 💥
 
 **目的:** Docker環境がない場合のOpenID Connect準拠テストの実施方法
 **対象:** Phase 3 - Testing & Validation
@@ -8,10 +8,10 @@
 
 ## 概要
 
-このガイドでは、Docker環境がない場合にHibanaのOpenID Connect準拠性をテストする方法を説明します。OpenID FoundationのオンラインConformance Suiteを使用することで、ローカルにDockerをインストールすることなく、正式な認証テストを実施できます。
+このガイドでは、Docker環境がない場合にEnraiのOpenID Connect準拠性をテストする方法を説明します。OpenID FoundationのオンラインConformance Suiteを使用することで、ローカルにDockerをインストールすることなく、正式な認証テストを実施できます。
 
 **前提条件:**
-- Hibanaが公開アクセス可能なURLでデプロイされていること（Cloudflare Workers）
+- Enraiが公開アクセス可能なURLでデプロイされていること（Cloudflare Workers）
 - HTTPSでアクセス可能であること
 - OpenID Foundationのアカウント（無料）
 
@@ -32,11 +32,11 @@
 
 ### 1.1 デプロイ前のローカルテスト
 
-公開デプロイの前に、ローカル環境でHibanaが正常に動作することを確認します。
+公開デプロイの前に、ローカル環境でEnraiが正常に動作することを確認します。
 
 ```bash
 # プロジェクトルートに移動
-cd /path/to/hibana
+cd /path/to/enrai
 
 # RSA鍵を生成（未実施の場合）
 ./scripts/setup-dev.sh
@@ -104,12 +104,12 @@ cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
 `wrangler.toml` を開き、以下を確認します：
 
 ```toml
-name = "hibana"
+name = "enrai"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
 [vars]
-ISSUER = "https://hibana.YOUR_SUBDOMAIN.workers.dev"
+ISSUER = "https://enrai.YOUR_SUBDOMAIN.workers.dev"
 KEY_ID = "edge-key-1"  # .keys/metadata.json の kid と一致させる
 TOKEN_TTL = "3600"
 CODE_TTL = "120"
@@ -152,9 +152,9 @@ npm run deploy
 
 ```
 Total Upload: XX.XX KiB / gzip: XX.XX KiB
-Uploaded hibana (X.XX sec)
-Published hibana (X.XX sec)
-  https://hibana.YOUR_SUBDOMAIN.workers.dev
+Uploaded enrai (X.XX sec)
+Published enrai (X.XX sec)
+  https://enrai.YOUR_SUBDOMAIN.workers.dev
 Current Deployment ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
@@ -165,13 +165,13 @@ Current Deployment ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 デプロイされたエンドポイントをテストします：
 
 ```bash
-HIBANA_URL="https://hibana.YOUR_SUBDOMAIN.workers.dev"
+ENRAI_URL="https://enrai.YOUR_SUBDOMAIN.workers.dev"
 
 # Discovery endpoint
-curl $HIBANA_URL/.well-known/openid-configuration | jq
+curl $ENRAI_URL/.well-known/openid-configuration | jq
 
 # JWKS endpoint
-curl $HIBANA_URL/.well-known/jwks.json | jq
+curl $ENRAI_URL/.well-known/jwks.json | jq
 ```
 
 **確認ポイント:**
@@ -210,29 +210,29 @@ curl $HIBANA_URL/.well-known/jwks.json | jq
 
 ### 3.3 OP（OpenID Provider）情報の入力
 
-テストプランの設定画面で、Hibanaの情報を入力します：
+テストプランの設定画面で、Enraiの情報を入力します：
 
 | フィールド | 値 | 例 |
 |-----------|-----|-----|
-| **Issuer** | デプロイしたWorkerのURL | `https://hibana.YOUR_SUBDOMAIN.workers.dev` |
-| **Discovery URL** | `{ISSUER}/.well-known/openid-configuration` | `https://hibana.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration` |
+| **Issuer** | デプロイしたWorkerのURL | `https://enrai.YOUR_SUBDOMAIN.workers.dev` |
+| **Discovery URL** | `{ISSUER}/.well-known/openid-configuration` | `https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration` |
 
-「Discover」ボタンをクリックすると、自動的にHibanaのメタデータが読み込まれます。
+「Discover」ボタンをクリックすると、自動的にEnraiのメタデータが読み込まれます。
 
 ### 3.4 クライアント登録
 
 OpenID Conformance Suiteが使用するテストクライアント情報を記録します。
 
-**現状の制限:** Hibanaは現在、Dynamic Client Registrationを実装していないため、静的なクライアント情報を使用します。
+**現状の制限:** Enraiは現在、Dynamic Client Registrationを実装していないため、静的なクライアント情報を使用します。
 
 以下の情報をメモします：
 
 ```
 Client ID: conformance-test-client
 Redirect URIs:
-  - https://www.certification.openid.net/test/a/hibana/callback
-  - https://www.certification.openid.net/test/a/hibana/callback?dummy1=lorem
-  - https://www.certification.openid.net/test/a/hibana/callback?dummy2=ipsum
+  - https://www.certification.openid.net/test/a/enrai/callback
+  - https://www.certification.openid.net/test/a/enrai/callback?dummy1=lorem
+  - https://www.certification.openid.net/test/a/enrai/callback?dummy2=ipsum
 ```
 
 **注意:** Dynamic Client Registrationが実装されるまで（Phase 4予定）、テストスイートの一部は手動で設定する必要があります。
@@ -242,14 +242,14 @@ Redirect URIs:
 Phase 4でDynamic Client Registration (`/register` endpoint) が実装された後は、以下の手順でクライアントを自動登録できます：
 
 ```bash
-curl -X POST $HIBANA_URL/register \
+curl -X POST $ENRAI_URL/register \
   -H "Content-Type: application/json" \
   -d '{
     "client_name": "OpenID Conformance Test Client",
     "redirect_uris": [
-      "https://www.certification.openid.net/test/a/hibana/callback",
-      "https://www.certification.openid.net/test/a/hibana/callback?dummy1=lorem",
-      "https://www.certification.openid.net/test/a/hibana/callback?dummy2=ipsum"
+      "https://www.certification.openid.net/test/a/enrai/callback",
+      "https://www.certification.openid.net/test/a/enrai/callback?dummy1=lorem",
+      "https://www.certification.openid.net/test/a/enrai/callback?dummy2=ipsum"
     ],
     "response_types": ["code"],
     "grant_types": ["authorization_code"],
@@ -289,7 +289,7 @@ OpenID Conformance Suiteで以下のテストモジュールを選択します�
 1. テストモジュールを選択後、「Start Test」をクリック
 
 2. ブラウザで表示される指示に従います：
-   - Authorization URLが表示されたら、クリックしてHibanaの認可エンドポイントにアクセス
+   - Authorization URLが表示されたら、クリックしてEnraiの認可エンドポイントにアクセス
    - リダイレクト後、テストスイートが自動的に続行します
 
 3. 各テストの実行中に表示されるログを確認します
@@ -344,7 +344,7 @@ OpenID Conformance Suiteで以下のテストモジュールを選択します�
 - JWKS tests: 100% pass
 - Optional tests: 推奨される
 
-**Hibanaの目標:**
+**Enraiの目標:**
 - ≥85% overall conformance score
 - 0 critical failures
 - Dynamic Client Registration実装後: ≥95%
@@ -372,11 +372,11 @@ mv conformance-test-result-*.json result-$(date +%Y%m%d).json
 テスト結果を以下のテンプレートでレポートにまとめます：
 
 ```markdown
-# Hibana - OpenID Conformance Test Report
+# Enrai - OpenID Conformance Test Report
 
 **Test Date:** YYYY-MM-DD
 **Tester:** Your Name
-**Hibana Version:** vX.Y.Z
+**Enrai Version:** vX.Y.Z
 **Environment:** Cloudflare Workers
 **Test Suite:** OpenID Connect Basic OP Profile
 
@@ -473,7 +473,7 @@ npm run deploy
 ```toml
 # wrangler.toml を編集
 [vars]
-ISSUER = "https://hibana.YOUR_SUBDOMAIN.workers.dev"
+ISSUER = "https://enrai.YOUR_SUBDOMAIN.workers.dev"
 ```
 
 ```bash
@@ -484,14 +484,14 @@ npm run deploy
 #### 問題: Conformance Suiteが"Unable to connect"エラーを表示
 
 **原因:**
-- HibanaがHTTPSでアクセスできない
+- EnraiがHTTPSでアクセスできない
 - CORS設定が間違っている
 - ファイアウォールがアクセスをブロックしている
 
 **解決方法:**
 ```bash
 # HTTPSアクセスを確認
-curl -I https://hibana.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration
+curl -I https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration
 
 # CORS設定を確認（src/index.ts）
 # 必要に応じてCORSミドルウェアを追加
@@ -538,7 +538,7 @@ npm test -- --grep "token"
 - [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
 
 **コミュニティ:**
-- Hibana GitHub Issues: https://github.com/sgrastar/hibana/issues
+- Enrai GitHub Issues: https://github.com/sgrastar/enrai/issues
 - OpenID Foundation: https://openid.net/
 
 **参考資料:**
@@ -633,7 +633,7 @@ Dynamic Client Registration実装後（Phase 4予定）:
 
 ---
 
-> 💥 **Hibana** - Docker不要のOpenID Conformance Testing
+> 💥 **Enrai** - Docker不要のOpenID Conformance Testing
 >
 > **更新日:** 2025-11-11
 > **ステータス:** Phase 3 - Testing & Validation
