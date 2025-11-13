@@ -69,4 +69,4 @@ After each test execution, record the following information:
 
 ---
 
-> 💥 **Enrai** - Test results tracking for OpenID Conformance
+> ⚡️ **Enrai** - Test results tracking for OpenID Conformance

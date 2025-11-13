@@ -342,7 +342,7 @@ Checklist for Phase 3 completion:
 
 ---
 
-> 💥 **Enrai Phase 3** - Start Conformance Testing in 30 minutes
+> ⚡️ **Enrai Phase 3** - Start Conformance Testing in 30 minutes
 >
 > **Last Updated:** 2025-11-11
 > **Estimated Time:** Approximately 30 minutes
