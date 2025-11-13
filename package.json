@@ -36,6 +36,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
+    "@esbuild/win32-x64": "^0.25.12",
     "@eslint/js": "^9.39.1",
     "@types/node": "^20.11.5",
     "@typescript-eslint/eslint-plugin": "^8.46.4",
@@ -49,6 +50,9 @@
     "typescript": "^5.3.3",
     "vitest": "^4.0.8",
     "wrangler": "^4.46.0"
+  },
+  "optionalDependencies": {
+    "@esbuild/linux-x64": "^0.25.12"
   },
   "engines": {
     "node": ">=18.0.0"
