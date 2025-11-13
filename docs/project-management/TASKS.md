@@ -931,16 +931,16 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [ ] Create script to generate test data (1000+ users for testing)
 
 #### 26.4 Durable Objects実装 - SessionStore
-- [ ] Create `src/durable-objects/SessionStore.ts`
-- [ ] Implement SessionStore class:
-  - [ ] `constructor()` - Initialize in-memory session map
-  - [ ] `fetch()` - Handle HTTP requests
-  - [ ] `getSession(sessionId)` - Get session from memory or D1 fallback
-  - [ ] `createSession(userId, ttl, data)` - Create new session
-  - [ ] `invalidateSession(sessionId)` - Delete session immediately
-  - [ ] `listUserSessions(userId)` - Get all sessions for user
-  - [ ] `cleanup()` - Remove expired sessions from memory
-- [ ] Implement hot/cold pattern (in-memory → D1 fallback)
+- [x] Create `src/durable-objects/SessionStore.ts`
+- [x] Implement SessionStore class:
+  - [x] `constructor()` - Initialize in-memory session map
+  - [x] `fetch()` - Handle HTTP requests
+  - [x] `getSession(sessionId)` - Get session from memory or D1 fallback
+  - [x] `createSession(userId, ttl, data)` - Create new session
+  - [x] `invalidateSession(sessionId)` - Delete session immediately
+  - [x] `listUserSessions(userId)` - Get all sessions for user
+  - [x] `cleanup()` - Remove expired sessions from memory
+- [x] Implement hot/cold pattern (in-memory → D1 fallback)
 - [x] Configure SessionStore in `wrangler.toml`
   ```toml
   [[durable_objects.bindings]]
@@ -948,22 +948,22 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
   class_name = "SessionStore"
   script_name = "enrai-shared"
   ```
-- [ ] Add unit tests for SessionStore (20+ tests)
-- [ ] Test session creation and retrieval
-- [ ] Test session expiration and cleanup
-- [ ] Test D1 fallback for cold sessions
+- [x] Add unit tests for SessionStore (20+ tests)
+- [x] Test session creation and retrieval
+- [x] Test session expiration and cleanup
+- [x] Test D1 fallback for cold sessions
 - [ ] Document SessionStore API
 
 #### 26.5 Durable Objects実装 - AuthorizationCodeStore
-- [ ] Create `src/durable-objects/AuthorizationCodeStore.ts`
-- [ ] Implement AuthorizationCodeStore class:
-  - [ ] `constructor()` - Initialize in-memory code map
-  - [ ] `fetch()` - Handle HTTP requests
-  - [ ] `store(code, metadata)` - Store authorization code (TTL: 60s)
-  - [ ] `consume(code, clientId, codeVerifier)` - Consume code (one-time use)
-  - [ ] `cleanup()` - Remove expired codes
-- [ ] Implement replay attack prevention (mark as used)
-- [ ] Implement PKCE validation (code_challenge, code_verifier)
+- [x] Create `src/durable-objects/AuthorizationCodeStore.ts`
+- [x] Implement AuthorizationCodeStore class:
+  - [x] `constructor()` - Initialize in-memory code map
+  - [x] `fetch()` - Handle HTTP requests
+  - [x] `store(code, metadata)` - Store authorization code (TTL: 60s)
+  - [x] `consume(code, clientId, codeVerifier)` - Consume code (one-time use)
+  - [x] `cleanup()` - Remove expired codes
+- [x] Implement replay attack prevention (mark as used)
+- [x] Implement PKCE validation (code_challenge, code_verifier)
 - [x] Configure AuthorizationCodeStore in `wrangler.toml`
   ```toml
   [[durable_objects.bindings]]
@@ -971,22 +971,22 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
   class_name = "AuthorizationCodeStore"
   script_name = "enrai-shared"
   ```
-- [ ] Add unit tests for AuthorizationCodeStore (15+ tests)
-- [ ] Test code storage and consumption
-- [ ] Test replay attack detection
-- [ ] Test PKCE validation
+- [x] Add unit tests for AuthorizationCodeStore (15+ tests)
+- [x] Test code storage and consumption
+- [x] Test replay attack detection
+- [x] Test PKCE validation
 - [ ] Document AuthorizationCodeStore API
 
 #### 26.6 Durable Objects実装 - RefreshTokenRotator
-- [ ] Create `src/durable-objects/RefreshTokenRotator.ts`
-- [ ] Implement RefreshTokenRotator class:
-  - [ ] `constructor()` - Initialize token family map
-  - [ ] `fetch()` - Handle HTTP requests
-  - [ ] `rotate(currentToken, userId, clientId)` - Rotate token atomically
-  - [ ] `revokeFamilyTokens(familyId)` - Revoke all tokens in family
-  - [ ] `logToD1(action, familyId, userId, metadata)` - Audit log
-- [ ] Implement token family tracking (detect token theft)
-- [ ] Implement theft detection (old token reuse → revoke all)
+- [x] Create `src/durable-objects/RefreshTokenRotator.ts`
+- [x] Implement RefreshTokenRotator class:
+  - [x] `constructor()` - Initialize token family map
+  - [x] `fetch()` - Handle HTTP requests
+  - [x] `rotate(currentToken, userId, clientId)` - Rotate token atomically
+  - [x] `revokeFamilyTokens(familyId)` - Revoke all tokens in family
+  - [x] `logToD1(action, familyId, userId, metadata)` - Audit log
+- [x] Implement token family tracking (detect token theft)
+- [x] Implement theft detection (old token reuse → revoke all)
 - [x] Configure RefreshTokenRotator in `wrangler.toml`
   ```toml
   [[durable_objects.bindings]]
@@ -994,46 +994,46 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
   class_name = "RefreshTokenRotator"
   script_name = "enrai-shared"
   ```
-- [ ] Add unit tests for RefreshTokenRotator (18+ tests)
-- [ ] Test token rotation
-- [ ] Test theft detection
-- [ ] Test D1 audit logging
+- [x] Add unit tests for RefreshTokenRotator (18+ tests)
+- [x] Test token rotation
+- [x] Test theft detection
+- [x] Test D1 audit logging
 - [ ] Document RefreshTokenRotator API
 
 #### 26.6a Durable Objects - Unit Tests
-- [ ] Create test files for each Durable Object:
-  - [ ] `packages/shared/src/durable-objects/__tests__/SessionStore.test.ts`
-  - [ ] `packages/shared/src/durable-objects/__tests__/AuthorizationCodeStore.test.ts`
-  - [ ] `packages/shared/src/durable-objects/__tests__/RefreshTokenRotator.test.ts`
-- [ ] SessionStore unit tests (20+ tests):
-  - [ ] Test session creation and storage
-  - [ ] Test session retrieval (hot and cold)
-  - [ ] Test session invalidation
-  - [ ] Test session expiration and cleanup
-  - [ ] Test multi-device session listing
-  - [ ] Test session extension (Active TTL)
-  - [ ] Test D1 fallback on memory miss
-  - [ ] Test concurrent session access
-- [ ] AuthorizationCodeStore unit tests (15+ tests):
-  - [ ] Test code storage and retrieval
-  - [ ] Test code consumption (one-time use)
-  - [ ] Test replay attack detection
-  - [ ] Test PKCE validation (S256 and plain)
-  - [ ] Test code expiration (60 seconds TTL)
-  - [ ] Test client validation
-  - [ ] Test DDoS protection (max 5 codes per user)
-  - [ ] Test automatic cleanup
-- [ ] RefreshTokenRotator unit tests (18+ tests):
-  - [ ] Test token family creation
-  - [ ] Test atomic token rotation
-  - [ ] Test theft detection (old token reuse)
-  - [ ] Test family revocation
-  - [ ] Test rotation count tracking
-  - [ ] Test D1 audit logging
-  - [ ] Test token expiration
-  - [ ] Test concurrent rotation attempts
-- [ ] Run all tests: `pnpm test`
-- [ ] Ensure test coverage ≥ 80% for Durable Objects
+- [x] Create test files for each Durable Object:
+  - [x] `packages/shared/src/durable-objects/__tests__/SessionStore.test.ts`
+  - [x] `packages/shared/src/durable-objects/__tests__/AuthorizationCodeStore.test.ts`
+  - [x] `packages/shared/src/durable-objects/__tests__/RefreshTokenRotator.test.ts`
+- [x] SessionStore unit tests (20+ tests):
+  - [x] Test session creation and storage
+  - [x] Test session retrieval (hot and cold)
+  - [x] Test session invalidation
+  - [x] Test session expiration and cleanup
+  - [x] Test multi-device session listing
+  - [x] Test session extension (Active TTL)
+  - [x] Test D1 fallback on memory miss
+  - [x] Test concurrent session access
+- [x] AuthorizationCodeStore unit tests (15+ tests):
+  - [x] Test code storage and retrieval
+  - [x] Test code consumption (one-time use)
+  - [x] Test replay attack detection
+  - [x] Test PKCE validation (S256 and plain)
+  - [x] Test code expiration (60 seconds TTL)
+  - [x] Test client validation
+  - [x] Test DDoS protection (max 5 codes per user)
+  - [x] Test automatic cleanup
+- [x] RefreshTokenRotator unit tests (18+ tests):
+  - [x] Test token family creation
+  - [x] Test atomic token rotation
+  - [x] Test theft detection (old token reuse)
+  - [x] Test family revocation
+  - [x] Test rotation count tracking
+  - [x] Test D1 audit logging
+  - [x] Test token expiration
+  - [x] Test concurrent rotation attempts
+- [x] Run all tests: `pnpm test`
+- [x] Ensure test coverage ≥ 80% for Durable Objects
 
 #### 26.6b Durable Objects - Integration Tests
 - [x] Create integration test suite:
