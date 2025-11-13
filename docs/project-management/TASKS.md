@@ -1108,7 +1108,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [x] Add unit tests for Passkey endpoints (placeholder tests created)
 - [ ] Test Passkey registration flow (deferred to integration testing)
 - [ ] Test Passkey authentication flow (deferred to integration testing)
-- [ ] Document Passkey API (deferred to Phase 5 completion)
+- [x] Document Passkey API - `docs/api/auth/passkey.md`
 
 #### 27.2 Magic Link実装 ✅
 - [x] Choose email provider (Resend recommended)
@@ -1136,7 +1136,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [x] Add unit tests for Magic Link (placeholder tests created)
 - [ ] Test email delivery (requires RESEND_API_KEY configuration)
 - [ ] Test token expiration (deferred to integration testing)
-- [ ] Document Magic Link API (deferred to Phase 5 completion)
+- [x] Document Magic Link API - `docs/api/auth/magic-link.md`
 
 #### 27.3 OAuth同意画面API ✅
 - [x] Implement `GET /auth/consent` endpoint:
@@ -1154,7 +1154,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [x] Add unit tests for consent endpoints (placeholder tests created)
 - [ ] Test consent approval flow (deferred to integration testing)
 - [ ] Test consent denial flow (deferred to integration testing)
-- [ ] Document consent API (deferred to Phase 5 completion)
+- [x] Document consent API - `docs/api/auth/consent.md`
 
 #### 27.4 ITP対応セッション管理API
 - [ ] Implement `POST /auth/session/token` - Issue short-lived token (5min TTL, single-use)
@@ -1235,7 +1235,22 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [x] Add unit tests for user management API (placeholder tests created)
 - [ ] Test user CRUD operations (deferred to integration testing)
 - [ ] Test search and filtering (deferred to integration testing)
-- [ ] Document admin user API (deferred to Phase 5 completion)
+- [x] Document admin user API - `docs/api/admin/users.md`
+
+#### 27.6.1 管理者API - 統計情報 ✅
+- [x] Implement `GET /admin/stats` - System statistics and analytics
+  - [x] Count active users (logged in within last 30 days)
+  - [x] Count total users
+  - [x] Count registered OAuth clients
+  - [x] Count new users today (since midnight)
+  - [x] Count logins today (since midnight)
+  - [x] Return recent activity feed (last 10 user registrations)
+- [x] Optimize queries with database indexes
+- [x] Add error handling for statistics endpoint
+- [x] Document admin statistics API - `docs/api/admin/statistics.md`
+- [ ] Add unit tests for statistics API (deferred to integration testing)
+- [ ] Add caching for statistics (5 min TTL) - Phase 6
+- [ ] Add advanced analytics (user growth trends, auth method breakdown) - Phase 6
 
 #### 27.7 管理者API - クライアント管理 ✅
 - [x] Implement `GET /admin/clients` - List OAuth clients
@@ -1271,7 +1286,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [ ] Add unit tests for client management API (30+ tests)
 - [ ] Test client CRUD operations
 - [ ] Test secret regeneration
-- [ ] Document admin client API
+- [x] Document admin client API - `docs/api/admin/clients.md`
 
 #### 27.8 管理者API - セッション管理
 - [ ] Implement `GET /admin/sessions` - List sessions
