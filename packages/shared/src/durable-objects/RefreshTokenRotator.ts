@@ -332,8 +332,7 @@ export class RefreshTokenRotator {
     // Update families map
     this.families.set(family.id, family);
 
-    // Update reverse index
-    this.tokenToFamily.delete(oldToken);
+    // Update reverse index (add new token, keep old token for theft detection)
     this.tokenToFamily.set(newToken, family.id);
 
     // Audit log
