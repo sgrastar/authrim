@@ -889,196 +889,909 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-## Phase 5: UI/UX Implementation (May 1-31, 2026)
+## Phase 5: UI/UX Implementation (May 1-31, 2026) 🎨
 
-### Week 26-27: Authentication UI (May 1-14)
+### ステージ1: インフラ基盤構築 (Week 26, Day 1-4: May 1-4)
 
-#### 26.1 Login Screen Implementation
-- [ ] Create login page HTML/CSS structure
-- [ ] Implement username/password form
-- [ ] Add password visibility toggle
-- [ ] Implement "Remember me" checkbox
-- [ ] Add "Forgot password" link
-- [ ] Implement error message display
-- [ ] Add loading states and spinners
-- [ ] Make responsive (mobile-first)
-- [ ] Ensure WCAG 2.1 AA compliance
-- [ ] Test across browsers (Chrome, Firefox, Safari, Edge)
+#### 26.1 D1データベースセットアップ
+- [ ] Create D1 database via Wrangler CLI
+  ```bash
+  wrangler d1 create enrai-production
+  ```
+- [ ] Configure D1 binding in `wrangler.toml`
+- [ ] Test D1 connectivity from Workers
+- [ ] Document D1 setup process
 
-#### 26.2 User Registration
-- [ ] Create registration form
-- [ ] Implement email validation
-- [ ] Add password strength indicator
-- [ ] Enforce password policy
-- [ ] Integrate reCAPTCHA
-- [ ] Add Terms of Service checkbox
-- [ ] Create email confirmation page
-- [ ] Design welcome email template
-- [ ] Implement email verification flow
-- [ ] Test registration flow end-to-end
+#### 26.2 D1 マイグレーション実行
+- [ ] Create migration files in `migrations/` directory
+  - [ ] `001_initial_schema.sql` - Core tables (users, oauth_clients, sessions)
+  - [ ] `002_add_custom_fields.sql` - user_custom_fields, parent_user_id
+  - [ ] `003_add_passkeys.sql` - passkeys table
+  - [ ] `004_add_roles.sql` - roles, user_roles tables
+  - [ ] `005_add_scope_mappings.sql` - scope_mappings table
+  - [ ] `006_add_branding.sql` - branding_settings table
+  - [ ] `007_add_identity_providers.sql` - identity_providers table (Phase 7用)
+  - [ ] `008_add_audit_log.sql` - audit_log table
+- [ ] Execute migrations locally: `wrangler d1 execute DB --local --file=./migrations/001_initial_schema.sql`
+- [ ] Execute migrations in production: `wrangler d1 execute DB --file=./migrations/001_initial_schema.sql`
+- [ ] Verify all tables created: `wrangler d1 execute DB --command "SELECT name FROM sqlite_master WHERE type='table'"`
+- [ ] Create rollback scripts for each migration
+- [ ] Test migration rollback process
+- [ ] Document migration workflow
 
-#### 26.3 Consent Screen
-- [ ] Design OAuth consent UI
-- [ ] Display requested scopes (human-readable)
-- [ ] Show client information (name, logo, description)
-- [ ] Add "Remember this choice" option
-- [ ] Implement Allow/Deny buttons
-- [ ] Add Privacy Policy link
-- [ ] Add Terms of Service link
-- [ ] Handle consent persistence
-- [ ] Test with various scope combinations
+#### 26.3 シードデータ投入
+- [ ] Create seed data script `migrations/seed_default_data.sql`:
+  - [ ] Insert default roles (super_admin, admin, viewer, support)
+  - [ ] Insert default branding settings
+  - [ ] Insert test admin user (for development)
+  - [ ] Insert test OAuth client (for testing)
+- [ ] Execute seed data locally
+- [ ] Execute seed data in production (optional test data)
+- [ ] Document seed data structure
+- [ ] Create script to generate test data (1000+ users for testing)
 
-#### 26.4 Session Management UI
-- [ ] Implement cookie-based session handling
-- [ ] Add session timeout handling
-- [ ] Implement "Keep me signed in" functionality
-- [ ] Create active sessions management page
-- [ ] Add device/browser information display
-- [ ] Implement session termination
-- [ ] Add "Sign out everywhere" functionality
-- [ ] Test multi-device session handling
+#### 26.4 Durable Objects実装 - SessionStore
+- [ ] Create `src/durable-objects/SessionStore.ts`
+- [ ] Implement SessionStore class:
+  - [ ] `constructor()` - Initialize in-memory session map
+  - [ ] `fetch()` - Handle HTTP requests
+  - [ ] `getSession(sessionId)` - Get session from memory or D1 fallback
+  - [ ] `createSession(userId, ttl, data)` - Create new session
+  - [ ] `invalidateSession(sessionId)` - Delete session immediately
+  - [ ] `listUserSessions(userId)` - Get all sessions for user
+  - [ ] `cleanup()` - Remove expired sessions from memory
+- [ ] Implement hot/cold pattern (in-memory → D1 fallback)
+- [ ] Configure SessionStore in `wrangler.toml`
+  ```toml
+  [[durable_objects.bindings]]
+  name = "SESSION_STORE"
+  class_name = "SessionStore"
+  script_name = "enrai"
+  ```
+- [ ] Add unit tests for SessionStore (20+ tests)
+- [ ] Test session creation and retrieval
+- [ ] Test session expiration and cleanup
+- [ ] Test D1 fallback for cold sessions
+- [ ] Document SessionStore API
 
-#### 26.5 Frontend Stack Setup
-- [ ] Choose framework (Svelte/SvelteKit or Solid.js)
-- [ ] Set up TailwindCSS
-- [ ] Configure Vite build system
-- [ ] Set up Zod for form validation
-- [ ] Configure routing
-- [ ] Set up state management
-- [ ] Add i18n support (future)
-- [ ] Configure production build
+#### 26.5 Durable Objects実装 - AuthorizationCodeStore
+- [ ] Create `src/durable-objects/AuthorizationCodeStore.ts`
+- [ ] Implement AuthorizationCodeStore class:
+  - [ ] `constructor()` - Initialize in-memory code map
+  - [ ] `fetch()` - Handle HTTP requests
+  - [ ] `store(code, metadata)` - Store authorization code (TTL: 60s)
+  - [ ] `consume(code, clientId, codeVerifier)` - Consume code (one-time use)
+  - [ ] `cleanup()` - Remove expired codes
+- [ ] Implement replay attack prevention (mark as used)
+- [ ] Implement PKCE validation (code_challenge, code_verifier)
+- [ ] Configure AuthorizationCodeStore in `wrangler.toml`
+  ```toml
+  [[durable_objects.bindings]]
+  name = "AUTH_CODE_STORE"
+  class_name = "AuthorizationCodeStore"
+  script_name = "enrai"
+  ```
+- [ ] Add unit tests for AuthorizationCodeStore (15+ tests)
+- [ ] Test code storage and consumption
+- [ ] Test replay attack detection
+- [ ] Test PKCE validation
+- [ ] Document AuthorizationCodeStore API
+
+#### 26.6 Durable Objects実装 - RefreshTokenRotator
+- [ ] Create `src/durable-objects/RefreshTokenRotator.ts`
+- [ ] Implement RefreshTokenRotator class:
+  - [ ] `constructor()` - Initialize token family map
+  - [ ] `fetch()` - Handle HTTP requests
+  - [ ] `rotate(currentToken, userId, clientId)` - Rotate token atomically
+  - [ ] `revokeFamilyTokens(familyId)` - Revoke all tokens in family
+  - [ ] `logToD1(action, familyId, userId, metadata)` - Audit log
+- [ ] Implement token family tracking (detect token theft)
+- [ ] Implement theft detection (old token reuse → revoke all)
+- [ ] Configure RefreshTokenRotator in `wrangler.toml`
+  ```toml
+  [[durable_objects.bindings]]
+  name = "REFRESH_TOKEN_ROTATOR"
+  class_name = "RefreshTokenRotator"
+  script_name = "enrai"
+  ```
+- [ ] Add unit tests for RefreshTokenRotator (18+ tests)
+- [ ] Test token rotation
+- [ ] Test theft detection
+- [ ] Test D1 audit logging
+- [ ] Document RefreshTokenRotator API
+
+#### 26.6a Durable Objects - Unit Tests
+- [ ] Create test files for each Durable Object:
+  - [ ] `packages/shared/src/durable-objects/__tests__/SessionStore.test.ts`
+  - [ ] `packages/shared/src/durable-objects/__tests__/AuthorizationCodeStore.test.ts`
+  - [ ] `packages/shared/src/durable-objects/__tests__/RefreshTokenRotator.test.ts`
+- [ ] SessionStore unit tests (20+ tests):
+  - [ ] Test session creation and storage
+  - [ ] Test session retrieval (hot and cold)
+  - [ ] Test session invalidation
+  - [ ] Test session expiration and cleanup
+  - [ ] Test multi-device session listing
+  - [ ] Test session extension (Active TTL)
+  - [ ] Test D1 fallback on memory miss
+  - [ ] Test concurrent session access
+- [ ] AuthorizationCodeStore unit tests (15+ tests):
+  - [ ] Test code storage and retrieval
+  - [ ] Test code consumption (one-time use)
+  - [ ] Test replay attack detection
+  - [ ] Test PKCE validation (S256 and plain)
+  - [ ] Test code expiration (60 seconds TTL)
+  - [ ] Test client validation
+  - [ ] Test DDoS protection (max 5 codes per user)
+  - [ ] Test automatic cleanup
+- [ ] RefreshTokenRotator unit tests (18+ tests):
+  - [ ] Test token family creation
+  - [ ] Test atomic token rotation
+  - [ ] Test theft detection (old token reuse)
+  - [ ] Test family revocation
+  - [ ] Test rotation count tracking
+  - [ ] Test D1 audit logging
+  - [ ] Test token expiration
+  - [ ] Test concurrent rotation attempts
+- [ ] Run all tests: `pnpm test`
+- [ ] Ensure test coverage ≥ 80% for Durable Objects
+
+#### 26.6b Durable Objects - Integration Tests
+- [ ] Create integration test suite:
+  - [ ] `test/integration/durable-objects.test.ts`
+- [ ] Test SessionStore + D1 integration:
+  - [ ] Session persistence across DO restarts
+  - [ ] D1 fallback on cold start
+  - [ ] Multi-user session isolation
+- [ ] Test AuthCodeStore + Token endpoint integration:
+  - [ ] Code generation → consumption flow
+  - [ ] Replay attack → token revocation
+- [ ] Test RefreshTokenRotator + Token endpoint:
+  - [ ] Token rotation flow
+  - [ ] Theft detection → family revocation
+  - [ ] Audit log verification
+- [ ] Test Durable Objects + wrangler.toml bindings:
+  - [ ] Verify bindings are correctly configured
+  - [ ] Test DO instantiation from Workers
+- [ ] Document integration test setup
+
+#### 26.6c Durable Objects - API Documentation
+- [ ] Update `docs/architecture/durable-objects.md`:
+  - [ ] Mark SessionStore as ✅ Implemented
+  - [ ] Mark AuthorizationCodeStore as ✅ Implemented
+  - [ ] Mark RefreshTokenRotator as ✅ Implemented
+  - [ ] Add implementation notes and lessons learned
+- [ ] Create API reference documentation:
+  - [ ] `docs/api/durable-objects/SessionStore.md`
+  - [ ] `docs/api/durable-objects/AuthorizationCodeStore.md`
+  - [ ] `docs/api/durable-objects/RefreshTokenRotator.md`
+- [ ] Document each HTTP endpoint with:
+  - [ ] Request format (JSON schema)
+  - [ ] Response format (JSON schema)
+  - [ ] Error responses
+  - [ ] Example curl commands
+  - [ ] Usage examples in TypeScript
+- [ ] Add OpenAPI/Swagger specs (optional):
+  - [ ] Generate from TypeScript interfaces
+  - [ ] Integrate with existing `docs/api/openapi.yaml`
+- [ ] Update README.md with Durable Objects section
+
+#### 26.7 ストレージ抽象化層実装
+- [ ] Create `packages/shared/src/storage/interfaces.ts`:
+  - [ ] Define `IStorageAdapter` interface
+  - [ ] Define `IUserStore` interface
+  - [ ] Define `IClientStore` interface
+  - [ ] Define `ISessionStore` interface
+  - [ ] Define `IPasskeyStore` interface
+- [ ] Create `packages/shared/src/storage/cloudflare-adapter.ts`:
+  - [ ] Implement `CloudflareStorageAdapter` class
+  - [ ] Integrate D1, KV, and Durable Objects
+  - [ ] Implement routing logic (session: → DO, client: → D1+KV cache)
+- [ ] Create factory function `createStorageAdapter(env: Env)`
+- [ ] Add unit tests for storage adapter (25+ tests)
+- [ ] Test adapter routing logic
+- [ ] Document storage abstraction layer
 
 ---
 
-### Week 28-29: Admin Dashboard (May 15-28)
+### ステージ2: バックエンドAPI実装 (Week 26-27: May 5-14)
 
-#### 28.1 Dashboard Overview
-- [ ] Create dashboard layout
-- [ ] Implement statistics cards:
-  - [ ] Active users count
-  - [ ] Total logins (24h, 7d, 30d)
-  - [ ] Registered clients count
-- [ ] Create activity feed (real-time)
-- [ ] Add login trend charts (Chart.js/ECharts)
-- [ ] Add geographic distribution map
-- [ ] Implement system health indicators
-- [ ] Create quick actions panel
-- [ ] Make dashboard responsive
-- [ ] Add dark mode support
+#### 27.1 WebAuthn/Passkey実装
+- [ ] Install `@simplewebauthn/server` and `@simplewebauthn/browser`
+- [ ] Create `src/handlers/auth/passkey.ts`
+- [ ] Implement `POST /auth/passkey/register/options` - Generate registration options
+- [ ] Implement `POST /auth/passkey/register/verify` - Verify registration
+- [ ] Implement `POST /auth/passkey/login/options` - Generate authentication options
+- [ ] Implement `POST /auth/passkey/login/verify` - Verify authentication
+- [ ] Store passkeys in D1 `passkeys` table
+- [ ] Implement counter management (replay attack prevention)
+- [ ] Add unit tests for Passkey endpoints (30+ tests)
+- [ ] Test Passkey registration flow
+- [ ] Test Passkey authentication flow
+- [ ] Document Passkey API
 
-#### 28.2 User Management
-- [ ] Create user list table with pagination
-- [ ] Implement search functionality
-- [ ] Add filtering (by status, role, date)
-- [ ] Create user detail view
-- [ ] Implement edit user profile
-- [ ] Add admin-initiated password reset
-- [ ] Implement account suspension/activation
-- [ ] Add delete user with confirmation dialog
-- [ ] Implement bulk operations (delete, suspend)
-- [ ] Add export users (CSV)
+#### 27.2 Magic Link実装
+- [ ] Choose email provider (Resend recommended)
+- [ ] Create `src/utils/email/` directory:
+  - [ ] `interfaces.ts` - `IEmailProvider` interface
+  - [ ] `resend-provider.ts` - Resend implementation
+  - [ ] `cloudflare-email-provider.ts` - Cloudflare Email Workers (Phase 7)
+  - [ ] `smtp-provider.ts` - SMTP implementation (Phase 7)
+- [ ] Implement `POST /auth/magic-link/send` endpoint:
+  - [ ] Generate secure token (UUID v4)
+  - [ ] Store token in KV with TTL (15 minutes)
+  - [ ] Send email with magic link
+  - [ ] Return success response
+- [ ] Implement `GET /auth/magic-link/verify` endpoint:
+  - [ ] Validate token from URL parameter
+  - [ ] Check token expiration
+  - [ ] Create session
+  - [ ] Delete used token
+  - [ ] Redirect to client application
+- [ ] Create email templates (HTML + plain text):
+  - [ ] Magic Link email template
+  - [ ] Email verification template (Phase 6)
+  - [ ] Password reset template (Phase 6)
+- [ ] Add rate limiting for Magic Link (3 req/15min per email)
+- [ ] Add unit tests for Magic Link (20+ tests)
+- [ ] Test email delivery
+- [ ] Test token expiration
+- [ ] Document Magic Link API
+
+#### 27.3 OAuth同意画面API
+- [ ] Implement `GET /auth/consent` endpoint:
+  - [ ] Retrieve authorization request from session
+  - [ ] Load client metadata from D1
+  - [ ] Convert scopes to human-readable format
+  - [ ] Return consent screen data (client name, logo, scopes, user info)
+- [ ] Implement `POST /auth/consent` endpoint:
+  - [ ] Validate consent decision (allow/deny)
+  - [ ] Store consent decision in D1 (optional: remember choice)
+  - [ ] Generate authorization code if allowed
+  - [ ] Redirect to client with code or error
+- [ ] Implement consent persistence (skip consent if previously granted)
+- [ ] Add Audit Log for consent decisions
+- [ ] Add unit tests for consent endpoints (15+ tests)
+- [ ] Test consent approval flow
+- [ ] Test consent denial flow
+- [ ] Document consent API
+
+#### 27.4 ITP対応セッション管理API
+- [ ] Implement `POST /auth/session/token` - Issue short-lived token (5min TTL, single-use)
+  - [ ] Generate secure token
+  - [ ] Store in KV with TTL (5 minutes)
+  - [ ] Link to user session
+  - [ ] Return token
+- [ ] Implement `POST /auth/session/verify` - Verify token & create RP session
+  - [ ] Validate token
+  - [ ] Check single-use flag
+  - [ ] Mark token as used
+  - [ ] Create new session for RP domain
+  - [ ] Return session cookie
+- [ ] Implement `GET /session/status` - Check session validity (iframe alternative)
+  - [ ] Validate session from cookie
+  - [ ] Check expiration
+  - [ ] Return session status
+- [ ] Implement `POST /session/refresh` - Extend session (Active TTL)
+  - [ ] Validate current session
+  - [ ] Extend expiration time
+  - [ ] Update session in SessionStore DO
+  - [ ] Return new expiration time
+- [ ] Add unit tests for session management (25+ tests)
+- [ ] Test cross-domain SSO flow
+- [ ] Test ITP compatibility (Safari)
+- [ ] Document session management API
+
+#### 27.5 Logout機能API
+- [ ] Implement `GET /logout` - Front-channel Logout
+  - [ ] Parse `id_token_hint` parameter
+  - [ ] Validate ID token
+  - [ ] Invalidate session in SessionStore DO
+  - [ ] Clear session cookie
+  - [ ] Redirect to `post_logout_redirect_uri`
+- [ ] Implement `POST /logout/backchannel` - Back-channel Logout (RFC 8725)
+  - [ ] Validate client authentication
+  - [ ] Parse `logout_token` (JWT)
+  - [ ] Validate logout token signature
+  - [ ] Invalidate sessions for user
+  - [ ] Return 200 OK
+- [ ] Add unit tests for logout endpoints (12+ tests)
+- [ ] Test front-channel logout
+- [ ] Test back-channel logout
+- [ ] Document logout API
+
+#### 27.6 管理者API - ユーザー管理
+- [ ] Implement `GET /admin/users` - List users with pagination
+  - [ ] Query parameters: `q` (search), `filter` (status), `sort`, `page`, `limit`
+  - [ ] Search by email, name
+  - [ ] Filter by verified, unverified, active, inactive
+  - [ ] Sort by created_at, last_login_at, email, name
+  - [ ] Return paginated results with total count
+- [ ] Implement `GET /admin/users/:id` - Get user details
+  - [ ] Load user from D1
+  - [ ] Load custom fields
+  - [ ] Load passkeys
+  - [ ] Load sessions
+  - [ ] Return user object
+- [ ] Implement `POST /admin/users` - Create user
+  - [ ] Validate email uniqueness
+  - [ ] Hash password (if provided)
+  - [ ] Insert into D1 users table
+  - [ ] Create Audit Log entry
+  - [ ] Return created user
+- [ ] Implement `PUT /admin/users/:id` - Update user
+  - [ ] Validate user exists
+  - [ ] Update user fields
+  - [ ] Update custom fields if provided
+  - [ ] Create Audit Log entry
+  - [ ] Return updated user
+- [ ] Implement `DELETE /admin/users/:id` - Delete user (cascade)
+  - [ ] Delete user from D1 (cascade to custom_fields, passkeys, sessions)
+  - [ ] Invalidate all user sessions
+  - [ ] Create Audit Log entry
+  - [ ] Return success response
+- [ ] Add admin authentication middleware (Bearer token)
+- [ ] Add RBAC permission checks (users:read, users:write, users:delete)
+- [ ] Add unit tests for user management API (35+ tests)
+- [ ] Test user CRUD operations
+- [ ] Test search and filtering
+- [ ] Document admin user API
+
+#### 27.7 管理者API - クライアント管理
+- [ ] Implement `GET /admin/clients` - List OAuth clients
+  - [ ] Query parameters: `q` (search), `sort`, `page`, `limit`
+  - [ ] Search by client_name, client_id
+  - [ ] Sort by created_at, client_name
+  - [ ] Return paginated results
+- [ ] Implement `GET /admin/clients/:id` - Get client details
+  - [ ] Load client from D1
+  - [ ] Return client object (mask client_secret)
+- [ ] Implement `POST /admin/clients` - Register new client (extend existing DCR)
+  - [ ] Use existing DCR endpoint internally
+  - [ ] Add admin-specific metadata
+  - [ ] Create Audit Log entry
+  - [ ] Return created client
+- [ ] Implement `PUT /admin/clients/:id` - Update client
+  - [ ] Validate client exists
+  - [ ] Update client metadata
+  - [ ] Create Audit Log entry
+  - [ ] Invalidate KV cache
+  - [ ] Return updated client
+- [ ] Implement `POST /admin/clients/:id/regenerate-secret` - Regenerate client secret
+  - [ ] Generate new client_secret
+  - [ ] Hash and store new secret
+  - [ ] Create Audit Log entry
+  - [ ] Return new secret (one-time display)
+- [ ] Implement `DELETE /admin/clients/:id` - Delete client
+  - [ ] Delete client from D1
+  - [ ] Invalidate KV cache
+  - [ ] Revoke all tokens for client
+  - [ ] Create Audit Log entry
+  - [ ] Return success response
+- [ ] Add unit tests for client management API (30+ tests)
+- [ ] Test client CRUD operations
+- [ ] Test secret regeneration
+- [ ] Document admin client API
+
+#### 27.8 管理者API - セッション管理
+- [ ] Implement `GET /admin/sessions` - List sessions
+  - [ ] Query parameters: `user_id`, `status` (active/expired), `page`, `limit`
+  - [ ] Load sessions from SessionStore DO + D1
+  - [ ] Return paginated session list with metadata (user, device, IP)
+- [ ] Implement `GET /admin/sessions/:id` - Get session details
+  - [ ] Load session from SessionStore DO or D1
+  - [ ] Return session data (anonymized)
+- [ ] Implement `POST /admin/sessions/:id/revoke` - Force logout individual session
+  - [ ] Validate session exists
+  - [ ] Invalidate session in SessionStore DO
+  - [ ] Delete session from D1
+  - [ ] Create Audit Log entry
+  - [ ] Return success response
+- [ ] Implement `POST /admin/users/:id/revoke-all-sessions` - Revoke all user sessions
+  - [ ] Get all sessions for user
+  - [ ] Invalidate all sessions in SessionStore DO
+  - [ ] Delete all sessions from D1
+  - [ ] Create Audit Log entry
+  - [ ] Return success response
+- [ ] Add unit tests for session management API (20+ tests)
+- [ ] Test session listing and filtering
+- [ ] Test session revocation
+- [ ] Document admin session API
+
+---
+
+### ステージ3: フロントエンド基盤 (Week 27-28: May 11-18)
+
+#### 28.1 SvelteKit環境構築
+- [ ] Initialize new SvelteKit project:
+  ```bash
+  npm create svelte@latest packages/ui
+  ```
+- [ ] Select options:
+  - [ ] Template: Skeleton project
+  - [ ] TypeScript: Yes
+  - [ ] ESLint: Yes
+  - [ ] Prettier: Yes
+- [ ] Install dependencies:
+  ```bash
+  cd packages/ui && npm install
+  ```
+- [ ] Configure `svelte.config.js` for Cloudflare Pages adapter:
+  ```javascript
+  import adapter from '@sveltejs/adapter-cloudflare';
+  ```
+- [ ] Test development server: `npm run dev`
+- [ ] Test production build: `npm run build`
+- [ ] Document SvelteKit setup
+
+#### 28.2 UnoCSS設定
+- [ ] Install UnoCSS:
+  ```bash
+  npm install -D unocss @unocss/reset
+  ```
+- [ ] Create `uno.config.ts`:
+  - [ ] Configure presets (uno, attributify, icons)
+  - [ ] Define custom theme colors
+  - [ ] Add shortcuts for common patterns
+- [ ] Create `src/app.css` with UnoCSS imports
+- [ ] Import in `src/routes/+layout.svelte`
+- [ ] Test UnoCSS classes in development
+- [ ] Document UnoCSS configuration
+
+#### 28.3 Melt UI導入
+- [ ] Install Melt UI:
+  ```bash
+  npm install @melt-ui/svelte @melt-ui/pp
+  ```
+- [ ] Configure Melt UI preprocessor in `svelte.config.js`
+- [ ] Create sample components using Melt UI:
+  - [ ] Button component
+  - [ ] Input component
+  - [ ] Dialog component
+- [ ] Test Melt UI components
+- [ ] Document Melt UI usage
+
+#### 28.4 Paraglide (i18n) 設定
+- [ ] Install Paraglide:
+  ```bash
+  npm install @inlang/paraglide-js @inlang/paraglide-sveltekit
+  ```
+- [ ] Create `project.inlang/settings.json`:
+  - [ ] Configure source language: "en"
+  - [ ] Configure target languages: ["ja"]
+- [ ] Create translation files:
+  - [ ] `messages/en.json` - English translations
+  - [ ] `messages/ja.json` - Japanese translations
+- [ ] Configure Paraglide in `svelte.config.js`
+- [ ] Create language switcher component
+- [ ] Test i18n in development
+- [ ] Document Paraglide setup
+
+#### 28.5 Cloudflare Pages連携
+- [ ] Create `packages/ui/wrangler.toml` for Pages Functions
+- [ ] Configure Pages build settings:
+  - [ ] Build command: `npm run build`
+  - [ ] Build output directory: `build/`
+  - [ ] Node version: 18
+- [ ] Create `.github/workflows/deploy-ui.yml`:
+  - [ ] Build SvelteKit app
+  - [ ] Deploy to Cloudflare Pages
+- [ ] Test local build
+- [ ] Test Pages deployment (preview)
+- [ ] Document Pages deployment
+
+#### 28.6 デザインシステム実装
+- [ ] Create `packages/ui/src/lib/design-system/` directory
+- [ ] Define design tokens:
+  - [ ] `tokens/colors.ts` - Color palette (primary, secondary, neutral, semantic)
+  - [ ] `tokens/typography.ts` - Font families, sizes, weights, line heights
+  - [ ] `tokens/spacing.ts` - Spacing scale (0.25rem - 4rem)
+  - [ ] `tokens/shadows.ts` - Box shadows (sm, md, lg)
+  - [ ] `tokens/radius.ts` - Border radius (sm, md, lg, full)
+- [ ] Create base components:
+  - [ ] `Button.svelte` - Primary, secondary, outline, ghost variants
+  - [ ] `Input.svelte` - Text, email, password types with label and error
+  - [ ] `Card.svelte` - Container with header, body, footer slots
+  - [ ] `Modal.svelte` - Dialog with backdrop and close button
+  - [ ] `Spinner.svelte` - Loading indicator
+  - [ ] `Alert.svelte` - Info, success, warning, error variants
+- [ ] Create layout components:
+  - [ ] `Container.svelte` - Max-width container
+  - [ ] `Stack.svelte` - Vertical stacking with gap
+  - [ ] `Grid.svelte` - Responsive grid layout
+- [ ] Test all components in isolation
+- [ ] Create Storybook for component showcase (optional)
+- [ ] Document design system
+
+---
+
+### ステージ4: 認証UI実装 (Week 28-29: May 15-25)
+
+#### 29.1 ログイン画面 (`/login`)
+- [ ] Create `packages/ui/src/routes/login/+page.svelte`
+- [ ] Design login layout:
+  - [ ] Enrai logo at top
+  - [ ] Email input field
+  - [ ] "Continue with Passkey" button (primary)
+  - [ ] "Send Magic Link" button (secondary)
+  - [ ] "Create Account" link
+  - [ ] Language switcher (en/ja)
+- [ ] Implement form validation (Zod)
+- [ ] Implement Passkey detection (check browser support)
+- [ ] Integrate with `/auth/passkey/login` API
+- [ ] Integrate with `/auth/magic-link/send` API
+- [ ] Add error message display
+- [ ] Add loading states
+- [ ] Add Cloudflare Turnstile (Captcha)
+- [ ] Test responsive design (320px - 1920px)
+- [ ] Test keyboard navigation
+- [ ] Test screen reader compatibility
+- [ ] Document login page
+
+#### 29.2 アカウント登録画面 (`/register`)
+- [ ] Create `packages/ui/src/routes/register/+page.svelte`
+- [ ] Design registration layout:
+  - [ ] Email input field
+  - [ ] Name input field (optional)
+  - [ ] "Create Account with Passkey" button
+  - [ ] "Sign up with Magic Link" button
+  - [ ] Terms of Service & Privacy Policy checkboxes
+  - [ ] "Already have an account?" link
+- [ ] Implement form validation
+- [ ] Check email uniqueness (debounced)
+- [ ] Integrate with `/auth/passkey/register` API
+- [ ] Integrate with `/auth/magic-link/send` API
+- [ ] Add Cloudflare Turnstile
+- [ ] Test registration flow
+- [ ] Document registration page
+
+#### 29.3 Magic Link送信完了画面 (`/magic-link-sent`)
+- [ ] Create `packages/ui/src/routes/magic-link-sent/+page.svelte`
+- [ ] Design success message:
+  - [ ] "Check your email" heading
+  - [ ] Email address display
+  - [ ] "Resend email" button (with timer countdown)
+  - [ ] "Back to login" link
+- [ ] Implement resend timer (60 seconds)
+- [ ] Integrate with resend API
+- [ ] Test resend flow
+- [ ] Document magic link sent page
+
+#### 29.4 Magic Link検証画面 (`/verify-magic-link`)
+- [ ] Create `packages/ui/src/routes/verify-magic-link/+page.svelte`
+- [ ] Show loading spinner immediately
+- [ ] Extract token from URL query parameter
+- [ ] Call `/auth/magic-link/verify` API
+- [ ] Handle success: redirect to client app or dashboard
+- [ ] Handle error: show error message with "Request new link" button
+- [ ] Test verification flow
+- [ ] Document verification page
+
+#### 29.5 OAuth同意画面 (`/consent`)
+- [ ] Create `packages/ui/src/routes/consent/+page.svelte`
+- [ ] Design consent layout:
+  - [ ] Client logo and name
+  - [ ] "{Client Name} wants to access your Enrai account" heading
+  - [ ] Scope list with icons (human-readable)
+  - [ ] User information display (email, name, avatar)
+  - [ ] "Allow" button (primary)
+  - [ ] "Deny" button (secondary)
+  - [ ] "Not you? Switch account" link
+  - [ ] Privacy Policy and Terms of Service links
+- [ ] Load consent data from `/auth/consent` API
+- [ ] Implement scope translation (technical → human-readable)
+- [ ] Integrate with `POST /auth/consent` API
+- [ ] Handle allow: redirect with authorization code
+- [ ] Handle deny: redirect with error
+- [ ] Test consent flow with various scopes
+- [ ] Document consent page
+
+#### 29.6 エラーページ (`/error`)
+- [ ] Create `packages/ui/src/routes/error/+page.svelte`
+- [ ] Design error layout:
+  - [ ] Error icon
+  - [ ] Error message (user-friendly)
+  - [ ] Error code (technical, small font)
+  - [ ] "Back to login" button
+  - [ ] Support contact link
+- [ ] Handle various error types:
+  - [ ] invalid_request
+  - [ ] access_denied
+  - [ ] server_error
+  - [ ] temporarily_unavailable
+- [ ] Log errors to console (development) or monitoring service (production)
+- [ ] Test error page with different error codes
+- [ ] Document error page
+
+---
+
+### ステージ5: 管理画面実装 (Week 29-30: May 22-31)
+
+#### 30.1 管理者ダッシュボード (`/admin`)
+- [ ] Create `packages/ui/src/routes/admin/+layout.svelte`:
+  - [ ] Sidebar navigation
+  - [ ] Top bar (logo, search, notifications, profile menu)
+  - [ ] Main content area
+- [ ] Create `packages/ui/src/routes/admin/+page.svelte`:
+  - [ ] Statistics cards:
+    - [ ] Active users count
+    - [ ] Total logins today
+    - [ ] Registered clients count
+    - [ ] Active sessions count
+  - [ ] Activity feed (latest logins, registrations, errors)
+  - [ ] Login trend chart (Chart.js or ECharts)
+  - [ ] Quick actions panel (Create user, Register client)
+- [ ] Integrate with `/admin/stats` API (create API if needed)
+- [ ] Add real-time updates (optional: WebSockets or polling)
+- [ ] Test dashboard layout and responsiveness
+- [ ] Document admin dashboard
+
+#### 30.2 ユーザー管理 (`/admin/users`)
+- [ ] Create `packages/ui/src/routes/admin/users/+page.svelte`:
+  - [ ] User list table with pagination
+  - [ ] Search bar (search by email, name)
+  - [ ] Filter dropdowns (verified/unverified, active/inactive)
+  - [ ] Sort by columns (email, name, created_at, last_login_at)
+  - [ ] "Add User" button
+  - [ ] Action buttons (Edit, Delete) per row
+- [ ] Integrate with `GET /admin/users` API
+- [ ] Implement client-side pagination
+- [ ] Implement debounced search
+- [ ] Add delete confirmation dialog
 - [ ] Test with large datasets (1000+ users)
+- [ ] Document user list page
 
-#### 28.3 Client Management
-- [ ] Create OAuth client list
-- [ ] Implement "Register new client" form
-- [ ] Create client detail view
-- [ ] Add edit client configuration
-- [ ] Implement client secret regeneration
-- [ ] Create redirect URI management
-- [ ] Add scope restrictions configuration
-- [ ] Implement client deletion
-- [ ] Add client usage statistics
-- [ ] Test with various client types
+#### 30.3 ユーザー詳細/編集 (`/admin/users/:id`)
+- [ ] Create `packages/ui/src/routes/admin/users/[id]/+page.svelte`:
+  - [ ] User information form (email, name, phone, address, etc.)
+  - [ ] Custom fields section (dynamic based on user_custom_fields)
+  - [ ] Passkey list (registered devices)
+  - [ ] Session list (active sessions)
+  - [ ] Audit Log (user actions)
+  - [ ] "Save Changes" button
+  - [ ] "Delete User" button (danger zone)
+- [ ] Integrate with `GET /admin/users/:id` API
+- [ ] Integrate with `PUT /admin/users/:id` API
+- [ ] Integrate with `DELETE /admin/users/:id` API
+- [ ] Implement form validation
+- [ ] Add "Delete Passkey" button for each device
+- [ ] Add "Revoke Session" button for each session
+- [ ] Test user editing and deletion
+- [ ] Document user detail page
 
-#### 28.4 Settings & Customization
-- [ ] Create branding settings page:
-  - [ ] Logo upload (with preview)
-  - [ ] Color customization (primary, secondary, background)
-  - [ ] Font selection
-- [ ] Implement password policy configuration:
-  - [ ] Minimum length
-  - [ ] Character requirements
-  - [ ] Password expiration
-- [ ] Add token expiration settings:
-  - [ ] Access token TTL
-  - [ ] ID token TTL
-  - [ ] Refresh token TTL
-- [ ] Create email template editor (WYSIWYG):
-  - [ ] Welcome email
-  - [ ] Password reset
-  - [ ] Verification email
-  - [ ] MFA setup
-- [ ] Add SMTP configuration
-- [ ] Create social login provider setup
-- [ ] Add MFA settings
-- [ ] Implement backup/restore UI
+#### 30.4 クライアント管理 (`/admin/clients`)
+- [ ] Create `packages/ui/src/routes/admin/clients/+page.svelte`:
+  - [ ] Client list table (client_id, client_name, created_at, grant_types)
+  - [ ] Search bar
+  - [ ] "Register Client" button
+  - [ ] Action buttons (Edit, Delete, View Secret) per row
+- [ ] Integrate with `GET /admin/clients` API
+- [ ] Implement client search
+- [ ] Add delete confirmation dialog
+- [ ] Test client list page
+- [ ] Document client list page
 
-#### 28.5 Admin Dashboard Tech Stack
-- [ ] Choose framework (React or Svelte)
-- [ ] Set up dashboard library (Recharts/ECharts)
-- [ ] Configure TanStack Table
-- [ ] Set up form library (React Hook Form/Svelte Forms)
-- [ ] Add rich text editor (TipTap or Monaco)
-- [ ] Configure routing
-- [ ] Set up API client
-- [ ] Add authentication for admin panel
+#### 30.5 クライアント詳細/編集 (`/admin/clients/:id`)
+- [ ] Create `packages/ui/src/routes/admin/clients/[id]/+page.svelte`:
+  - [ ] Client information form (client_name, redirect_uris, grant_types, scope)
+  - [ ] Redirect URIs management (add/remove)
+  - [ ] Grant Types selection (checkboxes)
+  - [ ] Scope configuration (multi-select or checkboxes)
+  - [ ] Logo URI input
+  - [ ] Client URI, Policy URI, ToS URI inputs
+  - [ ] "Save Changes" button
+  - [ ] "Regenerate Secret" button (show confirmation)
+  - [ ] "Delete Client" button (danger zone)
+- [ ] Integrate with `GET /admin/clients/:id` API
+- [ ] Integrate with `PUT /admin/clients/:id` API
+- [ ] Integrate with `POST /admin/clients/:id/regenerate-secret` API
+- [ ] Integrate with `DELETE /admin/clients/:id` API
+- [ ] Show client_secret only once after regeneration
+- [ ] Add form validation (URL validation, etc.)
+- [ ] Test client editing and deletion
+- [ ] Document client detail page
+
+#### 30.6 設定 (`/admin/settings`)
+- [ ] Create `packages/ui/src/routes/admin/settings/+page.svelte`:
+  - [ ] Tabs: General, Appearance, Security, Email, Advanced
+  - [ ] General tab:
+    - [ ] Site name input
+    - [ ] Logo upload
+    - [ ] Language selection
+    - [ ] Timezone selection
+  - [ ] Appearance tab:
+    - [ ] Theme selection (light/dark/auto)
+    - [ ] Primary color picker
+    - [ ] Secondary color picker
+    - [ ] Font family selection
+    - [ ] Login page preview (iframe)
+  - [ ] Security tab:
+    - [ ] Password policy configuration
+    - [ ] Session timeout setting
+    - [ ] MFA enforcement toggle
+    - [ ] Rate limiting configuration
+  - [ ] Email tab:
+    - [ ] Email provider selection (Resend/Cloudflare/SMTP)
+    - [ ] SMTP configuration (host, port, username, password)
+    - [ ] Test email button
+    - [ ] Email template editor (basic)
+  - [ ] Advanced tab:
+    - [ ] Token TTL settings (access, ID, refresh)
+    - [ ] Enable/disable features (Passkey, Magic Link, Social Login)
+- [ ] Integrate with `GET /admin/settings` API (create API if needed)
+- [ ] Integrate with `PUT /admin/settings` API
+- [ ] Implement live preview for appearance changes
+- [ ] Add test email functionality
+- [ ] Test all settings
+- [ ] Document settings page
+
+#### 30.7 Audit Log (`/admin/audit-log`)
+- [ ] Create `packages/ui/src/routes/admin/audit-log/+page.svelte`:
+  - [ ] Audit log table (timestamp, user, action, resource, IP, status)
+  - [ ] Filter by date range (date picker)
+  - [ ] Filter by action type (dropdown)
+  - [ ] Filter by user (autocomplete)
+  - [ ] Search by resource ID
+  - [ ] Export to CSV button
+  - [ ] Export to JSON button
+- [ ] Integrate with `GET /admin/audit-log` API (create API if needed)
+- [ ] Implement date range filtering
+- [ ] Implement CSV export (client-side)
+- [ ] Implement JSON export (client-side)
+- [ ] Test audit log display and filtering
+- [ ] Document audit log page
 
 ---
 
-### Week 30-31: Data Storage Abstraction (May 29 - Jun 11)
+### ステージ6: 統合・テスト (Week 30-31: May 26-31)
 
-#### 30.1 Storage Adapter Design
-- [ ] Define abstract storage interface
-- [ ] Create adapter interface (TypeScript)
-- [ ] Design migration system
-- [ ] Plan adapter selection mechanism
-- [ ] Document adapter contract
+#### 31.1 E2Eテスト (Playwright)
+- [ ] Install Playwright:
+  ```bash
+  npm install -D @playwright/test
+  ```
+- [ ] Configure `playwright.config.ts`
+- [ ] Create test suite `packages/ui/tests/`:
+  - [ ] `auth.spec.ts` - Login, registration, magic link flow
+  - [ ] `consent.spec.ts` - OAuth consent flow
+  - [ ] `admin.spec.ts` - Admin dashboard, user/client management
+- [ ] Write E2E tests:
+  - [ ] Test login with Passkey (mock WebAuthn)
+  - [ ] Test login with Magic Link
+  - [ ] Test registration with Passkey
+  - [ ] Test OAuth consent approval
+  - [ ] Test OAuth consent denial
+  - [ ] Test admin user CRUD
+  - [ ] Test admin client CRUD
+- [ ] Run tests: `npm run test`
+- [ ] Generate test report
+- [ ] Document E2E testing
 
-#### 30.2 KV Adapter (Current)
-- [ ] Refactor existing KV code to adapter
-- [ ] Implement storage interface
-- [ ] Add KV-specific optimizations
-- [ ] Test KV adapter
-- [ ] Document KV limitations
+#### 31.2 セキュリティテスト
+- [ ] Test CSRF protection:
+  - [ ] Verify CSRF token on all POST endpoints
+  - [ ] Test CSRF token validation
+- [ ] Test XSS prevention:
+  - [ ] Inject XSS payloads in input fields
+  - [ ] Verify HTML escaping
+  - [ ] Check CSP headers
+- [ ] Test SQL injection prevention:
+  - [ ] Inject SQL payloads in search queries
+  - [ ] Verify parameterized queries
+- [ ] Test authentication bypass:
+  - [ ] Try accessing admin pages without auth
+  - [ ] Try accessing other users' data
+- [ ] Document security test results
 
-#### 30.3 D1 Adapter (SQLite - Recommended)
-- [ ] Design database schema:
-  - [ ] Users table
-  - [ ] Sessions table
-  - [ ] Clients table
-  - [ ] Authorization codes table
-  - [ ] Refresh tokens table
-- [ ] Implement D1 adapter
-- [ ] Create migration scripts
-- [ ] Add indexes for performance
-- [ ] Implement foreign key constraints
-- [ ] Add query optimization
-- [ ] Test D1 adapter
-- [ ] Write D1 setup guide
+#### 31.3 パフォーマンス最適化
+- [ ] Run Lighthouse audit on all pages:
+  - [ ] Login page target: >90 Performance
+  - [ ] Admin dashboard target: >85 Performance
+- [ ] Optimize images:
+  - [ ] Convert to WebP format
+  - [ ] Add lazy loading
+- [ ] Optimize JavaScript bundle:
+  - [ ] Code splitting by route
+  - [ ] Tree shaking
+  - [ ] Minification
+- [ ] Optimize CSS:
+  - [ ] Purge unused UnoCSS classes
+  - [ ] Minification
+- [ ] Add caching headers for static assets
+- [ ] Measure page load time (p95 < 2 seconds)
+- [ ] Document performance improvements
 
-#### 30.4 Durable Objects Adapter
-- [ ] Design Durable Objects structure
-- [ ] Implement DO adapter
-- [ ] Add consistency guarantees
-- [ ] Test DO adapter
-- [ ] Document DO use cases
+#### 31.4 アクセシビリティ改善 (WCAG 2.1 AA)
+- [ ] Run axe DevTools on all pages
+- [ ] Fix accessibility issues:
+  - [ ] Add proper ARIA labels
+  - [ ] Ensure keyboard navigation works
+  - [ ] Add focus indicators
+  - [ ] Improve color contrast (4.5:1 minimum)
+  - [ ] Add alt text for images
+  - [ ] Ensure form labels are properly associated
+- [ ] Test with screen reader (NVDA or JAWS)
+- [ ] Test keyboard-only navigation (Tab, Enter, Esc)
+- [ ] Document accessibility compliance
 
-#### 30.5 Adapter Selection & Migration
-- [ ] Create configuration system
-- [ ] Implement adapter factory
-- [ ] Add runtime adapter switching
-- [ ] Create migration tool (KV → D1)
-- [ ] Test adapter switching
-- [ ] Document migration process
+#### 31.5 デプロイ準備
+- [ ] Create production environment variables
+- [ ] Configure Cloudflare Pages production deployment
+- [ ] Set up custom domain (if applicable)
+- [ ] Configure SSL/TLS
+- [ ] Set up monitoring (Sentry for errors)
+- [ ] Create deployment runbook
+- [ ] Test production deployment (preview)
+- [ ] Document deployment process
 
-#### 30.6 Session Store
-- [ ] Design Redis-compatible API
-- [ ] Implement distributed session support
-- [ ] Add session serialization
-- [ ] Create session cleanup cron job
-- [ ] Test session scaling
-- [ ] Document session store
+#### 31.6 Milestone 5 Review
+- [ ] Verify all Phase 5 features work:
+  - [ ] Login with Passkey
+  - [ ] Login with Magic Link
+  - [ ] OAuth consent flow
+  - [ ] Admin dashboard
+  - [ ] User management
+  - [ ] Client management
+  - [ ] Settings management
+- [ ] Run full test suite (unit + integration + E2E)
+- [ ] Check test coverage (target: >80%)
+- [ ] Review Lighthouse scores (target: >90)
+- [ ] Review accessibility (WCAG 2.1 AA compliance)
+- [ ] Update documentation
+- [ ] Create Phase 5 completion report
+- [ ] Plan Phase 6 kickoff
+
+---
+
+### Phase 5 Success Metrics 🎯
+
+#### Code Quality
+- [ ] Test coverage ≥ 80% (UI + API)
+- [ ] Zero TypeScript errors
+- [ ] Zero linting errors
+- [ ] All tests passing (unit + integration + E2E)
+
+#### Performance
+- [ ] Login page load time < 2 seconds (p95)
+- [ ] Admin dashboard load time < 3 seconds (p95)
+- [ ] Lighthouse Performance score > 90
+- [ ] Lighthouse Best Practices score > 90
+
+#### Accessibility
+- [ ] WCAG 2.1 AA compliance
+- [ ] axe DevTools score: 0 violations
+- [ ] Keyboard navigation functional
+- [ ] Screen reader compatible
+
+#### User Experience
+- [ ] Responsive design (320px - 1920px)
+- [ ] Cross-browser compatibility (Chrome, Firefox, Safari, Edge)
+- [ ] Internationalization (en, ja)
+- [ ] Dark mode support (optional)
+
+#### Security
+- [ ] CSRF protection enabled
+- [ ] XSS prevention verified
+- [ ] CSP headers configured
+- [ ] Authentication required for admin pages
+- [ ] RBAC implemented
+
+---
+
+### Phase 5 Deliverables 📦
+
+- [ ] ✅ D1 database with 11 tables
+- [ ] ✅ 3 Durable Objects (SessionStore, AuthCodeStore, RefreshTokenRotator)
+- [ ] ✅ Storage abstraction layer
+- [ ] ✅ 14+ backend API endpoints (auth + admin)
+- [ ] ✅ SvelteKit frontend application
+- [ ] ✅ 6 user-facing pages (login, register, magic link, consent, error)
+- [ ] ✅ 7 admin pages (dashboard, users, clients, settings, audit log)
+- [ ] ✅ E2E test suite (Playwright)
+- [ ] ✅ Design system with reusable components
+- [ ] ✅ Internationalization (en, ja)
+- [ ] ✅ Deployment to Cloudflare Pages
+
+---
 
 ---
 

@@ -1,7 +1,7 @@
 # Durable Objects Architecture 🔷
 
 **Last Updated**: 2025-11-13
-**Status**: Phase 5 Design
+**Status**: Phase 5 Implementation
 **Version**: 2.0.0
 
 ---
@@ -20,9 +20,9 @@ Enrai uses Cloudflare Durable Objects for managing **strong consistency requirem
 | Durable Object | Purpose | Phase | Status |
 |----------------|---------|-------|--------|
 | **KeyManager** | RSA key management & rotation | Phase 3 | ✅ Implemented |
-| **SessionStore** | Active session state management | Phase 5 | 📝 Planned |
-| **AuthorizationCodeStore** | One-time authorization codes | Phase 5 | 📝 Planned |
-| **RefreshTokenRotator** | Atomic refresh token rotation | Phase 5 | 📝 Planned |
+| **SessionStore** | Active session state management | Phase 5 | ✅ Implemented |
+| **AuthorizationCodeStore** | One-time authorization codes | Phase 5 | ✅ Implemented |
+| **RefreshTokenRotator** | Atomic refresh token rotation | Phase 5 | ✅ Implemented |
 
 ### Architecture Diagram
 
@@ -767,20 +767,27 @@ class RefreshTokenRotator {
 - ✅ Key rotation functionality
 - ✅ JWKS endpoint
 
-### Phase 5 (Planned - May 2026)
+### Phase 5 (Implementation in Progress - May 2026)
 - **Week 1**: SessionStore implementation
-  - Hot/cold session pattern
-  - D1 integration
+  - ✅ Hot/cold session pattern
+  - ✅ D1 integration
+  - ✅ Unit tests (20+ test cases)
+  - ✅ API documentation
 - **Week 2**: AuthorizationCodeStore implementation
-  - Replay attack prevention
-  - PKCE validation
+  - ✅ Replay attack prevention
+  - ✅ PKCE validation
+  - ✅ Unit tests (15+ test cases)
+  - ✅ API documentation
 - **Week 2**: RefreshTokenRotator implementation
-  - Token family tracking
-  - Theft detection
-- **Week 3**: Integration testing
-  - Security testing
-  - Performance benchmarks
-- **Week 4**: Production deployment
+  - ✅ Token family tracking
+  - ✅ Theft detection
+  - ✅ Unit tests (18+ test cases)
+  - ✅ API documentation
+- **Week 3**: Integration testing (In Progress)
+  - 🔄 Storage abstraction layer
+  - 🔄 Security testing
+  - 🔄 Performance benchmarks
+- **Week 4**: Production deployment (Planned)
   - Gradual rollout
   - Monitoring setup
 
