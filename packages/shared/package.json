@@ -15,7 +15,10 @@
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'Shared package: lint skipped'",
+    "test": "echo 'Shared package: tests skipped'",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "hono": "^4.0.0",

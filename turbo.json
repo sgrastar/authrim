@@ -24,6 +24,9 @@
     "deploy": {
       "dependsOn": ["build", "test"],
       "cache": false
+    },
+    "clean": {
+      "cache": false
     }
   }
 }

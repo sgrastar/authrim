@@ -7,7 +7,10 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'op-discovery: lint skipped'",
+    "test": "echo 'op-discovery: tests skipped'",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@enrai/shared": "workspace:*",
