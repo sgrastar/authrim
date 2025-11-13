@@ -113,9 +113,10 @@ pnpm install
 # 2. Login to Cloudflare
 wrangler login
 
-# 3. Run setup scripts
-./scripts/setup-kv.sh          # Create KV namespaces
+# 3. Run setup scripts (in order)
 ./scripts/setup-dev.sh         # Generate RSA keys & wrangler.toml files
+./scripts/setup-kv.sh          # Create KV namespaces
+./scripts/setup-d1.sh          # Create D1 database (Phase 5)
 ./scripts/setup-secrets.sh     # Upload secrets to Cloudflare
 ./scripts/setup-production.sh  # Choose deployment mode & configure URLs
                                # → Select option 1 (Test) or 2 (Production)
@@ -163,9 +164,39 @@ wrangler whoami
 
 You should see your Cloudflare account email and account ID.
 
-### 3. Create KV Namespaces
+### 3. Generate RSA Keys and Base Configuration
 
-**Important:** Create KV namespaces before generating RSA keys and deploying.
+**Important:** Generate wrangler.toml files first before creating infrastructure.
+
+```bash
+./scripts/setup-dev.sh
+```
+
+**What this does:**
+- Generates an RSA-2048 key pair
+- Saves private key to `.keys/private.pem`
+- Saves public key (JWK format) to `.keys/public.jwk.json`
+- Saves key metadata to `.keys/metadata.json`
+- Creates `.dev.vars` for local development
+- **Generates base `wrangler.toml` files for all packages**
+
+**Output:**
+```
+🔐 Enrai Development Setup
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 Generating RSA keys...
+✅ .dev.vars file created successfully!
+📝 Generating wrangler.toml files for each worker...
+
+📋 Key Information:
+  • Key ID: dev-key-1731532800000-abc123
+  • Private Key: .keys/private.pem
+  • Public JWK: .keys/public.jwk.json
+```
+
+### 4. Create KV Namespaces
+
+**Important:** Create KV namespaces after base wrangler.toml files exist.
 
 Create Cloudflare KV namespaces for storing state, codes, and clients:
 
@@ -218,35 +249,96 @@ This will:
 
 **Note:** You may need to undeploy workers first if namespaces are in use.
 
-### 4. Generate RSA Keys
+### 5. Create D1 Database (Phase 5)
 
-Generate cryptographic keys for signing JWT tokens:
+**Phase 5 Feature:** Create Cloudflare D1 database for persistent storage.
 
 ```bash
-./scripts/setup-dev.sh
+./scripts/setup-d1.sh
 ```
 
 **What this does:**
-- Generates an RSA-2048 key pair
-- Saves private key to `.keys/private.pem`
-- Saves public key (JWK format) to `.keys/public.jwk.json`
-- Saves key metadata to `.keys/metadata.json`
-- Creates `.dev.vars` for local development
+- Creates D1 database (`enrai-dev` or `enrai-prod`)
+- Updates all `packages/*/wrangler.toml` files with D1 bindings
+- Optionally runs database migrations (11 tables, 20 indexes)
+- Displays database status and helpful commands
 
-**Output:**
+**Interactive prompts:**
 ```
-🔐 Enrai Development Setup
+📦 D1 Database Setup
+
+Environment (dev/prod) [dev]: dev
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📦 Generating RSA keys...
-✅ .dev.vars file created successfully!
+Database: enrai-dev
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📋 Key Information:
-  • Key ID: dev-key-1731532800000-abc123
-  • Private Key: .keys/private.pem
-  • Public JWK: .keys/public.jwk.json
+📝 Creating D1 database: enrai-dev
+✅ Database created successfully!
+   Database ID: abc123-def456-...
+
+Run database migrations now? (y/N): y
+
+🚀 Running migrations...
+📝 Applying 001_initial_schema.sql...
+✅ Schema migration complete
+
+📝 Applying 002_seed_default_data.sql...
+✅ Seed data migration complete
+
+✅ All migrations applied!
 ```
 
-### 5. Upload Secrets to Cloudflare
+**Database schema created:**
+- 11 tables (users, oauth_clients, sessions, roles, etc.)
+- 20 indexes for optimized queries
+- Default roles (super_admin, admin, viewer, support)
+- OIDC scope mappings (profile, email, phone, address)
+- Test data (development only)
+
+**Reset Option:**
+
+If you need to reset the database (development only):
+
+```bash
+./scripts/setup-d1.sh --reset
+```
+
+This will:
+- Delete the existing D1 database
+- Recreate it with a fresh ID
+- Update all `wrangler.toml` files
+- Require 'YES' confirmation to prevent accidental data loss
+
+**Manual migration:**
+
+If you skip migrations during setup, you can run them later:
+
+```bash
+# Using migrate.sh (recommended)
+bash migrations/migrate.sh dev up
+
+# Or manually with wrangler
+wrangler d1 execute enrai-dev --file=migrations/001_initial_schema.sql
+wrangler d1 execute enrai-dev --file=migrations/002_seed_default_data.sql
+```
+
+**Verify database:**
+
+```bash
+# List tables
+wrangler d1 execute enrai-dev --command="SELECT name FROM sqlite_master WHERE type='table';"
+
+# Count records
+wrangler d1 execute enrai-dev --command="SELECT COUNT(*) FROM users;"
+```
+
+**⚠️ IMPORTANT:**
+- D1 database is required for Phase 5 features (UI/UX, admin dashboard)
+- For Phase 1-4, you can skip this step (uses KV storage only)
+- See [migrations/README.md](../migrations/README.md) for detailed schema documentation
+
+### 6. Upload Secrets to Cloudflare
 
 Upload your private and public keys to Cloudflare Workers secrets:
 
@@ -272,7 +364,7 @@ Upload your private and public keys to Cloudflare Workers secrets:
 
 **⚠️ IMPORTANT:** Never commit `.keys/` to version control! It's already in `.gitignore`.
 
-### 6. Configure Deployment Mode
+### 7. Configure Deployment Mode
 
 Choose your deployment mode and configure URLs:
 
@@ -317,7 +409,7 @@ Enter your choice (1/2):
 Is this correct? (y/N): y
 ```
 
-### 7. Build the Project
+### 8. Build the Project
 
 Build all worker packages (including Router if in test mode):
 
@@ -337,7 +429,7 @@ router:build: cache hit, replaying logs
 ...
 ```
 
-### 8. Deploy to Cloudflare Workers
+### 9. Deploy to Cloudflare Workers
 
 Deploy workers using the recommended sequential deployment with retry logic:
 
@@ -429,7 +521,7 @@ https://enrai.your-subdomain.workers.dev
 ⊗ Skipping router (wrangler.toml not found - not needed in production mode)
 ```
 
-### 9. Verify Deployment
+### 10. Verify Deployment
 
 Test your deployed OpenID Provider:
 
