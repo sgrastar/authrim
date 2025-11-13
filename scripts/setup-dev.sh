@@ -187,7 +187,7 @@ preview_id = "placeholder"'
 # Generate wrangler.toml for router (with Service Bindings)
 echo "  ✅ router/wrangler.toml (with Service Bindings)"
 cat > packages/router/wrangler.toml << 'ROUTER_TOML_EOF'
-name = "enrai-router"
+name = "enrai"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
