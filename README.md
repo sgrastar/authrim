@@ -220,11 +220,15 @@ pnpm install
 # 6. Build all packages
 pnpm run build
 
-# 7. (Optional) Deploy Durable Objects first
-./scripts/setup-durable-objects.sh
-
-# 7. Start all workers in parallel
+# 7. Start all workers in parallel (development mode)
 pnpm run dev
+
+# For production deployment:
+# 1. Deploy Durable Objects first (builds automatically)
+#    ./scripts/setup-durable-objects.sh
+# 2. Wait 30 seconds
+# 3. Deploy all workers
+#    pnpm run deploy:retry
 
 # Workers start at:
 # - op-discovery: http://localhost:8787
