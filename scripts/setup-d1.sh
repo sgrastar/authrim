@@ -1,0 +1,329 @@
+#!/bin/bash
+#
+# Enrai D1 Database Setup Script
+# This script creates D1 database and updates wrangler.toml files with bindings
+#
+# Usage:
+#   ./setup-d1.sh          - Interactive mode (prompts for existing database)
+#   ./setup-d1.sh --reset  - Reset mode (deletes and recreates database)
+#
+
+set -e
+
+# Parse command line arguments
+RESET_MODE=false
+if [ "$1" = "--reset" ]; then
+    RESET_MODE=true
+    echo "⚠️  RESET MODE ENABLED"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "The existing D1 database will be deleted and recreated."
+    echo "This will delete ALL data in the database."
+    echo ""
+    read -p "Are you sure you want to continue? Type 'YES' to confirm: " -r
+    if [ "$REPLY" != "YES" ]; then
+        echo "❌ Reset cancelled"
+        exit 1
+    fi
+    echo ""
+fi
+
+echo "⚡️ Enrai D1 Database Setup"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Check if wrangler is installed
+if ! command -v wrangler &> /dev/null; then
+    echo "❌ Error: wrangler is not installed"
+    echo "Please install it with: npm install -g wrangler"
+    exit 1
+fi
+
+# Check if user is logged in
+if ! wrangler whoami &> /dev/null; then
+    echo "❌ Error: Not logged in to Cloudflare"
+    echo "Please run: wrangler login"
+    exit 1
+fi
+
+echo "📦 D1 Database Setup"
+echo ""
+echo "This script will create or update D1 database for your Enrai deployment."
+echo ""
+
+# Determine environment
+read -p "Environment (dev/prod) [dev]: " ENV
+ENV=${ENV:-dev}
+
+DB_NAME="enrai-${ENV}"
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Database: $DB_NAME"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Check if database already exists
+DB_EXISTS=false
+if wrangler d1 info "$DB_NAME" &> /dev/null; then
+    DB_EXISTS=true
+fi
+
+if [ "$RESET_MODE" = true ] && [ "$DB_EXISTS" = true ]; then
+    echo "🗑️  Deleting existing database: $DB_NAME"
+    wrangler d1 delete "$DB_NAME" --skip-confirmation
+    echo "✅ Database deleted"
+    echo ""
+    DB_EXISTS=false
+fi
+
+# Create database if it doesn't exist
+if [ "$DB_EXISTS" = false ]; then
+    echo "📝 Creating D1 database: $DB_NAME"
+    CREATE_OUTPUT=$(wrangler d1 create "$DB_NAME" 2>&1)
+    echo "$CREATE_OUTPUT"
+
+    # Extract database ID from output
+    DB_ID=$(echo "$CREATE_OUTPUT" | grep -o 'database_id = "[^"]*"' | cut -d'"' -f2)
+
+    if [ -z "$DB_ID" ]; then
+        echo "❌ Error: Could not extract database ID"
+        echo "Please create database manually and update wrangler.toml files"
+        exit 1
+    fi
+
+    echo ""
+    echo "✅ Database created successfully!"
+    echo "   Database ID: $DB_ID"
+else
+    echo "✅ Database already exists: $DB_NAME"
+
+    # Get existing database ID
+    DB_INFO=$(wrangler d1 info "$DB_NAME" 2>&1)
+    DB_ID=$(echo "$DB_INFO" | grep -o 'id: [a-f0-9-]*' | head -1 | cut -d' ' -f2)
+
+    if [ -z "$DB_ID" ]; then
+        echo "⚠️  Warning: Could not extract database ID from existing database"
+        echo "Please update wrangler.toml files manually"
+        read -p "Continue anyway? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "❌ Setup cancelled"
+            exit 1
+        fi
+    else
+        echo "   Database ID: $DB_ID"
+    fi
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📝 Updating wrangler.toml files with D1 bindings"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Function to add D1 binding to wrangler.toml
+add_d1_binding() {
+    local file=$1
+    local package_name=$(basename $(dirname "$file"))
+
+    # Skip router - it doesn't need D1 binding
+    if [ "$package_name" = "router" ]; then
+        echo "  ⊗ Skipping router (no D1 binding needed)"
+        return
+    fi
+
+    echo "  • Updating $package_name..."
+
+    # Check if D1 binding already exists
+    if grep -q "^\[\[d1_databases\]\]" "$file"; then
+        # Update existing binding
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS
+            sed -i '' "/^\[\[d1_databases\]\]/,/^database_id = / {
+                s/^database_name = .*/database_name = \"$DB_NAME\"/
+                s/^database_id = .*/database_id = \"$DB_ID\"/
+            }" "$file"
+        else
+            # Linux
+            sed -i "/^\[\[d1_databases\]\]/,/^database_id = / {
+                s/^database_name = .*/database_name = \"$DB_NAME\"/
+                s/^database_id = .*/database_id = \"$DB_ID\"/
+            }" "$file"
+        fi
+    else
+        # Add new D1 binding after KV namespaces section
+        # Find the last KV namespace or vars section
+        if grep -q "^\[\[kv_namespaces\]\]" "$file"; then
+            # Add after last KV namespace
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                # macOS - need to handle multiline insertion differently
+                awk -v db_name="$DB_NAME" -v db_id="$DB_ID" '
+                    /^preview_id = / {
+                        print
+                        if (!d1_added) {
+                            print ""
+                            print "# D1 Database"
+                            print "[[d1_databases]]"
+                            print "binding = \"DB\""
+                            print "database_name = \"" db_name "\""
+                            print "database_id = \"" db_id "\""
+                            d1_added = 1
+                        }
+                        next
+                    }
+                    { print }
+                ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+            else
+                # Linux
+                sed -i "/^preview_id = /a\\
+\\
+# D1 Database\\
+[[d1_databases]]\\
+binding = \"DB\"\\
+database_name = \"$DB_NAME\"\\
+database_id = \"$DB_ID\"" "$file"
+            fi
+        elif grep -q "^\[vars\]" "$file"; then
+            # Add before vars section
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                awk -v db_name="$DB_NAME" -v db_id="$DB_ID" '
+                    /^\[vars\]/ {
+                        print "# D1 Database"
+                        print "[[d1_databases]]"
+                        print "binding = \"DB\""
+                        print "database_name = \"" db_name "\""
+                        print "database_id = \"" db_id "\""
+                        print ""
+                    }
+                    { print }
+                ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+            else
+                sed -i "/^\[vars\]/i\\
+# D1 Database\\
+[[d1_databases]]\\
+binding = \"DB\"\\
+database_name = \"$DB_NAME\"\\
+database_id = \"$DB_ID\"\\
+" "$file"
+            fi
+        else
+            # Append to end of file
+            echo "" >> "$file"
+            echo "# D1 Database" >> "$file"
+            echo "[[d1_databases]]" >> "$file"
+            echo "binding = \"DB\"" >> "$file"
+            echo "database_name = \"$DB_NAME\"" >> "$file"
+            echo "database_id = \"$DB_ID\"" >> "$file"
+        fi
+    fi
+}
+
+# Update all package wrangler.toml files
+for toml_file in packages/*/wrangler.toml; do
+    if [ -f "$toml_file" ]; then
+        add_d1_binding "$toml_file"
+    fi
+done
+
+echo ""
+echo "✅ All wrangler.toml files updated!"
+echo ""
+
+# Ask if user wants to run migrations
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📊 Database Migrations"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+read -p "Run database migrations now? (y/N): " -n 1 -r
+echo
+
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "🚀 Running migrations..."
+    echo ""
+
+    # Run migrations using migrate.sh
+    if [ -f "migrations/migrate.sh" ]; then
+        bash migrations/migrate.sh "$ENV" up
+    else
+        # Fallback: run migrations directly
+        echo "📝 Applying 001_initial_schema.sql..."
+        wrangler d1 execute "$DB_NAME" --file=migrations/001_initial_schema.sql
+        echo "✅ Schema migration complete"
+        echo ""
+
+        echo "📝 Applying 002_seed_default_data.sql..."
+        if [ "$ENV" = "prod" ]; then
+            echo "⚠️  Warning: This includes test data!"
+            echo "Please review migrations/002_seed_default_data.sql and remove test data before running on production"
+            read -p "Continue? (y/N): " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                wrangler d1 execute "$DB_NAME" --file=migrations/002_seed_default_data.sql
+                echo "✅ Seed data migration complete"
+            else
+                echo "⊗ Skipping seed data"
+            fi
+        else
+            wrangler d1 execute "$DB_NAME" --file=migrations/002_seed_default_data.sql
+            echo "✅ Seed data migration complete"
+        fi
+        echo ""
+        echo "✅ All migrations applied!"
+    fi
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📊 Database Status"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Tables created:"
+    wrangler d1 execute "$DB_NAME" --command="SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+    echo ""
+    echo "Record counts:"
+    wrangler d1 execute "$DB_NAME" --command="
+        SELECT 'users' as table_name, COUNT(*) as count FROM users
+        UNION ALL SELECT 'roles', COUNT(*) FROM roles
+        UNION ALL SELECT 'oauth_clients', COUNT(*) FROM oauth_clients
+        UNION ALL SELECT 'scope_mappings', COUNT(*) FROM scope_mappings
+        UNION ALL SELECT 'branding_settings', COUNT(*) FROM branding_settings;
+    "
+else
+    echo ""
+    echo "⊗ Migrations skipped"
+    echo ""
+    echo "To run migrations later:"
+    echo "  bash migrations/migrate.sh $ENV up"
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🎉 D1 Setup Complete!"
+echo ""
+echo "📋 Database Information:"
+echo "  • Database Name: $DB_NAME"
+echo "  • Database ID: $DB_ID"
+echo "  • Binding Name: DB"
+echo ""
+echo "📝 Updated Files:"
+for toml_file in packages/*/wrangler.toml; do
+    if [ -f "$toml_file" ]; then
+        package_name=$(basename $(dirname "$toml_file"))
+        if [ "$package_name" != "router" ]; then
+            echo "  • $package_name/wrangler.toml"
+        fi
+    fi
+done
+echo ""
+echo "Next steps:"
+echo "  1. Verify D1 binding in wrangler.toml files"
+echo "  2. Update your TypeScript Env interface to include DB binding"
+echo "  3. Test database access in your workers"
+echo ""
+echo "Useful commands:"
+echo "  • List tables:    wrangler d1 execute $DB_NAME --command=\"SELECT name FROM sqlite_master WHERE type='table';\""
+echo "  • Query data:     wrangler d1 execute $DB_NAME --command=\"SELECT * FROM users LIMIT 5;\""
+echo "  • Run migrations: bash migrations/migrate.sh $ENV up"
+echo "  • Check status:   bash migrations/migrate.sh $ENV status"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

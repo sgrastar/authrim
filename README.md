@@ -187,16 +187,19 @@ cd enrai
 # 2. Install dependencies (monorepo setup)
 pnpm install
 
-# 3. Set up KV namespaces
-./scripts/setup-kv.sh
-
-# 4. Set up RSA keys (for local development)
+# 3. Set up RSA keys and generate wrangler.toml files
 ./scripts/setup-dev.sh
 
-# 5. Build all packages
+# 4. Set up KV namespaces
+./scripts/setup-kv.sh
+
+# 5. Set up D1 database (Phase 5 - optional for Phase 1-4)
+./scripts/setup-d1.sh
+
+# 6. Build all packages
 pnpm run build
 
-# 6. Start all workers in parallel
+# 7. Start all workers in parallel
 pnpm run dev
 
 # Workers start at:
@@ -338,24 +341,27 @@ Deploy Enrai to Cloudflare's global edge network and get a production-ready Open
 # 1. Install dependencies
 pnpm install
 
-# 2. Set up KV namespaces
-./scripts/setup-kv.sh
-
-# 3. Set up RSA keys and generate wrangler.toml files
+# 2. Set up RSA keys and generate wrangler.toml files
 ./scripts/setup-dev.sh
 
-# 4. Upload secrets to Cloudflare
+# 3. Set up KV namespaces
+./scripts/setup-kv.sh
+
+# 4. Set up D1 database (Phase 5 - optional for Phase 1-4)
+./scripts/setup-d1.sh
+
+# 5. Upload secrets to Cloudflare
 ./scripts/setup-secrets.sh
 
-# 5. Choose deployment mode and configure
+# 6. Choose deployment mode and configure
 ./scripts/setup-production.sh
 # → Select: 1) Test Environment (Router Worker)
 #       or: 2) Production Environment (Custom Domain + Routes)
 
-# 6. Build TypeScript
+# 7. Build TypeScript
 pnpm run build
 
-# 7. Deploy with retry logic (recommended)
+# 8. Deploy with retry logic (recommended)
 pnpm run deploy:with-router
 # This uses deploy-with-retry.sh for sequential deployment with delays
 # Router Worker is included if wrangler.toml exists (test mode)
