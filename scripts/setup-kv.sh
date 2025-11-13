@@ -43,7 +43,7 @@ create_kv_namespace() {
     local preview_flag=$2
 
     echo "  📝 Creating KV namespace: $name $preview_flag" >&2
-    local output=$(wrangler kv:namespace create "$name" $preview_flag 2>&1)
+    local output=$(wrangler kv namespace create "$name" $preview_flag 2>&1)
     local exit_code=$?
 
     echo "  📄 Wrangler output:" >&2
