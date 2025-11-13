@@ -18,12 +18,7 @@ import type { KeyLike, JWTPayload, JWK } from 'jose';
 import { importJWK } from 'jose';
 import { verifyToken } from './jwt';
 import { isTokenRevoked } from './kv';
-import {
-  extractDPoPProof,
-  validateDPoPProof,
-  isDPoPBoundToken,
-  extractDPoPToken,
-} from './dpop';
+import { extractDPoPProof, validateDPoPProof, isDPoPBoundToken, extractDPoPToken } from './dpop';
 
 /**
  * Token introspection result
@@ -174,7 +169,8 @@ export async function introspectToken(
       valid: false,
       error: {
         error: 'invalid_request',
-        error_description: 'Invalid Authorization header format. Expected: Bearer <token> or DPoP <token>',
+        error_description:
+          'Invalid Authorization header format. Expected: Bearer <token> or DPoP <token>',
         wwwAuthenticate: 'Bearer',
         statusCode: 401,
       },
@@ -320,7 +316,8 @@ export async function introspectToken(
         valid: false,
         error: {
           error: 'invalid_token',
-          error_description: 'This token is DPoP-bound and requires DPoP proof. Use "DPoP" token type instead of "Bearer".',
+          error_description:
+            'This token is DPoP-bound and requires DPoP proof. Use "DPoP" token type instead of "Bearer".',
           wwwAuthenticate: 'DPoP error="invalid_token"',
           statusCode: 401,
         },

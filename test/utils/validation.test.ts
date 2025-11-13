@@ -248,7 +248,9 @@ describe('Validation Utilities', () => {
     });
 
     it('should accept base64url code with hyphens and underscores', () => {
-      const validCode = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'.repeat(2) + 'a'.repeat(4);
+      const validCode =
+        'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'.repeat(2) +
+        'a'.repeat(4);
       const result = validateAuthCode(validCode);
       expect(result.valid).toBe(true);
     });

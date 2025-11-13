@@ -70,8 +70,12 @@ function validatePARParams(formData: Record<string, unknown>): PARRequestParams 
     scope,
     state: typeof formData.state === 'string' ? formData.state : undefined,
     nonce: typeof formData.nonce === 'string' ? formData.nonce : undefined,
-    code_challenge: typeof formData.code_challenge === 'string' ? formData.code_challenge : undefined,
-    code_challenge_method: typeof formData.code_challenge_method === 'string' ? formData.code_challenge_method : undefined,
+    code_challenge:
+      typeof formData.code_challenge === 'string' ? formData.code_challenge : undefined,
+    code_challenge_method:
+      typeof formData.code_challenge_method === 'string'
+        ? formData.code_challenge_method
+        : undefined,
     response_mode: typeof formData.response_mode === 'string' ? formData.response_mode : undefined,
     prompt: typeof formData.prompt === 'string' ? formData.prompt : undefined,
     display: typeof formData.display === 'string' ? formData.display : undefined,
@@ -126,7 +130,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // Validate client_id
     const clientValidation = validateClientId(params.client_id);
     if (!clientValidation.valid) {
-      throw new OIDCError(ERROR_CODES.INVALID_CLIENT, clientValidation.error || 'Invalid client_id');
+      throw new OIDCError(
+        ERROR_CODES.INVALID_CLIENT,
+        clientValidation.error || 'Invalid client_id'
+      );
     }
 
     // Verify client exists (optional: implement client authentication here)
@@ -216,11 +223,9 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     };
 
     // Store in KV namespace (we'll use STATE_STORE for request URIs)
-    await c.env.STATE_STORE.put(
-      `request_uri:${requestUri}`,
-      JSON.stringify(requestData),
-      { expirationTtl: REQUEST_URI_EXPIRY }
-    );
+    await c.env.STATE_STORE.put(`request_uri:${requestUri}`, JSON.stringify(requestData), {
+      expirationTtl: REQUEST_URI_EXPIRY,
+    });
 
     // RFC 9126: Return request_uri and expires_in
     return c.json(
