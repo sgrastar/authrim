@@ -1,4 +1,4 @@
-# Enrai - OpenID Conformance Testing Guide (Without Docker) 💥
+# Enrai - OpenID Conformance Testing Guide (Without Docker) ⚡️
 
 **Purpose:** How to perform OpenID Connect conformance testing without Docker environment
 **Target:** Phase 3 - Testing & Validation
@@ -633,7 +633,7 @@ Dynamic Client Registration実装後（Phase 4予定）:
 
 ---
 
-> 💥 **Enrai** - Docker不要のOpenID Conformance Testing
+> ⚡️ **Enrai** - Docker不要のOpenID Conformance Testing
 >
 > **更新日:** 2025-11-11
 > **ステータス:** Phase 3 - Testing & Validation
