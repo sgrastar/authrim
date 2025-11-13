@@ -338,3 +338,233 @@ export interface StorageConfig {
   /** Additional options for the storage backend */
   options?: Record<string, unknown>;
 }
+
+/**
+ * Unified storage adapter interface
+ *
+ * Provides a unified interface for accessing multiple storage backends
+ * (D1, KV, Durable Objects) with intelligent routing logic.
+ *
+ * Routing Strategy:
+ * - Sessions: SessionStore Durable Object (hot data) + D1 fallback (cold data)
+ * - Clients: D1 database + KV cache (read-through cache pattern)
+ * - Users: D1 database
+ * - Authorization codes: AuthorizationCodeStore Durable Object (one-time use guarantee)
+ * - Refresh tokens: RefreshTokenRotator Durable Object (atomic rotation)
+ */
+export interface IStorageAdapter {
+  /**
+   * Get value by key (routes to appropriate storage backend)
+   * @param key - Key to retrieve (prefix determines routing: session:, client:, user:, etc.)
+   * @returns Value as string, or null if not found
+   */
+  get(key: string): Promise<string | null>;
+
+  /**
+   * Set value with optional TTL
+   * @param key - Key to set
+   * @param value - Value to store
+   * @param ttl - Optional time-to-live in seconds
+   */
+  set(key: string, value: string, ttl?: number): Promise<void>;
+
+  /**
+   * Delete value by key
+   * @param key - Key to delete
+   */
+  delete(key: string): Promise<void>;
+
+  /**
+   * Execute SQL query (D1 only)
+   * @param sql - SQL query string
+   * @param params - Query parameters
+   * @returns Query results
+   */
+  query<T = unknown>(sql: string, params?: unknown[]): Promise<T[]>;
+
+  /**
+   * Execute SQL statement (D1 only, no results returned)
+   * @param sql - SQL statement string
+   * @param params - Statement parameters
+   */
+  execute(sql: string, params?: unknown[]): Promise<void>;
+}
+
+/**
+ * IUserStore interface
+ * Simplified user storage operations for Phase 5
+ */
+export interface IUserStore {
+  /**
+   * Get user by ID
+   * @param userId - User identifier
+   * @returns User object or null if not found
+   */
+  get(userId: string): Promise<User | null>;
+
+  /**
+   * Get user by email
+   * @param email - User email address
+   * @returns User object or null if not found
+   */
+  getByEmail(email: string): Promise<User | null>;
+
+  /**
+   * Create a new user
+   * @param user - User data
+   * @returns Created user with ID
+   */
+  create(user: Partial<User>): Promise<User>;
+
+  /**
+   * Update an existing user
+   * @param userId - User identifier
+   * @param updates - Partial user data to update
+   * @returns Updated user
+   */
+  update(userId: string, updates: Partial<User>): Promise<User>;
+
+  /**
+   * Delete a user
+   * @param userId - User identifier
+   */
+  delete(userId: string): Promise<void>;
+}
+
+/**
+ * IClientStore interface
+ * Simplified client storage operations for Phase 5
+ */
+export interface IClientStore {
+  /**
+   * Get client by ID (with read-through cache: KV → D1)
+   * @param clientId - Client identifier
+   * @returns Client metadata or null if not found
+   */
+  get(clientId: string): Promise<ClientData | null>;
+
+  /**
+   * Create a new client
+   * @param client - Client data
+   * @returns Created client
+   */
+  create(client: Partial<ClientData>): Promise<ClientData>;
+
+  /**
+   * Update an existing client (invalidates cache)
+   * @param clientId - Client identifier
+   * @param updates - Partial client data to update
+   * @returns Updated client
+   */
+  update(clientId: string, updates: Partial<ClientData>): Promise<ClientData>;
+
+  /**
+   * Delete a client (invalidates cache)
+   * @param clientId - Client identifier
+   */
+  delete(clientId: string): Promise<void>;
+
+  /**
+   * List all clients
+   * @param options - List options
+   * @returns Array of clients
+   */
+  list(options?: { limit?: number; offset?: number }): Promise<ClientData[]>;
+}
+
+/**
+ * ISessionStore interface
+ * Simplified session storage operations for Phase 5
+ */
+export interface ISessionStore {
+  /**
+   * Get session by ID (Durable Object → D1 fallback)
+   * @param sessionId - Session identifier
+   * @returns Session object or null if not found
+   */
+  get(sessionId: string): Promise<Session | null>;
+
+  /**
+   * Create a new session (stored in Durable Object + D1)
+   * @param session - Session data
+   * @returns Created session with ID
+   */
+  create(session: Partial<Session>): Promise<Session>;
+
+  /**
+   * Invalidate session immediately (Durable Object + D1)
+   * @param sessionId - Session identifier
+   */
+  delete(sessionId: string): Promise<void>;
+
+  /**
+   * List active sessions for a user
+   * @param userId - User identifier
+   * @returns Array of active sessions
+   */
+  listByUser(userId: string): Promise<Session[]>;
+
+  /**
+   * Extend session expiration (Active TTL)
+   * @param sessionId - Session identifier
+   * @param additionalSeconds - Additional seconds to add to expiration
+   * @returns Updated session or null if not found
+   */
+  extend(sessionId: string, additionalSeconds: number): Promise<Session | null>;
+}
+
+/**
+ * IPasskeyStore interface
+ * Passkey storage operations for Phase 5
+ */
+export interface IPasskeyStore {
+  /**
+   * Get passkey by credential ID
+   * @param credentialId - WebAuthn credential ID
+   * @returns Passkey object or null if not found
+   */
+  getByCredentialId(credentialId: string): Promise<Passkey | null>;
+
+  /**
+   * List passkeys for a user
+   * @param userId - User identifier
+   * @returns Array of passkeys
+   */
+  listByUser(userId: string): Promise<Passkey[]>;
+
+  /**
+   * Create a new passkey
+   * @param passkey - Passkey data
+   * @returns Created passkey with ID
+   */
+  create(passkey: Partial<Passkey>): Promise<Passkey>;
+
+  /**
+   * Update passkey counter (for replay attack prevention)
+   * @param passkeyId - Passkey identifier
+   * @param counter - New counter value
+   * @returns Updated passkey
+   */
+  updateCounter(passkeyId: string, counter: number): Promise<Passkey>;
+
+  /**
+   * Delete a passkey
+   * @param passkeyId - Passkey identifier
+   */
+  delete(passkeyId: string): Promise<void>;
+}
+
+/**
+ * Passkey model
+ */
+export interface Passkey {
+  id: string; // UUID
+  user_id: string;
+  credential_id: string; // WebAuthn credential ID (unique)
+  public_key: string; // Public key for verification
+  counter: number; // Signature counter for replay attack prevention
+  transports?: string[]; // Authenticator transports (usb, nfc, ble, internal)
+  device_name?: string; // User-friendly device name
+  created_at: number; // Unix timestamp
+  last_used_at?: number; // Unix timestamp
+}
