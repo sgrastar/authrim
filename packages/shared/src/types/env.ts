@@ -9,6 +9,10 @@ export interface Env {
   CLIENTS: KVNamespace;
   REVOKED_TOKENS: KVNamespace;
   REFRESH_TOKENS: KVNamespace;
+  INITIAL_ACCESS_TOKENS?: KVNamespace; // For Dynamic Client Registration (RFC 7591)
+
+  // Rate Limiting
+  RATE_LIMIT?: KVNamespace;
 
   // Environment Variables
   ISSUER_URL: string;
@@ -18,6 +22,9 @@ export interface Env {
   NONCE_EXPIRY: string;
   REFRESH_TOKEN_EXPIRY: string;
   ALLOW_HTTP_REDIRECT?: string; // Allow http:// redirect URIs for development
+
+  // Dynamic Client Registration settings
+  OPEN_REGISTRATION?: string; // "true" to allow registration without Initial Access Token
 
   // Secrets (cryptographic keys)
   PRIVATE_KEY_PEM?: string;
