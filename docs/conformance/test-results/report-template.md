@@ -418,7 +418,7 @@ Refer to the following files for detailed test logs:
 
 ---
 
-> 💥 **Enrai** - OpenID Conformance Test Report
+> ⚡️ **Enrai** - OpenID Conformance Test Report
 >
 > **Version:** vX.Y.Z
 > **Report Date:** YYYY-MM-DD

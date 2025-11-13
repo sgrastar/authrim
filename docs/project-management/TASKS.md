@@ -2186,7 +2186,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ---
 
-> **Enrai** 💥 — Building standards-compliant identity infrastructure, one task at a time.
+> **Enrai** ⚡️ — Building standards-compliant identity infrastructure, one task at a time.
 >
 > **Updated:** 2025-11-12 — Phase 4 (Extended Features) ✅ COMPLETE
 > - Added Dynamic Client Registration (RFC 7591)
