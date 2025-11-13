@@ -21,14 +21,14 @@ if [ -f ".keys/private.pem" ]; then
         KEY_ID=$(cat .keys/metadata.json | jq -r '.kid')
     else
         echo "Regenerating keys..."
-        npm run generate-keys
+        pnpm run generate-keys
         PRIVATE_KEY=$(cat .keys/private.pem)
         PUBLIC_JWK=$(cat .keys/public.jwk.json | jq -c .)
         KEY_ID=$(cat .keys/metadata.json | jq -r '.kid')
     fi
 else
     echo "📦 Generating RSA keys..."
-    npm run generate-keys
+    pnpm run generate-keys
     PRIVATE_KEY=$(cat .keys/private.pem)
     PUBLIC_JWK=$(cat .keys/public.jwk.json | jq -c .)
     KEY_ID=$(cat .keys/metadata.json | jq -r '.kid')
@@ -46,25 +46,23 @@ EOF
 
 echo "✅ .dev.vars file created successfully!"
 echo ""
-
-# Update KEY_ID in wrangler.toml
-echo "📝 Updating KEY_ID in wrangler.toml..."
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    sed -i '' "s/KEY_ID = \".*\"/KEY_ID = \"$KEY_ID\"/" wrangler.toml
-else
-    # Linux
-    sed -i "s/KEY_ID = \".*\"/KEY_ID = \"$KEY_ID\"/" wrangler.toml
-fi
-
-echo "✅ wrangler.toml updated successfully!"
-echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "🎉 Setup complete!"
 echo ""
+echo "📋 Key Information:"
+echo "  • Key ID: $KEY_ID"
+echo "  • Private Key: .keys/private.pem"
+echo "  • Public JWK: .keys/public.jwk.json"
+echo ""
 echo "Next steps:"
-echo "  1. Run 'npm run dev' to start the development server"
-echo "  2. Run 'npm test' to run the test suite"
-echo "  3. Visit http://localhost:8787/.well-known/openid-configuration"
+echo "  1. Run 'pnpm install' to install dependencies (if not done)"
+echo "  2. Run 'pnpm run build' to build all packages"
+echo "  3. Run 'pnpm run dev' to start all workers"
+echo "  4. Visit http://localhost:8787/.well-known/openid-configuration"
+echo ""
+echo "For production deployment:"
+echo "  • Run './scripts/setup-kv.sh' to create KV namespaces"
+echo "  • Run './scripts/setup-secrets.sh' to configure Cloudflare Secrets"
+echo "  • Run './scripts/setup-production.sh' to set production URLs"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
