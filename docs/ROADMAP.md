@@ -379,9 +379,9 @@ Legend:
 
 **Timeline:** May 1-31, 2026 (4 weeks)
 
-**Goal:** 最高のパスワードレス体験 + Auth0/Clerkを超えるUX
+**Goal:** 最高のパスワードレス体験とユーザー体験
 
-**Priority:** Auth0/Clerkより優位、エッジが立つもの、現代的なUX
+**Priority:** 最高のユーザー体験、現代的なUX
 
 **Tech Stack Decisions:**
 - **Frontend**: Svelte + SvelteKit v5
@@ -848,17 +848,18 @@ Legend:
 - [ ] <50ms p95 global latency
 - [ ] Security audit passed
 
-### Phase 6: Passwordless Auth & Modern UX 🆕
+### Phase 5: UI/UX Implementation 🆕
 - [ ] 🎯 WebAuthn/Passkey fully functional (目玉機能)
 - [ ] 🎯 Magic Link authentication working
-- [ ] 🎯 ACR/AMR claims implemented
-- [ ] 🎯 6+ languages supported (ui_locales)
-- [ ] Front-Channel & Back-Channel Logout
+- [ ] 🎯 ITP-compliant cross-domain SSO
+- [ ] Fully functional login/registration UI
+- [ ] Complete admin dashboard
+- [ ] Multi-storage backend support
+- [ ] RBAC implementation
 - [ ] <5 sec login page load
 - [ ] >90% mobile Lighthouse score
 - [ ] WCAG 2.1 AA compliance
-- [ ] <3 clicks to any admin function
-- [ ] 50%+ users using Passkey (goal)
+- [ ] Multi-language support (EN, JA)
 
 ### Phase 7: CLI 🆕
 - [ ] <5 min from `npx create-enrai` to running IdP
@@ -900,7 +901,7 @@ Legend:
 Enrai will be:
 
 1. **🏆 OpenID Certified** - Official certification obtained
-2. **🔐 Passwordless-first** - WebAuthn + Magic Link (Auth0/Clerkを超える)
+2. **🔐 Passwordless-first** - WebAuthn + Magic Link
 3. **⚡ Fully automated** - One command from zero to production
 4. **🌍 Globally distributed** - <50ms latency worldwide (Cloudflare Edge)
 5. **🎨 Beautiful UX** - Modern, accessible, multi-language
@@ -951,7 +952,7 @@ Add:
 | 2025-11-12 | **🚀 MAJOR ROADMAP UPDATE** | All requested features integrated into phases |
 | 2025-11-12 | Phase 4 expanded | Added PAR, DPoP, Pairwise, Form Post, Token Introspection/Revocation |
 | 2025-11-12 | Phase 5 expanded | Added JARM, MTLS, JAR, Client Credentials Flow |
-| 2025-11-12 | Phase 6 reimagined | **Passwordless-first**: WebAuthn/Passkey + Magic Link + ACR/AMR + ui_locales |
+| 2025-11-12 | Phase 5 reimagined | **Passwordless-first**: WebAuthn/Passkey + Magic Link + ITP-compliant SSO |
 | 2025-11-12 | Phase 6 expanded | Added Session Management, Front/Back-Channel Logout, Audit Log, Scope Extensions |
 | 2025-11-12 | Phase 8 created | Enterprise Flows: Hybrid, Device, JWT Bearer, CIBA, JWE, Social Login, SAML, LDAP, SCIM |
 | 2025-11-12 | Phase 9 created | Next-Gen: OpenID4VP/CI/IA, Federation, OAuth 2.1, Ephemeral Identity, Mobile SDKs |
@@ -978,7 +979,7 @@ Add:
 > - **Vision:** The world's best passwordless OpenID Provider on Cloudflare Edge
 >
 > **Key Differentiators:**
-> - 🔐 **Passwordless-first** (WebAuthn + Magic Link) - Auth0/Clerkを超える
+> - 🔐 **Passwordless-first** (WebAuthn + Magic Link)
 > - ⚡ **Edge-native** (Cloudflare Workers) - <50ms worldwide
 > - 🎯 **Advanced Security** (PAR, DPoP, MTLS, JARM, JWE)
 > - 🆔 **Next-Gen** (Verifiable Credentials, OAuth 2.1, Federation)
