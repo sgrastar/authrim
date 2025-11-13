@@ -1,7 +1,7 @@
-# hibana – Technical Specification (for AI analysis)
+# enrai – Technical Specification (for AI analysis)
 
 ## 1. Project Overview
-**hibana** is a lightweight, standards-compliant **OpenID Connect Provider (OP)** implemented entirely on **Cloudflare Workers** using **Hono** as the routing framework.
+**enrai** is a lightweight, standards-compliant **OpenID Connect Provider (OP)** implemented entirely on **Cloudflare Workers** using **Hono** as the routing framework.
 It demonstrates that an individual developer can deploy a fully functional, globally distributed OpenID Provider (OIDC OP) at the edge.
 
 **Related Documents:**
@@ -33,7 +33,7 @@ It demonstrates that an individual developer can deploy a fully functional, glob
 
 ### 3.2 Logical Flow Diagram
 ```
-User → /authorize → [hibana OP] → redirect_uri (with code)
+User → /authorize → [enrai OP] → redirect_uri (with code)
 ↳ /token → returns { access_token, id_token }
 ↳ /userinfo → user claims (static or dynamic)
 ```
@@ -257,10 +257,10 @@ MIT License © 2025 [sgrastar](https://github.com/sgrastar)
 
 In short:
 
-* **hibana** is a Cloudflare Workers-based implementation of an **OpenID Provider (OP)**.
+* **enrai** is a Cloudflare Workers-based implementation of an **OpenID Provider (OP)**.
 * It adheres to **OIDC Core**, **Discovery**, and **OAuth 2.0** specifications.
 * It’s **stateless**, **edge-native**, and suitable for **OpenID Conformance certification**.
 * Its key innovation: *individual developers can deploy their own issuer on the edge.*
 
-> Conceptually: “hibana ignites identity — a spark of trust at the edge.”
+> Conceptually: “enrai ignites identity — a spark of trust at the edge.”
 

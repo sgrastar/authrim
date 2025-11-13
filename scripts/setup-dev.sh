@@ -1,11 +1,11 @@
 #!/bin/bash
 #
-# Hibana Development Setup Script
+# Enrai Development Setup Script
 # This script generates RSA keys and configures .dev.vars for local development
 
 set -e
 
-echo "🔐 Hibana Development Setup"
+echo "🔐 Enrai Development Setup"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 

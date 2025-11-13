@@ -1,5 +1,5 @@
 {
-  "name": "hibana",
+  "name": "enrai",
   "version": "0.1.0",
   "description": "A lightweight OpenID Connect Provider built on Cloudflare Workers",
   "main": "dist/index.js",

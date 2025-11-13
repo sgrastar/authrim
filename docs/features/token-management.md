@@ -1,10 +1,10 @@
 # Token Management
 
-This document describes Hibana's token management capabilities, including refresh token flow, token introspection, and token revocation.
+This document describes Enrai's token management capabilities, including refresh token flow, token introspection, and token revocation.
 
 ## Overview
 
-Hibana implements comprehensive token management features as defined in:
+Enrai implements comprehensive token management features as defined in:
 - **RFC 6749 Section 6**: Refresh Token Grant
 - **RFC 7662**: OAuth 2.0 Token Introspection
 - **RFC 7009**: OAuth 2.0 Token Revocation
@@ -29,7 +29,7 @@ Refresh tokens allow clients to obtain new access tokens without requiring the u
 
 #### Refresh Token Rotation
 
-Hibana implements **automatic refresh token rotation** as a security best practice:
+Enrai implements **automatic refresh token rotation** as a security best practice:
 
 1. When a refresh token is used, it is immediately invalidated
 2. A new refresh token is issued with the new access token
@@ -41,7 +41,7 @@ Clients can request a reduced scope when using a refresh token:
 
 ```http
 POST /token HTTP/1.1
-Host: hibana.sgrastar.workers.dev
+Host: enrai.sgrastar.workers.dev
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=refresh_token
@@ -103,7 +103,7 @@ Authorization: Basic <base64(client_id:client_secret)>  # Optional, alternative 
 #### Using Form Parameters
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/token \
+curl -X POST https://enrai.sgrastar.workers.dev/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=refresh_token" \
   -d "refresh_token=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
@@ -114,7 +114,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/token \
 #### Using HTTP Basic Authentication
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/token \
+curl -X POST https://enrai.sgrastar.workers.dev/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -u "my_client_id:my_client_secret" \
   -d "grant_type=refresh_token" \
@@ -127,7 +127,7 @@ Refresh tokens are JWTs containing the following claims:
 
 ```json
 {
-  "iss": "https://hibana.sgrastar.workers.dev",
+  "iss": "https://enrai.sgrastar.workers.dev",
   "sub": "user-abc123",
   "aud": "my_client_id",
   "exp": 1234567890,
@@ -193,8 +193,8 @@ Authorization: Basic <base64(client_id:client_secret)>  # Optional
   "exp": 1234567890,
   "iat": 1234564290,
   "sub": "user-abc123",
-  "aud": "https://hibana.sgrastar.workers.dev",
-  "iss": "https://hibana.sgrastar.workers.dev",
+  "aud": "https://enrai.sgrastar.workers.dev",
+  "iss": "https://enrai.sgrastar.workers.dev",
   "jti": "at_unique_identifier"
 }
 ```
@@ -222,7 +222,7 @@ A token is considered **inactive** if:
 ### Example Usage
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/introspect \
+curl -X POST https://enrai.sgrastar.workers.dev/introspect \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -u "my_client_id:my_client_secret" \
   -d "token=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
@@ -287,7 +287,7 @@ Content-Length: 0
 #### Revoke Access Token
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/revoke \
+curl -X POST https://enrai.sgrastar.workers.dev/revoke \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -u "my_client_id:my_client_secret" \
   -d "token=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
@@ -297,7 +297,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/revoke \
 #### Revoke Refresh Token
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/revoke \
+curl -X POST https://enrai.sgrastar.workers.dev/revoke \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -u "my_client_id:my_client_secret" \
   -d "token=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..." \
@@ -329,7 +329,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/revoke \
 
 ### Authorization Code Reuse Protection
 
-When an authorization code is reused, Hibana automatically revokes all tokens issued with that code:
+When an authorization code is reused, Enrai automatically revokes all tokens issued with that code:
 
 ```typescript
 // Per RFC 6749 Section 4.1.2: Authorization codes are single-use
@@ -383,7 +383,7 @@ REFRESH_TOKEN_EXPIRY = "604800" # 7 days
 
 ### Cloudflare KV Namespaces
 
-Hibana uses Cloudflare KV for token metadata storage:
+Enrai uses Cloudflare KV for token metadata storage:
 
 #### Refresh Tokens
 - **Key Format**: `refresh_token:{jti}`
@@ -401,7 +401,7 @@ Hibana uses Cloudflare KV for token metadata storage:
 
 ### Test Coverage
 
-Hibana includes comprehensive tests for token management:
+Enrai includes comprehensive tests for token management:
 
 - **Refresh Token Flow**: 20+ test cases
 - **Token Introspection**: 15+ test cases

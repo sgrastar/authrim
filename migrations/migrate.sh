@@ -1,5 +1,5 @@
 #!/bin/bash
-# Hibana Database Migration Script
+# Enrai Database Migration Script
 # Usage: ./migrations/migrate.sh [dev|prod] [up|down|reset|status]
 
 set -e
@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 # Configuration
 ENV=${1:-dev}
 ACTION=${2:-up}
-DB_NAME="hibana-${ENV}"
+DB_NAME="enrai-${ENV}"
 
 # Helper functions
 log_info() {
@@ -149,7 +149,7 @@ reset_database() {
 
 # Show help
 show_help() {
-    echo "Hibana Database Migration Script"
+    echo "Enrai Database Migration Script"
     echo ""
     echo "Usage: ./migrations/migrate.sh [env] [action]"
     echo ""
@@ -172,7 +172,7 @@ show_help() {
 # Main script
 main() {
     echo "╔════════════════════════════════════════╗"
-    echo "║   Hibana Database Migration Tool      ║"
+    echo "║   Enrai Database Migration Tool      ║"
     echo "╚════════════════════════════════════════╝"
     echo ""
 

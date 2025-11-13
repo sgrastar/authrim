@@ -1,4 +1,4 @@
-name = "hibana"
+name = "enrai"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -43,13 +43,13 @@ KEY_ID = "dev-key-TIMESTAMP-XXXXXXX"
 
 # Development environment
 [env.development]
-name = "hibana-dev"
+name = "enrai-dev"
 vars = { ISSUER_URL = "http://localhost:8787" }
 
 # Production environment
 [env.production]
-name = "hibana-prod"
-# vars = { ISSUER_URL = "https://hibana.YOUR_SUBDOMAIN.workers.dev" }
+name = "enrai-prod"
+# vars = { ISSUER_URL = "https://enrai.YOUR_SUBDOMAIN.workers.dev" }
 
 # Build configuration
 [build]
@@ -59,4 +59,4 @@ command = "npm run build"
 # [[durable_objects.bindings]]
 # name = "KEY_MANAGER"
 # class_name = "KeyManager"
-# script_name = "hibana"
+# script_name = "enrai"

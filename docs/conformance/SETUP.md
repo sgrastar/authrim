@@ -1,6 +1,6 @@
-# Hibana Development Setup Guide
+# Enrai Development Setup Guide
 
-This guide explains how to set up Hibana for local development and testing.
+This guide explains how to set up Enrai for local development and testing.
 
 ## Prerequisites
 

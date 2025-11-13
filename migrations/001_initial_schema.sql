@@ -1,4 +1,4 @@
--- Hibana Phase 5: Initial Database Schema
+-- Enrai Phase 5: Initial Database Schema
 -- Created: 2025-11-13
 -- Description: Creates all 11 tables for Phase 5 implementation
 -- Documentation: docs/architecture/database-schema.md

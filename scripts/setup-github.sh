@@ -1,9 +1,9 @@
 #!/bin/bash
-# Setup GitHub labels, milestones, and project for Hibana
+# Setup GitHub labels, milestones, and project for Enrai
 
 set -e
 
-echo "🔥 Setting up GitHub repository for Hibana..."
+echo "🔥 Setting up GitHub repository for Enrai..."
 echo ""
 
 # Check if gh CLI is installed
@@ -96,7 +96,7 @@ PROJECT_ID=$(gh api graphql -f query='
   mutation {
     createProjectV2(input: {
       ownerId: "MDQ6VXNlcjEyMzQ1Njc4OQ=="
-      title: "Hibana Development"
+      title: "Enrai Development"
       repositoryId: "R_kgDOLxYzXw"
     }) {
       projectV2 {
