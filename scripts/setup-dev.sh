@@ -79,6 +79,7 @@ NONCE_EXPIRY = "300"
 REFRESH_TOKEN_EXPIRY = "2592000"
 KEY_ID = "$KEY_ID"
 ALLOW_HTTP_REDIRECT = "true"
+OPEN_REGISTRATION = "true"
 
 # Development configuration
 [dev]
