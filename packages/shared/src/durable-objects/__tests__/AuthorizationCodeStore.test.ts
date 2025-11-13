@@ -32,7 +32,7 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
           return Promise.resolve(existed);
         } else {
           let count = 0;
-          keyOrKeys.forEach(key => {
+          keyOrKeys.forEach((key) => {
             if (this._storage.delete(key)) count++;
           });
           return Promise.resolve(count);
@@ -81,7 +81,7 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
 }
 
 // Mock Env
-const createMockEnv = (): Env => ({} as Env);
+const createMockEnv = (): Env => ({}) as Env;
 
 describe('AuthorizationCodeStore', () => {
   let codeStore: AuthorizationCodeStore;
@@ -111,7 +111,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(201);
 
-      const body = await response.json() as { success: boolean; expiresAt: number };
+      const body = (await response.json()) as { success: boolean; expiresAt: number };
       expect(body.success).toBe(true);
       expect(body).toHaveProperty('expiresAt');
     });
@@ -129,7 +129,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(400);
 
-      const body = await response.json() as { error: string };
+      const body = (await response.json()) as { error: string };
       expect(body.error).toBe('invalid_request');
     });
 
@@ -181,7 +181,11 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(consumeRequest);
       expect(response.status).toBe(200);
 
-      const body = await response.json() as { userId: string; scope: string; redirectUri: string };
+      const body = (await response.json()) as {
+        userId: string;
+        scope: string;
+        redirectUri: string;
+      };
       expect(body.userId).toBe('user_123');
       expect(body.scope).toBe('openid profile');
       expect(body.redirectUri).toBe('https://app.example.com/callback');
@@ -226,7 +230,7 @@ describe('AuthorizationCodeStore', () => {
       const response2 = await codeStore.fetch(consume2);
       expect(response2.status).toBe(400);
 
-      const body = await response2.json() as { error: string; error_description: string };
+      const body = (await response2.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_grant');
       expect(body.error_description).toContain('already used');
     });
@@ -244,7 +248,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(400);
 
-      const body = await response.json() as { error: string };
+      const body = (await response.json()) as { error: string };
       expect(body.error).toBe('invalid_grant');
     });
 
@@ -275,7 +279,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(consumeRequest);
       expect(response.status).toBe(400);
 
-      const body = await response.json() as { error: string; error_description: string };
+      const body = (await response.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_grant');
       expect(body.error_description).toContain('mismatch');
     });
@@ -346,7 +350,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(consumeRequest);
       expect(response.status).toBe(400);
 
-      const body = await response.json() as { error_description: string };
+      const body = (await response.json()) as { error_description: string };
       expect(body.error_description).toContain('PKCE');
     });
 
@@ -380,7 +384,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(consumeRequest);
       expect(response.status).toBe(400);
 
-      const body = await response.json() as { error_description: string };
+      const body = (await response.json()) as { error_description: string };
       expect(body.error_description).toContain('code_verifier required');
     });
   });
@@ -420,7 +424,7 @@ describe('AuthorizationCodeStore', () => {
       const lastResponse = responses[5];
       expect(lastResponse.status).toBe(500);
 
-      const body = await lastResponse.json() as { error_description: string };
+      const body = (await lastResponse.json()) as { error_description: string };
       expect(body.error_description).toContain('Too many');
     });
   });
@@ -434,7 +438,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json() as { status: string; codes: unknown; config: unknown };
+      const body = (await response.json()) as { status: string; codes: unknown; config: unknown };
       expect(body).toHaveProperty('status', 'ok');
       expect(body).toHaveProperty('codes');
       expect(body).toHaveProperty('config');
@@ -464,7 +468,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(checkRequest);
       expect(response.status).toBe(200);
 
-      const body = await response.json() as { exists: boolean };
+      const body = (await response.json()) as { exists: boolean };
       expect(body.exists).toBe(true);
     });
 
@@ -476,7 +480,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json() as { exists: boolean };
+      const body = (await response.json()) as { exists: boolean };
       expect(body.exists).toBe(false);
     });
   });
@@ -504,7 +508,7 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(deleteRequest);
       expect(response.status).toBe(200);
 
-      const body = await response.json() as { deleted: string };
+      const body = (await response.json()) as { deleted: string };
       expect(body.deleted).toBe('auth_code_delete');
 
       // Verify code is gone
@@ -512,7 +516,7 @@ describe('AuthorizationCodeStore', () => {
         method: 'GET',
       });
       const checkResponse = await codeStore.fetch(checkRequest);
-      const checkBody = await checkResponse.json() as { exists: boolean };
+      const checkBody = (await checkResponse.json()) as { exists: boolean };
       expect(checkBody.exists).toBe(false);
     });
   });
