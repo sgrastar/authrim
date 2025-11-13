@@ -377,12 +377,20 @@ update_wrangler_toml() {
     # Check if file exists
     if [ ! -f "$file" ]; then
         echo "    ⚠️  Warning: File not found: $file"
+        echo "    💡 Hint: Run './scripts/setup-dev.sh' first to generate wrangler.toml files"
         return 1
     fi
 
     # Check if IDs are provided
     if [ -z "$id" ] || [ -z "$preview_id" ]; then
         echo "    ⚠️  Warning: Empty ID provided for $binding (id: '$id', preview_id: '$preview_id')"
+        return 1
+    fi
+
+    # Check if the binding exists in the file
+    if ! grep -q "binding = \"$binding\"" "$file"; then
+        echo "    ⚠️  Warning: Binding '$binding' not found in $file"
+        echo "    💡 Hint: The wrangler.toml file may need to be regenerated with './scripts/setup-dev.sh'"
         return 1
     fi
 
