@@ -52,7 +52,9 @@ export async function validateDPoPProof(
       };
     }
 
-    const header = JSON.parse(new TextDecoder().decode(base64url.decode(headerPart))) as Partial<DPoPHeader>;
+    const header = JSON.parse(
+      new TextDecoder().decode(base64url.decode(headerPart))
+    ) as Partial<DPoPHeader>;
     // Payload parsing removed as we verify the entire JWT later
 
     // Validate header
