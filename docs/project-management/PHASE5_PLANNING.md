@@ -1059,7 +1059,7 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
    - ✅ ER図作成 → [database-schema.md](../architecture/database-schema.md)
    - ✅ API仕様書作成 → [OpenAPI 3.1](../api/openapi.yaml) | [APIガイド](../api/README.md)
    - ✅ デザインシステム策定 → [design-system.md](../design/design-system.md)
-   - 📝 ワイヤーフレーム作成 - 次のタスク
+   - ✅ ワイヤーフレーム作成 → [wireframes.md](../design/wireframes.md)
 
 4. **実装開始**
    - Week 1からタイムラインに沿って進行
@@ -1075,6 +1075,7 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   - [API README](../api/README.md) - APIガイド・クイックスタート
   - [API_INVENTORY.md](./API_INVENTORY.md) - APIインベントリ
   - [design-system.md](../design/design-system.md) - デザインシステム
+  - [wireframes.md](../design/wireframes.md) - UI ワイヤーフレーム（全13ページ）
 - **プロジェクト情報**
   - [ROADMAP.md](../ROADMAP.md) - 全体ロードマップ
   - [VISION.md](../VISION.md) - プロジェクトビジョン
