@@ -1,7 +1,7 @@
 # Phase 3 クイックスタートガイド 🚀
 
 **所要時間:** 約30分
-**対象:** Hibana Phase 3テストの実施者
+**対象:** Enrai Phase 3テストの実施者
 **更新日:** 2025-11-11
 
 ---
@@ -21,7 +21,7 @@
 
 ```bash
 # プロジェクトルートに移動
-cd /path/to/hibana
+cd /path/to/enrai
 
 # 依存関係のインストール（初回のみ）
 npm install
@@ -73,7 +73,7 @@ jq -r '.kid' .keys/metadata.json
 
 ```toml
 [vars]
-ISSUER = "https://hibana.YOUR_SUBDOMAIN.workers.dev"
+ISSUER = "https://enrai.YOUR_SUBDOMAIN.workers.dev"
 KEY_ID = "ここに上でコピーしたKEY_IDを貼り付け"
 ALLOW_HTTP_REDIRECT = "false"
 ```
@@ -86,7 +86,7 @@ wrangler whoami
 # Account ID: xxxxxxxxxxxxxxxxxxxx
 ```
 
-通常は `hibana.YOUR_USERNAME.workers.dev` になります。
+通常は `enrai.YOUR_USERNAME.workers.dev` になります。
 
 ### 2.3 Secretsの設定
 
@@ -113,8 +113,8 @@ npm run deploy
 **✓ 期待される出力:**
 
 ```
-Published hibana (X.XX sec)
-  https://hibana.YOUR_SUBDOMAIN.workers.dev
+Published enrai (X.XX sec)
+  https://enrai.YOUR_SUBDOMAIN.workers.dev
 ```
 
 このURLをコピーしてメモします。
@@ -123,14 +123,14 @@ Published hibana (X.XX sec)
 
 ```bash
 # 環境変数に設定
-export HIBANA_URL="https://hibana.YOUR_SUBDOMAIN.workers.dev"
+export ENRAI_URL="https://enrai.YOUR_SUBDOMAIN.workers.dev"
 
 # Discovery endpoint
-curl $HIBANA_URL/.well-known/openid-configuration | jq .issuer
-# 出力が $HIBANA_URL と一致すればOK
+curl $ENRAI_URL/.well-known/openid-configuration | jq .issuer
+# 出力が $ENRAI_URL と一致すればOK
 
 # JWKS endpoint
-curl $HIBANA_URL/.well-known/jwks.json | jq '.keys[0].kty'
+curl $ENRAI_URL/.well-known/jwks.json | jq '.keys[0].kty'
 # 出力が "RSA" であればOK
 ```
 
@@ -159,12 +159,12 @@ curl $HIBANA_URL/.well-known/jwks.json | jq '.keys[0].kty'
    - Response Type: **code**
 3. 「Continue」をクリック
 
-### 3.3 Hibanaの設定
+### 3.3 Enraiの設定
 
 **Issuer URL** に以下を入力：
 
 ```
-https://hibana.YOUR_SUBDOMAIN.workers.dev
+https://enrai.YOUR_SUBDOMAIN.workers.dev
 ```
 
 「Discover」ボタンをクリックすると、自動的にメタデータが読み込まれます。
@@ -173,7 +173,7 @@ https://hibana.YOUR_SUBDOMAIN.workers.dev
 
 1. 「Start Test」をクリック
 2. ブラウザで Authorization URL が表示されたらクリック
-3. Hibana の認可エンドポイントにリダイレクトされます
+3. Enrai の認可エンドポイントにリダイレクトされます
 4. 自動的にテストスイートにリダイレクトされ、テストが続行されます
 
 ### 3.5 結果の確認
@@ -234,7 +234,7 @@ git push origin claude/phase3-test-documentation-011CV2461YR1rAMaAnJdqK1v
 **解決方法:**
 ```bash
 # HTTPSアクセスを確認
-curl -I $HIBANA_URL/.well-known/openid-configuration
+curl -I $ENRAI_URL/.well-known/openid-configuration
 
 # 200 OK が返ることを確認
 ```
@@ -250,7 +250,7 @@ cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
 npm run deploy
 
 # 確認
-curl $HIBANA_URL/.well-known/jwks.json | jq
+curl $ENRAI_URL/.well-known/jwks.json | jq
 ```
 
 ### 問題: "Token endpoint error (500)"
@@ -337,12 +337,12 @@ Phase 3完了のためのチェックリスト：
 - [Cloudflare Workers Docs](https://developers.cloudflare.com/workers/)
 
 **サポート:**
-- GitHub Issues: https://github.com/sgrastar/hibana/issues
+- GitHub Issues: https://github.com/sgrastar/enrai/issues
 - TASKS.md: Phase 3 タスクリスト
 
 ---
 
-> 💥 **Hibana Phase 3** - 30分でConformance Testing開始
+> 💥 **Enrai Phase 3** - 30分でConformance Testing開始
 >
 > **更新日:** 2025-11-11
 > **所要時間:** 約30分

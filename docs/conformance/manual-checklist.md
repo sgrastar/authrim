@@ -1,4 +1,4 @@
-# Hibana Manual Conformance Checklist 💥
+# Enrai Manual Conformance Checklist 💥
 
 **Purpose:** Manual verification checklist for OpenID Connect Basic OP Profile conformance
 **Target:** Phase 3 - Testing & Validation
@@ -577,7 +577,7 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 
 ---
 
-> 💥 **Hibana** - Manual conformance testing for Phase 3
+> 💥 **Enrai** - Manual conformance testing for Phase 3
 >
 > **初回テスト実施日:** 2025-11-11 (適合率: 38.9%)
 > **再テスト実施日:** 2025-11-11 (適合率: 88.9%)

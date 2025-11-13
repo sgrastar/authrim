@@ -1,7 +1,7 @@
-# Hibana Project Kickoff Checklist
+# Enrai Project Kickoff Checklist
 
 ## Overview
-This checklist covers all immediate tasks needed to kickoff the Hibana project and complete Week 1 deliverables.
+This checklist covers all immediate tasks needed to kickoff the Enrai project and complete Week 1 deliverables.
 
 **Target Completion**: November 16, 2025
 **Milestone**: M1 - Foundation Complete (Dec 15, 2025)
@@ -28,7 +28,7 @@ This checklist covers all immediate tasks needed to kickoff the Hibana project a
 - [ ] GitHub repository access configured
 - [ ] Cloudflare account set up
 - [ ] Cloudflare API token generated
-- [ ] Git branch created: `claude/hibana-project-setup-011CUzP18xDrPBpH2wQgouqJ`
+- [ ] Git branch created: `claude/enrai-project-setup-011CUzP18xDrPBpH2wQgouqJ`
 
 ---
 
@@ -38,7 +38,7 @@ This checklist covers all immediate tasks needed to kickoff the Hibana project a
 Create the following directory structure:
 
 ```
-hibana/
+enrai/
 ├── .github/
 │   └── workflows/          # CI/CD workflows
 ├── src/
@@ -73,7 +73,7 @@ hibana/
 **File**: `package.json`
 
 - [ ] Create `package.json` with:
-  - [ ] Project name: `hibana`
+  - [ ] Project name: `enrai`
   - [ ] Version: `0.1.0`
   - [ ] Description: OpenID Connect Provider on Cloudflare Workers
   - [ ] Main entry point: `src/index.ts`
@@ -118,7 +118,7 @@ hibana/
 **File**: `wrangler.toml`
 
 - [ ] Create `wrangler.toml` with:
-  - [ ] `name`: "hibana"
+  - [ ] `name`: "enrai"
   - [ ] `main`: "src/index.ts"
   - [ ] `compatibility_date`: "2024-11-01"
   - [ ] KV namespace bindings:
@@ -372,10 +372,10 @@ hibana/
 
 ### Branch Management
 
-- [ ] Verify current branch: `claude/hibana-project-setup-011CUzP18xDrPBpH2wQgouqJ`
+- [ ] Verify current branch: `claude/enrai-project-setup-011CUzP18xDrPBpH2wQgouqJ`
 - [ ] Push to remote:
   ```bash
-  git push -u origin claude/hibana-project-setup-011CUzP18xDrPBpH2wQgouqJ
+  git push -u origin claude/enrai-project-setup-011CUzP18xDrPBpH2wQgouqJ
   ```
 
 ---
@@ -524,4 +524,4 @@ After completing this checklist, proceed to:
 
 ---
 
-> **Hibana** 🔥 — Starting strong with a solid foundation.
+> **Enrai** 🔥 — Starting strong with a solid foundation.

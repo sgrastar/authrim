@@ -1,6 +1,6 @@
-# Hibana Task Breakdown
+# Enrai Task Breakdown
 
-This document provides a comprehensive, week-by-week breakdown of all tasks required to build and certify the Hibana OpenID Connect Provider.
+This document provides a comprehensive, week-by-week breakdown of all tasks required to build and certify the Enrai OpenID Connect Provider.
 
 **Related Documents:**
 - [Project Schedule](./SCHEDULE.md) - High-level timeline and milestones
@@ -50,7 +50,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 #### 1.4 Cloudflare Workers Configuration
 - [x] Create `wrangler.toml` configuration:
-  - [x] Set worker name: `hibana`
+  - [x] Set worker name: `enrai`
   - [x] Configure compatibility date
   - [x] Set main entry point
   - [x] Define KV namespace bindings
@@ -534,7 +534,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 #### 13.2 Configuration ✅
 - [x] Configure OP metadata:
-  - [x] Issuer URL: https://hibana.sgrastar.workers.dev
+  - [x] Issuer URL: https://enrai.sgrastar.workers.dev
   - [x] Client registration: static_client
   - [x] Test credentials
 - [x] Configure test plan (oidcc-basic-certification-test-plan)
@@ -613,7 +613,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - Plan ID: e90FqMh4xG2mg
 - Test Version: 5.1.36
 - Test Date: 2025-11-12
-- Issuer: https://hibana.sgrastar.workers.dev
+- Issuer: https://enrai.sgrastar.workers.dev
 
 | Status | Count | Percentage |
 |--------|-------|------------|
@@ -1086,7 +1086,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 ### Week 32-33: CLI Tool Development (Jun 12-25)
 
-#### 32.1 `create-hibana` Package Setup
+#### 32.1 `create-enrai` Package Setup
 - [ ] Initialize NPM package
 - [ ] Set up TypeScript configuration
 - [ ] Configure build system (tsup/esbuild)
@@ -1118,28 +1118,28 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [ ] Add error handling
 
 #### 32.4 Deployment Commands
-- [ ] Implement `hibana deploy` command
-- [ ] Add `hibana deploy --production` flag
-- [ ] Implement `hibana rollback` command
-- [ ] Add `hibana status` command
-- [ ] Implement `hibana logs` command
+- [ ] Implement `enrai deploy` command
+- [ ] Add `enrai deploy --production` flag
+- [ ] Implement `enrai rollback` command
+- [ ] Add `enrai status` command
+- [ ] Implement `enrai logs` command
 - [ ] Add deployment progress tracking
 - [ ] Implement error recovery
 - [ ] Test deployment flow
 
 #### 32.5 Management Commands
-- [ ] Implement `hibana user create <email>`
-- [ ] Add `hibana user delete <email>`
-- [ ] Implement `hibana user reset-password <email>`
-- [ ] Add `hibana user list`
-- [ ] Implement `hibana client create <name>`
-- [ ] Add `hibana client list`
-- [ ] Implement `hibana client delete <id>`
-- [ ] Add `hibana keys rotate`
-- [ ] Implement `hibana backup`
-- [ ] Add `hibana restore <file>`
-- [ ] Implement `hibana config get <key>`
-- [ ] Add `hibana config set <key> <value>`
+- [ ] Implement `enrai user create <email>`
+- [ ] Add `enrai user delete <email>`
+- [ ] Implement `enrai user reset-password <email>`
+- [ ] Add `enrai user list`
+- [ ] Implement `enrai client create <name>`
+- [ ] Add `enrai client list`
+- [ ] Implement `enrai client delete <id>`
+- [ ] Add `enrai keys rotate`
+- [ ] Implement `enrai backup`
+- [ ] Add `enrai restore <file>`
+- [ ] Implement `enrai config get <key>`
+- [ ] Add `enrai config set <key> <value>`
 - [ ] Test all commands
 
 #### 32.6 CLI Testing
@@ -1327,7 +1327,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [ ] Responsive on all screen sizes (320px+)
 
 ### Phase 7: CLI & Automation
-- [ ] <5 minutes from `npx create-hibana` to running IdP
+- [ ] <5 minutes from `npx create-enrai` to running IdP
 - [ ] <1 minute deployment time
 - [ ] 100% automated setup (zero manual config)
 - [ ] CLI with 20+ commands
@@ -1467,7 +1467,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 #### 45.3 Identity Federation & Transformation
 - [ ] Design identity mapping schema
-- [ ] Implement social identity to Hibana user mapping
+- [ ] Implement social identity to Enrai user mapping
 - [ ] Create account linking logic (same email, multiple providers)
 - [ ] Implement first-time social login flow
 - [ ] Add profile synchronization from social providers
@@ -2105,7 +2105,7 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 
 #### 10.5 Production Environment
 - [ ] Set up production Cloudflare account
-- [ ] Configure custom domain (`id.hibana.dev`)
+- [ ] Configure custom domain (`id.enrai.org`)
 - [ ] Set up DNS records
 - [ ] Configure SSL/TLS (with MTLS support)
 
@@ -2179,14 +2179,14 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [ ] MTLS (Mutual TLS) implemented
 - [ ] JAR (JWT-Secured Authorization Request) operational
 - [ ] Client Credentials Flow working
-- [ ] Production deployment live (`https://id.hibana.dev`)
+- [ ] Production deployment live (`https://id.enrai.org`)
 - [ ] OpenID Certification obtained ✨
 - [ ] Public announcement ready
 - [ ] Migration guides published
 
 ---
 
-> **Hibana** 💥 — Building standards-compliant identity infrastructure, one task at a time.
+> **Enrai** 💥 — Building standards-compliant identity infrastructure, one task at a time.
 >
 > **Updated:** 2025-11-12 — Phase 4 (Extended Features) ✅ COMPLETE
 > - Added Dynamic Client Registration (RFC 7591)

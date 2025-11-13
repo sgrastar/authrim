@@ -1,4 +1,4 @@
-# Hibana API Documentation 🚀
+# Enrai API Documentation 🚀
 
 **最終更新**: 2025-11-13
 **API Version**: v1.0 (Phase 5)
@@ -20,7 +20,7 @@
 
 ## 概要
 
-Hibana OIDC OPは、39以上のAPIエンドポイントを提供します：
+Enrai OIDC OPは、39以上のAPIエンドポイントを提供します：
 
 | カテゴリ | エンドポイント数 | ステータス |
 |---------|----------------|-----------|
@@ -195,7 +195,7 @@ X-RateLimit-Reset: 1678901234
 {
   "error": "invalid_request",
   "error_description": "The request is missing a required parameter",
-  "error_uri": "https://docs.hibana.dev/errors/invalid_request"
+  "error_uri": "https://docs.enrai.org/errors/invalid_request"
 }
 ```
 
@@ -225,7 +225,7 @@ X-RateLimit-Reset: 1678901234
 | `invalid_request_uri` | 400 | request_uriが不正 |
 | `invalid_request_object` | 400 | request JWTが不正 |
 
-#### Hibana独自エラー
+#### Enrai独自エラー
 
 | エラーコード | HTTP Status | 説明 |
 |-------------|-------------|------|
@@ -345,15 +345,15 @@ curl https://your-domain.com/admin/users?q=john&limit=50 \
 
 ### 公式SDK（Phase 6で提供予定）
 
-- **TypeScript/JavaScript SDK** - npm: `@hibana/sdk`
-- **Python SDK** - PyPI: `hibana-sdk`
-- **Go SDK** - `github.com/hibana/go-sdk`
-- **Rust SDK** - Crates.io: `hibana-sdk`
+- **TypeScript/JavaScript SDK** - npm: `@enrai/sdk`
+- **Python SDK** - PyPI: `enrai-sdk`
+- **Go SDK** - `github.com/enrai/go-sdk`
+- **Rust SDK** - Crates.io: `enrai-sdk`
 
 ### コミュニティSDK
 
-- **Ruby** - `hibana-ruby` (community-maintained)
-- **PHP** - `hibana-php` (community-maintained)
+- **Ruby** - `enrai-ruby` (community-maintained)
+- **PHP** - `enrai-php` (community-maintained)
 
 ---
 
@@ -381,7 +381,7 @@ curl https://your-domain.com/admin/users?q=john&limit=50 \
 ```http
 Deprecation: true
 Sunset: Sat, 1 Jan 2026 00:00:00 GMT
-Link: <https://docs.hibana.dev/migration/v2>; rel="sunset"
+Link: <https://docs.enrai.org/migration/v2>; rel="sunset"
 ```
 
 ---
@@ -397,11 +397,11 @@ Link: <https://docs.hibana.dev/migration/v2>; rel="sunset"
 
 ### Issue報告
 
-GitHub Issues: https://github.com/sgrastar/hibana/issues
+GitHub Issues: https://github.com/sgrastar/enrai/issues
 
 ### コントリビューション
 
-Pull Requests歓迎: https://github.com/sgrastar/hibana/pulls
+Pull Requests歓迎: https://github.com/sgrastar/enrai/pulls
 
 ---
 

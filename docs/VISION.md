@@ -1,6 +1,6 @@
-# Hibana Vision 🔥
+# Enrai Vision 🔥
 
-**Hibana** is an enterprise-grade OpenID Connect Provider that deploys in minutes, not days.
+**Enrai** is an enterprise-grade OpenID Connect Provider that deploys in minutes, not days.
 
 ---
 
@@ -18,7 +18,7 @@ Setting up identity infrastructure is complex:
 
 ## 💡 Our Solution
 
-Hibana provides a **lightweight, serverless OpenID Connect Provider** that:
+Enrai provides a **lightweight, serverless OpenID Connect Provider** that:
 
 1. **Deploys in one command** - No complex setup
 2. **Runs on Cloudflare Workers** - Global edge network, zero cold starts
@@ -31,13 +31,13 @@ Hibana provides a **lightweight, serverless OpenID Connect Provider** that:
 ## 🚀 The Vision: One-Command Identity Infrastructure
 
 ```bash
-npx create-hibana my-identity-provider
+npx create-enrai my-identity-provider
 ```
 
 ### The Experience
 
 ```
-🔥 Hibana - OpenID Connect Provider Setup
+🔥 Enrai - OpenID Connect Provider Setup
 
 We'll set up your identity provider in a few steps.
 
@@ -97,8 +97,8 @@ Next steps:
   3. Register your first OAuth client
   4. Test the login flow
 
-Documentation: https://hibana.dev/docs
-Support: https://github.com/hibana/hibana/issues
+Documentation: https://enrai.org/docs
+Support: https://github.com/enrai/enrai/issues
 ```
 
 ---
@@ -151,7 +151,7 @@ Support: https://github.com/hibana/hibana/issues
 **Dashboard:**
 ```
 ┌─────────────────────────────────────────────────────┐
-│  🔥 Hibana Admin                    admin@acme.com ▼│
+│  🔥 Enrai Admin                    admin@acme.com ▼│
 ├─────────────────────────────────────────────────────┤
 │                                                     │
 │  Overview                                           │
@@ -220,12 +220,12 @@ Support: https://github.com/hibana/hibana/issues
 
 ```javascript
 // 1. Install client library
-npm install @hibana/client
+npm install @enrai/client
 
 // 2. Configure
-import { HibanaClient } from '@hibana/client';
+import { EnraiClient } from '@enrai/client';
 
-const auth = new HibanaClient({
+const auth = new EnraiClient({
   issuer: 'https://id.example.com',
   clientId: 'your-client-id',
   clientSecret: 'your-client-secret',
@@ -266,7 +266,7 @@ app.get('/callback', async (req, res) => {
 ┌─────────┐         │  (290+ cities)          │         ┌─────────┐
 │ User    │────────▶│                         │────────▶│ Your    │
 │ Browser │         │  ┌──────────────────┐  │         │ App     │
-└─────────┘         │  │ Hibana Workers   │  │         └─────────┘
+└─────────┘         │  │ Enrai Workers   │  │         └─────────┘
                     │  │ - Auth endpoints │  │
                     │  │ - Token issuance │  │
                     │  │ - User validation│  │
@@ -327,7 +327,7 @@ app.get('/callback', async (req, res) => {
 - Email template editor
 
 ### 🆕 Phase 7: CLI & Automation (Aug 2026)
-- `create-hibana` CLI tool
+- `create-enrai` CLI tool
 - One-command deployment
 - Interactive setup wizard
 - Cloudflare integration
@@ -348,7 +348,7 @@ app.get('/callback', async (req, res) => {
 ## 🎯 Success Metrics
 
 ### Developer Experience
-- ⏱️ **<5 minutes** from `npx create-hibana` to working IdP
+- ⏱️ **<5 minutes** from `npx create-enrai` to working IdP
 - 📚 **<30 minutes** to integrate first application
 - 🎨 **<1 hour** to fully customize branding
 
@@ -371,7 +371,7 @@ app.get('/callback', async (req, res) => {
 
 ## 🌟 Competitive Advantages
 
-| Feature | Hibana | Auth0 | Keycloak | Cognito |
+| Feature | Enrai | Auth0 | Keycloak | Cognito |
 |---------|--------|-------|----------|---------|
 | **Setup Time** | 5 min | 30 min | 2+ hours | 1+ hour |
 | **Cold Starts** | 0ms | N/A | N/A | 100-500ms |
@@ -410,7 +410,7 @@ app.get('/callback', async (req, res) => {
 
 ## 🤝 Open Source Philosophy
 
-Hibana is **open source** (MIT License):
+Enrai is **open source** (MIT License):
 - ✅ Full source code available
 - ✅ Community-driven development
 - ✅ No vendor lock-in
@@ -467,12 +467,12 @@ Hibana is **open source** (MIT License):
 ## 🚀 Get Started
 
 ```bash
-# Install Hibana
-npx create-hibana my-identity-provider
+# Install Enrai
+npx create-enrai my-identity-provider
 
 # Or clone and deploy manually
-git clone https://github.com/sgrastar/hibana.git
-cd hibana
+git clone https://github.com/sgrastar/enrai.git
+cd enrai
 npm install
 npm run deploy
 ```
@@ -481,10 +481,10 @@ npm run deploy
 
 ## 💬 Community
 
-- 💼 **GitHub**: https://github.com/sgrastar/hibana
-- 💬 **Discord**: https://discord.gg/hibana
-- 🐦 **Twitter**: @hibana_dev
-- 📧 **Email**: hello@hibana.dev
+- 💼 **GitHub**: https://github.com/sgrastar/enrai
+- 💬 **Discord**: https://discord.gg/enrai
+- 🐦 **Twitter**: @enrai_dev
+- 📧 **Email**: hello@enrai.org
 
 ---
 
@@ -494,6 +494,6 @@ MIT License - Use it however you want!
 
 ---
 
-> **Hibana** 🔥 — Identity infrastructure that sparks joy.
+> **Enrai** 🔥 — Identity infrastructure that sparks joy.
 >
 > *From zero to production-ready OpenID Provider in under 5 minutes.*

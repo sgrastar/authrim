@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: Hibana OIDC OP API
+  title: Enrai OIDC OP API
   version: 1.0.0
   description: |
-    Hibana is a modern OpenID Connect Provider (OP) built for the edge.
+    Enrai is a modern OpenID Connect Provider (OP) built for the edge.
 
     **Features**:
     - ✅ OIDC Core 1.0 compliant
@@ -17,10 +17,10 @@ info:
     - Phase 4 Complete: OIDC Core + Extensions
     - Phase 5 Planning: UI/UX + Admin APIs
 
-    **Documentation**: https://github.com/sgrastar/hibana
+    **Documentation**: https://github.com/sgrastar/enrai
   contact:
-    name: Hibana Development Team
-    url: https://github.com/sgrastar/hibana
+    name: Enrai Development Team
+    url: https://github.com/sgrastar/enrai
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
@@ -1668,4 +1668,4 @@ components:
           example: The request is missing a required parameter
         error_uri:
           type: string
-          example: https://docs.hibana.dev/errors/invalid_request
+          example: https://docs.enrai.org/errors/invalid_request

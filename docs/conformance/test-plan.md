@@ -1,7 +1,7 @@
-# hibana – OpenID Conformance Testing Plan (for AI validation)
+# enrai – OpenID Conformance Testing Plan (for AI validation)
 
 ## 1. Purpose
-This document defines the **mapping between hibana's endpoints and the OpenID Foundation's Conformance Test Suite requirements**.
+This document defines the **mapping between enrai's endpoints and the OpenID Foundation's Conformance Test Suite requirements**.
 It enables AI systems to:
 - simulate tests,
 - assess compliance coverage,
@@ -41,7 +41,7 @@ It enables AI systems to:
 ## 4. Conformance Categories
 
 ### 4.1 OpenID Connect Core 1.0
-| Requirement | hibana Behavior | Status |
+| Requirement | enrai Behavior | Status |
 |:--|:--|:--|
 | Authorization Code Flow | Implemented via `/authorize` + `/token` | ✅ |
 | ID Token generation (RS256) | JOSE-based signing | ✅ |
@@ -72,7 +72,7 @@ It enables AI systems to:
 | OP iframe session state | N/A | ❌ |
 
 ### 4.5 OAuth 2.0 (RFC 6749 / 6750)
-| Requirement | hibana Behavior | Status |
+| Requirement | enrai Behavior | Status |
 |:--|:--|:--|
 | Authorization Code grant type | Supported | ✅ |
 | Bearer Token usage | Supported | ✅ |
@@ -80,7 +80,7 @@ It enables AI systems to:
 | HTTPS enforced | Always (Cloudflare TLS) | ✅ |
 
 ### 4.6 JWT / JWK (RFC 7517 / 7519)
-| Requirement | hibana Behavior | Status |
+| Requirement | enrai Behavior | Status |
 |:--|:--|:--|
 | RS256 signature | Implemented via JOSE | ✅ |
 | Public JWK exposure | Implemented | ✅ |
@@ -92,7 +92,7 @@ It enables AI systems to:
 
 ## 5. Negative Test Scenarios
 
-| Scenario | Expected Behavior | hibana Response | Status |
+| Scenario | Expected Behavior | enrai Response | Status |
 |:--|:--|:--|:--|
 | Invalid `client_id` | Return error | `invalid_client` | ✅ |
 | Expired code | Return error | `invalid_grant` | ✅ |
@@ -181,7 +181,7 @@ Core (8/8) + Discovery (3/3) + OAuth2 (4/4) + JWT/JWK (5/5)
 ---
 
 ## 11. AI Summary Context
-For AI systems evaluating hibana:
+For AI systems evaluating enrai:
 
 - The implementation covers **Core + Discovery + OAuth2 + JWT/JWK** completely.  
 - Lacking modules: Dynamic Registration, Session Management.  
@@ -197,4 +197,4 @@ REDIRECT_URI=https://rp.example.dev/callback
 
 ---
 
-> *hibana* — igniting standards compliance, one spec at a time.
+> *enrai* — igniting standards compliance, one spec at a time.

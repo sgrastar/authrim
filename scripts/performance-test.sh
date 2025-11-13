@@ -1,15 +1,15 @@
 #!/bin/bash
-# Hibana Performance Benchmark Script
+# Enrai Performance Benchmark Script
 # Tests endpoint latency and throughput for Phase 3 completion
 
 set -e
 
-ISSUER="${ISSUER:-https://hibana.sgrastar.workers.dev}"
+ISSUER="${ISSUER:-https://enrai.sgrastar.workers.dev}"
 RESULTS_DIR="docs/conformance/test-results"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 RESULTS_FILE="${RESULTS_DIR}/performance-results-${TIMESTAMP}.md"
 
-echo "🔥 Hibana Performance Benchmark"
+echo "🔥 Enrai Performance Benchmark"
 echo "================================"
 echo "Issuer: ${ISSUER}"
 echo "Timestamp: ${TIMESTAMP}"
@@ -24,7 +24,7 @@ fi
 # Create results file
 mkdir -p "${RESULTS_DIR}"
 cat > "${RESULTS_FILE}" << EOF
-# Hibana Performance Benchmark Results
+# Enrai Performance Benchmark Results
 
 **Test Date:** $(date +%Y-%m-%d)
 **Test Time:** $(date +%H:%M:%S)
