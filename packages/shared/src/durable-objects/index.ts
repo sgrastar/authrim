@@ -19,12 +19,7 @@ export { RefreshTokenRotator } from './RefreshTokenRotator';
 export { KeyManager } from './KeyManager';
 
 // Export types for external use
-export type {
-  Session,
-  SessionData,
-  CreateSessionRequest,
-  SessionResponse,
-} from './SessionStore';
+export type { Session, SessionData, CreateSessionRequest, SessionResponse } from './SessionStore';
 
 export type {
   AuthorizationCode,
