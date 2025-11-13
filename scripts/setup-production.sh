@@ -17,8 +17,8 @@ if ! command -v wrangler &> /dev/null; then
     exit 1
 fi
 
-# Check if user is logged in and get subdomain
-echo "🔍 Detecting your Cloudflare account subdomain..."
+# Check if user is logged in
+echo "🔍 Checking Cloudflare authentication..."
 echo ""
 
 WHOAMI_OUTPUT=$(wrangler whoami 2>&1)
@@ -29,16 +29,42 @@ if ! echo "$WHOAMI_OUTPUT" | grep -q "You are logged in"; then
     exit 1
 fi
 
-# Extract subdomain from whoami output
-# The subdomain appears in the format: *.subdomain.workers.dev
-SUBDOMAIN=$(echo "$WHOAMI_OUTPUT" | grep -o '\*\.[a-zA-Z0-9_-]*\.workers\.dev' | head -1 | sed 's/\*\.//' | sed 's/\.workers\.dev//')
+echo "✅ Logged in to Cloudflare"
+echo ""
 
-if [ -z "$SUBDOMAIN" ]; then
-    echo "⚠️  Could not automatically detect your workers.dev subdomain"
-    SUBDOMAIN="your-subdomain"
+# Try to detect subdomain from existing deployments
+echo "🔍 Attempting to detect your workers.dev subdomain..."
+SUBDOMAIN=""
+
+# Check for existing worker deployments
+DEPLOYMENTS_OUTPUT=$(wrangler deployments list 2>&1 || true)
+if echo "$DEPLOYMENTS_OUTPUT" | grep -q "workers.dev"; then
+    # Extract subdomain from deployment URL (e.g., worker-name.subdomain.workers.dev)
+    SUBDOMAIN=$(echo "$DEPLOYMENTS_OUTPUT" | grep -o '[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*\.workers\.dev' | head -1 | cut -d'.' -f2)
 fi
 
-echo "✅ Detected subdomain: $SUBDOMAIN.workers.dev"
+if [ -z "$SUBDOMAIN" ] || [ "$SUBDOMAIN" = "workers" ]; then
+    echo "⚠️  Could not automatically detect your workers.dev subdomain"
+    echo ""
+    echo "Please enter your workers.dev subdomain:"
+    echo "  (This is the unique subdomain assigned to your Cloudflare account)"
+    echo "  Example: If your workers are at 'worker-name.sgrastar.workers.dev',"
+    echo "           enter 'sgrastar'"
+    echo ""
+    read -p "Your subdomain: " MANUAL_SUBDOMAIN
+
+    if [ -z "$MANUAL_SUBDOMAIN" ]; then
+        echo "❌ Error: Subdomain cannot be empty"
+        exit 1
+    fi
+
+    SUBDOMAIN="$MANUAL_SUBDOMAIN"
+    echo ""
+    echo "✅ Using subdomain: $SUBDOMAIN.workers.dev"
+else
+    echo "✅ Detected subdomain: $SUBDOMAIN.workers.dev"
+fi
+
 echo ""
 
 # Prompt for production URL choice
