@@ -46,6 +46,144 @@ EOF
 
 echo "✅ .dev.vars file created successfully!"
 echo ""
+
+echo "📝 Generating wrangler.toml files for each worker..."
+echo ""
+
+# Function to generate wrangler.toml for a worker
+generate_wrangler_toml() {
+    local package=$1
+    local port=$2
+    local kv_namespaces=$3
+
+    local file="packages/$package/wrangler.toml"
+
+    cat > "$file" << TOML_EOF
+name = "enrai-$package"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# KV Namespaces
+$kv_namespaces
+
+# Environment variables
+[vars]
+ISSUER_URL = "http://localhost:8787"
+TOKEN_EXPIRY = "3600"
+CODE_EXPIRY = "120"
+STATE_EXPIRY = "300"
+NONCE_EXPIRY = "300"
+REFRESH_TOKEN_EXPIRY = "2592000"
+KEY_ID = "$KEY_ID"
+ALLOW_HTTP_REDIRECT = "true"
+
+# Development configuration
+[dev]
+port = $port
+TOML_EOF
+
+    echo "  ✅ $package/wrangler.toml"
+}
+
+# Generate wrangler.toml for op-discovery
+generate_wrangler_toml "op-discovery" 8787 '[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "placeholder"
+preview_id = "placeholder"'
+
+# Generate wrangler.toml for op-auth
+generate_wrangler_toml "op-auth" 8788 '[[kv_namespaces]]
+binding = "AUTH_CODES"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "STATE_STORE"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "NONCE_STORE"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "CLIENTS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "placeholder"
+preview_id = "placeholder"'
+
+# Generate wrangler.toml for op-token
+generate_wrangler_toml "op-token" 8789 '[[kv_namespaces]]
+binding = "AUTH_CODES"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "REFRESH_TOKENS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "REVOKED_TOKENS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "CLIENTS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "placeholder"
+preview_id = "placeholder"'
+
+# Generate wrangler.toml for op-userinfo
+generate_wrangler_toml "op-userinfo" 8790 '[[kv_namespaces]]
+binding = "CLIENTS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "REVOKED_TOKENS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "placeholder"
+preview_id = "placeholder"'
+
+# Generate wrangler.toml for op-management
+generate_wrangler_toml "op-management" 8791 '[[kv_namespaces]]
+binding = "CLIENTS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "REFRESH_TOKENS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "REVOKED_TOKENS"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "placeholder"
+preview_id = "placeholder"'
+
+echo ""
+echo "✅ All wrangler.toml files generated!"
+echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "🎉 Setup complete!"
 echo ""
