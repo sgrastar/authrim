@@ -64,7 +64,7 @@ Enrai supports two deployment modes to ensure OpenID Connect specification compl
 #### 1️⃣ Test Environment (workers.dev + Router Worker)
 - **Use case**: Development, testing, quick setup
 - **How**: Router Worker acts as unified entry point with Service Bindings
-- **Issuer**: `https://enrai-router.subdomain.workers.dev`
+- **Issuer**: `https://enrai.subdomain.workers.dev`
 - **Pros**: OpenID Connect compliant, no custom domain needed
 - **Deploy**: `pnpm run deploy:with-router`
 
@@ -294,7 +294,7 @@ Choose your deployment mode and configure URLs:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   1) Test Environment (workers.dev + Router Worker)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     • Single unified endpoint: https://enrai-router.subdomain.workers.dev
+     • Single unified endpoint: https://enrai.subdomain.workers.dev
      • Uses Router Worker with Service Bindings
      • All endpoints accessible under one domain
      • Best for: Development, testing, quick setup
@@ -364,7 +364,7 @@ This is now the **recommended deployment method** for both test and production e
 - `enrai-op-auth`
 - `enrai-op-token`
 - `enrai-op-userinfo`
-- `enrai-router` (unified entry point)
+- `enrai` (unified entry point - Router Worker)
 
 **Workers deployed (Production Environment):**
 - `enrai-op-discovery`
@@ -414,8 +414,8 @@ https://enrai-op-discovery.your-subdomain.workers.dev
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📦 Deploying: router
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Published enrai-router (0.01 sec)
-https://enrai-router.your-subdomain.workers.dev
+Published enrai (0.01 sec)
+https://enrai.your-subdomain.workers.dev
 ✅ Successfully deployed: router
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -572,7 +572,7 @@ After deployment, verify that all endpoints are accessible from the issuer URL.
 
 Your unified endpoint should be:
 ```
-https://enrai-router.your-subdomain.workers.dev
+https://enrai.your-subdomain.workers.dev
 ```
 
 All OpenID Connect endpoints are automatically routed by the Router Worker:
