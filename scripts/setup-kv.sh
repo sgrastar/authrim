@@ -134,7 +134,40 @@ create_kv_namespace() {
                 ;;
             2)
                 echo "  🗑️  Deleting existing namespace: $id" >&2
-                wrangler kv namespace delete --namespace-id="$id" >&2
+                local delete_output=$(wrangler kv namespace delete --namespace-id="$id" 2>&1)
+                local delete_exit_code=$?
+
+                if [ $delete_exit_code -ne 0 ]; then
+                    echo "" >&2
+                    echo "  ❌ Failed to delete namespace:" >&2
+                    echo "$delete_output" >&2
+                    echo "" >&2
+
+                    # Check if it's because the namespace is in use
+                    if echo "$delete_output" | grep -q "associated scripts"; then
+                        echo "  ⚠️  The namespace is currently being used by deployed workers." >&2
+                        echo "  You need to either:" >&2
+                        echo "    - Undeploy the workers using this namespace first" >&2
+                        echo "    - Or use the existing namespace (option 1)" >&2
+                        echo "" >&2
+                        echo "  Would you like to use the existing namespace instead?" >&2
+                        read -p "  Use existing namespace? (y/n): " -r use_existing >&2
+
+                        if [[ $use_existing =~ ^[Yy]$ ]]; then
+                            echo "  ✓ Using existing namespace with ID: $id" >&2
+                            echo "$id"
+                            return 0
+                        else
+                            echo "  ❌ Cannot proceed without deleting or using existing namespace" >&2
+                            exit 1
+                        fi
+                    else
+                        echo "  ❌ Script aborted due to deletion failure" >&2
+                        exit 1
+                    fi
+                fi
+
+                echo "  ✓ Successfully deleted namespace" >&2
                 echo "  📝 Creating new namespace: $name $preview_flag" >&2
                 # Fall through to create new namespace
                 ;;
@@ -158,9 +191,10 @@ create_kv_namespace() {
     echo "$output" >&2
     echo "" >&2
 
-    # Check if the error is "already exists"
-    if [ $exit_code -ne 0 ]; then
-        if echo "$output" | grep -q "already exists"; then
+    # Check if the error is "already exists" (either from exit code or error message)
+    # Wrangler sometimes returns exit code 0 even on errors, so check for error indicators
+    if [ $exit_code -ne 0 ] || echo "$output" | grep -Eq "(ERROR|✘)"; then
+        if echo "$output" | grep -qi "already exists"; then
             echo "  ⚠️  Namespace already exists, fetching ID from list..." >&2
             # Re-fetch the list
             list_output=$(wrangler kv namespace list 2>&1)
