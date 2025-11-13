@@ -26,8 +26,8 @@ Enrai OIDC OP provides 39+ API endpoints:
 |---------|----------------|-----------|
 | **OIDC Core** | 7 | ✅ Phase 2 Complete |
 | **OIDC Extensions** | 4 | ✅ Phase 4 Complete |
-| **Auth UI** | 6 | 📝 Phase 5 Planned |
-| **Admin API** | 9 | 📝 Phase 5 Planned |
+| **Auth UI** | 6 | ✅ Phase 5 Stage 2 Complete |
+| **Admin API** | 9 | 🔄 Phase 5 Stage 2 Partial (6/9) |
 | **Session Management** | 6 | 📝 Phase 5 Planned |
 | **Logout** | 2 | 📝 Phase 5 Planned |
 | **Token Exchange** | 2+ | 🔄 Under Consideration |
@@ -63,37 +63,59 @@ Enterprise-grade security features:
 - Pairwise Subject Identifiers - Privacy Protection
 - Refresh Token Rotation
 
-### 3. Auth UI APIs 📝 Phase 5
+### 3. Auth UI APIs ✅ Implemented (Phase 5, Stage 2)
 
-New endpoints for passwordless authentication:
+Passwordless authentication endpoints:
 
-- `POST /auth/passkey/register` - Register Passkey
-- `POST /auth/passkey/verify` - Verify Passkey
-- `POST /auth/magic-link/send` - Send Magic Link
-- `POST /auth/magic-link/verify` - Verify Magic Link
+#### Passkey Authentication
+- `POST /auth/passkey/register/options` - Generate Passkey Registration Options
+- `POST /auth/passkey/register/verify` - Verify Passkey Registration
+- `POST /auth/passkey/login/options` - Generate Passkey Login Options
+- `POST /auth/passkey/login/verify` - Verify Passkey Login
+
+#### Magic Link Authentication
+- `POST /auth/magic-link/send` - Send Magic Link Email
+- `GET /auth/magic-link/verify` - Verify Magic Link Token
+
+#### OAuth Consent
 - `GET /auth/consent` - Get Consent Screen Data
-- `POST /auth/consent` - Confirm Consent
+- `POST /auth/consent` - Submit Consent Decision
 
-### 4. Admin API 📝 Phase 5
+**Documentation:**
+- [Passkey API](./auth/passkey.md)
+- [Magic Link API](./auth/magic-link.md)
+- [Consent API](./auth/consent.md)
+
+### 4. Admin API 🔄 Partial (Phase 5, Stage 2)
 
 Admin-only APIs for user and client management:
 
-#### User Management
-- `GET /admin/users` - List/Search Users
+#### User Management ✅ Implemented
+- `GET /admin/users` - List/Search Users (pagination, search, filtering)
+- `GET /admin/users/:id` - Get User Details
 - `POST /admin/users` - Create User
 - `PUT /admin/users/:id` - Update User
-- `DELETE /admin/users/:id` - Delete User
+- `DELETE /admin/users/:id` - Delete User (cascade)
 
-#### Client Management
-- `GET /admin/clients` - List Clients
+#### Client Management ✅ Implemented (Read-only)
+- `GET /admin/clients` - List Clients (pagination, search)
+- `GET /admin/clients/:id` - Get Client Details
+
+#### Client Management 📝 Planned (Phase 6)
 - `POST /admin/clients` - Create Client
 - `PUT /admin/clients/:id` - Update Client
+- `POST /admin/clients/:id/regenerate-secret` - Regenerate Client Secret
 - `DELETE /admin/clients/:id` - Delete Client
 
-#### Statistics
-- `GET /admin/stats` - Statistics Information
+#### Statistics ✅ Implemented
+- `GET /admin/stats` - System Statistics & Recent Activity
 
-**Authentication**: Bearer Token (admin privileges required)
+**Documentation:**
+- [Admin User Management API](./admin/users.md)
+- [Admin Client Management API](./admin/clients.md)
+- [Admin Statistics API](./admin/statistics.md)
+
+**Authentication**: Bearer Token (admin privileges required - Phase 6)
 
 ### 5. Session Management API 📝 Phase 5
 
@@ -405,6 +427,15 @@ Pull Requests Welcome: https://github.com/sgrastar/enrai/pulls
 
 ## Change History
 
+- **2025-11-13**: Phase 5 Stage 2 Implementation
+  - ✅ Implemented Passkey API (WebAuthn/FIDO2)
+  - ✅ Implemented Magic Link API (passwordless email auth)
+  - ✅ Implemented Consent API (OAuth consent screen)
+  - ✅ Implemented Admin User Management API (full CRUD)
+  - ✅ Implemented Admin Client Management API (read-only)
+  - ✅ Implemented Admin Statistics API
+  - 📄 Added comprehensive API documentation for all new endpoints
+  - 📝 Updated API overview and status tracking
 - **2025-11-13**: Initial version (Phase 5 Design)
   - OIDC Core APIs (implemented)
   - OIDC Extensions (implemented)
