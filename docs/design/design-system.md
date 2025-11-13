@@ -1,129 +1,129 @@
 # Enrai Design System 🎨
 
-**最終更新**: 2025-11-13
-**バージョン**: 1.0.0
-**ステータス**: Phase 5設計
+**Last Updated**: 2025-11-13
+**Version**: 1.0.0
+**Status**: Phase 5 Design
 
 ---
 
-## 📋 目次
+## 📋 Table of Contents
 
-1. [概要](#概要)
-2. [デザイン原則](#デザイン原則)
-3. [カラーシステム](#カラーシステム)
-4. [タイポグラフィ](#タイポグラフィ)
-5. [スペーシング](#スペーシング)
-6. [グリッドシステム](#グリッドシステム)
-7. [コンポーネント](#コンポーネント)
-8. [アイコン](#アイコン)
-9. [アニメーション](#アニメーション)
-10. [アクセシビリティ](#アクセシビリティ)
-11. [ダークモード](#ダークモード)
-12. [レスポンシブデザイン](#レスポンシブデザイン)
+1. [Overview](#overview)
+2. [Design Principles](#design-principles)
+3. [Color System](#color-system)
+4. [Typography](#typography)
+5. [Spacing](#spacing)
+6. [Grid System](#grid-system)
+7. [Components](#components)
+8. [Icons](#icons)
+9. [Animation](#animation)
+10. [Accessibility](#accessibility)
+11. [Dark Mode](#dark-mode)
+12. [Responsive Design](#responsive-design)
 
 ---
 
-## 概要
+## Overview
 
-Enrai Design Systemは、統一されたデザイン言語です。
+Enrai Design System is a unified design language.
 
-### 設計目標
+### Design Goals
 
-1. **シンプル & 直感的** - 複雑さを排除し、ユーザーが迷わないUI
-2. **高速 & 軽量** - エッジ最適化、バンドルサイズ最小化
-3. **アクセシブル** - WCAG 2.1 AA準拠、すべての人が使える
-4. **モダン & 美しい** - 2025年の最新デザイントレンド
-5. **カスタマイズ可能** - ブランディング設定で柔軟に変更可能
+1. **Simple & Intuitive** - Eliminate complexity, create UI that users never get lost in
+2. **Fast & Lightweight** - Edge optimized, minimized bundle size
+3. **Accessible** - WCAG 2.1 AA compliant, usable by everyone
+4. **Modern & Beautiful** - Latest design trends of 2025
+5. **Customizable** - Flexibly changeable via branding settings
 
-### 技術スタック
+### Tech Stack
 
-| カテゴリ | 技術 | 理由 |
+| Category | Technology | Reason |
 |---------|------|------|
-| **CSSフレームワーク** | UnoCSS | 軽量、Tailwind互換、高速 |
-| **コンポーネント** | Melt UI (Svelte) | Headless、アクセシブル、軽量 |
-| **フレームワーク** | SvelteKit v5 | 高速、バンドル小、SSR対応 |
-| **i18n** | Paraglide | 型安全、軽量 |
-| **Captcha** | Cloudflare Turnstile | プライバシー重視、reCAPTCHA互換 |
+| **CSS Framework** | UnoCSS | Lightweight, Tailwind compatible, fast |
+| **Components** | Melt UI (Svelte) | Headless, accessible, lightweight |
+| **Framework** | SvelteKit v5 | Fast, small bundle, SSR support |
+| **i18n** | Paraglide | Type-safe, lightweight |
+| **Captcha** | Cloudflare Turnstile | Privacy-focused, reCAPTCHA compatible |
 
-### デザイントークン管理
+### Design Token Management
 
-すべてのデザイントークンはUnoCSS設定で定義され、CSS変数として出力されます：
+All design tokens are defined in UnoCSS configuration and output as CSS variables:
 
 ```typescript
 // uno.config.ts
 export default defineConfig({
   theme: {
-    colors: { /* カラーパレット */ },
-    fontFamily: { /* フォント */ },
-    spacing: { /* スペーシング */ },
+    colors: { /* Color palette */ },
+    fontFamily: { /* Fonts */ },
+    spacing: { /* Spacing */ },
   }
 })
 ```
 
 ---
 
-## デザイン原則
+## Design Principles
 
 ### 1. Clarity over Cleverness
-- 明快さを最優先、トリッキーなUIは避ける
-- 一目で理解できる情報アーキテクチャ
+- Prioritize clarity, avoid tricky UI
+- Information architecture understandable at a glance
 
 ### 2. Speed & Efficiency
-- ページロード < 1秒
-- インタラクションは即座に反応（60fps）
-- 不要なアニメーションは排除
+- Page load < 1 second
+- Interactions respond instantly (60fps)
+- Eliminate unnecessary animations
 
 ### 3. Consistency & Predictability
-- 同じパターンは同じ見た目
-- ユーザーの期待を裏切らない
+- Same patterns look the same
+- Don't betray user expectations
 
 ### 4. Progressive Enhancement
-- 基本機能はJavaScriptなしでも動作
-- リッチな体験は徐々に追加
+- Basic functionality works without JavaScript
+- Rich experiences added gradually
 
 ### 5. Inclusive by Default
-- キーボード操作完全対応
-- スクリーンリーダー対応
-- カラーコントラスト基準準拠
+- Full keyboard navigation support
+- Screen reader compatible
+- Compliant with color contrast standards
 
 ---
 
-## カラーシステム
+## Color System
 
-### プライマリカラー
+### Primary Color
 
-**Blue (青)** - 信頼性、セキュリティ、プロフェッショナル
+**Blue** - Trustworthiness, security, professional
 
-| 名前 | Light Mode | Dark Mode | 用途 |
+| Name | Light Mode | Dark Mode | Usage |
 |------|-----------|-----------|------|
-| `primary-50` | `#EFF6FF` | `#1E3A5F` | 背景、ホバー |
-| `primary-100` | `#DBEAFE` | `#2C5282` | 背景アクセント |
-| `primary-200` | `#BFDBFE` | `#2B6CB0` | ボーダー |
-| `primary-300` | `#93C5FD` | `#3182CE` | 無効状態 |
-| `primary-400` | `#60A5FA` | `#4299E1` | ホバー |
-| `primary-500` | `#3B82F6` | `#4299E1` | **メイン（デフォルト）** |
-| `primary-600` | `#2563EB` | `#60A5FA` | アクティブ |
-| `primary-700` | `#1D4ED8` | `#93C5FD` | テキスト |
+| `primary-50` | `#EFF6FF` | `#1E3A5F` | Background, hover |
+| `primary-100` | `#DBEAFE` | `#2C5282` | Background accent |
+| `primary-200` | `#BFDBFE` | `#2B6CB0` | Border |
+| `primary-300` | `#93C5FD` | `#3182CE` | Disabled state |
+| `primary-400` | `#60A5FA` | `#4299E1` | Hover |
+| `primary-500` | `#3B82F6` | `#4299E1` | **Main (default)** |
+| `primary-600` | `#2563EB` | `#60A5FA` | Active |
+| `primary-700` | `#1D4ED8` | `#93C5FD` | Text |
 | `primary-800` | `#1E40AF` | `#BFDBFE` | - |
 | `primary-900` | `#1E3A8A` | `#DBEAFE` | - |
 
-### セカンダリカラー
+### Secondary Color
 
-**Green (緑)** - 成功、安全、認証完了
+**Green** - Success, safety, authentication complete
 
-| 名前 | Light Mode | Dark Mode | 用途 |
+| Name | Light Mode | Dark Mode | Usage |
 |------|-----------|-----------|------|
-| `secondary-50` | `#ECFDF5` | `#1C4532` | 背景 |
-| `secondary-100` | `#D1FAE5` | `#22543D` | 背景アクセント |
-| `secondary-500` | `#10B981` | `#48BB78` | **メイン** |
-| `secondary-600` | `#059669` | `#68D391` | ホバー |
-| `secondary-700` | `#047857` | `#9AE6B4` | アクティブ |
+| `secondary-50` | `#ECFDF5` | `#1C4532` | Background |
+| `secondary-100` | `#D1FAE5` | `#22543D` | Background accent |
+| `secondary-500` | `#10B981` | `#48BB78` | **Main** |
+| `secondary-600` | `#059669` | `#68D391` | Hover |
+| `secondary-700` | `#047857` | `#9AE6B4` | Active |
 
-### ニュートラルカラー
+### Neutral Colors
 
-**Gray (グレー)** - テキスト、背景、ボーダー
+**Gray** - Text, background, border
 
-| 名前 | Light Mode | Dark Mode | 用途 |
+| Name | Light Mode | Dark Mode | Usage |
 |------|-----------|-----------|------|
 | `gray-50` | `#F9FAFB` | `#1A202C` | 背景 |
 | `gray-100` | `#F3F4F6` | `#2D3748` | カード背景 |
@@ -136,11 +136,11 @@ export default defineConfig({
 | `gray-800` | `#1F2937` | `#F7FAFC` | ヘッダーテキスト |
 | `gray-900` | `#111827` | `#FFFFFF` | 最も強い強調 |
 
-### セマンティックカラー
+### Semantic Colors
 
-**状態を表すカラー**
+**Colors representing state**
 
-| 状態 | Light Mode | Dark Mode | 用途 |
+| State | Light Mode | Dark Mode | Usage |
 |------|-----------|-----------|------|
 | `success-500` | `#10B981` (Green) | `#48BB78` | 成功メッセージ、認証成功 |
 | `warning-500` | `#F59E0B` (Amber) | `#ECC94B` | 警告、注意喚起 |
@@ -180,25 +180,25 @@ WHERE id = 'default';
 
 ---
 
-## タイポグラフィ
+## Typography
 
-### フォントファミリー
+### Font Family
 
-**Sans-serif（デフォルト）** - クリーンで読みやすい
+**Sans-serif (default)** - Clean and readable
 
 ```css
 font-family: 'Inter', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', sans-serif;
 ```
 
-**Monospace（コード）** - コード、トークン表示
+**Monospace (code)** - Code, token display
 
 ```css
 font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 ```
 
-### フォントスケール
+### Font Scale
 
-| クラス | サイズ | Line Height | 用途 |
+| Class | Size | Line Height | Usage |
 |--------|--------|-------------|------|
 | `text-xs` | 12px (0.75rem) | 16px (1rem) | 補足、メタ情報 |
 | `text-sm` | 14px (0.875rem) | 20px (1.25rem) | 本文（小）、ラベル |
@@ -250,11 +250,11 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 
 ---
 
-## スペーシング
+## Spacing
 
-### スペーシングスケール
+### Spacing Scale
 
-8pxベース（8の倍数）のスペーシングシステム
+8px-based spacing system (multiples of 8)
 
 | クラス | サイズ | px | 用途 |
 |--------|--------|-----|------|
@@ -293,11 +293,11 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 
 ---
 
-## グリッドシステム
+## Grid System
 
-### コンテナ幅
+### Container Width
 
-| ブレークポイント | 最大幅 | 用途 |
+| Breakpoint | Max Width | Usage |
 |-----------------|--------|------|
 | `xs` (< 640px) | 100% | モバイル |
 | `sm` (640px+) | 640px | 小タブレット |
@@ -337,9 +337,9 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 
 ---
 
-## コンポーネント
+## Components
 
-### ボタン
+### Buttons
 
 #### Primary Button
 
@@ -587,11 +587,11 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 
 ---
 
-## アイコン
+## Icons
 
-### アイコンライブラリ
+### Icon Library
 
-**Lucide Icons** - 軽量、オープンソース、SVG
+**Lucide Icons** - Lightweight, open source, SVG
 
 ```bash
 npm install lucide-svelte
@@ -631,9 +631,9 @@ npm install lucide-svelte
 
 ---
 
-## アニメーション
+## Animation
 
-### トランジション
+### Transitions
 
 ```css
 /* 標準トランジション */
@@ -680,11 +680,11 @@ npm install lucide-svelte
 
 ---
 
-## アクセシビリティ
+## Accessibility
 
-### WCAG 2.1 AA準拠チェックリスト
+### WCAG 2.1 AA Compliance Checklist
 
-#### ✅ カラーコントラスト
+#### ✅ Color Contrast
 
 | 要素 | 最低比率 | 推奨比率 |
 |------|---------|---------|
@@ -788,9 +788,9 @@ npm install lucide-svelte
 
 ---
 
-## ダークモード
+## Dark Mode
 
-### 実装方式
+### Implementation Method
 
 UnoCSS + CSS変数で実装：
 
@@ -852,11 +852,11 @@ export default defineConfig({
 
 ---
 
-## レスポンシブデザイン
+## Responsive Design
 
-### ブレークポイント
+### Breakpoints
 
-| Prefix | Min Width | デバイス |
+| Prefix | Min Width | Device |
 |--------|----------|---------|
 | (なし) | 0px | モバイル（デフォルト） |
 | `sm:` | 640px | 大型モバイル、小タブレット |
@@ -894,30 +894,30 @@ export default defineConfig({
 
 ---
 
-## ブランディングカスタマイズ
+## Branding Customization
 
-管理画面から以下をカスタマイズ可能：
+The following can be customized from the admin panel:
 
-### カスタマイズ可能項目
+### Customizable Items
 
-1. **カラー**
-   - プライマリカラー
-   - セカンダリカラー
+1. **Colors**
+   - Primary color
+   - Secondary color
 
-2. **タイポグラフィ**
-   - フォントファミリー（Google Fonts対応）
+2. **Typography**
+   - Font family (Google Fonts support)
 
-3. **ロゴ・画像**
-   - ロゴURL
-   - 背景画像URL
+3. **Logo & Images**
+   - Logo URL
+   - Background image URL
 
-4. **カスタムCSS**
-   - 完全なCSS上書き可能
+4. **Custom CSS**
+   - Full CSS override possible
 
-5. **カスタムHTML**
-   - ヘッダー・フッター追加
+5. **Custom HTML**
+   - Add header & footer
 
-### カスタマイズ例
+### Customization Examples
 
 ```css
 /* カスタムCSS例（branding_settings.custom_css） */
@@ -939,9 +939,9 @@ export default defineConfig({
 
 ---
 
-## 参考資料
+## References
 
-### デザインシステム
+### Design Systems
 
 - [Tailwind CSS](https://tailwindcss.com/)
 - [UnoCSS](https://unocss.dev/)
@@ -949,20 +949,20 @@ export default defineConfig({
 - [shadcn/ui](https://ui.shadcn.com/)
 - [Radix Colors](https://www.radix-ui.com/colors)
 
-### アクセシビリティ
+### Accessibility
 
 - [WCAG 2.1 Guidelines](https://www.w3.org/WAI/WCAG21/quickref/)
 - [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/)
 - [A11y Project](https://www.a11yproject.com/)
 
-### Enraiドキュメント
+### Enrai Documentation
 
-- [database-schema.md](../architecture/database-schema.md) - データベーススキーマ
-- [openapi.yaml](../api/openapi.yaml) - API仕様書
-- [wireframes.md](./wireframes.md) - UI ワイヤーフレーム
-- [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5計画
+- [database-schema.md](../architecture/database-schema.md) - Database schema
+- [openapi.yaml](../api/openapi.yaml) - API specification
+- [wireframes.md](./wireframes.md) - UI wireframes
+- [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5 planning
 
 ---
 
-**変更履歴**:
-- 2025-11-13: 初版作成（Phase 5設計）
+**Change History**:
+- 2025-11-13: Initial version (Phase 5 design)
