@@ -589,8 +589,7 @@ export class RefreshTokenRotator {
       return new Response(
         JSON.stringify({
           error: 'server_error',
-          error_description:
-            error instanceof Error ? error.message : 'Internal Server Error',
+          error_description: error instanceof Error ? error.message : 'Internal Server Error',
         }),
         {
           status: 500,
