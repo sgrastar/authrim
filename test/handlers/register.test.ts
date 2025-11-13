@@ -63,13 +63,17 @@ describe('Dynamic Client Registration Handler', () => {
         redirect_uris: ['https://example.com/callback'],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(201);
 
@@ -116,13 +120,17 @@ describe('Dynamic Client Registration Handler', () => {
         scope: 'openid profile email',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(201);
 
@@ -149,13 +157,17 @@ describe('Dynamic Client Registration Handler', () => {
         client_name: 'Test Client',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(201);
 
@@ -179,13 +191,17 @@ describe('Dynamic Client Registration Handler', () => {
         redirect_uris: ['http://localhost:3000/callback'],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(201);
 
@@ -200,13 +216,17 @@ describe('Dynamic Client Registration Handler', () => {
         client_name: 'Test Client',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -220,13 +240,17 @@ describe('Dynamic Client Registration Handler', () => {
         redirect_uris: [],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -240,13 +264,17 @@ describe('Dynamic Client Registration Handler', () => {
         redirect_uris: 'https://example.com/callback',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -259,13 +287,17 @@ describe('Dynamic Client Registration Handler', () => {
         redirect_uris: ['http://example.com/callback'],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -279,13 +311,17 @@ describe('Dynamic Client Registration Handler', () => {
         redirect_uris: ['https://example.com/callback#fragment'],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -299,13 +335,17 @@ describe('Dynamic Client Registration Handler', () => {
         redirect_uris: ['not-a-valid-uri'],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -322,13 +362,17 @@ describe('Dynamic Client Registration Handler', () => {
         client_uri: 'not-a-uri',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -343,13 +387,17 @@ describe('Dynamic Client Registration Handler', () => {
         logo_uri: 'invalid-logo-uri',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -364,13 +412,17 @@ describe('Dynamic Client Registration Handler', () => {
         jwks_uri: 'not-valid',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -386,13 +438,17 @@ describe('Dynamic Client Registration Handler', () => {
         contacts: 'admin@example.com',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -407,13 +463,17 @@ describe('Dynamic Client Registration Handler', () => {
         contacts: ['admin@example.com', 123],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -433,13 +493,17 @@ describe('Dynamic Client Registration Handler', () => {
           token_endpoint_auth_method: method,
         };
 
-        const res = await app.request('/register', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+        const res = await app.request(
+          '/register',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestBody),
           },
-          body: JSON.stringify(requestBody),
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res.status).toBe(201);
 
@@ -454,13 +518,17 @@ describe('Dynamic Client Registration Handler', () => {
         token_endpoint_auth_method: 'invalid_method',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -480,13 +548,17 @@ describe('Dynamic Client Registration Handler', () => {
           application_type: type,
         };
 
-        const res = await app.request('/register', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+        const res = await app.request(
+          '/register',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestBody),
           },
-          body: JSON.stringify(requestBody),
-        }, mockEnv);
+          mockEnv
+        );
 
         expect(res.status).toBe(201);
 
@@ -501,13 +573,17 @@ describe('Dynamic Client Registration Handler', () => {
         application_type: 'invalid',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -524,13 +600,17 @@ describe('Dynamic Client Registration Handler', () => {
         grant_types: ['authorization_code', 'refresh_token'],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(201);
 
@@ -544,13 +624,17 @@ describe('Dynamic Client Registration Handler', () => {
         grant_types: 'authorization_code',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -565,13 +649,17 @@ describe('Dynamic Client Registration Handler', () => {
         grant_types: ['authorization_code', 'client_credentials'],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -588,13 +676,17 @@ describe('Dynamic Client Registration Handler', () => {
         response_types: ['code'],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(201);
 
@@ -608,13 +700,17 @@ describe('Dynamic Client Registration Handler', () => {
         response_types: 'code',
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -629,13 +725,17 @@ describe('Dynamic Client Registration Handler', () => {
         response_types: ['code', 'unsupported'],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -647,13 +747,17 @@ describe('Dynamic Client Registration Handler', () => {
 
   describe('Error Handling', () => {
     it('should reject non-JSON request body', async () => {
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: 'not-json',
         },
-        body: 'not-json',
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -663,13 +767,17 @@ describe('Dynamic Client Registration Handler', () => {
     });
 
     it('should reject null request body', async () => {
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(null),
         },
-        body: JSON.stringify(null),
-      }, mockEnv);
+        mockEnv
+      );
 
       expect(res.status).toBe(400);
 
@@ -682,10 +790,14 @@ describe('Dynamic Client Registration Handler', () => {
         redirect_uris: ['https://example.com/callback'],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
 
       // Should still work without Content-Type header
       expect(res.status).toBe(201);
@@ -698,21 +810,29 @@ describe('Dynamic Client Registration Handler', () => {
         redirect_uris: ['https://example.com/callback'],
       };
 
-      const res1 = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res1 = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
-      const res2 = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res2 = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       const json1 = await res1.json();
       const json2 = await res2.json();
@@ -725,21 +845,29 @@ describe('Dynamic Client Registration Handler', () => {
         redirect_uris: ['https://example.com/callback'],
       };
 
-      const res1 = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res1 = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
-      const res2 = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res2 = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       const json1 = await res1.json();
       const json2 = await res2.json();
@@ -752,13 +880,17 @@ describe('Dynamic Client Registration Handler', () => {
         redirect_uris: ['https://example.com/callback'],
       };
 
-      const res = await app.request('/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      }, mockEnv);
+        mockEnv
+      );
 
       const json = await res.json();
 
