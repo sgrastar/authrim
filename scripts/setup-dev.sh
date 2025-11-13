@@ -55,6 +55,7 @@ generate_wrangler_toml() {
     local package=$1
     local port=$2
     local kv_namespaces=$3
+    local do_bindings=$4
 
     local file="packages/$package/wrangler.toml"
 
@@ -68,6 +69,9 @@ preview_urls = true
 
 # KV Namespaces
 $kv_namespaces
+
+# Durable Objects Bindings
+$do_bindings
 
 # Environment variables
 [vars]
@@ -89,11 +93,44 @@ TOML_EOF
     echo "  ✅ $package/wrangler.toml"
 }
 
+# Generate wrangler.toml for shared package (Durable Objects)
+echo "  ✅ shared/wrangler.toml (Durable Objects)"
+cat > packages/shared/wrangler.toml << 'SHARED_TOML_EOF'
+name = "enrai-shared"
+main = "src/durable-objects/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Durable Objects definitions
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+
+[[durable_objects.bindings]]
+name = "AUTH_CODE_STORE"
+class_name = "AuthorizationCodeStore"
+
+[[durable_objects.bindings]]
+name = "REFRESH_TOKEN_ROTATOR"
+class_name = "RefreshTokenRotator"
+
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+
+# Environment variables
+[vars]
+KEY_MANAGER_SECRET = "dev-secret-change-in-production"
+SHARED_TOML_EOF
+
 # Generate wrangler.toml for op-discovery
 generate_wrangler_toml "op-discovery" 8787 '[[kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "placeholder"
-preview_id = "placeholder"'
+preview_id = "placeholder"' '[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "enrai-shared"'
 
 # Generate wrangler.toml for op-auth
 generate_wrangler_toml "op-auth" 8788 '[[kv_namespaces]]
@@ -119,7 +156,20 @@ preview_id = "placeholder"
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "placeholder"
-preview_id = "placeholder"'
+preview_id = "placeholder"' '[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "AUTH_CODE_STORE"
+class_name = "AuthorizationCodeStore"
+script_name = "enrai-shared"'
 
 # Generate wrangler.toml for op-token
 generate_wrangler_toml "op-token" 8789 '[[kv_namespaces]]
@@ -145,7 +195,25 @@ preview_id = "placeholder"
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "placeholder"
-preview_id = "placeholder"'
+preview_id = "placeholder"' '[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "AUTH_CODE_STORE"
+class_name = "AuthorizationCodeStore"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "REFRESH_TOKEN_ROTATOR"
+class_name = "RefreshTokenRotator"
+script_name = "enrai-shared"'
 
 # Generate wrangler.toml for op-userinfo
 generate_wrangler_toml "op-userinfo" 8790 '[[kv_namespaces]]
@@ -161,7 +229,15 @@ preview_id = "placeholder"
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "placeholder"
-preview_id = "placeholder"'
+preview_id = "placeholder"' '[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+script_name = "enrai-shared"'
 
 # Generate wrangler.toml for op-management
 generate_wrangler_toml "op-management" 8791 '[[kv_namespaces]]
@@ -187,7 +263,15 @@ preview_id = "placeholder"
 [[kv_namespaces]]
 binding = "INITIAL_ACCESS_TOKENS"
 id = "placeholder"
-preview_id = "placeholder"'
+preview_id = "placeholder"' '[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "REFRESH_TOKEN_ROTATOR"
+class_name = "RefreshTokenRotator"
+script_name = "enrai-shared"'
 
 # Generate wrangler.toml for router (with Service Bindings)
 echo "  ✅ router/wrangler.toml (with Service Bindings)"

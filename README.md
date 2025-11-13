@@ -91,13 +91,30 @@ Enrai is an **enterprise-grade OpenID Connect Provider** built for:
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| **Runtime** | Cloudflare Workers | Global edge deployment (5 specialized workers + optional Router) |
+| **Runtime** | Cloudflare Workers | Global edge deployment (6 specialized workers + optional Router) |
 | **Framework** | Hono | Fast, lightweight web framework |
 | **Build** | Turborepo + pnpm | Monorepo, parallel builds, caching |
-| **Storage** | KV / D1 / Durable Objects | Flexible data persistence |
+| **Storage** | KV / D1 / Durable Objects | Flexible data persistence (4 DO types) |
 | **Crypto** | JOSE | JWT/JWK standards (RS256) |
 | **Language** | TypeScript | Type safety, great DX |
 | **Routing** | Service Bindings / Routes | Unified endpoint (test/prod modes) |
+
+### 🔥 Durable Objects Architecture
+
+Enrai leverages **Cloudflare Durable Objects** for stateful operations with strong consistency guarantees:
+
+| Durable Object | Purpose | Key Features |
+|----------------|---------|--------------|
+| **SessionStore** | User session management | Hot/cold storage pattern, multi-device support, instant invalidation |
+| **AuthorizationCodeStore** | OAuth code lifecycle | One-time use, PKCE validation, replay attack prevention |
+| **RefreshTokenRotator** | Token rotation | Atomic rotation, theft detection, audit logging |
+| **KeyManager** | Cryptographic keys | JWK management, automatic key rotation, secure storage |
+
+**Benefits:**
+- ⚡️ **Strong Consistency** - No race conditions on critical operations
+- 🔒 **Security** - Atomic token rotation prevents theft
+- 🌍 **Global** - Single source of truth with edge locality
+- 💾 **Persistent** - Automatic D1 fallback for cold starts
 
 ---
 
@@ -126,15 +143,19 @@ Enrai is an **enterprise-grade OpenID Connect Provider** built for:
 - **Rate Limiting** (strict/moderate/lenient profiles)
 - **Enhanced Security** (CSP, CORS, HSTS, XSS protection)
 
-### 🆕 Planned (Phase 5-9)
+### 🚧 In Progress (Phase 5)
 
-**Phase 5: UI/UX Implementation** (May 2026)
-- 🖥️ Login & registration screens (Passwordless-first)
-- 🎨 OAuth consent screen
-- 📊 Admin dashboard
-- 👥 User management interface
-- 🔧 Client management interface
-- 💾 Data storage abstraction (KV/D1/DO)
+**Phase 5: UI/UX Implementation** (In Progress)
+- ✅ **Durable Objects** - Complete (SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager)
+- ✅ **Storage Abstraction Layer** - Complete (unified interface for KV/D1/DO)
+- ✅ **Integration Tests** - Complete (cross-DO workflows validated)
+- 🚧 Login & registration screens (Passwordless-first)
+- 🚧 OAuth consent screen
+- 🚧 Admin dashboard
+- 🚧 User management interface
+- 🚧 Client management interface
+
+### 🆕 Planned (Phase 6-10)
 
 **Phase 6: CLI & Automation** (Jun-Aug 2026)
 - 📦 `create-enrai` NPM package
@@ -187,17 +208,20 @@ cd enrai
 # 2. Install dependencies (monorepo setup)
 pnpm install
 
-# 3. Set up RSA keys and generate wrangler.toml files
+# 3. Set up RSA keys and generate wrangler.toml files (includes Durable Objects config)
 ./scripts/setup-dev.sh
 
 # 4. Set up KV namespaces
 ./scripts/setup-kv.sh
 
-# 5. Set up D1 database (Phase 5 - optional for Phase 1-4)
+# 5. Set up D1 database (Phase 5)
 ./scripts/setup-d1.sh
 
 # 6. Build all packages
 pnpm run build
+
+# 7. (Optional) Deploy Durable Objects first
+./scripts/setup-durable-objects.sh
 
 # 7. Start all workers in parallel
 pnpm run dev

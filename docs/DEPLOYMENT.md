@@ -46,16 +46,30 @@ Before deploying Enrai, ensure you have:
 
 ### 🌍 Architecture
 
-Enrai is a **monorepo** containing **5 specialized Cloudflare Workers** plus an optional **Router Worker**:
+Enrai is a **monorepo** containing **6 specialized Cloudflare Workers** (including Durable Objects) plus an optional **Router Worker**:
 
 | Worker | Package | Purpose |
 |--------|---------|---------|
+| **enrai-shared** | `packages/shared` | **Durable Objects** (SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager) |
 | **enrai-op-discovery** | `packages/op-discovery` | Discovery & JWKS endpoints |
 | **enrai-op-auth** | `packages/op-auth` | Authorization endpoint & PAR |
 | **enrai-op-token** | `packages/op-token` | Token endpoint |
 | **enrai-op-userinfo** | `packages/op-userinfo` | UserInfo endpoint |
 | **enrai-op-management** | `packages/op-management` | Client registration |
 | **enrai-router** | `packages/router` | Unified entry point (test env only) |
+
+### 🔥 Durable Objects Layer
+
+Enrai leverages **Cloudflare Durable Objects** for stateful operations with strong consistency:
+
+| Durable Object | Purpose | Key Features |
+|----------------|---------|--------------|
+| **SessionStore** | User session management | Hot/cold storage, multi-device support, instant invalidation |
+| **AuthorizationCodeStore** | OAuth code lifecycle | One-time use, PKCE validation, replay attack prevention |
+| **RefreshTokenRotator** | Token rotation | Atomic rotation, theft detection, audit logging |
+| **KeyManager** | Cryptographic keys | JWK management, automatic rotation, secure storage |
+
+**⚠️ CRITICAL:** The `enrai-shared` package **MUST be deployed first** before deploying other workers!
 
 ### 🎯 Deployment Modes
 
@@ -114,7 +128,7 @@ pnpm install
 wrangler login
 
 # 3. Run setup scripts (in order)
-./scripts/setup-dev.sh         # Generate RSA keys & wrangler.toml files
+./scripts/setup-dev.sh         # Generate RSA keys & wrangler.toml files (includes DO config)
 ./scripts/setup-kv.sh          # Create KV namespaces
 ./scripts/setup-d1.sh          # Create D1 database (Phase 5)
 ./scripts/setup-secrets.sh     # Upload secrets to Cloudflare
@@ -124,11 +138,15 @@ wrangler login
 # 4. Build and deploy
 pnpm run build
 
-# Deploy with retry logic (recommended for both modes)
-pnpm run deploy:with-router
+# 5. Deploy Durable Objects FIRST (CRITICAL!)
+./scripts/setup-durable-objects.sh
+# Wait 30 seconds for DO propagation...
+
+# 6. Deploy all workers with retry logic (recommended)
+pnpm run deploy:retry
+# - Deploys in correct order: shared → workers → router
 # - Uses sequential deployment with delays to avoid rate limits
-# - Automatically includes Router Worker if wrangler.toml exists (test mode)
-# - Automatically skips Router Worker if wrangler.toml missing (production mode)
+# - Includes automatic retries on failure
 ```
 
 **Done!** Your OpenID Provider is now live.
