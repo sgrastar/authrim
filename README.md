@@ -186,10 +186,16 @@ cd enrai
 # 2. Install dependencies (monorepo setup)
 pnpm install
 
-# 3. Build all packages
+# 3. Set up KV namespaces
+./scripts/setup-kv.sh
+
+# 4. Set up RSA keys (for local development)
+./scripts/setup-dev.sh
+
+# 5. Build all packages
 pnpm run build
 
-# 4. Start all workers in parallel
+# 6. Start all workers in parallel
 pnpm run dev
 
 # Workers start at:
@@ -331,14 +337,20 @@ Deploy Enrai to Cloudflare's global edge network and get a production-ready Open
 # 1. Install dependencies
 pnpm install
 
-# 2. Set up RSA keys
+# 2. Set up KV namespaces
+./scripts/setup-kv.sh
+
+# 3. Set up RSA keys
 ./scripts/setup-dev.sh
 
-# 3. Build TypeScript
+# 4. Build TypeScript
 pnpm run build
 
-# 4. Deploy to Cloudflare
-pnpm run deploy
+# 5. Deploy to Cloudflare (RECOMMENDED: use deploy:retry for stable deployment)
+pnpm run deploy:retry
+
+# Or for parallel deployment (may encounter rate limits):
+# pnpm run deploy
 ```
 
 **After deployment, you'll get 5 specialized workers:**
@@ -352,6 +364,25 @@ pnpm run deploy
 > See [WORKERS.md](./WORKERS.md) for routing configuration.
 
 📖 **See [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for detailed setup instructions**
+
+### Troubleshooting Deployment
+
+If you encounter KV namespace errors during deployment:
+
+```bash
+# Reset and recreate all KV namespaces
+./scripts/setup-kv.sh --reset
+
+# Then deploy with retry logic
+pnpm run deploy:retry
+```
+
+The `--reset` option will:
+- Delete all existing KV namespaces
+- Recreate them with fresh IDs
+- Update all `wrangler.toml` files automatically
+
+**Note:** You may need to undeploy workers first if namespaces are in use.
 
 ### GitHub Actions (CI/CD)
 

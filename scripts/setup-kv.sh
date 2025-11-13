@@ -3,8 +3,29 @@
 # Enrai KV Namespace Setup Script
 # This script creates all required KV namespaces and updates wrangler.toml files
 #
+# Usage:
+#   ./setup-kv.sh          - Interactive mode (prompts for existing namespaces)
+#   ./setup-kv.sh --reset  - Reset mode (deletes and recreates all namespaces)
+#
 
 set -e
+
+# Parse command line arguments
+RESET_MODE=false
+if [ "$1" = "--reset" ]; then
+    RESET_MODE=true
+    echo "⚠️  RESET MODE ENABLED"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "All existing KV namespaces will be deleted and recreated."
+    echo "This will delete ALL data in the namespaces."
+    echo ""
+    read -p "Are you sure you want to continue? Type 'YES' to confirm: " -r
+    if [ "$REPLY" != "YES" ]; then
+        echo "❌ Reset cancelled"
+        exit 1
+    fi
+    echo ""
+fi
 
 echo "⚡️ Enrai KV Namespace Setup"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -53,13 +74,17 @@ echo "  If the namespace doesn't exist, it will be created automatically."
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-read -p "Ready to start? Type 'y' to continue, 'N' to cancel: " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "❌ Setup cancelled"
-    exit 1
+
+# Skip confirmation prompt in reset mode
+if [ "$RESET_MODE" = false ]; then
+    read -p "Ready to start? Type 'y' to continue, 'N' to cancel: " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "❌ Setup cancelled"
+        exit 1
+    fi
+    echo ""
 fi
-echo ""
 
 # Function to get namespace ID from list by exact title match
 get_namespace_id_by_title() {
@@ -119,67 +144,99 @@ create_kv_namespace() {
         echo "  ⚠️  Found existing namespace: $name $preview_flag" >&2
         echo "      ID: $id" >&2
         echo "" >&2
-        echo "  What would you like to do?" >&2
-        echo "    1) Use existing namespace (keep all data)" >&2
-        echo "    2) Delete and recreate namespace (WARNING: all data will be lost)" >&2
-        echo "    3) Abort script" >&2
-        echo "" >&2
-        read -p "  Enter your choice (1/2/3): " -r choice >&2
 
-        case $choice in
-            1)
-                echo "  ✓ Using existing namespace with ID: $id" >&2
-                echo "$id"
-                return 0
-                ;;
-            2)
-                echo "  🗑️  Deleting existing namespace: $id" >&2
-                local delete_output=$(wrangler kv namespace delete --namespace-id="$id" 2>&1)
-                local delete_exit_code=$?
+        # In reset mode, automatically delete and recreate
+        if [ "$RESET_MODE" = true ]; then
+            echo "  🗑️  [RESET MODE] Deleting existing namespace: $id" >&2
+            local delete_output=$(wrangler kv namespace delete --namespace-id="$id" 2>&1)
+            local delete_exit_code=$?
 
-                if [ $delete_exit_code -ne 0 ]; then
+            if [ $delete_exit_code -ne 0 ]; then
+                echo "" >&2
+                echo "  ❌ Failed to delete namespace:" >&2
+                echo "$delete_output" >&2
+                echo "" >&2
+
+                # Check if it's because the namespace is in use
+                if echo "$delete_output" | grep -q "associated scripts"; then
+                    echo "  ⚠️  The namespace is currently being used by deployed workers." >&2
+                    echo "  ⚠️  You may need to undeploy the workers first using:" >&2
+                    echo "      wrangler delete <worker-name>" >&2
                     echo "" >&2
-                    echo "  ❌ Failed to delete namespace:" >&2
-                    echo "$delete_output" >&2
-                    echo "" >&2
+                    exit 1
+                else
+                    echo "  ❌ Script aborted due to deletion failure" >&2
+                    exit 1
+                fi
+            fi
 
-                    # Check if it's because the namespace is in use
-                    if echo "$delete_output" | grep -q "associated scripts"; then
-                        echo "  ⚠️  The namespace is currently being used by deployed workers." >&2
-                        echo "  You need to either:" >&2
-                        echo "    - Undeploy the workers using this namespace first" >&2
-                        echo "    - Or use the existing namespace (option 1)" >&2
+            echo "  ✓ Successfully deleted namespace" >&2
+            echo "  📝 Creating new namespace: $name $preview_flag" >&2
+            # Fall through to create new namespace
+        else
+            # Interactive mode - ask user what to do
+            echo "  What would you like to do?" >&2
+            echo "    1) Use existing namespace (keep all data)" >&2
+            echo "    2) Delete and recreate namespace (WARNING: all data will be lost)" >&2
+            echo "    3) Abort script" >&2
+            echo "" >&2
+            read -p "  Enter your choice (1/2/3): " -r choice >&2
+
+            case $choice in
+                1)
+                    echo "  ✓ Using existing namespace with ID: $id" >&2
+                    echo "$id"
+                    return 0
+                    ;;
+                2)
+                    echo "  🗑️  Deleting existing namespace: $id" >&2
+                    local delete_output=$(wrangler kv namespace delete --namespace-id="$id" 2>&1)
+                    local delete_exit_code=$?
+
+                    if [ $delete_exit_code -ne 0 ]; then
                         echo "" >&2
-                        echo "  Would you like to use the existing namespace instead?" >&2
-                        read -p "  Use existing namespace? (y/n): " -r use_existing >&2
+                        echo "  ❌ Failed to delete namespace:" >&2
+                        echo "$delete_output" >&2
+                        echo "" >&2
 
-                        if [[ $use_existing =~ ^[Yy]$ ]]; then
-                            echo "  ✓ Using existing namespace with ID: $id" >&2
-                            echo "$id"
-                            return 0
+                        # Check if it's because the namespace is in use
+                        if echo "$delete_output" | grep -q "associated scripts"; then
+                            echo "  ⚠️  The namespace is currently being used by deployed workers." >&2
+                            echo "  You need to either:" >&2
+                            echo "    - Undeploy the workers using this namespace first" >&2
+                            echo "    - Or use the existing namespace (option 1)" >&2
+                            echo "" >&2
+                            echo "  Would you like to use the existing namespace instead?" >&2
+                            read -p "  Use existing namespace? (y/n): " -r use_existing >&2
+
+                            if [[ $use_existing =~ ^[Yy]$ ]]; then
+                                echo "  ✓ Using existing namespace with ID: $id" >&2
+                                echo "$id"
+                                return 0
+                            else
+                                echo "  ❌ Cannot proceed without deleting or using existing namespace" >&2
+                                exit 1
+                            fi
                         else
-                            echo "  ❌ Cannot proceed without deleting or using existing namespace" >&2
+                            echo "  ❌ Script aborted due to deletion failure" >&2
                             exit 1
                         fi
-                    else
-                        echo "  ❌ Script aborted due to deletion failure" >&2
-                        exit 1
                     fi
-                fi
 
-                echo "  ✓ Successfully deleted namespace" >&2
-                echo "  📝 Creating new namespace: $name $preview_flag" >&2
-                # Fall through to create new namespace
-                ;;
-            3)
-                echo "  ❌ Script aborted by user" >&2
-                exit 1
-                ;;
-            *)
-                echo "  ❌ Invalid choice. Aborting." >&2
-                exit 1
-                ;;
-        esac
+                    echo "  ✓ Successfully deleted namespace" >&2
+                    echo "  📝 Creating new namespace: $name $preview_flag" >&2
+                    # Fall through to create new namespace
+                    ;;
+                3)
+                    echo "  ❌ Script aborted by user" >&2
+                    exit 1
+                    ;;
+                *)
+                    echo "  ❌ Invalid choice. Aborting." >&2
+                    exit 1
+                    ;;
+            esac
+        fi
     fi
 
     # Create new namespace (either first time or after deletion)
@@ -432,8 +489,13 @@ echo "  • packages/op-management/wrangler.toml"
 echo "  • packages/op-token/wrangler.toml"
 echo "  • packages/op-userinfo/wrangler.toml"
 echo ""
+echo "⚠️  Important: After creating or updating KV namespaces, wait 10-30 seconds"
+echo "   before deploying to allow Cloudflare to propagate the changes."
+echo ""
 echo "Next steps:"
-echo "  1. Run 'pnpm run deploy' to deploy your workers"
-echo "  2. Or run 'pnpm run dev' for local development"
+echo "  1. Run 'pnpm run deploy:retry' to deploy with retry logic (RECOMMENDED)"
+echo "     This deploys sequentially with delays to avoid rate limits."
+echo "  2. Or run 'pnpm run deploy' for parallel deployment (may fail with rate limits)"
+echo "  3. Or run 'pnpm run dev' for local development"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
