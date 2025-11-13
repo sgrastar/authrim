@@ -789,10 +789,11 @@ Audit Logは匿名化（`user_id` を NULL に設定）して保持
 
 1. ✅ **ER図作成** - 完了
 2. ✅ **API仕様書作成** - 完了 → [OpenAPI 3.1仕様書](../api/openapi.yaml)
-3. 📝 **デザインシステム策定** - 次のタスク
-4. 📝 **マイグレーションスクリプト作成**
-5. 📝 **シードデータ作成** - デフォルトロール、テストユーザー
-6. 📝 **ストレージ抽象化層実装** - IStorageAdapter
+3. ✅ **デザインシステム策定** - 完了 → [design-system.md](../design/design-system.md)
+4. 📝 **ワイヤーフレーム作成** - 次のタスク
+5. 📝 **マイグレーションスクリプト作成**
+6. 📝 **シードデータ作成** - デフォルトロール、テストユーザー
+7. 📝 **ストレージ抽象化層実装** - IStorageAdapter
 
 ---
 
@@ -803,6 +804,8 @@ Audit Logは匿名化（`user_id` を NULL に設定）して保持
   - [openapi.yaml](../api/openapi.yaml) - OpenAPI 3.1仕様書
   - [API README](../api/README.md) - APIガイド・クイックスタート
   - [API_INVENTORY.md](../project-management/API_INVENTORY.md) - APIインベントリ
+- **UI/UX設計**
+  - [design-system.md](../design/design-system.md) - デザインシステム
 - **プロジェクト計画**
   - [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5詳細計画
   - [ROADMAP.md](../ROADMAP.md) - 全体ロードマップ
