@@ -1076,20 +1076,20 @@ This document provides a comprehensive, week-by-week breakdown of all tasks requ
 - [ ] Update README.md with Durable Objects section
 
 #### 26.7 ストレージ抽象化層実装
-- [ ] Create `packages/shared/src/storage/interfaces.ts`:
-  - [ ] Define `IStorageAdapter` interface
-  - [ ] Define `IUserStore` interface
-  - [ ] Define `IClientStore` interface
-  - [ ] Define `ISessionStore` interface
-  - [ ] Define `IPasskeyStore` interface
-- [ ] Create `packages/shared/src/storage/cloudflare-adapter.ts`:
-  - [ ] Implement `CloudflareStorageAdapter` class
-  - [ ] Integrate D1, KV, and Durable Objects
-  - [ ] Implement routing logic (session: → DO, client: → D1+KV cache)
-- [ ] Create factory function `createStorageAdapter(env: Env)`
-- [ ] Add unit tests for storage adapter (25+ tests)
-- [ ] Test adapter routing logic
-- [ ] Document storage abstraction layer
+- [x] Create `packages/shared/src/storage/interfaces.ts`:
+  - [x] Define `IStorageAdapter` interface
+  - [x] Define `IUserStore` interface
+  - [x] Define `IClientStore` interface
+  - [x] Define `ISessionStore` interface
+  - [x] Define `IPasskeyStore` interface
+- [x] Create `packages/shared/src/storage/cloudflare-adapter.ts`:
+  - [x] Implement `CloudflareStorageAdapter` class
+  - [x] Integrate D1, KV, and Durable Objects
+  - [x] Implement routing logic (session: → DO, client: → D1+KV cache)
+- [x] Create factory function `createStorageAdapter(env: Env)`
+- [x] Add unit tests for storage adapter (37 tests - exceeds requirement of 25+)
+- [x] Test adapter routing logic
+- [x] Document storage abstraction layer
 
 ---
 
