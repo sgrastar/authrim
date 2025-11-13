@@ -10,33 +10,113 @@ echo "🌍 Enrai Production Configuration"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Prompt for production URL
-echo "📝 Please enter your production URL:"
+# Check if wrangler is installed
+if ! command -v wrangler &> /dev/null; then
+    echo "❌ Error: wrangler is not installed"
+    echo "Please install it with: pnpm install -g wrangler"
+    exit 1
+fi
+
+# Check if user is logged in and get subdomain
+echo "🔍 Detecting your Cloudflare account subdomain..."
+echo ""
+
+WHOAMI_OUTPUT=$(wrangler whoami 2>&1)
+
+if ! echo "$WHOAMI_OUTPUT" | grep -q "You are logged in"; then
+    echo "❌ Error: Not logged in to Cloudflare"
+    echo "Please run: wrangler login"
+    exit 1
+fi
+
+# Extract subdomain from whoami output
+# The subdomain appears in the format: *.subdomain.workers.dev
+SUBDOMAIN=$(echo "$WHOAMI_OUTPUT" | grep -o '\*\.[a-zA-Z0-9_-]*\.workers\.dev' | head -1 | sed 's/\*\.//' | sed 's/\.workers\.dev//')
+
+if [ -z "$SUBDOMAIN" ]; then
+    echo "⚠️  Could not automatically detect your workers.dev subdomain"
+    SUBDOMAIN="your-subdomain"
+fi
+
+echo "✅ Detected subdomain: $SUBDOMAIN.workers.dev"
+echo ""
+
+# Prompt for production URL choice
+echo "📝 Production URL Configuration"
 echo ""
 echo "   This URL will be used as the ISSUER_URL for your OpenID Provider."
 echo "   The issuer URL is the base URL that identifies your OAuth/OIDC server."
 echo "   It's used in tokens, discovery endpoints, and client configurations."
 echo ""
-echo "   Examples:"
-echo "   • https://id.yourdomain.com (custom domain)"
-echo "   • https://enrai.your-subdomain.workers.dev (workers.dev subdomain)"
+echo "Choose your deployment option:"
 echo ""
-read -p "Production URL: " PRODUCTION_URL
+echo "  1) Use workers.dev subdomain (recommended for testing)"
+echo "     URL: https://enrai.$SUBDOMAIN.workers.dev"
+echo ""
+echo "  2) Use custom domain (recommended for production)"
+echo "     You will enter your custom domain"
+echo ""
+read -p "Enter your choice (1/2): " -r choice
 
-# Validate URL format
-if [[ ! $PRODUCTION_URL =~ ^https:// ]]; then
-    echo "❌ Error: URL must start with https://"
-    exit 1
-fi
+case $choice in
+    1)
+        PRODUCTION_URL="https://enrai.$SUBDOMAIN.workers.dev"
+        echo ""
+        echo "✅ Using workers.dev subdomain"
+        ;;
+    2)
+        echo ""
+        echo "Enter your custom domain (e.g., https://id.yourdomain.com):"
+        read -p "Custom domain: " CUSTOM_DOMAIN
+
+        # Validate URL format
+        if [[ ! $CUSTOM_DOMAIN =~ ^https:// ]]; then
+            echo "❌ Error: URL must start with https://"
+            exit 1
+        fi
+
+        PRODUCTION_URL="$CUSTOM_DOMAIN"
+        echo ""
+        echo "✅ Using custom domain"
+        ;;
+    *)
+        echo "❌ Invalid choice. Exiting."
+        exit 1
+        ;;
+esac
 
 # Remove trailing slash if present
 PRODUCTION_URL=${PRODUCTION_URL%/}
 
 echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "🔍 Configuration Summary:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "   ISSUER_URL: $PRODUCTION_URL"
 echo ""
-read -p "Is this correct? (y/N): " -n 1 -r
+
+# Show additional notes for custom domains
+if [[ $choice == "2" ]]; then
+    echo "📌 Custom Domain Setup Notes:"
+    echo ""
+    echo "   After deployment, you'll need to configure custom domain routing:"
+    echo ""
+    echo "   Option A: Using Cloudflare Workers Routes"
+    echo "     • Add routes in your wrangler.toml files for each worker"
+    echo "     • Example:"
+    echo "       [[routes]]"
+    echo "       pattern = \"$PRODUCTION_URL/.well-known/*\""
+    echo "       zone_name = \"yourdomain.com\""
+    echo ""
+    echo "   Option B: Using a Router Worker"
+    echo "     • Deploy a single router worker that dispatches to the correct endpoint"
+    echo "     • See WORKERS.md for detailed routing configuration"
+    echo ""
+    echo "   Without proper routing, endpoints won't be accessible on your custom domain."
+    echo ""
+fi
+
+read -p "Continue with this configuration? (y/N): " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     echo "❌ Configuration cancelled"
@@ -97,13 +177,44 @@ echo "  • Authorization: $PRODUCTION_URL/authorize"
 echo "  • Token: $PRODUCTION_URL/token"
 echo "  • UserInfo: $PRODUCTION_URL/userinfo"
 echo ""
+
+if [[ $choice == "1" ]]; then
+    echo "📌 Workers.dev Deployment Notes:"
+    echo ""
+    echo "  Your workers will be automatically accessible at:"
+    echo "    • enrai-op-discovery.$SUBDOMAIN.workers.dev"
+    echo "    • enrai-op-auth.$SUBDOMAIN.workers.dev"
+    echo "    • enrai-op-token.$SUBDOMAIN.workers.dev"
+    echo "    • enrai-op-userinfo.$SUBDOMAIN.workers.dev"
+    echo "    • enrai-op-management.$SUBDOMAIN.workers.dev"
+    echo ""
+    echo "  ⚠️  Note: For a unified endpoint, you'll need to set up routing."
+    echo "  See DEPLOYMENT.md for routing configuration options."
+    echo ""
+elif [[ $choice == "2" ]]; then
+    echo "📌 Custom Domain Deployment Notes:"
+    echo ""
+    echo "  ⚠️  IMPORTANT: After deployment, you MUST configure custom domain routing!"
+    echo ""
+    echo "  Your workers will deploy to workers.dev by default, but won't be"
+    echo "  accessible on your custom domain until you configure routes."
+    echo ""
+    echo "  See DEPLOYMENT.md section 'Custom Domain Setup' for detailed instructions."
+    echo ""
+fi
+
 echo "Next steps:"
 echo "  1. Run 'pnpm run build' to build all packages"
 echo "  2. Run 'pnpm run deploy' to deploy to Cloudflare"
-echo "  3. Test your endpoints using the URLs above"
+if [[ $choice == "2" ]]; then
+    echo "  3. Configure custom domain routes (see DEPLOYMENT.md)"
+    echo "  4. Test your endpoints using the URLs above"
+else
+    echo "  3. Test your endpoints using the URLs above"
+fi
 echo ""
-echo "⚠️  Important:"
-echo "  Make sure you've run the following scripts first:"
+echo "⚠️  Prerequisites:"
+echo "  Make sure you've run these scripts first:"
 echo "  • ./scripts/setup-dev.sh (to generate keys)"
 echo "  • ./scripts/setup-kv.sh (to create KV namespaces)"
 echo "  • ./scripts/setup-secrets.sh (to upload secrets)"
