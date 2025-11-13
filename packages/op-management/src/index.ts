@@ -13,6 +13,16 @@ import {
 import { registerHandler } from './register';
 import { introspectHandler } from './introspect';
 import { revokeHandler } from './revoke';
+import {
+  adminStatsHandler,
+  adminUsersListHandler,
+  adminUserGetHandler,
+  adminUserCreateHandler,
+  adminUserUpdateHandler,
+  adminUserDeleteHandler,
+  adminClientsListHandler,
+  adminClientGetHandler,
+} from './admin';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -47,7 +57,7 @@ app.use(
   '*',
   cors({
     origin: '*',
-    allowMethods: ['POST', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
     maxAge: 86400,
@@ -102,6 +112,16 @@ app.post('/introspect', introspectHandler);
 
 // Token Revocation endpoint - RFC 7009
 app.post('/revoke', revokeHandler);
+
+// Admin API endpoints
+app.get('/admin/stats', adminStatsHandler);
+app.get('/admin/users', adminUsersListHandler);
+app.get('/admin/users/:id', adminUserGetHandler);
+app.post('/admin/users', adminUserCreateHandler);
+app.put('/admin/users/:id', adminUserUpdateHandler);
+app.delete('/admin/users/:id', adminUserDeleteHandler);
+app.get('/admin/clients', adminClientsListHandler);
+app.get('/admin/clients/:id', adminClientGetHandler);
 
 // 404 handler
 app.notFound((c) => {
