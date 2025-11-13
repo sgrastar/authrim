@@ -13,7 +13,7 @@ set -e
 
 MAX_RETRIES=4
 RETRY_DELAYS=(2 4 8 16)  # Exponential backoff in seconds
-INTER_DEPLOY_DELAY=3     # Delay between successful deployments to avoid rate limits
+INTER_DEPLOY_DELAY=10    # Delay between successful deployments to avoid rate limits
 
 deploy_package() {
     local package_name=$1
