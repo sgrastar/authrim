@@ -230,33 +230,54 @@ The following items will be reviewed and decided in order:
 
 ### 3️⃣ データストレージ設計
 
-#### 3.1 ストレージ選定
-- [ ] **各ストレージの用途決定**
+#### 3.1 ストレージ選定 - ハイブリッド構成
+- [x] **各ストレージの用途決定** - ✅ 決定完了（2025-11-13）
 
-  **Cloudflare KV**
-  - 用途: セッション、一時データ、キャッシュ
-  - データ例:
-    - セッションデータ（TTL: 24時間）
-    - Magic Linkトークン（TTL: 15分）
-    - CSRF Token（TTL: 1時間）
+詳細設計: [storage-strategy.md](../architecture/storage-strategy.md)
 
-  **Cloudflare D1 (SQLite)**
-  - 用途: 永続データ、リレーショナルデータ
+  **🔷 Durable Objects（強い一貫性・リアルタイム状態管理）**
+  - 用途: ワンタイム保証、排他制御、リアルタイムデータ
   - データ例:
-    - ユーザー情報
-    - クライアント情報（DCRで登録されたもの）
-    - 認証履歴
-    - Audit Log
+    - **Authorization Code Store**（TTL: 60秒、リプレイ攻撃防止）
+    - **Refresh Token Rotator**（原子的トークンローテーション、競合制御）
+    - **Session Store**（アクティブセッション、in-memory + persistent fallback）
+    - **KeyManager**（既存実装、RSA鍵管理・ローテーション）
+  - コスト: $0.02/1M CPU-ms（認可コード処理: 300K req/月 = $0.03）
 
-  **Durable Objects**
-  - 用途: 強い一貫性が必要なデータ、リアルタイムデータ
+  **🔶 Cloudflare D1 (SQLite)（永続データ・リレーショナル）**
+  - 用途: 永続データ、複雑なクエリ、Audit Log
   - データ例:
-    - キー管理（既存のKeyManager）
-    - Rate Limiting（既存実装）
-    - アクティブセッション管理
+    - **users**（マスターレコード）
+    - **oauth_clients**（登録済みクライアント）
+    - **sessions**（セッション履歴ログ、DOのfallback）
+    - **passkeys**（WebAuthn認証情報）
+    - **audit_log**（全操作の監査ログ）
+    - **refresh_token_log**（Audit用永続ログ）
+    - **roles** / **user_roles**（RBAC）
+    - **scope_mappings**（カスタムスコープ定義）
+    - **branding_settings**（UI設定）
+    - **identity_providers**（SAML/LDAP設定、Phase 7用）
+  - コスト: 無料枠内（5M rows read/day、100K rows write/day）
+
+  **🔵 Cloudflare KV（グローバルエッジキャッシュ・静的メタデータ）**
+  - 用途: 読み取り専用キャッシュ、グローバルCDN、短命トークン
+  - データ例:
+    - **JWKs**（公開鍵、DO KeyManagerからキャッシュ、TTL: 1h）
+    - **Discovery情報**（/.well-known/openid-configuration、TTL: 1h）
+    - **Client metadata cache**（D1からのread-through cache、TTL: 5min）
+    - **Magic Link tokens**（TTL: 15分）
+    - **CSRF Token**（TTL: 1時間）
+    - **Rate Limiting**（既存実装、IPベースカウンター）
+  - コスト: $0.50/1M reads（キャッシュヒット主体）
+
+#### ハイブリッド構成の利点
+1. **コスト最適化**: 短命トランザクションデータはDO（KVより15x安い）
+2. **強い一貫性**: 認可コード・トークンローテーションで必須
+3. **グローバルパフォーマンス**: 静的データはKVでエッジキャッシュ
+4. **マルチクラウド対応**: ストレージ抽象化層で実装済み
 
 - コメント：まだ全然考えてないけど、AzureやAWSにも入れられるように抽象化はしてほしい。
-  - **回答**: アダプターパターンで実装
+  - **回答**: アダプターパターンで実装済み（[storage/interfaces.ts](../../packages/shared/src/storage/interfaces.ts)）
     ```typescript
     interface IStorageAdapter {
       // KV-like operations
