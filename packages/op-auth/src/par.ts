@@ -235,7 +235,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       },
       201
     );
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('PAR error:', error);
 
     if (error instanceof OIDCError) {
