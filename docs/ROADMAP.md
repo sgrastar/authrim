@@ -232,7 +232,7 @@ Legend:
 - ✅ Client secret generation
 - ✅ Registration access token
 - ✅ 56 comprehensive tests
-- **Why:** 基本機能、OpenID認証で必須レベル
+- **Why:** Basic functionality, essential level for OpenID authentication
 
 #### Week 21-22: Key Rotation & Extended Claims ✅
 
@@ -288,7 +288,7 @@ Legend:
 - ✅ Authorization endpoint PAR support
 - ✅ Tests & conformance validation (15+ tests)
 - ✅ Documentation (comprehensive guide)
-- **Why:** セキュリティ強化、フィッシング対策、OpenID認証で高評価
+- **Why:** Security enhancement, phishing protection, highly rated for OpenID authentication
 
 ##### DPoP (Demonstrating Proof of Possession) - RFC 9449 ✅
 - ✅ DPoP token validation middleware
@@ -298,7 +298,7 @@ Legend:
 - ✅ Replay attack prevention
 - ✅ Tests & conformance validation (12 tests)
 - ✅ Documentation (inline code documentation)
-- **Why:** エッジ環境と相性抜群、最新セキュリティ標準、トークン盗難対策
+- **Why:** Excellent compatibility with edge environments, latest security standard, token theft protection
 
 ##### Pairwise Subject Identifiers - OIDC Core 8.1 ✅
 - ✅ Subject type configuration (public/pairwise)
@@ -307,7 +307,7 @@ Legend:
 - ✅ Storage for pairwise mappings
 - ✅ Tests & conformance validation (22 tests)
 - ✅ Documentation (inline code documentation)
-- **Why:** プライバシー保護、GDPR対応、事前準備必要
+- **Why:** Privacy protection, GDPR compliant, preparation required
 
 #### Week 28-29: Token Management ✅
 
@@ -319,7 +319,7 @@ Legend:
 - ✅ Storage implementation
 - ✅ Tests & conformance validation (47+ tests)
 - ✅ Documentation (comprehensive guide)
-- **Why:** 基本機能、メジャーな実装、UX向上
+- **Why:** Basic functionality, major implementation, UX improvement
 
 ##### Token Introspection & Revocation - RFC 7662, RFC 7009 ✅
 - ✅ `POST /introspect` endpoint
@@ -328,7 +328,7 @@ Legend:
 - ✅ Client authentication for introspection
 - ✅ Tests & conformance validation (47+ tests)
 - ✅ Documentation (comprehensive guide)
-- **Why:** セキュリティ基礎、エンタープライズで必須
+- **Why:** Security foundation, essential for enterprise
 
 #### Week 30: Response Modes & Storage Foundation ✅
 
@@ -340,7 +340,7 @@ Legend:
 - ✅ Documentation (comprehensive guide)
 - ✅ XSS prevention with HTML escaping
 - ✅ User-friendly loading UI with spinner
-- **Why:** セキュリティ基礎、ブラウザ履歴に残らない
+- **Why:** Security foundation, does not remain in browser history
 
 ##### Storage Foundation (Preparation for Phase 6) ✅
 - ✅ Abstract storage interface design
@@ -379,9 +379,9 @@ Legend:
 
 **Timeline:** May 1-31, 2026 (4 weeks)
 
-**Goal:** 最高のパスワードレス体験とユーザー体験
+**Goal:** Best passwordless and user experience
 
-**Priority:** 最高のユーザー体験、現代的なUX
+**Priority:** Best user experience, modern UX
 
 **Tech Stack Decisions:**
 - **Frontend**: Svelte + SvelteKit v5
@@ -473,7 +473,7 @@ Legend:
   - GDPR personal data export
 
 **Deliverables:**
-- [ ] 🎯 **WebAuthn/Passkey fully functional** (目玉機能)
+- [ ] 🎯 **WebAuthn/Passkey fully functional** (Key feature)
 - [ ] 🎯 **Magic Link authentication working**
 - [ ] 🎯 **ITP-compliant cross-domain SSO**
 - [ ] Fully functional login/registration UI (beautiful, passwordless)
@@ -538,7 +538,7 @@ Legend:
 
 **Timeline:** Aug 11 - Oct 31, 2026 (11 weeks)
 
-**Goal:** エンタープライズフロー + 高度な認証機能
+**Goal:** Enterprise flows + advanced authentication features
 
 *(Content from old Phase 8 - see TASKS.md for full details)*
 
@@ -620,7 +620,7 @@ Legend:
 
 **Timeline:** Nov 3, 2026 - Jan 31, 2027 (13 weeks)
 
-**Goal:** 分散ID + 次世代プロトコル
+**Goal:** Decentralized ID + next-generation protocols
 
 *(Content from old Phase 9 - see TASKS.md for full details)*
 
@@ -739,7 +739,7 @@ Legend:
 
 **Goal:** Obtain official OpenID certification + production deployment
 
-**Priority:** 認証取得、本番公開、完成
+**Priority:** Obtain certification, production release, completion
 
 ### Production Deployment
 
@@ -849,7 +849,7 @@ Legend:
 - [ ] Security audit passed
 
 ### Phase 5: UI/UX Implementation 🆕
-- [ ] 🎯 WebAuthn/Passkey fully functional (目玉機能)
+- [ ] 🎯 WebAuthn/Passkey fully functional (Key feature)
 - [ ] 🎯 Magic Link authentication working
 - [ ] 🎯 ITP-compliant cross-domain SSO
 - [ ] Fully functional login/registration UI

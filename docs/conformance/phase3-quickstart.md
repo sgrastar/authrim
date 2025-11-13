@@ -1,39 +1,39 @@
-# Phase 3 クイックスタートガイド 🚀
+# Phase 3 Quick Start Guide 🚀
 
-**所要時間:** 約30分
-**対象:** Enrai Phase 3テストの実施者
-**更新日:** 2025-11-11
-
----
-
-## 概要
-
-このガイドでは、Phase 3のOpenID Conformance Testingを最短で開始する手順を説明します。
-
-**前提条件:**
-- Node.js 18+インストール済み
-- Cloudflareアカウント作成済み
-- wrangler CLI認証済み (`wrangler login`)
+**Estimated Time:** Approximately 30 minutes
+**Target Audience:** Enrai Phase 3 Test Implementers
+**Last Updated:** 2025-11-11
 
 ---
 
-## ステップ1: ローカル動作確認 (5分)
+## Overview
+
+This guide explains the quickest way to start Phase 3 OpenID Conformance Testing.
+
+**Prerequisites:**
+- Node.js 18+ installed
+- Cloudflare account created
+- wrangler CLI authenticated (`wrangler login`)
+
+---
+
+## Step 1: Local Verification (5 minutes)
 
 ```bash
-# プロジェクトルートに移動
+# Navigate to project root
 cd /path/to/enrai
 
-# 依存関係のインストール（初回のみ）
+# Install dependencies (first time only)
 npm install
 
-# RSA鍵の生成と設定
+# Generate and configure RSA keys
 ./scripts/setup-dev.sh
 
-# 開発サーバーの起動
+# Start development server
 npm run dev
 ```
 
-別のターミナルで動作確認：
+Verify in another terminal:
 
 ```bash
 # Discovery endpoint
@@ -41,44 +41,44 @@ curl http://localhost:8787/.well-known/openid-configuration | jq .issuer
 
 # JWKS endpoint
 curl http://localhost:8787/.well-known/jwks.json | jq '.keys | length'
-# 出力が "1" 以上であればOK
+# Output should be "1" or higher for OK
 ```
 
-**✓ 期待される結果:**
-- Discovery: `"http://localhost:8787"` が返る
-- JWKS: 数字（1以上）が返る
+**✓ Expected Results:**
+- Discovery: Returns `"http://localhost:8787"`
+- JWKS: Returns a number (1 or higher)
 
 ---
 
-## ステップ2: プロダクション環境へのデプロイ (10分)
+## Step 2: Deploy to Production Environment (10 minutes)
 
-### 2.1 プロダクション用鍵の生成
+### 2.1 Generate Production Keys
 
 ```bash
-# 開発サーバーを停止 (Ctrl+C)
+# Stop development server (Ctrl+C)
 
-# 既存の鍵をバックアップ
+# Backup existing keys
 cp -r .keys .keys.dev
 
-# 新しい鍵を生成
+# Generate new keys
 npm run generate-keys
 
-# 生成された KEY_ID を確認
+# Verify generated KEY_ID
 jq -r '.kid' .keys/metadata.json
 ```
 
-### 2.2 wrangler.toml の設定
+### 2.2 Configure wrangler.toml
 
-`wrangler.toml` を開き、以下を設定：
+Open `wrangler.toml` and configure the following:
 
 ```toml
 [vars]
 ISSUER = "https://enrai.YOUR_SUBDOMAIN.workers.dev"
-KEY_ID = "ここに上でコピーしたKEY_IDを貼り付け"
+KEY_ID = "Paste the KEY_ID copied above here"
 ALLOW_HTTP_REDIRECT = "false"
 ```
 
-**YOUR_SUBDOMAINの確認:**
+**Verify YOUR_SUBDOMAIN:**
 
 ```bash
 wrangler whoami
@@ -86,266 +86,266 @@ wrangler whoami
 # Account ID: xxxxxxxxxxxxxxxxxxxx
 ```
 
-通常は `enrai.YOUR_USERNAME.workers.dev` になります。
+Usually it will be `enrai.YOUR_USERNAME.workers.dev`.
 
-### 2.3 Secretsの設定
+### 2.3 Configure Secrets
 
 ```bash
-# PRIVATE_KEY_PEM を設定
+# Configure PRIVATE_KEY_PEM
 cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
 
-# PUBLIC_JWK_JSON を設定
+# Configure PUBLIC_JWK_JSON
 cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
 ```
 
-**注意:** 各コマンド実行後、Enterキーを押してから Ctrl+D で入力を完了します。
+**Note:** After running each command, press Enter then Ctrl+D to complete the input.
 
-### 2.4 ビルドとデプロイ
+### 2.4 Build and Deploy
 
 ```bash
-# TypeScriptをビルド
+# Build TypeScript
 npm run build
 
-# Cloudflare Workersにデプロイ
+# Deploy to Cloudflare Workers
 npm run deploy
 ```
 
-**✓ 期待される出力:**
+**✓ Expected Output:**
 
 ```
 Published enrai (X.XX sec)
   https://enrai.YOUR_SUBDOMAIN.workers.dev
 ```
 
-このURLをコピーしてメモします。
+Copy and note this URL.
 
-### 2.5 デプロイの動作確認
+### 2.5 Verify Deployment
 
 ```bash
-# 環境変数に設定
+# Set environment variable
 export ENRAI_URL="https://enrai.YOUR_SUBDOMAIN.workers.dev"
 
 # Discovery endpoint
 curl $ENRAI_URL/.well-known/openid-configuration | jq .issuer
-# 出力が $ENRAI_URL と一致すればOK
+# Output should match $ENRAI_URL
 
 # JWKS endpoint
 curl $ENRAI_URL/.well-known/jwks.json | jq '.keys[0].kty'
-# 出力が "RSA" であればOK
+# Output should be "RSA"
 ```
 
-**トラブルシューティング:**
-- JWKS が空の場合 → Secretsを再設定してデプロイ
-- Issuer が一致しない場合 → wrangler.toml の ISSUER を修正してデプロイ
+**Troubleshooting:**
+- If JWKS is empty → Reconfigure Secrets and redeploy
+- If Issuer doesn't match → Fix ISSUER in wrangler.toml and redeploy
 
 ---
 
-## ステップ3: OpenID Conformance Suiteでのテスト (15分)
+## Step 3: Testing with OpenID Conformance Suite (15 minutes)
 
-### 3.1 アカウント作成
+### 3.1 Create Account
 
-1. https://www.certification.openid.net/ にアクセス
-2. 「Sign up」をクリック
-3. メールアドレスとパスワードを入力
-4. メールを確認してログイン
+1. Access https://www.certification.openid.net/
+2. Click "Sign up"
+3. Enter email address and password
+4. Verify email and login
 
-### 3.2 テストプランの作成
+### 3.2 Create Test Plan
 
-1. 「Create a new test plan」をクリック
-2. 以下を選択：
+1. Click "Create a new test plan"
+2. Select the following:
    - Test Type: **OpenID Connect Provider**
    - Profile: **Basic OP**
    - Client Type: **Public Client**
    - Response Type: **code**
-3. 「Continue」をクリック
+3. Click "Continue"
 
-### 3.3 Enraiの設定
+### 3.3 Configure Enrai
 
-**Issuer URL** に以下を入力：
+Enter the following in **Issuer URL**:
 
 ```
 https://enrai.YOUR_SUBDOMAIN.workers.dev
 ```
 
-「Discover」ボタンをクリックすると、自動的にメタデータが読み込まれます。
+Click the "Discover" button to automatically load metadata.
 
-### 3.4 テストの実行
+### 3.4 Run Tests
 
-1. 「Start Test」をクリック
-2. ブラウザで Authorization URL が表示されたらクリック
-3. Enrai の認可エンドポイントにリダイレクトされます
-4. 自動的にテストスイートにリダイレクトされ、テストが続行されます
+1. Click "Start Test"
+2. Click when Authorization URL is displayed in browser
+3. You'll be redirected to Enrai's authorization endpoint
+4. Automatically redirected to test suite and tests continue
 
-### 3.5 結果の確認
+### 3.5 Verify Results
 
-テスト完了後、以下を確認：
+After test completion, verify:
 
-- **Passed Tests:** 合格したテスト数
-- **Failed Tests:** 失敗したテスト数（目標: 0）
-- **Conformance Score:** 適合率（目標: ≥85%）
+- **Passed Tests:** Number of passed tests
+- **Failed Tests:** Number of failed tests (target: 0)
+- **Conformance Score:** Conformance rate (target: ≥85%)
 
-**✓ 成功基準:**
+**✓ Success Criteria:**
 - Passed Tests: ≥85%
 - Critical Failures: 0
-- Discovery & JWKS: すべて合格
+- Discovery & JWKS: All passing
 
 ---
 
-## ステップ4: 結果の記録
+## Step 4: Record Results
 
-### 4.1 テスト結果のエクスポート
+### 4.1 Export Test Results
 
-1. テスト結果画面で「Export」をクリック
-2. JSON ファイルをダウンロード
+1. Click "Export" on test results screen
+2. Download JSON file
 
-### 4.2 結果の保存
+### 4.2 Save Results
 
 ```bash
-# test-results ディレクトリを作成
+# Create test-results directory
 mkdir -p docs/conformance/test-results
 
-# ダウンロードしたファイルを移動
+# Move downloaded file
 mv ~/Downloads/conformance-test-result-*.json docs/conformance/test-results/
 
-# 日付付きでリネーム
+# Rename with date
 cd docs/conformance/test-results
 mv conformance-test-result-*.json result-$(date +%Y%m%d-%H%M).json
 ```
 
-### 4.3 結果のコミット
+### 4.3 Commit Results
 
 ```bash
-# Gitに追加
+# Add to Git
 git add docs/conformance/test-results/
 
-# コミット
+# Commit
 git commit -m "test: add OpenID Conformance test results for Phase 3"
 
-# プッシュ
+# Push
 git push origin claude/phase3-test-documentation-011CV2461YR1rAMaAnJdqK1v
 ```
 
 ---
 
-## トラブルシューティング
+## Troubleshooting
 
-### 問題: "Unable to connect to issuer"
+### Issue: "Unable to connect to issuer"
 
-**解決方法:**
+**Solution:**
 ```bash
-# HTTPSアクセスを確認
+# Verify HTTPS access
 curl -I $ENRAI_URL/.well-known/openid-configuration
 
-# 200 OK が返ることを確認
+# Verify 200 OK is returned
 ```
 
-### 問題: "JWKS endpoint returns empty keys"
+### Issue: "JWKS endpoint returns empty keys"
 
-**解決方法:**
+**Solution:**
 ```bash
-# Secrets を再設定
+# Reconfigure Secrets
 cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
 
-# 再デプロイ
+# Redeploy
 npm run deploy
 
-# 確認
+# Verify
 curl $ENRAI_URL/.well-known/jwks.json | jq
 ```
 
-### 問題: "Token endpoint error (500)"
+### Issue: "Token endpoint error (500)"
 
-**解決方法:**
+**Solution:**
 ```bash
-# PRIVATE_KEY_PEM を再設定
+# Reconfigure PRIVATE_KEY_PEM
 cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
 
-# 再デプロイ
+# Redeploy
 npm run deploy
 ```
 
 ---
 
-## チェックリスト
+## Checklist
 
-Phase 3完了のためのチェックリスト：
+Checklist for Phase 3 completion:
 
-### デプロイ前
-- [ ] ローカル環境でDiscovery endpointが動作
-- [ ] ローカル環境でJWKS endpointが動作
-- [ ] すべてのユニットテストが合格 (`npm test`)
+### Pre-deployment
+- [ ] Discovery endpoint working in local environment
+- [ ] JWKS endpoint working in local environment
+- [ ] All unit tests passing (`npm test`)
 
-### デプロイ後
-- [ ] プロダクション環境でDiscovery endpointが動作
-- [ ] プロダクション環境でJWKS endpointが動作
-- [ ] Issuer URLが一貫している
+### Post-deployment
+- [ ] Discovery endpoint working in production environment
+- [ ] JWKS endpoint working in production environment
+- [ ] Issuer URL is consistent
 
-### テスト実施後
-- [ ] OpenID Conformance Suiteでテスト完了
+### Post-testing
+- [ ] OpenID Conformance Suite tests completed
 - [ ] Conformance Score ≥ 85%
 - [ ] Critical Failures = 0
-- [ ] テスト結果をエクスポート・保存
-- [ ] 結果をGitにコミット
+- [ ] Test results exported and saved
+- [ ] Results committed to Git
 
-### ドキュメント
-- [ ] テスト結果レポートを作成
-- [ ] 失敗したテスト（もしあれば）の分析
-- [ ] 次のステップを文書化
+### Documentation
+- [ ] Create test results report
+- [ ] Analyze failed tests (if any)
+- [ ] Document next steps
 
 ---
 
-## 次のステップ
+## Next Steps
 
-### テストが成功した場合（≥85%）
+### If Tests Succeeded (≥85%)
 
-1. **Phase 3完了の宣言**
+1. **Declare Phase 3 Complete**
    ```bash
-   # ROADMAP.md を更新
-   # Phase 3のステータスを ⏳ → ✅ に変更
+   # Update ROADMAP.md
+   # Change Phase 3 status from ⏳ → ✅
    ```
 
-2. **Phase 4の準備**
-   - Dynamic Client Registration の設計
-   - Key Rotation の実装計画
+2. **Prepare for Phase 4**
+   - Design Dynamic Client Registration
+   - Plan Key Rotation implementation
 
-### テストが失敗した場合（<85%）
+### If Tests Failed (<85%)
 
-1. **失敗原因の分析**
-   - エラーログを確認
-   - どのテストが失敗したか特定
+1. **Analyze Failure Causes**
+   - Check error logs
+   - Identify which tests failed
 
-2. **コード修正**
-   - 該当するハンドラーを修正
-   - ユニットテストを追加
+2. **Fix Code**
+   - Fix relevant handlers
+   - Add unit tests
 
-3. **再テスト**
-   - デプロイ
-   - Conformance Suite で再実行
+3. **Retest**
+   - Deploy
+   - Re-run in Conformance Suite
 
 ---
 
-## リソース
+## Resources
 
-**詳細ドキュメント:**
-- [完全なテストガイド](./testing-guide.md) - 詳細な手順
-- [手動チェックリスト](./manual-checklist.md) - 手動テストの方法
-- [テスト計画](./test-plan.md) - テスト要件の詳細
+**Detailed Documentation:**
+- [Complete Testing Guide](./testing-guide.md) - Detailed procedures
+- [Manual Checklist](./manual-checklist.md) - Manual testing methods
+- [Test Plan](./test-plan.md) - Detailed test requirements
 
-**外部リンク:**
+**External Links:**
 - [OpenID Conformance Suite](https://www.certification.openid.net/)
 - [OpenID Connect Core Spec](https://openid.net/specs/openid-connect-core-1_0.html)
 - [Cloudflare Workers Docs](https://developers.cloudflare.com/workers/)
 
-**サポート:**
+**Support:**
 - GitHub Issues: https://github.com/sgrastar/enrai/issues
-- TASKS.md: Phase 3 タスクリスト
+- TASKS.md: Phase 3 task list
 
 ---
 
-> 💥 **Enrai Phase 3** - 30分でConformance Testing開始
+> 💥 **Enrai Phase 3** - Start Conformance Testing in 30 minutes
 >
-> **更新日:** 2025-11-11
-> **所要時間:** 約30分
-> **目標:** ≥85% conformance score
+> **Last Updated:** 2025-11-11
+> **Estimated Time:** Approximately 30 minutes
+> **Target:** ≥85% conformance score
 >
-> このガイドに従って、迅速にPhase 3のテストを開始できます。
+> Follow this guide to quickly start Phase 3 testing.

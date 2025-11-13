@@ -1,71 +1,71 @@
 # Enrai - OpenID Conformance Test Results
 
-このディレクトリには、OpenID Conformance Suiteでのテスト結果を保存します。
+This directory stores test results from the OpenID Conformance Suite.
 
-## ディレクトリ構造
+## Directory Structure
 
 ```
 test-results/
-├── README.md                 # このファイル
-├── result-YYYYMMDD-HHMM.json # テスト結果（JSON形式）
-└── report-YYYYMMDD.md        # テストレポート（Markdown形式）
+├── README.md                 # This file
+├── result-YYYYMMDD-HHMM.json # Test results (JSON format)
+└── report-YYYYMMDD.md        # Test report (Markdown format)
 ```
 
-## テスト結果の保存方法
+## How to Save Test Results
 
-### 1. OpenID Conformance Suiteからエクスポート
+### 1. Export from OpenID Conformance Suite
 
-テスト完了後、以下の手順でJSON形式のテスト結果をダウンロードします：
+After test completion, download the JSON test results with the following steps:
 
-1. テスト結果画面で「Export」ボタンをクリック
-2. JSON形式でダウンロード（`conformance-test-result-*.json`）
-3. このディレクトリに移動して保存
+1. Click the "Export" button on the test results screen
+2. Download in JSON format (`conformance-test-result-*.json`)
+3. Move and save to this directory
 
 ```bash
-# ダウンロードしたファイルを移動
+# Move downloaded file
 mv ~/Downloads/conformance-test-result-*.json .
 
-# 日付付きでリネーム
+# Rename with date
 mv conformance-test-result-*.json result-$(date +%Y%m%d-%H%M).json
 ```
 
-### 2. テストレポートの作成
+### 2. Create Test Report
 
-テスト結果を元に、レポートを作成します。テンプレートは [report-template.md](./report-template.md) を使用してください。
+Create a report based on the test results. Use the template [report-template.md](./report-template.md).
 
 ```bash
-# テンプレートをコピー
+# Copy template
 cp report-template.md report-$(date +%Y%m%d).md
 
-# エディタで編集
+# Edit with editor
 vim report-$(date +%Y%m%d).md
 ```
 
-## テスト結果の記録
+## Recording Test Results
 
-各テスト実施後、以下の情報を記録してください：
+After each test execution, record the following information:
 
-| 日付 | テスター | バージョン | 合格率 | レポート |
+| Date | Tester | Version | Pass Rate | Report |
 |------|----------|------------|--------|----------|
-| 2025-11-11 | (あなたの名前) | v0.2.0 | XX% | [report-20251111.md](./report-20251111.md) |
+| 2025-11-11 | (Your Name) | v0.2.0 | XX% | [report-20251111.md](./report-20251111.md) |
 
-## 目標
+## Goals
 
-**Phase 3の目標:**
+**Phase 3 Goals:**
 - Conformance Score: ≥ 85%
 - Critical Failures: 0
-- すべてのCore Testsに合格
+- Pass all Core Tests
 
-**Phase 5（認証取得）の目標:**
+**Phase 5 (Certification) Goals:**
 - Conformance Score: ≥ 95%
-- すべてのテストに合格
-- 警告（Warnings）を最小化
+- Pass all tests
+- Minimize warnings
 
-## リソース
+## Resources
 
-- [Testing Guide](../testing-guide.md) - テスト実施の詳細手順
-- [Phase 3 Quickstart](../phase3-quickstart.md) - クイックスタートガイド
-- [Manual Checklist](../manual-checklist.md) - 手動テストチェックリスト
+- [Testing Guide](../testing-guide.md) - Detailed testing procedures
+- [Phase 3 Quickstart](../phase3-quickstart.md) - Quick start guide
+- [Manual Checklist](../manual-checklist.md) - Manual testing checklist
 
 ---
 

@@ -1,102 +1,102 @@
-# Enrai API インベントリ 📋
+# Enrai API Inventory 📋
 
-**最終更新**: 2025-11-12
-**ステータス**: Phase 4完了、Phase 5計画中
+**Last Updated**: 2025-11-12
+**Status**: Phase 4 Complete, Phase 5 Planning
 
 ---
 
-## 📊 概要
+## 📊 Overview
 
-このドキュメントは、Enrai OIDC OPの全APIエンドポイントの現在の状態と将来計画を記録します。
+This document records the current status and future plans for all API endpoints of the Enrai OIDC OP.
 
-> 📄 **詳細なAPI仕様**: [OpenAPI 3.1仕様書](../api/openapi.yaml) | [APIガイド](../api/README.md)
+> 📄 **Detailed API Specifications**: [OpenAPI 3.1 Specification](../api/openapi.yaml) | [API Guide](../api/README.md)
 
-### 統計サマリー
+### Statistics Summary
 
-| カテゴリ | 実装済み | Phase 5計画 | 検討中 | 合計 |
+| Category | Implemented | Phase 5 Planned | Under Consideration | Total |
 |---------|---------|------------|--------|------|
 | **OIDC Core** | 7 | 0 | 0 | 7 |
-| **OIDC 拡張** | 4 | 0 | 0 | 4 |
-| **認証UI** | 0 | 6 | 0 | 6 |
-| **管理者API** | 0 | 9 | 0 | 9 |
-| **セッション管理** | 0 | 6 | 0 | 6 |
+| **OIDC Extensions** | 4 | 0 | 0 | 4 |
+| **Auth UI** | 0 | 6 | 0 | 6 |
+| **Admin API** | 0 | 9 | 0 | 9 |
+| **Session Management** | 0 | 6 | 0 | 6 |
 | **Logout** | 0 | 2 | 0 | 2 |
-| **トークン交換** | 2 | 0 | 3+ | 5+ |
-| **合計** | **13** | **23** | **3+** | **39+** |
+| **Token Exchange** | 2 | 0 | 3+ | 5+ |
+| **Total** | **13** | **23** | **3+** | **39+** |
 
 ---
 
-## ① OIDC Core APIs ✅ 実装済み（Phase 2完了）
+## ① OIDC Core APIs ✅ Implemented (Phase 2 Complete)
 
 | Endpoint | Method | Status | Phase | RFC/Spec |
 |----------|--------|--------|-------|----------|
-| `/.well-known/openid-configuration` | GET | ✅ 実装済み | Phase 2 | OIDC Discovery |
-| `/.well-known/jwks.json` | GET | ✅ 実装済み | Phase 2 | OIDC Core |
-| `/authorize` | GET | ✅ 実装済み | Phase 2 | OIDC Core 3.1.2 |
-| `/authorize` | POST | ✅ 実装済み | Phase 2 | OIDC Core 3.1.2.1 |
-| `/token` | POST | ✅ 実装済み | Phase 2 | OIDC Core 3.1.3 |
-| `/userinfo` | GET | ✅ 実装済み | Phase 2 | OIDC Core 5.3 |
-| `/userinfo` | POST | ✅ 実装済み | Phase 2 | OIDC Core 5.3.1 |
+| `/.well-known/openid-configuration` | GET | ✅ Implemented | Phase 2 | OIDC Discovery |
+| `/.well-known/jwks.json` | GET | ✅ Implemented | Phase 2 | OIDC Core |
+| `/authorize` | GET | ✅ Implemented | Phase 2 | OIDC Core 3.1.2 |
+| `/authorize` | POST | ✅ Implemented | Phase 2 | OIDC Core 3.1.2.1 |
+| `/token` | POST | ✅ Implemented | Phase 2 | OIDC Core 3.1.3 |
+| `/userinfo` | GET | ✅ Implemented | Phase 2 | OIDC Core 5.3 |
+| `/userinfo` | POST | ✅ Implemented | Phase 2 | OIDC Core 5.3.1 |
 
-### 特徴
-- **PKCE対応** (RFC 7636)
-- **Claims parameter対応** (OIDC Core 5.5)
-- **全標準スコープ対応** (openid, profile, email, address, phone)
-- **コード再利用時のトークン無効化** (RFC 6749 Section 4.1.2)
+### Features
+- **PKCE Support** (RFC 7636)
+- **Claims Parameter Support** (OIDC Core 5.5)
+- **All Standard Scopes Support** (openid, profile, email, address, phone)
+- **Token Revocation on Code Reuse** (RFC 6749 Section 4.1.2)
 
 ---
 
-## ② OIDC 拡張機能 ✅ 実装済み（Phase 4完了）
+## ② OIDC Extensions ✅ Implemented (Phase 4 Complete)
 
 | Endpoint | Method | Status | Phase | RFC/Spec |
 |----------|--------|--------|-------|----------|
-| `/register` | POST | ✅ 実装済み | Phase 4 | RFC 7591 (DCR) |
-| `/as/par` | POST | ✅ 実装済み | Phase 4 | RFC 9126 (PAR) |
-| `/introspect` | POST | ✅ 実装済み | Phase 4 | RFC 7662 |
-| `/revoke` | POST | ✅ 実装済み | Phase 4 | RFC 7009 |
+| `/register` | POST | ✅ Implemented | Phase 4 | RFC 7591 (DCR) |
+| `/as/par` | POST | ✅ Implemented | Phase 4 | RFC 9126 (PAR) |
+| `/introspect` | POST | ✅ Implemented | Phase 4 | RFC 7662 |
+| `/revoke` | POST | ✅ Implemented | Phase 4 | RFC 7009 |
 
-### 追加機能（Phase 4）
-- **DPoP対応** (RFC 9449) - トークンバインディング
-- **Pairwise Subject Identifiers** (OIDC Core 8.1) - プライバシー保護
-- **Refresh Token Flow** (RFC 6749 Section 6) - トークンローテーション
-- **Form Post Response Mode** (OAuth 2.0 Form Post) - セキュアなレスポンス
-
----
-
-## ③ 認証UI関連 API 📝 Phase 5計画
-
-| Endpoint | Method | Status | Phase | 目的 |
-|----------|--------|--------|-------|------|
-| `/auth/passkey/register` | POST | 📝 Phase 5計画 | Phase 5 | Passkey登録開始 |
-| `/auth/passkey/verify` | POST | 📝 Phase 5計画 | Phase 5 | Passkey検証 |
-| `/auth/magic-link/send` | POST | 📝 Phase 5計画 | Phase 5 | Magic Link送信 |
-| `/auth/magic-link/verify` | POST | 📝 Phase 5計画 | Phase 5 | Magic Link検証 |
-| `/auth/consent` | GET | 📝 Phase 5計画 | Phase 5 | 同意画面データ取得 |
-| `/auth/consent` | POST | 📝 Phase 5計画 | Phase 5 | 同意確定 |
-
-### 目標
-- **パスワードレスファースト** - WebAuthn/Passkey + Magic Link
-- **直感的で高速なUX** - ユーザー体験を最優先
+### Additional Features (Phase 4)
+- **DPoP Support** (RFC 9449) - Token Binding
+- **Pairwise Subject Identifiers** (OIDC Core 8.1) - Privacy Protection
+- **Refresh Token Flow** (RFC 6749 Section 6) - Token Rotation
+- **Form Post Response Mode** (OAuth 2.0 Form Post) - Secure Response
 
 ---
 
-## ④ 管理者 API 📝 Phase 5計画
+## ③ Auth UI APIs 📝 Phase 5 Planned
 
-### ユーザー管理
-
-| Endpoint | Method | Status | Phase | 目的 |
+| Endpoint | Method | Status | Phase | Purpose |
 |----------|--------|--------|-------|------|
-| `/admin/users` | GET | 📝 Phase 5計画 | Phase 5 | ユーザー一覧・検索 |
-| `/admin/users` | POST | 📝 Phase 5計画 | Phase 5 | ユーザー作成 |
-| `/admin/users/:id` | PUT | 📝 Phase 5計画 | Phase 5 | ユーザー更新 |
-| `/admin/users/:id` | DELETE | 📝 Phase 5計画 | Phase 5 | ユーザー削除 |
+| `/auth/passkey/register` | POST | 📝 Phase 5 Planned | Phase 5 | Start Passkey registration |
+| `/auth/passkey/verify` | POST | 📝 Phase 5 Planned | Phase 5 | Verify Passkey |
+| `/auth/magic-link/send` | POST | 📝 Phase 5 Planned | Phase 5 | Send Magic Link |
+| `/auth/magic-link/verify` | POST | 📝 Phase 5 Planned | Phase 5 | Verify Magic Link |
+| `/auth/consent` | GET | 📝 Phase 5 Planned | Phase 5 | Get consent screen data |
+| `/auth/consent` | POST | 📝 Phase 5 Planned | Phase 5 | Confirm consent |
 
-**検索パラメータ**:
-- `q`: 検索クエリ（email, name）
+### Goals
+- **Passwordless First** - WebAuthn/Passkey + Magic Link
+- **Intuitive & Fast UX** - Prioritize user experience
+
+---
+
+## ④ Admin API 📝 Phase 5 Planned
+
+### User Management
+
+| Endpoint | Method | Status | Phase | Purpose |
+|----------|--------|--------|-------|------|
+| `/admin/users` | GET | 📝 Phase 5 Planned | Phase 5 | List/Search users |
+| `/admin/users` | POST | 📝 Phase 5 Planned | Phase 5 | Create user |
+| `/admin/users/:id` | PUT | 📝 Phase 5 Planned | Phase 5 | Update user |
+| `/admin/users/:id` | DELETE | 📝 Phase 5 Planned | Phase 5 | Delete user |
+
+**Search Parameters**:
+- `q`: Search query (email, name)
 - `filter`: `verified`, `unverified`, `active`, `inactive`
 - `sort`: `created_at`, `last_login_at`, `email`, `name`
-- `page`: ページ番号（デフォルト: 1）
-- `limit`: 1ページあたり件数（デフォルト: 50, 最大: 100）
+- `page`: Page number (default: 1)
+- `limit`: Items per page (default: 50, max: 100)
 
 ### クライアント管理
 
