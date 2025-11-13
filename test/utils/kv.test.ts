@@ -12,8 +12,8 @@ import {
   storeClient,
   getClient,
   type AuthCodeData,
-} from '../../src/utils/kv';
-import type { Env } from '../../src/types/env';
+} from '../packages/shared/src/utils/kv';
+import type { Env } from '../packages/shared/src/types/env';
 
 // Mock KV namespace
 class MockKVNamespace implements KVNamespace {

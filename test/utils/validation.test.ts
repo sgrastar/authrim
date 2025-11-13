@@ -9,7 +9,7 @@ import {
   validateResponseType,
   validateAuthCode,
   validateToken,
-} from '../../src/utils/validation';
+} from '../packages/shared/src/utils/validation';
 
 describe('Validation Utilities', () => {
   describe('validateClientId', () => {
