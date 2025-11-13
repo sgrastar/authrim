@@ -274,7 +274,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
       return null;
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as { exists: boolean };
     return data.exists ? JSON.stringify({ exists: true }) : null;
   }
 

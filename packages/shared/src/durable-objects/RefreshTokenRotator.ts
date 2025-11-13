@@ -405,7 +405,7 @@ export class RefreshTokenRotator {
     try {
       // POST /family - Create new token family
       if (path === '/family' && request.method === 'POST') {
-        const body = await request.json();
+        const body = (await request.json()) as Partial<CreateFamilyRequest>;
 
         // Validate required fields
         if (!body.token || !body.userId || !body.clientId || !body.scope) {
@@ -421,7 +421,7 @@ export class RefreshTokenRotator {
           );
         }
 
-        const family = await this.createFamily(body);
+        const family = await this.createFamily(body as CreateFamilyRequest);
 
         return new Response(
           JSON.stringify({
@@ -437,7 +437,7 @@ export class RefreshTokenRotator {
 
       // POST /rotate - Rotate refresh token
       if (path === '/rotate' && request.method === 'POST') {
-        const body = await request.json();
+        const body = (await request.json()) as Partial<RotateTokenRequest>;
 
         // Validate required fields
         if (!body.currentToken || !body.userId || !body.clientId) {
@@ -454,7 +454,7 @@ export class RefreshTokenRotator {
         }
 
         try {
-          const result = await this.rotate(body);
+          const result = await this.rotate(body as RotateTokenRequest);
 
           return new Response(JSON.stringify(result), {
             headers: { 'Content-Type': 'application/json' },
@@ -489,7 +489,7 @@ export class RefreshTokenRotator {
 
       // POST /revoke-family - Revoke all tokens in family
       if (path === '/revoke-family' && request.method === 'POST') {
-        const body = await request.json();
+        const body = (await request.json()) as Partial<RevokeFamilyRequest>;
 
         if (!body.familyId) {
           return new Response(
@@ -504,7 +504,7 @@ export class RefreshTokenRotator {
           );
         }
 
-        await this.revokeFamilyTokens(body);
+        await this.revokeFamilyTokens(body as RevokeFamilyRequest);
 
         return new Response(
           JSON.stringify({
