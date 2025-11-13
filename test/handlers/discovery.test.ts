@@ -102,7 +102,7 @@ describe('Discovery Handler', () => {
       );
 
       const metadata = await response.json();
-      expect(metadata.grant_types_supported).toEqual(['authorization_code']);
+      expect(metadata.grant_types_supported).toEqual(['authorization_code', 'refresh_token']);
     });
 
     it('should support RS256 signing algorithm', async () => {
@@ -119,7 +119,7 @@ describe('Discovery Handler', () => {
       expect(metadata.id_token_signing_alg_values_supported).toEqual(['RS256']);
     });
 
-    it('should support public subject type', async () => {
+    it('should support public and pairwise subject types', async () => {
       const env = createMockEnv();
       const response = await app.request(
         '/.well-known/openid-configuration',
@@ -130,7 +130,7 @@ describe('Discovery Handler', () => {
       );
 
       const metadata = await response.json();
-      expect(metadata.subject_types_supported).toEqual(['public']);
+      expect(metadata.subject_types_supported).toEqual(['public', 'pairwise']);
     });
 
     it('should include standard OIDC scopes', async () => {

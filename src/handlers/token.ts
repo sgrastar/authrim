@@ -398,12 +398,7 @@ async function handleAuthorizationCodeGrant(
   try {
     // For Authorization Code Flow, ID token should only contain standard claims
     // Scope-based claims (profile, email) are returned from UserInfo endpoint
-    idToken = await createIDToken(
-      idTokenClaims,
-      privateKey,
-      keyId,
-      expiresIn
-    );
+    idToken = await createIDToken(idTokenClaims, privateKey, keyId, expiresIn);
   } catch (error) {
     console.error('Failed to create ID token:', error);
     return c.json(
@@ -608,7 +603,13 @@ async function handleRefreshTokenGrant(
   let publicKey;
   try {
     const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
-    publicKey = await importJWK(jwk, 'RS256');
+    const importedKey = await importJWK(jwk, 'RS256');
+
+    if (importedKey instanceof Uint8Array) {
+      throw new Error('Unexpected key type: expected KeyLike, got Uint8Array');
+    }
+
+    publicKey = importedKey;
   } catch (err) {
     console.error('Failed to import public key:', err);
     return c.json(

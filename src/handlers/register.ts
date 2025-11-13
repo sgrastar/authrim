@@ -37,7 +37,11 @@ function validateRegistrationRequest(
   const data = body as Partial<ClientRegistrationRequest>;
 
   // Validate redirect_uris (required)
-  if (!data.redirect_uris || !Array.isArray(data.redirect_uris) || data.redirect_uris.length === 0) {
+  if (
+    !data.redirect_uris ||
+    !Array.isArray(data.redirect_uris) ||
+    data.redirect_uris.length === 0
+  ) {
     return {
       valid: false,
       error: {
@@ -71,7 +75,8 @@ function validateRegistrationRequest(
           valid: false,
           error: {
             error: 'invalid_redirect_uri',
-            error_description: 'redirect_uris must use HTTPS (except http://localhost for development)',
+            error_description:
+              'redirect_uris must use HTTPS (except http://localhost for development)',
           },
         };
       }
@@ -312,11 +317,7 @@ function generateClientSecret(): string {
 /**
  * Store client metadata in KV
  */
-async function storeClient(
-  env: Env,
-  clientId: string,
-  metadata: ClientMetadata
-): Promise<void> {
+async function storeClient(env: Env, clientId: string, metadata: ClientMetadata): Promise<void> {
   await env.CLIENTS.put(clientId, JSON.stringify(metadata));
 }
 
@@ -325,9 +326,7 @@ async function storeClient(
  *
  * POST /register
  */
-export async function registerHandler(
-  c: Context<{ Bindings: Env }>
-): Promise<Response> {
+export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
     // Parse request body
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
@@ -398,7 +397,8 @@ export async function registerHandler(
     if (request.scope) response.scope = request.scope;
     // OIDC Core 8: Subject type and sector identifier
     response.subject_type = subjectType;
-    if (request.sector_identifier_uri) response.sector_identifier_uri = request.sector_identifier_uri;
+    if (request.sector_identifier_uri)
+      response.sector_identifier_uri = request.sector_identifier_uri;
 
     // Store client metadata
     const metadata: ClientMetadata = {
@@ -415,7 +415,7 @@ export async function registerHandler(
 
     return c.json(response, 201, {
       'Cache-Control': 'no-store',
-      'Pragma': 'no-cache',
+      Pragma: 'no-cache',
     });
   } catch (error) {
     console.error('Registration error:', error);
