@@ -95,14 +95,17 @@ pnpm install
 wrangler login
 
 # 3. Run setup scripts
-./scripts/setup-dev.sh        # Generate RSA keys
 ./scripts/setup-kv.sh          # Create KV namespaces
+./scripts/setup-dev.sh        # Generate RSA keys
 ./scripts/setup-secrets.sh     # Upload secrets to Cloudflare
 ./scripts/setup-production.sh  # Configure production URLs
 
 # 4. Build and deploy
 pnpm run build
-pnpm run deploy
+pnpm run deploy:retry         # Recommended: sequential deployment with retry logic
+
+# Or for parallel deployment (may encounter rate limits):
+# pnpm run deploy
 ```
 
 **Done!** Your OpenID Provider is now live.
@@ -136,7 +139,62 @@ wrangler whoami
 
 You should see your Cloudflare account email and account ID.
 
-### 3. Generate RSA Keys
+### 3. Create KV Namespaces
+
+**Important:** Create KV namespaces before generating RSA keys and deploying.
+
+Create Cloudflare KV namespaces for storing state, codes, and clients:
+
+```bash
+./scripts/setup-kv.sh
+```
+
+**What this does:**
+- Creates 7 KV namespaces (production)
+- Creates 7 KV namespaces (preview)
+- Updates all `packages/*/wrangler.toml` files with namespace IDs
+- Prompts for each existing namespace (use/recreate/abort)
+
+**Namespaces created:**
+- `AUTH_CODES` - Authorization codes
+- `STATE_STORE` - OAuth state parameters
+- `NONCE_STORE` - OpenID nonces
+- `CLIENTS` - Registered clients
+- `RATE_LIMIT` - Rate limiting data
+- `REFRESH_TOKENS` - Refresh tokens
+- `REVOKED_TOKENS` - Revoked tokens
+
+**Output:**
+```
+⚡️ Enrai KV Namespace Setup
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Creating production namespaces...
+✅ AUTH_CODES: abc123def456...
+✅ STATE_STORE: def456ghi789...
+...
+✅ All wrangler.toml files updated!
+
+⚠️  Important: Wait 10-30 seconds before deploying to allow
+   Cloudflare to propagate the changes.
+```
+
+**Reset Option:**
+
+If you need to delete and recreate all KV namespaces (e.g., after deployment errors):
+
+```bash
+./scripts/setup-kv.sh --reset
+```
+
+This will:
+- Automatically delete all existing KV namespaces
+- Recreate them with fresh IDs
+- Update all `wrangler.toml` files
+- Require 'YES' confirmation to prevent accidental data loss
+
+**Note:** You may need to undeploy workers first if namespaces are in use.
+
+### 4. Generate RSA Keys
 
 Generate cryptographic keys for signing JWT tokens:
 
@@ -162,39 +220,6 @@ Generate cryptographic keys for signing JWT tokens:
   • Key ID: dev-key-1731532800000-abc123
   • Private Key: .keys/private.pem
   • Public JWK: .keys/public.jwk.json
-```
-
-### 4. Create KV Namespaces
-
-Create Cloudflare KV namespaces for storing state, codes, and clients:
-
-```bash
-./scripts/setup-kv.sh
-```
-
-**What this does:**
-- Creates 7 KV namespaces (production)
-- Creates 7 KV namespaces (preview)
-- Updates all `packages/*/wrangler.toml` files with namespace IDs
-
-**Namespaces created:**
-- `AUTH_CODES` - Authorization codes
-- `STATE_STORE` - OAuth state parameters
-- `NONCE_STORE` - OpenID nonces
-- `CLIENTS` - Registered clients
-- `RATE_LIMIT` - Rate limiting data
-- `REFRESH_TOKENS` - Refresh tokens
-- `REVOKED_TOKENS` - Revoked tokens
-
-**Output:**
-```
-⚡️ Enrai KV Namespace Setup
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Creating production namespaces...
-✅ AUTH_CODES: abc123def456...
-✅ STATE_STORE: def456ghi789...
-...
-✅ All wrangler.toml files updated!
 ```
 
 ### 5. Upload Secrets to Cloudflare
@@ -276,6 +301,19 @@ op-auth:build: cache hit, replaying logs
 Deploy all 5 workers to Cloudflare:
 
 ```bash
+# Recommended: Sequential deployment with retry logic
+pnpm run deploy:retry
+```
+
+This script:
+- Deploys workers sequentially (not in parallel)
+- Adds 10-second delays between deployments to avoid rate limits
+- Retries failed deployments automatically (up to 4 attempts)
+- Provides detailed error reporting
+
+**Alternative: Parallel deployment** (faster but may hit rate limits):
+
+```bash
 pnpm run deploy
 ```
 
@@ -288,9 +326,16 @@ pnpm run deploy
 
 **Output:**
 ```
-op-discovery:deploy: Published enrai-op-discovery (0.01 sec)
-op-discovery:deploy: https://enrai-op-discovery.your-subdomain.workers.dev
-op-auth:deploy: Published enrai-op-auth (0.01 sec)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 Deploying: op-discovery
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Published enrai-op-discovery (0.01 sec)
+https://enrai-op-discovery.your-subdomain.workers.dev
+✅ Successfully deployed: op-discovery
+
+⏸️  Waiting 10s before next deployment to avoid rate limits...
+
+📦 Deploying: op-auth
 ...
 ```
 
@@ -602,6 +647,42 @@ pnpm run deploy
 
 ## Troubleshooting
 
+### Issue: "KV namespace 'xxxxx' not found" During Deployment
+
+**Cause:** KV namespace was deleted, renamed, or not properly propagated to Cloudflare's edge network
+
+**Symptoms:**
+```
+✘ [ERROR] A request to the Cloudflare API failed.
+  KV namespace 'bb5ca90df0fe4fe0a1600074822b8745' not found. [code: 10041]
+```
+
+**Solution:**
+
+Option 1: Reset and recreate all KV namespaces (recommended):
+```bash
+# Delete and recreate all KV namespaces
+./scripts/setup-kv.sh --reset
+
+# Wait 10-30 seconds for propagation
+sleep 30
+
+# Deploy with retry logic
+pnpm run deploy:retry
+```
+
+Option 2: Recreate specific namespaces interactively:
+```bash
+./scripts/setup-kv.sh
+# Choose option 2 (Delete and recreate) when prompted
+```
+
+**Note:** If workers are already deployed, you may need to undeploy them first:
+```bash
+cd packages/op-auth
+wrangler delete enrai-op-auth
+```
+
 ### Issue: "Error: Missing required KV namespace"
 
 **Cause:** KV namespaces not created or IDs not updated in `wrangler.toml`
@@ -609,7 +690,7 @@ pnpm run deploy
 **Solution:**
 ```bash
 ./scripts/setup-kv.sh
-pnpm run deploy
+pnpm run deploy:retry
 ```
 
 ### Issue: "Error: No such secret: PRIVATE_KEY_PEM"
@@ -702,6 +783,64 @@ service = "enrai-op-token"
 ```
 
 Ensure worker names match exactly.
+
+### Issue: Deployment Fails with Rate Limit or API Errors
+
+**Cause:** Parallel deployment causing too many concurrent API requests to Cloudflare
+
+**Symptoms:**
+- Multiple workers fail during parallel deployment
+- "Service unavailable" errors (code 7010)
+- API rate limit errors (1,200 requests per 5 minutes)
+- Random deployment failures
+
+**Solution:**
+
+Use the sequential deployment script with retry logic:
+```bash
+pnpm run deploy:retry
+```
+
+This script:
+- Deploys one worker at a time
+- Waits 10 seconds between deployments
+- Retries failed deployments automatically
+- Avoids overwhelming Cloudflare's API
+
+**Alternative:** Increase the delay in `scripts/deploy-with-retry.sh`:
+```bash
+# Edit line 16 in scripts/deploy-with-retry.sh
+INTER_DEPLOY_DELAY=15    # Increase from 10 to 15 seconds
+```
+
+### Issue: Deployment Succeeds but Endpoints Return Errors
+
+**Cause:** KV namespaces were created/updated but not yet propagated globally
+
+**Solution:**
+
+Wait 30-60 seconds after running `setup-kv.sh` before deploying:
+```bash
+./scripts/setup-kv.sh
+echo "Waiting for KV propagation..."
+sleep 30
+pnpm run deploy:retry
+```
+
+If still experiencing issues, undeploy and redeploy:
+```bash
+# Undeploy all workers
+cd packages/op-discovery && wrangler delete enrai-op-discovery
+cd ../op-auth && wrangler delete enrai-op-auth
+cd ../op-token && wrangler delete enrai-op-token
+cd ../op-userinfo && wrangler delete enrai-op-userinfo
+cd ../op-management && wrangler delete enrai-op-management
+cd ../..
+
+# Wait and redeploy
+sleep 30
+pnpm run deploy:retry
+```
 
 ---
 
