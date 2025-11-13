@@ -1,23 +1,23 @@
 {
   "name": "enrai",
   "version": "0.1.0",
-  "description": "A lightweight OpenID Connect Provider built on Cloudflare Workers",
-  "main": "dist/index.js",
+  "description": "A lightweight OpenID Connect Provider built on Cloudflare Workers - Monorepo",
+  "private": true,
   "type": "module",
+  "packageManager": "pnpm@9.0.0",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "build": "tsc",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "lint": "eslint src --ext .ts",
-    "lint:fix": "eslint src --ext .ts --fix",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
-    "typecheck": "tsc --noEmit",
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "deploy": "turbo run deploy",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf node_modules",
     "generate-keys": "tsx scripts/generate-keys.ts"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "keywords": [
     "openid-connect",
     "oidc",
@@ -43,6 +43,7 @@
     "globals": "^15.14.0",
     "prettier": "^3.2.4",
     "tsx": "^4.20.6",
+    "turbo": "^2.6.1",
     "typescript": "^5.3.3",
     "vitest": "^4.0.8",
     "wrangler": "^4.46.0"
