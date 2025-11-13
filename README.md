@@ -367,13 +367,13 @@ pnpm run deploy:with-router
 Enrai supports two deployment modes to ensure OpenID Connect specification compliance:
 
 #### 1️⃣ Test Environment (workers.dev + Router Worker)
-- **Unified endpoint**: `https://enrai-router.{subdomain}.workers.dev`
+- **Unified endpoint**: `https://enrai.{subdomain}.workers.dev`
 - **Use case**: Development, testing, quick setup
 - **Pros**: No custom domain needed, OpenID Connect compliant ✅
 - **Deploy**: `pnpm run deploy:with-router` (includes Router Worker)
 
 **Workers deployed:**
-- 🌍 **enrai-router** (unified entry point)
+- 🌍 **enrai** (unified entry point - Router Worker)
 - 🌍 **enrai-op-discovery**, **enrai-op-auth**, **enrai-op-token**, **enrai-op-userinfo**, **enrai-op-management**
 
 #### 2️⃣ Production Environment (Custom Domain + Routes)
