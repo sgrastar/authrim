@@ -135,16 +135,19 @@ wrangler login
 ./scripts/setup-production.sh  # Choose deployment mode & configure URLs
                                # → Select option 1 (Test) or 2 (Production)
 
-# 4. Build and deploy
-pnpm run build
-
-# 5. Deploy Durable Objects FIRST (CRITICAL!)
+# 4. Deploy Durable Objects FIRST (CRITICAL!)
 ./scripts/setup-durable-objects.sh
-# Wait 30 seconds for DO propagation...
+# This script will:
+#   - Build packages/shared automatically
+#   - Deploy Durable Objects to Cloudflare
+#   - Prompt you to wait 30 seconds for DO propagation
+
+# 5. Build all packages
+pnpm run build
 
 # 6. Deploy all workers with retry logic (recommended)
 pnpm run deploy:retry
-# - Deploys in correct order: shared → workers → router
+# - Deploys in correct order: shared (already deployed) → workers → router
 # - Uses sequential deployment with delays to avoid rate limits
 # - Includes automatic retries on failure
 ```
