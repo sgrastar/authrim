@@ -310,13 +310,6 @@ zone_name = \"$ZONE_NAME\""
     echo "$routes" >> "$file"
 }
 
-# Determine if we're using workers_dev based on deployment mode
-if [[ "$USE_ROUTER" == "true" ]]; then
-    USE_WORKERS_DEV="true"
-else
-    USE_WORKERS_DEV="false"
-fi
-
 # Update all package wrangler.toml files
 for toml_file in packages/*/wrangler.toml; do
     if [ -f "$toml_file" ]; then
@@ -326,6 +319,19 @@ for toml_file in packages/*/wrangler.toml; do
         if [[ "$USE_ROUTER" == "false" ]] && [[ "$package_name" == "router" ]]; then
             echo "  ⊗ Skipping router (not needed in production mode)"
             continue
+        fi
+
+        # Determine workers_dev setting based on deployment mode and package
+        if [[ "$USE_ROUTER" == "true" ]]; then
+            # Test Environment: Only router should be publicly accessible
+            if [[ "$package_name" == "router" ]]; then
+                USE_WORKERS_DEV="true"
+            else
+                USE_WORKERS_DEV="false"
+            fi
+        else
+            # Production mode: All workers use Routes (workers_dev = false)
+            USE_WORKERS_DEV="false"
         fi
 
         update_wrangler_toml "$toml_file" "$USE_WORKERS_DEV"
@@ -385,18 +391,16 @@ if [[ "$USE_ROUTER" == "true" ]]; then
     echo ""
     echo "  ✅ Router Worker enabled with Service Bindings"
     echo ""
-    echo "  Your unified endpoint will be:"
-    echo "    🌐 $PRODUCTION_URL"
+    echo "  Your unified endpoint:"
+    echo "    🌐 $PRODUCTION_URL (Router Worker - only public endpoint)"
     echo ""
-    echo "  Individual workers (for debugging):"
-    echo "    • enrai-op-discovery.$SUBDOMAIN.workers.dev"
-    echo "    • enrai-op-auth.$SUBDOMAIN.workers.dev"
-    echo "    • enrai-op-token.$SUBDOMAIN.workers.dev"
-    echo "    • enrai-op-userinfo.$SUBDOMAIN.workers.dev"
-    echo "    • enrai-op-management.$SUBDOMAIN.workers.dev"
-    echo "    • enrai.$SUBDOMAIN.workers.dev (main entry point - Router Worker)"
+    echo "  🔒 Security architecture:"
+    echo "    • Only the Router Worker is publicly accessible"
+    echo "    • Backend workers (op-discovery, op-auth, op-token, etc.) are NOT publicly exposed"
+    echo "    • All requests must go through the Router Worker"
+    echo "    • Backend workers are accessed via Service Bindings only"
     echo ""
-    echo "  ℹ️  All OpenID Connect endpoints will be accessible via the Router Worker"
+    echo "  ℹ️  All OpenID Connect endpoints will be accessible via: $PRODUCTION_URL"
     echo ""
 else
     echo "📌 Production Environment Deployment Notes:"

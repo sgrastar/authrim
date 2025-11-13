@@ -15,9 +15,10 @@ We implemented a dual-mode deployment system:
 ### 1. Test Environment (workers.dev + Router Worker)
 - **Use case**: Development, testing, quick setup
 - **How it works**: Deploy a Router Worker that acts as a single entry point
-- **Issuer**: `https://enrai-router.subdomain.workers.dev`
+- **Issuer**: `https://enrai.subdomain.workers.dev`
 - **Mechanism**: Service Bindings route requests to specialized workers
-- **Pros**: OpenID Connect compliant, works with workers.dev
+- **Security**: Only the Router Worker is publicly accessible; backend workers are NOT exposed
+- **Pros**: OpenID Connect compliant, works with workers.dev, secure architecture
 - **Cons**: Adds ~1-5ms latency per request
 
 ### 2. Production Environment (Custom Domain + Routes)
@@ -97,22 +98,27 @@ Verify that:
 ### Test Environment (Router Worker)
 
 ```
-┌─────────────────────────────────────────┐
-│  enrai-router.subdomain.workers.dev     │
-│  (Issuer: this URL)                     │
-└──────────────┬──────────────────────────┘
-               │
-      ┌────────┴────────┐
-      │  Router Worker  │
-      │ (Service Bindings)│
-      └────────┬────────┘
-               │
-    ┌──────────┼──────────┐
-    ↓          ↓          ↓
-┌────────┐ ┌────────┐ ┌────────┐
-│Discovery│ │  Auth  │ │ Token  │
-│ Worker │ │ Worker │ │ Worker │
-└────────┘ └────────┘ └────────┘
+                    Public Internet
+                           │
+                           ↓
+┌─────────────────────────────────────────────────────┐
+│  enrai.subdomain.workers.dev (ONLY public endpoint) │
+│  (Issuer: this URL)                                 │
+└──────────────────────┬──────────────────────────────┘
+                       │
+              ┌────────┴────────┐
+              │  Router Worker  │  ← workers_dev = true
+              │ (Service Bindings)│
+              └────────┬────────┘
+                       │
+         ┌─────────────┼─────────────┐
+         ↓             ↓             ↓
+    ┌────────┐    ┌────────┐    ┌────────┐
+    │Discovery│    │  Auth  │    │ Token  │  ← workers_dev = false
+    │ Worker │    │ Worker │    │ Worker │     (NOT publicly accessible)
+    └────────┘    └────────┘    └────────┘
+
+🔒 Security: Backend workers are accessed via Service Bindings only
 ```
 
 ### Production Environment (Routes)
@@ -140,10 +146,15 @@ Verify that:
 ### Test Environment
 
 The setup script:
-1. Sets issuer to `https://enrai-router.subdomain.workers.dev`
+1. Sets issuer to `https://enrai.subdomain.workers.dev`
 2. Generates `packages/router/wrangler.toml` with Service Bindings
-3. Updates all worker wrangler.toml files with the issuer URL
+3. Updates all worker wrangler.toml files:
+   - Router: `workers_dev = true` (publicly accessible)
+   - Backend workers: `workers_dev = false` (NOT publicly accessible)
+   - All workers: Sets issuer URL to the Router URL
 4. Instructs you to deploy with `pnpm run deploy:with-router`
+
+**Security Note**: Only the Router Worker receives a public workers.dev URL. Backend workers are deployed but remain private, accessible only via Service Bindings.
 
 ### Production Environment
 
