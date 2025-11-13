@@ -50,4 +50,8 @@ export interface Env {
 
   // Admin secrets for Durable Objects management
   KEY_MANAGER_SECRET?: string;
+
+  // Email configuration (Phase 5)
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
 }

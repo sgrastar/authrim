@@ -8,6 +8,14 @@ import { rateLimitMiddleware, RateLimitProfiles } from '@enrai/shared';
 // Import handlers
 import { authorizeHandler } from './authorize';
 import { parHandler } from './par';
+import {
+  passkeyRegisterOptionsHandler,
+  passkeyRegisterVerifyHandler,
+  passkeyLoginOptionsHandler,
+  passkeyLoginVerifyHandler,
+} from './passkey';
+import { magicLinkSendHandler, magicLinkVerifyHandler } from './magic-link';
+import { consentGetHandler, consentPostHandler } from './consent';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -101,6 +109,20 @@ app.get('/as/par', (c) => {
     405
   );
 });
+
+// Passkey/WebAuthn endpoints
+app.post('/auth/passkey/register/options', passkeyRegisterOptionsHandler);
+app.post('/auth/passkey/register/verify', passkeyRegisterVerifyHandler);
+app.post('/auth/passkey/login/options', passkeyLoginOptionsHandler);
+app.post('/auth/passkey/login/verify', passkeyLoginVerifyHandler);
+
+// Magic Link endpoints
+app.post('/auth/magic-link/send', magicLinkSendHandler);
+app.get('/auth/magic-link/verify', magicLinkVerifyHandler);
+
+// OAuth Consent endpoints
+app.get('/auth/consent', consentGetHandler);
+app.post('/auth/consent', consentPostHandler);
 
 // 404 handler
 app.notFound((c) => {

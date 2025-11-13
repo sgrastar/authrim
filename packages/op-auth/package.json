@@ -14,8 +14,10 @@
   },
   "dependencies": {
     "@enrai/shared": "workspace:*",
+    "@simplewebauthn/server": "^13.2.2",
     "hono": "^4.0.0",
-    "jose": "^5.2.0"
+    "jose": "^5.2.0",
+    "resend": "^6.4.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",
