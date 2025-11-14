@@ -49,7 +49,7 @@ app.use(
   '*',
   cors({
     origin: '*',
-    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
     maxAge: 86400,
@@ -121,10 +121,23 @@ app.post('/userinfo', async (c) => {
 });
 
 /**
+ * Authentication endpoints - Route to OP_AUTH worker
+ * - /auth/passkey/* - WebAuthn/Passkey authentication
+ * - /auth/magic-link/* - Magic link authentication
+ * - /auth/consent - OAuth consent screen
+ */
+app.all('/auth/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+/**
  * Management endpoints - Route to OP_MANAGEMENT worker
  * - /register (POST) - Dynamic Client Registration
  * - /introspect (POST) - Token Introspection
  * - /revoke (POST) - Token Revocation
+ * - /admin/* - Admin API (users, clients, stats)
+ * - /avatars/* - Avatar images
  */
 app.post('/register', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
@@ -137,6 +150,16 @@ app.post('/introspect', async (c) => {
 });
 
 app.post('/revoke', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.all('/admin/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+app.get('/avatars/*', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
