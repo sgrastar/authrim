@@ -14,6 +14,7 @@ import { registerHandler } from './register';
 import { introspectHandler } from './introspect';
 import { revokeHandler } from './revoke';
 import {
+  serveAvatarHandler,
   adminStatsHandler,
   adminUsersListHandler,
   adminUserGetHandler,
@@ -22,6 +23,8 @@ import {
   adminUserDeleteHandler,
   adminClientsListHandler,
   adminClientGetHandler,
+  adminUserAvatarUploadHandler,
+  adminUserAvatarDeleteHandler,
 } from './admin';
 
 // Create Hono app with Cloudflare Workers types
@@ -113,6 +116,9 @@ app.post('/introspect', introspectHandler);
 // Token Revocation endpoint - RFC 7009
 app.post('/revoke', revokeHandler);
 
+// Avatar serving endpoint
+app.get('/avatars/:filename', serveAvatarHandler);
+
 // Admin API endpoints
 app.get('/admin/stats', adminStatsHandler);
 app.get('/admin/users', adminUsersListHandler);
@@ -120,6 +126,8 @@ app.get('/admin/users/:id', adminUserGetHandler);
 app.post('/admin/users', adminUserCreateHandler);
 app.put('/admin/users/:id', adminUserUpdateHandler);
 app.delete('/admin/users/:id', adminUserDeleteHandler);
+app.post('/admin/users/:id/avatar', adminUserAvatarUploadHandler);
+app.delete('/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
 app.get('/admin/clients', adminClientsListHandler);
 app.get('/admin/clients/:id', adminClientGetHandler);
 

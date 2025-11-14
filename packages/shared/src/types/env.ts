@@ -5,6 +5,9 @@ export interface Env {
   // D1 Database
   DB: D1Database;
 
+  // R2 Buckets
+  AVATARS: R2Bucket;
+
   // KV Namespaces
   AUTH_CODES: KVNamespace;
   STATE_STORE: KVNamespace;

@@ -66,6 +66,11 @@ function createMockEnv(): Env {
     NONCE_STORE: {} as KVNamespace,
     REVOKED_TOKENS: {} as KVNamespace,
     REFRESH_TOKENS: {} as KVNamespace,
+    AVATARS: {
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+    } as unknown as R2Bucket,
     ISSUER_URL: 'https://idp.example.com',
     TOKEN_EXPIRY: '3600',
     CODE_EXPIRY: '600',
