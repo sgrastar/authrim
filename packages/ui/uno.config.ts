@@ -141,6 +141,11 @@ export default defineConfig({
 			'badge-base bg-error-100 text-error-800 dark:bg-error-800/20 dark:text-error-300',
 		'badge-info': 'badge-base bg-info-100 text-info-800 dark:bg-info-800/20 dark:text-info-300'
 	},
-	safelist: [],
+	safelist: [
+		// Ensure button shortcuts are always generated
+		'btn-primary',
+		'btn-secondary',
+		'btn-ghost'
+	],
 	rules: []
 });
