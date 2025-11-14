@@ -1,4 +1,5 @@
 <script lang="ts">
+	import 'virtual:uno.css';
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 

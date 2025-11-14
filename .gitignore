@@ -27,6 +27,7 @@ dist/
 *.sln
 *.sw?
 .DS_Store
+/packages/ui/project.inlang/project_id
 
 # Test coverage
 coverage/
@@ -58,3 +59,4 @@ temp/
 .turbo/
 packages/*/dist/
 packages/*/.wrangler/
+CLAUDE.md
