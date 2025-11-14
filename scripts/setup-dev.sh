@@ -141,7 +141,7 @@ class_name = "KeyManager"
 # Durable Objects migrations
 [[migrations]]
 tag = "v1"
-new_classes = [
+new_sqlite_classes = [
   "SessionStore",
   "AuthorizationCodeStore",
   "RefreshTokenRotator",
@@ -182,7 +182,7 @@ class_name = "KeyManager"
 # Durable Objects migrations
 [[migrations]]
 tag = "v1"
-new_classes = [
+new_sqlite_classes = [
   "SessionStore",
   "AuthorizationCodeStore",
   "RefreshTokenRotator",
