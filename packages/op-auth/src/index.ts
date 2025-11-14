@@ -16,6 +16,13 @@ import {
 } from './passkey';
 import { magicLinkSendHandler, magicLinkVerifyHandler } from './magic-link';
 import { consentGetHandler, consentPostHandler } from './consent';
+import {
+  issueSessionTokenHandler,
+  verifySessionTokenHandler,
+  sessionStatusHandler,
+  refreshSessionHandler,
+} from './session-management';
+import { frontChannelLogoutHandler, backChannelLogoutHandler } from './logout';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -123,6 +130,16 @@ app.get('/auth/magic-link/verify', magicLinkVerifyHandler);
 // OAuth Consent endpoints
 app.get('/auth/consent', consentGetHandler);
 app.post('/auth/consent', consentPostHandler);
+
+// ITP-Compliant Session Management endpoints
+app.post('/auth/session/token', issueSessionTokenHandler);
+app.post('/auth/session/verify', verifySessionTokenHandler);
+app.get('/session/status', sessionStatusHandler);
+app.post('/session/refresh', refreshSessionHandler);
+
+// Logout endpoints
+app.get('/logout', frontChannelLogoutHandler);
+app.post('/logout/backchannel', backChannelLogoutHandler);
 
 // 404 handler
 app.notFound((c) => {
