@@ -89,6 +89,7 @@ Enrai is an **enterprise-grade OpenID Connect Provider** built for:
 
 ## 📦 Technical Stack
 
+### Backend (API)
 | Layer | Technology | Purpose |
 |-------|------------|---------|
 | **Runtime** | Cloudflare Workers | Global edge deployment (6 specialized workers + optional Router) |
@@ -98,6 +99,17 @@ Enrai is an **enterprise-grade OpenID Connect Provider** built for:
 | **Crypto** | JOSE | JWT/JWK standards (RS256) |
 | **Language** | TypeScript | Type safety, great DX |
 | **Routing** | Service Bindings / Routes | Unified endpoint (test/prod modes) |
+
+### Frontend (UI)
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| **Framework** | SvelteKit v5 | Modern reactive framework with SSR |
+| **Deployment** | Cloudflare Pages | Global CDN, automatic deployments |
+| **CSS** | UnoCSS | Lightweight utility-first (3.10 KB gzipped) |
+| **Components** | Melt UI | Headless, accessible UI components |
+| **Icons** | Lucide Svelte | Beautiful, consistent icons |
+| **i18n** | Paraglide | Type-safe internationalization (EN/JA) |
+| **Language** | TypeScript | Full type safety across UI |
 
 ### 🔥 Durable Objects Architecture
 
@@ -145,12 +157,28 @@ Enrai leverages **Cloudflare Durable Objects** for stateful operations with stro
 
 ### 🚧 In Progress (Phase 5)
 
-**Phase 5: UI/UX Implementation** (In Progress)
+**Phase 5: UI/UX Implementation** (In Progress - Stage 3 Complete!)
+
+**Stage 1-2: Backend** ✅
 - ✅ **Durable Objects** - Complete (SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager)
 - ✅ **Storage Abstraction Layer** - Complete (unified interface for KV/D1/DO)
 - ✅ **Integration Tests** - Complete (cross-DO workflows validated)
+
+**Stage 3: Frontend Foundation** ✅ COMPLETE
+- ✅ **SvelteKit v5** - Modern framework with TypeScript
+- ✅ **UnoCSS** - Lightweight CSS framework (3.10 KB gzipped)
+- ✅ **Melt UI** - Headless, accessible components
+- ✅ **Paraglide i18n** - Type-safe internationalization (EN/JA)
+- ✅ **Design System** - Complete color palette, typography, components
+- ✅ **Cloudflare Pages** - Deployment configuration
+
+**Stage 4: Authentication UI** 🚧 Next
 - 🚧 Login & registration screens (Passwordless-first)
 - 🚧 OAuth consent screen
+- 🚧 Magic Link flow
+- 🚧 Passkey/WebAuthn integration
+
+**Stage 5: Admin Dashboard** 🚧 Planned
 - 🚧 Admin dashboard
 - 🚧 User management interface
 - 🚧 Client management interface
