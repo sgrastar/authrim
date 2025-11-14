@@ -54,8 +54,7 @@
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900">
 	<!-- Sidebar -->
 	<aside
-		class="fixed left-0 top-0 z-40 h-screen w-64 border-r border-gray-200 bg-white transition-transform dark:border-gray-700 dark:bg-gray-800"
-		class:"-translate-x-full"={!sidebarOpen}
+		class="fixed left-0 top-0 z-40 h-screen w-64 border-r border-gray-200 bg-white transition-transform dark:border-gray-700 dark:bg-gray-800 {!sidebarOpen ? '-translate-x-full' : ''}"
 	>
 		<!-- Logo -->
 		<div class="flex h-16 items-center border-b border-gray-200 px-6 dark:border-gray-700">
@@ -74,15 +73,11 @@
 					<li>
 						<a
 							href={item.path}
-							class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors"
-							class:bg-primary-50={isActive(item.path)}
-							class:text-primary-700={isActive(item.path)}
-							class:dark:bg-primary-900={isActive(item.path)}
-							class:dark:text-primary-300={isActive(item.path)}
-							class:text-gray-700={!isActive(item.path)}
-							class:dark:text-gray-300={!isActive(item.path)}
-							class:hover:bg-gray-100={!isActive(item.path)}
-							class:dark:hover:bg-gray-700={!isActive(item.path)}
+							class={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+								isActive(item.path)
+									? 'bg-primary-50 text-primary-700 dark:bg-primary-900 dark:text-primary-300'
+									: 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+							}`}
 						>
 							<div class={`${item.icon} h-5 w-5`}></div>
 							<span>{item.label()}</span>
