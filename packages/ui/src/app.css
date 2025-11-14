@@ -1,0 +1,65 @@
+/* UnoCSS Reset */
+@import '@unocss/reset/tailwind.css';
+
+/* UnoCSS Utilities */
+@unocss all;
+
+/* Custom Base Styles */
+:root {
+	/* Color scheme */
+	color-scheme: light dark;
+
+	/* Font smoothing */
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+body {
+	font-family: 'Inter', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', sans-serif;
+	background-color: white;
+	color: rgb(17, 24, 39); /* gray-900 */
+}
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+	body {
+		background-color: rgb(17, 24, 39); /* gray-900 */
+		color: rgb(255, 255, 255); /* white */
+	}
+}
+
+/* Screen reader only */
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border-width: 0;
+}
+
+.sr-only:focus {
+	position: static;
+	width: auto;
+	height: auto;
+	padding: inherit;
+	margin: inherit;
+	overflow: visible;
+	clip: auto;
+	white-space: normal;
+}
+
+/* Reduced motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}
