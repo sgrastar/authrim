@@ -51,10 +51,17 @@ echo "This script will create or update D1 database for your Enrai deployment."
 echo ""
 
 # Determine environment
-read -p "Environment (dev/prod) [dev]: " ENV
+read -p "Environment (local/dev/prod) [dev]: " ENV
 ENV=${ENV:-dev}
 
-DB_NAME="enrai-${ENV}"
+# Determine database name and remote flag
+if [ "$ENV" = "local" ]; then
+    DB_NAME="enrai-local"
+    REMOTE_FLAG=""
+else
+    DB_NAME="enrai-${ENV}"
+    REMOTE_FLAG="--remote"
+fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -276,7 +283,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     else
         # Fallback: run migrations directly
         echo "📝 Applying 001_initial_schema.sql..."
-        wrangler d1 execute "$DB_NAME" --file=migrations/001_initial_schema.sql
+        wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --file=migrations/001_initial_schema.sql
         echo "✅ Schema migration complete"
         echo ""
 
@@ -287,13 +294,13 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
             read -p "Continue? (y/N): " -n 1 -r
             echo
             if [[ $REPLY =~ ^[Yy]$ ]]; then
-                wrangler d1 execute "$DB_NAME" --file=migrations/002_seed_default_data.sql
+                wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --file=migrations/002_seed_default_data.sql
                 echo "✅ Seed data migration complete"
             else
                 echo "⊗ Skipping seed data"
             fi
         else
-            wrangler d1 execute "$DB_NAME" --file=migrations/002_seed_default_data.sql
+            wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --file=migrations/002_seed_default_data.sql
             echo "✅ Seed data migration complete"
         fi
         echo ""
@@ -306,10 +313,10 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     echo "Tables created:"
-    wrangler d1 execute "$DB_NAME" --command="SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+    wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --command="SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
     echo ""
     echo "Record counts:"
-    wrangler d1 execute "$DB_NAME" --command="
+    wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --command="
         SELECT 'users' as table_name, COUNT(*) as count FROM users
         UNION ALL SELECT 'roles', COUNT(*) FROM roles
         UNION ALL SELECT 'oauth_clients', COUNT(*) FROM oauth_clients
@@ -349,8 +356,13 @@ echo "  2. Update your TypeScript Env interface to include DB binding"
 echo "  3. Test database access in your workers"
 echo ""
 echo "Useful commands:"
-echo "  • List tables:    wrangler d1 execute $DB_NAME --command=\"SELECT name FROM sqlite_master WHERE type='table';\""
-echo "  • Query data:     wrangler d1 execute $DB_NAME --command=\"SELECT * FROM users LIMIT 5;\""
+if [ "$ENV" = "local" ]; then
+    echo "  • List tables:    wrangler d1 execute $DB_NAME --command=\"SELECT name FROM sqlite_master WHERE type='table';\""
+    echo "  • Query data:     wrangler d1 execute $DB_NAME --command=\"SELECT * FROM users LIMIT 5;\""
+else
+    echo "  • List tables:    wrangler d1 execute $DB_NAME --remote --command=\"SELECT name FROM sqlite_master WHERE type='table';\""
+    echo "  • Query data:     wrangler d1 execute $DB_NAME --remote --command=\"SELECT * FROM users LIMIT 5;\""
+fi
 echo "  • Run migrations: bash migrations/migrate.sh $ENV up"
 echo "  • Check status:   bash migrations/migrate.sh $ENV status"
 echo ""
