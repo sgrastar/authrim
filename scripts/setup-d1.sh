@@ -14,17 +14,6 @@ set -e
 RESET_MODE=false
 if [ "$1" = "--reset" ]; then
     RESET_MODE=true
-    echo "⚠️  RESET MODE ENABLED"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "The existing D1 database will be deleted and recreated."
-    echo "This will delete ALL data in the database."
-    echo ""
-    read -p "Are you sure you want to continue? Type 'YES' to confirm: " -r
-    if [ "$REPLY" != "YES" ]; then
-        echo "❌ Reset cancelled"
-        exit 1
-    fi
-    echo ""
 fi
 
 echo "⚡️ Enrai D1 Database Setup"
@@ -75,12 +64,46 @@ if wrangler d1 info "$DB_NAME" &> /dev/null; then
     DB_EXISTS=true
 fi
 
-if [ "$RESET_MODE" = true ] && [ "$DB_EXISTS" = true ]; then
-    echo "🗑️  Deleting existing database: $DB_NAME"
-    wrangler d1 delete "$DB_NAME" --skip-confirmation
-    echo "✅ Database deleted"
-    echo ""
-    DB_EXISTS=false
+if [ "$RESET_MODE" = true ]; then
+    if [ "$DB_EXISTS" = true ]; then
+        echo ""
+        echo "⚠️  RESET MODE: Database Deletion Confirmation"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "The following database will be DELETED:"
+        echo ""
+        echo "  Database Name: $DB_NAME"
+
+        # Show database info if available
+        DB_INFO=$(wrangler d1 info "$DB_NAME" 2>&1 | head -10)
+        if [ $? -eq 0 ]; then
+            echo ""
+            echo "$DB_INFO"
+        fi
+
+        echo ""
+        echo "⚠️  WARNING: This will delete ALL data in the database!"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        read -p "Are you sure you want to continue? Type 'YES' to confirm: " -r
+        echo ""
+
+        if [ "$REPLY" != "YES" ]; then
+            echo "❌ Reset cancelled"
+            exit 1
+        fi
+
+        echo "🗑️  Deleting database: $DB_NAME"
+        wrangler d1 delete "$DB_NAME" --skip-confirmation
+        echo "✅ Database deleted"
+        echo ""
+        DB_EXISTS=false
+    else
+        echo ""
+        echo "ℹ️  RESET MODE: Database does not exist"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Database '$DB_NAME' does not exist. It will be created."
+        echo ""
+    fi
 fi
 
 # Create database if it doesn't exist
@@ -283,21 +306,11 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     else
         # Fallback: run migrations directly
         echo "📝 Applying 001_initial_schema.sql..."
-        echo ""
-        echo "ℹ️  次のプロンプト「Ok to proceed?」について："
-        echo "   マイグレーション実行中、データベースが一時的に利用できなくなります。"
-        echo "   続行する場合は 'yes' と入力してください。"
-        echo ""
         wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --file=migrations/001_initial_schema.sql
         echo "✅ Schema migration complete"
         echo ""
 
         echo "📝 Applying 002_seed_default_data.sql..."
-        echo ""
-        echo "ℹ️  次のプロンプト「Ok to proceed?」について："
-        echo "   マイグレーション実行中、データベースが一時的に利用できなくなります。"
-        echo "   続行する場合は 'yes' と入力してください。"
-        echo ""
         if [ "$ENV" = "prod" ]; then
             echo "⚠️  Warning: This includes test data!"
             echo "Please review migrations/002_seed_default_data.sql and remove test data before running on production"
