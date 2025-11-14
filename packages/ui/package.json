@@ -16,7 +16,9 @@
 		"lint": "eslint .",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
-		"typecheck": "svelte-check --tsconfig ./tsconfig.json"
+		"typecheck": "svelte-check --tsconfig ./tsconfig.json",
+		"deploy:preview": "pnpm build && wrangler pages deploy .svelte-kit/cloudflare",
+		"deploy:production": "pnpm build && wrangler pages deploy .svelte-kit/cloudflare --branch=main"
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.1",
