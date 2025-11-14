@@ -113,6 +113,7 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
       {
         error: 'server_error',
         error_description: 'Failed to retrieve statistics',
+        details: error instanceof Error ? error.message : String(error),
       },
       500
     );
@@ -191,6 +192,7 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
       {
         error: 'server_error',
         error_description: 'Failed to retrieve users',
+        details: error instanceof Error ? error.message : String(error),
       },
       500
     );
@@ -329,6 +331,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       {
         error: 'server_error',
         error_description: 'Failed to create user',
+        details: error instanceof Error ? error.message : String(error),
       },
       500
     );
