@@ -89,7 +89,7 @@ app.use(
 );
 
 // Health check endpoint
-app.get('/health', (c) => {
+app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'op-auth',
@@ -118,24 +118,24 @@ app.get('/as/par', (c) => {
 });
 
 // Passkey/WebAuthn endpoints
-app.post('/auth/passkey/register/options', passkeyRegisterOptionsHandler);
-app.post('/auth/passkey/register/verify', passkeyRegisterVerifyHandler);
-app.post('/auth/passkey/login/options', passkeyLoginOptionsHandler);
-app.post('/auth/passkey/login/verify', passkeyLoginVerifyHandler);
+app.post('/api/auth/passkey/register/options', passkeyRegisterOptionsHandler);
+app.post('/api/auth/passkey/register/verify', passkeyRegisterVerifyHandler);
+app.post('/api/auth/passkey/login/options', passkeyLoginOptionsHandler);
+app.post('/api/auth/passkey/login/verify', passkeyLoginVerifyHandler);
 
 // Magic Link endpoints
-app.post('/auth/magic-link/send', magicLinkSendHandler);
-app.get('/auth/magic-link/verify', magicLinkVerifyHandler);
+app.post('/api/auth/magic-link/send', magicLinkSendHandler);
+app.get('/api/auth/magic-link/verify', magicLinkVerifyHandler);
 
 // OAuth Consent endpoints
-app.get('/auth/consent', consentGetHandler);
-app.post('/auth/consent', consentPostHandler);
+app.get('/api/auth/consent', consentGetHandler);
+app.post('/api/auth/consent', consentPostHandler);
 
-// ITP-Compliant Session Management endpoints
-app.post('/auth/session/token', issueSessionTokenHandler);
-app.post('/auth/session/verify', verifySessionTokenHandler);
-app.get('/session/status', sessionStatusHandler);
-app.post('/session/refresh', refreshSessionHandler);
+// Session Management endpoints (RESTful naming)
+app.post('/api/sessions/issue', issueSessionTokenHandler);      // Issue new session token
+app.post('/api/sessions/verify', verifySessionTokenHandler);    // Verify session token
+app.get('/api/sessions/status', sessionStatusHandler);          // Check session status
+app.post('/api/sessions/refresh', refreshSessionHandler);       // Refresh session expiration
 
 // Logout endpoints
 app.get('/logout', frontChannelLogoutHandler);

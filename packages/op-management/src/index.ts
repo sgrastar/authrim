@@ -102,7 +102,7 @@ app.use(
 );
 
 // Health check endpoint
-app.get('/health', (c) => {
+app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'op-management',
@@ -121,25 +121,25 @@ app.post('/introspect', introspectHandler);
 app.post('/revoke', revokeHandler);
 
 // Avatar serving endpoint
-app.get('/avatars/:filename', serveAvatarHandler);
+app.get('/api/avatars/:filename', serveAvatarHandler);
 
 // Admin API endpoints
-app.get('/admin/stats', adminStatsHandler);
-app.get('/admin/users', adminUsersListHandler);
-app.get('/admin/users/:id', adminUserGetHandler);
-app.post('/admin/users', adminUserCreateHandler);
-app.put('/admin/users/:id', adminUserUpdateHandler);
-app.delete('/admin/users/:id', adminUserDeleteHandler);
-app.post('/admin/users/:id/avatar', adminUserAvatarUploadHandler);
-app.delete('/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
-app.get('/admin/clients', adminClientsListHandler);
-app.get('/admin/clients/:id', adminClientGetHandler);
+app.get('/api/admin/stats', adminStatsHandler);
+app.get('/api/admin/users', adminUsersListHandler);
+app.get('/api/admin/users/:id', adminUserGetHandler);
+app.post('/api/admin/users', adminUserCreateHandler);
+app.put('/api/admin/users/:id', adminUserUpdateHandler);
+app.delete('/api/admin/users/:id', adminUserDeleteHandler);
+app.post('/api/admin/users/:id/avatar', adminUserAvatarUploadHandler);
+app.delete('/api/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
+app.get('/api/admin/clients', adminClientsListHandler);
+app.get('/api/admin/clients/:id', adminClientGetHandler);
 
-// Admin Session Management endpoints
-app.get('/admin/sessions', adminSessionsListHandler);
-app.get('/admin/sessions/:id', adminSessionGetHandler);
-app.post('/admin/sessions/:id/revoke', adminSessionRevokeHandler);
-app.post('/admin/users/:id/revoke-all-sessions', adminUserRevokeAllSessionsHandler);
+// Admin Session Management endpoints (RESTful naming)
+app.get('/api/admin/sessions', adminSessionsListHandler);
+app.get('/api/admin/sessions/:id', adminSessionGetHandler);
+app.delete('/api/admin/sessions/:id', adminSessionRevokeHandler);        // RESTful: DELETE instead of POST
+app.delete('/api/admin/users/:id/sessions', adminUserRevokeAllSessionsHandler);  // RESTful: /sessions instead of /revoke-all-sessions
 
 // 404 handler
 app.notFound((c) => {

@@ -59,7 +59,7 @@ app.use(
 );
 
 // Health check endpoint
-app.get('/health', (c) => {
+app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'op-token',

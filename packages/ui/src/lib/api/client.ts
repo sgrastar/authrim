@@ -78,7 +78,7 @@ export const adminUsersAPI = {
 				hasNext: boolean;
 				hasPrev: boolean;
 			};
-		}>(`/admin/users${query ? '?' + query : ''}`);
+		}>(`/api/admin/users${query ? '?' + query : ''}`);
 	},
 
 	/**
@@ -89,7 +89,7 @@ export const adminUsersAPI = {
 			user: any;
 			passkeys: any[];
 			customFields: any[];
-		}>(`/admin/users/${userId}`);
+		}>(`/api/admin/users/${userId}`);
 	},
 
 	/**
@@ -103,7 +103,7 @@ export const adminUsersAPI = {
 		phone_number_verified?: boolean;
 		[key: string]: any;
 	}) {
-		return apiFetch<{ user: any }>('/admin/users', {
+		return apiFetch<{ user: any }>('/api/admin/users', {
 			method: 'POST',
 			body: JSON.stringify(userData)
 		});
@@ -122,7 +122,7 @@ export const adminUsersAPI = {
 			picture?: string;
 		}
 	) {
-		return apiFetch<{ user: any }>(`/admin/users/${userId}`, {
+		return apiFetch<{ user: any }>(`/api/admin/users/${userId}`, {
 			method: 'PUT',
 			body: JSON.stringify(updates)
 		});
@@ -132,7 +132,7 @@ export const adminUsersAPI = {
 	 * Delete user
 	 */
 	async delete(userId: string) {
-		return apiFetch<{ success: boolean; message: string }>(`/admin/users/${userId}`, {
+		return apiFetch<{ success: boolean; message: string }>(`/api/admin/users/${userId}`, {
 			method: 'DELETE'
 		});
 	}
@@ -162,14 +162,14 @@ export const adminClientsAPI = {
 				hasNext: boolean;
 				hasPrev: boolean;
 			};
-		}>(`/admin/clients${query ? '?' + query : ''}`);
+		}>(`/api/admin/clients${query ? '?' + query : ''}`);
 	},
 
 	/**
 	 * Get client details by ID
 	 */
 	async get(clientId: string) {
-		return apiFetch<{ client: any }>(`/admin/clients/${clientId}`);
+		return apiFetch<{ client: any }>(`/api/admin/clients/${clientId}`);
 	}
 };
 
@@ -190,7 +190,7 @@ export const adminStatsAPI = {
 				loginsToday: number;
 			};
 			recentActivity: any[];
-		}>('/admin/stats');
+		}>('/api/admin/stats');
 	}
 };
 
@@ -202,7 +202,7 @@ export const passkeyAPI = {
 	 * Get registration options for Passkey
 	 */
 	async getRegisterOptions(data: { email: string; name?: string; userId?: string }) {
-		return apiFetch<{ options: any; userId: string }>('/auth/passkey/register/options', {
+		return apiFetch<{ options: any; userId: string }>('/api/auth/passkey/register/options', {
 			method: 'POST',
 			body: JSON.stringify(data)
 		});
@@ -213,7 +213,7 @@ export const passkeyAPI = {
 	 */
 	async verifyRegistration(data: { userId: string; credential: any; deviceName?: string }) {
 		return apiFetch<{ verified: boolean; passkeyId: string; message: string }>(
-			'/auth/passkey/register/verify',
+			'/api/auth/passkey/register/verify',
 			{
 				method: 'POST',
 				body: JSON.stringify(data)
@@ -225,7 +225,7 @@ export const passkeyAPI = {
 	 * Get authentication options for Passkey login
 	 */
 	async getLoginOptions(data: { email?: string }) {
-		return apiFetch<{ options: any; challengeId: string }>('/auth/passkey/login/options', {
+		return apiFetch<{ options: any; challengeId: string }>('/api/auth/passkey/login/options', {
 			method: 'POST',
 			body: JSON.stringify(data)
 		});
@@ -240,7 +240,7 @@ export const passkeyAPI = {
 			sessionId: string;
 			userId: string;
 			user: any;
-		}>('/auth/passkey/login/verify', {
+		}>('/api/auth/passkey/login/verify', {
 			method: 'POST',
 			body: JSON.stringify(data)
 		});
@@ -256,7 +256,7 @@ export const magicLinkAPI = {
 	 */
 	async send(data: { email: string; name?: string; redirect_uri?: string }) {
 		return apiFetch<{ success: boolean; message: string; messageId?: string; magic_link_url?: string }>(
-			'/auth/magic-link/send',
+			'/api/auth/magic-link/send',
 			{
 				method: 'POST',
 				body: JSON.stringify(data)
@@ -273,6 +273,6 @@ export const magicLinkAPI = {
 			sessionId: string;
 			userId: string;
 			user: any;
-		}>(`/auth/magic-link/verify?token=${encodeURIComponent(token)}`);
+		}>(`/api/auth/magic-link/verify?token=${encodeURIComponent(token)}`);
 	}
 };
