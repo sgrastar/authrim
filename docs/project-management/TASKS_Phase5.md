@@ -542,8 +542,8 @@
   - [x] Language switcher (en/ja)
 - [x] Implement form validation (email validation)
 - [x] Implement Passkey detection (check browser support)
-- [ ] Integrate with `/auth/passkey/login` API (placeholder implemented, API integration pending)
-- [ ] Integrate with `/auth/magic-link/send` API (placeholder implemented, API integration pending)
+- [x] Integrate with `/auth/passkey/login` API
+- [x] Integrate with `/auth/magic-link/send` API
 - [x] Add error message display
 - [x] Add loading states
 - [ ] Add Cloudflare Turnstile (Captcha) (deferred to backend API integration)
@@ -563,8 +563,8 @@
   - [x] "Already have an account?" link
 - [x] Implement form validation (email and name validation)
 - [ ] Check email uniqueness (debounced) (deferred to API integration)
-- [ ] Integrate with `/auth/passkey/register` API (placeholder implemented, API integration pending)
-- [ ] Integrate with `/auth/magic-link/send` API (placeholder implemented, API integration pending)
+- [x] Integrate with `/auth/passkey/register` API
+- [x] Integrate with `/auth/magic-link/send` API
 - [ ] Add Cloudflare Turnstile (deferred to backend API integration)
 - [x] Test registration flow (basic UI testing)
 - [x] Document registration page (code comments)
@@ -577,7 +577,7 @@
   - [x] "Resend email" button (with timer countdown)
   - [x] "Back to login" link
 - [x] Implement resend timer (60 seconds)
-- [ ] Integrate with resend API (placeholder implemented, API integration pending)
+- [x] Integrate with resend API
 - [x] Test resend flow (basic UI testing)
 - [x] Document magic link sent page (code comments)
 
@@ -585,7 +585,7 @@
 - [x] Create `packages/ui/src/routes/verify-magic-link/+page.svelte`
 - [x] Show loading spinner immediately
 - [x] Extract token from URL query parameter
-- [ ] Call `/auth/magic-link/verify` API (placeholder implemented, API integration pending)
+- [x] Call `/auth/magic-link/verify` API
 - [x] Handle success: redirect to client app or dashboard (placeholder logic)
 - [x] Handle error: show error message with "Request new link" button
 - [x] Test verification flow (basic UI testing)
@@ -648,7 +648,7 @@
   - [x] Activity feed (latest logins, registrations)
   - [ ] Login trend chart (Chart.js or ECharts) - Deferred to Phase 6
   - [x] Quick actions panel (Create user, Register client)
-- [ ] Integrate with `/admin/stats` API (mock data implemented, API integration pending)
+- [x] Integrate with `/admin/stats` API
 - [ ] Add real-time updates (optional: WebSockets or polling) - Deferred to Phase 6
 - [x] Test dashboard layout and responsiveness
 - [x] Document admin dashboard (code comments)
@@ -661,7 +661,7 @@
   - [x] Sort by columns (basic implementation)
   - [x] "Add User" button
   - [x] Action buttons (View, Delete) per row
-- [ ] Integrate with `GET /admin/users` API (mock data implemented, API integration pending)
+- [x] Integrate with `GET /admin/users` API
 - [x] Implement client-side pagination
 - [x] Implement debounced search
 - [ ] Add delete confirmation dialog (basic alert implemented)
@@ -677,9 +677,9 @@
   - [ ] Audit Log (user actions) - Deferred to Phase 6
   - [x] "Save Changes" button
   - [x] "Delete User" button (danger zone)
-- [ ] Integrate with `GET /admin/users/:id` API (mock data implemented, API integration pending)
-- [ ] Integrate with `PUT /admin/users/:id` API (mock implementation)
-- [ ] Integrate with `DELETE /admin/users/:id` API (mock implementation)
+- [x] Integrate with `GET /admin/users/:id` API
+- [x] Integrate with `PUT /admin/users/:id` API
+- [x] Integrate with `DELETE /admin/users/:id` API
 - [x] Implement form validation (basic validation)
 - [x] Add "Delete Passkey" button for each device
 - [x] Add "Revoke Session" button for each session
@@ -692,7 +692,7 @@
   - [x] Search bar
   - [x] "Register Client" button
   - [x] Action buttons (View, Delete) per row
-- [ ] Integrate with `GET /admin/clients` API (mock data implemented, API integration pending)
+- [x] Integrate with `GET /admin/clients` API
 - [x] Implement client search
 - [ ] Add delete confirmation dialog (basic alert implemented)
 - [x] Test client list page (basic UI testing)
@@ -709,10 +709,10 @@
   - [x] "Save Changes" button
   - [x] "Regenerate Secret" button (show confirmation)
   - [x] "Delete Client" button (danger zone)
-- [ ] Integrate with `GET /admin/clients/:id` API (mock data implemented, API integration pending)
-- [ ] Integrate with `PUT /admin/clients/:id` API (mock implementation)
-- [ ] Integrate with `POST /admin/clients/:id/regenerate-secret` API (mock implementation)
-- [ ] Integrate with `DELETE /admin/clients/:id` API (mock implementation)
+- [x] Integrate with `GET /admin/clients/:id` API
+- [ ] Integrate with `PUT /admin/clients/:id` API (not required for basic functionality)
+- [ ] Integrate with `POST /admin/clients/:id/regenerate-secret` API (not required for basic functionality)
+- [ ] Integrate with `DELETE /admin/clients/:id` API (not required for basic functionality)
 - [x] Show client_secret only once after regeneration (alert placeholder)
 - [ ] Add form validation (URL validation deferred to Phase 6)
 - [ ] Test client editing and deletion (deferred to integration testing)

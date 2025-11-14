@@ -2,6 +2,7 @@
 	import * as m from '$lib/paraglide/messages';
 	import { Card, Button, Input } from '$lib/components';
 	import { onMount } from 'svelte';
+	import { adminUsersAPI } from '$lib/api/client';
 
 	interface User {
 		id: string;
@@ -27,43 +28,37 @@
 
 	async function loadUsers() {
 		loading = true;
-		// Simulate API call - would call GET /admin/users in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 500));
 
-		// Mock data
-		const mockUsers: User[] = Array.from({ length: 50 }, (_, i) => ({
-			id: `user-${i + 1}`,
-			email: `user${i + 1}@example.com`,
-			name: i % 3 === 0 ? null : `User ${i + 1}`,
-			email_verified: i % 4 !== 0,
-			created_at: Date.now() - i * 86400000,
-			last_login_at: i % 5 === 0 ? null : Date.now() - i * 3600000
-		}));
+		try {
+			// Call API to get users
+			const { data, error } = await adminUsersAPI.list({
+				page: currentPage,
+				limit: itemsPerPage,
+				search: searchQuery || undefined,
+				verified: filterStatus === 'all' ? undefined : (filterStatus === 'verified' ? 'true' : 'false')
+			});
 
-		// Apply filters
-		let filtered = mockUsers;
-		if (searchQuery) {
-			filtered = filtered.filter(
-				(u) =>
-					u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-					u.name?.toLowerCase().includes(searchQuery.toLowerCase())
-			);
+			if (error) {
+				console.error('Failed to load users:', error);
+				users = [];
+				totalCount = 0;
+				totalPages = 0;
+			} else if (data) {
+				users = data.users.map(u => ({
+					...u,
+					email_verified: Boolean(u.email_verified)
+				}));
+				totalCount = data.pagination.total;
+				totalPages = data.pagination.totalPages;
+			}
+		} catch (err) {
+			console.error('Error loading users:', err);
+			users = [];
+			totalCount = 0;
+			totalPages = 0;
+		} finally {
+			loading = false;
 		}
-		if (filterStatus === 'verified') {
-			filtered = filtered.filter((u) => u.email_verified);
-		} else if (filterStatus === 'unverified') {
-			filtered = filtered.filter((u) => !u.email_verified);
-		}
-
-		totalCount = filtered.length;
-		totalPages = Math.ceil(totalCount / itemsPerPage);
-
-		// Pagination
-		const start = (currentPage - 1) * itemsPerPage;
-		const end = start + itemsPerPage;
-		users = filtered.slice(start, end);
-
-		loading = false;
 	}
 
 	function handleSearch() {
@@ -82,9 +77,24 @@
 		return new Date(timestamp).toLocaleDateString();
 	}
 
-	function handleDeleteUser(userId: string) {
-		// In real implementation, would show confirmation dialog and call DELETE /admin/users/:id
-		console.log('Delete user:', userId);
+	async function handleDeleteUser(userId: string) {
+		if (!confirm('Are you sure you want to delete this user? This action cannot be undone.')) {
+			return;
+		}
+
+		try {
+			const { error } = await adminUsersAPI.delete(userId);
+
+			if (error) {
+				alert('Failed to delete user: ' + (error.error_description || 'Unknown error'));
+			} else {
+				// Reload users after successful deletion
+				await loadUsers();
+			}
+		} catch (err) {
+			console.error('Error deleting user:', err);
+			alert('Failed to delete user');
+		}
 	}
 
 	function nextPage() {
