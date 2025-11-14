@@ -265,49 +265,49 @@
 - [ ] Test consent denial flow (deferred to integration testing)
 - [x] Document consent API - `docs/api/auth/consent.md`
 
-#### 27.4 ITP対応セッション管理API
-- [ ] Implement `POST /auth/session/token` - Issue short-lived token (5min TTL, single-use)
-  - [ ] Generate secure token
-  - [ ] Store in KV with TTL (5 minutes)
-  - [ ] Link to user session
-  - [ ] Return token
-- [ ] Implement `POST /auth/session/verify` - Verify token & create RP session
-  - [ ] Validate token
-  - [ ] Check single-use flag
-  - [ ] Mark token as used
-  - [ ] Create new session for RP domain
-  - [ ] Return session cookie
-- [ ] Implement `GET /session/status` - Check session validity (iframe alternative)
-  - [ ] Validate session from cookie
-  - [ ] Check expiration
-  - [ ] Return session status
-- [ ] Implement `POST /session/refresh` - Extend session (Active TTL)
-  - [ ] Validate current session
-  - [ ] Extend expiration time
-  - [ ] Update session in SessionStore DO
-  - [ ] Return new expiration time
+#### 27.4 ITP対応セッション管理API ✅
+- [x] Implement `POST /auth/session/token` - Issue short-lived token (5min TTL, single-use)
+  - [x] Generate secure token (UUID)
+  - [x] Store in KV with TTL (5 minutes)
+  - [x] Link to user session
+  - [x] Return token
+- [x] Implement `POST /auth/session/verify` - Verify token & create RP session
+  - [x] Validate token
+  - [x] Check single-use flag
+  - [x] Mark token as used
+  - [x] Create new session for RP domain
+  - [x] Return session cookie
+- [x] Implement `GET /session/status` - Check session validity (iframe alternative)
+  - [x] Validate session from cookie
+  - [x] Check expiration
+  - [x] Return session status
+- [x] Implement `POST /session/refresh` - Extend session (Active TTL)
+  - [x] Validate current session
+  - [x] Extend expiration time
+  - [x] Update session in SessionStore DO
+  - [x] Return new expiration time
 - [ ] Add unit tests for session management (25+ tests)
 - [ ] Test cross-domain SSO flow
 - [ ] Test ITP compatibility (Safari)
-- [ ] Document session management API
+- [x] Document session management API - `docs/api/auth/session-management.md`
 
-#### 27.5 Logout機能API
-- [ ] Implement `GET /logout` - Front-channel Logout
-  - [ ] Parse `id_token_hint` parameter
-  - [ ] Validate ID token
-  - [ ] Invalidate session in SessionStore DO
-  - [ ] Clear session cookie
-  - [ ] Redirect to `post_logout_redirect_uri`
-- [ ] Implement `POST /logout/backchannel` - Back-channel Logout (RFC 8725)
-  - [ ] Validate client authentication
-  - [ ] Parse `logout_token` (JWT)
-  - [ ] Validate logout token signature
-  - [ ] Invalidate sessions for user
-  - [ ] Return 200 OK
+#### 27.5 Logout機能API ✅
+- [x] Implement `GET /logout` - Front-channel Logout
+  - [x] Parse `id_token_hint` parameter
+  - [x] Validate ID token
+  - [x] Invalidate session in SessionStore DO
+  - [x] Clear session cookie
+  - [x] Redirect to `post_logout_redirect_uri`
+- [x] Implement `POST /logout/backchannel` - Back-channel Logout (RFC 8725)
+  - [x] Validate client authentication
+  - [x] Parse `logout_token` (JWT)
+  - [x] Validate logout token signature
+  - [x] Invalidate sessions for user (all or specific session via `sid`)
+  - [x] Return 200 OK
 - [ ] Add unit tests for logout endpoints (12+ tests)
 - [ ] Test front-channel logout
 - [ ] Test back-channel logout
-- [ ] Document logout API
+- [x] Document logout API - `docs/api/auth/logout.md`
 
 #### 27.6 管理者API - ユーザー管理 ✅
 - [x] Implement `GET /admin/users` - List users with pagination
@@ -397,30 +397,30 @@
 - [ ] Test secret regeneration
 - [x] Document admin client API - `docs/api/admin/clients.md`
 
-#### 27.8 管理者API - セッション管理
-- [ ] Implement `GET /admin/sessions` - List sessions
-  - [ ] Query parameters: `user_id`, `status` (active/expired), `page`, `limit`
-  - [ ] Load sessions from SessionStore DO + D1
-  - [ ] Return paginated session list with metadata (user, device, IP)
-- [ ] Implement `GET /admin/sessions/:id` - Get session details
-  - [ ] Load session from SessionStore DO or D1
-  - [ ] Return session data (anonymized)
-- [ ] Implement `POST /admin/sessions/:id/revoke` - Force logout individual session
-  - [ ] Validate session exists
-  - [ ] Invalidate session in SessionStore DO
-  - [ ] Delete session from D1
-  - [ ] Create Audit Log entry
-  - [ ] Return success response
-- [ ] Implement `POST /admin/users/:id/revoke-all-sessions` - Revoke all user sessions
-  - [ ] Get all sessions for user
-  - [ ] Invalidate all sessions in SessionStore DO
-  - [ ] Delete all sessions from D1
-  - [ ] Create Audit Log entry
-  - [ ] Return success response
+#### 27.8 管理者API - セッション管理 ✅
+- [x] Implement `GET /admin/sessions` - List sessions
+  - [x] Query parameters: `user_id`, `status` (active/expired), `page`, `limit`
+  - [x] Load sessions from SessionStore DO + D1
+  - [x] Return paginated session list with metadata (user email, name)
+- [x] Implement `GET /admin/sessions/:id` - Get session details
+  - [x] Load session from SessionStore DO or D1
+  - [x] Return session data with source tracking (memory/database)
+- [x] Implement `POST /admin/sessions/:id/revoke` - Force logout individual session
+  - [x] Validate session exists
+  - [x] Invalidate session in SessionStore DO
+  - [x] Delete session from D1
+  - [ ] Create Audit Log entry (Phase 6)
+  - [x] Return success response
+- [x] Implement `POST /admin/users/:id/revoke-all-sessions` - Revoke all user sessions
+  - [x] Get all sessions for user
+  - [x] Invalidate all sessions in SessionStore DO
+  - [x] Delete all sessions from D1
+  - [ ] Create Audit Log entry (Phase 6)
+  - [x] Return success response with revoked count
 - [ ] Add unit tests for session management API (20+ tests)
 - [ ] Test session listing and filtering
 - [ ] Test session revocation
-- [ ] Document admin session API
+- [x] Document admin session API - `docs/api/admin/sessions.md`
 
 ---
 
