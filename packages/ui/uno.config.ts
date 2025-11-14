@@ -11,7 +11,9 @@ import {
 
 export default defineConfig({
 	presets: [
-		presetUno(), // Default preset with Tailwind-compatible utilities
+		presetUno({
+			dark: 'media' // Enable dark mode based on prefers-color-scheme
+		}),
 		presetAttributify(), // Allows using utilities as HTML attributes
 		presetIcons({
 			// Icon support
@@ -89,15 +91,15 @@ export default defineConfig({
 			mono: ['Fira Code', 'Consolas', 'Monaco', 'Courier New', 'monospace']
 		},
 		fontSize: {
-			xs: ['0.75rem', { lineHeight: '1rem' }],
-			sm: ['0.875rem', { lineHeight: '1.25rem' }],
-			base: ['1rem', { lineHeight: '1.5rem' }],
-			lg: ['1.125rem', { lineHeight: '1.75rem' }],
-			xl: ['1.25rem', { lineHeight: '1.75rem' }],
-			'2xl': ['1.5rem', { lineHeight: '2rem' }],
-			'3xl': ['1.875rem', { lineHeight: '2.25rem' }],
-			'4xl': ['2.25rem', { lineHeight: '2.5rem' }],
-			'5xl': ['3rem', { lineHeight: '3rem' }]
+			xs: ['0.75rem', { 'line-height': '1rem' }],
+			sm: ['0.875rem', { 'line-height': '1.25rem' }],
+			base: ['1rem', { 'line-height': '1.5rem' }],
+			lg: ['1.125rem', { 'line-height': '1.75rem' }],
+			xl: ['1.25rem', { 'line-height': '1.75rem' }],
+			'2xl': ['1.5rem', { 'line-height': '2rem' }],
+			'3xl': ['1.875rem', { 'line-height': '2.25rem' }],
+			'4xl': ['2.25rem', { 'line-height': '2.5rem' }],
+			'5xl': ['3rem', { 'line-height': '3rem' }]
 		},
 		boxShadow: {
 			sm: '0 1px 2px 0 rgb(0 0 0 / 0.05)',
