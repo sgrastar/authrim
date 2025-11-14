@@ -143,13 +143,14 @@ CREATE INDEX idx_user_roles_role_id ON user_roles(role_id);
 -- 8. Scope Mappings Table (custom scope to claim mapping)
 -- =============================================================================
 CREATE TABLE scope_mappings (
-  scope TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
   claim_name TEXT NOT NULL,
   source_table TEXT NOT NULL,
   source_column TEXT NOT NULL,
   transformation TEXT,
   condition TEXT,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (scope, claim_name)
 );
 
 CREATE INDEX idx_scope_mappings_scope ON scope_mappings(scope);
