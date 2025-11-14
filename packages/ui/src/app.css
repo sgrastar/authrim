@@ -2,7 +2,9 @@
 @import '@unocss/reset/tailwind.css';
 
 /* UnoCSS Utilities */
-@unocss all;
+@unocss preflights;
+@unocss shortcuts;
+@unocss default;
 
 /* Custom Base Styles */
 :root {
