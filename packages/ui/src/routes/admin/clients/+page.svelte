@@ -2,6 +2,7 @@
 	import * as m from '$lib/paraglide/messages';
 	import { Card, Button, Input } from '$lib/components';
 	import { onMount } from 'svelte';
+	import { adminClientsAPI } from '$lib/api/client';
 
 	interface Client {
 		client_id: string;
@@ -24,36 +25,33 @@
 
 	async function loadClients() {
 		loading = true;
-		// Simulate API call - would call GET /admin/clients in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 500));
 
-		// Mock data
-		const mockClients: Client[] = Array.from({ length: 25 }, (_, i) => ({
-			client_id: `client-${i + 1}`,
-			client_name: `Application ${i + 1}`,
-			grant_types: i % 2 === 0 ? 'authorization_code,refresh_token' : 'authorization_code',
-			created_at: Date.now() - i * 86400000
-		}));
+		try {
+			// Call API to get clients
+			const { data, error } = await adminClientsAPI.list({
+				page: currentPage,
+				limit: itemsPerPage,
+				search: searchQuery || undefined
+			});
 
-		// Apply search filter
-		let filtered = mockClients;
-		if (searchQuery) {
-			filtered = filtered.filter(
-				(c) =>
-					c.client_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-					c.client_id.toLowerCase().includes(searchQuery.toLowerCase())
-			);
+			if (error) {
+				console.error('Failed to load clients:', error);
+				clients = [];
+				totalCount = 0;
+				totalPages = 0;
+			} else if (data) {
+				clients = data.clients;
+				totalCount = data.pagination.total;
+				totalPages = data.pagination.totalPages;
+			}
+		} catch (err) {
+			console.error('Error loading clients:', err);
+			clients = [];
+			totalCount = 0;
+			totalPages = 0;
+		} finally {
+			loading = false;
 		}
-
-		totalCount = filtered.length;
-		totalPages = Math.ceil(totalCount / itemsPerPage);
-
-		// Pagination
-		const start = (currentPage - 1) * itemsPerPage;
-		const end = start + itemsPerPage;
-		clients = filtered.slice(start, end);
-
-		loading = false;
 	}
 
 	function handleSearch() {

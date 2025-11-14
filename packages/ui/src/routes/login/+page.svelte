@@ -3,6 +3,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { Mail, Key } from 'lucide-svelte';
 	import * as m from '$lib/paraglide/messages';
+	import { passkeyAPI, magicLinkAPI } from '$lib/api/client';
 
 	let email = $state('');
 	let error = $state('');
@@ -40,21 +41,50 @@
 		passkeyLoading = true;
 
 		try {
-			// TODO: Implement Passkey authentication
-			// 1. Call /auth/passkey/login/options with email
-			// 2. Get challenge from server
-			// 3. Call navigator.credentials.get()
-			// 4. Send assertion to /auth/passkey/login/verify
-			// 5. Redirect to client app or dashboard
+			// 1. Get authentication options from server
+			const { data: optionsData, error: optionsError } = await passkeyAPI.getLoginOptions({ email });
 
-			// Placeholder for now
-			await new Promise(resolve => setTimeout(resolve, 1000));
-			console.log('Passkey login for:', email);
+			if (optionsError) {
+				throw new Error(optionsError.error_description || 'Failed to get authentication options');
+			}
 
-			// TODO: Remove this mock error
-			throw new Error('Passkey authentication not yet implemented');
+			// 2. Call WebAuthn API to get credential
+			const credential = await navigator.credentials.get({
+				publicKey: optionsData!.options
+			}) as any;
+
+			if (!credential) {
+				throw new Error('No credential received from authenticator');
+			}
+
+			// 3. Send credential to server for verification
+			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyLogin({
+				challengeId: optionsData!.challengeId,
+				credential: {
+					id: credential.id,
+					rawId: credential.id,
+					response: {
+						clientDataJSON: Array.from(new Uint8Array(credential.response.clientDataJSON)),
+						authenticatorData: Array.from(new Uint8Array(credential.response.authenticatorData)),
+						signature: Array.from(new Uint8Array(credential.response.signature)),
+						userHandle: credential.response.userHandle ? Array.from(new Uint8Array(credential.response.userHandle)) : undefined
+					},
+					type: credential.type
+				}
+			});
+
+			if (verifyError) {
+				throw new Error(verifyError.error_description || 'Authentication verification failed');
+			}
+
+			// 4. Store session and redirect
+			console.log('Logged in as:', verifyData!.user.email);
+			// TODO: Store session ID and redirect to appropriate page
+			alert('Login successful! Session ID: ' + verifyData!.sessionId);
+
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred during passkey authentication';
+			console.error('Passkey login error:', err);
 		} finally {
 			passkeyLoading = false;
 		}
@@ -78,18 +108,20 @@
 		magicLinkLoading = true;
 
 		try {
-			// TODO: Implement Magic Link send
-			// 1. Call /auth/magic-link/send with email
-			// 2. Redirect to /magic-link-sent page with email parameter
+			// Call API to send magic link
+			const { data, error: apiError } = await magicLinkAPI.send({ email });
 
-			// Placeholder for now
-			await new Promise(resolve => setTimeout(resolve, 1000));
+			if (apiError) {
+				throw new Error(apiError.error_description || 'Failed to send magic link');
+			}
+
 			console.log('Magic link sent to:', email);
 
 			// Redirect to magic link sent page
 			window.location.href = `/magic-link-sent?email=${encodeURIComponent(email)}`;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred while sending magic link';
+			console.error('Magic link send error:', err);
 		} finally {
 			magicLinkLoading = false;
 		}
