@@ -283,11 +283,21 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     else
         # Fallback: run migrations directly
         echo "📝 Applying 001_initial_schema.sql..."
+        echo ""
+        echo "ℹ️  次のプロンプト「Ok to proceed?」について："
+        echo "   マイグレーション実行中、データベースが一時的に利用できなくなります。"
+        echo "   続行する場合は 'yes' と入力してください。"
+        echo ""
         wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --file=migrations/001_initial_schema.sql
         echo "✅ Schema migration complete"
         echo ""
 
         echo "📝 Applying 002_seed_default_data.sql..."
+        echo ""
+        echo "ℹ️  次のプロンプト「Ok to proceed?」について："
+        echo "   マイグレーション実行中、データベースが一時的に利用できなくなります。"
+        echo "   続行する場合は 'yes' と入力してください。"
+        echo ""
         if [ "$ENV" = "prod" ]; then
             echo "⚠️  Warning: This includes test data!"
             echo "Please review migrations/002_seed_default_data.sql and remove test data before running on production"
