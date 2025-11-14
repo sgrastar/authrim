@@ -1,0 +1,360 @@
+<script lang="ts">
+	import * as m from '$lib/paraglide/messages';
+	import { Card, Button, Input } from '$lib/components';
+	import { onMount } from 'svelte';
+
+	interface AuditLogEntry {
+		id: string;
+		timestamp: number;
+		user_email: string | null;
+		action: string;
+		resource_type: string | null;
+		resource_id: string | null;
+		ip_address: string | null;
+		status: 'success' | 'failure';
+		metadata: Record<string, any>;
+	}
+
+	let logs: AuditLogEntry[] = [];
+	let loading = true;
+	let searchQuery = '';
+	let filterAction = 'all';
+	let filterStatus: 'all' | 'success' | 'failure' = 'all';
+	let currentPage = 1;
+	let totalPages = 1;
+	let totalCount = 0;
+	const itemsPerPage = 50;
+
+	// Date range filter
+	let startDate = '';
+	let endDate = '';
+
+	const actionTypes = [
+		'user.created',
+		'user.updated',
+		'user.deleted',
+		'user.login',
+		'user.logout',
+		'client.created',
+		'client.updated',
+		'client.deleted',
+		'token.issued',
+		'token.revoked'
+	];
+
+	onMount(async () => {
+		// Set default date range (last 7 days)
+		const now = new Date();
+		endDate = now.toISOString().split('T')[0];
+		const weekAgo = new Date(now.getTime() - 7 * 86400000);
+		startDate = weekAgo.toISOString().split('T')[0];
+
+		await loadLogs();
+	});
+
+	async function loadLogs() {
+		loading = true;
+		// Simulate API call - would call GET /admin/audit-log in real implementation
+		await new Promise((resolve) => setTimeout(resolve, 500));
+
+		// Mock data
+		const mockLogs: AuditLogEntry[] = Array.from({ length: 100 }, (_, i) => ({
+			id: `log-${i + 1}`,
+			timestamp: Date.now() - i * 3600000,
+			user_email: i % 5 === 0 ? null : `user${i % 10}@example.com`,
+			action: actionTypes[i % actionTypes.length],
+			resource_type: i % 3 === 0 ? 'user' : i % 3 === 1 ? 'client' : 'token',
+			resource_id: `resource-${i + 1}`,
+			ip_address: `192.168.1.${(i % 255) + 1}`,
+			status: i % 10 === 0 ? 'failure' : 'success',
+			metadata: {}
+		}));
+
+		// Apply filters
+		let filtered = mockLogs;
+
+		if (searchQuery) {
+			filtered = filtered.filter(
+				(log) =>
+					log.user_email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+					log.action.toLowerCase().includes(searchQuery.toLowerCase()) ||
+					log.resource_id?.toLowerCase().includes(searchQuery.toLowerCase())
+			);
+		}
+
+		if (filterAction !== 'all') {
+			filtered = filtered.filter((log) => log.action === filterAction);
+		}
+
+		if (filterStatus !== 'all') {
+			filtered = filtered.filter((log) => log.status === filterStatus);
+		}
+
+		// Date range filter
+		if (startDate) {
+			const start = new Date(startDate).getTime();
+			filtered = filtered.filter((log) => log.timestamp >= start);
+		}
+		if (endDate) {
+			const end = new Date(endDate).getTime() + 86400000; // End of day
+			filtered = filtered.filter((log) => log.timestamp < end);
+		}
+
+		totalCount = filtered.length;
+		totalPages = Math.ceil(totalCount / itemsPerPage);
+
+		// Pagination
+		const start = (currentPage - 1) * itemsPerPage;
+		const endIdx = start + itemsPerPage;
+		logs = filtered.slice(start, endIdx);
+
+		loading = false;
+	}
+
+	function handleSearch() {
+		currentPage = 1;
+		loadLogs();
+	}
+
+	function formatTimestamp(timestamp: number): string {
+		return new Date(timestamp).toLocaleString();
+	}
+
+	function nextPage() {
+		if (currentPage < totalPages) {
+			currentPage++;
+			loadLogs();
+		}
+	}
+
+	function prevPage() {
+		if (currentPage > 1) {
+			currentPage--;
+			loadLogs();
+		}
+	}
+
+	async function handleExportCSV() {
+		// In real implementation, would generate CSV and trigger download
+		alert('CSV export will be implemented with actual API integration');
+	}
+
+	async function handleExportJSON() {
+		// In real implementation, would generate JSON and trigger download
+		alert('JSON export will be implemented with actual API integration');
+	}
+</script>
+
+<svelte:head>
+	<title>{m.admin_audit_title()} - {m.app_title()}</title>
+</svelte:head>
+
+<div class="space-y-6">
+	<!-- Page header -->
+	<div class="flex items-center justify-between">
+		<div>
+			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
+				{m.admin_audit_title()}
+			</h1>
+			<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+				View and export system audit logs
+			</p>
+		</div>
+		<div class="flex gap-2">
+			<Button variant="secondary" on:click={handleExportCSV}>
+				<div class="i-heroicons-arrow-down-tray h-4 w-4"></div>
+				Export CSV
+			</Button>
+			<Button variant="secondary" on:click={handleExportJSON}>
+				<div class="i-heroicons-arrow-down-tray h-4 w-4"></div>
+				Export JSON
+			</Button>
+		</div>
+	</div>
+
+	<!-- Filters -->
+	<Card>
+		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+			<!-- Search -->
+			<div>
+				<Input
+					type="text"
+					placeholder="Search logs..."
+					bind:value={searchQuery}
+					on:input={handleSearch}
+				>
+					<div slot="icon" class="i-heroicons-magnifying-glass h-5 w-5"></div>
+				</Input>
+			</div>
+
+			<!-- Action filter -->
+			<div>
+				<select
+					bind:value={filterAction}
+					on:change={handleSearch}
+					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+				>
+					<option value="all">All Actions</option>
+					{#each actionTypes as action}
+						<option value={action}>{action}</option>
+					{/each}
+				</select>
+			</div>
+
+			<!-- Status filter -->
+			<div>
+				<select
+					bind:value={filterStatus}
+					on:change={handleSearch}
+					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+				>
+					<option value="all">All Status</option>
+					<option value="success">Success</option>
+					<option value="failure">Failure</option>
+				</select>
+			</div>
+
+			<!-- Date range -->
+			<div class="flex gap-2">
+				<input
+					type="date"
+					bind:value={startDate}
+					on:change={handleSearch}
+					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+				/>
+				<input
+					type="date"
+					bind:value={endDate}
+					on:change={handleSearch}
+					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+				/>
+			</div>
+		</div>
+	</Card>
+
+	<!-- Audit log table -->
+	<Card>
+		<div class="overflow-x-auto">
+			<table class="w-full">
+				<thead>
+					<tr class="border-b border-gray-200 dark:border-gray-700">
+						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
+							{m.admin_audit_timestamp()}
+						</th>
+						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
+							{m.admin_audit_user()}
+						</th>
+						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
+							{m.admin_audit_action()}
+						</th>
+						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
+							{m.admin_audit_resource()}
+						</th>
+						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
+							{m.admin_audit_ip()}
+						</th>
+						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
+							{m.admin_audit_status()}
+						</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#if loading}
+						{#each Array(10) as _}
+							<tr class="border-b border-gray-200 dark:border-gray-700">
+								<td class="px-4 py-3">
+									<div class="h-4 w-32 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
+								</td>
+								<td class="px-4 py-3">
+									<div class="h-4 w-40 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
+								</td>
+								<td class="px-4 py-3">
+									<div class="h-4 w-28 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
+								</td>
+								<td class="px-4 py-3">
+									<div class="h-4 w-24 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
+								</td>
+								<td class="px-4 py-3">
+									<div class="h-4 w-28 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
+								</td>
+								<td class="px-4 py-3">
+									<div class="h-6 w-16 animate-pulse rounded-full bg-gray-300 dark:bg-gray-700"></div>
+								</td>
+							</tr>
+						{/each}
+					{:else if logs.length === 0}
+						<tr>
+							<td colspan="6" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+								No audit logs found
+							</td>
+						</tr>
+					{:else}
+						{#each logs as log}
+							<tr class="border-b border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800">
+								<td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+									{formatTimestamp(log.timestamp)}
+								</td>
+								<td class="px-4 py-3 text-sm text-gray-900 dark:text-white">
+									{log.user_email || 'System'}
+								</td>
+								<td class="px-4 py-3 font-mono text-sm text-gray-700 dark:text-gray-300">
+									{log.action}
+								</td>
+								<td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+									{log.resource_type || '-'}
+								</td>
+								<td class="px-4 py-3 font-mono text-sm text-gray-700 dark:text-gray-300">
+									{log.ip_address || '-'}
+								</td>
+								<td class="px-4 py-3">
+									{#if log.status === 'success'}
+										<span
+											class="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900 dark:text-green-200"
+										>
+											Success
+										</span>
+									{:else}
+										<span
+											class="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900 dark:text-red-200"
+										>
+											Failure
+										</span>
+									{/if}
+								</td>
+							</tr>
+						{/each}
+					{/if}
+				</tbody>
+			</table>
+		</div>
+
+		<!-- Pagination -->
+		{#if !loading && totalPages > 1}
+			<div class="flex items-center justify-between border-t border-gray-200 px-4 py-3 dark:border-gray-700">
+				<div class="text-sm text-gray-700 dark:text-gray-300">
+					Showing <span class="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span>
+					to
+					<span class="font-medium">{Math.min(currentPage * itemsPerPage, totalCount)}</span>
+					of
+					<span class="font-medium">{totalCount}</span> results
+				</div>
+				<div class="flex gap-2">
+					<button
+						class="rounded-lg border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+						disabled={currentPage === 1}
+						on:click={prevPage}
+					>
+						Previous
+					</button>
+					<button
+						class="rounded-lg border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+						disabled={currentPage === totalPages}
+						on:click={nextPage}
+					>
+						Next
+					</button>
+				</div>
+			</div>
+		{/if}
+	</Card>
+</div>
