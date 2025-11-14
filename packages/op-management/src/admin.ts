@@ -7,6 +7,49 @@ import { Context } from 'hono';
 import type { Env } from '@enrai/shared';
 
 /**
+ * Serve avatar image from R2
+ * GET /avatars/:filename
+ */
+export async function serveAvatarHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const filename = c.req.param('filename');
+    const filePath = `avatars/${filename}`;
+
+    // Get file from R2
+    const object = await c.env.AVATARS.get(filePath);
+
+    if (!object) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Avatar not found',
+        },
+        404
+      );
+    }
+
+    // Return the image with proper headers
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('etag', object.httpEtag);
+    headers.set('cache-control', 'public, max-age=31536000, immutable');
+
+    return new Response(object.body, {
+      headers,
+    });
+  } catch (error) {
+    console.error('Serve avatar error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to serve avatar',
+      },
+      500
+    );
+  }
+}
+
+/**
  * Get admin statistics
  * GET /admin/stats
  */
@@ -304,6 +347,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       email_verified?: boolean;
       phone_number?: string;
       phone_number_verified?: boolean;
+      picture?: string;
       [key: string]: any;
     }>();
 
@@ -340,6 +384,10 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
     if (body.phone_number_verified !== undefined) {
       updates.push('phone_number_verified = ?');
       bindings.push(body.phone_number_verified ? 1 : 0);
+    }
+    if (body.picture !== undefined) {
+      updates.push('picture = ?');
+      bindings.push(body.picture);
     }
 
     // Always update updated_at
@@ -518,6 +566,173 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
       {
         error: 'server_error',
         error_description: 'Failed to retrieve client',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * Upload user avatar
+ * POST /admin/users/:id/avatar
+ */
+export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const userId = c.req.param('id');
+
+    // Check if user exists
+    const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first();
+
+    if (!user) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'User not found',
+        },
+        404
+      );
+    }
+
+    // Parse multipart form data
+    const body = await c.req.parseBody();
+    const file = body['avatar'];
+
+    if (!file || !(file instanceof File)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Avatar file is required',
+        },
+        400
+      );
+    }
+
+    // Validate file type
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowedMimeTypes.includes(file.type)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Invalid file type. Allowed types: JPEG, PNG, GIF, WebP',
+        },
+        400
+      );
+    }
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSize) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'File size exceeds 5MB limit',
+        },
+        400
+      );
+    }
+
+    // Generate file name and path
+    const fileExtension = file.name.split('.').pop() || 'jpg';
+    const fileName = `${userId}.${fileExtension}`;
+    const filePath = `avatars/${fileName}`;
+
+    // Upload to R2
+    const arrayBuffer = await file.arrayBuffer();
+    await c.env.AVATARS.put(filePath, arrayBuffer, {
+      httpMetadata: {
+        contentType: file.type,
+      },
+    });
+
+    // Construct avatar URL (will use Cloudflare Image Resizing)
+    const avatarUrl = `${c.env.ISSUER_URL}/${filePath}`;
+
+    // Update user's picture field
+    const now = Date.now();
+    await c.env.DB.prepare('UPDATE users SET picture = ?, updated_at = ? WHERE id = ?')
+      .bind(avatarUrl, now, userId)
+      .run();
+
+    return c.json({
+      success: true,
+      avatarUrl,
+      message: 'Avatar uploaded successfully',
+    });
+  } catch (error) {
+    console.error('Admin avatar upload error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to upload avatar',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * Delete user avatar
+ * DELETE /admin/users/:id/avatar
+ */
+export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const userId = c.req.param('id');
+
+    // Check if user exists
+    const user = await c.env.DB.prepare('SELECT id, picture FROM users WHERE id = ?')
+      .bind(userId)
+      .first();
+
+    if (!user) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'User not found',
+        },
+        404
+      );
+    }
+
+    // Check if user has an avatar
+    if (!user.picture) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'User does not have an avatar',
+        },
+        404
+      );
+    }
+
+    // Extract file path from URL
+    const pictureUrl = user.picture as string;
+    const urlParts = pictureUrl.split('/');
+    const filePath = urlParts.slice(-2).join('/'); // Get "avatars/filename.ext"
+
+    // Delete from R2
+    try {
+      await c.env.AVATARS.delete(filePath);
+    } catch (error) {
+      console.error('R2 delete error:', error);
+      // Continue even if R2 delete fails
+    }
+
+    // Update user's picture field to null
+    const now = Date.now();
+    await c.env.DB.prepare('UPDATE users SET picture = NULL, updated_at = ? WHERE id = ?')
+      .bind(now, userId)
+      .run();
+
+    return c.json({
+      success: true,
+      message: 'Avatar deleted successfully',
+    });
+  } catch (error) {
+    console.error('Admin avatar delete error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to delete avatar',
       },
       500
     );
