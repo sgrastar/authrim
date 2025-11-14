@@ -738,3 +738,312 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
     );
   }
 }
+
+/**
+ * List sessions with filtering
+ * GET /admin/sessions
+ */
+export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const page = parseInt(c.req.query('page') || '1');
+    const limit = parseInt(c.req.query('limit') || '20');
+    const userId = c.req.query('user_id');
+    const status = c.req.query('status'); // 'active' or 'expired'
+
+    const offset = (page - 1) * limit;
+    const now = Math.floor(Date.now() / 1000);
+
+    // Build query
+    let query = 'SELECT s.*, u.email, u.name FROM sessions s LEFT JOIN users u ON s.user_id = u.id';
+    let countQuery = 'SELECT COUNT(*) as count FROM sessions s';
+    const bindings: any[] = [];
+    const whereClauses: string[] = [];
+
+    // User filter
+    if (userId) {
+      whereClauses.push('s.user_id = ?');
+      bindings.push(userId);
+    }
+
+    // Status filter
+    if (status === 'active') {
+      whereClauses.push('s.expires_at > ?');
+      bindings.push(now);
+    } else if (status === 'expired') {
+      whereClauses.push('s.expires_at <= ?');
+      bindings.push(now);
+    }
+
+    // Apply WHERE clauses
+    if (whereClauses.length > 0) {
+      const whereClause = ' WHERE ' + whereClauses.join(' AND ');
+      query += whereClause;
+      countQuery += whereClause;
+    }
+
+    // Order and pagination
+    query += ' ORDER BY s.created_at DESC LIMIT ? OFFSET ?';
+    bindings.push(limit, offset);
+
+    // Execute queries
+    const countBindings = bindings.slice(0, bindings.length - 2);
+    const totalResult = await c.env.DB.prepare(countQuery)
+      .bind(...countBindings)
+      .first();
+
+    const sessions = await c.env.DB.prepare(query)
+      .bind(...bindings)
+      .all();
+
+    const total = (totalResult?.count as number) || 0;
+    const totalPages = Math.ceil(total / limit);
+
+    // Format sessions with metadata
+    const formattedSessions = sessions.results.map((session: any) => ({
+      id: session.id,
+      userId: session.user_id,
+      userEmail: session.email,
+      userName: session.name,
+      expiresAt: session.expires_at * 1000, // Convert to milliseconds
+      createdAt: session.created_at * 1000,
+      isActive: session.expires_at > now,
+    }));
+
+    return c.json({
+      sessions: formattedSessions,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error('Admin sessions list error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to retrieve sessions',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * Get session details by ID
+ * GET /admin/sessions/:id
+ */
+export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const sessionId = c.req.param('id');
+
+    // Try to get from SessionStore first (hot data)
+    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
+    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+
+    const sessionStoreResponse = await sessionStore.fetch(
+      new Request(`https://session-store/session/${sessionId}`, {
+        method: 'GET',
+      })
+    );
+
+    let sessionData;
+    let isActive = false;
+
+    if (sessionStoreResponse.ok) {
+      sessionData = await sessionStoreResponse.json() as {
+        id: string;
+        userId: string;
+        expiresAt: number;
+        createdAt: number;
+      };
+      isActive = sessionData.expiresAt > Date.now();
+    }
+
+    // Get from D1 for additional metadata
+    const session = await c.env.DB.prepare(
+      'SELECT s.*, u.email, u.name FROM sessions s LEFT JOIN users u ON s.user_id = u.id WHERE s.id = ?'
+    )
+      .bind(sessionId)
+      .first();
+
+    if (!session && !sessionData) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Session not found',
+        },
+        404
+      );
+    }
+
+    // Merge data from both sources
+    const result = {
+      id: sessionId,
+      userId: sessionData?.userId || session?.user_id,
+      userEmail: session?.email,
+      userName: session?.name,
+      expiresAt: sessionData?.expiresAt || (session?.expires_at as number) * 1000,
+      createdAt: sessionData?.createdAt || (session?.created_at as number) * 1000,
+      isActive: isActive || (session?.expires_at as number) > Math.floor(Date.now() / 1000),
+      source: sessionStoreResponse.ok ? 'memory' : 'database',
+    };
+
+    return c.json({
+      session: result,
+    });
+  } catch (error) {
+    console.error('Admin session get error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to retrieve session',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * Force logout individual session
+ * POST /admin/sessions/:id/revoke
+ */
+export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const sessionId = c.req.param('id');
+
+    // Check if session exists in D1
+    const session = await c.env.DB.prepare('SELECT id, user_id FROM sessions WHERE id = ?')
+      .bind(sessionId)
+      .first();
+
+    if (!session) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Session not found',
+        },
+        404
+      );
+    }
+
+    // Invalidate session in SessionStore DO
+    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
+    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+
+    const deleteResponse = await sessionStore.fetch(
+      new Request(`https://session-store/session/${sessionId}`, {
+        method: 'DELETE',
+      })
+    );
+
+    if (!deleteResponse.ok) {
+      console.warn(`Failed to delete session ${sessionId} from SessionStore`);
+    }
+
+    // Delete from D1
+    await c.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
+
+    // TODO: Create Audit Log entry (Phase 6)
+    console.log(`Admin revoked session: ${sessionId} for user ${session.user_id}`);
+
+    return c.json({
+      success: true,
+      message: 'Session revoked successfully',
+      sessionId: sessionId,
+    });
+  } catch (error) {
+    console.error('Admin session revoke error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to revoke session',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * Revoke all sessions for a user
+ * POST /admin/users/:id/revoke-all-sessions
+ */
+export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const userId = c.req.param('id');
+
+    // Check if user exists
+    const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first();
+
+    if (!user) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'User not found',
+        },
+        404
+      );
+    }
+
+    // Get all sessions for user from SessionStore DO
+    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
+    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+
+    const sessionsResponse = await sessionStore.fetch(
+      new Request(`https://session-store/sessions/user/${userId}`, {
+        method: 'GET',
+      })
+    );
+
+    let revokedCount = 0;
+
+    if (sessionsResponse.ok) {
+      const data = await sessionsResponse.json() as {
+        sessions: Array<{ id: string }>;
+      };
+
+      // Invalidate all sessions in SessionStore
+      await Promise.all(
+        data.sessions.map(async (session) => {
+          const deleteResponse = await sessionStore.fetch(
+            new Request(`https://session-store/session/${session.id}`, {
+              method: 'DELETE',
+            })
+          );
+          if (deleteResponse.ok) {
+            revokedCount++;
+          }
+        })
+      );
+    }
+
+    // Delete all sessions from D1
+    const deleteResult = await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?')
+      .bind(userId)
+      .run();
+
+    const dbRevokedCount = deleteResult.meta.changes || 0;
+
+    // TODO: Create Audit Log entry (Phase 6)
+    console.log(`Admin revoked all sessions for user: ${userId} (${Math.max(revokedCount, dbRevokedCount)} sessions)`);
+
+    return c.json({
+      success: true,
+      message: 'All user sessions revoked successfully',
+      userId: userId,
+      revokedCount: Math.max(revokedCount, dbRevokedCount),
+    });
+  } catch (error) {
+    console.error('Admin revoke all sessions error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to revoke user sessions',
+      },
+      500
+    );
+  }
+}

@@ -125,8 +125,34 @@ app.post('/userinfo', async (c) => {
  * - /auth/passkey/* - WebAuthn/Passkey authentication
  * - /auth/magic-link/* - Magic link authentication
  * - /auth/consent - OAuth consent screen
+ * - /auth/session/* - ITP-compliant session management
  */
 app.all('/auth/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+/**
+ * Session endpoints - Route to OP_AUTH worker
+ * - /session/status - Check session validity
+ * - /session/refresh - Extend session expiration
+ */
+app.all('/session/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+/**
+ * Logout endpoints - Route to OP_AUTH worker
+ * - /logout - Front-channel logout
+ * - /logout/backchannel - Back-channel logout (RFC 8725)
+ */
+app.get('/logout', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/logout/backchannel', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
