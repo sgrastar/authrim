@@ -854,7 +854,7 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
     let isActive = false;
 
     if (sessionStoreResponse.ok) {
-      sessionData = await sessionStoreResponse.json() as {
+      sessionData = (await sessionStoreResponse.json()) as {
         id: string;
         userId: string;
         expiresAt: number;
@@ -1001,7 +1001,7 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
     let revokedCount = 0;
 
     if (sessionsResponse.ok) {
-      const data = await sessionsResponse.json() as {
+      const data = (await sessionsResponse.json()) as {
         sessions: Array<{ id: string }>;
       };
 
@@ -1028,7 +1028,9 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
     const dbRevokedCount = deleteResult.meta.changes || 0;
 
     // TODO: Create Audit Log entry (Phase 6)
-    console.log(`Admin revoked all sessions for user: ${userId} (${Math.max(revokedCount, dbRevokedCount)} sessions)`);
+    console.log(
+      `Admin revoked all sessions for user: ${userId} (${Math.max(revokedCount, dbRevokedCount)} sessions)`
+    );
 
     return c.json({
       success: true,

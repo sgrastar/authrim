@@ -53,7 +53,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           throw new Error('Failed to fetch JWKS');
         }
 
-        const jwks = await jwksResponse.json() as jose.JSONWebKeySet;
+        const jwks = (await jwksResponse.json()) as jose.JSONWebKeySet;
 
         // Create a local JWKS resolver
         const getKey = async () => {
@@ -247,7 +247,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         throw new Error('Failed to fetch JWKS');
       }
 
-      const jwks = await jwksResponse.json() as jose.JSONWebKeySet;
+      const jwks = (await jwksResponse.json()) as jose.JSONWebKeySet;
 
       // Create a local JWKS resolver
       const getKey = async () => {
@@ -338,7 +338,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       );
 
       if (sessionsResponse.ok) {
-        const data = await sessionsResponse.json() as {
+        const data = (await sessionsResponse.json()) as {
           sessions: Array<{ id: string }>;
         };
 

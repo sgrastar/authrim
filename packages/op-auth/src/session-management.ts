@@ -57,7 +57,7 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const session = await sessionResponse.json() as {
+    const session = (await sessionResponse.json()) as {
       id: string;
       userId: string;
       expiresAt: number;
@@ -183,7 +183,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const session = await sessionResponse.json() as {
+    const session = (await sessionResponse.json()) as {
       id: string;
       userId: string;
       expiresAt: number;
@@ -214,7 +214,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
 
       if (createResponse.ok) {
-        const newSession = await createResponse.json() as { id: string };
+        const newSession = (await createResponse.json()) as { id: string };
         rpSessionId = newSession.id;
       }
     }
@@ -279,7 +279,7 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const session = await sessionResponse.json() as {
+    const session = (await sessionResponse.json()) as {
       id: string;
       userId: string;
       expiresAt: number;
@@ -403,7 +403,7 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const session = await extendResponse.json() as {
+    const session = (await extendResponse.json()) as {
       id: string;
       userId: string;
       expiresAt: number;
