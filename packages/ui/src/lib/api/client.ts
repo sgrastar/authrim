@@ -3,11 +3,15 @@
  * Handles communication with the backend API
  */
 
+import { env } from '$env/dynamic/public';
+
 // Get API base URL from environment variable or default to localhost
+// In production (Cloudflare Pages), set PUBLIC_API_BASE_URL to your deployed router URL
+// In development, it defaults to localhost:8786
 export const API_BASE_URL =
 	typeof window !== 'undefined'
-		? (window as any).__ENRAI_API_URL__ || 'http://localhost:8786'
-		: 'http://localhost:8786';
+		? env.PUBLIC_API_BASE_URL || 'http://localhost:8786'
+		: env.PUBLIC_API_BASE_URL || 'http://localhost:8786';
 
 /**
  * Generic fetch wrapper with error handling
