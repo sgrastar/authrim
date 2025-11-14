@@ -4,7 +4,9 @@
 # This script creates all required KV namespaces and updates wrangler.toml files
 #
 # Usage:
-#   ./setup-kv.sh          - Interactive mode (prompts for existing namespaces)
+#   ./setup-kv.sh          - Interactive mode
+#                            - If all namespaces exist: choose bulk action (use/recreate/interactive)
+#                            - If some missing: create new ones, prompt for existing
 #   ./setup-kv.sh --reset  - Reset mode (deletes and recreates all namespaces)
 #
 
@@ -64,14 +66,17 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "⚠️  How this script works:"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "  For each namespace, if it already exists, you'll be prompted with:"
+echo "  1. If all KV namespaces already exist:"
+echo "     → You can choose to use all existing ones with a single choice (bulk mode)"
 echo ""
-echo "    Enter your choice (1/2/3):"
+echo "  2. If some namespaces are missing:"
+echo "     → New ones will be created"
+echo "     → For existing ones, you'll be asked individually what to do"
+echo ""
+echo "  3. Individual namespace choices (when prompted):"
 echo "      1) Use existing namespace (keeps all data)"
 echo "      2) Delete and recreate (WARNING: deletes all data)"
 echo "      3) Abort script"
-echo ""
-echo "  If the namespace doesn't exist, it will be created automatically."
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
@@ -85,6 +90,116 @@ if [ "$RESET_MODE" = false ]; then
         exit 1
     fi
     echo ""
+fi
+
+# Define all required KV namespaces
+declare -a REQUIRED_NAMESPACES=(
+    "AUTH_CODES"
+    "STATE_STORE"
+    "NONCE_STORE"
+    "CLIENTS"
+    "RATE_LIMIT"
+    "REFRESH_TOKENS"
+    "REVOKED_TOKENS"
+    "INITIAL_ACCESS_TOKENS"
+)
+
+# Check if all namespaces exist
+if [ "$RESET_MODE" = false ]; then
+    echo "🔍 Checking for existing KV namespaces..."
+    echo ""
+
+    list_output=$(wrangler kv namespace list 2>&1)
+    list_exit_code=$?
+
+    if [ $list_exit_code -ne 0 ]; then
+        echo "  ⚠️  Warning: Could not list namespaces"
+        echo "$list_output"
+        echo ""
+    else
+        all_exist=true
+        missing_namespaces=()
+
+        for namespace in "${REQUIRED_NAMESPACES[@]}"; do
+            # Check for production namespace
+            if command -v jq &> /dev/null; then
+                prod_id=$(echo "$list_output" | jq -r ".[] | select(.title == \"$namespace\") | .id" 2>/dev/null | head -1)
+                preview_id=$(echo "$list_output" | jq -r ".[] | select(.title | test(\"^${namespace}_preview\"; \"i\")) | .id" 2>/dev/null | head -1)
+            else
+                prod_id=$(echo "$list_output" | grep -A 2 "\"title\"[[:space:]]*:[[:space:]]*\"$namespace\"" | grep "\"id\"" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1)
+                preview_id=$(echo "$list_output" | grep -i "\"title\".*$namespace" | grep -i "preview" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1)
+            fi
+
+            if [ -z "$prod_id" ] || [ -z "$preview_id" ]; then
+                all_exist=false
+                missing_namespaces+=("$namespace")
+            fi
+        done
+
+        if [ "$all_exist" = true ]; then
+            echo "✅ All required KV namespaces already exist!"
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "📋 Bulk Update Mode"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "All KV namespaces already exist. What would you like to do?"
+            echo ""
+            echo "  1) Use all existing namespaces (update wrangler.toml only)"
+            echo "  2) Delete and recreate all namespaces (WARNING: all data will be lost)"
+            echo "  3) Choose individually for each namespace (interactive mode)"
+            echo "  4) Cancel"
+            echo ""
+            read -p "Enter your choice (1/2/3/4): " -r bulk_choice
+            echo ""
+
+            case $bulk_choice in
+                1)
+                    echo "✅ Using all existing namespaces"
+                    echo ""
+                    BULK_MODE="use_existing"
+                    ;;
+                2)
+                    echo "⚠️  WARNING: This will DELETE ALL DATA in all namespaces!"
+                    echo ""
+                    read -p "Are you sure? Type 'YES' to confirm: " -r
+                    if [ "$REPLY" != "YES" ]; then
+                        echo "❌ Cancelled"
+                        exit 1
+                    fi
+                    echo ""
+                    echo "🗑️  Deleting and recreating all namespaces..."
+                    echo ""
+                    BULK_MODE="recreate_all"
+                    ;;
+                3)
+                    echo "📋 Interactive mode - you'll be asked for each namespace"
+                    echo ""
+                    BULK_MODE="interactive"
+                    ;;
+                4)
+                    echo "❌ Setup cancelled"
+                    exit 1
+                    ;;
+                *)
+                    echo "❌ Invalid choice. Aborting."
+                    exit 1
+                    ;;
+            esac
+        else
+            echo "ℹ️  Some namespaces don't exist yet:"
+            for missing in "${missing_namespaces[@]}"; do
+                echo "  • $missing"
+            done
+            echo ""
+            echo "These will be created automatically."
+            echo "For existing namespaces, you'll be asked what to do."
+            echo ""
+            BULK_MODE="interactive"
+        fi
+    fi
+else
+    BULK_MODE="reset"
 fi
 
 # Function to get namespace ID from list by exact title match
@@ -146,9 +261,13 @@ create_kv_namespace() {
         echo "      ID: $id" >&2
         echo "" >&2
 
-        # In reset mode, automatically delete and recreate
-        if [ "$RESET_MODE" = true ]; then
-            echo "  🗑️  [RESET MODE] Deleting existing namespace: $id" >&2
+        # Handle based on bulk mode
+        if [ "$BULK_MODE" = "use_existing" ]; then
+            echo "  ✓ [BULK MODE] Using existing namespace with ID: $id" >&2
+            echo "$id"
+            return 0
+        elif [ "$BULK_MODE" = "recreate_all" ] || [ "$RESET_MODE" = true ]; then
+            echo "  🗑️  [BULK MODE] Deleting existing namespace: $id" >&2
             local delete_output=$(wrangler kv namespace delete --namespace-id="$id" 2>&1)
             local delete_exit_code=$?
 

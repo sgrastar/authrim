@@ -35,3 +35,16 @@ export type {
   CreateFamilyRequest,
   RevokeFamilyRequest,
 } from './RefreshTokenRotator';
+
+/**
+ * Default export for ES Module compatibility
+ * This worker only exports Durable Objects, so the default export is a minimal fetch handler
+ */
+export default {
+  fetch(request: Request, env: unknown, ctx: ExecutionContext): Response {
+    return new Response('Enrai Shared - Durable Objects Worker', {
+      status: 200,
+      headers: { 'Content-Type': 'text/plain' },
+    });
+  },
+};
