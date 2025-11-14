@@ -2,11 +2,24 @@
 
 This document describes how to deploy the Enrai UI to Cloudflare Pages.
 
+## Deployment Architecture
+
+Enrai uses a **hybrid deployment architecture** (Option C from PHASE5_PLANNING.md):
+
+- **UI**: Cloudflare Pages (this package) - Static assets + SSR
+- **API**: Cloudflare Workers (packages/op-*) - Backend services
+
+This separation provides:
+- Independent deployment cycles
+- Optimal infrastructure for each layer
+- Better scalability and performance
+
 ## Prerequisites
 
 - Cloudflare account with Pages access
 - Git repository connected to Cloudflare Pages
 - Node.js 18+ installed locally
+- Wrangler CLI for manual deployments
 
 ## Build Configuration
 
@@ -26,34 +39,61 @@ Configure the following in the Cloudflare Pages dashboard:
 - **Framework**: SvelteKit
 - **Adapter**: @sveltejs/adapter-cloudflare
 
-## Manual Deployment
+## Deployment Methods
 
-### 1. Install Dependencies
+### Method 1: Automatic Deployment (Recommended)
 
+Cloudflare Pages automatically deploys when you push to the configured branch:
+
+1. Push to `main` branch (production) or `develop` (preview)
+2. Cloudflare Pages detects the push
+3. Runs the build command automatically
+4. Deploys to production or preview URL
+
+**No manual steps required!**
+
+### Method 2: Manual Deployment via CLI
+
+For local testing or manual deployments:
+
+#### Quick Deploy (from monorepo root)
+
+```bash
+# Deploy UI only
+pnpm run deploy:ui
+
+# Deploy API only
+pnpm run deploy:api
+
+# Deploy both UI and API
+pnpm run deploy:all
+```
+
+#### Step-by-step Manual Deployment
+
+**1. Install Dependencies**
 ```bash
 pnpm install
 ```
 
-### 2. Build the UI Package
-
+**2. Build the UI Package**
 ```bash
 pnpm run build --filter=ui
 ```
 
-### 3. Preview Locally
-
+**3. Preview Locally**
 ```bash
 cd packages/ui
 pnpm run preview
 ```
 
-### 4. Deploy to Cloudflare Pages
+**4. Deploy to Cloudflare Pages**
+```bash
+# From monorepo root
+wrangler pages deploy packages/ui/.svelte-kit/cloudflare --project-name=enrai-ui
+```
 
-The deployment is typically handled automatically via Git integration. When you push to the configured branch:
-
-1. Cloudflare Pages detects the push
-2. Runs the build command
-3. Deploys the output directory
+**Note**: Make sure you've created the `enrai-ui` project in Cloudflare Pages dashboard first.
 
 ## Environment Variables
 
