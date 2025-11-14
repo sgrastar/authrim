@@ -138,6 +138,16 @@ class_name = "RefreshTokenRotator"
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 
+# Durable Objects migrations
+[[migrations]]
+tag = "v1"
+new_classes = [
+  "SessionStore",
+  "AuthorizationCodeStore",
+  "RefreshTokenRotator",
+  "KeyManager"
+]
+
 # Environment variables
 [vars]
 KEY_MANAGER_SECRET = "dev-secret-change-in-production"
@@ -168,6 +178,16 @@ class_name = "RefreshTokenRotator"
 [[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
+
+# Durable Objects migrations
+[[migrations]]
+tag = "v1"
+new_classes = [
+  "SessionStore",
+  "AuthorizationCodeStore",
+  "RefreshTokenRotator",
+  "KeyManager"
+]
 
 # Environment variables
 [vars]
