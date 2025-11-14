@@ -51,6 +51,27 @@ From the monorepo root:
 pnpm install
 ```
 
+### Environment Configuration
+
+1. **Copy the environment template:**
+   ```bash
+   cd packages/ui
+   cp .env.example .env
+   ```
+
+2. **Configure API endpoint** in `.env`:
+   ```env
+   # For local development (default)
+   PUBLIC_API_BASE_URL=http://localhost:8786
+
+   # For remote API (staging/production)
+   # PUBLIC_API_BASE_URL=https://enrai.your-account.workers.dev
+   ```
+
+The UI needs to connect to the backend router. You can choose:
+- **Local**: Connect to local router running on `http://localhost:8786`
+- **Remote**: Connect to deployed router on Cloudflare Workers
+
 ### Start Development Server
 
 ```bash
@@ -63,17 +84,26 @@ pnpm --filter=ui dev
 
 The development server will start at `http://localhost:5173`.
 
+**Important:** If using local API, make sure to start the backend router:
+```bash
+# In another terminal
+cd packages/router
+pnpm dev
+```
+
 ### Available Scripts
 
-| Script      | Description                 |
-| ----------- | --------------------------- |
-| `dev`       | Start development server    |
-| `build`     | Build for production        |
-| `preview`   | Preview production build    |
-| `check`     | Run type checking           |
-| `lint`      | Run ESLint                  |
-| `format`    | Format code with Prettier   |
-| `typecheck` | Type check without building |
+| Script              | Description                          |
+| ------------------- | ------------------------------------ |
+| `dev`               | Start development server             |
+| `build`             | Build for production                 |
+| `preview`           | Preview production build             |
+| `check`             | Run type checking                    |
+| `lint`              | Run ESLint                           |
+| `format`            | Format code with Prettier            |
+| `typecheck`         | Type check without building          |
+| `deploy:preview`    | Deploy preview to Cloudflare Pages   |
+| `deploy:production` | Deploy production to Cloudflare Pages|
 
 ## Building
 
@@ -85,17 +115,64 @@ Output will be in `.svelte-kit/cloudflare/`.
 
 ## Deployment
 
-See [DEPLOY.md](./DEPLOY.md) for detailed deployment instructions to Cloudflare Pages.
+### Deploy to Cloudflare Pages
 
-### Quick Deploy
+#### Option 1: CLI Deployment (Recommended for testing)
 
-Cloudflare Pages automatically deploys when you push to the configured branch.
+```bash
+# Preview deployment
+cd packages/ui
+pnpm deploy:preview
 
-**Build settings:**
+# Production deployment
+pnpm deploy:production
+```
 
-- Build command: `pnpm install && pnpm run build --filter=ui`
-- Build output directory: `packages/ui/.svelte-kit/cloudflare`
-- Node version: 18
+#### Option 2: GitHub Integration (Recommended for production)
+
+1. **Connect repository** to Cloudflare Pages dashboard
+2. **Configure build settings:**
+   - Build command: `cd packages/ui && pnpm install && pnpm build`
+   - Build output directory: `packages/ui/.svelte-kit/cloudflare`
+   - Root directory: `/` (monorepo root)
+   - Node version: 18
+
+3. **Set environment variables** in Pages dashboard (Settings > Environment variables):
+
+   **Production:**
+   - Variable name: `PUBLIC_API_BASE_URL`
+   - Value: `https://enrai.your-account.workers.dev` (your deployed router URL)
+
+   **Preview (optional):**
+   - Variable name: `PUBLIC_API_BASE_URL`
+   - Value: `https://enrai-staging.your-account.workers.dev`
+
+4. **Deploy** - Push to configured branch (e.g., `main`)
+
+### Environment Variables
+
+| Variable | Description | Local Default | Production Example |
+|----------|-------------|---------------|-------------------|
+| `PUBLIC_API_BASE_URL` | Backend API endpoint | `http://localhost:8786` | `https://enrai.workers.dev` |
+
+**Note:** Environment variables prefixed with `PUBLIC_` are exposed to the browser. Never put secrets here.
+
+### Switching Between Local and Remote API
+
+Edit `.env` file to switch between environments:
+
+```env
+# Local development - connect to local router
+PUBLIC_API_BASE_URL=http://localhost:8786
+
+# Remote staging - connect to staging router
+PUBLIC_API_BASE_URL=https://enrai-staging.workers.dev
+
+# Remote production - connect to production router
+PUBLIC_API_BASE_URL=https://auth.yourdomain.com
+```
+
+Restart the dev server (`pnpm dev`) after changing `.env`.
 
 ## Internationalization
 
