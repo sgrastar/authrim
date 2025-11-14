@@ -125,7 +125,11 @@ export interface User {
   id: string; // Unique user identifier (UUID)
   email: string;
   email_verified: boolean;
-  password_hash?: string; // For local authentication
+  // Password authentication fields (optional, disabled by default)
+  password_hash?: string; // Hashed password (bcrypt/argon2)
+  password_changed_at?: number; // Unix timestamp of last password change
+  failed_login_attempts?: number; // Failed login counter for rate limiting
+  locked_until?: number; // Unix timestamp when account lock expires
   // Profile claims (OIDC standard claims)
   name?: string;
   family_name?: string;
