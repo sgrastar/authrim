@@ -1,6 +1,6 @@
 -- Enrai Phase 5: Initial Database Schema
 -- Created: 2025-11-13
--- Description: Creates all 11 tables for Phase 5 implementation
+-- Description: Creates all 12 tables for Phase 5 implementation (includes password auth support)
 -- Documentation: docs/architecture/database-schema.md
 
 -- =============================================================================
@@ -29,6 +29,12 @@ CREATE TABLE users (
   custom_attributes_json TEXT,
   parent_user_id TEXT REFERENCES users(id),
   identity_provider_id TEXT REFERENCES identity_providers(id),
+  -- Password authentication fields (optional, disabled by default)
+  password_hash TEXT,
+  password_changed_at INTEGER,
+  failed_login_attempts INTEGER DEFAULT 0,
+  locked_until INTEGER,
+  -- Timestamps
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   last_login_at INTEGER
@@ -73,7 +79,24 @@ CREATE INDEX idx_passkeys_user_id ON passkeys(user_id);
 CREATE INDEX idx_passkeys_credential_id ON passkeys(credential_id);
 
 -- =============================================================================
--- 4. OAuth Clients Table (RFC 7591 DCR compliant)
+-- 4. Password Reset Tokens Table (optional, for password authentication)
+-- =============================================================================
+CREATE TABLE password_reset_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+CREATE INDEX idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
+CREATE INDEX idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
+
+-- =============================================================================
+-- 5. OAuth Clients Table (RFC 7591 DCR compliant)
 -- =============================================================================
 CREATE TABLE oauth_clients (
   client_id TEXT PRIMARY KEY,
@@ -98,7 +121,7 @@ CREATE TABLE oauth_clients (
 CREATE INDEX idx_clients_created_at ON oauth_clients(created_at);
 
 -- =============================================================================
--- 5. User Sessions Table
+-- 6. User Sessions Table
 -- =============================================================================
 CREATE TABLE sessions (
   id TEXT PRIMARY KEY,
@@ -112,7 +135,7 @@ CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 
 -- =============================================================================
--- 6. Roles Table (RBAC)
+-- 7. Roles Table (RBAC)
 -- =============================================================================
 CREATE TABLE roles (
   id TEXT PRIMARY KEY,
@@ -125,7 +148,7 @@ CREATE TABLE roles (
 CREATE INDEX idx_roles_name ON roles(name);
 
 -- =============================================================================
--- 7. User Roles Table (N:M relationship)
+-- 8. User Roles Table (N:M relationship)
 -- =============================================================================
 CREATE TABLE user_roles (
   user_id TEXT NOT NULL,
@@ -140,7 +163,7 @@ CREATE INDEX idx_user_roles_user_id ON user_roles(user_id);
 CREATE INDEX idx_user_roles_role_id ON user_roles(role_id);
 
 -- =============================================================================
--- 8. Scope Mappings Table (custom scope to claim mapping)
+-- 9. Scope Mappings Table (custom scope to claim mapping)
 -- =============================================================================
 CREATE TABLE scope_mappings (
   scope TEXT NOT NULL,
@@ -156,7 +179,7 @@ CREATE TABLE scope_mappings (
 CREATE INDEX idx_scope_mappings_scope ON scope_mappings(scope);
 
 -- =============================================================================
--- 9. Branding Settings Table (UI customization)
+-- 10. Branding Settings Table (UI customization)
 -- =============================================================================
 CREATE TABLE branding_settings (
   id TEXT PRIMARY KEY DEFAULT 'default',
@@ -168,11 +191,14 @@ CREATE TABLE branding_settings (
   primary_color TEXT DEFAULT '#3B82F6',
   secondary_color TEXT DEFAULT '#10B981',
   font_family TEXT DEFAULT 'Inter',
+  -- Authentication method settings
+  enabled_auth_methods TEXT DEFAULT '["passkey","magic_link"]', -- JSON array
+  password_policy_json TEXT, -- Password policy config (if password auth enabled)
   updated_at INTEGER NOT NULL
 );
 
 -- =============================================================================
--- 10. Identity Providers Table (future SAML/LDAP support)
+-- 11. Identity Providers Table (future SAML/LDAP support)
 -- =============================================================================
 CREATE TABLE identity_providers (
   id TEXT PRIMARY KEY,
@@ -187,7 +213,7 @@ CREATE TABLE identity_providers (
 CREATE INDEX idx_identity_providers_type ON identity_providers(provider_type);
 
 -- =============================================================================
--- 11. Audit Log Table
+-- 12. Audit Log Table
 -- =============================================================================
 CREATE TABLE audit_log (
   id TEXT PRIMARY KEY,
@@ -209,7 +235,7 @@ CREATE INDEX idx_audit_log_resource ON audit_log(resource_type, resource_id);
 -- =============================================================================
 -- Migration Complete
 -- =============================================================================
--- Total tables created: 11
--- Total indexes created: 20
+-- Total tables created: 12
+-- Total indexes created: 23 (added 3 for password_reset_tokens)
 -- Version: 001
 -- =============================================================================
