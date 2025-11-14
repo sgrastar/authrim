@@ -329,6 +329,8 @@ Coverage:
 
 ### For Developers
 - [Development Guide](./DEVELOPMENT.md) - Local setup
+- [API Naming Conventions](./docs/API_NAMING_CONVENTIONS.md) - API design standards & best practices
+- [Architecture Patterns](./docs/ARCHITECTURE_PATTERNS.md) - Deployment patterns (A/B/C/D)
 - [API Reference](./docs/api/) - Endpoint documentation
 - [Testing Guide](./docs/testing/) - How to test
 

@@ -58,7 +58,7 @@ app.use(
 );
 
 // Health check endpoint
-app.get('/health', (c) => {
+app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'enrai-router',
@@ -122,22 +122,24 @@ app.post('/userinfo', async (c) => {
 
 /**
  * Authentication endpoints - Route to OP_AUTH worker
- * - /auth/passkey/* - WebAuthn/Passkey authentication
- * - /auth/magic-link/* - Magic link authentication
- * - /auth/consent - OAuth consent screen
- * - /auth/session/* - ITP-compliant session management
+ * - /api/auth/passkey/* - WebAuthn/Passkey authentication
+ * - /api/auth/magic-link/* - Magic link authentication
+ * - /api/auth/consent - OAuth consent screen
+ * - /api/auth/session/* - ITP-compliant session management (deprecated, use /api/sessions/*)
  */
-app.all('/auth/*', async (c) => {
+app.all('/api/auth/*', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
 
 /**
  * Session endpoints - Route to OP_AUTH worker
- * - /session/status - Check session validity
- * - /session/refresh - Extend session expiration
+ * - /api/sessions/status - Check session validity
+ * - /api/sessions/refresh - Extend session expiration
+ * - /api/sessions/issue - Issue session token
+ * - /api/sessions/verify - Verify session token
  */
-app.all('/session/*', async (c) => {
+app.all('/api/sessions/*', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
@@ -159,11 +161,11 @@ app.post('/logout/backchannel', async (c) => {
 
 /**
  * Management endpoints - Route to OP_MANAGEMENT worker
- * - /register (POST) - Dynamic Client Registration
- * - /introspect (POST) - Token Introspection
- * - /revoke (POST) - Token Revocation
- * - /admin/* - Admin API (users, clients, stats)
- * - /avatars/* - Avatar images
+ * - /register (POST) - Dynamic Client Registration (OIDC standard)
+ * - /introspect (POST) - Token Introspection (OAuth 2.0 standard)
+ * - /revoke (POST) - Token Revocation (OAuth 2.0 standard)
+ * - /api/admin/* - Admin API (users, clients, stats)
+ * - /api/avatars/* - Avatar images
  */
 app.post('/register', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
@@ -180,12 +182,12 @@ app.post('/revoke', async (c) => {
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
-app.all('/admin/*', async (c) => {
+app.all('/api/admin/*', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
-app.get('/avatars/*', async (c) => {
+app.get('/api/avatars/*', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
