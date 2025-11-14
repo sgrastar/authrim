@@ -22,7 +22,7 @@
 		onchange={(e) => switchLanguage(e.currentTarget.value)}
 		class="px-2 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
 	>
-		{#each availableLanguageTags as lang}
+		{#each availableLanguageTags as lang (lang)}
 			<option value={lang}>
 				{lang === 'en' ? m.language_english() : m.language_japanese()}
 			</option>
