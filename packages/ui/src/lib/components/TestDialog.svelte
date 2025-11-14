@@ -18,7 +18,7 @@
 			use:melt={$overlay}
 			class="fixed inset-0 z-40 bg-gray-900/50 backdrop-blur-sm"
 			transition:fade={{ duration: 150 }}
-		/>
+		></div>
 		<div
 			use:melt={$content}
 			class="fixed left-1/2 top-1/2 z-50 max-w-md w-full max-h-[85vh] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-white dark:bg-gray-800 shadow-xl p-6"
