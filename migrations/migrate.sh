@@ -14,7 +14,15 @@ NC='\033[0m' # No Color
 # Configuration
 ENV=${1:-dev}
 ACTION=${2:-up}
-DB_NAME="enrai-${ENV}"
+
+# Determine database name and remote flag
+if [ "$ENV" = "local" ]; then
+    DB_NAME="enrai-local"
+    REMOTE_FLAG=""
+else
+    DB_NAME="enrai-${ENV}"
+    REMOTE_FLAG="--remote"
+fi
 
 # Helper functions
 log_info() {
@@ -79,7 +87,7 @@ migrate_up() {
 
     # Apply migrations in order
     log_info "Applying 001_initial_schema.sql..."
-    wrangler d1 execute "${DB_NAME}" --file=migrations/001_initial_schema.sql
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --file=migrations/001_initial_schema.sql
     log_success "Schema migration complete"
 
     log_info "Applying 002_seed_default_data.sql..."
@@ -88,7 +96,7 @@ migrate_up() {
         log_info "Please manually review and edit 002_seed_default_data.sql"
         log_info "Remove test users and clients before running on production"
     else
-        wrangler d1 execute "${DB_NAME}" --file=migrations/002_seed_default_data.sql
+        wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --file=migrations/002_seed_default_data.sql
         log_success "Seed data migration complete"
     fi
 
@@ -101,11 +109,11 @@ show_status() {
     echo ""
 
     log_info "Tables:"
-    wrangler d1 execute "${DB_NAME}" --command="SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
     echo ""
 
     log_info "Table counts:"
-    wrangler d1 execute "${DB_NAME}" --command="
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="
         SELECT 'users' as table_name, COUNT(*) as count FROM users
         UNION ALL SELECT 'roles', COUNT(*) FROM roles
         UNION ALL SELECT 'oauth_clients', COUNT(*) FROM oauth_clients
@@ -115,7 +123,7 @@ show_status() {
     "
 }
 
-# Reset database (dev only)
+# Reset database (local/dev only)
 reset_database() {
     if [ "$ENV" = "prod" ]; then
         log_error "Cannot reset production database"
@@ -130,17 +138,17 @@ reset_database() {
     fi
 
     log_info "Dropping all tables..."
-    wrangler d1 execute "${DB_NAME}" --command="DROP TABLE IF EXISTS audit_log;"
-    wrangler d1 execute "${DB_NAME}" --command="DROP TABLE IF EXISTS identity_providers;"
-    wrangler d1 execute "${DB_NAME}" --command="DROP TABLE IF EXISTS branding_settings;"
-    wrangler d1 execute "${DB_NAME}" --command="DROP TABLE IF EXISTS scope_mappings;"
-    wrangler d1 execute "${DB_NAME}" --command="DROP TABLE IF EXISTS user_roles;"
-    wrangler d1 execute "${DB_NAME}" --command="DROP TABLE IF EXISTS roles;"
-    wrangler d1 execute "${DB_NAME}" --command="DROP TABLE IF EXISTS sessions;"
-    wrangler d1 execute "${DB_NAME}" --command="DROP TABLE IF EXISTS oauth_clients;"
-    wrangler d1 execute "${DB_NAME}" --command="DROP TABLE IF EXISTS passkeys;"
-    wrangler d1 execute "${DB_NAME}" --command="DROP TABLE IF EXISTS user_custom_fields;"
-    wrangler d1 execute "${DB_NAME}" --command="DROP TABLE IF EXISTS users;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="DROP TABLE IF EXISTS audit_log;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="DROP TABLE IF EXISTS identity_providers;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="DROP TABLE IF EXISTS branding_settings;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="DROP TABLE IF EXISTS scope_mappings;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="DROP TABLE IF EXISTS user_roles;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="DROP TABLE IF EXISTS roles;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="DROP TABLE IF EXISTS sessions;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="DROP TABLE IF EXISTS oauth_clients;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="DROP TABLE IF EXISTS passkeys;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="DROP TABLE IF EXISTS user_custom_fields;"
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --command="DROP TABLE IF EXISTS users;"
     log_success "All tables dropped"
 
     log_info "Re-running migrations..."
@@ -154,19 +162,21 @@ show_help() {
     echo "Usage: ./migrations/migrate.sh [env] [action]"
     echo ""
     echo "Environments:"
-    echo "  dev    - Development database (default)"
-    echo "  prod   - Production database"
+    echo "  local  - Local D1 database (for local development)"
+    echo "  dev    - Development database on Cloudflare (default)"
+    echo "  prod   - Production database on Cloudflare"
     echo ""
     echo "Actions:"
     echo "  up     - Run migrations (default)"
     echo "  status - Show database status"
-    echo "  reset  - Reset database (dev only)"
+    echo "  reset  - Reset database (local/dev only)"
     echo "  help   - Show this help"
     echo ""
     echo "Examples:"
+    echo "  ./migrations/migrate.sh local up"
     echo "  ./migrations/migrate.sh dev up"
     echo "  ./migrations/migrate.sh prod status"
-    echo "  ./migrations/migrate.sh dev reset"
+    echo "  ./migrations/migrate.sh local reset"
 }
 
 # Main script
