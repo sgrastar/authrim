@@ -25,6 +25,10 @@ import {
   adminClientGetHandler,
   adminUserAvatarUploadHandler,
   adminUserAvatarDeleteHandler,
+  adminSessionsListHandler,
+  adminSessionGetHandler,
+  adminSessionRevokeHandler,
+  adminUserRevokeAllSessionsHandler,
 } from './admin';
 
 // Create Hono app with Cloudflare Workers types
@@ -130,6 +134,12 @@ app.post('/admin/users/:id/avatar', adminUserAvatarUploadHandler);
 app.delete('/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
 app.get('/admin/clients', adminClientsListHandler);
 app.get('/admin/clients/:id', adminClientGetHandler);
+
+// Admin Session Management endpoints
+app.get('/admin/sessions', adminSessionsListHandler);
+app.get('/admin/sessions/:id', adminSessionGetHandler);
+app.post('/admin/sessions/:id/revoke', adminSessionRevokeHandler);
+app.post('/admin/users/:id/revoke-all-sessions', adminUserRevokeAllSessionsHandler);
 
 // 404 handler
 app.notFound((c) => {
