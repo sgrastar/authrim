@@ -87,10 +87,20 @@ migrate_up() {
 
     # Apply migrations in order
     log_info "Applying 001_initial_schema.sql..."
+    echo ""
+    echo "ℹ️  次のプロンプト「Ok to proceed?」について："
+    echo "   マイグレーション実行中、データベースが一時的に利用できなくなります。"
+    echo "   続行する場合は 'yes' と入力してください。"
+    echo ""
     wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --file=migrations/001_initial_schema.sql
     log_success "Schema migration complete"
 
     log_info "Applying 002_seed_default_data.sql..."
+    echo ""
+    echo "ℹ️  次のプロンプト「Ok to proceed?」について："
+    echo "   マイグレーション実行中、データベースが一時的に利用できなくなります。"
+    echo "   続行する場合は 'yes' と入力してください。"
+    echo ""
     if [ "$ENV" = "prod" ]; then
         log_warning "Skipping test data for production"
         log_info "Please manually review and edit 002_seed_default_data.sql"
