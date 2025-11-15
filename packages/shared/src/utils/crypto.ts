@@ -73,3 +73,45 @@ export function base64UrlToArrayBuffer(base64url: string): Uint8Array {
 
   return bytes;
 }
+
+/**
+ * Timing-safe string comparison
+ *
+ * Compares two strings in constant time to prevent timing attacks.
+ * This is critical for comparing sensitive values like client secrets,
+ * passwords, or authentication tokens.
+ *
+ * @param a - First string to compare
+ * @param b - Second string to compare
+ * @returns true if strings are equal, false otherwise
+ *
+ * @example
+ * ```ts
+ * const isValid = timingSafeEqual(clientSecret, providedSecret);
+ * if (!isValid) {
+ *   return c.json({ error: 'invalid_client' }, 401);
+ * }
+ * ```
+ */
+export function timingSafeEqual(a: string, b: string): boolean {
+  // Convert strings to Uint8Array
+  const encoder = new TextEncoder();
+  const aBuffer = encoder.encode(a);
+  const bBuffer = encoder.encode(b);
+
+  // If lengths differ, still compare to prevent timing leaks
+  // We'll compare up to the longer length, padding the shorter one
+  const length = Math.max(aBuffer.length, bBuffer.length);
+
+  // Always perform the same number of comparisons regardless of input
+  let result = aBuffer.length === bBuffer.length ? 0 : 1;
+
+  for (let i = 0; i < length; i++) {
+    // Use modulo to safely handle different lengths without branching
+    const aValue = aBuffer[i % aBuffer.length] || 0;
+    const bValue = bBuffer[i % bBuffer.length] || 0;
+    result |= aValue ^ bValue;
+  }
+
+  return result === 0;
+}

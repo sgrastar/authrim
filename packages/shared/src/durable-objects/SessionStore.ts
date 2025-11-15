@@ -43,6 +43,14 @@ export interface SessionData {
 }
 
 /**
+ * Persistent state stored in Durable Storage
+ */
+interface SessionStoreState {
+  sessions: Record<string, Session>; // Serializable format (Map cannot be serialized directly)
+  lastCleanup: number;
+}
+
+/**
  * Session creation request
  */
 export interface CreateSessionRequest {
@@ -71,13 +79,61 @@ export class SessionStore {
   private env: Env;
   private sessions: Map<string, Session> = new Map();
   private cleanupInterval: number | null = null;
+  private initialized: boolean = false;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
 
-    // Start periodic cleanup
+    // State will be initialized on first request
+    // This avoids blocking the constructor
+  }
+
+  /**
+   * Initialize state from Durable Storage
+   * Must be called before any session operations
+   */
+  private async initializeState(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    try {
+      const stored = await this.state.storage.get<SessionStoreState>('state');
+
+      if (stored) {
+        // Restore sessions from Durable Storage
+        this.sessions = new Map(Object.entries(stored.sessions));
+        console.log(`SessionStore: Restored ${this.sessions.size} sessions from Durable Storage`);
+      }
+    } catch (error) {
+      console.error('SessionStore: Failed to initialize from Durable Storage:', error);
+      // Continue with empty state
+    }
+
+    this.initialized = true;
+
+    // Start periodic cleanup after initialization
     this.startCleanup();
+  }
+
+  /**
+   * Save current state to Durable Storage
+   * Converts Map to serializable object
+   */
+  private async saveState(): Promise<void> {
+    try {
+      const stateToSave: SessionStoreState = {
+        sessions: Object.fromEntries(this.sessions),
+        lastCleanup: Date.now(),
+      };
+
+      await this.state.storage.put('state', stateToSave);
+    } catch (error) {
+      console.error('SessionStore: Failed to save to Durable Storage:', error);
+      // Don't throw - we don't want to break the session operation
+      // But this should be monitored/alerted in production
+    }
   }
 
   /**
@@ -96,7 +152,7 @@ export class SessionStore {
   }
 
   /**
-   * Cleanup expired sessions from memory
+   * Cleanup expired sessions from memory and Durable Storage
    */
   private async cleanupExpiredSessions(): Promise<void> {
     const now = Date.now();
@@ -111,6 +167,8 @@ export class SessionStore {
 
     if (cleaned > 0) {
       console.log(`SessionStore: Cleaned up ${cleaned} expired sessions`);
+      // Persist cleanup to Durable Storage
+      await this.saveState();
     }
   }
 
@@ -203,6 +261,8 @@ export class SessionStore {
    * Get session by ID (memory → D1 fallback)
    */
   async getSession(sessionId: string): Promise<Session | null> {
+    await this.initializeState();
+
     // 1. Check in-memory (hot)
     let session = this.sessions.get(sessionId);
     if (session) {
@@ -237,6 +297,8 @@ export class SessionStore {
    * Create new session
    */
   async createSession(userId: string, ttl: number, data?: SessionData): Promise<Session> {
+    await this.initializeState();
+
     const session: Session = {
       id: this.generateSessionId(),
       userId,
@@ -248,7 +310,10 @@ export class SessionStore {
     // 1. Store in memory (hot)
     this.sessions.set(session.id, session);
 
-    // 2. Persist to D1 (backup & audit) - async, don't wait
+    // 2. Persist to Durable Storage (for DO restart resilience)
+    await this.saveState();
+
+    // 3. Persist to D1 (backup & audit) - async, don't wait
     this.saveToD1(session).catch((error) => {
       console.error('SessionStore: Failed to save to D1:', error);
     });
@@ -260,11 +325,18 @@ export class SessionStore {
    * Invalidate session immediately
    */
   async invalidateSession(sessionId: string): Promise<boolean> {
+    await this.initializeState();
+
     // 1. Remove from memory
     const hadSession = this.sessions.has(sessionId);
     this.sessions.delete(sessionId);
 
-    // 2. Mark as deleted in D1 - async, don't wait
+    // 2. Persist to Durable Storage
+    if (hadSession) {
+      await this.saveState();
+    }
+
+    // 3. Mark as deleted in D1 - async, don't wait
     this.deleteFromD1(sessionId).catch((error) => {
       console.error('SessionStore: Failed to delete from D1:', error);
     });
@@ -276,6 +348,8 @@ export class SessionStore {
    * List all active sessions for a user
    */
   async listUserSessions(userId: string): Promise<SessionResponse[]> {
+    await this.initializeState();
+
     const sessions: SessionResponse[] = [];
     const now = Date.now();
 
@@ -325,6 +399,8 @@ export class SessionStore {
    * Extend session expiration (Active TTL)
    */
   async extendSession(sessionId: string, additionalSeconds: number): Promise<Session | null> {
+    await this.initializeState();
+
     const session = await this.getSession(sessionId);
     if (!session) {
       return null;
@@ -335,6 +411,9 @@ export class SessionStore {
 
     // Update in memory
     this.sessions.set(sessionId, session);
+
+    // Persist to Durable Storage
+    await this.saveState();
 
     // Update in D1 - async
     this.saveToD1(session).catch((error) => {

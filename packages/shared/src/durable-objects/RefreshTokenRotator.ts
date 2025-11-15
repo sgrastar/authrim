@@ -89,6 +89,15 @@ interface AuditLogEntry {
 }
 
 /**
+ * Persistent state stored in Durable Storage
+ */
+interface RefreshTokenRotatorState {
+  families: Record<string, TokenFamily>; // Serializable format (Map cannot be serialized directly)
+  tokenToFamily: Record<string, string>; // Reverse index
+  lastCleanup: number;
+}
+
+/**
  * RefreshTokenRotator Durable Object
  *
  * Provides distributed refresh token rotation with theft detection.
@@ -99,6 +108,7 @@ export class RefreshTokenRotator {
   private families: Map<string, TokenFamily> = new Map();
   private tokenToFamily: Map<string, string> = new Map(); // Reverse index: token → familyId
   private cleanupInterval: number | null = null;
+  private initialized: boolean = false;
 
   // Configuration
   private readonly DEFAULT_TTL = 30 * 24 * 60 * 60; // 30 days in seconds
@@ -109,8 +119,58 @@ export class RefreshTokenRotator {
     this.state = state;
     this.env = env;
 
-    // Start periodic cleanup
+    // State will be initialized on first request
+  }
+
+  /**
+   * Initialize state from Durable Storage
+   * Must be called before any token operations
+   */
+  private async initializeState(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    try {
+      const stored = await this.state.storage.get<RefreshTokenRotatorState>('state');
+
+      if (stored) {
+        // Restore token families from Durable Storage
+        this.families = new Map(Object.entries(stored.families));
+        this.tokenToFamily = new Map(Object.entries(stored.tokenToFamily));
+        console.log(
+          `RefreshTokenRotator: Restored ${this.families.size} token families from Durable Storage`
+        );
+      }
+    } catch (error) {
+      console.error('RefreshTokenRotator: Failed to initialize from Durable Storage:', error);
+      // Continue with empty state
+    }
+
+    this.initialized = true;
+
+    // Start periodic cleanup after initialization
     this.startCleanup();
+  }
+
+  /**
+   * Save current state to Durable Storage
+   * Converts Maps to serializable objects
+   */
+  private async saveState(): Promise<void> {
+    try {
+      const stateToSave: RefreshTokenRotatorState = {
+        families: Object.fromEntries(this.families),
+        tokenToFamily: Object.fromEntries(this.tokenToFamily),
+        lastCleanup: Date.now(),
+      };
+
+      await this.state.storage.put('state', stateToSave);
+    } catch (error) {
+      console.error('RefreshTokenRotator: Failed to save to Durable Storage:', error);
+      // Don't throw - we don't want to break the token operation
+      // But this should be monitored/alerted in production
+    }
   }
 
   /**
@@ -142,6 +202,8 @@ export class RefreshTokenRotator {
           this.tokenToFamily.delete(token);
         }
 
+        cleaned++;
+
         // Log cleanup
         await this.logToD1({
           action: 'expired',
@@ -149,13 +211,13 @@ export class RefreshTokenRotator {
           userId: family.userId,
           timestamp: now,
         });
-
-        cleaned++;
       }
     }
 
     if (cleaned > 0) {
       console.log(`RefreshTokenRotator: Cleaned up ${cleaned} expired token families`);
+      // Persist cleanup to Durable Storage
+      await this.saveState();
     }
   }
 
@@ -218,6 +280,8 @@ export class RefreshTokenRotator {
    * Create new token family
    */
   async createFamily(request: CreateFamilyRequest): Promise<TokenFamily> {
+    await this.initializeState();
+
     const familyId = this.generateFamilyId();
     const now = Date.now();
 
@@ -240,6 +304,9 @@ export class RefreshTokenRotator {
     // Update reverse index
     this.tokenToFamily.set(request.token, familyId);
 
+    // Persist to Durable Storage
+    await this.saveState();
+
     // Audit log
     await this.logToD1({
       action: 'created',
@@ -257,6 +324,8 @@ export class RefreshTokenRotator {
    * Rotate refresh token (atomic operation)
    */
   async rotate(request: RotateTokenRequest): Promise<RotateTokenResponse> {
+    await this.initializeState();
+
     // Find token family
     const family = this.findFamilyByToken(request.currentToken);
 
@@ -335,6 +404,9 @@ export class RefreshTokenRotator {
     // Update reverse index (add new token, keep old token for theft detection)
     this.tokenToFamily.set(newToken, family.id);
 
+    // Persist to Durable Storage
+    await this.saveState();
+
     // Audit log
     await this.logToD1({
       action: 'rotated',
@@ -359,6 +431,8 @@ export class RefreshTokenRotator {
    * Revoke all tokens in a token family
    */
   async revokeFamilyTokens(request: RevokeFamilyRequest): Promise<void> {
+    await this.initializeState();
+
     const family = this.families.get(request.familyId);
 
     if (!family) {
@@ -374,6 +448,9 @@ export class RefreshTokenRotator {
     for (const token of family.previousTokens) {
       this.tokenToFamily.delete(token);
     }
+
+    // Persist to Durable Storage
+    await this.saveState();
 
     // Audit log
     await this.logToD1({
@@ -392,6 +469,7 @@ export class RefreshTokenRotator {
    * Get token family info (for debugging/admin)
    */
   async getFamilyInfo(familyId: string): Promise<TokenFamily | null> {
+    await this.initializeState();
     return this.families.get(familyId) || null;
   }
 

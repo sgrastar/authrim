@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { Env } from '@enrai/shared';
-import { validateClientId } from '@enrai/shared';
+import { validateClientId, timingSafeEqual } from '@enrai/shared';
 import { deleteRefreshToken, getRefreshToken, revokeToken } from '@enrai/shared';
 import { parseToken } from '@enrai/shared';
 
@@ -90,6 +90,35 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
       {
         error: 'invalid_client',
         error_description: clientIdValidation.error,
+      },
+      401
+    );
+  }
+
+  // RFC 7009 Section 2.1: The authorization server first validates the client credentials
+  // Fetch client to verify client_secret
+  const clientRecord = await c.env.DB.prepare(
+    'SELECT client_id, client_secret FROM oauth_clients WHERE client_id = ?'
+  )
+    .bind(client_id)
+    .first();
+
+  if (!clientRecord) {
+    return c.json(
+      {
+        error: 'invalid_client',
+        error_description: 'Client not found',
+      },
+      401
+    );
+  }
+
+  // Verify client_secret using timing-safe comparison to prevent timing attacks
+  if (!client_secret || !timingSafeEqual(clientRecord.client_secret as string, client_secret)) {
+    return c.json(
+      {
+        error: 'invalid_client',
+        error_description: 'Invalid client credentials',
       },
       401
     );
