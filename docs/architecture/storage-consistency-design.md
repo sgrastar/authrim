@@ -8,13 +8,23 @@
 
 ## エグゼクティブサマリー
 
-Enrai Phase 5のストレージアーキテクチャは、Cloudflare Workers の各種ストレージプリミティブ（Durable Objects、D1、KV）を効果的に組み合わせていますが、**複数のストレージ間の一貫性**に関して3つのクリティカルな課題が存在します：
+Enrai Phase 5のストレージアーキテクチャは、Cloudflare Workers の各種ストレージプリミティブ（Durable Objects、D1、KV）を効果的に組み合わせていますが、**複数のストレージ間の一貫性**に関して**8つのクリティカルな課題**が存在します：
+
+### 主要課題（Priority 1）
 
 1. **DOからD1への非同期書き込み** - 信頼性の欠如
 2. **KVキャッシュ無効化の一貫性窓** - 古いデータ提供のリスク
 3. **認可コードのKV使用** - OAuth 2.0セキュリティ要件違反
 
-本ドキュメントは、これらの課題に対する具体的な解決策と実装戦略を提示します。
+### 追加課題（包括的監査で発見）
+
+4. **RefreshTokenRotatorの永続性欠如** - DO再起動時のトークン損失
+5. **監査ログの信頼性** - 非同期書き込みによるログ損失
+6. **Rate Limitingの精度問題** - KV競合によるカウント不正確
+7. **Passkey Counterの競合状態** - WebAuthn仕様違反の可能性
+8. **セッショントークンの競合状態** - KV `used` フラグの非アトミック更新
+
+本ドキュメントは、これらすべての課題に対する具体的な解決策と実装戦略を提示します。
 
 ---
 
@@ -205,6 +215,363 @@ T2: 正当なクライアント: エッジロケーションBに送信
 - `AuthorizationCodeStore` Durable Objectが**既に実装済み**
 - ファイル: `packages/shared/src/durable-objects/AuthorizationCodeStore.ts`
 - しかし、**未使用**（authorize.ts、token.tsで利用されていない）
+
+---
+
+### 1.4 追加の一貫性問題（包括的監査で発見）
+
+以下の問題は、コードベース全体の詳細な監査により発見されました。
+
+#### 問題4: RefreshTokenRotatorの永続性欠如（クリティカル）
+
+**場所**: `packages/shared/src/durable-objects/RefreshTokenRotator.ts:99-100`
+
+```typescript
+export class RefreshTokenRotator {
+  private state: DurableObjectState;
+  private env: Env;
+  private families: Map<string, TokenFamily> = new Map(); // ← メモリのみ
+  private tokenToFamily: Map<string, string> = new Map(); // ← メモリのみ
+  // ...
+}
+```
+
+**問題点**:
+- トークンファミリーが**メモリのみ**に保存されている
+- `KeyManager` は `this.state.storage.put()` を使用して永続化しているが、`RefreshTokenRotator` は使用していない
+- Durable Object再起動時（デプロイ、エラー、Worker移行等）に**すべてのトークンファミリーが失われる**
+
+**影響**:
+```
+ユーザーフロー:
+1. ユーザーがログイン → Refresh Token発行
+2. Token Family作成 → RefreshTokenRotator メモリに保存
+3. Worker再起動（例: 新しいバージョンのデプロイ）
+4. メモリクリア → すべてのToken Familyが消失
+5. ユーザーがRefresh Tokenでアクセス試行
+6. Token Family見つからない → 認証失敗 ❌
+7. ユーザー強制ログアウト
+
+結果: すべてのユーザーが再ログイン必須
+```
+
+**比較 - KeyManagerの正しい実装**:
+
+`packages/shared/src/durable-objects/KeyManager.ts:75-112`
+
+```typescript
+export class KeyManager {
+  private keyManagerState: KeyManagerState | null = null;
+
+  private async initializeState(): Promise<void> {
+    // Durable Storageから読み込み ✅
+    const stored = await this.state.storage.get<KeyManagerState>('state');
+    if (stored) {
+      this.keyManagerState = stored;
+    }
+  }
+
+  private async saveState(): Promise<void> {
+    // Durable Storageへ永続化 ✅
+    await this.state.storage.put('state', this.keyManagerState);
+  }
+}
+```
+
+**解決策**:
+- RefreshTokenRotatorも同様に `state.storage.put()` / `get()` を使用
+- トークンファミリーをDurable Storageに永続化
+- 再起動時に復元
+
+---
+
+#### 問題5: 監査ログの信頼性（コンプライアンスリスク）
+
+**場所**: `packages/shared/src/durable-objects/RefreshTokenRotator.ts:191-215`
+
+```typescript
+private async logToD1(entry: AuditLogEntry): Promise<void> {
+  if (!this.env.DB) {
+    return;
+  }
+
+  try {
+    await this.env.DB.prepare(/* INSERT INTO audit_log ... */).run();
+  } catch (error) {
+    console.error('RefreshTokenRotator: D1 audit log error:', error);
+    // Don't throw - audit logging failure should not break rotation
+    // ↑ エラーは無視される ⚠️
+  }
+}
+```
+
+**問題点**:
+- `SessionStore` と同じ問題: 監査ログが非同期で、失敗が無視される
+- トークン盗難検出、ファミリー無効化などの**セキュリティイベント**がログに記録されない可能性
+- コンプライアンス要件（SOC 2、GDPR等）を満たせない
+
+**影響範囲**:
+```
+SessionStore:
+- セッション作成/延長/無効化
+- 監査ログ失敗時も処理継続
+
+RefreshTokenRotator:
+- トークンローテーション
+- 盗難検出 ← 特にクリティカル
+- ファミリー無効化
+- すべて監査ログ失敗の可能性
+
+合計: すべての認証・認可イベント
+```
+
+**コンプライアンス要件**:
+```
+SOC 2 (System and Organization Controls 2):
+- CC6.1: すべてのアクセス試行を記録
+- CC7.2: セキュリティイベントの監視と記録
+
+GDPR (General Data Protection Regulation):
+- Article 30: 処理活動の記録
+- Article 33: データ侵害の記録
+
+OAuth 2.0 Security BCP:
+- Section 4.13: すべてのトークン操作を記録
+```
+
+**解決策**:
+- セクション2.1のリトライキューを監査ログにも適用
+- または、監査ログを同期的に書き込み（一貫性レベル: `strong`）
+- 監査ログ失敗時はアラート送信
+
+---
+
+#### 問題6: Rate Limitingの精度問題
+
+**場所**: `packages/shared/src/middleware/rate-limit.ts:63-106`
+
+```typescript
+async function checkRateLimit(env, clientIP, config) {
+  const key = `ratelimit:${clientIP}`;
+
+  // Step 1: Read
+  const recordJson = await env.STATE_STORE.get(key);
+  let record: RateLimitRecord;
+
+  if (recordJson) {
+    record = JSON.parse(recordJson);
+    // Step 2: Modify
+    record.count++;
+  } else {
+    record = { count: 1, resetAt: now + config.windowSeconds };
+  }
+
+  // Step 3: Write
+  await env.STATE_STORE.put(key, JSON.stringify(record), {
+    expirationTtl: config.windowSeconds + 60,
+  });
+
+  const allowed = record.count <= config.maxRequests;
+  return { allowed, ... };
+}
+```
+
+**問題点**: Read-Modify-Write 競合
+
+```
+並行リクエストの例:
+T0: 現在 count = 5 (KV)
+
+T1: Request A: KV.get() → count = 5
+T2: Request B: KV.get() → count = 5 (まだ古い値)
+
+T3: Request A: count++ → 6
+T4: Request B: count++ → 6 (本来は7であるべき)
+
+T5: Request A: KV.put(count=6)
+T6: Request B: KV.put(count=6) ← 上書き
+
+結果: count = 6 (正しくは7)
+```
+
+**影響**:
+- レート制限が正確でない
+- 攻撃者が制限を回避できる可能性
+- DDoS保護が機能しない
+
+**KVの制約**:
+- Cloudflare KVは結果整合性
+- Compare-and-Swap (CAS) 機能なし
+- アトミックなインクリメント不可
+
+**解決策**:
+```
+Option 1: Durable Objects for Rate Limiting
+- 強一貫性が必要な場合
+- IPアドレスごとにDOインスタンス（シャーディング）
+- アトミックなカウント保証
+
+Option 2: Durable Objects Alarms + KV
+- DOでカウント（正確）
+- KVでキャッシュ（パフォーマンス）
+- 定期的な同期
+
+Option 3: 精度を許容する（現状維持）
+- レート制限は「ベストエフォート」と割り切る
+- 多少の不正確さは許容
+- KVベースでシンプルに保つ
+```
+
+---
+
+#### 問題7: Passkey Counterの競合状態（WebAuthn仕様違反の可能性）
+
+**場所**: `packages/shared/src/storage/adapters/cloudflare-adapter.ts:819-829`
+
+```typescript
+async updateCounter(passkeyId: string, counter: number): Promise<Passkey> {
+  const now = Math.floor(Date.now() / 1000);
+
+  // Step 1: D1 UPDATE (新しいcounterで上書き)
+  await this.adapter.execute(
+    'UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?',
+    [counter, now, passkeyId]
+  );
+
+  // Step 2: SELECT (更新結果取得)
+  const results = await this.adapter.query<Passkey>(
+    'SELECT * FROM passkeys WHERE id = ?',
+    [passkeyId]
+  );
+
+  return results[0];
+}
+```
+
+**WebAuthn仕様要件**:
+
+[WebAuthn Level 2 Specification, Section 7.2](https://www.w3.org/TR/webauthn-2/#sctn-authenticator-data)
+
+> The signature counter's value MUST be strictly increasing. If the stored counter value is greater than or equal to the received counter value, the credential has been cloned.
+
+**問題点**:
+```
+並行認証リクエストの例:
+DB state: counter = 10
+
+T1: User logs in from Device A
+    → Authenticator returns counter = 11
+    → updateCounter(passkeyId, 11)
+
+T2: User logs in from Device B (同時)
+    → Authenticator returns counter = 12
+    → updateCounter(passkeyId, 12)
+
+T3: Request A: UPDATE counter = 11 WHERE id = ...
+T4: Request B: UPDATE counter = 12 WHERE id = ... (上書き)
+
+結果: counter = 12 ✅
+
+T5: User logs in again from Device A
+    → Authenticator returns counter = 13
+    → DB counter = 12 → 13 > 12 → OK ✅
+
+問題なし？ → いいえ、逆順の場合:
+
+T1: Request B: UPDATE counter = 12
+T2: Request A: UPDATE counter = 11 (上書き) ← 問題!
+
+結果: counter = 11 ❌
+
+T3: User logs in from Device B again
+    → Authenticator returns counter = 13
+    → DB counter = 11 → 13 > 11 → OK (本来は検出すべきクローン)
+```
+
+**正しい実装**:
+
+```typescript
+// Compare-and-Swap パターン
+async updateCounter(passkeyId: string, newCounter: number): Promise<Passkey> {
+  // Step 1: 現在のcounterを取得
+  const current = await this.adapter.query<Passkey>(
+    'SELECT counter FROM passkeys WHERE id = ?',
+    [passkeyId]
+  );
+
+  if (!current[0]) {
+    throw new Error('Passkey not found');
+  }
+
+  // Step 2: 新しいcounterが大きい場合のみ更新
+  if (newCounter <= current[0].counter) {
+    throw new Error('Invalid counter: possible credential clone');
+  }
+
+  // Step 3: Conditional UPDATE
+  const result = await this.adapter.execute(
+    'UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ? AND counter = ?',
+    [newCounter, Math.floor(Date.now() / 1000), passkeyId, current[0].counter]
+  );
+
+  // Step 4: 更新が成功したか確認（他のリクエストが先に更新していないか）
+  if (result.changes === 0) {
+    // 他のリクエストが先に更新 → リトライ
+    return await this.updateCounter(passkeyId, newCounter);
+  }
+
+  // 成功
+  return await this.get(passkeyId);
+}
+```
+
+---
+
+#### 問題8: セッショントークン（KV）の競合状態
+
+**場所**: `packages/op-auth/src/session-management.ts:140-165`
+
+```typescript
+// Step 1: KVからトークン取得
+const tokenData = await kvStore.get(tokenKey);
+if (!tokenData) {
+  return c.json({ error: 'Invalid token' }, 400);
+}
+
+const parsed = JSON.parse(tokenData);
+
+// Step 2: 使用済みチェック
+if (parsed.used) {
+  return c.json({ error: 'Token already used' }, 400);
+}
+
+// Step 3: 使用済みマーク
+parsed.used = true;
+await kvStore.put(tokenKey, JSON.stringify(parsed), {
+  expirationTtl: 60,
+});
+```
+
+**問題点**: AuthorizationCode と同じ Read-Check-Set 競合
+
+```
+並行リクエスト:
+T1: Request A: KV.get(token) → used = false
+T2: Request B: KV.get(token) → used = false (まだ古い値)
+
+T3: Request A: used = true → KV.put()
+T4: Request B: used = true → KV.put()
+
+結果: 両方のリクエストが成功 ❌
+```
+
+**影響**:
+- ITP (Intelligent Tracking Prevention) 対応のセッショントークンが再利用可能
+- セキュリティリスク
+
+**解決策**:
+- セッショントークンもDurable Objectで管理
+- または、TTLを極端に短くして影響を最小化（現在: 5分）
 
 ---
 
@@ -960,6 +1327,589 @@ export async function storeAuthCodeMigration(
 
 ---
 
+### 2.4 RefreshTokenRotatorの永続化
+
+#### 設計方針
+
+**KeyManagerと同じDurable Storage パターンを適用**
+
+```typescript
+// packages/shared/src/durable-objects/RefreshTokenRotator.ts
+
+export class RefreshTokenRotator {
+  private state: DurableObjectState;
+  private env: Env;
+
+  // 状態管理用の型定義
+  private rotatorState: {
+    families: Map<string, TokenFamily>;
+    tokenToFamily: Map<string, string>;
+  } | null = null;
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  /**
+   * 初期化: Durable Storageから状態を復元
+   */
+  private async initializeState(): Promise<void> {
+    if (this.rotatorState !== null) {
+      return; // 既に初期化済み
+    }
+
+    // Durable Storageから読み込み
+    const storedFamilies = await this.state.storage.get<Array<[string, TokenFamily]>>('families');
+    const storedIndex = await this.state.storage.get<Array<[string, string]>>('tokenToFamily');
+
+    this.rotatorState = {
+      families: storedFamilies ? new Map(storedFamilies) : new Map(),
+      tokenToFamily: storedIndex ? new Map(storedIndex) : new Map(),
+    };
+
+    console.log(
+      `RefreshTokenRotator initialized: ${this.rotatorState.families.size} families restored`
+    );
+  }
+
+  /**
+   * 状態を Durable Storage に保存
+   */
+  private async saveState(): Promise<void> {
+    if (!this.rotatorState) {
+      return;
+    }
+
+    await this.state.storage.put('families', Array.from(this.rotatorState.families.entries()));
+    await this.state.storage.put(
+      'tokenToFamily',
+      Array.from(this.rotatorState.tokenToFamily.entries())
+    );
+  }
+
+  /**
+   * トークンファミリー作成（永続化対応）
+   */
+  async createFamily(request: CreateFamilyRequest): Promise<TokenFamily> {
+    // 状態初期化
+    await this.initializeState();
+
+    const familyId = this.generateFamilyId();
+    const now = Date.now();
+
+    const family: TokenFamily = {
+      id: familyId,
+      currentToken: request.token,
+      previousTokens: [],
+      userId: request.userId,
+      clientId: request.clientId,
+      scope: request.scope,
+      rotationCount: 0,
+      createdAt: now,
+      lastRotation: now,
+      expiresAt: now + request.ttl * 1000,
+    };
+
+    // メモリに保存
+    this.rotatorState!.families.set(familyId, family);
+    this.rotatorState!.tokenToFamily.set(request.token, familyId);
+
+    // Durable Storageに永続化
+    await this.saveState();
+
+    // 監査ログ（非同期・ベストエフォート）
+    void this.logToD1({
+      action: 'created',
+      familyId,
+      userId: request.userId,
+      clientId: request.clientId,
+      metadata: { scope: request.scope },
+      timestamp: now,
+    });
+
+    return family;
+  }
+
+  /**
+   * トークンローテーション（永続化対応）
+   */
+  async rotate(request: RotateTokenRequest): Promise<RotateTokenResponse> {
+    await this.initializeState();
+
+    const family = this.findFamilyByToken(request.currentToken);
+    if (!family) {
+      throw new Error('invalid_grant: Refresh token not found or expired');
+    }
+
+    // ... 盗難検出ロジック（既存コードと同じ） ...
+
+    // 新しいトークン生成
+    const newToken = this.generateToken();
+
+    // アトミック更新（メモリ内）
+    const oldToken = family.currentToken;
+    family.previousTokens.push(oldToken);
+    family.currentToken = newToken;
+    family.rotationCount++;
+    family.lastRotation = Date.now();
+
+    // previousTokensをトリム
+    if (family.previousTokens.length > this.MAX_PREVIOUS_TOKENS) {
+      const removed = family.previousTokens.shift();
+      if (removed) {
+        this.rotatorState!.tokenToFamily.delete(removed);
+      }
+    }
+
+    // メモリ更新
+    this.rotatorState!.families.set(family.id, family);
+    this.rotatorState!.tokenToFamily.set(newToken, family.id);
+
+    // Durable Storageに永続化 ✅
+    await this.saveState();
+
+    // 監査ログ（非同期）
+    void this.logToD1({
+      action: 'rotated',
+      familyId: family.id,
+      userId: request.userId,
+      clientId: request.clientId,
+      metadata: { rotationCount: family.rotationCount },
+      timestamp: Date.now(),
+    });
+
+    return {
+      newToken,
+      familyId: family.id,
+      expiresIn: Math.floor((family.expiresAt - Date.now()) / 1000),
+      rotationCount: family.rotationCount,
+    };
+  }
+}
+```
+
+**メリット**:
+- DO再起動後もトークンファミリーが復元される ✅
+- デプロイ時にユーザーが強制ログアウトされない ✅
+- Worker移行時も状態が保持される ✅
+
+**注意点**:
+- `state.storage.put()` は非同期だが、DO内でシリアライズされるため一貫性は保たれる
+- ストレージサイズ制限: Durable Storageは128KB/key（大量のトークンファミリーには注意）
+
+---
+
+### 2.5 監査ログの信頼性向上
+
+#### 設計方針
+
+**Option A: リトライキューによる信頼性確保**
+
+セクション2.1の `Write-Behind Queue with Retry Logic` を監査ログにも適用。
+
+```typescript
+// packages/shared/src/durable-objects/shared/AuditLogQueue.ts (新規)
+
+export interface AuditLogEntry {
+  event: string;
+  userId?: string;
+  metadata?: Record<string, unknown>;
+  timestamp: number;
+}
+
+export class AuditLogQueue {
+  private queue: Map<string, { entry: AuditLogEntry; attempts: number; nextRetry: number }> =
+    new Map();
+  private processing: boolean = false;
+
+  constructor(
+    private env: Env,
+    private onAlert: (alert: Alert) => Promise<void>
+  ) {}
+
+  async enqueue(entry: AuditLogEntry): Promise<void> {
+    const id = `audit_${crypto.randomUUID()}`;
+    this.queue.set(id, {
+      entry,
+      attempts: 0,
+      nextRetry: Date.now(),
+    });
+
+    if (!this.processing) {
+      void this.processQueue();
+    }
+  }
+
+  private async processQueue(): Promise<void> {
+    this.processing = true;
+
+    while (this.queue.size > 0) {
+      const now = Date.now();
+
+      for (const [id, queued] of this.queue.entries()) {
+        if (queued.nextRetry > now) continue;
+
+        try {
+          await this.writeToD1(queued.entry);
+          this.queue.delete(id); // 成功 → 削除
+        } catch (error) {
+          queued.attempts++;
+
+          if (queued.attempts >= 5) {
+            // 最大リトライ超過 → アラート
+            await this.onAlert({
+              type: 'AUDIT_LOG_FAILURE',
+              severity: 'critical',
+              message: 'Audit log write failed after 5 attempts',
+              metadata: { entry: queued.entry, error },
+              timestamp: now,
+            });
+
+            this.queue.delete(id); // デッドレターキューへ移動（実装は省略）
+          } else {
+            // Exponential backoff
+            queued.nextRetry = now + Math.pow(2, queued.attempts) * 1000;
+          }
+        }
+      }
+
+      // 待機
+      const nextItem = Array.from(this.queue.values())
+        .sort((a, b) => a.nextRetry - b.nextRetry)[0];
+
+      if (nextItem && nextItem.nextRetry > now) {
+        await new Promise((resolve) => setTimeout(resolve, nextItem.nextRetry - now));
+      }
+
+      if (this.queue.size === 0) break;
+    }
+
+    this.processing = false;
+  }
+
+  private async writeToD1(entry: AuditLogEntry): Promise<void> {
+    await this.env.DB.prepare(
+      'INSERT INTO audit_log (id, user_id, action, metadata_json, created_at) VALUES (?, ?, ?, ?, ?)'
+    )
+      .bind(
+        `audit_${crypto.randomUUID()}`,
+        entry.userId || null,
+        entry.event,
+        entry.metadata ? JSON.stringify(entry.metadata) : null,
+        Math.floor(entry.timestamp / 1000)
+      )
+      .run();
+  }
+}
+
+// RefreshTokenRotatorでの使用例
+export class RefreshTokenRotator {
+  private auditQueue: AuditLogQueue;
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.auditQueue = new AuditLogQueue(env, async (alert) => {
+      await sendAlert(env, alert);
+    });
+  }
+
+  async rotate(request: RotateTokenRequest): Promise<RotateTokenResponse> {
+    // ... トークンローテーション処理 ...
+
+    // 監査ログをキューに追加（非同期・リトライ保証）
+    await this.auditQueue.enqueue({
+      event: 'refresh_token.rotated',
+      userId: request.userId,
+      metadata: { familyId: family.id, rotationCount: family.rotationCount },
+      timestamp: Date.now(),
+    });
+
+    return result;
+  }
+}
+```
+
+**Option B: 同期的な監査ログ（強一貫性）**
+
+セキュリティイベント（盗難検出等）のみ同期的に書き込み。
+
+```typescript
+async rotate(request: RotateTokenRequest): Promise<RotateTokenResponse> {
+  // ... トークンローテーション処理 ...
+
+  if (theftDetected) {
+    // 盗難検出 → 同期的にログ書き込み（失敗したらエラー返却）
+    await this.logToD1Sync({
+      event: 'refresh_token.theft_detected',
+      userId: request.userId,
+      metadata: { familyId: family.id },
+      timestamp: Date.now(),
+    });
+
+    throw new Error('invalid_grant: Token theft detected');
+  }
+
+  // 通常のローテーション → 非同期ログ（ベストエフォート）
+  void this.auditQueue.enqueue({ ... });
+
+  return result;
+}
+
+private async logToD1Sync(entry: AuditLogEntry): Promise<void> {
+  // タイムアウト付き同期書き込み
+  await Promise.race([
+    this.writeToD1(entry),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Audit log timeout')), 5000)
+    ),
+  ]);
+}
+```
+
+**推奨**: Option A (リトライキュー) + Option B (重要イベントは同期)のハイブリッド
+
+---
+
+### 2.6 Rate Limitingの設計選択
+
+#### オプション比較
+
+| オプション | 精度 | パフォーマンス | 複雑度 | コスト |
+|-----------|------|--------------|-------|-------|
+| Option 1: DO | ✅ 完璧 | ⚠️ シャーディング必要 | 高 | 高 |
+| Option 2: DO Alarms + KV | ✅ 高い | ✅ 良好 | 中 | 中 |
+| Option 3: KV (現状) | ⚠️ ベストエフォート | ✅ 最良 | 低 | 低 |
+
+**推奨**: Option 3（現状維持） + ドキュメント化
+
+**理由**:
+- レート制限は「ベストエフォート」で十分な場合が多い
+- 完璧な精度よりも、シンプルさと低コストを優先
+- 攻撃者は多数のIPを使用するため、単一IPの精度向上は効果限定的
+
+**ドキュメント追加**:
+
+```typescript
+// packages/shared/src/middleware/rate-limit.ts
+
+/**
+ * Rate Limiting Middleware (Best-Effort)
+ *
+ * このレート制限実装はKVベースのため、結果整合性により完璧な精度は保証されません。
+ * 並行リクエストによりカウントが不正確になる可能性がありますが、以下の理由により許容範囲内です：
+ *
+ * 1. レート制限は主にDDoS対策（大量リクエスト）を目的とし、境界値での精度は重要でない
+ * 2. 攻撃者は通常、多数のIPアドレスを使用するため、単一IPの精度向上は限定的
+ * 3. シンプルな実装により、パフォーマンスとコストを最適化
+ *
+ * より高精度なレート制限が必要な場合（例: 課金APIのクォータ管理）は、
+ * Durable Objectsベースの実装を検討してください。
+ */
+export function rateLimitMiddleware(config: RateLimitConfig) {
+  // ...
+}
+```
+
+**Alternative (将来の改善)**:
+
+厳密な精度が必要な場合のみ、特定エンドポイントでDOベースを使用。
+
+```typescript
+// Rate Limit DO (高精度版)
+export class RateLimitCounter {
+  private counts: Map<string, { count: number; resetAt: number }> = new Map();
+
+  async increment(clientIP: string, windowSeconds: number): Promise<number> {
+    const now = Math.floor(Date.now() / 1000);
+    let record = this.counts.get(clientIP);
+
+    if (!record || now >= record.resetAt) {
+      record = { count: 1, resetAt: now + windowSeconds };
+    } else {
+      record.count++;
+    }
+
+    this.counts.set(clientIP, record);
+    return record.count;
+  }
+}
+```
+
+---
+
+### 2.7 Passkey Counterの Compare-and-Swap 実装
+
+#### 実装詳細
+
+```typescript
+// packages/shared/src/storage/adapters/cloudflare-adapter.ts
+
+export class PasskeyStore implements IPasskeyStore {
+  /**
+   * Update passkey counter with compare-and-swap logic
+   * Ensures monotonic increase per WebAuthn specification
+   */
+  async updateCounter(
+    passkeyId: string,
+    newCounter: number,
+    maxRetries: number = 3
+  ): Promise<Passkey> {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        // Step 1: Read current counter
+        const current = await this.adapter.query<{ counter: number }>(
+          'SELECT counter FROM passkeys WHERE id = ?',
+          [passkeyId]
+        );
+
+        if (!current[0]) {
+          throw new Error(`Passkey not found: ${passkeyId}`);
+        }
+
+        const currentCounter = current[0].counter;
+
+        // Step 2: Validate monotonic increase
+        if (newCounter <= currentCounter) {
+          // Counter did not increase → possible credential clone
+          console.error('SECURITY: Passkey counter anomaly detected', {
+            passkeyId,
+            currentCounter,
+            newCounter,
+          });
+
+          throw new Error(
+            `Invalid counter: ${newCounter} <= ${currentCounter}. Possible credential clone.`
+          );
+        }
+
+        // Step 3: Conditional UPDATE (compare-and-swap)
+        const now = Math.floor(Date.now() / 1000);
+        const result = await this.adapter.execute(
+          `UPDATE passkeys
+           SET counter = ?, last_used_at = ?
+           WHERE id = ? AND counter = ?`,
+          [newCounter, now, passkeyId, currentCounter]
+        );
+
+        // Step 4: Check if update succeeded
+        if (result.changes === 0) {
+          // Another request updated the counter first → retry
+          console.warn(
+            `Passkey counter update conflict (attempt ${attempt + 1}/${maxRetries})`,
+            { passkeyId }
+          );
+
+          // Exponential backoff before retry
+          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 10));
+          continue;
+        }
+
+        // Success → return updated passkey
+        const updated = await this.adapter.query<Passkey>(
+          'SELECT * FROM passkeys WHERE id = ?',
+          [passkeyId]
+        );
+
+        if (!updated[0]) {
+          throw new Error(`Passkey disappeared after update: ${passkeyId}`);
+        }
+
+        return updated[0];
+      } catch (error) {
+        if (attempt === maxRetries - 1) {
+          // Max retries reached
+          throw error;
+        }
+        // Retry on transient errors
+      }
+    }
+
+    throw new Error(`Failed to update passkey counter after ${maxRetries} attempts`);
+  }
+}
+```
+
+**WebAuthn仕様準拠**:
+- ✅ Counter単調増加保証
+- ✅ クローン検出（counter減少時にエラー）
+- ✅ 並行リクエスト対応（Compare-and-Swap）
+
+---
+
+### 2.8 セッショントークンの管理改善
+
+#### Option A: TTL短縮（最も簡単）
+
+```typescript
+// packages/op-auth/src/session-management.ts
+
+// 現在: 5分
+const SESSION_TOKEN_TTL = 300;
+
+// 改善: 30秒に短縮
+const SESSION_TOKEN_TTL = 30;
+```
+
+**メリット**:
+- 実装変更なし
+- 競合状態の影響を最小化
+
+**デメリット**:
+- UX低下（短いTTLでユーザーが再認証を求められる可能性）
+- ITP対応の本質的な解決ではない
+
+#### Option B: Durable Objectで管理（完璧だが複雑）
+
+```typescript
+// packages/shared/src/durable-objects/SessionTokenStore.ts (新規)
+
+export class SessionTokenStore {
+  private tokens: Map<string, { sessionId: string; used: boolean; expiresAt: number }> =
+    new Map();
+
+  async createToken(sessionId: string, ttl: number): Promise<string> {
+    const token = `st_${crypto.randomUUID()}`;
+    this.tokens.set(token, {
+      sessionId,
+      used: false,
+      expiresAt: Date.now() + ttl * 1000,
+    });
+    return token;
+  }
+
+  async consumeToken(token: string): Promise<string | null> {
+    const tokenData = this.tokens.get(token);
+
+    if (!tokenData || tokenData.used || tokenData.expiresAt <= Date.now()) {
+      return null;
+    }
+
+    // アトミックに使用済みマーク
+    tokenData.used = true;
+    this.tokens.set(token, tokenData);
+
+    return tokenData.sessionId;
+  }
+}
+```
+
+**メリット**:
+- ✅ 完璧な一貫性
+- ✅ 競合状態なし
+
+**デメリット**:
+- 複雑度増加
+- コスト増加
+
+#### 推奨: Option A（TTL短縮 + ドキュメント化）
+
+**理由**:
+- セッショントークンは一時的なもので、完璧な精度は必須ではない
+- TTL短縮で影響を最小化すれば十分
+- シンプルさを維持
+
+---
+
 ## 3. 実装優先順位
 
 ### Priority 1: クリティカルセキュリティ修正
@@ -1008,11 +1958,72 @@ export async function storeAuthCodeMigration(
 - `packages/shared/src/utils/monitoring.ts` (新規)
 - `test/durable-objects/SessionStore.retry.test.ts` (新規)
 
+#### 3.4 RefreshTokenRotatorの永続化 (推定工数: 2-3日)
+
+**タスク**:
+1. `RefreshTokenRotator.ts` の修正 - Durable Storage使用
+2. `initializeState()` / `saveState()` メソッド追加
+3. 既存メソッドの永続化対応 (create, rotate, revoke)
+4. 移行テスト - 既存トークンファミリーの移行
+5. 負荷テスト - ストレージサイズ制限確認
+
+**ファイル変更**:
+- `packages/shared/src/durable-objects/RefreshTokenRotator.ts`
+- `test/durable-objects/RefreshTokenRotator.persistence.test.ts` (新規)
+
+#### 3.5 Passkey Counterの Compare-and-Swap 実装 (推定工数: 1-2日)
+
+**タスク**:
+1. `cloudflare-adapter.ts` の `updateCounter()` 修正
+2. 条件付きUPDATE文実装
+3. リトライロジック追加
+4. WebAuthn仕様準拠テスト
+5. 並行リクエスト負荷テスト
+
+**ファイル変更**:
+- `packages/shared/src/storage/adapters/cloudflare-adapter.ts`
+- `test/integration/passkey-counter.test.ts` (新規)
+
 ---
 
 ### Priority 3: 観測性とドキュメント
 
-#### 3.4 一貫性レベルの明示化 (推定工数: 2日)
+#### 3.6 監査ログの信頼性向上 (推定工数: 2-3日)
+
+**タスク**:
+1. `AuditLogQueue` クラス作成
+2. `SessionStore` と `RefreshTokenRotator` への統合
+3. セキュリティイベントの同期ログ実装
+4. アラート統合
+5. コンプライアンステスト
+
+**ファイル変更**:
+- `packages/shared/src/durable-objects/shared/AuditLogQueue.ts` (新規)
+- `packages/shared/src/durable-objects/SessionStore.ts`
+- `packages/shared/src/durable-objects/RefreshTokenRotator.ts`
+- `test/audit/audit-log-reliability.test.ts` (新規)
+
+#### 3.7 Rate Limitingのドキュメント化 (推定工数: 0.5日)
+
+**タスク**:
+1. `rate-limit.ts` にドキュメント追加（ベストエフォート精度の説明）
+2. 将来の改善オプション記載
+3. DO版の参考実装（コメント）
+
+**ファイル変更**:
+- `packages/shared/src/middleware/rate-limit.ts`
+
+#### 3.8 セッショントークンのTTL短縮 (推定工数: 0.5日)
+
+**タスク**:
+1. `session-management.ts` の TTL 調整 (300秒 → 30秒)
+2. ドキュメント追加（競合状態の影響最小化の説明）
+3. UX影響評価
+
+**ファイル変更**:
+- `packages/op-auth/src/session-management.ts`
+
+#### 3.9 一貫性レベルの明示化 (推定工数: 2日)
 
 **タスク**:
 1. インターフェース拡張 - `WriteOptions`
@@ -1022,6 +2033,31 @@ export async function storeAuthCodeMigration(
 **ファイル変更**:
 - `packages/shared/src/storage/interfaces.ts`
 - `docs/architecture/consistency-model.md` (新規)
+
+---
+
+### 総合推定工数
+
+| Priority | タスク | 工数 |
+|----------|-------|------|
+| **Priority 1** | | |
+| 3.1 | 認可コードのDO移行 | 2-3日 |
+| 3.2 | KVキャッシュ無効化修正 | 1日 |
+| **Priority 2** | | |
+| 3.3 | D1書き込みリトライロジック | 3-4日 |
+| 3.4 | RefreshTokenRotatorの永続化 | 2-3日 |
+| 3.5 | Passkey Counterの CAS実装 | 1-2日 |
+| **Priority 3** | | |
+| 3.6 | 監査ログの信頼性向上 | 2-3日 |
+| 3.7 | Rate Limitingドキュメント化 | 0.5日 |
+| 3.8 | セッショントークンTTL短縮 | 0.5日 |
+| 3.9 | 一貫性レベルの明示化 | 2日 |
+| **合計** | | **14-20日** |
+
+**推奨実装順序**:
+1. Priority 1 → Priority 2 → Priority 3 の順
+2. Priority 1内では: 3.1 (認可コード) → 3.2 (キャッシュ) の順（OAuth 2.0違反が最優先）
+3. Priority 2内では: 3.4 (RefreshTokenRotator) → 3.3 (SessionStore) → 3.5 (Passkey) の順（ユーザー影響度）
 
 ---
 
@@ -1295,15 +2331,39 @@ const doId = env.SESSION_STORE.idFromName(`shard_${shard}`);
 | **認可コード保存** | DO | Strong | ワンタイムユース保証 ✅ |
 | **認可コード消費** | DO | Strong | アトミック操作、再利用検出 ✅ |
 | **クライアント更新** | D1 + KV | Strong | Delete-Then-Write、不整合窓なし ✅ |
-| **トークンローテーション** | DO | Strong | アトミック、盗難検出 ✅ (既存) |
+| **トークンローテーション** | DO (永続化) | Strong | アトミック、盗難検出、DO再起動耐性 ✅ |
+| **Passkey Counter** | D1 (CAS) | Strong | 単調増加保証、WebAuthn準拠 ✅ |
+| **監査ログ** | D1 (Queue + Sync) | Eventual/Strong (選択可) | リトライ保証、重要イベントは同期 ✅ |
+| **Rate Limiting** | KV | Eventual (ベストエフォート) | ドキュメント化、許容範囲 ⚠️ |
+| **セッショントークン** | KV (TTL短縮) | Eventual | 影響最小化（30秒TTL） ⚠️ |
+
+### 発見された問題と解決策のサマリー
+
+**クリティカル問題** (3件):
+1. ✅ DOからD1への非同期書き込み → リトライキュー実装
+2. ✅ KVキャッシュ無効化の一貫性窓 → Delete-Then-Write
+3. ✅ 認可コードのKV使用 → Durable Object移行
+
+**追加で発見された問題** (5件):
+4. ✅ RefreshTokenRotatorの永続性欠如 → Durable Storage実装
+5. ✅ 監査ログの信頼性 → リトライキュー + 同期ログ
+6. ⚠️ Rate Limitingの精度問題 → ドキュメント化（許容）
+7. ✅ Passkey Counterの競合状態 → Compare-and-Swap
+8. ⚠️ セッショントークンの競合状態 → TTL短縮（許容）
+
+**合計**: 8つの課題に対する包括的な解決策
 
 ### 次のステップ
 
 1. ✅ 本設計ドキュメントのレビュー
-2. 🔧 Priority 1タスクの実装開始
-3. 🧪 統合テスト・セキュリティテスト
-4. 📊 モニタリング・アラート設定
-5. 🚀 段階的ロールアウト
+2. 🔧 Priority 1タスクの実装開始（3-4日）
+3. 🔧 Priority 2タスクの実装（6-9日）
+4. 📝 Priority 3タスクの実装（5-7日）
+5. 🧪 統合テスト・セキュリティテスト
+6. 📊 モニタリング・アラート設定
+7. 🚀 段階的ロールアウト
+
+**総推定工数**: 14-20日（約3-4週間）
 
 ---
 
@@ -1320,5 +2380,6 @@ const doId = env.SESSION_STORE.idFromName(`shard_${shard}`);
 
 | 日付 | バージョン | 変更内容 |
 |------|-----------|---------|
-| 2025-11-15 | 1.0 | 初版作成 |
+| 2025-11-15 | 1.0 | 初版作成（主要3課題の分析と解決策） |
+| 2025-11-15 | 2.0 | 包括的監査による5つの追加問題発見と解決策追加:<br>- RefreshTokenRotatorの永続性欠如<br>- 監査ログの信頼性<br>- Rate Limitingの精度問題<br>- Passkey Counterの競合状態<br>- セッショントークンの競合状態<br>合計8つの課題への対応を完全ドキュメント化 |
 
