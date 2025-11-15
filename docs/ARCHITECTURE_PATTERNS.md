@@ -23,12 +23,15 @@ Enrai supports **4 deployment patterns** to accommodate different use cases, fro
 
 | Feature | Pattern A | Pattern B | Pattern C | Pattern D |
 |---------|-----------|-----------|-----------|-----------|
-| **Cookie Sharing** | ✅ Same-origin | ✅ OIDC same-origin | ⚠️ Cross-origin | N/A |
-| **CORS Required** | ❌ No | ⚠️ Admin only | ✅ Yes | ✅ Yes |
+| **Cookie Sharing** | ✅ Same-origin* | ✅ OIDC same-origin | ⚠️ Cross-origin | N/A |
+| **CORS Required** | ⚠️ Dev only | ⚠️ Admin only | ✅ Yes | ✅ Yes |
 | **Admin Security** | ⚠️ Basic | ✅ IP restriction | ✅ IP restriction | CLI/API only |
 | **Multi-Domain SSO** | ❌ No | ❌ No | ✅ Yes | N/A |
+| **Custom Domain Required** | ⚠️ Production only | ⚠️ Recommended | ⚠️ Recommended | ❌ No |
 | **Complexity** | ⭐ Low | ⭐⭐ Medium | ⭐⭐⭐⭐ High | ⭐⭐ Medium |
 | **Implementation** | ✅ Phase 1 | 🔄 Phase 2 | 🔄 Phase 3 | ✅ Phase 1 (partial) |
+
+> **Note:** Pattern A with custom domain provides true same-origin cookie sharing. For development using `*.workers.dev` and `*.pages.dev`, the API and UI will be on separate domains, requiring CORS configuration (similar to Pattern B).
 
 ---
 
@@ -40,29 +43,60 @@ Enrai supports **4 deployment patterns** to accommodate different use cases, fro
 
 All components (OIDC endpoints, APIs, UI) are served from a single domain.
 
-#### Workers.dev Deployment
+#### Custom Domain Deployment (Production)
 ```
-https://enrai.your-account.workers.dev/
-├── /.well-known/*                # OIDC Discovery & JWKS
-├── /authorize, /token            # OIDC Endpoints
-├── /api/auth/*                   # Authentication APIs
-├── /api/admin/*                  # Admin APIs
-├── /api/sessions/*               # Session Management
+https://id.example.com/
+├── /.well-known/*                # OIDC Discovery & JWKS (Worker)
+├── /authorize, /token            # OIDC Endpoints (Worker)
+├── /api/auth/*                   # Authentication APIs (Worker)
+├── /api/admin/*                  # Admin APIs (Worker)
+├── /api/sessions/*               # Session Management (Worker)
 ├── /login                        # Login UI (Cloudflare Pages)
 └── /admin                        # Admin UI (Cloudflare Pages)
 ```
 
-#### Custom Domain Deployment
+**How it works:**
+- Custom domain routes API requests to Workers
+- Same domain serves static UI via Cloudflare Pages
+- Unified domain enables same-origin cookies and no CORS
+
+**Setup:**
+1. Add custom domain to both Workers and Pages
+2. Configure DNS (see [DEPLOYMENT.md](./DEPLOYMENT.md))
+3. Route API paths (`/api/*`, `/.well-known/*`) to Workers
+4. Route UI paths (`/login`, `/admin`) to Pages
+
+#### Workers.dev Deployment (Development Only)
+
+⚠️ **Note:** When using `*.workers.dev` and `*.pages.dev`, the API and UI will be on **separate domains**. This is acceptable for development/testing but requires CORS configuration.
+
 ```
-https://id.example.com/
-├── /.well-known/*                # OIDC Discovery & JWKS
-├── /authorize, /token            # OIDC Endpoints
-├── /api/auth/*                   # Authentication APIs
-├── /api/admin/*                  # Admin APIs
-├── /api/sessions/*               # Session Management
-├── /login                        # Login UI (Cloudflare Pages)
-└── /admin                        # Admin UI (Cloudflare Pages)
+# Development setup (separate domains)
+
+https://enrai-router.your-account.workers.dev/  # API (Worker)
+├── /.well-known/*
+├── /authorize, /token
+└── /api/*
+
+https://enrai-ui.pages.dev/                     # UI (Pages)
+├── /login
+└── /admin
 ```
+
+**Limitations:**
+- API and UI are on **different domains** (`*.workers.dev` ≠ `*.pages.dev`)
+- Requires CORS configuration (see Pattern B)
+- Cookies cannot be shared between Worker and Pages
+- Not a true "unified domain" deployment
+
+**For development:**
+- This setup works fine for testing
+- Configure CORS to allow `*.pages.dev` to access `*.workers.dev`
+- See Pattern B configuration for CORS settings
+
+**For production:**
+- Use a custom domain (see above)
+- Or use Pattern B/C with proper CORS setup
 
 ### Benefits
 
@@ -98,21 +132,62 @@ https://id.example.com/
 
 ### Configuration
 
-#### Environment Variables
+#### Development Setup (workers.dev + pages.dev)
+
+For development/testing using separate domains:
+
 ```bash
-# .dev.vars or wrangler.toml
+# Worker environment (.dev.vars)
+ISSUER_URL=https://enrai-router.your-account.workers.dev
+ADMIN_UI_ORIGIN=https://enrai-ui.pages.dev,http://localhost:5173
+
+# Pages environment
+PUBLIC_API_BASE_URL=https://enrai-router.your-account.workers.dev
+```
+
+**Enable CORS in Worker:**
+```typescript
+// Required because API and UI are on different domains
+app.use('*', cors({
+  origin: ['https://enrai-ui.pages.dev', 'http://localhost:5173'],
+  credentials: true,
+}));
+```
+
+#### Production Setup (Custom Domain)
+
+For production using a unified domain:
+
+```bash
+# Worker environment (.dev.vars or wrangler.toml)
 ISSUER_URL=https://id.example.com
 PUBLIC_API_BASE_URL=https://id.example.com
-```
 
-#### Cloudflare Pages Settings
-```bash
-# Connect custom domain
-wrangler pages deploy packages/ui --project-name=enrai-ui
-
-# Set environment variable
+# Pages environment
 PUBLIC_API_BASE_URL=https://id.example.com
 ```
+
+**Custom Domain Setup:**
+```bash
+# 1. Deploy Worker with custom domain
+cd packages/router
+wrangler deploy
+wrangler domains add id.example.com
+
+# 2. Deploy Pages with custom domain
+wrangler pages deploy packages/ui/.svelte-kit/cloudflare --project-name=enrai-ui
+wrangler pages domain add id.example.com --project-name=enrai-ui
+
+# 3. Configure routing (Cloudflare Dashboard)
+# Dashboard → Websites → id.example.com → Rules → Page Rules
+# Route /api/* and /.well-known/* to Worker
+# Route /login and /admin to Pages
+```
+
+**Prerequisites:**
+- ✅ A custom domain (e.g., `id.example.com`)
+- ✅ Domain managed by Cloudflare (for DNS routing)
+- ✅ SSL certificate (automatically provided by Cloudflare)
 
 ---
 
