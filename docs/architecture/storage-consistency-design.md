@@ -8,7 +8,7 @@
 
 ## エグゼクティブサマリー
 
-Enrai Phase 5のストレージアーキテクチャは、Cloudflare Workers の各種ストレージプリミティブ（Durable Objects、D1、KV）を効果的に組み合わせていますが、**複数のストレージ間の一貫性**に関して**8つのクリティカルな課題**が存在します：
+Enrai Phase 5のストレージアーキテクチャは、Cloudflare Workers の各種ストレージプリミティブ（Durable Objects、D1、KV）を効果的に組み合わせていますが、**複数のストレージ間の一貫性**に関して**11のクリティカルな課題**が存在します：
 
 ### 主要課題（Priority 1）
 
@@ -16,7 +16,7 @@ Enrai Phase 5のストレージアーキテクチャは、Cloudflare Workers の
 2. **KVキャッシュ無効化の一貫性窓** - 古いデータ提供のリスク
 3. **認可コードのKV使用** - OAuth 2.0セキュリティ要件違反
 
-### 追加課題（包括的監査で発見）
+### 追加課題（包括的監査で発見 - v2.0）
 
 4. **RefreshTokenRotatorの永続性欠如** - DO再起動時のトークン損失
 5. **監査ログの信頼性** - 非同期書き込みによるログ損失
@@ -24,7 +24,15 @@ Enrai Phase 5のストレージアーキテクチャは、Cloudflare Workers の
 7. **Passkey Counterの競合状態** - WebAuthn仕様違反の可能性
 8. **セッショントークンの競合状態** - KV `used` フラグの非アトミック更新
 
+### 新発見の課題（詳細監査で発見 - v3.0）⚠️
+
+9. **SessionStore DOの永続性欠如** - すべてのアクティブセッション損失
+10. **AuthorizationCodeStore DOの永続性欠如** - OAuth フロー失敗 + 実装未使用
+11. **PAR request_uri の競合状態** - RFC 9126単一使用保証違反（Medium）
+
 本ドキュメントは、これらすべての課題に対する具体的な解決策と実装戦略を提示します。
+
+**重要な発見**: 4つのDurable Objectsのうち**3つ**が永続性の問題を抱えています（問題 #4, #9, #10）。これは系統的なパターンの問題です。
 
 ---
 
@@ -572,6 +580,297 @@ T4: Request B: used = true → KV.put()
 **解決策**:
 - セッショントークンもDurable Objectで管理
 - または、TTLを極端に短くして影響を最小化（現在: 5分）
+
+---
+
+#### 問題9: SessionStore DOの永続性欠如（クリティカル）⚠️ 新発見
+
+**場所**: `packages/shared/src/durable-objects/SessionStore.ts:72`
+
+```typescript
+export class SessionStore {
+  private state: DurableObjectState;
+  private env: Env;
+  private sessions: Map<string, Session> = new Map(); // ← メモリのみ ❌
+  // ...
+}
+```
+
+**問題点**:
+- SessionStoreが`RefreshTokenRotator`と**同じ問題**を抱えている
+- セッションデータが**メモリのみ**に保存、`state.storage.put/get()`を使用していない
+- D1への書き込みは fire-and-forget（問題1と重複）
+- Durable Object再起動時に**すべてのアクティブセッションが失われる**
+
+**影響範囲**:
+```
+ユーザー影響:
+1. ユーザーがログイン → セッション作成
+2. SessionStore メモリに保存（+ D1書き込み試行）
+3. Worker再起動（デプロイ、スケーリング、障害等）
+4. メモリクリア → すべてのセッションが消失
+5. ユーザーがアクセス試行
+6. セッションが見つからない → 認証失敗 ❌
+7. **すべてのユーザーが強制ログアウト**
+
+さらに問題:
+- D1書き込みが失敗していた場合、D1フォールバックも失敗
+- hot/cold パターンが完全に機能しない
+```
+
+**データフロー分析**:
+```
+現状（問題あり）:
+┌──────────────┐
+│ Session作成  │
+└──────┬───────┘
+       │
+       ├─────────────┬──────────────┐
+       ▼             ▼              ▼
+   [メモリ保存]  [D1書き込み]  [レスポンス]
+    ✅ 即座     ⚠️ async      ✅ 返却
+       │        .catch()           │
+       │        無視               │
+       │                          │
+   [DO再起動]                     │
+       │                          │
+       ▼                          │
+    全消失 ❌                      │
+       │                          │
+   [D1から読む]                   │
+       │                          │
+       ▼                          │
+   失敗している ❌ ← D1書き込みが失敗していた場合
+```
+
+**KeyManagerとの比較**:
+
+SessionStore (問題あり):
+```typescript
+// Line 72: メモリのみ
+private sessions: Map<string, Session> = new Map();
+
+// Line 252-254: Fire-and-forget
+this.saveToD1(session).catch((error) => {
+  console.error('SessionStore: Failed to save to D1:', error);
+});
+```
+
+KeyManager (正しい実装):
+```typescript
+// Durable Storage使用
+private keyManagerState: KeyManagerState | null = null;
+
+private async initializeState(): Promise<void> {
+  const stored = await this.state.storage.get<KeyManagerState>('state');
+  if (stored) {
+    this.keyManagerState = stored;
+  }
+}
+
+private async saveState(): Promise<void> {
+  await this.state.storage.put('state', this.keyManagerState);
+}
+```
+
+**解決策**:
+1. SessionStoreを`KeyManager`パターンにリファクタリング
+2. `state.storage.put/get()`を使用してセッションを永続化
+3. D1は監査目的のバックアップのみ（オプション）
+4. 再起動時にDurable Storageから復元
+
+---
+
+#### 問題10: AuthorizationCodeStore DOの永続性欠如（クリティカル）⚠️ 新発見
+
+**場所**: `packages/shared/src/durable-objects/AuthorizationCodeStore.ts:83`
+
+```typescript
+export class AuthorizationCodeStore {
+  private state: DurableObjectState;
+  private env: Env;
+  private codes: Map<string, AuthorizationCode> = new Map(); // ← メモリのみ ❌
+  // ...
+}
+```
+
+**問題点**:
+- AuthorizationCodeStoreが**問題3の解決策として作成された**にもかかわらず、**永続性の問題**を抱えている
+- 認可コードが**メモリのみ**に保存、`state.storage.put/get()`を使用していない
+- **さらに問題**: このDOは実装されているが、実際には使用されていない！
+  - `op-token/src/token.ts` は依然としてKVベースの`getAuthCode()`を使用
+  - `op-auth/src/consent.ts` は AuthorizationCodeStore DO を使用（正しい）
+  - **不整合**: 2つの実装が混在
+
+**影響範囲**:
+```
+OAuth 2.0フロー:
+1. ユーザーが認可 → 認可コード発行
+2. AuthorizationCodeStore メモリに保存
+3. Worker再起動（60秒TTL内でも発生しうる）
+4. メモリクリア → 認可コードが消失
+5. クライアントがトークンエンドポイントへコード送信
+6. コードが見つからない → トークン取得失敗 ❌
+7. OAuth フロー全体が失敗
+
+影響度:
+- 短いTTL (60秒) のため影響は限定的
+- しかし、DO再起動のタイミング次第では100%失敗
+```
+
+**皮肉な状況**:
+```
+問題3: KV使用による競合状態
+     ↓
+解決策: AuthorizationCodeStore DO を作成 ✅
+     ↓
+新問題: DOが永続性を持たない ❌
+     ↓
+さらに: 実際にはまだKVを使用している ❌
+
+結果: 解決策が実装されたが、使用されず、かつ新しい問題がある
+```
+
+**コードエビデンス**:
+
+AuthorizationCodeStore (作成されたが未使用):
+```typescript
+// packages/shared/src/durable-objects/AuthorizationCodeStore.ts:83
+private codes: Map<string, AuthorizationCode> = new Map(); // メモリのみ
+```
+
+Token endpoint (古いKV実装を使用中):
+```typescript
+// packages/op-token/src/token.ts:180
+const authCodeData = await getAuthCode(c.env, validCode);
+
+// packages/op-token/src/token.ts:461
+await markAuthCodeAsUsed(c.env, validCode, {...}); // KV競合状態（問題3）
+```
+
+Consent endpoint (新しいDO実装を使用):
+```typescript
+// packages/op-auth/src/consent.ts:252-253
+const codeStoreId = c.env.AUTH_CODE_STORE.idFromName(code);
+const codeStore = c.env.AUTH_CODE_STORE.get(codeStoreId);
+```
+
+**解決策**:
+1. AuthorizationCodeStoreに`state.storage.put/get()`を実装
+2. **Token endpointをAuthorizationCodeStore使用に移行**（最優先）
+3. KVベースの`getAuthCode()`/`markAuthCodeAsUsed()`を廃止
+
+---
+
+#### 問題11: PAR request_uri の単一使用保証の競合状態（Medium）⚠️ 新発見
+
+**場所**: `packages/op-auth/src/authorize.ts:92-142`
+
+```typescript
+// Step 1: KVからrequest_uriデータ取得
+const requestData = await c.env.STATE_STORE.get(`request_uri:${request_uri}`);
+
+if (!requestData) {
+  return c.json({ error: 'Invalid or expired request_uri' }, 400);
+}
+
+// ... データ使用 ...
+
+// Step 2: 単一使用のため削除（RFC 9126要件）
+await c.env.STATE_STORE.delete(`request_uri:${request_uri}`);
+```
+
+**問題点**: KV get → use → delete パターンによる競合状態
+
+```
+並行リクエストの例:
+T1: Request A: KV.get(`request_uri:urn:...`) → データ取得 ✅
+T2: Request B: KV.get(`request_uri:urn:...`) → データ取得 ✅ (まだ削除されていない)
+
+T3: Request A: データ使用 → 認可コード生成
+T4: Request B: データ使用 → 認可コード生成
+
+T5: Request A: KV.delete()
+T6: Request B: KV.delete()
+
+結果: 同じrequest_uriから2つの認可コードが生成される ❌
+```
+
+**RFC 9126 違反**:
+
+[RFC 9126: OAuth 2.0 Pushed Authorization Requests, Section 2.3](https://datatracker.ietf.org/doc/html/rfc9126#section-2.3)
+
+> The request_uri MUST be bound to the client that posted the authorization request. The request_uri MUST be one-time use and MUST be short lived.
+
+**攻撃シナリオ**:
+```
+1. 攻撃者が有効なrequest_uriを取得（PARエンドポイントから）
+2. 同時に2つの認可リクエスト送信:
+   - Request A: /authorize?request_uri=urn:...
+   - Request B: /authorize?request_uri=urn:...
+3. タイミング次第で、両方が成功
+4. 2つの認可コードが発行される
+5. 攻撃者は1つを使用、もう1つを保存
+
+影響:
+- 単一使用保証の違反
+- セキュリティリスク（限定的）
+```
+
+**影響度評価**:
+- **Severity**: Medium（Criticalではない）
+- **理由**:
+  1. 攻撃には精密なタイミングが必要
+  2. request_uriの寿命が短い（600秒）
+  3. ネットワークレベルのMitMまたはクライアント制御が必要
+  4. 認可コード自体も単一使用（別の保護あり）
+
+**緩和策（現状）**:
+- 短いPAR有効期限（600秒）
+- 認可コード自体の単一使用保証（問題3で指摘されているが）
+- HTTPSによる伝送保護
+
+**解決策オプション**:
+
+Option 1: Durable Object for PAR
+```typescript
+// PAR RequestStore DO (新規作成)
+class PARRequestStore {
+  private requests: Map<string, RequestData> = new Map();
+
+  async consumeRequest(requestUri: string): Promise<RequestData | null> {
+    const data = this.requests.get(requestUri);
+    if (!data) return null;
+
+    // アトミックに削除
+    this.requests.delete(requestUri);
+    return data;
+  }
+}
+```
+
+Option 2: KV Compare-and-Swap（将来の機能）
+```typescript
+// Cloudflare KV CAS（現時点では利用不可）
+const success = await c.env.STATE_STORE.compareAndSwap(
+  `request_uri:${request_uri}`,
+  null, // expected value (after delete)
+  requestData, // current value
+);
+```
+
+Option 3: 現状受容（推奨）
+```
+理由:
+- 攻撃難易度が高い
+- 実際の影響は限定的
+- 他のセキュリティ層で保護されている
+- 複雑性 vs リスクのトレードオフ
+
+アクション:
+- ドキュメント化のみ
+- モニタリング（同一request_uriの複数使用検出）
+```
 
 ---
 
@@ -1910,6 +2209,509 @@ export class SessionTokenStore {
 
 ---
 
+### 2.9 SessionStore DO の永続化実装（クリティカル）⚠️ NEW
+
+**戦略**: KeyManagerパターンの適用
+
+#### Step 1: Durable Storageインタフェース追加
+
+```typescript
+// packages/shared/src/durable-objects/SessionStore.ts
+
+interface SessionStoreState {
+  sessions: Record<string, Session>; // Map → Record for serialization
+  lastCleanup: number;
+}
+
+export class SessionStore {
+  private state: DurableObjectState;
+  private env: Env;
+  private sessionStoreState: SessionStoreState | null = null;
+  private cleanupInterval: number | null = null;
+
+  /**
+   * Initialize state from Durable Storage
+   */
+  private async initializeState(): Promise<void> {
+    if (this.sessionStoreState !== null) {
+      return;
+    }
+
+    // Load from Durable Storage
+    const stored = await this.state.storage.get<SessionStoreState>('state');
+
+    if (stored) {
+      this.sessionStoreState = stored;
+    } else {
+      // Initialize empty state
+      this.sessionStoreState = {
+        sessions: {},
+        lastCleanup: Date.now(),
+      };
+      await this.saveState();
+    }
+
+    // Start cleanup interval
+    this.startCleanup();
+  }
+
+  /**
+   * Save state to Durable Storage
+   */
+  private async saveState(): Promise<void> {
+    if (this.sessionStoreState) {
+      await this.state.storage.put('state', this.sessionStoreState);
+    }
+  }
+
+  /**
+   * Get session (from Durable Storage, D1 fallback only for migration)
+   */
+  async getSession(sessionId: string): Promise<Session | null> {
+    await this.initializeState();
+
+    const session = this.sessionStoreState!.sessions[sessionId];
+
+    if (session && !this.isExpired(session)) {
+      return session;
+    }
+
+    // Optional: D1 fallback for migration period only
+    // After migration complete, remove this
+    if (!session) {
+      const d1Session = await this.loadFromD1(sessionId);
+      if (d1Session && !this.isExpired(d1Session)) {
+        // Promote to Durable Storage
+        this.sessionStoreState!.sessions[sessionId] = d1Session;
+        await this.saveState();
+        return d1Session;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Create session (save to Durable Storage)
+   */
+  async createSession(userId: string, ttl: number, data?: SessionData): Promise<Session> {
+    await this.initializeState();
+
+    const session: Session = {
+      id: this.generateSessionId(),
+      userId,
+      expiresAt: Date.now() + ttl * 1000,
+      createdAt: Date.now(),
+      data,
+    };
+
+    // 1. Save to Durable Storage (primary)
+    this.sessionStoreState!.sessions[session.id] = session;
+    await this.saveState();
+
+    // 2. Optional: Backup to D1 (async, for audit)
+    // Keep this for audit trail, but don't rely on it
+    this.saveToD1(session).catch((error) => {
+      console.error('SessionStore: D1 backup failed:', error);
+      // Trigger alert for audit log failure
+    });
+
+    return session;
+  }
+
+  /**
+   * Invalidate session (remove from Durable Storage)
+   */
+  async invalidateSession(sessionId: string): Promise<boolean> {
+    await this.initializeState();
+
+    const hadSession = !!this.sessionStoreState!.sessions[sessionId];
+
+    // Remove from Durable Storage
+    delete this.sessionStoreState!.sessions[sessionId];
+    await this.saveState();
+
+    // Optional: Delete from D1 (async)
+    this.deleteFromD1(sessionId).catch((error) => {
+      console.error('SessionStore: D1 delete failed:', error);
+    });
+
+    return hadSession;
+  }
+}
+```
+
+#### Step 2: クリーンアップロジックの更新
+
+```typescript
+private async cleanupExpiredSessions(): Promise<void> {
+  await this.initializeState();
+
+  const now = Date.now();
+  let cleaned = 0;
+  const sessions = this.sessionStoreState!.sessions;
+
+  for (const [sessionId, session] of Object.entries(sessions)) {
+    if (session.expiresAt <= now) {
+      delete sessions[sessionId];
+      cleaned++;
+    }
+  }
+
+  if (cleaned > 0) {
+    await this.saveState();
+    console.log(`SessionStore: Cleaned up ${cleaned} expired sessions`);
+  }
+
+  this.sessionStoreState!.lastCleanup = now;
+}
+```
+
+#### マイグレーション戦略
+
+```
+Phase 1: デュアルライト期間（1週間）
+┌──────────────────┐
+│ SessionStore DO  │
+├──────────────────┤
+│ 1. Write DO ✅   │
+│ 2. Write D1 ⚠️   │  ← バックアップとして継続
+│ 3. Read DO ✅    │
+│    Fallback D1   │  ← 移行期間のみ
+└──────────────────┘
+
+Phase 2: DO単独期間（永続）
+┌──────────────────┐
+│ SessionStore DO  │
+├──────────────────┤
+│ 1. Write DO ✅   │
+│ 2. Optional D1   │  ← 監査ログのみ
+│ 3. Read DO ✅    │
+└──────────────────┘
+```
+
+**工数見積もり**: 2-3日
+- コード変更: 1日
+- テスト: 1日
+- マイグレーション: 0.5-1日
+
+---
+
+### 2.10 AuthorizationCodeStore DO の永続化 + 移行（クリティカル）⚠️ NEW
+
+**戦略**: 永続化実装 + Token endpoint移行
+
+#### Step 1: Durable Storage実装（SessionStoreと同様）
+
+```typescript
+// packages/shared/src/durable-objects/AuthorizationCodeStore.ts
+
+interface AuthCodeStoreState {
+  codes: Record<string, AuthorizationCode>;
+  lastCleanup: number;
+}
+
+export class AuthorizationCodeStore {
+  private state: DurableObjectState;
+  private env: Env;
+  private authCodeState: AuthCodeStoreState | null = null;
+
+  private async initializeState(): Promise<void> {
+    if (this.authCodeState !== null) {
+      return;
+    }
+
+    const stored = await this.state.storage.get<AuthCodeStoreState>('state');
+
+    if (stored) {
+      this.authCodeState = stored;
+    } else {
+      this.authCodeState = {
+        codes: {},
+        lastCleanup: Date.now(),
+      };
+      await this.saveState();
+    }
+
+    this.startCleanup();
+  }
+
+  private async saveState(): Promise<void> {
+    if (this.authCodeState) {
+      await this.state.storage.put('state', this.authCodeState);
+    }
+  }
+
+  /**
+   * Store code (Durable Storage)
+   */
+  async storeCode(request: StoreCodeRequest): Promise<{ success: boolean; expiresAt: number }> {
+    await this.initializeState();
+
+    // DDoS protection
+    const userCodeCount = this.countUserCodes(request.userId);
+    if (userCodeCount >= this.MAX_CODES_PER_USER) {
+      throw new Error('Too many authorization codes for this user');
+    }
+
+    const now = Date.now();
+    const authCode: AuthorizationCode = {
+      code: request.code,
+      clientId: request.clientId,
+      redirectUri: request.redirectUri,
+      userId: request.userId,
+      scope: request.scope,
+      codeChallenge: request.codeChallenge,
+      codeChallengeMethod: request.codeChallengeMethod,
+      nonce: request.nonce,
+      state: request.state,
+      used: false,
+      expiresAt: now + this.CODE_TTL * 1000,
+      createdAt: now,
+    };
+
+    // Save to Durable Storage
+    this.authCodeState!.codes[request.code] = authCode;
+    await this.saveState();
+
+    return {
+      success: true,
+      expiresAt: authCode.expiresAt,
+    };
+  }
+
+  /**
+   * Consume code (atomic with Durable Storage)
+   */
+  async consumeCode(request: ConsumeCodeRequest): Promise<ConsumeCodeResponse> {
+    await this.initializeState();
+
+    const stored = this.authCodeState!.codes[request.code];
+
+    if (!stored) {
+      throw new Error('invalid_grant: Authorization code not found or expired');
+    }
+
+    // Expiration check
+    if (this.isExpired(stored)) {
+      delete this.authCodeState!.codes[request.code];
+      await this.saveState();
+      throw new Error('invalid_grant: Authorization code expired');
+    }
+
+    // Replay attack detection (atomic with DO)
+    if (stored.used) {
+      console.warn(`SECURITY: Replay attack detected! Code ${request.code}`);
+      throw new Error('invalid_grant: Authorization code already used');
+    }
+
+    // Client ID validation
+    if (stored.clientId !== request.clientId) {
+      throw new Error('invalid_grant: Client ID mismatch');
+    }
+
+    // PKCE validation
+    if (stored.codeChallenge) {
+      if (!request.codeVerifier) {
+        throw new Error('invalid_grant: code_verifier required for PKCE');
+      }
+
+      const challenge = await this.generateCodeChallenge(
+        request.codeVerifier,
+        stored.codeChallengeMethod || 'S256'
+      );
+
+      if (challenge !== stored.codeChallenge) {
+        throw new Error('invalid_grant: Invalid code_verifier');
+      }
+    }
+
+    // Mark as used ATOMICALLY (Durable Storage guarantees)
+    stored.used = true;
+    this.authCodeState!.codes[request.code] = stored;
+    await this.saveState();
+
+    return {
+      userId: stored.userId,
+      scope: stored.scope,
+      redirectUri: stored.redirectUri,
+      nonce: stored.nonce,
+      state: stored.state,
+    };
+  }
+}
+```
+
+#### Step 2: Token Endpoint移行（最重要）
+
+```typescript
+// packages/op-token/src/token.ts
+
+async function handleAuthorizationCodeGrant(c, formData) {
+  // ... validation ...
+
+  // OLD: KV-based (remove this)
+  // const authCodeData = await getAuthCode(c.env, validCode);
+
+  // NEW: Use AuthorizationCodeStore DO
+  const codeStoreId = c.env.AUTH_CODE_STORE.idFromName(validCode);
+  const codeStore = c.env.AUTH_CODE_STORE.get(codeStoreId);
+
+  try {
+    const authData = await codeStore.fetch(
+      new Request(`https://auth-code-store/consume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: validCode,
+          clientId: client_id,
+          codeVerifier: code_verifier,
+        }),
+      })
+    );
+
+    if (!authData.ok) {
+      const error = await authData.json();
+      return c.json(error, 400);
+    }
+
+    const authCodeData = await authData.json();
+
+    // ... rest of token generation ...
+  } catch (error) {
+    // Handle errors
+    return c.json({ error: 'invalid_grant', error_description: error.message }, 400);
+  }
+
+  // OLD: Remove markAuthCodeAsUsed() - now handled by consumeCode()
+  // await markAuthCodeAsUsed(c.env, validCode, {...});
+}
+```
+
+**工数見積もり**: 2-3日
+- Step 1 (永続化): 1日
+- Step 2 (Token endpoint移行): 1日
+- テスト + 移行: 1日
+
+---
+
+### 2.11 PAR request_uri 競合状態の対処（Medium）⚠️ NEW
+
+#### Option 1: Durable Object for PAR（完全な解決）
+
+```typescript
+// packages/shared/src/durable-objects/PARRequestStore.ts (新規)
+
+interface PARRequest {
+  requestUri: string;
+  clientId: string;
+  data: Record<string, unknown>;
+  createdAt: number;
+  expiresAt: number;
+  used: boolean;
+}
+
+export class PARRequestStore {
+  private state: DurableObjectState;
+  private requests: Record<string, PARRequest> = {};
+
+  async storeRequest(requestUri: string, data: Record<string, unknown>, ttl: number) {
+    const now = Date.now();
+    this.requests[requestUri] = {
+      requestUri,
+      clientId: data.client_id as string,
+      data,
+      createdAt: now,
+      expiresAt: now + ttl * 1000,
+      used: false,
+    };
+
+    await this.state.storage.put('requests', this.requests);
+  }
+
+  /**
+   * Consume request atomically (single-use guarantee)
+   */
+  async consumeRequest(requestUri: string, clientId: string): Promise<Record<string, unknown> | null> {
+    const request = this.requests[requestUri];
+
+    if (!request) {
+      return null;
+    }
+
+    // Expiration check
+    if (request.expiresAt <= Date.now()) {
+      delete this.requests[requestUri];
+      await this.state.storage.put('requests', this.requests);
+      return null;
+    }
+
+    // Client ID validation
+    if (request.clientId !== clientId) {
+      throw new Error('client_id mismatch');
+    }
+
+    // Single-use check (ATOMIC)
+    if (request.used) {
+      console.warn(`SECURITY: PAR request_uri reuse detected: ${requestUri}`);
+      throw new Error('request_uri already used');
+    }
+
+    // Mark as used ATOMICALLY
+    request.used = true;
+    this.requests[requestUri] = request;
+    await this.state.storage.put('requests', this.requests);
+
+    return request.data;
+  }
+}
+```
+
+#### Option 2: 現状受容 + モニタリング（推奨）
+
+**理由**:
+- 攻撃難易度が極めて高い（精密なタイミング制御が必要）
+- 影響範囲が限定的（他のセキュリティ層で保護）
+- 実装コストが高い（新しいDO + マイグレーション）
+
+**代替アプローチ**:
+
+```typescript
+// packages/op-auth/src/authorize.ts
+
+// Add monitoring for concurrent request_uri usage
+const requestData = await c.env.STATE_STORE.get(`request_uri:${request_uri}`);
+
+if (!requestData) {
+  return c.json({ error: 'invalid_request', error_description: 'Invalid or expired request_uri' }, 400);
+}
+
+// Add a "processing" marker (best-effort detection)
+const processingKey = `request_uri_processing:${request_uri}`;
+const alreadyProcessing = await c.env.STATE_STORE.get(processingKey);
+
+if (alreadyProcessing) {
+  // Log potential concurrent usage
+  console.warn(`Potential concurrent PAR request_uri usage: ${request_uri}`);
+  // Optionally: create alert
+}
+
+// Mark as processing
+await c.env.STATE_STORE.put(processingKey, 'true', { expirationTtl: 60 });
+
+// ... use data ...
+
+// Delete both keys
+await c.env.STATE_STORE.delete(`request_uri:${request_uri}`);
+await c.env.STATE_STORE.delete(processingKey);
+```
+
+**推奨**: Option 2（現状受容 + モニタリング）
+
+**工数見積もり**: 0.5-1日（モニタリングのみ）
+
+---
+
 ## 3. 実装優先順位
 
 ### Priority 1: クリティカルセキュリティ修正
@@ -2036,28 +2838,108 @@ export class SessionTokenStore {
 
 ---
 
-### 総合推定工数
+### Priority 4: 新発見の問題対応（v3.0）⚠️ NEW
 
-| Priority | タスク | 工数 |
-|----------|-------|------|
-| **Priority 1** | | |
-| 3.1 | 認可コードのDO移行 | 2-3日 |
-| 3.2 | KVキャッシュ無効化修正 | 1日 |
-| **Priority 2** | | |
-| 3.3 | D1書き込みリトライロジック | 3-4日 |
-| 3.4 | RefreshTokenRotatorの永続化 | 2-3日 |
-| 3.5 | Passkey Counterの CAS実装 | 1-2日 |
-| **Priority 3** | | |
-| 3.6 | 監査ログの信頼性向上 | 2-3日 |
-| 3.7 | Rate Limitingドキュメント化 | 0.5日 |
-| 3.8 | セッショントークンTTL短縮 | 0.5日 |
-| 3.9 | 一貫性レベルの明示化 | 2日 |
-| **合計** | | **14-20日** |
+#### 3.10 SessionStore DO の永続化実装 (推定工数: 2-3日)
 
-**推奨実装順序**:
-1. Priority 1 → Priority 2 → Priority 3 の順
-2. Priority 1内では: 3.1 (認可コード) → 3.2 (キャッシュ) の順（OAuth 2.0違反が最優先）
-3. Priority 2内では: 3.4 (RefreshTokenRotator) → 3.3 (SessionStore) → 3.5 (Passkey) の順（ユーザー影響度）
+**タスク**:
+1. `SessionStore.ts` の修正 - Durable Storage使用
+2. `initializeState()` / `saveState()` メソッド実装
+3. Map → Record 変換（シリアライゼーション対応）
+4. D1フォールバックの移行サポート実装
+5. マイグレーション戦略実行（デュアルライト期間）
+6. パフォーマンステスト - 永続化オーバーヘッド測定
+
+**ファイル変更**:
+- `packages/shared/src/durable-objects/SessionStore.ts`
+- `test/durable-objects/SessionStore.persistence.test.ts` (新規)
+- `test/integration/session-migration.test.ts` (新規)
+
+**優先度**: **CRITICAL** - すべてのユーザーが DO 再起動時にログアウトされる
+
+---
+
+#### 3.11 AuthorizationCodeStore DO の永続化 + Token Endpoint 移行 (推定工数: 2-3日)
+
+**タスク**:
+1. `AuthorizationCodeStore.ts` の修正 - Durable Storage使用
+2. `initializeState()` / `saveState()` メソッド実装
+3. **Token endpoint (`token.ts`) を DO 使用に移行** ← 最重要
+4. KV ベース関数の廃止 (`getAuthCode`, `markAuthCodeAsUsed`)
+5. 統合テスト - OAuth フロー全体（DO経由）
+6. セキュリティテスト - 競合状態解消確認
+
+**ファイル変更**:
+- `packages/shared/src/durable-objects/AuthorizationCodeStore.ts`
+- `packages/op-token/src/token.ts` ← **重要な変更**
+- `packages/shared/src/utils/kv.ts` (削除: `getAuthCode`, `markAuthCodeAsUsed`)
+- `test/integration/authorization-code-do.test.ts` (新規)
+
+**優先度**: **CRITICAL** - 問題3（KV競合状態）と問題10（永続性欠如）の両方を解決
+
+**注**: このタスクは 3.1（認可コードのDO移行）と統合可能
+
+---
+
+#### 3.12 PAR request_uri モニタリング実装 (推定工数: 0.5-1日)
+
+**タスク**:
+1. `authorize.ts` に処理マーカー追加
+2. 並行使用検出ロジック実装
+3. アラート統合 - 疑わしい使用パターン検出
+4. ドキュメント化 - RFC 9126 制限事項
+
+**ファイル変更**:
+- `packages/op-auth/src/authorize.ts`
+- `docs/security/par-limitations.md` (新規)
+
+**優先度**: MEDIUM - 攻撃難易度が高く、影響限定的
+
+**推奨**: Option 2（現状受容 + モニタリング）を採用
+
+---
+
+### 総合推定工数（v3.0更新）
+
+| Priority | タスク | 工数 | 問題 |
+|----------|-------|------|------|
+| **Priority 1** | | | |
+| 3.1 | 認可コードのDO移行 | 2-3日 | #3 |
+| 3.2 | KVキャッシュ無効化修正 | 1日 | #2 |
+| **Priority 2** | | | |
+| 3.3 | D1書き込みリトライロジック | 3-4日 | #1 |
+| 3.4 | RefreshTokenRotatorの永続化 | 2-3日 | #4 |
+| 3.5 | Passkey Counterの CAS実装 | 1-2日 | #7 |
+| **Priority 3** | | | |
+| 3.6 | 監査ログの信頼性向上 | 2-3日 | #5 |
+| 3.7 | Rate Limitingドキュメント化 | 0.5日 | #6 |
+| 3.8 | セッショントークンTTL短縮 | 0.5日 | #8 |
+| 3.9 | 一貫性レベルの明示化 | 2日 | - |
+| **Priority 4 ⚠️ NEW** | | | |
+| 3.10 | SessionStore DO 永続化 | 2-3日 | **#9** |
+| 3.11 | AuthCodeStore DO 永続化 + Token移行 | 2-3日 | **#10 + #3** |
+| 3.12 | PAR request_uri モニタリング | 0.5-1日 | **#11** |
+| **合計（v2.0）** | | **14-20日** | 8問題 |
+| **合計（v3.0）** | | **19-27日** | **11問題** |
+
+**v2.0 → v3.0 増加分**: +5-7日（新規3問題対応）
+
+**推奨実装順序（v3.0更新）**:
+
+**最優先（ユーザー影響が最大）**:
+1. **3.10 SessionStore DO 永続化（問題#9）** ← 全ユーザーがDO再起動で強制ログアウト
+2. **3.4 RefreshTokenRotator 永続化（問題#4）** ← 全ユーザーが再認証必須
+3. **3.11 AuthCodeStore DO 永続化（問題#10）** ← OAuth フロー失敗
+
+**次点（セキュリティ）**:
+4. **3.1 + 3.11統合: 認可コードDO移行（問題#3）** ← 3.11で対応済み
+5. **3.5 Passkey Counter CAS（問題#7）** ← WebAuthn仕様違反
+
+**その他**:
+6. 3.2 KVキャッシュ（問題#2） → 3.3 D1リトライ（問題#1） → 3.6 監査ログ（問題#5）
+7. 3.12 PAR モニタリング（問題#11） → 3.7-3.9 ドキュメント
+
+**注**: タスク3.1と3.11は統合可能（AuthorizationCodeStore関連のため）
 
 ---
 
@@ -2322,48 +3204,81 @@ const doId = env.SESSION_STORE.idFromName(`shard_${shard}`);
 
 本設計により、以下の一貫性保証が実現されます：
 
-### 改善後の一貫性モデル
+### 改善後の一貫性モデル（v3.0）
 
-| 操作 | ストレージ | 一貫性レベル | 保証内容 |
-|------|-----------|-------------|---------|
-| **セッション作成** | DO + D1 (Queue) | Strong (DO) + Eventual (D1) | メモリ即座、D1はリトライ保証 ✅ |
-| **セッション無効化** | DO + D1 (Queue) | Strong | 即座削除、D1はベストエフォート ✅ |
-| **認可コード保存** | DO | Strong | ワンタイムユース保証 ✅ |
-| **認可コード消費** | DO | Strong | アトミック操作、再利用検出 ✅ |
-| **クライアント更新** | D1 + KV | Strong | Delete-Then-Write、不整合窓なし ✅ |
-| **トークンローテーション** | DO (永続化) | Strong | アトミック、盗難検出、DO再起動耐性 ✅ |
-| **Passkey Counter** | D1 (CAS) | Strong | 単調増加保証、WebAuthn準拠 ✅ |
-| **監査ログ** | D1 (Queue + Sync) | Eventual/Strong (選択可) | リトライ保証、重要イベントは同期 ✅ |
-| **Rate Limiting** | KV | Eventual (ベストエフォート) | ドキュメント化、許容範囲 ⚠️ |
-| **セッショントークン** | KV (TTL短縮) | Eventual | 影響最小化（30秒TTL） ⚠️ |
+| 操作 | ストレージ | 一貫性レベル | 保証内容 | 問題 |
+|------|-----------|-------------|---------|------|
+| **セッション作成** | DO (永続化) + D1 (Queue) | Strong (DO) + Eventual (D1) | Durable Storage永続化、DO再起動耐性 ✅ | #9 |
+| **セッション無効化** | DO (永続化) + D1 (Queue) | Strong | Durable Storage削除、即座反映 ✅ | #9 |
+| **認可コード保存** | DO (永続化) | Strong | ワンタイムユース保証、DO再起動耐性 ✅ | #10 |
+| **認可コード消費** | DO (永続化) | Strong | アトミック操作、再利用検出、PKCE検証 ✅ | #10, #3 |
+| **クライアント更新** | D1 + KV | Strong | Delete-Then-Write、不整合窓なし ✅ | #2 |
+| **トークンローテーション** | DO (永続化) | Strong | アトミック、盗難検出、DO再起動耐性 ✅ | #4 |
+| **Passkey Counter** | D1 (CAS) | Strong | 単調増加保証、WebAuthn準拠 ✅ | #7 |
+| **監査ログ** | D1 (Queue + Sync) | Eventual/Strong (選択可) | リトライ保証、重要イベントは同期 ✅ | #5, #1 |
+| **PAR request_uri** | KV (モニタリング) | Eventual + Detection | 並行使用検出、アラート ⚠️ | #11 |
+| **Rate Limiting** | KV | Eventual (ベストエフォート) | ドキュメント化、許容範囲 ⚠️ | #6 |
+| **セッショントークン** | KV (TTL短縮) | Eventual | 影響最小化（30秒TTL） ⚠️ | #8 |
 
-### 発見された問題と解決策のサマリー
+### 発見された問題と解決策のサマリー（v3.0）
 
-**クリティカル問題** (3件):
+**クリティカル問題** (6件):
 1. ✅ DOからD1への非同期書き込み → リトライキュー実装
 2. ✅ KVキャッシュ無効化の一貫性窓 → Delete-Then-Write
-3. ✅ 認可コードのKV使用 → Durable Object移行
-
-**追加で発見された問題** (5件):
+3. ✅ 認可コードのKV使用 → Durable Object移行（3.11で対応）
 4. ✅ RefreshTokenRotatorの永続性欠如 → Durable Storage実装
-5. ✅ 監査ログの信頼性 → リトライキュー + 同期ログ
-6. ⚠️ Rate Limitingの精度問題 → ドキュメント化（許容）
+5. ⚠️ **SessionStore DOの永続性欠如 → Durable Storage実装（NEW）**
+6. ⚠️ **AuthorizationCodeStore DOの永続性欠如 → Durable Storage実装 + Token移行（NEW）**
 7. ✅ Passkey Counterの競合状態 → Compare-and-Swap
-8. ⚠️ セッショントークンの競合状態 → TTL短縮（許容）
 
-**合計**: 8つの課題に対する包括的な解決策
+**高・中優先度の問題** (4件):
+8. ✅ 監査ログの信頼性 → リトライキュー + 同期ログ
+9. ⚠️ Rate Limitingの精度問題 → ドキュメント化（許容）
+10. ⚠️ セッショントークンの競合状態 → TTL短縮（許容）
+11. ⚠️ **PAR request_uri の競合状態 → モニタリング実装（NEW）**
 
-### 次のステップ
+**合計**: **11課題**（v2.0: 8課題 + v3.0新規: 3課題）に対する包括的な解決策
 
-1. ✅ 本設計ドキュメントのレビュー
-2. 🔧 Priority 1タスクの実装開始（3-4日）
-3. 🔧 Priority 2タスクの実装（6-9日）
-4. 📝 Priority 3タスクの実装（5-7日）
-5. 🧪 統合テスト・セキュリティテスト
-6. 📊 モニタリング・アラート設定
-7. 🚀 段階的ロールアウト
+### 重要な発見: Durable Object永続性パターンの系統的欠陥
 
-**総推定工数**: 14-20日（約3-4週間）
+**v3.0の詳細監査で判明した事実**:
+- 4つのDurable Objectsのうち**3つ（75%）**が永続性の問題を抱えている
+- 問題を抱えるDO: RefreshTokenRotator (#4), SessionStore (#9), AuthorizationCodeStore (#10)
+- 正しい実装: KeyManager のみ（`state.storage.put/get()` 使用）
+
+**根本原因**:
+- KeyManagerが最初に正しく実装された
+- 後続のDOが「in-memory + D1バックアップ」パターンで実装された
+- このパターンはDurable Objectsの設計思想に反する
+
+**影響**:
+- DO再起動時に全セッション消失（問題#9） → 全ユーザー強制ログアウト
+- DO再起動時に全トークンファミリー消失（問題#4） → 全ユーザー再認証必須
+- DO再起動時に認可コード消失（問題#10） → OAuth フロー失敗
+
+**解決策**:
+- 3つすべてのDOをKeyManagerパターンにリファクタリング
+- `state.storage.put/get()` による永続化実装
+- D1は監査ログのみ（オプション）
+
+### 次のステップ（v3.0更新）
+
+1. ✅ 本設計ドキュメントのレビュー（v3.0完了）
+2. 🔧 **Priority 4（最優先）**: DO永続化実装（5-7日）
+   - 3.10 SessionStore DO 永続化
+   - 3.4 RefreshTokenRotator 永続化
+   - 3.11 AuthCodeStore DO 永続化 + Token移行
+3. 🔧 Priority 1: セキュリティ修正（3-4日）
+4. 🔧 Priority 2: 信頼性向上（6-9日）
+5. 📝 Priority 3: ドキュメント・モニタリング（3-4日）
+6. 🧪 統合テスト・セキュリティテスト
+7. 📊 モニタリング・アラート設定
+8. 🚀 段階的ロールアウト
+
+**総推定工数**:
+- v2.0: 14-20日
+- **v3.0: 19-27日**（+5-7日）
+- **約4-5週間**
 
 ---
 
@@ -2382,4 +3297,5 @@ const doId = env.SESSION_STORE.idFromName(`shard_${shard}`);
 |------|-----------|---------|
 | 2025-11-15 | 1.0 | 初版作成（主要3課題の分析と解決策） |
 | 2025-11-15 | 2.0 | 包括的監査による5つの追加問題発見と解決策追加:<br>- RefreshTokenRotatorの永続性欠如<br>- 監査ログの信頼性<br>- Rate Limitingの精度問題<br>- Passkey Counterの競合状態<br>- セッショントークンの競合状態<br>合計8つの課題への対応を完全ドキュメント化 |
+| 2025-11-15 | 3.0 | **詳細監査による3つの新規クリティカル問題発見**:<br>- **問題#9: SessionStore DO の永続性欠如（CRITICAL）**<br>  → DO再起動で全ユーザー強制ログアウト<br>- **問題#10: AuthorizationCodeStore DO の永続性欠如（CRITICAL）**<br>  → OAuth フロー失敗 + Token endpoint未移行<br>- **問題#11: PAR request_uri の競合状態（MEDIUM）**<br>  → RFC 9126単一使用保証違反<br><br>**系統的パターン発見**: 4つのDOのうち3つ（75%）が永続性問題<br>→ KeyManagerパターンへの統一リファクタリングが必要<br><br>合計**11課題**の完全ドキュメント化、工数19-27日に更新 |
 
