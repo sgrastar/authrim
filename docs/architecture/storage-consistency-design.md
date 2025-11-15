@@ -9,7 +9,9 @@
 
 ## エグゼクティブサマリー
 
-Enrai Phase 5のストレージアーキテクチャは、Cloudflare Workers の各種ストレージプリミティブ（Durable Objects、D1、KV）を効果的に組み合わせていますが、**7つの視点からの完全監査**により**24の課題**を特定しました（v5.0 - 2025-11-15最終監査完了）：
+Enrai Phase 5のストレージアーキテクチャは、Cloudflare Workers の各種ストレージプリミティブ（Durable Objects、D1、KV）を効果的に組み合わせていますが、**7つの視点からの完全監査**により**24の課題**を特定しました（v5.0 - 2025-11-15最終監査完了）。
+
+**v6.0更新**: OPとしての製品特性を考慮し、**全Durable Objects化**への方針を決定。運用・ドキュメント対応では完全解決できないKV起因の5課題（#6, #8, #11, #12, #21）をDO化することで、**RFC/OIDC完全準拠**と**100%の一貫性保証**を実現します。
 
 ### 🔴 リリースブロッカー（CRITICAL - 9問題）
 
@@ -3783,4 +3785,913 @@ const doId = env.SESSION_STORE.idFromName(`shard_${shard}`);
 | 2025-11-15 | 1.0 | 初版作成（主要3課題の分析と解決策） |
 | 2025-11-15 | 2.0 | 包括的監査による5つの追加問題発見と解決策追加:<br>- RefreshTokenRotatorの永続性欠如<br>- 監査ログの信頼性<br>- Rate Limitingの精度問題<br>- Passkey Counterの競合状態<br>- セッショントークンの競合状態<br>合計8つの課題への対応を完全ドキュメント化 |
 | 2025-11-15 | 3.0 | **詳細監査による3つの新規クリティカル問題発見**:<br>- **問題#9: SessionStore DO の永続性欠如（CRITICAL）**<br>  → DO再起動で全ユーザー強制ログアウト<br>- **問題#10: AuthorizationCodeStore DO の永続性欠如（CRITICAL）**<br>  → OAuth フロー失敗 + Token endpoint未移行<br>- **問題#11: PAR request_uri の競合状態（MEDIUM）**<br>  → RFC 9126単一使用保証違反<br><br>**系統的パターン発見**: 4つのDOのうち3つ（75%）が永続性問題<br>→ KeyManagerパターンへの統一リファクタリングが必要<br><br>合計**11課題**の完全ドキュメント化、工数19-27日に更新 |
+| 2025-11-15 | 6.0 | **全Durable Objects化への方針決定**:<br>- KV起因の5課題（#6, #8, #11, #12, #21）を完全解決<br>- 運用・ドキュメント対応では事象発生を防げない課題をDO化<br>- すべての状態管理をDOに統一する明確なアーキテクチャ原則<br>- 新規DO: RateLimiterCounter, SessionTokenStore, PARRequestStore, MagicLinkStore, PasskeyChallengeStore<br>- 総工数: 20.5-28.5日（4-6週間）<br><br>**製品方針**: OPとしてセキュリティ・一貫性を最優先、RFC/OIDC完全準拠を実現 |
+
+---
+
+## 6. 全Durable Objects化 実装計画（v6.0）
+
+### 6.1 方針決定の背景
+
+#### OPとしての製品特性
+
+Enraiは OAuth 2.0 / OpenID Connect Provider（OP）として、以下の要件を満たす必要があります：
+
+- **セキュリティ・一貫性が最優先**: 「ベストエフォート」では不十分
+- **RFC/OIDC仕様への完全準拠**: 認証基盤としての信頼性
+- **攻撃耐性**: Replay攻撃、タイミング攻撃、競合状態攻撃への完全な防御
+
+#### 運用対応では解決できない5つの課題
+
+以下の課題は、Cloudflare KVの**結果整合性**という技術的制約に起因するため、運用・監視・ドキュメント化では事象発生を**完全には防げません**：
+
+1. **#6: Rate Limiting精度** - 並行リクエストでカウントが不正確になる可能性
+2. **#8: セッショントークン競合** - TTL短縮しても競合窓は残る
+3. **#11: PAR request_uri競合** - モニタリングで検知はできるが競合自体は防げない
+4. **#12: DPoP JTI競合** - 低確率だが技術的には発生可能
+5. **#21: Passkey/Magic Link チャレンジ再利用** - 並行リクエストで同じチャレンジを複数回使用可能
+
+#### 全DO化の判断根拠
+
+**コスト分析**:
+- 100万ID規模でも**数万円/月程度**
+- セキュリティインシデントのリスクコストと比較して十分低い
+- Durable Objectsはリクエスト課金（$0.15/million requests）
+
+**複雑性の評価**:
+- 新規DOクラス: 5個追加
+- 総コード量増加: 約300-400行
+- しかし、**統一パターン**により保守性は向上
+- 現状の「KVとDOの混在」が解消される
+
+**アーキテクチャ上の利点**:
+- すべての「状態管理」がDOに統一 → 一貫したパターン
+- KV vs DOの使い分け判断が不要に
+- テスト容易性の向上（DOは単体テスト可能）
+
+---
+
+### 6.2 全DO化後のアーキテクチャ原則
+
+#### ストレージ使い分けの明確化
+
+```
+┌─────────────────────────────────────────────────────────┐
+│              Enrai Storage Architecture                  │
+│                   (Full DO Migration)                    │
+└─────────────────────────────────────────────────────────┘
+
+【Durable Objects】- 強一貫性、アトミック操作、状態管理
+├─ SessionStore              (#9 - 永続化実装)
+├─ RefreshTokenRotator       (#4, #17 - 永続化 + 使用)
+├─ AuthorizationCodeStore    (#3, #10 - 永続化 + 使用)
+├─ KeyManager                (既存 - 正しい実装)
+├─ RateLimiterCounter        (#6 - 新規) ★
+├─ SessionTokenStore         (#8 - 新規) ★
+├─ PARRequestStore           (#11 - 新規) ★
+├─ MagicLinkStore            (#21 - 新規) ★
+└─ PasskeyChallengeStore     (#21 - 新規) ★
+
+【D1 (SQLite)】- リレーショナルデータ、監査ログ、永続化
+├─ users
+├─ clients
+├─ passkeys
+├─ audit_log
+└─ password_reset_tokens
+
+【KV】- 読み取り専用キャッシュのみ
+└─ CLIENTS_CACHE (client metadata cache)
+
+【削除予定】- KVからDOへ完全移行
+├─ AUTH_CODES → AuthorizationCodeStore DO
+├─ REFRESH_TOKENS → RefreshTokenRotator DO
+├─ MAGIC_LINKS → MagicLinkStore DO
+├─ STATE_STORE (rate limit) → RateLimiterCounter DO
+└─ セッショントークン → SessionTokenStore DO
+```
+
+**新しい原則**:
+- **状態を持つリソース** → Durable Objects
+- **単一使用リソース** → Durable Objects
+- **読み取り専用キャッシュ** → KV
+- **リレーショナルデータ** → D1
+
+---
+
+### 6.3 実装フェーズ
+
+#### Phase 1: 既存DO永続化（CRITICAL - 5-7日）
+
+**目的**: DO再起動時のデータ損失防止
+
+| タスク | ファイル | 工数 | 問題 |
+|--------|---------|------|------|
+| SessionStore DO 永続化 | `SessionStore.ts` | 2-3日 | #9 |
+| RefreshTokenRotator DO 永続化 | `RefreshTokenRotator.ts` | 2-3日 | #4 |
+| AuthorizationCodeStore DO 永続化 | `AuthorizationCodeStore.ts` | 1日 | #10 |
+
+**実装内容**:
+- `state.storage.put/get()` による永続化
+- KeyManagerパターンの適用
+- D1は監査ログ用のバックアップのみ
+
+**影響**:
+- 全ユーザーがDO再起動で強制ログアウトされる問題を解決
+- DO再起動時の全トークンファミリー消失を防止
+- OAuth フロー失敗を防止
+
+---
+
+#### Phase 2: セキュリティ修正（CRITICAL - 2.5-3.5日）
+
+**目的**: RFCセキュリティ要件への準拠
+
+| タスク | ファイル | 工数 | 問題 |
+|--------|---------|------|------|
+| Client Secret タイミング攻撃対策 | logout.ts, token.ts, revoke.ts, introspect.ts | 0.5日 | #15 |
+| /revoke, /introspect 認証追加 | revoke.ts, introspect.ts | 1日 | #16 |
+| RefreshTokenRotator 使用開始 | token.ts | 1-2日 | #17 |
+
+**実装内容**:
+- `timingSafeEqual()` への置換
+- client_secret検証の追加
+- KV関数からDO使用への移行
+
+---
+
+#### Phase 3: 新規DO実装（一貫性問題の完全解決 - 6-8日）★ 全DO化の核心
+
+**目的**: KV起因の競合状態を完全に排除
+
+##### 3.1 RateLimiterCounter DO 実装 (#6) - 1-1.5日
+
+**ファイル**: `packages/shared/src/durable-objects/RateLimiterCounter.ts` (新規)
+
+```typescript
+export class RateLimiterCounter {
+  private state: DurableObjectState;
+  private counts: Map<string, RateLimitRecord> = new Map();
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/increment' && request.method === 'POST') {
+      const { clientIP, config } = await request.json();
+      const result = await this.increment(clientIP, config);
+      return Response.json(result);
+    }
+
+    return new Response('Not found', { status: 404 });
+  }
+
+  async increment(clientIP: string, config: RateLimitConfig): Promise<RateLimitResult> {
+    const now = Math.floor(Date.now() / 1000);
+    let record = this.counts.get(clientIP);
+
+    if (!record || now >= record.resetAt) {
+      // 新しいウィンドウ開始
+      record = {
+        count: 1,
+        resetAt: now + config.windowSeconds,
+        firstRequestAt: now,
+      };
+    } else {
+      // カウントインクリメント（アトミック）
+      record.count++;
+    }
+
+    this.counts.set(clientIP, record);
+    await this.state.storage.put(clientIP, record); // 永続化
+
+    // クリーンアップ（古いエントリ削除）
+    if (this.counts.size > 10000) {
+      await this.cleanup();
+    }
+
+    return {
+      allowed: record.count <= config.maxRequests,
+      current: record.count,
+      limit: config.maxRequests,
+      resetAt: record.resetAt,
+      retryAfter: record.count > config.maxRequests ? record.resetAt - now : 0,
+    };
+  }
+
+  private async cleanup(): Promise<void> {
+    const now = Math.floor(Date.now() / 1000);
+    const toDelete: string[] = [];
+
+    for (const [ip, record] of this.counts.entries()) {
+      if (now >= record.resetAt + 3600) { // 1時間の猶予
+        toDelete.push(ip);
+      }
+    }
+
+    for (const ip of toDelete) {
+      this.counts.delete(ip);
+      await this.state.storage.delete(ip);
+    }
+  }
+}
+
+interface RateLimitRecord {
+  count: number;
+  resetAt: number;
+  firstRequestAt: number;
+}
+
+interface RateLimitConfig {
+  windowSeconds: number;
+  maxRequests: number;
+}
+
+interface RateLimitResult {
+  allowed: boolean;
+  current: number;
+  limit: number;
+  resetAt: number;
+  retryAfter: number;
+}
+```
+
+**移行元**: `packages/shared/src/middleware/rate-limit.ts`
+
+**メリット**:
+- ✅ レート制限の**完璧な精度保証**（100%）
+- ✅ 並行リクエストでも正確なカウント
+- ✅ アトミックなインクリメント
+
+---
+
+##### 3.2 SessionTokenStore DO 実装 (#8) - 0.5-1日
+
+**ファイル**: `packages/shared/src/durable-objects/SessionTokenStore.ts` (新規)
+
+```typescript
+export class SessionTokenStore {
+  private state: DurableObjectState;
+  private env: Env;
+  private tokens: Map<string, SessionTokenData> = new Map();
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/create' && request.method === 'POST') {
+      const { sessionId, ttl } = await request.json();
+      const token = await this.createToken(sessionId, ttl);
+      return Response.json({ token });
+    }
+
+    if (url.pathname === '/consume' && request.method === 'POST') {
+      const { token } = await request.json();
+      const sessionId = await this.consumeToken(token);
+      return Response.json({ sessionId });
+    }
+
+    return new Response('Not found', { status: 404 });
+  }
+
+  async createToken(sessionId: string, ttl: number): Promise<string> {
+    const token = `st_${crypto.randomUUID()}`;
+    const data: SessionTokenData = {
+      sessionId,
+      used: false,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + ttl * 1000,
+    };
+
+    this.tokens.set(token, data);
+    await this.state.storage.put(token, data);
+
+    return token;
+  }
+
+  async consumeToken(token: string): Promise<string | null> {
+    let data = this.tokens.get(token);
+
+    // メモリにない場合、storageから復元
+    if (!data) {
+      data = await this.state.storage.get<SessionTokenData>(token);
+      if (data) {
+        this.tokens.set(token, data);
+      }
+    }
+
+    // トークンが存在しない、使用済み、または期限切れ
+    if (!data || data.used || data.expiresAt <= Date.now()) {
+      return null;
+    }
+
+    // アトミックに使用済みマーク（これが全DO化の核心）
+    data.used = true;
+    this.tokens.set(token, data);
+    await this.state.storage.put(token, data);
+
+    // 使用済みトークンは即座に削除（オプション）
+    setTimeout(() => {
+      this.tokens.delete(token);
+      this.state.storage.delete(token);
+    }, 1000);
+
+    return data.sessionId;
+  }
+}
+
+interface SessionTokenData {
+  sessionId: string;
+  used: boolean;
+  createdAt: number;
+  expiresAt: number;
+}
+```
+
+**移行元**: `packages/op-auth/src/session-management.ts`
+
+**メリット**:
+- ✅ セッショントークンの**完全な単一使用保証**
+- ✅ 競合状態なし（KVのTTL短縮では解決できなかった問題を完全解決）
+
+---
+
+##### 3.3 PARRequestStore DO 実装 (#11) - 0.5-1日
+
+**ファイル**: `packages/shared/src/durable-objects/PARRequestStore.ts` (新規)
+
+```typescript
+export class PARRequestStore {
+  private state: DurableObjectState;
+  private env: Env;
+  private requests: Map<string, PARRequestData> = new Map();
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/store' && request.method === 'POST') {
+      const { requestUri, data } = await request.json();
+      await this.storeRequest(requestUri, data);
+      return Response.json({ success: true });
+    }
+
+    if (url.pathname === '/consume' && request.method === 'POST') {
+      const { requestUri } = await request.json();
+      const data = await this.consumeRequest(requestUri);
+      return Response.json({ data });
+    }
+
+    return new Response('Not found', { status: 404 });
+  }
+
+  async storeRequest(requestUri: string, data: PARRequestData): Promise<void> {
+    data.createdAt = Date.now();
+    data.expiresAt = Date.now() + 600 * 1000; // 10分
+
+    this.requests.set(requestUri, data);
+    await this.state.storage.put(requestUri, data);
+  }
+
+  async consumeRequest(requestUri: string): Promise<PARRequestData | null> {
+    let data = this.requests.get(requestUri);
+
+    // メモリにない場合、storageから復元
+    if (!data) {
+      data = await this.state.storage.get<PARRequestData>(requestUri);
+      if (data) {
+        this.requests.set(requestUri, data);
+      }
+    }
+
+    // リクエストが存在しないまたは期限切れ
+    if (!data || data.expiresAt <= Date.now()) {
+      return null;
+    }
+
+    // アトミックに削除（単一使用保証 - RFC 9126要件）
+    this.requests.delete(requestUri);
+    await this.state.storage.delete(requestUri);
+
+    return data;
+  }
+}
+
+interface PARRequestData {
+  client_id: string;
+  redirect_uri: string;
+  scope: string;
+  state?: string;
+  nonce?: string;
+  code_challenge?: string;
+  code_challenge_method?: string;
+  createdAt?: number;
+  expiresAt?: number;
+}
+```
+
+**移行元**: `packages/op-auth/src/authorize.ts`
+
+**メリット**:
+- ✅ **RFC 9126完全準拠**（request_uri単一使用保証）
+- ✅ 競合状態なし（モニタリングでは解決できなかった問題を完全解決）
+
+---
+
+##### 3.4 MagicLinkStore DO 実装 (#21) - 1-1.5日
+
+**ファイル**: `packages/shared/src/durable-objects/MagicLinkStore.ts` (新規)
+
+```typescript
+export class MagicLinkStore {
+  private state: DurableObjectState;
+  private env: Env;
+  private links: Map<string, MagicLinkData> = new Map();
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/create' && request.method === 'POST') {
+      const { email, ttl } = await request.json();
+      const token = await this.createLink(email, ttl);
+      return Response.json({ token });
+    }
+
+    if (url.pathname === '/consume' && request.method === 'POST') {
+      const { token } = await request.json();
+      const data = await this.consumeLink(token);
+      return Response.json({ data });
+    }
+
+    return new Response('Not found', { status: 404 });
+  }
+
+  async createLink(email: string, ttl: number = 900): Promise<string> {
+    const token = crypto.randomUUID();
+    const data: MagicLinkData = {
+      email,
+      used: false,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + ttl * 1000,
+    };
+
+    this.links.set(token, data);
+    await this.state.storage.put(token, data);
+
+    return token;
+  }
+
+  async consumeLink(token: string): Promise<MagicLinkData | null> {
+    let data = this.links.get(token);
+
+    // メモリにない場合、storageから復元
+    if (!data) {
+      data = await this.state.storage.get<MagicLinkData>(token);
+      if (data) {
+        this.links.set(token, data);
+      }
+    }
+
+    // リンクが存在しない、使用済み、または期限切れ
+    if (!data || data.used || data.expiresAt <= Date.now()) {
+      return null;
+    }
+
+    // アトミックに使用済みマーク（Replay攻撃防止）
+    data.used = true;
+    this.links.set(token, data);
+    await this.state.storage.put(token, data);
+
+    return data;
+  }
+
+  // 定期クリーンアップ（アラームで実行）
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    const toDelete: string[] = [];
+
+    for (const [token, data] of this.links.entries()) {
+      if (data.expiresAt < now - 3600000) { // 期限切れ+1時間
+        toDelete.push(token);
+      }
+    }
+
+    for (const token of toDelete) {
+      this.links.delete(token);
+      await this.state.storage.delete(token);
+    }
+
+    // 次回のクリーンアップをスケジュール
+    await this.state.storage.setAlarm(Date.now() + 3600000); // 1時間後
+  }
+}
+
+interface MagicLinkData {
+  email: string;
+  used: boolean;
+  createdAt: number;
+  expiresAt: number;
+}
+```
+
+**移行元**: `packages/op-auth/src/magic-link.ts`
+
+**メリット**:
+- ✅ Magic Linkの**Replay攻撃完全防止**
+- ✅ 15分TTL内の並行リクエストも確実に検出
+
+---
+
+##### 3.5 PasskeyChallengeStore DO 実装 (#21) - 1.5-2日
+
+**ファイル**: `packages/shared/src/durable-objects/PasskeyChallengeStore.ts` (新規)
+
+```typescript
+export class PasskeyChallengeStore {
+  private state: DurableObjectState;
+  private env: Env;
+  private challenges: Map<string, PasskeyChallengeData> = new Map();
+
+  constructor(state: DurableObjectState, env: Env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/create' && request.method === 'POST') {
+      const { userId, challenge, ttl } = await request.json();
+      await this.createChallenge(userId, challenge, ttl);
+      return Response.json({ success: true });
+    }
+
+    if (url.pathname === '/consume' && request.method === 'POST') {
+      const { challenge } = await request.json();
+      const data = await this.consumeChallenge(challenge);
+      return Response.json({ data });
+    }
+
+    return new Response('Not found', { status: 404 });
+  }
+
+  async createChallenge(userId: string, challenge: string, ttl: number = 300): Promise<void> {
+    const data: PasskeyChallengeData = {
+      userId,
+      challenge,
+      used: false,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + ttl * 1000,
+    };
+
+    this.challenges.set(challenge, data);
+    await this.state.storage.put(challenge, data);
+  }
+
+  async consumeChallenge(challenge: string): Promise<PasskeyChallengeData | null> {
+    let data = this.challenges.get(challenge);
+
+    // メモリにない場合、storageから復元
+    if (!data) {
+      data = await this.state.storage.get<PasskeyChallengeData>(challenge);
+      if (data) {
+        this.challenges.set(challenge, data);
+      }
+    }
+
+    // チャレンジが存在しない、使用済み、または期限切れ
+    if (!data || data.used || data.expiresAt <= Date.now()) {
+      return null;
+    }
+
+    // アトミックに使用済みマーク（Replay攻撃防止）
+    data.used = true;
+    this.challenges.set(challenge, data);
+    await this.state.storage.put(challenge, data);
+
+    return data;
+  }
+
+  // 定期クリーンアップ
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    const toDelete: string[] = [];
+
+    for (const [challenge, data] of this.challenges.entries()) {
+      if (data.expiresAt < now - 3600000) { // 期限切れ+1時間
+        toDelete.push(challenge);
+      }
+    }
+
+    for (const challenge of toDelete) {
+      this.challenges.delete(challenge);
+      await this.state.storage.delete(challenge);
+    }
+
+    // 次回のクリーンアップをスケジュール
+    await this.state.storage.setAlarm(Date.now() + 3600000); // 1時間後
+  }
+}
+
+interface PasskeyChallengeData {
+  userId: string;
+  challenge: string;
+  used: boolean;
+  createdAt: number;
+  expiresAt: number;
+}
+```
+
+**移行元**: `packages/op-auth/src/passkey.ts` (6箇所)
+
+**メリット**:
+- ✅ Passkeyチャレンジの**Replay攻撃完全防止**
+- ✅ WebAuthn仕様への完全準拠
+
+---
+
+#### Phase 4: 信頼性向上・クリーンアップ（4-6日）
+
+| タスク | 工数 | 問題 |
+|--------|------|------|
+| AuthCodeStore Token Endpoint 移行 | 1日 | #3, #10 |
+| D1書き込みリトライロジック | 3-4日 | #1 |
+| KVキャッシュ無効化修正 | 1日 | #2 |
+| Passkey Counter CAS実装 | 1-2日 | #7 |
+| D1クリーンアップジョブ | 1-2日 | #18 |
+| OIDC準拠修正 | 1-2日 | #19, #23 |
+| 部分失敗対策 | 1-2日 | #22 |
+
+---
+
+#### Phase 5: テスト・監視・ドキュメント（3-4日）
+
+**テスト**:
+- 全OAuth/OIDCフロー統合テスト
+- DO再起動テスト
+- 並行リクエストテスト
+- セキュリティテスト（タイミング攻撃、Replay攻撃）
+
+**監視・アラート**:
+- DO書き込み失敗アラート
+- 異常パターン検出
+- コスト監視ダッシュボード
+
+**ドキュメント**:
+- アーキテクチャ図更新
+- 一貫性モデル説明
+- 運用ガイド
+
+---
+
+### 6.4 総工数見積もり
+
+| Phase | 内容 | 工数 | 優先度 |
+|-------|------|------|--------|
+| Phase 1 | 既存DO永続化 | 5-7日 | P0 (CRITICAL) |
+| Phase 2 | セキュリティ修正 | 2.5-3.5日 | P0 (CRITICAL) |
+| **Phase 3** | **新規DO実装（全DO化）** | **6-8日** | **P1 (HIGH)** ★ |
+| Phase 4 | 信頼性向上 | 4-6日 | P2 (MEDIUM) |
+| Phase 5 | テスト・監視 | 3-4日 | P1 (HIGH) |
+| **合計** | | **20.5-28.5日** | |
+
+**推奨スケジュール**: 4-6週間
+
+---
+
+### 6.5 実装順序（推奨）
+
+#### Week 1-2: CRITICAL対応（7.5-10日）
+1. SessionStore DO 永続化（2-3日）
+2. RefreshTokenRotator DO 永続化（2-3日）
+3. AuthCodeStore 永続化 + Token移行（1-2日）
+4. Client Secret タイミング攻撃対策（0.5日）
+5. /revoke, /introspect 認証追加（1日）
+6. RefreshTokenRotator 使用開始（1-2日）
+
+#### Week 3: 全DO化の核心 ★（3-4.5日）
+7. RateLimiterCounter DO（1-1.5日）
+8. SessionTokenStore DO（0.5-1日）
+9. PARRequestStore DO（0.5-1日）
+10. 統合テスト（1日）
+
+#### Week 4: 全DO化完成（2.5-3.5日）
+11. MagicLinkStore DO（1-1.5日）
+12. PasskeyChallengeStore DO（1.5-2日）
+
+#### Week 5-6: 信頼性・最適化（7-10日）
+13. D1リトライロジック（3-4日）
+14. その他の信頼性向上（4-5日）
+15. セキュリティテスト・ドキュメント（2-3日）
+
+---
+
+### 6.6 マイグレーション戦略
+
+#### デュアルライト期間
+
+各DOの移行は段階的に実施：
+
+```
+Week N:     KV only (現状)
+Week N+1:   Dual Write (KV + DO) - Read from KV
+Week N+2:   Dual Write (KV + DO) - Read from DO ← 切替
+Week N+3:   DO only - KV削除
+```
+
+#### フィーチャーフラグ
+
+各DOに環境変数でフィーチャーフラグを設定：
+
+```toml
+# wrangler.toml
+[vars]
+USE_RATE_LIMITER_DO = "true"
+USE_SESSION_TOKEN_DO = "true"
+USE_PAR_REQUEST_DO = "true"
+USE_MAGIC_LINK_DO = "true"
+USE_PASSKEY_CHALLENGE_DO = "true"
+```
+
+問題発生時は即座にKVに戻せる設計。
+
+---
+
+### 6.7 wrangler.toml 更新
+
+```toml
+# ========================================
+# 新規 Durable Objects バインディング
+# ========================================
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "SESSION_TOKEN_STORE"
+class_name = "SessionTokenStore"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "PAR_REQUEST_STORE"
+class_name = "PARRequestStore"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "MAGIC_LINK_STORE"
+class_name = "MagicLinkStore"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "PASSKEY_CHALLENGE_STORE"
+class_name = "PasskeyChallengeStore"
+script_name = "enrai-shared"
+
+# ========================================
+# KV削除予定（段階的移行後）
+# ========================================
+# 以下は全DO化完了後に削除:
+# - AUTH_CODES → AuthorizationCodeStore DO
+# - REFRESH_TOKENS → RefreshTokenRotator DO
+# - MAGIC_LINKS → MagicLinkStore DO
+# - STATE_STORE (rate limit部分) → RateLimiterCounter DO
+```
+
+---
+
+### 6.8 成功指標（KPI）
+
+#### 技術指標
+- [ ] DO再起動時のデータ損失: **0件**
+- [ ] 競合状態による重複発行: **0件**
+- [ ] RFC/OIDC仕様違反: **0件**
+- [ ] セキュリティテスト合格率: **100%**
+
+#### パフォーマンス指標
+- [ ] レート制限精度: **100%**（現状: ベストエフォート）
+- [ ] トークン単一使用保証: **100%**（現状: 99.x%）
+- [ ] DO応答時間: **< 50ms (p95)**
+
+#### 運用指標
+- [ ] アラート設定: 5種類以上
+- [ ] 監視ダッシュボード: 完成
+- [ ] ドキュメント更新: 100%
+
+---
+
+### 6.9 リスクと対策
+
+| リスク | 対策 | 軽減策 |
+|--------|------|--------|
+| DO実装の複雑性 | 統一パターン採用 | KeyManagerの成功例を踏襲 |
+| マイグレーション中の不整合 | デュアルライト期間設定 | フィーチャーフラグでロールバック |
+| パフォーマンス劣化 | 負荷テスト実施 | DOは低レイテンシ |
+| コスト増加 | コスト監視 | 100万ID級で数万円/月の試算済み |
+
+---
+
+### 6.10 DO設計パターン（統一規約）
+
+#### 統一インターフェース
+
+すべての「単一使用リソース」DOは以下のパターンに従う：
+
+```typescript
+export interface SingleUseResourceStore<T> {
+  create(data: T, ttl: number): Promise<string>;
+  consume(id: string): Promise<T | null>;
+  cleanup(): Promise<void>;
+}
+```
+
+#### 永続化パターン（KeyManager準拠）
+
+```typescript
+export class ExampleStore {
+  private state: DurableObjectState;
+  private storeState: StoreState | null = null;
+
+  private async initializeState(): Promise<void> {
+    const stored = await this.state.storage.get<StoreState>('state');
+    if (stored) {
+      this.storeState = stored;
+    } else {
+      this.storeState = { items: {}, lastCleanup: Date.now() };
+    }
+  }
+
+  private async saveState(): Promise<void> {
+    await this.state.storage.put('state', this.storeState);
+  }
+
+  async alarm(): Promise<void> {
+    // 定期クリーンアップ処理
+    await this.cleanup();
+    await this.state.storage.setAlarm(Date.now() + 3600000); // 1時間後
+  }
+}
+```
+
+これにより、保守性・可読性が大幅に向上します。
+
+---
+
+### 6.11 全DO化の効果まとめ
+
+#### 解決される課題
+
+| 問題 | 現状 | 全DO化後 |
+|------|------|----------|
+| #6: Rate Limiting精度 | ベストエフォート | **100% 精度保証** ✅ |
+| #8: セッショントークン競合 | TTL短縮のみ | **完全な単一使用保証** ✅ |
+| #11: PAR request_uri競合 | モニタリングのみ | **RFC 9126完全準拠** ✅ |
+| #12: DPoP JTI競合 | 低確率で発生 | **競合状態なし** ✅ |
+| #21: Magic Link/Passkey競合 | Replay攻撃可能 | **Replay攻撃完全防止** ✅ |
+
+#### アーキテクチャ上の改善
+
+- ✅ **統一性**: すべての状態管理がDOパターンで統一
+- ✅ **保守性**: KV vs DOの使い分け判断が不要に
+- ✅ **テスト容易性**: DOは単体テストが容易
+- ✅ **RFC/OIDC準拠**: 仕様への完全準拠を証明可能
+- ✅ **セキュリティ**: 攻撃耐性の大幅向上
+
+#### コスト対効果
+
+**投資**:
+- 実装工数: 20.5-28.5日（4-6週間）
+- 運用コスト: +数万円/月（100万ID規模）
+
+**リターン**:
+- セキュリティインシデントリスク: ほぼゼロ
+- 運用負荷: 大幅減（監視・アラート不要）
+- 信頼性: OAuth/OIDC OP として完全な信頼を獲得
+
+**結論**: OPとしての製品価値を考えると、全DO化は**必須の投資**
+
+---
+
+### 6.12 次のステップ
+
+1. ✅ 全DO化実装計画のレビュー（v6.0完了）
+2. 🔧 **Phase 1開始**: SessionStore DO 永続化から着手
+3. 📊 継続的な進捗報告とテスト実施
+4. 🚀 段階的ロールアウトとモニタリング
 
