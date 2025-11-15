@@ -12,6 +12,7 @@
 import { Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import type { Env } from '@enrai/shared';
+import { timingSafeEqual } from '@enrai/shared';
 import * as jose from 'jose';
 
 /**
@@ -213,7 +214,12 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         .bind(id)
         .first();
 
-      if (!client || client.client_secret !== secret) {
+      // Use timing-safe comparison to prevent timing attacks
+      if (
+        !client ||
+        !client.client_secret ||
+        !timingSafeEqual(client.client_secret as string, secret)
+      ) {
         return c.json(
           {
             error: 'invalid_client',
