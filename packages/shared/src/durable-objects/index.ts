@@ -18,6 +18,9 @@ export { AuthorizationCodeStore } from './AuthorizationCodeStore';
 export { RefreshTokenRotator } from './RefreshTokenRotator';
 export { KeyManager } from './KeyManager';
 export { ChallengeStore } from './ChallengeStore';
+export { RateLimiterCounter } from './RateLimiterCounter';
+export { PARRequestStore } from './PARRequestStore';
+export { DPoPJTIStore } from './DPoPJTIStore';
 
 // Export types for external use
 export type { Session, SessionData, CreateSessionRequest, SessionResponse } from './SessionStore';
@@ -44,6 +47,24 @@ export type {
   ConsumeChallengeRequest,
   ConsumeChallengeResponse,
 } from './ChallengeStore';
+
+export type {
+  RateLimitConfig,
+  RateLimitRecord,
+  RateLimitResult,
+  IncrementRequest,
+} from './RateLimiterCounter';
+
+export type {
+  PARRequestData,
+  StorePARRequest,
+  ConsumePARRequest,
+} from './PARRequestStore';
+
+export type {
+  DPoPJTIRecord,
+  CheckAndStoreJTIRequest,
+} from './DPoPJTIStore';
 
 /**
  * Default export for ES Module compatibility
