@@ -3842,15 +3842,18 @@ Enraiは OAuth 2.0 / OpenID Connect Provider（OP）として、以下の要件�
 └─────────────────────────────────────────────────────────┘
 
 【Durable Objects】- 強一貫性、アトミック操作、状態管理
-├─ SessionStore              (#9 - 永続化実装)
-├─ RefreshTokenRotator       (#4, #17 - 永続化 + 使用)
-├─ AuthorizationCodeStore    (#3, #10 - 永続化 + 使用)
-├─ KeyManager                (既存 - 正しい実装)
-├─ RateLimiterCounter        (#6 - 新規) ★
-├─ SessionTokenStore         (#8 - 新規) ★
-├─ PARRequestStore           (#11 - 新規) ★
-├─ MagicLinkStore            (#21 - 新規) ★
-└─ PasskeyChallengeStore     (#21 - 新規) ★
+├─ SessionStore              (#9 - 永続化実装済み) ✅
+├─ RefreshTokenRotator       (#4, #17 - 永続化実装済み) ✅
+├─ AuthorizationCodeStore    (#3, #10 - 永続化実装済み) ✅
+├─ KeyManager                (既存 - 正しい実装) ✅
+├─ RateLimiterCounter        (#6 - 新規実装済み) ★ ✅
+├─ PARRequestStore           (#11 - 新規実装済み) ★ ✅
+├─ DPoPJTIStore              (#12 - 新規実装済み) ★ ✅
+└─ ChallengeStore            (#8, #21 - 統合実装済み) ★ ✅
+    ├─ session_token (ITP-bypass用)
+    ├─ passkey_registration
+    ├─ passkey_authentication
+    └─ magic_link
 
 【D1 (SQLite)】- リレーショナルデータ、監査ログ、永続化
 ├─ users
@@ -3863,11 +3866,12 @@ Enraiは OAuth 2.0 / OpenID Connect Provider（OP）として、以下の要件�
 └─ CLIENTS_CACHE (client metadata cache)
 
 【削除予定】- KVからDOへ完全移行
-├─ AUTH_CODES → AuthorizationCodeStore DO
-├─ REFRESH_TOKENS → RefreshTokenRotator DO
-├─ MAGIC_LINKS → MagicLinkStore DO
-├─ STATE_STORE (rate limit) → RateLimiterCounter DO
-└─ セッショントークン → SessionTokenStore DO
+├─ AUTH_CODES → AuthorizationCodeStore DO ✅
+├─ REFRESH_TOKENS → RefreshTokenRotator DO ✅
+├─ MAGIC_LINKS → ChallengeStore DO ✅
+├─ STATE_STORE (rate limit) → RateLimiterCounter DO (実装済み、統合待ち)
+├─ PAR リクエスト → PARRequestStore DO (実装済み、統合待ち)
+└─ DPoP JTI → DPoPJTIStore DO (実装済み、統合待ち)
 ```
 
 **新しい原則**:
@@ -4545,33 +4549,30 @@ class_name = "RateLimiterCounter"
 script_name = "enrai-shared"
 
 [[durable_objects.bindings]]
-name = "SESSION_TOKEN_STORE"
-class_name = "SessionTokenStore"
-script_name = "enrai-shared"
-
-[[durable_objects.bindings]]
 name = "PAR_REQUEST_STORE"
 class_name = "PARRequestStore"
 script_name = "enrai-shared"
 
 [[durable_objects.bindings]]
-name = "MAGIC_LINK_STORE"
-class_name = "MagicLinkStore"
+name = "DPOP_JTI_STORE"
+class_name = "DPoPJTIStore"
 script_name = "enrai-shared"
 
 [[durable_objects.bindings]]
-name = "PASSKEY_CHALLENGE_STORE"
-class_name = "PasskeyChallengeStore"
+name = "CHALLENGE_STORE"
+class_name = "ChallengeStore"
 script_name = "enrai-shared"
 
 # ========================================
 # KV削除予定（段階的移行後）
 # ========================================
 # 以下は全DO化完了後に削除:
-# - AUTH_CODES → AuthorizationCodeStore DO
-# - REFRESH_TOKENS → RefreshTokenRotator DO
-# - MAGIC_LINKS → MagicLinkStore DO
-# - STATE_STORE (rate limit部分) → RateLimiterCounter DO
+# - AUTH_CODES → AuthorizationCodeStore DO (移行済み)
+# - REFRESH_TOKENS → RefreshTokenRotator DO (移行済み)
+# - MAGIC_LINKS → ChallengeStore DO (移行済み)
+# - STATE_STORE (rate limit部分) → RateLimiterCounter DO (実装済み、統合待ち)
+# - PAR リクエスト → PARRequestStore DO (実装済み、統合待ち)
+# - DPoP JTI → DPoPJTIStore DO (実装済み、統合待ち)
 ```
 
 ---
