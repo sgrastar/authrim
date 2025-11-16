@@ -260,7 +260,40 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     const passkeyId = crypto.randomUUID();
     const now = Date.now();
 
-    // Step 1: Store passkey in D1 (FIRST)
+    // Step 1: Create session using SessionStore Durable Object (FIRST)
+    // This ensures that if session creation fails, we don't store the passkey
+    const sessionId = crypto.randomUUID();
+    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
+    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+
+    const sessionResponse = await sessionStore.fetch(
+      new Request('https://session-store/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: userId,
+          ttl: 30 * 24 * 60 * 60, // 30 days in seconds
+          data: {
+            amr: ['passkey'],
+            acr: 'urn:mace:incommon:iap:bronze',
+          },
+        }),
+      })
+    );
+
+    if (!sessionResponse.ok) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to create session',
+        },
+        500
+      );
+    }
+
+    const sessionData = (await sessionResponse.json()) as { id: string };
+
+    // Step 2: Store passkey in D1
     await c.env.DB.prepare(
       `INSERT INTO passkeys (id, user_id, credential_id, public_key, counter, transports, device_name, created_at, last_used_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -278,7 +311,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       )
       .run();
 
-    // Step 2: Update user's email_verified status
+    // Step 3: Update user's email_verified status
     await c.env.DB.prepare('UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?')
       .bind(now, userId)
       .run();
@@ -289,6 +322,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     return c.json({
       verified: true,
       passkeyId,
+      sessionId: sessionData.id,
       message: 'Passkey registered successfully',
     });
   } catch (error) {
@@ -516,15 +550,48 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Update counter and last_used_at in database
     const now = Date.now();
+
+    // Step 1: Create session using SessionStore Durable Object (FIRST)
+    // This ensures that if session creation fails, we don't update the database
+    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
+    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+
+    const sessionResponse = await sessionStore.fetch(
+      new Request('https://session-store/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: passkey.user_id,
+          ttl: 30 * 24 * 60 * 60, // 30 days in seconds
+          data: {
+            amr: ['passkey'],
+            acr: 'urn:mace:incommon:iap:bronze',
+          },
+        }),
+      })
+    );
+
+    if (!sessionResponse.ok) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to create session',
+        },
+        500
+      );
+    }
+
+    const sessionData = (await sessionResponse.json()) as { id: string };
+
+    // Step 2: Update counter and last_used_at in database
     await c.env.DB.prepare(
       'UPDATE passkeys SET counter = ?, last_used_at = ? WHERE credential_id = ?'
     )
       .bind(authenticationInfo.newCounter, now, credentialIDBase64)
       .run();
 
-    // Update user's last_login_at
+    // Step 3: Update user's last_login_at
     await c.env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
       .bind(now, passkey.user_id)
       .run();
@@ -537,28 +604,9 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     // Note: Challenge is already consumed by ChallengeStore DO (atomic operation)
     // No need to explicitly delete - consumed challenges are auto-cleaned by DO
 
-    // Create session using SessionStore Durable Object
-    const sessionId = crypto.randomUUID();
-    const sessionStoreId = c.env.SESSION_STORE.idFromName(sessionId);
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
-
-    await sessionStore.fetch(
-      new Request(`https://session-store/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          userId: user!.id,
-          email: user!.email,
-          name: user!.name,
-          expiresAt: now + 24 * 60 * 60 * 1000, // 24 hours
-        }),
-      })
-    );
-
     return c.json({
       verified: true,
-      sessionId,
+      sessionId: sessionData.id,
       userId: passkey.user_id,
       user: {
         id: user!.id,
