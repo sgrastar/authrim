@@ -203,28 +203,53 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
 
   /**
    * Set to D1 with KV cache invalidation
+   *
+   * Strategy: Delete-Then-Write
+   * 1. Delete KV cache first to prevent stale cache reads
+   * 2. Then update D1 (source of truth)
+   *
+   * This ensures that even if D1 write fails, the cache is invalidated,
+   * so future reads will fetch fresh data from D1 instead of stale cache.
    */
   private async setToD1WithKVCache(key: string, value: string): Promise<void> {
-    // 1. Update D1
-    await this.setToD1(key, value);
-
-    // 2. Invalidate KV cache
+    // Step 1: Invalidate KV cache BEFORE updating D1
     if (this.env.CLIENTS_CACHE) {
-      await this.env.CLIENTS_CACHE.delete(key);
+      try {
+        await this.env.CLIENTS_CACHE.delete(key);
+      } catch (error) {
+        // Cache deletion failure should not block D1 write
+        // D1 is the source of truth
+        console.warn(`KV cache delete failed for ${key}, proceeding with D1 write`, error);
+      }
     }
+
+    // Step 2: Update D1 (source of truth)
+    await this.setToD1(key, value);
   }
 
   /**
    * Delete from D1 with KV cache invalidation
+   *
+   * Strategy: Delete-Then-Write (same as setToD1WithKVCache)
+   * 1. Delete KV cache first to prevent stale cache reads
+   * 2. Then delete from D1 (source of truth)
+   *
+   * This ensures cache consistency even if D1 deletion fails.
    */
   private async deleteFromD1WithKVCache(key: string): Promise<void> {
-    // 1. Delete from D1
-    await this.deleteFromD1(key);
-
-    // 2. Invalidate KV cache
+    // Step 1: Invalidate KV cache BEFORE deleting from D1
     if (this.env.CLIENTS_CACHE) {
-      await this.env.CLIENTS_CACHE.delete(key);
+      try {
+        await this.env.CLIENTS_CACHE.delete(key);
+      } catch (error) {
+        // Cache deletion failure should not block D1 delete
+        // D1 is the source of truth
+        console.warn(`KV cache delete failed for ${key}, proceeding with D1 delete`, error);
+      }
     }
+
+    // Step 2: Delete from D1 (source of truth)
+    await this.deleteFromD1(key);
   }
 
   /**
