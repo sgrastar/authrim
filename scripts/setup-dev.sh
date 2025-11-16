@@ -138,6 +138,10 @@ class_name = "RefreshTokenRotator"
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 
+[[durable_objects.bindings]]
+name = "CHALLENGE_STORE"
+class_name = "ChallengeStore"
+
 # Durable Objects migrations
 [[migrations]]
 tag = "v1"
@@ -145,7 +149,8 @@ new_sqlite_classes = [
   "SessionStore",
   "AuthorizationCodeStore",
   "RefreshTokenRotator",
-  "KeyManager"
+  "KeyManager",
+  "ChallengeStore"
 ]
 
 # Environment variables
@@ -179,6 +184,10 @@ class_name = "RefreshTokenRotator"
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 
+[[durable_objects.bindings]]
+name = "CHALLENGE_STORE"
+class_name = "ChallengeStore"
+
 # Durable Objects migrations
 [[migrations]]
 tag = "v1"
@@ -186,7 +195,8 @@ new_sqlite_classes = [
   "SessionStore",
   "AuthorizationCodeStore",
   "RefreshTokenRotator",
-  "KeyManager"
+  "KeyManager",
+  "ChallengeStore"
 ]
 
 # Environment variables
@@ -241,6 +251,11 @@ script_name = "enrai-shared"
 [[durable_objects.bindings]]
 name = "AUTH_CODE_STORE"
 class_name = "AuthorizationCodeStore"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "CHALLENGE_STORE"
+class_name = "ChallengeStore"
 script_name = "enrai-shared"'
 
 # Generate wrangler.toml for op-token
