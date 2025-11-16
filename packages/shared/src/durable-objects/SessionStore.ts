@@ -45,8 +45,10 @@ export interface SessionData {
 
 /**
  * Persistent state stored in Durable Storage
+ * Issue #14: Schema version management for Durable Objects
  */
 interface SessionStoreState {
+  version: number; // Data structure version (for migrations)
   sessions: Record<string, Session>; // Serializable format (Map cannot be serialized directly)
   lastCleanup: number;
 }
@@ -82,6 +84,9 @@ export class SessionStore {
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
 
+  // Current data structure version (Issue #14)
+  private readonly CURRENT_VERSION = 1;
+
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
@@ -93,6 +98,7 @@ export class SessionStore {
   /**
    * Initialize state from Durable Storage
    * Must be called before any session operations
+   * Issue #14: Includes version checking and automatic migration
    */
   private async initializeState(): Promise<void> {
     if (this.initialized) {
@@ -103,8 +109,19 @@ export class SessionStore {
       const stored = await this.state.storage.get<SessionStoreState>('state');
 
       if (stored) {
-        // Restore sessions from Durable Storage
-        this.sessions = new Map(Object.entries(stored.sessions));
+        // Version check and migration (Issue #14)
+        if (stored.version && stored.version < this.CURRENT_VERSION) {
+          console.log(
+            `SessionStore: Migrating data from v${stored.version} to v${this.CURRENT_VERSION}`
+          );
+          const migrated = await this.migrateData(stored);
+          this.sessions = new Map(Object.entries(migrated.sessions));
+          await this.saveState(); // Save migrated state
+        } else {
+          // Restore sessions from Durable Storage
+          this.sessions = new Map(Object.entries(stored.sessions));
+        }
+
         console.log(`SessionStore: Restored ${this.sessions.size} sessions from Durable Storage`);
       }
     } catch (error) {
@@ -121,10 +138,12 @@ export class SessionStore {
   /**
    * Save current state to Durable Storage
    * Converts Map to serializable object
+   * Issue #14: Includes version number
    */
   private async saveState(): Promise<void> {
     try {
       const stateToSave: SessionStoreState = {
+        version: this.CURRENT_VERSION,
         sessions: Object.fromEntries(this.sessions),
         lastCleanup: Date.now(),
       };
@@ -135,6 +154,37 @@ export class SessionStore {
       // Don't throw - we don't want to break the session operation
       // But this should be monitored/alerted in production
     }
+  }
+
+  /**
+   * Migrate data from older versions
+   * Issue #14: Data structure migration for Durable Objects
+   *
+   * @param oldState - State from older version
+   * @returns Migrated state with current version
+   */
+  private async migrateData(oldState: SessionStoreState): Promise<SessionStoreState> {
+    let state = oldState;
+
+    // Example migration: v0 → v1
+    // If there were breaking changes in the Session interface, handle them here
+    // For now, SessionStore v1 is the initial version with version tracking
+
+    // Future migrations would be added here:
+    // if (state.version === 1) {
+    //   // Migrate v1 → v2
+    //   // Example: Add new field to sessions
+    //   for (const [id, session] of Object.entries(state.sessions)) {
+    //     state.sessions[id] = {
+    //       ...session,
+    //       newField: 'default_value',
+    //     };
+    //   }
+    //   state.version = 2;
+    // }
+
+    state.version = this.CURRENT_VERSION;
+    return state;
   }
 
   /**

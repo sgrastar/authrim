@@ -6,8 +6,32 @@ This directory contains SQL migration scripts for Enrai's Cloudflare D1 database
 
 | File | Description | Status |
 |------|-------------|--------|
-| `001_initial_schema.sql` | Creates all 11 tables and indexes | ✅ Ready |
+| `000_schema_migrations.sql` | Migration tracking infrastructure (**DO NOT MODIFY**) | ✅ Ready |
+| `001_initial_schema.sql` | Creates all 12 tables and indexes | ✅ Ready |
 | `002_seed_default_data.sql` | Default roles, settings, and test data | ✅ Ready |
+
+## 🎯 Migration Management (Issue #14)
+
+Enrai now includes automated migration tracking with version management and checksum validation.
+
+### Quick Commands
+
+```bash
+# Show migration status
+pnpm migrate:status
+
+# Apply pending migrations
+pnpm migrate:up
+
+# Validate migration integrity
+pnpm migrate:validate
+
+# Preview changes (dry run)
+pnpm migrate:dry-run
+
+# Create new migration
+pnpm migrate:create description_here
+```
 
 ## 🚀 Quick Start
 
