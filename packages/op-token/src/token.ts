@@ -299,13 +299,15 @@ async function handleAuthorizationCodeGrant(
   let tokenType: 'Bearer' | 'DPoP' = 'Bearer';
 
   if (dpopProof) {
-    // Validate DPoP proof
+    // Validate DPoP proof (issue #12: DPoP JTI replay protection via DO)
     const dpopValidation = await validateDPoPProof(
       dpopProof,
       'POST',
       c.req.url,
       undefined, // No access token yet (this is token issuance)
-      c.env.NONCE_STORE
+      c.env.NONCE_STORE,
+      c.env.DPOP_JTI_STORE, // DPoPJTIStore DO for atomic JTI replay protection
+      client_id // Bind JTI to client_id for additional security
     );
 
     if (!dpopValidation.valid) {
@@ -687,13 +689,15 @@ async function handleRefreshTokenGrant(
   let tokenType: 'Bearer' | 'DPoP' = 'Bearer';
 
   if (dpopProof) {
-    // Validate DPoP proof
+    // Validate DPoP proof (issue #12: DPoP JTI replay protection via DO)
     const dpopValidation = await validateDPoPProof(
       dpopProof,
       'POST',
       c.req.url,
       undefined, // No access token yet (this is token refresh)
-      c.env.NONCE_STORE
+      c.env.NONCE_STORE,
+      c.env.DPOP_JTI_STORE, // DPoPJTIStore DO for atomic JTI replay protection
+      client_id // Bind JTI to client_id for additional security
     );
 
     if (!dpopValidation.valid) {

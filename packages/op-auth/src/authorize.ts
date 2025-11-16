@@ -149,9 +149,23 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // Type assertion to help TypeScript understand parsedData is non-null after null check
+    const parData: {
+      client_id: string;
+      response_type: string;
+      redirect_uri: string;
+      scope: string;
+      state?: string;
+      nonce?: string;
+      code_challenge?: string;
+      code_challenge_method?: string;
+      claims?: string;
+      response_mode?: string;
+    } = parsedData;
+
     try {
       // RFC 9126: When using request_uri, client_id from query MUST match client_id from PAR
-      if (client_id && client_id !== parsedData.client_id) {
+      if (client_id && client_id !== parData.client_id) {
         return c.json(
           {
             error: 'invalid_request',
@@ -162,16 +176,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Load parameters from PAR request
-      response_type = parsedData.response_type;
-      client_id = parsedData.client_id;
-      redirect_uri = parsedData.redirect_uri;
-      scope = parsedData.scope;
-      state = parsedData.state;
-      nonce = parsedData.nonce;
-      code_challenge = parsedData.code_challenge;
-      code_challenge_method = parsedData.code_challenge_method;
-      claims = parsedData.claims;
-      response_mode = parsedData.response_mode;
+      response_type = parData.response_type;
+      client_id = parData.client_id;
+      redirect_uri = parData.redirect_uri;
+      scope = parData.scope;
+      state = parData.state;
+      nonce = parData.nonce;
+      code_challenge = parData.code_challenge;
+      code_challenge_method = parData.code_challenge_method;
+      claims = parData.claims;
+      response_mode = parData.response_mode;
     } catch {
       return c.json(
         {
