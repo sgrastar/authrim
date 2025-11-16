@@ -49,9 +49,9 @@
 			}
 
 			// 2. Call WebAuthn API to get credential
-			const credential = await navigator.credentials.get({
+			const credential = (await navigator.credentials.get({
 				publicKey: optionsData!.options
-			}) as any;
+			})) as PublicKeyCredential | null;
 
 			if (!credential) {
 				throw new Error('No credential received from authenticator');
@@ -109,7 +109,7 @@
 
 		try {
 			// Call API to send magic link
-			const { data, error: apiError } = await magicLinkAPI.send({ email });
+			const { error: apiError } = await magicLinkAPI.send({ email });
 
 			if (apiError) {
 				throw new Error(apiError.error_description || 'Failed to send magic link');

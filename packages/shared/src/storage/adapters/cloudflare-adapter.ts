@@ -25,6 +25,7 @@ import type {
   Passkey,
 } from '../interfaces';
 import type { Env } from '../../types/env';
+import type { D1Result } from '../../utils/d1-retry';
 
 /**
  * CloudflareStorageAdapter
@@ -109,12 +110,12 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   }
 
   /**
-   * Execute SQL statement (D1 only, no results returned)
+   * Execute SQL statement (D1 only, returns execution result)
    */
-  async execute(sql: string, params?: unknown[]): Promise<void> {
+  async execute(sql: string, params?: unknown[]): Promise<D1Result> {
     const stmt = this.env.DB.prepare(sql);
     const bound = params ? stmt.bind(...params) : stmt;
-    await bound.run();
+    return await bound.run();
   }
 
   // ========== Private helper methods ==========

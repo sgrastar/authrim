@@ -8,6 +8,8 @@
  * full database support for users, sessions, and clients.
  */
 
+import type { D1Result } from '../utils/d1-retry';
+
 /**
  * Base storage interface for all storage operations
  */
@@ -386,11 +388,12 @@ export interface IStorageAdapter {
   query<T = unknown>(sql: string, params?: unknown[]): Promise<T[]>;
 
   /**
-   * Execute SQL statement (D1 only, no results returned)
+   * Execute SQL statement (D1 only, returns execution result)
    * @param sql - SQL statement string
    * @param params - Statement parameters
+   * @returns D1 execution result with metadata (changes, last_row_id, etc.)
    */
-  execute(sql: string, params?: unknown[]): Promise<void>;
+  execute(sql: string, params?: unknown[]): Promise<D1Result>;
 }
 
 /**

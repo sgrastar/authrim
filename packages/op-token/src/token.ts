@@ -24,6 +24,19 @@ import { importPKCS8, importJWK, type KeyLike } from 'jose';
 import { extractDPoPProof, validateDPoPProof } from '@enrai/shared';
 
 /**
+ * Response from AuthCodeStore Durable Object
+ */
+interface AuthCodeStoreResponse {
+  userId: string;
+  scope: string;
+  redirectUri: string;
+  nonce?: string;
+  state?: string;
+  createdAt?: number;
+  claims?: Record<string, unknown>;
+}
+
+/**
  * Token Endpoint Handler
  * https://openid.net/specs/openid-connect-core-1_0.html#TokenEndpoint
  *
@@ -211,7 +224,7 @@ async function handleAuthorizationCodeGrant(
     }
 
     // AuthCodeStore DO returns: { userId, scope, redirectUri, nonce?, state? }
-    const consumedData = await consumeResponse.json();
+    const consumedData = (await consumeResponse.json()) as AuthCodeStoreResponse;
 
     // Map AuthCodeStore DO response to expected format
     authCodeData = {
@@ -223,6 +236,7 @@ async function handleAuthorizationCodeGrant(
       auth_time: consumedData.createdAt
         ? Math.floor(consumedData.createdAt / 1000)
         : Math.floor(Date.now() / 1000), // OIDC Core: Time when End-User authentication occurred
+      claims: consumedData.claims,
     };
   } catch (error) {
     console.error('AuthCodeStore DO error:', error);
@@ -334,7 +348,7 @@ async function handleAuthorizationCodeGrant(
 
   // Add claims parameter if it was requested during authorization
   if (authCodeData.claims) {
-    accessTokenClaims.claims = authCodeData.claims;
+    accessTokenClaims.claims = JSON.stringify(authCodeData.claims);
   }
 
   // Add DPoP confirmation (cnf) claim if DPoP is used

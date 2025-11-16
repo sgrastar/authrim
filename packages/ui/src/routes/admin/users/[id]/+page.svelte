@@ -164,7 +164,8 @@
 		<Card>
 			<div class="space-y-4">
 				<div class="h-6 w-32 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
-				{#each Array(5) as _}
+				<!-- eslint-disable-next-line @typescript-eslint/no-unused-vars -->
+				{#each Array(5) as _, i (i)}
 					<div class="space-y-2">
 						<div class="h-4 w-24 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
 						<div class="h-10 w-full animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
@@ -237,7 +238,7 @@
 				<p class="text-sm text-gray-500 dark:text-gray-400">No passkeys registered</p>
 			{:else}
 				<div class="space-y-3">
-					{#each passkeys as passkey}
+					{#each passkeys as passkey (passkey.id)}
 						<div class="flex items-center justify-between rounded-lg border border-gray-200 p-3 dark:border-gray-700">
 							<div class="flex items-center gap-3">
 								<div class="rounded-lg bg-primary-100 p-2 dark:bg-primary-900">
@@ -276,7 +277,7 @@
 				<p class="text-sm text-gray-500 dark:text-gray-400">No active sessions</p>
 			{:else}
 				<div class="space-y-3">
-					{#each sessions as session}
+					{#each sessions as session (session.id)}
 						<div class="flex items-center justify-between rounded-lg border border-gray-200 p-3 dark:border-gray-700">
 							<div>
 								<p class="text-sm font-medium text-gray-900 dark:text-white">
