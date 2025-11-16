@@ -21,6 +21,7 @@
  */
 
 import type { Env } from '../types/env';
+import { retryD1Operation } from '../utils/d1-retry';
 
 /**
  * Token family (tracks rotation chain)
@@ -249,31 +250,34 @@ export class RefreshTokenRotator {
 
   /**
    * Log audit entry to D1
+   * Uses retry logic with exponential backoff for reliability
+   * CRITICAL: Audit logs are required for security compliance (SOC 2, GDPR)
    */
   private async logToD1(entry: AuditLogEntry): Promise<void> {
     if (!this.env.DB) {
       return;
     }
 
-    try {
-      await this.env.DB.prepare(
-        `INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, metadata_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
-          `audit_${crypto.randomUUID()}`,
-          entry.userId || null,
-          `refresh_token.${entry.action}`,
-          'refresh_token_family',
-          entry.familyId,
-          entry.metadata ? JSON.stringify(entry.metadata) : null,
-          Math.floor(entry.timestamp / 1000)
+    await retryD1Operation(
+      async () => {
+        await this.env.DB.prepare(
+          `INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, metadata_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
-        .run();
-    } catch (error) {
-      console.error('RefreshTokenRotator: D1 audit log error:', error);
-      // Don't throw - audit logging failure should not break rotation
-    }
+          .bind(
+            `audit_${crypto.randomUUID()}`,
+            entry.userId || null,
+            `refresh_token.${entry.action}`,
+            'refresh_token_family',
+            entry.familyId,
+            entry.metadata ? JSON.stringify(entry.metadata) : null,
+            Math.floor(entry.timestamp / 1000)
+          )
+          .run();
+      },
+      'RefreshTokenRotator.logToD1',
+      { maxRetries: 3 }
+    );
   }
 
   /**

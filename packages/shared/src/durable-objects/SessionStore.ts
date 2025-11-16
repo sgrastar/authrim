@@ -18,6 +18,7 @@
  */
 
 import type { Env } from '../types/env';
+import { retryD1Operation } from '../utils/d1-retry';
 
 /**
  * Session data interface
@@ -219,42 +220,47 @@ export class SessionStore {
 
   /**
    * Save session to D1 database (persistent storage)
+   * Uses retry logic with exponential backoff for reliability
    */
   private async saveToD1(session: Session): Promise<void> {
     if (!this.env.DB) {
       return;
     }
 
-    try {
-      await this.env.DB.prepare(
-        'INSERT OR REPLACE INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)'
-      )
-        .bind(
-          session.id,
-          session.userId,
-          Math.floor(session.expiresAt / 1000), // Convert to seconds
-          Math.floor(session.createdAt / 1000)
+    await retryD1Operation(
+      async () => {
+        await this.env.DB.prepare(
+          'INSERT OR REPLACE INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)'
         )
-        .run();
-    } catch (error) {
-      console.error('SessionStore: D1 save error:', error);
-      // Don't throw - session is still in memory
-    }
+          .bind(
+            session.id,
+            session.userId,
+            Math.floor(session.expiresAt / 1000), // Convert to seconds
+            Math.floor(session.createdAt / 1000)
+          )
+          .run();
+      },
+      'SessionStore.saveToD1',
+      { maxRetries: 3 }
+    );
   }
 
   /**
    * Delete session from D1 database
+   * Uses retry logic with exponential backoff for reliability
    */
   private async deleteFromD1(sessionId: string): Promise<void> {
     if (!this.env.DB) {
       return;
     }
 
-    try {
-      await this.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
-    } catch (error) {
-      console.error('SessionStore: D1 delete error:', error);
-    }
+    await retryD1Operation(
+      async () => {
+        await this.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
+      },
+      'SessionStore.deleteFromD1',
+      { maxRetries: 3 }
+    );
   }
 
   /**
