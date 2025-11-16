@@ -197,7 +197,6 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // Generate request_uri
     const requestUri = generateRequestUri();
 
-    // Store request parameters in KV with TTL
     // RFC 9126: Recommended lifetime is short (e.g., 10 minutes)
     const REQUEST_URI_EXPIRY = 600; // 10 minutes
 
@@ -219,13 +218,40 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       login_hint: params.login_hint,
       acr_values: params.acr_values,
       claims: params.claims,
-      created_at: Date.now(),
     };
 
-    // Store in KV namespace (we'll use STATE_STORE for request URIs)
-    await c.env.STATE_STORE.put(`request_uri:${requestUri}`, JSON.stringify(requestData), {
-      expirationTtl: REQUEST_URI_EXPIRY,
-    });
+    // Store in PARRequestStore DO (issue #11: single-use guarantee)
+    // Falls back to KV if DO is unavailable
+    try {
+      if (c.env.PAR_REQUEST_STORE) {
+        // Use DO ID based on client_id to shard load
+        const id = c.env.PAR_REQUEST_STORE.idFromName(params.client_id);
+        const stub = c.env.PAR_REQUEST_STORE.get(id);
+
+        const response = await stub.fetch('http://internal/request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestUri,
+            data: requestData,
+            ttl: REQUEST_URI_EXPIRY,
+          }),
+        });
+
+        if (!response.ok) {
+          console.warn('PARRequestStore DO failed, falling back to KV');
+          throw new Error('DO failed');
+        }
+      } else {
+        throw new Error('DO not available');
+      }
+    } catch (error) {
+      console.error('PAR DO error, using KV fallback:', error);
+      // Fallback to KV
+      await c.env.STATE_STORE.put(`request_uri:${requestUri}`, JSON.stringify(requestData), {
+        expirationTtl: REQUEST_URI_EXPIRY,
+      });
+    }
 
     // RFC 9126: Return request_uri and expires_in
     return c.json(

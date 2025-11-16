@@ -142,6 +142,18 @@ class_name = "KeyManager"
 name = "CHALLENGE_STORE"
 class_name = "ChallengeStore"
 
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+
+[[durable_objects.bindings]]
+name = "PAR_REQUEST_STORE"
+class_name = "PARRequestStore"
+
+[[durable_objects.bindings]]
+name = "DPOP_JTI_STORE"
+class_name = "DPoPJTIStore"
+
 # Durable Objects migrations
 [[migrations]]
 tag = "v1"
@@ -150,7 +162,10 @@ new_sqlite_classes = [
   "AuthorizationCodeStore",
   "RefreshTokenRotator",
   "KeyManager",
-  "ChallengeStore"
+  "ChallengeStore",
+  "RateLimiterCounter",
+  "PARRequestStore",
+  "DPoPJTIStore"
 ]
 
 # Environment variables
@@ -188,6 +203,18 @@ class_name = "KeyManager"
 name = "CHALLENGE_STORE"
 class_name = "ChallengeStore"
 
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+
+[[durable_objects.bindings]]
+name = "PAR_REQUEST_STORE"
+class_name = "PARRequestStore"
+
+[[durable_objects.bindings]]
+name = "DPOP_JTI_STORE"
+class_name = "DPoPJTIStore"
+
 # Durable Objects migrations
 [[migrations]]
 tag = "v1"
@@ -196,7 +223,10 @@ new_sqlite_classes = [
   "AuthorizationCodeStore",
   "RefreshTokenRotator",
   "KeyManager",
-  "ChallengeStore"
+  "ChallengeStore",
+  "RateLimiterCounter",
+  "PARRequestStore",
+  "DPoPJTIStore"
 ]
 
 # Environment variables
@@ -212,6 +242,11 @@ id = "placeholder"
 preview_id = "placeholder"' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
 script_name = "enrai-shared"'
 
 # Generate wrangler.toml for op-auth
@@ -256,6 +291,16 @@ script_name = "enrai-shared"
 [[durable_objects.bindings]]
 name = "CHALLENGE_STORE"
 class_name = "ChallengeStore"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "PAR_REQUEST_STORE"
+class_name = "PARRequestStore"
 script_name = "enrai-shared"'
 
 # Generate wrangler.toml for op-token
@@ -300,6 +345,16 @@ script_name = "enrai-shared"
 [[durable_objects.bindings]]
 name = "REFRESH_TOKEN_ROTATOR"
 class_name = "RefreshTokenRotator"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "DPOP_JTI_STORE"
+class_name = "DPoPJTIStore"
 script_name = "enrai-shared"'
 
 # Generate wrangler.toml for op-userinfo
@@ -324,6 +379,16 @@ script_name = "enrai-shared"
 [[durable_objects.bindings]]
 name = "SESSION_STORE"
 class_name = "SessionStore"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "DPOP_JTI_STORE"
+class_name = "DPoPJTIStore"
 script_name = "enrai-shared"'
 
 # Generate wrangler.toml for op-management
@@ -358,6 +423,11 @@ script_name = "enrai-shared"
 [[durable_objects.bindings]]
 name = "REFRESH_TOKEN_ROTATOR"
 class_name = "RefreshTokenRotator"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
 script_name = "enrai-shared"'
 
 # Generate wrangler.toml for router (with Service Bindings)

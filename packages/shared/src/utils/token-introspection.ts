@@ -260,13 +260,19 @@ export async function introspectToken(
       };
     }
 
-    // Validate DPoP proof with htm, htu, and ath parameters
+    // Extract client_id from token claims (azp or client_id claim)
+    const client_id =
+      (tokenClaims.azp as string | undefined) || (tokenClaims.client_id as string | undefined);
+
+    // Validate DPoP proof with htm, htu, and ath parameters (issue #12: DPoP JTI replay protection via DO)
     const dpopValidation = await validateDPoPProof(
       dpopProof,
       request.method,
       request.url,
       accessToken, // Include access token for ath validation
-      request.env.NONCE_STORE
+      request.env.NONCE_STORE,
+      request.env.DPOP_JTI_STORE, // DPoPJTIStore DO for atomic JTI replay protection
+      client_id // Bind JTI to client_id for additional security
     );
 
     if (!dpopValidation.valid) {
