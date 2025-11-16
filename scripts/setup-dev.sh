@@ -142,6 +142,18 @@ class_name = "KeyManager"
 name = "CHALLENGE_STORE"
 class_name = "ChallengeStore"
 
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+
+[[durable_objects.bindings]]
+name = "PAR_REQUEST_STORE"
+class_name = "PARRequestStore"
+
+[[durable_objects.bindings]]
+name = "DPOP_JTI_STORE"
+class_name = "DPoPJTIStore"
+
 # Durable Objects migrations
 [[migrations]]
 tag = "v1"
@@ -150,7 +162,10 @@ new_sqlite_classes = [
   "AuthorizationCodeStore",
   "RefreshTokenRotator",
   "KeyManager",
-  "ChallengeStore"
+  "ChallengeStore",
+  "RateLimiterCounter",
+  "PARRequestStore",
+  "DPoPJTIStore"
 ]
 
 # Environment variables
@@ -188,6 +203,18 @@ class_name = "KeyManager"
 name = "CHALLENGE_STORE"
 class_name = "ChallengeStore"
 
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+
+[[durable_objects.bindings]]
+name = "PAR_REQUEST_STORE"
+class_name = "PARRequestStore"
+
+[[durable_objects.bindings]]
+name = "DPOP_JTI_STORE"
+class_name = "DPoPJTIStore"
+
 # Durable Objects migrations
 [[migrations]]
 tag = "v1"
@@ -196,7 +223,10 @@ new_sqlite_classes = [
   "AuthorizationCodeStore",
   "RefreshTokenRotator",
   "KeyManager",
-  "ChallengeStore"
+  "ChallengeStore",
+  "RateLimiterCounter",
+  "PARRequestStore",
+  "DPoPJTIStore"
 ]
 
 # Environment variables
