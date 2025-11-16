@@ -58,7 +58,7 @@ Enrai Phase 5のストレージアーキテクチャは、Cloudflare Workers の
 20. ~~セッショントークン競合（#8 - MEDIUM）~~ ✅ **実装完了** - ChallengeStore DO統合
 21. ~~Rate Limiting精度（#6 - ACCEPTED）~~ ✅ **実装完了** - RateLimiterCounter DO統合
 22. ~~JWKS/KeyManager不整合（#13 - DESIGN）~~ ✅ **実装完了** - JWKS Endpoint動的取得
-23. スキーマバージョン管理（#14 - FUTURE）
+23. ~~スキーマバージョン管理（#14 - FUTURE）~~ ✅ **実装完了** - Migration tracking & DO versioning
 24. password_reset_tokens (#20 - 確認済み、問題なし)
 
 ---
@@ -3787,6 +3787,7 @@ const doId = env.SESSION_STORE.idFromName(`shard_${shard}`);
 | 2025-11-15 | 3.0 | **詳細監査による3つの新規クリティカル問題発見**:<br>- **問題#9: SessionStore DO の永続性欠如（CRITICAL）**<br>  → DO再起動で全ユーザー強制ログアウト<br>- **問題#10: AuthorizationCodeStore DO の永続性欠如（CRITICAL）**<br>  → OAuth フロー失敗 + Token endpoint未移行<br>- **問題#11: PAR request_uri の競合状態（MEDIUM）**<br>  → RFC 9126単一使用保証違反<br><br>**系統的パターン発見**: 4つのDOのうち3つ（75%）が永続性問題<br>→ KeyManagerパターンへの統一リファクタリングが必要<br><br>合計**11課題**の完全ドキュメント化、工数19-27日に更新 |
 | 2025-11-15 | 6.0 | **全Durable Objects化への方針決定**:<br>- KV起因の5課題（#6, #8, #11, #12, #21）を完全解決<br>- 運用・ドキュメント対応では事象発生を防げない課題をDO化<br>- すべての状態管理をDOに統一する明確なアーキテクチャ原則<br>- 新規DO: RateLimiterCounter, SessionTokenStore, PARRequestStore, MagicLinkStore, PasskeyChallengeStore<br>- 総工数: 20.5-28.5日（4-6週間）<br><br>**製品方針**: OPとしてセキュリティ・一貫性を最優先、RFC/OIDC完全準拠を実現 |
 | 2025-11-16 | 7.0 | **全DO統合実装完了**:<br>- ✅ #6: RateLimiterCounter DO実装・統合完了（100%精度保証）<br>- ✅ #11: PARRequestStore DO実装・統合完了（RFC 9126完全準拠）<br>- ✅ #12: DPoPJTIStore DO実装・統合完了（Replay攻撃完全防止）<br>- ✅ #13: JWKS Endpoint動的取得実装完了（KeyManager DO経由）<br>- ✅ #8, #21: ChallengeStore DO統合完了（Session Token, Passkey, Magic Link）<br><br>**全8つのDO実装完了**: SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, ChallengeStore, RateLimiterCounter, PARRequestStore, DPoPJTIStore<br><br>**セキュリティ強化**: アトミック操作によりrace condition完全排除、RFC/OIDC完全準拠達成 |
+| 2025-11-16 | 8.0 | **#14: スキーマバージョン管理実装完了**:<br>- ✅ D1マイグレーション管理テーブル作成（schema_migrations, migration_metadata）<br>- ✅ MigrationRunnerクラス実装（チェックサム検証、べき等性保証）<br>- ✅ CLIツール実装（migrate:create コマンド）<br>- ✅ DO data structure versioning実装（SessionStore v1）<br>- ✅ 自動マイグレーション機能（バージョン検出→migrate→save）<br>- ✅ マイグレーションREADME更新<br><br>**全24問題中23問題実装完了** - 残り1問題のみ（#20: 確認済み問題なし） |
 
 ---
 
