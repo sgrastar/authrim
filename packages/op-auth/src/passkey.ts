@@ -106,16 +106,23 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       attestationType: 'none',
     } as any);
 
-    // Store challenge in KV for verification (TTL: 5 minutes)
-    await c.env.STATE_STORE.put(
-      `passkey_challenge:${user.id}`,
-      JSON.stringify({
-        challenge: options.challenge,
-        userId: user.id,
-        email,
-        timestamp: Date.now(),
-      }),
-      { expirationTtl: 300 }
+    // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes)
+    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+
+    await challengeStore.fetch(
+      new Request('https://challenge-store/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: `passkey_reg:${user.id}`,
+          type: 'passkey_registration',
+          userId: user.id as string,
+          challenge: options.challenge,
+          ttl: 300, // 5 minutes
+          email,
+        }),
+      })
     );
 
     return c.json({
@@ -158,19 +165,47 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       );
     }
 
-    // Retrieve challenge from KV
-    const challengeData = await c.env.STATE_STORE.get(`passkey_challenge:${userId}`, 'json');
-    if (!challengeData) {
+    // Consume challenge from ChallengeStore DO (atomic operation)
+    // This prevents parallel replay attacks
+    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+
+    let challenge: string;
+    try {
+      const consumeResponse = await challengeStore.fetch(
+        new Request('https://challenge-store/challenge/consume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: `passkey_reg:${userId}`,
+            type: 'passkey_registration',
+            // No challenge value needed - DO will return it
+          }),
+        })
+      );
+
+      if (!consumeResponse.ok) {
+        const error = await consumeResponse.json();
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: error.error_description || 'Challenge not found or expired',
+          },
+          400
+        );
+      }
+
+      const challengeData = (await consumeResponse.json()) as { challenge: string };
+      challenge = challengeData.challenge;
+    } catch (error) {
       return c.json(
         {
-          error: 'invalid_request',
-          error_description: 'Challenge not found or expired',
+          error: 'server_error',
+          error_description: 'Failed to consume challenge',
         },
-        400
+        500
       );
     }
-
-    const { challenge } = challengeData as { challenge: string; userId: string; email: string };
 
     // Get RP ID from ISSUER_URL
     const issuerUrl = new URL(c.env.ISSUER_URL);
@@ -222,10 +257,10 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         ? credentialID
         : Buffer.from(credentialID).toString('base64');
 
-    // Store passkey in D1
     const passkeyId = crypto.randomUUID();
     const now = Date.now();
 
+    // Step 1: Store passkey in D1 (FIRST)
     await c.env.DB.prepare(
       `INSERT INTO passkeys (id, user_id, credential_id, public_key, counter, transports, device_name, created_at, last_used_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -243,13 +278,13 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       )
       .run();
 
-    // Update user's email_verified status
+    // Step 2: Update user's email_verified status
     await c.env.DB.prepare('UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?')
       .bind(now, userId)
       .run();
 
-    // Delete challenge from KV
-    await c.env.STATE_STORE.delete(`passkey_challenge:${userId}`);
+    // Note: Challenge is already consumed by ChallengeStore DO (atomic operation)
+    // No need to explicitly delete - consumed challenges are auto-cleaned by DO
 
     return c.json({
       verified: true,
@@ -317,16 +352,24 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
       userVerification: 'required',
     } as any);
 
-    // Store challenge in KV for verification (TTL: 5 minutes)
+    // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes)
     const challengeId = crypto.randomUUID();
-    await c.env.STATE_STORE.put(
-      `passkey_auth_challenge:${challengeId}`,
-      JSON.stringify({
-        challenge: options.challenge,
-        email: email || null,
-        timestamp: Date.now(),
-      }),
-      { expirationTtl: 300 }
+    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+
+    await challengeStore.fetch(
+      new Request('https://challenge-store/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: `passkey_auth:${challengeId}`,
+          type: 'passkey_authentication',
+          userId: 'unknown', // Will be determined during verification
+          challenge: options.challenge,
+          ttl: 300, // 5 minutes
+          metadata: { email: email || null },
+        }),
+      })
     );
 
     return c.json({
@@ -368,22 +411,45 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Retrieve challenge from KV
-    const challengeData = await c.env.STATE_STORE.get(
-      `passkey_auth_challenge:${challengeId}`,
-      'json'
-    );
-    if (!challengeData) {
+    // Consume challenge from ChallengeStore DO (atomic operation)
+    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+
+    let challenge: string;
+    try {
+      const consumeResponse = await challengeStore.fetch(
+        new Request('https://challenge-store/challenge/consume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: `passkey_auth:${challengeId}`,
+            type: 'passkey_authentication',
+          }),
+        })
+      );
+
+      if (!consumeResponse.ok) {
+        const error = await consumeResponse.json();
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: error.error_description || 'Challenge not found or expired',
+          },
+          400
+        );
+      }
+
+      const challengeData = (await consumeResponse.json()) as { challenge: string };
+      challenge = challengeData.challenge;
+    } catch (error) {
       return c.json(
         {
-          error: 'invalid_request',
-          error_description: 'Challenge not found or expired',
+          error: 'server_error',
+          error_description: 'Failed to consume challenge',
         },
-        400
+        500
       );
     }
-
-    const { challenge } = challengeData as { challenge: string; email: string | null };
 
     // Get credential ID from response
     const credentialIDBase64 = credential.id;
@@ -468,8 +534,8 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       .bind(passkey.user_id)
       .first();
 
-    // Delete challenge from KV
-    await c.env.STATE_STORE.delete(`passkey_auth_challenge:${challengeId}`);
+    // Note: Challenge is already consumed by ChallengeStore DO (atomic operation)
+    // No need to explicitly delete - consumed challenges are auto-cleaned by DO
 
     // Create session using SessionStore Durable Object
     const sessionId = crypto.randomUUID();

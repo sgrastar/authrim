@@ -18,6 +18,7 @@
  */
 
 import type { Env } from '../types/env';
+import { retryD1Operation } from '../utils/d1-retry';
 
 /**
  * Session data interface
@@ -40,6 +41,14 @@ export interface SessionData {
   ipAddress?: string;
   userAgent?: string;
   [key: string]: unknown;
+}
+
+/**
+ * Persistent state stored in Durable Storage
+ */
+interface SessionStoreState {
+  sessions: Record<string, Session>; // Serializable format (Map cannot be serialized directly)
+  lastCleanup: number;
 }
 
 /**
@@ -71,13 +80,61 @@ export class SessionStore {
   private env: Env;
   private sessions: Map<string, Session> = new Map();
   private cleanupInterval: number | null = null;
+  private initialized: boolean = false;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
 
-    // Start periodic cleanup
+    // State will be initialized on first request
+    // This avoids blocking the constructor
+  }
+
+  /**
+   * Initialize state from Durable Storage
+   * Must be called before any session operations
+   */
+  private async initializeState(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    try {
+      const stored = await this.state.storage.get<SessionStoreState>('state');
+
+      if (stored) {
+        // Restore sessions from Durable Storage
+        this.sessions = new Map(Object.entries(stored.sessions));
+        console.log(`SessionStore: Restored ${this.sessions.size} sessions from Durable Storage`);
+      }
+    } catch (error) {
+      console.error('SessionStore: Failed to initialize from Durable Storage:', error);
+      // Continue with empty state
+    }
+
+    this.initialized = true;
+
+    // Start periodic cleanup after initialization
     this.startCleanup();
+  }
+
+  /**
+   * Save current state to Durable Storage
+   * Converts Map to serializable object
+   */
+  private async saveState(): Promise<void> {
+    try {
+      const stateToSave: SessionStoreState = {
+        sessions: Object.fromEntries(this.sessions),
+        lastCleanup: Date.now(),
+      };
+
+      await this.state.storage.put('state', stateToSave);
+    } catch (error) {
+      console.error('SessionStore: Failed to save to Durable Storage:', error);
+      // Don't throw - we don't want to break the session operation
+      // But this should be monitored/alerted in production
+    }
   }
 
   /**
@@ -96,7 +153,7 @@ export class SessionStore {
   }
 
   /**
-   * Cleanup expired sessions from memory
+   * Cleanup expired sessions from memory and Durable Storage
    */
   private async cleanupExpiredSessions(): Promise<void> {
     const now = Date.now();
@@ -111,6 +168,8 @@ export class SessionStore {
 
     if (cleaned > 0) {
       console.log(`SessionStore: Cleaned up ${cleaned} expired sessions`);
+      // Persist cleanup to Durable Storage
+      await this.saveState();
     }
   }
 
@@ -161,48 +220,55 @@ export class SessionStore {
 
   /**
    * Save session to D1 database (persistent storage)
+   * Uses retry logic with exponential backoff for reliability
    */
   private async saveToD1(session: Session): Promise<void> {
     if (!this.env.DB) {
       return;
     }
 
-    try {
-      await this.env.DB.prepare(
-        'INSERT OR REPLACE INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)'
-      )
-        .bind(
-          session.id,
-          session.userId,
-          Math.floor(session.expiresAt / 1000), // Convert to seconds
-          Math.floor(session.createdAt / 1000)
+    await retryD1Operation(
+      async () => {
+        await this.env.DB.prepare(
+          'INSERT OR REPLACE INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)'
         )
-        .run();
-    } catch (error) {
-      console.error('SessionStore: D1 save error:', error);
-      // Don't throw - session is still in memory
-    }
+          .bind(
+            session.id,
+            session.userId,
+            Math.floor(session.expiresAt / 1000), // Convert to seconds
+            Math.floor(session.createdAt / 1000)
+          )
+          .run();
+      },
+      'SessionStore.saveToD1',
+      { maxRetries: 3 }
+    );
   }
 
   /**
    * Delete session from D1 database
+   * Uses retry logic with exponential backoff for reliability
    */
   private async deleteFromD1(sessionId: string): Promise<void> {
     if (!this.env.DB) {
       return;
     }
 
-    try {
-      await this.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
-    } catch (error) {
-      console.error('SessionStore: D1 delete error:', error);
-    }
+    await retryD1Operation(
+      async () => {
+        await this.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
+      },
+      'SessionStore.deleteFromD1',
+      { maxRetries: 3 }
+    );
   }
 
   /**
    * Get session by ID (memory → D1 fallback)
    */
   async getSession(sessionId: string): Promise<Session | null> {
+    await this.initializeState();
+
     // 1. Check in-memory (hot)
     let session = this.sessions.get(sessionId);
     if (session) {
@@ -237,6 +303,8 @@ export class SessionStore {
    * Create new session
    */
   async createSession(userId: string, ttl: number, data?: SessionData): Promise<Session> {
+    await this.initializeState();
+
     const session: Session = {
       id: this.generateSessionId(),
       userId,
@@ -248,7 +316,10 @@ export class SessionStore {
     // 1. Store in memory (hot)
     this.sessions.set(session.id, session);
 
-    // 2. Persist to D1 (backup & audit) - async, don't wait
+    // 2. Persist to Durable Storage (for DO restart resilience)
+    await this.saveState();
+
+    // 3. Persist to D1 (backup & audit) - async, don't wait
     this.saveToD1(session).catch((error) => {
       console.error('SessionStore: Failed to save to D1:', error);
     });
@@ -260,11 +331,18 @@ export class SessionStore {
    * Invalidate session immediately
    */
   async invalidateSession(sessionId: string): Promise<boolean> {
+    await this.initializeState();
+
     // 1. Remove from memory
     const hadSession = this.sessions.has(sessionId);
     this.sessions.delete(sessionId);
 
-    // 2. Mark as deleted in D1 - async, don't wait
+    // 2. Persist to Durable Storage
+    if (hadSession) {
+      await this.saveState();
+    }
+
+    // 3. Mark as deleted in D1 - async, don't wait
     this.deleteFromD1(sessionId).catch((error) => {
       console.error('SessionStore: Failed to delete from D1:', error);
     });
@@ -273,9 +351,71 @@ export class SessionStore {
   }
 
   /**
+   * Batch invalidate multiple sessions
+   * Optimized for admin operations (e.g., delete all user sessions)
+   */
+  async invalidateSessionsBatch(sessionIds: string[]): Promise<{ deleted: number; failed: string[] }> {
+    await this.initializeState();
+
+    const deleted: string[] = [];
+    const failed: string[] = [];
+
+    // 1. Remove from memory
+    for (const sessionId of sessionIds) {
+      if (this.sessions.has(sessionId)) {
+        this.sessions.delete(sessionId);
+        deleted.push(sessionId);
+      } else {
+        failed.push(sessionId);
+      }
+    }
+
+    // 2. Persist to Durable Storage (single write for all deletions)
+    if (deleted.length > 0) {
+      await this.saveState();
+    }
+
+    // 3. Delete from D1 in batch - async, don't wait
+    if (deleted.length > 0 && this.env.DB) {
+      this.batchDeleteFromD1(deleted).catch((error) => {
+        console.error('SessionStore: Failed to batch delete from D1:', error);
+      });
+    }
+
+    return {
+      deleted: deleted.length,
+      failed,
+    };
+  }
+
+  /**
+   * Batch delete sessions from D1
+   * Uses a single SQL statement with IN clause for efficiency
+   */
+  private async batchDeleteFromD1(sessionIds: string[]): Promise<void> {
+    if (!this.env.DB || sessionIds.length === 0) {
+      return;
+    }
+
+    // Create placeholders for SQL IN clause
+    const placeholders = sessionIds.map(() => '?').join(',');
+    const query = `DELETE FROM sessions WHERE id IN (${placeholders})`;
+
+    await retryD1Operation(
+      async () => {
+        await this.env.DB.prepare(query).bind(...sessionIds).run();
+      },
+      'SessionStore.batchDeleteFromD1',
+      { maxRetries: 3 }
+    );
+  }
+
+  /**
    * List all active sessions for a user
    */
   async listUserSessions(userId: string): Promise<SessionResponse[]> {
+    await this.initializeState();
+
     const sessions: SessionResponse[] = [];
     const now = Date.now();
 
@@ -325,6 +465,8 @@ export class SessionStore {
    * Extend session expiration (Active TTL)
    */
   async extendSession(sessionId: string, additionalSeconds: number): Promise<Session | null> {
+    await this.initializeState();
+
     const session = await this.getSession(sessionId);
     if (!session) {
       return null;
@@ -335,6 +477,9 @@ export class SessionStore {
 
     // Update in memory
     this.sessions.set(sessionId, session);
+
+    // Persist to Durable Storage
+    await this.saveState();
 
     // Update in D1 - async
     this.saveToD1(session).catch((error) => {
@@ -409,6 +554,35 @@ export class SessionStore {
           JSON.stringify({
             success: true,
             deleted: deleted ? sessionId : null,
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      // POST /sessions/batch-delete - Batch invalidate multiple sessions
+      if (path === '/sessions/batch-delete' && request.method === 'POST') {
+        const body = (await request.json()) as { sessionIds?: string[] };
+
+        if (!body.sessionIds || !Array.isArray(body.sessionIds)) {
+          return new Response(
+            JSON.stringify({ error: 'Missing required field: sessionIds (array)' }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const result = await this.invalidateSessionsBatch(body.sessionIds);
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            deleted: result.deleted,
+            failed: result.failed.length,
+            failedIds: result.failed,
           }),
           {
             headers: { 'Content-Type': 'application/json' },
