@@ -252,34 +252,49 @@ export async function magicLinkVerifyHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Update user's email_verified and last_login_at
     const now = Date.now();
+
+    // Step 1: Create session using SessionStore Durable Object (FIRST)
+    // If this fails, token remains valid and user can retry
+    const sessionId = crypto.randomUUID();
+    const sessionStoreId = c.env.SESSION_STORE.idFromName(sessionId);
+    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+
+    try {
+      await sessionStore.fetch(
+        new Request(`https://session-store/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            userId: user.id,
+            email: user.email,
+            name: user.name,
+            expiresAt: now + 24 * 60 * 60 * 1000, // 24 hours
+          }),
+        })
+      );
+    } catch (error) {
+      console.error('Failed to create session:', error);
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to create session. Please try again.',
+        },
+        500
+      );
+    }
+
+    // Step 2: Update user's email_verified and last_login_at
+    // If this fails, session exists but email not verified - acceptable state
     await c.env.DB.prepare(
       'UPDATE users SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ?'
     )
       .bind(now, now, userId)
       .run();
 
-    // Create session using SessionStore Durable Object
-    const sessionId = crypto.randomUUID();
-    const sessionStoreId = c.env.SESSION_STORE.idFromName(sessionId);
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
-
-    await sessionStore.fetch(
-      new Request(`https://session-store/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          userId: user.id,
-          email: user.email,
-          name: user.name,
-          expiresAt: now + 24 * 60 * 60 * 1000, // 24 hours
-        }),
-      })
-    );
-
-    // Delete used token from KV
+    // Step 3: Delete used token from KV (LAST)
+    // Only delete token after all critical operations succeed
     await c.env.MAGIC_LINKS.delete(`token:${token}`);
 
     // If redirect_uri provided, redirect to it with session
