@@ -218,7 +218,8 @@
 
 		{#if loading}
 			<div class="space-y-3">
-				{#each Array(3) as _}
+				<!-- eslint-disable-next-line @typescript-eslint/no-unused-vars -->
+				{#each Array(3) as _, i (i)}
 					<div class="flex items-center gap-3">
 						<div class="h-10 w-10 animate-pulse rounded-full bg-gray-300 dark:bg-gray-700"></div>
 						<div class="flex-1 space-y-2">
@@ -232,7 +233,7 @@
 			<p class="text-center text-gray-500 dark:text-gray-400">No recent activity</p>
 		{:else}
 			<div class="space-y-3">
-				{#each recentActivity as activity}
+				{#each recentActivity as activity (activity.id)}
 					<div class="flex items-start gap-3">
 						<div
 							class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800"
