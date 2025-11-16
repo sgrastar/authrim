@@ -5,6 +5,7 @@ export * from './types/oidc';
 
 // Utils
 export * from './utils/crypto';
+export * from './utils/d1-retry';
 export * from './utils/dpop';
 export * from './utils/errors';
 export * from './utils/jwt';
@@ -24,3 +25,4 @@ export * from './storage/adapters/kv-adapter';
 
 // Durable Objects
 export { KeyManager } from './durable-objects/KeyManager';
+export { ChallengeStore } from './durable-objects/ChallengeStore';

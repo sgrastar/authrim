@@ -79,35 +79,52 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     sub,
   };
 
-  // Static user data for MVP
-  // In production, fetch from user database based on sub
+  // Fetch user data from D1 database
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(sub).first();
+
+  if (!user) {
+    return c.json(
+      {
+        error: 'invalid_token',
+        error_description: 'User not found',
+      },
+      401
+    );
+  }
+
+  // Parse address JSON if present
+  let address = null;
+  if (user.address_json) {
+    try {
+      address = JSON.parse(user.address_json as string);
+    } catch (error) {
+      console.error('Failed to parse address JSON:', error);
+    }
+  }
+
+  // Map D1 user record to OIDC userinfo claims
   const userData = {
-    name: 'Test User',
-    family_name: 'User',
-    given_name: 'Test',
-    middle_name: 'Demo',
-    nickname: 'Tester',
-    preferred_username: 'testuser',
-    profile: 'https://example.com/testuser',
-    picture: 'https://example.com/testuser/avatar.jpg',
-    website: 'https://example.com',
-    gender: 'unknown',
-    birthdate: '1990-01-01',
-    zoneinfo: 'Asia/Tokyo',
-    locale: 'en-US',
-    updated_at: Math.floor(Date.now() / 1000),
-    email: 'test@example.com',
-    email_verified: true,
-    phone_number: '+81 90-1234-5678',
-    phone_number_verified: true,
-    address: {
-      formatted: '1-2-3 Shibuya, Shibuya-ku, Tokyo 150-0002, Japan',
-      street_address: '1-2-3 Shibuya',
-      locality: 'Shibuya-ku',
-      region: 'Tokyo',
-      postal_code: '150-0002',
-      country: 'Japan',
-    },
+    name: user.name || undefined,
+    family_name: user.family_name || undefined,
+    given_name: user.given_name || undefined,
+    middle_name: user.middle_name || undefined,
+    nickname: user.nickname || undefined,
+    preferred_username: user.preferred_username || undefined,
+    profile: user.profile || undefined,
+    picture: user.picture || undefined,
+    website: user.website || undefined,
+    gender: user.gender || undefined,
+    birthdate: user.birthdate || undefined,
+    zoneinfo: user.zoneinfo || undefined,
+    locale: user.locale || undefined,
+    updated_at: user.updated_at
+      ? Math.floor(new Date(user.updated_at as string).getTime() / 1000)
+      : Math.floor(Date.now() / 1000),
+    email: user.email || undefined,
+    email_verified: user.email_verified === 1,
+    phone_number: user.phone_number || undefined,
+    phone_number_verified: user.phone_number_verified === 1,
+    address: address || undefined,
   };
 
   // Profile scope claims (OIDC Core 5.4)

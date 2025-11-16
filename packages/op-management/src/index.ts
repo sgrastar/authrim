@@ -152,5 +152,60 @@ app.onError((err, c) => {
   return c.json({ error: 'internal_server_error', message: 'An unexpected error occurred' }, 500);
 });
 
-// Export for Cloudflare Workers
-export default app;
+/**
+ * Scheduled handler for D1 database cleanup
+ * Runs daily at 2:00 AM UTC to clean up expired data
+ *
+ * Cron configuration in wrangler.toml:
+ * [triggers]
+ * crons = ["0 2 * * *"]  # Daily at 2:00 AM UTC
+ */
+async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
+  const now = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
+  console.log(`[Scheduled] D1 cleanup job started at ${new Date().toISOString()}`);
+
+  try {
+    // 1. Cleanup expired sessions (with 1-day grace period)
+    const sessionsResult = await env.DB.prepare(
+      'DELETE FROM sessions WHERE expires_at < ?'
+    )
+      .bind(now - 86400) // 1 day grace period
+      .run();
+    const sessionsDeleted = sessionsResult.meta?.changes || 0;
+    console.log(`[Scheduled] Deleted ${sessionsDeleted} expired sessions`);
+
+    // 2. Cleanup expired/used password reset tokens
+    const passwordTokensResult = await env.DB.prepare(
+      'DELETE FROM password_reset_tokens WHERE expires_at < ? OR used = 1'
+    )
+      .bind(now)
+      .run();
+    const passwordTokensDeleted = passwordTokensResult.meta?.changes || 0;
+    console.log(`[Scheduled] Deleted ${passwordTokensDeleted} expired/used password reset tokens`);
+
+    // 3. Cleanup old audit logs (older than 90 days)
+    // Keep audit logs for 90 days for compliance (adjust based on requirements)
+    const ninetyDaysAgo = now - 90 * 86400;
+    const auditLogsResult = await env.DB.prepare(
+      'DELETE FROM audit_log WHERE created_at < ?'
+    )
+      .bind(ninetyDaysAgo)
+      .run();
+    const auditLogsDeleted = auditLogsResult.meta?.changes || 0;
+    console.log(`[Scheduled] Deleted ${auditLogsDeleted} audit logs older than 90 days`);
+
+    console.log(
+      `[Scheduled] D1 cleanup completed: ${sessionsDeleted} sessions, ${passwordTokensDeleted} tokens, ${auditLogsDeleted} audit logs`
+    );
+  } catch (error) {
+    console.error('[Scheduled] D1 cleanup job failed:', error);
+    // Don't throw - we don't want to mark the cron job as failed
+    // Errors are logged for monitoring
+  }
+}
+
+// Export for Cloudflare Workers with scheduled handler
+export default {
+  fetch: app.fetch,
+  scheduled: handleScheduled,
+};

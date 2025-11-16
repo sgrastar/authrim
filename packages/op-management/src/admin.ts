@@ -1008,19 +1008,23 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
         sessions: Array<{ id: string }>;
       };
 
-      // Invalidate all sessions in SessionStore
-      await Promise.all(
-        data.sessions.map(async (session) => {
-          const deleteResponse = await sessionStore.fetch(
-            new Request(`https://session-store/session/${session.id}`, {
-              method: 'DELETE',
-            })
-          );
-          if (deleteResponse.ok) {
-            revokedCount++;
-          }
-        })
-      );
+      // Invalidate all sessions in SessionStore using batch API
+      // This avoids N+1 DO calls and improves performance
+      if (data.sessions.length > 0) {
+        const sessionIds = data.sessions.map((s) => s.id);
+        const batchDeleteResponse = await sessionStore.fetch(
+          new Request('https://session-store/sessions/batch-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionIds }),
+          })
+        );
+
+        if (batchDeleteResponse.ok) {
+          const result = (await batchDeleteResponse.json()) as { deleted: number };
+          revokedCount = result.deleted;
+        }
+      }
     }
 
     // Delete all sessions from D1

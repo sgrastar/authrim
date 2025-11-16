@@ -73,6 +73,14 @@ export interface ConsumeCodeResponse {
 }
 
 /**
+ * Persistent state stored in Durable Storage
+ */
+interface AuthorizationCodeStoreState {
+  codes: Record<string, AuthorizationCode>; // Serializable format (Map cannot be serialized directly)
+  lastCleanup: number;
+}
+
+/**
  * AuthorizationCodeStore Durable Object
  *
  * Provides distributed authorization code storage with one-time use guarantee.
@@ -82,6 +90,7 @@ export class AuthorizationCodeStore {
   private env: Env;
   private codes: Map<string, AuthorizationCode> = new Map();
   private cleanupInterval: number | null = null;
+  private initialized: boolean = false;
 
   // Configuration
   private readonly CODE_TTL = 60; // 60 seconds per OAuth 2.0 Security BCP
@@ -92,8 +101,56 @@ export class AuthorizationCodeStore {
     this.state = state;
     this.env = env;
 
-    // Start periodic cleanup
+    // State will be initialized on first request
+  }
+
+  /**
+   * Initialize state from Durable Storage
+   * Must be called before any code operations
+   */
+  private async initializeState(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    try {
+      const stored = await this.state.storage.get<AuthorizationCodeStoreState>('state');
+
+      if (stored) {
+        // Restore authorization codes from Durable Storage
+        this.codes = new Map(Object.entries(stored.codes));
+        console.log(
+          `AuthCodeStore: Restored ${this.codes.size} authorization codes from Durable Storage`
+        );
+      }
+    } catch (error) {
+      console.error('AuthCodeStore: Failed to initialize from Durable Storage:', error);
+      // Continue with empty state
+    }
+
+    this.initialized = true;
+
+    // Start periodic cleanup after initialization
     this.startCleanup();
+  }
+
+  /**
+   * Save current state to Durable Storage
+   * Converts Map to serializable object
+   */
+  private async saveState(): Promise<void> {
+    try {
+      const stateToSave: AuthorizationCodeStoreState = {
+        codes: Object.fromEntries(this.codes),
+        lastCleanup: Date.now(),
+      };
+
+      await this.state.storage.put('state', stateToSave);
+    } catch (error) {
+      console.error('AuthCodeStore: Failed to save to Durable Storage:', error);
+      // Don't throw - we don't want to break the code operation
+      // But this should be monitored/alerted in production
+    }
   }
 
   /**
@@ -108,9 +165,9 @@ export class AuthorizationCodeStore {
   }
 
   /**
-   * Cleanup expired codes from memory
+   * Cleanup expired codes from memory and Durable Storage
    */
-  private cleanupExpiredCodes(): void {
+  private async cleanupExpiredCodes(): Promise<void> {
     const now = Date.now();
     let cleaned = 0;
 
@@ -123,6 +180,8 @@ export class AuthorizationCodeStore {
 
     if (cleaned > 0) {
       console.log(`AuthCodeStore: Cleaned up ${cleaned} expired codes`);
+      // Persist cleanup to Durable Storage
+      await this.saveState();
     }
   }
 
@@ -177,6 +236,8 @@ export class AuthorizationCodeStore {
    * Store authorization code
    */
   async storeCode(request: StoreCodeRequest): Promise<{ success: boolean; expiresAt: number }> {
+    await this.initializeState();
+
     // DDoS protection: Limit codes per user
     const userCodeCount = this.countUserCodes(request.userId);
     if (userCodeCount >= this.MAX_CODES_PER_USER) {
@@ -201,6 +262,9 @@ export class AuthorizationCodeStore {
 
     this.codes.set(request.code, authCode);
 
+    // Persist to Durable Storage
+    await this.saveState();
+
     return {
       success: true,
       expiresAt: authCode.expiresAt,
@@ -211,6 +275,8 @@ export class AuthorizationCodeStore {
    * Consume authorization code (one-time use, atomic operation)
    */
   async consumeCode(request: ConsumeCodeRequest): Promise<ConsumeCodeResponse> {
+    await this.initializeState();
+
     const stored = this.codes.get(request.code);
 
     if (!stored) {
@@ -220,6 +286,7 @@ export class AuthorizationCodeStore {
     // Check expiration
     if (this.isExpired(stored)) {
       this.codes.delete(request.code);
+      await this.saveState();
       throw new Error('invalid_grant: Authorization code expired');
     }
 
@@ -263,6 +330,9 @@ export class AuthorizationCodeStore {
     stored.used = true;
     this.codes.set(request.code, stored);
 
+    // Persist to Durable Storage (CRITICAL for DO restart resilience)
+    await this.saveState();
+
     // Return authorization data
     return {
       userId: stored.userId,
@@ -277,6 +347,7 @@ export class AuthorizationCodeStore {
    * Check if code exists (for testing/debugging)
    */
   async hasCode(code: string): Promise<boolean> {
+    await this.initializeState();
     const stored = this.codes.get(code);
     return stored !== undefined && !this.isExpired(stored);
   }
@@ -285,7 +356,12 @@ export class AuthorizationCodeStore {
    * Delete code manually (cleanup)
    */
   async deleteCode(code: string): Promise<boolean> {
-    return this.codes.delete(code);
+    await this.initializeState();
+    const deleted = this.codes.delete(code);
+    if (deleted) {
+      await this.saveState();
+    }
+    return deleted;
   }
 
   /**

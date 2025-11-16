@@ -87,26 +87,24 @@ export async function magicLinkSendHandler(c: Context<{ Bindings: Env }>) {
     const token = crypto.randomUUID();
     const now = Date.now();
 
-    // Store token in KV with TTL (15 minutes)
-    if (!c.env.MAGIC_LINKS) {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Magic Links KV namespace not configured',
-        },
-        500
-      );
-    }
+    // Store token in ChallengeStore DO with TTL (15 minutes)
+    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    await c.env.MAGIC_LINKS.put(
-      `token:${token}`,
-      JSON.stringify({
-        userId: user.id,
-        email,
-        redirect_uri: redirect_uri || null,
-        createdAt: now,
-      }),
-      { expirationTtl: MAGIC_LINK_TTL }
+    await challengeStore.fetch(
+      new Request('https://challenge-store/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: `magic_link:${token}`,
+          type: 'magic_link',
+          userId: user.id as string,
+          challenge: token, // Token is the challenge value
+          ttl: MAGIC_LINK_TTL, // 15 minutes
+          email,
+          redirectUri: redirect_uri || undefined,
+        }),
+      })
     );
 
     // Construct magic link URL
@@ -210,34 +208,56 @@ export async function magicLinkVerifyHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Retrieve token data from KV
-    if (!c.env.MAGIC_LINKS) {
+    // Consume token from ChallengeStore DO (atomic operation)
+    // This prevents parallel replay attacks
+    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+
+    let userId: string;
+    let email: string;
+    let storedRedirectUri: string | undefined;
+    try {
+      const consumeResponse = await challengeStore.fetch(
+        new Request('https://challenge-store/challenge/consume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: `magic_link:${token}`,
+            type: 'magic_link',
+            challenge: token,
+          }),
+        })
+      );
+
+      if (!consumeResponse.ok) {
+        const error = await consumeResponse.json();
+        return c.json(
+          {
+            error: 'invalid_token',
+            error_description: error.error_description || 'Magic link token is invalid or expired',
+          },
+          400
+        );
+      }
+
+      const challengeData = (await consumeResponse.json()) as {
+        challenge: string;
+        userId: string;
+        email?: string;
+        redirectUri?: string;
+      };
+      userId = challengeData.userId;
+      email = challengeData.email || '';
+      storedRedirectUri = challengeData.redirectUri;
+    } catch (error) {
       return c.json(
         {
           error: 'server_error',
-          error_description: 'Magic Links KV namespace not configured',
+          error_description: 'Failed to consume magic link token',
         },
         500
       );
     }
-
-    const tokenData = await c.env.MAGIC_LINKS.get(`token:${token}`, 'json');
-    if (!tokenData) {
-      return c.json(
-        {
-          error: 'invalid_token',
-          error_description: 'Magic link token is invalid or expired',
-        },
-        400
-      );
-    }
-
-    const { userId, email } = tokenData as {
-      userId: string;
-      email: string;
-      redirect_uri?: string;
-      createdAt: number;
-    };
 
     // Get user details
     const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first();
@@ -252,35 +272,49 @@ export async function magicLinkVerifyHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Update user's email_verified and last_login_at
     const now = Date.now();
+
+    // Step 1: Create session using SessionStore Durable Object (FIRST)
+    // If this fails, token remains valid and user can retry
+    const sessionId = crypto.randomUUID();
+    const sessionStoreId = c.env.SESSION_STORE.idFromName(sessionId);
+    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+
+    try {
+      await sessionStore.fetch(
+        new Request(`https://session-store/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            userId: user.id,
+            email: user.email,
+            name: user.name,
+            expiresAt: now + 24 * 60 * 60 * 1000, // 24 hours
+          }),
+        })
+      );
+    } catch (error) {
+      console.error('Failed to create session:', error);
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to create session. Please try again.',
+        },
+        500
+      );
+    }
+
+    // Step 2: Update user's email_verified and last_login_at
+    // If this fails, session exists but email not verified - acceptable state
     await c.env.DB.prepare(
       'UPDATE users SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ?'
     )
       .bind(now, now, userId)
       .run();
 
-    // Create session using SessionStore Durable Object
-    const sessionId = crypto.randomUUID();
-    const sessionStoreId = c.env.SESSION_STORE.idFromName(sessionId);
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
-
-    await sessionStore.fetch(
-      new Request(`https://session-store/create`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          userId: user.id,
-          email: user.email,
-          name: user.name,
-          expiresAt: now + 24 * 60 * 60 * 1000, // 24 hours
-        }),
-      })
-    );
-
-    // Delete used token from KV
-    await c.env.MAGIC_LINKS.delete(`token:${token}`);
+    // Note: Challenge token is already consumed by ChallengeStore DO (atomic operation)
+    // No need to explicitly delete - consumed challenges are auto-cleaned by DO
 
     // If redirect_uri provided, redirect to it with session
     if (redirect_uri) {
