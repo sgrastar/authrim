@@ -152,7 +152,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
 
       if (!consumeResponse.ok) {
-        const error = await consumeResponse.json();
+        const error = (await consumeResponse.json()) as { error_description?: string };
         return c.json(
           {
             error: 'invalid_token',
