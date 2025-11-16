@@ -1,58 +1,15 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    /* Language and Environment */
-    "target": "ES2022",
-    "lib": ["ES2022"],
-
-    /* Modules */
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-
-    /* Emit */
-    "outDir": "./dist",
-    "noEmit": false,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-
-    /* Interop Constraints */
-    "isolatedModules": true,
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-
-    /* Type Checking */
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "noImplicitReturns": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-
-    /* Skip Lib Check */
-    "skipLibCheck": true,
-
-    /* Path Mapping */
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"],
-      "@handlers/*": ["./src/handlers/*"],
-      "@utils/*": ["./src/utils/*"],
-      "@types/*": ["./src/types/*"]
-    },
-
-    /* Cloudflare Workers */
-    "types": ["@cloudflare/workers-types", "@types/node"]
+    "noEmit": true
   },
   "include": [
-    "src/**/*"
+    "packages/*/src/**/*",
+    "test/**/*"
   ],
   "exclude": [
     "node_modules",
     "dist",
-    ".wrangler",
-    "test"
+    ".wrangler"
   ]
 }
