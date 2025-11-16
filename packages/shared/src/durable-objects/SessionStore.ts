@@ -351,6 +351,66 @@ export class SessionStore {
   }
 
   /**
+   * Batch invalidate multiple sessions
+   * Optimized for admin operations (e.g., delete all user sessions)
+   */
+  async invalidateSessionsBatch(sessionIds: string[]): Promise<{ deleted: number; failed: string[] }> {
+    await this.initializeState();
+
+    const deleted: string[] = [];
+    const failed: string[] = [];
+
+    // 1. Remove from memory
+    for (const sessionId of sessionIds) {
+      if (this.sessions.has(sessionId)) {
+        this.sessions.delete(sessionId);
+        deleted.push(sessionId);
+      } else {
+        failed.push(sessionId);
+      }
+    }
+
+    // 2. Persist to Durable Storage (single write for all deletions)
+    if (deleted.length > 0) {
+      await this.saveState();
+    }
+
+    // 3. Delete from D1 in batch - async, don't wait
+    if (deleted.length > 0 && this.env.DB) {
+      this.batchDeleteFromD1(deleted).catch((error) => {
+        console.error('SessionStore: Failed to batch delete from D1:', error);
+      });
+    }
+
+    return {
+      deleted: deleted.length,
+      failed,
+    };
+  }
+
+  /**
+   * Batch delete sessions from D1
+   * Uses a single SQL statement with IN clause for efficiency
+   */
+  private async batchDeleteFromD1(sessionIds: string[]): Promise<void> {
+    if (!this.env.DB || sessionIds.length === 0) {
+      return;
+    }
+
+    // Create placeholders for SQL IN clause
+    const placeholders = sessionIds.map(() => '?').join(',');
+    const query = `DELETE FROM sessions WHERE id IN (${placeholders})`;
+
+    await retryD1Operation(
+      async () => {
+        await this.env.DB.prepare(query).bind(...sessionIds).run();
+      },
+      'SessionStore.batchDeleteFromD1',
+      { maxRetries: 3 }
+    );
+  }
+
+  /**
    * List all active sessions for a user
    */
   async listUserSessions(userId: string): Promise<SessionResponse[]> {
@@ -494,6 +554,35 @@ export class SessionStore {
           JSON.stringify({
             success: true,
             deleted: deleted ? sessionId : null,
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      // POST /sessions/batch-delete - Batch invalidate multiple sessions
+      if (path === '/sessions/batch-delete' && request.method === 'POST') {
+        const body = (await request.json()) as { sessionIds?: string[] };
+
+        if (!body.sessionIds || !Array.isArray(body.sessionIds)) {
+          return new Response(
+            JSON.stringify({ error: 'Missing required field: sessionIds (array)' }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const result = await this.invalidateSessionsBatch(body.sessionIds);
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            deleted: result.deleted,
+            failed: result.failed.length,
+            failedIds: result.failed,
           }),
           {
             headers: { 'Content-Type': 'application/json' },
