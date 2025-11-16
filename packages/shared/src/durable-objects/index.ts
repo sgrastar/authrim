@@ -17,6 +17,7 @@ export { SessionStore } from './SessionStore';
 export { AuthorizationCodeStore } from './AuthorizationCodeStore';
 export { RefreshTokenRotator } from './RefreshTokenRotator';
 export { KeyManager } from './KeyManager';
+export { ChallengeStore } from './ChallengeStore';
 
 // Export types for external use
 export type { Session, SessionData, CreateSessionRequest, SessionResponse } from './SessionStore';
@@ -35,6 +36,14 @@ export type {
   CreateFamilyRequest,
   RevokeFamilyRequest,
 } from './RefreshTokenRotator';
+
+export type {
+  Challenge,
+  ChallengeType,
+  StoreChallengeRequest,
+  ConsumeChallengeRequest,
+  ConsumeChallengeResponse,
+} from './ChallengeStore';
 
 /**
  * Default export for ES Module compatibility
