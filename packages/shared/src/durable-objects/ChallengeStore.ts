@@ -14,6 +14,7 @@
  * - passkey_registration: WebAuthn registration challenge
  * - passkey_authentication: WebAuthn authentication challenge
  * - magic_link: Email-based magic link token
+ * - session_token: ITP-bypass session token (single-use)
  */
 
 import type { Env } from '../types/env';
@@ -21,7 +22,7 @@ import type { Env } from '../types/env';
 /**
  * Challenge types
  */
-export type ChallengeType = 'passkey_registration' | 'passkey_authentication' | 'magic_link';
+export type ChallengeType = 'passkey_registration' | 'passkey_authentication' | 'magic_link' | 'session_token';
 
 /**
  * Challenge metadata
