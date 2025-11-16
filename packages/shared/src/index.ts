@@ -25,3 +25,4 @@ export * from './storage/adapters/kv-adapter';
 
 // Durable Objects
 export { KeyManager } from './durable-objects/KeyManager';
+export { ChallengeStore } from './durable-objects/ChallengeStore';
