@@ -69,7 +69,7 @@
 		<!-- Navigation -->
 		<nav class="flex-1 overflow-y-auto p-4">
 			<ul class="space-y-1">
-				{#each navItems as item}
+				{#each navItems as item (item.path)}
 					<li>
 						<a
 							href={item.path}
