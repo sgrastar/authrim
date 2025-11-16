@@ -8,8 +8,6 @@ import {
   validateState,
   validateNonce,
 } from '@enrai/shared';
-import { storeAuthCode } from '@enrai/shared';
-import type { AuthCodeData } from '@enrai/shared';
 import { generateSecureRandomString } from '@enrai/shared';
 
 /**
@@ -355,31 +353,43 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const validClientId: string = client_id as string;
   const validScope: string = scope as string;
 
-  // Store authorization code with metadata
-  const authCodeData: AuthCodeData = {
-    client_id: validClientId,
-    redirect_uri: validRedirectUri,
-    scope: validScope,
-    sub,
-    timestamp: Date.now(),
-  };
-
-  // Add optional parameters only if they are provided
-  if (nonce) {
-    authCodeData.nonce = nonce;
-  }
-  if (code_challenge && code_challenge_method) {
-    authCodeData.code_challenge = code_challenge;
-    authCodeData.code_challenge_method = code_challenge_method;
-  }
-  if (claims) {
-    authCodeData.claims = claims;
-  }
-
+  // Store authorization code using AuthorizationCodeStore Durable Object
+  // This provides strong consistency guarantees and replay attack prevention
   try {
-    await storeAuthCode(c.env, code, authCodeData);
+    const authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
+    const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
+
+    const storeResponse = await authCodeStore.fetch(
+      new Request('https://auth-code-store/code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          clientId: validClientId,
+          redirectUri: validRedirectUri,
+          userId: sub,
+          scope: validScope,
+          codeChallenge: code_challenge,
+          codeChallengeMethod: code_challenge_method,
+          nonce,
+          state,
+        }),
+      })
+    );
+
+    if (!storeResponse.ok) {
+      const errorData = await storeResponse.json();
+      console.error('Failed to store authorization code:', errorData);
+      return redirectWithError(
+        c,
+        validRedirectUri,
+        'server_error',
+        'Failed to process authorization request',
+        state
+      );
+    }
   } catch (error) {
-    console.error('Failed to store authorization code:', error);
+    console.error('AuthCodeStore DO error:', error);
     return redirectWithError(
       c,
       validRedirectUri,
