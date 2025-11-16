@@ -69,6 +69,32 @@ function createMockEnv(): Env {
       }),
     } as unknown as DurableObjectNamespace,
     KEY_MANAGER: {} as DurableObjectNamespace,
+    RATE_LIMITER: {
+      idFromName: vi.fn().mockReturnValue('rate-limiter-do-id'),
+      get: vi.fn().mockReturnValue({
+        fetch: vi
+          .fn()
+          .mockResolvedValue(
+            new Response(JSON.stringify({ allowed: true, current: 1, limit: 100 }), { status: 200 })
+          ),
+      }),
+    } as unknown as DurableObjectNamespace,
+    PAR_REQUEST_STORE: {
+      idFromName: vi.fn().mockReturnValue('par-request-do-id'),
+      get: vi.fn().mockReturnValue({
+        fetch: vi
+          .fn()
+          .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 })),
+      }),
+    } as unknown as DurableObjectNamespace,
+    DPOP_JTI_STORE: {
+      idFromName: vi.fn().mockReturnValue('dpop-jti-do-id'),
+      get: vi.fn().mockReturnValue({
+        fetch: vi
+          .fn()
+          .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 })),
+      }),
+    } as unknown as DurableObjectNamespace,
     AUTH_CODES: {} as KVNamespace,
     STATE_STORE: {} as KVNamespace,
     NONCE_STORE: {} as KVNamespace,

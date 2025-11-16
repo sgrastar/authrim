@@ -334,13 +334,17 @@ export class KeyManager {
    * Handle HTTP requests to the KeyManager Durable Object
    */
   async fetch(request: Request): Promise<Response> {
-    // Authenticate all requests
-    if (!this.authenticate(request)) {
-      return this.unauthorizedResponse();
-    }
-
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // Public endpoints (no authentication required)
+    // /jwks is public because it only returns public keys for JWT verification
+    const isPublicEndpoint = path === '/jwks' && request.method === 'GET';
+
+    // Authenticate all requests except public endpoints
+    if (!isPublicEndpoint && !this.authenticate(request)) {
+      return this.unauthorizedResponse();
+    }
 
     try {
       // GET /active - Get active signing key

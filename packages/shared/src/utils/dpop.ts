@@ -6,7 +6,7 @@
 
 import { importJWK, jwtVerify, calculateJwkThumbprint, base64url, type JWK } from 'jose';
 import type { DPoPClaims, DPoPValidationResult } from '../types/oidc';
-import type { KVNamespace } from '@cloudflare/workers-types';
+import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
 
 interface DPoPHeader {
   typ: string;
@@ -20,7 +20,9 @@ interface DPoPHeader {
  * @param method - HTTP method (e.g., 'POST', 'GET')
  * @param url - Full request URL
  * @param accessToken - Optional access token for validation (when present, ath claim must match)
- * @param nonceStore - KV namespace for nonce tracking (replay protection)
+ * @param nonceStore - KV namespace for nonce tracking (replay protection - fallback only)
+ * @param dpopJTIStore - DPoP JTI Store DO for atomic replay protection (issue #12)
+ * @param clientId - Optional client ID for JTI binding
  * @returns Validation result with JWK thumbprint if valid
  */
 export async function validateDPoPProof(
@@ -28,7 +30,9 @@ export async function validateDPoPProof(
   method: string,
   url: string,
   accessToken?: string,
-  nonceStore?: KVNamespace
+  nonceStore?: KVNamespace,
+  dpopJTIStore?: DurableObjectNamespace,
+  clientId?: string
 ): Promise<DPoPValidationResult> {
   try {
     // Parse JWT header without verification first to extract JWK
@@ -210,20 +214,67 @@ export async function validateDPoPProof(
     }
 
     // Replay protection: check if jti has been used before
-    if (nonceStore) {
-      const usedJti = await nonceStore.get(`dpop_jti:${claims.jti}`);
-      if (usedJti) {
-        return {
-          valid: false,
-          error: 'use_dpop_nonce',
-          error_description: 'DPoP proof jti has already been used (replay attack detected)',
-        };
-      }
+    // Issue #12: Use DPoPJTIStore DO for atomic check-and-store (prevents race conditions)
+    // Falls back to KV-based replay protection if DO is unavailable
+    try {
+      if (dpopJTIStore) {
+        // Use DO ID based on client_id (or jti if no client_id) to shard load
+        const shardKey = clientId || claims.jti;
+        const id = dpopJTIStore.idFromName(shardKey);
+        const stub = dpopJTIStore.get(id);
 
-      // Store jti with TTL of 60 seconds (same as proof freshness window)
-      await nonceStore.put(`dpop_jti:${claims.jti}`, '1', {
-        expirationTtl: 60,
-      });
+        // Atomic check-and-store in DPoPJTIStore DO
+        const response = await stub.fetch('http://internal/check-and-store', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jti: claims.jti,
+            client_id: clientId,
+            iat: claims.iat,
+            ttl: 3600, // 1 hour TTL (longer than 60s freshness window for safety)
+          }),
+        });
+
+        if (!response.ok) {
+          // DO detected replay or failed
+          if (response.status === 400) {
+            const error = (await response.json()) as {
+              error: string;
+              error_description: string;
+            };
+            return {
+              valid: false,
+              error: 'use_dpop_nonce',
+              error_description:
+                error.error_description || 'DPoP proof jti has already been used (replay attack detected)',
+            };
+          }
+          // DO error, fall through to KV fallback
+          console.warn('DPoPJTIStore DO failed, falling back to KV');
+          throw new Error('DO failed');
+        }
+        // DO succeeded, JTI stored atomically
+      } else {
+        throw new Error('DO not available');
+      }
+    } catch (error) {
+      console.error('DPoP JTI DO error, using KV fallback:', error);
+      // Fallback to KV-based replay protection (non-atomic, has race condition)
+      if (nonceStore) {
+        const usedJti = await nonceStore.get(`dpop_jti:${claims.jti}`);
+        if (usedJti) {
+          return {
+            valid: false,
+            error: 'use_dpop_nonce',
+            error_description: 'DPoP proof jti has already been used (replay attack detected)',
+          };
+        }
+
+        // Store jti with TTL of 60 seconds (same as proof freshness window)
+        await nonceStore.put(`dpop_jti:${claims.jti}`, '1', {
+          expirationTtl: 60,
+        });
+      }
     }
 
     // Calculate JWK thumbprint (jkt)

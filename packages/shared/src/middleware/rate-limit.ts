@@ -59,8 +59,67 @@ function getClientIP(c: Context): string {
 
 /**
  * Check if rate limit is exceeded
+ *
+ * Uses RateLimiterCounter DO for atomic, precise rate limiting (issue #6).
+ * Falls back to KV-based rate limiting if DO is unavailable.
  */
 async function checkRateLimit(
+  env: Env,
+  clientIP: string,
+  config: RateLimitConfig
+): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
+  // Try DO-based rate limiting first
+  try {
+    if (env.RATE_LIMITER) {
+      // Use DO ID based on IP to shard load
+      const id = env.RATE_LIMITER.idFromName(clientIP);
+      const stub = env.RATE_LIMITER.get(id);
+
+      // Call DO to increment counter atomically
+      const response = await stub.fetch('http://internal/increment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientIP,
+          config: {
+            windowSeconds: config.windowSeconds,
+            maxRequests: config.maxRequests,
+          },
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json<{
+          allowed: boolean;
+          current: number;
+          limit: number;
+          resetAt: number;
+          retryAfter: number;
+        }>();
+
+        return {
+          allowed: result.allowed,
+          remaining: Math.max(0, result.limit - result.current),
+          resetAt: result.resetAt,
+        };
+      }
+
+      // DO failed, fall through to KV fallback
+      console.warn('RateLimiterCounter DO failed, falling back to KV');
+    }
+  } catch (error) {
+    console.error('Rate limiting DO error, falling back to KV:', error);
+  }
+
+  // Fallback to KV-based rate limiting
+  return await checkRateLimitKV(env, clientIP, config);
+}
+
+/**
+ * KV-based rate limiting (fallback)
+ * Used when RateLimiterCounter DO is unavailable
+ */
+async function checkRateLimitKV(
   env: Env,
   clientIP: string,
   config: RateLimitConfig

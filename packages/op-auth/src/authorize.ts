@@ -86,10 +86,60 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Retrieve request parameters from KV storage
-    const requestData = await c.env.STATE_STORE.get(`request_uri:${request_uri}`);
+    // Retrieve request parameters atomically (issue #11: single-use guarantee)
+    // Try DO first, fall back to KV
+    let parsedData: {
+      client_id: string;
+      response_type: string;
+      redirect_uri: string;
+      scope: string;
+      state?: string;
+      nonce?: string;
+      code_challenge?: string;
+      code_challenge_method?: string;
+      claims?: string;
+      response_mode?: string;
+    } | null = null;
 
-    if (!requestData) {
+    try {
+      if (c.env.PAR_REQUEST_STORE && client_id) {
+        // Use PARRequestStore DO for atomic consume
+        const id = c.env.PAR_REQUEST_STORE.idFromName(client_id);
+        const stub = c.env.PAR_REQUEST_STORE.get(id);
+
+        const response = await stub.fetch('http://internal/request/consume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestUri: request_uri,
+            client_id: client_id,
+          }),
+        });
+
+        if (response.ok) {
+          parsedData = (await response.json()) as typeof parsedData;
+        } else {
+          throw new Error('DO consume failed');
+        }
+      } else {
+        throw new Error('DO not available');
+      }
+    } catch (error) {
+      console.error('PAR DO consume error, using KV fallback:', error);
+      // Fallback to KV
+      const requestData = await c.env.STATE_STORE.get(`request_uri:${request_uri}`);
+      if (requestData) {
+        try {
+          parsedData = JSON.parse(requestData) as typeof parsedData;
+          // Delete from KV (non-atomic, but best effort)
+          await c.env.STATE_STORE.delete(`request_uri:${request_uri}`);
+        } catch {
+          // Parse error handled below
+        }
+      }
+    }
+
+    if (!parsedData) {
       return c.json(
         {
           error: 'invalid_request',
@@ -99,22 +149,23 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    try {
-      const parsedData = JSON.parse(requestData) as {
-        client_id: string;
-        response_type: string;
-        redirect_uri: string;
-        scope: string;
-        state?: string;
-        nonce?: string;
-        code_challenge?: string;
-        code_challenge_method?: string;
-        claims?: string;
-        response_mode?: string;
-      };
+    // Type assertion to help TypeScript understand parsedData is non-null after null check
+    const parData: {
+      client_id: string;
+      response_type: string;
+      redirect_uri: string;
+      scope: string;
+      state?: string;
+      nonce?: string;
+      code_challenge?: string;
+      code_challenge_method?: string;
+      claims?: string;
+      response_mode?: string;
+    } = parsedData;
 
+    try {
       // RFC 9126: When using request_uri, client_id from query MUST match client_id from PAR
-      if (client_id && client_id !== parsedData.client_id) {
+      if (client_id && client_id !== parData.client_id) {
         return c.json(
           {
             error: 'invalid_request',
@@ -125,19 +176,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Load parameters from PAR request
-      response_type = parsedData.response_type;
-      client_id = parsedData.client_id;
-      redirect_uri = parsedData.redirect_uri;
-      scope = parsedData.scope;
-      state = parsedData.state;
-      nonce = parsedData.nonce;
-      code_challenge = parsedData.code_challenge;
-      code_challenge_method = parsedData.code_challenge_method;
-      claims = parsedData.claims;
-      response_mode = parsedData.response_mode;
-
-      // RFC 9126: request_uri is single-use, delete after retrieval
-      await c.env.STATE_STORE.delete(`request_uri:${request_uri}`);
+      response_type = parData.response_type;
+      client_id = parData.client_id;
+      redirect_uri = parData.redirect_uri;
+      scope = parData.scope;
+      state = parData.state;
+      nonce = parData.nonce;
+      code_challenge = parData.code_challenge;
+      code_challenge_method = parData.code_challenge_method;
+      claims = parData.claims;
+      response_mode = parData.response_mode;
     } catch {
       return c.json(
         {
