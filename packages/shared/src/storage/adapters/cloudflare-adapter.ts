@@ -818,21 +818,63 @@ export class PasskeyStore implements IPasskeyStore {
 
   async updateCounter(passkeyId: string, counter: number): Promise<Passkey> {
     const now = Math.floor(Date.now() / 1000);
+    const MAX_RETRIES = 3;
 
-    await this.adapter.execute('UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?', [
-      counter,
-      now,
-      passkeyId,
-    ]);
+    // Retry loop for Compare-and-Swap (CAS) to handle concurrent updates
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      // 1. Read current counter value
+      const currentResults = await this.adapter.query<Passkey>(
+        'SELECT * FROM passkeys WHERE id = ?',
+        [passkeyId]
+      );
 
-    const results = await this.adapter.query<Passkey>('SELECT * FROM passkeys WHERE id = ?', [
-      passkeyId,
-    ]);
-    if (!results[0]) {
-      throw new Error(`Passkey not found: ${passkeyId}`);
+      if (!currentResults[0]) {
+        throw new Error(`Passkey not found: ${passkeyId}`);
+      }
+
+      const currentPasskey = currentResults[0];
+      const currentCounter = currentPasskey.counter;
+
+      // 2. Validate that new counter is greater than current (WebAuthn requirement)
+      if (counter <= currentCounter) {
+        throw new Error(
+          `Counter rollback detected: new counter ${counter} <= current counter ${currentCounter}. Possible cloned authenticator.`
+        );
+      }
+
+      // 3. Conditional UPDATE (Compare-and-Swap)
+      // Only update if counter hasn't changed since we read it
+      const result = await this.adapter.execute(
+        'UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ? AND counter = ?',
+        [counter, now, passkeyId, currentCounter]
+      );
+
+      // 4. Check if update succeeded (affected rows > 0)
+      if (result.meta && result.meta.changes && result.meta.changes > 0) {
+        // Success! Return updated passkey
+        return {
+          ...currentPasskey,
+          counter,
+          last_used_at: now,
+        };
+      }
+
+      // Update failed - another request modified the counter
+      // Retry the operation
+      console.warn(
+        `Passkey counter CAS conflict for ${passkeyId}, attempt ${attempt + 1}/${MAX_RETRIES}`
+      );
+
+      // Small delay before retry to reduce contention
+      if (attempt < MAX_RETRIES - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+      }
     }
 
-    return results[0];
+    // Max retries exceeded
+    throw new Error(
+      `Failed to update passkey counter after ${MAX_RETRIES} attempts due to concurrent modifications`
+    );
   }
 
   async delete(passkeyId: string): Promise<void> {
