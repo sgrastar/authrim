@@ -66,21 +66,28 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
 
     // Generate short-lived token
     const token = crypto.randomUUID();
-    const tokenKey = `session_token:${token}`;
 
-    // Store token in KV with 5 minute TTL
-    const tokenData = {
-      sessionId: session.id,
-      userId: session.userId,
-      used: false,
-      createdAt: Date.now(),
-    };
+    // Store token in ChallengeStore DO with 5 minute TTL
+    // This provides atomic single-use guarantee (prevents race conditions)
+    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    // Use STATE_STORE as fallback if KV is not configured
-    const kvStore = c.env.KV || c.env.STATE_STORE;
-    await kvStore.put(tokenKey, JSON.stringify(tokenData), {
-      expirationTtl: 5 * 60, // 5 minutes
-    });
+    await challengeStore.fetch(
+      new Request('https://challenge-store/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: `session_token:${token}`,
+          type: 'session_token',
+          userId: session.userId,
+          challenge: token,
+          ttl: 5 * 60, // 5 minutes
+          metadata: {
+            sessionId: session.id,
+          },
+        }),
+      })
+    );
 
     return c.json({
       token,
@@ -124,51 +131,62 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Get token data from KV
-    const tokenKey = `session_token:${token}`;
-    const kvStore = c.env.KV || c.env.STATE_STORE;
-    const tokenDataStr = await kvStore.get(tokenKey);
+    // Consume token from ChallengeStore DO (atomic operation)
+    // This prevents race conditions and ensures single-use
+    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    if (!tokenDataStr) {
+    let sessionId: string;
+    let userId: string;
+    try {
+      const consumeResponse = await challengeStore.fetch(
+        new Request('https://challenge-store/challenge/consume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: `session_token:${token}`,
+            type: 'session_token',
+            challenge: token,
+          }),
+        })
+      );
+
+      if (!consumeResponse.ok) {
+        const error = await consumeResponse.json();
+        return c.json(
+          {
+            error: 'invalid_token',
+            error_description: error.error_description || 'Token not found, expired, or already used',
+          },
+          401
+        );
+      }
+
+      const challengeData = (await consumeResponse.json()) as {
+        challenge: string;
+        userId: string;
+        metadata?: {
+          sessionId: string;
+        };
+      };
+      userId = challengeData.userId;
+      sessionId = challengeData.metadata?.sessionId || '';
+    } catch (error) {
       return c.json(
         {
-          error: 'invalid_token',
-          error_description: 'Token not found or has expired',
+          error: 'server_error',
+          error_description: 'Failed to verify session token',
         },
-        401
+        500
       );
     }
-
-    const tokenData = JSON.parse(tokenDataStr) as {
-      sessionId: string;
-      userId: string;
-      used: boolean;
-      createdAt: number;
-    };
-
-    // Check if token has already been used (single-use)
-    if (tokenData.used) {
-      return c.json(
-        {
-          error: 'invalid_token',
-          error_description: 'Token has already been used',
-        },
-        401
-      );
-    }
-
-    // Mark token as used
-    tokenData.used = true;
-    await kvStore.put(tokenKey, JSON.stringify(tokenData), {
-      expirationTtl: 60, // Keep for 1 minute for audit
-    });
 
     // Verify the original session still exists
     const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
     const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
 
     const sessionResponse = await sessionStore.fetch(
-      new Request(`https://session-store/session/${tokenData.sessionId}`, {
+      new Request(`https://session-store/session/${sessionId}`, {
         method: 'GET',
       })
     );
