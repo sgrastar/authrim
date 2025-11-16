@@ -60,6 +60,14 @@ function createMockEnv(): Env {
           .mockResolvedValue(new Response(JSON.stringify({ id: 'family_123' }), { status: 200 })),
       }),
     } as unknown as DurableObjectNamespace,
+    CHALLENGE_STORE: {
+      idFromName: vi.fn().mockReturnValue('challenge-do-id'),
+      get: vi.fn().mockReturnValue({
+        fetch: vi
+          .fn()
+          .mockResolvedValue(new Response(JSON.stringify({ challenge: 'test' }), { status: 200 })),
+      }),
+    } as unknown as DurableObjectNamespace,
     KEY_MANAGER: {} as DurableObjectNamespace,
     AUTH_CODES: {} as KVNamespace,
     STATE_STORE: {} as KVNamespace,
@@ -560,12 +568,12 @@ describe('PasskeyStore', () => {
     };
     (env.DB.prepare as any).mockReturnValue({
       bind: vi.fn().mockReturnThis(),
-      run: vi.fn().mockResolvedValue({ success: true }),
+      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
       all: vi.fn().mockResolvedValue({ results: [mockPasskey] }),
     });
 
-    const updated = await passkeyStore.updateCounter('passkey_123', 5);
-    expect(updated.counter).toBe(5);
+    const updated = await passkeyStore.updateCounter('passkey_123', 6);
+    expect(updated.counter).toBe(6);
   });
 
   it('should delete passkey', async () => {

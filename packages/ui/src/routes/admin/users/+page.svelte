@@ -217,7 +217,8 @@
 				</thead>
 				<tbody>
 					{#if loading}
-						{#each Array(5) as _}
+						<!-- eslint-disable-next-line @typescript-eslint/no-unused-vars -->
+						{#each Array(5) as _, i (i)}
 							<tr class="border-b border-gray-200 dark:border-gray-700">
 								<td class="px-4 py-3">
 									<div class="h-4 w-48 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
@@ -249,7 +250,7 @@
 							</td>
 						</tr>
 					{:else}
-						{#each users as user}
+						{#each users as user (user.id)}
 							<tr class="border-b border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800">
 								<td class="px-4 py-3 text-sm text-gray-900 dark:text-white">
 									{user.email}

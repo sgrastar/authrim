@@ -12,7 +12,7 @@
 		resource_id: string | null;
 		ip_address: string | null;
 		status: 'success' | 'failure';
-		metadata: Record<string, any>;
+		metadata: Record<string, unknown>;
 	}
 
 	let logs: AuditLogEntry[] = [];
@@ -195,7 +195,7 @@
 					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
 				>
 					<option value="all">All Actions</option>
-					{#each actionTypes as action}
+					{#each actionTypes as action (action)}
 						<option value={action}>{action}</option>
 					{/each}
 				</select>
@@ -260,7 +260,8 @@
 				</thead>
 				<tbody>
 					{#if loading}
-						{#each Array(10) as _}
+						<!-- eslint-disable-next-line @typescript-eslint/no-unused-vars -->
+						{#each Array(10) as _, i (i)}
 							<tr class="border-b border-gray-200 dark:border-gray-700">
 								<td class="px-4 py-3">
 									<div class="h-4 w-32 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
@@ -289,7 +290,7 @@
 							</td>
 						</tr>
 					{:else}
-						{#each logs as log}
+						{#each logs as log (log.id)}
 							<tr class="border-b border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800">
 								<td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
 									{formatTimestamp(log.timestamp)}

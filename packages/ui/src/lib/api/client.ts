@@ -5,6 +5,58 @@
 
 import { env } from '$env/dynamic/public';
 
+// Type definitions
+interface User {
+	id: string;
+	email: string;
+	email_verified: boolean;
+	name?: string;
+	picture?: string;
+	phone_number?: string;
+	phone_number_verified?: boolean;
+	created_at: number;
+	updated_at: number;
+	last_login_at?: number;
+	[key: string]: unknown;
+}
+
+interface Passkey {
+	id: string;
+	user_id: string;
+	credential_id: string;
+	device_name?: string;
+	created_at: number;
+	last_used_at?: number;
+}
+
+interface Client {
+	client_id: string;
+	client_name?: string;
+	redirect_uris: string[];
+	grant_types: string[];
+	response_types: string[];
+	scope?: string;
+	created_at: number;
+	updated_at: number;
+}
+
+interface Activity {
+	id: string;
+	type: string;
+	timestamp: number;
+	[key: string]: unknown;
+}
+
+interface CustomField {
+	key: string;
+	value: unknown;
+}
+
+interface APIError {
+	error: string;
+	error_description: string;
+}
+
 // Get API base URL from environment variable or default to localhost
 // In production (Cloudflare Pages), set PUBLIC_API_BASE_URL to your deployed router URL
 // In development, it defaults to localhost:8786
@@ -19,7 +71,7 @@ export const API_BASE_URL =
 async function apiFetch<T>(
 	endpoint: string,
 	options: RequestInit = {}
-): Promise<{ data?: T; error?: any }> {
+): Promise<{ data?: T; error?: APIError }> {
 	try {
 		const url = `${API_BASE_URL}${endpoint}`;
 		const response = await fetch(url, {
@@ -69,7 +121,7 @@ export const adminUsersAPI = {
 
 		const query = queryParams.toString();
 		return apiFetch<{
-			users: any[];
+			users: User[];
 			pagination: {
 				page: number;
 				limit: number;
@@ -86,9 +138,9 @@ export const adminUsersAPI = {
 	 */
 	async get(userId: string) {
 		return apiFetch<{
-			user: any;
-			passkeys: any[];
-			customFields: any[];
+			user: User;
+			passkeys: Passkey[];
+			customFields: CustomField[];
 		}>(`/api/admin/users/${userId}`);
 	},
 
@@ -101,9 +153,9 @@ export const adminUsersAPI = {
 		email_verified?: boolean;
 		phone_number?: string;
 		phone_number_verified?: boolean;
-		[key: string]: any;
+		[key: string]: unknown;
 	}) {
-		return apiFetch<{ user: any }>('/api/admin/users', {
+		return apiFetch<{ user: User }>('/api/admin/users', {
 			method: 'POST',
 			body: JSON.stringify(userData)
 		});
@@ -122,7 +174,7 @@ export const adminUsersAPI = {
 			picture?: string;
 		}
 	) {
-		return apiFetch<{ user: any }>(`/api/admin/users/${userId}`, {
+		return apiFetch<{ user: User }>(`/api/admin/users/${userId}`, {
 			method: 'PUT',
 			body: JSON.stringify(updates)
 		});
@@ -153,7 +205,7 @@ export const adminClientsAPI = {
 
 		const query = queryParams.toString();
 		return apiFetch<{
-			clients: any[];
+			clients: Client[];
 			pagination: {
 				page: number;
 				limit: number;
@@ -169,7 +221,7 @@ export const adminClientsAPI = {
 	 * Get client details by ID
 	 */
 	async get(clientId: string) {
-		return apiFetch<{ client: any }>(`/api/admin/clients/${clientId}`);
+		return apiFetch<{ client: Client }>(`/api/admin/clients/${clientId}`);
 	}
 };
 
@@ -189,7 +241,7 @@ export const adminStatsAPI = {
 				newUsersToday: number;
 				loginsToday: number;
 			};
-			recentActivity: any[];
+			recentActivity: Activity[];
 		}>('/api/admin/stats');
 	}
 };
@@ -202,7 +254,7 @@ export const passkeyAPI = {
 	 * Get registration options for Passkey
 	 */
 	async getRegisterOptions(data: { email: string; name?: string; userId?: string }) {
-		return apiFetch<{ options: any; userId: string }>('/api/auth/passkey/register/options', {
+		return apiFetch<{ options: Record<string, unknown>; userId: string }>('/api/auth/passkey/register/options', {
 			method: 'POST',
 			body: JSON.stringify(data)
 		});
@@ -211,7 +263,7 @@ export const passkeyAPI = {
 	/**
 	 * Verify Passkey registration
 	 */
-	async verifyRegistration(data: { userId: string; credential: any; deviceName?: string }) {
+	async verifyRegistration(data: { userId: string; credential: Record<string, unknown>; deviceName?: string }) {
 		return apiFetch<{ verified: boolean; passkeyId: string; message: string }>(
 			'/api/auth/passkey/register/verify',
 			{
@@ -225,7 +277,7 @@ export const passkeyAPI = {
 	 * Get authentication options for Passkey login
 	 */
 	async getLoginOptions(data: { email?: string }) {
-		return apiFetch<{ options: any; challengeId: string }>('/api/auth/passkey/login/options', {
+		return apiFetch<{ options: Record<string, unknown>; challengeId: string }>('/api/auth/passkey/login/options', {
 			method: 'POST',
 			body: JSON.stringify(data)
 		});
@@ -234,12 +286,12 @@ export const passkeyAPI = {
 	/**
 	 * Verify Passkey authentication
 	 */
-	async verifyLogin(data: { challengeId: string; credential: any }) {
+	async verifyLogin(data: { challengeId: string; credential: Record<string, unknown> }) {
 		return apiFetch<{
 			verified: boolean;
 			sessionId: string;
 			userId: string;
-			user: any;
+			user: User;
 		}>('/api/auth/passkey/login/verify', {
 			method: 'POST',
 			body: JSON.stringify(data)
@@ -272,7 +324,7 @@ export const magicLinkAPI = {
 			success: boolean;
 			sessionId: string;
 			userId: string;
-			user: any;
+			user: User;
 		}>(`/api/auth/magic-link/verify?token=${encodeURIComponent(token)}`);
 	}
 };

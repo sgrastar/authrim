@@ -156,7 +156,8 @@
 		<Card>
 			<div class="space-y-4">
 				<div class="h-6 w-32 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
-				{#each Array(5) as _}
+				<!-- eslint-disable-next-line @typescript-eslint/no-unused-vars -->
+				{#each Array(5) as _, i (i)}
 					<div class="space-y-2">
 						<div class="h-4 w-24 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
 						<div class="h-10 w-full animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
@@ -234,7 +235,7 @@
 			</div>
 
 			<div class="space-y-2">
-				{#each client.redirect_uris as uri}
+				{#each client.redirect_uris as uri (uri)}
 					<div class="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 dark:border-gray-700">
 						<code class="text-sm text-gray-900 dark:text-white">{uri}</code>
 						<button
@@ -257,7 +258,7 @@
 				{m.admin_client_detail_grantTypes()}
 			</h2>
 			<div class="space-y-2">
-				{#each availableGrantTypes as grantType}
+				{#each availableGrantTypes as grantType (grantType.value)}
 					<label class="flex items-center gap-2">
 						<input
 							type="checkbox"
