@@ -31,6 +31,7 @@ export interface Env {
   SESSION_STORE: DurableObjectNamespace;
   AUTH_CODE_STORE: DurableObjectNamespace;
   REFRESH_TOKEN_ROTATOR: DurableObjectNamespace;
+  CHALLENGE_STORE: DurableObjectNamespace;
 
   // Environment Variables
   ISSUER_URL: string;
