@@ -220,6 +220,9 @@ async function handleAuthorizationCodeGrant(
       redirect_uri: consumedData.redirectUri, // Keep for compatibility
       nonce: consumedData.nonce,
       state: consumedData.state,
+      auth_time: consumedData.createdAt
+        ? Math.floor(consumedData.createdAt / 1000)
+        : Math.floor(Date.now() / 1000), // OIDC Core: Time when End-User authentication occurred
     };
   } catch (error) {
     console.error('AuthCodeStore DO error:', error);
@@ -372,13 +375,14 @@ async function handleAuthorizationCodeGrant(
     );
   }
 
-  // Generate ID Token with at_hash
+  // Generate ID Token with at_hash and auth_time
   const idTokenClaims = {
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
     aud: client_id,
     nonce: authCodeData.nonce,
     at_hash: atHash, // OIDC spec requirement for code flow
+    auth_time: authCodeData.auth_time, // OIDC Core Section 2: Time when End-User authentication occurred
   };
 
   let idToken: string;

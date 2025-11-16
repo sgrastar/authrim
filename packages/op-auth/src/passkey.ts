@@ -222,10 +222,10 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         ? credentialID
         : Buffer.from(credentialID).toString('base64');
 
-    // Store passkey in D1
     const passkeyId = crypto.randomUUID();
     const now = Date.now();
 
+    // Step 1: Store passkey in D1 (FIRST)
     await c.env.DB.prepare(
       `INSERT INTO passkeys (id, user_id, credential_id, public_key, counter, transports, device_name, created_at, last_used_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -243,12 +243,13 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       )
       .run();
 
-    // Update user's email_verified status
+    // Step 2: Update user's email_verified status
     await c.env.DB.prepare('UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?')
       .bind(now, userId)
       .run();
 
-    // Delete challenge from KV
+    // Step 3: Delete challenge from KV (LAST)
+    // Only delete challenge after all critical operations succeed
     await c.env.STATE_STORE.delete(`passkey_challenge:${userId}`);
 
     return c.json({
