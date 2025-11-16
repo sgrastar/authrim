@@ -7,8 +7,6 @@ import {
   validateRedirectUri,
 } from '@enrai/shared';
 import {
-  getAuthCode,
-  markAuthCodeAsUsed,
   revokeToken,
   storeRefreshToken,
   getRefreshToken,
@@ -177,50 +175,64 @@ async function handleAuthorizationCodeGrant(
     );
   }
 
-  // Retrieve authorization code data from KV
-  const authCodeData = await getAuthCode(c.env, validCode);
-  if (!authCodeData) {
+  // Consume authorization code using AuthorizationCodeStore Durable Object
+  // This replaces KV-based getAuthCode() with strong consistency guarantees
+  const authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
+  const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
+
+  let authCodeData;
+  try {
+    const consumeResponse = await authCodeStore.fetch(
+      new Request('https://auth-code-store/code/consume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: validCode,
+          clientId: client_id,
+          codeVerifier: code_verifier,
+        }),
+      })
+    );
+
+    if (!consumeResponse.ok) {
+      const errorData = (await consumeResponse.json()) as {
+        error: string;
+        error_description: string;
+      };
+
+      return c.json(
+        {
+          error: errorData.error || 'invalid_grant',
+          error_description:
+            errorData.error_description || 'Authorization code is invalid or expired',
+        },
+        400
+      );
+    }
+
+    // AuthCodeStore DO returns: { userId, scope, redirectUri, nonce?, state? }
+    const consumedData = await consumeResponse.json();
+
+    // Map AuthCodeStore DO response to expected format
+    authCodeData = {
+      sub: consumedData.userId, // Map userId to sub for JWT claims
+      scope: consumedData.scope,
+      redirect_uri: consumedData.redirectUri, // Keep for compatibility
+      nonce: consumedData.nonce,
+      state: consumedData.state,
+    };
+  } catch (error) {
+    console.error('AuthCodeStore DO error:', error);
     return c.json(
       {
-        error: 'invalid_grant',
-        error_description: 'Authorization code is invalid or expired',
+        error: 'server_error',
+        error_description: 'Failed to validate authorization code',
       },
-      400
+      500
     );
   }
 
-  // Check if authorization code has already been used (code reuse attack detection)
-  // Per RFC 6749 Section 4.1.2: The authorization server MUST revoke tokens issued with the reused code
-  if (authCodeData.used && authCodeData.jti) {
-    console.warn(
-      `Authorization code reuse detected! Code: ${code}, previously issued token JTI: ${authCodeData.jti}`
-    );
-
-    // Revoke the previously issued access token
-    const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
-    await revokeToken(c.env, authCodeData.jti, expiresIn);
-
-    return c.json(
-      {
-        error: 'invalid_grant',
-        error_description: 'Authorization code has already been used',
-      },
-      400
-    );
-  }
-
-  // Verify client_id matches
-  if (authCodeData.client_id !== client_id) {
-    return c.json(
-      {
-        error: 'invalid_grant',
-        error_description: 'Authorization code was issued to a different client',
-      },
-      400
-    );
-  }
-
-  // Verify redirect_uri matches
+  // Verify redirect_uri matches (additional safety check)
   if (authCodeData.redirect_uri !== redirect_uri) {
     return c.json(
       {
@@ -229,31 +241,6 @@ async function handleAuthorizationCodeGrant(
       },
       400
     );
-  }
-
-  // Verify PKCE if code_challenge was used in authorization request
-  if (authCodeData.code_challenge) {
-    if (!code_verifier) {
-      return c.json(
-        {
-          error: 'invalid_grant',
-          error_description: 'code_verifier is required for PKCE',
-        },
-        400
-      );
-    }
-
-    // Verify code_verifier against code_challenge
-    const isValid = await verifyPKCE(code_verifier, authCodeData.code_challenge);
-    if (!isValid) {
-      return c.json(
-        {
-          error: 'invalid_grant',
-          error_description: 'Invalid code_verifier',
-        },
-        400
-      );
-    }
   }
 
   // Load private key for signing tokens
@@ -454,14 +441,9 @@ async function handleAuthorizationCodeGrant(
     );
   }
 
-  // Mark authorization code as used and store token JTI for revocation on code reuse
+  // Authorization code has been consumed and marked as used by AuthCodeStore DO
   // Per RFC 6749 Section 4.1.2: Authorization codes are single-use
-  // We mark it as used instead of deleting to detect reuse attacks
-  // NOTE: Only mark as used after successful token generation to allow retry on transient errors
-  await markAuthCodeAsUsed(c.env, validCode, {
-    ...authCodeData,
-    jti: tokenJti,
-  });
+  // The DO guarantees atomic consumption and replay attack detection
 
   // Return token response
   c.header('Cache-Control', 'no-store');
