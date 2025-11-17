@@ -3,6 +3,9 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { Mail, Key, User } from 'lucide-svelte';
 	import * as m from '$lib/paraglide/messages';
+	import { passkeyAPI, magicLinkAPI } from '$lib/api/client';
+	import { startRegistration } from '@simplewebauthn/browser';
+	import type { PublicKeyCredentialCreationOptionsJSON } from '@simplewebauthn/types';
 
 	let email = $state('');
 	let name = $state('');
@@ -51,21 +54,57 @@
 		passkeyLoading = true;
 
 		try {
-			// TODO: Implement Passkey registration
-			// 1. Call /auth/passkey/register/options with email and name
-			// 2. Get challenge from server
-			// 3. Call navigator.credentials.create()
-			// 4. Send attestation to /auth/passkey/register/verify
-			// 5. Redirect to client app or dashboard
+			// 1. Get registration options from server
+			const { data: optionsData, error: optionsError } = await passkeyAPI.getRegisterOptions({
+				email,
+				name
+			});
 
-			// Placeholder for now
-			await new Promise(resolve => setTimeout(resolve, 1000));
-			console.log('Passkey registration for:', { email, name });
+			console.log('API Response:', { optionsData, optionsError });
 
-			// TODO: Remove this mock error
-			throw new Error('Passkey registration not yet implemented');
+			if (optionsError) {
+				throw new Error(optionsError.error_description || 'Failed to get registration options');
+			}
+
+			if (!optionsData || !optionsData.options) {
+				throw new Error('Invalid response from server: missing options');
+			}
+
+			console.log('Registration options:', optionsData.options);
+
+			// 2. Call WebAuthn API using @simplewebauthn/browser
+			// This handles all the base64url to Uint8Array conversions automatically
+			let credential;
+			try {
+				console.log('Calling startRegistration with:', optionsData.options);
+				credential = await startRegistration({ optionsJSON: optionsData.options });
+				console.log('Registration credential:', credential);
+			} catch (webauthnError) {
+				console.error('WebAuthn error:', webauthnError);
+				throw new Error(`WebAuthn failed: ${webauthnError instanceof Error ? webauthnError.message : 'Unknown error'}`);
+			}
+
+			// 3. Send credential to server for verification
+			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyRegistration({
+				userId: optionsData!.userId,
+				credential,
+				deviceName: navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Desktop'
+			});
+
+			if (verifyError) {
+				throw new Error(verifyError.error_description || 'Registration verification failed');
+			}
+
+			// 4. Registration successful
+			console.log('Registration successful:', verifyData!.message);
+			console.log('Passkey created:', verifyData!.passkeyId);
+
+			// Redirect to login page after successful registration
+			window.location.href = '/login';
+
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred during passkey registration';
+			console.error('Passkey registration error:', err);
 		} finally {
 			passkeyLoading = false;
 		}
@@ -97,18 +136,20 @@
 		magicLinkLoading = true;
 
 		try {
-			// TODO: Implement Magic Link registration
-			// 1. Call /auth/magic-link/send with email and name
-			// 2. Redirect to /magic-link-sent page with email parameter
+			// Call API to send magic link
+			const { error: apiError } = await magicLinkAPI.send({ email, name });
 
-			// Placeholder for now
-			await new Promise(resolve => setTimeout(resolve, 1000));
-			console.log('Magic link registration for:', { email, name });
+			if (apiError) {
+				throw new Error(apiError.error_description || 'Failed to send magic link');
+			}
+
+			console.log('Magic link sent to:', email);
 
 			// Redirect to magic link sent page
 			window.location.href = `/magic-link-sent?email=${encodeURIComponent(email)}`;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred while sending magic link';
+			console.error('Magic link send error:', err);
 		} finally {
 			magicLinkLoading = false;
 		}

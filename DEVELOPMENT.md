@@ -23,17 +23,53 @@ Before you begin, ensure you have the following installed:
 
 ## Initial Setup
 
-### 1. Clone the Repository
+### Method 1: Configuration-Based Setup (Recommended)
+
+The new unified setup process supports all deployment patterns (A-D) and is the recommended approach for both development and production.
 
 ```bash
+# 1. Clone the repository
 git clone https://github.com/YOUR-USERNAME/enrai.git
 cd enrai
+
+# 2. Install dependencies
+pnpm install
+
+# 3. Install Wrangler CLI (if not already installed globally)
+pnpm install -g wrangler
+
+# 4. Login to Cloudflare
+wrangler login
+
+# 5. Create configuration file (interactive)
+./scripts/setup-config.sh
+
+# 6. Build and deploy based on configuration
+./scripts/build.sh --config enrai-config-1.0.0.json
 ```
 
-### 2. Install Dependencies
+**Features:**
+- ✅ **Interactive Setup** - Guided configuration for all deployment patterns
+- ✅ **Pattern Support** - Pattern A (Unified), B (Separate Admin), C (Multi-Domain), D (Headless)
+- ✅ **Conflict Detection** - Checks for existing resources before deployment
+- ✅ **Version Management** - Configuration files are versioned for easy rollback
+
+See [Architecture Patterns](./docs/ARCHITECTURE_PATTERNS.md) for details on deployment patterns.
+
+### Method 2: Manual Setup (Legacy)
+
+For advanced users who prefer manual control:
 
 ```bash
+# 1. Clone the repository
+git clone https://github.com/YOUR-USERNAME/enrai.git
+cd enrai
+
+# 2. Install dependencies
 pnpm install
+
+# 3. Install Wrangler CLI (if not already installed globally)
+pnpm install -g wrangler
 ```
 
 This will install:
@@ -44,13 +80,7 @@ This will install:
 - **Vitest** - Testing framework
 - **ESLint** & **Prettier** - Code quality tools
 
-### 3. Install Wrangler CLI (if not already installed globally)
-
-```bash
-pnpm install -g wrangler
-```
-
-## Configuration
+## Configuration (Manual Setup)
 
 ### 1. Cloudflare KV Namespaces
 

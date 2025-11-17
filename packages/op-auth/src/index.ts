@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import type { Env } from '@enrai/shared';
-import { rateLimitMiddleware, RateLimitProfiles } from '@enrai/shared';
+import { rateLimitMiddleware, RateLimitProfiles, isAllowedOrigin, parseAllowedOrigins } from '@enrai/shared';
 
 // Import handlers
 import { authorizeHandler } from './authorize';
@@ -58,18 +58,35 @@ app.use(
   })
 );
 
-// CORS configuration
-app.use(
-  '*',
-  cors({
-    origin: '*',
+// CORS configuration with origin validation
+app.use('*', async (c, next) => {
+  const allowedOriginsEnv = c.env.ALLOWED_ORIGINS || c.env.ISSUER_URL;
+  const allowedOrigins = parseAllowedOrigins(allowedOriginsEnv);
+
+  const corsMiddleware = cors({
+    origin: (origin) => {
+      // Allow requests without Origin header (same-origin or non-browser)
+      if (!origin) {
+        return c.env.ISSUER_URL;
+      }
+
+      // Validate against allowlist
+      if (isAllowedOrigin(origin, allowedOrigins)) {
+        return origin;
+      }
+
+      // Reject unauthorized origins
+      return '';
+    },
     allowMethods: ['GET', 'POST', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
     maxAge: 86400,
     credentials: true,
-  })
-);
+  });
+
+  return corsMiddleware(c, next);
+});
 
 // Rate limiting for sensitive endpoints
 app.use(

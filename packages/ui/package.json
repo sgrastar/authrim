@@ -43,6 +43,7 @@
 	},
 	"dependencies": {
 		"@inlang/paraglide-sveltekit": "^0.16.1",
+		"@simplewebauthn/browser": "^13.0.0",
 		"lucide-svelte": "^0.553.0"
 	}
 }

@@ -38,6 +38,7 @@ export interface Env {
 
   // Environment Variables
   ISSUER_URL: string;
+  ALLOWED_ORIGINS?: string; // Comma-separated list of allowed origins (CORS + WebAuthn RP ID)
   TOKEN_EXPIRY: string;
   CODE_EXPIRY: string;
   STATE_EXPIRY: string;

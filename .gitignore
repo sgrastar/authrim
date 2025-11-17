@@ -60,3 +60,4 @@ temp/
 packages/*/dist/
 packages/*/.wrangler/
 CLAUDE.md
+enrai-config-*.json

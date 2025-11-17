@@ -226,7 +226,40 @@ Enrai leverages **Cloudflare Durable Objects** for stateful operations with stro
 - pnpm
 - Cloudflare account (free tier works)
 
-### Quick Start (Development)
+### Quick Start (Recommended - Configuration-Based)
+
+**New unified setup process** - supports all deployment patterns (A-D):
+
+```bash
+# 1. Clone repository
+git clone https://github.com/sgrastar/enrai.git
+cd enrai
+
+# 2. Install dependencies (monorepo setup)
+pnpm install
+
+# 3. Create configuration file (interactive)
+./scripts/setup-config.sh
+
+# 4. Build and deploy based on configuration
+./scripts/build.sh --config enrai-config-1.0.0.json
+
+# Workers start at:
+# - Configured domains based on your pattern selection
+# - See docs/ARCHITECTURE_PATTERNS.md for deployment patterns
+```
+
+**Features:**
+- ✅ **Interactive Setup** - Guided configuration for all deployment patterns
+- ✅ **Pattern Support** - Pattern A (Unified), B (Separate Admin), C (Multi-Domain), D (Headless)
+- ✅ **Conflict Detection** - Checks for existing resources before deployment
+- ✅ **Version Management** - Configuration files are versioned for easy rollback
+
+> **Note:** The configuration-based setup supports all [Architecture Patterns](./docs/ARCHITECTURE_PATTERNS.md) and is the recommended approach for both development and production.
+
+### Quick Start (Legacy - Manual Setup)
+
+**Traditional step-by-step setup** - for advanced users who prefer manual control:
 
 ```bash
 # 1. Clone repository
