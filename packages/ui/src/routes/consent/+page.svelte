@@ -167,7 +167,6 @@
 					</p>
 
 					{#if consentData.clientUri}
-					<!-- svelte-ignore svelte/no-navigation-without-resolve -->
 						<a
 							href={consentData.clientUri}
 							target="_blank"
@@ -265,7 +264,6 @@
 				{#if consentData.policyUri || consentData.tosUri}
 					<div class="flex items-center justify-center gap-4 mt-4 text-xs text-gray-500 dark:text-gray-400">
 						{#if consentData.policyUri}
-					<!-- svelte-ignore svelte/no-navigation-without-resolve -->
 							<a
 								href={consentData.policyUri}
 								target="_blank"
@@ -277,7 +275,6 @@
 							</a>
 						{/if}
 						{#if consentData.tosUri}
-					<!-- svelte-ignore svelte/no-navigation-without-resolve -->
 							<a
 								href={consentData.tosUri}
 								target="_blank"
