@@ -4,6 +4,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { MailCheck, ArrowLeft } from 'lucide-svelte';
 	import * as m from '$lib/paraglide/messages';
+	import { magicLinkAPI } from '$lib/api/client';
 
 	let email = $state('');
 	let countdown = $state(60);
@@ -61,19 +62,21 @@
 		successMessage = '';
 
 		try {
-			// TODO: Implement resend Magic Link
-			// 1. Call /auth/magic-link/send with email
-			// 2. Show success message
-			// 3. Restart countdown
+			// Call API to resend magic link
+			const { error: apiError } = await magicLinkAPI.send({ email });
 
-			// Placeholder for now
-			await new Promise(resolve => setTimeout(resolve, 1000));
-			console.log('Resending magic link to:', email);
+			if (apiError) {
+				throw new Error(apiError.error_description || 'Failed to resend magic link');
+			}
 
+			console.log('Magic link resent to:', email);
 			successMessage = m.magicLink_sent_resendSuccess();
+
+			// Restart countdown timer
 			startCountdown();
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred while resending magic link';
+			console.error('Resend magic link error:', err);
 		} finally {
 			resendLoading = false;
 		}

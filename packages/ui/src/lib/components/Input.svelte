@@ -7,6 +7,7 @@
 		error?: string;
 		helperText?: string;
 		icon?: Snippet;
+		value?: string;
 	}
 
 	let {
@@ -16,6 +17,7 @@
 		icon,
 		type = 'text',
 		id,
+		value = $bindable(''),
 		class: className = '',
 		...restProps
 	}: Props = $props();
@@ -42,6 +44,7 @@
 		<input
 			id={inputId}
 			{type}
+			bind:value
 			class={`${inputClasses} ${icon ? 'pl-10' : ''}`}
 			aria-invalid={hasError}
 			aria-describedby={error ? `${inputId}-error` : helperText ? `${inputId}-helper` : undefined}

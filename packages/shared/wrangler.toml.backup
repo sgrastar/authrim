@@ -1,0 +1,43 @@
+name = "enrai-shared"
+main = "src/durable-objects/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+# Durable Objects definitions
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+
+[[durable_objects.bindings]]
+name = "AUTH_CODE_STORE"
+class_name = "AuthorizationCodeStore"
+
+[[durable_objects.bindings]]
+name = "REFRESH_TOKEN_ROTATOR"
+class_name = "RefreshTokenRotator"
+
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+
+# Durable Objects migrations
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = [
+  "SessionStore",
+  "AuthorizationCodeStore",
+  "RefreshTokenRotator",
+  "KeyManager"
+]
+
+# Environment variables
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "enrai-users-db"
+database_id = "c286a9b6-b646-43a6-802d-15d527bc9efa"
+
+[vars]
+KEY_MANAGER_SECRET = "dev-secret-change-in-production"

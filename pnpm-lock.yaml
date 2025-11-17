@@ -227,6 +227,9 @@ importers:
       '@inlang/paraglide-sveltekit':
         specifier: ^0.16.1
         version: 0.16.1(@sveltejs/kit@2.48.4(@sveltejs/vite-plugin-svelte@6.2.1(svelte@5.43.6)(vite@7.2.2(@types/node@20.19.25)(jiti@2.6.1)(tsx@4.20.6)(yaml@1.10.2)))(svelte@5.43.6)(vite@7.2.2(@types/node@20.19.25)(jiti@2.6.1)(tsx@4.20.6)(yaml@1.10.2)))
+      '@simplewebauthn/browser':
+        specifier: ^13.0.0
+        version: 13.2.2
       lucide-svelte:
         specifier: ^0.553.0
         version: 0.553.0(svelte@5.43.6)
@@ -1296,6 +1299,9 @@ packages:
     resolution: {integrity: sha512-k+/Rkcyx//P6fetPoLMb8pBeqJBNGx81uuf7iljX9++yNBVRDQgD04L+SVXmXmh5ZP4/WOp4mWF0kmi06PW2tA==}
     cpu: [x64]
     os: [win32]
+
+  '@simplewebauthn/browser@13.2.2':
+    resolution: {integrity: sha512-FNW1oLQpTJyqG5kkDg5ZsotvWgmBaC6jCHR7Ej0qUNep36Wl9tj2eZu7J5rP+uhXgHaLk+QQ3lqcw2vS5MX1IA==}
 
   '@simplewebauthn/server@13.2.2':
     resolution: {integrity: sha512-HcWLW28yTMGXpwE9VLx9J+N2KEUaELadLrkPEEI9tpI5la70xNEVEsu/C+m3u7uoq4FulLqZQhgBCzR9IZhFpA==}
@@ -4030,6 +4036,8 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.53.2':
     optional: true
+
+  '@simplewebauthn/browser@13.2.2': {}
 
   '@simplewebauthn/server@13.2.2':
     dependencies:

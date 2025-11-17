@@ -8,7 +8,8 @@ export default defineConfig({
 		UnoCSS(),
 		paraglide({
 			project: './project.inlang',
-			outdir: './src/lib/paraglide'
+			outdir: './src/lib/paraglide',
+			disableAsyncLocalStorage: true // Cloudflare Pages compatibility
 		}),
 		sveltekit()
 	]

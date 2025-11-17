@@ -4,6 +4,8 @@
 	import { Mail, Key } from 'lucide-svelte';
 	import * as m from '$lib/paraglide/messages';
 	import { passkeyAPI, magicLinkAPI } from '$lib/api/client';
+	import { startAuthentication } from '@simplewebauthn/browser';
+	import type { PublicKeyCredentialRequestOptionsJSON } from '@simplewebauthn/types';
 
 	let email = $state('');
 	let error = $state('');
@@ -48,29 +50,16 @@
 				throw new Error(optionsError.error_description || 'Failed to get authentication options');
 			}
 
-			// 2. Call WebAuthn API to get credential
-			const credential = (await navigator.credentials.get({
-				publicKey: optionsData!.options
-			})) as PublicKeyCredential | null;
-
-			if (!credential) {
-				throw new Error('No credential received from authenticator');
-			}
+			// 2. Call WebAuthn API using @simplewebauthn/browser
+			// This handles all the base64url to Uint8Array conversions automatically
+			const credential = await startAuthentication({
+				optionsJSON: optionsData!.options as PublicKeyCredentialRequestOptionsJSON
+			});
 
 			// 3. Send credential to server for verification
 			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyLogin({
 				challengeId: optionsData!.challengeId,
-				credential: {
-					id: credential.id,
-					rawId: credential.id,
-					response: {
-						clientDataJSON: Array.from(new Uint8Array(credential.response.clientDataJSON)),
-						authenticatorData: Array.from(new Uint8Array(credential.response.authenticatorData)),
-						signature: Array.from(new Uint8Array(credential.response.signature)),
-						userHandle: credential.response.userHandle ? Array.from(new Uint8Array(credential.response.userHandle)) : undefined
-					},
-					type: credential.type
-				}
+				credential
 			});
 
 			if (verifyError) {
@@ -79,8 +68,15 @@
 
 			// 4. Store session and redirect
 			console.log('Logged in as:', verifyData!.user.email);
-			// TODO: Store session ID and redirect to appropriate page
-			alert('Login successful! Session ID: ' + verifyData!.sessionId);
+
+			// Store session ID in localStorage
+			if (verifyData!.sessionId) {
+				localStorage.setItem('sessionId', verifyData!.sessionId);
+				localStorage.setItem('userId', verifyData!.userId);
+			}
+
+			// Redirect to home page
+			window.location.href = '/';
 
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred during passkey authentication';

@@ -5,12 +5,14 @@
 
 import { Context } from 'hono';
 import type { Env } from '@enrai/shared';
+import { isAllowedOrigin, parseAllowedOrigins } from '@enrai/shared';
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
+import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import type {
   VerifiedRegistrationResponse,
   VerifiedAuthenticationResponse,
@@ -22,6 +24,44 @@ import type {
 
 // RP (Relying Party) configuration
 const RP_NAME = 'Enrai';
+
+type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
+
+/**
+ * Normalize any credential identifier to an unpadded base64url string.
+ * Handles legacy base64-encoded values saved in D1 as well as ArrayBuffer inputs.
+ */
+function toBase64URLString(input: CredentialIDLike): string {
+  if (typeof input === 'string') {
+    if (isoBase64URL.isBase64URL(input)) {
+      return isoBase64URL.trimPadding(input);
+    }
+
+    if (isoBase64URL.isBase64(input)) {
+      const buffer = isoBase64URL.toBuffer(input, 'base64');
+      return isoBase64URL.fromBuffer(buffer);
+    }
+
+    return isoBase64URL.fromUTF8String(input);
+  }
+
+  if (input instanceof ArrayBuffer) {
+    return isoBase64URL.fromBuffer(new Uint8Array(input));
+  }
+
+  const view = input as ArrayBufferView;
+  const typedArray = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  // @ts-ignore - TypeScript strict buffer type mismatch
+  return isoBase64URL.fromBuffer(typedArray);
+}
+
+function normalizeStoredCredentialId(id?: string | null): string | null {
+  if (!id) {
+    return null;
+  }
+
+  return toBase64URLString(id);
+}
 
 /**
  * Generate registration options for Passkey creation
@@ -47,10 +87,26 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    // Get RP ID from ISSUER_URL (e.g., "enrai.sgrastar.workers.dev")
-    const issuerUrl = new URL(c.env.ISSUER_URL);
-    const rpID = issuerUrl.hostname;
-    const origin = c.env.ISSUER_URL;
+    // Validate Origin header against allowlist
+    const originHeader = c.req.header('origin');
+    const allowedOriginsEnv = c.env.ALLOWED_ORIGINS || c.env.ISSUER_URL;
+    const allowedOrigins = parseAllowedOrigins(allowedOriginsEnv);
+
+    // Reject unauthorized origins
+    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+      return c.json(
+        {
+          error: 'unauthorized_origin',
+          error_description: 'Origin not allowed for WebAuthn operations',
+        },
+        403
+      );
+    }
+
+    // Use validated origin for RP ID and origin
+    const originUrl = new URL(originHeader);
+    const rpID = originUrl.hostname;
+    const origin = originHeader;
 
     // Check if user exists
     let user;
@@ -86,25 +142,42 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       .bind(user.id)
       .all();
 
-    const excludeCredentials = existingPasskeys.results.map((pk: any) => ({
-      id: pk.credential_id,
-      type: 'public-key' as const,
-      transports: pk.transports ? JSON.parse(pk.transports) : undefined,
-    }));
+    const excludeCredentials: Array<{
+      id: string;
+      type: 'public-key';
+      transports?: string[];
+    }> = existingPasskeys.results
+      .map((pk: any) => {
+        const normalizedId = normalizeStoredCredentialId(pk.credential_id as string);
+        if (!normalizedId) {
+          return null;
+        }
+
+        return {
+          id: normalizedId,
+          type: 'public-key' as const,
+          transports: pk.transports ? JSON.parse(pk.transports) : undefined,
+        };
+      })
+      .filter((cred): cred is NonNullable<typeof cred> => cred !== null);
 
     // Generate registration options
+    const encoder = new TextEncoder();
     const options = await generateRegistrationOptions({
       rpName: RP_NAME,
       rpID,
+      // @ts-ignore - TextEncoder.encode() returns compatible Uint8Array
+      userID: encoder.encode(user.id as string),
       userName: email,
       userDisplayName: (user.name as string) || email,
+      excludeCredentials: excludeCredentials as any,
       // Use platform authenticator (device-bound) for better security
       authenticatorSelection: {
         residentKey: 'required',
         userVerification: 'required',
       },
       attestationType: 'none',
-    } as any);
+    });
 
     // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes)
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
@@ -207,10 +280,26 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       );
     }
 
-    // Get RP ID from ISSUER_URL
-    const issuerUrl = new URL(c.env.ISSUER_URL);
-    const rpID = issuerUrl.hostname;
-    const origin = c.env.ISSUER_URL;
+    // Validate Origin header against allowlist
+    const originHeader = c.req.header('origin');
+    const allowedOriginsEnv = c.env.ALLOWED_ORIGINS || c.env.ISSUER_URL;
+    const allowedOrigins = parseAllowedOrigins(allowedOriginsEnv);
+
+    // Reject unauthorized origins
+    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+      return c.json(
+        {
+          error: 'unauthorized_origin',
+          error_description: 'Origin not allowed for WebAuthn operations',
+        },
+        403
+      );
+    }
+
+    // Use validated origin for RP ID and origin
+    const originUrl = new URL(originHeader);
+    const rpID = originUrl.hostname;
+    const origin = originHeader;
 
     // Verify registration response
     let verification: VerifiedRegistrationResponse;
@@ -250,12 +339,19 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       registrationInfoAny.credentialPublicKey || registrationInfoAny.credential?.publicKey;
     const counter = registrationInfoAny.counter || registrationInfoAny.credential?.counter || 0;
 
+    if (!credentialID || !credentialPublicKey) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Registration response missing credential information',
+        },
+        500
+      );
+    }
+
     // Convert credentialPublicKey (Uint8Array) to base64
     const publicKeyBase64 = Buffer.from(credentialPublicKey).toString('base64');
-    const credentialIDBase64 =
-      typeof credentialID === 'string'
-        ? credentialID
-        : Buffer.from(credentialID).toString('base64');
+    const credentialIDBase64URL = toBase64URLString(credentialID as CredentialIDLike);
 
     const passkeyId = crypto.randomUUID();
     const now = Date.now();
@@ -301,7 +397,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       .bind(
         passkeyId,
         userId,
-        credentialIDBase64,
+        credentialIDBase64URL,
         publicKeyBase64,
         counter,
         JSON.stringify(credential.response.transports || []),
@@ -316,6 +412,11 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       .bind(now, userId)
       .run();
 
+    // Get updated user details
+    const updatedUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
+      .bind(userId)
+      .first();
+
     // Note: Challenge is already consumed by ChallengeStore DO (atomic operation)
     // No need to explicitly delete - consumed challenges are auto-cleaned by DO
 
@@ -324,6 +425,16 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       passkeyId,
       sessionId: sessionData.id,
       message: 'Passkey registered successfully',
+      userId: userId,
+      user: {
+        id: updatedUser!.id,
+        email: updatedUser!.email,
+        name: updatedUser!.name,
+        email_verified: updatedUser!.email_verified,
+        created_at: updatedUser!.created_at,
+        updated_at: updatedUser!.updated_at,
+        last_login_at: updatedUser!.last_login_at,
+      },
     });
   } catch (error) {
     console.error('Passkey registration verify error:', error);
@@ -349,9 +460,25 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
 
     const { email } = body;
 
-    // Get RP ID from ISSUER_URL
-    const issuerUrl = new URL(c.env.ISSUER_URL);
-    const rpID = issuerUrl.hostname;
+    // Validate Origin header against allowlist
+    const originHeader = c.req.header('origin');
+    const allowedOriginsEnv = c.env.ALLOWED_ORIGINS || c.env.ISSUER_URL;
+    const allowedOrigins = parseAllowedOrigins(allowedOriginsEnv);
+
+    // Reject unauthorized origins
+    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+      return c.json(
+        {
+          error: 'unauthorized_origin',
+          error_description: 'Origin not allowed for WebAuthn operations',
+        },
+        403
+      );
+    }
+
+    // Use validated origin for RP ID
+    const originUrl = new URL(originHeader);
+    const rpID = originUrl.hostname;
 
     let allowCredentials: Array<{
       id: string;
@@ -372,11 +499,20 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
           .bind(user.id)
           .all();
 
-        allowCredentials = userPasskeys.results.map((pk: any) => ({
-          id: pk.credential_id,
-          type: 'public-key' as const,
-          transports: pk.transports ? JSON.parse(pk.transports) : undefined,
-        }));
+        allowCredentials = userPasskeys.results
+          .map((pk: any) => {
+            const normalizedId = normalizeStoredCredentialId(pk.credential_id as string);
+            if (!normalizedId) {
+              return null;
+            }
+
+            return {
+              id: normalizedId,
+              type: 'public-key' as const,
+              transports: pk.transports ? JSON.parse(pk.transports) : undefined,
+            };
+          })
+          .filter((cred): cred is NonNullable<typeof cred> => cred !== null);
       }
     }
 
@@ -384,6 +520,8 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
     const options = await generateAuthenticationOptions({
       rpID,
       userVerification: 'required',
+      // Always include allowCredentials, even if empty (required by @simplewebauthn/browser v11+)
+      allowCredentials: allowCredentials.length > 0 ? (allowCredentials as any) : [],
     } as any);
 
     // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes)
@@ -486,14 +624,31 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get credential ID from response
-    const credentialIDBase64 = credential.id;
+    const credentialIDBase64URL = toBase64URLString(credential.id);
 
     // Look up passkey in database
-    const passkey = await c.env.DB.prepare(
+    let passkey = await c.env.DB.prepare(
       'SELECT id, user_id, credential_id, public_key, counter FROM passkeys WHERE credential_id = ?'
     )
-      .bind(credentialIDBase64)
+      .bind(credentialIDBase64URL)
       .first();
+
+    // Legacy fallback: credential IDs used to be stored as standard base64
+    if (!passkey && isoBase64URL.isBase64URL(credentialIDBase64URL)) {
+      const legacyId = isoBase64URL.toBase64(credentialIDBase64URL);
+      passkey = await c.env.DB.prepare(
+        'SELECT id, user_id, credential_id, public_key, counter FROM passkeys WHERE credential_id = ?'
+      )
+        .bind(legacyId)
+        .first();
+
+      if (passkey) {
+        await c.env.DB.prepare('UPDATE passkeys SET credential_id = ? WHERE id = ?')
+          .bind(credentialIDBase64URL, passkey.id)
+          .run();
+        passkey.credential_id = credentialIDBase64URL;
+      }
+    }
 
     if (!passkey) {
       return c.json(
@@ -505,12 +660,39 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Get RP ID from ISSUER_URL
-    const issuerUrl = new URL(c.env.ISSUER_URL);
-    const rpID = issuerUrl.hostname;
-    const origin = c.env.ISSUER_URL;
+    // Validate Origin header against allowlist
+    const originHeader = c.req.header('origin');
+    const allowedOriginsEnv = c.env.ALLOWED_ORIGINS || c.env.ISSUER_URL;
+    const allowedOrigins = parseAllowedOrigins(allowedOriginsEnv);
+
+    // Reject unauthorized origins
+    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+      return c.json(
+        {
+          error: 'unauthorized_origin',
+          error_description: 'Origin not allowed for WebAuthn operations',
+        },
+        403
+      );
+    }
+
+    // Use validated origin for RP ID and origin
+    const originUrl = new URL(originHeader);
+    const rpID = originUrl.hostname;
+    const origin = originHeader;
 
     // Convert stored public key from base64 to Uint8Array
+    const normalizedCredentialId = normalizeStoredCredentialId(passkey.credential_id as string);
+    if (!normalizedCredentialId) {
+      console.error('Stored credential ID could not be normalized for passkey:', passkey.id);
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Stored credential is corrupted',
+        },
+        500
+      );
+    }
     const publicKey = Uint8Array.from(Buffer.from(passkey.public_key as string, 'base64'));
 
     // Verify authentication response
@@ -522,7 +704,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         expectedOrigin: origin,
         expectedRPID: rpID,
         credential: {
-          id: passkey.credential_id as string,
+          id: normalizedCredentialId as string,
           publicKey: publicKey,
           counter: passkey.counter as number,
         },
@@ -585,10 +767,8 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     const sessionData = (await sessionResponse.json()) as { id: string };
 
     // Step 2: Update counter and last_used_at in database
-    await c.env.DB.prepare(
-      'UPDATE passkeys SET counter = ?, last_used_at = ? WHERE credential_id = ?'
-    )
-      .bind(authenticationInfo.newCounter, now, credentialIDBase64)
+    await c.env.DB.prepare('UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?')
+      .bind(authenticationInfo.newCounter, now, passkey.id)
       .run();
 
     // Step 3: Update user's last_login_at
@@ -613,6 +793,9 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         email: user!.email,
         name: user!.name,
         email_verified: user!.email_verified,
+        created_at: user!.created_at,
+        updated_at: user!.updated_at,
+        last_login_at: user!.last_login_at,
       },
     });
   } catch (error) {

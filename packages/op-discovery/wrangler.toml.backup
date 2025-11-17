@@ -1,0 +1,40 @@
+name = "enrai-op-discovery"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "39df7d0d6c024b1da2d5b8f37b8f15cd"
+preview_id = "358414c119844e33b731bde80e0252bd"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "enrai-users-db"
+database_id = "c286a9b6-b646-43a6-802d-15d527bc9efa"
+
+# Durable Objects Bindings
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "enrai-shared"
+
+# Environment variables
+[vars]
+ISSUER_URL = "https://enrai.sgrastar.workers.dev"
+TOKEN_EXPIRY = "3600"
+CODE_EXPIRY = "120"
+STATE_EXPIRY = "300"
+NONCE_EXPIRY = "300"
+REFRESH_TOKEN_EXPIRY = "2592000"
+KEY_ID = "dev-key-1763100614021-fu4soi"
+ALLOW_HTTP_REDIRECT = "true"
+OPEN_REGISTRATION = "false"
+
+# Development configuration
+[dev]
+port = 8787

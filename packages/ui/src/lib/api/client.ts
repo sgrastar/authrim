@@ -3,7 +3,7 @@
  * Handles communication with the backend API
  */
 
-import { env } from '$env/dynamic/public';
+import { PUBLIC_API_BASE_URL } from '$env/static/public';
 
 // Type definitions
 interface User {
@@ -57,13 +57,10 @@ interface APIError {
 	error_description: string;
 }
 
-// Get API base URL from environment variable or default to localhost
-// In production (Cloudflare Pages), set PUBLIC_API_BASE_URL to your deployed router URL
+// Get API base URL from environment variable (static build-time value)
+// In production (Cloudflare Pages), set PUBLIC_API_BASE_URL in .env file
 // In development, it defaults to localhost:8786
-export const API_BASE_URL =
-	typeof window !== 'undefined'
-		? env.PUBLIC_API_BASE_URL || 'http://localhost:8786'
-		: env.PUBLIC_API_BASE_URL || 'http://localhost:8786';
+export const API_BASE_URL = PUBLIC_API_BASE_URL || 'http://localhost:8786';
 
 /**
  * Generic fetch wrapper with error handling
@@ -264,7 +261,7 @@ export const passkeyAPI = {
 	 * Verify Passkey registration
 	 */
 	async verifyRegistration(data: { userId: string; credential: Record<string, unknown>; deviceName?: string }) {
-		return apiFetch<{ verified: boolean; passkeyId: string; message: string }>(
+		return apiFetch<{ verified: boolean; passkeyId: string; sessionId: string; message: string; userId: string; user: User }>(
 			'/api/auth/passkey/register/verify',
 			{
 				method: 'POST',

@@ -4,6 +4,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { CheckCircle, XCircle } from 'lucide-svelte';
 	import * as m from '$lib/paraglide/messages';
+	import { magicLinkAPI } from '$lib/api/client';
 
 	type VerificationState = 'verifying' | 'success' | 'error';
 
@@ -29,30 +30,31 @@
 
 	async function verifyToken(token: string) {
 		try {
-			// TODO: Implement Magic Link verification
-			// 1. Call /auth/magic-link/verify with token
-			// 2. Handle response (success or error)
-			// 3. On success: redirect to client app or dashboard
-			// 4. On error: show error message
+			// Call API to verify magic link token
+			const { data, error } = await magicLinkAPI.verify(token);
 
-			// Placeholder for now
-			await new Promise(resolve => setTimeout(resolve, 2000));
-			console.log('Verifying token:', token);
+			if (error) {
+				throw new Error(error.error_description || m.magicLink_verify_errorInvalid());
+			}
 
-			// Mock success for now (change to actual API call)
-			// Uncomment one of the following to test different states:
+			// Verification successful
+			state = 'success';
+			console.log('Magic link verified successfully:', data!.user.email);
 
-			// Success case:
-			// state = 'success';
-			// setTimeout(() => {
-			// 	window.location.href = '/dashboard'; // or redirect_uri
-			// }, 2000);
+			// Store session ID in localStorage
+			if (data!.sessionId) {
+				localStorage.setItem('sessionId', data!.sessionId);
+				localStorage.setItem('userId', data!.userId);
+			}
 
-			// Error case (for testing):
-			throw new Error(m.magicLink_verify_errorInvalid());
+			// Redirect to home page after 2 seconds
+			setTimeout(() => {
+				window.location.href = '/';
+			}, 2000);
 		} catch (err) {
 			state = 'error';
 			errorMessage = err instanceof Error ? err.message : m.magicLink_verify_errorInvalid();
+			console.error('Magic link verification error:', err);
 		}
 	}
 

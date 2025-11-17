@@ -75,74 +75,32 @@ if ! npx wrangler whoami &> /dev/null; then
     exit 1
 fi
 
-# Get Cloudflare account ID and API token from wrangler
-ACCOUNT_ID=$(npx wrangler whoami 2>&1 | grep -oE "Account ID: [a-f0-9]+" | grep -oE "[a-f0-9]{32}" | head -1)
+# Get Cloudflare account ID from wrangler
+# Parse the table format output from wrangler whoami
+WHOAMI_OUTPUT=$(npx wrangler whoami 2>&1)
+
+# Try multiple methods to extract Account ID
+# Method 1: Parse table format (works with wrangler 3.x+)
+ACCOUNT_ID=$(echo "$WHOAMI_OUTPUT" | grep -oE '[a-f0-9]{32}' | head -1)
+
+# Method 2: If method 1 fails, try legacy format
+if [ -z "$ACCOUNT_ID" ]; then
+    ACCOUNT_ID=$(echo "$WHOAMI_OUTPUT" | grep -oE "Account ID: [a-f0-9]+" | grep -oE "[a-f0-9]{32}" | head -1)
+fi
 
 if [ -z "$ACCOUNT_ID" ]; then
     echo -e "${RED}❌ Error: Could not determine Cloudflare Account ID${NC}"
+    echo ""
+    echo "Debug information:"
+    echo "$WHOAMI_OUTPUT"
+    echo ""
     echo "Please ensure you are logged in with: npx wrangler login"
     exit 1
 fi
 
-echo -e "${BLUE}📊 Fetching list of Workers...${NC}"
+echo -e "${BLUE}📊 Checking for deployed Workers...${NC}"
 echo "Account ID: $ACCOUNT_ID"
 echo ""
-
-# Get API token from wrangler config
-WRANGLER_CONFIG_DIR="${HOME}/.wrangler/config"
-API_TOKEN=""
-
-# Try to get token from wrangler config
-if [ -f "$WRANGLER_CONFIG_DIR/default.toml" ]; then
-    API_TOKEN=$(grep -oE 'api_token = "[^"]+"' "$WRANGLER_CONFIG_DIR/default.toml" | cut -d'"' -f2)
-fi
-
-# If we couldn't get the token from config, check environment
-if [ -z "$API_TOKEN" ]; then
-    if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
-        API_TOKEN="$CLOUDFLARE_API_TOKEN"
-    elif [ -n "$CF_API_TOKEN" ]; then
-        API_TOKEN="$CF_API_TOKEN"
-    fi
-fi
-
-# If still no token, we need to inform the user
-if [ -z "$API_TOKEN" ]; then
-    echo -e "${RED}❌ Error: Could not find Cloudflare API token${NC}"
-    echo ""
-    echo "To use this script, you need to provide a Cloudflare API token."
-    echo ""
-    echo "Option 1: Set environment variable"
-    echo "  export CLOUDFLARE_API_TOKEN=your_token_here"
-    echo "  ./delete-workers.sh"
-    echo ""
-    echo "Option 2: Get token from Cloudflare dashboard"
-    echo "  1. Go to: https://dash.cloudflare.com/profile/api-tokens"
-    echo "  2. Create a token with 'Workers Scripts:Edit' permission"
-    echo "  3. Set as environment variable: export CLOUDFLARE_API_TOKEN=your_token"
-    echo ""
-    exit 1
-fi
-
-# Fetch workers using Cloudflare API
-WORKERS_JSON=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/workers/scripts" \
-    -H "Authorization: Bearer ${API_TOKEN}" \
-    -H "Content-Type: application/json")
-
-# Check if API call was successful
-if ! echo "$WORKERS_JSON" | grep -q '"success":true'; then
-    echo -e "${RED}❌ Error: Failed to fetch workers list from Cloudflare API${NC}"
-    echo ""
-    echo "API Response:"
-    echo "$WORKERS_JSON" | head -20
-    echo ""
-    echo "Please check:"
-    echo "  1. Your API token has 'Workers Scripts:Read' permission"
-    echo "  2. Your account ID is correct: $ACCOUNT_ID"
-    echo "  3. You have workers deployed in this account"
-    echo ""
-    exit 1
-fi
 
 # Define the worker names for Enrai project
 ENRAI_WORKER_NAMES=(
@@ -158,13 +116,25 @@ ENRAI_WORKER_NAMES=(
 # Arrays to store workers to delete
 declare -a WORKERS_TO_DELETE=()
 
-echo -e "${BLUE}🔍 Searching for Enrai workers...${NC}"
+echo -e "${BLUE}🔍 Checking which Enrai workers are deployed...${NC}"
 echo ""
 
-# Extract worker names from JSON response
+# Function to check if a worker exists
+check_worker_exists() {
+    local worker_name="$1"
+    # Try to get worker info using wrangler (will fail silently if not found)
+    if npx wrangler deployments list --name "$worker_name" 2>&1 | grep -qiE "(deployment|version|created)"; then
+        return 0  # Worker exists
+    else
+        return 1  # Worker doesn't exist
+    fi
+}
+
+# Build list of workers based on mode
 if [ -n "$SPECIFIC_WORKER" ]; then
     # Check if specific worker exists
-    if echo "$WORKERS_JSON" | grep -q "\"id\":\"$SPECIFIC_WORKER\""; then
+    echo "Checking: $SPECIFIC_WORKER..."
+    if check_worker_exists "$SPECIFIC_WORKER"; then
         WORKERS_TO_DELETE+=("$SPECIFIC_WORKER")
         echo -e "${GREEN}  ✓ Found: $SPECIFIC_WORKER${NC}"
     else
@@ -172,33 +142,42 @@ if [ -n "$SPECIFIC_WORKER" ]; then
         exit 0
     fi
 elif [ "$DELETE_ALL" = true ]; then
-    # Search for all Enrai workers
-    for worker_name in "${ENRAI_WORKER_NAMES[@]}"; do
-        if echo "$WORKERS_JSON" | grep -q "\"id\":\"$worker_name\""; then
-            WORKERS_TO_DELETE+=("$worker_name")
-            echo -e "${GREEN}  ✓ Found: $worker_name${NC}"
-        fi
-    done
+    # Add all Enrai workers (we'll check if they exist during deletion)
+    echo "Preparing to delete all Enrai workers..."
+    echo ""
+    WORKERS_TO_DELETE=("${ENRAI_WORKER_NAMES[@]}")
+    echo -e "${BLUE}ℹ️  Will attempt to delete ${#WORKERS_TO_DELETE[@]} workers${NC}"
+    echo -e "${YELLOW}   (Workers that don't exist will be skipped)${NC}"
 else
     # Interactive mode - let user select workers
-    echo "Available Enrai workers:"
+    echo "Checking for deployed Enrai workers..."
     echo ""
 
     worker_index=1
     declare -a AVAILABLE_WORKERS=()
 
     for worker_name in "${ENRAI_WORKER_NAMES[@]}"; do
-        if echo "$WORKERS_JSON" | grep -q "\"id\":\"$worker_name\""; then
+        echo -n "  Checking $worker_name... "
+        if check_worker_exists "$worker_name"; then
             AVAILABLE_WORKERS+=("$worker_name")
-            echo "  $worker_index) $worker_name"
-            ((worker_index++))
+            echo -e "${GREEN}✓${NC}"
+        else
+            echo -e "${YELLOW}not deployed${NC}"
         fi
     done
+
+    echo ""
 
     if [ ${#AVAILABLE_WORKERS[@]} -eq 0 ]; then
         echo -e "${YELLOW}ℹ️  No Enrai workers found${NC}"
         exit 0
     fi
+
+    echo "Available Enrai workers:"
+    echo ""
+    for i in "${!AVAILABLE_WORKERS[@]}"; do
+        echo "  $((i+1))) ${AVAILABLE_WORKERS[$i]}"
+    done
 
     echo "  A) Delete all Enrai workers"
     echo "  C) Cancel"
@@ -278,25 +257,19 @@ FAILED_COUNT=0
 for worker in "${WORKERS_TO_DELETE[@]}"; do
     echo -e "${BLUE}🗑️  Deleting: $worker${NC}"
 
-    # Delete the worker using Cloudflare API with force=true to delete associated Durable Objects
-    DELETE_RESPONSE=$(curl -s -X DELETE \
-        "https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/workers/scripts/${worker}?force=true" \
-        -H "Authorization: Bearer ${API_TOKEN}" \
-        -H "Content-Type: application/json")
+    # Delete the worker using wrangler delete command with --name option
+    DELETE_OUTPUT=$(npx wrangler delete --name "$worker" --force 2>&1)
+    DELETE_EXIT_CODE=$?
 
-    # Check if deletion was successful
-    if echo "$DELETE_RESPONSE" | grep -q '"success":true'; then
+    # Display the output
+    echo "$DELETE_OUTPUT"
+
+    # Check if deletion was successful (exit code 0 or output contains success message)
+    if [ $DELETE_EXIT_CODE -eq 0 ] || echo "$DELETE_OUTPUT" | grep -qiE "(deleted|success|removed)"; then
         echo -e "${GREEN}  ✅ Successfully deleted: $worker${NC}"
         ((DELETED_COUNT++))
     else
         echo -e "${RED}  ❌ Failed to delete: $worker${NC}"
-
-        # Try to extract error message
-        ERROR_MSG=$(echo "$DELETE_RESPONSE" | grep -oE '"message":"[^"]*"' | head -1 | cut -d'"' -f4)
-        if [ -n "$ERROR_MSG" ]; then
-            echo -e "${YELLOW}     Error: $ERROR_MSG${NC}"
-        fi
-
         ((FAILED_COUNT++))
     fi
     echo ""
@@ -313,10 +286,11 @@ if [ $FAILED_COUNT -gt 0 ]; then
     echo ""
     echo "Next steps:"
     echo "  1. Check the error messages above"
-    echo "  2. Verify your API token has the correct permissions"
+    echo "  2. Ensure you are logged in: npx wrangler login"
     echo "  3. Try deleting from the Cloudflare dashboard if the issue persists"
+    echo "     Dashboard: https://dash.cloudflare.com/"
 fi
 echo ""
-echo "Note: Associated Durable Objects were also deleted with the workers"
+echo "Note: Associated Durable Objects are also deleted when workers are deleted"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
