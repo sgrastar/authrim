@@ -14,6 +14,7 @@
 	let magicLinkLoading = $state(false);
 	let emailError = $state('');
 	let nameError = $state('');
+	let debugInfo = $state<Array<{ step: string; data: any; timestamp: string }>>([]);
 
 	// Email validation
 	function validateEmail(email: string): boolean {
@@ -29,10 +30,11 @@
 	);
 
 	async function handlePasskeyRegister() {
-		// Clear previous errors
+		// Clear previous errors and debug info
 		error = '';
 		emailError = '';
 		nameError = '';
+		debugInfo = [];
 
 		// Validate email
 		if (!email.trim()) {
@@ -60,7 +62,11 @@
 				name
 			});
 
-			console.log('API Response:', { optionsData, optionsError });
+			debugInfo.push({
+				step: '1. Registration Options Response',
+				data: { optionsData, optionsError },
+				timestamp: new Date().toISOString()
+			});
 
 			if (optionsError) {
 				throw new Error(optionsError.error_description || 'Failed to get registration options');
@@ -70,41 +76,78 @@
 				throw new Error('Invalid response from server: missing options');
 			}
 
-			console.log('Registration options:', optionsData.options);
-
 			// 2. Call WebAuthn API using @simplewebauthn/browser
 			// This handles all the base64url to Uint8Array conversions automatically
 			let credential;
 			try {
-				console.log('Calling startRegistration with:', optionsData.options);
 				credential = await startRegistration({ optionsJSON: optionsData.options });
-				console.log('Registration credential:', credential);
+				debugInfo.push({
+					step: '2. WebAuthn Credential Created',
+					data: credential,
+					timestamp: new Date().toISOString()
+				});
 			} catch (webauthnError) {
-				console.error('WebAuthn error:', webauthnError);
+				debugInfo.push({
+					step: '2. WebAuthn Error',
+					data: {
+						error: webauthnError,
+						message: webauthnError instanceof Error ? webauthnError.message : 'Unknown error',
+						stack: webauthnError instanceof Error ? webauthnError.stack : undefined
+					},
+					timestamp: new Date().toISOString()
+				});
 				throw new Error(`WebAuthn failed: ${webauthnError instanceof Error ? webauthnError.message : 'Unknown error'}`);
 			}
 
 			// 3. Send credential to server for verification
-			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyRegistration({
+			const verificationPayload = {
 				userId: optionsData!.userId,
 				credential,
 				deviceName: navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Desktop'
+			};
+
+			debugInfo.push({
+				step: '3. Verification Request Payload',
+				data: verificationPayload,
+				timestamp: new Date().toISOString()
+			});
+
+			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyRegistration(verificationPayload);
+
+			debugInfo.push({
+				step: '4. Verification Response',
+				data: { verifyData, verifyError },
+				timestamp: new Date().toISOString()
 			});
 
 			if (verifyError) {
 				throw new Error(verifyError.error_description || 'Registration verification failed');
 			}
 
-			// 4. Registration successful
-			console.log('Registration successful:', verifyData!.message);
-			console.log('Passkey created:', verifyData!.passkeyId);
+			// 5. Registration successful
+			debugInfo.push({
+				step: '5. Success - Redirecting',
+				data: { message: 'Registration completed successfully' },
+				timestamp: new Date().toISOString()
+			});
 
 			// Redirect to login page after successful registration
-			window.location.href = '/login';
+			// Give time for debug info to render before redirect
+			setTimeout(() => {
+				window.location.href = '/login';
+			}, 3000);
 
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred during passkey registration';
-			console.error('Passkey registration error:', err);
+			debugInfo.push({
+				step: 'ERROR',
+				data: {
+					error: err,
+					message: err instanceof Error ? err.message : 'Unknown error',
+					stack: err instanceof Error ? err.stack : undefined
+				},
+				timestamp: new Date().toISOString()
+			});
 		} finally {
 			passkeyLoading = false;
 		}
@@ -276,6 +319,28 @@
 				{m.register_termsAgreement()}
 			</p>
 		</Card>
+
+		<!-- Debug Information -->
+		{#if debugInfo.length > 0}
+			<Card class="mt-6 bg-gray-900 text-white">
+				<div class="mb-4">
+					<h3 class="text-lg font-semibold text-yellow-400">🐛 Debug Information</h3>
+					<p class="text-xs text-gray-400 mt-1">This section shows technical details for debugging</p>
+				</div>
+
+				<div class="space-y-4 max-h-96 overflow-y-auto">
+					{#each debugInfo as info}
+						<div class="border border-gray-700 rounded-lg p-3">
+							<div class="flex items-center justify-between mb-2">
+								<h4 class="font-mono text-sm font-semibold text-green-400">{info.step}</h4>
+								<span class="text-xs text-gray-500">{new Date(info.timestamp).toLocaleTimeString()}</span>
+							</div>
+							<pre class="bg-black rounded p-2 text-xs overflow-x-auto"><code>{JSON.stringify(info.data, null, 2)}</code></pre>
+						</div>
+					{/each}
+				</div>
+			</Card>
+		{/if}
 
 		<!-- Sign In Link -->
 		<p class="text-center text-sm text-gray-600 dark:text-gray-400">

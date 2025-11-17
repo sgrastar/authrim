@@ -320,11 +320,12 @@ export class ChallengeStore {
       if (path === '/challenge/consume' && request.method === 'POST') {
         const body = (await request.json()) as Partial<ConsumeChallengeRequest>;
 
-        if (!body.id || !body.type || !body.challenge) {
+        // Note: challenge field is optional - it's only validated if provided
+        if (!body.id || !body.type) {
           return new Response(
             JSON.stringify({
               error: 'invalid_request',
-              error_description: 'Missing required fields',
+              error_description: 'Missing required fields: id and type',
             }),
             {
               status: 400,
