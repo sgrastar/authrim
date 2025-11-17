@@ -5,12 +5,27 @@
 
 	let currentLang = $state(languageTag());
 
-	function switchLanguage(lang: string) {
-		setLanguageTag(lang);
-		currentLang = lang;
-		// Force re-render by reloading (for demo purposes)
-		if (typeof window !== 'undefined') {
-			window.location.reload();
+	async function switchLanguage(lang: string) {
+		// Save to server-side cookie via API (not affected by Safari ITP 7-day limit)
+		try {
+			await fetch('/api/set-language', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({ language: lang })
+			});
+
+			// Update client-side language tag
+			setLanguageTag(lang);
+			currentLang = lang;
+
+			// Reload page to apply language change across all components
+			if (typeof window !== 'undefined') {
+				window.location.reload();
+			}
+		} catch (error) {
+			console.error('Failed to set language:', error);
 		}
 	}
 </script>

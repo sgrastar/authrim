@@ -305,9 +305,9 @@
 			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Email Settings</h2>
 			<div class="space-y-4">
 				<div>
-					<label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<div class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
 						Email Provider
-					</label>
+					</div>
 					<div class="space-y-2">
 						<label class="flex items-center gap-2">
 							<input

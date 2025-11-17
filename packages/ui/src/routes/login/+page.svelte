@@ -302,7 +302,6 @@
 
 		<!-- Create Account Link -->
 		<p class="text-center text-sm text-gray-600 dark:text-gray-400">
-			<!-- svelte-ignore svelte/no-navigation-without-resolve -->
 			<a
 				href="/register"
 				class="font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"

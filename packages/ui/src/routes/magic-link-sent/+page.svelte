@@ -168,7 +168,6 @@
 
 		<!-- Back to Login Link -->
 		<p class="text-center">
-			<!-- svelte-ignore svelte/no-navigation-without-resolve -->
 			<a
 				href="/login"
 				class="inline-flex items-center gap-2 text-sm font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
