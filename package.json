@@ -8,7 +8,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
-    "deploy": "turbo run deploy --filter='!@enrai/router'",
+    "deploy": "./scripts/deploy-with-retry.sh",
     "deploy:with-router": "./scripts/deploy-with-retry.sh",
     "deploy:retry": "./scripts/deploy-with-retry.sh",
     "deploy:ui": "pnpm --filter=ui build && wrangler pages deploy packages/ui/.svelte-kit/cloudflare --project-name=enrai-ui",

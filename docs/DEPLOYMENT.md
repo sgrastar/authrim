@@ -82,7 +82,7 @@ EMAIL_FROM="noreply@yourdomain.com"  # Optional
 ./scripts/setup-secrets.sh
 
 # Deploy all workers
-pnpm run deploy:with-router
+pnpm run deploy
 ```
 
 ---
@@ -247,14 +247,14 @@ Enrai supports two deployment modes to ensure OpenID Connect specification compl
 - **How**: Router Worker acts as unified entry point with Service Bindings
 - **Issuer**: `https://enrai.subdomain.workers.dev`
 - **Pros**: OpenID Connect compliant, no custom domain needed
-- **Deploy**: `pnpm run deploy:with-router`
+- **Deploy**: `pnpm run deploy`
 
 #### 2️⃣ Production Environment (Custom Domain + Routes)
 - **Use case**: Production deployments
 - **How**: Cloudflare Routes map paths directly to specialized workers
 - **Issuer**: Your custom domain (e.g., `https://id.yourdomain.com`)
 - **Pros**: Optimal performance (no extra hop), professional URL
-- **Deploy**: `pnpm run deploy:retry`
+- **Deploy**: `pnpm run deploy`
 
 Each worker is deployed independently but shares the same issuer URL.
 
@@ -306,7 +306,7 @@ wrangler login
 pnpm run build
 
 # 5. Deploy all workers with retry logic (recommended)
-pnpm run deploy:retry
+pnpm run deploy
 # - Deploys in correct order: shared (Durable Objects) → workers → router
 # - Uses sequential deployment with delays to avoid rate limits
 # - Includes automatic retries on failure
@@ -624,7 +624,7 @@ Deploy workers using the recommended sequential deployment with retry logic:
 #### Recommended: Deploy with Retry Logic (All Modes)
 
 ```bash
-pnpm run deploy:with-router
+pnpm run deploy
 ```
 
 This is now the **recommended deployment method** for both test and production environments.
@@ -1065,7 +1065,7 @@ Option 1: Reset and recreate all KV namespaces (recommended):
 sleep 30
 
 # Deploy with retry logic
-pnpm run deploy:retry
+pnpm run deploy
 ```
 
 Option 2: Recreate specific namespaces interactively:
@@ -1087,7 +1087,7 @@ wrangler delete enrai-op-auth
 **Solution:**
 ```bash
 ./scripts/setup-kv.sh
-pnpm run deploy:retry
+pnpm run deploy
 ```
 
 ### Issue: "Error: No such secret: PRIVATE_KEY_PEM"
@@ -1195,7 +1195,7 @@ Ensure worker names match exactly.
 
 Use the recommended sequential deployment with retry logic:
 ```bash
-pnpm run deploy:with-router
+pnpm run deploy
 ```
 
 This is now the **default recommended method** and automatically:
@@ -1211,7 +1211,7 @@ This is now the **default recommended method** and automatically:
 pnpm run deploy
 
 # Switch to this instead:
-pnpm run deploy:with-router
+pnpm run deploy
 ```
 
 **Alternative:** Increase the delay in `scripts/deploy-with-retry.sh` if rate limits persist:
@@ -1231,7 +1231,7 @@ Wait 30-60 seconds after running `setup-kv.sh` before deploying:
 ./scripts/setup-kv.sh
 echo "Waiting for KV propagation..."
 sleep 30
-pnpm run deploy:retry
+pnpm run deploy
 ```
 
 If still experiencing issues, undeploy and redeploy:
@@ -1246,7 +1246,7 @@ cd ../..
 
 # Wait and redeploy
 sleep 30
-pnpm run deploy:retry
+pnpm run deploy
 ```
 
 ---
