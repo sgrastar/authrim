@@ -235,9 +235,8 @@ async function handleAuthorizationCodeGrant(
       redirect_uri: consumedData.redirectUri, // Keep for compatibility
       nonce: consumedData.nonce,
       state: consumedData.state,
-      auth_time: consumedData.createdAt
-        ? Math.floor(consumedData.createdAt / 1000)
-        : Math.floor(Date.now() / 1000), // OIDC Core: Time when End-User authentication occurred
+      auth_time: consumedData.authTime || Math.floor(Date.now() / 1000), // OIDC Core: Time when End-User authentication occurred
+      acr: consumedData.acr, // OIDC Core: Authentication Context Class Reference
       claims: consumedData.claims,
     };
   } catch (error) {
