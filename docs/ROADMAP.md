@@ -12,14 +12,16 @@
 2025                 2026                                    2027
 Nov  Dec  Jan  Feb  Mar  Apr  May  Jun  Jul  Aug  Sep  Oct  Nov  Dec  Jan  Feb  Mar+
 │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
-├─P1─┼─P2─┼─P3─┼────┼─P4─┼─P5─┼───P6────┼────P7────┼─────P8─────┼─────P9─────┼─P10
+├─P1─┼─P2─┼─P3─┼────┼─P4─┼─P5─┼─────P6─────────────┼──P7───────┼──P8──┼─────┼─P9
 │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
-✅   ✅   ✅   ✅   ✅   ✅   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🎓
+✅   ✅   ✅   ✅   ✅   ✅   🏢   🏢   🏢   🏢   🏢   🏢   🚀   🚀   🚀   🌐   🎓
 
 Legend:
 ✅ Complete (Phases 1-5)
-🆕 Planned (CLI, Enterprise, Next-Gen, SaaS)
-🎓 Final (Certification & Production Launch)
+🏢 Planned (Phase 6: Enterprise Features)
+🚀 Planned (Phase 7: Next-Gen Protocols)
+🌐 Planned (Phase 8: SaaS Platform)
+🎓 Final (Phase 9: CLI & Production Launch)
 ```
 
 ---
@@ -32,12 +34,11 @@ Legend:
 | **M2: Core API** | 2026-01-31 | ✅ Complete | All OIDC endpoints functional |
 | **M3: Conformance** | 2026-03-15 | ✅ Complete | OpenID Conformance Suite (95.8% Phase 3) |
 | **M4: Extensions** | 2026-04-30 | ✅ Complete | All extended security features: DCR, Rate Limiting, PAR, DPoP, Pairwise, Token Management, Form Post, Storage Foundation |
-| **M5: UI/UX** | 2026-05-31 | ✅ 100% Complete | D1 Database, 9 Durable Objects, Backend APIs, SvelteKit Frontend, Admin Dashboard, Comprehensive Testing (E2E, Accessibility, Performance) |
-| **M6: CLI & Deploy** | 2026-08-10 | 🆕 Planned | One-command deployment |
-| **M7: Enterprise** | 2026-10-31 | 🆕 Planned | Hybrid, Device, CIBA, Social Login |
-| **M8: Next-Gen** | 2027-01-31 | 🆕 Planned | Verifiable Credentials, OAuth 2.1 |
-| **M9: SaaS** | 2027+ | 🌐 Future | Multi-tenant platform |
-| **M10: Certification** | TBD | 🎓 Final | OpenID Certification & Production Launch |
+| **M5: UI/UX** | 2026-05-31 | ✅ Complete | D1 Database, 9 Durable Objects, Backend APIs, SvelteKit Frontend, Admin Dashboard, Comprehensive Testing (E2E, Accessibility, Performance) |
+| **M6: Enterprise** | 2026-10-31 | 🏢 Planned | Hybrid, Device, CIBA, Social Login, SAML, LDAP, SCIM, Visual Flow Builder, WebSDK |
+| **M7: Next-Gen** | 2027-01-31 | 🚀 Planned | Verifiable Credentials, OAuth 2.1, Federation, Mobile SDKs, GraphQL |
+| **M8: SaaS** | 2027+ | 🌐 Planned | Multi-tenant platform, Billing, Marketplace |
+| **M9: CLI & Launch** | TBD | 🎓 Final | One-command deployment, OpenID Certification, Production Launch |
 
 ---
 
@@ -522,83 +523,33 @@ Legend:
 
 ---
 
-## Phase 6: CLI & Automation 🆕
+## Phase 6: Enterprise Features & Advanced Flows 🏢
 
-**Timeline:** Jun 12 - Aug 10, 2026 (9 weeks)
+**Timeline:** Jun 1 - Oct 31, 2026 (5 months)
 
-**Goal:** One-command deployment and management
+**Goal:** Enterprise-grade authentication flows and integrations
 
-*(Content from old Phase 7 - see TASKS.md for full details)*
-
-### Week 32-33: CLI Tool Development (Jun 12-25)
-
-**Key Features:**
-- [ ] `create-enrai` NPM package
-- [ ] Interactive setup wizard
-- [ ] Project scaffolding
-- [ ] Deployment commands
-
-### Week 34-35: Cloudflare Integration (Jun 26 - Jul 9)
-
-**Key Features:**
-- [ ] Cloudflare API client
-- [ ] Worker deployment API
-- [ ] KV/D1/DO management
-- [ ] DNS & custom domain setup
-
-### Week 36-39: Production Readiness (Jul 10 - Aug 10)
-
-**Key Features:**
-- [ ] Setup automation
-- [ ] Error handling & recovery
-- [ ] Performance optimization
-- [ ] Security hardening
-- [ ] Monitoring & observability
-- [ ] Documentation & examples
-- [ ] NPM package publishing
-
-**Deliverables:**
-- [ ] `create-enrai` package published
-- [ ] One-command deployment functional
-- [ ] CLI with 20+ management commands
-- [ ] Production-ready error handling
-- [ ] Complete documentation
-
----
-
-*(See TASKS.md Phase 6 for full CLI implementation details)*
-
----
-
-## Phase 7: Enterprise Flows & Advanced Features 🏢
-
-**Timeline:** Aug 11 - Oct 31, 2026 (11 weeks)
-
-**Goal:** Enterprise flows + advanced authentication features
-
-*(Content from old Phase 8 - see TASKS.md for full details)*
-
-### Week 40-42: Advanced OAuth Flows (Aug 11-31)
+### Week 23-25: Advanced OAuth Flows (Jun 1-21)
 
 **Key Features:**
 - [ ] Hybrid Flow (OIDC Core 3.3)
 - [ ] Device Authorization Flow (RFC 8628)
 - [ ] JWT Bearer Flow (RFC 7523)
 
-### Week 43-44: CIBA & Advanced Encryption (Sep 1-14)
+### Week 26-27: CIBA & Advanced Encryption (Jun 22 - Jul 5)
 
 **Key Features:**
 - [ ] CIBA (Client Initiated Backchannel Authentication)
 - [ ] JWE (JSON Web Encryption - RFC 7516)
 
-### Week 45-47: Social Login & Identity Federation (Sep 15 - Oct 5)
+### Week 28-30: Social Login & Identity Federation (Jul 6-26)
 
 **Key Features:**
 - [ ] Social Login Providers (Google, GitHub, Microsoft, Apple, Facebook, Twitter, LinkedIn)
 - [ ] Identity Federation & Transformation
 - [ ] Account linking
 
-### Week 48-50: Enterprise Integration (Oct 6-26)
+### Week 31-33: Enterprise Integration (Jul 27 - Aug 16)
 
 **Key Features:**
 - [ ] SAML 2.0 Bridge (OIDC → SAML)
@@ -608,15 +559,15 @@ Legend:
 - [ ] Webhook Integration
 - [ ] Bulk User Operations API
 
-### Week 51: Advanced Security & RBAC (Oct 27 - Nov 2)
+### Week 34-35: Advanced Security & RBAC (Aug 17-30)
 
 **Key Features:**
 - [ ] Risk-Based Authentication
-- [ ] ABAC (Attribute-Based Access Control) - advanced extension
+- [ ] ABAC (Attribute-Based Access Control)
 - [ ] GDPR Automation (Right to Erasure, Data Portability)
 - [ ] Compliance Tooling (SOC 2, ISO 27001)
 
-### Week 52: Advanced UI Features
+### Week 36-38: Advanced UI Features (Sep 1-21)
 
 **Key Features:**
 - [ ] Visual Authentication Flow Builder (SimCity-inspired UI)
@@ -633,10 +584,18 @@ Legend:
   - Video backgrounds support
   - Template gallery
 
+### Week 39-40: Testing & Documentation (Sep 22 - Oct 5)
+
+**Key Features:**
+- [ ] Enterprise feature testing
+- [ ] Integration testing
+- [ ] Documentation updates
+- [ ] Migration guides
+
 **Deliverables:**
 - [ ] All advanced OAuth flows operational
 - [ ] CIBA & JWE implemented
-- [ ] Social Login (6+ providers)
+- [ ] Social Login (7+ providers)
 - [ ] SAML 2.0 bridge functional
 - [ ] LDAP/AD integration working
 - [ ] SCIM 2.0 provisioning operational
@@ -652,15 +611,13 @@ Legend:
 
 ---
 
-## Phase 8: Verifiable Credentials & Next-Gen 🚀
+## Phase 7: Verifiable Credentials & Next-Gen Protocols 🚀
 
-**Timeline:** Nov 3, 2026 - Jan 31, 2027 (13 weeks)
+**Timeline:** Nov 1, 2026 - Jan 31, 2027 (3 months)
 
-**Goal:** Decentralized ID + next-generation protocols
+**Goal:** Decentralized identity and next-generation protocols
 
-*(Content from old Phase 9 - see TASKS.md for full details)*
-
-### Week 52-54: OpenID for Verifiable Credentials (Nov 3-23)
+### Week 41-43: OpenID for Verifiable Credentials (Nov 1-21)
 
 **Key Features:**
 - [ ] OpenID4VP (Verifiable Presentations)
@@ -669,7 +626,7 @@ Legend:
 - [ ] W3C Verifiable Credentials support
 - [ ] DID (Decentralized Identifier) resolution
 
-### Week 55-57: Federation & OAuth 2.1 (Nov 24 - Dec 14)
+### Week 44-46: Federation & OAuth 2.1 (Nov 22 - Dec 12)
 
 **Key Features:**
 - [ ] OpenID Federation 1.0
@@ -677,7 +634,7 @@ Legend:
 - [ ] Trust chain validation
 - [ ] Security best practices enforcement
 
-### Week 58-60: Privacy & Advanced Features (Dec 15, 2026 - Jan 11, 2027)
+### Week 47-49: Privacy & Advanced Features (Dec 13, 2026 - Jan 2, 2027)
 
 **Key Features:**
 - [ ] Ephemeral Identity
@@ -686,7 +643,7 @@ Legend:
 - [ ] GDPR automation (right to erasure, data portability)
 - [ ] Privacy dashboard
 
-### Week 61-63: Developer Tools & Ecosystem (Jan 12-31, 2027)
+### Week 50-52: Developer Tools & Ecosystem (Jan 3-23, 2027)
 
 **Key Features:**
 - [ ] Mobile SDKs (iOS, Android, React Native, Flutter)
@@ -713,15 +670,13 @@ Legend:
 
 ---
 
-## Phase 9: White-Label & SaaS Platform 🌐
+## Phase 8: White-Label & SaaS Platform 🌐
 
-**Timeline:** Feb 1, 2027 onwards
+**Timeline:** Feb 1, 2027 onwards (ongoing)
 
-**Goal:** Multi-tenant SaaS platform + marketplace
+**Goal:** Multi-tenant SaaS platform and marketplace
 
-*(Content from old Phase 10 - see TASKS.md for full details)*
-
-### Week 64-67: Multi-Tenancy Foundation (Feb 1-28)
+### Week 53-56: Multi-Tenancy Foundation (Feb 1-28)
 
 **Key Features:**
 - [ ] Multi-tenant architecture
@@ -730,7 +685,7 @@ Legend:
 - [ ] Tenant provisioning API
 - [ ] Resource quotas per tenant
 
-### Week 68-71: Billing & Monetization (Mar 1-28, 2027)
+### Week 57-60: Billing & Monetization (Mar 1-28, 2027)
 
 **Key Features:**
 - [ ] Stripe integration
@@ -739,7 +694,7 @@ Legend:
 - [ ] Invoice generation
 - [ ] Subscription management
 
-### Week 72-75: Marketplace (Mar 29 - Apr 25, 2027)
+### Week 61-64: Marketplace (Mar 29 - Apr 25, 2027)
 
 **Key Features:**
 - [ ] Plugin system architecture
@@ -748,7 +703,7 @@ Legend:
 - [ ] Plugin versioning & updates
 - [ ] Plugin revenue sharing
 
-### Week 76+: Platform Refinement & Growth (Apr 26, 2027 onwards)
+### Week 65+: Platform Refinement & Growth (Apr 26, 2027 onwards)
 
 **Key Features:**
 - [ ] White-label customization
@@ -769,32 +724,62 @@ Legend:
 
 ---
 
-## Phase 10: Certification & Production Launch 🎓
+## Phase 9: CLI, Automation & Production Launch 🎓
 
-**Timeline:** Final Phase (TBD)
+**Timeline:** TBD (Pre-release phase)
 
-**Goal:** Obtain official OpenID certification + production deployment
+**Goal:** One-command deployment + OpenID Certification + Production Launch
 
-**Priority:** Obtain certification, production release, completion
+**Priority:** Developer experience, production readiness, official certification
 
-### Production Deployment
+### Stage 1: CLI Tool Development
 
+**Key Features:**
+- [ ] `create-enrai` NPM package
+- [ ] Interactive setup wizard
+- [ ] Project scaffolding
+- [ ] Deployment commands
+
+### Stage 2: Cloudflare Integration
+
+**Key Features:**
+- [ ] Cloudflare API client
+- [ ] Worker deployment API
+- [ ] KV/D1/DO management
+- [ ] DNS & custom domain setup
+
+### Stage 3: Production Readiness
+
+**Key Features:**
+- [ ] Setup automation
+- [ ] Error handling & recovery
+- [ ] Performance optimization
+- [ ] Security hardening
+- [ ] Monitoring & observability
+- [ ] Documentation & examples
+- [ ] NPM package publishing
+
+### Stage 4: Production Deployment
+
+**Key Features:**
 - [ ] Production Cloudflare account setup
 - [ ] Custom domain configuration (`id.enrai.org`)
 - [ ] DNS records & SSL/TLS configuration
 - [ ] Production secrets generation
 - [ ] Production deployment & verification
 
-### OpenID Certification Submission
+### Stage 5: OpenID Certification Submission
 
+**Key Features:**
 - [ ] Pre-submission testing (full conformance suite)
 - [ ] Application preparation & documentation
 - [ ] Test results compilation
 - [ ] Submission to OpenID Foundation
 - [ ] Certification review & approval
 
-### Release Preparation
+### Stage 6: Release Preparation
 
+**Key Features:**
 - [ ] Release notes & changelog
 - [ ] API documentation finalization
 - [ ] Migration guides (from Auth0/Keycloak)
@@ -803,6 +788,11 @@ Legend:
 - [ ] OpenID Certified™ mark display
 
 **Deliverables:**
+- [ ] `create-enrai` package published
+- [ ] One-command deployment functional (<5 min setup)
+- [ ] CLI with 20+ management commands
+- [ ] Production-ready error handling
+- [ ] Complete documentation
 - [ ] OpenID Certification obtained ✨
 - [ ] Production deployment live (`https://id.enrai.org`)
 - [ ] Public announcement ready
@@ -811,35 +801,11 @@ Legend:
 
 ---
 
-*(Content moved from old Phase 5 - Certification moved to final phase)*
+*(See TASKS.md Phase 6 + Phase 10 for full implementation details)*
 
 ---
 
-## Previous Phase 10: White-Label & SaaS Platform 🌐 (Now Phase 9)
-
-*(See Phase 9 above for current SaaS platform timeline)*
-
-### Multi-Tenancy
-- [ ] Tenant isolation (data, config, branding)
-- [ ] Custom domain per tenant (id.{customer}.com)
-- [ ] Tenant management dashboard
-- [ ] Tenant provisioning API
-- [ ] Resource quotas per tenant
-
-### Billing & Monetization
-- [ ] Stripe integration
-- [ ] Usage metering (MAU, API calls, storage)
-- [ ] Plan/pricing tiers (Free, Pro, Enterprise)
-- [ ] Invoice generation
-- [ ] Subscription management
-- [ ] Usage dashboards (per tenant)
-
-### Marketplace
-- [ ] Plugin system architecture
-- [ ] Plugin marketplace (templates, integrations)
-- [ ] Third-party plugin submission
-- [ ] Plugin versioning & updates
-- [ ] Plugin revenue sharing
+> **Note:** Phase 10 (Certification & Production Launch) has been merged into **Phase 9** (CLI, Automation & Production Launch) as they are closely related release activities. Phase 9 now serves as the final pre-release and launch phase.
 
 ---
 
@@ -894,37 +860,43 @@ Legend:
 - ✅ Lighthouse Accessibility score: 89 (good, target 90+)
 - ✅ WCAG 2.1 AA compliance - verified with axe-core (5 pages, zero violations)
 
-### Phase 7: CLI 🆕
-- [ ] <5 min from `npx create-enrai` to running IdP
-- [ ] <1 min deployment time
-- [ ] 100% automated setup
-- [ ] Zero manual configuration required
-- [ ] 1000+ NPM downloads/month (goal)
-
-### Phase 8: Enterprise 🆕
+### Phase 6: Enterprise 🏢
 - [ ] Hybrid Flow operational
 - [ ] Device Flow functional (IoT/TV)
 - [ ] JWT Bearer Flow working
 - [ ] CIBA implemented
 - [ ] JWE encryption support
-- [ ] 6+ social login providers
+- [ ] 7+ social login providers
 - [ ] SAML 2.0 bridge functional
 - [ ] SCIM 2.0 provisioning
+- [ ] Visual Flow Builder operational
+- [ ] WebSDK published
 - [ ] 10+ enterprise customers (goal)
 
-### Phase 9: Next-Gen 🆕
+### Phase 7: Next-Gen 🚀
 - [ ] OpenID4VP/CI/IA implemented
 - [ ] OpenID Federation 1.0
 - [ ] OAuth 2.1 compliance
 - [ ] Ephemeral Identity
 - [ ] Mobile SDKs (4 platforms)
 - [ ] GraphQL API
+- [ ] Infrastructure as Code (Terraform, Helm, Pulumi)
 - [ ] 100+ GitHub stars (goal)
 
-### Phase 10: SaaS 🌐
+### Phase 8: SaaS 🌐
 - [ ] Multi-tenant platform
-- [ ] 100+ paying customers
-- [ ] $10k+ MRR
+- [ ] 100+ active tenants
+- [ ] Billing & monetization functional
+- [ ] Plugin marketplace live
+- [ ] $10k+ MRR (goal)
+
+### Phase 9: CLI & Launch 🎓
+- [ ] <5 min from `npx create-enrai` to running IdP
+- [ ] <1 min deployment time
+- [ ] 100% automated setup
+- [ ] OpenID Certification obtained ✨
+- [ ] Production deployment live
+- [ ] 1000+ NPM downloads/month (goal)
 
 ---
 
