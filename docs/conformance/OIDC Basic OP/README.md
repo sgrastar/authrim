@@ -8,8 +8,7 @@ Its conformance goal is not only certification, but **to redefine what "complian
 
 **Related Documents:**
 - [Test Plan](./test-plan.md) - Detailed conformance testing mapping
-- [Testing Guide](./testing-guide.md) - OpenID Conformance Suite testing without Docker
-- [Phase 3 Quickstart](./phase3-quickstart.md) - Quick start guide for Phase 3 testing
+- [Testing Guide](./testing-guide.md) - Complete testing guide with quick start and detailed instructions
 - [Manual Checklist](./manual-checklist.md) - Manual conformance verification checklist
 - [Protocol Flow](../architecture/protocol-flow.md) - OIDC flow implementation
 - [Technical Specs](../architecture/technical-specs.md) - System architecture details

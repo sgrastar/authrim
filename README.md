@@ -282,10 +282,10 @@ pnpm run dev
 
 # For production deployment:
 # Deploy all workers (including Durable Objects automatically)
-pnpm run deploy:retry
+pnpm run deploy
 # - Deploys enrai-shared (Durable Objects) first
 # - Then deploys other workers sequentially
-# - Optional: Use ./scripts/setup-durable-objects.sh to deploy DOs separately
+# - Includes retry logic and rate limit protection
 
 # Workers start at:
 # - op-discovery: http://localhost:8787
@@ -452,8 +452,8 @@ pnpm install
 # 7. Build TypeScript
 pnpm run build
 
-# 8. Deploy with retry logic (recommended)
-pnpm run deploy:with-router
+# 8. Deploy with retry logic
+pnpm run deploy
 # This uses deploy-with-retry.sh for sequential deployment with delays
 # - Deploys enrai-shared (Durable Objects) first
 # - Router Worker is included if wrangler.toml exists (test mode)
@@ -468,7 +468,7 @@ Enrai supports two deployment modes to ensure OpenID Connect specification compl
 - **Unified endpoint**: `https://enrai.{subdomain}.workers.dev`
 - **Use case**: Development, testing, quick setup
 - **Pros**: No custom domain needed, OpenID Connect compliant ✅
-- **Deploy**: `pnpm run deploy:with-router` (includes Router Worker)
+- **Deploy**: `pnpm run deploy` (includes Router Worker)
 
 **Workers deployed:**
 - 🌍 **enrai-shared** (Durable Objects - deployed first)
@@ -479,7 +479,7 @@ Enrai supports two deployment modes to ensure OpenID Connect specification compl
 - **Custom domain**: `https://id.yourdomain.com`
 - **Use case**: Production deployments
 - **Pros**: Optimal performance, professional URL
-- **Deploy**: `pnpm run deploy:with-router` (Router Worker skipped automatically)
+- **Deploy**: `pnpm run deploy` (Router Worker skipped automatically)
 - **Requires**: Cloudflare-managed domain
 
 **Workers deployed:**
@@ -494,17 +494,11 @@ Enrai supports two deployment modes to ensure OpenID Connect specification compl
 All deployment commands now use sequential deployment with retry logic to avoid API rate limits:
 
 ```bash
-# Recommended: Deploy with retry logic (works for both modes)
-pnpm run deploy:with-router
-
-# Alternative: Same as above (deploy:retry is an alias)
-pnpm run deploy:retry
-
-# Legacy: Parallel deployment (NOT recommended, may hit rate limits)
+# Deploy with retry logic (works for both modes)
 pnpm run deploy
 ```
 
-**Benefits of sequential deployment:**
+**Benefits:**
 - ✅ Avoids Cloudflare API rate limits (1,200 requests per 5 minutes)
 - ✅ Prevents "Service unavailable" errors (code 7010)
 - ✅ Automatic retry with exponential backoff (up to 4 attempts)
