@@ -6,7 +6,7 @@
  */
 
 import { SignJWT, jwtVerify, importPKCS8, importJWK } from 'jose';
-import type { JWK, KeyLike, JWTPayload } from 'jose';
+import type { JWK, CryptoKey, JWTPayload } from 'jose';
 import { generateSecureRandomString } from './crypto';
 import type { IDTokenClaims } from '../types/oidc';
 
@@ -37,7 +37,7 @@ export interface AccessTokenClaims extends JWTPayload {
  */
 export async function createIDToken(
   claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
-  privateKey: KeyLike,
+  privateKey: CryptoKey,
   kid: string,
   expiresIn: number = 3600
 ): Promise<string> {
@@ -63,7 +63,7 @@ export async function createIDToken(
  */
 export async function createAccessToken(
   claims: Omit<AccessTokenClaims, 'iat' | 'exp' | 'jti'>,
-  privateKey: KeyLike,
+  privateKey: CryptoKey,
   kid: string,
   expiresIn: number = 3600
 ): Promise<{ token: string; jti: string }> {
@@ -94,7 +94,7 @@ export async function createAccessToken(
  */
 export async function verifyToken(
   token: string,
-  publicKey: KeyLike,
+  publicKey: CryptoKey,
   issuer: string,
   audience: string
 ): Promise<JWTPayload> {
@@ -140,9 +140,9 @@ export function parseToken(token: string): JWTPayload {
  * Import private key from PEM format (PKCS#8)
  *
  * @param pem - PEM-formatted private key
- * @returns Promise<KeyLike>
+ * @returns Promise<CryptoKey>
  */
-export async function importPrivateKeyFromPEM(pem: string): Promise<KeyLike> {
+export async function importPrivateKeyFromPEM(pem: string): Promise<CryptoKey> {
   return await importPKCS8(pem, 'RS256');
 }
 
@@ -150,10 +150,10 @@ export async function importPrivateKeyFromPEM(pem: string): Promise<KeyLike> {
  * Import public key from JWK format
  *
  * @param jwk - JWK public key
- * @returns Promise<KeyLike>
+ * @returns Promise<CryptoKey>
  */
-export async function importPublicKeyFromJWK(jwk: JWK): Promise<KeyLike> {
-  return (await importJWK(jwk, 'RS256')) as KeyLike;
+export async function importPublicKeyFromJWK(jwk: JWK): Promise<CryptoKey> {
+  return (await importJWK(jwk, 'RS256')) as CryptoKey;
 }
 
 /**
@@ -232,7 +232,7 @@ export interface RefreshTokenClaims extends JWTPayload {
  */
 export async function createRefreshToken(
   claims: Omit<RefreshTokenClaims, 'iat' | 'exp' | 'jti'>,
-  privateKey: KeyLike,
+  privateKey: CryptoKey,
   kid: string,
   expiresIn: number = 2592000
 ): Promise<{ token: string; jti: string }> {

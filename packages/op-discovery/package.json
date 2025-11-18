@@ -15,7 +15,7 @@
   "dependencies": {
     "@enrai/shared": "workspace:*",
     "hono": "^4.0.0",
-    "jose": "^5.2.0"
+    "jose": "^6.1.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240117.0",

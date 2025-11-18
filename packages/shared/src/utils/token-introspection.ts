@@ -14,7 +14,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '../types/env';
-import type { KeyLike, JWTPayload, JWK } from 'jose';
+import type { CryptoKey, JWTPayload, JWK } from 'jose';
 import { importJWK } from 'jose';
 import { verifyToken } from './jwt';
 import { isTokenRevoked } from './kv';
@@ -60,22 +60,22 @@ export interface TokenValidationRequest {
  * Cached public key for token verification
  * Module-level cache for performance optimization
  */
-let cachedPublicKey: KeyLike | null = null;
+let cachedPublicKey: CryptoKey | null = null;
 let cachedKeyId: string | null = null;
 
 /**
  * Get or create cached public key for token verification
  */
-async function getPublicKey(publicJWKJson: string, keyId: string): Promise<KeyLike> {
+async function getPublicKey(publicJWKJson: string, keyId: string): Promise<CryptoKey> {
   if (cachedPublicKey && cachedKeyId === keyId) {
     return cachedPublicKey;
   }
 
   const publicJWK = JSON.parse(publicJWKJson) as JWK;
-  const importedKey = await importJWK(publicJWK, 'RS256');
+  const importedKey = await importJWK(publicJWK, 'RS256') as CryptoKey;
 
   if (importedKey instanceof Uint8Array) {
-    throw new Error('Unexpected key type: expected KeyLike, got Uint8Array');
+    throw new Error('Unexpected key type: expected CryptoKey, got Uint8Array');
   }
 
   cachedPublicKey = importedKey;
@@ -193,7 +193,7 @@ export async function introspectToken(
     };
   }
 
-  let publicKey: KeyLike;
+  let publicKey: CryptoKey;
   try {
     publicKey = await getPublicKey(publicJWKJson, keyId);
   } catch (error) {

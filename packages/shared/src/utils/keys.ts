@@ -6,14 +6,14 @@
  */
 
 import { generateKeyPair, exportJWK, exportPKCS8 } from 'jose';
-import type { JWK, KeyLike } from 'jose';
+import type { JWK, CryptoKey } from 'jose';
 
 /**
  * RSA key pair interface
  */
 export interface RSAKeyPair {
-  publicKey: KeyLike;
-  privateKey: KeyLike;
+  publicKey: CryptoKey;
+  privateKey: CryptoKey;
 }
 
 /**
@@ -37,7 +37,7 @@ export async function generateRSAKeyPair(modulusLength: number = 2048): Promise<
  * @param kid - Key ID (optional)
  * @returns Promise<JWK>
  */
-export async function exportPublicJWK(publicKey: KeyLike, kid?: string): Promise<JWK> {
+export async function exportPublicJWK(publicKey: CryptoKey, kid?: string): Promise<JWK> {
   const jwk = await exportJWK(publicKey);
 
   // Add standard JWK parameters
@@ -56,7 +56,7 @@ export async function exportPublicJWK(publicKey: KeyLike, kid?: string): Promise
  * @param privateKey - Private key to export
  * @returns Promise<string> - PEM-formatted private key
  */
-export async function exportPrivateKey(privateKey: KeyLike): Promise<string> {
+export async function exportPrivateKey(privateKey: CryptoKey): Promise<string> {
   return await exportPKCS8(privateKey);
 }
 
@@ -73,8 +73,8 @@ export async function generateKeySet(
 ): Promise<{
   publicJWK: JWK;
   privatePEM: string;
-  publicKey: KeyLike;
-  privateKey: KeyLike;
+  publicKey: CryptoKey;
+  privateKey: CryptoKey;
 }> {
   const { publicKey, privateKey } = await generateRSAKeyPair(modulusLength);
   const publicJWK = await exportPublicJWK(publicKey, kid);

@@ -5,7 +5,6 @@
 	import * as m from '$lib/paraglide/messages';
 	import { passkeyAPI, magicLinkAPI } from '$lib/api/client';
 	import { startRegistration } from '@simplewebauthn/browser';
-	import type { PublicKeyCredentialCreationOptionsJSON } from '@simplewebauthn/types';
 
 	let email = $state('');
 	let name = $state('');
@@ -14,7 +13,7 @@
 	let magicLinkLoading = $state(false);
 	let emailError = $state('');
 	let nameError = $state('');
-	let debugInfo = $state<Array<{ step: string; data: any; timestamp: string }>>([]);
+	let debugInfo = $state<Array<{ step: string; data: unknown; timestamp: string }>>([]);
 
 	// Email validation
 	function validateEmail(email: string): boolean {
@@ -329,7 +328,7 @@
 				</div>
 
 				<div class="space-y-4 max-h-96 overflow-y-auto">
-					{#each debugInfo as info}
+					{#each debugInfo as info (info.timestamp)}
 						<div class="border border-gray-700 rounded-lg p-3">
 							<div class="flex items-center justify-between mb-2">
 								<h4 class="font-mono text-sm font-semibold text-green-400">{info.step}</h4>

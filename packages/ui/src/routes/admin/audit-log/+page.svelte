@@ -1,6 +1,6 @@
 <script lang="ts">
 	import * as m from '$lib/paraglide/messages';
-	import { Card, Button, Input } from '$lib/components';
+	import { Card, Button } from '$lib/components';
 	import { onMount } from 'svelte';
 	import { adminAuditLogAPI } from '$lib/api/client';
 
@@ -53,9 +53,10 @@
 
 	onMount(async () => {
 		// Set default date range (last 7 days)
-		const now = new Date();
+		const nowTime = Date.now();
+		const now = new Date(nowTime);
 		endDate = now.toISOString().split('T')[0];
-		const weekAgo = new Date(now.getTime() - 7 * 86400000);
+		const weekAgo = new Date(nowTime - 7 * 86400000);
 		startDate = weekAgo.toISOString().split('T')[0];
 
 		await loadLogs();
@@ -92,10 +93,8 @@
 			}
 
 			if (endDate) {
-				// Set to end of day
-				const endDateObj = new Date(endDate);
-				endDateObj.setHours(23, 59, 59, 999);
-				params.end_date = endDateObj.toISOString();
+				// Set to end of day (23:59:59.999Z)
+				params.end_date = `${endDate}T23:59:59.999Z`;
 			}
 
 			// Call API

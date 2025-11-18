@@ -2,14 +2,22 @@
 	import 'virtual:uno.css';
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
-	import { setLanguageTag, availableLanguageTags } from '$lib/paraglide/runtime.js';
+	import {
+		setLanguageTag,
+		availableLanguageTags,
+		type AvailableLanguageTag
+	} from '$lib/paraglide/runtime.js';
 	import type { LayoutData } from './$types';
+	import type { Snippet } from 'svelte';
 
-	let { children, data } = $props<{ children: any; data: LayoutData }>();
+	let { children, data } = $props<{ children: Snippet; data: LayoutData }>();
 
 	// Set language from server-provided data (from cookie)
-	if (data.preferredLanguage && availableLanguageTags.includes(data.preferredLanguage as any)) {
-		setLanguageTag(data.preferredLanguage as any);
+	if (
+		data.preferredLanguage &&
+		availableLanguageTags.includes(data.preferredLanguage as AvailableLanguageTag)
+	) {
+		setLanguageTag(data.preferredLanguage as AvailableLanguageTag);
 	}
 </script>
 

@@ -4,7 +4,7 @@ import type { IntrospectionResponse } from '@enrai/shared';
 import { validateClientId, timingSafeEqual } from '@enrai/shared';
 import { getRefreshToken, isTokenRevoked } from '@enrai/shared';
 import { parseToken, verifyToken } from '@enrai/shared';
-import { importJWK, type KeyLike } from 'jose';
+import { importJWK, type CryptoKey } from 'jose';
 
 /**
  * Token Introspection Endpoint Handler
@@ -161,7 +161,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   let publicKey;
   try {
     const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
-    publicKey = (await importJWK(jwk, 'RS256')) as KeyLike;
+    publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
   } catch (err) {
     console.error('Failed to import public key:', err);
     return c.json(
