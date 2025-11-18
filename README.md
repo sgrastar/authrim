@@ -168,45 +168,47 @@ Enrai leverages **Cloudflare Durable Objects** for stateful operations with stro
 
 ### 🎯 Next Phase (Phase 6)
 
-**Phase 6: CLI & Automation** (Jun-Aug 2026)
+**Phase 6: Enterprise Features & Advanced Flows** (Jun-Oct 2026)
 
-**Goal:** One-command deployment and management
+**Goal:** Enterprise-grade authentication flows and integrations
 
 **Planned Features:**
-- 📦 **`create-enrai` NPM package** - Interactive setup wizard
-- 🚀 **One-command deployment** - From zero to production in <5 minutes
-- 🤖 **Cloudflare integration** - Automatic Worker/KV/D1/DO setup
-- 🛠️ **Management CLI** - User, client, and key management commands
-- 📚 **Integration examples** - Next.js, React, Vue, Angular, Svelte
+- 🏢 **Advanced OAuth Flows** - Hybrid, Device, JWT Bearer
+- 🔐 **CIBA & JWE** - Client Initiated Backchannel Authentication, JSON Web Encryption
+- 🌐 **Social Login** - Google, GitHub, Microsoft, Apple, Facebook, Twitter, LinkedIn (7+ providers)
+- 🔗 **Enterprise Integration** - SAML 2.0 bridge, LDAP/AD, SCIM 2.0 provisioning
+- 🎨 **Visual Flow Builder** - SimCity-inspired drag & drop authentication flow constructor
+- 🧩 **WebSDK** - Highly customizable Web Components for login/registration
+- ✅ **Compliance** - GDPR automation, Risk-based authentication, ABAC
 
 **Why This Matters:**
-- Simplifies deployment from complex multi-step process to single command
-- Makes Enrai accessible to developers without deep infrastructure knowledge
-- Establishes foundation for future SaaS platform (Phase 9)
+- Enables enterprise adoption with required authentication methods
+- Provides flexibility for complex authentication scenarios
+- Ensures regulatory compliance (GDPR, SOC 2, ISO 27001)
 
-### 🆕 Planned (Phase 7-10)
+### 🆕 Planned (Phase 7-9)
 
-**Phase 7: Enterprise Features** (Aug-Oct 2026)
-- 🏢 Hybrid Flow, Device Flow, JWT Bearer
-- 🔐 CIBA, JWE encryption
-- 🌐 Social Login (Google, GitHub, etc.)
-- 🔗 SAML 2.0, LDAP/AD, SCIM 2.0
-
-**Phase 8: Next-Gen Protocols** (Nov 2026 - Jan 2027)
-- 🆔 Verifiable Credentials (OpenID4VP/CI/IA)
+**Phase 7: Verifiable Credentials & Next-Gen** (Nov 2026 - Jan 2027)
+- 🆔 Verifiable Credentials (OpenID4VP/CI/IA, W3C VC support, DID resolution)
 - 🌐 OpenID Federation 1.0
 - 🔮 OAuth 2.1 compliance
+- 🔒 Ephemeral Identity & differential privacy
 - 📱 Mobile SDKs (iOS, Android, React Native, Flutter)
+- 📊 GraphQL API & Infrastructure as Code (Terraform, Helm, Pulumi)
 
-**Phase 9: SaaS Platform** (Feb 2027+)
-- 🌐 Multi-tenant architecture
-- 💰 Billing & monetization
-- 🛒 Plugin marketplace
+**Phase 8: SaaS Platform** (Feb 2027+)
+- 🌐 Multi-tenant architecture with custom domains
+- 💰 Billing & monetization (Stripe integration, usage metering)
+- 🛒 Plugin marketplace & revenue sharing
+- 🏷️ White-label customization
 
-**Phase 10: Certification & Launch** (Final Phase)
-- ✅ OpenID Certification submission
-- 🚀 Production deployment
-- 📣 Public announcement
+**Phase 9: CLI & Production Launch** (TBD - Final Phase)
+- 📦 `create-enrai` NPM package (one-command deployment)
+- 🚀 Cloudflare integration (automatic Worker/KV/D1/DO setup)
+- 🛠️ Management CLI (20+ commands for users, clients, keys)
+- ✅ OpenID Certification submission & approval
+- 🌍 Production deployment (`https://id.enrai.org`)
+- 📣 Public announcement & migration guides
 
 [🗺️ Full Roadmap](./docs/ROADMAP.md) | [📋 Detailed Tasks](./docs/project-management/TASKS.md)
 
@@ -322,8 +324,10 @@ open "http://localhost:8787/authorize?response_type=code&client_id=test&redirect
 | **M3: Conformance** | 2026-03-15 | ✅ Complete | OpenID testing (95.8% Phase 3) |
 | **M4: Extensions** | 2026-04-30 | ✅ Complete | Dynamic registration, PAR, DPoP |
 | **M5: UI/UX** | 2026-05-31 | ✅ Complete | Full-stack implementation + testing |
-| **M6: CLI & Deploy** | 2026-08-10 | 🆕 Planned | One-command deployment |
-| **M7: Enterprise** | 2026-10-31 | 🆕 Planned | Advanced flows, social login |
+| **M6: Enterprise** | 2026-10-31 | 🏢 Planned | Advanced flows, social login, SAML, LDAP, SCIM |
+| **M7: Next-Gen** | 2027-01-31 | 🚀 Planned | Verifiable Credentials, OAuth 2.1, Mobile SDKs |
+| **M8: SaaS** | 2027+ | 🌐 Planned | Multi-tenant platform, Billing, Marketplace |
+| **M9: CLI & Launch** | TBD | 🎓 Final | One-command deployment, Certification, Production |
 
 ### Test Results
 
