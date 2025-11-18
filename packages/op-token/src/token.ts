@@ -20,7 +20,7 @@ import {
   parseToken,
   verifyToken,
 } from '@enrai/shared';
-import { importPKCS8, importJWK, type KeyLike } from 'jose';
+import { importPKCS8, importJWK, type CryptoKey } from 'jose';
 import { extractDPoPProof, validateDPoPProof } from '@enrai/shared';
 
 /**
@@ -605,7 +605,7 @@ async function handleRefreshTokenGrant(
   let publicKey;
   try {
     const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
-    publicKey = (await importJWK(jwk, 'RS256')) as KeyLike;
+    publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
   } catch (err) {
     console.error('Failed to import public key:', err);
     return c.json(

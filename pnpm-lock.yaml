@@ -12,8 +12,8 @@ importers:
         specifier: ^4.0.0
         version: 4.10.5
       jose:
-        specifier: ^5.2.0
-        version: 5.10.0
+        specifier: ^6.1.2
+        version: 6.1.2
     optionalDependencies:
       '@esbuild/linux-x64':
         specifier: ^0.25.12
@@ -77,8 +77,8 @@ importers:
         specifier: ^4.0.0
         version: 4.10.5
       jose:
-        specifier: ^5.2.0
-        version: 5.10.0
+        specifier: ^6.1.2
+        version: 6.1.2
       resend:
         specifier: ^6.4.2
         version: 6.4.2
@@ -105,8 +105,8 @@ importers:
         specifier: ^4.0.0
         version: 4.10.5
       jose:
-        specifier: ^5.2.0
-        version: 5.10.0
+        specifier: ^6.1.2
+        version: 6.1.2
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20240117.0
@@ -127,8 +127,8 @@ importers:
         specifier: ^4.0.0
         version: 4.10.5
       jose:
-        specifier: ^5.2.0
-        version: 5.10.0
+        specifier: ^6.1.2
+        version: 6.1.2
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20240117.0
@@ -149,8 +149,8 @@ importers:
         specifier: ^4.0.0
         version: 4.10.5
       jose:
-        specifier: ^5.2.0
-        version: 5.10.0
+        specifier: ^6.1.2
+        version: 6.1.2
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20240117.0
@@ -171,8 +171,8 @@ importers:
         specifier: ^4.0.0
         version: 4.10.5
       jose:
-        specifier: ^5.2.0
-        version: 5.10.0
+        specifier: ^6.1.2
+        version: 6.1.2
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20240117.0
@@ -209,8 +209,8 @@ importers:
         specifier: ^4.0.0
         version: 4.10.5
       jose:
-        specifier: ^5.2.0
-        version: 5.10.0
+        specifier: ^6.1.2
+        version: 6.1.2
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20240117.0
@@ -2211,8 +2211,8 @@ packages:
     resolution: {integrity: sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ==}
     hasBin: true
 
-  jose@5.10.0:
-    resolution: {integrity: sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg==}
+  jose@6.1.2:
+    resolution: {integrity: sha512-MpcPtHLE5EmztuFIqB0vzHAWJPpmN1E6L4oo+kze56LIs3MyXIj9ZHMDxqOvkP38gBR7K1v3jqd4WU2+nrfONQ==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -5059,7 +5059,7 @@ snapshots:
 
   jiti@2.6.1: {}
 
-  jose@5.10.0: {}
+  jose@6.1.2: {}
 
   js-tokens@4.0.0: {}
 

@@ -45,12 +45,14 @@
 				};
 
 				// Convert recent activity from API format
-				recentActivity = data.recentActivity.map((activity: any, index: number) => ({
-					id: String(index),
-					type: 'user_created' as const,
-					user: activity.email || 'Unknown',
-					timestamp: new Date(activity.timestamp).toISOString()
-				}));
+				recentActivity = data.recentActivity.map(
+					(activity: { email?: string; timestamp: number }, index: number) => ({
+						id: String(index),
+						type: 'user_created' as const,
+						user: activity.email || 'Unknown',
+						timestamp: new Date(activity.timestamp).toISOString()
+					})
+				);
 			}
 		} catch (err) {
 			console.error('Error loading admin stats:', err);
