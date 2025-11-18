@@ -18,16 +18,15 @@
 ## Overall Timeline (Extended Plan)
 
 ```
-Phase 1: Foundation                    [Nov 10 - Dec 15, 2025]     (5 weeks)
-Phase 2: Core Implementation           [Dec 16 - Jan 31, 2026]     (6 weeks)
-Phase 3: Testing & Validation          [Feb 1 - Mar 15, 2026]      (6 weeks)
-Phase 4: Extended Features             [Mar 16 - Apr 30, 2026]     (6 weeks)
-Phase 5: UI/UX Implementation          [May 1 - May 31, 2026]      (4 weeks)
-Phase 6: CLI & Automation              [Jun 12 - Aug 10, 2026]     (9 weeks)
-Phase 7: Enterprise Features           [Aug 11 - Oct 31, 2026]     (11 weeks)
-Phase 8: Verifiable Credentials        [Nov 3, 2026 - Jan 31, 2027] (13 weeks)
-Phase 9: White-Label & SaaS            [Feb 1, 2027 onwards]       (ongoing)
-Phase 10: Certification & Production   [Final Phase]               (4 weeks)
+Phase 1: Foundation                    [Nov 10 - Dec 15, 2025]     (5 weeks)  ✅
+Phase 2: Core Implementation           [Dec 16 - Jan 31, 2026]     (6 weeks)  ✅
+Phase 3: Testing & Validation          [Feb 1 - Mar 15, 2026]      (6 weeks)  ✅
+Phase 4: Extended Features             [Mar 16 - Apr 30, 2026]     (6 weeks)  ✅
+Phase 5: UI/UX Implementation          [May 1 - May 31, 2026]      (4 weeks)  ✅
+Phase 6: Enterprise Features           [Jun 1 - Oct 31, 2026]      (5 months) 🏢
+Phase 7: Verifiable Credentials        [Nov 1, 2026 - Jan 31, 2027] (3 months) 🚀
+Phase 8: White-Label & SaaS            [Feb 1, 2027 onwards]       (ongoing)  🌐
+Phase 9: CLI & Production Launch       [TBD - Final Phase]         (4 weeks)  🎓
 ```
 
 ---
@@ -213,29 +212,56 @@ Phase 10: Certification & Production   [Final Phase]               (4 weeks)
 
 ---
 
-### Phase 6: CLI & Automation (Jun 12 - Aug 10, 2026)
+### Phase 6: Enterprise Features (Jun 1 - Oct 31, 2026)
 
 | Week | Tasks | Owner | Status |
 |:-----|:------|:------|:-------|
-| Week 32 (6/12-6/18) | CLI tool development, create-enrai package setup | Dev | ⏳ Pending |
-| Week 33 (6/19-6/25) | Project scaffolding, interactive setup wizard | Dev | ⏳ Pending |
-| Week 34 (6/26-7/2) | Cloudflare API integration, Worker deployment API | Dev | ⏳ Pending |
-| Week 35 (7/3-7/9) | KV/D1/DO management, DNS & custom domain setup | Dev | ⏳ Pending |
-| Week 36 (7/10-7/16) | Setup automation wizard, health checks | Dev | ⏳ Pending |
-| Week 37 (7/17-7/23) | Integration examples, environment management | Dev | ⏳ Pending |
-| Week 38 (7/24-7/30) | Production readiness, error handling | Dev | ⏳ Pending |
-| Week 39 (7/31-8/10) | Performance optimization, security hardening, NPM publishing | Dev | ⏳ Pending |
+| Week 23-25 (6/1-6/21) | Advanced OAuth Flows (Hybrid, Device, JWT Bearer) | Dev | ⏳ Pending |
+| Week 26-27 (6/22-7/5) | CIBA & JWE implementation | Dev | ⏳ Pending |
+| Week 28-30 (7/6-7/26) | Social Login & Identity Federation (7+ providers) | Dev | ⏳ Pending |
+| Week 31-33 (7/27-8/16) | Enterprise Integration (SAML, LDAP, SCIM, CSV/JSON) | Dev | ⏳ Pending |
+| Week 34-35 (8/17-8/30) | Advanced Security & RBAC (Risk-based auth, ABAC, GDPR) | Dev | ⏳ Pending |
+| Week 36-38 (9/1-9/21) | Advanced UI (Visual Flow Builder, WebSDK, Theming) | Dev | ⏳ Pending |
+| Week 39-40 (9/22-10/5) | Testing & Documentation | Dev | ⏳ Pending |
 
 ---
 
-### Phase 10: Certification & Production Launch (Final Phase)
+### Phase 7: Verifiable Credentials & Next-Gen (Nov 1, 2026 - Jan 31, 2027)
 
 | Week | Tasks | Owner | Status |
 |:-----|:------|:------|:-------|
-| Week N (TBD) | Production environment setup, domain configuration | Dev | ⏳ Pending |
-| Week N+1 (TBD) | Production deployment, final verification | Dev | ⏳ Pending |
-| Week N+2 (TBD) | Certification application preparation, OpenID Foundation submission | Dev | ⏳ Pending |
-| Week N+3 (TBD) | Certification approval waiting, release preparation, official launch | Dev | ⏳ Pending |
+| Week 41-43 | OpenID for Verifiable Credentials (OpenID4VP/CI/IA, W3C VC, DID) | Dev | ⏳ Pending |
+| Week 44-46 | Federation & OAuth 2.1 (OpenID Federation 1.0, Trust chain) | Dev | ⏳ Pending |
+| Week 47-49 | Privacy & Advanced Features (Ephemeral ID, Differential privacy) | Dev | ⏳ Pending |
+| Week 50-52 | Developer Tools & Ecosystem (Mobile SDKs, IaC, GraphQL) | Dev | ⏳ Pending |
+
+---
+
+### Phase 8: White-Label & SaaS Platform (Feb 1, 2027 onwards)
+
+| Week | Tasks | Owner | Status |
+|:-----|:------|:------|:-------|
+| Week 53-56 | Multi-Tenancy Foundation | Dev | ⏳ Pending |
+| Week 57-60 | Billing & Monetization | Dev | ⏳ Pending |
+| Week 61-64 | Marketplace | Dev | ⏳ Pending |
+| Week 65+ | Platform Refinement & Growth | Dev | ⏳ Pending |
+
+---
+
+### Phase 9: CLI & Production Launch (TBD - Final Phase)
+
+| Stage | Tasks | Owner | Status |
+|:-----|:------|:------|:-------|
+| Stage 1 | CLI Tool Development (create-enrai package, interactive wizard) | Dev | ⏳ Pending |
+| Stage 2 | Cloudflare Integration (API client, Worker deployment, KV/D1/DO mgmt) | Dev | ⏳ Pending |
+| Stage 3 | Production Readiness (automation, error handling, monitoring, docs) | Dev | ⏳ Pending |
+| Stage 4 | Production Deployment (Cloudflare setup, custom domain, SSL/TLS) | Dev | ⏳ Pending |
+| Stage 5 | OpenID Certification Submission (pre-submission testing, documentation) | Dev | ⏳ Pending |
+| Stage 6 | Release Preparation (release notes, migration guides, announcement) | Dev | ⏳ Pending |
+
+---
+
+> **Note:** Phase 10 has been merged into Phase 9 (CLI & Production Launch) as they are closely related release activities.
 
 ---
 
@@ -249,10 +275,10 @@ Phase 10: Certification & Production   [Final Phase]               (4 weeks)
 | 2025-11-12 | M3: Conformance Suite Passed (Early!) | ✅ Complete |
 | 2025-11-12 | M4: Extended Features Complete (Early!) | ✅ Complete |
 | 2025-11-18 | M5: UI/UX Implementation Complete (Early!) | ✅ Complete |
-| 2026-08-10 | M6: CLI & Automation Complete | 🆕 Planned |
-| 2026-10-31 | M7: Enterprise Features Complete | 🆕 Planned |
-| 2027-01-31 | M8: Verifiable Credentials Complete | 🆕 Planned |
-| TBD | M10: OpenID Certification Obtained & Production Launch | 🎓 Final |
+| 2026-10-31 | M6: Enterprise Features Complete | 🏢 Planned |
+| 2027-01-31 | M7: Verifiable Credentials & Next-Gen Complete | 🚀 Planned |
+| 2027+ | M8: SaaS Platform Operational | 🌐 Planned |
+| TBD | M9: CLI & Production Launch | 🎓 Final |
 
 ---
 
