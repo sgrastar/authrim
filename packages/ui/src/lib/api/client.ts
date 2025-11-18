@@ -10,10 +10,12 @@ interface User {
 	id: string;
 	email: string;
 	email_verified: boolean;
-	name?: string;
-	picture?: string;
-	phone_number?: string;
+	name?: string | null;
+	picture?: string | null;
+	phone_number?: string | null;
 	phone_number_verified?: boolean;
+	given_name?: string | null;
+	family_name?: string | null;
 	created_at: number;
 	updated_at: number;
 	last_login_at?: number;
@@ -31,11 +33,15 @@ interface Passkey {
 
 interface Client {
 	client_id: string;
-	client_name?: string;
+	client_name: string;
 	redirect_uris: string[];
 	grant_types: string[];
 	response_types: string[];
 	scope?: string;
+	logo_uri?: string | null;
+	client_uri?: string | null;
+	policy_uri?: string | null;
+	tos_uri?: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -269,7 +275,7 @@ export const passkeyAPI = {
 	 * Get registration options for Passkey
 	 */
 	async getRegisterOptions(data: { email: string; name?: string; userId?: string }) {
-		return apiFetch<{ options: Record<string, unknown>; userId: string }>('/api/auth/passkey/register/options', {
+		return apiFetch<{ options: unknown; userId: string }>('/api/auth/passkey/register/options', {
 			method: 'POST',
 			body: JSON.stringify(data)
 		});
@@ -278,7 +284,7 @@ export const passkeyAPI = {
 	/**
 	 * Verify Passkey registration
 	 */
-	async verifyRegistration(data: { userId: string; credential: Record<string, unknown>; deviceName?: string }) {
+	async verifyRegistration(data: { userId: string; credential: unknown; deviceName?: string }) {
 		return apiFetch<{ verified: boolean; passkeyId: string; sessionId: string; message: string; userId: string; user: User }>(
 			'/api/auth/passkey/register/verify',
 			{
@@ -292,7 +298,7 @@ export const passkeyAPI = {
 	 * Get authentication options for Passkey login
 	 */
 	async getLoginOptions(data: { email?: string }) {
-		return apiFetch<{ options: Record<string, unknown>; challengeId: string }>('/api/auth/passkey/login/options', {
+		return apiFetch<{ options: unknown; challengeId: string }>('/api/auth/passkey/login/options', {
 			method: 'POST',
 			body: JSON.stringify(data)
 		});
@@ -301,7 +307,7 @@ export const passkeyAPI = {
 	/**
 	 * Verify Passkey authentication
 	 */
-	async verifyLogin(data: { challengeId: string; credential: Record<string, unknown> }) {
+	async verifyLogin(data: { challengeId: string; credential: unknown }) {
 		return apiFetch<{
 			verified: boolean;
 			sessionId: string;

@@ -24,7 +24,7 @@
 	let saving = false;
 	let newRedirectUri = '';
 
-	$: clientId = $page.params.id;
+	$: clientId = $page.params.id as string;
 
 	const availableGrantTypes = [
 		{ value: 'authorization_code', label: 'Authorization Code' },
@@ -137,16 +137,16 @@
 			</h1>
 		</div>
 		<div class="flex gap-2">
-			<Button variant="primary" on:click={handleSave} disabled={saving || loading}>
+			<Button variant="primary" onclick={handleSave} disabled={saving || loading}>
 				{#if saving}
 					<div class="i-heroicons-arrow-path h-4 w-4 animate-spin"></div>
 				{/if}
 				{m.admin_client_detail_save()}
 			</Button>
-			<Button variant="secondary" on:click={handleRegenerateSecret} disabled={loading}>
+			<Button variant="secondary" onclick={handleRegenerateSecret} disabled={loading}>
 				{m.admin_client_detail_regenerateSecret()}
 			</Button>
-			<Button variant="secondary" on:click={handleDelete} disabled={loading}>
+			<Button variant="secondary" onclick={handleDelete} disabled={loading}>
 				{m.admin_client_detail_deleteClient()}
 			</Button>
 		</div>
@@ -228,10 +228,10 @@
 						type="url"
 						placeholder="https://example.com/callback"
 						bind:value={newRedirectUri}
-						on:keydown={(e) => e.key === 'Enter' && addRedirectUri()}
+						onkeydown={(e) => e.key === 'Enter' && addRedirectUri()}
 					/>
 				</div>
-				<Button variant="secondary" on:click={addRedirectUri}>Add</Button>
+				<Button variant="secondary" onclick={addRedirectUri}>Add</Button>
 			</div>
 
 			<div class="space-y-2">
@@ -240,7 +240,7 @@
 						<code class="text-sm text-gray-900 dark:text-white">{uri}</code>
 						<button
 							class="rounded bg-red-500 px-2 py-1 text-xs font-medium text-white hover:bg-red-600 transition-colors"
-							on:click={() => removeRedirectUri(uri)}
+							onclick={() => removeRedirectUri(uri)}
 						>
 							Remove
 						</button>
@@ -263,7 +263,7 @@
 						<input
 							type="checkbox"
 							checked={client.grant_types.includes(grantType.value)}
-							on:change={() => toggleGrantType(grantType.value)}
+							onchange={() => toggleGrantType(grantType.value)}
 							class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
 						/>
 						<span class="text-sm text-gray-700 dark:text-gray-300">{grantType.label}</span>

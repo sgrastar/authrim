@@ -127,7 +127,7 @@
 				Manage user accounts and permissions
 			</p>
 		</div>
-		<Button variant="primary" on:click={() => (window.location.href = '/admin/users/new')}>
+		<Button variant="primary" onclick={() => (window.location.href = '/admin/users/new')}>
 			{m.admin_users_addUser()}
 		</Button>
 	</div>
@@ -141,7 +141,7 @@
 					type="text"
 					placeholder={m.admin_users_search()}
 					bind:value={searchQuery}
-					on:input={handleSearch}
+					oninput={handleSearch}
 				>
 					<div slot="icon" class="i-heroicons-magnifying-glass h-5 w-5"></div>
 				</Input>
@@ -157,7 +157,7 @@
 					class:text-gray-700={filterStatus !== 'all'}
 					class:dark:bg-gray-700={filterStatus !== 'all'}
 					class:dark:text-gray-300={filterStatus !== 'all'}
-					on:click={() => handleFilterChange('all')}
+					onclick={() => handleFilterChange('all')}
 				>
 					{m.admin_users_all()}
 				</button>
@@ -169,7 +169,7 @@
 					class:text-gray-700={filterStatus !== 'verified'}
 					class:dark:bg-gray-700={filterStatus !== 'verified'}
 					class:dark:text-gray-300={filterStatus !== 'verified'}
-					on:click={() => handleFilterChange('verified')}
+					onclick={() => handleFilterChange('verified')}
 				>
 					{m.admin_users_verified()}
 				</button>
@@ -181,7 +181,7 @@
 					class:text-gray-700={filterStatus !== 'unverified'}
 					class:dark:bg-gray-700={filterStatus !== 'unverified'}
 					class:dark:text-gray-300={filterStatus !== 'unverified'}
-					on:click={() => handleFilterChange('unverified')}
+					onclick={() => handleFilterChange('unverified')}
 				>
 					{m.admin_users_unverified()}
 				</button>
@@ -289,7 +289,7 @@
 										</a>
 										<button
 											class="rounded bg-red-500 px-3 py-1 text-xs font-medium text-white hover:bg-red-600 transition-colors"
-											on:click={() => handleDeleteUser(user.id)}
+											onclick={() => handleDeleteUser(user.id)}
 										>
 											{m.admin_users_delete()}
 										</button>
@@ -316,14 +316,14 @@
 					<button
 						class="rounded-lg border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
 						disabled={currentPage === 1}
-						on:click={prevPage}
+						onclick={prevPage}
 					>
 						Previous
 					</button>
 					<button
 						class="rounded-lg border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
 						disabled={currentPage === totalPages}
-						on:click={nextPage}
+						onclick={nextPage}
 					>
 						Next
 					</button>

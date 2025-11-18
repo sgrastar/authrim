@@ -17,7 +17,7 @@
 			});
 
 			// Update client-side language tag
-			setLanguageTag(lang);
+			setLanguageTag(lang as 'en' | 'ja');
 			currentLang = lang;
 
 			// Reload page to apply language change across all components

@@ -38,7 +38,7 @@
 	let loading = true;
 	let saving = false;
 
-	$: userId = $page.params.id;
+	$: userId = $page.params.id as string;
 
 	onMount(async () => {
 		await loadUser();
@@ -148,13 +148,13 @@
 			</h1>
 		</div>
 		<div class="flex gap-2">
-			<Button variant="primary" on:click={handleSave} disabled={saving || loading}>
+			<Button variant="primary" onclick={handleSave} disabled={saving || loading}>
 				{#if saving}
 					<div class="i-heroicons-arrow-path h-4 w-4 animate-spin"></div>
 				{/if}
 				{m.admin_user_detail_save()}
 			</Button>
-			<Button variant="secondary" on:click={handleDelete} disabled={loading}>
+			<Button variant="secondary" onclick={handleDelete} disabled={loading}>
 				{m.admin_user_detail_deleteUser()}
 			</Button>
 		</div>
@@ -258,7 +258,7 @@
 							</div>
 							<button
 								class="rounded bg-red-500 px-3 py-1 text-xs font-medium text-white hover:bg-red-600 transition-colors"
-								on:click={() => handleDeletePasskey(passkey.id)}
+								onclick={() => handleDeletePasskey(passkey.id)}
 							>
 								Delete
 							</button>
@@ -292,7 +292,7 @@
 							</div>
 							<button
 								class="rounded bg-red-500 px-3 py-1 text-xs font-medium text-white hover:bg-red-600 transition-colors"
-								on:click={() => handleRevokeSession(session.id)}
+								onclick={() => handleRevokeSession(session.id)}
 							>
 								Revoke
 							</button>

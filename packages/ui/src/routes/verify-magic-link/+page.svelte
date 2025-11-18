@@ -8,7 +8,7 @@
 
 	type VerificationState = 'verifying' | 'success' | 'error';
 
-	let state = $state<VerificationState>('verifying');
+	let verificationState: VerificationState = $state('verifying');
 	let errorMessage = $state('');
 	let token = $state('');
 
@@ -19,7 +19,7 @@
 
 		// If no token, show error
 		if (!token) {
-			state = 'error';
+			verificationState = 'error';
 			errorMessage = m.magicLink_verify_errorInvalid();
 			return;
 		}
@@ -38,7 +38,7 @@
 			}
 
 			// Verification successful
-			state = 'success';
+			verificationState = 'success';
 			console.log('Magic link verified successfully:', data!.user.email);
 
 			// Store session ID in localStorage
@@ -52,7 +52,7 @@
 				window.location.href = '/';
 			}, 2000);
 		} catch (err) {
-			state = 'error';
+			verificationState = 'error';
 			errorMessage = err instanceof Error ? err.message : m.magicLink_verify_errorInvalid();
 			console.error('Magic link verification error:', err);
 		}
@@ -87,7 +87,7 @@
 
 		<!-- Verification Card -->
 		<Card class="text-center">
-			{#if state === 'verifying'}
+			{#if verificationState === 'verifying'}
 				<!-- Verifying State -->
 				<div class="flex justify-center mb-6">
 					<Spinner size="xl" color="primary" />
