@@ -223,23 +223,9 @@ curl $ENRAI_URL/.well-known/jwks.json | jq
 
 OpenID Conformance Suiteが使用するテストクライアント情報を記録します。
 
-**現状の制限:** Enraiは現在、Dynamic Client Registrationを実装していないため、静的なクライアント情報を使用します。
+**✅ 実装済み:** EnraiはDynamic Client Registration (DCR) を完全にサポートしています。
 
-以下の情報をメモします：
-
-```
-Client ID: conformance-test-client
-Redirect URIs:
-  - https://www.certification.openid.net/test/a/enrai/callback
-  - https://www.certification.openid.net/test/a/enrai/callback?dummy1=lorem
-  - https://www.certification.openid.net/test/a/enrai/callback?dummy2=ipsum
-```
-
-**注意:** Dynamic Client Registrationが実装されるまで（Phase 4予定）、テストスイートの一部は手動で設定する必要があります。
-
-### 3.5 テストクライアントの設定（将来対応）
-
-Phase 4でDynamic Client Registration (`/register` endpoint) が実装された後は、以下の手順でクライアントを自動登録できます：
+テストスイートは以下の手順でクライアントを自動登録できます：
 
 ```bash
 curl -X POST $ENRAI_URL/register \
@@ -252,10 +238,50 @@ curl -X POST $ENRAI_URL/register \
       "https://www.certification.openid.net/test/a/enrai/callback?dummy2=ipsum"
     ],
     "response_types": ["code"],
-    "grant_types": ["authorization_code"],
-    "token_endpoint_auth_method": "none"
+    "grant_types": ["authorization_code", "refresh_token"],
+    "token_endpoint_auth_method": "client_secret_basic",
+    "subject_type": "public"
   }'
 ```
+
+レスポンス例：
+```json
+{
+  "client_id": "client_xxxxxxxxxxxxx",
+  "client_secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "client_id_issued_at": 1234567890,
+  "client_secret_expires_at": 0,
+  "redirect_uris": [...],
+  "token_endpoint_auth_method": "client_secret_basic",
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "application_type": "web",
+  "subject_type": "public"
+}
+```
+
+### 3.5 サポートされている高度な機能
+
+Enraiは以下のOIDC拡張機能をサポートしています：
+
+**RFC 9101: JWT Secured Authorization Request (JAR)**
+- `request` パラメータによる認可リクエストのJWT化
+- 署名付き (RS256) および未署名 (alg=none) リクエストオブジェクトの両方をサポート
+- リクエストパラメータの上書き（request object parameters take precedence）
+
+**OIDC Core 3.1.2.1: 認証パラメータ**
+- `prompt`: none, login, consent, select_account
+- `max_age`: 再認証時間制約
+- `id_token_hint`: セッションヒント用IDトークン
+- `acr_values`: 認証コンテキストクラスリファレンス
+
+**RFC 6749: Refresh Token**
+- Refresh Token発行とローテーション
+- スコープのダウングレードをサポート
+
+**OIDC Core 8: Subject Types**
+- Public subject identifiers
+- Pairwise subject identifiers (sector_identifier_uri対応)
 
 ---
 
@@ -323,6 +349,31 @@ OpenID Conformance Suiteで以下のテストモジュールを選択します�
 - RS256公開鍵の検証
 - 署名検証
 
+**Request Object (JAR) Tests:**
+- `request` パラメータの処理
+- 未署名 (alg=none) リクエストオブジェクトの検証
+- 署名付き (RS256) リクエストオブジェクトの検証
+- パラメータオーバーライドの確認
+
+**Authentication Parameter Tests:**
+- `prompt=none` の既存セッション要件の確認
+- `prompt=login` の強制再認証
+- `max_age` の時間制約の適用
+- `id_token_hint` からのセッション抽出
+- `acr_values` の選択と ID Token への含有
+
+**Refresh Token Tests:**
+- Refresh Token の発行
+- Refresh Token による新規 Access Token の取得
+- スコープのダウングレード
+- Refresh Token のローテーション
+
+**Dynamic Client Registration Tests:**
+- POST /register エンドポイント
+- メタデータの検証
+- client_id と client_secret の発行
+- Pairwise subject type のサポート
+
 ---
 
 ## 5. 結果の確認と記録
@@ -345,9 +396,9 @@ OpenID Conformance Suiteで以下のテストモジュールを選択します�
 - Optional tests: 推奨される
 
 **Enraiの目標:**
-- ≥85% overall conformance score
+- 100% overall conformance score (すべての必須機能実装済み)
 - 0 critical failures
-- Dynamic Client Registration実装後: ≥95%
+- すべてのOIDC OP Basic Profileテストに合格
 
 ### 5.3 結果のエクスポート
 
@@ -622,21 +673,26 @@ npm test -- --grep "token"
    - Conformance Suiteで再テスト
    - 合格率を確認
 
-### 8.3 Phase 4への準備
+### 8.3 実装完了機能の確認
 
-Dynamic Client Registration実装後（Phase 4予定）:
+以下の機能がすべて実装済みです：
 
-1. `/register` エンドポイントの実装
-2. クライアントメタデータの検証
-3. クライアントストレージ（KV/Durable Objects）
-4. Conformance Suiteでの再テスト
+1. ✅ `/register` エンドポイント (Dynamic Client Registration)
+2. ✅ クライアントメタデータの検証
+3. ✅ クライアントストレージ（KV）
+4. ✅ Refresh Token サポート
+5. ✅ Request Object (JAR) サポート
+6. ✅ 認証パラメータ (prompt, max_age, id_token_hint, acr_values)
+7. ✅ Subject Type (public, pairwise) サポート
+
+**次のステップ:** Conformance Suiteで全テストを実行し、100%合格を確認
 
 ---
 
 > ⚡️ **Enrai** - Docker不要のOpenID Conformance Testing
 >
-> **更新日:** 2025-11-11
-> **ステータス:** Phase 3 - Testing & Validation
-> **目標:** ≥85% conformance score
+> **更新日:** 2025-11-18
+> **ステータス:** Phase 5 完了 - すべての必須機能実装済み
+> **目標:** 100% conformance score (達成見込み)
 >
 > このガイドを使用して、Dockerなしでも正式なOpenID Connect準拠テストを実施できます。
