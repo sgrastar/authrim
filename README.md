@@ -82,6 +82,35 @@ Enrai is an **enterprise-grade OpenID Connect Provider** built for:
 - ✅ **Extended Claims** - Full profile, email, address, phone support
 - ✅ **Rate Limiting** - Configurable per-endpoint protection
 - ✅ **Security Enhancements** - Enhanced CSP, CORS, security headers
+- ✅ **Token Management** - Refresh tokens, introspection, revocation
+- ✅ **PAR** - Pushed Authorization Requests (RFC 9126)
+- ✅ **DPoP** - Demonstrating Proof of Possession (RFC 9449)
+- ✅ **Pairwise Identifiers** - Privacy-preserving subject IDs
+
+**Test Coverage:** 378+ tests passing ✅
+
+### Phase 5: UI/UX Implementation 🔄 85% COMPLETE
+
+**Major infrastructure & UI components complete!**
+
+**Backend:**
+- ✅ **D1 Database** - 12 tables (users, sessions, passkeys, clients, etc.)
+- ✅ **Durable Objects** - 9 implementations (SessionStore, AuthCodeStore, RefreshTokenRotator, etc.)
+- ✅ **WebAuthn/Passkey API** - Full FIDO2 implementation
+- ✅ **Magic Link Auth** - Passwordless email authentication
+- ✅ **Admin APIs** - User/client/session management (20+ endpoints)
+
+**Frontend:**
+- ✅ **SvelteKit + UnoCSS + Melt UI** - Modern, accessible UI framework
+- ✅ **Authentication Pages** - Login, register, magic link, consent, error
+- ✅ **Admin Dashboard** - Users, clients, settings, audit log (7 pages)
+- ✅ **Internationalization** - English & Japanese (Paraglide)
+- ✅ **Design System** - Reusable components & design tokens
+
+**Remaining:**
+- ⏳ E2E Testing (Playwright)
+- ⏳ Performance Optimization
+- ⏳ Accessibility Verification (WCAG 2.1 AA)
 
 [📋 View detailed roadmap](./docs/ROADMAP.md)
 

@@ -14,11 +14,12 @@ Nov  Dec  Jan  Feb  Mar  Apr  May  Jun  Jul  Aug  Sep  Oct  Nov  Dec  Jan  Feb  
 │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
 ├─P1─┼─P2─┼─P3─┼────┼─P4─┼─P5─┼───P6────┼────P7────┼─────P8─────┼─────P9─────┼─P10
 │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
-✅   ✅   ✅   ✅   ✅   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🎓
+✅   ✅   ✅   ✅   ✅   🔄   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🆕   🎓
 
 Legend:
 ✅ Complete (Phases 1-4)
-🆕 Planned (UI/UX, CLI, Enterprise, Next-Gen, SaaS)
+🔄 In Progress (Phase 5: 85% - UI/UX Implementation)
+🆕 Planned (CLI, Enterprise, Next-Gen, SaaS)
 🎓 Final (Certification & Production Launch)
 ```
 
@@ -32,7 +33,7 @@ Legend:
 | **M2: Core API** | 2026-01-31 | ✅ Complete | All OIDC endpoints functional |
 | **M3: Conformance** | 2026-03-15 | ✅ Complete | OpenID Conformance Suite (95.8% Phase 3) |
 | **M4: Extensions** | 2026-04-30 | ✅ Complete | All extended security features: DCR, Rate Limiting, PAR, DPoP, Pairwise, Token Management, Form Post, Storage Foundation |
-| **M5: UI/UX** | 2026-05-31 | 🆕 Planned | Login/Registration, Admin Dashboard, User Database |
+| **M5: UI/UX** | 2026-05-31 | 🔄 85% Complete | D1 Database, 9 Durable Objects, Backend APIs, SvelteKit Frontend, Admin Dashboard (E2E testing pending) |
 | **M6: CLI & Deploy** | 2026-08-10 | 🆕 Planned | One-command deployment |
 | **M7: Enterprise** | 2026-10-31 | 🆕 Planned | Hybrid, Device, CIBA, Social Login |
 | **M8: Next-Gen** | 2027-01-31 | 🆕 Planned | Verifiable Credentials, OAuth 2.1 |
@@ -375,114 +376,124 @@ Legend:
 
 ---
 
-## Phase 5: UI/UX Implementation 🆕
+## Phase 5: UI/UX Implementation 🔄 85% COMPLETE
 
-**Timeline:** May 1-31, 2026 (4 weeks)
+**Timeline:** May 1-31, 2026 (4 weeks) - **Started early (Nov 2025)**
 
 **Goal:** Best passwordless and user experience
 
 **Priority:** Best user experience, modern UX
 
+**Status:** 🔄 85% Complete (Stages 1-5 done, Stage 6 testing pending)
+
 **Tech Stack Decisions:**
-- **Frontend**: Svelte + SvelteKit v5
-- **CSS**: UnoCSS
-- **Components**: Melt UI (Headless, accessible)
-- **Hosting**: Cloudflare Pages (UI) + Workers (API) - Hybrid
-- **Captcha**: Cloudflare Turnstile
-- **i18n**: Paraglide (type-safe, lightweight)
+- **Frontend**: Svelte + SvelteKit v5 ✅
+- **CSS**: UnoCSS ✅
+- **Components**: Melt UI (Headless, accessible) ✅
+- **Hosting**: Cloudflare Pages (UI) + Workers (API) - Hybrid ✅
+- **Captcha**: Cloudflare Turnstile ⏳
+- **i18n**: Paraglide (type-safe, lightweight) ✅
 
-### Week 26-27: Authentication UI (May 1-14)
+### Stage 1: Infrastructure Foundation ✅ COMPLETE
 
-**Key Features:**
-- [ ] Passwordless Login Screen (Passkey + Magic Link)
-  - Email input with validation
-  - Passkey authentication flow (WebAuthn)
-  - Magic Link fallback
-  - Cloudflare Turnstile integration
-- [ ] User Registration with WebAuthn
-  - Passkey registration flow
-  - Email verification
-- [ ] OAuth Consent Screen
-  - Client info display (logo, name, scopes)
-  - Privacy policy & ToS links
-  - Allow/Deny actions
-- [ ] Multi-language support (English, Japanese)
-- [ ] Theme System (basic branding)
-  - Custom CSS/HTML header/footer
-  - Logo, colors, fonts
-  - Background images
+**Completed Features:**
+- ✅ **D1 Database Setup** - 12 tables with migrations
+- ✅ **Durable Objects** - 9 implementations (SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, etc.)
+- ✅ **Storage Abstraction Layer** - CloudflareAdapter with intelligent routing
+- ✅ **Setup Scripts** - `setup-d1.sh` for automated database setup
 
-### Week 28-29: Admin Dashboard (May 15-28)
+### Stage 2: Backend API Implementation ✅ COMPLETE
 
-**Key Features:**
-- [ ] Dashboard Overview
-  - Statistics cards (users, sessions, logins, clients)
-  - Activity feed (recent logins, registrations, errors)
-  - Charts (login trends, user registration trends)
-- [ ] User Management
-  - User list with search/filter/sort/pagination
-  - User search API (`GET /admin/users?q=...`)
-  - CRUD operations
-  - Custom fields support (searchable + JSON)
-  - Parent-child user relationships
-- [ ] Client Management
-  - Client list with search
-  - CRUD operations (using DCR API)
-  - Custom scope mappings
-- [ ] Rate Limiting Dashboard
-  - Blocked IPs list
-  - Request counts per endpoint (charts)
-  - Anomaly detection alerts
-- [ ] Settings & Customization
-  - Branding settings (logo, colors, theme)
-  - Email provider configuration (Resend/Cloudflare/SMTP)
-  - Security settings (session timeout, rate limits)
-  - RBAC roles management
-
-### Week 30-31: Data Storage & Authentication (May 29 - Jun 11)
-
-**Key Features:**
-- [ ] Storage Abstraction Layer
-  - `IStorageAdapter` interface (KV-like + SQL-like)
-  - CloudflareAdapter (KV + D1 + DO)
-  - Multi-cloud support design (Azure, AWS, PostgreSQL)
-- [ ] D1 Database Schema
-  - Users table (with custom_attributes_json, parent_user_id)
-  - user_custom_fields table (searchable custom fields)
-  - Passkeys table
-  - Sessions table
-  - Roles & user_roles tables (RBAC)
-  - scope_mappings table (custom claim mapping)
-  - branding_settings table
-  - identity_providers table (for future SAML/LDAP)
-- [ ] WebAuthn/Passkey Implementation (FIDO2)
-  - @simplewebauthn/server & browser libraries
-  - Registration & authentication flows
+**Completed Features:**
+- ✅ **WebAuthn/Passkey API** - Full FIDO2 implementation
+  - Registration & authentication endpoints
   - Counter management (replay attack prevention)
-- [ ] Magic Link Authentication
-  - Token generation (cryptographically secure)
-  - Email provider adapter (Resend default)
-  - Token verification (one-time, 15min TTL)
-- [ ] Session Management
-  - Server-side session + token exchange (ITP-compliant)
-  - Cross-domain SSO support
+  - @simplewebauthn/server integration
+- ✅ **Magic Link Authentication** - Passwordless email-based auth
+  - Token generation & verification
+  - Resend email provider integration
+  - 15-minute TTL with one-time use
+- ✅ **OAuth Consent Screen API** - Client info & scope display
+- ✅ **Session Management API** - ITP-compliant cross-domain SSO
+  - Server-side session + token exchange
   - HttpOnly cookies
   - Session revocation
-- [ ] Data Export
-  - CSV/JSON export (all tables)
-  - GDPR personal data export
+- ✅ **Logout API** - Front-channel & back-channel logout (RFC 8725)
+- ✅ **Admin User Management API** - Full CRUD with pagination
+  - Search/filter/sort functionality
+  - Custom fields support
+  - Avatar upload/delete (R2 storage)
+  - RBAC permission checks
+- ✅ **Admin Client Management API** - OAuth client administration
+- ✅ **Admin Session Management API** - Session monitoring & revocation
+- ✅ **Admin Statistics API** - System analytics
 
-**Deliverables:**
-- [ ] 🎯 **WebAuthn/Passkey fully functional** (Key feature)
-- [ ] 🎯 **Magic Link authentication working**
-- [ ] 🎯 **ITP-compliant cross-domain SSO**
-- [ ] Fully functional login/registration UI (beautiful, passwordless)
-- [ ] Complete admin dashboard (with user/client management)
-- [ ] Multi-storage backend support (KV, D1, DO)
-- [ ] RBAC implementation (roles & permissions)
-- [ ] Custom fields & scope mappings
-- [ ] Multi-language support (EN, JA)
-- [ ] Responsive, accessible interfaces (WCAG 2.1 AA)
+### Stage 3: Frontend Foundation ✅ COMPLETE
+
+**Completed Features:**
+- ✅ **SvelteKit Setup** - Project initialized with TypeScript
+- ✅ **UnoCSS Configuration** - Custom theme & shortcuts
+- ✅ **Melt UI Integration** - Headless accessible components
+- ✅ **Paraglide i18n** - English & Japanese support
+- ✅ **Design System** - Design tokens & base components
+- ✅ **Cloudflare Pages** - Build & deployment configuration
+
+### Stage 4: Authentication UI ✅ COMPLETE
+
+**Completed Features:**
+- ✅ **Login Page** (`/login`) - Passkey + Magic Link
+- ✅ **Registration Page** (`/register`) - Account creation
+- ✅ **Magic Link Sent** (`/magic-link-sent`) - Email confirmation
+- ✅ **Verify Magic Link** (`/verify-magic-link`) - Token validation
+- ✅ **Consent Screen** (`/consent`) - OAuth authorization
+- ✅ **Error Page** (`/error`) - User-friendly error handling
+
+### Stage 5: Admin Dashboard ✅ COMPLETE
+
+**Completed Features:**
+- ✅ **Dashboard Overview** (`/admin`) - Statistics & activity feed
+  - Active users, total logins, registered clients
+  - Recent registrations display
+  - Quick actions panel
+- ✅ **User Management** (`/admin/users`) - User list with search/filter
+  - Pagination & sorting
+  - View, edit, delete actions
+- ✅ **User Detail Page** (`/admin/users/[id]`) - Full user profile
+  - User information editing
+  - Passkey management
+  - Session management
+- ✅ **Client Management** (`/admin/clients`) - OAuth client list
+- ✅ **Client Detail Page** (`/admin/clients/[id]`) - Client configuration
+- ✅ **Settings Page** (`/admin/settings`) - System configuration
+  - General, Appearance, Security, Email, Advanced tabs
+- ✅ **Audit Log** (`/admin/audit-log`) - Activity monitoring
+
+### Stage 6: Integration & Testing ⏳ IN PROGRESS
+
+**Remaining Tasks:**
+- [ ] E2E Testing (Playwright)
+- [ ] Security Testing (CSRF, XSS, SQL injection)
+- [ ] Performance Optimization (Lighthouse scores)
+- [ ] Accessibility Review (WCAG 2.1 AA)
+- [ ] Production Deployment Preparation
+
+**Completed Deliverables:**
+- ✅ **D1 Database** - 12 tables (users, oauth_clients, sessions, passkeys, etc.)
+- ✅ **9 Durable Objects** - SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, etc.
+- ✅ **Storage Abstraction Layer** - CloudflareAdapter with KV/D1/DO routing
+- ✅ **20+ Backend API Endpoints** - Auth + Admin
+- ✅ **SvelteKit Frontend** - Complete application
+- ✅ **6 User-Facing Pages** - Login, register, magic link, consent, error
+- ✅ **7 Admin Pages** - Dashboard, users, clients, settings, audit log
+- ✅ **Design System** - UnoCSS + Melt UI components
+- ✅ **Multi-language Support** - English & Japanese (Paraglide)
+- ✅ **Cloudflare Pages Deployment** - Build configuration
+
+**Pending Deliverables:**
+- [ ] E2E Test Suite (Playwright)
+- [ ] WCAG 2.1 AA Compliance Verification
+- [ ] Performance Optimization (<5 sec login load)
+- [ ] Production Deployment
 
 ---
 
@@ -840,26 +851,23 @@ Legend:
 - ✅ 378+ total tests passing (200+ new Phase 4 tests)
 - [ ] <50ms p95 latency (edge) - deferred to Phase 5
 
-### Phase 5: Certification ⏳
-- [ ] OpenID Certification obtained ✨
-- [ ] JARM, MTLS, JAR implemented
-- [ ] Client Credentials Flow working
-- [ ] Production deployment stable
-- [ ] <50ms p95 global latency
-- [ ] Security audit passed
-
-### Phase 5: UI/UX Implementation 🆕
-- [ ] 🎯 WebAuthn/Passkey fully functional (Key feature)
-- [ ] 🎯 Magic Link authentication working
-- [ ] 🎯 ITP-compliant cross-domain SSO
-- [ ] Fully functional login/registration UI
-- [ ] Complete admin dashboard
-- [ ] Multi-storage backend support
-- [ ] RBAC implementation
-- [ ] <5 sec login page load
-- [ ] >90% mobile Lighthouse score
-- [ ] WCAG 2.1 AA compliance
-- [ ] Multi-language support (EN, JA)
+### Phase 5: UI/UX Implementation 🔄 85% Complete
+- ✅ 🎯 **WebAuthn/Passkey API implemented** (Backend complete)
+- ✅ 🎯 **Magic Link authentication working** (Backend + Frontend)
+- ✅ 🎯 **ITP-compliant cross-domain SSO** (Session management API)
+- ✅ Fully functional login/registration UI (6 pages complete)
+- ✅ Complete admin dashboard (7 pages complete)
+- ✅ Multi-storage backend support (KV, D1, DO)
+- ✅ RBAC foundation (roles & permissions tables)
+- ✅ Multi-language support (EN, JA with Paraglide)
+- ✅ D1 database (12 tables with migrations)
+- ✅ 9 Durable Objects implemented
+- ✅ 20+ backend API endpoints
+- ✅ Design system (UnoCSS + Melt UI)
+- [ ] E2E test suite (Playwright) - pending
+- [ ] <5 sec login page load - pending optimization
+- [ ] >90% mobile Lighthouse score - pending optimization
+- [ ] WCAG 2.1 AA compliance - pending verification
 
 ### Phase 7: CLI 🆕
 - [ ] <5 min from `npx create-enrai` to running IdP
@@ -963,25 +971,31 @@ Add:
 | 2025-11-12 | **Phase 4 COMPLETE** ✅ | All Phase 4 features implemented: Token Management, PAR, DPoP, Pairwise, Form Post, Storage Foundation (378+ tests passing) |
 | 2025-11-12 | **Phase 5 planning finalized** | Tech stack decisions: Svelte 5 + UnoCSS + Melt UI, Hybrid hosting, ITP-compliant SSO, RBAC, Custom fields, Multi-language |
 | 2025-11-12 | **Phase 7 expanded** | Added WebSDK, Visual Flow Builder (SimCity-inspired), GDPR automation, CSV/JSON import/export, Webhook integration |
+| 2025-11-18 | **Phase 5: 85% COMPLETE** 🔄 | D1 Database (12 tables), 9 Durable Objects, 20+ Backend APIs, SvelteKit Frontend, Admin Dashboard (7 pages), Auth UI (6 pages), i18n (EN/JA) - E2E testing pending |
 
 ---
 
-> **Last Update:** 2025-11-12 (Phase 4 COMPLETE ✅)
+> **Last Update:** 2025-11-18 (Phase 5: 85% COMPLETE 🔄)
 > **Next Update:** 2026-05-31 (Post Phase 5)
 >
 > ⚡️ **Enrai** - Building the future of identity infrastructure, one phase at a time.
 >
 > **Current Status:**
-> - **Phase 4 COMPLETE:** All extended security features implemented ✅
-> - **Tests:** 378+ passing (200+ new Phase 4 tests)
+> - **Phase 5: 85% COMPLETE** 🔄 Major infrastructure & UI complete, testing pending
+> - **Tests:** 378+ passing (backend) + unit tests for Durable Objects
 > - **Phase 3 Achievement:** 95.8% (23/24 tests) | **Overall Conformance:** 72.7% (24/33 tests)
+> - **Infrastructure:** D1 Database (12 tables), 9 Durable Objects, Storage Abstraction Layer
+> - **Backend:** 20+ API endpoints (Auth + Admin)
+> - **Frontend:** SvelteKit + UnoCSS + Melt UI (13 pages complete)
 > - **Roadmap:** 10 Phases covering 60+ advanced features
 > - **Vision:** The world's best passwordless OpenID Provider on Cloudflare Edge
 >
 > **Key Differentiators:**
-> - 🔐 **Passwordless-first** (WebAuthn + Magic Link)
-> - ⚡ **Edge-native** (Cloudflare Workers) - <50ms worldwide
-> - 🎯 **Advanced Security** (PAR, DPoP, MTLS, JARM, JWE)
-> - 🆔 **Next-Gen** (Verifiable Credentials, OAuth 2.1, Federation)
-> - 🏢 **Enterprise-ready** (SAML, LDAP, SCIM, CIBA)
+> - 🔐 **Passwordless-first** (WebAuthn + Magic Link) - API & UI Complete
+> - ⚡ **Edge-native** (Cloudflare Workers + Pages) - <50ms worldwide
+> - 🎯 **Advanced Security** (PAR, DPoP, Pairwise, Token Management)
+> - 🎨 **Modern UI/UX** (SvelteKit, i18n, Design System)
+> - 🗄️ **Flexible Storage** (KV, D1, Durable Objects)
+> - 🆔 **Next-Gen Ready** (Verifiable Credentials, OAuth 2.1, Federation)
+> - 🏢 **Enterprise-ready** (SAML, LDAP, SCIM, CIBA) - Planned
 > - 🌍 **Open Source & Self-hosted** - No vendor lock-in
