@@ -37,6 +37,28 @@ fi
 echo ""
 echo "📝 Creating .dev.vars file..."
 
+# Prompt for optional Resend API Key
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📧 Email Configuration (Optional)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "Enrai uses Resend for sending magic link emails."
+echo "If you have a Resend API key, enter it now."
+echo "Otherwise, press Enter to skip (magic links will return URLs instead)."
+echo ""
+read -p "Resend API Key (or press Enter to skip): " RESEND_API_KEY
+
+# Set default EMAIL_FROM
+EMAIL_FROM="noreply@yourdomain.com"
+if [ -n "$RESEND_API_KEY" ]; then
+    echo ""
+    read -p "Email From address (default: noreply@yourdomain.com): " EMAIL_FROM_INPUT
+    if [ -n "$EMAIL_FROM_INPUT" ]; then
+        EMAIL_FROM="$EMAIL_FROM_INPUT"
+    fi
+fi
+
 # Create .dev.vars file
 cat > .dev.vars << EOF
 PRIVATE_KEY_PEM="$PRIVATE_KEY"
@@ -44,6 +66,22 @@ PUBLIC_JWK_JSON='$PUBLIC_JWK'
 ALLOW_HTTP_REDIRECT="true"
 EOF
 
+# Add email configuration if provided
+if [ -n "$RESEND_API_KEY" ]; then
+    cat >> .dev.vars << EOF
+RESEND_API_KEY="$RESEND_API_KEY"
+EMAIL_FROM="$EMAIL_FROM"
+EOF
+    echo ""
+    echo "✅ Email configuration added:"
+    echo "   • Resend API Key: ${RESEND_API_KEY:0:10}..."
+    echo "   • Email From: $EMAIL_FROM"
+else
+    echo ""
+    echo "⊗ Email configuration skipped (magic links will return URLs)"
+fi
+
+echo ""
 echo "✅ .dev.vars file created successfully!"
 echo ""
 

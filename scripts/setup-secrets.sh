@@ -260,6 +260,41 @@ upload_secrets "op-userinfo" "false" "true"
 # op-management: Needs both keys (for registration token signing and verification)
 upload_secrets "op-management" "true" "true"
 
+# Email configuration for op-auth (Magic Link support)
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📧 Email Configuration for Magic Links"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "Enrai uses Resend for sending magic link emails."
+echo "If you don't configure this now, magic links will return URLs"
+echo "instead of sending emails (useful for development)."
+echo ""
+read -p "Do you want to configure Resend API Key? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "📦 Uploading email configuration to op-auth..."
+    cd "packages/op-auth"
+
+    echo "  • Enter your Resend API Key:"
+    read -s -p "    RESEND_API_KEY: " RESEND_API_KEY
+    echo
+
+    echo "  • Enter your 'From' email address (e.g., noreply@yourdomain.com):"
+    read -p "    EMAIL_FROM: " EMAIL_FROM
+
+    # Upload secrets
+    echo "$RESEND_API_KEY" | wrangler secret put RESEND_API_KEY
+    echo "$EMAIL_FROM" | wrangler secret put EMAIL_FROM
+
+    cd ../..
+    echo "✅ Email configuration uploaded to op-auth"
+    echo ""
+else
+    echo "⊗ Email configuration skipped (magic links will return URLs)"
+    echo ""
+fi
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "🎉 All secrets uploaded successfully!"
 echo ""

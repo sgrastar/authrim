@@ -17,6 +17,173 @@ This guide walks you through deploying Enrai to Cloudflare Workers, resulting in
 
 ---
 
+## Environment Types
+
+Enrai supports three distinct environment types, each with different purposes and configuration methods:
+
+### 🏠 Development Environment (Local)
+
+**Purpose**: Local development and debugging on your machine
+
+**Characteristics**:
+- 💻 **Location**: `localhost` (ports 8787-8791)
+- 🔧 **Command**: `pnpm run dev` (uses `wrangler dev`)
+- 📁 **Configuration**: `.dev.vars` file (gitignored)
+- 🔓 **Security**: HTTP allowed, relaxed security settings
+- 🔑 **Secrets**: Stored in `.dev.vars` (local file)
+- 🌐 **Access**: Local machine only
+- 📧 **Email**: Magic links return URLs (no actual email sent unless configured)
+
+**Setup**:
+```bash
+# Generate keys and create .dev.vars
+./scripts/setup-dev.sh
+
+# Optional: Add Resend API Key during setup
+# Or manually add to .dev.vars:
+echo 'RESEND_API_KEY="re_your_key"' >> .dev.vars
+echo 'EMAIL_FROM="noreply@yourdomain.com"' >> .dev.vars
+
+# Start development servers
+pnpm run dev
+```
+
+**`.dev.vars` Example**:
+```bash
+PRIVATE_KEY_PEM="-----BEGIN PRIVATE KEY-----..."
+PUBLIC_JWK_JSON='{"kty":"RSA",...}'
+ALLOW_HTTP_REDIRECT="true"
+RESEND_API_KEY="re_xxxxxxxxxxxx"  # Optional
+EMAIL_FROM="noreply@yourdomain.com"  # Optional
+```
+
+---
+
+### 🧪 Test Environment (Remote - workers.dev)
+
+**Purpose**: Integration testing, demos, staging deployments
+
+**Characteristics**:
+- ☁️ **Location**: Cloudflare Workers
+- 🌐 **URL**: `https://enrai.{your-subdomain}.workers.dev`
+- 🔐 **Security**: HTTPS required, production-like security
+- 🔑 **Secrets**: Uploaded via `wrangler secret put`
+- 🌍 **Access**: Public internet
+- 📧 **Email**: Actual emails sent via Resend (if configured)
+- 🎯 **Use case**: Testing before production, demos, conformance testing
+
+**Setup**:
+```bash
+# Configure for test environment
+./scripts/setup-production.sh
+# Choose: 1) Test Environment (workers.dev + Router Worker)
+
+# Upload secrets (including optional Resend API Key)
+./scripts/setup-secrets.sh
+
+# Deploy all workers
+pnpm run deploy:with-router
+```
+
+---
+
+### 🚀 Production Environment (Remote - Custom Domain)
+
+**Purpose**: Production deployment for real users
+
+**Characteristics**:
+- ☁️ **Location**: Cloudflare Workers
+- 🌐 **URL**: Your custom domain (e.g., `https://id.yourdomain.com`)
+- 🔒 **Security**: Strict security settings, HTTPS only
+- 🔑 **Secrets**: Uploaded via `wrangler secret put`
+- 🌍 **Access**: Public internet
+- 📧 **Email**: Actual emails sent via Resend
+- 🎯 **Use case**: Production service for real users
+- 📊 **Performance**: Optimal (no extra router hop)
+
+**Setup**:
+```bash
+# Configure for production
+./scripts/setup-production.sh
+# Choose: 2) Production Environment (Custom Domain + Routes)
+
+# Upload secrets (including Resend API Key)
+./scripts/setup-secrets.sh
+
+# Deploy all workers
+pnpm run deploy
+```
+
+---
+
+### 📧 Email Configuration (Resend API Key)
+
+Magic link authentication requires email configuration. This is **optional for development** (magic links return URLs) but **required for production**.
+
+#### Development Environment
+
+```bash
+# Option 1: Interactive setup
+./scripts/setup-dev.sh
+# Follow prompts to enter Resend API Key
+
+# Option 2: Manual configuration
+echo 'RESEND_API_KEY="re_your_actual_key"' >> .dev.vars
+echo 'EMAIL_FROM="noreply@yourdomain.com"' >> .dev.vars
+
+# Restart dev server
+pnpm run dev
+```
+
+#### Test/Production Environment
+
+```bash
+# Option 1: During secret upload
+./scripts/setup-secrets.sh
+# Answer 'y' when prompted for email configuration
+
+# Option 2: Manual upload
+cd packages/op-auth
+echo "re_your_actual_key" | wrangler secret put RESEND_API_KEY
+echo "noreply@yourdomain.com" | wrangler secret put EMAIL_FROM
+cd ../..
+```
+
+**Getting Resend API Key**:
+1. Sign up at [resend.com](https://resend.com)
+2. Verify your domain (or use sandbox domain for testing)
+3. Go to [API Keys](https://resend.com/api-keys) and create a new key
+4. Copy the key (starts with `re_`)
+
+**Testing Email Configuration**:
+```bash
+# Send test magic link
+curl -X POST http://localhost:8788/auth/magic-link/send \
+  -H "Content-Type: application/json" \
+  -d '{"email":"your-email@example.com","name":"Test User"}'
+
+# With RESEND_API_KEY: Email will be sent
+# Without RESEND_API_KEY: Response includes magic_link_url
+```
+
+---
+
+### Environment Comparison
+
+| Feature | Development (Local) | Test (workers.dev) | Production (Custom Domain) |
+|---------|---------------------|--------------------|-----------------------------|
+| **Location** | localhost | Cloudflare Workers | Cloudflare Workers |
+| **URL** | `http://localhost:8787` | `https://enrai.{subdomain}.workers.dev` | `https://id.yourdomain.com` |
+| **Command** | `wrangler dev` | `wrangler deploy` | `wrangler deploy` |
+| **Setup Script** | `setup-dev.sh` | `setup-production.sh` (Test) | `setup-production.sh` (Production) |
+| **Secrets** | `.dev.vars` file | `wrangler secret put` | `wrangler secret put` |
+| **HTTP** | ✅ Allowed | ❌ HTTPS only | ❌ HTTPS only |
+| **Public Access** | ❌ Local only | ✅ Internet | ✅ Internet |
+| **Email Sending** | ⚠️ Optional (returns URLs) | ✅ Real emails | ✅ Real emails |
+| **Use Case** | Development, debugging | Testing, demos | Production service |
+
+---
+
 ## Prerequisites
 
 Before deploying Enrai, ensure you have:

@@ -416,4 +416,258 @@ describe('SessionStore', () => {
       expect(response.status).toBe(500);
     });
   });
+
+  describe('Batch Session Invalidation', () => {
+    it('should batch delete multiple sessions', async () => {
+      // Create multiple sessions
+      const sessionIds: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const request = new Request('http://localhost/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: `user_batch_${i}`, ttl: 3600 }),
+        });
+        const response = await sessionStore.fetch(request);
+        const { id } = (await response.json()) as any;
+        sessionIds.push(id);
+      }
+
+      // Batch delete
+      const batchRequest = new Request('http://localhost/sessions/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionIds }),
+      });
+      const batchResponse = await sessionStore.fetch(batchRequest);
+      expect(batchResponse.status).toBe(200);
+
+      const body = (await batchResponse.json()) as any;
+      expect(body.success).toBe(true);
+      expect(body.deleted).toBe(3);
+      expect(body.failed).toBe(0);
+      expect(body.failedIds).toEqual([]);
+
+      // Verify sessions are deleted
+      for (const id of sessionIds) {
+        const getRequest = new Request(`http://localhost/session/${id}`, {
+          method: 'GET',
+        });
+        const getResponse = await sessionStore.fetch(getRequest);
+        expect(getResponse.status).toBe(404);
+      }
+    });
+
+    it('should report failed deletions for non-existent sessions', async () => {
+      // Create one session
+      const createRequest = new Request('http://localhost/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: 'user_batch_fail', ttl: 3600 }),
+      });
+      const createResponse = await sessionStore.fetch(createRequest);
+      const { id: existingId } = (await createResponse.json()) as any;
+
+      // Try to delete existing + non-existent sessions
+      const sessionIds = [existingId, 'session_nonexistent_1', 'session_nonexistent_2'];
+      const batchRequest = new Request('http://localhost/sessions/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionIds }),
+      });
+      const batchResponse = await sessionStore.fetch(batchRequest);
+      expect(batchResponse.status).toBe(200);
+
+      const body = (await batchResponse.json()) as any;
+      expect(body.success).toBe(true);
+      expect(body.deleted).toBe(1);
+      expect(body.failed).toBe(2);
+      expect(body.failedIds).toContain('session_nonexistent_1');
+      expect(body.failedIds).toContain('session_nonexistent_2');
+    });
+
+    it('should reject batch delete with missing sessionIds', async () => {
+      const request = new Request('http://localhost/sessions/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      const response = await sessionStore.fetch(request);
+      expect(response.status).toBe(400);
+
+      const body = (await response.json()) as any;
+      expect(body.error).toContain('sessionIds');
+    });
+
+    it('should reject batch delete with invalid sessionIds type', async () => {
+      const request = new Request('http://localhost/sessions/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionIds: 'not-an-array' }),
+      });
+
+      const response = await sessionStore.fetch(request);
+      expect(response.status).toBe(400);
+
+      const body = (await response.json()) as any;
+      expect(body.error).toContain('sessionIds');
+    });
+
+    it('should handle batch delete with empty array', async () => {
+      const request = new Request('http://localhost/sessions/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionIds: [] }),
+      });
+
+      const response = await sessionStore.fetch(request);
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as any;
+      expect(body.success).toBe(true);
+      expect(body.deleted).toBe(0);
+      expect(body.failed).toBe(0);
+    });
+  });
+
+  describe('D1 Integration', () => {
+    it('should handle D1 errors gracefully during session creation', async () => {
+      // Mock D1 to throw error
+      const errorEnv = {
+        ...mockEnv,
+        DB: {
+          prepare: vi.fn().mockReturnValue({
+            bind: vi.fn().mockReturnThis(),
+            run: vi.fn().mockRejectedValue(new Error('D1 connection failed')),
+            first: vi.fn().mockResolvedValue(null),
+            all: vi.fn().mockResolvedValue({ results: [] }),
+          }),
+        },
+      } as unknown as Env;
+
+      const errorSessionStore = new SessionStore(mockState as unknown as DurableObjectState, errorEnv);
+
+      // Session creation should succeed even if D1 fails
+      const request = new Request('http://localhost/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: 'user_d1_error', ttl: 3600 }),
+      });
+
+      const response = await errorSessionStore.fetch(request);
+      expect(response.status).toBe(201);
+
+      const body = (await response.json()) as any;
+      expect(body).toHaveProperty('id');
+      expect(body.userId).toBe('user_d1_error');
+    });
+
+    it('should handle D1 errors during session extension', async () => {
+      // Create session first
+      const createRequest = new Request('http://localhost/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: 'user_extend_error', ttl: 3600 }),
+      });
+      const createResponse = await sessionStore.fetch(createRequest);
+      const { id } = (await createResponse.json()) as any;
+
+      // Mock D1 to throw error for extension
+      const errorEnv = {
+        ...mockEnv,
+        DB: {
+          prepare: vi.fn().mockReturnValue({
+            bind: vi.fn().mockReturnThis(),
+            run: vi.fn().mockRejectedValue(new Error('D1 update failed')),
+            first: vi.fn().mockResolvedValue(null),
+            all: vi.fn().mockResolvedValue({ results: [] }),
+          }),
+        },
+      } as unknown as Env;
+
+      const errorSessionStore = new SessionStore(mockState as unknown as DurableObjectState, errorEnv);
+
+      // Extension should succeed in memory even if D1 fails
+      const extendRequest = new Request(`http://localhost/session/${id}/extend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seconds: 3600 }),
+      });
+
+      const extendResponse = await errorSessionStore.fetch(extendRequest);
+      expect(extendResponse.status).toBe(200);
+
+      const body = (await extendResponse.json()) as any;
+      expect(body).toHaveProperty('expiresAt');
+    });
+
+    it('should load cold sessions from D1 when listing user sessions', async () => {
+      const userId = 'user_cold_storage';
+      const now = Date.now();
+      const coldSessionId = 'session_cold_123';
+
+      // Mock D1 to return a session not in memory (cold storage)
+      const d1Env = {
+        ...mockEnv,
+        DB: {
+          prepare: vi.fn().mockReturnValue({
+            bind: vi.fn().mockReturnThis(),
+            run: vi.fn().mockResolvedValue({}),
+            first: vi.fn().mockResolvedValue(null),
+            all: vi.fn().mockResolvedValue({
+              results: [
+                {
+                  id: coldSessionId,
+                  user_id: userId,
+                  expires_at: Math.floor((now + 3600000) / 1000), // expires in 1 hour
+                  created_at: Math.floor((now - 1000) / 1000),
+                },
+              ],
+            }),
+          }),
+        },
+      } as unknown as Env;
+
+      const d1SessionStore = new SessionStore(mockState as unknown as DurableObjectState, d1Env);
+
+      // List sessions should include cold session from D1
+      const listRequest = new Request(`http://localhost/sessions/user/${userId}`, {
+        method: 'GET',
+      });
+      const listResponse = await d1SessionStore.fetch(listRequest);
+      expect(listResponse.status).toBe(200);
+
+      const body = (await listResponse.json()) as any;
+      expect(body.sessions).toHaveLength(1);
+      expect(body.sessions[0].id).toBe(coldSessionId);
+      expect(body.sessions[0].userId).toBe(userId);
+    });
+
+    it('should handle D1 errors during session listing', async () => {
+      // Mock D1 to throw error
+      const errorEnv = {
+        ...mockEnv,
+        DB: {
+          prepare: vi.fn().mockReturnValue({
+            bind: vi.fn().mockReturnThis(),
+            run: vi.fn().mockResolvedValue({}),
+            first: vi.fn().mockResolvedValue(null),
+            all: vi.fn().mockRejectedValue(new Error('D1 list error')),
+          }),
+        },
+      } as unknown as Env;
+
+      const errorSessionStore = new SessionStore(mockState as unknown as DurableObjectState, errorEnv);
+
+      // Listing should still work with in-memory sessions only
+      const listRequest = new Request('http://localhost/sessions/user/user_list_error', {
+        method: 'GET',
+      });
+      const listResponse = await errorSessionStore.fetch(listRequest);
+      expect(listResponse.status).toBe(200);
+
+      const body = (await listResponse.json()) as any;
+      expect(body.sessions).toEqual([]);
+    });
+  });
 });
