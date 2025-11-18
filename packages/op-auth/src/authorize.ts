@@ -8,7 +8,8 @@ import {
   validateState,
   validateNonce,
 } from '@enrai/shared';
-import { generateSecureRandomString } from '@enrai/shared';
+import { generateSecureRandomString, parseToken, verifyToken } from '@enrai/shared';
+import { importJWK } from 'jose';
 
 /**
  * Authorization Endpoint Handler
@@ -32,12 +33,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let claims: string | undefined;
   let request_uri: string | undefined;
   let response_mode: string | undefined;
+  let request: string | undefined; // RFC 9101: Request Object (JAR)
+  let prompt: string | undefined;
+  let max_age: string | undefined;
+  let id_token_hint: string | undefined;
+  let acr_values: string | undefined;
+  let display: string | undefined;
+  let ui_locales: string | undefined;
+  let login_hint: string | undefined;
 
   if (c.req.method === 'POST') {
     // Parse POST body (application/x-www-form-urlencoded)
     try {
       const body = await c.req.parseBody();
       request_uri = typeof body.request_uri === 'string' ? body.request_uri : undefined;
+      request = typeof body.request === 'string' ? body.request : undefined;
       response_type = typeof body.response_type === 'string' ? body.response_type : undefined;
       client_id = typeof body.client_id === 'string' ? body.client_id : undefined;
       redirect_uri = typeof body.redirect_uri === 'string' ? body.redirect_uri : undefined;
@@ -49,6 +59,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         typeof body.code_challenge_method === 'string' ? body.code_challenge_method : undefined;
       claims = typeof body.claims === 'string' ? body.claims : undefined;
       response_mode = typeof body.response_mode === 'string' ? body.response_mode : undefined;
+      prompt = typeof body.prompt === 'string' ? body.prompt : undefined;
+      max_age = typeof body.max_age === 'string' ? body.max_age : undefined;
+      id_token_hint = typeof body.id_token_hint === 'string' ? body.id_token_hint : undefined;
+      acr_values = typeof body.acr_values === 'string' ? body.acr_values : undefined;
+      display = typeof body.display === 'string' ? body.display : undefined;
+      ui_locales = typeof body.ui_locales === 'string' ? body.ui_locales : undefined;
+      login_hint = typeof body.login_hint === 'string' ? body.login_hint : undefined;
     } catch {
       return c.json(
         {
@@ -61,6 +78,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   } else {
     // Parse GET query parameters
     request_uri = c.req.query('request_uri');
+    request = c.req.query('request');
     response_type = c.req.query('response_type');
     client_id = c.req.query('client_id');
     redirect_uri = c.req.query('redirect_uri');
@@ -71,6 +89,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     code_challenge_method = c.req.query('code_challenge_method');
     claims = c.req.query('claims');
     response_mode = c.req.query('response_mode');
+    prompt = c.req.query('prompt');
+    max_age = c.req.query('max_age');
+    id_token_hint = c.req.query('id_token_hint');
+    acr_values = c.req.query('acr_values');
+    display = c.req.query('display');
+    ui_locales = c.req.query('ui_locales');
+    login_hint = c.req.query('login_hint');
   }
 
   // RFC 9126: If request_uri is present, fetch parameters from PAR storage
@@ -193,6 +218,98 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           error_description: 'Failed to process request_uri',
         },
         500
+      );
+    }
+  }
+
+  // RFC 9101 (JAR): If request parameter is present, parse JWT request object
+  if (request) {
+    try {
+      // Parse JWT header to check algorithm
+      const parts = request.split('.');
+      if (parts.length !== 3) {
+        return c.json(
+          {
+            error: 'invalid_request_object',
+            error_description: 'Request object must be a valid JWT',
+          },
+          400
+        );
+      }
+
+      // Decode header (base64url to JSON)
+      const base64url = parts[0];
+      const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+      const header = JSON.parse(atob(base64));
+      const alg = header.alg;
+
+      // Parse request object (unsigned or signed)
+      let requestObjectClaims: Record<string, unknown>;
+
+      if (alg === 'none') {
+        // Unsigned request object - just parse without verification
+        requestObjectClaims = parseToken(request) as Record<string, unknown>;
+      } else {
+        // Signed request object - verify signature
+        // Load client's public key from D1/KV (for client-signed requests)
+        // For now, accept unsigned only for conformance testing
+        // Production should verify signatures
+        const publicJwkJson = c.env.PUBLIC_JWK_JSON;
+        if (!publicJwkJson) {
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: 'Server configuration error',
+            },
+            500
+          );
+        }
+
+        let publicJwk;
+        try {
+          publicJwk = JSON.parse(publicJwkJson);
+        } catch {
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: 'Server configuration error',
+            },
+            500
+          );
+        }
+
+        const publicKey = await importJWK(publicJwk, alg);
+        const verified = await verifyToken(request, publicKey);
+        requestObjectClaims = verified.payload as Record<string, unknown>;
+      }
+
+      // Override parameters with those from request object
+      // Per OIDC Core 6.1: request object parameters take precedence
+      if (requestObjectClaims.response_type) response_type = requestObjectClaims.response_type as string;
+      if (requestObjectClaims.client_id) client_id = requestObjectClaims.client_id as string;
+      if (requestObjectClaims.redirect_uri) redirect_uri = requestObjectClaims.redirect_uri as string;
+      if (requestObjectClaims.scope) scope = requestObjectClaims.scope as string;
+      if (requestObjectClaims.state) state = requestObjectClaims.state as string;
+      if (requestObjectClaims.nonce) nonce = requestObjectClaims.nonce as string;
+      if (requestObjectClaims.code_challenge) code_challenge = requestObjectClaims.code_challenge as string;
+      if (requestObjectClaims.code_challenge_method) code_challenge_method = requestObjectClaims.code_challenge_method as string;
+      if (requestObjectClaims.claims) claims = requestObjectClaims.claims as string;
+      if (requestObjectClaims.response_mode) response_mode = requestObjectClaims.response_mode as string;
+      if (requestObjectClaims.prompt) prompt = requestObjectClaims.prompt as string;
+      if (requestObjectClaims.max_age) max_age = requestObjectClaims.max_age as string;
+      if (requestObjectClaims.id_token_hint) id_token_hint = requestObjectClaims.id_token_hint as string;
+      if (requestObjectClaims.acr_values) acr_values = requestObjectClaims.acr_values as string;
+      if (requestObjectClaims.display) display = requestObjectClaims.display as string;
+      if (requestObjectClaims.ui_locales) ui_locales = requestObjectClaims.ui_locales as string;
+      if (requestObjectClaims.login_hint) login_hint = requestObjectClaims.login_hint as string;
+    } catch (error) {
+      console.error('Failed to parse request object:', error);
+      return c.json(
+        {
+          error: 'invalid_request_object',
+          error_description: 'Failed to parse or verify request object',
+        },
+        400
       );
     }
   }
@@ -389,13 +506,127 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
+  // Process authentication-related parameters (OIDC Core 3.1.2.1)
+  let sessionUserId: string | undefined;
+  let authTime: number | undefined;
+  let sessionAcr: string | undefined;
+
+  // Handle id_token_hint parameter
+  if (id_token_hint) {
+    try {
+      // Verify ID token hint
+      const publicJwkJson = c.env.PUBLIC_JWK_JSON;
+      if (publicJwkJson) {
+        const publicJwk = JSON.parse(publicJwkJson);
+        const publicKey = await importJWK(publicJwk, 'RS256');
+        const verified = await verifyToken(id_token_hint, publicKey);
+        const idTokenPayload = verified.payload as Record<string, unknown>;
+
+        // Extract user identifier and auth_time from ID token
+        sessionUserId = idTokenPayload.sub as string;
+        authTime = idTokenPayload.auth_time as number;
+        sessionAcr = idTokenPayload.acr as string;
+      }
+    } catch (error) {
+      console.error('Failed to verify id_token_hint:', error);
+      // Invalid id_token_hint - treat as if no session exists
+    }
+  }
+
+  // Handle prompt parameter (OIDC Core 3.1.2.1)
+  if (prompt) {
+    const promptValues = prompt.split(' ');
+
+    // Check for invalid prompt combinations
+    if (promptValues.includes('none') && promptValues.length > 1) {
+      return redirectWithError(
+        c,
+        validRedirectUri,
+        'invalid_request',
+        'prompt=none cannot be combined with other prompt values',
+        state
+      );
+    }
+
+    if (promptValues.includes('none')) {
+      // prompt=none: MUST NOT display any authentication or consent UI
+      // If not authenticated, return login_required error
+      if (!sessionUserId) {
+        return redirectWithError(
+          c,
+          validRedirectUri,
+          'login_required',
+          'User authentication is required',
+          state
+        );
+      }
+
+      // Check max_age if provided
+      if (max_age && authTime) {
+        const maxAgeSeconds = parseInt(max_age, 10);
+        const currentTime = Math.floor(Date.now() / 1000);
+        const timeSinceAuth = currentTime - authTime;
+
+        if (timeSinceAuth > maxAgeSeconds) {
+          return redirectWithError(
+            c,
+            validRedirectUri,
+            'login_required',
+            'Re-authentication is required due to max_age constraint',
+            state
+          );
+        }
+      }
+    }
+
+    if (promptValues.includes('login')) {
+      // prompt=login: Force re-authentication even if user has valid session
+      // Clear session context to force login
+      sessionUserId = undefined;
+      authTime = undefined;
+    }
+
+    // Note: prompt=consent and prompt=select_account are handled by consent UI
+    // They don't affect the authorization endpoint logic directly
+  }
+
+  // Handle max_age parameter (OIDC Core 3.1.2.1)
+  if (max_age && !prompt?.includes('none')) {
+    const maxAgeSeconds = parseInt(max_age, 10);
+
+    if (authTime) {
+      const currentTime = Math.floor(Date.now() / 1000);
+      const timeSinceAuth = currentTime - authTime;
+
+      if (timeSinceAuth > maxAgeSeconds) {
+        // Re-authentication required - redirect to login
+        // In a full implementation, this would redirect to login UI
+        // For now, we'll generate a new session
+        sessionUserId = undefined;
+        authTime = undefined;
+      }
+    }
+  }
+
   // Generate authorization code (cryptographically secure random string, base64url format, ~128 characters)
   // Using 96 bytes results in approximately 128 characters in base64url encoding
   const code = generateSecureRandomString(96);
 
-  // For MVP, use a static subject (user identifier)
-  // In a real implementation, this would come from user authentication
-  const sub = 'user-' + crypto.randomUUID();
+  // Determine user identifier (sub)
+  // Use session user if available, otherwise generate new user
+  const sub = sessionUserId || 'user-' + crypto.randomUUID();
+
+  // Record authentication time
+  const currentAuthTime = authTime || Math.floor(Date.now() / 1000);
+
+  // Handle acr_values parameter (Authentication Context Class Reference)
+  let selectedAcr = sessionAcr;
+  if (acr_values && !selectedAcr) {
+    // Select first ACR value from the list
+    // In production, this should match against supported ACR values
+    const acrList = acr_values.split(' ');
+    selectedAcr = acrList[0];
+  }
 
   // Type narrowing: client_id and scope are guaranteed to be strings at this point
   const validClientId: string = client_id as string;
@@ -421,6 +652,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           codeChallengeMethod: code_challenge_method,
           nonce,
           state,
+          claims,
+          authTime: currentAuthTime,
+          acr: selectedAcr,
         }),
       })
     );
