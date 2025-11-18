@@ -109,7 +109,7 @@ export async function magicLinkSendHandler(c: Context<{ Bindings: Env }>) {
 
     // Construct magic link URL
     const issuerUrl = new URL(c.env.ISSUER_URL);
-    const magicLinkUrl = new URL('/auth/magic-link/verify', issuerUrl);
+    const magicLinkUrl = new URL('/api/auth/magic-link/verify', issuerUrl);
     magicLinkUrl.searchParams.set('token', token);
     if (redirect_uri) {
       magicLinkUrl.searchParams.set('redirect_uri', redirect_uri);
@@ -231,10 +231,20 @@ export async function magicLinkVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       if (!consumeResponse.ok) {
         const error = (await consumeResponse.json()) as { error_description?: string };
+        const errorDescription = error.error_description || 'Magic link token is invalid or expired';
+
+        // Redirect to error page if DEFAULT_REDIRECT_URL is configured
+        if (c.env.DEFAULT_REDIRECT_URL) {
+          const redirectUrl = new URL(c.env.DEFAULT_REDIRECT_URL);
+          redirectUrl.searchParams.set('error', 'invalid_token');
+          redirectUrl.searchParams.set('error_description', errorDescription);
+          return c.redirect(redirectUrl.toString());
+        }
+
         return c.json(
           {
             error: 'invalid_token',
-            error_description: error.error_description || 'Magic link token is invalid or expired',
+            error_description: errorDescription,
           },
           400
         );
@@ -316,14 +326,17 @@ export async function magicLinkVerifyHandler(c: Context<{ Bindings: Env }>) {
     // Note: Challenge token is already consumed by ChallengeStore DO (atomic operation)
     // No need to explicitly delete - consumed challenges are auto-cleaned by DO
 
-    // If redirect_uri provided, redirect to it with session
-    if (redirect_uri) {
-      const redirectUrl = new URL(redirect_uri);
+    // Determine redirect URL (use provided redirect_uri or default)
+    const finalRedirectUri = redirect_uri || storedRedirectUri || c.env.DEFAULT_REDIRECT_URL;
+
+    if (finalRedirectUri) {
+      const redirectUrl = new URL(finalRedirectUri);
       redirectUrl.searchParams.set('session_id', sessionId);
+      redirectUrl.searchParams.set('status', 'success');
       return c.redirect(redirectUrl.toString());
     }
 
-    // Otherwise return JSON response
+    // Fallback: return JSON response if no redirect URL is configured
     return c.json({
       success: true,
       sessionId,
