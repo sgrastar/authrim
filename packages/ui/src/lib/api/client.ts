@@ -47,6 +47,24 @@ interface Activity {
 	[key: string]: unknown;
 }
 
+interface AuditLogEntry {
+	id: string;
+	userId?: string;
+	user?: {
+		id: string;
+		email: string;
+		name?: string;
+		picture?: string;
+	};
+	action: string;
+	resourceType?: string;
+	resourceId?: string;
+	ipAddress?: string;
+	userAgent?: string;
+	metadata?: Record<string, unknown>;
+	createdAt: string;
+}
+
 interface CustomField {
 	key: string;
 	value: unknown;
@@ -323,5 +341,144 @@ export const magicLinkAPI = {
 			userId: string;
 			user: User;
 		}>(`/api/auth/magic-link/verify?token=${encodeURIComponent(token)}`);
+	}
+};
+
+/**
+ * Admin API - Audit Log
+ */
+export const adminAuditLogAPI = {
+	/**
+	 * List audit log entries with filtering and pagination
+	 */
+	async list(params: {
+		page?: number;
+		limit?: number;
+		user_id?: string;
+		action?: string;
+		resource_type?: string;
+		resource_id?: string;
+		start_date?: string;
+		end_date?: string;
+	} = {}) {
+		const queryParams = new URLSearchParams();
+		if (params.page) queryParams.set('page', params.page.toString());
+		if (params.limit) queryParams.set('limit', params.limit.toString());
+		if (params.user_id) queryParams.set('user_id', params.user_id);
+		if (params.action) queryParams.set('action', params.action);
+		if (params.resource_type) queryParams.set('resource_type', params.resource_type);
+		if (params.resource_id) queryParams.set('resource_id', params.resource_id);
+		if (params.start_date) queryParams.set('start_date', params.start_date);
+		if (params.end_date) queryParams.set('end_date', params.end_date);
+
+		const query = queryParams.toString();
+		return apiFetch<{
+			entries: AuditLogEntry[];
+			pagination: {
+				page: number;
+				limit: number;
+				total: number;
+				totalPages: number;
+			};
+		}>(`/api/admin/audit-log${query ? '?' + query : ''}`);
+	},
+
+	/**
+	 * Get audit log entry details by ID
+	 */
+	async get(entryId: string) {
+		return apiFetch<AuditLogEntry>(`/api/admin/audit-log/${entryId}`);
+	}
+};
+
+/**
+ * Admin API - Settings
+ */
+export const adminSettingsAPI = {
+	/**
+	 * Get system settings
+	 */
+	async get() {
+		return apiFetch<{
+			settings: {
+				general: {
+					siteName: string;
+					logoUrl: string;
+					language: string;
+					timezone: string;
+				};
+				appearance: {
+					primaryColor: string;
+					secondaryColor: string;
+					fontFamily: string;
+				};
+				security: {
+					sessionTimeout: number;
+					mfaEnforced: boolean;
+					passwordMinLength: number;
+					passwordRequireSpecialChar: boolean;
+				};
+				email: {
+					emailProvider: 'resend' | 'cloudflare' | 'smtp';
+					smtpHost: string;
+					smtpPort: number;
+					smtpUsername: string;
+					smtpPassword: string;
+				};
+				advanced: {
+					accessTokenTtl: number;
+					idTokenTtl: number;
+					refreshTokenTtl: number;
+					passkeyEnabled: boolean;
+					magicLinkEnabled: boolean;
+				};
+			};
+		}>('/api/admin/settings');
+	},
+
+	/**
+	 * Update system settings
+	 */
+	async update(settings: {
+		general?: {
+			siteName?: string;
+			logoUrl?: string;
+			language?: string;
+			timezone?: string;
+		};
+		appearance?: {
+			primaryColor?: string;
+			secondaryColor?: string;
+			fontFamily?: string;
+		};
+		security?: {
+			sessionTimeout?: number;
+			mfaEnforced?: boolean;
+			passwordMinLength?: number;
+			passwordRequireSpecialChar?: boolean;
+		};
+		email?: {
+			emailProvider?: 'resend' | 'cloudflare' | 'smtp';
+			smtpHost?: string;
+			smtpPort?: number;
+			smtpUsername?: string;
+			smtpPassword?: string;
+		};
+		advanced?: {
+			accessTokenTtl?: number;
+			idTokenTtl?: number;
+			refreshTokenTtl?: number;
+			passkeyEnabled?: boolean;
+			magicLinkEnabled?: boolean;
+		};
+	}) {
+		return apiFetch<{
+			success: boolean;
+			message: string;
+			settings: Record<string, unknown>;
+		}>('/api/admin/settings', {
+			method: 'PUT',
+			body: JSON.stringify({ settings })
+		});
 	}
 };

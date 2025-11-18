@@ -29,6 +29,10 @@ import {
   adminSessionGetHandler,
   adminSessionRevokeHandler,
   adminUserRevokeAllSessionsHandler,
+  adminAuditLogListHandler,
+  adminAuditLogGetHandler,
+  adminSettingsGetHandler,
+  adminSettingsUpdateHandler,
 } from './admin';
 
 // Create Hono app with Cloudflare Workers types
@@ -140,6 +144,14 @@ app.get('/api/admin/sessions', adminSessionsListHandler);
 app.get('/api/admin/sessions/:id', adminSessionGetHandler);
 app.delete('/api/admin/sessions/:id', adminSessionRevokeHandler);        // RESTful: DELETE instead of POST
 app.delete('/api/admin/users/:id/sessions', adminUserRevokeAllSessionsHandler);  // RESTful: /sessions instead of /revoke-all-sessions
+
+// Admin Audit Log endpoints
+app.get('/api/admin/audit-log', adminAuditLogListHandler);
+app.get('/api/admin/audit-log/:id', adminAuditLogGetHandler);
+
+// Admin Settings endpoints
+app.get('/api/admin/settings', adminSettingsGetHandler);
+app.put('/api/admin/settings', adminSettingsUpdateHandler);
 
 // 404 handler
 app.notFound((c) => {

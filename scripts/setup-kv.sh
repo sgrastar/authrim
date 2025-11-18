@@ -61,6 +61,7 @@ echo "  • RATE_LIMIT - Rate limiting counters"
 echo "  • REFRESH_TOKENS - OAuth refresh tokens"
 echo "  • REVOKED_TOKENS - Revoked token list"
 echo "  • INITIAL_ACCESS_TOKENS - Dynamic Client Registration tokens"
+echo "  • SETTINGS - System settings storage"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "⚠️  How this script works:"
@@ -102,6 +103,7 @@ declare -a REQUIRED_NAMESPACES=(
     "REFRESH_TOKENS"
     "REVOKED_TOKENS"
     "INITIAL_ACCESS_TOKENS"
+    "SETTINGS"
 )
 
 # Check if all namespaces exist
@@ -454,6 +456,9 @@ echo "✅ REVOKED_TOKENS: $REVOKED_TOKENS_ID"
 INITIAL_ACCESS_TOKENS_ID=$(create_kv_namespace "INITIAL_ACCESS_TOKENS")
 echo "✅ INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID"
 
+SETTINGS_ID=$(create_kv_namespace "SETTINGS")
+echo "✅ SETTINGS: $SETTINGS_ID"
+
 echo ""
 echo "Creating preview namespaces (for development/testing)..."
 
@@ -481,6 +486,9 @@ echo "✅ REVOKED_TOKENS (preview): $PREVIEW_REVOKED_TOKENS_ID"
 
 PREVIEW_INITIAL_ACCESS_TOKENS_ID=$(create_kv_namespace "INITIAL_ACCESS_TOKENS" "--preview")
 echo "✅ INITIAL_ACCESS_TOKENS (preview): $PREVIEW_INITIAL_ACCESS_TOKENS_ID"
+
+PREVIEW_SETTINGS_ID=$(create_kv_namespace "SETTINGS" "--preview")
+echo "✅ SETTINGS (preview): $PREVIEW_SETTINGS_ID"
 
 echo ""
 echo "📝 Updating wrangler.toml files..."
@@ -578,6 +586,7 @@ update_wrangler_toml "packages/op-management/wrangler.toml" "REFRESH_TOKENS" "$R
 update_wrangler_toml "packages/op-management/wrangler.toml" "REVOKED_TOKENS" "$REVOKED_TOKENS_ID" "$PREVIEW_REVOKED_TOKENS_ID"
 update_wrangler_toml "packages/op-management/wrangler.toml" "RATE_LIMIT" "$RATE_LIMIT_ID" "$PREVIEW_RATE_LIMIT_ID"
 update_wrangler_toml "packages/op-management/wrangler.toml" "INITIAL_ACCESS_TOKENS" "$INITIAL_ACCESS_TOKENS_ID" "$PREVIEW_INITIAL_ACCESS_TOKENS_ID"
+update_wrangler_toml "packages/op-management/wrangler.toml" "SETTINGS" "$SETTINGS_ID" "$PREVIEW_SETTINGS_ID"
 echo "✅ op-management updated"
 
 # Update op-token wrangler.toml
@@ -615,6 +624,7 @@ echo "  • RATE_LIMIT: $RATE_LIMIT_ID / $PREVIEW_RATE_LIMIT_ID"
 echo "  • REFRESH_TOKENS: $REFRESH_TOKENS_ID / $PREVIEW_REFRESH_TOKENS_ID"
 echo "  • REVOKED_TOKENS: $REVOKED_TOKENS_ID / $PREVIEW_REVOKED_TOKENS_ID"
 echo "  • INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID / $PREVIEW_INITIAL_ACCESS_TOKENS_ID"
+echo "  • SETTINGS: $SETTINGS_ID / $PREVIEW_SETTINGS_ID"
 echo ""
 echo "All wrangler.toml files have been updated with the correct namespace IDs."
 echo ""

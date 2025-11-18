@@ -1056,3 +1056,349 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
     );
   }
 }
+
+/**
+ * GET /api/admin/audit-log
+ * List audit log entries with filtering and pagination
+ */
+export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const env = c.env as Env;
+
+    // Get query parameters
+    const page = parseInt(c.req.query('page') || '1', 10);
+    const limit = Math.min(
+      parseInt(c.req.query('limit') || '20', 10),
+      100
+    );
+    const offset = (page - 1) * limit;
+
+    // Filters
+    const userId = c.req.query('user_id');
+    const action = c.req.query('action');
+    const resourceType = c.req.query('resource_type');
+    const resourceId = c.req.query('resource_id');
+    const startDate = c.req.query('start_date'); // ISO 8601 format
+    const endDate = c.req.query('end_date'); // ISO 8601 format
+
+    // Build WHERE clause
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (userId) {
+      conditions.push('user_id = ?');
+      params.push(userId);
+    }
+
+    if (action) {
+      conditions.push('action = ?');
+      params.push(action);
+    }
+
+    if (resourceType) {
+      conditions.push('resource_type = ?');
+      params.push(resourceType);
+    }
+
+    if (resourceId) {
+      conditions.push('resource_id = ?');
+      params.push(resourceId);
+    }
+
+    if (startDate) {
+      const startTimestamp = Math.floor(new Date(startDate).getTime() / 1000);
+      conditions.push('created_at >= ?');
+      params.push(startTimestamp);
+    }
+
+    if (endDate) {
+      const endTimestamp = Math.floor(new Date(endDate).getTime() / 1000);
+      conditions.push('created_at <= ?');
+      params.push(endTimestamp);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Get total count
+    const countQuery = `SELECT COUNT(*) as total FROM audit_log ${whereClause}`;
+    const countResult = await env.DB.prepare(countQuery)
+      .bind(...params)
+      .first<{ total: number }>();
+
+    const total = countResult?.total || 0;
+    const totalPages = Math.ceil(total / limit);
+
+    // Get audit log entries
+    const query = `
+      SELECT
+        id,
+        user_id,
+        action,
+        resource_type,
+        resource_id,
+        ip_address,
+        user_agent,
+        metadata_json,
+        created_at
+      FROM audit_log
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    const result = await env.DB.prepare(query)
+      .bind(...params, limit, offset)
+      .all();
+
+    // Format entries
+    const entries = (result.results || []).map((row: any) => ({
+      id: row.id,
+      userId: row.user_id,
+      action: row.action,
+      resourceType: row.resource_type,
+      resourceId: row.resource_id,
+      ipAddress: row.ip_address,
+      userAgent: row.user_agent,
+      metadata: row.metadata_json ? JSON.parse(row.metadata_json) : null,
+      createdAt: new Date(row.created_at * 1000).toISOString(),
+    }));
+
+    return c.json({
+      entries,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    });
+  } catch (error) {
+    console.error('Admin audit log list error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to fetch audit log',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * GET /api/admin/audit-log/:id
+ * Get a specific audit log entry by ID
+ */
+export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const env = c.env as Env;
+    const id = c.req.param('id');
+
+    if (!id) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Audit log entry ID is required',
+        },
+        400
+      );
+    }
+
+    // Get audit log entry
+    const entry = await env.DB.prepare(
+      `
+      SELECT
+        id,
+        user_id,
+        action,
+        resource_type,
+        resource_id,
+        ip_address,
+        user_agent,
+        metadata_json,
+        created_at
+      FROM audit_log
+      WHERE id = ?
+      `
+    )
+      .bind(id)
+      .first();
+
+    if (!entry) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Audit log entry not found',
+        },
+        404
+      );
+    }
+
+    // Get user information if user_id exists
+    let user = null;
+    if (entry.user_id) {
+      const userResult = await env.DB.prepare(
+        'SELECT id, email, name, picture FROM users WHERE id = ?'
+      )
+        .bind(entry.user_id)
+        .first();
+
+      if (userResult) {
+        user = {
+          id: userResult.id,
+          email: userResult.email,
+          name: userResult.name,
+          picture: userResult.picture,
+        };
+      }
+    }
+
+    return c.json({
+      id: entry.id,
+      userId: entry.user_id,
+      user,
+      action: entry.action,
+      resourceType: entry.resource_type,
+      resourceId: entry.resource_id,
+      ipAddress: entry.ip_address,
+      userAgent: entry.user_agent,
+      metadata: entry.metadata_json ? JSON.parse(entry.metadata_json as string) : null,
+      createdAt: new Date((entry.created_at as number) * 1000).toISOString(),
+    });
+  } catch (error) {
+    console.error('Admin audit log get error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to fetch audit log entry',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * GET /api/admin/settings
+ * Get system settings
+ */
+export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const env = c.env as Env;
+
+    // Get settings from KV
+    const settingsJson = await env.SETTINGS?.get('system_settings');
+
+    // Default settings
+    const defaultSettings = {
+      general: {
+        siteName: 'Enrai',
+        logoUrl: '',
+        language: 'en',
+        timezone: 'UTC',
+      },
+      appearance: {
+        primaryColor: '#3B82F6',
+        secondaryColor: '#10B981',
+        fontFamily: 'Inter',
+      },
+      security: {
+        sessionTimeout: 86400, // 24 hours
+        mfaEnforced: false,
+        passwordMinLength: 8,
+        passwordRequireSpecialChar: true,
+      },
+      email: {
+        emailProvider: 'resend',
+        smtpHost: '',
+        smtpPort: 587,
+        smtpUsername: '',
+        smtpPassword: '',
+      },
+      advanced: {
+        accessTokenTtl: 3600, // 1 hour
+        idTokenTtl: 3600, // 1 hour
+        refreshTokenTtl: 2592000, // 30 days
+        passkeyEnabled: true,
+        magicLinkEnabled: true,
+      },
+    };
+
+    // Merge with stored settings if they exist
+    const settings = settingsJson ? { ...defaultSettings, ...JSON.parse(settingsJson) } : defaultSettings;
+
+    return c.json({ settings });
+  } catch (error) {
+    console.error('Admin settings get error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to fetch settings',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * PUT /api/admin/settings
+ * Update system settings
+ */
+export async function adminSettingsUpdateHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const env = c.env as Env;
+    const body = await c.req.json();
+
+    if (!body.settings) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Settings object is required',
+        },
+        400
+      );
+    }
+
+    // Validate settings structure
+    const allowedSections = ['general', 'appearance', 'security', 'email', 'advanced'];
+    const settings = body.settings;
+
+    for (const section of Object.keys(settings)) {
+      if (!allowedSections.includes(section)) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: `Invalid settings section: ${section}`,
+          },
+          400
+        );
+      }
+    }
+
+    // Store settings in KV
+    if (env.SETTINGS) {
+      await env.SETTINGS.put('system_settings', JSON.stringify(settings));
+    } else {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Settings storage is not configured',
+        },
+        500
+      );
+    }
+
+    return c.json({
+      success: true,
+      message: 'Settings updated successfully',
+      settings,
+    });
+  } catch (error) {
+    console.error('Admin settings update error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to update settings',
+      },
+      500
+    );
+  }
+}
