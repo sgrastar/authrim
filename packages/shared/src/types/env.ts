@@ -22,6 +22,7 @@ export interface Env {
   JWKS_CACHE?: KVNamespace; // JWKs cache (from KeyManager DO)
   MAGIC_LINKS?: KVNamespace; // Magic Link tokens (TTL: 15 min)
   KV?: KVNamespace; // General purpose KV for session tokens and other data
+  SETTINGS?: KVNamespace; // System settings storage
 
   // Rate Limiting
   RATE_LIMIT?: KVNamespace;

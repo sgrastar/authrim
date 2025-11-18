@@ -266,6 +266,10 @@ zone_name = \"$ZONE_NAME\"
 
 [[routes]]
 pattern = \"$DOMAIN_ONLY/as/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/api/auth/*\"
 zone_name = \"$ZONE_NAME\""
             ;;
         op-token)
@@ -295,6 +299,10 @@ zone_name = \"$ZONE_NAME\"
 
 [[routes]]
 pattern = \"$DOMAIN_ONLY/revoke\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/api/admin/*\"
 zone_name = \"$ZONE_NAME\""
             ;;
     esac

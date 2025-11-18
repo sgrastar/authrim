@@ -2,12 +2,15 @@
 	import * as m from '$lib/paraglide/messages';
 	import { Card, Button, Input } from '$lib/components';
 	import { onMount } from 'svelte';
+	import { adminSettingsAPI } from '$lib/api/client';
 
 	type Tab = 'general' | 'appearance' | 'security' | 'email' | 'advanced';
 
 	let activeTab: Tab = 'general';
 	let loading = false;
 	let saving = false;
+	let error = '';
+	let successMessage = '';
 
 	// General settings
 	let siteName = 'Enrai';
@@ -46,17 +49,110 @@
 
 	async function loadSettings() {
 		loading = true;
-		// Simulate API call - would call GET /admin/settings in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 500));
-		loading = false;
+		error = '';
+
+		try {
+			const { data, error: apiError } = await adminSettingsAPI.get();
+
+			if (apiError) {
+				error = apiError.error_description || 'Failed to load settings';
+				console.error('Failed to load settings:', apiError);
+			} else if (data) {
+				// General
+				siteName = data.settings.general.siteName;
+				logoUrl = data.settings.general.logoUrl;
+				language = data.settings.general.language;
+				timezone = data.settings.general.timezone;
+
+				// Appearance
+				primaryColor = data.settings.appearance.primaryColor;
+				secondaryColor = data.settings.appearance.secondaryColor;
+				fontFamily = data.settings.appearance.fontFamily;
+
+				// Security
+				sessionTimeout = data.settings.security.sessionTimeout;
+				mfaEnforced = data.settings.security.mfaEnforced;
+				passwordMinLength = data.settings.security.passwordMinLength;
+				passwordRequireSpecialChar = data.settings.security.passwordRequireSpecialChar;
+
+				// Email
+				emailProvider = data.settings.email.emailProvider;
+				smtpHost = data.settings.email.smtpHost;
+				smtpPort = data.settings.email.smtpPort;
+				smtpUsername = data.settings.email.smtpUsername;
+				smtpPassword = data.settings.email.smtpPassword;
+
+				// Advanced
+				accessTokenTtl = data.settings.advanced.accessTokenTtl;
+				idTokenTtl = data.settings.advanced.idTokenTtl;
+				refreshTokenTtl = data.settings.advanced.refreshTokenTtl;
+				passkeyEnabled = data.settings.advanced.passkeyEnabled;
+				magicLinkEnabled = data.settings.advanced.magicLinkEnabled;
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'An error occurred';
+			console.error('Error loading settings:', err);
+		} finally {
+			loading = false;
+		}
 	}
 
 	async function handleSave() {
 		saving = true;
-		// Simulate API call - would call PUT /admin/settings in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 1000));
-		saving = false;
-		alert('Settings saved successfully');
+		error = '';
+		successMessage = '';
+
+		try {
+			const { data, error: apiError } = await adminSettingsAPI.update({
+				general: {
+					siteName,
+					logoUrl,
+					language,
+					timezone
+				},
+				appearance: {
+					primaryColor,
+					secondaryColor,
+					fontFamily
+				},
+				security: {
+					sessionTimeout,
+					mfaEnforced,
+					passwordMinLength,
+					passwordRequireSpecialChar
+				},
+				email: {
+					emailProvider,
+					smtpHost,
+					smtpPort,
+					smtpUsername,
+					smtpPassword
+				},
+				advanced: {
+					accessTokenTtl,
+					idTokenTtl,
+					refreshTokenTtl,
+					passkeyEnabled,
+					magicLinkEnabled
+				}
+			});
+
+			if (apiError) {
+				error = apiError.error_description || 'Failed to save settings';
+				console.error('Failed to save settings:', apiError);
+			} else if (data) {
+				successMessage = 'Settings saved successfully';
+				// Clear success message after 3 seconds
+				setTimeout(() => {
+					successMessage = '';
+				}, 3000);
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'An error occurred';
+			console.error('Error saving settings:', err);
+		} finally {
+			saving = false;
+		}
 	}
 
 	function setTab(tab: Tab) {
@@ -86,6 +182,26 @@
 			Save Changes
 		</Button>
 	</div>
+
+	<!-- Error Message -->
+	{#if error}
+		<div class="rounded-lg bg-red-50 p-4 dark:bg-red-900/20">
+			<div class="flex items-center gap-3">
+				<div class="i-heroicons-exclamation-circle h-5 w-5 text-red-600 dark:text-red-400"></div>
+				<p class="text-sm text-red-800 dark:text-red-200">{error}</p>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Success Message -->
+	{#if successMessage}
+		<div class="rounded-lg bg-green-50 p-4 dark:bg-green-900/20">
+			<div class="flex items-center gap-3">
+				<div class="i-heroicons-check-circle h-5 w-5 text-green-600 dark:text-green-400"></div>
+				<p class="text-sm text-green-800 dark:text-green-200">{successMessage}</p>
+			</div>
+		</div>
+	{/if}
 
 	<!-- Tabs -->
 	<div class="border-b border-gray-200 dark:border-gray-700">

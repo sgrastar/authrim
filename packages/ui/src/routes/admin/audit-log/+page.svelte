@@ -2,24 +2,31 @@
 	import * as m from '$lib/paraglide/messages';
 	import { Card, Button, Input } from '$lib/components';
 	import { onMount } from 'svelte';
+	import { adminAuditLogAPI } from '$lib/api/client';
 
 	interface AuditLogEntry {
 		id: string;
-		timestamp: number;
-		user_email: string | null;
+		userId?: string;
+		user?: {
+			id: string;
+			email: string;
+			name?: string;
+			picture?: string;
+		};
 		action: string;
-		resource_type: string | null;
-		resource_id: string | null;
-		ip_address: string | null;
-		status: 'success' | 'failure';
-		metadata: Record<string, unknown>;
+		resourceType?: string;
+		resourceId?: string;
+		ipAddress?: string;
+		userAgent?: string;
+		metadata?: Record<string, unknown>;
+		createdAt: string;
 	}
 
 	let logs: AuditLogEntry[] = [];
 	let loading = true;
-	let searchQuery = '';
+	let error = '';
 	let filterAction = 'all';
-	let filterStatus: 'all' | 'success' | 'failure' = 'all';
+	let filterResourceType = 'all';
 	let currentPage = 1;
 	let totalPages = 1;
 	let totalCount = 0;
@@ -42,6 +49,8 @@
 		'token.revoked'
 	];
 
+	const resourceTypes = ['user', 'client', 'token', 'session'];
+
 	onMount(async () => {
 		// Set default date range (last 7 days)
 		const now = new Date();
@@ -54,61 +63,58 @@
 
 	async function loadLogs() {
 		loading = true;
-		// Simulate API call - would call GET /admin/audit-log in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 500));
+		error = '';
 
-		// Mock data
-		const mockLogs: AuditLogEntry[] = Array.from({ length: 100 }, (_, i) => ({
-			id: `log-${i + 1}`,
-			timestamp: Date.now() - i * 3600000,
-			user_email: i % 5 === 0 ? null : `user${i % 10}@example.com`,
-			action: actionTypes[i % actionTypes.length],
-			resource_type: i % 3 === 0 ? 'user' : i % 3 === 1 ? 'client' : 'token',
-			resource_id: `resource-${i + 1}`,
-			ip_address: `192.168.1.${(i % 255) + 1}`,
-			status: i % 10 === 0 ? 'failure' : 'success',
-			metadata: {}
-		}));
+		try {
+			// Build API params
+			const params: {
+				page: number;
+				limit: number;
+				action?: string;
+				resource_type?: string;
+				start_date?: string;
+				end_date?: string;
+			} = {
+				page: currentPage,
+				limit: itemsPerPage
+			};
 
-		// Apply filters
-		let filtered = mockLogs;
+			if (filterAction !== 'all') {
+				params.action = filterAction;
+			}
 
-		if (searchQuery) {
-			filtered = filtered.filter(
-				(log) =>
-					log.user_email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-					log.action.toLowerCase().includes(searchQuery.toLowerCase()) ||
-					log.resource_id?.toLowerCase().includes(searchQuery.toLowerCase())
-			);
+			if (filterResourceType !== 'all') {
+				params.resource_type = filterResourceType;
+			}
+
+			if (startDate) {
+				params.start_date = new Date(startDate).toISOString();
+			}
+
+			if (endDate) {
+				// Set to end of day
+				const endDateObj = new Date(endDate);
+				endDateObj.setHours(23, 59, 59, 999);
+				params.end_date = endDateObj.toISOString();
+			}
+
+			// Call API
+			const { data, error: apiError } = await adminAuditLogAPI.list(params);
+
+			if (apiError) {
+				error = apiError.error_description || 'Failed to load audit logs';
+				console.error('Failed to load audit logs:', apiError);
+			} else if (data) {
+				logs = data.entries;
+				totalCount = data.pagination.total;
+				totalPages = data.pagination.totalPages;
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'An error occurred';
+			console.error('Error loading audit logs:', err);
+		} finally {
+			loading = false;
 		}
-
-		if (filterAction !== 'all') {
-			filtered = filtered.filter((log) => log.action === filterAction);
-		}
-
-		if (filterStatus !== 'all') {
-			filtered = filtered.filter((log) => log.status === filterStatus);
-		}
-
-		// Date range filter
-		if (startDate) {
-			const start = new Date(startDate).getTime();
-			filtered = filtered.filter((log) => log.timestamp >= start);
-		}
-		if (endDate) {
-			const end = new Date(endDate).getTime() + 86400000; // End of day
-			filtered = filtered.filter((log) => log.timestamp < end);
-		}
-
-		totalCount = filtered.length;
-		totalPages = Math.ceil(totalCount / itemsPerPage);
-
-		// Pagination
-		const start = (currentPage - 1) * itemsPerPage;
-		const endIdx = start + itemsPerPage;
-		logs = filtered.slice(start, endIdx);
-
-		loading = false;
 	}
 
 	function handleSearch() {
@@ -116,8 +122,8 @@
 		loadLogs();
 	}
 
-	function formatTimestamp(timestamp: number): string {
-		return new Date(timestamp).toLocaleString();
+	function formatTimestamp(dateString: string): string {
+		return new Date(dateString).toLocaleString();
 	}
 
 	function nextPage() {
@@ -175,20 +181,11 @@
 	<!-- Filters -->
 	<Card>
 		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-			<!-- Search -->
-			<div>
-				<Input
-					type="text"
-					placeholder="Search logs..."
-					bind:value={searchQuery}
-					on:input={handleSearch}
-				>
-					<div slot="icon" class="i-heroicons-magnifying-glass h-5 w-5"></div>
-				</Input>
-			</div>
-
 			<!-- Action filter -->
 			<div>
+				<label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					Action
+				</label>
 				<select
 					bind:value={filterAction}
 					on:change={handleSearch}
@@ -201,27 +198,39 @@
 				</select>
 			</div>
 
-			<!-- Status filter -->
+			<!-- Resource Type filter -->
 			<div>
+				<label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					Resource Type
+				</label>
 				<select
-					bind:value={filterStatus}
+					bind:value={filterResourceType}
 					on:change={handleSearch}
 					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
 				>
-					<option value="all">All Status</option>
-					<option value="success">Success</option>
-					<option value="failure">Failure</option>
+					<option value="all">All Types</option>
+					{#each resourceTypes as type (type)}
+						<option value={type}>{type}</option>
+					{/each}
 				</select>
 			</div>
 
 			<!-- Date range -->
-			<div class="flex gap-2">
+			<div>
+				<label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					Start Date
+				</label>
 				<input
 					type="date"
 					bind:value={startDate}
 					on:change={handleSearch}
 					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
 				/>
+			</div>
+			<div>
+				<label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					End Date
+				</label>
 				<input
 					type="date"
 					bind:value={endDate}
@@ -230,6 +239,13 @@
 				/>
 			</div>
 		</div>
+
+		<!-- Error message -->
+		{#if error}
+			<div class="mt-4 rounded-lg bg-red-50 p-4 dark:bg-red-900/20">
+				<p class="text-sm text-red-800 dark:text-red-200">{error}</p>
+			</div>
+		{/if}
 	</Card>
 
 	<!-- Audit log table -->
@@ -253,9 +269,6 @@
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
 							{m.admin_audit_ip()}
 						</th>
-						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_audit_status()}
-						</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -278,14 +291,11 @@
 								<td class="px-4 py-3">
 									<div class="h-4 w-28 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
 								</td>
-								<td class="px-4 py-3">
-									<div class="h-6 w-16 animate-pulse rounded-full bg-gray-300 dark:bg-gray-700"></div>
-								</td>
 							</tr>
 						{/each}
 					{:else if logs.length === 0}
 						<tr>
-							<td colspan="6" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+							<td colspan="5" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
 								No audit logs found
 							</td>
 						</tr>
@@ -293,34 +303,19 @@
 						{#each logs as log (log.id)}
 							<tr class="border-b border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800">
 								<td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-									{formatTimestamp(log.timestamp)}
+									{formatTimestamp(log.createdAt)}
 								</td>
 								<td class="px-4 py-3 text-sm text-gray-900 dark:text-white">
-									{log.user_email || 'System'}
+									{log.user?.email || 'System'}
 								</td>
 								<td class="px-4 py-3 font-mono text-sm text-gray-700 dark:text-gray-300">
 									{log.action}
 								</td>
 								<td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-									{log.resource_type || '-'}
+									{log.resourceType || '-'}
 								</td>
 								<td class="px-4 py-3 font-mono text-sm text-gray-700 dark:text-gray-300">
-									{log.ip_address || '-'}
-								</td>
-								<td class="px-4 py-3">
-									{#if log.status === 'success'}
-										<span
-											class="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900 dark:text-green-200"
-										>
-											Success
-										</span>
-									{:else}
-										<span
-											class="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900 dark:text-red-200"
-										>
-											Failure
-										</span>
-									{/if}
+									{log.ipAddress || '-'}
 								</td>
 							</tr>
 						{/each}

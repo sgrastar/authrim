@@ -29,38 +29,34 @@
 	let loading = true;
 
 	onMount(async () => {
-		// Simulate API call - would call /admin/stats in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 500));
+		try {
+			// Call real API
+			const { adminStatsAPI } = await import('$lib/api/client');
+			const { data, error } = await adminStatsAPI.get();
 
-		stats = {
-			activeUsers: 1234,
-			totalUsers: 5678,
-			clients: 42,
-			todayLogins: 89
-		};
+			if (error) {
+				console.error('Failed to load stats:', error);
+			} else if (data) {
+				stats = {
+					activeUsers: data.stats.activeUsers,
+					totalUsers: data.stats.totalUsers,
+					clients: data.stats.registeredClients,
+					todayLogins: data.stats.loginsToday
+				};
 
-		recentActivity = [
-			{
-				id: '1',
-				type: 'user_login',
-				user: 'john.doe@example.com',
-				timestamp: new Date().toISOString()
-			},
-			{
-				id: '2',
-				type: 'user_created',
-				user: 'jane.smith@example.com',
-				timestamp: new Date(Date.now() - 300000).toISOString()
-			},
-			{
-				id: '3',
-				type: 'client_registered',
-				user: 'admin@example.com',
-				timestamp: new Date(Date.now() - 600000).toISOString()
+				// Convert recent activity from API format
+				recentActivity = data.recentActivity.map((activity: any, index: number) => ({
+					id: String(index),
+					type: 'user_created' as const,
+					user: activity.email || 'Unknown',
+					timestamp: new Date(activity.timestamp).toISOString()
+				}));
 			}
-		];
-
-		loading = false;
+		} catch (err) {
+			console.error('Error loading admin stats:', err);
+		} finally {
+			loading = false;
+		}
 	});
 
 	function formatTimestamp(timestamp: string): string {
