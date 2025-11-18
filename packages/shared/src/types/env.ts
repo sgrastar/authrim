@@ -64,4 +64,7 @@ export interface Env {
   // Email configuration (Phase 5)
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
+
+  // Redirect configuration
+  DEFAULT_REDIRECT_URL?: string; // Default redirect URL for magic link verification
 }
