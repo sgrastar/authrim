@@ -32,6 +32,9 @@ export interface AuthorizationCode {
   codeChallengeMethod?: 'S256' | 'plain';
   nonce?: string;
   state?: string;
+  claims?: string; // OIDC claims parameter (JSON string)
+  authTime?: number; // OIDC auth_time (authentication timestamp)
+  acr?: string; // OIDC acr (Authentication Context Class Reference)
   used: boolean;
   expiresAt: number;
   createdAt: number;
@@ -50,6 +53,9 @@ export interface StoreCodeRequest {
   codeChallengeMethod?: 'S256' | 'plain';
   nonce?: string;
   state?: string;
+  claims?: string;
+  authTime?: number;
+  acr?: string;
 }
 
 /**
@@ -70,6 +76,9 @@ export interface ConsumeCodeResponse {
   redirectUri: string;
   nonce?: string;
   state?: string;
+  claims?: string;
+  authTime?: number;
+  acr?: string;
 }
 
 /**
@@ -255,6 +264,9 @@ export class AuthorizationCodeStore {
       codeChallengeMethod: request.codeChallengeMethod,
       nonce: request.nonce,
       state: request.state,
+      claims: request.claims,
+      authTime: request.authTime,
+      acr: request.acr,
       used: false,
       expiresAt: now + this.CODE_TTL * 1000,
       createdAt: now,
@@ -340,6 +352,9 @@ export class AuthorizationCodeStore {
       redirectUri: stored.redirectUri,
       nonce: stored.nonce,
       state: stored.state,
+      claims: stored.claims,
+      authTime: stored.authTime,
+      acr: stored.acr,
     };
   }
 

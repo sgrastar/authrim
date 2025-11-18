@@ -34,6 +34,8 @@ interface AuthCodeStoreResponse {
   state?: string;
   createdAt?: number;
   claims?: Record<string, unknown>;
+  authTime?: number;
+  acr?: string;
 }
 
 /**
@@ -233,9 +235,8 @@ async function handleAuthorizationCodeGrant(
       redirect_uri: consumedData.redirectUri, // Keep for compatibility
       nonce: consumedData.nonce,
       state: consumedData.state,
-      auth_time: consumedData.createdAt
-        ? Math.floor(consumedData.createdAt / 1000)
-        : Math.floor(Date.now() / 1000), // OIDC Core: Time when End-User authentication occurred
+      auth_time: consumedData.authTime || Math.floor(Date.now() / 1000), // OIDC Core: Time when End-User authentication occurred
+      acr: consumedData.acr, // OIDC Core: Authentication Context Class Reference
       claims: consumedData.claims,
     };
   } catch (error) {
@@ -392,7 +393,7 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Generate ID Token with at_hash and auth_time
-  const idTokenClaims = {
+  const idTokenClaims: Record<string, unknown> = {
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
     aud: client_id,
@@ -400,6 +401,11 @@ async function handleAuthorizationCodeGrant(
     at_hash: atHash, // OIDC spec requirement for code flow
     auth_time: authCodeData.auth_time, // OIDC Core Section 2: Time when End-User authentication occurred
   };
+
+  // Add acr (Authentication Context Class Reference) if provided
+  if (authCodeData.acr) {
+    idTokenClaims.acr = authCodeData.acr;
+  }
 
   let idToken: string;
   try {
