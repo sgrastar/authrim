@@ -8,7 +8,9 @@ It enables AI systems to:
 - identify missing features before submission for OpenID Certified™ Basic OP Profile.
 
 **Related Documents:**
-- [Conformance Overview](./overview.md) - High-level certification strategy
+- [Conformance Overview](./README.md) - High-level certification strategy
+- [Testing Guide](./testing-guide.md) - Complete testing guide with quick start
+- [Manual Checklist](./manual-checklist.md) - Manual verification checklist with test results
 - [Protocol Flow](../architecture/protocol-flow.md) - Implementation details
 - [Technical Specs](../architecture/technical-specs.md) - Endpoint specifications
 

@@ -4,6 +4,11 @@
 **Target:** Phase 3 - Testing & Validation
 **Date:** 2025-11-11
 
+**Related Documents:**
+- [Test Plan](./test-plan.md) - AI validation test plan with expected conformance mapping
+- [Testing Guide](./testing-guide.md) - Complete testing guide for OpenID Conformance Suite
+- [Conformance Overview](./README.md) - High-level certification strategy
+
 ---
 
 ## 1. Discovery Endpoint (`/.well-known/openid-configuration`)

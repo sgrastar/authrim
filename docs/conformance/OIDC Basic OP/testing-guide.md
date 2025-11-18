@@ -1,79 +1,254 @@
-# Enrai - OpenID Conformance Testing Guide (Without Docker) ⚡️
+# Enrai - OpenID Conformance Testing Guide ⚡️
 
-**Purpose:** How to perform OpenID Connect conformance testing without Docker environment
+**Purpose:** Complete guide for OpenID Connect conformance testing without Docker
 **Target:** Phase 3 - Testing & Validation
-**Last Updated:** 2025-11-11
+**Last Updated:** 2025-11-18
 
 ---
 
-## Overview
+## Quick Start (30 Minutes) 🚀
 
-This guide explains how to test Enrai's OpenID Connect conformance when you don't have a Docker environment. By using the OpenID Foundation's online Conformance Suite, you can perform official certification testing without installing Docker locally.
+Follow these steps to quickly start OpenID Conformance Testing:
 
-**Prerequisites:**
-- Enrai deployed at a publicly accessible URL (Cloudflare Workers)
-- Accessible via HTTPS
-- OpenID Foundation account (free)
+### Prerequisites
+- Node.js 18+ installed
+- Cloudflare account created
+- wrangler CLI authenticated (`wrangler login`)
 
----
-
-## Table of Contents
-
-1. [Prepare Test Environment](#1-prepare-test-environment)
-2. [Deploy to Cloudflare Workers](#2-deploy-to-cloudflare-workers)
-3. [Use OpenID Conformance Suite](#3-use-openid-conformance-suite)
-4. [Execute Tests](#4-execute-tests)
-5. [Verify and Record Results](#5-verify-and-record-results)
-6. [Troubleshooting](#6-troubleshooting)
-
----
-
-## 1. Prepare Test Environment
-
-### 1.1 Local Testing Before Deployment
-
-Before public deployment, verify that Enrai works correctly in your local environment.
+### Step 1: Local Verification (5 minutes)
 
 ```bash
 # Navigate to project root
 cd /path/to/enrai
 
-# Generate RSA keys (if not already done)
+# Install dependencies (first time only)
+pnpm install
+
+# Generate and configure RSA keys
 ./scripts/setup-dev.sh
 
 # Start development server
 pnpm run dev
 ```
 
-### 1.2 Verify Local Operation
-
-Run the following commands in another terminal to verify all endpoints respond correctly:
+Verify in another terminal:
 
 ```bash
 # Discovery endpoint
-curl http://localhost:8787/.well-known/openid-configuration | jq
+curl http://localhost:8787/.well-known/openid-configuration | jq .issuer
 
 # JWKS endpoint
-curl http://localhost:8787/.well-known/jwks.json | jq
-
-# Authorization endpoint (open in browser)
-open "http://localhost:8787/authorize?response_type=code&client_id=test&redirect_uri=http://localhost:3000/callback&scope=openid%20profile&state=test"
+curl http://localhost:8787/.well-known/jwks.json | jq '.keys | length'
+# Output should be "1" or higher for OK
 ```
 
-**Expected Results:**
-- Discovery endpoint: 200 OK, valid JSON
-- JWKS endpoint: 200 OK, JWK Set containing RSA public key
-- Authorization endpoint: 302 Found, redirect with authorization code
+### Step 2: Deploy to Production (10 minutes)
 
-After verifying all endpoints work correctly, proceed to the next step.
+```bash
+# Generate production keys
+pnpm run generate-keys
+
+# Configure wrangler.toml
+# Set ISSUER = "https://enrai.YOUR_SUBDOMAIN.workers.dev"
+# Set KEY_ID from: jq -r '.kid' .keys/metadata.json
+
+# Configure secrets
+cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
+cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
+
+# Build and deploy
+pnpm run build
+pnpm run deploy
+```
+
+### Step 3: Run Conformance Tests (15 minutes)
+
+1. Access https://www.certification.openid.net/
+2. Create account and login
+3. Create test plan: **OpenID Connect Provider** → **Basic OP**
+4. Enter your issuer URL: `https://enrai.YOUR_SUBDOMAIN.workers.dev`
+5. Click "Discover" to load metadata
+6. Start tests and follow browser instructions
+
+### Success Criteria
+
+- ✅ Conformance Score: ≥85%
+- ✅ Critical Failures: 0
+- ✅ Discovery & JWKS: All passing
 
 ---
 
-## 2. Deploy to Cloudflare Workers
+## Table of Contents
+
+1. [Local Development Setup](#1-local-development-setup)
+2. [Prepare Test Environment](#2-prepare-test-environment)
+3. [Deploy to Cloudflare Workers](#3-deploy-to-cloudflare-workers)
+4. [Use OpenID Conformance Suite](#4-use-openid-conformance-suite)
+5. [Execute Tests](#5-execute-tests)
+6. [Verify and Record Results](#6-verify-and-record-results)
+7. [Troubleshooting](#7-troubleshooting)
+8. [Next Steps](#8-next-steps)
+
+---
+
+## 1. Local Development Setup
+
+This section explains how to set up Enrai for local development and testing.
+
+### 1.1 Prerequisites
+
+- Node.js 18.0.0 or higher
+- pnpm (or npm)
+- jq (for JSON processing in setup script)
+
+### 1.2 Quick Setup
+
+Run the automated setup script:
+
+```bash
+./scripts/setup-dev.sh
+```
+
+This script will:
+1. Generate RSA key pairs for JWT signing (if not already present)
+2. Create `.dev.vars` file with necessary environment variables
+3. Update `wrangler.toml` with the generated KEY_ID
+
+### 1.3 Manual Setup (Optional)
+
+If you prefer to set up manually:
+
+#### Generate RSA Keys
+
+```bash
+pnpm run generate-keys
+```
+
+This creates:
+- `.keys/private.pem` - Private key for signing tokens
+- `.keys/public.jwk.json` - Public key in JWK format
+- `.keys/metadata.json` - Key metadata (kid, algorithm, etc.)
+
+#### Create `.dev.vars` File
+
+Create a `.dev.vars` file in the project root:
+
+```bash
+PRIVATE_KEY_PEM="<content of .keys/private.pem>"
+PUBLIC_JWK_JSON='<compact JSON from .keys/public.jwk.json>'
+ALLOW_HTTP_REDIRECT="true"
+```
+
+**Important:**
+- The `PRIVATE_KEY_PEM` should include the full PEM content with newlines
+- The `PUBLIC_JWK_JSON` should be a compact JSON string (single line, no spaces)
+- Both values should be quoted as shown above
+
+#### Update `wrangler.toml`
+
+Update the `KEY_ID` in `wrangler.toml` to match the `kid` from `.keys/metadata.json`:
+
+```toml
+[vars]
+KEY_ID = "dev-key-1234567890-xxxxx"
+```
+
+### 1.4 Running the Server
+
+Start the development server:
+
+```bash
+pnpm run dev
+```
+
+The server will be available at `http://localhost:8787`.
+
+### 1.5 Testing the Local Setup
+
+#### Test Discovery Endpoint
+
+```bash
+curl http://localhost:8787/.well-known/openid-configuration | jq
+```
+
+Expected: JSON response with OpenID configuration
+
+#### Test JWKS Endpoint
+
+```bash
+curl http://localhost:8787/.well-known/jwks.json | jq
+```
+
+Expected: JSON response with public key in JWK format
+
+#### Test Authorization Flow
+
+```bash
+curl -i "http://localhost:8787/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20profile&state=test-state&nonce=test-nonce"
+```
+
+Expected: 302 redirect with authorization code
+
+#### Test Token Exchange
+
+```bash
+CODE="<authorization-code>"
+curl -X POST http://localhost:8787/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=authorization_code" \
+  -d "code=$CODE" \
+  -d "client_id=test-client" \
+  -d "redirect_uri=https://example.com/callback" | jq
+```
+
+Expected: JSON response with `access_token`, `id_token`, and other token fields
+
+#### Test UserInfo Endpoint
+
+```bash
+ACCESS_TOKEN="<access-token>"
+curl http://localhost:8787/userinfo \
+  -H "Authorization: Bearer $ACCESS_TOKEN" | jq
+```
+
+Expected: JSON response with user claims
+
+### 1.6 Running Tests
+
+```bash
+pnpm test
+```
+
+To run tests with coverage:
+
+```bash
+pnpm run test:coverage
+```
+
+### 1.7 Security Notes
+
+- The `.keys/` directory is gitignored by default
+- Never commit private keys to version control
+- `.dev.vars` is also gitignored and contains sensitive data
+- For production deployment, use Wrangler secrets instead of `.dev.vars`
+
+---
+
+## 2. Prepare Test Environment
+
+### 2.1 Overview
+
+Before public deployment, verify that Enrai works correctly in your local environment. This has been covered in detail in [Section 1: Local Development Setup](#1-local-development-setup).
+
+If you've already completed the local setup, you can skip to [Section 3: Deploy to Cloudflare Workers](#3-deploy-to-cloudflare-workers).
+
+---
+
+## 3. Deploy to Cloudflare Workers
 
 The OpenID Conformance Suite requires an internet-accessible URL. Deploy to Cloudflare Workers to obtain a public URL.
 
-### 2.1 Generate Production RSA Keys
+### 3.1 Generate Production RSA Keys
 
 Generate a new RSA key pair for the production environment:
 
@@ -85,7 +260,7 @@ cp -r .keys .keys.dev
 pnpm run generate-keys
 ```
 
-### 2.2 Configure Wrangler Secrets
+### 3.2 Configure Wrangler Secrets
 
 Set the generated keys as Cloudflare Workers secrets:
 
@@ -99,7 +274,7 @@ cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
 
 **Important:** Secrets are stored encrypted and only accessible in the Workers runtime.
 
-### 2.3 wrangler.toml の設定確認
+### 3.3 wrangler.toml の設定確認
 
 `wrangler.toml` を開き、以下を確認します：
 
@@ -130,7 +305,7 @@ jq -r '.kid' .keys/metadata.json
 
 この値を `wrangler.toml` の `KEY_ID` に設定します。
 
-### 2.4 TypeScriptのビルド
+### 3.4 TypeScriptのビルド
 
 デプロイ前にTypeScriptをビルドします：
 
@@ -140,7 +315,7 @@ pnpm run build
 
 エラーがないことを確認してください。
 
-### 2.5 デプロイ
+### 3.5 デプロイ
 
 Cloudflare Workersにデプロイします：
 
@@ -160,7 +335,7 @@ Current Deployment ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
 デプロイされたURLをメモしておきます。
 
-### 2.6 デプロイの動作確認
+### 3.6 デプロイの動作確認
 
 デプロイされたエンドポイントをテストします：
 
@@ -181,9 +356,9 @@ curl $ENRAI_URL/.well-known/jwks.json | jq
 
 ---
 
-## 3. OpenID Conformance Suiteの利用
+## 4. OpenID Conformance Suiteの利用
 
-### 3.1 アカウント登録
+### 4.1 アカウント登録
 
 1. OpenID Conformance Suiteにアクセス:
    https://www.certification.openid.net/
@@ -192,7 +367,7 @@ curl $ENRAI_URL/.well-known/jwks.json | jq
 
 3. メールアドレスを確認し、ログインします
 
-### 3.2 テストプランの作成
+### 4.2 テストプランの作成
 
 1. ログイン後、「Create a new test plan」をクリック
 
@@ -208,7 +383,7 @@ curl $ENRAI_URL/.well-known/jwks.json | jq
 
 3. 「Continue」をクリック
 
-### 3.3 OP（OpenID Provider）情報の入力
+### 4.3 OP（OpenID Provider）情報の入力
 
 テストプランの設定画面で、Enraiの情報を入力します：
 
@@ -219,7 +394,7 @@ curl $ENRAI_URL/.well-known/jwks.json | jq
 
 「Discover」ボタンをクリックすると、自動的にEnraiのメタデータが読み込まれます。
 
-### 3.4 クライアント登録
+### 4.4 クライアント登録
 
 OpenID Conformance Suiteが使用するテストクライアント情報を記録します。
 
@@ -260,7 +435,7 @@ curl -X POST $ENRAI_URL/register \
 }
 ```
 
-### 3.5 サポートされている高度な機能
+### 4.5 サポートされている高度な機能
 
 Enraiは以下のOIDC拡張機能をサポートしています：
 
@@ -285,9 +460,9 @@ Enraiは以下のOIDC拡張機能をサポートしています：
 
 ---
 
-## 4. テストの実行
+## 5. テストの実行
 
-### 4.1 Basic OP Profile テストの選択
+### 5.1 Basic OP Profile テストの選択
 
 OpenID Conformance Suiteで以下のテストモジュールを選択します：
 
@@ -310,7 +485,7 @@ OpenID Conformance Suiteで以下のテストモジュールを選択します�
    - Endpoint URL validation
    - Supported features validation
 
-### 4.2 テストの開始
+### 5.2 テストの開始
 
 1. テストモジュールを選択後、「Start Test」をクリック
 
@@ -320,7 +495,7 @@ OpenID Conformance Suiteで以下のテストモジュールを選択します�
 
 3. 各テストの実行中に表示されるログを確認します
 
-### 4.3 テストケースの詳細
+### 5.3 テストケースの詳細
 
 **Discovery Tests:**
 - `.well-known/openid-configuration` の形式確認
@@ -376,9 +551,9 @@ OpenID Conformance Suiteで以下のテストモジュールを選択します�
 
 ---
 
-## 5. 結果の確認と記録
+## 6. 結果の確認と記録
 
-### 5.1 テスト結果の確認
+### 6.1 テスト結果の確認
 
 テスト完了後、以下の情報を確認します：
 
@@ -387,7 +562,7 @@ OpenID Conformance Suiteで以下のテストモジュールを選択します�
 - **Warnings:** 警告の数（合格だが改善推奨）
 - **Skipped Tests:** スキップされたテスト数
 
-### 5.2 合格基準
+### 6.2 合格基準
 
 **Basic OP Profile 認証の要件:**
 - Core tests: 100% pass
@@ -400,7 +575,7 @@ OpenID Conformance Suiteで以下のテストモジュールを選択します�
 - 0 critical failures
 - すべてのOIDC OP Basic Profileテストに合格
 
-### 5.3 結果のエクスポート
+### 6.3 結果のエクスポート
 
 1. テスト結果画面で「Export」をクリック
 2. JSON形式でダウンロード
@@ -418,7 +593,7 @@ cd docs/conformance/test-results
 mv conformance-test-result-*.json result-$(date +%Y%m%d).json
 ```
 
-### 5.4 テストレポートの作成
+### 6.4 テストレポートの作成
 
 テスト結果を以下のテンプレートでレポートにまとめます：
 
@@ -465,9 +640,9 @@ mv conformance-test-result-*.json result-$(date +%Y%m%d).json
 
 ---
 
-## 6. トラブルシューティング
+## 7. トラブルシューティング
 
-### 6.1 よくある問題
+### 7.1 よくある問題
 
 #### 問題: Discovery endpointが見つからない (404)
 
@@ -548,7 +723,7 @@ curl -I https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuratio
 # 必要に応じてCORSミドルウェアを追加
 ```
 
-### 6.2 デバッグ方法
+### 7.2 デバッグ方法
 
 #### Cloudflare Workers のログ確認
 
@@ -574,14 +749,14 @@ curl -v http://localhost:8787/.well-known/openid-configuration
 
 ```bash
 # 統合テストを実行
-npm test
+pnpm test
 
 # 特定のエンドポイントをテスト
-npm test -- --grep "discovery"
-npm test -- --grep "token"
+pnpm test -- --grep "discovery"
+pnpm test -- --grep "token"
 ```
 
-### 6.3 サポートとリソース
+### 7.3 サポートとリソース
 
 **ドキュメント:**
 - [OpenID Connect Core Specification](https://openid.net/specs/openid-connect-core-1_0.html)
@@ -595,48 +770,6 @@ npm test -- --grep "token"
 **参考資料:**
 - [Manual Conformance Checklist](./manual-checklist.md) - 手動テストチェックリスト
 - [Test Plan](./test-plan.md) - テスト計画の詳細
-- [Deployment Guide](../DEPLOYMENT.md) - デプロイメントガイド
-
----
-
-## 7. Phase 3 タスクリストとの対応
-
-このガイドは、TASKS.mdのPhase 3タスクに対応しています：
-
-### Week 13: Conformance Suite Setup ✓
-
-- [x] ~~Install Docker and Docker Compose~~ → オンライン版を使用するため不要
-- [x] ~~Clone OpenID Conformance Suite repository~~ → オンライン版を使用するため不要
-- [x] Configure conformance suite for Basic OP profile → セクション3.2で実施
-- [x] Set up test environment → セクション2で実施
-
-### Week 13.2: Configuration ✓
-
-- [x] Configure OP metadata → セクション3.3で実施
-- [x] Configure test plan → セクション3.2で実施
-- [x] Document setup process → このドキュメント全体
-
-### Week 13.3: Initial Test Run
-
-- [ ] Run conformance suite → セクション4で実施予定
-- [ ] Collect test results → セクション5で実施予定
-- [ ] Identify failing tests → セクション5.1で実施予定
-- [ ] Prioritize fixes → セクション5.4で実施予定
-
-### Week 14-17: Conformance Test Fixes
-
-- [ ] Fix discovery endpoint issues
-- [ ] Fix core flow issues
-- [ ] Fix JWT/JWK issues
-- [ ] Fix OAuth 2.0 issues
-- [ ] Fix edge cases
-
-### Week 18: Final Validation
-
-- [ ] Complete test run
-- [ ] Create test report → セクション5.4で実施予定
-- [ ] Verify conformance score ≥ 85%
-- [ ] Document certification readiness
 
 ---
 
@@ -689,10 +822,10 @@ npm test -- --grep "token"
 
 ---
 
-> ⚡️ **Enrai** - Docker不要のOpenID Conformance Testing
+> ⚡️ **Enrai** - Complete OpenID Conformance Testing Guide
 >
 > **更新日:** 2025-11-18
 > **ステータス:** Phase 5 完了 - すべての必須機能実装済み
 > **目標:** 100% conformance score (達成見込み)
 >
-> このガイドを使用して、Dockerなしでも正式なOpenID Connect準拠テストを実施できます。
+> このガイドを使用して、ローカル開発からConformance Testingまで完全にサポートします。
