@@ -1,6 +1,18 @@
-## Phase 5: UI/UX Implementation (May 1-31, 2026) 🎨
+## Phase 5: UI/UX Implementation (May 1-31, 2026) 🎨 ✅ LARGELY COMPLETE
 
-### ステージ1: インフラ基盤構築 (Week 26, Day 1-4: May 1-4)
+**Status:** 85% Complete (Stages 1-5 完了, Stage 6 残り)
+
+**Completed Stages:**
+- ✅ Stage 1: Infrastructure Foundation (D1, Durable Objects, Storage)
+- ✅ Stage 2: Backend API Implementation (Auth + Admin APIs)
+- ✅ Stage 3: Frontend Foundation (SvelteKit, UnoCSS, Melt UI, Paraglide)
+- ✅ Stage 4: Authentication UI (Login, Register, Magic Link, Consent, Error)
+- ✅ Stage 5: Admin Dashboard (Dashboard, Users, Clients, Settings, Audit Log)
+- ⏳ Stage 6: Integration & Testing (E2E, Security, Performance, Accessibility)
+
+---
+
+### ステージ1: インフラ基盤構築 (Week 26, Day 1-4: May 1-4) ✅ COMPLETE
 
 #### 26.1 D1データベースセットアップ
 - [x] Create D1 database via Wrangler CLI
@@ -144,7 +156,7 @@
 - [x] Run all tests: `pnpm test`
 - [x] Ensure test coverage ≥ 80% for Durable Objects
 
-#### 26.6b Durable Objects - Integration Tests
+#### 26.6b Durable Objects - Integration Tests ✅
 - [x] Create integration test suite:
   - [x] `test/integration/durable-objects.test.ts`
 - [x] Test SessionStore + D1 integration:
@@ -314,37 +326,38 @@
   - [x] Query parameters: `q` (search), `filter` (status), `sort`, `page`, `limit`
   - [x] Search by email, name
   - [x] Filter by verified, unverified, active, inactive
-  - [ ] Sort by created_at, last_login_at, email, name (basic sorting implemented)
+  - [x] Sort by created_at, last_login_at, email, name
   - [x] Return paginated results with total count
 - [x] Implement `GET /admin/users/:id` - Get user details
   - [x] Load user from D1
   - [x] Load custom fields
   - [x] Load passkeys
-  - [ ] Load sessions (deferred to Stage 2.8)
+  - [x] Load sessions
   - [x] Return user object
 - [x] Implement `POST /admin/users` - Create user
   - [x] Validate email uniqueness
-  - [ ] Hash password (if provided) - Phase 6
+  - [x] Hash password (if provided)
   - [x] Insert into D1 users table
   - [ ] Create Audit Log entry - Phase 6
   - [x] Return created user
 - [x] Implement `PUT /admin/users/:id` - Update user
   - [x] Validate user exists
   - [x] Update user fields
-  - [ ] Update custom fields if provided - Phase 6
+  - [x] Update custom fields if provided
   - [ ] Create Audit Log entry - Phase 6
   - [x] Return updated user
 - [x] Implement `DELETE /admin/users/:id` - Delete user (cascade)
   - [x] Delete user from D1 (cascade to custom_fields, passkeys, sessions)
-  - [ ] Invalidate all user sessions (deferred to Stage 2.8)
+  - [x] Invalidate all user sessions
   - [ ] Create Audit Log entry - Phase 6
   - [x] Return success response
-- [ ] Add admin authentication middleware (Bearer token) - Phase 6
-- [ ] Add RBAC permission checks (users:read, users:write, users:delete) - Phase 6
-- [x] Add unit tests for user management API (placeholder tests created)
-- [ ] Test user CRUD operations (deferred to integration testing)
-- [ ] Test search and filtering (deferred to integration testing)
+- [x] Add admin authentication middleware (Bearer token)
+- [x] Add RBAC permission checks (users:read, users:write, users:delete)
+- [x] Add unit tests for user management API
+- [x] Test user CRUD operations
+- [x] Test search and filtering
 - [x] Document admin user API - `docs/api/admin/users.md`
+- [x] Add avatar upload/delete functionality (R2 storage)
 
 #### 27.6.1 管理者API - 統計情報 ✅
 - [x] Implement `GET /admin/stats` - System statistics and analytics
@@ -365,36 +378,36 @@
 - [x] Implement `GET /admin/clients` - List OAuth clients
   - [x] Query parameters: `q` (search), `sort`, `page`, `limit`
   - [x] Search by client_name, client_id
-  - [ ] Sort by created_at, client_name (basic sorting implemented)
+  - [x] Sort by created_at, client_name
   - [x] Return paginated results
 - [x] Implement `GET /admin/clients/:id` - Get client details
   - [x] Load client from D1
   - [x] Return client object (mask client_secret)
-- [ ] Implement `POST /admin/clients` - Register new client (extend existing DCR)
-  - [ ] Use existing DCR endpoint internally
-  - [ ] Add admin-specific metadata
-  - [ ] Create Audit Log entry
-  - [ ] Return created client
-- [ ] Implement `PUT /admin/clients/:id` - Update client
-  - [ ] Validate client exists
-  - [ ] Update client metadata
-  - [ ] Create Audit Log entry
-  - [ ] Invalidate KV cache
-  - [ ] Return updated client
-- [ ] Implement `POST /admin/clients/:id/regenerate-secret` - Regenerate client secret
-  - [ ] Generate new client_secret
-  - [ ] Hash and store new secret
-  - [ ] Create Audit Log entry
-  - [ ] Return new secret (one-time display)
-- [ ] Implement `DELETE /admin/clients/:id` - Delete client
-  - [ ] Delete client from D1
-  - [ ] Invalidate KV cache
-  - [ ] Revoke all tokens for client
-  - [ ] Create Audit Log entry
-  - [ ] Return success response
-- [ ] Add unit tests for client management API (30+ tests)
-- [ ] Test client CRUD operations
-- [ ] Test secret regeneration
+- [x] Implement `POST /admin/clients` - Register new client (extend existing DCR)
+  - [x] Use existing DCR endpoint internally
+  - [x] Add admin-specific metadata
+  - [ ] Create Audit Log entry - Phase 6
+  - [x] Return created client
+- [x] Implement `PUT /admin/clients/:id` - Update client
+  - [x] Validate client exists
+  - [x] Update client metadata
+  - [ ] Create Audit Log entry - Phase 6
+  - [x] Invalidate KV cache
+  - [x] Return updated client
+- [x] Implement `POST /admin/clients/:id/regenerate-secret` - Regenerate client secret
+  - [x] Generate new client_secret
+  - [x] Hash and store new secret
+  - [ ] Create Audit Log entry - Phase 6
+  - [x] Return new secret (one-time display)
+- [x] Implement `DELETE /admin/clients/:id` - Delete client
+  - [x] Delete client from D1
+  - [x] Invalidate KV cache
+  - [x] Revoke all tokens for client
+  - [ ] Create Audit Log entry - Phase 6
+  - [x] Return success response
+- [x] Add unit tests for client management API
+- [x] Test client CRUD operations
+- [x] Test secret regeneration
 - [x] Document admin client API - `docs/api/admin/clients.md`
 
 #### 27.8 管理者API - セッション管理 ✅
@@ -424,112 +437,112 @@
 
 ---
 
-### ステージ3: フロントエンド基盤 (Week 27-28: May 11-18)
+### ステージ3: フロントエンド基盤 (Week 27-28: May 11-18) ✅
 
-#### 28.1 SvelteKit環境構築
-- [ ] Initialize new SvelteKit project:
+#### 28.1 SvelteKit環境構築 ✅
+- [x] Initialize new SvelteKit project:
   ```bash
   npm create svelte@latest packages/ui
   ```
-- [ ] Select options:
-  - [ ] Template: Skeleton project
-  - [ ] TypeScript: Yes
-  - [ ] ESLint: Yes
-  - [ ] Prettier: Yes
-- [ ] Install dependencies:
+- [x] Select options:
+  - [x] Template: Skeleton project
+  - [x] TypeScript: Yes
+  - [x] ESLint: Yes
+  - [x] Prettier: Yes
+- [x] Install dependencies:
   ```bash
   cd packages/ui && npm install
   ```
-- [ ] Configure `svelte.config.js` for Cloudflare Pages adapter:
+- [x] Configure `svelte.config.js` for Cloudflare Pages adapter:
   ```javascript
   import adapter from '@sveltejs/adapter-cloudflare';
   ```
-- [ ] Test development server: `npm run dev`
-- [ ] Test production build: `npm run build`
-- [ ] Document SvelteKit setup
+- [x] Test development server: `npm run dev`
+- [x] Test production build: `npm run build`
+- [x] Document SvelteKit setup
 
-#### 28.2 UnoCSS設定
-- [ ] Install UnoCSS:
+#### 28.2 UnoCSS設定 ✅
+- [x] Install UnoCSS:
   ```bash
   npm install -D unocss @unocss/reset
   ```
-- [ ] Create `uno.config.ts`:
-  - [ ] Configure presets (uno, attributify, icons)
-  - [ ] Define custom theme colors
-  - [ ] Add shortcuts for common patterns
-- [ ] Create `src/app.css` with UnoCSS imports
-- [ ] Import in `src/routes/+layout.svelte`
-- [ ] Test UnoCSS classes in development
-- [ ] Document UnoCSS configuration
+- [x] Create `uno.config.ts`:
+  - [x] Configure presets (uno, attributify, icons)
+  - [x] Define custom theme colors
+  - [x] Add shortcuts for common patterns
+- [x] Create `src/app.css` with UnoCSS imports
+- [x] Import in `src/routes/+layout.svelte`
+- [x] Test UnoCSS classes in development
+- [x] Document UnoCSS configuration
 
-#### 28.3 Melt UI導入
-- [ ] Install Melt UI:
+#### 28.3 Melt UI導入 ✅
+- [x] Install Melt UI:
   ```bash
   npm install @melt-ui/svelte @melt-ui/pp
   ```
-- [ ] Configure Melt UI preprocessor in `svelte.config.js`
-- [ ] Create sample components using Melt UI:
-  - [ ] Button component
-  - [ ] Input component
-  - [ ] Dialog component
-- [ ] Test Melt UI components
-- [ ] Document Melt UI usage
+- [x] Configure Melt UI preprocessor in `svelte.config.js`
+- [x] Create sample components using Melt UI:
+  - [x] Button component
+  - [x] Input component
+  - [x] Dialog component
+- [x] Test Melt UI components
+- [x] Document Melt UI usage
 
-#### 28.4 Paraglide (i18n) 設定
-- [ ] Install Paraglide:
+#### 28.4 Paraglide (i18n) 設定 ✅
+- [x] Install Paraglide:
   ```bash
   npm install @inlang/paraglide-js @inlang/paraglide-sveltekit
   ```
-- [ ] Create `project.inlang/settings.json`:
-  - [ ] Configure source language: "en"
-  - [ ] Configure target languages: ["ja"]
-- [ ] Create translation files:
-  - [ ] `messages/en.json` - English translations
-  - [ ] `messages/ja.json` - Japanese translations
-- [ ] Configure Paraglide in `svelte.config.js`
-- [ ] Create language switcher component
-- [ ] Test i18n in development
-- [ ] Document Paraglide setup
+- [x] Create `project.inlang/settings.json`:
+  - [x] Configure source language: "en"
+  - [x] Configure target languages: ["ja"]
+- [x] Create translation files:
+  - [x] `messages/en.json` - English translations
+  - [x] `messages/ja.json` - Japanese translations
+- [x] Configure Paraglide in `svelte.config.js`
+- [x] Create language switcher component
+- [x] Test i18n in development
+- [x] Document Paraglide setup
 
-#### 28.5 Cloudflare Pages連携
-- [ ] Create `packages/ui/wrangler.toml` for Pages Functions
-- [ ] Configure Pages build settings:
-  - [ ] Build command: `npm run build`
-  - [ ] Build output directory: `build/`
-  - [ ] Node version: 18
-- [ ] Create `.github/workflows/deploy-ui.yml`:
-  - [ ] Build SvelteKit app
-  - [ ] Deploy to Cloudflare Pages
-- [ ] Test local build
-- [ ] Test Pages deployment (preview)
-- [ ] Document Pages deployment
+#### 28.5 Cloudflare Pages連携 ✅
+- [x] Create `packages/ui/wrangler.toml` for Pages Functions
+- [x] Configure Pages build settings:
+  - [x] Build command: `npm run build`
+  - [x] Build output directory: `build/`
+  - [x] Node version: 18
+- [x] Create `.github/workflows/deploy-ui.yml`:
+  - [x] Build SvelteKit app
+  - [x] Deploy to Cloudflare Pages
+- [x] Test local build
+- [x] Test Pages deployment (preview)
+- [x] Document Pages deployment
 
-#### 28.6 デザインシステム実装
-- [ ] Create `packages/ui/src/lib/design-system/` directory
-- [ ] Define design tokens:
-  - [ ] `tokens/colors.ts` - Color palette (primary, secondary, neutral, semantic)
-  - [ ] `tokens/typography.ts` - Font families, sizes, weights, line heights
-  - [ ] `tokens/spacing.ts` - Spacing scale (0.25rem - 4rem)
-  - [ ] `tokens/shadows.ts` - Box shadows (sm, md, lg)
-  - [ ] `tokens/radius.ts` - Border radius (sm, md, lg, full)
-- [ ] Create base components:
-  - [ ] `Button.svelte` - Primary, secondary, outline, ghost variants
-  - [ ] `Input.svelte` - Text, email, password types with label and error
-  - [ ] `Card.svelte` - Container with header, body, footer slots
-  - [ ] `Modal.svelte` - Dialog with backdrop and close button
-  - [ ] `Spinner.svelte` - Loading indicator
-  - [ ] `Alert.svelte` - Info, success, warning, error variants
-- [ ] Create layout components:
-  - [ ] `Container.svelte` - Max-width container
-  - [ ] `Stack.svelte` - Vertical stacking with gap
-  - [ ] `Grid.svelte` - Responsive grid layout
-- [ ] Test all components in isolation
-- [ ] Create Storybook for component showcase (optional)
-- [ ] Document design system
+#### 28.6 デザインシステム実装 ✅
+- [x] Create `packages/ui/src/lib/design-system/` directory
+- [x] Define design tokens:
+  - [x] `tokens/colors.ts` - Color palette (primary, secondary, neutral, semantic)
+  - [x] `tokens/typography.ts` - Font families, sizes, weights, line heights
+  - [x] `tokens/spacing.ts` - Spacing scale (0.25rem - 4rem)
+  - [x] `tokens/shadows.ts` - Box shadows (sm, md, lg)
+  - [x] `tokens/radius.ts` - Border radius (sm, md, lg, full)
+- [x] Create base components:
+  - [x] `Button.svelte` - Primary, secondary, outline, ghost variants
+  - [x] `Input.svelte` - Text, email, password types with label and error
+  - [x] `Card.svelte` - Container with header, body, footer slots
+  - [x] `Modal.svelte` - Dialog with backdrop and close button
+  - [x] `Spinner.svelte` - Loading indicator
+  - [x] `Alert.svelte` - Info, success, warning, error variants
+- [x] Create layout components:
+  - [x] `Container.svelte` - Max-width container
+  - [x] `Stack.svelte` - Vertical stacking with gap
+  - [x] `Grid.svelte` - Responsive grid layout
+- [x] Test all components in isolation
+- [ ] Create Storybook for component showcase (optional) - Phase 6
+- [x] Document design system
 
 ---
 
-### ステージ4: 認証UI実装 (Week 28-29: May 15-25)
+### ステージ4: 認証UI実装 (Week 28-29: May 15-25) ✅ COMPLETE
 
 #### 29.1 ログイン画面 (`/login`)
 - [x] Create `packages/ui/src/routes/login/+page.svelte`
@@ -770,7 +783,7 @@
 
 ---
 
-### ステージ6: 統合・テスト (Week 30-31: May 26-31)
+### ステージ6: 統合・テスト (Week 30-31: May 26-31) ⏳ IN PROGRESS
 
 #### 31.1 E2Eテスト (Playwright)
 - [ ] Install Playwright:
@@ -907,17 +920,17 @@
 
 ### Phase 5 Deliverables 📦
 
-- [ ] ✅ D1 database with 11 tables
-- [ ] ✅ 3 Durable Objects (SessionStore, AuthCodeStore, RefreshTokenRotator)
-- [ ] ✅ Storage abstraction layer
-- [ ] ✅ 14+ backend API endpoints (auth + admin)
-- [ ] ✅ SvelteKit frontend application
-- [ ] ✅ 6 user-facing pages (login, register, magic link, consent, error)
-- [ ] ✅ 7 admin pages (dashboard, users, clients, settings, audit log)
-- [ ] ✅ E2E test suite (Playwright)
-- [ ] ✅ Design system with reusable components
-- [ ] ✅ Internationalization (en, ja)
-- [ ] ✅ Deployment to Cloudflare Pages
+- [x] ✅ D1 database with 12 tables (users, oauth_clients, sessions, passkeys, custom_fields, roles, user_roles, scope_mappings, branding_settings, identity_providers, audit_log, oauth_authorization_codes)
+- [x] ✅ 9 Durable Objects (SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, ChallengeStore, RateLimiterCounter, PARRequestStore, DPoPJTIStore, and base class)
+- [x] ✅ Storage abstraction layer with Cloudflare adapter
+- [x] ✅ 20+ backend API endpoints (auth + admin)
+- [x] ✅ SvelteKit frontend application
+- [x] ✅ 6 user-facing pages (login, register, magic link sent, verify magic link, consent, error)
+- [x] ✅ 7 admin pages (dashboard, users, user detail, clients, client detail, settings, audit log)
+- [ ] ⏳ E2E test suite (Playwright) - Stage 6
+- [x] ✅ Design system with reusable components (UnoCSS + Melt UI)
+- [x] ✅ Internationalization (en, ja) with Paraglide
+- [x] ✅ Deployment to Cloudflare Pages
 
 ---
 
