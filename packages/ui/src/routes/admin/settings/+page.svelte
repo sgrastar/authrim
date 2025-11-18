@@ -175,7 +175,7 @@
 				Configure your Enrai instance
 			</p>
 		</div>
-		<Button variant="primary" on:click={handleSave} disabled={saving || loading}>
+		<Button variant="primary" onclick={handleSave} disabled={saving || loading}>
 			{#if saving}
 				<div class="i-heroicons-arrow-path h-4 w-4 animate-spin"></div>
 			{/if}
@@ -216,7 +216,7 @@
 				class:hover:text-gray-700={activeTab !== 'general'}
 				class:dark:text-gray-400={activeTab !== 'general'}
 				class:dark:hover:text-gray-300={activeTab !== 'general'}
-				on:click={() => setTab('general')}
+				onclick={() => setTab('general')}
 			>
 				{m.admin_settings_general()}
 			</button>
@@ -230,7 +230,7 @@
 				class:hover:text-gray-700={activeTab !== 'appearance'}
 				class:dark:text-gray-400={activeTab !== 'appearance'}
 				class:dark:hover:text-gray-300={activeTab !== 'appearance'}
-				on:click={() => setTab('appearance')}
+				onclick={() => setTab('appearance')}
 			>
 				{m.admin_settings_appearance()}
 			</button>
@@ -244,7 +244,7 @@
 				class:hover:text-gray-700={activeTab !== 'security'}
 				class:dark:text-gray-400={activeTab !== 'security'}
 				class:dark:hover:text-gray-300={activeTab !== 'security'}
-				on:click={() => setTab('security')}
+				onclick={() => setTab('security')}
 			>
 				{m.admin_settings_security()}
 			</button>
@@ -258,7 +258,7 @@
 				class:hover:text-gray-700={activeTab !== 'email'}
 				class:dark:text-gray-400={activeTab !== 'email'}
 				class:dark:hover:text-gray-300={activeTab !== 'email'}
-				on:click={() => setTab('email')}
+				onclick={() => setTab('email')}
 			>
 				{m.admin_settings_email()}
 			</button>
@@ -272,7 +272,7 @@
 				class:hover:text-gray-700={activeTab !== 'advanced'}
 				class:dark:text-gray-400={activeTab !== 'advanced'}
 				class:dark:hover:text-gray-300={activeTab !== 'advanced'}
-				on:click={() => setTab('advanced')}
+				onclick={() => setTab('advanced')}
 			>
 				{m.admin_settings_advanced()}
 			</button>

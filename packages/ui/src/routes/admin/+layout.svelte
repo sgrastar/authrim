@@ -107,7 +107,7 @@
 				<!-- Mobile menu button -->
 				<button aria-label="Toggle sidebar menu"
 					class="lg:hidden inline-flex items-center justify-center rounded-lg p-2 text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
-					on:click={toggleSidebar}
+					onclick={toggleSidebar}
 				>
 					<div class="i-heroicons-bars-3 h-6 w-6"></div>
 				</button>
@@ -145,8 +145,8 @@
 {#if sidebarOpen}
 	<div
 		class="fixed inset-0 z-30 bg-gray-900/50 lg:hidden"
-		on:click={toggleSidebar}
-		on:keydown={(e) => e.key === 'Escape' && toggleSidebar()}
+		onclick={toggleSidebar}
+		onkeydown={(e) => e.key === 'Escape' && toggleSidebar()}
 		role="button"
 		tabindex="0"
 		aria-label="Close sidebar"

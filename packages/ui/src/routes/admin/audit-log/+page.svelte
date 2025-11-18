@@ -166,11 +166,11 @@
 			</p>
 		</div>
 		<div class="flex gap-2">
-			<Button variant="secondary" on:click={handleExportCSV}>
+			<Button variant="secondary" onclick={handleExportCSV}>
 				<div class="i-heroicons-arrow-down-tray h-4 w-4"></div>
 				Export CSV
 			</Button>
-			<Button variant="secondary" on:click={handleExportJSON}>
+			<Button variant="secondary" onclick={handleExportJSON}>
 				<div class="i-heroicons-arrow-down-tray h-4 w-4"></div>
 				Export JSON
 			</Button>
@@ -182,12 +182,13 @@
 		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
 			<!-- Action filter -->
 			<div>
-				<label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+				<label for="filter-action" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
 					Action
 				</label>
 				<select
+				id="filter-action"
 					bind:value={filterAction}
-					on:change={handleSearch}
+					onchange={handleSearch}
 					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
 				>
 					<option value="all">All Actions</option>
@@ -199,12 +200,12 @@
 
 			<!-- Resource Type filter -->
 			<div>
-				<label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+				<label for="filter-action" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
 					Resource Type
 				</label>
 				<select
 					bind:value={filterResourceType}
-					on:change={handleSearch}
+					onchange={handleSearch}
 					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
 				>
 					<option value="all">All Types</option>
@@ -216,24 +217,24 @@
 
 			<!-- Date range -->
 			<div>
-				<label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+				<label for="filter-action" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
 					Start Date
 				</label>
 				<input
 					type="date"
 					bind:value={startDate}
-					on:change={handleSearch}
+					onchange={handleSearch}
 					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
 				/>
 			</div>
 			<div>
-				<label class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+				<label for="filter-action" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
 					End Date
 				</label>
 				<input
 					type="date"
 					bind:value={endDate}
-					on:change={handleSearch}
+					onchange={handleSearch}
 					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
 				/>
 			</div>
@@ -337,14 +338,14 @@
 					<button
 						class="rounded-lg border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
 						disabled={currentPage === 1}
-						on:click={prevPage}
+						onclick={prevPage}
 					>
 						Previous
 					</button>
 					<button
 						class="rounded-lg border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
 						disabled={currentPage === totalPages}
-						on:click={nextPage}
+						onclick={nextPage}
 					>
 						Next
 					</button>

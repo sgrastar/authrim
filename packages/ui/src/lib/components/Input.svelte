@@ -2,12 +2,12 @@
 	import type { Snippet } from 'svelte';
 	import type { HTMLInputAttributes } from 'svelte/elements';
 
-	interface Props extends HTMLInputAttributes {
+	interface Props extends Omit<HTMLInputAttributes, 'value'> {
 		label?: string;
 		error?: string;
 		helperText?: string;
 		icon?: Snippet;
-		value?: string;
+		value?: string | number | null;
 	}
 
 	let {
@@ -17,7 +17,7 @@
 		icon,
 		type = 'text',
 		id,
-		value = $bindable(''),
+		value = $bindable('' as string | number | null),
 		class: className = '',
 		...restProps
 	}: Props = $props();

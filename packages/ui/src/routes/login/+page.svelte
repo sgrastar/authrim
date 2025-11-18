@@ -5,7 +5,6 @@
 	import * as m from '$lib/paraglide/messages';
 	import { passkeyAPI, magicLinkAPI } from '$lib/api/client';
 	import { startAuthentication } from '@simplewebauthn/browser';
-	import type { PublicKeyCredentialRequestOptionsJSON } from '@simplewebauthn/types';
 
 	let email = $state('');
 	let error = $state('');
@@ -63,7 +62,8 @@
 			let credential;
 			try {
 				credential = await startAuthentication({
-					optionsJSON: optionsData!.options as PublicKeyCredentialRequestOptionsJSON
+			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+					optionsJSON: optionsData!.options as any
 				});
 				debugInfo.push({
 					step: '2. WebAuthn Credential Created',

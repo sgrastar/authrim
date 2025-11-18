@@ -79,7 +79,8 @@
 			// This handles all the base64url to Uint8Array conversions automatically
 			let credential;
 			try {
-				credential = await startRegistration({ optionsJSON: optionsData.options });
+			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+				credential = await startRegistration({ optionsJSON: optionsData.options as any });
 				debugInfo.push({
 					step: '2. WebAuthn Credential Created',
 					data: credential,

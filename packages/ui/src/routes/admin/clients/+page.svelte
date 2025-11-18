@@ -7,7 +7,7 @@
 	interface Client {
 		client_id: string;
 		client_name: string;
-		grant_types: string;
+		grant_types: string[];
 		created_at: number;
 	}
 
@@ -98,7 +98,7 @@
 				Manage OAuth 2.0 / OpenID Connect clients
 			</p>
 		</div>
-		<Button variant="primary" on:click={() => (window.location.href = '/admin/clients/new')}>
+		<Button variant="primary" onclick={() => (window.location.href = '/admin/clients/new')}>
 			{m.admin_clients_registerClient()}
 		</Button>
 	</div>
@@ -110,7 +110,7 @@
 				type="text"
 				placeholder={m.admin_clients_search()}
 				bind:value={searchQuery}
-				on:input={handleSearch}
+				oninput={handleSearch}
 			>
 				<div slot="icon" class="i-heroicons-magnifying-glass h-5 w-5"></div>
 			</Input>
@@ -196,7 +196,7 @@
 										</a>
 										<button
 											class="rounded bg-red-500 px-3 py-1 text-xs font-medium text-white hover:bg-red-600 transition-colors"
-											on:click={() => handleDeleteClient(client.client_id)}
+											onclick={() => handleDeleteClient(client.client_id)}
 										>
 											Delete
 										</button>
@@ -223,14 +223,14 @@
 					<button
 						class="rounded-lg border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
 						disabled={currentPage === 1}
-						on:click={prevPage}
+						onclick={prevPage}
 					>
 						Previous
 					</button>
 					<button
 						class="rounded-lg border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
 						disabled={currentPage === totalPages}
-						on:click={nextPage}
+						onclick={nextPage}
 					>
 						Next
 					</button>
