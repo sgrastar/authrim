@@ -273,7 +273,18 @@ preview_id = "placeholder"
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "placeholder"
-preview_id = "placeholder"' '[[durable_objects.bindings]]
+preview_id = "placeholder"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "enrai-users-db"
+database_id = "placeholder"
+
+# R2 Bucket
+[[r2_buckets]]
+binding = "AVATARS"
+bucket_name = "enrai-avatars"' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 script_name = "enrai-shared"
@@ -371,7 +382,13 @@ preview_id = "placeholder"
 [[kv_namespaces]]
 binding = "RATE_LIMIT"
 id = "placeholder"
-preview_id = "placeholder"' '[[durable_objects.bindings]]
+preview_id = "placeholder"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "enrai-users-db"
+database_id = "placeholder"' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 script_name = "enrai-shared"
@@ -415,7 +432,18 @@ preview_id = "placeholder"
 [[kv_namespaces]]
 binding = "INITIAL_ACCESS_TOKENS"
 id = "placeholder"
-preview_id = "placeholder"' '[[durable_objects.bindings]]
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "SETTINGS"
+id = "placeholder"
+preview_id = "placeholder"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "enrai-users-db"
+database_id = "placeholder"' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 script_name = "enrai-shared"
@@ -428,6 +456,11 @@ script_name = "enrai-shared"
 [[durable_objects.bindings]]
 name = "RATE_LIMITER"
 class_name = "RateLimiterCounter"
+script_name = "enrai-shared"
+
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
 script_name = "enrai-shared"'
 
 # Generate wrangler.toml for router (with Service Bindings)
