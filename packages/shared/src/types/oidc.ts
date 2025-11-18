@@ -30,6 +30,14 @@ export interface OIDCProviderMetadata {
   require_pushed_authorization_requests?: boolean;
   // RFC 9449: DPoP (Demonstrating Proof of Possession)
   dpop_signing_alg_values_supported?: string[];
+  // RFC 9101 (JAR): Request Object support
+  request_parameter_supported?: boolean;
+  request_uri_parameter_supported?: boolean;
+  request_object_signing_alg_values_supported?: string[];
+  // OIDC Core: Additional metadata
+  claim_types_supported?: string[];
+  claims_parameter_supported?: boolean;
+  acr_values_supported?: string[];
 }
 
 /**

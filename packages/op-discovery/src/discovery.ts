@@ -41,6 +41,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'iat',
       'nonce',
       'at_hash',
+      'auth_time', // OIDC Core: Authentication timestamp
+      'acr', // OIDC Core: Authentication Context Class Reference
       // Profile scope claims (OIDC Core 5.4)
       'name',
       'family_name',
@@ -69,6 +71,15 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     code_challenge_methods_supported: ['S256'],
     // RFC 9449: DPoP (Demonstrating Proof of Possession) support
     dpop_signing_alg_values_supported: ['RS256', 'ES256'],
+    // RFC 9101 (JAR): Request Object support
+    request_parameter_supported: true,
+    request_uri_parameter_supported: true,
+    request_object_signing_alg_values_supported: ['RS256', 'none'],
+    // OIDC Core: Additional metadata
+    claim_types_supported: ['normal'],
+    claims_parameter_supported: true,
+    // ACR (Authentication Context Class Reference) support
+    acr_values_supported: ['urn:mace:incommon:iap:silver', 'urn:mace:incommon:iap:bronze'],
   };
 
   // Add cache headers for better performance
