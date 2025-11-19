@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import type { Env, OIDCProviderMetadata } from '@enrai/shared';
+import { SUPPORTED_JWE_ALG, SUPPORTED_JWE_ENC } from '@enrai/shared';
 
 /**
  * OpenID Connect Discovery Endpoint Handler
@@ -27,7 +28,11 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     require_pushed_authorization_requests: false,
     response_types_supported: ['code'],
     response_modes_supported: ['query', 'form_post'],
-    grant_types_supported: ['authorization_code', 'refresh_token'],
+    grant_types_supported: [
+      'authorization_code',
+      'refresh_token',
+      'urn:ietf:params:oauth:grant-type:jwt-bearer', // RFC 7523: JWT Bearer Flow
+    ],
     id_token_signing_alg_values_supported: ['RS256'],
     // OIDC Core 8: Both public and pairwise subject identifiers are supported
     subject_types_supported: ['public', 'pairwise'],
@@ -75,6 +80,11 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     request_parameter_supported: true,
     request_uri_parameter_supported: true,
     request_object_signing_alg_values_supported: ['RS256', 'none'],
+    // RFC 7516: JWE (JSON Web Encryption) support
+    id_token_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
+    id_token_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
+    userinfo_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
+    userinfo_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
     // OIDC Core: Additional metadata
     claim_types_supported: ['normal'],
     claims_parameter_supported: true,
