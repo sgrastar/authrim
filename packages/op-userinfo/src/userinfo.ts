@@ -1,6 +1,16 @@
 import type { Context } from 'hono';
 import type { Env } from '@enrai/shared';
-import { introspectTokenFromContext } from '@enrai/shared';
+import {
+  introspectTokenFromContext,
+  getClient,
+  encryptJWT,
+  isUserInfoEncryptionRequired,
+  getClientPublicKey,
+  validateJWEOptions,
+  type JWEAlgorithm,
+  type JWEEncryption,
+} from '@enrai/shared';
+import { SignJWT } from 'jose';
 
 /**
  * UserInfo Endpoint Handler
@@ -209,5 +219,101 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
+  // JWE: Check if client requires UserInfo encryption (RFC 7516)
+  // Get client_id from token claims
+  const client_id = tokenClaims.client_id as string;
+  if (!client_id) {
+    // If no client_id in token, return unencrypted response
+    return c.json(userClaims);
+  }
+
+  const clientMetadata = await getClient(c.env, client_id);
+
+  // Check if client requires UserInfo encryption
+  if (clientMetadata && isUserInfoEncryptionRequired(clientMetadata)) {
+    const alg = clientMetadata.userinfo_encrypted_response_alg as string;
+    const enc = clientMetadata.userinfo_encrypted_response_enc as string;
+
+    // Validate encryption algorithms
+    try {
+      validateJWEOptions(alg, enc);
+    } catch (validationError) {
+      console.error('Invalid JWE options for UserInfo:', validationError);
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description: `Client encryption configuration is invalid: ${validationError instanceof Error ? validationError.message : 'Unknown error'}`,
+        },
+        400
+      );
+    }
+
+    // Get client's public key for encryption
+    const publicKey = await getClientPublicKey(clientMetadata);
+    if (!publicKey) {
+      console.error('Client requires UserInfo encryption but no public key available');
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description: 'Client requires UserInfo encryption but no public key (jwks or jwks_uri) is configured',
+        },
+        400
+      );
+    }
+
+    // For UserInfo encryption, we need to sign the claims first (JWT), then encrypt (JWE)
+    // This creates a nested JWT: JWS inside JWE
+    try {
+      // Import private key for signing
+      const { importPKCS8 } = await import('jose');
+      const privateKeyPEM = c.env.PRIVATE_KEY_PEM;
+      const keyId = c.env.KEY_ID || 'default';
+
+      if (!privateKeyPEM) {
+        console.error('Private key not configured for UserInfo signing');
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: 'Server configuration error',
+          },
+          500
+        );
+      }
+
+      const privateKey = await importPKCS8(privateKeyPEM, 'RS256');
+
+      // Sign UserInfo claims as JWT
+      const signedUserInfo = await new SignJWT(userClaims)
+        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: keyId })
+        .setIssuedAt()
+        .setIssuer(c.env.ISSUER_URL)
+        .setAudience(client_id)
+        .sign(privateKey);
+
+      // Encrypt the signed JWT
+      const encryptedUserInfo = await encryptJWT(signedUserInfo, publicKey, {
+        alg: alg as JWEAlgorithm,
+        enc: enc as JWEEncryption,
+        cty: 'JWT', // Content type is JWT
+        kid: publicKey.kid,
+      });
+
+      // Return encrypted UserInfo as JWT (not JSON)
+      // OIDC Core 5.3.4: The response MUST be a JWT
+      c.header('Content-Type', 'application/jwt');
+      return c.body(encryptedUserInfo);
+    } catch (encryptError) {
+      console.error('Failed to encrypt UserInfo response:', encryptError);
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to encrypt UserInfo response',
+        },
+        500
+      );
+    }
+  }
+
+  // No encryption required, return JSON response
   return c.json(userClaims);
 }

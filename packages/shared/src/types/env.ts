@@ -31,6 +31,7 @@ export interface Env {
   PAR_REQUEST_STORE: DurableObjectNamespace; // #11: PAR request_uri single-use
   DPOP_JTI_STORE: DurableObjectNamespace; // #12: DPoP JTI replay protection
   TOKEN_REVOCATION_STORE: DurableObjectNamespace; // Token revocation list
+  DEVICE_CODE_STORE: DurableObjectNamespace; // RFC 8628: Device Authorization Grant
 
   // Environment Variables
   ISSUER_URL: string;
@@ -62,4 +63,7 @@ export interface Env {
 
   // Redirect configuration
   DEFAULT_REDIRECT_URL?: string; // Default redirect URL for magic link verification
+
+  // JWT Bearer Flow (RFC 7523) - Phase 6
+  TRUSTED_JWT_ISSUERS?: string; // Comma-separated list of trusted issuers for JWT Bearer flow
 }
