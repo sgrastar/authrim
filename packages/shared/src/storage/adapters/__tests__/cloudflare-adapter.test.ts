@@ -95,6 +95,14 @@ function createMockEnv(): Env {
           .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 })),
       }),
     } as unknown as DurableObjectNamespace,
+    DEVICE_CODE_STORE: {
+      idFromName: vi.fn().mockReturnValue('device-code-do-id'),
+      get: vi.fn().mockReturnValue({
+        fetch: vi
+          .fn()
+          .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
+      }),
+    } as unknown as DurableObjectNamespace,
     AUTH_CODES: {} as KVNamespace,
     STATE_STORE: {} as KVNamespace,
     NONCE_STORE: {} as KVNamespace,
