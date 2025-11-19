@@ -80,8 +80,14 @@ app.get('/.well-known/*', async (c) => {
 /**
  * Authorization endpoints - Route to OP_AUTH worker
  * - /authorize (GET/POST)
+ * - /authorize/confirm (GET/POST) - Re-authentication confirmation
  * - /as/par (POST)
  */
+app.all('/authorize/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
 app.get('/authorize', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_AUTH.fetch(request);
