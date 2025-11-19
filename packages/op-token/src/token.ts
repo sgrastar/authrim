@@ -96,6 +96,8 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     return await handleAuthorizationCodeGrant(c, formData);
   } else if (grant_type === 'urn:ietf:params:oauth:grant-type:jwt-bearer') {
     return await handleJWTBearerGrant(c, formData);
+  } else if (grant_type === 'urn:ietf:params:oauth:grant-type:device_code') {
+    return await handleDeviceCodeGrant(c, formData);
   }
 
   // If grant_type is not supported
@@ -1085,5 +1087,296 @@ async function handleJWTBearerGrant(
     token_type: 'Bearer',
     expires_in: expiresIn,
     scope: grantedScope,
+  });
+}
+
+/**
+ * Handle Device Code Grant
+ * RFC 8628: OAuth 2.0 Device Authorization Grant
+ * https://datatracker.ietf.org/doc/html/rfc8628#section-3.4
+ */
+async function handleDeviceCodeGrant(
+  c: Context<{ Bindings: Env }>,
+  formData: Record<string, string>
+) {
+  const deviceCode = formData.device_code;
+  const client_id = formData.client_id;
+
+  // Validate required parameters
+  if (!deviceCode) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'device_code is required',
+      },
+      400
+    );
+  }
+
+  if (!client_id) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'client_id is required',
+      },
+      400
+    );
+  }
+
+  // Get device code metadata from DeviceCodeStore
+  const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName('global');
+  const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
+
+  // Update poll time (for rate limiting)
+  try {
+    await deviceCodeStore.fetch(
+      new Request('https://internal/update-poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_code: deviceCode }),
+      })
+    );
+  } catch (error) {
+    console.error('Failed to update poll time:', error);
+  }
+
+  // Get device code metadata
+  const getResponse = await deviceCodeStore.fetch(
+    new Request('https://internal/get-by-device-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_code: deviceCode }),
+    })
+  );
+
+  const metadata = (await getResponse.json()) as {
+    device_code: string;
+    user_code: string;
+    client_id: string;
+    scope: string;
+    status: 'pending' | 'approved' | 'denied' | 'expired';
+    sub?: string;
+    user_id?: string;
+    last_poll_at?: number;
+    poll_count?: number;
+    created_at: number;
+    expires_at: number;
+  };
+
+  if (!metadata || !metadata.device_code) {
+    return c.json(
+      {
+        error: 'expired_token',
+        error_description: 'Device code has expired or is invalid',
+      },
+      400
+    );
+  }
+
+  // Check if device code is for the correct client
+  if (metadata.client_id !== client_id) {
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'Device code does not belong to this client',
+      },
+      400
+    );
+  }
+
+  // Check status and return appropriate response
+  if (metadata.status === 'pending') {
+    // User has not yet approved - check if polling too fast
+    const { isPollingTooFast, DEVICE_FLOW_CONSTANTS } = await import('@enrai/shared');
+
+    if (isPollingTooFast(metadata, DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL)) {
+      return c.json(
+        {
+          error: 'slow_down',
+          error_description: 'You are polling too frequently. Please slow down.',
+        },
+        400
+      );
+    }
+
+    return c.json(
+      {
+        error: 'authorization_pending',
+        error_description: 'User has not yet authorized the device',
+      },
+      400
+    );
+  }
+
+  if (metadata.status === 'denied') {
+    // Delete the device code (it's been denied)
+    await deviceCodeStore.fetch(
+      new Request('https://internal/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_code: deviceCode }),
+      })
+    );
+
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'User denied the authorization request',
+      },
+      403
+    );
+  }
+
+  if (metadata.status === 'expired') {
+    return c.json(
+      {
+        error: 'expired_token',
+        error_description: 'Device code has expired',
+      },
+      400
+    );
+  }
+
+  // Status is 'approved' - issue tokens
+  if (metadata.status !== 'approved' || !metadata.sub) {
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'Device code is not approved',
+      },
+      400
+    );
+  }
+
+  // Delete the device code (one-time use)
+  await deviceCodeStore.fetch(
+    new Request('https://internal/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_code: deviceCode }),
+    })
+  );
+
+  // Get private key for signing tokens
+  const keyManagerId = c.env.KEY_MANAGER.idFromName('global');
+  const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
+  const keysResponse = await keyManager.fetch('https://internal/keys');
+  const { privateKeyPem, keyId } = (await keysResponse.json()) as {
+    privateKeyPem: string;
+    keyId: string;
+  };
+
+  let privateKey: CryptoKey;
+  try {
+    privateKey = await importPKCS8(privateKeyPem, 'RS256');
+  } catch (error) {
+    console.error('Failed to import private key:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to load signing keys',
+      },
+      500
+    );
+  }
+
+  const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
+
+  // Generate ID Token
+  const idTokenClaims = {
+    iss: c.env.ISSUER_URL,
+    sub: metadata.sub,
+    aud: client_id,
+    nonce: undefined, // Device flow doesn't use nonce
+    auth_time: Math.floor(Date.now() / 1000),
+  };
+
+  let idToken: string;
+  try {
+    idToken = await createIDToken(
+      idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+      privateKey,
+      keyId,
+      expiresIn
+    );
+  } catch (error) {
+    console.error('Failed to create ID token:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create ID token',
+      },
+      500
+    );
+  }
+
+  // Generate Access Token
+  const accessTokenClaims = {
+    iss: c.env.ISSUER_URL,
+    sub: metadata.sub,
+    aud: c.env.ISSUER_URL,
+    scope: metadata.scope,
+    client_id,
+  };
+
+  let accessToken: string;
+  try {
+    const result = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
+    accessToken = result.token;
+  } catch (error) {
+    console.error('Failed to create access token:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create access token',
+      },
+      500
+    );
+  }
+
+  // Generate Refresh Token
+  const refreshTokenExpiry = parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10);
+  let refreshToken: string;
+  let refreshJti: string;
+  try {
+    const refreshTokenClaims = {
+      sub: metadata.sub!,
+      scope: metadata.scope,
+      client_id,
+    };
+    const result = await createRefreshToken(refreshTokenClaims, privateKey, keyId, refreshTokenExpiry);
+    refreshToken = result.token;
+    refreshJti = result.jti;
+
+    await storeRefreshToken(c.env, refreshJti, {
+      jti: refreshJti,
+      client_id,
+      sub: metadata.sub!,
+      scope: metadata.scope,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + refreshTokenExpiry,
+    });
+  } catch (error) {
+    console.error('Failed to create refresh token:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create refresh token',
+      },
+      500
+    );
+  }
+
+  // Return token response
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+
+  return c.json({
+    access_token: accessToken,
+    token_type: 'Bearer',
+    expires_in: expiresIn,
+    id_token: idToken,
+    refresh_token: refreshToken,
+    scope: metadata.scope,
   });
 }
