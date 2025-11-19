@@ -234,11 +234,12 @@ export async function createRefreshToken(
   claims: Omit<RefreshTokenClaims, 'iat' | 'exp' | 'jti'>,
   privateKey: CryptoKey,
   kid: string,
-  expiresIn: number = 2592000
+  expiresIn: number = 2592000,
+  providedJti?: string
 ): Promise<{ token: string; jti: string }> {
   const now = Math.floor(Date.now() / 1000);
-  // Generate unique token identifier with enhanced security (~128 characters)
-  const jti = generateSecureRandomString(96);
+  // Use provided JTI (from RefreshTokenRotator) or generate a new one
+  const jti = providedJti || generateSecureRandomString(96);
 
   const token = await new SignJWT({
     ...claims,

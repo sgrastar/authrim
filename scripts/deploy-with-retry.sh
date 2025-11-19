@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Deployment script with retry logic for Cloudflare API errors
+# Deployment script for Cloudflare Workers
 #
 # This script deploys workers SEQUENTIALLY with delays to avoid:
 # - Cloudflare API rate limits (1,200 requests per 5 minutes)
@@ -11,9 +11,10 @@
 
 set -e
 
-MAX_RETRIES=4
-RETRY_DELAYS=(2 4 8 16)  # Exponential backoff in seconds
-INTER_DEPLOY_DELAY=10    # Delay between successful deployments to avoid rate limits
+# Trap Ctrl+C and other signals to ensure clean exit
+trap 'echo ""; echo "⚠️  Deployment cancelled by user"; exit 130' INT TERM
+
+INTER_DEPLOY_DELAY=10    # Delay between deployments to avoid rate limits
 
 deploy_package() {
     local package_name=$1
@@ -23,37 +24,64 @@ deploy_package() {
     echo "📦 Deploying: $package_name"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    for i in $(seq 0 $((MAX_RETRIES - 1))); do
-        if [ $i -gt 0 ]; then
-            local delay=${RETRY_DELAYS[$((i-1))]}
-            echo "⏳ Retry $i/$MAX_RETRIES after ${delay}s delay..."
-            sleep $delay
-        fi
-
-        if (cd "$package_path" && pnpm run deploy); then
-            echo "✅ Successfully deployed: $package_name"
-            return 0
-        else
-            local exit_code=$?
-            if [ $i -lt $((MAX_RETRIES - 1)) ]; then
-                echo "⚠️  Deploy failed (exit code: $exit_code), will retry..."
-            else
-                echo "❌ Deploy failed after $MAX_RETRIES attempts: $package_name"
-                return $exit_code
-            fi
-        fi
-    done
-
-    return 1
+    if (cd "$package_path" && pnpm run deploy); then
+        echo "✅ Successfully deployed: $package_name"
+        return 0
+    else
+        local exit_code=$?
+        echo "❌ Deploy failed: $package_name (exit code: $exit_code)"
+        return $exit_code
+    fi
 }
 
 # Main deployment sequence
-echo "🚀 Starting deployment with retry logic..."
+echo "🚀 Starting deployment..."
+echo ""
+
+# Validation: Check for placeholder values in wrangler.toml files
+echo "🔍 Validating configuration..."
+PLACEHOLDER_FOUND=false
+for toml_file in packages/*/wrangler.toml; do
+    if [ -f "$toml_file" ]; then
+        package_name=$(basename $(dirname "$toml_file"))
+
+        # Check for placeholder in KV namespaces
+        if grep -q 'id = "placeholder"' "$toml_file" 2>/dev/null; then
+            echo "  ❌ Found placeholder KV namespace ID in $package_name/wrangler.toml"
+            PLACEHOLDER_FOUND=true
+        fi
+
+        # Check for placeholder in D1 databases
+        if grep -q 'database_id = "placeholder"' "$toml_file" 2>/dev/null; then
+            echo "  ❌ Found placeholder D1 database ID in $package_name/wrangler.toml"
+            PLACEHOLDER_FOUND=true
+        fi
+    fi
+done
+
+if [ "$PLACEHOLDER_FOUND" = true ]; then
+    echo ""
+    echo "❌ Deployment aborted: Configuration contains placeholder values"
+    echo ""
+    echo "Please run the following setup scripts first:"
+    echo "  1. ./scripts/setup-kv.sh        - Create KV namespaces and update IDs"
+    echo "  2. ./scripts/setup-secrets.sh   - Upload secrets to Cloudflare"
+    echo "  3. ./scripts/setup-d1.sh        - Create D1 database (if exists)"
+    echo ""
+    exit 1
+fi
+
+echo "  ✅ Configuration validated"
 echo ""
 
 # Build first
 echo "🔨 Building packages..."
-pnpm run build
+if [ "$BUILD_TARGET" = "api" ]; then
+    echo "   (API only - excluding UI)"
+    pnpm run build:api
+else
+    pnpm run build
+fi
 echo ""
 
 # Deploy packages in order

@@ -665,6 +665,94 @@ export class RefreshTokenRotator {
         );
       }
 
+      // GET /validate - Validate a token and return its metadata
+      if (path === '/validate' && request.method === 'GET') {
+        const token = url.searchParams.get('token');
+        if (!token) {
+          return new Response(
+            JSON.stringify({
+              error: 'invalid_request',
+              error_description: 'Missing token parameter',
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const familyId = this.tokenToFamily.get(token);
+        if (!familyId) {
+          return new Response(
+            JSON.stringify({
+              valid: false,
+              error: 'Token not found',
+            }),
+            {
+              status: 404,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const family = this.families.get(familyId);
+        if (!family) {
+          return new Response(
+            JSON.stringify({
+              valid: false,
+              error: 'Family not found',
+            }),
+            {
+              status: 404,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        // Check if token is expired
+        const now = Date.now();
+        if (family.expiresAt <= now) {
+          return new Response(
+            JSON.stringify({
+              valid: false,
+              error: 'Token expired',
+            }),
+            {
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        // Check if token is the current valid token
+        if (family.currentToken !== token) {
+          return new Response(
+            JSON.stringify({
+              valid: false,
+              error: 'Token has been rotated',
+            }),
+            {
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            valid: true,
+            familyId: family.id,
+            userId: family.userId,
+            clientId: family.clientId,
+            scope: family.scope,
+            createdAt: family.createdAt,
+            expiresAt: family.expiresAt,
+            rotationCount: family.rotationCount,
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
       return new Response('Not Found', { status: 404 });
     } catch (error) {
       console.error('RefreshTokenRotator error:', error);

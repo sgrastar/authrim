@@ -21,6 +21,7 @@ export { ChallengeStore } from './ChallengeStore';
 export { RateLimiterCounter } from './RateLimiterCounter';
 export { PARRequestStore } from './PARRequestStore';
 export { DPoPJTIStore } from './DPoPJTIStore';
+export { TokenRevocationStore } from './TokenRevocationStore';
 
 // Export types for external use
 export type { Session, SessionData, CreateSessionRequest, SessionResponse } from './SessionStore';
@@ -65,6 +66,11 @@ export type {
   DPoPJTIRecord,
   CheckAndStoreJTIRequest,
 } from './DPoPJTIStore';
+
+export type {
+  RevokedTokenRecord,
+  RevokeTokenRequest,
+} from './TokenRevocationStore';
 
 /**
  * Default export for ES Module compatibility

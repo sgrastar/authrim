@@ -306,7 +306,6 @@ async function handleAuthorizationCodeGrant(
       'POST',
       c.req.url,
       undefined, // No access token yet (this is token issuance)
-      c.env.NONCE_STORE,
       c.env.DPOP_JTI_STORE, // DPoPJTIStore DO for atomic JTI replay protection
       client_id // Bind JTI to client_id for additional security
     );
@@ -393,19 +392,15 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Generate ID Token with at_hash and auth_time
-  const idTokenClaims: Record<string, unknown> = {
+  const idTokenClaims = {
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
     aud: client_id,
     nonce: authCodeData.nonce,
     at_hash: atHash, // OIDC spec requirement for code flow
     auth_time: authCodeData.auth_time, // OIDC Core Section 2: Time when End-User authentication occurred
+    ...(authCodeData.acr && { acr: authCodeData.acr }),
   };
-
-  // Add acr (Authentication Context Class Reference) if provided
-  if (authCodeData.acr) {
-    idTokenClaims.acr = authCodeData.acr;
-  }
 
   let idToken: string;
   try {
@@ -573,8 +568,8 @@ async function handleRefreshTokenGrant(
     );
   }
 
-  // Retrieve refresh token metadata from KV
-  const refreshTokenData = await getRefreshToken(c.env, jti);
+  // Retrieve refresh token metadata from RefreshTokenRotator DO
+  const refreshTokenData = await getRefreshToken(c.env, jti, client_id);
   if (!refreshTokenData) {
     return c.json(
       {
@@ -701,7 +696,6 @@ async function handleRefreshTokenGrant(
       'POST',
       c.req.url,
       undefined, // No access token yet (this is token refresh)
-      c.env.NONCE_STORE,
       c.env.DPOP_JTI_STORE, // DPoPJTIStore DO for atomic JTI replay protection
       client_id // Bind JTI to client_id for additional security
     );
@@ -780,15 +774,57 @@ async function handleRefreshTokenGrant(
     );
   }
 
-  // Implement refresh token rotation (security best practice)
-  // Delete old refresh token and issue a new one
-  await deleteRefreshToken(c.env, jti);
+  // Implement refresh token rotation using RefreshTokenRotator DO
+  // This provides atomic rotation with theft detection
+  if (!c.env.REFRESH_TOKEN_ROTATOR) {
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Refresh token rotation unavailable',
+      },
+      500
+    );
+  }
+
+  const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
+  const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
 
   let newRefreshToken: string;
   let newRefreshTokenJti: string;
   const refreshTokenExpiresIn = parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10);
 
   try {
+    // Call RefreshTokenRotator DO to atomically rotate the token
+    const rotateResponse = await rotator.fetch('http://internal/rotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        currentToken: jti,
+        userId: refreshTokenData.sub,
+        clientId: client_id,
+      }),
+    });
+
+    if (!rotateResponse.ok) {
+      const error = (await rotateResponse.json()) as {
+        error?: string;
+        error_description?: string;
+      };
+      return c.json(
+        {
+          error: error.error || 'invalid_grant',
+          error_description: error.error_description || 'Token rotation failed',
+        },
+        400
+      );
+    }
+
+    const rotateResult = (await rotateResponse.json()) as {
+      newToken: string;
+    };
+    newRefreshTokenJti = rotateResult.newToken;
+
+    // Create JWT using the new JTI from RefreshTokenRotator
     const refreshTokenClaims = {
       iss: c.env.ISSUER_URL,
       sub: refreshTokenData.sub,
@@ -797,30 +833,21 @@ async function handleRefreshTokenGrant(
       client_id: client_id,
     };
 
+    // Pass the JTI from RefreshTokenRotator to ensure consistency
     const result = await createRefreshToken(
       refreshTokenClaims,
       privateKey,
       keyId,
-      refreshTokenExpiresIn
+      refreshTokenExpiresIn,
+      newRefreshTokenJti // Use the JTI from RefreshTokenRotator DO
     );
     newRefreshToken = result.token;
-    newRefreshTokenJti = result.jti;
-
-    // Store new refresh token metadata
-    await storeRefreshToken(c.env, newRefreshTokenJti, {
-      jti: newRefreshTokenJti,
-      client_id: client_id,
-      sub: refreshTokenData.sub,
-      scope: grantedScope,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + refreshTokenExpiresIn,
-    });
   } catch (error) {
-    console.error('Failed to create new refresh token:', error);
+    console.error('Failed to rotate refresh token:', error);
     return c.json(
       {
         error: 'server_error',
-        error_description: 'Failed to create refresh token',
+        error_description: 'Failed to rotate refresh token',
       },
       500
     );

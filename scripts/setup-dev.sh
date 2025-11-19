@@ -206,6 +206,15 @@ new_sqlite_classes = [
   "DPoPJTIStore"
 ]
 
+[[migrations]]
+tag = "v2"
+# Empty migration to match production state
+# Keeps existing Durable Objects intact
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["RateLimiterCounter", "PARRequestStore", "DPoPJTIStore"]
+
 # Environment variables
 [vars]
 KEY_MANAGER_SECRET = "dev-secret-change-in-production"
@@ -267,6 +276,15 @@ new_sqlite_classes = [
   "DPoPJTIStore"
 ]
 
+[[migrations]]
+tag = "v2"
+# Empty migration to match production state
+# Keeps existing Durable Objects intact
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["RateLimiterCounter", "PARRequestStore", "DPoPJTIStore"]
+
 # Environment variables
 [vars]
 KEY_MANAGER_SECRET = "dev-secret-change-in-production"
@@ -274,10 +292,7 @@ SHARED_TOML_EOF
 fi
 
 # Generate wrangler.toml for op-discovery
-generate_wrangler_toml "op-discovery" 8787 '[[kv_namespaces]]
-binding = "RATE_LIMIT"
-id = "placeholder"
-preview_id = "placeholder"' '[[durable_objects.bindings]]
+generate_wrangler_toml "op-discovery" 8787 '' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 script_name = "enrai-shared"
@@ -289,27 +304,7 @@ script_name = "enrai-shared"'
 
 # Generate wrangler.toml for op-auth
 generate_wrangler_toml "op-auth" 8788 '[[kv_namespaces]]
-binding = "AUTH_CODES"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "STATE_STORE"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "NONCE_STORE"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
 binding = "CLIENTS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "RATE_LIMIT"
 id = "placeholder"
 preview_id = "placeholder"
 
@@ -354,29 +349,11 @@ script_name = "enrai-shared"'
 
 # Generate wrangler.toml for op-token
 generate_wrangler_toml "op-token" 8789 '[[kv_namespaces]]
-binding = "AUTH_CODES"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "REFRESH_TOKENS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "REVOKED_TOKENS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
 binding = "CLIENTS"
 id = "placeholder"
 preview_id = "placeholder"
 
-[[kv_namespaces]]
-binding = "RATE_LIMIT"
-id = "placeholder"
-preview_id = "placeholder"' '[[durable_objects.bindings]]
+# Durable Objects Bindings' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 script_name = "enrai-shared"
@@ -412,21 +389,13 @@ binding = "CLIENTS"
 id = "placeholder"
 preview_id = "placeholder"
 
-[[kv_namespaces]]
-binding = "REVOKED_TOKENS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "RATE_LIMIT"
-id = "placeholder"
-preview_id = "placeholder"
-
 # D1 Database
 [[d1_databases]]
 binding = "DB"
 database_name = "enrai-users-db"
-database_id = "placeholder"' '[[durable_objects.bindings]]
+database_id = "placeholder"
+
+# Durable Objects Bindings' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 script_name = "enrai-shared"
@@ -453,21 +422,6 @@ id = "placeholder"
 preview_id = "placeholder"
 
 [[kv_namespaces]]
-binding = "REFRESH_TOKENS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "REVOKED_TOKENS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "RATE_LIMIT"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
 binding = "INITIAL_ACCESS_TOKENS"
 id = "placeholder"
 preview_id = "placeholder"
@@ -481,7 +435,9 @@ preview_id = "placeholder"
 [[d1_databases]]
 binding = "DB"
 database_name = "enrai-users-db"
-database_id = "placeholder"' '[[durable_objects.bindings]]
+database_id = "placeholder"
+
+# Durable Objects Bindings' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 script_name = "enrai-shared"

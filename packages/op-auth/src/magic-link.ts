@@ -47,21 +47,39 @@ export async function magicLinkSendHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Rate limiting check: 3 requests per 15 minutes per email
-    const rateLimitKey = `magic_link_rate:${email}`;
-    const rateLimitData = await c.env.RATE_LIMIT?.get(rateLimitKey, 'json');
+    // Use RateLimiterCounter DO for atomic rate limiting (issue #6)
+    const rateLimiterId = c.env.RATE_LIMITER.idFromName('magic-link');
+    const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
-    if (rateLimitData) {
-      const { count, resetAt } = rateLimitData as { count: number; resetAt: number };
-      if (count >= 3 && Date.now() < resetAt) {
-        return c.json(
-          {
-            error: 'rate_limit_exceeded',
-            error_description: 'Too many magic link requests. Please try again later.',
-            retry_after: Math.ceil((resetAt - Date.now()) / 1000),
-          },
-          429
-        );
-      }
+    const rateLimitResponse = await rateLimiter.fetch('http://internal/increment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientIP: `magic_link:${email}`,
+        config: {
+          windowSeconds: 15 * 60, // 15 minutes
+          maxRequests: 3,
+        },
+      }),
+    });
+
+    const rateLimitResult = (await rateLimitResponse.json()) as {
+      allowed: boolean;
+      current: number;
+      limit: number;
+      resetAt: number;
+      retryAfter: number;
+    };
+
+    if (!rateLimitResult.allowed) {
+      return c.json(
+        {
+          error: 'rate_limit_exceeded',
+          error_description: 'Too many magic link requests. Please try again later.',
+          retry_after: rateLimitResult.retryAfter,
+        },
+        429
+      );
     }
 
     // Check if user exists, if not create a new user
@@ -162,15 +180,7 @@ export async function magicLinkSendHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Update rate limit counter
-    const rateLimitResetAt = Date.now() + MAGIC_LINK_TTL * 1000;
-    const newRateLimitData = {
-      count: rateLimitData ? (rateLimitData as any).count + 1 : 1,
-      resetAt: rateLimitResetAt,
-    };
-    await c.env.RATE_LIMIT?.put(rateLimitKey, JSON.stringify(newRateLimitData), {
-      expirationTtl: MAGIC_LINK_TTL,
-    });
+    // Rate limit counter is automatically updated by RateLimiterCounter DO
 
     return c.json({
       success: true,
