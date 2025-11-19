@@ -8,6 +8,7 @@ export * from './utils/crypto';
 export * from './utils/d1-retry';
 export * from './utils/dpop';
 export * from './utils/errors';
+export * from './utils/jwe';
 export * from './utils/jwt';
 export * from './utils/keys';
 export * from './utils/kv';
