@@ -77,6 +77,34 @@ importers:
         specifier: ^4.46.0
         version: 4.47.0(@cloudflare/workers-types@4.20251111.0)
 
+  packages/op-async:
+    dependencies:
+      '@enrai/shared':
+        specifier: workspace:*
+        version: link:../shared
+      hono:
+        specifier: ^4.0.0
+        version: 4.10.5
+      jose:
+        specifier: ^6.1.2
+        version: 6.1.2
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20240117.0
+        version: 4.20251111.0
+      '@vitest/ui':
+        specifier: ^4.0.8
+        version: 4.0.10(vitest@4.0.8)
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.8
+        version: 4.0.8(@types/node@20.19.25)(@vitest/ui@4.0.10)(jiti@2.6.1)(jsdom@27.2.0)(tsx@4.20.6)(yaml@1.10.2)
+      wrangler:
+        specifier: ^4.46.0
+        version: 4.47.0(@cloudflare/workers-types@4.20251111.0)
+
   packages/op-auth:
     dependencies:
       '@enrai/shared':
