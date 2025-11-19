@@ -11,6 +11,7 @@ import {
   storeRefreshToken,
   getRefreshToken,
   deleteRefreshToken,
+  getClient,
 } from '@enrai/shared';
 import {
   createIDToken,
@@ -19,6 +20,17 @@ import {
   createRefreshToken,
   parseToken,
   verifyToken,
+} from '@enrai/shared';
+import {
+  encryptJWT,
+  isIDTokenEncryptionRequired,
+  getClientPublicKey,
+  validateJWEOptions,
+  validateJWTBearerAssertion,
+  parseTrustedIssuers,
+  type JWEAlgorithm,
+  type JWEEncryption,
+  type IDTokenClaims,
 } from '@enrai/shared';
 import { importPKCS8, importJWK, type CryptoKey } from 'jose';
 import { extractDPoPProof, validateDPoPProof } from '@enrai/shared';
@@ -82,6 +94,8 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     return await handleRefreshTokenGrant(c, formData);
   } else if (grant_type === 'authorization_code') {
     return await handleAuthorizationCodeGrant(c, formData);
+  } else if (grant_type === 'urn:ietf:params:oauth:grant-type:jwt-bearer') {
+    return await handleJWTBearerGrant(c, formData);
   }
 
   // If grant_type is not supported
@@ -411,7 +425,60 @@ async function handleAuthorizationCodeGrant(
   try {
     // For Authorization Code Flow, ID token should only contain standard claims
     // Scope-based claims (profile, email) are returned from UserInfo endpoint
-    idToken = await createIDToken(idTokenClaims, privateKey, keyId, expiresIn);
+    idToken = await createIDToken(idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>, privateKey, keyId, expiresIn);
+
+    // JWE: Check if client requires ID token encryption (RFC 7516)
+    const clientMetadata = await getClient(c.env, client_id);
+    if (clientMetadata && isIDTokenEncryptionRequired(clientMetadata)) {
+      const alg = clientMetadata.id_token_encrypted_response_alg as string;
+      const enc = clientMetadata.id_token_encrypted_response_enc as string;
+
+      // Validate encryption algorithms
+      try {
+        validateJWEOptions(alg, enc);
+      } catch (validationError) {
+        console.error('Invalid JWE options:', validationError);
+        return c.json(
+          {
+            error: 'invalid_client_metadata',
+            error_description: `Client encryption configuration is invalid: ${validationError instanceof Error ? validationError.message : 'Unknown error'}`,
+          },
+          400
+        );
+      }
+
+      // Get client's public key for encryption
+      const publicKey = await getClientPublicKey(clientMetadata);
+      if (!publicKey) {
+        console.error('Client requires encryption but no public key available');
+        return c.json(
+          {
+            error: 'invalid_client_metadata',
+            error_description: 'Client requires ID token encryption but no public key (jwks or jwks_uri) is configured',
+          },
+          400
+        );
+      }
+
+      // Encrypt the signed ID token (nested JWT: JWS inside JWE)
+      try {
+        idToken = await encryptJWT(idToken, publicKey, {
+          alg: alg as JWEAlgorithm,
+          enc: enc as JWEEncryption,
+          cty: 'JWT', // Content type is JWT (the signed ID token)
+          kid: publicKey.kid,
+        });
+      } catch (encryptError) {
+        console.error('Failed to encrypt ID token:', encryptError);
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: 'Failed to encrypt ID token',
+          },
+          500
+        );
+      }
+    }
   } catch (error) {
     console.error('Failed to create ID token:', error);
     return c.json(
@@ -869,4 +936,154 @@ async function verifyPKCE(codeVerifier: string, codeChallenge: string): Promise<
 
   // Compare with code_challenge
   return base64url === codeChallenge;
+}
+
+/**
+ * Handle JWT Bearer Grant (RFC 7523)
+ * https://datatracker.ietf.org/doc/html/rfc7523
+ *
+ * Service-to-service authentication using JWT assertions
+ */
+async function handleJWTBearerGrant(
+  c: Context<{ Bindings: Env }>,
+  formData: Record<string, string>
+) {
+  const assertion = formData.assertion;
+  const scope = formData.scope;
+
+  // Validate assertion parameter
+  if (!assertion) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Missing required parameter: assertion',
+      },
+      400
+    );
+  }
+
+  // Parse trusted issuers from environment
+  const trustedIssuers = parseTrustedIssuers(c.env.TRUSTED_JWT_ISSUERS);
+
+  if (trustedIssuers.size === 0) {
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'JWT Bearer grant is not configured (no trusted issuers)',
+      },
+      500
+    );
+  }
+
+  // Validate JWT assertion
+  const validation = await validateJWTBearerAssertion(
+    assertion,
+    c.env.ISSUER_URL,
+    trustedIssuers
+  );
+
+  if (!validation.valid || !validation.claims) {
+    return c.json(
+      {
+        error: validation.error || 'invalid_grant',
+        error_description: validation.error_description || 'JWT assertion validation failed',
+      },
+      400
+    );
+  }
+
+  const claims = validation.claims;
+
+  // Determine scope: use requested scope or scope from assertion
+  let grantedScope = scope || claims.scope || 'openid';
+
+  // Validate scope against allowed scopes for the issuer
+  const trustedIssuer = trustedIssuers.get(claims.iss);
+  if (trustedIssuer?.allowed_scopes) {
+    const requestedScopes = grantedScope.split(' ');
+    const hasDisallowedScope = requestedScopes.some(
+      (s) => !trustedIssuer.allowed_scopes?.includes(s)
+    );
+
+    if (hasDisallowedScope) {
+      return c.json(
+        {
+          error: 'invalid_scope',
+          error_description: 'Requested scope is not allowed for this issuer',
+        },
+        400
+      );
+    }
+  }
+
+  // Load private key for signing tokens
+  const privateKeyPEM = c.env.PRIVATE_KEY_PEM;
+  const keyId = c.env.KEY_ID || 'default';
+
+  if (!privateKeyPEM) {
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Server configuration error',
+      },
+      500
+    );
+  }
+
+  let privateKey: CryptoKey;
+  try {
+    privateKey = await importPKCS8(privateKeyPEM, 'RS256');
+  } catch (error) {
+    console.error('Failed to import private key:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to load signing key',
+      },
+      500
+    );
+  }
+
+  // Token expiration
+  const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
+
+  // Generate Access Token
+  // For JWT Bearer flow, the subject (sub) comes from the assertion
+  const accessTokenClaims = {
+    iss: c.env.ISSUER_URL,
+    sub: claims.sub, // Subject from JWT assertion
+    aud: c.env.ISSUER_URL,
+    scope: grantedScope,
+    client_id: claims.iss, // Issuer acts as client_id for service accounts
+  };
+
+  let accessToken: string;
+  try {
+    const result = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
+    accessToken = result.token;
+  } catch (error) {
+    console.error('Failed to create access token:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create access token',
+      },
+      500
+    );
+  }
+
+  // JWT Bearer flow typically does NOT issue ID tokens or refresh tokens
+  // It's for service-to-service authentication, not user authentication
+  // Only access token is returned
+
+  // Return token response
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+
+  return c.json({
+    access_token: accessToken,
+    token_type: 'Bearer',
+    expires_in: expiresIn,
+    scope: grantedScope,
+  });
 }
