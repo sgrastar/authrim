@@ -7,6 +7,8 @@ import {
   isUserInfoEncryptionRequired,
   getClientPublicKey,
   validateJWEOptions,
+  type JWEAlgorithm,
+  type JWEEncryption,
 } from '@enrai/shared';
 import { SignJWT } from 'jose';
 
@@ -290,8 +292,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
 
       // Encrypt the signed JWT
       const encryptedUserInfo = await encryptJWT(signedUserInfo, publicKey, {
-        alg,
-        enc,
+        alg: alg as JWEAlgorithm,
+        enc: enc as JWEEncryption,
         cty: 'JWT', // Content type is JWT
         kid: publicKey.kid,
       });

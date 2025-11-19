@@ -10,6 +10,7 @@ export * from './utils/dpop';
 export * from './utils/errors';
 export * from './utils/jwe';
 export * from './utils/jwt';
+export * from './utils/jwt-bearer';
 export * from './utils/keys';
 export * from './utils/kv';
 export * from './utils/origin-validator';
