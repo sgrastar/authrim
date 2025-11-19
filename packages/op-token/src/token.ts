@@ -327,6 +327,8 @@ async function handleAuthorizationCodeGrant(
     );
 
     if (!dpopValidation.valid) {
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
       return c.json(
         {
           error: dpopValidation.error || 'invalid_dpop_proof',
@@ -579,6 +581,8 @@ async function handleRefreshTokenGrant(
         client_secret = basicClientSecret;
       }
     } catch {
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
       return c.json(
         {
           error: 'invalid_client',
@@ -591,6 +595,8 @@ async function handleRefreshTokenGrant(
 
   // Validate refresh_token parameter
   if (!refreshTokenValue) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'invalid_request',
@@ -603,6 +609,8 @@ async function handleRefreshTokenGrant(
   // Validate client_id
   const clientIdValidation = validateClientId(client_id);
   if (!clientIdValidation.valid) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'invalid_client',
@@ -617,6 +625,8 @@ async function handleRefreshTokenGrant(
   try {
     refreshTokenPayload = parseToken(refreshTokenValue);
   } catch {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'invalid_grant',
@@ -628,6 +638,8 @@ async function handleRefreshTokenGrant(
 
   const jti = refreshTokenPayload.jti as string;
   if (!jti) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'invalid_grant',
@@ -640,6 +652,8 @@ async function handleRefreshTokenGrant(
   // Retrieve refresh token metadata from RefreshTokenRotator DO
   const refreshTokenData = await getRefreshToken(c.env, jti, client_id);
   if (!refreshTokenData) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'invalid_grant',
@@ -651,6 +665,8 @@ async function handleRefreshTokenGrant(
 
   // Verify client_id matches
   if (refreshTokenData.client_id !== client_id) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'invalid_grant',
@@ -661,23 +677,66 @@ async function handleRefreshTokenGrant(
   }
 
   // Load public key for verification
-  const publicJwkJson = c.env.PUBLIC_JWK_JSON;
-  if (!publicJwkJson) {
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Server configuration error',
-      },
-      500
-    );
-  }
-
-  let publicKey;
+  // Decode JWT header to get kid (Key ID)
+  let publicKey: CryptoKey | null = null;
   try {
-    const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
-    publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
+    const parts = refreshTokenValue.split('.');
+    if (parts.length !== 3) {
+      throw new Error('Invalid JWT format');
+    }
+    const headerBase64url = parts[0];
+    const headerBase64 = headerBase64url.replace(/-/g, '+').replace(/_/g, '/');
+    const headerJson = JSON.parse(atob(headerBase64)) as { kid?: string; alg?: string };
+    const kid = headerJson.kid;
+
+    // Fetch JWKS from KeyManager DO
+    if (c.env.KEY_MANAGER) {
+      try {
+        const keyManagerId = c.env.KEY_MANAGER.idFromName('default');
+        const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
+        const jwksResponse = await keyManager.fetch('http://internal/jwks', { method: 'GET' });
+
+        if (jwksResponse.ok) {
+          const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; [key: string]: unknown }> };
+          // Find key by kid
+          const jwk = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
+          if (jwk) {
+            publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
+          }
+        }
+      } catch (kmError) {
+        console.warn('Failed to fetch key from KeyManager, falling back to PUBLIC_JWK_JSON:', kmError);
+      }
+    }
+
+    // Fallback to PUBLIC_JWK_JSON if KeyManager unavailable
+    if (!publicKey) {
+      const publicJwkJson = c.env.PUBLIC_JWK_JSON;
+      if (publicJwkJson) {
+        const publicJwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
+        // Check if kid matches (if available)
+        if (!kid || publicJwk.kid === kid) {
+          publicKey = (await importJWK(publicJwk, 'RS256')) as CryptoKey;
+        }
+      }
+    }
+
+    if (!publicKey) {
+      console.error('No matching public key found for refresh token verification');
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to load verification key',
+        },
+        500
+      );
+    }
   } catch (err) {
     console.error('Failed to import public key:', err);
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'server_error',
@@ -692,6 +751,8 @@ async function handleRefreshTokenGrant(
     await verifyToken(refreshTokenValue, publicKey, c.env.ISSUER_URL, client_id);
   } catch (error) {
     console.error('Refresh token verification failed:', error);
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'invalid_grant',
@@ -710,6 +771,8 @@ async function handleRefreshTokenGrant(
     // Check if all requested scopes are in the original scope
     const isSubset = requestedScopes.every((s) => originalScopes.includes(s));
     if (!isSubset) {
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
       return c.json(
         {
           error: 'invalid_scope',
@@ -726,6 +789,8 @@ async function handleRefreshTokenGrant(
   const keyId = c.env.KEY_ID || 'default';
 
   if (!privateKeyPEM) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'server_error',
@@ -740,6 +805,8 @@ async function handleRefreshTokenGrant(
     privateKey = await importPKCS8(privateKeyPEM, 'RS256');
   } catch (error) {
     console.error('Failed to import private key:', error);
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'server_error',
@@ -770,6 +837,8 @@ async function handleRefreshTokenGrant(
     );
 
     if (!dpopValidation.valid) {
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
       return c.json(
         {
           error: dpopValidation.error || 'invalid_dpop_proof',
@@ -811,6 +880,8 @@ async function handleRefreshTokenGrant(
     accessToken = result.token;
   } catch (err) {
     console.error('Failed to create access token:', err);
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'server_error',
@@ -834,6 +905,8 @@ async function handleRefreshTokenGrant(
     idToken = await createIDToken(idTokenClaims, privateKey, keyId, expiresIn);
   } catch (error) {
     console.error('Failed to create ID token:', error);
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'server_error',
@@ -846,6 +919,8 @@ async function handleRefreshTokenGrant(
   // Implement refresh token rotation using RefreshTokenRotator DO
   // This provides atomic rotation with theft detection
   if (!c.env.REFRESH_TOKEN_ROTATOR) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'server_error',
@@ -879,6 +954,8 @@ async function handleRefreshTokenGrant(
         error?: string;
         error_description?: string;
       };
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
       return c.json(
         {
           error: error.error || 'invalid_grant',
@@ -913,6 +990,8 @@ async function handleRefreshTokenGrant(
     newRefreshToken = result.token;
   } catch (error) {
     console.error('Failed to rotate refresh token:', error);
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
     return c.json(
       {
         error: 'server_error',

@@ -6,7 +6,7 @@ import type { Env } from '@enrai/shared';
 import { rateLimitMiddleware, RateLimitProfiles, isAllowedOrigin, parseAllowedOrigins } from '@enrai/shared';
 
 // Import handlers
-import { authorizeHandler } from './authorize';
+import { authorizeHandler, authorizeConfirmHandler } from './authorize';
 import { parHandler } from './par';
 import {
   passkeyRegisterOptionsHandler,
@@ -119,6 +119,10 @@ app.get('/api/health', (c) => {
 // OIDC Core 3.1.2.1: MUST support both GET and POST methods
 app.get('/authorize', authorizeHandler);
 app.post('/authorize', authorizeHandler);
+
+// Authorization confirmation endpoint (for max_age re-authentication)
+app.get('/authorize/confirm', authorizeConfirmHandler);
+app.post('/authorize/confirm', authorizeConfirmHandler);
 
 // PAR (Pushed Authorization Request) endpoint - RFC 9126
 app.post('/as/par', parHandler);
