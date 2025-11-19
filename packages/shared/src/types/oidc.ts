@@ -34,6 +34,11 @@ export interface OIDCProviderMetadata {
   request_parameter_supported?: boolean;
   request_uri_parameter_supported?: boolean;
   request_object_signing_alg_values_supported?: string[];
+  // RFC 7516: JWE (JSON Web Encryption) support
+  id_token_encryption_alg_values_supported?: string[];
+  id_token_encryption_enc_values_supported?: string[];
+  userinfo_encryption_alg_values_supported?: string[];
+  userinfo_encryption_enc_values_supported?: string[];
   // OIDC Core: Additional metadata
   claim_types_supported?: string[];
   claims_parameter_supported?: boolean;
@@ -175,6 +180,7 @@ export interface ClientRegistrationRequest {
   tos_uri?: string;
   policy_uri?: string;
   jwks_uri?: string;
+  jwks?: { keys: unknown[] }; // Embedded JWK Set
   software_id?: string;
   software_version?: string;
   // Token endpoint authentication
@@ -189,6 +195,11 @@ export interface ClientRegistrationRequest {
   // Subject type (OIDC Core 8)
   subject_type?: 'public' | 'pairwise';
   sector_identifier_uri?: string;
+  // JWE (JSON Web Encryption) - RFC 7516
+  id_token_encrypted_response_alg?: string;
+  id_token_encrypted_response_enc?: string;
+  userinfo_encrypted_response_alg?: string;
+  userinfo_encrypted_response_enc?: string;
 }
 
 /**
@@ -208,6 +219,7 @@ export interface ClientRegistrationResponse {
   tos_uri?: string;
   policy_uri?: string;
   jwks_uri?: string;
+  jwks?: { keys: unknown[] };
   software_id?: string;
   software_version?: string;
   token_endpoint_auth_method?: string;
@@ -217,6 +229,11 @@ export interface ClientRegistrationResponse {
   scope?: string;
   subject_type?: 'public' | 'pairwise';
   sector_identifier_uri?: string;
+  // JWE (JSON Web Encryption) - RFC 7516
+  id_token_encrypted_response_alg?: string;
+  id_token_encrypted_response_enc?: string;
+  userinfo_encrypted_response_alg?: string;
+  userinfo_encrypted_response_enc?: string;
 }
 
 /**
@@ -228,6 +245,12 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   // OIDC Core 8: Subject Identifier Types
   subject_type?: 'public' | 'pairwise';
   sector_identifier_uri?: string; // For pairwise subject type
+  // JWE fields inherited from ClientRegistrationResponse
+  id_token_encrypted_response_alg?: string;
+  id_token_encrypted_response_enc?: string;
+  userinfo_encrypted_response_alg?: string;
+  userinfo_encrypted_response_enc?: string;
+  jwks?: { keys: unknown[] };
 }
 
 /**

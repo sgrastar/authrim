@@ -11,6 +11,7 @@ import {
   storeRefreshToken,
   getRefreshToken,
   deleteRefreshToken,
+  getClient,
 } from '@enrai/shared';
 import {
   createIDToken,
@@ -19,6 +20,12 @@ import {
   createRefreshToken,
   parseToken,
   verifyToken,
+} from '@enrai/shared';
+import {
+  encryptJWT,
+  isIDTokenEncryptionRequired,
+  getClientPublicKey,
+  validateJWEOptions,
 } from '@enrai/shared';
 import { importPKCS8, importJWK, type CryptoKey } from 'jose';
 import { extractDPoPProof, validateDPoPProof } from '@enrai/shared';
@@ -412,6 +419,59 @@ async function handleAuthorizationCodeGrant(
     // For Authorization Code Flow, ID token should only contain standard claims
     // Scope-based claims (profile, email) are returned from UserInfo endpoint
     idToken = await createIDToken(idTokenClaims, privateKey, keyId, expiresIn);
+
+    // JWE: Check if client requires ID token encryption (RFC 7516)
+    const clientMetadata = await getClient(c.env, client_id);
+    if (clientMetadata && isIDTokenEncryptionRequired(clientMetadata)) {
+      const alg = clientMetadata.id_token_encrypted_response_alg as string;
+      const enc = clientMetadata.id_token_encrypted_response_enc as string;
+
+      // Validate encryption algorithms
+      try {
+        validateJWEOptions(alg, enc);
+      } catch (validationError) {
+        console.error('Invalid JWE options:', validationError);
+        return c.json(
+          {
+            error: 'invalid_client_metadata',
+            error_description: `Client encryption configuration is invalid: ${validationError instanceof Error ? validationError.message : 'Unknown error'}`,
+          },
+          400
+        );
+      }
+
+      // Get client's public key for encryption
+      const publicKey = await getClientPublicKey(clientMetadata);
+      if (!publicKey) {
+        console.error('Client requires encryption but no public key available');
+        return c.json(
+          {
+            error: 'invalid_client_metadata',
+            error_description: 'Client requires ID token encryption but no public key (jwks or jwks_uri) is configured',
+          },
+          400
+        );
+      }
+
+      // Encrypt the signed ID token (nested JWT: JWS inside JWE)
+      try {
+        idToken = await encryptJWT(idToken, publicKey, {
+          alg,
+          enc,
+          cty: 'JWT', // Content type is JWT (the signed ID token)
+          kid: publicKey.kid,
+        });
+      } catch (encryptError) {
+        console.error('Failed to encrypt ID token:', encryptError);
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: 'Failed to encrypt ID token',
+          },
+          500
+        );
+      }
+    }
   } catch (error) {
     console.error('Failed to create ID token:', error);
     return c.json(

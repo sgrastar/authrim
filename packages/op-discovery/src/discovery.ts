@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import type { Env, OIDCProviderMetadata } from '@enrai/shared';
+import { SUPPORTED_JWE_ALG, SUPPORTED_JWE_ENC } from '@enrai/shared';
 
 /**
  * OpenID Connect Discovery Endpoint Handler
@@ -75,6 +76,11 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     request_parameter_supported: true,
     request_uri_parameter_supported: true,
     request_object_signing_alg_values_supported: ['RS256', 'none'],
+    // RFC 7516: JWE (JSON Web Encryption) support
+    id_token_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
+    id_token_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
+    userinfo_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
+    userinfo_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
     // OIDC Core: Additional metadata
     claim_types_supported: ['normal'],
     claims_parameter_supported: true,
