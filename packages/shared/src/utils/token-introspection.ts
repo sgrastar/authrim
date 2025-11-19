@@ -270,7 +270,6 @@ export async function introspectToken(
       request.method,
       request.url,
       accessToken, // Include access token for ath validation
-      request.env.NONCE_STORE,
       request.env.DPOP_JTI_STORE, // DPoPJTIStore DO for atomic JTI replay protection
       client_id // Bind JTI to client_id for additional security
     );

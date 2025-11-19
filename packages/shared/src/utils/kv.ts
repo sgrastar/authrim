@@ -2,107 +2,15 @@
  * KV Storage Utilities
  *
  * Provides helper functions for storing and retrieving data from Cloudflare KV namespaces.
- * Used for managing authorization codes, state parameters, and nonce values.
+ * Used for managing state parameters and nonce values.
+ *
+ * Note: Authorization codes and revoked tokens have been migrated to Durable Objects:
+ * - Authorization codes → AuthorizationCodeStore DO
+ * - Revoked tokens → TokenRevocationStore DO
  */
 
 import type { Env } from '../types/env';
 import type { RefreshTokenData } from '../types/oidc';
-
-/**
- * Data structure for authorization code metadata
- */
-export interface AuthCodeData {
-  client_id: string;
-  redirect_uri: string;
-  scope: string;
-  sub: string; // Subject (user identifier) - required for token issuance
-  nonce?: string;
-  timestamp: number;
-  code_challenge?: string;
-  code_challenge_method?: string;
-  jti?: string; // JWT ID of the access token (for revocation on code reuse)
-  used?: boolean; // Whether the authorization code has been used (for detecting reuse attacks)
-  claims?: string; // Requested claims (JSON string, per OIDC Core 5.5)
-}
-
-/**
- * Store authorization code in KV with associated metadata
- *
- * @param env - Cloudflare environment bindings
- * @param code - Authorization code (base64url-encoded random string, ~128 characters)
- * @param data - Authorization code metadata
- * @returns Promise<void>
- */
-export async function storeAuthCode(env: Env, code: string, data: AuthCodeData): Promise<void> {
-  const ttl = parseInt(env.CODE_EXPIRY, 10);
-  const expirationTtl = ttl; // TTL in seconds
-
-  await env.AUTH_CODES.put(code, JSON.stringify(data), {
-    expirationTtl,
-  });
-}
-
-/**
- * Retrieve authorization code metadata from KV
- *
- * @param env - Cloudflare environment bindings
- * @param code - Authorization code to retrieve
- * @returns Promise<AuthCodeData | null>
- */
-export async function getAuthCode(env: Env, code: string): Promise<AuthCodeData | null> {
-  const data = await env.AUTH_CODES.get(code);
-
-  if (!data) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(data) as AuthCodeData;
-  } catch (error) {
-    console.error('Failed to parse auth code data:', error);
-    return null;
-  }
-}
-
-/**
- * Delete authorization code from KV (single-use enforcement)
- *
- * @param env - Cloudflare environment bindings
- * @param code - Authorization code to delete
- * @returns Promise<void>
- */
-export async function deleteAuthCode(env: Env, code: string): Promise<void> {
-  await env.AUTH_CODES.delete(code);
-}
-
-/**
- * Mark authorization code as used and store associated token JTI
- * This allows detection of authorization code reuse attacks (RFC 6749 Section 4.1.2)
- *
- * @param env - Cloudflare environment bindings
- * @param code - Authorization code
- * @param data - Updated authorization code data with jti and used flag
- * @returns Promise<void>
- */
-export async function markAuthCodeAsUsed(
-  env: Env,
-  code: string,
-  data: AuthCodeData
-): Promise<void> {
-  const ttl = parseInt(env.CODE_EXPIRY, 10);
-  const expirationTtl = ttl;
-
-  await env.AUTH_CODES.put(
-    code,
-    JSON.stringify({
-      ...data,
-      used: true,
-    }),
-    {
-      expirationTtl,
-    }
-  );
-}
 
 /**
  * Store state parameter in KV
@@ -230,14 +138,37 @@ export async function getClient(
  * @param env - Cloudflare environment bindings
  * @param jti - JWT ID of the token to revoke
  * @param expiresIn - Token expiration time in seconds (TTL for revocation list entry)
+ * @param reason - Optional revocation reason
  * @returns Promise<void>
  */
-export async function revokeToken(env: Env, jti: string, expiresIn: number): Promise<void> {
-  // Store revoked token JTI with same TTL as token expiration
-  // After token expires naturally, no need to keep it in revocation list
-  await env.REVOKED_TOKENS.put(jti, 'revoked', {
-    expirationTtl: expiresIn,
+export async function revokeToken(
+  env: Env,
+  jti: string,
+  expiresIn: number,
+  reason?: string
+): Promise<void> {
+  if (!env.TOKEN_REVOCATION_STORE) {
+    throw new Error('TOKEN_REVOCATION_STORE Durable Object not available');
+  }
+
+  // Use a global singleton Durable Object instance for all token revocations
+  const id = env.TOKEN_REVOCATION_STORE.idFromName('global');
+  const stub = env.TOKEN_REVOCATION_STORE.get(id);
+
+  const response = await stub.fetch('http://internal/revoke', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jti,
+      ttl: expiresIn,
+      reason: reason || 'Token revoked',
+    }),
   });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to revoke token: ${error}`);
+  }
 }
 
 /**
@@ -248,17 +179,38 @@ export async function revokeToken(env: Env, jti: string, expiresIn: number): Pro
  * @returns Promise<boolean> - True if token is revoked
  */
 export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
-  const result = await env.REVOKED_TOKENS.get(jti);
-  return result !== null;
+  if (!env.TOKEN_REVOCATION_STORE) {
+    throw new Error('TOKEN_REVOCATION_STORE Durable Object not available');
+  }
+
+  const id = env.TOKEN_REVOCATION_STORE.idFromName('global');
+  const stub = env.TOKEN_REVOCATION_STORE.get(id);
+
+  try {
+    const response = await stub.fetch(`http://internal/check?jti=${encodeURIComponent(jti)}`, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      return false;
+    }
+
+    const data = await response.json<{ revoked: boolean }>();
+    return data.revoked;
+  } catch (error) {
+    console.error('Failed to check token revocation:', error);
+    return false;
+  }
 }
 
 // RefreshTokenData is now imported from types/oidc
 
 /**
- * Store refresh token in KV
+ * Store refresh token using RefreshTokenRotator DO
+ * Creates a new token family for the refresh token
  *
  * @param env - Cloudflare environment bindings
- * @param jti - Refresh token JTI (unique identifier)
+ * @param jti - Refresh token JTI (unique identifier) - this is the actual token value
  * @param data - Refresh token metadata
  * @returns Promise<void>
  */
@@ -267,41 +219,146 @@ export async function storeRefreshToken(
   jti: string,
   data: RefreshTokenData
 ): Promise<void> {
-  const ttl = parseInt(env.REFRESH_TOKEN_EXPIRY, 10);
-  await env.REFRESH_TOKENS.put(jti, JSON.stringify(data), {
-    expirationTtl: ttl,
+  if (!env.REFRESH_TOKEN_ROTATOR) {
+    throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
+  }
+
+  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(data.client_id);
+  const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
+
+  const response = await stub.fetch('http://internal/family', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: jti,
+      userId: data.sub,
+      clientId: data.client_id,
+      scope: data.scope || '',
+      ttl: parseInt(env.REFRESH_TOKEN_EXPIRY, 10),
+    }),
   });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to store refresh token: ${error}`);
+  }
 }
 
 /**
- * Retrieve refresh token metadata from KV
+ * Retrieve refresh token metadata using RefreshTokenRotator DO
+ * Note: This validates the token and returns metadata if valid
  *
  * @param env - Cloudflare environment bindings
- * @param jti - Refresh token JTI
+ * @param jti - Refresh token JTI (the actual token value)
+ * @param client_id - Client ID (required to locate the correct DO instance)
  * @returns Promise<RefreshTokenData | null>
  */
-export async function getRefreshToken(env: Env, jti: string): Promise<RefreshTokenData | null> {
-  const data = await env.REFRESH_TOKENS.get(jti);
-
-  if (!data) {
-    return null;
+export async function getRefreshToken(
+  env: Env,
+  jti: string,
+  client_id: string
+): Promise<RefreshTokenData | null> {
+  if (!env.REFRESH_TOKEN_ROTATOR) {
+    throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
   }
 
+  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
+  const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
+
   try {
-    return JSON.parse(data) as RefreshTokenData;
+    const response = await stub.fetch(`http://internal/validate?token=${encodeURIComponent(jti)}`, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = (await response.json()) as {
+      valid: boolean;
+      familyId?: string;
+      userId?: string;
+      clientId?: string;
+      scope?: string;
+      createdAt?: number;
+      expiresAt?: number;
+    };
+    if (!data || !data.valid) {
+      return null;
+    }
+
+    // Convert DO response to RefreshTokenData format
+    return {
+      jti,
+      client_id: data.clientId!,
+      sub: data.userId!,
+      scope: data.scope!,
+      iat: Math.floor(data.createdAt! / 1000),
+      exp: Math.floor(data.expiresAt! / 1000),
+    };
   } catch (error) {
-    console.error('Failed to parse refresh token data:', error);
+    console.error('Failed to get refresh token:', error);
     return null;
   }
 }
 
 /**
- * Delete refresh token from KV (revocation or rotation)
+ * Delete refresh token using RefreshTokenRotator DO
+ * Revokes the entire token family for security
  *
  * @param env - Cloudflare environment bindings
- * @param jti - Refresh token JTI
+ * @param jti - Refresh token JTI (the actual token value)
+ * @param client_id - Client ID (required to locate the correct DO instance)
  * @returns Promise<void>
  */
-export async function deleteRefreshToken(env: Env, jti: string): Promise<void> {
-  await env.REFRESH_TOKENS.delete(jti);
+export async function deleteRefreshToken(
+  env: Env,
+  jti: string,
+  client_id: string
+): Promise<void> {
+  if (!env.REFRESH_TOKEN_ROTATOR) {
+    throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
+  }
+
+  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
+  const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
+
+  // First get the family ID for this token
+  const validateResponse = await stub.fetch(
+    `http://internal/validate?token=${encodeURIComponent(jti)}`,
+    {
+      method: 'GET',
+    }
+  );
+
+  if (!validateResponse.ok) {
+    // Token doesn't exist or already revoked, that's OK
+    return;
+  }
+
+  const data = (await validateResponse.json()) as {
+    valid?: boolean;
+    familyId?: string;
+  };
+  const familyId = data.familyId;
+
+  if (!familyId) {
+    // No family found, nothing to revoke
+    return;
+  }
+
+  // Revoke the entire family
+  const response = await stub.fetch('http://internal/revoke-family', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      familyId,
+      reason: 'Token revocation requested',
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to delete refresh token: ${error}`);
+  }
 }

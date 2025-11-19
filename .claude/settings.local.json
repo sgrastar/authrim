@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sudo apt-get:*)",
+      "Bash(sudo apt-get install:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

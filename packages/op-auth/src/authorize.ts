@@ -126,42 +126,31 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       response_mode?: string;
     } | null = null;
 
-    try {
-      if (c.env.PAR_REQUEST_STORE && client_id) {
-        // Use PARRequestStore DO for atomic consume
-        const id = c.env.PAR_REQUEST_STORE.idFromName(client_id);
-        const stub = c.env.PAR_REQUEST_STORE.get(id);
+    if (!c.env.PAR_REQUEST_STORE || !client_id) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'PAR request storage unavailable',
+        },
+        500
+      );
+    }
 
-        const response = await stub.fetch('http://internal/request/consume', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            requestUri: request_uri,
-            client_id: client_id,
-          }),
-        });
+    // Use PARRequestStore DO for atomic consume
+    const id = c.env.PAR_REQUEST_STORE.idFromName(client_id);
+    const stub = c.env.PAR_REQUEST_STORE.get(id);
 
-        if (response.ok) {
-          parsedData = (await response.json()) as typeof parsedData;
-        } else {
-          throw new Error('DO consume failed');
-        }
-      } else {
-        throw new Error('DO not available');
-      }
-    } catch (error) {
-      console.error('PAR DO consume error, using KV fallback:', error);
-      // Fallback to KV
-      const requestData = await c.env.STATE_STORE.get(`request_uri:${request_uri}`);
-      if (requestData) {
-        try {
-          parsedData = JSON.parse(requestData) as typeof parsedData;
-          // Delete from KV (non-atomic, but best effort)
-          await c.env.STATE_STORE.delete(`request_uri:${request_uri}`);
-        } catch {
-          // Parse error handled below
-        }
-      }
+    const response = await stub.fetch('http://internal/request/consume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestUri: request_uri,
+        client_id: client_id,
+      }),
+    });
+
+    if (response.ok) {
+      parsedData = (await response.json()) as typeof parsedData;
     }
 
     if (!parsedData) {
@@ -278,8 +267,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           );
         }
 
-        const publicKey = await importJWK(publicJwk, alg);
-        const verified = await verifyToken(request, publicKey);
+        const publicKey = await importJWK(publicJwk, alg) as CryptoKey;
+        const verified = await verifyToken(request, publicKey, c.env.ISSUER_URL, client_id || '');
         requestObjectClaims = verified.payload as Record<string, unknown>;
       }
 
@@ -518,8 +507,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const publicJwkJson = c.env.PUBLIC_JWK_JSON;
       if (publicJwkJson) {
         const publicJwk = JSON.parse(publicJwkJson);
-        const publicKey = await importJWK(publicJwk, 'RS256');
-        const verified = await verifyToken(id_token_hint, publicKey);
+        const publicKey = await importJWK(publicJwk, 'RS256') as CryptoKey;
+        const verified = await verifyToken(id_token_hint, publicKey, c.env.ISSUER_URL, client_id || '');
         const idTokenPayload = verified.payload as Record<string, unknown>;
 
         // Extract user identifier and auth_time from ID token
@@ -615,6 +604,36 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Determine user identifier (sub)
   // Use session user if available, otherwise generate new user
   const sub = sessionUserId || 'user-' + crypto.randomUUID();
+
+  // Create user in database if it doesn't exist (for dynamic user creation)
+  if (!sessionUserId) {
+    try {
+      // Check if user already exists
+      const existingUser = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?')
+        .bind(sub)
+        .first();
+
+      if (!existingUser) {
+        // Create new user with minimal information
+        await c.env.DB.prepare(
+          `INSERT INTO users (id, email, email_verified, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+          .bind(
+            sub,
+            `${sub}@example.com`, // Placeholder email
+            0, // email not verified
+            new Date().toISOString(),
+            new Date().toISOString()
+          )
+          .run();
+        console.log(`Created dynamic user: ${sub}`);
+      }
+    } catch (error) {
+      console.error('Failed to create user:', error);
+      // Continue anyway - user might already exist due to race condition
+    }
+  }
 
   // Record authentication time
   const currentAuthTime = authTime || Math.floor(Date.now() / 1000);

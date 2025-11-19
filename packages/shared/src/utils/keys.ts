@@ -25,6 +25,7 @@ export interface RSAKeyPair {
 export async function generateRSAKeyPair(modulusLength: number = 2048): Promise<RSAKeyPair> {
   const { publicKey, privateKey } = await generateKeyPair('RS256', {
     modulusLength,
+    extractable: true,
   });
 
   return { publicKey, privateKey };
