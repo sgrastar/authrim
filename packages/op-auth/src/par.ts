@@ -221,36 +221,38 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     };
 
     // Store in PARRequestStore DO (issue #11: single-use guarantee)
-    // Falls back to KV if DO is unavailable
-    try {
-      if (c.env.PAR_REQUEST_STORE) {
-        // Use DO ID based on client_id to shard load
-        const id = c.env.PAR_REQUEST_STORE.idFromName(params.client_id);
-        const stub = c.env.PAR_REQUEST_STORE.get(id);
+    if (!c.env.PAR_REQUEST_STORE) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'PAR request storage unavailable',
+        },
+        500
+      );
+    }
 
-        const response = await stub.fetch('http://internal/request', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            requestUri,
-            data: requestData,
-            ttl: REQUEST_URI_EXPIRY,
-          }),
-        });
+    // Use DO ID based on client_id to shard load
+    const id = c.env.PAR_REQUEST_STORE.idFromName(params.client_id);
+    const stub = c.env.PAR_REQUEST_STORE.get(id);
 
-        if (!response.ok) {
-          console.warn('PARRequestStore DO failed, falling back to KV');
-          throw new Error('DO failed');
-        }
-      } else {
-        throw new Error('DO not available');
-      }
-    } catch (error) {
-      console.error('PAR DO error, using KV fallback:', error);
-      // Fallback to KV
-      await c.env.STATE_STORE.put(`request_uri:${requestUri}`, JSON.stringify(requestData), {
-        expirationTtl: REQUEST_URI_EXPIRY,
-      });
+    const response = await stub.fetch('http://internal/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestUri,
+        data: requestData,
+        ttl: REQUEST_URI_EXPIRY,
+      }),
+    });
+
+    if (!response.ok) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to store PAR request',
+        },
+        500
+      );
     }
 
     // RFC 9126: Return request_uri and expires_in

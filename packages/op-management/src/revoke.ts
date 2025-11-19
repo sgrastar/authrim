@@ -155,7 +155,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   // Determine token type and revoke accordingly
   if (token_type_hint === 'refresh_token') {
     // Revoke refresh token
-    await deleteRefreshToken(c.env, jti);
+    await deleteRefreshToken(c.env, jti, tokenClientId);
   } else if (token_type_hint === 'access_token') {
     // Revoke access token
     const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
@@ -163,10 +163,10 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   } else {
     // No hint provided, try both types
     // First, check if it's a refresh token
-    const refreshTokenData = await getRefreshToken(c.env, jti);
+    const refreshTokenData = await getRefreshToken(c.env, jti, tokenClientId);
     if (refreshTokenData) {
       // It's a refresh token
-      await deleteRefreshToken(c.env, jti);
+      await deleteRefreshToken(c.env, jti, tokenClientId);
     } else {
       // Assume it's an access token
       const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);

@@ -34,6 +34,12 @@ export async function jwksHandler(c: Context<{ Bindings: Env }>) {
 
     const data = await response.json<{ keys: unknown[] }>();
 
+    // If KeyManager returns empty keys, fall back to environment variable
+    if (!data.keys || data.keys.length === 0) {
+      console.warn('KeyManager returned empty keys, falling back to environment variable');
+      return fallbackToEnvKey(c);
+    }
+
     // Add cache headers for better performance
     // Cache for 5 minutes to allow key rotation to propagate quickly
     c.header('Cache-Control', 'public, max-age=300');

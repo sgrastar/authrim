@@ -209,7 +209,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
 
   // Check if refresh token exists in KV (for refresh tokens)
   if (jti && token_type_hint === 'refresh_token') {
-    const refreshTokenData = await getRefreshToken(c.env, jti);
+    const refreshTokenData = await getRefreshToken(c.env, jti, tokenClientId);
     if (!refreshTokenData) {
       return c.json<IntrospectionResponse>({
         active: false,

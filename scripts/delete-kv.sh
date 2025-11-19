@@ -75,15 +75,17 @@ if [ $? -ne 0 ]; then
 fi
 
 # Define the KV namespace names we expect to find for Enrai
+# Note: The following have been migrated to Durable Objects:
+#   • AUTH_CODES → AuthorizationCodeStore DO
+#   • REFRESH_TOKENS → RefreshTokenRotator DO
+#   • REVOKED_TOKENS (removed)
+#   • STATE_STORE → PARRequestStore DO
+#   • NONCE_STORE → DPoPJTIStore DO
+#   • RATE_LIMIT → RateLimiterCounter DO
 ENRAI_KV_NAMES=(
-    "AUTH_CODES"
-    "STATE_STORE"
-    "NONCE_STORE"
     "CLIENTS"
-    "RATE_LIMIT"
-    "REFRESH_TOKENS"
-    "REVOKED_TOKENS"
     "INITIAL_ACCESS_TOKENS"
+    "SETTINGS"
 )
 
 # Arrays to store namespaces to delete
@@ -102,8 +104,19 @@ get_namespace_id_by_title() {
     if command -v jq &> /dev/null; then
         echo "$list_output" | jq -r ".[] | select(.title == \"$title\") | .id" 2>/dev/null | head -1
     else
-        # Fallback to grep-based parsing
-        echo "$list_output" | grep -A 2 "\"title\"[[:space:]]*:[[:space:]]*\"$title\"" | grep "\"id\"" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1
+        # Fallback to awk-based parsing
+        echo "$list_output" | awk -v title="$title" '
+            /"id"/ {
+                match($0, /"id"[[:space:]]*:[[:space:]]*"([a-f0-9]{32})"/, arr)
+                if (arr[1]) current_id = arr[1]
+            }
+            /"title"/ {
+                if ($0 ~ "\"" title "\"") {
+                    print current_id
+                    exit
+                }
+            }
+        '
     fi
 }
 
@@ -121,7 +134,18 @@ for kv_name in "${ENRAI_KV_NAMES[@]}"; do
     if command -v jq &> /dev/null; then
         preview_id=$(echo "$KV_LIST_JSON" | jq -r ".[] | select(.title | test(\"^${kv_name}_preview\"; \"i\")) | .id" 2>/dev/null | head -1)
     else
-        preview_id=$(echo "$KV_LIST_JSON" | grep -i "\"title\".*$kv_name" | grep -i "preview" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1)
+        preview_id=$(echo "$KV_LIST_JSON" | awk -v ns="$kv_name" '
+            /"id"/ {
+                match($0, /"id"[[:space:]]*:[[:space:]]*"([a-f0-9]{32})"/, arr)
+                if (arr[1]) current_id = arr[1]
+            }
+            /"title"/ {
+                if (tolower($0) ~ tolower(ns "_preview")) {
+                    print current_id
+                    exit
+                }
+            }
+        ')
     fi
 
     if [ -n "$preview_id" ]; then

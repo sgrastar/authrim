@@ -194,14 +194,19 @@ update_wrangler_toml() {
         sed -i "s|ISSUER_URL = \".*\"|ISSUER_URL = \"$PRODUCTION_URL\"|" "$file"
     fi
 
-    # Set OPEN_REGISTRATION to false for production (require Initial Access Token)
-    # Only update if the line exists, otherwise it will be added by op-management specific logic
+    # Set OPEN_REGISTRATION based on deployment type
+    # - Test environment (workers.dev): keep as true for easy testing
+    # - Production environment (custom domain): set to false (require Initial Access Token)
     if grep -q "^OPEN_REGISTRATION = " "$file"; then
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' "s|OPEN_REGISTRATION = \".*\"|OPEN_REGISTRATION = \"false\"|" "$file"
-        else
-            sed -i "s|OPEN_REGISTRATION = \".*\"|OPEN_REGISTRATION = \"false\"|" "$file"
+        if [[ "$DEPLOYMENT_TYPE" == "production" ]]; then
+            # Production: Require Initial Access Token for security
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                sed -i '' "s|OPEN_REGISTRATION = \".*\"|OPEN_REGISTRATION = \"false\"|" "$file"
+            else
+                sed -i "s|OPEN_REGISTRATION = \".*\"|OPEN_REGISTRATION = \"false\"|" "$file"
+            fi
         fi
+        # Test environment: Keep OPEN_REGISTRATION = "true" (no change needed)
     fi
 
     # Remove existing workers_dev and preview_urls settings if present

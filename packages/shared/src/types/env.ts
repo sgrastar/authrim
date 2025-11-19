@@ -9,12 +9,9 @@ export interface Env {
   AVATARS: R2Bucket;
 
   // KV Namespaces
-  AUTH_CODES: KVNamespace;
   STATE_STORE: KVNamespace;
   NONCE_STORE: KVNamespace;
   CLIENTS: KVNamespace;
-  REVOKED_TOKENS: KVNamespace;
-  REFRESH_TOKENS: KVNamespace;
   INITIAL_ACCESS_TOKENS?: KVNamespace; // For Dynamic Client Registration (RFC 7591)
 
   // KV Namespaces for Phase 5
@@ -23,9 +20,6 @@ export interface Env {
   MAGIC_LINKS?: KVNamespace; // Magic Link tokens (TTL: 15 min)
   KV?: KVNamespace; // General purpose KV for session tokens and other data
   SETTINGS?: KVNamespace; // System settings storage
-
-  // Rate Limiting
-  RATE_LIMIT?: KVNamespace;
 
   // Durable Objects
   KEY_MANAGER: DurableObjectNamespace;
@@ -36,6 +30,7 @@ export interface Env {
   RATE_LIMITER: DurableObjectNamespace; // #6: Atomic rate limiting
   PAR_REQUEST_STORE: DurableObjectNamespace; // #11: PAR request_uri single-use
   DPOP_JTI_STORE: DurableObjectNamespace; // #12: DPoP JTI replay protection
+  TOKEN_REVOCATION_STORE: DurableObjectNamespace; // Token revocation list
 
   // Environment Variables
   ISSUER_URL: string;

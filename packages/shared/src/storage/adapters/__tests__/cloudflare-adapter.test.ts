@@ -95,11 +95,16 @@ function createMockEnv(): Env {
           .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 })),
       }),
     } as unknown as DurableObjectNamespace,
-    AUTH_CODES: {} as KVNamespace,
+    TOKEN_REVOCATION_STORE: {
+      idFromName: vi.fn().mockReturnValue('token-revocation-do-id'),
+      get: vi.fn().mockReturnValue({
+        fetch: vi
+          .fn()
+          .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 })),
+      }),
+    } as unknown as DurableObjectNamespace,
     STATE_STORE: {} as KVNamespace,
     NONCE_STORE: {} as KVNamespace,
-    REVOKED_TOKENS: {} as KVNamespace,
-    REFRESH_TOKENS: {} as KVNamespace,
     AVATARS: {
       get: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockResolvedValue(undefined),

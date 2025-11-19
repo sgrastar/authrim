@@ -53,15 +53,17 @@ echo "This script will create or update KV namespaces for your Enrai deployment.
 echo ""
 echo "KV namespaces are Cloudflare's key-value storage used by the workers."
 echo "We'll create both production and preview namespaces for:"
-echo "  • AUTH_CODES - OAuth authorization codes"
-echo "  • STATE_STORE - OAuth state parameters"
-echo "  • NONCE_STORE - OpenID Connect nonces"
 echo "  • CLIENTS - Registered OAuth clients"
-echo "  • RATE_LIMIT - Rate limiting counters"
-echo "  • REFRESH_TOKENS - OAuth refresh tokens"
-echo "  • REVOKED_TOKENS - Revoked token list"
 echo "  • INITIAL_ACCESS_TOKENS - Dynamic Client Registration tokens"
 echo "  • SETTINGS - System settings storage"
+echo ""
+echo "Note: The following have been migrated to Durable Objects:"
+echo "  • AUTH_CODES → AuthorizationCodeStore DO"
+echo "  • REFRESH_TOKENS → RefreshTokenRotator DO"
+echo "  • REVOKED_TOKENS (removed)"
+echo "  • STATE_STORE → PARRequestStore DO"
+echo "  • NONCE_STORE → DPoPJTIStore DO"
+echo "  • RATE_LIMIT → RateLimiterCounter DO"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "⚠️  How this script works:"
@@ -95,16 +97,36 @@ fi
 
 # Define all required KV namespaces
 declare -a REQUIRED_NAMESPACES=(
-    "AUTH_CODES"
-    "STATE_STORE"
-    "NONCE_STORE"
     "CLIENTS"
-    "RATE_LIMIT"
-    "REFRESH_TOKENS"
-    "REVOKED_TOKENS"
     "INITIAL_ACCESS_TOKENS"
     "SETTINGS"
 )
+
+# Function to get namespace ID from list by exact title match
+get_namespace_id_by_title() {
+    local title=$1
+    local list_output=$2
+
+    # Try using jq if available for robust JSON parsing
+    if command -v jq &> /dev/null; then
+        echo "$list_output" | jq -r ".[] | select(.title == \"$title\") | .id" 2>/dev/null | head -1
+    else
+        # Fallback to awk-based parsing
+        # Process JSON to find matching title and extract its id
+        echo "$list_output" | awk -v title="$title" '
+            /"id"/ {
+                match($0, /"id"[[:space:]]*:[[:space:]]*"([a-f0-9]{32})"/, arr)
+                if (arr[1]) current_id = arr[1]
+            }
+            /"title"/ {
+                if ($0 ~ "\"" title "\"") {
+                    print current_id
+                    exit
+                }
+            }
+        '
+    fi
+}
 
 # Check if all namespaces exist
 if [ "$RESET_MODE" = false ]; then
@@ -128,8 +150,19 @@ if [ "$RESET_MODE" = false ]; then
                 prod_id=$(echo "$list_output" | jq -r ".[] | select(.title == \"$namespace\") | .id" 2>/dev/null | head -1)
                 preview_id=$(echo "$list_output" | jq -r ".[] | select(.title | test(\"^${namespace}_preview\"; \"i\")) | .id" 2>/dev/null | head -1)
             else
-                prod_id=$(echo "$list_output" | grep -A 2 "\"title\"[[:space:]]*:[[:space:]]*\"$namespace\"" | grep "\"id\"" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1)
-                preview_id=$(echo "$list_output" | grep -i "\"title\".*$namespace" | grep -i "preview" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1)
+                prod_id=$(get_namespace_id_by_title "$namespace" "$list_output")
+                preview_id=$(echo "$list_output" | awk -v ns="$namespace" '
+                    /"id"/ {
+                        match($0, /"id"[[:space:]]*:[[:space:]]*"([a-f0-9]{32})"/, arr)
+                        if (arr[1]) current_id = arr[1]
+                    }
+                    /"title"/ {
+                        if (tolower($0) ~ tolower(ns "_preview")) {
+                            print current_id
+                            exit
+                        }
+                    }
+                ')
             fi
 
             if [ -z "$prod_id" ] || [ -z "$preview_id" ]; then
@@ -204,21 +237,6 @@ else
     BULK_MODE="reset"
 fi
 
-# Function to get namespace ID from list by exact title match
-get_namespace_id_by_title() {
-    local title=$1
-    local list_output=$2
-
-    # Try using jq if available for robust JSON parsing
-    if command -v jq &> /dev/null; then
-        echo "$list_output" | jq -r ".[] | select(.title == \"$title\") | .id" 2>/dev/null | head -1
-    else
-        # Fallback to grep-based parsing
-        # Match the entire object that contains our title
-        echo "$list_output" | grep -A 2 "\"title\"[[:space:]]*:[[:space:]]*\"$title\"" | grep "\"id\"" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1
-    fi
-}
-
 # Function to get or create KV namespace and extract ID
 create_kv_namespace() {
     local name=$1
@@ -244,8 +262,19 @@ create_kv_namespace() {
         if command -v jq &> /dev/null; then
             id=$(echo "$list_output" | jq -r ".[] | select(.title | test(\"^${name}_preview\"; \"i\")) | .id" 2>/dev/null | head -1)
         else
-            # Fallback: look for title containing the name and preview
-            id=$(echo "$list_output" | grep -i "\"title\".*$name" | grep -i "preview" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1)
+            # Fallback: awk-based parsing for preview namespace
+            id=$(echo "$list_output" | awk -v ns="$name" '
+                /"id"/ {
+                    match($0, /"id"[[:space:]]*:[[:space:]]*"([a-f0-9]{32})"/, arr)
+                    if (arr[1]) current_id = arr[1]
+                }
+                /"title"/ {
+                    if (tolower($0) ~ tolower(ns "_preview")) {
+                        print current_id
+                        exit
+                    }
+                }
+            ')
         fi
 
         # If we didn't find a preview namespace, try exact match
@@ -293,6 +322,8 @@ create_kv_namespace() {
             fi
 
             echo "  ✓ Successfully deleted namespace" >&2
+            echo "  ⏳ Waiting 5 seconds for deletion to propagate..." >&2
+            sleep 5
             echo "  📝 Creating new namespace: $name $preview_flag" >&2
             # Fall through to create new namespace
         else
@@ -346,6 +377,8 @@ create_kv_namespace() {
                     fi
 
                     echo "  ✓ Successfully deleted namespace" >&2
+                    echo "  ⏳ Waiting 5 seconds for deletion to propagate..." >&2
+                    sleep 5
                     echo "  📝 Creating new namespace: $name $preview_flag" >&2
                     # Fall through to create new namespace
                     ;;
@@ -382,7 +415,19 @@ create_kv_namespace() {
                 if command -v jq &> /dev/null; then
                     id=$(echo "$list_output" | jq -r ".[] | select(.title | test(\"^${name}_preview\"; \"i\")) | .id" 2>/dev/null | head -1)
                 else
-                    id=$(echo "$list_output" | grep -i "\"title\".*$name" | grep -i "preview" | grep -o '"[a-f0-9]\{32\}"' | tr -d '"' | head -1)
+                    # Fallback: awk-based parsing for preview namespace
+                    id=$(echo "$list_output" | awk -v ns="$name" '
+                        /"id"/ {
+                            match($0, /"id"[[:space:]]*:[[:space:]]*"([a-f0-9]{32})"/, arr)
+                            if (arr[1]) current_id = arr[1]
+                        }
+                        /"title"/ {
+                            if (tolower($0) ~ tolower(ns "_preview")) {
+                                print current_id
+                                exit
+                            }
+                        }
+                    ')
                 fi
 
                 if [ -z "$id" ]; then
@@ -432,26 +477,9 @@ create_kv_namespace() {
 
 # Create production namespaces
 echo "Creating production namespaces (for live environment)..."
-AUTH_CODES_ID=$(create_kv_namespace "AUTH_CODES")
-echo "✅ AUTH_CODES: $AUTH_CODES_ID"
-
-STATE_STORE_ID=$(create_kv_namespace "STATE_STORE")
-echo "✅ STATE_STORE: $STATE_STORE_ID"
-
-NONCE_STORE_ID=$(create_kv_namespace "NONCE_STORE")
-echo "✅ NONCE_STORE: $NONCE_STORE_ID"
 
 CLIENTS_ID=$(create_kv_namespace "CLIENTS")
 echo "✅ CLIENTS: $CLIENTS_ID"
-
-RATE_LIMIT_ID=$(create_kv_namespace "RATE_LIMIT")
-echo "✅ RATE_LIMIT: $RATE_LIMIT_ID"
-
-REFRESH_TOKENS_ID=$(create_kv_namespace "REFRESH_TOKENS")
-echo "✅ REFRESH_TOKENS: $REFRESH_TOKENS_ID"
-
-REVOKED_TOKENS_ID=$(create_kv_namespace "REVOKED_TOKENS")
-echo "✅ REVOKED_TOKENS: $REVOKED_TOKENS_ID"
 
 INITIAL_ACCESS_TOKENS_ID=$(create_kv_namespace "INITIAL_ACCESS_TOKENS")
 echo "✅ INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID"
@@ -463,26 +491,8 @@ echo ""
 echo "Creating preview namespaces (for development/testing)..."
 
 # Create preview namespaces
-PREVIEW_AUTH_CODES_ID=$(create_kv_namespace "AUTH_CODES" "--preview")
-echo "✅ AUTH_CODES (preview): $PREVIEW_AUTH_CODES_ID"
-
-PREVIEW_STATE_STORE_ID=$(create_kv_namespace "STATE_STORE" "--preview")
-echo "✅ STATE_STORE (preview): $PREVIEW_STATE_STORE_ID"
-
-PREVIEW_NONCE_STORE_ID=$(create_kv_namespace "NONCE_STORE" "--preview")
-echo "✅ NONCE_STORE (preview): $PREVIEW_NONCE_STORE_ID"
-
 PREVIEW_CLIENTS_ID=$(create_kv_namespace "CLIENTS" "--preview")
 echo "✅ CLIENTS (preview): $PREVIEW_CLIENTS_ID"
-
-PREVIEW_RATE_LIMIT_ID=$(create_kv_namespace "RATE_LIMIT" "--preview")
-echo "✅ RATE_LIMIT (preview): $PREVIEW_RATE_LIMIT_ID"
-
-PREVIEW_REFRESH_TOKENS_ID=$(create_kv_namespace "REFRESH_TOKENS" "--preview")
-echo "✅ REFRESH_TOKENS (preview): $PREVIEW_REFRESH_TOKENS_ID"
-
-PREVIEW_REVOKED_TOKENS_ID=$(create_kv_namespace "REVOKED_TOKENS" "--preview")
-echo "✅ REVOKED_TOKENS (preview): $PREVIEW_REVOKED_TOKENS_ID"
 
 PREVIEW_INITIAL_ACCESS_TOKENS_ID=$(create_kv_namespace "INITIAL_ACCESS_TOKENS" "--preview")
 echo "✅ INITIAL_ACCESS_TOKENS (preview): $PREVIEW_INITIAL_ACCESS_TOKENS_ID"
@@ -561,20 +571,8 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📝 Updating packages/op-auth/wrangler.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_wrangler_toml "packages/op-auth/wrangler.toml" "AUTH_CODES" "$AUTH_CODES_ID" "$PREVIEW_AUTH_CODES_ID"
-update_wrangler_toml "packages/op-auth/wrangler.toml" "STATE_STORE" "$STATE_STORE_ID" "$PREVIEW_STATE_STORE_ID"
-update_wrangler_toml "packages/op-auth/wrangler.toml" "NONCE_STORE" "$NONCE_STORE_ID" "$PREVIEW_NONCE_STORE_ID"
 update_wrangler_toml "packages/op-auth/wrangler.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
-update_wrangler_toml "packages/op-auth/wrangler.toml" "RATE_LIMIT" "$RATE_LIMIT_ID" "$PREVIEW_RATE_LIMIT_ID"
 echo "✅ op-auth updated"
-
-# Update op-discovery wrangler.toml
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📝 Updating packages/op-discovery/wrangler.toml..."
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_wrangler_toml "packages/op-discovery/wrangler.toml" "RATE_LIMIT" "$RATE_LIMIT_ID" "$PREVIEW_RATE_LIMIT_ID"
-echo "✅ op-discovery updated"
 
 # Update op-management wrangler.toml
 echo ""
@@ -582,9 +580,6 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "📝 Updating packages/op-management/wrangler.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 update_wrangler_toml "packages/op-management/wrangler.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
-update_wrangler_toml "packages/op-management/wrangler.toml" "REFRESH_TOKENS" "$REFRESH_TOKENS_ID" "$PREVIEW_REFRESH_TOKENS_ID"
-update_wrangler_toml "packages/op-management/wrangler.toml" "REVOKED_TOKENS" "$REVOKED_TOKENS_ID" "$PREVIEW_REVOKED_TOKENS_ID"
-update_wrangler_toml "packages/op-management/wrangler.toml" "RATE_LIMIT" "$RATE_LIMIT_ID" "$PREVIEW_RATE_LIMIT_ID"
 update_wrangler_toml "packages/op-management/wrangler.toml" "INITIAL_ACCESS_TOKENS" "$INITIAL_ACCESS_TOKENS_ID" "$PREVIEW_INITIAL_ACCESS_TOKENS_ID"
 update_wrangler_toml "packages/op-management/wrangler.toml" "SETTINGS" "$SETTINGS_ID" "$PREVIEW_SETTINGS_ID"
 echo "✅ op-management updated"
@@ -594,11 +589,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📝 Updating packages/op-token/wrangler.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_wrangler_toml "packages/op-token/wrangler.toml" "AUTH_CODES" "$AUTH_CODES_ID" "$PREVIEW_AUTH_CODES_ID"
 update_wrangler_toml "packages/op-token/wrangler.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
-update_wrangler_toml "packages/op-token/wrangler.toml" "REFRESH_TOKENS" "$REFRESH_TOKENS_ID" "$PREVIEW_REFRESH_TOKENS_ID"
-update_wrangler_toml "packages/op-token/wrangler.toml" "REVOKED_TOKENS" "$REVOKED_TOKENS_ID" "$PREVIEW_REVOKED_TOKENS_ID"
-update_wrangler_toml "packages/op-token/wrangler.toml" "RATE_LIMIT" "$RATE_LIMIT_ID" "$PREVIEW_RATE_LIMIT_ID"
 echo "✅ op-token updated"
 
 # Update op-userinfo wrangler.toml
@@ -607,8 +598,6 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "📝 Updating packages/op-userinfo/wrangler.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 update_wrangler_toml "packages/op-userinfo/wrangler.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
-update_wrangler_toml "packages/op-userinfo/wrangler.toml" "REVOKED_TOKENS" "$REVOKED_TOKENS_ID" "$PREVIEW_REVOKED_TOKENS_ID"
-update_wrangler_toml "packages/op-userinfo/wrangler.toml" "RATE_LIMIT" "$RATE_LIMIT_ID" "$PREVIEW_RATE_LIMIT_ID"
 echo "✅ op-userinfo updated"
 
 echo ""
@@ -616,13 +605,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "🎉 Setup complete!"
 echo ""
 echo "Created KV namespaces (production / preview):"
-echo "  • AUTH_CODES: $AUTH_CODES_ID / $PREVIEW_AUTH_CODES_ID"
-echo "  • STATE_STORE: $STATE_STORE_ID / $PREVIEW_STATE_STORE_ID"
-echo "  • NONCE_STORE: $NONCE_STORE_ID / $PREVIEW_NONCE_STORE_ID"
 echo "  • CLIENTS: $CLIENTS_ID / $PREVIEW_CLIENTS_ID"
-echo "  • RATE_LIMIT: $RATE_LIMIT_ID / $PREVIEW_RATE_LIMIT_ID"
-echo "  • REFRESH_TOKENS: $REFRESH_TOKENS_ID / $PREVIEW_REFRESH_TOKENS_ID"
-echo "  • REVOKED_TOKENS: $REVOKED_TOKENS_ID / $PREVIEW_REVOKED_TOKENS_ID"
 echo "  • INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID / $PREVIEW_INITIAL_ACCESS_TOKENS_ID"
 echo "  • SETTINGS: $SETTINGS_ID / $PREVIEW_SETTINGS_ID"
 echo ""
@@ -630,7 +613,6 @@ echo "All wrangler.toml files have been updated with the correct namespace IDs."
 echo ""
 echo "📁 Updated files:"
 echo "  • packages/op-auth/wrangler.toml"
-echo "  • packages/op-discovery/wrangler.toml"
 echo "  • packages/op-management/wrangler.toml"
 echo "  • packages/op-token/wrangler.toml"
 echo "  • packages/op-userinfo/wrangler.toml"
