@@ -39,6 +39,8 @@ export interface OIDCProviderMetadata {
   id_token_encryption_enc_values_supported?: string[];
   userinfo_encryption_alg_values_supported?: string[];
   userinfo_encryption_enc_values_supported?: string[];
+  // RFC 8628: Device Authorization Grant
+  device_authorization_endpoint?: string;
   // OIDC Core: Additional metadata
   claim_types_supported?: string[];
   claims_parameter_supported?: boolean;
@@ -351,4 +353,46 @@ export interface DPoPValidationResult {
     y?: string;
   };
   jkt?: string; // JWK Thumbprint (SHA-256, base64url-encoded)
+}
+
+/**
+ * Device Authorization Request
+ * RFC 8628: OAuth 2.0 Device Authorization Grant
+ * https://datatracker.ietf.org/doc/html/rfc8628#section-3.1
+ */
+export interface DeviceAuthorizationRequest {
+  client_id: string;
+  scope?: string;
+}
+
+/**
+ * Device Authorization Response
+ * RFC 8628: OAuth 2.0 Device Authorization Grant
+ * https://datatracker.ietf.org/doc/html/rfc8628#section-3.2
+ */
+export interface DeviceAuthorizationResponse {
+  device_code: string; // Unique device verification code
+  user_code: string; // End-user verification code (8-char, human-readable)
+  verification_uri: string; // End-user verification URI
+  verification_uri_complete?: string; // Verification URI with user_code included
+  expires_in: number; // Lifetime in seconds (typically 300-600)
+  interval?: number; // Minimum polling interval in seconds (default 5)
+}
+
+/**
+ * Device Code Metadata
+ * Internal storage for device authorization flow
+ */
+export interface DeviceCodeMetadata {
+  device_code: string;
+  user_code: string;
+  client_id: string;
+  scope: string;
+  status: 'pending' | 'approved' | 'denied' | 'expired';
+  created_at: number;
+  expires_at: number;
+  last_poll_at?: number; // Last time the device polled for the token
+  poll_count?: number; // Number of times the device has polled
+  user_id?: string; // Set when user approves the device
+  sub?: string; // Subject (user identifier) - set when approved
 }

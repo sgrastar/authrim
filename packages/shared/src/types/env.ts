@@ -36,6 +36,7 @@ export interface Env {
   RATE_LIMITER: DurableObjectNamespace; // #6: Atomic rate limiting
   PAR_REQUEST_STORE: DurableObjectNamespace; // #11: PAR request_uri single-use
   DPOP_JTI_STORE: DurableObjectNamespace; // #12: DPoP JTI replay protection
+  DEVICE_CODE_STORE: DurableObjectNamespace; // RFC 8628: Device Authorization Grant
 
   // Environment Variables
   ISSUER_URL: string;

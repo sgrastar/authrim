@@ -1,0 +1,27 @@
+{
+  "name": "@enrai/op-async",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'op-async: lint skipped'",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@enrai/shared": "workspace:*",
+    "hono": "^4.0.0",
+    "jose": "^6.1.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240117.0",
+    "@vitest/ui": "^4.0.8",
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.8",
+    "wrangler": "^4.46.0"
+  }
+}
