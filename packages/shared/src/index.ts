@@ -6,9 +6,12 @@ export * from './types/oidc';
 // Utils
 export * from './utils/crypto';
 export * from './utils/d1-retry';
+export * from './utils/device-flow';
 export * from './utils/dpop';
 export * from './utils/errors';
+export * from './utils/jwe';
 export * from './utils/jwt';
+export * from './utils/jwt-bearer';
 export * from './utils/keys';
 export * from './utils/kv';
 export * from './utils/origin-validator';
@@ -27,3 +30,4 @@ export * from './storage/adapters/kv-adapter';
 // Durable Objects
 export { KeyManager } from './durable-objects/KeyManager';
 export { ChallengeStore } from './durable-objects/ChallengeStore';
+export { DeviceCodeStore } from './durable-objects/DeviceCodeStore';
