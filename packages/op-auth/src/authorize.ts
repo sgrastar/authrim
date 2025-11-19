@@ -7,6 +7,7 @@ import {
   validateScope,
   validateState,
   validateNonce,
+  getClient,
 } from '@enrai/shared';
 import { generateSecureRandomString, parseToken, verifyToken } from '@enrai/shared';
 import { importJWK } from 'jose';
@@ -41,6 +42,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let display: string | undefined;
   let ui_locales: string | undefined;
   let login_hint: string | undefined;
+  let _confirmed: string | undefined;
+  let _auth_time: string | undefined;
+  let _session_user_id: string | undefined;
 
   if (c.req.method === 'POST') {
     // Parse POST body (application/x-www-form-urlencoded)
@@ -66,6 +70,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       display = typeof body.display === 'string' ? body.display : undefined;
       ui_locales = typeof body.ui_locales === 'string' ? body.ui_locales : undefined;
       login_hint = typeof body.login_hint === 'string' ? body.login_hint : undefined;
+      _confirmed = typeof body._confirmed === 'string' ? body._confirmed : undefined;
+      _auth_time = typeof body._auth_time === 'string' ? body._auth_time : undefined;
+      _session_user_id = typeof body._session_user_id === 'string' ? body._session_user_id : undefined;
     } catch {
       return c.json(
         {
@@ -96,6 +103,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     display = c.req.query('display');
     ui_locales = c.req.query('ui_locales');
     login_hint = c.req.query('login_hint');
+    _confirmed = c.req.query('_confirmed');
+    _auth_time = c.req.query('_auth_time');
+    _session_user_id = c.req.query('_session_user_id');
   }
 
   // RFC 9126: If request_uri is present, fetch parameters from PAR storage
@@ -328,20 +338,218 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  // Validate redirect_uri (allow http for development)
-  const allowHttp = c.env.ALLOW_HTTP_REDIRECT === 'true';
-  const redirectUriValidation = validateRedirectUri(redirect_uri, allowHttp);
-  if (!redirectUriValidation.valid) {
+  // Type narrowing: client_id is guaranteed to be a string at this point
+  const validClientId: string = client_id as string;
+
+  // Fetch client metadata to validate redirect_uri
+  const clientMetadata = await getClient(c.env, validClientId);
+  if (!clientMetadata) {
     return c.json(
       {
-        error: 'invalid_request',
-        error_description: redirectUriValidation.error,
+        error: 'invalid_client',
+        error_description: 'Client not found',
       },
       400
     );
   }
 
-  // From here on, we have a valid redirect_uri, so errors should be returned via redirect
+  // Validate redirect_uri format (allow http for development)
+  const allowHttp = c.env.ALLOW_HTTP_REDIRECT === 'true';
+  const redirectUriValidation = validateRedirectUri(redirect_uri, allowHttp);
+  if (!redirectUriValidation.valid) {
+    // Invalid redirect_uri format - cannot redirect, must show error page
+    return c.html(
+      `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invalid Redirect URI</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .container {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      max-width: 500px;
+      width: 100%;
+    }
+    h1 {
+      margin: 0 0 1rem 0;
+      font-size: 1.5rem;
+      color: #d32f2f;
+    }
+    p {
+      margin: 0 0 1rem 0;
+      color: #666;
+      line-height: 1.5;
+    }
+    .error-code {
+      background: #f5f5f5;
+      padding: 0.5rem;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Invalid Redirect URI</h1>
+    <p>The redirect URI provided in the authorization request is invalid.</p>
+    <div class="error-code">
+      <strong>Error:</strong> invalid_request<br>
+      <strong>Description:</strong> ${redirectUriValidation.error}
+    </div>
+    <p>Please contact the application developer to resolve this issue.</p>
+  </div>
+</body>
+</html>`,
+      400
+    );
+  }
+
+  // Check if redirect_uri is registered for this client
+  // Per OAuth 2.0 Section 3.1.2.3: redirect_uri MUST match one of the registered redirect URIs
+  const registeredRedirectUris = clientMetadata.redirect_uris as string[] | undefined;
+  if (!registeredRedirectUris || !Array.isArray(registeredRedirectUris)) {
+    return c.html(
+      `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Client Configuration Error</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .container {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      max-width: 500px;
+      width: 100%;
+    }
+    h1 {
+      margin: 0 0 1rem 0;
+      font-size: 1.5rem;
+      color: #d32f2f;
+    }
+    p {
+      margin: 0 0 1rem 0;
+      color: #666;
+      line-height: 1.5;
+    }
+    .error-code {
+      background: #f5f5f5;
+      padding: 0.5rem;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Client Configuration Error</h1>
+    <p>The client application has not registered any redirect URIs.</p>
+    <div class="error-code">
+      <strong>Error:</strong> invalid_client<br>
+      <strong>Description:</strong> Client has no registered redirect URIs
+    </div>
+    <p>Please contact the application developer to resolve this issue.</p>
+  </div>
+</body>
+</html>`,
+      400
+    );
+  }
+
+  // Check if the provided redirect_uri matches one of the registered URIs
+  const redirectUriMatches = registeredRedirectUris.includes(redirect_uri as string);
+  if (!redirectUriMatches) {
+    return c.html(
+      `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unregistered Redirect URI</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .container {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      max-width: 500px;
+      width: 100%;
+    }
+    h1 {
+      margin: 0 0 1rem 0;
+      font-size: 1.5rem;
+      color: #d32f2f;
+    }
+    p {
+      margin: 0 0 1rem 0;
+      color: #666;
+      line-height: 1.5;
+    }
+    .error-code {
+      background: #f5f5f5;
+      padding: 0.5rem;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Unregistered Redirect URI</h1>
+    <p>The redirect URI provided in the authorization request is not registered for this client application.</p>
+    <div class="error-code">
+      <strong>Error:</strong> invalid_request<br>
+      <strong>Description:</strong> redirect_uri is not registered for this client<br>
+      <strong>Provided URI:</strong> ${redirect_uri || '(none)'}
+    </div>
+    <p>Please contact the application developer to register the redirect URI or use a registered redirect URI.</p>
+  </div>
+</body>
+</html>`,
+      400
+    );
+  }
+
+  // From here on, we have a valid and registered redirect_uri, so errors should be returned via redirect
   // Type narrowing: redirect_uri is guaranteed to be a string at this point
   const validRedirectUri: string = redirect_uri as string;
 
@@ -500,14 +708,98 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let authTime: number | undefined;
   let sessionAcr: string | undefined;
 
-  // Handle id_token_hint parameter
-  if (id_token_hint) {
+  // Check for existing session (cookie)
+  // This is required for prompt=none to work correctly
+  const sessionId = c.req.header('Cookie')?.match(/enrai_session=([^;]+)/)?.[1];
+  if (sessionId && c.env.SESSION_STORE) {
     try {
-      // Verify ID token hint
-      const publicJwkJson = c.env.PUBLIC_JWK_JSON;
-      if (publicJwkJson) {
-        const publicJwk = JSON.parse(publicJwkJson);
-        const publicKey = await importJWK(publicJwk, 'RS256') as CryptoKey;
+      const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
+      const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+
+      const sessionResponse = await sessionStore.fetch(
+        new Request(`https://session-store/session/${encodeURIComponent(sessionId)}`, {
+          method: 'GET',
+        })
+      );
+
+      if (sessionResponse.ok) {
+        const session = (await sessionResponse.json()) as {
+          id: string;
+          userId: string;
+          createdAt: number;
+          expiresAt: number;
+        };
+
+        // Check if session is not expired
+        if (session.expiresAt > Date.now()) {
+          sessionUserId = session.userId;
+          authTime = Math.floor(session.createdAt / 1000);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to retrieve session:', error);
+      // Continue without session
+    }
+  }
+
+  // If this is a re-authentication confirmation callback, restore original auth_time and sessionUserId
+  if (_confirmed === 'true') {
+    if (_auth_time) {
+      authTime = parseInt(_auth_time, 10);
+    }
+    if (_session_user_id) {
+      sessionUserId = _session_user_id;
+    }
+  }
+
+  // Handle id_token_hint parameter (fallback if no session cookie)
+  if (id_token_hint && !sessionUserId) {
+    try {
+      // Decode JWT header to get kid (Key ID)
+      const parts = id_token_hint.split('.');
+      if (parts.length !== 3) {
+        throw new Error('Invalid JWT format');
+      }
+      const headerBase64url = parts[0];
+      const headerBase64 = headerBase64url.replace(/-/g, '+').replace(/_/g, '/');
+      const headerJson = JSON.parse(atob(headerBase64)) as { kid?: string; alg?: string };
+      const kid = headerJson.kid;
+
+      // Fetch JWKS from KeyManager DO
+      let publicKey: CryptoKey | null = null;
+
+      if (c.env.KEY_MANAGER) {
+        try {
+          const keyManagerId = c.env.KEY_MANAGER.idFromName('default');
+          const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
+          const jwksResponse = await keyManager.fetch('http://internal/jwks', { method: 'GET' });
+
+          if (jwksResponse.ok) {
+            const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; [key: string]: unknown }> };
+            // Find key by kid
+            const jwk = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
+            if (jwk) {
+              publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
+            }
+          }
+        } catch (kmError) {
+          console.warn('Failed to fetch key from KeyManager, falling back to PUBLIC_JWK_JSON:', kmError);
+        }
+      }
+
+      // Fallback to PUBLIC_JWK_JSON if KeyManager unavailable
+      if (!publicKey) {
+        const publicJwkJson = c.env.PUBLIC_JWK_JSON;
+        if (publicJwkJson) {
+          const publicJwk = JSON.parse(publicJwkJson);
+          // Check if kid matches (if available)
+          if (!kid || publicJwk.kid === kid) {
+            publicKey = (await importJWK(publicJwk, 'RS256')) as CryptoKey;
+          }
+        }
+      }
+
+      if (publicKey) {
         const verified = await verifyToken(id_token_hint, publicKey, c.env.ISSUER_URL, client_id || '');
         const idTokenPayload = verified.payload as Record<string, unknown>;
 
@@ -515,9 +807,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         sessionUserId = idTokenPayload.sub as string;
         authTime = idTokenPayload.auth_time as number;
         sessionAcr = idTokenPayload.acr as string;
+        console.log('id_token_hint verified successfully, sub:', sessionUserId, 'auth_time:', authTime);
+      } else {
+        console.error('No matching public key found for id_token_hint verification');
       }
     } catch (error) {
       console.error('Failed to verify id_token_hint:', error);
+      console.error('Error details:', error instanceof Error ? error.message : 'Unknown error');
       // Invalid id_token_hint - treat as if no session exists
     }
   }
@@ -568,9 +864,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    if (promptValues.includes('login')) {
+    if (promptValues.includes('login') && _confirmed !== 'true') {
       // prompt=login: Force re-authentication even if user has valid session
-      // Clear session context to force login
+      // Clear session context to force login (unless user has already confirmed)
       sessionUserId = undefined;
       authTime = undefined;
     }
@@ -580,7 +876,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Handle max_age parameter (OIDC Core 3.1.2.1)
-  if (max_age && !prompt?.includes('none')) {
+  // Skip this check if user has already confirmed re-authentication
+  let requiresReauthentication = false;
+  if (max_age && !prompt?.includes('none') && _confirmed !== 'true') {
     const maxAgeSeconds = parseInt(max_age, 10);
 
     if (authTime) {
@@ -588,12 +886,63 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const timeSinceAuth = currentTime - authTime;
 
       if (timeSinceAuth > maxAgeSeconds) {
-        // Re-authentication required - redirect to login
-        // In a full implementation, this would redirect to login UI
-        // For now, we'll generate a new session
-        sessionUserId = undefined;
-        authTime = undefined;
+        // Re-authentication required - show confirmation screen
+        requiresReauthentication = true;
+        // Note: Do NOT clear auth_time here - it will be preserved through the confirmation flow
       }
+    }
+  }
+
+  // If re-authentication is required, show confirmation screen (unless already confirmed)
+  if ((requiresReauthentication || (prompt?.includes('login') && sessionUserId)) && _confirmed !== 'true') {
+    // Store authorization request parameters in ChallengeStore
+    const challengeId = crypto.randomUUID();
+    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+
+    await challengeStore.fetch(
+      new Request('https://challenge-store/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: challengeId,
+          type: 'reauth',
+          userId: sessionUserId || 'anonymous',
+          challenge: challengeId,
+          ttl: 600, // 10 minutes
+          metadata: {
+            response_type,
+            client_id,
+            redirect_uri,
+            scope,
+            state,
+            nonce,
+            code_challenge,
+            code_challenge_method,
+            claims,
+            response_mode,
+            max_age,
+            prompt,
+            id_token_hint,
+            acr_values,
+            display,
+            ui_locales,
+            login_hint,
+            sessionUserId,
+            authTime, // Preserve original auth_time
+          },
+        }),
+      })
+    );
+
+    // Redirect to UI re-authentication screen (if UI_URL is configured)
+    // Otherwise, redirect to local /authorize/confirm GET endpoint which will show the UI
+    const uiUrl = c.env.UI_URL;
+    if (uiUrl) {
+      return c.redirect(`${uiUrl}/reauth?challenge_id=${encodeURIComponent(challengeId)}`, 302);
+    } else {
+      // Fallback: redirect to local confirm endpoint with GET
+      return c.redirect(`/authorize/confirm?challenge_id=${encodeURIComponent(challengeId)}`, 302);
     }
   }
 
@@ -606,33 +955,64 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const sub = sessionUserId || 'user-' + crypto.randomUUID();
 
   // Create user in database if it doesn't exist (for dynamic user creation)
+  // Use INSERT OR IGNORE to avoid checking for existence first
   if (!sessionUserId) {
-    try {
-      // Check if user already exists
-      const existingUser = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?')
-        .bind(sub)
-        .first();
+    // Create user and session in parallel to reduce latency
+    const userCreationPromise = c.env.DB.prepare(
+      `INSERT OR IGNORE INTO users (id, email, email_verified, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+      .bind(
+        sub,
+        `${sub}@example.com`, // Placeholder email
+        0, // email not verified
+        new Date().toISOString(),
+        new Date().toISOString()
+      )
+      .run()
+      .catch((error: unknown) => {
+        console.error('Failed to create user:', error);
+        // Continue anyway - user might already exist
+      });
 
-      if (!existingUser) {
-        // Create new user with minimal information
-        await c.env.DB.prepare(
-          `INSERT INTO users (id, email, email_verified, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?)`
+    // Create session for the new user (required for prompt=none support)
+    let sessionCreationPromise: Promise<void> | null = null;
+    if (c.env.SESSION_STORE) {
+      const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
+      const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+
+      sessionCreationPromise = sessionStore
+        .fetch(
+          new Request('https://session-store/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: sub,
+              ttl: 3600, // 1 hour session
+              data: {
+                clientId: validClientId,
+              },
+            }),
+          })
         )
-          .bind(
-            sub,
-            `${sub}@example.com`, // Placeholder email
-            0, // email not verified
-            new Date().toISOString(),
-            new Date().toISOString()
-          )
-          .run();
-        console.log(`Created dynamic user: ${sub}`);
-      }
-    } catch (error) {
-      console.error('Failed to create user:', error);
-      // Continue anyway - user might already exist due to race condition
+        .then(async (sessionResponse) => {
+          if (sessionResponse.ok) {
+            const { id } = (await sessionResponse.json()) as { id: string };
+            // Set session cookie for subsequent requests (prompt=none)
+            c.header(
+              'Set-Cookie',
+              `enrai_session=${id}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=3600`
+            );
+          }
+        })
+        .catch((error: unknown) => {
+          console.error('Failed to create session:', error);
+          // Continue anyway - session is optional for basic flow
+        });
     }
+
+    // Wait for both operations to complete in parallel
+    await Promise.all([userCreationPromise, sessionCreationPromise].filter(Boolean));
   }
 
   // Record authentication time
@@ -647,8 +1027,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     selectedAcr = acrList[0];
   }
 
-  // Type narrowing: client_id and scope are guaranteed to be strings at this point
-  const validClientId: string = client_id as string;
+  // Type narrowing: scope is guaranteed to be a string at this point
   const validScope: string = scope as string;
 
   // Store authorization code using AuthorizationCodeStore Durable Object
@@ -838,4 +1217,178 @@ function escapeHtml(unsafe: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+/**
+ * Handle re-authentication confirmation
+ * POST /authorize/confirm
+ */
+export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
+  // Parse challenge_id from request
+  let challenge_id: string | undefined;
+
+  if (c.req.method === 'POST') {
+    try {
+      const body = await c.req.parseBody();
+      challenge_id = typeof body.challenge_id === 'string' ? body.challenge_id : undefined;
+    } catch {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Failed to parse request body',
+        },
+        400
+      );
+    }
+  } else {
+    challenge_id = c.req.query('challenge_id');
+  }
+
+  if (!challenge_id) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Missing challenge_id parameter',
+      },
+      400
+    );
+  }
+
+  // GET request: Show re-authentication confirmation form
+  if (c.req.method === 'GET') {
+    return c.html(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Re-authentication Required</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .container {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      max-width: 400px;
+      width: 100%;
+    }
+    h1 {
+      margin: 0 0 1rem 0;
+      font-size: 1.5rem;
+      color: #333;
+    }
+    p {
+      margin: 0 0 1.5rem 0;
+      color: #666;
+      line-height: 1.5;
+    }
+    button {
+      width: 100%;
+      padding: 0.75rem;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: #5568d3;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Re-authentication Required</h1>
+    <p>For security reasons, you need to confirm your authentication.</p>
+    <form method="POST" action="/authorize/confirm">
+      <input type="hidden" name="challenge_id" value="${challenge_id}">
+      <button type="submit">Continue</button>
+    </form>
+  </div>
+</body>
+</html>`);
+  }
+
+  // POST request: Process confirmation and redirect to /authorize
+  const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+  const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+
+  const consumeResponse = await challengeStore.fetch(
+    new Request('https://challenge-store/challenge/consume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: challenge_id,
+        type: 'reauth',
+        challenge: challenge_id,
+      }),
+    })
+  );
+
+  if (!consumeResponse.ok) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Invalid or expired challenge',
+      },
+      400
+    );
+  }
+
+  const challengeData = (await consumeResponse.json()) as {
+    userId: string;
+    metadata?: {
+      response_type?: string;
+      client_id?: string;
+      redirect_uri?: string;
+      scope?: string;
+      state?: string;
+      nonce?: string;
+      code_challenge?: string;
+      code_challenge_method?: string;
+      claims?: string;
+      response_mode?: string;
+      sessionUserId?: string;
+      [key: string]: unknown;
+    };
+  };
+
+  const metadata = challengeData.metadata || {};
+
+  // Build query string for internal redirect to /authorize
+  const params = new URLSearchParams();
+  if (metadata.response_type) params.set('response_type', metadata.response_type as string);
+  if (metadata.client_id) params.set('client_id', metadata.client_id as string);
+  if (metadata.redirect_uri) params.set('redirect_uri', metadata.redirect_uri as string);
+  if (metadata.scope) params.set('scope', metadata.scope as string);
+  if (metadata.state) params.set('state', metadata.state as string);
+  if (metadata.nonce) params.set('nonce', metadata.nonce as string);
+  if (metadata.code_challenge) params.set('code_challenge', metadata.code_challenge as string);
+  if (metadata.code_challenge_method)
+    params.set('code_challenge_method', metadata.code_challenge_method as string);
+  if (metadata.claims) params.set('claims', metadata.claims as string);
+  if (metadata.response_mode) params.set('response_mode', metadata.response_mode as string);
+  if (metadata.max_age) params.set('max_age', metadata.max_age as string);
+  if (metadata.prompt) params.set('prompt', metadata.prompt as string);
+
+  // Add a flag to indicate this is a re-authentication confirmation
+  params.set('_confirmed', 'true');
+
+  // Preserve original auth_time and sessionUserId for consistency
+  if (metadata.authTime) params.set('_auth_time', metadata.authTime.toString());
+  if (metadata.sessionUserId) params.set('_session_user_id', metadata.sessionUserId as string);
+
+  // Redirect to /authorize with original parameters
+  const redirectUrl = `/authorize?${params.toString()}`;
+  return c.redirect(redirectUrl, 302);
 }

@@ -63,6 +63,7 @@ export interface Env {
 
   // Redirect configuration
   DEFAULT_REDIRECT_URL?: string; // Default redirect URL for magic link verification
+  UI_URL?: string; // URL of the UI deployment (Cloudflare Pages)
 
   // JWT Bearer Flow (RFC 7523) - Phase 6
   TRUSTED_JWT_ISSUERS?: string; // Comma-separated list of trusted issuers for JWT Bearer flow
