@@ -67,4 +67,8 @@ export interface Env {
 
   // JWT Bearer Flow (RFC 7523) - Phase 6
   TRUSTED_JWT_ISSUERS?: string; // Comma-separated list of trusted issuers for JWT Bearer flow
+
+  // Trusted Client domains (comma-separated)
+  // Clients with redirect_uri domains in this list are automatically trusted
+  TRUSTED_DOMAINS?: string;
 }

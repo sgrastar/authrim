@@ -209,6 +209,23 @@ update_wrangler_toml() {
         # Test environment: Keep OPEN_REGISTRATION = "true" (no change needed)
     fi
 
+    # Set TRUSTED_DOMAINS (for Trusted Client support)
+    if grep -q "^TRUSTED_DOMAINS = " "$file"; then
+        # TRUSTED_DOMAINS already exists, no change needed (keep existing value)
+        :
+    else
+        # Add TRUSTED_DOMAINS after OPEN_REGISTRATION if it doesn't exist
+        if grep -q "^OPEN_REGISTRATION = " "$file"; then
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                sed -i '' "/^OPEN_REGISTRATION = /a\\
+TRUSTED_DOMAINS = \"www.certification.openid.net\"
+" "$file"
+            else
+                sed -i "/^OPEN_REGISTRATION = /a\\TRUSTED_DOMAINS = \"www.certification.openid.net\"" "$file"
+            fi
+        fi
+    fi
+
     # Remove existing workers_dev and preview_urls settings if present
     if [[ "$OSTYPE" == "darwin"* ]]; then
         sed -i '' '/^workers_dev = /d' "$file"
