@@ -100,6 +100,14 @@ migrate_up() {
         log_success "Seed data migration complete"
     fi
 
+    log_info "Applying 003_add_consent_table.sql..."
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --file=migrations/003_add_consent_table.sql || log_warning "Migration 003 may already be applied"
+    log_success "Consent table migration complete"
+
+    log_info "Applying 004_add_client_trust_settings.sql..."
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --file=migrations/004_add_client_trust_settings.sql || log_warning "Migration 004 may already be applied"
+    log_success "Trusted client settings migration complete"
+
     log_success "All migrations applied successfully!"
 }
 

@@ -1083,14 +1083,48 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const _consent_confirmed = c.req.query('_consent_confirmed') || (await c.req.parseBody().then(b => typeof b._consent_confirmed === 'string' ? b._consent_confirmed : undefined).catch(() => undefined));
 
   if (_consent_confirmed !== 'true') {
-    // Query existing consent from D1
-    let consentRequired = false;
-    try {
+    // Get client metadata to check if it's a trusted client
+    const clientMetadata = await getClient(c.env, validClientId);
+
+    // Check if this is a trusted client that can skip consent
+    const isTrustedClient = clientMetadata && clientMetadata.is_trusted && clientMetadata.skip_consent;
+
+    // Trusted clients skip consent (unless prompt=consent is explicitly specified)
+    if (isTrustedClient && !prompt?.includes('consent')) {
+      // Check if consent already exists
       const existingConsent = await c.env.DB.prepare(
-        'SELECT scope, granted_at, expires_at FROM oauth_client_consents WHERE user_id = ? AND client_id = ?'
+        'SELECT id FROM oauth_client_consents WHERE user_id = ? AND client_id = ?'
       )
         .bind(sub, validClientId)
         .first();
+
+      if (!existingConsent) {
+        // Auto-grant consent for trusted client
+        const consentId = crypto.randomUUID();
+        const now = Date.now();
+
+        await c.env.DB.prepare(`
+          INSERT INTO oauth_client_consents
+          (id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        `)
+          .bind(consentId, sub, validClientId, scope, now, null)
+          .run();
+
+        console.log(`[CONSENT] Auto-granted for trusted client: client_id=${validClientId}, user_id=${sub}`);
+      }
+
+      // Skip consent screen
+      // Continue to authorization code generation
+    } else {
+      // Third-Party Client or prompt=consent: Check consent requirements
+      let consentRequired = false;
+      try {
+        const existingConsent = await c.env.DB.prepare(
+          'SELECT scope, granted_at, expires_at FROM oauth_client_consents WHERE user_id = ? AND client_id = ?'
+        )
+          .bind(sub, validClientId)
+          .first();
 
       if (!existingConsent) {
         // No consent record exists
@@ -1184,6 +1218,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         return c.redirect(`/auth/consent?challenge_id=${encodeURIComponent(challengeId)}`, 302);
       }
     }
+    } // End of Third-Party Client consent check
   }
 
   // Record authentication time

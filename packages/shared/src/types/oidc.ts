@@ -247,6 +247,9 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   // OIDC Core 8: Subject Identifier Types
   subject_type?: 'public' | 'pairwise';
   sector_identifier_uri?: string; // For pairwise subject type
+  // Trusted Client Settings
+  is_trusted?: boolean; // Trusted (First-Party) client
+  skip_consent?: boolean; // Skip consent screen for trusted clients
   // JWE fields inherited from ClientRegistrationResponse
   id_token_encrypted_response_alg?: string;
   id_token_encrypted_response_enc?: string;
