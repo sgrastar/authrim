@@ -1,5 +1,5 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 	import { Card, Button, Input } from '$lib/components';
 	import { onMount } from 'svelte';
 	import { adminClientsAPI } from '$lib/api/client';
@@ -84,7 +84,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.admin_clients_title()} - {m.app_title()}</title>
+	<title>{$LL.admin_clients_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -92,14 +92,14 @@
 	<div class="flex items-center justify-between">
 		<div>
 			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-				{m.admin_clients_title()}
+				{$LL.admin_clients_title()}
 			</h1>
 			<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
 				Manage OAuth 2.0 / OpenID Connect clients
 			</p>
 		</div>
 		<Button variant="primary" onclick={() => (window.location.href = '/admin/clients/new')}>
-			{m.admin_clients_registerClient()}
+			{$LL.admin_clients_registerClient()}
 		</Button>
 	</div>
 
@@ -108,7 +108,7 @@
 		<div class="max-w-md">
 			<Input
 				type="text"
-				placeholder={m.admin_clients_search()}
+				placeholder={$LL.admin_clients_search()}
 				bind:value={searchQuery}
 				oninput={handleSearch}
 			>
@@ -124,19 +124,19 @@
 				<thead>
 					<tr class="border-b border-gray-200 dark:border-gray-700">
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_clients_clientId()}
+							{$LL.admin_clients_clientId()}
 						</th>
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_clients_clientName()}
+							{$LL.admin_clients_clientName()}
 						</th>
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_clients_grantTypes()}
+							{$LL.admin_clients_grantTypes()}
 						</th>
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_clients_created()}
+							{$LL.admin_clients_created()}
 						</th>
 						<th class="px-4 py-3 text-right text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_clients_actions()}
+							{$LL.admin_clients_actions()}
 						</th>
 					</tr>
 				</thead>

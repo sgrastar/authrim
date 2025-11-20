@@ -1,37 +1,37 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 
 	// Navigation items
 	const navItems = [
 		{
 			path: '/admin',
-			label: () => m.admin_sidebar_dashboard(),
+			label: () => $LL.admin_sidebar_dashboard(),
 			icon: 'i-heroicons-home'
 		},
 		{
 			path: '/admin/users',
-			label: () => m.admin_sidebar_users(),
+			label: () => $LL.admin_sidebar_users(),
 			icon: 'i-heroicons-users'
 		},
 		{
 			path: '/admin/clients',
-			label: () => m.admin_sidebar_clients(),
+			label: () => $LL.admin_sidebar_clients(),
 			icon: 'i-heroicons-cube'
 		},
 		{
 			path: '/admin/sessions',
-			label: () => m.admin_sidebar_sessions(),
+			label: () => $LL.admin_sidebar_sessions(),
 			icon: 'i-heroicons-clock'
 		},
 		{
 			path: '/admin/audit-log',
-			label: () => m.admin_sidebar_audit_log(),
+			label: () => $LL.admin_sidebar_audit_log(),
 			icon: 'i-heroicons-document-text'
 		},
 		{
 			path: '/admin/settings',
-			label: () => m.admin_sidebar_settings(),
+			label: () => $LL.admin_sidebar_settings(),
 			icon: 'i-heroicons-cog-6-tooth'
 		}
 	];
@@ -62,7 +62,7 @@
 				<div class="h-8 w-8 rounded bg-primary-500 flex items-center justify-center">
 					<span class="text-white font-bold text-lg">E</span>
 				</div>
-				<span class="text-xl font-bold text-gray-900 dark:text-white">{m.app_title()}</span>
+				<span class="text-xl font-bold text-gray-900 dark:text-white">{$LL.app_title()}</span>
 			</a>
 		</div>
 

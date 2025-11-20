@@ -51,6 +51,77 @@ interface AuthCodeStoreResponse {
 }
 
 /**
+ * Get signing key from KeyManager
+ * If no active key exists, generates a new one
+ */
+async function getSigningKeyFromKeyManager(
+  env: Env
+): Promise<{ privateKey: CryptoKey; kid: string }> {
+  if (!env.KEY_MANAGER) {
+    throw new Error('KEY_MANAGER binding not available');
+  }
+
+  if (!env.KEY_MANAGER_SECRET) {
+    throw new Error('KEY_MANAGER_SECRET not configured');
+  }
+
+  const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+  const keyManager = env.KEY_MANAGER.get(keyManagerId);
+
+  // Authentication header for KeyManager
+  const authHeaders = {
+    'Authorization': `Bearer ${env.KEY_MANAGER_SECRET}`,
+  };
+
+  // Try to get active key (using internal endpoint that returns privatePEM)
+  console.log('Fetching active key with auth:', { hasSecret: !!env.KEY_MANAGER_SECRET, secretLength: env.KEY_MANAGER_SECRET?.length });
+  const activeResponse = await keyManager.fetch('http://dummy/internal/active-with-private', {
+    method: 'GET',
+    headers: authHeaders,
+  });
+
+  console.log('Active key response:', { status: activeResponse.status, ok: activeResponse.ok });
+
+  let keyData: { kid: string; privatePEM: string };
+
+  if (activeResponse.ok) {
+    keyData = await activeResponse.json() as { kid: string; privatePEM: string };
+    console.log('Got active key from KeyManager:', { kid: keyData.kid, hasPEM: !!keyData.privatePEM, pemLength: keyData.privatePEM?.length });
+  } else {
+    // No active key, generate and activate one
+    console.log('No active signing key found, generating new key');
+    console.log('Rotate request auth headers:', { hasAuth: !!authHeaders.Authorization, authLength: authHeaders.Authorization?.length });
+    const rotateResponse = await keyManager.fetch('http://dummy/internal/rotate', {
+      method: 'POST',
+      headers: authHeaders,
+    });
+
+    if (!rotateResponse.ok) {
+      const errorText = await rotateResponse.text();
+      console.error('Failed to rotate key:', rotateResponse.status, errorText);
+      throw new Error('Failed to generate signing key');
+    }
+
+    const rotateText = await rotateResponse.text();
+    console.log('Received rotate response:', {
+      textLength: rotateText.length,
+      hasPrivatePEM: rotateText.includes('privatePEM'),
+      textStart: rotateText.substring(0, 200)
+    });
+
+    const rotateData = JSON.parse(rotateText) as { success: boolean; key: { kid: string; privatePEM: string } };
+    keyData = rotateData.key;
+    console.log('Generated new key from KeyManager:', { kid: keyData.kid, hasPEM: !!keyData.privatePEM, pemLength: keyData.privatePEM?.length, pemStart: keyData.privatePEM?.substring(0, 50) });
+  }
+
+  // Import private key
+  console.log('Attempting to import private key...');
+  const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
+
+  return { privateKey, kid: keyData.kid };
+}
+
+/**
  * Token Endpoint Handler
  * https://openid.net/specs/openid-connect-core-1_0.html#TokenEndpoint
  *
@@ -277,26 +348,17 @@ async function handleAuthorizationCodeGrant(
     );
   }
 
-  // Load private key for signing tokens
+  // Load private key for signing tokens from KeyManager
   // NOTE: Key loading moved BEFORE code deletion to avoid losing code on key loading failure
-  const privateKeyPEM = c.env.PRIVATE_KEY_PEM;
-  const keyId = c.env.KEY_ID || 'default';
+  let privateKey: CryptoKey;
+  let keyId: string;
 
-  if (!privateKeyPEM) {
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Server configuration error',
-      },
-      500
-    );
-  }
-
-  let privateKey;
   try {
-    privateKey = await importPKCS8(privateKeyPEM, 'RS256');
+    const signingKey = await getSigningKeyFromKeyManager(c.env);
+    privateKey = signingKey.privateKey;
+    keyId = signingKey.kid;
   } catch (error) {
-    console.error('Failed to import private key:', error);
+    console.error('Failed to get signing key from KeyManager:', error);
     return c.json(
       {
         error: 'server_error',
@@ -620,6 +682,36 @@ async function handleRefreshTokenGrant(
     );
   }
 
+  // Fetch client metadata to verify client_secret (for confidential clients)
+  const clientMetadata = await getClient(c.env, client_id);
+  if (!clientMetadata) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    return c.json(
+      {
+        error: 'invalid_client',
+        error_description: 'Client not found',
+      },
+      400
+    );
+  }
+
+  // Verify client_secret for confidential clients
+  // Public clients (e.g., SPAs, mobile apps) don't have a client_secret
+  if (clientMetadata.client_secret) {
+    if (!client_secret || client_secret !== clientMetadata.client_secret) {
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: 'Client authentication failed',
+        },
+        401
+      );
+    }
+  }
+
   // Parse refresh token to get JTI (without verification yet)
   let refreshTokenPayload;
   try {
@@ -690,49 +782,54 @@ async function handleRefreshTokenGrant(
     const kid = headerJson.kid;
 
     // Fetch JWKS from KeyManager DO
-    if (c.env.KEY_MANAGER) {
-      try {
-        const keyManagerId = c.env.KEY_MANAGER.idFromName('default');
-        const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-        const jwksResponse = await keyManager.fetch('http://internal/jwks', { method: 'GET' });
-
-        if (jwksResponse.ok) {
-          const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; [key: string]: unknown }> };
-          // Find key by kid
-          const jwk = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
-          if (jwk) {
-            publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
-          }
-        }
-      } catch (kmError) {
-        console.warn('Failed to fetch key from KeyManager, falling back to PUBLIC_JWK_JSON:', kmError);
-      }
-    }
-
-    // Fallback to PUBLIC_JWK_JSON if KeyManager unavailable
-    if (!publicKey) {
-      const publicJwkJson = c.env.PUBLIC_JWK_JSON;
-      if (publicJwkJson) {
-        const publicJwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
-        // Check if kid matches (if available)
-        if (!kid || publicJwk.kid === kid) {
-          publicKey = (await importJWK(publicJwk, 'RS256')) as CryptoKey;
-        }
-      }
-    }
-
-    if (!publicKey) {
-      console.error('No matching public key found for refresh token verification');
+    if (!c.env.KEY_MANAGER) {
+      console.error('KEY_MANAGER binding not available');
       c.header('Cache-Control', 'no-store');
       c.header('Pragma', 'no-cache');
       return c.json(
         {
           error: 'server_error',
-          error_description: 'Failed to load verification key',
+          error_description: 'KeyManager not configured',
         },
         500
       );
     }
+
+    const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+    const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
+    const jwksResponse = await keyManager.fetch('http://internal/jwks', { method: 'GET' });
+
+    if (!jwksResponse.ok) {
+      console.error('Failed to fetch JWKS from KeyManager:', jwksResponse.status);
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to fetch verification keys',
+        },
+        500
+      );
+    }
+
+    const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; [key: string]: unknown }> };
+    // Find key by kid
+    const jwk = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
+
+    if (!jwk) {
+      console.error(`No matching public key found for kid: ${kid}`);
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Verification key not found',
+        },
+        500
+      );
+    }
+
+    publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
   } catch (err) {
     console.error('Failed to import public key:', err);
     c.header('Cache-Control', 'no-store');
@@ -784,27 +881,16 @@ async function handleRefreshTokenGrant(
     grantedScope = scope;
   }
 
-  // Load private key for signing new tokens
-  const privateKeyPEM = c.env.PRIVATE_KEY_PEM;
-  const keyId = c.env.KEY_ID || 'default';
+  // Load private key for signing new tokens from KeyManager
+  let privateKey: CryptoKey;
+  let keyId: string;
 
-  if (!privateKeyPEM) {
-    c.header('Cache-Control', 'no-store');
-    c.header('Pragma', 'no-cache');
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Server configuration error',
-      },
-      500
-    );
-  }
-
-  let privateKey;
   try {
-    privateKey = await importPKCS8(privateKeyPEM, 'RS256');
+    const signingKey = await getSigningKeyFromKeyManager(c.env);
+    privateKey = signingKey.privateKey;
+    keyId = signingKey.kid;
   } catch (error) {
-    console.error('Failed to import private key:', error);
+    console.error('Failed to get signing key from KeyManager:', error);
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json(
@@ -1124,25 +1210,16 @@ async function handleJWTBearerGrant(
     }
   }
 
-  // Load private key for signing tokens
-  const privateKeyPEM = c.env.PRIVATE_KEY_PEM;
-  const keyId = c.env.KEY_ID || 'default';
-
-  if (!privateKeyPEM) {
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Server configuration error',
-      },
-      500
-    );
-  }
-
+  // Load private key for signing tokens from KeyManager
   let privateKey: CryptoKey;
+  let keyId: string;
+
   try {
-    privateKey = await importPKCS8(privateKeyPEM, 'RS256');
+    const signingKey = await getSigningKeyFromKeyManager(c.env);
+    privateKey = signingKey.privateKey;
+    keyId = signingKey.kid;
   } catch (error) {
-    console.error('Failed to import private key:', error);
+    console.error('Failed to get signing key from KeyManager:', error);
     return c.json(
       {
         error: 'server_error',
@@ -1364,19 +1441,14 @@ async function handleDeviceCodeGrant(
   );
 
   // Get private key for signing tokens
-  const keyManagerId = c.env.KEY_MANAGER.idFromName('global');
-  const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-  const keysResponse = await keyManager.fetch('https://internal/keys');
-  const { privateKeyPem, keyId } = (await keysResponse.json()) as {
-    privateKeyPem: string;
-    keyId: string;
-  };
-
   let privateKey: CryptoKey;
+  let keyId: string;
   try {
-    privateKey = await importPKCS8(privateKeyPem, 'RS256');
+    const signingKey = await getSigningKeyFromKeyManager(c.env);
+    privateKey = signingKey.privateKey;
+    keyId = signingKey.kid;
   } catch (error) {
-    console.error('Failed to import private key:', error);
+    console.error('Failed to get signing key:', error);
     return c.json(
       {
         error: 'server_error',

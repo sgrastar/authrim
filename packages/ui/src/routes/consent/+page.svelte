@@ -3,7 +3,7 @@
 	import { Button, Card, Spinner } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { CheckCircle, User, Building2, ExternalLink } from 'lucide-svelte';
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 
 	interface ConsentData {
 		clientName: string;
@@ -63,16 +63,16 @@
 	}
 
 	function getScopeLabel(scope: string): string {
-		const scopeLabels: Record<string, () => string> = {
-			openid: m.consent_scope_openid,
-			profile: m.consent_scope_profile,
-			email: m.consent_scope_email,
-			phone: m.consent_scope_phone,
-			address: m.consent_scope_address,
-			offline_access: m.consent_scope_offline_access
+		const scopeLabels: Record<string, string> = {
+			openid: $LL.consent_scope_openid(),
+			profile: $LL.consent_scope_profile(),
+			email: $LL.consent_scope_email(),
+			phone: $LL.consent_scope_phone(),
+			address: $LL.consent_scope_address(),
+			offline_access: $LL.consent_scope_offline_access()
 		};
 
-		return scopeLabels[scope]?.() || scope;
+		return scopeLabels[scope] || scope;
 	}
 
 	async function handleAllow() {
@@ -124,7 +124,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.consent_title({ clientName: consentData?.clientName || '' })} - {m.app_title()}</title>
+	<title>{$LL.consent_title({ clientName: consentData?.clientName || '' })} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
@@ -139,7 +139,7 @@
 			<!-- Loading State -->
 			<Card class="text-center py-12">
 				<Spinner size="xl" color="primary" class="mb-4" />
-				<p class="text-gray-600 dark:text-gray-400">{m.common_loading()}</p>
+				<p class="text-gray-600 dark:text-gray-400">{$LL.common_loading()}</p>
 			</Card>
 		{:else if consentData}
 			<!-- Consent Screen -->
@@ -159,11 +159,11 @@
 					{/if}
 
 					<h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2">
-						{m.consent_title({ clientName: consentData.clientName })}
+						{$LL.consent_title({ clientName: consentData.clientName })}
 					</h2>
 
 					<p class="text-gray-600 dark:text-gray-400 text-sm">
-						{m.consent_subtitle()}
+						{$LL.consent_subtitle()}
 					</p>
 
 					{#if consentData.clientUri}
@@ -182,7 +182,7 @@
 				<div class="border-t border-gray-200 dark:border-gray-700 pt-6 mb-6">
 					<!-- Scopes -->
 					<h3 class="text-sm font-medium text-gray-900 dark:text-white mb-4">
-						{m.consent_scopesTitle()}
+						{$LL.consent_scopesTitle()}
 					</h3>
 
 					<ul class="space-y-3 mb-6">
@@ -199,7 +199,7 @@
 					<!-- User Info -->
 					<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
 						<p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-							{m.consent_userInfo()}
+							{$LL.consent_userInfo()}
 						</p>
 
 						<div class="flex items-center gap-3">
@@ -232,7 +232,7 @@
 							onclick={handleSwitchAccount}
 							class="text-xs text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300 mt-2"
 						>
-							{m.consent_notYou()}
+							{$LL.consent_notYou()}
 						</button>
 					</div>
 				</div>
@@ -246,7 +246,7 @@
 						disabled={allowLoading}
 						onclick={handleDeny}
 					>
-						{m.consent_denyButton()}
+						{$LL.consent_denyButton()}
 					</Button>
 
 					<Button
@@ -256,7 +256,7 @@
 						disabled={denyLoading}
 						onclick={handleAllow}
 					>
-						{m.consent_allowButton()}
+						{$LL.consent_allowButton()}
 					</Button>
 				</div>
 
@@ -270,7 +270,7 @@
 								rel="noopener noreferrer"
 								class="hover:text-primary-600 dark:hover:text-primary-400 inline-flex items-center gap-1"
 							>
-								{m.consent_privacyPolicy()}
+								{$LL.consent_privacyPolicy()}
 								<ExternalLink class="h-3 w-3" />
 							</a>
 						{/if}
@@ -281,7 +281,7 @@
 								rel="noopener noreferrer"
 								class="hover:text-primary-600 dark:hover:text-primary-400 inline-flex items-center gap-1"
 							>
-								{m.consent_termsOfService()}
+								{$LL.consent_termsOfService()}
 								<ExternalLink class="h-3 w-3" />
 							</a>
 						{/if}
@@ -298,6 +298,6 @@
 
 	<!-- Footer -->
 	<footer class="mt-12 text-center text-xs text-gray-500 dark:text-gray-500">
-		<p>{m.footer_stack()}</p>
+		<p>{$LL.footer_stack()}</p>
 	</footer>
 </div>

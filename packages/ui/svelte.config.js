@@ -16,7 +16,10 @@ const config = {
 				include: ['/*'],
 				exclude: ['<all>']
 			}
-		})
+		}),
+		alias: {
+			$i18n: 'src/i18n'
+		}
 	}
 };
 

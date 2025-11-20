@@ -18,7 +18,7 @@ import type { Env } from '@enrai/shared';
 export async function jwksHandler(c: Context<{ Bindings: Env }>) {
   try {
     // Get KeyManager DO instance
-    const keyManagerId = c.env.KEY_MANAGER.idFromName('default');
+    const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
     // Fetch JWKS from KeyManager DO (public endpoint, no auth required)
