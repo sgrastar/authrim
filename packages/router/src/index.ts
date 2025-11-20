@@ -23,9 +23,14 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', logger());
 
 // Enhanced security headers
-app.use(
-  '*',
-  secureHeaders({
+// Skip for /authorize endpoint to allow form_post response mode with nonce-based CSP
+app.use('*', async (c, next) => {
+  // Skip secure headers for /authorize endpoint (handled by op-auth worker with nonce-based CSP)
+  if (c.req.path === '/authorize' || c.req.path.startsWith('/authorize/')) {
+    return next();
+  }
+
+  return secureHeaders({
     contentSecurityPolicy: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
@@ -41,8 +46,8 @@ app.use(
     xFrameOptions: 'DENY',
     xContentTypeOptions: 'nosniff',
     referrerPolicy: 'strict-origin-when-cross-origin',
-  })
-);
+  })(c, next);
+});
 
 // CORS configuration
 app.use(

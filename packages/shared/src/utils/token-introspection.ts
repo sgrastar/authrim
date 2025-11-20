@@ -54,6 +54,8 @@ export interface TokenValidationRequest {
   headers: Headers;
   /** Environment bindings */
   env: Env;
+  /** Request body (for form-encoded POST requests) */
+  body?: URLSearchParams;
 }
 
 /**
@@ -146,9 +148,65 @@ function extractAccessToken(authHeader: string): {
 export async function introspectToken(
   request: TokenValidationRequest
 ): Promise<TokenIntrospectionResult> {
+  let accessToken: string | null = null;
+  let isDPoP = false;
+
   // Extract Authorization header
   const authHeader = request.headers.get('Authorization');
-  if (!authHeader) {
+
+  if (authHeader) {
+    // Extract access token from Authorization header
+    const tokenInfo = extractAccessToken(authHeader);
+    if (!tokenInfo) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_request',
+          error_description:
+            'Invalid Authorization header format. Expected: Bearer <token> or DPoP <token>',
+          wwwAuthenticate: 'Bearer',
+          statusCode: 401,
+        },
+      };
+    }
+    accessToken = tokenInfo.token;
+    isDPoP = tokenInfo.isDPoP;
+  } else if (request.method === 'POST' && request.body) {
+    // RFC 6750 Section 2.2: Form-Encoded Body Parameter
+    // When sending the access token in the HTTP request entity-body, the client
+    // adds the access token to the request-body using the "access_token" parameter.
+
+    // Verify Content-Type is application/x-www-form-urlencoded
+    const contentType = request.headers.get('Content-Type');
+    if (!contentType || !contentType.includes('application/x-www-form-urlencoded')) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_request',
+          error_description: 'Missing Authorization header',
+          wwwAuthenticate: 'Bearer',
+          statusCode: 401,
+        },
+      };
+    }
+
+    // Extract access_token from form body
+    const bodyToken = request.body.get('access_token');
+    if (!bodyToken) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_request',
+          error_description: 'Missing Authorization header',
+          wwwAuthenticate: 'Bearer',
+          statusCode: 401,
+        },
+      };
+    }
+
+    accessToken = bodyToken;
+    isDPoP = false; // Form-encoded body only supports Bearer tokens
+  } else {
     return {
       valid: false,
       error: {
@@ -160,22 +218,17 @@ export async function introspectToken(
     };
   }
 
-  // Extract access token
-  const tokenInfo = extractAccessToken(authHeader);
-  if (!tokenInfo) {
+  if (!accessToken) {
     return {
       valid: false,
       error: {
         error: 'invalid_request',
-        error_description:
-          'Invalid Authorization header format. Expected: Bearer <token> or DPoP <token>',
+        error_description: 'Missing access token',
         wwwAuthenticate: 'Bearer',
         statusCode: 401,
       },
     };
   }
-
-  const { token: accessToken, isDPoP } = tokenInfo;
 
   // Load public key for verification
   // First, try to extract kid from JWT header
@@ -422,10 +475,32 @@ export async function introspectToken(
 export async function introspectTokenFromContext(
   c: Context<{ Bindings: Env }>
 ): Promise<TokenIntrospectionResult> {
+  // Parse request body if it's a POST request with form-encoded content
+  let body: URLSearchParams | undefined;
+  if (c.req.method === 'POST') {
+    const contentType = c.req.header('Content-Type');
+    if (contentType && contentType.includes('application/x-www-form-urlencoded')) {
+      try {
+        // Parse form-encoded body
+        const formData = await c.req.parseBody();
+        // Convert to URLSearchParams
+        body = new URLSearchParams();
+        for (const [key, value] of Object.entries(formData)) {
+          if (typeof value === 'string') {
+            body.append(key, value);
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to parse request body:', error);
+      }
+    }
+  }
+
   return await introspectToken({
     method: c.req.method,
     url: c.req.url,
     headers: c.req.raw.headers,
     env: c.env,
+    body,
   });
 }

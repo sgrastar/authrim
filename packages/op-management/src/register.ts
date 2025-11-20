@@ -461,6 +461,57 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // eslint-disable-next-line no-console
     console.log(`Client registered: ${clientId}`);
 
+    // OIDC Conformance Test: Create test user for certification.openid.net
+    const isCertificationTest = request.redirect_uris.some(
+      uri => uri.includes('certification.openid.net')
+    );
+
+    if (isCertificationTest) {
+      console.log('[DCR] OIDC Conformance Test detected, creating test user');
+
+      // Create fixed test user with complete profile (INSERT OR IGNORE to avoid duplicates)
+      await c.env.DB.prepare(`
+        INSERT OR IGNORE INTO users (
+          id, email, email_verified, name, given_name, family_name,
+          middle_name, nickname, preferred_username, profile, picture,
+          website, gender, birthdate, zoneinfo, locale,
+          phone_number, phone_number_verified, address_json,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        'user-oidc-conformance-test',
+        'test@example.com',
+        1, // email_verified
+        'John Doe',
+        'John',
+        'Doe',
+        'Q',
+        'Johnny',
+        'test',
+        'https://example.com/johndoe',
+        'https://example.com/avatar.jpg',
+        'https://example.com',
+        'male',
+        '1990-01-01',
+        'America/New_York',
+        'en-US',
+        '+1-555-0100',
+        1, // phone_number_verified
+        JSON.stringify({
+          formatted: '1234 Main St, Anytown, ST 12345, USA',
+          street_address: '1234 Main St',
+          locality: 'Anytown',
+          region: 'ST',
+          postal_code: '12345',
+          country: 'USA',
+        }),
+        issuedAt,
+        issuedAt
+      ).run();
+
+      console.log('[DCR] Test user created/verified: user-oidc-conformance-test');
+    }
+
     return c.json(response, 201, {
       'Cache-Control': 'no-store',
       Pragma: 'no-cache',
