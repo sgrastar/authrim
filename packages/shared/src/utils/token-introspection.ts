@@ -178,31 +178,82 @@ export async function introspectToken(
   const { token: accessToken, isDPoP } = tokenInfo;
 
   // Load public key for verification
-  const publicJWKJson = request.env.PUBLIC_JWK_JSON;
-  const keyId = request.env.KEY_ID || 'default';
-
-  if (!publicJWKJson) {
-    return {
-      valid: false,
-      error: {
-        error: 'server_error',
-        error_description: 'Server configuration error',
-        wwwAuthenticate: isDPoP ? 'DPoP' : 'Bearer',
-        statusCode: 500,
-      },
-    };
+  // First, try to extract kid from JWT header
+  let kid: string | undefined;
+  try {
+    const parts = accessToken.split('.');
+    if (parts.length === 3) {
+      const headerBase64url = parts[0];
+      const headerBase64 = headerBase64url.replace(/-/g, '+').replace(/_/g, '/');
+      const headerJson = JSON.parse(atob(headerBase64)) as { kid?: string; alg?: string };
+      kid = headerJson.kid;
+    }
+  } catch (error) {
+    console.warn('Failed to extract kid from JWT header:', error);
   }
 
-  let publicKey: CryptoKey;
-  try {
-    publicKey = await getPublicKey(publicJWKJson, keyId);
-  } catch (error) {
-    console.error('Failed to load verification key:', error);
+  let publicKey: CryptoKey | null = null;
+
+  // Try to fetch JWKS from KeyManager DO
+  if (request.env.KEY_MANAGER) {
+    try {
+      const keyManagerId = request.env.KEY_MANAGER.idFromName('default-v3');
+      const keyManager = request.env.KEY_MANAGER.get(keyManagerId);
+      const jwksResponse = await keyManager.fetch('http://internal/jwks', { method: 'GET' });
+
+      if (jwksResponse.ok) {
+        const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; [key: string]: unknown }> };
+        // Find key by kid
+        const jwk = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
+        if (jwk) {
+          publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
+        }
+      }
+    } catch (kmError) {
+      console.warn('Failed to fetch key from KeyManager, falling back to PUBLIC_JWK_JSON:', kmError);
+    }
+  }
+
+  // Fallback to PUBLIC_JWK_JSON if KeyManager unavailable or failed
+  if (!publicKey) {
+    const publicJWKJson = request.env.PUBLIC_JWK_JSON;
+    const keyId = request.env.KEY_ID || 'default';
+
+    if (!publicJWKJson) {
+      return {
+        valid: false,
+        error: {
+          error: 'server_error',
+          error_description: 'Server configuration error: no public key available',
+          wwwAuthenticate: isDPoP ? 'DPoP' : 'Bearer',
+          statusCode: 500,
+        },
+      };
+    }
+
+    try {
+      publicKey = await getPublicKey(publicJWKJson, keyId);
+    } catch (error) {
+      console.error('Failed to load verification key:', error);
+      return {
+        valid: false,
+        error: {
+          error: 'server_error',
+          error_description: 'Failed to load verification key',
+          wwwAuthenticate: isDPoP ? 'DPoP' : 'Bearer',
+          statusCode: 500,
+        },
+      };
+    }
+  }
+
+  // Ensure we have a public key
+  if (!publicKey) {
     return {
       valid: false,
       error: {
         error: 'server_error',
-        error_description: 'Failed to load verification key',
+        error_description: 'No public key available for token verification',
         wwwAuthenticate: isDPoP ? 'DPoP' : 'Bearer',
         statusCode: 500,
       },

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 	import { Card, Button } from '$lib/components';
 	import { onMount } from 'svelte';
 	import { adminAuditLogAPI } from '$lib/api/client';
@@ -151,7 +151,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.admin_audit_title()} - {m.app_title()}</title>
+	<title>{$LL.admin_audit_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -159,7 +159,7 @@
 	<div class="flex items-center justify-between">
 		<div>
 			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-				{m.admin_audit_title()}
+				{$LL.admin_audit_title()}
 			</h1>
 			<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
 				View and export system audit logs
@@ -255,19 +255,19 @@
 				<thead>
 					<tr class="border-b border-gray-200 dark:border-gray-700">
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_audit_timestamp()}
+							{$LL.admin_audit_timestamp()}
 						</th>
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_audit_user()}
+							{$LL.admin_audit_user()}
 						</th>
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_audit_action()}
+							{$LL.admin_audit_action()}
 						</th>
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_audit_resource()}
+							{$LL.admin_audit_resource()}
 						</th>
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_audit_ip()}
+							{$LL.admin_audit_ip()}
 						</th>
 					</tr>
 				</thead>

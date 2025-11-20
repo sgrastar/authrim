@@ -120,6 +120,13 @@ export class KeyManager {
     const kid = this.generateKeyId();
     const keySet = await generateKeySet(kid, 2048);
 
+    console.log('KeyManager generateNewKey - keySet:', {
+      kid,
+      hasPEM: !!keySet.privatePEM,
+      pemLength: keySet.privatePEM?.length,
+      pemStart: keySet.privatePEM?.substring(0, 50)
+    });
+
     const newKey: StoredKey = {
       kid,
       publicJWK: keySet.publicJWK,
@@ -127,6 +134,13 @@ export class KeyManager {
       createdAt: Date.now(),
       isActive: false,
     };
+
+    console.log('KeyManager generateNewKey - newKey:', {
+      kid: newKey.kid,
+      hasPEM: !!newKey.privatePEM,
+      pemLength: newKey.privatePEM?.length,
+      keys: Object.keys(newKey)
+    });
 
     const state = this.getState();
     state.keys.push(newKey);
@@ -211,7 +225,44 @@ export class KeyManager {
 
     await this.saveState();
 
-    return newKey;
+    // Return the key from state.keys to ensure it's the current version after cleanup
+    const rotatedKey = state.keys.find((k) => k.kid === newKey.kid);
+    if (!rotatedKey) {
+      throw new Error('Rotated key not found in state after rotation');
+    }
+
+    console.log('KeyManager rotateKeys - returning key:', {
+      kid: rotatedKey.kid,
+      hasPEM: !!rotatedKey.privatePEM,
+      pemLength: rotatedKey.privatePEM?.length,
+      keys: Object.keys(rotatedKey)
+    });
+
+    // Explicitly reconstruct the object to ensure all properties are enumerable and serializable
+    const result: StoredKey = {
+      kid: rotatedKey.kid,
+      publicJWK: rotatedKey.publicJWK,
+      privatePEM: rotatedKey.privatePEM,
+      createdAt: rotatedKey.createdAt,
+      isActive: rotatedKey.isActive,
+    };
+
+    console.log('KeyManager rotateKeys - reconstructed result:', {
+      kid: result.kid,
+      hasPEM: !!result.privatePEM,
+      pemLength: result.privatePEM?.length,
+      keys: Object.keys(result),
+      ownPropertyNames: Object.getOwnPropertyNames(result)
+    });
+
+    // Verify JSON serialization works
+    const testJson = JSON.stringify(result);
+    console.log('KeyManager rotateKeys - test JSON serialization:', {
+      jsonLength: testJson.length,
+      hasPrivatePEM: testJson.includes('privatePEM')
+    });
+
+    return result;
   }
 
   /**
@@ -341,13 +392,13 @@ export class KeyManager {
     // /jwks is public because it only returns public keys for JWT verification
     const isPublicEndpoint = path === '/jwks' && request.method === 'GET';
 
-    // Authenticate all requests except public endpoints
+    // All other endpoints require authentication (including /internal/* for security)
     if (!isPublicEndpoint && !this.authenticate(request)) {
       return this.unauthorizedResponse();
     }
 
     try {
-      // GET /active - Get active signing key
+      // GET /active - Get active signing key (public endpoints, no private key)
       if (path === '/active' && request.method === 'GET') {
         const activeKey = await this.getActiveKey();
 
@@ -366,6 +417,32 @@ export class KeyManager {
         });
       }
 
+      // GET /internal/active-with-private - Get active signing key with private key (for internal use by op-token)
+      if (path === '/internal/active-with-private' && request.method === 'GET') {
+        const activeKey = await this.getActiveKey();
+
+        if (!activeKey) {
+          return new Response(JSON.stringify({ error: 'No active key found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Explicitly reconstruct the object to ensure all properties are serializable
+        const result: StoredKey = {
+          kid: activeKey.kid,
+          publicJWK: activeKey.publicJWK,
+          privatePEM: activeKey.privatePEM,
+          createdAt: activeKey.createdAt,
+          isActive: activeKey.isActive,
+        };
+
+        // Return full key data including privatePEM for internal use
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       // GET /jwks - Get all public keys (JWKS format)
       if (path === '/jwks' && request.method === 'GET') {
         const keys = await this.getAllPublicKeys();
@@ -375,7 +452,7 @@ export class KeyManager {
         });
       }
 
-      // POST /rotate - Trigger key rotation
+      // POST /rotate - Trigger key rotation (public endpoint, no private key)
       if (path === '/rotate' && request.method === 'POST') {
         const newKey = await this.rotateKeys();
 
@@ -383,6 +460,34 @@ export class KeyManager {
         const safeKey = this.sanitizeKey(newKey);
 
         return new Response(JSON.stringify({ success: true, key: safeKey }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // POST /internal/rotate - Trigger key rotation and return with private key (for internal use)
+      if (path === '/internal/rotate' && request.method === 'POST') {
+        const newKey = await this.rotateKeys();
+
+        console.log('KeyManager /internal/rotate - newKey:', {
+          kid: newKey.kid,
+          hasPEM: !!newKey.privatePEM,
+          pemLength: newKey.privatePEM?.length,
+          pemStart: newKey.privatePEM?.substring(0, 50),
+          keys: Object.keys(newKey)
+        });
+
+        // Already reconstructed in rotateKeys(), so newKey should be serializable
+        const responseBody = { success: true, key: newKey };
+        const jsonString = JSON.stringify(responseBody);
+
+        console.log('KeyManager /internal/rotate - response JSON:', {
+          jsonLength: jsonString.length,
+          hasPrivatePEM: jsonString.includes('privatePEM'),
+          jsonStart: jsonString.substring(0, 200)
+        });
+
+        // Return full key data including privatePEM for internal use
+        return new Response(jsonString, {
           headers: { 'Content-Type': 'application/json' },
         });
       }

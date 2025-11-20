@@ -1,5 +1,5 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 	import { Card } from '$lib/components';
 	import { onMount } from 'svelte';
 
@@ -105,14 +105,14 @@
 </script>
 
 <svelte:head>
-	<title>{m.admin_dashboard_title()} - {m.app_title()}</title>
+	<title>{$LL.admin_dashboard_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="space-y-6">
 	<!-- Page header -->
 	<div>
 		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-			{m.admin_dashboard_title()}
+			{$LL.admin_dashboard_title()}
 		</h1>
 		<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
 			Overview of your Enrai instance
@@ -126,7 +126,7 @@
 			<div class="flex items-center justify-between">
 				<div>
 					<p class="text-sm font-medium text-gray-500 dark:text-gray-400">
-						{m.admin_dashboard_activeUsers()}
+						{$LL.admin_dashboard_activeUsers()}
 					</p>
 					<p class="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
 						{#if loading}
@@ -147,7 +147,7 @@
 			<div class="flex items-center justify-between">
 				<div>
 					<p class="text-sm font-medium text-gray-500 dark:text-gray-400">
-						{m.admin_dashboard_totalUsers()}
+						{$LL.admin_dashboard_totalUsers()}
 					</p>
 					<p class="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
 						{#if loading}
@@ -168,7 +168,7 @@
 			<div class="flex items-center justify-between">
 				<div>
 					<p class="text-sm font-medium text-gray-500 dark:text-gray-400">
-						{m.admin_dashboard_clients()}
+						{$LL.admin_dashboard_clients()}
 					</p>
 					<p class="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
 						{#if loading}
@@ -189,7 +189,7 @@
 			<div class="flex items-center justify-between">
 				<div>
 					<p class="text-sm font-medium text-gray-500 dark:text-gray-400">
-						{m.admin_dashboard_todayLogins()}
+						{$LL.admin_dashboard_todayLogins()}
 					</p>
 					<p class="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
 						{#if loading}
@@ -210,7 +210,7 @@
 	<Card>
 		<div class="mb-4">
 			<h2 class="text-lg font-semibold text-gray-900 dark:text-white">
-				{m.admin_dashboard_recentActivity()}
+				{$LL.admin_dashboard_recentActivity()}
 			</h2>
 		</div>
 

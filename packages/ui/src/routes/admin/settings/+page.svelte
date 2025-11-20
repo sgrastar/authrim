@@ -1,5 +1,5 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 	import { Card, Button, Input } from '$lib/components';
 	import { onMount } from 'svelte';
 	import { adminSettingsAPI } from '$lib/api/client';
@@ -161,7 +161,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.admin_settings_title()} - {m.app_title()}</title>
+	<title>{$LL.admin_settings_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -169,7 +169,7 @@
 	<div class="flex items-center justify-between">
 		<div>
 			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-				{m.admin_settings_title()}
+				{$LL.admin_settings_title()}
 			</h1>
 			<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
 				Configure your Enrai instance
@@ -218,7 +218,7 @@
 				class:dark:hover:text-gray-300={activeTab !== 'general'}
 				onclick={() => setTab('general')}
 			>
-				{m.admin_settings_general()}
+				{$LL.admin_settings_general()}
 			</button>
 			<button
 				class="border-b-2 px-1 py-4 text-sm font-medium transition-colors"
@@ -232,7 +232,7 @@
 				class:dark:hover:text-gray-300={activeTab !== 'appearance'}
 				onclick={() => setTab('appearance')}
 			>
-				{m.admin_settings_appearance()}
+				{$LL.admin_settings_appearance()}
 			</button>
 			<button
 				class="border-b-2 px-1 py-4 text-sm font-medium transition-colors"
@@ -246,7 +246,7 @@
 				class:dark:hover:text-gray-300={activeTab !== 'security'}
 				onclick={() => setTab('security')}
 			>
-				{m.admin_settings_security()}
+				{$LL.admin_settings_security()}
 			</button>
 			<button
 				class="border-b-2 px-1 py-4 text-sm font-medium transition-colors"
@@ -260,7 +260,7 @@
 				class:dark:hover:text-gray-300={activeTab !== 'email'}
 				onclick={() => setTab('email')}
 			>
-				{m.admin_settings_email()}
+				{$LL.admin_settings_email()}
 			</button>
 			<button
 				class="border-b-2 px-1 py-4 text-sm font-medium transition-colors"
@@ -274,7 +274,7 @@
 				class:dark:hover:text-gray-300={activeTab !== 'advanced'}
 				onclick={() => setTab('advanced')}
 			>
-				{m.admin_settings_advanced()}
+				{$LL.admin_settings_advanced()}
 			</button>
 		</nav>
 	</div>

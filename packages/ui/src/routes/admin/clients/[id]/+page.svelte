@@ -1,5 +1,5 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 	import { Card, Button, Input } from '$lib/components';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
@@ -71,7 +71,7 @@
 	}
 
 	async function handleDelete() {
-		if (!confirm(m.admin_client_detail_deleteClient() + '?')) return;
+		if (!confirm($LL.admin_client_detail_deleteClient() + '?')) return;
 
 		// Simulate API call - would call DELETE /admin/clients/:id in real implementation
 		await new Promise((resolve) => setTimeout(resolve, 500));
@@ -118,7 +118,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.admin_client_detail_title()} - {m.app_title()}</title>
+	<title>{$LL.admin_client_detail_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -133,7 +133,7 @@
 				Back to clients
 			</a>
 			<h1 class="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
-				{m.admin_client_detail_title()}
+				{$LL.admin_client_detail_title()}
 			</h1>
 		</div>
 		<div class="flex gap-2">
@@ -141,13 +141,13 @@
 				{#if saving}
 					<div class="i-heroicons-arrow-path h-4 w-4 animate-spin"></div>
 				{/if}
-				{m.admin_client_detail_save()}
+				{$LL.admin_client_detail_save()}
 			</Button>
 			<Button variant="secondary" onclick={handleRegenerateSecret} disabled={loading}>
-				{m.admin_client_detail_regenerateSecret()}
+				{$LL.admin_client_detail_regenerateSecret()}
 			</Button>
 			<Button variant="secondary" onclick={handleDelete} disabled={loading}>
-				{m.admin_client_detail_deleteClient()}
+				{$LL.admin_client_detail_deleteClient()}
 			</Button>
 		</div>
 	</div>
@@ -169,7 +169,7 @@
 		<!-- Basic Information -->
 		<Card>
 			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
-				{m.admin_client_detail_basicInfo()}
+				{$LL.admin_client_detail_basicInfo()}
 			</h2>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div>
@@ -219,7 +219,7 @@
 		<!-- Redirect URIs -->
 		<Card>
 			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
-				{m.admin_client_detail_redirectUris()}
+				{$LL.admin_client_detail_redirectUris()}
 			</h2>
 
 			<div class="mb-4 flex gap-2">
@@ -255,7 +255,7 @@
 		<!-- Grant Types -->
 		<Card>
 			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
-				{m.admin_client_detail_grantTypes()}
+				{$LL.admin_client_detail_grantTypes()}
 			</h2>
 			<div class="space-y-2">
 				{#each availableGrantTypes as grantType (grantType.value)}
@@ -275,7 +275,7 @@
 		<!-- Scopes -->
 		<Card>
 			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
-				{m.admin_client_detail_scopes()}
+				{$LL.admin_client_detail_scopes()}
 			</h2>
 			<div>
 				<label for="scope" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">

@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(sudo apt-get:*)",
-      "Bash(sudo apt-get install:*)"
+      "Bash(sudo apt-get install:*)",
+      "Bash(pnpm:*)",
+      "Bash(find:*)",
+      "WebFetch(domain:auth0.com)",
+      "Bash(./scripts/deploy-with-retry.sh:*)"
     ],
     "deny": [],
     "ask": []

@@ -2,7 +2,7 @@
 	import { Button, Input, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { Mail, Key } from 'lucide-svelte';
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, magicLinkAPI } from '$lib/api/client';
 	import { startAuthentication } from '@simplewebauthn/browser';
 
@@ -32,12 +32,12 @@
 
 		// Validate email
 		if (!email.trim()) {
-			error = m.login_errorEmailRequired();
+			error = $LL.login_errorEmailRequired();
 			return;
 		}
 
 		if (!validateEmail(email)) {
-			error = m.login_errorEmailInvalid();
+			error = $LL.login_errorEmailInvalid();
 			return;
 		}
 
@@ -148,12 +148,12 @@
 
 		// Validate email
 		if (!email.trim()) {
-			error = m.login_errorEmailRequired();
+			error = $LL.login_errorEmailRequired();
 			return;
 		}
 
 		if (!validateEmail(email)) {
-			error = m.login_errorEmailInvalid();
+			error = $LL.login_errorEmailInvalid();
 			return;
 		}
 
@@ -188,7 +188,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.login_title()} - {m.app_title()}</title>
+	<title>{$LL.login_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
@@ -202,10 +202,10 @@
 		<!-- Logo -->
 		<div class="text-center mb-8">
 			<h1 class="text-4xl font-bold text-primary-600 dark:text-primary-400 mb-2">
-				{m.app_title()}
+				{$LL.app_title()}
 			</h1>
 			<p class="text-gray-600 dark:text-gray-400 text-sm">
-				{m.app_subtitle()}
+				{$LL.app_subtitle()}
 			</p>
 		</div>
 
@@ -213,10 +213,10 @@
 		<Card class="mb-6">
 			<div class="mb-6">
 				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-1">
-					{m.login_title()}
+					{$LL.login_title()}
 				</h2>
 				<p class="text-gray-600 dark:text-gray-400 text-sm">
-					{m.login_subtitle()}
+					{$LL.login_subtitle()}
 				</p>
 			</div>
 
@@ -230,9 +230,9 @@
 			<!-- Email Input -->
 			<div class="mb-6">
 				<Input
-					label={m.common_email()}
+					label={$LL.common_email()}
 					type="email"
-					placeholder={m.common_emailPlaceholder()}
+					placeholder={$LL.common_emailPlaceholder()}
 					bind:value={email}
 					onkeypress={handleKeyPress}
 					autocomplete="email"
@@ -254,13 +254,13 @@
 					onclick={handlePasskeyLogin}
 				>
 					<Key class="h-5 w-5" />
-					{m.login_continueWithPasskey()}
+					{$LL.login_continueWithPasskey()}
 				</Button>
 
 				<!-- Divider -->
 				<div class="flex items-center my-4">
 					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
-					<span class="px-4 text-sm text-gray-500 dark:text-gray-400">{m.common_or()}</span>
+					<span class="px-4 text-sm text-gray-500 dark:text-gray-400">{$LL.common_or()}</span>
 					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
 				</div>
 			{/if}
@@ -274,7 +274,7 @@
 				onclick={handleMagicLinkSend}
 			>
 				<Mail class="h-5 w-5" />
-				{m.login_sendMagicLink()}
+				{$LL.login_sendMagicLink()}
 			</Button>
 		</Card>
 
@@ -306,13 +306,13 @@
 				href="/register"
 				class="font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
 			>
-				{m.login_createAccount()}
+				{$LL.login_createAccount()}
 			</a>
 		</p>
 	</div>
 
 	<!-- Footer -->
 	<footer class="mt-12 text-center text-xs text-gray-500 dark:text-gray-500">
-		<p>{m.footer_stack()}</p>
+		<p>{$LL.footer_stack()}</p>
 	</footer>
 </div>
