@@ -315,10 +315,44 @@ function generateClientSecret(): string {
 }
 
 /**
- * Store client metadata in KV
+ * Store client metadata in KV and D1
  */
 async function storeClient(env: Env, clientId: string, metadata: ClientMetadata): Promise<void> {
+  // Store in KV for fast access
   await env.CLIENTS.put(clientId, JSON.stringify(metadata));
+
+  // Store in D1 for consent foreign key constraints
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(`
+    INSERT OR REPLACE INTO oauth_clients (
+      client_id, client_secret, client_name, redirect_uris,
+      grant_types, response_types, scope, logo_uri,
+      client_uri, policy_uri, tos_uri, contacts,
+      subject_type, sector_identifier_uri,
+      token_endpoint_auth_method, is_trusted, skip_consent,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    clientId,
+    metadata.client_secret || null,
+    metadata.client_name || null,
+    JSON.stringify(metadata.redirect_uris),
+    JSON.stringify(metadata.grant_types || ['authorization_code']),
+    JSON.stringify(metadata.response_types || ['code']),
+    metadata.scope || null,
+    metadata.logo_uri || null,
+    metadata.client_uri || null,
+    metadata.policy_uri || null,
+    metadata.tos_uri || null,
+    metadata.contacts ? JSON.stringify(metadata.contacts) : null,
+    metadata.subject_type || 'public',
+    metadata.sector_identifier_uri || null,
+    metadata.token_endpoint_auth_method || 'client_secret_basic',
+    metadata.is_trusted ? 1 : 0,
+    metadata.skip_consent ? 1 : 0,
+    metadata.created_at || now,
+    metadata.updated_at || now
+  ).run();
 }
 
 /**
@@ -371,6 +405,18 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const responseTypes = request.response_types || ['code'];
     const applicationType = request.application_type || 'web';
 
+    // Determine if client is trusted based on redirect_uri domain
+    // Trusted clients can skip consent screens (First-Party clients)
+    const redirectDomain = new URL(request.redirect_uris[0]).hostname;
+    const issuerDomain = new URL(c.env.ISSUER_URL).hostname;
+    const trustedDomains = c.env.TRUSTED_DOMAINS?.split(',').map(d => d.trim()) || [];
+
+    const isTrusted =
+      redirectDomain === issuerDomain ||
+      trustedDomains.includes(redirectDomain);
+
+    console.log(`[DCR] Client registration: domain=${redirectDomain}, trusted=${isTrusted}`);
+
     // Build response
     const response: ClientRegistrationResponse = {
       client_id: clientId,
@@ -405,6 +451,8 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       ...response,
       created_at: issuedAt,
       updated_at: issuedAt,
+      is_trusted: isTrusted,
+      skip_consent: isTrusted, // Trusted clients skip consent by default
     };
 
     await storeClient(c.env, clientId, metadata);
