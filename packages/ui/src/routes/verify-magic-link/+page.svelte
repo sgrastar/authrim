@@ -3,7 +3,7 @@
 	import { Button, Card, Alert, Spinner } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { CheckCircle, XCircle } from 'lucide-svelte';
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 	import { magicLinkAPI } from '$lib/api/client';
 
 	type VerificationState = 'verifying' | 'success' | 'error';
@@ -20,7 +20,7 @@
 		// If no token, show error
 		if (!token) {
 			verificationState = 'error';
-			errorMessage = m.magicLink_verify_errorInvalid();
+			errorMessage = $LL.magicLink_verify_errorInvalid();
 			return;
 		}
 
@@ -34,7 +34,7 @@
 			const { data, error } = await magicLinkAPI.verify(token);
 
 			if (error) {
-				throw new Error(error.error_description || m.magicLink_verify_errorInvalid());
+				throw new Error(error.error_description || $LL.magicLink_verify_errorInvalid());
 			}
 
 			// Verification successful
@@ -53,7 +53,7 @@
 			}, 2000);
 		} catch (err) {
 			verificationState = 'error';
-			errorMessage = err instanceof Error ? err.message : m.magicLink_verify_errorInvalid();
+			errorMessage = err instanceof Error ? err.message : $LL.magicLink_verify_errorInvalid();
 			console.error('Magic link verification error:', err);
 		}
 	}
@@ -64,7 +64,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.magicLink_verify_title()} - {m.app_title()}</title>
+	<title>{$LL.magicLink_verify_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
@@ -78,10 +78,10 @@
 		<!-- Logo -->
 		<div class="text-center mb-8">
 			<h1 class="text-4xl font-bold text-primary-600 dark:text-primary-400 mb-2">
-				{m.app_title()}
+				{$LL.app_title()}
 			</h1>
 			<p class="text-gray-600 dark:text-gray-400 text-sm">
-				{m.app_subtitle()}
+				{$LL.app_subtitle()}
 			</p>
 		</div>
 
@@ -94,11 +94,11 @@
 				</div>
 
 				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2">
-					{m.magicLink_verify_title()}
+					{$LL.magicLink_verify_title()}
 				</h2>
 
 				<p class="text-gray-600 dark:text-gray-400">
-					{m.magicLink_verify_subtitle()}
+					{$LL.magicLink_verify_subtitle()}
 				</p>
 			{:else if state === 'success'}
 				<!-- Success State -->
@@ -109,11 +109,11 @@
 				</div>
 
 				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2">
-					{m.magicLink_verify_success()}
+					{$LL.magicLink_verify_success()}
 				</h2>
 
 				<p class="text-gray-600 dark:text-gray-400">
-					{m.common_loading()}
+					{$LL.common_loading()}
 				</p>
 			{:else if state === 'error'}
 				<!-- Error State -->
@@ -124,7 +124,7 @@
 				</div>
 
 				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-4">
-					{m.error_title()}
+					{$LL.error_title()}
 				</h2>
 
 				<Alert variant="error" class="mb-6 text-left">
@@ -136,7 +136,7 @@
 					class="w-full"
 					onclick={handleRequestNewLink}
 				>
-					{m.magicLink_verify_requestNew()}
+					{$LL.magicLink_verify_requestNew()}
 				</Button>
 			{/if}
 		</Card>
@@ -144,6 +144,6 @@
 
 	<!-- Footer -->
 	<footer class="mt-12 text-center text-xs text-gray-500 dark:text-gray-500">
-		<p>{m.footer_stack()}</p>
+		<p>{$LL.footer_stack()}</p>
 	</footer>
 </div>

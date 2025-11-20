@@ -1,5 +1,5 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 	import { Card, Button, Input } from '$lib/components';
 	import { onMount } from 'svelte';
 	import { adminUsersAPI } from '$lib/api/client';
@@ -113,7 +113,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.admin_users_title()} - {m.app_title()}</title>
+	<title>{$LL.admin_users_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -121,14 +121,14 @@
 	<div class="flex items-center justify-between">
 		<div>
 			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-				{m.admin_users_title()}
+				{$LL.admin_users_title()}
 			</h1>
 			<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
 				Manage user accounts and permissions
 			</p>
 		</div>
 		<Button variant="primary" onclick={() => (window.location.href = '/admin/users/new')}>
-			{m.admin_users_addUser()}
+			{$LL.admin_users_addUser()}
 		</Button>
 	</div>
 
@@ -139,7 +139,7 @@
 			<div class="flex-1 max-w-md">
 				<Input
 					type="text"
-					placeholder={m.admin_users_search()}
+					placeholder={$LL.admin_users_search()}
 					bind:value={searchQuery}
 					oninput={handleSearch}
 				>
@@ -159,7 +159,7 @@
 					class:dark:text-gray-300={filterStatus !== 'all'}
 					onclick={() => handleFilterChange('all')}
 				>
-					{m.admin_users_all()}
+					{$LL.admin_users_all()}
 				</button>
 				<button
 					class="rounded-lg px-3 py-2 text-sm font-medium transition-colors"
@@ -171,7 +171,7 @@
 					class:dark:text-gray-300={filterStatus !== 'verified'}
 					onclick={() => handleFilterChange('verified')}
 				>
-					{m.admin_users_verified()}
+					{$LL.admin_users_verified()}
 				</button>
 				<button
 					class="rounded-lg px-3 py-2 text-sm font-medium transition-colors"
@@ -183,7 +183,7 @@
 					class:dark:text-gray-300={filterStatus !== 'unverified'}
 					onclick={() => handleFilterChange('unverified')}
 				>
-					{m.admin_users_unverified()}
+					{$LL.admin_users_unverified()}
 				</button>
 			</div>
 		</div>
@@ -196,22 +196,22 @@
 				<thead>
 					<tr class="border-b border-gray-200 dark:border-gray-700">
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_users_email()}
+							{$LL.admin_users_email()}
 						</th>
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_users_name()}
+							{$LL.admin_users_name()}
 						</th>
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_users_status()}
+							{$LL.admin_users_status()}
 						</th>
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_users_created()}
+							{$LL.admin_users_created()}
 						</th>
 						<th class="px-4 py-3 text-left text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_users_lastLogin()}
+							{$LL.admin_users_lastLogin()}
 						</th>
 						<th class="px-4 py-3 text-right text-sm font-semibold text-gray-900 dark:text-white">
-							{m.admin_users_actions()}
+							{$LL.admin_users_actions()}
 						</th>
 					</tr>
 				</thead>
@@ -285,13 +285,13 @@
 											href={`/admin/users/${user.id}`}
 											class="rounded bg-primary-500 px-3 py-1 text-xs font-medium text-white hover:bg-primary-600 transition-colors"
 										>
-											{m.admin_users_view()}
+											{$LL.admin_users_view()}
 										</a>
 										<button
 											class="rounded bg-red-500 px-3 py-1 text-xs font-medium text-white hover:bg-red-600 transition-colors"
 											onclick={() => handleDeleteUser(user.id)}
 										>
-											{m.admin_users_delete()}
+											{$LL.admin_users_delete()}
 										</button>
 									</div>
 								</td>

@@ -3,7 +3,7 @@
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { MailCheck, ArrowLeft } from 'lucide-svelte';
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 	import { magicLinkAPI } from '$lib/api/client';
 
 	let email = $state('');
@@ -70,7 +70,7 @@
 			}
 
 			console.log('Magic link resent to:', email);
-			successMessage = m.magicLink_sent_resendSuccess();
+			successMessage = $LL.magicLink_sent_resendSuccess();
 
 			// Restart countdown timer
 			startCountdown();
@@ -84,7 +84,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.magicLink_sent_title()} - {m.app_title()}</title>
+	<title>{$LL.magicLink_sent_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
@@ -98,10 +98,10 @@
 		<!-- Logo -->
 		<div class="text-center mb-8">
 			<h1 class="text-4xl font-bold text-primary-600 dark:text-primary-400 mb-2">
-				{m.app_title()}
+				{$LL.app_title()}
 			</h1>
 			<p class="text-gray-600 dark:text-gray-400 text-sm">
-				{m.app_subtitle()}
+				{$LL.app_subtitle()}
 			</p>
 		</div>
 
@@ -116,13 +116,13 @@
 
 			<!-- Title -->
 			<h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2 text-center">
-				{m.magicLink_sent_title()}
+				{$LL.magicLink_sent_title()}
 			</h2>
 
 			<!-- Email -->
 			<div class="mb-6 text-center">
 				<p class="text-gray-600 dark:text-gray-400 mb-2">
-					{m.magicLink_sent_subtitle()}
+					{$LL.magicLink_sent_subtitle()}
 				</p>
 				<p class="text-lg font-medium text-gray-900 dark:text-white break-all">
 					{email}
@@ -132,7 +132,7 @@
 			<!-- Instructions -->
 			<div class="bg-info-50 dark:bg-info-900/20 border border-info-200 dark:border-info-800 rounded-lg p-4 mb-6">
 				<p class="text-sm text-info-800 dark:text-info-200">
-					{m.magicLink_sent_instructions()}
+					{$LL.magicLink_sent_instructions()}
 				</p>
 			</div>
 
@@ -159,9 +159,9 @@
 				onclick={handleResend}
 			>
 				{#if canResend || resendLoading}
-					{m.magicLink_sent_resendButton()}
+					{$LL.magicLink_sent_resendButton()}
 				{:else}
-					{m.magicLink_sent_resendTimer({ seconds: countdown })}
+					{$LL.magicLink_sent_resendTimer({ seconds: countdown })}
 				{/if}
 			</Button>
 		</Card>
@@ -173,13 +173,13 @@
 				class="inline-flex items-center gap-2 text-sm font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
 			>
 				<ArrowLeft class="h-4 w-4" />
-				{m.common_backToLogin()}
+				{$LL.common_backToLogin()}
 			</a>
 		</p>
 	</div>
 
 	<!-- Footer -->
 	<footer class="mt-12 text-center text-xs text-gray-500 dark:text-gray-500">
-		<p>{m.footer_stack()}</p>
+		<p>{$LL.footer_stack()}</p>
 	</footer>
 </div>

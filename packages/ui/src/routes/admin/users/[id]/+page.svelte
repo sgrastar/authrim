@@ -1,5 +1,5 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 	import { Card, Button, Input } from '$lib/components';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
@@ -102,7 +102,7 @@
 	}
 
 	async function handleDelete() {
-		if (!confirm(m.admin_user_detail_deleteConfirm())) return;
+		if (!confirm($LL.admin_user_detail_deleteConfirm())) return;
 
 		// Simulate API call - would call DELETE /admin/users/:id in real implementation
 		await new Promise((resolve) => setTimeout(resolve, 500));
@@ -129,7 +129,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.admin_user_detail_title()} - {m.app_title()}</title>
+	<title>{$LL.admin_user_detail_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="space-y-6">
@@ -144,7 +144,7 @@
 				Back to users
 			</a>
 			<h1 class="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
-				{m.admin_user_detail_title()}
+				{$LL.admin_user_detail_title()}
 			</h1>
 		</div>
 		<div class="flex gap-2">
@@ -152,10 +152,10 @@
 				{#if saving}
 					<div class="i-heroicons-arrow-path h-4 w-4 animate-spin"></div>
 				{/if}
-				{m.admin_user_detail_save()}
+				{$LL.admin_user_detail_save()}
 			</Button>
 			<Button variant="secondary" onclick={handleDelete} disabled={loading}>
-				{m.admin_user_detail_deleteUser()}
+				{$LL.admin_user_detail_deleteUser()}
 			</Button>
 		</div>
 	</div>
@@ -177,7 +177,7 @@
 		<!-- Basic Information -->
 		<Card>
 			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
-				{m.admin_user_detail_basicInfo()}
+				{$LL.admin_user_detail_basicInfo()}
 			</h2>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div>
@@ -232,7 +232,7 @@
 		<!-- Registered Passkeys -->
 		<Card>
 			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
-				{m.admin_user_detail_passkeys()}
+				{$LL.admin_user_detail_passkeys()}
 			</h2>
 			{#if passkeys.length === 0}
 				<p class="text-sm text-gray-500 dark:text-gray-400">No passkeys registered</p>
@@ -271,7 +271,7 @@
 		<!-- Active Sessions -->
 		<Card>
 			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
-				{m.admin_user_detail_sessions()}
+				{$LL.admin_user_detail_sessions()}
 			</h2>
 			{#if sessions.length === 0}
 				<p class="text-sm text-gray-500 dark:text-gray-400">No active sessions</p>

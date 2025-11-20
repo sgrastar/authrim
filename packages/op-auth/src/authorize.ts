@@ -109,115 +109,161 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // RFC 9126: If request_uri is present, fetch parameters from PAR storage
+  // OIDC Core 6.2: Also support HTTPS request_uri (Request Object by Reference)
   if (request_uri) {
-    // Validate request_uri format
-    if (!request_uri.startsWith('urn:ietf:params:oauth:request_uri:')) {
+    // Check if this is a PAR request_uri (URN) or HTTPS request_uri
+    const isPAR = request_uri.startsWith('urn:ietf:params:oauth:request_uri:');
+    const isHTTPS = request_uri.startsWith('https://');
+
+    if (!isPAR && !isHTTPS) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: 'Invalid request_uri format',
+          error_description: 'request_uri must be either urn:ietf:params:oauth:request_uri: or https://',
         },
         400
       );
     }
 
-    // Retrieve request parameters atomically (issue #11: single-use guarantee)
-    // Try DO first, fall back to KV
-    let parsedData: {
-      client_id: string;
-      response_type: string;
-      redirect_uri: string;
-      scope: string;
-      state?: string;
-      nonce?: string;
-      code_challenge?: string;
-      code_challenge_method?: string;
-      claims?: string;
-      response_mode?: string;
-    } | null = null;
+    // Handle HTTPS request_uri (Request Object by Reference)
+    if (isHTTPS) {
+      try {
+        // Fetch the Request Object from the URL
+        const requestObjectResponse = await fetch(request_uri, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/oauth-authz-req+jwt, application/jwt',
+          },
+        });
 
-    if (!c.env.PAR_REQUEST_STORE || !client_id) {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'PAR request storage unavailable',
-        },
-        500
-      );
+        if (!requestObjectResponse.ok) {
+          return c.json(
+            {
+              error: 'invalid_request_uri',
+              error_description: 'Failed to fetch request object from request_uri',
+            },
+            400
+          );
+        }
+
+        const requestObject = await requestObjectResponse.text();
+
+        // Use the fetched Request Object as if it was the 'request' parameter
+        request = requestObject;
+        // Continue to request parameter processing below
+        request_uri = undefined; // Clear request_uri to avoid PAR processing
+      } catch (error) {
+        console.error('Failed to fetch request_uri:', error);
+        return c.json(
+          {
+            error: 'invalid_request_uri',
+            error_description: 'Failed to fetch request object from request_uri',
+          },
+          400
+        );
+      }
     }
 
-    // Use PARRequestStore DO for atomic consume
-    const id = c.env.PAR_REQUEST_STORE.idFromName(client_id);
-    const stub = c.env.PAR_REQUEST_STORE.get(id);
+    // Handle PAR request_uri (URN format)
+    if (isPAR) {
+      // Retrieve request parameters atomically (issue #11: single-use guarantee)
+      // Try DO first, fall back to KV
+      let parsedData: {
+        client_id: string;
+        response_type: string;
+        redirect_uri: string;
+        scope: string;
+        state?: string;
+        nonce?: string;
+        code_challenge?: string;
+        code_challenge_method?: string;
+        claims?: string;
+        response_mode?: string;
+      } | null = null;
 
-    const response = await stub.fetch('http://internal/request/consume', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requestUri: request_uri,
-        client_id: client_id,
-      }),
-    });
+      if (!c.env.PAR_REQUEST_STORE || !client_id) {
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: 'PAR request storage unavailable',
+          },
+          500
+        );
+      }
 
-    if (response.ok) {
-      parsedData = (await response.json()) as typeof parsedData;
-    }
+      // Use PARRequestStore DO for atomic consume
+      const id = c.env.PAR_REQUEST_STORE.idFromName(client_id);
+      const stub = c.env.PAR_REQUEST_STORE.get(id);
 
-    if (!parsedData) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Invalid or expired request_uri',
-        },
-        400
-      );
-    }
+      const response = await stub.fetch('http://internal/request/consume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestUri: request_uri,
+          client_id: client_id,
+        }),
+      });
 
-    // Type assertion to help TypeScript understand parsedData is non-null after null check
-    const parData: {
-      client_id: string;
-      response_type: string;
-      redirect_uri: string;
-      scope: string;
-      state?: string;
-      nonce?: string;
-      code_challenge?: string;
-      code_challenge_method?: string;
-      claims?: string;
-      response_mode?: string;
-    } = parsedData;
+      if (response.ok) {
+        parsedData = (await response.json()) as typeof parsedData;
+      }
 
-    try {
-      // RFC 9126: When using request_uri, client_id from query MUST match client_id from PAR
-      if (client_id && client_id !== parData.client_id) {
+      if (!parsedData) {
         return c.json(
           {
             error: 'invalid_request',
-            error_description: 'client_id mismatch',
+            error_description: 'Invalid or expired request_uri',
           },
           400
         );
       }
 
-      // Load parameters from PAR request
-      response_type = parData.response_type;
-      client_id = parData.client_id;
-      redirect_uri = parData.redirect_uri;
-      scope = parData.scope;
-      state = parData.state;
-      nonce = parData.nonce;
-      code_challenge = parData.code_challenge;
-      code_challenge_method = parData.code_challenge_method;
-      claims = parData.claims;
-      response_mode = parData.response_mode;
-    } catch {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Failed to process request_uri',
-        },
-        500
-      );
+      // Type assertion to help TypeScript understand parsedData is non-null after null check
+      const parData: {
+        client_id: string;
+        response_type: string;
+        redirect_uri: string;
+        scope: string;
+        state?: string;
+        nonce?: string;
+        code_challenge?: string;
+        code_challenge_method?: string;
+        claims?: string;
+        response_mode?: string;
+      } = parsedData;
+
+      try {
+        // RFC 9126: When using request_uri, client_id from query MUST match client_id from PAR
+        if (client_id && client_id !== parData.client_id) {
+          return c.json(
+            {
+              error: 'invalid_request',
+              error_description: 'client_id mismatch',
+            },
+            400
+          );
+        }
+
+        // Load parameters from PAR request
+        response_type = parData.response_type;
+        client_id = parData.client_id;
+        redirect_uri = parData.redirect_uri;
+        scope = parData.scope;
+        state = parData.state;
+        nonce = parData.nonce;
+        code_challenge = parData.code_challenge;
+        code_challenge_method = parData.code_challenge_method;
+        claims = parData.claims;
+        response_mode = parData.response_mode;
+      } catch {
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: 'Failed to process request_uri',
+          },
+          500
+        );
+      }
     }
   }
 
@@ -743,10 +789,19 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // If this is a re-authentication confirmation callback, restore original auth_time and sessionUserId
+  // EXCEPT when prompt=login (which requires a new auth_time)
   if (_confirmed === 'true') {
-    if (_auth_time) {
+    const promptValues = prompt ? prompt.split(' ') : [];
+    const isPromptLogin = promptValues.includes('login');
+
+    // Only restore auth_time if NOT prompt=login
+    if (_auth_time && !isPromptLogin) {
       authTime = parseInt(_auth_time, 10);
+    } else if (isPromptLogin) {
+      // For prompt=login, clear auth_time to force new authentication time
+      authTime = undefined;
     }
+
     if (_session_user_id) {
       sessionUserId = _session_user_id;
     }
@@ -770,7 +825,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
       if (c.env.KEY_MANAGER) {
         try {
-          const keyManagerId = c.env.KEY_MANAGER.idFromName('default');
+          const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
           const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
           const jwksResponse = await keyManager.fetch('http://internal/jwks', { method: 'GET' });
 

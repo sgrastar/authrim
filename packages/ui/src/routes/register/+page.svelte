@@ -2,7 +2,7 @@
 	import { Button, Input, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { Mail, Key, User } from 'lucide-svelte';
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, magicLinkAPI } from '$lib/api/client';
 	import { startRegistration } from '@simplewebauthn/browser';
 
@@ -37,18 +37,18 @@
 
 		// Validate email
 		if (!email.trim()) {
-			emailError = m.login_errorEmailRequired();
+			emailError = $LL.login_errorEmailRequired();
 			return;
 		}
 
 		if (!validateEmail(email)) {
-			emailError = m.login_errorEmailInvalid();
+			emailError = $LL.login_errorEmailInvalid();
 			return;
 		}
 
 		// Validate name
 		if (!name.trim()) {
-			nameError = m.register_errorNameRequired();
+			nameError = $LL.register_errorNameRequired();
 			return;
 		}
 
@@ -161,18 +161,18 @@
 
 		// Validate email
 		if (!email.trim()) {
-			emailError = m.login_errorEmailRequired();
+			emailError = $LL.login_errorEmailRequired();
 			return;
 		}
 
 		if (!validateEmail(email)) {
-			emailError = m.login_errorEmailInvalid();
+			emailError = $LL.login_errorEmailInvalid();
 			return;
 		}
 
 		// Validate name (optional for magic link, but recommended)
 		if (!name.trim()) {
-			nameError = m.register_errorNameRequired();
+			nameError = $LL.register_errorNameRequired();
 			return;
 		}
 
@@ -207,7 +207,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.register_title()} - {m.app_title()}</title>
+	<title>{$LL.register_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
@@ -221,10 +221,10 @@
 		<!-- Logo -->
 		<div class="text-center mb-8">
 			<h1 class="text-4xl font-bold text-primary-600 dark:text-primary-400 mb-2">
-				{m.app_title()}
+				{$LL.app_title()}
 			</h1>
 			<p class="text-gray-600 dark:text-gray-400 text-sm">
-				{m.app_subtitle()}
+				{$LL.app_subtitle()}
 			</p>
 		</div>
 
@@ -232,10 +232,10 @@
 		<Card class="mb-6">
 			<div class="mb-6">
 				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-1">
-					{m.register_title()}
+					{$LL.register_title()}
 				</h2>
 				<p class="text-gray-600 dark:text-gray-400 text-sm">
-					{m.register_subtitle()}
+					{$LL.register_subtitle()}
 				</p>
 			</div>
 
@@ -249,9 +249,9 @@
 			<!-- Name Input -->
 			<div class="mb-4">
 				<Input
-					label={m.common_name()}
+					label={$LL.common_name()}
 					type="text"
-					placeholder={m.common_namePlaceholder()}
+					placeholder={$LL.common_namePlaceholder()}
 					bind:value={name}
 					error={nameError}
 					autocomplete="name"
@@ -266,9 +266,9 @@
 			<!-- Email Input -->
 			<div class="mb-6">
 				<Input
-					label={m.common_email()}
+					label={$LL.common_email()}
 					type="email"
-					placeholder={m.common_emailPlaceholder()}
+					placeholder={$LL.common_emailPlaceholder()}
 					bind:value={email}
 					error={emailError}
 					onkeypress={handleKeyPress}
@@ -291,13 +291,13 @@
 					onclick={handlePasskeyRegister}
 				>
 					<Key class="h-5 w-5" />
-					{m.register_createWithPasskey()}
+					{$LL.register_createWithPasskey()}
 				</Button>
 
 				<!-- Divider -->
 				<div class="flex items-center my-4">
 					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
-					<span class="px-4 text-sm text-gray-500 dark:text-gray-400">{m.common_or()}</span>
+					<span class="px-4 text-sm text-gray-500 dark:text-gray-400">{$LL.common_or()}</span>
 					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
 				</div>
 			{/if}
@@ -311,12 +311,12 @@
 				onclick={handleMagicLinkSignup}
 			>
 				<Mail class="h-5 w-5" />
-				{m.register_signupWithMagicLink()}
+				{$LL.register_signupWithMagicLink()}
 			</Button>
 
 			<!-- Terms Agreement -->
 			<p class="mt-4 text-xs text-gray-500 dark:text-gray-400 text-center">
-				{m.register_termsAgreement()}
+				{$LL.register_termsAgreement()}
 			</p>
 		</Card>
 
@@ -348,13 +348,13 @@
 				href="/login"
 				class="font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
 			>
-				{m.register_alreadyHaveAccount()}
+				{$LL.register_alreadyHaveAccount()}
 			</a>
 		</p>
 	</div>
 
 	<!-- Footer -->
 	<footer class="mt-12 text-center text-xs text-gray-500 dark:text-gray-500">
-		<p>{m.footer_stack()}</p>
+		<p>{$LL.footer_stack()}</p>
 	</footer>
 </div>

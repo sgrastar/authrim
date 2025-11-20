@@ -22,7 +22,8 @@
 		"format:check": "prettier --check .",
 		"typecheck": "svelte-check --tsconfig ./tsconfig.json",
 		"deploy:preview": "pnpm build && wrangler pages deploy .svelte-kit/cloudflare",
-		"deploy:production": "pnpm build && wrangler pages deploy .svelte-kit/cloudflare --branch=main"
+		"deploy:production": "pnpm build && wrangler pages deploy .svelte-kit/cloudflare --branch=main",
+		"typesafe-i18n": "typesafe-i18n"
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.1",
@@ -47,12 +48,12 @@
 		"svelte-check": "^4.3.3",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.46.4",
+		"typesafe-i18n": "^5.26.2",
 		"unocss": "^66.5.6",
 		"vite": "^7.1.10",
 		"vitest": "^4.0.8"
 	},
 	"dependencies": {
-		"@inlang/paraglide-sveltekit": "^0.16.1",
 		"@simplewebauthn/browser": "^13.0.0",
 		"lucide-svelte": "^0.553.0"
 	}

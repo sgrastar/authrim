@@ -3,7 +3,7 @@
 	import { Button, Card } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { ShieldCheck } from 'lucide-svelte';
-	import * as m from '$lib/paraglide/messages';
+	import { LL } from '$i18n/i18n-svelte';
 
 	let challengeId = $state('');
 	let loading = $state(false);
@@ -21,7 +21,7 @@
 </script>
 
 <svelte:head>
-	<title>Re-authentication Required - {m.app_title()}</title>
+	<title>Re-authentication Required - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
@@ -78,6 +78,6 @@
 
 	<!-- Footer -->
 	<footer class="mt-12 text-center text-xs text-gray-500 dark:text-gray-500">
-		<p>{m.footer_stack()}</p>
+		<p>{$LL.footer_stack()}</p>
 	</footer>
 </div>

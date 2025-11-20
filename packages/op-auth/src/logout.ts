@@ -41,7 +41,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (idTokenHint) {
       try {
         // Get signing key from KeyManager
-        const keyManagerId = c.env.KEY_MANAGER.idFromName('global');
+        const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
         const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
         const jwksResponse = await keyManager.fetch(
@@ -240,7 +240,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     let logoutClaims;
     try {
       // Get signing key from KeyManager
-      const keyManagerId = c.env.KEY_MANAGER.idFromName('global');
+      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
       const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
       const jwksResponse = await keyManager.fetch(
