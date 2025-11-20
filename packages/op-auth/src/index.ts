@@ -6,7 +6,7 @@ import type { Env } from '@enrai/shared';
 import { rateLimitMiddleware, RateLimitProfiles, isAllowedOrigin, parseAllowedOrigins } from '@enrai/shared';
 
 // Import handlers
-import { authorizeHandler, authorizeConfirmHandler } from './authorize';
+import { authorizeHandler, authorizeConfirmHandler, authorizeLoginHandler } from './authorize';
 import { parHandler } from './par';
 import {
   passkeyRegisterOptionsHandler,
@@ -123,6 +123,10 @@ app.post('/authorize', authorizeHandler);
 // Authorization confirmation endpoint (for max_age re-authentication)
 app.get('/authorize/confirm', authorizeConfirmHandler);
 app.post('/authorize/confirm', authorizeConfirmHandler);
+
+// Authorization login endpoint (for session-less authentication)
+app.get('/authorize/login', authorizeLoginHandler);
+app.post('/authorize/login', authorizeLoginHandler);
 
 // PAR (Pushed Authorization Request) endpoint - RFC 9126
 app.post('/as/par', parHandler);

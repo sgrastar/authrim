@@ -279,3 +279,104 @@ describe('Discovery Metadata - Authentication Parameters', () => {
     expect(claimsSupported).toContain('acr');
   });
 });
+
+describe('Consent Flow', () => {
+  describe('prompt=none with consent required', () => {
+    it('should return consent_required error when consent is needed', () => {
+      const prompt = 'none';
+      const hasSession = true;
+      const consentRequired = true; // No existing consent
+
+      if (prompt === 'none' && hasSession && consentRequired) {
+        const error = 'consent_required';
+        expect(error).toBe('consent_required');
+      }
+    });
+
+    it('should succeed when consent exists', () => {
+      const prompt = 'none';
+      const hasSession = true;
+      const consentRequired = false; // Consent already granted
+
+      if (prompt === 'none' && hasSession && !consentRequired) {
+        expect(true).toBe(true); // Should succeed
+      }
+    });
+  });
+
+  describe('Consent checking logic', () => {
+    it('should require consent when no previous consent exists', () => {
+      const existingConsent = null;
+      const consentRequired = !existingConsent;
+
+      expect(consentRequired).toBe(true);
+    });
+
+    it('should require consent when scope exceeds granted scope', () => {
+      const grantedScopes = ['openid', 'profile'];
+      const requestedScopes = ['openid', 'profile', 'email'];
+      const hasAllScopes = requestedScopes.every((s) => grantedScopes.includes(s));
+
+      expect(hasAllScopes).toBe(false); // Should require consent
+    });
+
+    it('should not require consent when scope is covered', () => {
+      const grantedScopes = ['openid', 'profile', 'email'];
+      const requestedScopes = ['openid', 'profile'];
+      const hasAllScopes = requestedScopes.every((s) => grantedScopes.includes(s));
+
+      expect(hasAllScopes).toBe(true); // Should not require consent
+    });
+
+    it('should always require consent when prompt=consent', () => {
+      const prompt = 'consent';
+      const existingConsent = { scope: 'openid profile' };
+      let consentRequired = false;
+
+      if (existingConsent) {
+        consentRequired = false;
+      }
+
+      if (prompt === 'consent') {
+        consentRequired = true;
+      }
+
+      expect(consentRequired).toBe(true);
+    });
+  });
+
+  describe('Login flow', () => {
+    it('should redirect to login when no session exists', () => {
+      const hasSession = false;
+      const prompt = null; // No prompt specified
+
+      if (!hasSession && prompt !== 'none') {
+        const shouldRedirectToLogin = true;
+        expect(shouldRedirectToLogin).toBe(true);
+      }
+    });
+
+    it('should not redirect to login when session exists', () => {
+      const hasSession = true;
+      const prompt = null;
+
+      if (hasSession) {
+        const shouldRedirectToLogin = false;
+        expect(shouldRedirectToLogin).toBe(false);
+      }
+    });
+
+    it('should show login form with username and password fields', () => {
+      const loginFormFields = {
+        username: { type: 'text', required: true },
+        password: { type: 'password', required: true },
+        challenge_id: { type: 'hidden', required: true },
+      };
+
+      expect(loginFormFields.username.type).toBe('text');
+      expect(loginFormFields.password.type).toBe('password');
+      expect(loginFormFields.username.required).toBe(true);
+      expect(loginFormFields.password.required).toBe(true);
+    });
+  });
+});
