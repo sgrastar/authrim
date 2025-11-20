@@ -123,48 +123,18 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     // If user doesn't exist, create a new user
     if (!user) {
       const newUserId = crypto.randomUUID();
-      const now = Date.now();
+      const now = Math.floor(Date.now() / 1000);
 
-      // Set default data for test users (e.g., OIDC Conformance Suite)
-      const isTestUser = email.endsWith('@example.com');
-      const defaultName = isTestUser ? 'John Doe' : (name || null);
-      const defaultAddress = isTestUser
-        ? JSON.stringify({
-            formatted: '1234 Main St, Anytown, ST 12345, USA',
-            street_address: '1234 Main St',
-            locality: 'Anytown',
-            region: 'ST',
-            postal_code: '12345',
-            country: 'USA',
-          })
-        : null;
-      const defaultPhone = isTestUser ? '+1-555-0100' : null;
-      const phoneVerified = isTestUser ? 1 : 0;
-      const givenName = isTestUser ? 'John' : null;
-      const familyName = isTestUser ? 'Doe' : null;
-      const middleName = isTestUser ? 'Q' : null;
-      const nickname = isTestUser ? 'Johnny' : null;
+      // Create user with minimal profile data
+      const defaultName = name || null;
       const preferredUsername = email.split('@')[0];
-      const picture = isTestUser ? 'https://example.com/avatar.jpg' : null;
-      const website = isTestUser ? 'https://example.com' : null;
-      const gender = isTestUser ? 'male' : null;
-      const birthdate = isTestUser ? '1990-01-01' : null;
-      const zoneinfo = isTestUser ? 'America/New_York' : null;
-      const locale = isTestUser ? 'en-US' : null;
 
       await c.env.DB.prepare(
         `INSERT INTO users (
-          id, email, name, given_name, family_name, middle_name, nickname,
-          preferred_username, picture, website, gender, birthdate, zoneinfo, locale,
-          email_verified, address_json, phone_number, phone_number_verified,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`
+          id, email, name, preferred_username, email_verified, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 0, ?, ?)`
       )
-        .bind(
-          newUserId, email, defaultName, givenName, familyName, middleName, nickname,
-          preferredUsername, picture, website, gender, birthdate, zoneinfo, locale,
-          defaultAddress, defaultPhone, phoneVerified, now, now
-        )
+        .bind(newUserId, email, defaultName, preferredUsername, now, now)
         .run();
 
       user = { id: newUserId, email, name: name || email.split('@')[0] };
