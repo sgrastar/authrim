@@ -4,6 +4,8 @@
 
 Enrai uses cryptographic keys for JWT signing. These keys must be managed securely throughout their lifecycle. This document describes how to generate, store, and rotate keys safely.
 
+> **🔐 Enhanced Security**: For production deployments requiring additional protection against storage breaches, see the [Envelope Encryption](../security/envelope-encryption.md) guide. This approach encrypts private keys at rest using a two-factor storage model (Durable Objects + Environment Variables).
+
 ## Key Types
 
 ### RSA Key Pair
