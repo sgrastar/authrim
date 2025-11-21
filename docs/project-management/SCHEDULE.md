@@ -1,7 +1,7 @@
-# Enrai Project Schedule
+# Authrim Project Schedule
 
 ## Project Overview
-**Enrai** - A lightweight OpenID Connect Provider built on Cloudflare Workers
+**Authrim** - A lightweight OpenID Connect Provider built on Cloudflare Workers
 **Start Date**: November 10, 2025
 **Goal**: Obtain OpenID Certified™ Basic OP Profile certification
 **Tech Stack**: Cloudflare Workers, Hono, Durable Objects, KV Storage, JOSE
@@ -252,7 +252,7 @@ Phase 9: CLI & Production Launch       [TBD - Final Phase]         (4 weeks)  �
 
 | Stage | Tasks | Owner | Status |
 |:-----|:------|:------|:-------|
-| Stage 1 | CLI Tool Development (create-enrai package, interactive wizard) | Dev | ⏳ Pending |
+| Stage 1 | CLI Tool Development (create-authrim package, interactive wizard) | Dev | ⏳ Pending |
 | Stage 2 | Cloudflare Integration (API client, Worker deployment, KV/D1/DO mgmt) | Dev | ⏳ Pending |
 | Stage 3 | Production Readiness (automation, error handling, monitoring, docs) | Dev | ⏳ Pending |
 | Stage 4 | Production Deployment (Cloudflare setup, custom domain, SSL/TLS) | Dev | ⏳ Pending |
@@ -321,7 +321,7 @@ Phase 9: CLI & Production Launch       [TBD - Final Phase]         (4 weeks)  �
 **Planned Start:** Jun 12, 2026 | **Target End:** Aug 10, 2026
 
 **Key Objectives:**
-1. Design and implement `create-enrai` NPM package
+1. Design and implement `create-authrim` NPM package
 2. Interactive setup wizard for Cloudflare deployment
 3. One-command deployment automation
 4. Management CLI for users, clients, and keys
@@ -336,4 +336,4 @@ Phase 9: CLI & Production Launch       [TBD - Final Phase]         (4 weeks)  �
 
 ---
 
-> **Enrai** 🔥 — Proving that even a solo developer can operate a globally distributed identity provider.
+> **Authrim** 🔥 — Proving that even a solo developer can operate a globally distributed identity provider.

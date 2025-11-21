@@ -1,4 +1,4 @@
-# enrai – OpenID Connect Config OP Conformance
+# authrim – OpenID Connect Config OP Conformance
 
 ## Vision & Objectives
 
@@ -54,7 +54,7 @@
 
 ---
 
-## Enrai Implementation Status
+## Authrim Implementation Status
 
 ### Discovery Metadata (/.well-known/openid-configuration)
 
@@ -127,26 +127,26 @@ https://www.certification.openid.net/
 **Configuration:**
 ```bash
 # Test Configuration
-Issuer: https://enrai.YOUR_SUBDOMAIN.workers.dev
-Discovery URL: https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration
-JWKS URL: https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/jwks.json
+Issuer: https://authrim.YOUR_SUBDOMAIN.workers.dev
+Discovery URL: https://authrim.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration
+JWKS URL: https://authrim.YOUR_SUBDOMAIN.workers.dev/.well-known/jwks.json
 ```
 
 ### Test Procedure
 
-1. **Deploy Enrai**
+1. **Deploy Authrim**
    ```bash
    pnpm run deploy
    ```
 
 2. **Verify Discovery Endpoint**
    ```bash
-   curl https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration | jq
+   curl https://authrim.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration | jq
    ```
 
 3. **Verify JWKS Endpoint**
    ```bash
-   curl https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/jwks.json | jq
+   curl https://authrim.YOUR_SUBDOMAIN.workers.dev/.well-known/jwks.json | jq
    ```
 
 4. **Run Conformance Tests**
@@ -187,7 +187,7 @@ JWKS URL: https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/jwks.json
 
 - [OIDC Basic OP](../OIDC%20Basic%20OP/README.md) - Basic OP profile conformance
 - [Test Plan](../OIDC%20Basic%20OP/test-plan.md) - Overall conformance testing strategy
-- [Project README](../../README.md) - Enrai project overview
+- [Project README](../../README.md) - Authrim project overview
 
 ---
 

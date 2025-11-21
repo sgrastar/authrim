@@ -1,4 +1,4 @@
-# enrai – FAPI 2.0 Security Profile Conformance
+# authrim – FAPI 2.0 Security Profile Conformance
 
 ## Vision & Objectives
 
@@ -70,7 +70,7 @@
 
 ---
 
-## Enrai Implementation Status
+## Authrim Implementation Status
 
 ### ✅ Implemented Features (Phase 4-5)
 
@@ -204,9 +204,9 @@ https://www.certification.openid.net/
 **Configuration:**
 ```bash
 # Test Configuration
-Issuer: https://enrai.YOUR_SUBDOMAIN.workers.dev
-PAR Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/as/par
-Token Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/token
+Issuer: https://authrim.YOUR_SUBDOMAIN.workers.dev
+PAR Endpoint: https://authrim.YOUR_SUBDOMAIN.workers.dev/as/par
+Token Endpoint: https://authrim.YOUR_SUBDOMAIN.workers.dev/token
 
 # Enable features
 PKCE: Required
@@ -216,14 +216,14 @@ DPoP: Supported
 
 ### Test Procedure
 
-1. **Deploy Enrai**
+1. **Deploy Authrim**
    ```bash
    pnpm run deploy
    ```
 
 2. **Verify PAR Endpoint**
    ```bash
-   curl -X POST https://enrai.YOUR_SUBDOMAIN.workers.dev/as/par \
+   curl -X POST https://authrim.YOUR_SUBDOMAIN.workers.dev/as/par \
      -H "Content-Type: application/x-www-form-urlencoded" \
      -u "CLIENT_ID:CLIENT_SECRET" \
      -d "client_id=CLIENT_ID&response_type=code&redirect_uri=https://example.com/callback&scope=openid" | jq
@@ -307,7 +307,7 @@ DPoP: Supported
 - [OIDC Config OP](../OIDC%20Config%20OP/README.md) - Discovery configuration conformance
 - [OIDC Dynamic OP](../OIDC%20Dynamic%20OP/README.md) - Dynamic Client Registration conformance
 - [Test Plan](../OIDC%20Basic%20OP/test-plan.md) - Overall conformance testing strategy
-- [Project README](../../README.md) - Enrai project overview
+- [Project README](../../README.md) - Authrim project overview
 
 ---
 

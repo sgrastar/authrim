@@ -13,7 +13,7 @@
 	let successMessage = '';
 
 	// General settings
-	let siteName = 'Enrai';
+	let siteName = 'Authrim';
 	let logoUrl = '';
 	let language = 'en';
 	let timezone = 'UTC';
@@ -172,7 +172,7 @@
 				{$LL.admin_settings_title()}
 			</h1>
 			<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-				Configure your Enrai instance
+				Configure your Authrim instance
 			</p>
 		</div>
 		<Button variant="primary" onclick={handleSave} disabled={saving || loading}>

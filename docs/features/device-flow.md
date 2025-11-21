@@ -4,7 +4,7 @@
 
 **RFC 8628** - OAuth 2.0 Device Authorization Grant
 
-Enrai implements Device Flow, an OAuth 2.0 extension designed for input-constrained devices (smart TVs, IoT devices, CLI tools) that lack a web browser or have limited input capabilities. Users authenticate on a separate device (smartphone/PC) using a simple verification code or QR code.
+Authrim implements Device Flow, an OAuth 2.0 extension designed for input-constrained devices (smart TVs, IoT devices, CLI tools) that lack a web browser or have limited input capabilities. Users authenticate on a separate device (smartphone/PC) using a simple verification code or QR code.
 
 ## Specification
 
@@ -146,8 +146,8 @@ client_id=tv_app_123&scope=openid+profile+email
 {
   "device_code": "4c9a8e6f-b2d1-4a7c-9e3f-1d2b4a7c9e3f",
   "user_code": "WDJB-MJHT",
-  "verification_uri": "https://ui.enrai.com/device",
-  "verification_uri_complete": "https://ui.enrai.com/device?user_code=WDJB-MJHT",
+  "verification_uri": "https://ui.authrim.com/device",
+  "verification_uri_complete": "https://ui.authrim.com/device?user_code=WDJB-MJHT",
   "expires_in": 600,
   "interval": 5
 }
@@ -460,7 +460,7 @@ UI_BASE_URL="http://localhost:5173"  # SvelteKit dev server
 
 ```toml
 [vars]
-UI_BASE_URL = "https://enrai-ui.pages.dev"  # Cloudflare Pages URL
+UI_BASE_URL = "https://authrim-ui.pages.dev"  # Cloudflare Pages URL
 ```
 
 **Setup Script**: `scripts/setup-production.sh`
@@ -469,10 +469,10 @@ UI_BASE_URL = "https://enrai-ui.pages.dev"  # Cloudflare Pages URL
 ```
 Enter the base URL for your SvelteKit UI (Cloudflare Pages):
   Examples:
-    • https://enrai-ui.pages.dev (Cloudflare Pages)
+    • https://authrim-ui.pages.dev (Cloudflare Pages)
     • https://ui.yourdomain.com (custom domain)
 
-UI_BASE_URL [https://enrai-ui.pages.dev]:
+UI_BASE_URL [https://authrim-ui.pages.dev]:
 ```
 
 ### Constants (Configurable)

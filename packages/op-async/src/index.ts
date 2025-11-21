@@ -1,5 +1,5 @@
 /**
- * Enrai OP-Async Worker
+ * Authrim OP-Async Worker
  * RFC 8628: OAuth 2.0 Device Authorization Grant
  *
  * Handles asynchronous authentication flows:
@@ -9,7 +9,7 @@
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import type { Env } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
 import { deviceAuthorizationHandler } from './device-authorization';
 import { deviceVerifyHandler } from './device-verify';
 import { deviceVerifyApiHandler } from './device-verify-api';

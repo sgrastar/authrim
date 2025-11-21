@@ -1,6 +1,6 @@
-# Enrai Deployment Architecture Patterns
+# Authrim Deployment Architecture Patterns
 
-This document describes the flexible deployment architectures supported by Enrai, ranging from simple single-domain setups to advanced multi-domain SSO configurations.
+This document describes the flexible deployment architectures supported by Authrim, ranging from simple single-domain setups to advanced multi-domain SSO configurations.
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@ This document describes the flexible deployment architectures supported by Enrai
 
 ## Overview
 
-Enrai supports **4 deployment patterns** to accommodate different use cases, from simple MVPs to enterprise-grade multi-domain SSO systems.
+Authrim supports **4 deployment patterns** to accommodate different use cases, from simple MVPs to enterprise-grade multi-domain SSO systems.
 
 ### Pattern Comparison
 
@@ -73,12 +73,12 @@ https://id.example.com/
 ```
 # Development setup (separate domains)
 
-https://enrai-router.your-account.workers.dev/  # API (Worker)
+https://authrim-router.your-account.workers.dev/  # API (Worker)
 ├── /.well-known/*
 ├── /authorize, /token
 └── /api/*
 
-https://enrai-ui.pages.dev/                     # UI (Pages)
+https://authrim-ui.pages.dev/                     # UI (Pages)
 ├── /login
 └── /admin
 ```
@@ -138,18 +138,18 @@ For development/testing using separate domains:
 
 ```bash
 # Worker environment (.dev.vars)
-ISSUER_URL=https://enrai-router.your-account.workers.dev
-ADMIN_UI_ORIGIN=https://enrai-ui.pages.dev,http://localhost:5173
+ISSUER_URL=https://authrim-router.your-account.workers.dev
+ADMIN_UI_ORIGIN=https://authrim-ui.pages.dev,http://localhost:5173
 
 # Pages environment
-PUBLIC_API_BASE_URL=https://enrai-router.your-account.workers.dev
+PUBLIC_API_BASE_URL=https://authrim-router.your-account.workers.dev
 ```
 
 **Enable CORS in Worker:**
 ```typescript
 // Required because API and UI are on different domains
 app.use('*', cors({
-  origin: ['https://enrai-ui.pages.dev', 'http://localhost:5173'],
+  origin: ['https://authrim-ui.pages.dev', 'http://localhost:5173'],
   credentials: true,
 }));
 ```
@@ -175,8 +175,8 @@ wrangler deploy
 wrangler domains add id.example.com
 
 # 2. Deploy Pages with custom domain
-wrangler pages deploy packages/ui/.svelte-kit/cloudflare --project-name=enrai-ui
-wrangler pages domain add id.example.com --project-name=enrai-ui
+wrangler pages deploy packages/ui/.svelte-kit/cloudflare --project-name=authrim-ui
+wrangler pages domain add id.example.com --project-name=authrim-ui
 
 # 3. Configure routing (Cloudflare Dashboard)
 # Dashboard → Websites → id.example.com → Rules → Page Rules
@@ -201,14 +201,14 @@ OIDC and APIs remain on the same domain, but Admin UI is separated for enhanced 
 
 #### Workers.dev Deployment
 ```
-https://enrai.your-account.workers.dev/   # OIDC + APIs + Login UI
+https://authrim.your-account.workers.dev/   # OIDC + APIs + Login UI
 ├── /.well-known/*
 ├── /authorize, /token
 ├── /api/auth/*
 ├── /api/admin/*                          # Admin API (still same domain)
 └── /login
 
-https://enrai-admin.pages.dev/            # Admin UI (separate)
+https://authrim-admin.pages.dev/            # Admin UI (separate)
 └── /admin
 ```
 
@@ -253,7 +253,7 @@ Admin UI needs to call APIs on a different domain, requiring CORS setup.
 // Store in KV: CORS_SETTINGS
 {
   "admin_origins": [
-    "https://enrai-admin.pages.dev",
+    "https://authrim-admin.pages.dev",
     "https://admin.example.com",
     "http://localhost:5173"  // Development
   ]
@@ -276,7 +276,7 @@ app.use('*', cors({
 
 ```bash
 # wrangler.toml or wrangler secret
-ADMIN_UI_ORIGIN=https://enrai-admin.pages.dev,https://admin.example.com,http://localhost:5173
+ADMIN_UI_ORIGIN=https://authrim-admin.pages.dev,https://admin.example.com,http://localhost:5173
 ```
 
 ```typescript
@@ -289,21 +289,21 @@ const ADMIN_ORIGINS = env.ADMIN_UI_ORIGIN?.split(',') || ['*'];
 #### Admin UI Deployment (Cloudflare Pages)
 ```bash
 # Deploy Admin UI separately
-wrangler pages deploy packages/ui --project-name=enrai-admin
+wrangler pages deploy packages/ui --project-name=authrim-admin
 
 # Set API base URL
-PUBLIC_API_BASE_URL=https://enrai.your-account.workers.dev
+PUBLIC_API_BASE_URL=https://authrim.your-account.workers.dev
 
 # Optional: Add custom domain
-wrangler pages domain add admin.example.com --project-name=enrai-admin
+wrangler pages domain add admin.example.com --project-name=authrim-admin
 ```
 
 #### Cloudflare Access Setup
 ```bash
 # Protect Admin UI with Cloudflare Access
 # Dashboard: Zero Trust > Access > Applications > Add Application
-Name: Enrai Admin
-Domain: enrai-admin.pages.dev or admin.example.com
+Name: Authrim Admin
+Domain: authrim-admin.pages.dev or admin.example.com
 Policy: Require email from @example.com
 ```
 
@@ -319,16 +319,16 @@ Complete separation of OIDC, APIs, Login UI, and Admin UI across different domai
 
 #### Workers.dev Deployment
 ```
-https://enrai.your-account.workers.dev/   # OIDC + APIs
+https://authrim.your-account.workers.dev/   # OIDC + APIs
 ├── /.well-known/*
 ├── /authorize, /token
 ├── /api/auth/*
 └── /api/admin/*
 
-https://enrai-login.pages.dev/            # Login UI (branded)
+https://authrim-login.pages.dev/            # Login UI (branded)
 └── /login, /consent
 
-https://enrai-admin.pages.dev/            # Admin UI
+https://authrim-admin.pages.dev/            # Admin UI
 └── /admin
 ```
 
@@ -514,10 +514,10 @@ PUBLIC_REDIRECT_URI=https://service1.com/callback
 
 ### Architecture
 
-No Login UI or Admin UI provided by Enrai. All operations are performed via API or CLI.
+No Login UI or Admin UI provided by Authrim. All operations are performed via API or CLI.
 
 ```
-https://enrai.your-account.workers.dev/   # OIDC + APIs only
+https://authrim.your-account.workers.dev/   # OIDC + APIs only
 ├── /.well-known/*
 ├── /authorize                            # Used by native apps (custom scheme)
 ├── /token
@@ -546,7 +546,7 @@ No Admin UI  ❌
 
 #### ✅ Existing Systems Integration
 - Keep existing login UI
-- Use Enrai as backend identity provider
+- Use Authrim as backend identity provider
 - API-driven user management
 
 ### Limitations
@@ -561,33 +561,33 @@ The following features require a UI and are **not available** in headless mode:
 
 #### Admin Operations via CLI
 ```bash
-# Install Enrai CLI (future)
-npm install -g @enrai/cli
+# Install Authrim CLI (future)
+npm install -g @authrim/cli
 
 # Configure
-enrai config set api-url https://enrai.your-account.workers.dev
-enrai config set admin-token <your-admin-token>
+authrim config set api-url https://authrim.your-account.workers.dev
+authrim config set admin-token <your-admin-token>
 
 # User management
-enrai users list
-enrai users create --email user@example.com --name "John Doe"
-enrai users delete user_123
+authrim users list
+authrim users create --email user@example.com --name "John Doe"
+authrim users delete user_123
 
 # Client management
-enrai clients register --name "My App" --redirect-uri https://myapp.com/callback
-enrai clients list
+authrim clients register --name "My App" --redirect-uri https://myapp.com/callback
+authrim clients list
 ```
 
 #### Admin Operations via API
 ```bash
 # Create user
-curl -X POST https://enrai.your-account.workers.dev/api/admin/users \
+curl -X POST https://authrim.your-account.workers.dev/api/admin/users \
   -H "Authorization: Bearer <admin_token>" \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","name":"John Doe"}'
 
 # List users
-curl https://enrai.your-account.workers.dev/api/admin/users \
+curl https://authrim.your-account.workers.dev/api/admin/users \
   -H "Authorization: Bearer <admin_token>"
 ```
 
@@ -673,7 +673,7 @@ pnpm --filter=op-* deploy
 **Goal:** Improve Pattern D (Headless) experience with CLI and SDKs.
 
 **Deliverables:**
-- [ ] Enrai CLI (`@enrai/cli`)
+- [ ] Authrim CLI (`@authrim/cli`)
   - User management commands
   - Client management commands
   - Token inspection commands
@@ -743,21 +743,21 @@ pnpm --filter=op-* deploy
 
 1. **Deploy Admin UI separately:**
    ```bash
-   wrangler pages deploy packages/ui --project-name=enrai-admin
+   wrangler pages deploy packages/ui --project-name=authrim-admin
    ```
 
 2. **Configure CORS:**
    ```bash
    # Add to KV: CORS_SETTINGS
    wrangler kv:key put --binding=SETTINGS_KV "cors_settings" \
-     '{"admin_origins":["https://enrai-admin.pages.dev"]}'
+     '{"admin_origins":["https://authrim-admin.pages.dev"]}'
    ```
 
 3. **Update Admin UI environment variable:**
    ```bash
    wrangler pages secret put PUBLIC_API_BASE_URL \
-     --project-name=enrai-admin
-   # Enter: https://enrai.your-account.workers.dev
+     --project-name=authrim-admin
+   # Enter: https://authrim.your-account.workers.dev
    ```
 
 4. **Optional: Add Cloudflare Access protection**
@@ -779,7 +779,7 @@ pnpm --filter=op-* deploy
      "allowed_origins": [
        "https://service1.com",
        "https://service2.net",
-       "https://enrai-admin.pages.dev"
+       "https://authrim-admin.pages.dev"
      ]
    }
    ```
@@ -794,7 +794,7 @@ pnpm --filter=op-* deploy
 
 ## Summary
 
-Enrai's flexible architecture supports various deployment patterns:
+Authrim's flexible architecture supports various deployment patterns:
 
 - **Pattern A (Unified):** Best for most use cases - simple, fast, no CORS
 - **Pattern B (Hybrid):** Enhanced security with separate Admin UI

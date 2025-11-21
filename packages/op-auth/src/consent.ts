@@ -8,7 +8,7 @@
  */
 
 import { Context } from 'hono';
-import type { Env } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
 
 // Scope descriptions (human-readable)
 const SCOPE_DESCRIPTIONS: Record<string, { title: string; description: string }> = {

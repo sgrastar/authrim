@@ -2,7 +2,7 @@
 
 ## Overview
 
-Enrai uses cryptographic keys for JWT signing. These keys must be managed securely throughout their lifecycle. This document describes how to generate, store, and rotate keys safely.
+Authrim uses cryptographic keys for JWT signing. These keys must be managed securely throughout their lifecycle. This document describes how to generate, store, and rotate keys safely.
 
 > **🔐 Enhanced Security**: For production deployments requiring additional protection against storage breaches, see the [Envelope Encryption](../security/envelope-encryption.md) guide. This approach encrypts private keys at rest using a two-factor storage model (Durable Objects + Environment Variables).
 
@@ -10,7 +10,7 @@ Enrai uses cryptographic keys for JWT signing. These keys must be managed secure
 
 ### RSA Key Pair
 
-Enrai uses RSA-2048 key pairs with the RS256 algorithm (RSA signature with SHA-256) for signing JWT tokens.
+Authrim uses RSA-2048 key pairs with the RS256 algorithm (RSA signature with SHA-256) for signing JWT tokens.
 
 - **Private Key**: Used to sign JWT tokens (ID tokens and access tokens)
 - **Public Key**: Distributed via JWKS endpoint for token verification
@@ -110,7 +110,7 @@ Then update `wrangler.toml` with the key ID:
 [env.production]
 vars = {
   KEY_ID = "prod-key-1234567890-abc123",
-  ISSUER_URL = "https://id.enrai.org"
+  ISSUER_URL = "https://id.authrim.org"
 }
 ```
 

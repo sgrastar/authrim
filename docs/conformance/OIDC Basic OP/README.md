@@ -1,7 +1,7 @@
-# enrai – Conformance Overview
+# authrim – Conformance Overview
 
 ## 1. Vision
-**enrai** is a lightweight, edge-native OpenID Connect Provider designed to show that
+**authrim** is a lightweight, edge-native OpenID Connect Provider designed to show that
 a single developer can operate a fully compliant identity provider — safely, globally, and at minimal cost.
 
 Its conformance goal is not only certification, but **to redefine what "compliant infrastructure" means in the era of serverless computing.**
@@ -68,7 +68,7 @@ Its conformance goal is not only certification, but **to redefine what "complian
 
 | Attribute | Value |
 |:--|:--|
-| **Issuer (iss)** | `https://id.enrai.org` |
+| **Issuer (iss)** | `https://id.authrim.org` |
 | **Profile** | Basic OpenID Provider |
 | **Conformance Suite** | `https://openid.net/certification/` |
 | **Deployment Type** | Cloudflare Workers |
@@ -87,7 +87,7 @@ Its conformance goal is not only certification, but **to redefine what "complian
 ---
 
 ## 8. Long-Term Vision
-enrai aims to become the **reference “Edge OP”**:
+authrim aims to become the **reference “Edge OP”**:
 - Zero infrastructure overhead.
 - Zero database dependencies.
 - Fully explainable OIDC compliance.
@@ -98,4 +98,4 @@ then compliance itself becomes democratized — not just centralized.
 
 ---
 
-> *enrai* — compliance as creation, not constraint.
+> *authrim* — compliance as creation, not constraint.

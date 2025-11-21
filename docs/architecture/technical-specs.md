@@ -1,7 +1,7 @@
-# enrai – Technical Specification (for AI analysis)
+# authrim – Technical Specification (for AI analysis)
 
 ## 1. Project Overview
-**enrai** is a lightweight, standards-compliant **OpenID Connect Provider (OP)** implemented entirely on **Cloudflare Workers** using **Hono** as the routing framework.
+**authrim** is a lightweight, standards-compliant **OpenID Connect Provider (OP)** implemented entirely on **Cloudflare Workers** using **Hono** as the routing framework.
 It demonstrates that an individual developer can deploy a fully functional, globally distributed OpenID Provider (OIDC OP) at the edge.
 
 **Related Documents:**
@@ -51,7 +51,7 @@ See [storage-strategy.md](./storage-strategy.md) for detailed architecture
 
 ### 3.2 Logical Flow Diagram
 ```
-User → /authorize → [enrai OP] → redirect_uri (with code)
+User → /authorize → [authrim OP] → redirect_uri (with code)
 ↳ /token → returns { access_token, id_token }
 ↳ /userinfo → user claims (static or dynamic)
 ```
@@ -275,10 +275,10 @@ Apache License 2.0 © 2025 [sgrastar](https://github.com/sgrastar)
 
 In short:
 
-* **enrai** is a Cloudflare Workers-based implementation of an **OpenID Provider (OP)**.
+* **authrim** is a Cloudflare Workers-based implementation of an **OpenID Provider (OP)**.
 * It adheres to **OIDC Core**, **Discovery**, and **OAuth 2.0** specifications.
 * It’s **stateless**, **edge-native**, and suitable for **OpenID Conformance certification**.
 * Its key innovation: *individual developers can deploy their own issuer on the edge.*
 
-> Conceptually: “enrai ignites identity — a spark of trust at the edge.”
+> Conceptually: “authrim ignites identity — a spark of trust at the edge.”
 

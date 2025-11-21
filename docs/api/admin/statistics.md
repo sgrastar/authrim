@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Admin Statistics API provides aggregated metrics and analytics for administrators to monitor the health and usage of the Enrai OIDC Provider.
+The Admin Statistics API provides aggregated metrics and analytics for administrators to monitor the health and usage of the Authrim OIDC Provider.
 
 **Key Features:**
 - Real-time statistics (active users, total users, clients)

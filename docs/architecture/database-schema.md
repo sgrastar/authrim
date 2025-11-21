@@ -1,4 +1,4 @@
-# Enrai Database Schema - ER Diagram 🗄️
+# Authrim Database Schema - ER Diagram 🗄️
 
 **Last Updated**: 2025-11-13
 **Status**: Phase 5 Design
@@ -19,7 +19,7 @@
 
 ## Overview
 
-This document defines the database schema for Enrai OIDC OP.
+This document defines the database schema for Authrim OIDC OP.
 
 ### Statistics Summary
 
@@ -737,7 +737,7 @@ migrations/
 
 ### Hybrid Multi-Tier Architecture
 
-Enrai uses a **three-tier storage strategy** optimized for performance, cost, and consistency:
+Authrim uses a **three-tier storage strategy** optimized for performance, cost, and consistency:
 
 ```
 ┌────────────────┐  ┌────────────────┐  ┌────────────────┐

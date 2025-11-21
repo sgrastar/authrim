@@ -1,4 +1,4 @@
-# Enrai Design System 🎨
+# Authrim Design System 🎨
 
 **Last Updated**: 2025-11-13
 **Version**: 1.0.0
@@ -25,7 +25,7 @@
 
 ## Overview
 
-Enrai Design System is a unified design language.
+Authrim Design System is a unified design language.
 
 ### Design Goals
 
@@ -224,7 +224,7 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 ```html
 <!-- ヒーロー見出し -->
 <h1 class="text-4xl font-bold text-gray-900 dark:text-white">
-  Welcome to Enrai
+  Welcome to Authrim
 </h1>
 
 <!-- セクション見出し -->
@@ -955,7 +955,7 @@ The following can be customized from the admin panel:
 - [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/)
 - [A11y Project](https://www.a11yproject.com/)
 
-### Enrai Documentation
+### Authrim Documentation
 
 - [database-schema.md](../architecture/database-schema.md) - Database schema
 - [openapi.yaml](../api/openapi.yaml) - API specification

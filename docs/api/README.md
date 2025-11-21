@@ -1,4 +1,4 @@
-# Enrai API Documentation 🚀
+# Authrim API Documentation 🚀
 
 **Last Updated**: 2025-11-13
 **API Version**: v1.0 (Phase 5)
@@ -20,7 +20,7 @@
 
 ## Overview
 
-Enrai OIDC OP provides 39+ API endpoints:
+Authrim OIDC OP provides 39+ API endpoints:
 
 | Category | Endpoint Count | Status |
 |---------|----------------|-----------|
@@ -215,7 +215,7 @@ X-RateLimit-Reset: 1678901234
 {
   "error": "invalid_request",
   "error_description": "The request is missing a required parameter",
-  "error_uri": "https://docs.enrai.org/errors/invalid_request"
+  "error_uri": "https://docs.authrim.org/errors/invalid_request"
 }
 ```
 
@@ -245,7 +245,7 @@ X-RateLimit-Reset: 1678901234
 | `invalid_request_uri` | 400 | Invalid request_uri |
 | `invalid_request_object` | 400 | Invalid request JWT |
 
-#### Enrai Custom Errors
+#### Authrim Custom Errors
 
 | Error Code | HTTP Status | Description |
 |-------------|-------------|------|
@@ -365,15 +365,15 @@ curl https://your-domain.com/admin/users?q=john&limit=50 \
 
 ### Official SDKs (Planned for Phase 6)
 
-- **TypeScript/JavaScript SDK** - npm: `@enrai/sdk`
-- **Python SDK** - PyPI: `enrai-sdk`
-- **Go SDK** - `github.com/enrai/go-sdk`
-- **Rust SDK** - Crates.io: `enrai-sdk`
+- **TypeScript/JavaScript SDK** - npm: `@authrim/sdk`
+- **Python SDK** - PyPI: `authrim-sdk`
+- **Go SDK** - `github.com/authrim/go-sdk`
+- **Rust SDK** - Crates.io: `authrim-sdk`
 
 ### Community SDKs
 
-- **Ruby** - `enrai-ruby` (community-maintained)
-- **PHP** - `enrai-php` (community-maintained)
+- **Ruby** - `authrim-ruby` (community-maintained)
+- **PHP** - `authrim-php` (community-maintained)
 
 ---
 
@@ -401,7 +401,7 @@ curl https://your-domain.com/admin/users?q=john&limit=50 \
 ```http
 Deprecation: true
 Sunset: Sat, 1 Jan 2026 00:00:00 GMT
-Link: <https://docs.enrai.org/migration/v2>; rel="sunset"
+Link: <https://docs.authrim.org/migration/v2>; rel="sunset"
 ```
 
 ---
@@ -417,11 +417,11 @@ Link: <https://docs.enrai.org/migration/v2>; rel="sunset"
 
 ### Issue Reporting
 
-GitHub Issues: https://github.com/sgrastar/enrai/issues
+GitHub Issues: https://github.com/sgrastar/authrim/issues
 
 ### Contributions
 
-Pull Requests Welcome: https://github.com/sgrastar/enrai/pulls
+Pull Requests Welcome: https://github.com/sgrastar/authrim/pulls
 
 ---
 

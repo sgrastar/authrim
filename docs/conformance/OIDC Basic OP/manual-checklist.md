@@ -1,4 +1,4 @@
-# Enrai Manual Conformance Checklist ⚡️
+# Authrim Manual Conformance Checklist ⚡️
 
 **Purpose:** Manual verification checklist for OpenID Connect Basic OP Profile conformance
 **Target:** Phase 3 - Testing & Validation
@@ -582,7 +582,7 @@ curl -i http://localhost:8787/authorize?response_type=invalid
 
 ---
 
-> ⚡️ **Enrai** - Manual conformance testing for Phase 3
+> ⚡️ **Authrim** - Manual conformance testing for Phase 3
 >
 > **Initial Test Date:** 2025-11-11 (Conformance: 38.9%)
 > **Retest Date:** 2025-11-11 (Conformance: 88.9%)

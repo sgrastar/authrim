@@ -1,10 +1,10 @@
 # Cloudflare Pages Deployment Guide
 
-This document describes how to deploy the Enrai UI to Cloudflare Pages.
+This document describes how to deploy the Authrim UI to Cloudflare Pages.
 
 ## Deployment Architecture
 
-Enrai uses a **hybrid deployment architecture** (Option C from PHASE5_PLANNING.md):
+Authrim uses a **hybrid deployment architecture** (Option C from PHASE5_PLANNING.md):
 
 - **UI**: Cloudflare Pages (this package) - Static assets + SSR
 - **API**: Cloudflare Workers (packages/op-*) - Backend services
@@ -90,10 +90,10 @@ pnpm run preview
 **4. Deploy to Cloudflare Pages**
 ```bash
 # From monorepo root
-wrangler pages deploy packages/ui/.svelte-kit/cloudflare --project-name=enrai-ui
+wrangler pages deploy packages/ui/.svelte-kit/cloudflare --project-name=authrim-ui
 ```
 
-**Note**: Make sure you've created the `enrai-ui` project in Cloudflare Pages dashboard first.
+**Note**: Make sure you've created the `authrim-ui` project in Cloudflare Pages dashboard first.
 
 ## Environment Variables
 
@@ -121,7 +121,7 @@ The build outputs to `.svelte-kit/cloudflare/` with the following structure:
 Ensure you're running the build from the monorepo root:
 
 ```bash
-cd /path/to/enrai
+cd /path/to/authrim
 pnpm run build --filter=ui
 ```
 

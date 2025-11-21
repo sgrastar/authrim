@@ -236,9 +236,9 @@ const result: StoredKey = {
 
 ### デプロイ完了
 **最新バージョン (2025-11-20T04:10):**
-- `enrai-shared`: `94e5306d-9db0-4b5c-a4cc-2176e0facb1c`
-- `enrai-op-token`: `4f29c961-4d1a-406e-956a-116c9d02efb6`
-- `enrai-op-auth`: `f36a992c-f7bf-439a-b1dc-ca8ba98af2e4`
+- `authrim-shared`: `94e5306d-9db0-4b5c-a4cc-2176e0facb1c`
+- `authrim-op-token`: `4f29c961-4d1a-406e-956a-116c9d02efb6`
+- `authrim-op-auth`: `f36a992c-f7bf-439a-b1dc-ca8ba98af2e4`
 
 ### デプロイ時の問題と対処
 - Cloudflare のデプロイは eventually consistent（最終的整合性）

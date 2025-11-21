@@ -1,11 +1,11 @@
-# Enrai Worker分割アーキテクチャ
+# Authrim Worker分割アーキテクチャ
 
-このドキュメントは、Enraiの新しいWorker分割アーキテクチャについて説明します。
+このドキュメントは、Authrimの新しいWorker分割アーキテクチャについて説明します。
 
 ## 📦 Monorepo構造
 
 ```
-enrai/
+authrim/
 ├── packages/
 │   ├── shared/              # 共通ライブラリ
 │   │   ├── src/
@@ -164,7 +164,7 @@ op-token (トークン発行) → REFRESH_TOKENS KV → op-token (リフレッ�
 // wrangler.tomlの例（既に定義済み）
 [[services]]
 binding = "OP_TOKEN"
-service = "enrai-op-token"
+service = "authrim-op-token"
 
 // コード内での使用（将来的に実装予定）
 const response = await env.OP_TOKEN.fetch(request);
@@ -237,7 +237,7 @@ KeyManagerは`op-discovery`に配置し、他のWorkerから参照します:
 [[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
-script_name = "enrai-op-discovery"
+script_name = "authrim-op-discovery"
 ```
 
 ### 共通パッケージの変更

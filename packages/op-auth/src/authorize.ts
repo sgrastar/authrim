@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import type { Env } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
 import {
   validateResponseType,
   validateClientId,
@@ -8,8 +8,8 @@ import {
   validateState,
   validateNonce,
   getClient,
-} from '@enrai/shared';
-import { generateSecureRandomString, parseToken, verifyToken } from '@enrai/shared';
+} from '@authrim/shared';
+import { generateSecureRandomString, parseToken, verifyToken } from '@authrim/shared';
 import { importJWK } from 'jose';
 
 /**
@@ -756,7 +756,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Check for existing session (cookie)
   // This is required for prompt=none to work correctly
-  const sessionId = c.req.header('Cookie')?.match(/enrai_session=([^;]+)/)?.[1];
+  const sessionId = c.req.header('Cookie')?.match(/authrim_session=([^;]+)/)?.[1];
   if (sessionId && c.env.SESSION_STORE) {
     try {
       const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
@@ -1709,7 +1709,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     // Set session cookie
     c.header(
       'Set-Cookie',
-      `enrai_session=${id}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=3600`
+      `authrim_session=${id}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=3600`
     );
   }
 

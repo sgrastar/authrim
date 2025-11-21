@@ -1,10 +1,10 @@
 #!/bin/bash
 
 ###############################################################################
-# Enrai Configuration File Creation Script
+# Authrim Configuration File Creation Script
 #
 # Purpose: Interactively collect configuration and generate config file
-# Output: enrai-config-{version}.json
+# Output: authrim-config-{version}.json
 #
 # Usage:
 #   ./scripts/setup-config.sh
@@ -129,8 +129,8 @@ select_operation_mode() {
     echo ""
     log_info "Select existing configuration file:"
 
-    # Find enrai-config-*.json files
-    config_files=(enrai-config-*.json)
+    # Find authrim-config-*.json files
+    config_files=(authrim-config-*.json)
 
     if [[ ! -f "${config_files[0]}" ]]; then
       log_error "No existing configuration files found"
@@ -272,24 +272,24 @@ configure_domains() {
 
       # Use workers.dev / pages.dev
       if [[ "$ENABLE_API" == "true" ]]; then
-        read -p "API Worker name [default: enrai]: " worker_name
-        WORKER_NAME="${worker_name:-enrai}"
+        read -p "API Worker name [default: authrim]: " worker_name
+        WORKER_NAME="${worker_name:-authrim}"
         API_CUSTOM_DOMAIN="false"
         API_DOMAIN="https://${WORKER_NAME}.${ACCOUNT_NAME}.workers.dev"
         API_WORKER_NAME="$WORKER_NAME"
       fi
 
       if [[ "$ENABLE_LOGIN_PAGE" == "true" ]]; then
-        read -p "Login Page project name [default: enrai-${ACCOUNT_NAME}-login]: " login_project
-        LOGIN_PROJECT="${login_project:-enrai-${ACCOUNT_NAME}-login}"
+        read -p "Login Page project name [default: authrim-${ACCOUNT_NAME}-login]: " login_project
+        LOGIN_PROJECT="${login_project:-authrim-${ACCOUNT_NAME}-login}"
         LOGIN_CUSTOM_DOMAIN="false"
         LOGIN_DOMAIN="https://${LOGIN_PROJECT}.pages.dev"
         LOGIN_PAGES_PROJECT="$LOGIN_PROJECT"
       fi
 
       if [[ "$ENABLE_ADMIN_PAGE" == "true" ]]; then
-        read -p "Admin Page project name [default: enrai-${ACCOUNT_NAME}-admin]: " admin_project
-        ADMIN_PROJECT="${admin_project:-enrai-${ACCOUNT_NAME}-admin}"
+        read -p "Admin Page project name [default: authrim-${ACCOUNT_NAME}-admin]: " admin_project
+        ADMIN_PROJECT="${admin_project:-authrim-${ACCOUNT_NAME}-admin}"
         ADMIN_CUSTOM_DOMAIN="false"
         ADMIN_DOMAIN="https://${ADMIN_PROJECT}.pages.dev"
         ADMIN_PAGES_PROJECT="$ADMIN_PROJECT"
@@ -302,19 +302,19 @@ configure_domains() {
     if [[ "$ENABLE_API" == "true" ]]; then
       API_CUSTOM_DOMAIN="false"
       API_DOMAIN="http://localhost:8787"
-      API_WORKER_NAME="enrai"
+      API_WORKER_NAME="authrim"
     fi
 
     if [[ "$ENABLE_LOGIN_PAGE" == "true" ]]; then
       LOGIN_CUSTOM_DOMAIN="false"
       LOGIN_DOMAIN="http://localhost:5173"
-      LOGIN_PAGES_PROJECT="enrai-login"
+      LOGIN_PAGES_PROJECT="authrim-login"
     fi
 
     if [[ "$ENABLE_ADMIN_PAGE" == "true" ]]; then
       ADMIN_CUSTOM_DOMAIN="false"
       ADMIN_DOMAIN="http://localhost:5174"
-      ADMIN_PAGES_PROJECT="enrai-admin"
+      ADMIN_PAGES_PROJECT="authrim-admin"
     fi
   fi
 
@@ -495,7 +495,7 @@ generate_config_file() {
     VERSION="$MAJOR.$MINOR.$PATCH"
   fi
 
-  CONFIG_FILE="enrai-config-${VERSION}.json"
+  CONFIG_FILE="authrim-config-${VERSION}.json"
 
   # Generate CORS arrays JSON
   CORS_ORIGINS_JSON="[]"
@@ -574,8 +574,8 @@ EOF
   log_success "Configuration file generated: $CONFIG_FILE"
 
   # Add to .gitignore
-  if [[ ! -f .gitignore ]] || ! grep -q "enrai-config-\*.json" .gitignore 2>/dev/null; then
-    echo "enrai-config-*.json" >> .gitignore
+  if [[ ! -f .gitignore ]] || ! grep -q "authrim-config-\*.json" .gitignore 2>/dev/null; then
+    echo "authrim-config-*.json" >> .gitignore
     log_success "Added to .gitignore"
   fi
 
@@ -603,7 +603,7 @@ confirm_build() {
 main() {
   echo ""
   echo "========================================="
-  echo "Enrai Configuration File Creation"
+  echo "Authrim Configuration File Creation"
   echo "========================================="
   echo ""
 

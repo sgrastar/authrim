@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
-import type { Env } from '@enrai/shared';
-import { rateLimitMiddleware, RateLimitProfiles } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
+import { rateLimitMiddleware, RateLimitProfiles } from '@authrim/shared';
 
 // Import handlers
 import { discoveryHandler } from './discovery';
