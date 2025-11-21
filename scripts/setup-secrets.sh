@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# Enrai Cloudflare Secrets Setup Script
+# Authrim Cloudflare Secrets Setup Script
 # This script uploads private and public keys to Cloudflare Workers secrets
 #
 
 set -e
 
-echo "🔐 Enrai Cloudflare Secrets Setup"
+echo "🔐 Authrim Cloudflare Secrets Setup"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -63,7 +63,7 @@ generate_wrangler_toml() {
     local file="packages/$package/wrangler.toml"
 
     cat > "$file" << TOML_EOF
-name = "enrai-$package"
+name = "authrim-$package"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -265,7 +265,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "📧 Email Configuration for Magic Links"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "Enrai uses Resend for sending magic link emails."
+echo "Authrim uses Resend for sending magic link emails."
 echo "If you don't configure this now, magic links will return URLs"
 echo "instead of sending emails (useful for development)."
 echo ""

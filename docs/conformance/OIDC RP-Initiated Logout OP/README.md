@@ -1,4 +1,4 @@
-# enrai – OpenID Connect RP-Initiated Logout OP Conformance
+# authrim – OpenID Connect RP-Initiated Logout OP Conformance
 
 ## Vision & Objectives
 
@@ -96,7 +96,7 @@ Location: https://client.example.com/logged-out?state=STATE_VALUE
 
 ---
 
-## Enrai Implementation Status
+## Authrim Implementation Status
 
 ### ✅ RP-Initiated Logout (Phase 5)
 
@@ -163,7 +163,7 @@ Location: https://client.example.com/logged-out?state=STATE_VALUE
 **Discovery Metadata:**
 ```json
 {
-  "end_session_endpoint": "https://enrai.YOUR_SUBDOMAIN.workers.dev/logout"
+  "end_session_endpoint": "https://authrim.YOUR_SUBDOMAIN.workers.dev/logout"
 }
 ```
 
@@ -197,15 +197,15 @@ https://www.certification.openid.net/
 **Configuration:**
 ```bash
 # Test Configuration
-Issuer: https://enrai.YOUR_SUBDOMAIN.workers.dev
-Logout Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/logout
+Issuer: https://authrim.YOUR_SUBDOMAIN.workers.dev
+Logout Endpoint: https://authrim.YOUR_SUBDOMAIN.workers.dev/logout
 
 # Discovery will auto-configure end_session_endpoint
 ```
 
 ### Test Procedure
 
-1. **Deploy Enrai**
+1. **Deploy Authrim**
    ```bash
    pnpm run deploy
    ```
@@ -216,7 +216,7 @@ Logout Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/logout
    # (Use Authorization Code Flow)
 
    # 2. Logout with id_token_hint
-   curl "https://enrai.YOUR_SUBDOMAIN.workers.dev/logout?id_token_hint=ID_TOKEN"
+   curl "https://authrim.YOUR_SUBDOMAIN.workers.dev/logout?id_token_hint=ID_TOKEN"
 
    # 3. Verify session is terminated
    # (Try accessing /userinfo with old access_token - should fail)
@@ -225,7 +225,7 @@ Logout Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/logout
 3. **Verify Logout with Redirect**
    ```bash
    # Logout with post_logout_redirect_uri
-   curl -i "https://enrai.YOUR_SUBDOMAIN.workers.dev/logout?\
+   curl -i "https://authrim.YOUR_SUBDOMAIN.workers.dev/logout?\
      id_token_hint=ID_TOKEN&\
      post_logout_redirect_uri=https://client.example.com/logged-out&\
      state=STATE_VALUE"
@@ -235,10 +235,10 @@ Logout Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/logout
 
 4. **Verify Discovery Metadata**
    ```bash
-   curl https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration | \
+   curl https://authrim.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration | \
      jq '.end_session_endpoint'
 
-   # Expected: "https://enrai.YOUR_SUBDOMAIN.workers.dev/logout"
+   # Expected: "https://authrim.YOUR_SUBDOMAIN.workers.dev/logout"
    ```
 
 5. **Run Conformance Tests**
@@ -327,7 +327,7 @@ Logout Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/logout
 - [OIDC Basic OP](../OIDC%20Basic%20OP/README.md) - Basic OP profile conformance
 - [OIDC Config OP](../OIDC%20Config%20OP/README.md) - Discovery configuration conformance
 - [Test Plan](../OIDC%20Basic%20OP/test-plan.md) - Overall conformance testing strategy
-- [Project README](../../README.md) - Enrai project overview
+- [Project README](../../README.md) - Authrim project overview
 - [Session Management Architecture](../../architecture/session-management.md) - Durable Objects session design
 
 ---

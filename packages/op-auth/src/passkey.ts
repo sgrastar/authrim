@@ -4,8 +4,8 @@
  */
 
 import { Context } from 'hono';
-import type { Env } from '@enrai/shared';
-import { isAllowedOrigin, parseAllowedOrigins } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
+import { isAllowedOrigin, parseAllowedOrigins } from '@authrim/shared';
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -23,7 +23,7 @@ import type {
 } from '@simplewebauthn/server';
 
 // RP (Relying Party) configuration
-const RP_NAME = 'Enrai';
+const RP_NAME = 'Authrim';
 
 type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
 

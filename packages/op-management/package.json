@@ -1,5 +1,5 @@
 {
-  "name": "@enrai/op-management",
+  "name": "@authrim/op-management",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -13,7 +13,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@enrai/shared": "workspace:*",
+    "@authrim/shared": "workspace:*",
     "hono": "^4.0.0",
     "jose": "^6.1.2"
   },

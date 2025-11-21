@@ -1,4 +1,4 @@
--- Enrai Phase 7: Device Flow Support
+-- Authrim Phase 7: Device Flow Support
 -- Created: 2025-11-21
 -- Description: Adds device_codes table for RFC 8628 Device Authorization Grant
 -- RFC: https://datatracker.ietf.org/doc/html/rfc8628

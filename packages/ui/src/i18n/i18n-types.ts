@@ -624,7 +624,7 @@ type RootTranslation = {
 
 export type TranslationFunctions = {
 	/**
-	 * Enrai
+	 * Authrim
 	 */
 	app_title: () => LocalizedString
 	/**
@@ -784,7 +784,7 @@ export type TranslationFunctions = {
 	 */
 	register_title: () => LocalizedString
 	/**
-	 * Get started with Enrai
+	 * Get started with Authrim
 	 */
 	register_subtitle: () => LocalizedString
 	/**
@@ -860,7 +860,7 @@ export type TranslationFunctions = {
 	 */
 	consent_title: (arg: { clientName: string }) => LocalizedString
 	/**
-	 * This application is requesting access to your Enrai account
+	 * This application is requesting access to your Authrim account
 	 */
 	consent_subtitle: () => LocalizedString
 	/**

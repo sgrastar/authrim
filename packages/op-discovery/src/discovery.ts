@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
-import type { Env, OIDCProviderMetadata } from '@enrai/shared';
-import { SUPPORTED_JWE_ALG, SUPPORTED_JWE_ENC } from '@enrai/shared';
+import type { Env, OIDCProviderMetadata } from '@authrim/shared';
+import { SUPPORTED_JWE_ALG, SUPPORTED_JWE_ENC } from '@authrim/shared';
 
 /**
  * OpenID Connect Discovery Endpoint Handler

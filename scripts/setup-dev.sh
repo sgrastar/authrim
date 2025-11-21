@@ -1,11 +1,11 @@
 #!/bin/bash
 #
-# Enrai Development Setup Script
+# Authrim Development Setup Script
 # This script generates RSA keys and configures .dev.vars for local development
 
 set -e
 
-echo "🔐 Enrai Development Setup"
+echo "🔐 Authrim Development Setup"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -43,7 +43,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "📧 Email Configuration (Optional)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "Enrai uses Resend for sending magic link emails."
+echo "Authrim uses Resend for sending magic link emails."
 echo "If you have a Resend API key, enter it now."
 echo "Otherwise, press Enter to skip (magic links will return URLs instead)."
 echo ""
@@ -111,7 +111,7 @@ generate_wrangler_toml() {
     fi
 
     cat > "$file" << TOML_EOF
-name = "enrai-$package"
+name = "authrim-$package"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -156,7 +156,7 @@ if [ -f "$SHARED_FILE" ]; then
     else
         echo "    ✓ Overwriting shared/wrangler.toml"
         cat > packages/shared/wrangler.toml << 'SHARED_TOML_EOF'
-name = "enrai-shared"
+name = "authrim-shared"
 main = "src/durable-objects/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -226,7 +226,7 @@ SHARED_TOML_EOF
 else
     echo "  ✅ shared/wrangler.toml (Durable Objects)"
     cat > packages/shared/wrangler.toml << 'SHARED_TOML_EOF'
-name = "enrai-shared"
+name = "authrim-shared"
 main = "src/durable-objects/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -297,12 +297,12 @@ fi
 generate_wrangler_toml "op-discovery" 8787 '' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "RATE_LIMITER"
 class_name = "RateLimiterCounter"
-script_name = "enrai-shared"'
+script_name = "authrim-shared"'
 
 # Generate wrangler.toml for op-auth
 generate_wrangler_toml "op-auth" 8788 '[[kv_namespaces]]
@@ -313,41 +313,41 @@ preview_id = "placeholder"
 # D1 Database
 [[d1_databases]]
 binding = "DB"
-database_name = "enrai-users-db"
+database_name = "authrim-users-db"
 database_id = "placeholder"
 
 # R2 Bucket
 [[r2_buckets]]
 binding = "AVATARS"
-bucket_name = "enrai-avatars"' '[[durable_objects.bindings]]
+bucket_name = "authrim-avatars"' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "SESSION_STORE"
 class_name = "SessionStore"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "AUTH_CODE_STORE"
 class_name = "AuthorizationCodeStore"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "CHALLENGE_STORE"
 class_name = "ChallengeStore"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "RATE_LIMITER"
 class_name = "RateLimiterCounter"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "PAR_REQUEST_STORE"
 class_name = "PARRequestStore"
-script_name = "enrai-shared"'
+script_name = "authrim-shared"'
 
 # Generate wrangler.toml for op-token
 generate_wrangler_toml "op-token" 8789 '[[kv_namespaces]]
@@ -358,32 +358,32 @@ preview_id = "placeholder"
 # Durable Objects Bindings' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "SESSION_STORE"
 class_name = "SessionStore"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "AUTH_CODE_STORE"
 class_name = "AuthorizationCodeStore"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "REFRESH_TOKEN_ROTATOR"
 class_name = "RefreshTokenRotator"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "RATE_LIMITER"
 class_name = "RateLimiterCounter"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "DPOP_JTI_STORE"
 class_name = "DPoPJTIStore"
-script_name = "enrai-shared"'
+script_name = "authrim-shared"'
 
 # Generate wrangler.toml for op-userinfo
 generate_wrangler_toml "op-userinfo" 8790 '[[kv_namespaces]]
@@ -394,28 +394,28 @@ preview_id = "placeholder"
 # D1 Database
 [[d1_databases]]
 binding = "DB"
-database_name = "enrai-users-db"
+database_name = "authrim-users-db"
 database_id = "placeholder"
 
 # Durable Objects Bindings' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "SESSION_STORE"
 class_name = "SessionStore"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "RATE_LIMITER"
 class_name = "RateLimiterCounter"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "DPOP_JTI_STORE"
 class_name = "DPoPJTIStore"
-script_name = "enrai-shared"'
+script_name = "authrim-shared"'
 
 # Generate wrangler.toml for op-management
 generate_wrangler_toml "op-management" 8791 '[[kv_namespaces]]
@@ -436,33 +436,33 @@ preview_id = "placeholder"
 # D1 Database
 [[d1_databases]]
 binding = "DB"
-database_name = "enrai-users-db"
+database_name = "authrim-users-db"
 database_id = "placeholder"
 
 # Durable Objects Bindings' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "REFRESH_TOKEN_ROTATOR"
 class_name = "RefreshTokenRotator"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "RATE_LIMITER"
 class_name = "RateLimiterCounter"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "SESSION_STORE"
 class_name = "SessionStore"
-script_name = "enrai-shared"'
+script_name = "authrim-shared"'
 
 # Generate wrangler.toml for router (with Service Bindings)
 echo "  ✅ router/wrangler.toml (with Service Bindings)"
 cat > packages/router/wrangler.toml << 'ROUTER_TOML_EOF'
-name = "enrai"
+name = "authrim"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -470,23 +470,23 @@ compatibility_flags = ["nodejs_compat"]
 # Service Bindings to other workers
 [[services]]
 binding = "OP_DISCOVERY"
-service = "enrai-op-discovery"
+service = "authrim-op-discovery"
 
 [[services]]
 binding = "OP_AUTH"
-service = "enrai-op-auth"
+service = "authrim-op-auth"
 
 [[services]]
 binding = "OP_TOKEN"
-service = "enrai-op-token"
+service = "authrim-op-token"
 
 [[services]]
 binding = "OP_USERINFO"
-service = "enrai-op-userinfo"
+service = "authrim-op-userinfo"
 
 [[services]]
 binding = "OP_MANAGEMENT"
-service = "enrai-op-management"
+service = "authrim-op-management"
 
 # Development configuration
 [dev]

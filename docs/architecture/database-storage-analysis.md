@@ -1,4 +1,4 @@
-# Enrai データベース・ストレージ使用状況分析レポート
+# Authrim データベース・ストレージ使用状況分析レポート
 
 **作成日**: 2025-11-20
 **対象**: 1000万MAU規模での安全性とレイテンシ評価
@@ -7,7 +7,7 @@
 
 ## エグゼクティブサマリー
 
-Enraiは、Cloudflareの4つのストレージサービス（D1、R2、Durable Objects、KV）を適切に使い分けた設計です。
+Authrimは、Cloudflareの4つのストレージサービス（D1、R2、Durable Objects、KV）を適切に使い分けた設計です。
 
 **現状評価**:
 - ✅ 100万MAUまで: 問題なく対応可能
@@ -23,7 +23,7 @@ Enraiは、Cloudflareの4つのストレージサービス（D1、R2、Durable O
 
 ### 概要
 - **バインディング名**: `DB`
-- **データベース名**: `enrai-{env}` (例: `enrai-dev`, `enrai-prod`)
+- **データベース名**: `authrim-{env}` (例: `authrim-dev`, `authrim-prod`)
 - **セットアップ**: `scripts/setup-d1.sh`
 
 ### テーブル構成（計13テーブル）
@@ -73,7 +73,7 @@ DB: D1Database;
 -- usersテーブル
 INSERT INTO users (id, email, name, picture, created_at, updated_at)
 VALUES ('usr_abc123', 'user@example.com', 'John Doe',
-        'https://enrai.example.com/avatars/usr_abc123.jpg',
+        'https://authrim.example.com/avatars/usr_abc123.jpg',
         1705123456789, 1705123456789);
 
 -- sessionsテーブル
@@ -186,8 +186,8 @@ VALUES ('ses_xyz789', 'usr_abc123', 1705209856, 1705123456);
 ### 概要
 - **バインディング名**: `AVATARS`
 - **バケット名**:
-  - 本番: `enrai-avatars`
-  - プレビュー: `enrai-avatars-preview`
+  - 本番: `authrim-avatars`
+  - プレビュー: `authrim-avatars-preview`
 
 ### データ内容
 
@@ -255,8 +255,8 @@ export async function serveAvatarHandler(c: Context) {
 # wrangler.toml
 [[r2_buckets]]
 binding = "AVATARS"
-bucket_name = "enrai-avatars"
-preview_bucket_name = "enrai-avatars-preview"
+bucket_name = "authrim-avatars"
+preview_bucket_name = "authrim-avatars-preview"
 ```
 
 ```typescript
@@ -273,7 +273,7 @@ const resizedUrl = `/cdn-cgi/image/width=200,height=200/${avatarUrl}`;
 
 ## 3. Durable Objects（強整合性ストレージ）
 
-Enraiでは **10種類のDurable Objects** を使用しています。
+Authrimでは **10種類のDurable Objects** を使用しています。
 
 ### 3.1 SessionStore
 
@@ -1452,6 +1452,6 @@ const avatarUrl = getAvatarUrl(user.picture, 200);
 | Phase 4 | 1000万〜 | 12ヶ月以降 | 次世代アーキテクチャ検討 |
 
 ### 結論
-**Enraiの現在のアーキテクチャは、適切な最適化により1000万MAUに対応可能です。**
+**Authrimの現在のアーキテクチャは、適切な最適化により1000万MAUに対応可能です。**
 
 Phase 2の対策（SessionStoreとRateLimiterのシャーディング）は、**500万MAU到達前に実装必須**です。それ以外は段階的に実装することで、安全かつコスト効率的に成長できます。

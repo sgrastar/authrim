@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Enrai D1 Database Deletion Script
-# This script safely deletes D1 databases for the Enrai project
+# Authrim D1 Database Deletion Script
+# This script safely deletes D1 databases for the Authrim project
 #
 # Usage:
 #   ./delete-d1.sh                 - Interactive mode (prompts for environment and confirmation)
@@ -49,7 +49,7 @@ for arg in "$@"; do
     esac
 done
 
-echo -e "${BLUE}⚡️ Enrai D1 Database Deletion${NC}"
+echo -e "${BLUE}⚡️ Authrim D1 Database Deletion${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -100,7 +100,7 @@ if [ -z "$ENV" ]; then
     echo ""
 fi
 
-DB_NAME="enrai-${ENV}"
+DB_NAME="authrim-${ENV}"
 
 echo -e "${BLUE}📊 Checking for D1 database: $DB_NAME${NC}"
 echo ""
@@ -119,7 +119,7 @@ if [ "$DB_EXISTS" = false ]; then
     echo "If you expected to find this database, please check:"
     echo "  1. You are logged in to the correct Cloudflare account"
     echo "  2. The database was created using the setup scripts"
-    echo "  3. The database name is correct (enrai-${ENV})"
+    echo "  3. The database name is correct (authrim-${ENV})"
     echo ""
     exit 0
 fi

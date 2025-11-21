@@ -1,6 +1,6 @@
 # Accessibility (A11y) Compliance
 
-This document describes Enrai's accessibility implementation, testing strategy, and WCAG 2.1 AA compliance.
+This document describes Authrim's accessibility implementation, testing strategy, and WCAG 2.1 AA compliance.
 
 ## Accessibility Standards
 
@@ -322,4 +322,4 @@ pnpm test:e2e test-e2e/accessibility.spec.ts
 
 ## Contact
 
-For accessibility issues or suggestions, please open an issue on [GitHub](https://github.com/sgrastar/enrai/issues).
+For accessibility issues or suggestions, please open an issue on [GitHub](https://github.com/sgrastar/authrim/issues).

@@ -13,7 +13,7 @@
 
 import { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
-import type { Env } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
 
 /**
  * Issue a short-lived session token (5 minute TTL, single-use)
@@ -25,7 +25,7 @@ import type { Env } from '@enrai/shared';
 export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
   try {
     // Get session from cookie
-    const sessionId = getCookie(c, 'enrai_session');
+    const sessionId = getCookie(c, 'authrim_session');
 
     if (!sessionId) {
       return c.json(
@@ -265,7 +265,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
 export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
   try {
     // Get session from cookie
-    const sessionId = getCookie(c, 'enrai_session');
+    const sessionId = getCookie(c, 'authrim_session');
 
     if (!sessionId) {
       return c.json(
@@ -344,7 +344,7 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
 export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
   try {
     // Get session from cookie or body
-    let sessionId = getCookie(c, 'enrai_session');
+    let sessionId = getCookie(c, 'authrim_session');
 
     // Get extension duration (default: 1 hour)
     let extendSeconds = 3600; // Default: 1 hour

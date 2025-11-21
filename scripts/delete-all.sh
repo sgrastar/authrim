@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Enrai Complete Deletion Script
-# This script safely deletes ALL Cloudflare resources for the Enrai project
+# Authrim Complete Deletion Script
+# This script safely deletes ALL Cloudflare resources for the Authrim project
 #
 # This is a master script that orchestrates the deletion of:
 #   - Workers (and associated Durable Objects)
@@ -60,7 +60,7 @@ done
 
 echo ""
 echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${MAGENTA}⚡️  Enrai Complete Resource Deletion${NC}"
+echo -e "${MAGENTA}⚡️  Authrim Complete Resource Deletion${NC}"
 echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
@@ -71,7 +71,7 @@ fi
 
 # If environment not specified, prompt for it
 if [ -z "$ENV" ]; then
-    echo "This script will delete ALL Enrai resources for a specific environment."
+    echo "This script will delete ALL Authrim resources for a specific environment."
     echo ""
     echo -e "${YELLOW}⚠️  Environment Explanation:${NC}"
     echo ""
@@ -119,13 +119,13 @@ echo ""
 echo "The following resources will be deleted in this order:"
 echo ""
 echo "  1. 🔧 Cloudflare Workers (and Durable Objects)"
-echo "     • enrai-shared"
-echo "     • enrai-op-auth"
-echo "     • enrai-op-discovery"
-echo "     • enrai-op-management"
-echo "     • enrai-op-token"
-echo "     • enrai-op-userinfo"
-echo "     • enrai-router"
+echo "     • authrim-shared"
+echo "     • authrim-op-auth"
+echo "     • authrim-op-discovery"
+echo "     • authrim-op-management"
+echo "     • authrim-op-token"
+echo "     • authrim-op-userinfo"
+echo "     • authrim-router"
 echo ""
 echo "  2. 📦 KV Namespaces (production and preview)"
 echo "     • AUTH_CODES"
@@ -138,7 +138,7 @@ echo "     • REVOKED_TOKENS"
 echo "     • INITIAL_ACCESS_TOKENS"
 echo ""
 echo "  3. 🗄️  D1 Database"
-echo "     • enrai-${ENV}"
+echo "     • authrim-${ENV}"
 echo ""
 echo -e "${RED}⚠️  WARNING: This action CANNOT be undone!${NC}"
 echo -e "${RED}⚠️  ALL data will be permanently deleted!${NC}"

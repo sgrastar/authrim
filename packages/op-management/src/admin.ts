@@ -4,7 +4,7 @@
  */
 
 import { Context } from 'hono';
-import type { Env } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
 
 /**
  * Serve avatar image from R2
@@ -1452,7 +1452,7 @@ export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
     // Default settings
     const defaultSettings = {
       general: {
-        siteName: 'Enrai',
+        siteName: 'Authrim',
         logoUrl: '',
         language: 'en',
         timezone: 'UTC',

@@ -8,14 +8,14 @@
 
 ## Overview
 
-Enrai uses Cloudflare Durable Objects for managing **strong consistency requirements** in distributed authentication flows. Durable Objects provide:
+Authrim uses Cloudflare Durable Objects for managing **strong consistency requirements** in distributed authentication flows. Durable Objects provide:
 
 - **Strong consistency**: Immediate read-after-write consistency (no eventual consistency delays)
 - **Atomic operations**: Transactions within a single DO instance
 - **In-memory state**: Sub-millisecond access to hot data
 - **Global coordination**: Single-instance-per-key guarantees across the world
 
-### Durable Objects in Enrai
+### Durable Objects in Authrim
 
 | Durable Object | Purpose | Phase | Status |
 |----------------|---------|-------|--------|
@@ -240,7 +240,7 @@ Configuration can be updated via the `/config` endpoint or by modifying the init
    - No public HTTP access to KeyManager endpoints
    - Use Cloudflare Access or Workers authentication
 
-### Usage in Enrai
+### Usage in Authrim
 
 #### Initialization
 
@@ -249,7 +249,7 @@ Configuration can be updated via the `/config` endpoint or by modifying the init
 [[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
-script_name = "enrai"
+script_name = "authrim"
 
 // In worker code
 const keyManagerId = env.KEY_MANAGER.idFromName('default');

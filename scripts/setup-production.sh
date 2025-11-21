@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# Enrai Production Configuration Script
+# Authrim Production Configuration Script
 # This script updates wrangler.toml files with production URLs
 #
 
 set -e
 
-echo "🌍 Enrai Production Configuration"
+echo "🌍 Authrim Production Configuration"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -70,12 +70,12 @@ echo ""
 # Prompt for deployment mode
 echo "📝 Deployment Mode Configuration"
 echo ""
-echo "   Choose how you want to deploy Enrai:"
+echo "   Choose how you want to deploy Authrim:"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  1) Test Environment (workers.dev + Router Worker)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "     • Single unified endpoint: https://enrai.$SUBDOMAIN.workers.dev"
+echo "     • Single unified endpoint: https://authrim.$SUBDOMAIN.workers.dev"
 echo "     • Uses Router Worker with Service Bindings"
 echo "     • All endpoints accessible under one domain"
 echo "     • Best for: Development, testing, quick setup"
@@ -95,7 +95,7 @@ read -p "Enter your choice (1/2): " -r DEPLOYMENT_MODE
 case $DEPLOYMENT_MODE in
     1)
         # Test Environment: Router Worker + workers.dev
-        PRODUCTION_URL="https://enrai.$SUBDOMAIN.workers.dev"
+        PRODUCTION_URL="https://authrim.$SUBDOMAIN.workers.dev"
         USE_ROUTER="true"
         DEPLOYMENT_TYPE="test"
         echo ""
@@ -143,11 +143,11 @@ echo "📝 UI Base URL Configuration (for Device Flow verification page)"
 echo ""
 echo "Enter the base URL for your SvelteKit UI (Cloudflare Pages):"
 echo "  Examples:"
-echo "    • https://enrai-ui.pages.dev (Cloudflare Pages)"
+echo "    • https://authrim-ui.pages.dev (Cloudflare Pages)"
 echo "    • https://ui.yourdomain.com (custom domain)"
 echo ""
-read -p "UI_BASE_URL [https://enrai-ui.pages.dev]: " UI_BASE_URL_INPUT
-UI_BASE_URL=${UI_BASE_URL_INPUT:-https://enrai-ui.pages.dev}
+read -p "UI_BASE_URL [https://authrim-ui.pages.dev]: " UI_BASE_URL_INPUT
+UI_BASE_URL=${UI_BASE_URL_INPUT:-https://authrim-ui.pages.dev}
 
 # Remove trailing slash if present
 UI_BASE_URL=${UI_BASE_URL%/}

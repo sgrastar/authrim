@@ -2,7 +2,7 @@
 
 ### Week 32-33: CLI Tool Development (Jun 12-25)
 
-#### 32.1 `create-enrai` Package Setup
+#### 32.1 `create-authrim` Package Setup
 - [ ] Initialize NPM package
 - [ ] Set up TypeScript configuration
 - [ ] Configure build system (tsup/esbuild)
@@ -34,28 +34,28 @@
 - [ ] Add error handling
 
 #### 32.4 Deployment Commands
-- [ ] Implement `enrai deploy` command
-- [ ] Add `enrai deploy --production` flag
-- [ ] Implement `enrai rollback` command
-- [ ] Add `enrai status` command
-- [ ] Implement `enrai logs` command
+- [ ] Implement `authrim deploy` command
+- [ ] Add `authrim deploy --production` flag
+- [ ] Implement `authrim rollback` command
+- [ ] Add `authrim status` command
+- [ ] Implement `authrim logs` command
 - [ ] Add deployment progress tracking
 - [ ] Implement error recovery
 - [ ] Test deployment flow
 
 #### 32.5 Management Commands
-- [ ] Implement `enrai user create <email>`
-- [ ] Add `enrai user delete <email>`
-- [ ] Implement `enrai user reset-password <email>`
-- [ ] Add `enrai user list`
-- [ ] Implement `enrai client create <name>`
-- [ ] Add `enrai client list`
-- [ ] Implement `enrai client delete <id>`
-- [ ] Add `enrai keys rotate`
-- [ ] Implement `enrai backup`
-- [ ] Add `enrai restore <file>`
-- [ ] Implement `enrai config get <key>`
-- [ ] Add `enrai config set <key> <value>`
+- [ ] Implement `authrim user create <email>`
+- [ ] Add `authrim user delete <email>`
+- [ ] Implement `authrim user reset-password <email>`
+- [ ] Add `authrim user list`
+- [ ] Implement `authrim client create <name>`
+- [ ] Add `authrim client list`
+- [ ] Implement `authrim client delete <id>`
+- [ ] Add `authrim keys rotate`
+- [ ] Implement `authrim backup`
+- [ ] Add `authrim restore <file>`
+- [ ] Implement `authrim config get <key>`
+- [ ] Add `authrim config set <key> <value>`
 - [ ] Test all commands
 
 #### 32.6 CLI Testing
@@ -243,7 +243,7 @@
 - [ ] Responsive on all screen sizes (320px+)
 
 ### Phase 7: CLI & Automation
-- [ ] <5 minutes from `npx create-enrai` to running IdP
+- [ ] <5 minutes from `npx create-authrim` to running IdP
 - [ ] <1 minute deployment time
 - [ ] 100% automated setup (zero manual config)
 - [ ] CLI with 20+ commands

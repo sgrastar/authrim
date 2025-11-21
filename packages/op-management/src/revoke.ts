@@ -1,8 +1,8 @@
 import type { Context } from 'hono';
-import type { Env } from '@enrai/shared';
-import { validateClientId, timingSafeEqual } from '@enrai/shared';
-import { deleteRefreshToken, getRefreshToken, revokeToken } from '@enrai/shared';
-import { parseToken } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
+import { validateClientId, timingSafeEqual } from '@authrim/shared';
+import { deleteRefreshToken, getRefreshToken, revokeToken } from '@authrim/shared';
+import { parseToken } from '@authrim/shared';
 
 /**
  * Token Revocation Endpoint Handler

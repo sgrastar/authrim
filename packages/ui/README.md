@@ -1,6 +1,6 @@
-# Enrai UI
+# Authrim UI
 
-Frontend application for Enrai - OpenID Connect Provider on Cloudflare Workers.
+Frontend application for Authrim - OpenID Connect Provider on Cloudflare Workers.
 
 ## Tech Stack
 
@@ -65,7 +65,7 @@ pnpm install
    PUBLIC_API_BASE_URL=http://localhost:8786
 
    # For remote API (staging/production)
-   # PUBLIC_API_BASE_URL=https://enrai.your-account.workers.dev
+   # PUBLIC_API_BASE_URL=https://authrim.your-account.workers.dev
    ```
 
 The UI needs to connect to the backend router. You can choose:
@@ -141,11 +141,11 @@ pnpm deploy:production
 
    **Production:**
    - Variable name: `PUBLIC_API_BASE_URL`
-   - Value: `https://enrai.your-account.workers.dev` (your deployed router URL)
+   - Value: `https://authrim.your-account.workers.dev` (your deployed router URL)
 
    **Preview (optional):**
    - Variable name: `PUBLIC_API_BASE_URL`
-   - Value: `https://enrai-staging.your-account.workers.dev`
+   - Value: `https://authrim-staging.your-account.workers.dev`
 
 4. **Deploy** - Push to configured branch (e.g., `main`)
 
@@ -153,7 +153,7 @@ pnpm deploy:production
 
 | Variable | Description | Local Default | Production Example |
 |----------|-------------|---------------|-------------------|
-| `PUBLIC_API_BASE_URL` | Backend API endpoint | `http://localhost:8786` | `https://enrai.workers.dev` |
+| `PUBLIC_API_BASE_URL` | Backend API endpoint | `http://localhost:8786` | `https://authrim.workers.dev` |
 
 **Note:** Environment variables prefixed with `PUBLIC_` are exposed to the browser. Never put secrets here.
 
@@ -166,7 +166,7 @@ Edit `.env` file to switch between environments:
 PUBLIC_API_BASE_URL=http://localhost:8786
 
 # Remote staging - connect to staging router
-PUBLIC_API_BASE_URL=https://enrai-staging.workers.dev
+PUBLIC_API_BASE_URL=https://authrim-staging.workers.dev
 
 # Remote production - connect to production router
 PUBLIC_API_BASE_URL=https://auth.yourdomain.com

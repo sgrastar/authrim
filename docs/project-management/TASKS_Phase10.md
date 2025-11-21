@@ -53,7 +53,7 @@
 
 #### 10.5 Production Environment
 - [ ] Set up production Cloudflare account
-- [ ] Configure custom domain (`id.enrai.org`)
+- [ ] Configure custom domain (`id.authrim.org`)
 - [ ] Set up DNS records
 - [ ] Configure SSL/TLS (with MTLS support)
 
@@ -127,14 +127,14 @@
 - [ ] MTLS (Mutual TLS) implemented
 - [ ] JAR (JWT-Secured Authorization Request) operational
 - [ ] Client Credentials Flow working
-- [ ] Production deployment live (`https://id.enrai.org`)
+- [ ] Production deployment live (`https://id.authrim.org`)
 - [ ] OpenID Certification obtained ✨
 - [ ] Public announcement ready
 - [ ] Migration guides published
 
 ---
 
-> **Enrai** ⚡️ — Building standards-compliant identity infrastructure, one task at a time.
+> **Authrim** ⚡️ — Building standards-compliant identity infrastructure, one task at a time.
 >
 > **Updated:** 2025-11-12 — Phase 4 (Extended Features) ✅ COMPLETE
 > - Added Dynamic Client Registration (RFC 7591)

@@ -1,7 +1,7 @@
-# Enrai Project Kickoff Checklist
+# Authrim Project Kickoff Checklist
 
 ## Overview
-This checklist covers all immediate tasks needed to kickoff the Enrai project and complete Week 1 deliverables.
+This checklist covers all immediate tasks needed to kickoff the Authrim project and complete Week 1 deliverables.
 
 **Target Completion**: November 16, 2025
 **Milestone**: M1 - Foundation Complete (Dec 15, 2025)
@@ -28,7 +28,7 @@ This checklist covers all immediate tasks needed to kickoff the Enrai project an
 - [ ] GitHub repository access configured
 - [ ] Cloudflare account set up
 - [ ] Cloudflare API token generated
-- [ ] Git branch created: `claude/enrai-project-setup-011CUzP18xDrPBpH2wQgouqJ`
+- [ ] Git branch created: `claude/authrim-project-setup-011CUzP18xDrPBpH2wQgouqJ`
 
 ---
 
@@ -38,7 +38,7 @@ This checklist covers all immediate tasks needed to kickoff the Enrai project an
 Create the following directory structure:
 
 ```
-enrai/
+authrim/
 ├── .github/
 │   └── workflows/          # CI/CD workflows
 ├── src/
@@ -73,7 +73,7 @@ enrai/
 **File**: `package.json`
 
 - [ ] Create `package.json` with:
-  - [ ] Project name: `enrai`
+  - [ ] Project name: `authrim`
   - [ ] Version: `0.1.0`
   - [ ] Description: OpenID Connect Provider on Cloudflare Workers
   - [ ] Main entry point: `src/index.ts`
@@ -118,7 +118,7 @@ enrai/
 **File**: `wrangler.toml`
 
 - [ ] Create `wrangler.toml` with:
-  - [ ] `name`: "enrai"
+  - [ ] `name`: "authrim"
   - [ ] `main`: "src/index.ts"
   - [ ] `compatibility_date`: "2024-11-01"
   - [ ] KV namespace bindings:
@@ -372,10 +372,10 @@ enrai/
 
 ### Branch Management
 
-- [ ] Verify current branch: `claude/enrai-project-setup-011CUzP18xDrPBpH2wQgouqJ`
+- [ ] Verify current branch: `claude/authrim-project-setup-011CUzP18xDrPBpH2wQgouqJ`
 - [ ] Push to remote:
   ```bash
-  git push -u origin claude/enrai-project-setup-011CUzP18xDrPBpH2wQgouqJ
+  git push -u origin claude/authrim-project-setup-011CUzP18xDrPBpH2wQgouqJ
   ```
 
 ---
@@ -524,4 +524,4 @@ After completing this checklist, proceed to:
 
 ---
 
-> **Enrai** 🔥 — Starting strong with a solid foundation.
+> **Authrim** 🔥 — Starting strong with a solid foundation.

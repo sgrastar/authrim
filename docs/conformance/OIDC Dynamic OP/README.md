@@ -1,4 +1,4 @@
-# enrai – OpenID Connect Dynamic OP Conformance
+# authrim – OpenID Connect Dynamic OP Conformance
 
 ## Vision & Objectives
 
@@ -67,7 +67,7 @@
 
 ---
 
-## Enrai Implementation Status
+## Authrim Implementation Status
 
 ### Registration Endpoint (/register)
 
@@ -163,23 +163,23 @@ https://www.certification.openid.net/
 **Configuration:**
 ```bash
 # Test Configuration
-Issuer: https://enrai.YOUR_SUBDOMAIN.workers.dev
-Discovery URL: https://enrai.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration
-Registration Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/register
+Issuer: https://authrim.YOUR_SUBDOMAIN.workers.dev
+Discovery URL: https://authrim.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration
+Registration Endpoint: https://authrim.YOUR_SUBDOMAIN.workers.dev/register
 
 # Dynamic Registration will auto-configure test clients
 ```
 
 ### Test Procedure
 
-1. **Deploy Enrai**
+1. **Deploy Authrim**
    ```bash
    pnpm run deploy
    ```
 
 2. **Verify Registration Endpoint**
    ```bash
-   curl -X POST https://enrai.YOUR_SUBDOMAIN.workers.dev/register \
+   curl -X POST https://authrim.YOUR_SUBDOMAIN.workers.dev/register \
      -H "Content-Type: application/json" \
      -d '{
        "redirect_uris": ["https://example.com/callback"],
@@ -192,7 +192,7 @@ Registration Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/register
 3. **Verify Subject Type Support**
    ```bash
    # Test pairwise subject type
-   curl -X POST https://enrai.YOUR_SUBDOMAIN.workers.dev/register \
+   curl -X POST https://authrim.YOUR_SUBDOMAIN.workers.dev/register \
      -H "Content-Type: application/json" \
      -d '{
        "redirect_uris": ["https://example.com/callback"],
@@ -244,7 +244,7 @@ Registration Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/register
 - [OIDC Basic OP](../OIDC%20Basic%20OP/README.md) - Basic OP profile conformance
 - [OIDC Config OP](../OIDC%20Config%20OP/README.md) - Discovery configuration conformance
 - [Test Plan](../OIDC%20Basic%20OP/test-plan.md) - Overall conformance testing strategy
-- [Project README](../../README.md) - Enrai project overview
+- [Project README](../../README.md) - Authrim project overview
 
 ---
 

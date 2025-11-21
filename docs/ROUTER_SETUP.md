@@ -2,9 +2,9 @@
 
 ## Problem Statement
 
-After splitting Enrai into multiple specialized Workers, an OpenID Connect specification violation was discovered:
+After splitting Authrim into multiple specialized Workers, an OpenID Connect specification violation was discovered:
 
-**Issue**: The issuer was set to `https://enrai.sgrastar.workers.dev`, but the discovery document was actually at `https://enrai-op-discovery.sgrastar.workers.dev/.well-known/openid-configuration`.
+**Issue**: The issuer was set to `https://authrim.sgrastar.workers.dev`, but the discovery document was actually at `https://authrim-op-discovery.sgrastar.workers.dev/.well-known/openid-configuration`.
 
 **OIDC Requirement**: The issuer identifier and all endpoints MUST be accessible from the same domain.
 
@@ -15,7 +15,7 @@ We implemented a dual-mode deployment system:
 ### 1. Test Environment (workers.dev + Router Worker)
 - **Use case**: Development, testing, quick setup
 - **How it works**: Deploy a Router Worker that acts as a single entry point
-- **Issuer**: `https://enrai.subdomain.workers.dev`
+- **Issuer**: `https://authrim.subdomain.workers.dev`
 - **Mechanism**: Service Bindings route requests to specialized workers
 - **Security**: Only the Router Worker is publicly accessible; backend workers are NOT exposed
 - **Pros**: OpenID Connect compliant, works with workers.dev, secure architecture
@@ -82,7 +82,7 @@ Test your deployment:
 
 ```bash
 # Replace with your actual URL
-curl https://enrai-router.subdomain.workers.dev/.well-known/openid-configuration | jq
+curl https://authrim-router.subdomain.workers.dev/.well-known/openid-configuration | jq
 
 # Or for custom domain
 curl https://id.yourdomain.com/.well-known/openid-configuration | jq
@@ -102,7 +102,7 @@ Verify that:
                            │
                            ↓
 ┌─────────────────────────────────────────────────────┐
-│  enrai.subdomain.workers.dev (ONLY public endpoint) │
+│  authrim.subdomain.workers.dev (ONLY public endpoint) │
 │  (Issuer: this URL)                                 │
 └──────────────────────┬──────────────────────────────┘
                        │
@@ -146,7 +146,7 @@ Verify that:
 ### Test Environment
 
 The setup script:
-1. Sets issuer to `https://enrai.subdomain.workers.dev`
+1. Sets issuer to `https://authrim.subdomain.workers.dev`
 2. Generates `packages/router/wrangler.toml` with Service Bindings
 3. Updates all worker wrangler.toml files:
    - Router: `workers_dev = true` (publicly accessible)

@@ -1,4 +1,4 @@
-# Enrai Product Roadmap 🗺️
+# Authrim Product Roadmap 🗺️
 
 **Vision:** One-command identity infrastructure for the modern web
 
@@ -740,7 +740,7 @@ Legend:
 ### Stage 1: CLI Tool Development
 
 **Key Features:**
-- [ ] `create-enrai` NPM package
+- [ ] `create-authrim` NPM package
 - [ ] Interactive setup wizard
 - [ ] Project scaffolding
 - [ ] Deployment commands
@@ -768,7 +768,7 @@ Legend:
 
 **Key Features:**
 - [ ] Production Cloudflare account setup
-- [ ] Custom domain configuration (`id.enrai.org`)
+- [ ] Custom domain configuration (`id.authrim.org`)
 - [ ] DNS records & SSL/TLS configuration
 - [ ] Production secrets generation
 - [ ] Production deployment & verification
@@ -793,13 +793,13 @@ Legend:
 - [ ] OpenID Certified™ mark display
 
 **Deliverables:**
-- [ ] `create-enrai` package published
+- [ ] `create-authrim` package published
 - [ ] One-command deployment functional (<5 min setup)
 - [ ] CLI with 20+ management commands
 - [ ] Production-ready error handling
 - [ ] Complete documentation
 - [ ] OpenID Certification obtained ✨
-- [ ] Production deployment live (`https://id.enrai.org`)
+- [ ] Production deployment live (`https://id.authrim.org`)
 - [ ] Public announcement ready
 - [ ] Migration guides published
 - [ ] Celebrate! 🎉
@@ -896,7 +896,7 @@ Legend:
 - [ ] $10k+ MRR (goal)
 
 ### Phase 9: CLI & Launch 🎓
-- [ ] <5 min from `npx create-enrai` to running IdP
+- [ ] <5 min from `npx create-authrim` to running IdP
 - [ ] <1 min deployment time
 - [ ] 100% automated setup
 - [ ] OpenID Certification obtained ✨
@@ -908,7 +908,7 @@ Legend:
 ## 🎯 Key Results (Overall)
 
 ### By August 2026 (Phase 7 Complete)
-Enrai will be:
+Authrim will be:
 
 1. **🏆 OpenID Certified** - Official certification obtained
 2. **🔐 Passwordless-first** - WebAuthn + Magic Link
@@ -980,7 +980,7 @@ Add:
 > **Last Update:** 2025-11-18 (Phase 5: 100% COMPLETE ✅)
 > **Next Update:** 2026-08-10 (Post Phase 6)
 >
-> ⚡️ **Enrai** - Building the future of identity infrastructure, one phase at a time.
+> ⚡️ **Authrim** - Building the future of identity infrastructure, one phase at a time.
 >
 > **Current Status:**
 > - **Phase 5: 100% COMPLETE** ✅ Full-stack implementation with comprehensive testing

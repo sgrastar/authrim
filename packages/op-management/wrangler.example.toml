@@ -1,4 +1,4 @@
-name = "enrai-op-management"
+name = "authrim-op-management"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
@@ -6,5 +6,5 @@ compatibility_date = "2024-01-01"
 # Create buckets with: wrangler r2 bucket create <bucket_name>
 [[r2_buckets]]
 binding = "AVATARS"
-bucket_name = "enrai-avatars"
-preview_bucket_name = "enrai-avatars-preview"
+bucket_name = "authrim-avatars"
+preview_bucket_name = "authrim-avatars-preview"
