@@ -89,6 +89,21 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     request_parameter_supported: true,
     request_uri_parameter_supported: true,
     request_object_signing_alg_values_supported: ['RS256', 'none'],
+    request_object_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
+    request_object_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
+    // JARM (JWT-Secured Authorization Response Mode) support
+    response_modes_supported: [
+      'query',
+      'fragment',
+      'form_post',
+      'query.jwt',
+      'fragment.jwt',
+      'form_post.jwt',
+      'jwt',
+    ],
+    authorization_signing_alg_values_supported: ['RS256'],
+    authorization_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
+    authorization_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
     // RFC 7516: JWE (JSON Web Encryption) support
     id_token_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
     id_token_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
