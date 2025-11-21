@@ -23,6 +23,7 @@ import {
   adminUserDeleteHandler,
   adminClientsListHandler,
   adminClientGetHandler,
+  adminClientUpdateHandler,
   adminUserAvatarUploadHandler,
   adminUserAvatarDeleteHandler,
   adminSessionsListHandler,
@@ -138,6 +139,7 @@ app.post('/api/admin/users/:id/avatar', adminUserAvatarUploadHandler);
 app.delete('/api/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
 app.get('/api/admin/clients', adminClientsListHandler);
 app.get('/api/admin/clients/:id', adminClientGetHandler);
+app.put('/api/admin/clients/:id', adminClientUpdateHandler);
 
 // Admin Session Management endpoints (RESTful naming)
 app.get('/api/admin/sessions', adminSessionsListHandler);

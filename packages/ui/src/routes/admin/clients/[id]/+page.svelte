@@ -14,6 +14,9 @@
 		client_uri: string | null;
 		policy_uri: string | null;
 		tos_uri: string | null;
+		is_trusted?: boolean;
+		skip_consent?: boolean;
+		allow_claims_without_scope?: boolean;
 		created_at: number;
 		updated_at: number;
 	}
@@ -42,6 +45,7 @@
 		await new Promise((resolve) => setTimeout(resolve, 500));
 
 		// Mock data
+		const now = Math.floor(Date.now() / 1000);
 		client = {
 			client_id: clientId,
 			client_name: 'My Application',
@@ -52,8 +56,11 @@
 			client_uri: 'https://example.com',
 			policy_uri: 'https://example.com/privacy',
 			tos_uri: 'https://example.com/terms',
-			created_at: Date.now() - 86400000 * 30,
-			updated_at: Date.now() - 86400000 * 5
+			is_trusted: false,
+			skip_consent: false,
+			allow_claims_without_scope: false,
+			created_at: now - 86400 * 30,
+			updated_at: now - 86400 * 5
 		};
 
 		loading = false;
@@ -89,7 +96,7 @@
 	}
 
 	function formatDate(timestamp: number): string {
-		return new Date(timestamp).toLocaleString();
+		return new Date(timestamp * 1000).toLocaleString();
 	}
 
 	function addRedirectUri() {
@@ -290,6 +297,31 @@
 				<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
 					Separate multiple scopes with spaces
 				</p>
+			</div>
+		</Card>
+
+		<!-- Claims Parameter Settings -->
+		<Card>
+			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
+				Claims Parameter Settings
+			</h2>
+			<div class="space-y-4">
+				<label class="flex items-start gap-3">
+					<input
+						type="checkbox"
+						bind:checked={client.allow_claims_without_scope}
+						class="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+					/>
+					<div class="flex-1">
+						<span class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+							Allow claims without scope
+						</span>
+						<span class="block text-xs text-gray-500 dark:text-gray-400 mt-1">
+							When enabled, the client can request user claims via the <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">claims</code> parameter even without the corresponding scope.
+							This is required for OIDC conformance tests but should be disabled for production clients for privacy protection.
+						</span>
+					</div>
+				</label>
 			</div>
 		</Card>
 	{:else}

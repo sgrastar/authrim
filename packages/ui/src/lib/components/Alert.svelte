@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
-	import { AlertCircle, CheckCircle, Info, AlertTriangle, X } from 'lucide-svelte';
 
 	interface Props extends HTMLAttributes<HTMLDivElement> {
 		variant?: 'success' | 'error' | 'warning' | 'info';
@@ -29,33 +28,32 @@
 			iconClass: 'text-success-600 dark:text-success-400',
 			titleClass: 'text-success-800 dark:text-success-300',
 			textClass: 'text-success-700 dark:text-success-400',
-			Icon: CheckCircle
+			iconName: 'i-heroicons-check-circle'
 		},
 		error: {
 			containerClass: 'bg-error-50 border-error-200 dark:bg-error-900/20 dark:border-error-800',
 			iconClass: 'text-error-600 dark:text-error-400',
 			titleClass: 'text-error-800 dark:text-error-300',
 			textClass: 'text-error-700 dark:text-error-400',
-			Icon: AlertCircle
+			iconName: 'i-heroicons-exclamation-circle'
 		},
 		warning: {
 			containerClass: 'bg-warning-50 border-warning-200 dark:bg-warning-900/20 dark:border-warning-800',
 			iconClass: 'text-warning-600 dark:text-warning-400',
 			titleClass: 'text-warning-800 dark:text-warning-300',
 			textClass: 'text-warning-700 dark:text-warning-400',
-			Icon: AlertTriangle
+			iconName: 'i-heroicons-exclamation-triangle'
 		},
 		info: {
 			containerClass: 'bg-info-50 border-info-200 dark:bg-info-900/20 dark:border-info-800',
 			iconClass: 'text-info-600 dark:text-info-400',
 			titleClass: 'text-info-800 dark:text-info-300',
 			textClass: 'text-info-700 dark:text-info-400',
-			Icon: Info
+			iconName: 'i-heroicons-information-circle'
 		}
 	};
 
 	const config = $derived(variantConfig[variant]);
-	const Icon = $derived(config.Icon);
 
 	function handleDismiss() {
 		visible = false;
@@ -70,7 +68,7 @@
 		{...restProps}
 	>
 		<div class="flex items-start gap-3">
-			<Icon class={`h-5 w-5 mt-0.5 flex-shrink-0 ${config.iconClass}`} />
+			<div class={`${config.iconName} h-5 w-5 mt-0.5 flex-shrink-0 ${config.iconClass}`}></div>
 
 			<div class="flex-1 min-w-0">
 				{#if title}
@@ -90,7 +88,7 @@
 					onclick={handleDismiss}
 					aria-label="Dismiss alert"
 				>
-					<X class="h-5 w-5" />
+					<div class="i-heroicons-x-mark h-5 w-5"></div>
 				</button>
 			{/if}
 		</div>

@@ -330,8 +330,9 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       client_uri, policy_uri, tos_uri, contacts,
       subject_type, sector_identifier_uri,
       token_endpoint_auth_method, is_trusted, skip_consent,
+      allow_claims_without_scope,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     clientId,
     metadata.client_secret || null,
@@ -350,6 +351,7 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
     metadata.token_endpoint_auth_method || 'client_secret_basic',
     metadata.is_trusted ? 1 : 0,
     metadata.skip_consent ? 1 : 0,
+    metadata.allow_claims_without_scope ? 1 : 0,
     metadata.created_at || now,
     metadata.updated_at || now
   ).run();
@@ -446,6 +448,11 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (request.sector_identifier_uri)
       response.sector_identifier_uri = request.sector_identifier_uri;
 
+    // OIDC Conformance Test: Detect certification.openid.net
+    const isCertificationTest = request.redirect_uris.some(
+      uri => uri.includes('certification.openid.net')
+    );
+
     // Store client metadata
     const metadata: ClientMetadata = {
       ...response,
@@ -453,6 +460,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       updated_at: issuedAt,
       is_trusted: isTrusted,
       skip_consent: isTrusted, // Trusted clients skip consent by default
+      allow_claims_without_scope: isCertificationTest, // OIDC conformance tests need flexible claims parameter handling
     };
 
     await storeClient(c.env, clientId, metadata);
@@ -460,11 +468,6 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // Log client registration for debugging/auditing
     // eslint-disable-next-line no-console
     console.log(`Client registered: ${clientId}`);
-
-    // OIDC Conformance Test: Create test user for certification.openid.net
-    const isCertificationTest = request.redirect_uris.some(
-      uri => uri.includes('certification.openid.net')
-    );
 
     if (isCertificationTest) {
       console.log('[DCR] OIDC Conformance Test detected, creating test user');

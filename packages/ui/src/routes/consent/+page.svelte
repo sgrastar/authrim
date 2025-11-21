@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { Button, Card, Spinner } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { CheckCircle, User, Building2, ExternalLink } from 'lucide-svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	interface ConsentData {
@@ -154,7 +153,7 @@
 						/>
 					{:else}
 						<div class="h-16 w-16 mx-auto mb-4 rounded-lg bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-							<Building2 class="h-8 w-8 text-primary-600 dark:text-primary-400" />
+							<div class="i-heroicons-building-office h-8 w-8 text-primary-600 dark:text-primary-400"></div>
 						</div>
 					{/if}
 
@@ -174,7 +173,7 @@
 							class="inline-flex items-center gap-1 text-sm text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300 mt-2"
 						>
 							{consentData.clientUri}
-							<ExternalLink class="h-3 w-3" />
+							<div class="i-heroicons-arrow-top-right-on-square h-3 w-3"></div>
 						</a>
 					{/if}
 				</div>
@@ -188,7 +187,7 @@
 					<ul class="space-y-3 mb-6">
 						{#each consentData.scopes as scope (scope)}
 							<li class="flex items-start gap-3">
-								<CheckCircle class="h-5 w-5 text-success-600 dark:text-success-400 flex-shrink-0 mt-0.5" />
+								<div class="i-heroicons-check-circle h-5 w-5 text-success-600 dark:text-success-400 flex-shrink-0 mt-0.5"></div>
 								<span class="text-gray-700 dark:text-gray-300 text-sm">
 									{getScopeLabel(scope)}
 								</span>
@@ -211,7 +210,7 @@
 								/>
 							{:else}
 								<div class="h-10 w-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-									<User class="h-5 w-5 text-primary-600 dark:text-primary-400" />
+									<div class="i-heroicons-user h-5 w-5 text-primary-600 dark:text-primary-400"></div>
 								</div>
 							{/if}
 
@@ -271,7 +270,7 @@
 								class="hover:text-primary-600 dark:hover:text-primary-400 inline-flex items-center gap-1"
 							>
 								{$LL.consent_privacyPolicy()}
-								<ExternalLink class="h-3 w-3" />
+								<div class="i-heroicons-arrow-top-right-on-square h-3 w-3"></div>
 							</a>
 						{/if}
 						{#if consentData.tosUri}
@@ -282,7 +281,7 @@
 								class="hover:text-primary-600 dark:hover:text-primary-400 inline-flex items-center gap-1"
 							>
 								{$LL.consent_termsOfService()}
-								<ExternalLink class="h-3 w-3" />
+								<div class="i-heroicons-arrow-top-right-on-square h-3 w-3"></div>
 							</a>
 						{/if}
 					</div>

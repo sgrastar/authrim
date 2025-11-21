@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { AlertCircle, ArrowLeft, HelpCircle } from 'lucide-svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let errorCode = $state('');
@@ -71,7 +70,7 @@
 			<!-- Error Icon -->
 			<div class="flex justify-center mb-6">
 				<div class="rounded-full bg-error-100 dark:bg-error-900/30 p-4">
-					<AlertCircle class="h-12 w-12 text-error-600 dark:text-error-400" />
+					<div class="i-heroicons-exclamation-circle h-12 w-12 text-error-600 dark:text-error-400"></div>
 				</div>
 			</div>
 
@@ -110,7 +109,7 @@
 					class="w-full"
 					onclick={handleBackToLogin}
 				>
-					<ArrowLeft class="h-5 w-5" />
+					<div class="i-heroicons-arrow-left h-5 w-5"></div>
 					{$LL.common_backToLogin()}
 				</Button>
 
@@ -119,7 +118,7 @@
 					class="w-full"
 					onclick={handleContactSupport}
 				>
-					<HelpCircle class="h-5 w-5" />
+					<div class="i-heroicons-question-mark-circle h-5 w-5"></div>
 					Contact Support
 				</Button>
 			</div>
