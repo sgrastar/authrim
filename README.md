@@ -1,4 +1,4 @@
-# Authrim ⚡️
+# Authrim ✨
 
 > **One-command identity infrastructure for the modern web**
 
@@ -36,14 +36,14 @@ Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 
 ### Why Authrim?
 
-| Feature | Authrim | Auth0 | Keycloak | Cognito |
-|---------|--------|-------|----------|---------|
-| **Setup Time** | 5 min (goal) | 30 min | 2+ hours | 1+ hour |
-| **Cold Starts** | 0ms | N/A | N/A | 100-500ms |
-| **Global Edge** | ✅ | ✅ | ❌ | ❌ |
-| **Self-Hosted** | ✅ | ❌ | ✅ | ❌ |
-| **Open Source** | ✅ Apache 2.0 | ❌ | ✅ Apache | ❌ |
-| **Custom UI** | ✅ Full | ⚠️ Limited | ✅ Full | ⚠️ Limited |
+| Feature         | Authrim      | Auth0     | Keycloak | Cognito   |
+| --------------- | ------------ | --------- | -------- | --------- |
+| **Setup Time**  | 5 min (goal) | 30 min    | 2+ hours | 1+ hour   |
+| **Cold Starts** | 0ms          | N/A       | N/A      | 100-500ms |
+| **Global Edge** | ✅            | ✅         | ❌        | ❌         |
+| **Self-Hosted** | ✅            | ❌         | ✅        | ❌         |
+| **Open Source** | ✅ Apache 2.0 | ❌         | ✅ Apache | ❌         |
+| **Custom UI**   | ✅ Full       | ⚠️ Limited | ✅ Full   | ⚠️ Limited |
 
 ---
 
@@ -101,37 +101,37 @@ Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 ## 📦 Technical Stack
 
 ### Backend (API)
-| Layer | Technology | Purpose |
-|-------|------------|---------|
-| **Runtime** | Cloudflare Workers | Global edge deployment (6 specialized workers + optional Router) |
-| **Framework** | Hono | Fast, lightweight web framework |
-| **Build** | Turborepo + pnpm | Monorepo, parallel builds, caching |
-| **Storage** | KV / D1 / Durable Objects | Flexible data persistence (4 DO types) |
-| **Crypto** | JOSE | JWT/JWK standards (RS256) |
-| **Language** | TypeScript | Type safety, great DX |
-| **Routing** | Service Bindings / Routes | Unified endpoint (test/prod modes) |
+| Layer         | Technology                | Purpose                                                          |
+| ------------- | ------------------------- | ---------------------------------------------------------------- |
+| **Runtime**   | Cloudflare Workers        | Global edge deployment (6 specialized workers + optional Router) |
+| **Framework** | Hono                      | Fast, lightweight web framework                                  |
+| **Build**     | Turborepo + pnpm          | Monorepo, parallel builds, caching                               |
+| **Storage**   | KV / D1 / Durable Objects | Flexible data persistence (4 DO types)                           |
+| **Crypto**    | JOSE                      | JWT/JWK standards (RS256)                                        |
+| **Language**  | TypeScript                | Type safety, great DX                                            |
+| **Routing**   | Service Bindings / Routes | Unified endpoint (test/prod modes)                               |
 
 ### Frontend (UI)
-| Layer | Technology | Purpose |
-|-------|------------|---------|
-| **Framework** | SvelteKit v5 | Modern reactive framework with SSR |
-| **Deployment** | Cloudflare Pages | Global CDN, automatic deployments |
-| **CSS** | UnoCSS | Lightweight utility-first (3.10 KB gzipped) |
-| **Components** | Melt UI | Headless, accessible UI components |
-| **Icons** | Lucide Svelte | Beautiful, consistent icons |
-| **i18n** | Paraglide | Type-safe internationalization (EN/JA) |
-| **Language** | TypeScript | Full type safety across UI |
+| Layer          | Technology       | Purpose                                     |
+| -------------- | ---------------- | ------------------------------------------- |
+| **Framework**  | SvelteKit v5     | Modern reactive framework with SSR          |
+| **Deployment** | Cloudflare Pages | Global CDN, automatic deployments           |
+| **CSS**        | UnoCSS           | Lightweight utility-first (3.10 KB gzipped) |
+| **Components** | Melt UI          | Headless, accessible UI components          |
+| **Icons**      | Lucide Svelte    | Beautiful, consistent icons                 |
+| **i18n**       | Paraglide        | Type-safe internationalization (EN/JA)      |
+| **Language**   | TypeScript       | Full type safety across UI                  |
 
 ### 🔥 Durable Objects Architecture
 
 Authrim leverages **Cloudflare Durable Objects** for stateful operations with strong consistency guarantees:
 
-| Durable Object | Purpose | Key Features |
-|----------------|---------|--------------|
-| **SessionStore** | User session management | Hot/cold storage pattern, multi-device support, instant invalidation |
-| **AuthorizationCodeStore** | OAuth code lifecycle | One-time use, PKCE validation, replay attack prevention |
-| **RefreshTokenRotator** | Token rotation | Atomic rotation, theft detection, audit logging |
-| **KeyManager** | Cryptographic keys | JWK management, automatic key rotation, secure storage |
+| Durable Object             | Purpose                 | Key Features                                                         |
+| -------------------------- | ----------------------- | -------------------------------------------------------------------- |
+| **SessionStore**           | User session management | Hot/cold storage pattern, multi-device support, instant invalidation |
+| **AuthorizationCodeStore** | OAuth code lifecycle    | One-time use, PKCE validation, replay attack prevention              |
+| **RefreshTokenRotator**    | Token rotation          | Atomic rotation, theft detection, audit logging                      |
+| **KeyManager**             | Cryptographic keys      | JWK management, automatic key rotation, secure storage               |
 
 **Benefits:**
 - ⚡️ **Strong Consistency** - No race conditions on critical operations
@@ -325,17 +325,17 @@ open "http://localhost:8787/authorize?response_type=code&client_id=test&redirect
 
 ### Milestones
 
-| Milestone | Date | Status | Description |
-|-----------|------|--------|-------------|
-| **M1: Foundation** | 2025-12-15 | ✅ Complete | Project setup, tooling |
-| **M2: Core API** | 2026-01-31 | ✅ Complete | All OIDC endpoints |
-| **M3: Conformance** | 2026-03-15 | ✅ Complete | OpenID testing (95.8% Phase 3) |
-| **M4: Extensions** | 2026-04-30 | ✅ Complete | Dynamic registration, PAR, DPoP |
-| **M5: UI/UX** | 2026-05-31 | ✅ Complete | Full-stack implementation + testing |
-| **M6: Enterprise** | 2026-10-31 | 🏢 Planned | Advanced flows, social login, SAML, LDAP, SCIM |
-| **M7: Next-Gen** | 2027-01-31 | 🚀 Planned | Verifiable Credentials, OAuth 2.1, Mobile SDKs |
-| **M8: SaaS** | 2027+ | 🌐 Planned | Multi-tenant platform, Billing, Marketplace |
-| **M9: CLI & Launch** | TBD | 🎓 Final | One-command deployment, Certification, Production |
+| Milestone            | Date       | Status     | Description                                       |
+| -------------------- | ---------- | ---------- | ------------------------------------------------- |
+| **M1: Foundation**   | 2025-12-15 | ✅ Complete | Project setup, tooling                            |
+| **M2: Core API**     | 2026-01-31 | ✅ Complete | All OIDC endpoints                                |
+| **M3: Conformance**  | 2026-03-15 | ✅ Complete | OpenID testing (95.8% Phase 3)                    |
+| **M4: Extensions**   | 2026-04-30 | ✅ Complete | Dynamic registration, PAR, DPoP                   |
+| **M5: UI/UX**        | 2026-05-31 | ✅ Complete | Full-stack implementation + testing               |
+| **M6: Enterprise**   | 2026-10-31 | 🏢 Planned  | Advanced flows, social login, SAML, LDAP, SCIM    |
+| **M7: Next-Gen**     | 2027-01-31 | 🚀 Planned  | Verifiable Credentials, OAuth 2.1, Mobile SDKs    |
+| **M8: SaaS**         | 2027+      | 🌐 Planned  | Multi-tenant platform, Billing, Marketplace       |
+| **M9: CLI & Launch** | TBD        | 🎓 Final    | One-command deployment, Certification, Production |
 
 ### Test Results
 
@@ -407,16 +407,16 @@ Authrim is primarily a solo development project. See [CONTRIBUTING.md](./CONTRIB
 
 ## 📜 Specification Compliance
 
-| Specification | Status | Reference |
-|---------------|--------|-----------|
-| **OpenID Connect Core 1.0** | ✅ Implemented | [Spec](https://openid.net/specs/openid-connect-core-1_0.html) |
-| **OpenID Connect Discovery 1.0** | ✅ Implemented | [Spec](https://openid.net/specs/openid-connect-discovery-1_0.html) |
-| **OAuth 2.0 (RFC 6749)** | ✅ Implemented | [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) |
-| **PKCE (RFC 7636)** | ✅ Implemented | [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636) |
-| **JWT (RFC 7519)** | ✅ Implemented | [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519) |
-| **JWK (RFC 7517)** | ✅ Implemented | [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517) |
-| **Dynamic Client Registration (RFC 7591)** | ✅ Implemented | [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591) |
-| **Session Management** | ❌ Not planned | [Spec](https://openid.net/specs/openid-connect-session-1_0.html) |
+| Specification                              | Status        | Reference                                                          |
+| ------------------------------------------ | ------------- | ------------------------------------------------------------------ |
+| **OpenID Connect Core 1.0**                | ✅ Implemented | [Spec](https://openid.net/specs/openid-connect-core-1_0.html)      |
+| **OpenID Connect Discovery 1.0**           | ✅ Implemented | [Spec](https://openid.net/specs/openid-connect-discovery-1_0.html) |
+| **OAuth 2.0 (RFC 6749)**                   | ✅ Implemented | [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749)          |
+| **PKCE (RFC 7636)**                        | ✅ Implemented | [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636)          |
+| **JWT (RFC 7519)**                         | ✅ Implemented | [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519)          |
+| **JWK (RFC 7517)**                         | ✅ Implemented | [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517)          |
+| **Dynamic Client Registration (RFC 7591)** | ✅ Implemented | [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)          |
+| **Session Management**                     | ❌ Not planned | [Spec](https://openid.net/specs/openid-connect-session-1_0.html)   |
 
 ---
 

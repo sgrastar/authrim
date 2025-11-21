@@ -6,7 +6,7 @@
 	import { createPinInput, melt } from '@melt-ui/svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import QRCode from 'qrcode';
+	import * as QRCode from 'qrcode';
 
 	let error = $state('');
 	let success = $state('');
@@ -210,11 +210,11 @@
 
 		<!-- Pin Input -->
 		<div class="mb-6">
-			<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+			<div class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
 				{$LL.device_codeLabel()}
-			</label>
+			</div>
 
-			<div use:melt={$root} class="flex gap-2 items-center justify-center">
+			<div use:melt={$root} role="group" aria-label={$LL.device_codeLabel()} class="flex gap-2 items-center justify-center">
 				{#each Array(8) as _, i}
 					<!-- Add hyphen separator after 4th digit -->
 					{#if i === 4}
