@@ -23,6 +23,7 @@ export { PARRequestStore } from './PARRequestStore';
 export { DPoPJTIStore } from './DPoPJTIStore';
 export { TokenRevocationStore } from './TokenRevocationStore';
 export { DeviceCodeStore } from './DeviceCodeStore';
+export { CIBARequestStore } from './CIBARequestStore';
 
 // Export types for external use
 export type { Session, SessionData, CreateSessionRequest, SessionResponse } from './SessionStore';

@@ -28,6 +28,11 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     require_pushed_authorization_requests: false,
     // RFC 8628: Device Authorization endpoint
     device_authorization_endpoint: `${issuer}/device_authorization`,
+    // OIDC CIBA: Backchannel Authentication endpoint
+    backchannel_authentication_endpoint: `${issuer}/bc-authorize`,
+    backchannel_token_delivery_modes_supported: ['poll', 'ping', 'push'],
+    backchannel_authentication_request_signing_alg_values_supported: ['RS256', 'ES256'],
+    backchannel_user_code_parameter_supported: true,
     response_types_supported: ['code'],
     response_modes_supported: ['query', 'form_post'],
     grant_types_supported: [
@@ -35,6 +40,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'refresh_token',
       'urn:ietf:params:oauth:grant-type:jwt-bearer', // RFC 7523: JWT Bearer Flow
       'urn:ietf:params:oauth:grant-type:device_code', // RFC 8628: Device Authorization Grant
+      'urn:openid:params:grant-type:ciba', // OIDC CIBA: Client Initiated Backchannel Authentication
     ],
     id_token_signing_alg_values_supported: ['RS256'],
     // OIDC Core 8: Both public and pairwise subject identifiers are supported
