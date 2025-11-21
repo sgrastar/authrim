@@ -583,7 +583,7 @@ See [LICENSE](./LICENSE) for details.
 
 ---
 
-> **Authrim** ⚡️ — *A spark of identity on the edge.*
+> **Authrim** ⚡️ — *Authentication at the edge of everywhere*
 >
 > **Status:** Phase 2 Complete (Core API) | **Next:** Phase 3 (Conformance Testing)
 >
