@@ -32,6 +32,7 @@ export interface Env {
   DPOP_JTI_STORE: DurableObjectNamespace; // #12: DPoP JTI replay protection
   TOKEN_REVOCATION_STORE: DurableObjectNamespace; // Token revocation list
   DEVICE_CODE_STORE: DurableObjectNamespace; // RFC 8628: Device Authorization Grant
+  CIBA_REQUEST_STORE: DurableObjectNamespace; // OpenID Connect CIBA Flow
 
   // Environment Variables
   ISSUER_URL: string;
