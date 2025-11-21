@@ -11,11 +11,11 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@enrai/shared';
-import { OIDCError } from '@enrai/shared';
-import { ERROR_CODES, HTTP_STATUS } from '@enrai/shared';
-import { validateClientId, validateRedirectUri, validateScope } from '@enrai/shared';
-import { generateSecureRandomString } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
+import { OIDCError } from '@authrim/shared';
+import { ERROR_CODES, HTTP_STATUS } from '@authrim/shared';
+import { validateClientId, validateRedirectUri, validateScope } from '@authrim/shared';
+import { generateSecureRandomString } from '@authrim/shared';
 
 /**
  * PAR request parameters interface

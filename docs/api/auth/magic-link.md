@@ -201,17 +201,17 @@ The magic link email includes both HTML and plain text versions.
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Sign in to Enrai</title>
+  <title>Sign in to Authrim</title>
 </head>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
   <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-    <h1 style="color: #4F46E5;">Sign in to Enrai</h1>
+    <h1 style="color: #4F46E5;">Sign in to Authrim</h1>
     <p>Hello John Doe,</p>
     <p>Click the button below to sign in to your account:</p>
     <div style="margin: 30px 0;">
       <a href="https://your-domain.com/auth/magic-link/verify?token=..."
          style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
-        Sign in to Enrai
+        Sign in to Authrim
       </a>
     </div>
     <p style="color: #666; font-size: 14px;">
@@ -227,7 +227,7 @@ The magic link email includes both HTML and plain text versions.
 
 **Plain Text Email:**
 ```
-Sign in to Enrai
+Sign in to Authrim
 
 Hello John Doe,
 
@@ -240,7 +240,7 @@ This link will expire in 15 minutes.
 If you didn't request this email, you can safely ignore it.
 
 ---
-Enrai
+Authrim
 ```
 
 ---
@@ -350,7 +350,7 @@ sequenceDiagram
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
 | `RESEND_API_KEY` | No | Resend API key for email sending | - |
-| `EMAIL_FROM` | No | Sender email address | `noreply@enrai.dev` |
+| `EMAIL_FROM` | No | Sender email address | `noreply@authrim.dev` |
 | `ISSUER_URL` | Yes | Base URL for magic link generation | - |
 | `MAGIC_LINKS` | Yes | KV namespace binding for tokens | - |
 | `RATE_LIMIT` | No | KV namespace binding for rate limiting | - |
@@ -387,8 +387,8 @@ import { ResendEmailProvider } from './utils/email/resend-provider';
 const emailProvider = new ResendEmailProvider(RESEND_API_KEY);
 await emailProvider.send({
   to: 'user@example.com',
-  from: 'noreply@enrai.dev',
-  subject: 'Sign in to Enrai',
+  from: 'noreply@authrim.dev',
+  subject: 'Sign in to Authrim',
   html: '...',
   text: '...'
 });

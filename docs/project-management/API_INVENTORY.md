@@ -1,4 +1,4 @@
-# Enrai API Inventory 📋
+# Authrim API Inventory 📋
 
 **Last Updated**: 2025-11-12
 **Status**: Phase 4 Complete, Phase 5 Planning
@@ -7,7 +7,7 @@
 
 ## 📊 Overview
 
-This document records the current status and future plans for all API endpoints of the Enrai OIDC OP.
+This document records the current status and future plans for all API endpoints of the Authrim OIDC OP.
 
 > 📄 **Detailed API Specifications**: [OpenAPI 3.1 Specification](../api/openapi.yaml) | [API Guide](../api/README.md)
 
@@ -171,10 +171,10 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 
 **対応可能なトークンタイプ**:
 - 標準: access_token, refresh_token, id_token, saml2, saml1, jwt
-- Enrai独自:
-  - `urn:enrai:params:oauth:token-type:session-token` - セッショントークン
-  - `urn:enrai:params:oauth:token-type:magic-link-token` - Magic Linkトークン
-  - `urn:enrai:params:oauth:token-type:passkey-assertion` - Passkey認証アサーション
+- Authrim独自:
+  - `urn:authrim:params:oauth:token-type:session-token` - セッショントークン
+  - `urn:authrim:params:oauth:token-type:magic-link-token` - Magic Linkトークン
+  - `urn:authrim:params:oauth:token-type:passkey-assertion` - Passkey認証アサーション
 
 **ユースケース**:
 - セッショントークン → アクセストークン（ITP対応SSO）

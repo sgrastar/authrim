@@ -9,14 +9,14 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
 import type {
   ClientRegistrationRequest,
   ClientRegistrationResponse,
   ClientMetadata,
   OAuthErrorResponse,
-} from '@enrai/shared';
-import { generateSecureRandomString } from '@enrai/shared';
+} from '@authrim/shared';
+import { generateSecureRandomString } from '@authrim/shared';
 
 /**
  * Validate client registration request
@@ -381,7 +381,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const subjectType = request.subject_type || 'public'; // Default to 'public'
     if (subjectType === 'pairwise' && request.redirect_uris.length > 1) {
       // Import pairwise utilities dynamically (to avoid circular dependencies)
-      const { validateSectorIdentifierConsistency } = await import('@enrai/shared');
+      const { validateSectorIdentifierConsistency } = await import('@authrim/shared');
 
       const hasSameSector = validateSectorIdentifierConsistency(request.redirect_uris);
       if (!hasSameSector && !request.sector_identifier_uri) {

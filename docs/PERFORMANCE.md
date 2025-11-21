@@ -1,6 +1,6 @@
 # Performance Optimization & Monitoring
 
-This document describes the performance testing strategy, current benchmarks, and optimization guidelines for Enrai.
+This document describes the performance testing strategy, current benchmarks, and optimization guidelines for Authrim.
 
 ## Performance Testing Strategy
 

@@ -17,7 +17,7 @@
 #### 26.1 D1データベースセットアップ
 - [x] Create D1 database via Wrangler CLI
   ```bash
-  wrangler d1 create enrai-production
+  wrangler d1 create authrim-production
   ```
 - [x] Configure D1 binding in `wrangler.toml`
 - [x] Test D1 connectivity from Workers
@@ -67,7 +67,7 @@
   [[durable_objects.bindings]]
   name = "SESSION_STORE"
   class_name = "SessionStore"
-  script_name = "enrai-shared"
+  script_name = "authrim-shared"
   ```
 - [x] Add unit tests for SessionStore (20+ tests)
 - [x] Test session creation and retrieval
@@ -90,7 +90,7 @@
   [[durable_objects.bindings]]
   name = "AUTH_CODE_STORE"
   class_name = "AuthorizationCodeStore"
-  script_name = "enrai-shared"
+  script_name = "authrim-shared"
   ```
 - [x] Add unit tests for AuthorizationCodeStore (15+ tests)
 - [x] Test code storage and consumption
@@ -113,7 +113,7 @@
   [[durable_objects.bindings]]
   name = "REFRESH_TOKEN_ROTATOR"
   class_name = "RefreshTokenRotator"
-  script_name = "enrai-shared"
+  script_name = "authrim-shared"
   ```
 - [x] Add unit tests for RefreshTokenRotator (18+ tests)
 - [x] Test token rotation
@@ -547,7 +547,7 @@
 #### 29.1 ログイン画面 (`/login`)
 - [x] Create `packages/ui/src/routes/login/+page.svelte`
 - [x] Design login layout:
-  - [x] Enrai logo at top
+  - [x] Authrim logo at top
   - [x] Email input field
   - [x] "Continue with Passkey" button (primary)
   - [x] "Send Magic Link" button (secondary)
@@ -608,7 +608,7 @@
 - [x] Create `packages/ui/src/routes/consent/+page.svelte`
 - [x] Design consent layout:
   - [x] Client logo and name
-  - [x] "{Client Name} wants to access your Enrai account" heading
+  - [x] "{Client Name} wants to access your Authrim account" heading
   - [x] Scope list with icons (human-readable)
   - [x] User information display (email, name, avatar)
   - [x] "Allow" button (primary)
@@ -853,7 +853,7 @@
   - [x] Add ARIA labels (Language Switcher: `aria-label="Language"`)
   - [x] Fix color contrast (Primary button: 3.67 → 6.8:1 ratio)
   - [x] Add semantic HTML landmarks (`<main>`, `<nav>`, `<footer>`)
-  - [x] Add page title (`<title>Enrai - OpenID Connect Provider</title>`)
+  - [x] Add page title (`<title>Authrim - OpenID Connect Provider</title>`)
   - [x] Update focus indicators (primary-500 → primary-700 for high contrast)
 - [x] Ensure keyboard navigation works:
   - [x] All interactive elements focusable

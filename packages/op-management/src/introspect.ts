@@ -1,9 +1,9 @@
 import type { Context } from 'hono';
-import type { Env } from '@enrai/shared';
-import type { IntrospectionResponse } from '@enrai/shared';
-import { validateClientId, timingSafeEqual } from '@enrai/shared';
-import { getRefreshToken, isTokenRevoked } from '@enrai/shared';
-import { parseToken, verifyToken } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
+import type { IntrospectionResponse } from '@authrim/shared';
+import { validateClientId, timingSafeEqual } from '@authrim/shared';
+import { getRefreshToken, isTokenRevoked } from '@authrim/shared';
+import { parseToken, verifyToken } from '@authrim/shared';
 import { importJWK, type CryptoKey } from 'jose';
 
 /**

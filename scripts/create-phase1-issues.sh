@@ -1,5 +1,5 @@
 #!/bin/bash
-# Create Phase 1 (Foundation) issues for Enrai project
+# Create Phase 1 (Foundation) issues for Authrim project
 
 set -e
 

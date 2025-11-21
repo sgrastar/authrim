@@ -1,4 +1,4 @@
--- Enrai Phase 5: Seed Default Data
+-- Authrim Phase 5: Seed Default Data
 -- Created: 2025-11-13
 -- Description: Insert default roles, branding settings, and test data
 -- Documentation: docs/architecture/database-schema.md
@@ -109,7 +109,7 @@ INSERT INTO users (
   last_login_at
 ) VALUES (
   'user_test_admin',
-  'admin@test.enrai.org',
+  'admin@test.authrim.org',
   1,
   'Test Admin',
   'Test',
@@ -141,7 +141,7 @@ INSERT INTO users (
   last_login_at
 ) VALUES (
   'user_test_user',
-  'user@test.enrai.org',
+  'user@test.authrim.org',
   1,
   'Test User',
   'Test',
@@ -166,7 +166,7 @@ INSERT INTO users (
   last_login_at
 ) VALUES (
   'user_test_support',
-  'support@test.enrai.org',
+  'support@test.authrim.org',
   1,
   'Test Support',
   'Test',

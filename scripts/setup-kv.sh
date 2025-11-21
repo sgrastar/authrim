@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Enrai KV Namespace Setup Script
+# Authrim KV Namespace Setup Script
 # This script creates all required KV namespaces and updates wrangler.toml files
 #
 # Usage:
@@ -29,7 +29,7 @@ if [ "$1" = "--reset" ]; then
     echo ""
 fi
 
-echo "⚡️ Enrai KV Namespace Setup"
+echo "⚡️ Authrim KV Namespace Setup"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -49,7 +49,7 @@ fi
 
 echo "📦 KV Namespace Setup"
 echo ""
-echo "This script will create or update KV namespaces for your Enrai deployment."
+echo "This script will create or update KV namespaces for your Authrim deployment."
 echo ""
 echo "KV namespaces are Cloudflare's key-value storage used by the workers."
 echo "We'll create both production and preview namespaces for:"

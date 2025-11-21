@@ -1,4 +1,4 @@
--- Enrai Phase 5: Initial Database Schema
+-- Authrim Phase 5: Initial Database Schema
 -- Created: 2025-11-13
 -- Description: Creates all 12 tables for Phase 5 implementation (includes password auth support)
 -- Documentation: docs/architecture/database-schema.md

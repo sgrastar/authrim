@@ -1,5 +1,5 @@
 /**
- * API Client for Enrai
+ * API Client for Authrim
  * Handles communication with the backend API
  */
 

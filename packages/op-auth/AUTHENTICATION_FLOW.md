@@ -1,6 +1,6 @@
 # Authentication Flow Documentation
 
-This document describes the authentication and consent flows in the Enrai OpenID Provider.
+This document describes the authentication and consent flows in the Authrim OpenID Provider.
 
 ## Table of Contents
 
@@ -32,7 +32,7 @@ UI_URL=http://localhost:5173
 ```
 
 **Method 3: Cloudflare Dashboard**
-1. Navigate to Workers & Pages → enrai-op-auth → Settings → Variables
+1. Navigate to Workers & Pages → authrim-op-auth → Settings → Variables
 2. Add environment variable: `UI_URL`
 3. Value: Your UI deployment URL
 
@@ -432,7 +432,7 @@ Run the OpenID Connect Conformance Suite to test:
 To enable consent functionality, run the migration:
 
 ```bash
-wrangler d1 execute enrai-prod --file=migrations/003_add_consent_table.sql
+wrangler d1 execute authrim-prod --file=migrations/003_add_consent_table.sql
 ```
 
 This creates the `oauth_client_consents` table for storing user consent history.

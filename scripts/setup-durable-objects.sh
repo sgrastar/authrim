@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Enrai Durable Objects Setup Script
+# Authrim Durable Objects Setup Script
 # This script helps configure and deploy Durable Objects for the shared package
 #
 # Usage:
@@ -10,7 +10,7 @@
 
 set -e
 
-echo "⚡️ Enrai Durable Objects Setup"
+echo "⚡️ Authrim Durable Objects Setup"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -33,7 +33,7 @@ if [ "$1" = "--info" ]; then
     echo "📊 Durable Objects Information"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo "Enrai uses the following Durable Objects:"
+    echo "Authrim uses the following Durable Objects:"
     echo ""
     echo "1. SessionStore"
     echo "   • Purpose: Manage user sessions with hot/cold storage pattern"
@@ -76,8 +76,8 @@ if [ "$1" = "--info" ]; then
     echo ""
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "📦 Package: @enrai/shared"
-    echo "   Script name: enrai-shared"
+    echo "📦 Package: @authrim/shared"
+    echo "   Script name: authrim-shared"
     echo "   Location: packages/shared/"
     echo ""
     echo "To deploy Durable Objects:"
@@ -150,7 +150,7 @@ for i in $(seq 1 $MAX_RETRIES); do
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
         echo "📋 Deployment Summary:"
-        echo "   • Worker name: enrai-shared"
+        echo "   • Worker name: authrim-shared"
         echo "   • Durable Objects: 8 (SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, ChallengeStore, RateLimiterCounter, PARRequestStore, DPoPJTIStore)"
         echo ""
         echo "⚠️  Important: Wait 10-30 seconds before deploying other workers"
@@ -159,7 +159,7 @@ for i in $(seq 1 $MAX_RETRIES); do
         echo "Next steps:"
         echo "  1. Wait 30 seconds for DO propagation"
         echo "  2. Deploy other workers: pnpm run deploy:retry"
-        echo "  3. Verify deployment: curl https://enrai-shared.<subdomain>.workers.dev/"
+        echo "  3. Verify deployment: curl https://authrim-shared.<subdomain>.workers.dev/"
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         exit 0

@@ -52,8 +52,8 @@ Generate WebAuthn registration options for creating a new passkey.
   "options": {
     "challenge": "Gu0hYqrVjzsN3wz...",
     "rp": {
-      "name": "Enrai",
-      "id": "enrai.example.com"
+      "name": "Authrim",
+      "id": "authrim.example.com"
     },
     "user": {
       "id": "dXNlcl8xMjM=",
@@ -220,7 +220,7 @@ Generate WebAuthn authentication options for passkey login.
   "options": {
     "challenge": "Gu0hYqrVjzsN3wz...",
     "timeout": 60000,
-    "rpId": "enrai.example.com",
+    "rpId": "authrim.example.com",
     "userVerification": "required",
     "allowCredentials": [
       {

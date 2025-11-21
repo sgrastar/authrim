@@ -115,7 +115,7 @@
 			{$LL.admin_dashboard_title()}
 		</h1>
 		<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-			Overview of your Enrai instance
+			Overview of your Authrim instance
 		</p>
 	</div>
 

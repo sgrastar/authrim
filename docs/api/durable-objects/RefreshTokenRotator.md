@@ -577,7 +577,7 @@ curl -X POST https://token-rotator.example.workers.dev/rotate \
 curl https://token-rotator.example.workers.dev/status
 
 # Query D1 audit logs for security analysis
-wrangler d1 execute enrai-dev --command \
+wrangler d1 execute authrim-dev --command \
   "SELECT action, user_id, created_at, metadata_json
    FROM audit_log
    WHERE action LIKE 'refresh_token.%'

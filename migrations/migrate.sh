@@ -1,5 +1,5 @@
 #!/bin/bash
-# Enrai Database Migration Script
+# Authrim Database Migration Script
 # Usage: ./migrations/migrate.sh [dev|prod] [up|down|reset|status]
 
 set -e
@@ -17,10 +17,10 @@ ACTION=${2:-up}
 
 # Determine database name and remote flag
 if [ "$ENV" = "local" ]; then
-    DB_NAME="enrai-local"
+    DB_NAME="authrim-local"
     REMOTE_FLAG=""
 else
-    DB_NAME="enrai-${ENV}"
+    DB_NAME="authrim-${ENV}"
     REMOTE_FLAG="--remote"
 fi
 
@@ -169,7 +169,7 @@ reset_database() {
 
 # Show help
 show_help() {
-    echo "Enrai Database Migration Script"
+    echo "Authrim Database Migration Script"
     echo ""
     echo "Usage: ./migrations/migrate.sh [env] [action]"
     echo ""
@@ -194,7 +194,7 @@ show_help() {
 # Main script
 main() {
     echo "╔════════════════════════════════════════╗"
-    echo "║   Enrai Database Migration Tool      ║"
+    echo "║   Authrim Database Migration Tool      ║"
     echo "╚════════════════════════════════════════╝"
     echo ""
 

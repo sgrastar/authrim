@@ -1,7 +1,7 @@
 import type { BaseTranslation } from '../i18n-types'
 
 const en = {
-	app_title: 'Enrai',
+	app_title: 'Authrim',
 	app_subtitle: 'OpenID Connect Provider on Cloudflare Workers',
 	test_title: 'Frontend Stack Test',
 	test_meltui: 'Test Melt UI (Headless Components):',
@@ -44,7 +44,7 @@ const en = {
 	login_errorEmailInvalid: 'Please enter a valid email address',
 
 	register_title: 'Create your account',
-	register_subtitle: 'Get started with Enrai',
+	register_subtitle: 'Get started with Authrim',
 	register_createWithPasskey: 'Create Account with Passkey',
 	register_signupWithMagicLink: 'Sign up with Magic Link',
 	register_alreadyHaveAccount: 'Already have an account? Sign in',
@@ -66,7 +66,7 @@ const en = {
 	magicLink_verify_requestNew: 'Request a new link',
 
 	consent_title: '{clientName:string} wants to access your account',
-	consent_subtitle: 'This application is requesting access to your Enrai account',
+	consent_subtitle: 'This application is requesting access to your Authrim account',
 	consent_scopesTitle: 'This application will be able to:',
 	consent_userInfo: 'You are signed in as',
 	consent_notYou: 'Not you? Switch account',

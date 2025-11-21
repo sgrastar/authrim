@@ -39,7 +39,7 @@
 
 	function handleContactSupport() {
 		// TODO: Add support email or link
-		window.location.href = 'mailto:support@enrai.dev?subject=Error: ' + errorCode;
+		window.location.href = 'mailto:support@authrim.dev?subject=Error: ' + errorCode;
 	}
 </script>
 

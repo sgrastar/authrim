@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: Enrai OIDC OP API
+  title: Authrim OIDC OP API
   version: 1.0.0
   description: |
-    Enrai is a modern OpenID Connect Provider (OP) built for the edge.
+    Authrim is a modern OpenID Connect Provider (OP) built for the edge.
 
     **Features**:
     - ✅ OIDC Core 1.0 compliant
@@ -17,10 +17,10 @@ info:
     - Phase 4 Complete: OIDC Core + Extensions
     - Phase 5 Planning: UI/UX + Admin APIs
 
-    **Documentation**: https://github.com/sgrastar/enrai
+    **Documentation**: https://github.com/sgrastar/authrim
   contact:
-    name: Enrai Development Team
-    url: https://github.com/sgrastar/enrai
+    name: Authrim Development Team
+    url: https://github.com/sgrastar/authrim
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -1668,4 +1668,4 @@ components:
           example: The request is missing a required parameter
         error_uri:
           type: string
-          example: https://docs.enrai.org/errors/invalid_request
+          example: https://docs.authrim.org/errors/invalid_request

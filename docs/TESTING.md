@@ -1,6 +1,6 @@
 # Testing Strategy
 
-This document describes the comprehensive testing strategy for Enrai, covering unit tests, integration tests, E2E tests, accessibility tests, and performance tests.
+This document describes the comprehensive testing strategy for Authrim, covering unit tests, integration tests, E2E tests, accessibility tests, and performance tests.
 
 ## Test Coverage Overview
 

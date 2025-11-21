@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This guide walks you through deploying Enrai to Cloudflare Workers, resulting in a production-ready OpenID Connect Provider accessible via a public URL.
+This guide walks you through deploying Authrim to Cloudflare Workers, resulting in a production-ready OpenID Connect Provider accessible via a public URL.
 
 ## 📋 Table of Contents
 
@@ -19,7 +19,7 @@ This guide walks you through deploying Enrai to Cloudflare Workers, resulting in
 
 ## Environment Types
 
-Enrai supports three distinct environment types, each with different purposes and configuration methods:
+Authrim supports three distinct environment types, each with different purposes and configuration methods:
 
 ### 🏠 Development Environment (Local)
 
@@ -65,7 +65,7 @@ EMAIL_FROM="noreply@yourdomain.com"  # Optional
 
 **Characteristics**:
 - ☁️ **Location**: Cloudflare Workers
-- 🌐 **URL**: `https://enrai.{your-subdomain}.workers.dev`
+- 🌐 **URL**: `https://authrim.{your-subdomain}.workers.dev`
 - 🔐 **Security**: HTTPS required, production-like security
 - 🔑 **Secrets**: Uploaded via `wrangler secret put`
 - 🌍 **Access**: Public internet
@@ -173,7 +173,7 @@ curl -X POST http://localhost:8788/auth/magic-link/send \
 | Feature | Development (Local) | Test (workers.dev) | Production (Custom Domain) |
 |---------|---------------------|--------------------|-----------------------------|
 | **Location** | localhost | Cloudflare Workers | Cloudflare Workers |
-| **URL** | `http://localhost:8787` | `https://enrai.{subdomain}.workers.dev` | `https://id.yourdomain.com` |
+| **URL** | `http://localhost:8787` | `https://authrim.{subdomain}.workers.dev` | `https://id.yourdomain.com` |
 | **Command** | `wrangler dev` | `wrangler deploy` | `wrangler deploy` |
 | **Setup Script** | `setup-dev.sh` | `setup-production.sh` (Test) | `setup-production.sh` (Production) |
 | **Secrets** | `.dev.vars` file | `wrangler secret put` | `wrangler secret put` |
@@ -186,7 +186,7 @@ curl -X POST http://localhost:8788/auth/magic-link/send \
 
 ## Prerequisites
 
-Before deploying Enrai, ensure you have:
+Before deploying Authrim, ensure you have:
 
 1. **Cloudflare Account** (free tier works)
    - Sign up at [cloudflare.com](https://dash.cloudflare.com/sign-up)
@@ -213,21 +213,21 @@ Before deploying Enrai, ensure you have:
 
 ### 🌍 Architecture
 
-Enrai is a **monorepo** containing **6 specialized Cloudflare Workers** (including Durable Objects) plus an optional **Router Worker**:
+Authrim is a **monorepo** containing **6 specialized Cloudflare Workers** (including Durable Objects) plus an optional **Router Worker**:
 
 | Worker | Package | Purpose |
 |--------|---------|---------|
-| **enrai-shared** | `packages/shared` | **Durable Objects** (SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager) |
-| **enrai-op-discovery** | `packages/op-discovery` | Discovery & JWKS endpoints |
-| **enrai-op-auth** | `packages/op-auth` | Authorization endpoint & PAR |
-| **enrai-op-token** | `packages/op-token` | Token endpoint |
-| **enrai-op-userinfo** | `packages/op-userinfo` | UserInfo endpoint |
-| **enrai-op-management** | `packages/op-management` | Client registration |
-| **enrai-router** | `packages/router` | Unified entry point (test env only) |
+| **authrim-shared** | `packages/shared` | **Durable Objects** (SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager) |
+| **authrim-op-discovery** | `packages/op-discovery` | Discovery & JWKS endpoints |
+| **authrim-op-auth** | `packages/op-auth` | Authorization endpoint & PAR |
+| **authrim-op-token** | `packages/op-token` | Token endpoint |
+| **authrim-op-userinfo** | `packages/op-userinfo` | UserInfo endpoint |
+| **authrim-op-management** | `packages/op-management` | Client registration |
+| **authrim-router** | `packages/router` | Unified entry point (test env only) |
 
 ### 🔥 Durable Objects Layer
 
-Enrai leverages **Cloudflare Durable Objects** for stateful operations with strong consistency:
+Authrim leverages **Cloudflare Durable Objects** for stateful operations with strong consistency:
 
 | Durable Object | Purpose | Key Features |
 |----------------|---------|--------------|
@@ -236,16 +236,16 @@ Enrai leverages **Cloudflare Durable Objects** for stateful operations with stro
 | **RefreshTokenRotator** | Token rotation | Atomic rotation, theft detection, audit logging |
 | **KeyManager** | Cryptographic keys | JWK management, automatic rotation, secure storage |
 
-**⚠️ CRITICAL:** The `enrai-shared` package **MUST be deployed first** before deploying other workers!
+**⚠️ CRITICAL:** The `authrim-shared` package **MUST be deployed first** before deploying other workers!
 
 ### 🎯 Deployment Modes
 
-Enrai supports two deployment modes to ensure OpenID Connect specification compliance:
+Authrim supports two deployment modes to ensure OpenID Connect specification compliance:
 
 #### 1️⃣ Test Environment (workers.dev + Router Worker)
 - **Use case**: Development, testing, quick setup
 - **How**: Router Worker acts as unified entry point with Service Bindings
-- **Issuer**: `https://enrai.subdomain.workers.dev`
+- **Issuer**: `https://authrim.subdomain.workers.dev`
 - **Pros**: OpenID Connect compliant, no custom domain needed
 - **Deploy**: `pnpm run deploy`
 
@@ -287,8 +287,8 @@ For experienced users, here's the TL;DR:
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/sgrastar/enrai.git
-cd enrai
+git clone https://github.com/sgrastar/authrim.git
+cd authrim
 pnpm install
 
 # 2. Login to Cloudflare
@@ -316,7 +316,7 @@ pnpm run deploy
 
 > 💡 **Important**:
 > - Both `deploy:with-router` and `deploy:retry` now use the same sequential deployment script with retry logic
-> - The `deploy:retry` command automatically deploys the `enrai-shared` package (Durable Objects) first
+> - The `deploy:retry` command automatically deploys the `authrim-shared` package (Durable Objects) first
 > - The router is conditionally deployed based on your configuration from `setup-production.sh`
 > - You can optionally use `./scripts/setup-durable-objects.sh` to deploy Durable Objects separately, but this is not required when using `deploy:retry`
 
@@ -328,8 +328,8 @@ pnpm run deploy
 
 ```bash
 # Clone the repository
-git clone https://github.com/sgrastar/enrai.git
-cd enrai
+git clone https://github.com/sgrastar/authrim.git
+cd authrim
 
 # Install dependencies for all packages
 pnpm install
@@ -370,7 +370,7 @@ You should see your Cloudflare account email and account ID.
 
 **Output:**
 ```
-🔐 Enrai Development Setup
+🔐 Authrim Development Setup
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📦 Generating RSA keys...
 ✅ .dev.vars file created successfully!
@@ -409,7 +409,7 @@ Create Cloudflare KV namespaces for storing state, codes, and clients:
 
 **Output:**
 ```
-⚡️ Enrai KV Namespace Setup
+⚡️ Authrim KV Namespace Setup
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Creating production namespaces...
 ✅ AUTH_CODES: abc123def456...
@@ -446,7 +446,7 @@ This will:
 ```
 
 **What this does:**
-- Creates D1 database (`enrai-dev` or `enrai-prod`)
+- Creates D1 database (`authrim-dev` or `authrim-prod`)
 - Updates all `packages/*/wrangler.toml` files with D1 bindings
 - Optionally runs database migrations (11 tables, 20 indexes)
 - Displays database status and helpful commands
@@ -458,10 +458,10 @@ This will:
 Environment (dev/prod) [dev]: dev
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Database: enrai-dev
+Database: authrim-dev
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📝 Creating D1 database: enrai-dev
+📝 Creating D1 database: authrim-dev
 ✅ Database created successfully!
    Database ID: abc123-def456-...
 
@@ -507,18 +507,18 @@ If you skip migrations during setup, you can run them later:
 bash migrations/migrate.sh dev up
 
 # Or manually with wrangler
-wrangler d1 execute enrai-dev --file=migrations/001_initial_schema.sql
-wrangler d1 execute enrai-dev --file=migrations/002_seed_default_data.sql
+wrangler d1 execute authrim-dev --file=migrations/001_initial_schema.sql
+wrangler d1 execute authrim-dev --file=migrations/002_seed_default_data.sql
 ```
 
 **Verify database:**
 
 ```bash
 # List tables
-wrangler d1 execute enrai-dev --command="SELECT name FROM sqlite_master WHERE type='table';"
+wrangler d1 execute authrim-dev --command="SELECT name FROM sqlite_master WHERE type='table';"
 
 # Count records
-wrangler d1 execute enrai-dev --command="SELECT COUNT(*) FROM users;"
+wrangler d1 execute authrim-dev --command="SELECT COUNT(*) FROM users;"
 ```
 
 **⚠️ IMPORTANT:**
@@ -540,7 +540,7 @@ Upload your private and public keys to Cloudflare Workers secrets:
 
 **Output:**
 ```
-🔐 Enrai Cloudflare Secrets Setup
+🔐 Authrim Cloudflare Secrets Setup
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📦 Uploading secrets to op-discovery...
   • Uploading PRIVATE_KEY_PEM...
@@ -569,12 +569,12 @@ Choose your deployment mode and configure URLs:
 ```
 📝 Deployment Mode Configuration
 
-   Choose how you want to deploy Enrai:
+   Choose how you want to deploy Authrim:
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   1) Test Environment (workers.dev + Router Worker)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     • Single unified endpoint: https://enrai.subdomain.workers.dev
+     • Single unified endpoint: https://authrim.subdomain.workers.dev
      • Uses Router Worker with Service Bindings
      • All endpoints accessible under one domain
      • Best for: Development, testing, quick setup
@@ -631,7 +631,7 @@ This is now the **recommended deployment method** for both test and production e
 
 **What this does:**
 - Builds all packages
-- Deploys **`enrai-shared` (Durable Objects) first**
+- Deploys **`authrim-shared` (Durable Objects) first**
 - Deploys other workers **sequentially** (one at a time)
 - Adds 10-second delays between deployments to avoid rate limits
 - Retries failed deployments automatically (up to 4 attempts with exponential backoff)
@@ -640,21 +640,21 @@ This is now the **recommended deployment method** for both test and production e
   - ⊗ **Skipped** if `packages/router/wrangler.toml` missing (Production Environment)
 
 **Workers deployed (Test Environment):**
-- `enrai-shared` (Durable Objects - deployed first)
-- `enrai-op-discovery`
-- `enrai-op-management`
-- `enrai-op-auth`
-- `enrai-op-token`
-- `enrai-op-userinfo`
-- `enrai` (unified entry point - Router Worker)
+- `authrim-shared` (Durable Objects - deployed first)
+- `authrim-op-discovery`
+- `authrim-op-management`
+- `authrim-op-auth`
+- `authrim-op-token`
+- `authrim-op-userinfo`
+- `authrim` (unified entry point - Router Worker)
 
 **Workers deployed (Production Environment):**
-- `enrai-shared` (Durable Objects - deployed first)
-- `enrai-op-discovery`
-- `enrai-op-management`
-- `enrai-op-auth`
-- `enrai-op-token`
-- `enrai-op-userinfo`
+- `authrim-shared` (Durable Objects - deployed first)
+- `authrim-op-discovery`
+- `authrim-op-management`
+- `authrim-op-auth`
+- `authrim-op-token`
+- `authrim-op-userinfo`
 - Router Worker is automatically skipped
 
 #### Alternative: Parallel Deployment (Legacy, Not Recommended)
@@ -676,15 +676,15 @@ Only use this if you understand the risks. The sequential deployment (`deploy:wi
 
 🔨 Building packages...
 
-• Packages in scope: @enrai/op-auth, @enrai/op-discovery, @enrai/op-management, @enrai/op-token, @enrai/op-userinfo, @enrai/router, @enrai/shared
+• Packages in scope: @authrim/op-auth, @authrim/op-discovery, @authrim/op-management, @authrim/op-token, @authrim/op-userinfo, @authrim/router, @authrim/shared
 • Running build in 7 packages
 ...
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📦 Deploying: op-discovery
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Published enrai-op-discovery (0.01 sec)
-https://enrai-op-discovery.your-subdomain.workers.dev
+Published authrim-op-discovery (0.01 sec)
+https://authrim-op-discovery.your-subdomain.workers.dev
 ✅ Successfully deployed: op-discovery
 
 ⏸️  Waiting 10s before next deployment to avoid rate limits...
@@ -697,8 +697,8 @@ https://enrai-op-discovery.your-subdomain.workers.dev
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📦 Deploying: router
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Published enrai (0.01 sec)
-https://enrai.your-subdomain.workers.dev
+Published authrim (0.01 sec)
+https://authrim.your-subdomain.workers.dev
 ✅ Successfully deployed: router
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -795,7 +795,7 @@ echo "$(cat ../../.keys/public.jwk.json | jq -c .)" | wrangler secret put PUBLIC
 
 ## GitHub Actions CI/CD
 
-Enrai includes pre-configured GitHub Actions workflows for automated testing and deployment.
+Authrim includes pre-configured GitHub Actions workflows for automated testing and deployment.
 
 ### Setup GitHub Secrets
 
@@ -855,7 +855,7 @@ After deployment, verify that all endpoints are accessible from the issuer URL.
 
 Your unified endpoint should be:
 ```
-https://enrai.your-subdomain.workers.dev
+https://authrim.your-subdomain.workers.dev
 ```
 
 All OpenID Connect endpoints are automatically routed by the Router Worker:
@@ -869,8 +869,8 @@ All OpenID Connect endpoints are automatically routed by the Router Worker:
 **No additional configuration needed!** The Router Worker handles everything.
 
 Individual workers are still accessible at their own subdomains for debugging:
-- `https://enrai-op-discovery.your-subdomain.workers.dev`
-- `https://enrai-op-auth.your-subdomain.workers.dev`
+- `https://authrim-op-discovery.your-subdomain.workers.dev`
+- `https://authrim-op-auth.your-subdomain.workers.dev`
 - etc.
 
 #### For Production Environment (Custom Domain + Routes):
@@ -978,7 +978,7 @@ Repeat for all 5 workers or use routes (see Post-Deployment section).
 
 1. Add a CNAME record pointing to your Worker:
    ```
-   id.example.com CNAME enrai-op-discovery.your-subdomain.workers.dev
+   id.example.com CNAME authrim-op-discovery.your-subdomain.workers.dev
    ```
 
 2. Add the custom domain in Cloudflare Dashboard (same as above)
@@ -1077,7 +1077,7 @@ Option 2: Recreate specific namespaces interactively:
 **Note:** If workers are already deployed, you may need to undeploy them first:
 ```bash
 cd packages/op-auth
-wrangler delete enrai-op-auth
+wrangler delete authrim-op-auth
 ```
 
 ### Issue: "Error: Missing required KV namespace"
@@ -1176,7 +1176,7 @@ Verify `wrangler.toml` service bindings:
 # In packages/op-auth/wrangler.toml
 [[services]]
 binding = "OP_TOKEN"
-service = "enrai-op-token"
+service = "authrim-op-token"
 ```
 
 Ensure worker names match exactly.
@@ -1237,11 +1237,11 @@ pnpm run deploy
 If still experiencing issues, undeploy and redeploy:
 ```bash
 # Undeploy all workers
-cd packages/op-discovery && wrangler delete enrai-op-discovery
-cd ../op-auth && wrangler delete enrai-op-auth
-cd ../op-token && wrangler delete enrai-op-token
-cd ../op-userinfo && wrangler delete enrai-op-userinfo
-cd ../op-management && wrangler delete enrai-op-management
+cd packages/op-discovery && wrangler delete authrim-op-discovery
+cd ../op-auth && wrangler delete authrim-op-auth
+cd ../op-token && wrangler delete authrim-op-token
+cd ../op-userinfo && wrangler delete authrim-op-userinfo
+cd ../op-management && wrangler delete authrim-op-management
 cd ../..
 
 # Wait and redeploy
@@ -1285,8 +1285,8 @@ After successful deployment:
 - [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
 - [Wrangler CLI Documentation](https://developers.cloudflare.com/workers/wrangler/)
 - [OpenID Connect Specification](https://openid.net/specs/openid-connect-core-1_0.html)
-- [Enrai Development Guide](../DEVELOPMENT.md)
-- [Enrai Worker Architecture](../WORKERS.md)
+- [Authrim Development Guide](../DEVELOPMENT.md)
+- [Authrim Worker Architecture](../WORKERS.md)
 
 ---
 
@@ -1295,7 +1295,7 @@ After successful deployment:
 If you encounter issues:
 
 1. Check the [Troubleshooting](#troubleshooting) section
-2. Review [GitHub Issues](https://github.com/sgrastar/enrai/issues)
+2. Review [GitHub Issues](https://github.com/sgrastar/authrim/issues)
 3. Create a new issue with:
    - Deployment logs
    - Error messages

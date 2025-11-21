@@ -1,4 +1,4 @@
-# Enrai スクリプト改良実装仕様書
+# Authrim スクリプト改良実装仕様書
 
 **作成日:** 2025-01-17
 **バージョン:** 1.0.0
@@ -43,7 +43,7 @@
 ### ファイル形式
 
 - **フォーマット:** JSON
-- **ファイル名:** `enrai-config-{version}.json`
+- **ファイル名:** `authrim-config-{version}.json`
 - **保存場所:** プロジェクトルート（`.gitignore`に追加）
 
 ### スキーマ定義
@@ -339,19 +339,19 @@
     "api": {
       "enabled": true,
       "custom_domain": false,
-      "worker_name": "enrai"
+      "worker_name": "authrim"
     },
     "login_page": {
       "enabled": true,
       "hosting": "cloudflare-pages",
       "custom_domain": false,
-      "pages_project_name": "enrai-login"
+      "pages_project_name": "authrim-login"
     },
     "admin_page": {
       "enabled": true,
       "hosting": "cloudflare-pages",
       "custom_domain": false,
-      "pages_project_name": "enrai-admin"
+      "pages_project_name": "authrim-admin"
     }
   },
   "cloudflare": {
@@ -366,8 +366,8 @@
     "enabled": true,
     "allowed_origins": [
       "http://localhost:5173",
-      "https://enrai-login.pages.dev",
-      "https://enrai-admin.pages.dev"
+      "https://authrim-login.pages.dev",
+      "https://authrim-admin.pages.dev"
     ]
   }
 }
@@ -482,7 +482,7 @@
     "api": {
       "enabled": true,
       "custom_domain": false,
-      "worker_name": "enrai"
+      "worker_name": "authrim"
     },
     "login_page": {
       "enabled": false
@@ -567,7 +567,7 @@
   └─ 入力内容を表示
   ↓
 [11] 設定ファイルの生成
-  ├─ ファイル名: enrai-config-{version}.json
+  ├─ ファイル名: authrim-config-{version}.json
   ├─ バージョン: セマンティックバージョニング
   └─ .gitignore に追加
   ↓
@@ -630,7 +630,7 @@ esac
 # 既存設定の変更・バージョンアップの場合、既存ファイルを読み込む
 if [[ "$OPERATION_MODE" != "new" ]]; then
   echo "既存の設定ファイルを選択してください："
-  select config_file in enrai-config-*.json; do
+  select config_file in authrim-config-*.json; do
     if [[ -f "$config_file" ]]; then
       EXISTING_CONFIG="$config_file"
       break
@@ -711,20 +711,20 @@ if [[ "$ENVIRONMENT" == "remote" ]]; then
     ACCOUNT_NAME="$account_name"
 
     if [[ "$ENABLE_API" == "Y" ]]; then
-      read -p "API Worker名を入力 [デフォルト: enrai]: " worker_name
-      WORKER_NAME="${worker_name:-enrai}"
+      read -p "API Worker名を入力 [デフォルト: authrim]: " worker_name
+      WORKER_NAME="${worker_name:-authrim}"
       API_DOMAIN="https://${WORKER_NAME}.${ACCOUNT_NAME}.workers.dev"
     fi
 
     if [[ "$ENABLE_LOGIN_PAGE" == "Y" ]]; then
-      read -p "Login Page プロジェクト名を入力 [デフォルト: enrai-${ACCOUNT_NAME}-login]: " login_project
-      LOGIN_PROJECT="${login_project:-enrai-${ACCOUNT_NAME}-login}"
+      read -p "Login Page プロジェクト名を入力 [デフォルト: authrim-${ACCOUNT_NAME}-login]: " login_project
+      LOGIN_PROJECT="${login_project:-authrim-${ACCOUNT_NAME}-login}"
       LOGIN_DOMAIN="https://${LOGIN_PROJECT}.pages.dev"
     fi
 
     if [[ "$ENABLE_ADMIN_PAGE" == "Y" ]]; then
-      read -p "Admin Page プロジェクト名を入力 [デフォルト: enrai-${ACCOUNT_NAME}-admin]: " admin_project
-      ADMIN_PROJECT="${admin_project:-enrai-${ACCOUNT_NAME}-admin}"
+      read -p "Admin Page プロジェクト名を入力 [デフォルト: authrim-${ACCOUNT_NAME}-admin]: " admin_project
+      ADMIN_PROJECT="${admin_project:-authrim-${ACCOUNT_NAME}-admin}"
       ADMIN_DOMAIN="https://${ADMIN_PROJECT}.pages.dev"
     fi
   fi
@@ -830,7 +830,7 @@ if [[ "$OPERATION_MODE" != "new" ]]; then
   VERSION=$(echo "$EXISTING_VERSION" | awk -F. '{$2 = $2 + 1; print $1"."$2"."$3}')
 fi
 
-CONFIG_FILE="enrai-config-${VERSION}.json"
+CONFIG_FILE="authrim-config-${VERSION}.json"
 
 # JSON生成
 cat > "$CONFIG_FILE" <<EOF
@@ -884,8 +884,8 @@ jq . "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
 echo "設定ファイルを生成しました: $CONFIG_FILE"
 
 # .gitignoreに追加
-if ! grep -q "enrai-config-*.json" .gitignore 2>/dev/null; then
-  echo "enrai-config-*.json" >> .gitignore
+if ! grep -q "authrim-config-*.json" .gitignore 2>/dev/null; then
+  echo "authrim-config-*.json" >> .gitignore
   echo ".gitignoreに追加しました"
 fi
 ```
@@ -1012,7 +1012,7 @@ done
 ```bash
 if [[ -z "$CONFIG_FILE" ]]; then
   echo "設定ファイルを選択してください："
-  select config_file in enrai-config-*.json; do
+  select config_file in authrim-config-*.json; do
     if [[ -f "$config_file" ]]; then
       CONFIG_FILE="$config_file"
       break
@@ -1179,12 +1179,12 @@ generate_pattern_a_config() {
 
   # router worker
   cat > packages/router/wrangler.toml <<EOF
-name = "enrai-router"
+name = "authrim-router"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 
 [env.production]
-name = "enrai-router"
+name = "authrim-router"
 route = { pattern = "$API_DOMAIN/*", custom_domain = true }
 EOF
 
@@ -1258,7 +1258,7 @@ setup_kv_namespaces() {
 setup_d1_databases() {
   echo "D1 Databaseを設定中..."
 
-  DB_NAME="enrai-users-db"
+  DB_NAME="authrim-users-db"
 
   existing_id=$(jq -r --arg name "$DB_NAME" \
     '.resources.d1_databases[] | select(.database_name == $name) | .database_id' \
@@ -1303,7 +1303,7 @@ setup_secrets() {
     fi
 
     # リモートの既存鍵をチェック
-    if wrangler secret list --name="enrai-shared" 2>/dev/null | grep -q "RSA_PRIVATE_KEY"; then
+    if wrangler secret list --name="authrim-shared" 2>/dev/null | grep -q "RSA_PRIVATE_KEY"; then
       echo "リモートに既存の鍵が見つかりました"
       read -p "既存のリモート鍵を使用しますか？ [Y/n]: " use_remote
       if [[ ! "$use_remote" =~ ^[Nn]$ ]]; then
@@ -1326,8 +1326,8 @@ setup_secrets() {
     # リモートにアップロード
     if [[ "$REUSE_REMOTE_KEYS" != "true" ]]; then
       echo "秘密鍵をCloudflareにアップロード中..."
-      cat .keys/private.pem | wrangler secret put RSA_PRIVATE_KEY --name="enrai-shared"
-      cat .keys/public.pem | wrangler secret put RSA_PUBLIC_KEY --name="enrai-shared"
+      cat .keys/private.pem | wrangler secret put RSA_PRIVATE_KEY --name="authrim-shared"
+      cat .keys/public.pem | wrangler secret put RSA_PUBLIC_KEY --name="authrim-shared"
       echo "秘密鍵をアップロードしました"
     fi
   fi
@@ -1479,10 +1479,10 @@ CORS_ORIGINS=https://id.example.com
 
 ```bash
 # .dev.vars (local)
-ISSUER_URL=https://enrai.sgrastar.workers.dev
-PUBLIC_API_BASE_URL=https://enrai.sgrastar.workers.dev
-ADMIN_UI_ORIGIN=https://enrai-login.pages.dev,https://enrai-admin.pages.dev,http://localhost:5173
-CORS_ORIGINS=https://enrai-login.pages.dev,https://enrai-admin.pages.dev,http://localhost:5173
+ISSUER_URL=https://authrim.sgrastar.workers.dev
+PUBLIC_API_BASE_URL=https://authrim.sgrastar.workers.dev
+ADMIN_UI_ORIGIN=https://authrim-login.pages.dev,https://authrim-admin.pages.dev,http://localhost:5173
+CORS_ORIGINS=https://authrim-login.pages.dev,https://authrim-admin.pages.dev,http://localhost:5173
 ```
 
 #### wrangler.toml設定
@@ -1490,11 +1490,11 @@ CORS_ORIGINS=https://enrai-login.pages.dev,https://enrai-admin.pages.dev,http://
 ```toml
 # カスタムドメイン使用時
 [env.production]
-name = "enrai-router"
+name = "authrim-router"
 route = { pattern = "id.example.com/*", custom_domain = true }
 
 # workers.dev使用時
-name = "enrai"
+name = "authrim"
 ```
 
 ---
@@ -1572,15 +1572,15 @@ PUBLIC_OIDC_BASE_URL=https://api.example.com
 
 ```bash
 # API Worker (.dev.vars)
-ISSUER_URL=https://enrai.sgrastar.workers.dev
-PUBLIC_API_BASE_URL=https://enrai.sgrastar.workers.dev
+ISSUER_URL=https://authrim.sgrastar.workers.dev
+PUBLIC_API_BASE_URL=https://authrim.sgrastar.workers.dev
 CORS_ORIGINS=*
 ```
 
 #### wrangler.toml設定
 
 ```toml
-name = "enrai"
+name = "authrim"
 # UIはデプロイしない
 ```
 
@@ -1621,7 +1621,7 @@ name = "enrai"
 
 1. **リソース名の変更**
    - ユーザーに異なる名前を入力させる
-   - 自動的にサフィックスを追加（例: `enrai-2`）
+   - 自動的にサフィックスを追加（例: `authrim-2`）
 
 2. **既存リソースの再利用**
    - 既存のKV、D1を再利用する
