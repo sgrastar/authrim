@@ -35,6 +35,7 @@ export interface AuthorizationCode {
   claims?: string; // OIDC claims parameter (JSON string)
   authTime?: number; // OIDC auth_time (authentication timestamp)
   acr?: string; // OIDC acr (Authentication Context Class Reference)
+  cHash?: string; // OIDC c_hash for hybrid flows (RFC 3.3.2.11)
   used: boolean;
   expiresAt: number;
   createdAt: number;
@@ -56,6 +57,7 @@ export interface StoreCodeRequest {
   claims?: string;
   authTime?: number;
   acr?: string;
+  cHash?: string; // OIDC c_hash for hybrid flows
 }
 
 /**
@@ -79,6 +81,7 @@ export interface ConsumeCodeResponse {
   claims?: string;
   authTime?: number;
   acr?: string;
+  cHash?: string; // OIDC c_hash for hybrid flows
 }
 
 /**

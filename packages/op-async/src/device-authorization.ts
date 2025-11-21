@@ -11,6 +11,7 @@ import {
   generateUserCode,
   getVerificationUriComplete,
   DEVICE_FLOW_CONSTANTS,
+  getClient,
 } from '@authrim/shared';
 
 /**
@@ -37,8 +38,31 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
       );
     }
 
-    // TODO: Validate client exists (optional for device flow per RFC 8628)
-    // For now, we accept any client_id
+    // Validate client exists and is authorized for device flow
+    // Per RFC 8628 Section 3.1: Client authentication is OPTIONAL for public clients,
+    // but we MUST verify the client is registered
+    const clientMetadata = await getClient(c.env, client_id);
+    if (!clientMetadata) {
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: 'Client not found or not registered',
+        },
+        400
+      );
+    }
+
+    // Verify client is authorized to use device flow grant type
+    const grantTypes = clientMetadata.grant_types as string[] | undefined;
+    if (grantTypes && !grantTypes.includes('urn:ietf:params:oauth:grant-type:device_code')) {
+      return c.json(
+        {
+          error: 'unauthorized_client',
+          error_description: 'Client is not authorized to use device flow',
+        },
+        400
+      );
+    }
 
     // Generate device code and user code
     const deviceCode = generateDeviceCode();
