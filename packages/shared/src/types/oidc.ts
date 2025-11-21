@@ -41,6 +41,11 @@ export interface OIDCProviderMetadata {
   userinfo_encryption_enc_values_supported?: string[];
   // RFC 8628: Device Authorization Grant
   device_authorization_endpoint?: string;
+  // OIDC CIBA (Client Initiated Backchannel Authentication)
+  backchannel_authentication_endpoint?: string;
+  backchannel_token_delivery_modes_supported?: string[];
+  backchannel_authentication_request_signing_alg_values_supported?: string[];
+  backchannel_user_code_parameter_supported?: boolean;
   // OIDC Core: Additional metadata
   claim_types_supported?: string[];
   claims_parameter_supported?: boolean;
@@ -258,6 +263,11 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   userinfo_encrypted_response_alg?: string;
   userinfo_encrypted_response_enc?: string;
   jwks?: { keys: unknown[] };
+  // CIBA (Client Initiated Backchannel Authentication) settings
+  backchannel_token_delivery_mode?: string; // 'poll', 'ping', 'push', or combination
+  backchannel_client_notification_endpoint?: string; // Callback URL for ping/push modes
+  backchannel_authentication_request_signing_alg?: string; // Algorithm for signed auth requests
+  backchannel_user_code_parameter?: boolean; // Whether client supports user_code parameter
 }
 
 /**
@@ -400,4 +410,63 @@ export interface DeviceCodeMetadata {
   poll_count?: number; // Number of times the device has polled
   user_id?: string; // Set when user approves the device
   sub?: string; // Subject (user identifier) - set when approved
+}
+
+/**
+ * CIBA (Client Initiated Backchannel Authentication) Request
+ * OpenID Connect CIBA Flow Core 1.0
+ * https://openid.net/specs/openid-client-initiated-backchannel-authentication-core-1_0.html
+ */
+export interface CIBAAuthenticationRequest {
+  scope: string;
+  client_notification_token?: string; // Required for ping and push modes
+  acr_values?: string;
+  login_hint_token?: string; // JWT containing login hint
+  id_token_hint?: string; // Previously issued ID token
+  login_hint?: string; // Email, phone, or other identifier
+  binding_message?: string; // Human-readable message to display to user
+  user_code?: string; // Optional code for user to verify
+  requested_expiry?: number; // Requested expiry time in seconds
+}
+
+/**
+ * CIBA Authentication Response
+ * https://openid.net/specs/openid-client-initiated-backchannel-authentication-core-1_0.html#auth_response
+ */
+export interface CIBAAuthenticationResponse {
+  auth_req_id: string; // Unique authentication request identifier
+  expires_in: number; // Lifetime in seconds
+  interval?: number; // Minimum polling interval in seconds (poll mode only)
+}
+
+/**
+ * CIBA Request Metadata
+ * Internal storage for CIBA authentication flow
+ */
+export interface CIBARequestMetadata {
+  auth_req_id: string; // Unique authentication request identifier
+  client_id: string;
+  scope: string;
+  login_hint?: string; // Email, phone, or other user identifier
+  login_hint_token?: string; // JWT containing login hint
+  id_token_hint?: string; // Previously issued ID token
+  binding_message?: string; // Message to display to user
+  user_code?: string; // Optional verification code
+  acr_values?: string; // Requested Authentication Context Class Reference values
+  requested_expiry?: number; // Client-requested expiry time
+  status: 'pending' | 'approved' | 'denied' | 'expired';
+  delivery_mode: 'poll' | 'ping' | 'push'; // Token delivery mode
+  client_notification_token?: string; // For ping/push modes
+  client_notification_endpoint?: string; // Callback URL for ping/push modes
+  created_at: number;
+  expires_at: number;
+  last_poll_at?: number; // Last time client polled for the token
+  poll_count?: number; // Number of times client has polled
+  interval: number; // Minimum polling interval in seconds
+  user_id?: string; // Set when user approves the request
+  sub?: string; // Subject (user identifier) - set when approved
+  nonce?: string; // Nonce for ID token (optional)
+  // Token issuance tracking
+  token_issued?: boolean; // True if tokens have been issued
+  token_issued_at?: number; // Timestamp when tokens were issued
 }
