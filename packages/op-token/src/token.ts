@@ -1,18 +1,18 @@
 import type { Context } from 'hono';
-import type { Env } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
 import {
   validateGrantType,
   validateAuthCode,
   validateClientId,
   validateRedirectUri,
-} from '@enrai/shared';
+} from '@authrim/shared';
 import {
   revokeToken,
   storeRefreshToken,
   getRefreshToken,
   deleteRefreshToken,
   getClient,
-} from '@enrai/shared';
+} from '@authrim/shared';
 import {
   createIDToken,
   createAccessToken,
@@ -20,7 +20,7 @@ import {
   createRefreshToken,
   parseToken,
   verifyToken,
-} from '@enrai/shared';
+} from '@authrim/shared';
 import {
   encryptJWT,
   isIDTokenEncryptionRequired,
@@ -31,9 +31,9 @@ import {
   type JWEAlgorithm,
   type JWEEncryption,
   type IDTokenClaims,
-} from '@enrai/shared';
+} from '@authrim/shared';
 import { importPKCS8, importJWK, type CryptoKey } from 'jose';
-import { extractDPoPProof, validateDPoPProof } from '@enrai/shared';
+import { extractDPoPProof, validateDPoPProof } from '@authrim/shared';
 
 /**
  * Response from AuthCodeStore Durable Object
@@ -1370,7 +1370,7 @@ async function handleDeviceCodeGrant(
   // Check status and return appropriate response
   if (metadata.status === 'pending') {
     // User has not yet approved - check if polling too fast
-    const { isPollingTooFast, DEVICE_FLOW_CONSTANTS } = await import('@enrai/shared');
+    const { isPollingTooFast, DEVICE_FLOW_CONSTANTS } = await import('@authrim/shared');
 
     if (isPollingTooFast(metadata, DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL)) {
       return c.json(

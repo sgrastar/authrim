@@ -1,4 +1,4 @@
-# enrai – OpenID Connect Form Post OP Conformance
+# authrim – OpenID Connect Form Post OP Conformance
 
 ## Vision & Objectives
 
@@ -81,7 +81,7 @@ Form Post Response Modeでは、以下の構造のHTMLを返す必要があり�
 
 ---
 
-## Enrai Implementation Status
+## Authrim Implementation Status
 
 ### Form Post Response Mode
 
@@ -199,8 +199,8 @@ https://www.certification.openid.net/
 **Configuration:**
 ```bash
 # Test Configuration
-Issuer: https://enrai.YOUR_SUBDOMAIN.workers.dev
-Authorization Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/authorize
+Issuer: https://authrim.YOUR_SUBDOMAIN.workers.dev
+Authorization Endpoint: https://authrim.YOUR_SUBDOMAIN.workers.dev/authorize
 
 # Enable Form Post Response Mode
 response_mode: form_post
@@ -208,7 +208,7 @@ response_mode: form_post
 
 ### Test Procedure
 
-1. **Deploy Enrai**
+1. **Deploy Authrim**
    ```bash
    pnpm run deploy
    ```
@@ -216,7 +216,7 @@ response_mode: form_post
 2. **Verify Form Post Response (Manual)**
    ```bash
    # 1. Navigate to authorization endpoint with response_mode=form_post
-   https://enrai.YOUR_SUBDOMAIN.workers.dev/authorize?
+   https://authrim.YOUR_SUBDOMAIN.workers.dev/authorize?
      client_id=CLIENT_ID&
      redirect_uri=https://example.com/callback&
      response_type=code&
@@ -285,7 +285,7 @@ response_mode: form_post
 - [OIDC Config OP](../OIDC%20Config%20OP/README.md) - Discovery configuration conformance
 - [OIDC Hybrid OP](../OIDC%20Hybrid%20OP/README.md) - Hybrid Flow conformance
 - [Test Plan](../OIDC%20Basic%20OP/test-plan.md) - Overall conformance testing strategy
-- [Project README](../../README.md) - Enrai project overview
+- [Project README](../../README.md) - Authrim project overview
 
 ---
 

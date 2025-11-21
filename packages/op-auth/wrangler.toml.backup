@@ -1,4 +1,4 @@
-name = "enrai-op-auth"
+name = "authrim-op-auth"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -14,7 +14,7 @@ preview_id = "d655d33a22fa4c8e9642eb976acffe4d"
 # D1 Database
 [[d1_databases]]
 binding = "DB"
-database_name = "enrai-users-db"
+database_name = "authrim-users-db"
 database_id = "c286a9b6-b646-43a6-802d-15d527bc9efa"
 
 [[kv_namespaces]]
@@ -41,21 +41,21 @@ preview_id = "358414c119844e33b731bde80e0252bd"
 [[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "SESSION_STORE"
 class_name = "SessionStore"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "AUTH_CODE_STORE"
 class_name = "AuthorizationCodeStore"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 # Environment variables
 [vars]
-ISSUER_URL = "https://enrai.sgrastar.workers.dev"
+ISSUER_URL = "https://authrim.sgrastar.workers.dev"
 TOKEN_EXPIRY = "3600"
 CODE_EXPIRY = "120"
 STATE_EXPIRY = "300"

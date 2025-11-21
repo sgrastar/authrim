@@ -1,9 +1,9 @@
-# Enrai API Endpoints List
+# Authrim API Endpoints List
 
 **Last Updated**: 2025-11-21
 **Total Endpoints**: 46
 
-This document provides a concise list of all available API endpoints in Enrai OIDC Provider.
+This document provides a concise list of all available API endpoints in Authrim OIDC Provider.
 
 ---
 

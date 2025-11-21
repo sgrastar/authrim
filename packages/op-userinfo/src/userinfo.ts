@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import type { Env } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
 import {
   introspectTokenFromContext,
   getClient,
@@ -9,7 +9,7 @@ import {
   validateJWEOptions,
   type JWEAlgorithm,
   type JWEEncryption,
-} from '@enrai/shared';
+} from '@authrim/shared';
 import { SignJWT } from 'jose';
 
 /**

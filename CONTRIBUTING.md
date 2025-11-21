@@ -1,10 +1,10 @@
-# Contributing to Enrai
+# Contributing to Authrim
 
-Thank you for your interest in Enrai!
+Thank you for your interest in Authrim!
 
 ## Development Model
 
-Enrai is primarily a **solo development project** by [sgrastar](https://github.com/sgrastar).
+Authrim is primarily a **solo development project** by [sgrastar](https://github.com/sgrastar).
 
 ### What We Accept
 
@@ -50,8 +50,8 @@ If you have questions:
 
 ## License
 
-Enrai is licensed under the Apache License 2.0. By reporting issues, you agree that any code examples or suggestions you provide may be used under this license.
+Authrim is licensed under the Apache License 2.0. By reporting issues, you agree that any code examples or suggestions you provide may be used under this license.
 
 ---
 
-Thank you for your interest in Enrai! 🔥
+Thank you for your interest in Authrim! 🔥

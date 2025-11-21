@@ -1,14 +1,14 @@
-# Enrai: RP (Relying Party) Support Implementation Analysis
+# Authrim: RP (Relying Party) Support Implementation Analysis
 
 **Date:** November 18, 2025  
 **Status:** Preliminary Assessment for RP Support Architecture  
-**Project:** Enrai - OpenID Connect Implementation on Cloudflare Workers
+**Project:** Authrim - OpenID Connect Implementation on Cloudflare Workers
 
 ---
 
 ## Executive Summary
 
-**Enrai is a fully-featured OpenID Connect Provider (OP) implementation**, currently at Phase 5 with 400+ tests passing and comprehensive OIDC compliance. The project is **exclusively OP-focused** with no existing Relying Party (RP) components.
+**Authrim is a fully-featured OpenID Connect Provider (OP) implementation**, currently at Phase 5 with 400+ tests passing and comprehensive OIDC compliance. The project is **exclusively OP-focused** with no existing Relying Party (RP) components.
 
 ### Key Findings:
 - ✅ **Excellent OP Foundation** - Phases 1-5 complete, production-ready
@@ -112,7 +112,7 @@
 │  │  └─────────────┴──────────┴──────────┴────────────────┘    │   │
 │  │                                                              │   │
 │  │  ┌──────────────────────────────────────────────────────┐   │   │
-│  │  │         Shared Library (@enrai/shared)              │   │   │
+│  │  │         Shared Library (@authrim/shared)              │   │   │
 │  │  │  Types, Utils, Validation, Crypto, Storage          │   │   │
 │  │  └──────────────────────────────────────────────────────┘   │   │
 │  └──────────────────────────────────────────────────────────────┘   │
@@ -220,7 +220,7 @@ settings              -- System configuration
 - ❌ No client libraries (SDK)
 - ❌ Zero mentions of "client application" or "consumer"
 
-**This makes sense:** Enrai is designed as an **identity provider** for applications to integrate with, not as a client library for consuming other identity providers.
+**This makes sense:** Authrim is designed as an **identity provider** for applications to integrate with, not as a client library for consuming other identity providers.
 
 ---
 
@@ -474,22 +474,22 @@ Durable Objects (new):
 
 ### 7.1 Reusable OP Components
 
-**From @enrai/shared:**
+**From @authrim/shared:**
 ```typescript
 // Cryptography (immediately reusable)
-import { verifyJWT, parseToken, validateSignature } from '@enrai/shared';
+import { verifyJWT, parseToken, validateSignature } from '@authrim/shared';
 
 // Validation (can be adapted)
-import { validateState, validateNonce, validateRedirectUri } from '@enrai/shared';
+import { validateState, validateNonce, validateRedirectUri } from '@authrim/shared';
 
 // Storage abstractions (can be extended)
-import { CloudflareAdapter } from '@enrai/shared/storage';
+import { CloudflareAdapter } from '@authrim/shared/storage';
 
 // Constants (can reference)
-import { STANDARD_SCOPES, TOKEN_ENDPOINTS } from '@enrai/shared';
+import { STANDARD_SCOPES, TOKEN_ENDPOINTS } from '@authrim/shared';
 
 // Error handling (same patterns)
-import { createErrorResponse, handleValidationError } from '@enrai/shared';
+import { createErrorResponse, handleValidationError } from '@authrim/shared';
 ```
 
 ### 7.2 Testing Integration
@@ -513,7 +513,7 @@ import { createErrorResponse, handleValidationError } from '@enrai/shared';
 
 ### 8.1 Suggested Architecture
 
-**New Package: `@enrai/rp-client`**
+**New Package: `@authrim/rp-client`**
 ```
 packages/rp-client/
 ├── src/
@@ -577,11 +577,11 @@ packages/rp-client/
 
 ```typescript
 // Hypothetical RP client usage
-import { OIDCClient } from '@enrai/rp-client';
+import { OIDCClient } from '@authrim/rp-client';
 
 // 1. Initialize client
 const client = new OIDCClient({
-  issuer: 'https://enrai.example.workers.dev',
+  issuer: 'https://authrim.example.workers.dev',
   clientId: 'my-app-id',
   clientSecret: 'secret', // For confidential clients
   redirectUri: 'http://localhost:3000/callback',
@@ -700,7 +700,7 @@ RP Tests (estimated 150-200 tests total):
 ### 11.2 Implementation Priorities
 
 **Phase 6a (Weeks 1-2): CRITICAL**
-1. Create `@enrai/rp-client` package
+1. Create `@authrim/rp-client` package
 2. Implement Authorization Code Flow client
 3. Implement JWT validation
 4. Create RP example application
@@ -795,7 +795,7 @@ TOTAL: 169 hours (≈ 4.2 weeks full-time development)
 
 ### 13.1 How This Compares to Existing Solutions
 
-| Feature | Enrai (OP) | Enrai (RP) | Auth0 | Okta | Keycloak |
+| Feature | Authrim (OP) | Authrim (RP) | Auth0 | Okta | Keycloak |
 |---------|-----------|-----------|-------|------|----------|
 | **Deployment** | Edge | Edge | Managed | Managed | Self-hosted |
 | **Latency** | <50ms global | <50ms global | 100-200ms | 100-200ms | 500-2000ms |
@@ -808,7 +808,7 @@ TOTAL: 169 hours (≈ 4.2 weeks full-time development)
 
 ### 13.2 Unique Value Propositions
 
-**For Enrai RP:**
+**For Authrim RP:**
 1. **Edge-native RP** - First OIDC RP implementation on edge
 2. **<50ms latency** - Global distribution via Cloudflare
 3. **Passwordless integration** - Direct access to WebAuthn + Magic Links
@@ -870,19 +870,19 @@ TOTAL: 169 hours (≈ 4.2 weeks full-time development)
 
 ### Summary of Findings
 
-1. **Enrai is a production-ready OpenID Provider** with 400+ tests, Phase 5 complete, and comprehensive OIDC compliance (95.8% Phase 3 score).
+1. **Authrim is a production-ready OpenID Provider** with 400+ tests, Phase 5 complete, and comprehensive OIDC compliance (95.8% Phase 3 score).
 
-2. **No RP code currently exists** - Enrai is exclusively OP-focused with well-separated, modular architecture.
+2. **No RP code currently exists** - Authrim is exclusively OP-focused with well-separated, modular architecture.
 
 3. **Adding RP support is highly feasible** - 80% of required functionality (crypto, JWT validation, DPoP, PAR) already exists in the OP implementation.
 
 4. **Estimated effort: 169-254 hours** (4-6 weeks full-time for one senior engineer) to implement all 7 RP profiles with comprehensive testing.
 
-5. **Unique opportunity**: Enrai RP would be the **first truly edge-native OIDC Relying Party** implementation, offering <50ms latency globally - a significant competitive advantage.
+5. **Unique opportunity**: Authrim RP would be the **first truly edge-native OIDC Relying Party** implementation, offering <50ms latency globally - a significant competitive advantage.
 
 6. **Strong technical foundation**: TypeScript monorepo, comprehensive test infrastructure, Cloudflare integration, and proven deployment patterns all support successful RP implementation.
 
-7. **Clear implementation path**: Leverage existing `@enrai/shared` library, Durable Objects for state management, D1 for persistence, and KV for caching - all proven patterns from OP implementation.
+7. **Clear implementation path**: Leverage existing `@authrim/shared` library, Durable Objects for state management, D1 for persistence, and KV for caching - all proven patterns from OP implementation.
 
 ---
 
@@ -891,22 +891,22 @@ TOTAL: 169 hours (≈ 4.2 weeks full-time development)
 ### A. Key Files to Review
 
 **Architecture Documents:**
-- `/home/user/enrai/docs/architecture/protocol-flow.md` - OP protocol specification
-- `/home/user/enrai/docs/architecture/technical-specs.md` - System architecture
-- `/home/user/enrai/docs/ROADMAP.md` - Project roadmap (Phase 6-9 planned)
+- `/home/user/authrim/docs/architecture/protocol-flow.md` - OP protocol specification
+- `/home/user/authrim/docs/architecture/technical-specs.md` - System architecture
+- `/home/user/authrim/docs/ROADMAP.md` - Project roadmap (Phase 6-9 planned)
 
 **Implementation Files:**
-- `/home/user/enrai/packages/shared/src/` - Shared utilities (400KB)
-- `/home/user/enrai/packages/op-auth/src/authorize.ts` - Authorization endpoint
-- `/home/user/enrai/packages/op-token/src/token.ts` - Token endpoint
-- `/home/user/enrai/packages/shared/src/durable-objects/` - 9 Durable Objects
+- `/home/user/authrim/packages/shared/src/` - Shared utilities (400KB)
+- `/home/user/authrim/packages/op-auth/src/authorize.ts` - Authorization endpoint
+- `/home/user/authrim/packages/op-token/src/token.ts` - Token endpoint
+- `/home/user/authrim/packages/shared/src/durable-objects/` - 9 Durable Objects
 
 **Testing:**
-- `/home/user/enrai/test/handlers/` - Unit tests
-- `/home/user/enrai/test-e2e/` - E2E tests (Playwright)
+- `/home/user/authrim/test/handlers/` - Unit tests
+- `/home/user/authrim/test-e2e/` - E2E tests (Playwright)
 
 **Conformance:**
-- `/home/user/enrai/docs/conformance/` - 7 OP profiles documented
+- `/home/user/authrim/docs/conformance/` - 7 OP profiles documented
 
 ### B. Technology Stack Summary
 

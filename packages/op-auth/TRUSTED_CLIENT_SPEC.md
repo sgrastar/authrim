@@ -45,7 +45,7 @@ const isTrusted =
 
 | 条件 | 判定 | 例 |
 |------|------|-----|
-| redirect_uriのドメイン == ISSUER_URLのドメイン | ✅ Trusted | `enrai.sgrastar.workers.dev` |
+| redirect_uriのドメイン == ISSUER_URLのドメイン | ✅ Trusted | `authrim.sgrastar.workers.dev` |
 | redirect_uriのドメイン ∈ TRUSTED_DOMAINS | ✅ Trusted | `www.certification.openid.net` |
 | 上記以外 | ❌ Untrusted | `example.com` |
 
@@ -337,7 +337,7 @@ export interface Env {
 
 **前提条件**:
 - TRUSTED_DOMAINS=`www.certification.openid.net`
-- Dynamic Registration: redirect_uri=`https://www.certification.openid.net/test/a/Enrai-basic-test/callback`
+- Dynamic Registration: redirect_uri=`https://www.certification.openid.net/test/a/Authrim-basic-test/callback`
 
 **期待動作**:
 ```
@@ -350,8 +350,8 @@ export interface Env {
 ### 2. Trusted Client（同一ドメイン）
 
 **前提条件**:
-- ISSUER_URL=`https://enrai.sgrastar.workers.dev`
-- redirect_uri=`https://enrai.sgrastar.workers.dev/callback`
+- ISSUER_URL=`https://authrim.sgrastar.workers.dev`
+- redirect_uri=`https://authrim.sgrastar.workers.dev/callback`
 
 **期待動作**:
 ```
@@ -391,7 +391,7 @@ export interface Env {
 
 ```bash
 # 1. マイグレーション実行
-wrangler d1 execute enrai-prod --file=migrations/004_add_client_trust_settings.sql
+wrangler d1 execute authrim-prod --file=migrations/004_add_client_trust_settings.sql
 
 # 2. 環境変数設定
 # wrangler.toml または Cloudflare Dashboardで設定

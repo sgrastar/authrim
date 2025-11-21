@@ -9,7 +9,7 @@
  * [[durable_objects.bindings]]
  * name = "SESSION_STORE"
  * class_name = "SessionStore"
- * script_name = "enrai-shared"
+ * script_name = "authrim-shared"
  * ```
  */
 
@@ -79,7 +79,7 @@ export type {
  */
 export default {
   fetch(request: Request, env: unknown, ctx: ExecutionContext): Response {
-    return new Response('Enrai Shared - Durable Objects Worker', {
+    return new Response('Authrim Shared - Durable Objects Worker', {
       status: 200,
       headers: { 'Content-Type': 'text/plain' },
     });

@@ -67,7 +67,7 @@ app.use(
 app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
-    service: 'enrai-router',
+    service: 'authrim-router',
     version: '0.1.0',
     timestamp: new Date().toISOString(),
   });
@@ -236,7 +236,7 @@ app.notFound((c) => {
     {
       error: 'not_found',
       message: 'The requested resource was not found',
-      hint: 'This is the Enrai Router Worker. Ensure the requested path matches a valid OpenID Connect endpoint.',
+      hint: 'This is the Authrim Router Worker. Ensure the requested path matches a valid OpenID Connect endpoint.',
     },
     404
   );

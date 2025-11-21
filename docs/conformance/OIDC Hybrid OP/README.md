@@ -1,4 +1,4 @@
-# enrai – OpenID Connect Hybrid OP Conformance
+# authrim – OpenID Connect Hybrid OP Conformance
 
 ## Vision & Objectives
 
@@ -96,7 +96,7 @@ at_hash = base64url(left_half(hash(access_token, alg)))
 
 ---
 
-## Enrai Implementation Status
+## Authrim Implementation Status
 
 ### ❌ Hybrid Flow (Planned for Phase 6)
 
@@ -190,9 +190,9 @@ https://www.certification.openid.net/
 **Configuration:**
 ```bash
 # Test Configuration (when implemented)
-Issuer: https://enrai.YOUR_SUBDOMAIN.workers.dev
-Authorization Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/authorize
-Token Endpoint: https://enrai.YOUR_SUBDOMAIN.workers.dev/token
+Issuer: https://authrim.YOUR_SUBDOMAIN.workers.dev
+Authorization Endpoint: https://authrim.YOUR_SUBDOMAIN.workers.dev/authorize
+Token Endpoint: https://authrim.YOUR_SUBDOMAIN.workers.dev/token
 
 # Enable Hybrid Flow
 response_types_supported: code id_token, code token, code id_token token
@@ -200,7 +200,7 @@ response_types_supported: code id_token, code token, code id_token token
 
 ### Test Procedure (Future)
 
-1. **Deploy Enrai** (Phase 6+)
+1. **Deploy Authrim** (Phase 6+)
    ```bash
    pnpm run deploy
    ```
@@ -208,7 +208,7 @@ response_types_supported: code id_token, code token, code id_token token
 2. **Verify Hybrid Flow - code id_token**
    ```bash
    # 1. Navigate to authorization endpoint
-   https://enrai.YOUR_SUBDOMAIN.workers.dev/authorize?
+   https://authrim.YOUR_SUBDOMAIN.workers.dev/authorize?
      client_id=CLIENT_ID&
      redirect_uri=https://example.com/callback&
      response_type=code id_token&
@@ -293,8 +293,8 @@ response_types_supported: code id_token, code token, code id_token token
 - [OIDC Basic OP](../OIDC%20Basic%20OP/README.md) - Basic OP profile conformance
 - [OIDC Form Post OP](../OIDC%20Form%20Post%20OP/README.md) - Form Post Response Mode (compatible with Hybrid)
 - [Test Plan](../OIDC%20Basic%20OP/test-plan.md) - Overall conformance testing strategy
-- [Project README](../../README.md) - Enrai project overview
-- [ROADMAP](../../ROADMAP.md) - Enrai development roadmap
+- [Project README](../../README.md) - Authrim project overview
+- [ROADMAP](../../ROADMAP.md) - Authrim development roadmap
 
 ---
 

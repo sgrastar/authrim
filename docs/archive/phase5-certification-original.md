@@ -58,7 +58,7 @@
 
 #### Production Deployment
 - [ ] Production Cloudflare account setup
-- [ ] Custom domain configuration (`id.enrai.org`)
+- [ ] Custom domain configuration (`id.authrim.org`)
 - [ ] DNS records setup
 - [ ] SSL/TLS configuration (with MTLS support)
 - [ ] Production secrets generation

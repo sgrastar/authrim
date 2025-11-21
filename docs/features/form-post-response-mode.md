@@ -4,7 +4,7 @@
 
 **OAuth 2.0 Form Post Response Mode** allows authorization responses to be delivered via HTTP POST instead of URL redirects with query or fragment parameters.
 
-Enrai implements Form Post Response Mode as specified in the [OAuth 2.0 Form Post Response Mode specification](https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html).
+Authrim implements Form Post Response Mode as specified in the [OAuth 2.0 Form Post Response Mode specification](https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html).
 
 ## Specification
 
@@ -119,7 +119,7 @@ GET /authorize
   &scope=openid+profile+email
   &state=abc123
   &nonce=xyz789
-Host: enrai.sgrastar.workers.dev
+Host: authrim.sgrastar.workers.dev
 ```
 
 ---
@@ -195,7 +195,7 @@ The client must handle this as a POST request (not GET).
 #### Step 1: Client Initiates Authorization
 
 ```javascript
-const authUrl = new URL('https://enrai.sgrastar.workers.dev/authorize');
+const authUrl = new URL('https://authrim.sgrastar.workers.dev/authorize');
 authUrl.searchParams.set('response_type', 'code');
 authUrl.searchParams.set('response_mode', 'form_post');
 authUrl.searchParams.set('client_id', 'my_client_id');
@@ -270,7 +270,7 @@ const codeVerifier = generateRandomString(128);
 const codeChallenge = await sha256(codeVerifier);
 const codeChallengeBase64 = base64UrlEncode(codeChallenge);
 
-const authUrl = new URL('https://enrai.sgrastar.workers.dev/authorize');
+const authUrl = new URL('https://authrim.sgrastar.workers.dev/authorize');
 authUrl.searchParams.set('response_type', 'code');
 authUrl.searchParams.set('response_mode', 'form_post');
 authUrl.searchParams.set('client_id', 'my_client_id');
@@ -291,7 +291,7 @@ window.location.href = authUrl.toString();
 
 ```javascript
 // Step 1: Push authorization request
-const parResponse = await fetch('https://enrai.sgrastar.workers.dev/as/par', {
+const parResponse = await fetch('https://authrim.sgrastar.workers.dev/as/par', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/x-www-form-urlencoded',
@@ -309,7 +309,7 @@ const parResponse = await fetch('https://enrai.sgrastar.workers.dev/as/par', {
 const { request_uri } = await parResponse.json();
 
 // Step 2: Redirect to authorization endpoint with request_uri
-const authUrl = new URL('https://enrai.sgrastar.workers.dev/authorize');
+const authUrl = new URL('https://authrim.sgrastar.workers.dev/authorize');
 authUrl.searchParams.set('client_id', 'my_client_id');
 authUrl.searchParams.set('request_uri', request_uri);
 
@@ -342,7 +342,7 @@ window.location.href = authUrl.toString();
 
 ### XSS Prevention
 
-Enrai implements **comprehensive HTML escaping** to prevent XSS attacks:
+Authrim implements **comprehensive HTML escaping** to prevent XSS attacks:
 
 #### Escaping Functions
 
@@ -435,7 +435,7 @@ def callback():
 
 ### User Experience
 
-Enrai's form post response includes a user-friendly loading screen:
+Authrim's form post response includes a user-friendly loading screen:
 
 1. **Loading Spinner**: Animated spinner indicating progress
 2. **Message**: "Redirecting to application..."
@@ -471,7 +471,7 @@ Clients can check this metadata to verify Form Post support before using it.
 
 ### Test Coverage
 
-Enrai includes comprehensive tests for Form Post Response Mode:
+Authrim includes comprehensive tests for Form Post Response Mode:
 
 **Test File**: `test/form-post-response-mode.test.ts`
 

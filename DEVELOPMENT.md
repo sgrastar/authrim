@@ -1,6 +1,6 @@
 # Development Guide
 
-This guide will help you set up your development environment for Enrai.
+This guide will help you set up your development environment for Authrim.
 
 ## Table of Contents
 
@@ -29,8 +29,8 @@ The new unified setup process supports all deployment patterns (A-D) and is the 
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR-USERNAME/enrai.git
-cd enrai
+git clone https://github.com/YOUR-USERNAME/authrim.git
+cd authrim
 
 # 2. Install dependencies
 pnpm install
@@ -45,7 +45,7 @@ wrangler login
 ./scripts/setup-config.sh
 
 # 6. Build and deploy based on configuration
-./scripts/build.sh --config enrai-config-1.0.0.json
+./scripts/build.sh --config authrim-config-1.0.0.json
 ```
 
 **Features:**
@@ -62,8 +62,8 @@ For advanced users who prefer manual control:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR-USERNAME/enrai.git
-cd enrai
+git clone https://github.com/YOUR-USERNAME/authrim.git
+cd authrim
 
 # 2. Install dependencies
 pnpm install
@@ -183,7 +183,7 @@ pnpm run generate-keys    # Generate RSA key pair
 ### Project Structure
 
 ```
-enrai/
+authrim/
 ├── .github/
 │   └── workflows/           # GitHub Actions CI/CD
 ├── docs/

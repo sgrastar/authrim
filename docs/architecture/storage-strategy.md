@@ -1,4 +1,4 @@
-# Enrai Storage Strategy - Hybrid Multi-Tier Architecture 🗄️
+# Authrim Storage Strategy - Hybrid Multi-Tier Architecture 🗄️
 
 **Last Updated**: 2025-11-13
 **Status**: Phase 5 Design
@@ -21,7 +21,7 @@
 
 ## Overview
 
-Enrai uses a **hybrid multi-tier storage architecture** that combines three Cloudflare storage services:
+Authrim uses a **hybrid multi-tier storage architecture** that combines three Cloudflare storage services:
 
 - **Durable Objects (DO)**: Strong consistency, real-time state management
 - **D1 (SQLite)**: Persistent relational data, complex queries
@@ -557,7 +557,7 @@ export class AWSStorageAdapter implements IStorageAdapter {
 # D1 Database
 [[d1_databases]]
 binding = "DB"
-database_name = "enrai-prod"
+database_name = "authrim-prod"
 database_id = "xxxx"
 
 # KV Namespaces
@@ -577,22 +577,22 @@ id = "xxxx"
 [[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
-script_name = "enrai"
+script_name = "authrim"
 
 [[durable_objects.bindings]]
 name = "SESSION_STORE"
 class_name = "SessionStore"
-script_name = "enrai"
+script_name = "authrim"
 
 [[durable_objects.bindings]]
 name = "AUTH_CODE_STORE"
 class_name = "AuthorizationCodeStore"
-script_name = "enrai"
+script_name = "authrim"
 
 [[durable_objects.bindings]]
 name = "REFRESH_TOKEN_ROTATOR"
 class_name = "RefreshTokenRotator"
-script_name = "enrai"
+script_name = "authrim"
 ```
 
 ---

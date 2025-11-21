@@ -1,6 +1,6 @@
-# Enrai Scripts Documentation
+# Authrim Scripts Documentation
 
-This directory contains setup and deletion scripts for managing Cloudflare resources used by the Enrai OpenID Connect Provider.
+This directory contains setup and deletion scripts for managing Cloudflare resources used by the Authrim OpenID Connect Provider.
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ Initialize development environment configuration.
 - Configures local development settings
 
 ### setup-kv.sh
-Create and configure KV namespaces for Enrai.
+Create and configure KV namespaces for Authrim.
 
 **Usage:**
 ```bash
@@ -52,7 +52,7 @@ Create and configure KV namespaces for Enrai.
 Each namespace includes both production and preview versions.
 
 ### setup-d1.sh
-Create and configure D1 databases for Enrai.
+Create and configure D1 databases for Authrim.
 
 **Usage:**
 ```bash
@@ -64,7 +64,7 @@ Create and configure D1 databases for Enrai.
 ```
 
 **What it does:**
-- Creates D1 database (e.g., `enrai-dev`, `enrai-prod`)
+- Creates D1 database (e.g., `authrim-dev`, `authrim-prod`)
 - Updates wrangler.toml files with D1 bindings
 - Optionally runs database migrations
 
@@ -117,7 +117,7 @@ Configure GitHub integration and CI/CD settings.
 ⚠️ **WARNING**: These scripts permanently delete resources. Use with caution!
 
 ### delete-kv.sh
-Delete KV namespaces for Enrai.
+Delete KV namespaces for Authrim.
 
 **Usage:**
 ```bash
@@ -132,12 +132,12 @@ Delete KV namespaces for Enrai.
 ```
 
 **What it deletes:**
-- All Enrai KV namespaces (production and preview)
-- Only deletes namespaces with names matching the Enrai pattern
+- All Authrim KV namespaces (production and preview)
+- Only deletes namespaces with names matching the Authrim pattern
 
 **Safety features:**
 - Requires typing 'DELETE' to confirm
-- Only targets Enrai-specific namespaces
+- Only targets Authrim-specific namespaces
 - Provides detailed summary before deletion
 - Handles namespace-in-use errors gracefully
 
@@ -162,7 +162,7 @@ Delete D1 databases by environment.
 ```
 
 **What it deletes:**
-- D1 database for specified environment (e.g., `enrai-dev`)
+- D1 database for specified environment (e.g., `authrim-dev`)
 - Shows table contents before deletion
 - Production databases require typing 'DELETE PRODUCTION' to confirm
 
@@ -179,11 +179,11 @@ Delete Cloudflare Workers and associated Durable Objects.
 # Interactive mode (select workers to delete)
 ./scripts/delete-workers.sh
 
-# Delete all Enrai workers
+# Delete all Authrim workers
 ./scripts/delete-workers.sh --all
 
 # Delete specific worker
-./scripts/delete-workers.sh --worker enrai-shared
+./scripts/delete-workers.sh --worker authrim-shared
 
 # Dry run mode
 ./scripts/delete-workers.sh --all --dry-run
@@ -195,7 +195,7 @@ Delete Cloudflare Workers and associated Durable Objects.
 **What it deletes:**
 - Selected Cloudflare Workers
 - Associated Durable Objects (automatically deleted with workers)
-- Only deletes workers with names matching the Enrai pattern
+- Only deletes workers with names matching the Authrim pattern
 
 **Requirements:**
 - Requires `CLOUDFLARE_API_TOKEN` environment variable
@@ -212,11 +212,11 @@ Delete Cloudflare Workers and associated Durable Objects.
 **Safety features:**
 - Uses Cloudflare REST API for reliable deletion
 - Requires typing 'DELETE' to confirm
-- Only targets Enrai-specific workers (enrai-*)
+- Only targets Authrim-specific workers (authrim-*)
 - Uses `force=true` parameter to cleanly delete associated Durable Objects
 
 ### delete-all.sh
-Master script to delete all Enrai resources in the correct order.
+Master script to delete all Authrim resources in the correct order.
 
 **Usage:**
 ```bash
@@ -376,7 +376,7 @@ export CLOUDFLARE_API_TOKEN=your_token_here
 ./scripts/delete-workers.sh --all --dry-run
 
 # Delete specific worker
-./scripts/delete-workers.sh --worker enrai-shared
+./scripts/delete-workers.sh --worker authrim-shared
 
 # Delete all workers
 ./scripts/delete-workers.sh --all

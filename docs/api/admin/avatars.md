@@ -25,7 +25,7 @@ https://your-domain.com/admin/users/:id/avatar
 ## Storage Architecture
 
 - **Storage Backend:** Cloudflare R2
-- **Bucket:** `enrai-avatars`
+- **Bucket:** `authrim-avatars`
 - **File Path:** `avatars/{userId}.{ext}`
 - **Image Resizing:** Cloudflare Image Resizing (via `/cdn-cgi/image/` prefix)
 
@@ -265,10 +265,10 @@ See [User Management API](./users.md#4-update-user) for details.
 
 ```bash
 # Create production bucket
-wrangler r2 bucket create enrai-avatars
+wrangler r2 bucket create authrim-avatars
 
 # Create preview bucket (for development)
-wrangler r2 bucket create enrai-avatars-preview
+wrangler r2 bucket create authrim-avatars-preview
 ```
 
 ### 2. Configure wrangler.toml
@@ -278,8 +278,8 @@ Add to your `packages/op-management/wrangler.toml`:
 ```toml
 [[r2_buckets]]
 binding = "AVATARS"
-bucket_name = "enrai-avatars"
-preview_bucket_name = "enrai-avatars-preview"
+bucket_name = "authrim-avatars"
+preview_bucket_name = "authrim-avatars-preview"
 ```
 
 ### 3. Enable Cloudflare Image Resizing

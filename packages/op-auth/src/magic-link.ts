@@ -4,7 +4,7 @@
  */
 
 import { Context } from 'hono';
-import type { Env } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
 import { ResendEmailProvider } from './utils/email/resend-provider';
 import { getMagicLinkEmailHtml, getMagicLinkEmailText } from './utils/email/templates';
 
@@ -151,18 +151,18 @@ export async function magicLinkSendHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const emailProvider = new ResendEmailProvider(resendApiKey);
-    const fromEmail = c.env.EMAIL_FROM || 'noreply@enrai.dev';
+    const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
 
     const emailResult = await emailProvider.send({
       to: email,
       from: fromEmail,
-      subject: 'Sign in to Enrai',
+      subject: 'Sign in to Authrim',
       html: getMagicLinkEmailHtml({
         name: (user.name as string) || undefined,
         email,
         magicLink: magicLinkUrl.toString(),
         expiresInMinutes: MAGIC_LINK_TTL / 60,
-        appName: 'Enrai',
+        appName: 'Authrim',
         logoUrl: undefined, // TODO: Add logo URL
       }),
       text: getMagicLinkEmailText({
@@ -170,7 +170,7 @@ export async function magicLinkSendHandler(c: Context<{ Bindings: Env }>) {
         email,
         magicLink: magicLinkUrl.toString(),
         expiresInMinutes: MAGIC_LINK_TTL / 60,
-        appName: 'Enrai',
+        appName: 'Authrim',
       }),
     });
 

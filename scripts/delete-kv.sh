@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Enrai KV Namespace Deletion Script
-# This script safely deletes KV namespaces for the Enrai project
+# Authrim KV Namespace Deletion Script
+# This script safely deletes KV namespaces for the Authrim project
 #
 # Usage:
 #   ./delete-kv.sh                 - Interactive mode (prompts for confirmation)
@@ -39,7 +39,7 @@ for arg in "$@"; do
     esac
 done
 
-echo -e "${BLUE}⚡️ Enrai KV Namespace Deletion${NC}"
+echo -e "${BLUE}⚡️ Authrim KV Namespace Deletion${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -74,7 +74,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Define the KV namespace names we expect to find for Enrai
+# Define the KV namespace names we expect to find for Authrim
 # Note: The following have been migrated to Durable Objects:
 #   • AUTH_CODES → AuthorizationCodeStore DO
 #   • REFRESH_TOKENS → RefreshTokenRotator DO
@@ -82,7 +82,7 @@ fi
 #   • STATE_STORE → PARRequestStore DO
 #   • NONCE_STORE → DPoPJTIStore DO
 #   • RATE_LIMIT → RateLimiterCounter DO
-ENRAI_KV_NAMES=(
+AUTHRIM_KV_NAMES=(
     "CLIENTS"
     "INITIAL_ACCESS_TOKENS"
     "SETTINGS"
@@ -92,7 +92,7 @@ ENRAI_KV_NAMES=(
 declare -a NAMESPACES_TO_DELETE_IDS=()
 declare -a NAMESPACES_TO_DELETE_TITLES=()
 
-echo -e "${BLUE}🔍 Searching for Enrai KV namespaces...${NC}"
+echo -e "${BLUE}🔍 Searching for Authrim KV namespaces...${NC}"
 echo ""
 
 # Function to extract namespace ID by title
@@ -121,7 +121,7 @@ get_namespace_id_by_title() {
 }
 
 # Search for both production and preview namespaces
-for kv_name in "${ENRAI_KV_NAMES[@]}"; do
+for kv_name in "${AUTHRIM_KV_NAMES[@]}"; do
     # Check for production namespace
     prod_id=$(get_namespace_id_by_title "$kv_name" "$KV_LIST_JSON")
     if [ -n "$prod_id" ]; then
@@ -159,7 +159,7 @@ echo ""
 
 # Check if any namespaces were found
 if [ ${#NAMESPACES_TO_DELETE_IDS[@]} -eq 0 ]; then
-    echo -e "${YELLOW}ℹ️  No Enrai KV namespaces found to delete${NC}"
+    echo -e "${YELLOW}ℹ️  No Authrim KV namespaces found to delete${NC}"
     echo ""
     echo "If you expected to find namespaces, please check:"
     echo "  1. You are logged in to the correct Cloudflare account"

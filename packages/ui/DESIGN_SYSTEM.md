@@ -1,6 +1,6 @@
-# Enrai Design System
+# Authrim Design System
 
-This document describes the design system used in the Enrai UI application.
+This document describes the design system used in the Authrim UI application.
 
 ## Design Principles
 

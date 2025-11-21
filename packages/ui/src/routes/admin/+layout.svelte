@@ -93,7 +93,7 @@
 				<div class="h-8 w-8 rounded-full bg-gray-300 dark:bg-gray-600"></div>
 				<div class="flex-1">
 					<p class="text-sm font-medium text-gray-900 dark:text-white">Admin</p>
-					<p class="text-xs text-gray-500 dark:text-gray-400">admin@enrai.local</p>
+					<p class="text-xs text-gray-500 dark:text-gray-400">admin@authrim.local</p>
 				</div>
 			</div>
 		</div>

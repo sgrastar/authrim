@@ -1,6 +1,6 @@
-# Enrai Database Migrations 🗄️
+# Authrim Database Migrations 🗄️
 
-This directory contains SQL migration scripts for Enrai's Cloudflare D1 database.
+This directory contains SQL migration scripts for Authrim's Cloudflare D1 database.
 
 ## 📋 Migration Files
 
@@ -15,7 +15,7 @@ This directory contains SQL migration scripts for Enrai's Cloudflare D1 database
 
 ## 🎯 Migration Management (Issue #14)
 
-Enrai now includes automated migration tracking with version management and checksum validation.
+Authrim now includes automated migration tracking with version management and checksum validation.
 
 ### Quick Commands
 
@@ -42,10 +42,10 @@ pnpm migrate:create description_here
 
 ```bash
 # Create production database
-wrangler d1 create enrai-prod
+wrangler d1 create authrim-prod
 
 # Create development database (recommended for testing)
-wrangler d1 create enrai-dev
+wrangler d1 create authrim-dev
 ```
 
 Update your `wrangler.toml` with the database binding:
@@ -53,7 +53,7 @@ Update your `wrangler.toml` with the database binding:
 ```toml
 [[d1_databases]]
 binding = "DB"
-database_name = "enrai-dev"
+database_name = "authrim-dev"
 database_id = "your-database-id-here"
 ```
 
@@ -63,31 +63,31 @@ database_id = "your-database-id-here"
 
 ```bash
 # Development
-wrangler d1 execute enrai-dev --file=migrations/001_initial_schema.sql
-wrangler d1 execute enrai-dev --file=migrations/002_seed_default_data.sql
+wrangler d1 execute authrim-dev --file=migrations/001_initial_schema.sql
+wrangler d1 execute authrim-dev --file=migrations/002_seed_default_data.sql
 
 # Production (⚠️ IMPORTANT: Remove test data from 002 first!)
-wrangler d1 execute enrai-prod --file=migrations/001_initial_schema.sql
-wrangler d1 execute enrai-prod --file=migrations/002_seed_default_data.sql
+wrangler d1 execute authrim-prod --file=migrations/001_initial_schema.sql
+wrangler d1 execute authrim-prod --file=migrations/002_seed_default_data.sql
 ```
 
 #### Apply Single Migration
 
 ```bash
-wrangler d1 execute enrai-dev --file=migrations/001_initial_schema.sql
+wrangler d1 execute authrim-dev --file=migrations/001_initial_schema.sql
 ```
 
 ### 3. Verify Migrations
 
 ```bash
 # List all tables
-wrangler d1 execute enrai-dev --command="SELECT name FROM sqlite_master WHERE type='table';"
+wrangler d1 execute authrim-dev --command="SELECT name FROM sqlite_master WHERE type='table';"
 
 # Check table structure
-wrangler d1 execute enrai-dev --command="PRAGMA table_info(users);"
+wrangler d1 execute authrim-dev --command="PRAGMA table_info(users);"
 
 # Count records
-wrangler d1 execute enrai-dev --command="SELECT COUNT(*) FROM users;"
+wrangler d1 execute authrim-dev --command="SELECT COUNT(*) FROM users;"
 ```
 
 ## 📊 Database Schema
@@ -133,9 +133,9 @@ Full schema documentation: [docs/architecture/database-schema.md](../docs/archit
 
 | Email | Role | Purpose |
 |-------|------|---------|
-| `admin@test.enrai.org` | Super Admin | Testing admin features |
-| `user@test.enrai.org` | None | Testing regular user flows |
-| `support@test.enrai.org` | Support | Testing support operations |
+| `admin@test.authrim.org` | Super Admin | Testing admin features |
+| `user@test.authrim.org` | None | Testing regular user flows |
+| `support@test.authrim.org` | Support | Testing support operations |
 
 **Default password**: None (use Passkey or Magic Link)
 
@@ -154,12 +154,12 @@ Full schema documentation: [docs/architecture/database-schema.md](../docs/archit
 
 1. **Backup existing data** (if any)
    ```bash
-   wrangler d1 backup create enrai-prod
+   wrangler d1 backup create authrim-prod
    ```
 
 2. **Test in development first**
    ```bash
-   wrangler d1 execute enrai-dev --file=migrations/001_initial_schema.sql
+   wrangler d1 execute authrim-dev --file=migrations/001_initial_schema.sql
    ```
 
 3. **Review migration output** for errors
@@ -191,34 +191,34 @@ Full schema documentation: [docs/architecture/database-schema.md](../docs/archit
 
 ```bash
 # Check D1 status
-wrangler d1 info enrai-dev
+wrangler d1 info authrim-dev
 
 # View recent errors (if available)
-wrangler d1 execute enrai-dev --command="SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 10;"
+wrangler d1 execute authrim-dev --command="SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 10;"
 ```
 
 ### Table Already Exists
 
 ```bash
 # Drop all tables (⚠️ DESTRUCTIVE - Development only!)
-wrangler d1 execute enrai-dev --command="DROP TABLE IF EXISTS users;"
-wrangler d1 execute enrai-dev --command="DROP TABLE IF EXISTS user_custom_fields;"
+wrangler d1 execute authrim-dev --command="DROP TABLE IF EXISTS users;"
+wrangler d1 execute authrim-dev --command="DROP TABLE IF EXISTS user_custom_fields;"
 # ... repeat for all tables
 
 # Re-run migrations
-wrangler d1 execute enrai-dev --file=migrations/001_initial_schema.sql
+wrangler d1 execute authrim-dev --file=migrations/001_initial_schema.sql
 ```
 
 ### Reset Development Database
 
 ```bash
 # Delete and recreate
-wrangler d1 delete enrai-dev
-wrangler d1 create enrai-dev
+wrangler d1 delete authrim-dev
+wrangler d1 create authrim-dev
 
 # Re-run all migrations
-wrangler d1 execute enrai-dev --file=migrations/001_initial_schema.sql
-wrangler d1 execute enrai-dev --file=migrations/002_seed_default_data.sql
+wrangler d1 execute authrim-dev --file=migrations/001_initial_schema.sql
+wrangler d1 execute authrim-dev --file=migrations/002_seed_default_data.sql
 ```
 
 ## 🔐 Security Considerations

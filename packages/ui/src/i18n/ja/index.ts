@@ -1,7 +1,7 @@
 import type { Translation } from '../i18n-types'
 
 const ja = {
-	app_title: 'Enrai',
+	app_title: 'Authrim',
 	app_subtitle: 'Cloudflare Workers上のOpenID Connectプロバイダー',
 	test_title: 'フロントエンドスタックテスト',
 	test_meltui: 'Melt UI（ヘッドレスコンポーネント）のテスト:',
@@ -44,7 +44,7 @@ const ja = {
 	login_errorEmailInvalid: '有効なメールアドレスを入力してください',
 
 	register_title: 'アカウント作成',
-	register_subtitle: 'Enraiを始めましょう',
+	register_subtitle: 'Authrimを始めましょう',
 	register_createWithPasskey: 'Passkeyでアカウント作成',
 	register_signupWithMagicLink: 'マジックリンクで登録',
 	register_alreadyHaveAccount: '既にアカウントをお持ちの方はこちら',
@@ -66,7 +66,7 @@ const ja = {
 	magicLink_verify_requestNew: '新しいリンクをリクエスト',
 
 	consent_title: '{clientName}があなたのアカウントへのアクセスを要求しています',
-	consent_subtitle: 'このアプリケーションがあなたのEnraiアカウントへのアクセスを要求しています',
+	consent_subtitle: 'このアプリケーションがあなたのAuthrimアカウントへのアクセスを要求しています',
 	consent_scopesTitle: 'このアプリケーションは以下の操作が可能になります：',
 	consent_userInfo: 'サインイン中のアカウント',
 	consent_notYou: '別のアカウントでログイン',

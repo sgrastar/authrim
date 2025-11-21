@@ -49,8 +49,8 @@ Phase 5で実装された統合ストレージ抽象化層です。Cloudflare Wo
 ### 基本的な使い方
 
 ```typescript
-import { createStorageAdapter } from '@enrai/shared/storage/adapters/cloudflare-adapter';
-import type { Env } from '@enrai/shared/types/env';
+import { createStorageAdapter } from '@authrim/shared/storage/adapters/cloudflare-adapter';
+import type { Env } from '@authrim/shared/types/env';
 
 // ハンドラー内でストレージアダプターを作成
 export default {

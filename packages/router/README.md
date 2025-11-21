@@ -1,17 +1,17 @@
-# Enrai Router Worker
+# Authrim Router Worker
 
-The Router Worker provides a unified entry point for all Enrai OpenID Connect endpoints when using workers.dev deployment.
+The Router Worker provides a unified entry point for all Authrim OpenID Connect endpoints when using workers.dev deployment.
 
 ## Purpose
 
-This worker solves the OpenID Connect specification compliance issue where all endpoints must be accessible from a single issuer domain. When deploying to Cloudflare Workers without a custom domain, each worker gets its own subdomain (e.g., `enrai-op-discovery.subdomain.workers.dev`, `enrai-op-auth.subdomain.workers.dev`), which violates the OIDC spec.
+This worker solves the OpenID Connect specification compliance issue where all endpoints must be accessible from a single issuer domain. When deploying to Cloudflare Workers without a custom domain, each worker gets its own subdomain (e.g., `authrim-op-discovery.subdomain.workers.dev`, `authrim-op-auth.subdomain.workers.dev`), which violates the OIDC spec.
 
-The Router Worker acts as a single entry point (`enrai-router.subdomain.workers.dev`) and uses Service Bindings to route requests to the appropriate specialized worker.
+The Router Worker acts as a single entry point (`authrim-router.subdomain.workers.dev`) and uses Service Bindings to route requests to the appropriate specialized worker.
 
 ## Architecture
 
 ```
-Client Request → enrai-router.subdomain.workers.dev
+Client Request → authrim-router.subdomain.workers.dev
                         ↓
                   Router Worker
                   (Service Bindings)
@@ -55,11 +55,11 @@ The Router Worker uses Service Bindings, which are automatically configured by `
 ```toml
 [[services]]
 binding = "OP_DISCOVERY"
-service = "enrai-op-discovery"
+service = "authrim-op-discovery"
 
 [[services]]
 binding = "OP_AUTH"
-service = "enrai-op-auth"
+service = "authrim-op-auth"
 
 # ... etc
 ```

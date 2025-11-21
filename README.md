@@ -1,4 +1,4 @@
-# Enrai ⚡️
+# Authrim ⚡️
 
 > **One-command identity infrastructure for the modern web**
 
@@ -12,11 +12,11 @@ A lightweight, serverless **OpenID Connect Provider** that deploys to **Cloudfla
 
 ## 🎯 Vision
 
-**Enrai** makes identity infrastructure as simple as deploying a website:
+**Authrim** makes identity infrastructure as simple as deploying a website:
 
 ```bash
 # Future goal (Phase 6)
-npx create-enrai my-identity-provider
+npx create-authrim my-identity-provider
 ```
 
 **Result:** A production-ready OpenID Connect Provider with login screens, admin dashboard, and global edge deployment—all in under 5 minutes.
@@ -25,18 +25,18 @@ npx create-enrai my-identity-provider
 
 ---
 
-## ✨ What is Enrai?
+## ✨ What is Authrim?
 
-Enrai is an **enterprise-grade OpenID Connect Provider** built for:
+Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 
 - 🚀 **Developers** - Simple integration, great DX
 - 🏢 **Enterprises** - Self-hosted, no vendor lock-in
 - 🌍 **Global apps** - <50ms latency worldwide
 - 💰 **Startups** - Generous free tier, no hidden costs
 
-### Why Enrai?
+### Why Authrim?
 
-| Feature | Enrai | Auth0 | Keycloak | Cognito |
+| Feature | Authrim | Auth0 | Keycloak | Cognito |
 |---------|--------|-------|----------|---------|
 | **Setup Time** | 5 min (goal) | 30 min | 2+ hours | 1+ hour |
 | **Cold Starts** | 0ms | N/A | N/A | 100-500ms |
@@ -124,7 +124,7 @@ Enrai is an **enterprise-grade OpenID Connect Provider** built for:
 
 ### 🔥 Durable Objects Architecture
 
-Enrai leverages **Cloudflare Durable Objects** for stateful operations with strong consistency guarantees:
+Authrim leverages **Cloudflare Durable Objects** for stateful operations with strong consistency guarantees:
 
 | Durable Object | Purpose | Key Features |
 |----------------|---------|--------------|
@@ -211,11 +211,11 @@ Enrai leverages **Cloudflare Durable Objects** for stateful operations with stro
 - 🏷️ White-label customization
 
 **Phase 9: CLI & Production Launch** (TBD - Final Phase)
-- 📦 `create-enrai` NPM package (one-command deployment)
+- 📦 `create-authrim` NPM package (one-command deployment)
 - 🚀 Cloudflare integration (automatic Worker/KV/D1/DO setup)
 - 🛠️ Management CLI (20+ commands for users, clients, keys)
 - ✅ OpenID Certification submission & approval
-- 🌍 Production deployment (`https://id.enrai.org`)
+- 🌍 Production deployment (`https://id.authrim.org`)
 - 📣 Public announcement & migration guides
 
 [🗺️ Full Roadmap](./docs/ROADMAP.md) | [📋 Detailed Tasks](./docs/project-management/TASKS.md)
@@ -236,8 +236,8 @@ Enrai leverages **Cloudflare Durable Objects** for stateful operations with stro
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/sgrastar/enrai.git
-cd enrai
+git clone https://github.com/sgrastar/authrim.git
+cd authrim
 
 # 2. Install dependencies (monorepo setup)
 pnpm install
@@ -246,7 +246,7 @@ pnpm install
 ./scripts/setup-config.sh
 
 # 4. Build and deploy based on configuration
-./scripts/build.sh --config enrai-config-1.0.0.json
+./scripts/build.sh --config authrim-config-1.0.0.json
 
 # Workers start at:
 # - Configured domains based on your pattern selection
@@ -267,8 +267,8 @@ pnpm install
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/sgrastar/enrai.git
-cd enrai
+git clone https://github.com/sgrastar/authrim.git
+cd authrim
 
 # 2. Install dependencies (monorepo setup)
 pnpm install
@@ -291,7 +291,7 @@ pnpm run dev
 # For production deployment:
 # Deploy all workers (including Durable Objects automatically)
 pnpm run deploy
-# - Deploys enrai-shared (Durable Objects) first
+# - Deploys authrim-shared (Durable Objects) first
 # - Then deploys other workers sequentially
 # - Includes retry logic and rate limit protection
 
@@ -304,7 +304,7 @@ pnpm run deploy
 # - router: http://localhost:8786 (optional, for unified endpoint)
 ```
 
-> **Note:** Enrai uses a monorepo structure with 5 specialized workers plus an optional Router Worker for unified endpoint access. See [WORKERS.md](./WORKERS.md) and [docs/ROUTER_SETUP.md](./docs/ROUTER_SETUP.md) for architecture details.
+> **Note:** Authrim uses a monorepo structure with 5 specialized workers plus an optional Router Worker for unified endpoint access. See [WORKERS.md](./WORKERS.md) and [docs/ROUTER_SETUP.md](./docs/ROUTER_SETUP.md) for architecture details.
 
 ### Test the API
 
@@ -379,7 +379,7 @@ Coverage:
 
 ## 🔐 Security
 
-Enrai implements security best practices:
+Authrim implements security best practices:
 
 - ✅ **PKCE** (Proof Key for Code Exchange) - RFC 7636
 - ✅ **Single-use authorization codes** - Replay attack prevention
@@ -389,13 +389,13 @@ Enrai implements security best practices:
 - ✅ **CSRF protection** - State parameter validation
 - ✅ **Rate limiting** - Implemented (Phase 4)
 
-**Responsible Disclosure:** security@enrai.org
+**Responsible Disclosure:** security@authrim.org
 
 ---
 
 ## 🤝 Contributing
 
-Enrai is primarily a solo development project. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+Authrim is primarily a solo development project. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
 
 **What we accept:**
 - 🐛 Bug reports via GitHub Issues
@@ -434,7 +434,7 @@ Enrai is primarily a solo development project. See [CONTRIBUTING.md](./CONTRIBUT
 
 ### Quick Deploy to Cloudflare Workers
 
-Deploy Enrai to Cloudflare's global edge network and get a production-ready OpenID Provider with a public URL.
+Deploy Authrim to Cloudflare's global edge network and get a production-ready OpenID Provider with a public URL.
 
 ```bash
 # 1. Install dependencies
@@ -463,25 +463,25 @@ pnpm run build
 # 8. Deploy with retry logic
 pnpm run deploy
 # This uses deploy-with-retry.sh for sequential deployment with delays
-# - Deploys enrai-shared (Durable Objects) first
+# - Deploys authrim-shared (Durable Objects) first
 # - Router Worker is included if wrangler.toml exists (test mode)
 # - Router Worker is skipped if wrangler.toml missing (production mode)
 ```
 
 ### Deployment Modes
 
-Enrai supports two deployment modes to ensure OpenID Connect specification compliance:
+Authrim supports two deployment modes to ensure OpenID Connect specification compliance:
 
 #### 1️⃣ Test Environment (workers.dev + Router Worker)
-- **Unified endpoint**: `https://enrai.{subdomain}.workers.dev`
+- **Unified endpoint**: `https://authrim.{subdomain}.workers.dev`
 - **Use case**: Development, testing, quick setup
 - **Pros**: No custom domain needed, OpenID Connect compliant ✅
 - **Deploy**: `pnpm run deploy` (includes Router Worker)
 
 **Workers deployed:**
-- 🌍 **enrai-shared** (Durable Objects - deployed first)
-- 🌍 **enrai** (unified entry point - Router Worker)
-- 🌍 **enrai-op-discovery**, **enrai-op-auth**, **enrai-op-token**, **enrai-op-userinfo**, **enrai-op-management**
+- 🌍 **authrim-shared** (Durable Objects - deployed first)
+- 🌍 **authrim** (unified entry point - Router Worker)
+- 🌍 **authrim-op-discovery**, **authrim-op-auth**, **authrim-op-token**, **authrim-op-userinfo**, **authrim-op-management**
 
 #### 2️⃣ Production Environment (Custom Domain + Routes)
 - **Custom domain**: `https://id.yourdomain.com`
@@ -491,8 +491,8 @@ Enrai supports two deployment modes to ensure OpenID Connect specification compl
 - **Requires**: Cloudflare-managed domain
 
 **Workers deployed:**
-- 🌍 **enrai-shared** (Durable Objects - deployed first)
-- 🌍 **enrai-op-discovery**, **enrai-op-auth**, **enrai-op-token**, **enrai-op-userinfo**, **enrai-op-management**
+- 🌍 **authrim-shared** (Durable Objects - deployed first)
+- 🌍 **authrim-op-discovery**, **authrim-op-auth**, **authrim-op-token**, **authrim-op-userinfo**, **authrim-op-management**
 - Router Worker is automatically excluded (no wrangler.toml generated in production mode)
 
 > 💡 **Learn more**: See [docs/ROUTER_SETUP.md](./docs/ROUTER_SETUP.md) for detailed architecture and [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for step-by-step instructions.
@@ -543,7 +543,7 @@ Automatic deployment is configured for the `main` branch:
 
 **Future (Phase 6):**
 ```bash
-npx create-enrai my-idp
+npx create-authrim my-idp
 # One command, fully automated setup
 ```
 
@@ -576,14 +576,14 @@ See [LICENSE](./LICENSE) for details.
 
 ## 💬 Community
 
-- 💼 **GitHub**: [sgrastar/enrai](https://github.com/sgrastar/enrai)
-- 🐛 **Issues**: [Report bugs](https://github.com/sgrastar/enrai/issues)
-- 💡 **Discussions**: [Feature requests](https://github.com/sgrastar/enrai/discussions)
-- 📧 **Email**: hello@enrai.org
+- 💼 **GitHub**: [sgrastar/authrim](https://github.com/sgrastar/authrim)
+- 🐛 **Issues**: [Report bugs](https://github.com/sgrastar/authrim/issues)
+- 💡 **Discussions**: [Feature requests](https://github.com/sgrastar/authrim/discussions)
+- 📧 **Email**: hello@authrim.org
 
 ---
 
-> **Enrai** ⚡️ — *A spark of identity on the edge.*
+> **Authrim** ⚡️ — *A spark of identity on the edge.*
 >
 > **Status:** Phase 2 Complete (Core API) | **Next:** Phase 3 (Conformance Testing)
 >

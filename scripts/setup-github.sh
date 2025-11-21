@@ -1,9 +1,9 @@
 #!/bin/bash
-# Setup GitHub labels, milestones, and project for Enrai
+# Setup GitHub labels, milestones, and project for Authrim
 
 set -e
 
-echo "🔥 Setting up GitHub repository for Enrai..."
+echo "🔥 Setting up GitHub repository for Authrim..."
 echo ""
 
 # Check if gh CLI is installed
@@ -96,7 +96,7 @@ PROJECT_ID=$(gh api graphql -f query='
   mutation {
     createProjectV2(input: {
       ownerId: "MDQ6VXNlcjEyMzQ1Njc4OQ=="
-      title: "Enrai Development"
+      title: "Authrim Development"
       repositoryId: "R_kgDOLxYzXw"
     }) {
       projectV2 {

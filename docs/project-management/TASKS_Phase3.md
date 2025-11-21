@@ -10,7 +10,7 @@
 
 #### 13.2 Configuration ✅
 - [x] Configure OP metadata:
-  - [x] Issuer URL: https://enrai.sgrastar.workers.dev
+  - [x] Issuer URL: https://authrim.sgrastar.workers.dev
   - [x] Client registration: static_client
   - [x] Test credentials
 - [x] Configure test plan (oidcc-basic-certification-test-plan)
@@ -89,7 +89,7 @@
 - Plan ID: e90FqMh4xG2mg
 - Test Version: 5.1.36
 - Test Date: 2025-11-12
-- Issuer: https://enrai.sgrastar.workers.dev
+- Issuer: https://authrim.sgrastar.workers.dev
 
 | Status | Count | Percentage |
 |--------|-------|------------|

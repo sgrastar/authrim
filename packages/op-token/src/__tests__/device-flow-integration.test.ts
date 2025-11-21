@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { generateDeviceCode, generateUserCode, DEVICE_FLOW_CONSTANTS } from '@enrai/shared';
+import { generateDeviceCode, generateUserCode, DEVICE_FLOW_CONSTANTS } from '@authrim/shared';
 
 describe('Device Flow Integration Tests', () => {
   describe('Device Authorization Flow', () => {

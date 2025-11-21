@@ -7,5 +7,5 @@ contact_links:
     url: https://openid.net/certification/testing/
     about: OpenID Foundation Conformance Testing documentation
   - name: Project Documentation
-    url: https://github.com/sgrastar/enrai/blob/main/README.md
-    about: Read the Enrai project documentation
+    url: https://github.com/sgrastar/authrim/blob/main/README.md
+    about: Read the Authrim project documentation

@@ -1,4 +1,4 @@
-name = "enrai-shared"
+name = "authrim-shared"
 main = "src/durable-objects/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -36,7 +36,7 @@ new_sqlite_classes = [
 # D1 Database
 [[d1_databases]]
 binding = "DB"
-database_name = "enrai-users-db"
+database_name = "authrim-users-db"
 database_id = "c286a9b6-b646-43a6-802d-15d527bc9efa"
 
 [vars]

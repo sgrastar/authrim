@@ -15,7 +15,7 @@ test.describe('Homepage', () => {
 		await page.goto('/');
 
 		// Check that the page has a title (adjust as needed)
-		await expect(page).toHaveTitle(/Enrai/i);
+		await expect(page).toHaveTitle(/Authrim/i);
 	});
 
 	test('should be accessible via keyboard', async ({ page }) => {

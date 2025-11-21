@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import type { Env } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
 
 /**
  * JSON Web Key Set (JWKS) Endpoint Handler

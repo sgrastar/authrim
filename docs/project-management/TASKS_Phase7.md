@@ -139,7 +139,7 @@
 
 #### 45.3 Identity Federation & Transformation
 - [ ] Design identity mapping schema
-- [ ] Implement social identity to Enrai user mapping
+- [ ] Implement social identity to Authrim user mapping
 - [ ] Create account linking logic (same email, multiple providers)
 - [ ] Implement first-time social login flow
 - [ ] Add profile synchronization from social providers

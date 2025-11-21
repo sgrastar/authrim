@@ -277,7 +277,7 @@ Upon consent approval, the API:
 sequenceDiagram
     participant User
     participant Client App
-    participant OP (Enrai)
+    participant OP (Authrim)
     participant SessionStore
     participant AuthCodeStore
     participant D1

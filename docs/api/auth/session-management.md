@@ -37,7 +37,7 @@ Requires an active session (via cookie).
 
 **Request Headers:**
 ```http
-Cookie: enrai_session={session_id}
+Cookie: authrim_session={session_id}
 ```
 
 **Response (200 OK):**
@@ -67,7 +67,7 @@ Cookie: enrai_session={session_id}
 **Example:**
 ```bash
 curl -X POST "https://your-domain.com/auth/session/token" \
-  -H "Cookie: enrai_session=session_abc123"
+  -H "Cookie: authrim_session=session_abc123"
 ```
 
 **JavaScript Usage:**
@@ -183,7 +183,7 @@ Reads session from cookie.
 
 **Request Headers:**
 ```http
-Cookie: enrai_session={session_id}
+Cookie: authrim_session={session_id}
 ```
 
 **Response (200 OK) - Active Session:**
@@ -237,7 +237,7 @@ Cookie: enrai_session={session_id}
 **Example:**
 ```bash
 curl "https://your-domain.com/session/status" \
-  -H "Cookie: enrai_session=session_abc123"
+  -H "Cookie: authrim_session=session_abc123"
 ```
 
 **JavaScript Usage:**
@@ -277,7 +277,7 @@ Session can be provided via cookie or request body.
 
 **Option 1: Cookie Authentication**
 ```http
-Cookie: enrai_session={session_id}
+Cookie: authrim_session={session_id}
 ```
 
 **Request Body (Optional):**
@@ -335,7 +335,7 @@ Cookie: enrai_session={session_id}
 # Extend session by 1 hour (via cookie)
 curl -X POST "https://your-domain.com/session/refresh" \
   -H "Content-Type: application/json" \
-  -H "Cookie: enrai_session=session_abc123" \
+  -H "Cookie: authrim_session=session_abc123" \
   -d '{"extend_seconds": 3600}'
 
 # Extend session by 2 hours (via body)
@@ -394,7 +394,7 @@ document.addEventListener('mousemove', () => {
      │                             │                              │
      │ 2. Session created          │                              │
      │<────────────────────────────┤                              │
-     │    Cookie: enrai_session    │                              │
+     │    Cookie: authrim_session    │                              │
      │                             │                              │
      │ 3. Issue session token      │                              │
      ├────────────────────────────>│                              │

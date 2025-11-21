@@ -1,8 +1,8 @@
-# enrai – Protocol Flow Specification (for AI reasoning)
+# authrim – Protocol Flow Specification (for AI reasoning)
 
 ## 1. Overview
-This document describes the **end-to-end protocol flow** of the `enrai` OpenID Connect Provider (OP).
-The purpose is to enable automated systems (AI / LLM) to reason about enrai's behavior, data flow, and compliance with OIDC Core 1.0 and OAuth 2.0 specifications.
+This document describes the **end-to-end protocol flow** of the `authrim` OpenID Connect Provider (OP).
+The purpose is to enable automated systems (AI / LLM) to reason about authrim's behavior, data flow, and compliance with OIDC Core 1.0 and OAuth 2.0 specifications.
 
 **Related Documents:**
 - [Technical Specifications](./technical-specs.md) - System architecture and endpoint specifications
@@ -16,7 +16,7 @@ The purpose is to enable automated systems (AI / LLM) to reason about enrai's be
 |:--|:--|
 | **User Agent (UA)** | Web browser or client initiating authorization. |
 | **Relying Party (RP)** | The client application using OIDC to authenticate users. |
-| **enrai (OP)** | The OpenID Provider (implemented via Cloudflare Workers + Hono). |
+| **authrim (OP)** | The OpenID Provider (implemented via Cloudflare Workers + Hono). |
 | **Cloudflare KV** | Persistent store for transient states, codes, and nonces. |
 | **Durable Object** | Persistent key manager for JWK rotation and private key storage. |
 
@@ -195,7 +195,7 @@ IDLE
 ## 7. Sequence Diagram (Logical Representation)
 
 ```text
- RP                    enrai (OP)                 KV Store
+ RP                    authrim (OP)                 KV Store
  │                          │                          │
  │  GET /.well-known        │                          │
  │──────────────────────────>│                          │
@@ -228,7 +228,7 @@ IDLE
 
 ## 9. AI Interpretation Notes
 
-For AI systems analyzing enrai:
+For AI systems analyzing authrim:
 
 1. **Identify endpoints** — There are exactly five currently active endpoints: discovery, jwks, authorize, token, userinfo.
 2. **Stateful elements** — Only `KV` stores ephemeral data (`code`, `state`, `nonce`). No persistent DB.
@@ -250,5 +250,5 @@ For AI systems analyzing enrai:
 
 ---
 
-> *enrai* — igniting identity, one request at a time.
+> *authrim* — igniting identity, one request at a time.
 

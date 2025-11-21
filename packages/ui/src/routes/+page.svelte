@@ -5,7 +5,7 @@
 </script>
 
 <svelte:head>
-	<title>Enrai - OpenID Connect Provider</title>
+	<title>Authrim - OpenID Connect Provider</title>
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4">

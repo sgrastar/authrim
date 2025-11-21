@@ -1,4 +1,4 @@
-name = "enrai"
+name = "authrim"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -8,23 +8,23 @@ preview_urls = true
 # Service Bindings to other workers
 [[services]]
 binding = "OP_DISCOVERY"
-service = "enrai-op-discovery"
+service = "authrim-op-discovery"
 
 [[services]]
 binding = "OP_AUTH"
-service = "enrai-op-auth"
+service = "authrim-op-auth"
 
 [[services]]
 binding = "OP_TOKEN"
-service = "enrai-op-token"
+service = "authrim-op-token"
 
 [[services]]
 binding = "OP_USERINFO"
-service = "enrai-op-userinfo"
+service = "authrim-op-userinfo"
 
 [[services]]
 binding = "OP_MANAGEMENT"
-service = "enrai-op-management"
+service = "authrim-op-management"
 
 # Development configuration
 [dev]
