@@ -34,6 +34,12 @@ export interface OIDCProviderMetadata {
   request_parameter_supported?: boolean;
   request_uri_parameter_supported?: boolean;
   request_object_signing_alg_values_supported?: string[];
+  request_object_encryption_alg_values_supported?: string[];
+  request_object_encryption_enc_values_supported?: string[];
+  // JARM (JWT-Secured Authorization Response Mode) support
+  authorization_signing_alg_values_supported?: string[];
+  authorization_encryption_alg_values_supported?: string[];
+  authorization_encryption_enc_values_supported?: string[];
   // RFC 7516: JWE (JSON Web Encryption) support
   id_token_encryption_alg_values_supported?: string[];
   id_token_encryption_enc_values_supported?: string[];
@@ -241,6 +247,14 @@ export interface ClientRegistrationResponse {
   id_token_encrypted_response_enc?: string;
   userinfo_encrypted_response_alg?: string;
   userinfo_encrypted_response_enc?: string;
+  // JAR (JWT-Secured Authorization Request) - RFC 9101
+  request_object_signing_alg?: string;
+  request_object_encryption_alg?: string;
+  request_object_encryption_enc?: string;
+  // JARM (JWT-Secured Authorization Response Mode) - draft-ietf-oauth-jarm
+  authorization_signed_response_alg?: string;
+  authorization_encrypted_response_alg?: string;
+  authorization_encrypted_response_enc?: string;
 }
 
 /**
