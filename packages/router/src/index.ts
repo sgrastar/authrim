@@ -14,6 +14,7 @@ interface Env {
   OP_TOKEN: Fetcher;
   OP_USERINFO: Fetcher;
   OP_MANAGEMENT: Fetcher;
+  OP_ASYNC: Fetcher;
 }
 
 // Create Hono app with Cloudflare Workers types
@@ -168,6 +169,32 @@ app.get('/logout', async (c) => {
 app.post('/logout/backchannel', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_AUTH.fetch(request);
+});
+
+/**
+ * Device Flow endpoints - Route to OP_ASYNC worker
+ * - /device_authorization (POST) - RFC 8628: Device Authorization Grant
+ * - /device (GET/POST) - User verification page (minimal HTML for OIDC conformance)
+ * - /api/device/* - Headless JSON APIs for SvelteKit UI and WebSDK
+ */
+app.post('/device_authorization', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_ASYNC.fetch(request);
+});
+
+app.get('/device', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_ASYNC.fetch(request);
+});
+
+app.post('/device', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_ASYNC.fetch(request);
+});
+
+app.all('/api/device/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_ASYNC.fetch(request);
 });
 
 /**

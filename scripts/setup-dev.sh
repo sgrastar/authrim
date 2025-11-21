@@ -64,6 +64,7 @@ cat > .dev.vars << EOF
 PRIVATE_KEY_PEM="$PRIVATE_KEY"
 PUBLIC_JWK_JSON='$PUBLIC_JWK'
 ALLOW_HTTP_REDIRECT="true"
+UI_BASE_URL="http://localhost:5173"
 EOF
 
 # Add email configuration if provided

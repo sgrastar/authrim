@@ -1,9 +1,10 @@
 /**
- * Device Verification Handler
+ * Device Verification Handler (Minimal - for OIDC Conformance Test)
  * RFC 8628: Device User Authorization
  *
- * User-facing endpoint where users enter their user_code
- * and approve/deny the device authorization request
+ * IMPORTANT: This is a minimal HTML form for OIDC conformance testing only.
+ * For production use, redirect users to the SvelteKit UI at UI_BASE_URL/device
+ * or use the headless JSON API at POST /api/device/verify
  */
 
 import type { Context } from 'hono';
@@ -13,11 +14,13 @@ import { html } from 'hono/html';
 
 /**
  * GET /device
- * Show device verification form
+ * Minimal device verification form (Conformance test only)
+ *
+ * Note: In production, users should be redirected to UI_BASE_URL/device
  */
 export async function deviceVerifyHandler(c: Context<{ Bindings: Env }>) {
   if (c.req.method === 'GET') {
-    return showVerificationForm(c);
+    return showMinimalVerificationForm(c);
   } else if (c.req.method === 'POST') {
     return handleVerificationSubmission(c);
   }
@@ -26,170 +29,49 @@ export async function deviceVerifyHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * Show device verification form
+ * Show minimal device verification form (Conformance test only)
  */
-async function showVerificationForm(c: Context<{ Bindings: Env }>) {
+async function showMinimalVerificationForm(c: Context<{ Bindings: Env }>) {
   const userCodeParam = c.req.query('user_code');
   const error = c.req.query('error');
   const success = c.req.query('success');
 
+  // For production use, redirect to SvelteKit UI
+  // Uncomment the following lines when UI is deployed:
+  // if (c.env.UI_BASE_URL) {
+  //   const redirectUrl = new URL(`${c.env.UI_BASE_URL}/device`);
+  //   if (userCodeParam) redirectUrl.searchParams.set('user_code', userCodeParam);
+  //   return c.redirect(redirectUrl.toString());
+  // }
+
+  // Minimal HTML for conformance testing
   const page = html`
     <!DOCTYPE html>
     <html lang="en">
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Device Verification - Enrai</title>
-        <style>
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-          }
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto',
-              'Helvetica', 'Arial', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-          }
-          .container {
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            padding: 40px;
-            max-width: 480px;
-            width: 100%;
-          }
-          h1 {
-            color: #2d3748;
-            font-size: 28px;
-            margin-bottom: 8px;
-            text-align: center;
-          }
-          .subtitle {
-            color: #718096;
-            font-size: 14px;
-            text-align: center;
-            margin-bottom: 32px;
-          }
-          .form-group {
-            margin-bottom: 24px;
-          }
-          label {
-            display: block;
-            color: #4a5568;
-            font-size: 14px;
-            font-weight: 600;
-            margin-bottom: 8px;
-          }
-          input[type='text'] {
-            width: 100%;
-            padding: 12px 16px;
-            border: 2px solid #e2e8f0;
-            border-radius: 8px;
-            font-size: 18px;
-            font-weight: 600;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            text-align: center;
-            transition: border-color 0.2s;
-          }
-          input[type='text']:focus {
-            outline: none;
-            border-color: #667eea;
-          }
-          .hint {
-            color: #a0aec0;
-            font-size: 12px;
-            margin-top: 8px;
-            text-align: center;
-          }
-          .btn {
-            width: 100%;
-            padding: 14px;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-          }
-          .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-          }
-          .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
-          }
-          .alert {
-            padding: 12px 16px;
-            border-radius: 8px;
-            margin-bottom: 24px;
-            font-size: 14px;
-          }
-          .alert-error {
-            background: #fed7d7;
-            color: #c53030;
-            border: 1px solid #fc8181;
-          }
-          .alert-success {
-            background: #c6f6d5;
-            color: #22543d;
-            border: 1px solid #68d391;
-          }
-          .logo {
-            text-align: center;
-            margin-bottom: 24px;
-            font-size: 48px;
-          }
-        </style>
+        <title>Device Verification</title>
       </head>
       <body>
-        <div class="container">
-          <div class="logo">🔐</div>
-          <h1>Device Verification</h1>
-          <p class="subtitle">Enter the code shown on your device</p>
-
-          ${error ? html`<div class="alert alert-error">${error}</div>` : ''}
-          ${success ? html`<div class="alert alert-success">${success}</div>` : ''}
-
-          <form method="POST" action="/device">
-            <div class="form-group">
-              <label for="user_code">Verification Code</label>
-              <input
-                type="text"
-                id="user_code"
-                name="user_code"
-                value="${userCodeParam || ''}"
-                placeholder="XXXX-XXXX"
-                maxlength="9"
-                pattern="[A-Z0-9]{4}-[A-Z0-9]{4}"
-                required
-                autofocus
-              />
-              <div class="hint">Format: XXXX-XXXX (8 characters)</div>
-            </div>
-
-            <button type="submit" class="btn btn-primary">Continue</button>
-          </form>
-        </div>
-
-        <script>
-          // Auto-format user code input
-          const input = document.getElementById('user_code');
-          input.addEventListener('input', (e) => {
-            let value = e.target.value.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-            if (value.length > 4) {
-              value = value.slice(0, 4) + '-' + value.slice(4, 8);
-            }
-            e.target.value = value;
-          });
-        </script>
+        <h1>Device Verification</h1>
+        ${error ? html`<p style="color: red;">${error}</p>` : ''}
+        ${success ? html`<p style="color: green;">${success}</p>` : ''}
+        <form method="POST" action="/device">
+          <label for="user_code">Enter verification code:</label>
+          <input
+            type="text"
+            id="user_code"
+            name="user_code"
+            value="${userCodeParam || ''}"
+            placeholder="XXXX-XXXX"
+            maxlength="9"
+            pattern="[A-Z0-9]{4}-[A-Z0-9]{4}"
+            required
+            autofocus
+          />
+          <button type="submit">Continue</button>
+        </form>
       </body>
     </html>
   `;

@@ -488,3 +488,25 @@ export const adminSettingsAPI = {
 		});
 	}
 };
+
+/**
+ * Device Flow API
+ * RFC 8628: OAuth 2.0 Device Authorization Grant
+ */
+export const deviceFlowAPI = {
+	/**
+	 * Verify device code with user approval
+	 */
+	async verifyDeviceCode(userCode: string, approve: boolean = true) {
+		return apiFetch<{
+			success: boolean;
+			message?: string;
+		}>('/api/device/verify', {
+			method: 'POST',
+			body: JSON.stringify({
+				user_code: userCode,
+				approve
+			})
+		});
+	}
+};
