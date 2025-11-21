@@ -1,14 +1,14 @@
 #!/bin/bash
 #
-# Enrai Workers Deletion Script
-# This script safely deletes Cloudflare Workers for the Enrai project
+# Authrim Workers Deletion Script
+# This script safely deletes Cloudflare Workers for the Authrim project
 #
 # Usage:
 #   ./delete-workers.sh                      - Interactive mode (prompts for workers and confirmation)
 #   ./delete-workers.sh --dry-run            - Dry run mode (shows what would be deleted)
 #   ./delete-workers.sh --force              - Force deletion without confirmation (USE WITH CAUTION)
-#   ./delete-workers.sh --all                - Delete all Enrai workers
-#   ./delete-workers.sh --worker enrai-auth  - Delete specific worker
+#   ./delete-workers.sh --all                - Delete all Authrim workers
+#   ./delete-workers.sh --worker authrim-auth  - Delete specific worker
 #
 
 set -e
@@ -52,7 +52,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo -e "${BLUE}⚡️ Enrai Workers Deletion${NC}"
+echo -e "${BLUE}⚡️ Authrim Workers Deletion${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -102,21 +102,21 @@ echo -e "${BLUE}📊 Checking for deployed Workers...${NC}"
 echo "Account ID: $ACCOUNT_ID"
 echo ""
 
-# Define the worker names for Enrai project
-ENRAI_WORKER_NAMES=(
-    "enrai-shared"
-    "enrai-op-auth"
-    "enrai-op-discovery"
-    "enrai-op-management"
-    "enrai-op-token"
-    "enrai-op-userinfo"
-    "enrai-router"
+# Define the worker names for Authrim project
+AUTHRIM_WORKER_NAMES=(
+    "authrim-shared"
+    "authrim-op-auth"
+    "authrim-op-discovery"
+    "authrim-op-management"
+    "authrim-op-token"
+    "authrim-op-userinfo"
+    "authrim-router"
 )
 
 # Arrays to store workers to delete
 declare -a WORKERS_TO_DELETE=()
 
-echo -e "${BLUE}🔍 Checking which Enrai workers are deployed...${NC}"
+echo -e "${BLUE}🔍 Checking which Authrim workers are deployed...${NC}"
 echo ""
 
 # Function to check if a worker exists
@@ -142,21 +142,21 @@ if [ -n "$SPECIFIC_WORKER" ]; then
         exit 0
     fi
 elif [ "$DELETE_ALL" = true ]; then
-    # Add all Enrai workers (we'll check if they exist during deletion)
-    echo "Preparing to delete all Enrai workers..."
+    # Add all Authrim workers (we'll check if they exist during deletion)
+    echo "Preparing to delete all Authrim workers..."
     echo ""
-    WORKERS_TO_DELETE=("${ENRAI_WORKER_NAMES[@]}")
+    WORKERS_TO_DELETE=("${AUTHRIM_WORKER_NAMES[@]}")
     echo -e "${BLUE}ℹ️  Will attempt to delete ${#WORKERS_TO_DELETE[@]} workers${NC}"
     echo -e "${YELLOW}   (Workers that don't exist will be skipped)${NC}"
 else
     # Interactive mode - let user select workers
-    echo "Checking for deployed Enrai workers..."
+    echo "Checking for deployed Authrim workers..."
     echo ""
 
     worker_index=1
     declare -a AVAILABLE_WORKERS=()
 
-    for worker_name in "${ENRAI_WORKER_NAMES[@]}"; do
+    for worker_name in "${AUTHRIM_WORKER_NAMES[@]}"; do
         echo -n "  Checking $worker_name... "
         if check_worker_exists "$worker_name"; then
             AVAILABLE_WORKERS+=("$worker_name")
@@ -169,17 +169,17 @@ else
     echo ""
 
     if [ ${#AVAILABLE_WORKERS[@]} -eq 0 ]; then
-        echo -e "${YELLOW}ℹ️  No Enrai workers found${NC}"
+        echo -e "${YELLOW}ℹ️  No Authrim workers found${NC}"
         exit 0
     fi
 
-    echo "Available Enrai workers:"
+    echo "Available Authrim workers:"
     echo ""
     for i in "${!AVAILABLE_WORKERS[@]}"; do
         echo "  $((i+1))) ${AVAILABLE_WORKERS[$i]}"
     done
 
-    echo "  A) Delete all Enrai workers"
+    echo "  A) Delete all Authrim workers"
     echo "  C) Cancel"
     echo ""
     read -p "Enter your choice (number, A, or C): " -r choice
@@ -202,12 +202,12 @@ echo ""
 
 # Check if any workers were found
 if [ ${#WORKERS_TO_DELETE[@]} -eq 0 ]; then
-    echo -e "${YELLOW}ℹ️  No Enrai workers found to delete${NC}"
+    echo -e "${YELLOW}ℹ️  No Authrim workers found to delete${NC}"
     echo ""
     echo "If you expected to find workers, please check:"
     echo "  1. You are logged in to the correct Cloudflare account"
     echo "  2. The workers are deployed"
-    echo "  3. The worker names match the expected pattern (enrai-*)"
+    echo "  3. The worker names match the expected pattern (authrim-*)"
     echo ""
     exit 0
 fi

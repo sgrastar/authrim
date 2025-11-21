@@ -38,7 +38,7 @@
 
 #### 1.4 Cloudflare Workers Configuration
 - [x] Create `wrangler.toml` configuration:
-  - [x] Set worker name: `enrai`
+  - [x] Set worker name: `authrim`
   - [x] Configure compatibility date
   - [x] Set main entry point
   - [x] Define KV namespace bindings

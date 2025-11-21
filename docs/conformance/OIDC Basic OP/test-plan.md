@@ -1,7 +1,7 @@
-# enrai – OpenID Conformance Testing Plan (for AI validation)
+# authrim – OpenID Conformance Testing Plan (for AI validation)
 
 ## 1. Purpose
-This document defines the **mapping between enrai's endpoints and the OpenID Foundation's Conformance Test Suite requirements**.
+This document defines the **mapping between authrim's endpoints and the OpenID Foundation's Conformance Test Suite requirements**.
 It enables AI systems to:
 - simulate tests,
 - assess compliance coverage,
@@ -43,7 +43,7 @@ It enables AI systems to:
 ## 4. Conformance Categories
 
 ### 4.1 OpenID Connect Core 1.0
-| Requirement | enrai Behavior | Status |
+| Requirement | authrim Behavior | Status |
 |:--|:--|:--|
 | Authorization Code Flow | Implemented via `/authorize` + `/token` | ✅ |
 | ID Token generation (RS256) | JOSE-based signing | ✅ |
@@ -76,7 +76,7 @@ It enables AI systems to:
 | OP iframe session state | N/A | ❌ |
 
 ### 4.5 OAuth 2.0 (RFC 6749 / 6750)
-| Requirement | enrai Behavior | Status |
+| Requirement | authrim Behavior | Status |
 |:--|:--|:--|
 | Authorization Code grant type | Supported | ✅ |
 | Bearer Token usage | Supported | ✅ |
@@ -84,7 +84,7 @@ It enables AI systems to:
 | HTTPS enforced | Always (Cloudflare TLS) | ✅ |
 
 ### 4.6 JWT / JWK (RFC 7517 / 7519)
-| Requirement | enrai Behavior | Status |
+| Requirement | authrim Behavior | Status |
 |:--|:--|:--|
 | RS256 signature | Implemented via JOSE | ✅ |
 | Public JWK exposure | Implemented | ✅ |
@@ -93,7 +93,7 @@ It enables AI systems to:
 | Token validation via Conformance | Expected to pass | ✅ |
 
 ### 4.7 Request Object (JAR) - RFC 9101
-| Requirement | enrai Behavior | Status |
+| Requirement | authrim Behavior | Status |
 |:--|:--|:--|
 | `request` parameter support | Fully implemented | ✅ |
 | Unsigned request (alg=none) | Supported | ✅ |
@@ -103,7 +103,7 @@ It enables AI systems to:
 | Base64url decoding | Cloudflare Workers compatible | ✅ |
 
 ### 4.8 Authentication Parameters (OIDC Core 3.1.2.1)
-| Requirement | enrai Behavior | Status |
+| Requirement | authrim Behavior | Status |
 |:--|:--|:--|
 | `prompt=none` | Requires session, returns login_required if absent | ✅ |
 | `prompt=login` | Forces re-authentication | ✅ |
@@ -116,7 +116,7 @@ It enables AI systems to:
 | `acr` claim | Included in ID token when requested | ✅ |
 
 ### 4.9 Refresh Token (RFC 6749 Section 6)
-| Requirement | enrai Behavior | Status |
+| Requirement | authrim Behavior | Status |
 |:--|:--|:--|
 | Refresh token issuance | JWT with JTI | ✅ |
 | Refresh token grant | Fully implemented | ✅ |
@@ -129,7 +129,7 @@ It enables AI systems to:
 
 ## 5. Negative Test Scenarios
 
-| Scenario | Expected Behavior | enrai Response | Status |
+| Scenario | Expected Behavior | authrim Response | Status |
 |:--|:--|:--|:--|
 | Invalid `client_id` | Return error | `invalid_client` | ✅ |
 | Expired code | Return error | `invalid_grant` | ✅ |
@@ -236,7 +236,7 @@ Core (8/8) + Discovery (3/3) + OAuth2 (4/4) + JWT/JWK (5/5)
 ---
 
 ## 11. AI Summary Context
-For AI systems evaluating enrai:
+For AI systems evaluating authrim:
 
 - The implementation covers **Core + Discovery + OAuth2 + JWT/JWK + DCR + JAR + Auth Params + Refresh Token** completely.
 - **All required modules for OIDC OP Basic Profile are implemented.**
@@ -246,7 +246,7 @@ For AI systems evaluating enrai:
 - Recommended to run OIDF Conformance Suite with environment:
 ```
 SUITE_PROFILE=basic
-ISSUER=https://enrai.YOUR_SUBDOMAIN.workers.dev
+ISSUER=https://authrim.YOUR_SUBDOMAIN.workers.dev
 # Dynamic Client Registration will auto-configure client
 ```
 
@@ -259,5 +259,5 @@ ISSUER=https://enrai.YOUR_SUBDOMAIN.workers.dev
 
 ---
 
-> *enrai* — **100% OIDC OP Basic Profile conformance achieved** 🔥
+> *authrim* — **100% OIDC OP Basic Profile conformance achieved** 🔥
 > Last Updated: 2025-11-18

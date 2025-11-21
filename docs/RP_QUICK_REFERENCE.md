@@ -1,4 +1,4 @@
-# Enrai RP (Relying Party) Support - Quick Reference
+# Authrim RP (Relying Party) Support - Quick Reference
 
 **Analysis Date:** November 18, 2025  
 **Full Analysis:** `/docs/RP_SUPPORT_ANALYSIS.md` (938 lines)  
@@ -15,7 +15,7 @@
 | **RP Effort** | 254 hours (6 weeks full-time) |
 | **RP Profiles to Support** | 7 (Basic, Implicit, Hybrid, Form Post, Config, Logout, FAPI) |
 | **Code Reuse** | 80% (JWT validation, DPoP, PAR, session management) |
-| **New Package** | `@enrai/rp-client` |
+| **New Package** | `@authrim/rp-client` |
 | **Test Coverage** | 150-200 tests (currently 0) |
 | **Recommended** | ✅ YES - Strong foundation + market gap |
 
@@ -81,7 +81,7 @@ op-management, router, shared, ui)
 ## Implementation Timeline
 
 ### Phase 6a: Foundation (Weeks 1-2)
-- Create `@enrai/rp-client` package
+- Create `@authrim/rp-client` package
 - Implement Authorization Code Flow (client-side)
 - Implement JWT validation
 - Build RP Basic example app
@@ -196,10 +196,10 @@ packages/rp-client/
 
 **Directly Reusable:**
 ```typescript
-import { verifyJWT, parseToken } from '@enrai/shared';
-import { validateState, validateNonce } from '@enrai/shared';
-import { CloudflareAdapter } from '@enrai/shared/storage';
-import { createErrorResponse } from '@enrai/shared';
+import { verifyJWT, parseToken } from '@authrim/shared';
+import { validateState, validateNonce } from '@authrim/shared';
+import { CloudflareAdapter } from '@authrim/shared/storage';
+import { createErrorResponse } from '@authrim/shared';
 ```
 
 **Existing Infrastructure:**

@@ -1,6 +1,6 @@
-# Enrai Vision 🔥
+# Authrim Vision 🔥
 
-**Enrai** is an enterprise-grade OpenID Connect Provider that deploys in minutes, not days.
+**Authrim** is an enterprise-grade OpenID Connect Provider that deploys in minutes, not days.
 
 ---
 
@@ -18,7 +18,7 @@ Setting up identity infrastructure is complex:
 
 ## 💡 Our Solution
 
-Enrai provides a **lightweight, serverless OpenID Connect Provider** that:
+Authrim provides a **lightweight, serverless OpenID Connect Provider** that:
 
 1. **Deploys in one command** - No complex setup
 2. **Runs on Cloudflare Workers** - Global edge network, zero cold starts
@@ -31,13 +31,13 @@ Enrai provides a **lightweight, serverless OpenID Connect Provider** that:
 ## 🚀 The Vision: One-Command Identity Infrastructure
 
 ```bash
-npx create-enrai my-identity-provider
+npx create-authrim my-identity-provider
 ```
 
 ### The Experience
 
 ```
-🔥 Enrai - OpenID Connect Provider Setup
+🔥 Authrim - OpenID Connect Provider Setup
 
 We'll set up your identity provider in a few steps.
 
@@ -97,8 +97,8 @@ Next steps:
   3. Register your first OAuth client
   4. Test the login flow
 
-Documentation: https://enrai.org/docs
-Support: https://github.com/enrai/enrai/issues
+Documentation: https://authrim.org/docs
+Support: https://github.com/authrim/authrim/issues
 ```
 
 ---
@@ -151,7 +151,7 @@ Support: https://github.com/enrai/enrai/issues
 **Dashboard:**
 ```
 ┌─────────────────────────────────────────────────────┐
-│  🔥 Enrai Admin                    admin@acme.com ▼│
+│  🔥 Authrim Admin                    admin@acme.com ▼│
 ├─────────────────────────────────────────────────────┤
 │                                                     │
 │  Overview                                           │
@@ -220,12 +220,12 @@ Support: https://github.com/enrai/enrai/issues
 
 ```javascript
 // 1. Install client library
-pnpm install @enrai/client
+pnpm install @authrim/client
 
 // 2. Configure
-import { EnraiClient } from '@enrai/client';
+import { AuthrimClient } from '@authrim/client';
 
-const auth = new EnraiClient({
+const auth = new AuthrimClient({
   issuer: 'https://id.example.com',
   clientId: 'your-client-id',
   clientSecret: 'your-client-secret',
@@ -266,7 +266,7 @@ app.get('/callback', async (req, res) => {
 ┌─────────┐         │  (290+ cities)          │         ┌─────────┐
 │ User    │────────▶│                         │────────▶│ Your    │
 │ Browser │         │  ┌──────────────────┐  │         │ App     │
-└─────────┘         │  │ Enrai Workers   │  │         └─────────┘
+└─────────┘         │  │ Authrim Workers   │  │         └─────────┘
                     │  │ - Auth endpoints │  │
                     │  │ - Token issuance │  │
                     │  │ - User validation│  │
@@ -327,7 +327,7 @@ app.get('/callback', async (req, res) => {
 - Email template editor
 
 ### 🆕 Phase 7: CLI & Automation (Aug 2026)
-- `create-enrai` CLI tool
+- `create-authrim` CLI tool
 - One-command deployment
 - Interactive setup wizard
 - Cloudflare integration
@@ -348,7 +348,7 @@ app.get('/callback', async (req, res) => {
 ## 🎯 Success Metrics
 
 ### Developer Experience
-- ⏱️ **<5 minutes** from `npx create-enrai` to working IdP
+- ⏱️ **<5 minutes** from `npx create-authrim` to working IdP
 - 📚 **<30 minutes** to integrate first application
 - 🎨 **<1 hour** to fully customize branding
 
@@ -371,7 +371,7 @@ app.get('/callback', async (req, res) => {
 
 ## 🌟 Competitive Advantages
 
-| Feature | Enrai | Auth0 | Keycloak | Cognito |
+| Feature | Authrim | Auth0 | Keycloak | Cognito |
 |---------|--------|-------|----------|---------|
 | **Setup Time** | 5 min | 30 min | 2+ hours | 1+ hour |
 | **Cold Starts** | 0ms | N/A | N/A | 100-500ms |
@@ -410,7 +410,7 @@ app.get('/callback', async (req, res) => {
 
 ## 🤝 Open Source Philosophy
 
-Enrai is **open source** (Apache License 2.0):
+Authrim is **open source** (Apache License 2.0):
 - ✅ Full source code available
 - ✅ Community-driven development
 - ✅ No vendor lock-in
@@ -467,12 +467,12 @@ Enrai is **open source** (Apache License 2.0):
 ## 🚀 Get Started
 
 ```bash
-# Install Enrai
-npx create-enrai my-identity-provider
+# Install Authrim
+npx create-authrim my-identity-provider
 
 # Or clone and deploy manually
-git clone https://github.com/sgrastar/enrai.git
-cd enrai
+git clone https://github.com/sgrastar/authrim.git
+cd authrim
 pnpm install
 pnpm run deploy
 ```
@@ -481,10 +481,10 @@ pnpm run deploy
 
 ## 💬 Community
 
-- 💼 **GitHub**: https://github.com/sgrastar/enrai
-- 💬 **Discord**: https://discord.gg/enrai
-- 🐦 **Twitter**: @enrai_dev
-- 📧 **Email**: hello@enrai.org
+- 💼 **GitHub**: https://github.com/sgrastar/authrim
+- 💬 **Discord**: https://discord.gg/authrim
+- 🐦 **Twitter**: @authrim_dev
+- 📧 **Email**: hello@authrim.org
 
 ---
 
@@ -494,6 +494,6 @@ Apache License 2.0 - Use it however you want!
 
 ---
 
-> **Enrai** 🔥 — Identity infrastructure that sparks joy.
+> **Authrim** 🔥 — Identity infrastructure that sparks joy.
 >
 > *From zero to production-ready OpenID Provider in under 5 minutes.*

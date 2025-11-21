@@ -1,6 +1,6 @@
-# Enrai Documentation
+# Authrim Documentation
 
-Complete documentation for the Enrai OpenID Connect Provider project.
+Complete documentation for the Authrim OpenID Connect Provider project.
 
 > **Quick Navigation**: Use the search function (Ctrl+F / Cmd+F) or jump to:
 > [Project Management](#-project-management) | [Architecture](#️-architecture--specifications) | [Conformance Testing](#-conformance-testing) | [Finding Information](#-finding-information)
@@ -31,7 +31,7 @@ Technical specifications and protocol flow documentation.
 | [Protocol Flow](./architecture/protocol-flow.md) | End-to-end OIDC Authorization Code Flow specification |
 | [Technical Specs](./architecture/technical-specs.md) | System architecture, components, and endpoint specifications |
 
-**For AI/LLM Analysis**: These documents are structured for machine-readable analysis of Enrai's behavior and compliance.
+**For AI/LLM Analysis**: These documents are structured for machine-readable analysis of Authrim's behavior and compliance.
 
 ---
 
@@ -126,7 +126,7 @@ Phase 5: Certification Prep  [May 1 - May 31, 2026]   ⏳ Planned
 ### "How do I track issues?"
 → [GitHub Workflow](./project-management/GITHUB_WORKFLOW.md)
 
-### "How does OIDC work in Enrai?"
+### "How does OIDC work in Authrim?"
 → [Protocol Flow](./architecture/protocol-flow.md)
 
 ### "What are the technical requirements?"
@@ -150,7 +150,7 @@ When adding or updating documentation:
 4. **Keep it current**: Update status and dates as project progresses
 5. **Be consistent**: Follow existing formatting and style
 6. **Add cross-references**: Link to related documents at the beginning of each file
-7. **Use examples**: Include `id.example.dev` for examples, `id.enrai.org` for production references
+7. **Use examples**: Include `id.example.dev` for examples, `id.authrim.org` for production references
 
 ### Documentation Quality Standards
 
@@ -187,4 +187,4 @@ When adding or updating documentation:
 
 ---
 
-> **Enrai** 🔥 — Comprehensive documentation for edge-native OpenID Connect.
+> **Authrim** 🔥 — Comprehensive documentation for edge-native OpenID Connect.

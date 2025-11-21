@@ -11,8 +11,8 @@
 
 import { Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import type { Env } from '@enrai/shared';
-import { timingSafeEqual } from '@enrai/shared';
+import type { Env } from '@authrim/shared';
+import { timingSafeEqual } from '@authrim/shared';
 import * as jose from 'jose';
 
 /**
@@ -81,7 +81,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get session from cookie
-    const sessionId = getCookie(c, 'enrai_session');
+    const sessionId = getCookie(c, 'authrim_session');
 
     if (sessionId) {
       // Invalidate session in SessionStore
@@ -141,7 +141,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Clear session cookie
-    setCookie(c, 'enrai_session', '', {
+    setCookie(c, 'authrim_session', '', {
       path: '/',
       httpOnly: true,
       secure: true,

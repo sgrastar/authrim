@@ -5,13 +5,13 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, DeviceCodeMetadata } from '@enrai/shared';
+import type { Env, DeviceCodeMetadata } from '@authrim/shared';
 import {
   generateDeviceCode,
   generateUserCode,
   getVerificationUriComplete,
   DEVICE_FLOW_CONSTANTS,
-} from '@enrai/shared';
+} from '@authrim/shared';
 
 /**
  * POST /device_authorization

@@ -9,7 +9,7 @@
 
 ## エグゼクティブサマリー
 
-Enrai Phase 5のストレージアーキテクチャは、Cloudflare Workers の各種ストレージプリミティブ（Durable Objects、D1、KV）を効果的に組み合わせていますが、**7つの視点からの完全監査**により**24の課題**を特定しました（v5.0 - 2025-11-15最終監査完了）。
+Authrim Phase 5のストレージアーキテクチャは、Cloudflare Workers の各種ストレージプリミティブ（Durable Objects、D1、KV）を効果的に組み合わせていますが、**7つの視点からの完全監査**により**24の課題**を特定しました（v5.0 - 2025-11-15最終監査完了）。
 
 **v6.0更新**: OPとしての製品特性を考慮し、**全Durable Objects化**への方針を決定。運用・ドキュメント対応では完全解決できないKV起因の5課題（#6, #8, #11, #12, #21）をDO化することで、**RFC/OIDC完全準拠**と**100%の一貫性保証**を実現します。
 
@@ -3797,7 +3797,7 @@ const doId = env.SESSION_STORE.idFromName(`shard_${shard}`);
 
 #### OPとしての製品特性
 
-Enraiは OAuth 2.0 / OpenID Connect Provider（OP）として、以下の要件を満たす必要があります：
+Authrimは OAuth 2.0 / OpenID Connect Provider（OP）として、以下の要件を満たす必要があります：
 
 - **セキュリティ・一貫性が最優先**: 「ベストエフォート」では不十分
 - **RFC/OIDC仕様への完全準拠**: 認証基盤としての信頼性
@@ -3839,7 +3839,7 @@ Enraiは OAuth 2.0 / OpenID Connect Provider（OP）として、以下の要件�
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Enrai Storage Architecture                  │
+│              Authrim Storage Architecture                  │
 │                   (Full DO Migration)                    │
 └─────────────────────────────────────────────────────────┘
 
@@ -4548,22 +4548,22 @@ USE_PASSKEY_CHALLENGE_DO = "true"
 [[durable_objects.bindings]]
 name = "RATE_LIMITER"
 class_name = "RateLimiterCounter"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "PAR_REQUEST_STORE"
 class_name = "PARRequestStore"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "DPOP_JTI_STORE"
 class_name = "DPoPJTIStore"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 [[durable_objects.bindings]]
 name = "CHALLENGE_STORE"
 class_name = "ChallengeStore"
-script_name = "enrai-shared"
+script_name = "authrim-shared"
 
 # ========================================
 # KV削除予定（段階的移行後）

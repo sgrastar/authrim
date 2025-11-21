@@ -452,9 +452,9 @@ GET /saml/metadata    (SAML metadata)
 - **DO Usage**: None (uses D1 for config)
 
 **Purpose**:
-- Enrai acts as **SAML Identity Provider (IdP)**
-- Allows Enrai to provide SSO to SAML Service Providers (Okta, Azure AD, etc.)
-- OIDC clients can access SAML-only applications via Enrai
+- Authrim acts as **SAML Identity Provider (IdP)**
+- Allows Authrim to provide SSO to SAML Service Providers (Okta, Azure AD, etc.)
+- OIDC clients can access SAML-only applications via Authrim
 
 **SAML Library Isolation**:
 ```
@@ -608,7 +608,7 @@ if (config.saml_enabled) {
 // Use native Web APIs instead of libraries
 const hash = await crypto.subtle.digest('SHA-256', data);
 
-// 4. Share code via @enrai/shared package
+// 4. Share code via @authrim/shared package
 // Avoid duplication across workers
 ```
 
@@ -971,7 +971,7 @@ wrangler secret put ENABLE_SOCIAL_LOGIN
 # Enter: false
 
 # Verify rollback
-curl https://enrai.example.com/social/google
+curl https://authrim.example.com/social/google
 # Should return: {"error": "not_supported"}
 ```
 
@@ -1065,7 +1065,7 @@ alerts:
 ### Dashboard
 
 ```
-Enrai Monitoring Dashboard
+Authrim Monitoring Dashboard
 
 ┌─────────────────────────────────────────────────────┐
 │ Worker Health                                       │

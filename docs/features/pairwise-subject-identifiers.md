@@ -4,7 +4,7 @@
 
 **OpenID Connect Core 1.0 Section 8** - Subject Identifier Types
 
-Hibana implements pairwise subject identifiers, a privacy-enhancing feature that provides different subject (`sub`) values for the same user across different clients, preventing user tracking and correlation across applications.
+Authrim implements pairwise subject identifiers, a privacy-enhancing feature that provides different subject (`sub`) values for the same user across different clients, preventing user tracking and correlation across applications.
 
 ## Specification
 
@@ -136,7 +136,7 @@ sub = base64url(SHA-256(sector_identifier || local_account_id || salt))
 ```json
 {
   "sub": "user-12345",
-  "iss": "https://hibana.sgrastar.workers.dev",
+  "iss": "https://authrim.sgrastar.workers.dev",
   "aud": "client_abc",
   ...
 }
@@ -155,7 +155,7 @@ sub = base64url(SHA-256(sector_identifier || local_account_id || salt))
 ```json
 {
   "sub": "AbC123XyZ456...",
-  "iss": "https://hibana.sgrastar.workers.dev",
+  "iss": "https://authrim.sgrastar.workers.dev",
   "aud": "client_a",
   ...
 }
@@ -165,7 +165,7 @@ sub = base64url(SHA-256(sector_identifier || local_account_id || salt))
 ```json
 {
   "sub": "PqR789StU012...",
-  "iss": "https://hibana.sgrastar.workers.dev",
+  "iss": "https://authrim.sgrastar.workers.dev",
   "aud": "client_b",
   ...
 }
@@ -359,7 +359,7 @@ async function generateSubjectIdentifier(
 ### Example 1: Register Client with Pairwise
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": ["https://myapp.example.com/callback"],
@@ -384,7 +384,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/register \
 ### Example 2: Multiple Redirect URIs (Same Host)
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": [
@@ -402,7 +402,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/register \
 ### Example 3: Multiple Redirect URIs (Different Hosts)
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": [
@@ -424,7 +424,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/register \
 
 **Client A (Public)**:
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": ["https://app-a.example.com/callback"],
@@ -434,7 +434,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/register \
 
 **Client B (Public)**:
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": ["https://app-b.example.com/callback"],
@@ -449,7 +449,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/register \
 
 **Client C (Pairwise)**:
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": ["https://app-c.example.com/callback"],
@@ -459,7 +459,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/register \
 
 **Client D (Pairwise)**:
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": ["https://app-d.example.com/callback"],
@@ -528,7 +528,7 @@ PAIRWISE_SALT="your-cryptographically-secure-secret-salt-here"
 # wrangler.toml
 [vars]
 # Public variables
-ISSUER_URL = "https://hibana.sgrastar.workers.dev"
+ISSUER_URL = "https://authrim.sgrastar.workers.dev"
 
 # Secrets (set via `wrangler secret put`)
 # PAIRWISE_SALT = "<your-secret-salt>"
@@ -556,7 +556,7 @@ Subject type support is advertised in OpenID Provider metadata:
 
 ### Test Coverage
 
-Hibana includes comprehensive tests for pairwise subject identifiers:
+Authrim includes comprehensive tests for pairwise subject identifiers:
 
 **Test File**: `test/pairwise.test.ts`
 

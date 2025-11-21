@@ -1,6 +1,6 @@
 # API Naming Conventions
 
-This document defines the naming conventions and best practices for Enrai's API endpoints.
+This document defines the naming conventions and best practices for Authrim's API endpoints.
 
 ## Table of Contents
 
@@ -16,10 +16,10 @@ This document defines the naming conventions and best practices for Enrai's API 
 
 ## Overview
 
-Enrai's API is divided into two main categories:
+Authrim's API is divided into two main categories:
 
 1. **OIDC Standard Endpoints** - Paths defined by OpenID Connect and OAuth 2.0 specifications
-2. **Custom API Endpoints** - Enrai-specific APIs with `/api/` prefix
+2. **Custom API Endpoints** - Authrim-specific APIs with `/api/` prefix
 
 ### Design Principles
 
@@ -316,7 +316,7 @@ All API errors follow the OAuth 2.0 error response format (RFC 6749):
 {
   "error": "invalid_request",
   "error_description": "Missing required parameter: email",
-  "error_uri": "https://docs.enrai.dev/errors/invalid_request"
+  "error_uri": "https://docs.authrim.dev/errors/invalid_request"
 }
 ```
 
@@ -332,7 +332,7 @@ All API errors follow the OAuth 2.0 error response format (RFC 6749):
 | `server_error` | 500 | Internal server error |
 | `temporarily_unavailable` | 503 | Service temporarily unavailable |
 
-### Custom Error Codes (Enrai-specific)
+### Custom Error Codes (Authrim-specific)
 
 | Error Code | HTTP Status | Description |
 |-----------|-------------|-------------|
@@ -348,7 +348,7 @@ All API errors follow the OAuth 2.0 error response format (RFC 6749):
 
 ### Current Approach (No Versioning)
 
-Enrai currently does not use API versioning. All endpoints are considered **v1** implicitly.
+Authrim currently does not use API versioning. All endpoints are considered **v1** implicitly.
 
 ### Future Versioning (When Needed)
 

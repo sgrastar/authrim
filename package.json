@@ -1,5 +1,5 @@
 {
-  "name": "enrai",
+  "name": "authrim",
   "version": "0.1.0",
   "description": "A lightweight OpenID Connect Provider built on Cloudflare Workers - Monorepo",
   "private": true,
@@ -12,7 +12,7 @@
     "deploy": "./scripts/deploy-with-retry.sh",
     "deploy:with-router": "./scripts/deploy-with-retry.sh",
     "deploy:retry": "./scripts/deploy-with-retry.sh",
-    "deploy:ui": "pnpm --filter=ui build && wrangler pages deploy packages/ui/.svelte-kit/cloudflare --project-name=enrai-ui",
+    "deploy:ui": "pnpm --filter=ui build && wrangler pages deploy packages/ui/.svelte-kit/cloudflare --project-name=authrim-ui",
     "deploy:api": "BUILD_TARGET=api ./scripts/deploy-with-retry.sh",
     "deploy:all": "pnpm run deploy:ui && pnpm run deploy:api",
     "test": "turbo run test",
@@ -30,7 +30,7 @@
     "clean": "turbo run clean && rm -rf node_modules",
     "generate-keys": "tsx scripts/generate-keys.ts",
     "migrate:create": "tsx scripts/create-migration.ts",
-    "migrate:info": "echo '\n📋 Migration Commands:\n\n  migrate:create <name>  - Create new migration file\n  \nFor applying migrations, use wrangler:\n  wrangler d1 migrations list enrai-db\n  wrangler d1 migrations apply enrai-db\n\nFor local development:\n  wrangler d1 execute enrai-db --local --file=migrations/000_schema_migrations.sql\n  wrangler d1 execute enrai-db --local --file=migrations/001_initial_schema.sql\n'"
+    "migrate:info": "echo '\n📋 Migration Commands:\n\n  migrate:create <name>  - Create new migration file\n  \nFor applying migrations, use wrangler:\n  wrangler d1 migrations list authrim-db\n  wrangler d1 migrations apply authrim-db\n\nFor local development:\n  wrangler d1 execute authrim-db --local --file=migrations/000_schema_migrations.sql\n  wrangler d1 execute authrim-db --local --file=migrations/001_initial_schema.sql\n'"
   },
   "workspaces": [
     "packages/*"

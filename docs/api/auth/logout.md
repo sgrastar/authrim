@@ -43,7 +43,7 @@ Session can be provided via cookie.
 
 **Request Headers:**
 ```http
-Cookie: enrai_session={session_id}
+Cookie: authrim_session={session_id}
 ```
 
 **Response (302 Found):**
@@ -52,7 +52,7 @@ Redirects to `post_logout_redirect_uri` (if provided) or default logout page.
 **Response Headers:**
 ```http
 Location: https://yourapp.com/logged-out?state=xyz123
-Set-Cookie: enrai_session=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0
+Set-Cookie: authrim_session=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0
 ```
 
 **Error Responses:**
@@ -66,11 +66,11 @@ Set-Cookie: enrai_session=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0
 ```bash
 # Basic logout
 curl -L "https://your-domain.com/logout" \
-  -H "Cookie: enrai_session=session_abc123"
+  -H "Cookie: authrim_session=session_abc123"
 
 # Logout with ID token hint and redirect
 curl -L "https://your-domain.com/logout?id_token_hint=eyJhbGc...&post_logout_redirect_uri=https://yourapp.com/bye&state=xyz123" \
-  -H "Cookie: enrai_session=session_abc123"
+  -H "Cookie: authrim_session=session_abc123"
 ```
 
 **JavaScript Usage:**

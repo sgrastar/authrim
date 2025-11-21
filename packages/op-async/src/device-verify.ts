@@ -8,8 +8,8 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, DeviceCodeMetadata } from '@enrai/shared';
-import { normalizeUserCode, validateUserCodeFormat } from '@enrai/shared';
+import type { Env, DeviceCodeMetadata } from '@authrim/shared';
+import { normalizeUserCode, validateUserCodeFormat } from '@authrim/shared';
 import { html } from 'hono/html';
 
 /**

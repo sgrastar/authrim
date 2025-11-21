@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Enrai D1 Database Setup Script
+# Authrim D1 Database Setup Script
 # This script creates D1 database and updates wrangler.toml files with bindings
 #
 # Usage:
@@ -16,7 +16,7 @@ if [ "$1" = "--reset" ]; then
     RESET_MODE=true
 fi
 
-echo "⚡️ Enrai D1 Database Setup"
+echo "⚡️ Authrim D1 Database Setup"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -36,7 +36,7 @@ fi
 
 echo "📦 D1 Database Setup"
 echo ""
-echo "This script will create or update D1 database for your Enrai deployment."
+echo "This script will create or update D1 database for your Authrim deployment."
 echo ""
 
 # Determine environment
@@ -45,10 +45,10 @@ ENV=${ENV:-dev}
 
 # Determine database name and remote flag
 if [ "$ENV" = "local" ]; then
-    DB_NAME="enrai-local"
+    DB_NAME="authrim-local"
     REMOTE_FLAG=""
 else
-    DB_NAME="enrai-${ENV}"
+    DB_NAME="authrim-${ENV}"
     REMOTE_FLAG="--remote"
 fi
 

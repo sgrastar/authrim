@@ -79,7 +79,7 @@ importers:
 
   packages/op-async:
     dependencies:
-      '@enrai/shared':
+      '@authrim/shared':
         specifier: workspace:*
         version: link:../shared
       hono:
@@ -107,7 +107,7 @@ importers:
 
   packages/op-auth:
     dependencies:
-      '@enrai/shared':
+      '@authrim/shared':
         specifier: workspace:*
         version: link:../shared
       '@simplewebauthn/server':
@@ -138,7 +138,7 @@ importers:
 
   packages/op-discovery:
     dependencies:
-      '@enrai/shared':
+      '@authrim/shared':
         specifier: workspace:*
         version: link:../shared
       hono:
@@ -160,7 +160,7 @@ importers:
 
   packages/op-management:
     dependencies:
-      '@enrai/shared':
+      '@authrim/shared':
         specifier: workspace:*
         version: link:../shared
       hono:
@@ -182,7 +182,7 @@ importers:
 
   packages/op-token:
     dependencies:
-      '@enrai/shared':
+      '@authrim/shared':
         specifier: workspace:*
         version: link:../shared
       hono:
@@ -204,7 +204,7 @@ importers:
 
   packages/op-userinfo:
     dependencies:
-      '@enrai/shared':
+      '@authrim/shared':
         specifier: workspace:*
         version: link:../shared
       hono:
@@ -226,7 +226,7 @@ importers:
 
   packages/router:
     dependencies:
-      '@enrai/shared':
+      '@authrim/shared':
         specifier: workspace:*
         version: link:../shared
       hono:

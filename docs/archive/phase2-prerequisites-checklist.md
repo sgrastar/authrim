@@ -1,6 +1,6 @@
 # Phase 2 Prerequisites Checklist
 
-**Project:** Enrai OpenID Connect Provider
+**Project:** Authrim OpenID Connect Provider
 **Date Created:** 2025-11-11
 **Phase 2 Period:** Week 6-12
 **Status:** ✅ All prerequisites fully achieved

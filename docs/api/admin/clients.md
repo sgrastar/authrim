@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Admin Client Management API provides OAuth 2.0 client management capabilities for administrators. It enables listing, viewing, and managing registered OAuth clients (applications) that can authenticate with the Enrai OIDC Provider.
+The Admin Client Management API provides OAuth 2.0 client management capabilities for administrators. It enables listing, viewing, and managing registered OAuth clients (applications) that can authenticate with the Authrim OIDC Provider.
 
 **Key Features:**
 - List OAuth clients with pagination and search

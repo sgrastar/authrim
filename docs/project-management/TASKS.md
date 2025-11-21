@@ -1,6 +1,6 @@
-# Enrai Task Breakdown
+# Authrim Task Breakdown
 
-This document provides a comprehensive, week-by-week breakdown of all tasks required to build and certify the Enrai OpenID Connect Provider.
+This document provides a comprehensive, week-by-week breakdown of all tasks required to build and certify the Authrim OpenID Connect Provider.
 
 **Related Documents:**
 - [Project Schedule](./SCHEDULE.md) - High-level timeline and milestones
