@@ -35,6 +35,12 @@ import {
   adminSettingsGetHandler,
   adminSettingsUpdateHandler,
 } from './admin';
+import scimApp from './scim';
+import {
+  adminScimTokensListHandler,
+  adminScimTokenCreateHandler,
+  adminScimTokenRevokeHandler,
+} from './scim-tokens';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -69,9 +75,9 @@ app.use(
   '*',
   cors({
     origin: '*',
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization'],
-    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization', 'If-Match', 'If-None-Match'],
+    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'ETag', 'Location'],
     maxAge: 86400,
     credentials: true,
   })
@@ -154,6 +160,14 @@ app.get('/api/admin/audit-log/:id', adminAuditLogGetHandler);
 // Admin Settings endpoints
 app.get('/api/admin/settings', adminSettingsGetHandler);
 app.put('/api/admin/settings', adminSettingsUpdateHandler);
+
+// Admin SCIM Token Management endpoints
+app.get('/api/admin/scim-tokens', adminScimTokensListHandler);
+app.post('/api/admin/scim-tokens', adminScimTokenCreateHandler);
+app.delete('/api/admin/scim-tokens/:tokenHash', adminScimTokenRevokeHandler);
+
+// SCIM 2.0 endpoints - RFC 7643, 7644
+app.route('/scim/v2', scimApp);
 
 // 404 handler
 app.notFound((c) => {

@@ -55,9 +55,9 @@ app.use(
   '*',
   cors({
     origin: '*',
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization'],
-    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization', 'If-Match', 'If-None-Match'],
+    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'ETag', 'Location'],
     maxAge: 86400,
     credentials: true,
   })
@@ -219,6 +219,7 @@ app.all('/api/ciba/*', async (c) => {
  * - /revoke (POST) - Token Revocation (OAuth 2.0 standard)
  * - /api/admin/* - Admin API (users, clients, stats)
  * - /api/avatars/* - Avatar images
+ * - /scim/v2/* - SCIM 2.0 User Provisioning (RFC 7643, 7644)
  */
 app.post('/register', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
@@ -241,6 +242,12 @@ app.all('/api/admin/*', async (c) => {
 });
 
 app.get('/api/avatars/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+// SCIM 2.0 endpoints - RFC 7643, 7644
+app.all('/scim/v2/*', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
