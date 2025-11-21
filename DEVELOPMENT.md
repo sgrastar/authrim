@@ -185,32 +185,65 @@ pnpm run generate-keys    # Generate RSA key pair
 ```
 enrai/
 ├── .github/
-│   └── workflows/       # GitHub Actions CI/CD
+│   └── workflows/           # GitHub Actions CI/CD
 ├── docs/
-│   ├── architecture/    # Architecture documentation
-│   ├── conformance/     # OpenID conformance testing
+│   ├── architecture/        # Architecture documentation
+│   ├── conformance/         # OpenID conformance testing
+│   ├── features/            # Feature documentation (device-flow.md, etc.)
 │   └── project-management/  # Project plans and tasks
-├── src/
-│   ├── handlers/        # Endpoint handlers
-│   │   ├── authorize.ts
-│   │   ├── discovery.ts
-│   │   ├── jwks.ts
-│   │   ├── token.ts
-│   │   └── userinfo.ts
-│   ├── utils/           # Utility functions
-│   │   ├── jwt.ts
-│   │   ├── kv.ts
-│   │   └── validation.ts
-│   ├── types/           # TypeScript type definitions
-│   │   └── env.ts
-│   └── index.ts         # Main entry point
-├── test/                # Test files
-│   ├── integration/     # Integration tests
-│   └── unit/            # Unit tests
+├── packages/
+│   ├── shared/              # Shared utilities and Durable Objects
+│   │   ├── src/
+│   │   │   ├── durable-objects/  # SessionStore, AuthCodeStore, KeyManager, etc.
+│   │   │   └── utils/            # Shared utilities
+│   │   └── wrangler.toml         # Durable Objects configuration
+│   ├── op-discovery/        # Discovery and JWKS endpoints
+│   │   ├── src/
+│   │   │   ├── discovery.ts
+│   │   │   └── jwks.ts
+│   │   └── wrangler.toml
+│   ├── op-auth/             # Authorization and consent endpoints
+│   │   ├── src/
+│   │   │   ├── authorize.ts
+│   │   │   └── consent.ts
+│   │   └── wrangler.toml
+│   ├── op-token/            # Token endpoint (all grant types)
+│   │   ├── src/
+│   │   │   └── token.ts
+│   │   └── wrangler.toml
+│   ├── op-userinfo/         # UserInfo endpoint
+│   │   ├── src/
+│   │   │   └── userinfo.ts
+│   │   └── wrangler.toml
+│   ├── op-management/       # Admin API and dynamic client registration
+│   │   ├── src/
+│   │   │   ├── admin/
+│   │   │   └── register.ts
+│   │   └── wrangler.toml
+│   ├── op-async/            # Device Flow (RFC 8628) + future CIBA
+│   │   ├── src/
+│   │   │   ├── device-authorization.ts
+│   │   │   ├── device-verify.ts
+│   │   │   └── device-verify-api.ts
+│   │   └── wrangler.toml
+│   ├── router/              # Optional unified router (test/dev mode)
+│   │   ├── src/
+│   │   │   └── index.ts
+│   │   └── wrangler.toml
+│   └── ui/                  # SvelteKit frontend (Cloudflare Pages)
+│       ├── src/
+│       │   ├── routes/      # Pages (login, register, device, admin)
+│       │   ├── lib/         # Components and utilities
+│       │   └── i18n/        # Multi-language support (EN/JA)
+│       └── svelte.config.js
+├── scripts/                 # Setup and deployment scripts
+│   ├── setup-dev.sh
+│   ├── setup-production.sh
+│   ├── setup-kv.sh
+│   └── deploy-with-retry.sh
 ├── package.json
-├── tsconfig.json
-├── wrangler.toml        # Cloudflare Workers configuration
-└── vitest.config.ts     # Test configuration
+├── pnpm-workspace.yaml      # Monorepo configuration
+└── turbo.json               # Turborepo build configuration
 ```
 
 ### Making Changes

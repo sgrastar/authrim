@@ -1,7 +1,7 @@
 # Enrai API Endpoints List
 
-**Last Updated**: 2025-11-16
-**Total Endpoints**: 42
+**Last Updated**: 2025-11-21
+**Total Endpoints**: 46
 
 This document provides a concise list of all available API endpoints in Enrai OIDC Provider.
 
@@ -34,6 +34,19 @@ This document provides a concise list of all available API endpoints in Enrai OI
 | POST | `/register` | Dynamic Client Registration (RFC 7591) |
 | POST | `/introspect` | Token introspection (RFC 7662) |
 | POST | `/revoke` | Token revocation (RFC 7009) |
+
+---
+
+## Device Flow (RFC 8628)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/device_authorization` | Initiate device authorization flow, returns device code and user code |
+| GET | `/device` | Device verification page (minimal HTML for conformance, redirects to UI in production) |
+| POST | `/api/device/verify` | Verify and approve/deny device code (headless JSON API) |
+| POST | `/token` | Token endpoint with `grant_type=urn:ietf:params:oauth:grant-type:device_code` |
+
+**Documentation**: See [Device Flow Guide](./features/device-flow.md) for comprehensive documentation.
 
 ---
 

@@ -139,10 +139,25 @@ esac
 PRODUCTION_URL=${PRODUCTION_URL%/}
 
 echo ""
+echo "📝 UI Base URL Configuration (for Device Flow verification page)"
+echo ""
+echo "Enter the base URL for your SvelteKit UI (Cloudflare Pages):"
+echo "  Examples:"
+echo "    • https://enrai-ui.pages.dev (Cloudflare Pages)"
+echo "    • https://ui.yourdomain.com (custom domain)"
+echo ""
+read -p "UI_BASE_URL [https://enrai-ui.pages.dev]: " UI_BASE_URL_INPUT
+UI_BASE_URL=${UI_BASE_URL_INPUT:-https://enrai-ui.pages.dev}
+
+# Remove trailing slash if present
+UI_BASE_URL=${UI_BASE_URL%/}
+
+echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "🔍 Configuration Summary:"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "   ISSUER_URL: $PRODUCTION_URL"
+echo "   UI_BASE_URL: $UI_BASE_URL"
 echo ""
 
 # Show additional notes for custom domains
@@ -192,6 +207,15 @@ update_wrangler_toml() {
     else
         # Linux
         sed -i "s|ISSUER_URL = \".*\"|ISSUER_URL = \"$PRODUCTION_URL\"|" "$file"
+    fi
+
+    # Update UI_BASE_URL (for Device Flow and async workers)
+    if grep -q "^UI_BASE_URL = " "$file"; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s|UI_BASE_URL = \".*\"|UI_BASE_URL = \"$UI_BASE_URL\"|" "$file"
+        else
+            sed -i "s|UI_BASE_URL = \".*\"|UI_BASE_URL = \"$UI_BASE_URL\"|" "$file"
+        fi
     fi
 
     # Set OPEN_REGISTRATION based on deployment type

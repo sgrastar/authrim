@@ -22,6 +22,7 @@ export { RateLimiterCounter } from './RateLimiterCounter';
 export { PARRequestStore } from './PARRequestStore';
 export { DPoPJTIStore } from './DPoPJTIStore';
 export { TokenRevocationStore } from './TokenRevocationStore';
+export { DeviceCodeStore } from './DeviceCodeStore';
 
 // Export types for external use
 export type { Session, SessionData, CreateSessionRequest, SessionResponse } from './SessionStore';
