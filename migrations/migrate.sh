@@ -108,6 +108,10 @@ migrate_up() {
     wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --file=migrations/004_add_client_trust_settings.sql || log_warning "Migration 004 may already be applied"
     log_success "Trusted client settings migration complete"
 
+    log_info "Applying 005_add_claims_parameter_setting.sql..."
+    wrangler d1 execute "${DB_NAME}" ${REMOTE_FLAG} --file=migrations/005_add_claims_parameter_setting.sql || log_warning "Migration 005 may already be applied"
+    log_success "Claims parameter settings migration complete"
+
     log_success "All migrations applied successfully!"
 }
 

@@ -50,6 +50,7 @@
 		await new Promise((resolve) => setTimeout(resolve, 500));
 
 		// Mock data
+		const now = Math.floor(Date.now() / 1000);
 		user = {
 			id: userId,
 			email: 'john.doe@example.com',
@@ -59,31 +60,31 @@
 			family_name: 'Doe',
 			phone_number: '+1234567890',
 			phone_number_verified: false,
-			created_at: Date.now() - 86400000 * 30,
-			updated_at: Date.now() - 86400000 * 5,
-			last_login_at: Date.now() - 3600000 * 2
+			created_at: now - 86400 * 30,
+			updated_at: now - 86400 * 5,
+			last_login_at: now - 3600 * 2
 		};
 
 		passkeys = [
 			{
 				id: 'passkey-1',
 				device_name: 'MacBook Pro',
-				created_at: Date.now() - 86400000 * 15,
-				last_used_at: Date.now() - 3600000 * 2
+				created_at: now - 86400 * 15,
+				last_used_at: now - 3600 * 2
 			},
 			{
 				id: 'passkey-2',
 				device_name: 'iPhone 15 Pro',
-				created_at: Date.now() - 86400000 * 10,
-				last_used_at: Date.now() - 86400000 * 3
+				created_at: now - 86400 * 10,
+				last_used_at: now - 86400 * 3
 			}
 		];
 
 		sessions = [
 			{
 				id: 'session-1',
-				created_at: Date.now() - 3600000 * 2,
-				expires_at: Date.now() + 86400000
+				created_at: now - 3600 * 2,
+				expires_at: now + 86400
 			}
 		];
 
@@ -112,7 +113,7 @@
 
 	function formatDate(timestamp: number | null): string {
 		if (!timestamp) return 'Never';
-		return new Date(timestamp).toLocaleString();
+		return new Date(timestamp * 1000).toLocaleString();
 	}
 
 	function handleDeletePasskey(passkeyId: string) {

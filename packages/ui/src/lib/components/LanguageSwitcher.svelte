@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { LL, getLocale, setLocale } from '$i18n/i18n-svelte';
 	import type { Locales } from '$i18n/i18n-types';
-	import { Globe } from 'lucide-svelte';
 
 	const availableLocales: Locales[] = ['en', 'ja'];
 	let currentLang = $state<Locales>(getLocale());
@@ -32,7 +31,7 @@
 </script>
 
 <div class="flex items-center gap-2">
-	<Globe class="h-4 w-4 text-gray-500" />
+	<div class="i-heroicons-globe-alt h-4 w-4 text-gray-500"></div>
 	<select
 		value={currentLang}
 		onchange={(e) => switchLanguage(e.currentTarget.value)}

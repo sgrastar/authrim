@@ -45,7 +45,7 @@ interface AuthCodeStoreResponse {
   nonce?: string;
   state?: string;
   createdAt?: number;
-  claims?: Record<string, unknown>;
+  claims?: string; // JSON string of claims parameter
   authTime?: number;
   acr?: string;
 }
@@ -430,7 +430,7 @@ async function handleAuthorizationCodeGrant(
 
   // Add claims parameter if it was requested during authorization
   if (authCodeData.claims) {
-    accessTokenClaims.claims = JSON.stringify(authCodeData.claims);
+    accessTokenClaims.claims = authCodeData.claims;
   }
 
   // Add DPoP confirmation (cnf) claim if DPoP is used

@@ -6,7 +6,18 @@
       "Bash(pnpm:*)",
       "Bash(find:*)",
       "WebFetch(domain:auth0.com)",
-      "Bash(./scripts/deploy-with-retry.sh:*)"
+      "Bash(./scripts/deploy-with-retry.sh:*)",
+      "Bash(time pnpm build:*)",
+      "Bash(node --version:*)",
+      "Bash(export PATH=\"/home/yuta/.proto/tools/node/22.21.1/bin:$PATH\":*)",
+      "WebSearch",
+      "WebFetch(domain:kit.svelte.dev)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:maku.blog)",
+      "Bash(src/routes/admin/clients/[id]/+page.ts)",
+      "Bash(src/routes/admin/users/[id]/+page.ts)"
     ],
     "deny": [],
     "ask": []

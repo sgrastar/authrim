@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { createDialog, melt } from '@melt-ui/svelte';
 	import { fade } from 'svelte/transition';
-	import { X } from 'lucide-svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const {
@@ -40,7 +39,7 @@
 				use:melt={$close}
 				class="absolute right-4 top-4 inline-flex h-8 w-8 appearance-none items-center justify-center rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500"
 			>
-				<X class="h-4 w-4" />
+				<div class="i-heroicons-x-mark h-4 w-4"></div>
 				<span class="sr-only">{$LL.dialog_close()}</span>
 			</button>
 		</div>

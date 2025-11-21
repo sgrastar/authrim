@@ -27,6 +27,7 @@
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.1",
+		"@iconify-json/heroicons": "^1.2.1",
 		"@melt-ui/pp": "^0.3.2",
 		"@melt-ui/svelte": "^0.86.6",
 		"@sveltejs/adapter-auto": "^7.0.0",
@@ -54,7 +55,6 @@
 		"vitest": "^4.0.8"
 	},
 	"dependencies": {
-		"@simplewebauthn/browser": "^13.0.0",
-		"lucide-svelte": "^0.553.0"
+		"@simplewebauthn/browser": "^13.0.0"
 	}
 }

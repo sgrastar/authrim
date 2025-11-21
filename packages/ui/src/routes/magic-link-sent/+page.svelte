@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { MailCheck, ArrowLeft } from 'lucide-svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { magicLinkAPI } from '$lib/api/client';
 
@@ -110,7 +109,7 @@
 			<!-- Icon -->
 			<div class="flex justify-center mb-6">
 				<div class="rounded-full bg-success-100 dark:bg-success-900/30 p-4">
-					<MailCheck class="h-12 w-12 text-success-600 dark:text-success-400" />
+					<div class="i-heroicons-envelope-solid h-12 w-12 text-success-600 dark:text-success-400"></div>
 				</div>
 			</div>
 
@@ -167,15 +166,15 @@
 		</Card>
 
 		<!-- Back to Login Link -->
-		<p class="text-center">
+		<div class="text-center">
 			<a
 				href="/login"
 				class="inline-flex items-center gap-2 text-sm font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
 			>
-				<ArrowLeft class="h-4 w-4" />
+				<div class="i-heroicons-arrow-left h-4 w-4"></div>
 				{$LL.common_backToLogin()}
 			</a>
-		</p>
+		</div>
 	</div>
 
 	<!-- Footer -->
