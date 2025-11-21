@@ -6,5 +6,11 @@ export default defineConfig({
 	plugins: [
 		UnoCSS(),
 		sveltekit()
-	]
+	],
+	build: {
+		target: 'esnext',
+		minify: 'esbuild',
+		sourcemap: false,
+		chunkSizeWarningLimit: 1000
+	}
 });

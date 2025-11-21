@@ -18,7 +18,7 @@ export default defineConfig({
 		presetIcons({
 			// Icon support
 			scale: 1.2,
-			warn: true
+			warn: false
 		}),
 		presetTypography(), // Typography utilities
 		presetWebFonts({

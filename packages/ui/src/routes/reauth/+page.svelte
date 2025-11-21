@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { Button, Card } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { ShieldCheck } from 'lucide-svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let challengeId = $state('');
@@ -36,7 +35,7 @@
 			<!-- Icon -->
 			<div class="text-center mb-6">
 				<div class="h-16 w-16 mx-auto mb-4 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-					<ShieldCheck class="h-8 w-8 text-primary-600 dark:text-primary-400" />
+					<div class="i-heroicons-shield-check h-8 w-8 text-primary-600 dark:text-primary-400"></div>
 				</div>
 
 				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2">

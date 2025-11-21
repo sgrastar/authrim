@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { Button, Card, Alert, Spinner } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { CheckCircle, XCircle } from 'lucide-svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { magicLinkAPI } from '$lib/api/client';
 
@@ -104,7 +103,7 @@
 				<!-- Success State -->
 				<div class="flex justify-center mb-6">
 					<div class="rounded-full bg-success-100 dark:bg-success-900/30 p-4">
-						<CheckCircle class="h-12 w-12 text-success-600 dark:text-success-400" />
+						<div class="i-heroicons-check-circle h-12 w-12 text-success-600 dark:text-success-400"></div>
 					</div>
 				</div>
 
@@ -119,7 +118,7 @@
 				<!-- Error State -->
 				<div class="flex justify-center mb-6">
 					<div class="rounded-full bg-error-100 dark:bg-error-900/30 p-4">
-						<XCircle class="h-12 w-12 text-error-600 dark:text-error-400" />
+						<div class="i-heroicons-x-circle h-12 w-12 text-error-600 dark:text-error-400"></div>
 					</div>
 				</div>
 

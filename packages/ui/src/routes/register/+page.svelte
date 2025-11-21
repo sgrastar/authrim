@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { Button, Input, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import { Mail, Key, User } from 'lucide-svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, magicLinkAPI } from '$lib/api/client';
 	import { startRegistration } from '@simplewebauthn/browser';
@@ -258,7 +257,7 @@
 					required
 				>
 					{#snippet icon()}
-						<User class="h-5 w-5 text-gray-400" />
+						<div class="i-heroicons-user h-5 w-5 text-gray-400"></div>
 					{/snippet}
 				</Input>
 			</div>
@@ -276,7 +275,7 @@
 					required
 				>
 					{#snippet icon()}
-						<Mail class="h-5 w-5 text-gray-400" />
+						<div class="i-heroicons-envelope h-5 w-5 text-gray-400"></div>
 					{/snippet}
 				</Input>
 			</div>
@@ -290,7 +289,7 @@
 					disabled={magicLinkLoading}
 					onclick={handlePasskeyRegister}
 				>
-					<Key class="h-5 w-5" />
+					<div class="i-heroicons-key h-5 w-5"></div>
 					{$LL.register_createWithPasskey()}
 				</Button>
 
@@ -310,7 +309,7 @@
 				disabled={passkeyLoading}
 				onclick={handleMagicLinkSignup}
 			>
-				<Mail class="h-5 w-5" />
+				<div class="i-heroicons-envelope h-5 w-5"></div>
 				{$LL.register_signupWithMagicLink()}
 			</Button>
 

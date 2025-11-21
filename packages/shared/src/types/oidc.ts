@@ -250,6 +250,8 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   // Trusted Client Settings
   is_trusted?: boolean; // Trusted (First-Party) client
   skip_consent?: boolean; // Skip consent screen for trusted clients
+  // Claims Parameter Settings
+  allow_claims_without_scope?: boolean; // Allow claims parameter to request claims without corresponding scope (default: false)
   // JWE fields inherited from ClientRegistrationResponse
   id_token_encrypted_response_alg?: string;
   id_token_encrypted_response_enc?: string;

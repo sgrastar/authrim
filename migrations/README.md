@@ -9,6 +9,9 @@ This directory contains SQL migration scripts for Enrai's Cloudflare D1 database
 | `000_schema_migrations.sql` | Migration tracking infrastructure (**DO NOT MODIFY**) | ✅ Ready |
 | `001_initial_schema.sql` | Creates all 12 tables and indexes | ✅ Ready |
 | `002_seed_default_data.sql` | Default roles, settings, and test data | ✅ Ready |
+| `003_add_consent_table.sql` | Adds consent table for OAuth consent management | ✅ Ready |
+| `004_add_client_trust_settings.sql` | Adds trusted client settings (is_trusted, skip_consent) | ✅ Ready |
+| `005_add_claims_parameter_setting.sql` | Adds claims parameter setting (allow_claims_without_scope) | ✅ Ready |
 
 ## 🎯 Migration Management (Issue #14)
 
@@ -250,6 +253,9 @@ wrangler d1 execute enrai-dev --file=migrations/002_seed_default_data.sql
 |---------|------|-------------|
 | 001 | 2025-11-13 | Initial schema (11 tables, 20 indexes) |
 | 002 | 2025-11-13 | Default data (roles, settings, test data) |
+| 003 | 2025-11-20 | Consent table for OAuth consent management |
+| 004 | 2025-11-20 | Trusted client settings (is_trusted, skip_consent) |
+| 005 | 2025-11-21 | Claims parameter setting (allow_claims_without_scope) |
 
 ---
 

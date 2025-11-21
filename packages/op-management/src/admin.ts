@@ -576,6 +576,168 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
+ * Update client settings
+ * PUT /admin/clients/:id
+ */
+export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const clientId = c.req.param('id');
+
+    // Check if client exists
+    const existingClient = await c.env.DB.prepare('SELECT * FROM oauth_clients WHERE client_id = ?')
+      .bind(clientId)
+      .first();
+
+    if (!existingClient) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Client not found',
+        },
+        404
+      );
+    }
+
+    // Parse request body
+    const body = await c.req.json();
+
+    // Extract updatable fields
+    const {
+      client_name,
+      redirect_uris,
+      grant_types,
+      scope,
+      logo_uri,
+      client_uri,
+      policy_uri,
+      tos_uri,
+      is_trusted,
+      skip_consent,
+      allow_claims_without_scope,
+    } = body;
+
+    // Build update query dynamically
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    if (client_name !== undefined) {
+      updates.push('client_name = ?');
+      values.push(client_name);
+    }
+    if (redirect_uris !== undefined) {
+      updates.push('redirect_uris = ?');
+      values.push(JSON.stringify(redirect_uris));
+    }
+    if (grant_types !== undefined) {
+      updates.push('grant_types = ?');
+      values.push(JSON.stringify(grant_types));
+    }
+    if (scope !== undefined) {
+      updates.push('scope = ?');
+      values.push(scope);
+    }
+    if (logo_uri !== undefined) {
+      updates.push('logo_uri = ?');
+      values.push(logo_uri);
+    }
+    if (client_uri !== undefined) {
+      updates.push('client_uri = ?');
+      values.push(client_uri);
+    }
+    if (policy_uri !== undefined) {
+      updates.push('policy_uri = ?');
+      values.push(policy_uri);
+    }
+    if (tos_uri !== undefined) {
+      updates.push('tos_uri = ?');
+      values.push(tos_uri);
+    }
+    if (is_trusted !== undefined) {
+      updates.push('is_trusted = ?');
+      values.push(is_trusted ? 1 : 0);
+    }
+    if (skip_consent !== undefined) {
+      updates.push('skip_consent = ?');
+      values.push(skip_consent ? 1 : 0);
+    }
+    if (allow_claims_without_scope !== undefined) {
+      updates.push('allow_claims_without_scope = ?');
+      values.push(allow_claims_without_scope ? 1 : 0);
+    }
+
+    // Always update updated_at timestamp
+    updates.push('updated_at = ?');
+    values.push(Math.floor(Date.now() / 1000));
+
+    if (updates.length === 1) {
+      // Only updated_at, no actual changes
+      return c.json({
+        success: true,
+        message: 'No changes to update',
+      });
+    }
+
+    // Execute update query
+    await c.env.DB.prepare(`
+      UPDATE oauth_clients
+      SET ${updates.join(', ')}
+      WHERE client_id = ?
+    `)
+      .bind(...values, clientId)
+      .run();
+
+    // Update KV cache
+    const updatedClient = await c.env.DB.prepare('SELECT * FROM oauth_clients WHERE client_id = ?')
+      .bind(clientId)
+      .first();
+
+    if (updatedClient) {
+      // Parse JSON fields for KV storage
+      const clientMetadata = {
+        client_id: updatedClient.client_id,
+        client_secret: updatedClient.client_secret,
+        client_name: updatedClient.client_name,
+        redirect_uris: JSON.parse(updatedClient.redirect_uris as string),
+        grant_types: JSON.parse(updatedClient.grant_types as string),
+        response_types: updatedClient.response_types
+          ? JSON.parse(updatedClient.response_types as string)
+          : ['code'],
+        scope: updatedClient.scope,
+        logo_uri: updatedClient.logo_uri,
+        client_uri: updatedClient.client_uri,
+        policy_uri: updatedClient.policy_uri,
+        tos_uri: updatedClient.tos_uri,
+        contacts: updatedClient.contacts ? JSON.parse(updatedClient.contacts as string) : undefined,
+        subject_type: updatedClient.subject_type || 'public',
+        sector_identifier_uri: updatedClient.sector_identifier_uri,
+        token_endpoint_auth_method: updatedClient.token_endpoint_auth_method || 'client_secret_basic',
+        created_at: updatedClient.created_at,
+        updated_at: updatedClient.updated_at,
+        is_trusted: updatedClient.is_trusted === 1,
+        skip_consent: updatedClient.skip_consent === 1,
+        allow_claims_without_scope: updatedClient.allow_claims_without_scope === 1,
+      };
+
+      await c.env.CLIENTS.put(clientId, JSON.stringify(clientMetadata));
+    }
+
+    return c.json({
+      success: true,
+      client: updatedClient,
+    });
+  } catch (error) {
+    console.error('Admin client update error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to update client',
+      },
+      500
+    );
+  }
+}
+
+/**
  * Upload user avatar
  * POST /admin/users/:id/avatar
  */

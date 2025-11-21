@@ -127,15 +127,23 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     birthdate: user.birthdate || undefined,
     zoneinfo: user.zoneinfo || undefined,
     locale: user.locale || undefined,
-    updated_at: user.updated_at
-      ? Math.floor(new Date(user.updated_at as string).getTime() / 1000)
-      : Math.floor(Date.now() / 1000),
+    updated_at: user.updated_at ? (user.updated_at as number) : Math.floor(Date.now() / 1000),
     email: user.email || undefined,
     email_verified: user.email_verified === 1,
     phone_number: user.phone_number || undefined,
     phone_number_verified: user.phone_number_verified === 1,
     address: address || undefined,
   };
+
+  // Get client metadata to check claims parameter settings
+  // Extract client_id from token claims
+  const client_id = tokenClaims.client_id as string;
+  const clientMetadata = client_id ? await getClient(c.env, client_id) : null;
+
+  // Check if client allows claims parameter to request claims without corresponding scope
+  // Default: false (strict scope-based access control)
+  // OIDC conformance tests: true (flexible claims parameter handling)
+  const allowClaimsWithoutScope = clientMetadata?.allow_claims_without_scope === true;
 
   // Profile scope claims (OIDC Core 5.4)
   const profileClaims = [
@@ -155,7 +163,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     'updated_at',
   ];
 
-  // Add profile claims if profile scope is granted OR if explicitly requested
+  // Add profile claims if profile scope is granted OR if explicitly requested (when allowed)
   if (scopes.includes('profile')) {
     // Include all profile claims when profile scope is granted
     for (const claim of profileClaims) {
@@ -163,19 +171,21 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         userClaims[claim] = userData[claim as keyof typeof userData];
       }
     }
-  } else {
+  } else if (allowClaimsWithoutScope) {
     // Include individual profile claims if explicitly requested via claims parameter
+    // (only when client allows claims without scope)
     for (const claim of profileClaims) {
       if (claim in requestedUserinfoClaims && claim in userData) {
         userClaims[claim] = userData[claim as keyof typeof userData];
       }
     }
   }
+  // else: Strict mode - do not return profile claims without profile scope
 
   // Email scope claims
   const emailClaims = ['email', 'email_verified'];
 
-  // Add email claims if email scope is granted OR if explicitly requested
+  // Add email claims if email scope is granted OR if explicitly requested (when allowed)
   if (scopes.includes('email')) {
     // Include all email claims when email scope is granted
     for (const claim of emailClaims) {
@@ -183,26 +193,30 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         userClaims[claim] = userData[claim as keyof typeof userData];
       }
     }
-  } else {
+  } else if (allowClaimsWithoutScope) {
     // Include individual email claims if explicitly requested via claims parameter
+    // (only when client allows claims without scope)
     for (const claim of emailClaims) {
       if (claim in requestedUserinfoClaims && claim in userData) {
         userClaims[claim] = userData[claim as keyof typeof userData];
       }
     }
   }
+  // else: Strict mode - do not return email claims without email scope
 
   // Address scope claims (OIDC Core 5.4)
   if (scopes.includes('address')) {
     userClaims.address = userData.address;
-  } else if ('address' in requestedUserinfoClaims) {
+  } else if (allowClaimsWithoutScope && 'address' in requestedUserinfoClaims) {
+    // Include address if explicitly requested via claims parameter (only when allowed)
     userClaims.address = userData.address;
   }
+  // else: Strict mode - do not return address without address scope
 
   // Phone scope claims (OIDC Core 5.4)
   const phoneClaims = ['phone_number', 'phone_number_verified'];
 
-  // Add phone claims if phone scope is granted OR if explicitly requested
+  // Add phone claims if phone scope is granted OR if explicitly requested (when allowed)
   if (scopes.includes('phone')) {
     // Include all phone claims when phone scope is granted
     for (const claim of phoneClaims) {
@@ -210,27 +224,25 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         userClaims[claim] = userData[claim as keyof typeof userData];
       }
     }
-  } else {
+  } else if (allowClaimsWithoutScope) {
     // Include individual phone claims if explicitly requested via claims parameter
+    // (only when client allows claims without scope)
     for (const claim of phoneClaims) {
       if (claim in requestedUserinfoClaims && claim in userData) {
         userClaims[claim] = userData[claim as keyof typeof userData];
       }
     }
   }
+  // else: Strict mode - do not return phone claims without phone scope
 
   // JWE: Check if client requires UserInfo encryption (RFC 7516)
-  // Get client_id from token claims
-  const client_id = tokenClaims.client_id as string;
-  if (!client_id) {
-    // If no client_id in token, return unencrypted response
+  if (!client_id || !clientMetadata) {
+    // If no client_id in token or metadata not found, return unencrypted response
     return c.json(userClaims);
   }
 
-  const clientMetadata = await getClient(c.env, client_id);
-
   // Check if client requires UserInfo encryption
-  if (clientMetadata && isUserInfoEncryptionRequired(clientMetadata)) {
+  if (isUserInfoEncryptionRequired(clientMetadata)) {
     const alg = clientMetadata.userinfo_encrypted_response_alg as string;
     const enc = clientMetadata.userinfo_encrypted_response_enc as string;
 
