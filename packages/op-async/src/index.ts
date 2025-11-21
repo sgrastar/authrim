@@ -1,10 +1,11 @@
 /**
  * Authrim OP-Async Worker
  * RFC 8628: OAuth 2.0 Device Authorization Grant
+ * OpenID Connect CIBA Flow Core 1.0
  *
  * Handles asynchronous authentication flows:
  * - Device Flow (RFC 8628)
- * - CIBA (Client Initiated Backchannel Authentication) - Future
+ * - CIBA (Client Initiated Backchannel Authentication)
  */
 
 import { Hono } from 'hono';
@@ -13,6 +14,7 @@ import type { Env } from '@authrim/shared';
 import { deviceAuthorizationHandler } from './device-authorization';
 import { deviceVerifyHandler } from './device-verify';
 import { deviceVerifyApiHandler } from './device-verify-api';
+import { cibaAuthorizationHandler } from './ciba-authorization';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -67,5 +69,24 @@ app.post('/device', deviceVerifyHandler);
  * Used by SvelteKit UI and custom WebSDK implementations
  */
 app.post('/api/device/verify', deviceVerifyApiHandler);
+
+/**
+ * POST /bc-authorize
+ * OpenID Connect CIBA: Backchannel Authentication Endpoint
+ *
+ * Request:
+ *   POST /bc-authorize
+ *   Content-Type: application/x-www-form-urlencoded
+ *
+ *   scope=openid&client_id=...&login_hint=user@example.com&binding_message=...
+ *
+ * Response:
+ *   {
+ *     "auth_req_id": "1c266114-a1be-4252-8ad1-04986c5b9ac1",
+ *     "expires_in": 300,
+ *     "interval": 5
+ *   }
+ */
+app.post('/bc-authorize', cibaAuthorizationHandler);
 
 export default app;

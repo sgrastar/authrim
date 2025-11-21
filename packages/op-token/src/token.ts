@@ -169,6 +169,8 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
     return await handleJWTBearerGrant(c, formData);
   } else if (grant_type === 'urn:ietf:params:oauth:grant-type:device_code') {
     return await handleDeviceCodeGrant(c, formData);
+  } else if (grant_type === 'urn:openid:params:grant-type:ciba') {
+    return await handleCIBAGrant(c, formData);
   }
 
   // If grant_type is not supported
@@ -1552,6 +1554,371 @@ async function handleDeviceCodeGrant(
   return c.json({
     access_token: accessToken,
     token_type: 'Bearer',
+    expires_in: expiresIn,
+    id_token: idToken,
+    refresh_token: refreshToken,
+    scope: metadata.scope,
+  });
+}
+
+/**
+ * Handle CIBA Grant
+ * OpenID Connect CIBA Flow Core 1.0
+ * https://openid.net/specs/openid-client-initiated-backchannel-authentication-core-1_0.html#token_endpoint
+ */
+async function handleCIBAGrant(
+  c: Context<{ Bindings: Env }>,
+  formData: Record<string, string>
+) {
+  const authReqId = formData.auth_req_id;
+  const client_id = formData.client_id;
+
+  // Validate required parameters
+  if (!authReqId) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'auth_req_id is required',
+      },
+      400
+    );
+  }
+
+  if (!client_id) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'client_id is required',
+      },
+      400
+    );
+  }
+
+  // Get CIBA request metadata from CIBARequestStore
+  const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName('global');
+  const cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
+
+  // Update poll time (for rate limiting in poll mode)
+  try {
+    await cibaRequestStore.fetch(
+      new Request('https://internal/update-poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auth_req_id: authReqId }),
+      })
+    );
+  } catch (error) {
+    console.error('Failed to update poll time:', error);
+  }
+
+  // Get CIBA request metadata
+  const getResponse = await cibaRequestStore.fetch(
+    new Request('https://internal/get-by-auth-req-id', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auth_req_id: authReqId }),
+    })
+  );
+
+  const metadata = (await getResponse.json()) as {
+    auth_req_id: string;
+    client_id: string;
+    scope: string;
+    status: 'pending' | 'approved' | 'denied' | 'expired';
+    delivery_mode: 'poll' | 'ping' | 'push';
+    interval: number;
+    sub?: string;
+    user_id?: string;
+    nonce?: string;
+    last_poll_at?: number;
+    poll_count?: number;
+    created_at: number;
+    expires_at: number;
+    token_issued?: boolean;
+  };
+
+  if (!metadata || !metadata.auth_req_id) {
+    return c.json(
+      {
+        error: 'expired_token',
+        error_description: 'CIBA request has expired or is invalid',
+      },
+      400
+    );
+  }
+
+  // Check if auth_req_id is for the correct client
+  if (metadata.client_id !== client_id) {
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'auth_req_id does not belong to this client',
+      },
+      400
+    );
+  }
+
+  // Check if tokens have already been issued (one-time use)
+  if (metadata.token_issued) {
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'Tokens have already been issued for this auth_req_id',
+      },
+      400
+    );
+  }
+
+  // Check status and return appropriate response
+  if (metadata.status === 'pending') {
+    // User has not yet approved - check if polling too fast (poll mode only)
+    if (metadata.delivery_mode === 'poll') {
+      const { isPollingTooFast } = await import('@authrim/shared');
+
+      if (isPollingTooFast(metadata)) {
+        return c.json(
+          {
+            error: 'slow_down',
+            error_description: 'You are polling too frequently. Please slow down.',
+          },
+          400
+        );
+      }
+    }
+
+    return c.json(
+      {
+        error: 'authorization_pending',
+        error_description: 'User has not yet authorized the authentication request',
+      },
+      400
+    );
+  }
+
+  if (metadata.status === 'denied') {
+    // Delete the CIBA request (it's been denied)
+    await cibaRequestStore.fetch(
+      new Request('https://internal/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auth_req_id: authReqId }),
+      })
+    );
+
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'User denied the authentication request',
+      },
+      403
+    );
+  }
+
+  if (metadata.status === 'expired') {
+    return c.json(
+      {
+        error: 'expired_token',
+        error_description: 'CIBA request has expired',
+      },
+      400
+    );
+  }
+
+  // Status is 'approved' - issue tokens
+  if (metadata.status !== 'approved' || !metadata.sub) {
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'CIBA request is not approved',
+      },
+      400
+    );
+  }
+
+  // Mark tokens as issued (one-time use enforcement)
+  const markIssuedResponse = await cibaRequestStore.fetch(
+    new Request('https://internal/mark-token-issued', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auth_req_id: authReqId }),
+    })
+  );
+
+  if (!markIssuedResponse.ok) {
+    const error = await markIssuedResponse.json();
+    console.error('Failed to mark tokens as issued:', error);
+    // If tokens were already issued, return error
+    if (error.error_description?.includes('already issued')) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Tokens have already been issued for this auth_req_id',
+        },
+        400
+      );
+    }
+  }
+
+  // Get user data for token claims
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
+    .bind(metadata.user_id)
+    .first();
+
+  if (!user) {
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'User not found',
+      },
+      500
+    );
+  }
+
+  // Get client metadata for encryption settings
+  const clientMetadata = await getClient(c.env, metadata.client_id);
+
+  if (!clientMetadata) {
+    return c.json(
+      {
+        error: 'invalid_client',
+        error_description: 'Client not found',
+      },
+      400
+    );
+  }
+
+  // Get signing key from KeyManager
+  const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env);
+
+  // Extract DPoP proof if present
+  const dpopProof = extractDPoPProof(c.req.raw);
+  let dpopJkt: string | undefined;
+
+  // Validate DPoP proof if provided
+  if (dpopProof) {
+    const { validateDPoPProof: validateDPoP } = await import('@authrim/shared');
+    const dpopValidation = await validateDPoP(
+      dpopProof,
+      'POST',
+      c.env.ISSUER_URL + '/token',
+      c.env
+    );
+
+    if (dpopValidation.valid && dpopValidation.jkt) {
+      dpopJkt = dpopValidation.jkt;
+    }
+  }
+
+  // Token expiration times
+  const expiresIn = parseInt(c.env.TOKEN_EXPIRY || '3600', 10);
+  const refreshExpiresIn = parseInt(c.env.REFRESH_TOKEN_EXPIRY || '2592000', 10);
+
+  // Create ID Token
+  let idToken = await createIDToken(
+    c.env.ISSUER_URL,
+    metadata.sub,
+    metadata.client_id,
+    privateKey,
+    kid,
+    metadata.nonce,
+    expiresIn,
+    undefined, // at_hash will be calculated after access token creation
+    undefined // auth_time
+  );
+
+  // Create Access Token
+  const accessToken = await createAccessToken(
+    c.env.ISSUER_URL,
+    metadata.sub,
+    metadata.client_id,
+    privateKey,
+    kid,
+    expiresIn,
+    metadata.scope,
+    dpopJkt
+  );
+
+  // Calculate at_hash for ID token
+  const atHash = await calculateAtHash(accessToken);
+
+  // Recreate ID token with at_hash
+  idToken = await createIDToken(
+    c.env.ISSUER_URL,
+    metadata.sub,
+    metadata.client_id,
+    privateKey,
+    kid,
+    metadata.nonce,
+    expiresIn,
+    atHash,
+    undefined // auth_time
+  );
+
+  // Encrypt ID token if required
+  if (isIDTokenEncryptionRequired(clientMetadata)) {
+    const clientPublicKey = await getClientPublicKey(clientMetadata);
+
+    if (!clientPublicKey) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Client encryption key not available',
+        },
+        500
+      );
+    }
+
+    const alg = clientMetadata.id_token_encrypted_response_alg as JWEAlgorithm;
+    const enc = clientMetadata.id_token_encrypted_response_enc as JWEEncryption;
+
+    if (!validateJWEOptions(alg, enc)) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Invalid JWE algorithm or encryption method',
+        },
+        500
+      );
+    }
+
+    idToken = await encryptJWT(idToken, clientPublicKey, alg, enc);
+  }
+
+  // Create Refresh Token
+  const refreshToken = await createRefreshToken(
+    metadata.client_id,
+    metadata.sub,
+    metadata.scope,
+    privateKey,
+    kid,
+    refreshExpiresIn
+  );
+
+  // Store refresh token in KV
+  await storeRefreshToken(c.env, refreshToken, {
+    client_id: metadata.client_id,
+    sub: metadata.sub,
+    scope: metadata.scope,
+    iat: Date.now() / 1000,
+    exp: Date.now() / 1000 + refreshExpiresIn,
+  });
+
+  // Delete the CIBA request after successful token issuance
+  await cibaRequestStore.fetch(
+    new Request('https://internal/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auth_req_id: authReqId }),
+    })
+  );
+
+  // Return token response
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+
+  return c.json({
+    access_token: accessToken,
+    token_type: dpopJkt ? 'DPoP' : 'Bearer',
     expires_in: expiresIn,
     id_token: idToken,
     refresh_token: refreshToken,

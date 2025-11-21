@@ -198,6 +198,21 @@ app.all('/api/device/*', async (c) => {
 });
 
 /**
+ * CIBA (Client Initiated Backchannel Authentication) endpoints - Route to OP_ASYNC worker
+ * - /bc-authorize (POST) - OIDC CIBA: Backchannel Authentication Request
+ * - /api/ciba/* - Headless JSON APIs for CIBA approval UI
+ */
+app.post('/bc-authorize', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_ASYNC.fetch(request);
+});
+
+app.all('/api/ciba/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_ASYNC.fetch(request);
+});
+
+/**
  * Management endpoints - Route to OP_MANAGEMENT worker
  * - /register (POST) - Dynamic Client Registration (OIDC standard)
  * - /introspect (POST) - Token Introspection (OAuth 2.0 standard)
