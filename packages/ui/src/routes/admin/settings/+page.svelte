@@ -4,7 +4,7 @@
 	import { onMount } from 'svelte';
 	import { adminSettingsAPI } from '$lib/api/client';
 
-	type Tab = 'general' | 'appearance' | 'security' | 'email' | 'advanced';
+	type Tab = 'general' | 'appearance' | 'security' | 'email' | 'advanced' | 'ciba';
 
 	let activeTab: Tab = 'general';
 	let loading = false;
@@ -42,6 +42,22 @@
 	let refreshTokenTtl = 2592000; // 30 days in seconds
 	let passkeyEnabled = true;
 	let magicLinkEnabled = true;
+
+	// CIBA settings
+	let cibaEnabled = true;
+	let cibaDefaultExpiresIn = 300; // 5 minutes
+	let cibaMinExpiresIn = 60; // 1 minute
+	let cibaMaxExpiresIn = 600; // 10 minutes
+	let cibaDefaultInterval = 5; // 5 seconds
+	let cibaMinInterval = 2; // 2 seconds
+	let cibaMaxInterval = 60; // 60 seconds
+	let cibaSupportedDeliveryModes: string[] = ['poll', 'ping', 'push'];
+	let cibaUserCodeEnabled = true;
+	let cibaBindingMessageMaxLength = 140;
+	let cibaNotificationsEnabled = false;
+	let cibaNotificationEmail = false;
+	let cibaNotificationSms = false;
+	let cibaNotificationPush = false;
 
 	onMount(async () => {
 		await loadSettings();
@@ -88,6 +104,24 @@
 				refreshTokenTtl = data.settings.advanced.refreshTokenTtl;
 				passkeyEnabled = data.settings.advanced.passkeyEnabled;
 				magicLinkEnabled = data.settings.advanced.magicLinkEnabled;
+
+				// CIBA
+				if (data.settings.ciba) {
+					cibaEnabled = data.settings.ciba.enabled;
+					cibaDefaultExpiresIn = data.settings.ciba.defaultExpiresIn;
+					cibaMinExpiresIn = data.settings.ciba.minExpiresIn;
+					cibaMaxExpiresIn = data.settings.ciba.maxExpiresIn;
+					cibaDefaultInterval = data.settings.ciba.defaultInterval;
+					cibaMinInterval = data.settings.ciba.minInterval;
+					cibaMaxInterval = data.settings.ciba.maxInterval;
+					cibaSupportedDeliveryModes = data.settings.ciba.supportedDeliveryModes;
+					cibaUserCodeEnabled = data.settings.ciba.userCodeEnabled;
+					cibaBindingMessageMaxLength = data.settings.ciba.bindingMessageMaxLength;
+					cibaNotificationsEnabled = data.settings.ciba.notificationsEnabled;
+					cibaNotificationEmail = data.settings.ciba.notificationProviders?.email || false;
+					cibaNotificationSms = data.settings.ciba.notificationProviders?.sms || false;
+					cibaNotificationPush = data.settings.ciba.notificationProviders?.push || false;
+				}
 			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred';
@@ -134,6 +168,24 @@
 					refreshTokenTtl,
 					passkeyEnabled,
 					magicLinkEnabled
+				},
+				ciba: {
+					enabled: cibaEnabled,
+					defaultExpiresIn: cibaDefaultExpiresIn,
+					minExpiresIn: cibaMinExpiresIn,
+					maxExpiresIn: cibaMaxExpiresIn,
+					defaultInterval: cibaDefaultInterval,
+					minInterval: cibaMinInterval,
+					maxInterval: cibaMaxInterval,
+					supportedDeliveryModes: cibaSupportedDeliveryModes,
+					userCodeEnabled: cibaUserCodeEnabled,
+					bindingMessageMaxLength: cibaBindingMessageMaxLength,
+					notificationsEnabled: cibaNotificationsEnabled,
+					notificationProviders: {
+						email: cibaNotificationEmail,
+						sms: cibaNotificationSms,
+						push: cibaNotificationPush
+					}
 				}
 			});
 
@@ -275,6 +327,20 @@
 				onclick={() => setTab('advanced')}
 			>
 				{$LL.admin_settings_advanced()}
+			</button>
+			<button
+				class="border-b-2 px-1 py-4 text-sm font-medium transition-colors"
+				class:border-primary-500={activeTab === 'ciba'}
+				class:text-primary-600={activeTab === 'ciba'}
+				class:dark:text-primary-400={activeTab === 'ciba'}
+				class:border-transparent={activeTab !== 'ciba'}
+				class:text-gray-500={activeTab !== 'ciba'}
+				class:hover:text-gray-700={activeTab !== 'ciba'}
+				class:dark:text-gray-400={activeTab !== 'ciba'}
+				class:dark:hover:text-gray-300={activeTab !== 'ciba'}
+				onclick={() => setTab('ciba')}
+			>
+				CIBA
 			</button>
 		</nav>
 	</div>
@@ -546,6 +612,207 @@
 						</label>
 					</div>
 				</div>
+			</div>
+		</Card>
+	{:else if activeTab === 'ciba'}
+		<Card>
+			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">CIBA (Client Initiated Backchannel Authentication) Settings</h2>
+			<div class="space-y-6">
+				<!-- Enable CIBA -->
+				<div>
+					<label class="flex items-center gap-2">
+						<input
+							type="checkbox"
+							bind:checked={cibaEnabled}
+							class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+						/>
+						<span class="text-sm font-medium text-gray-700 dark:text-gray-300">Enable CIBA Flow</span>
+					</label>
+					<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+						Allow clients to initiate backchannel authentication requests
+					</p>
+				</div>
+
+				{#if cibaEnabled}
+					<!-- Expiration Settings -->
+					<div>
+						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Expiration Settings</h3>
+						<div class="grid gap-4 sm:grid-cols-3">
+							<div>
+								<label for="cibaDefaultExpiresIn" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+									Default Expires In (seconds)
+								</label>
+								<Input id="cibaDefaultExpiresIn" type="number" bind:value={cibaDefaultExpiresIn} min={cibaMinExpiresIn} max={cibaMaxExpiresIn} />
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									{Math.floor(cibaDefaultExpiresIn / 60)} minutes
+								</p>
+							</div>
+							<div>
+								<label for="cibaMinExpiresIn" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+									Min Expires In (seconds)
+								</label>
+								<Input id="cibaMinExpiresIn" type="number" bind:value={cibaMinExpiresIn} min="30" />
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									{Math.floor(cibaMinExpiresIn / 60)} minutes
+								</p>
+							</div>
+							<div>
+								<label for="cibaMaxExpiresIn" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+									Max Expires In (seconds)
+								</label>
+								<Input id="cibaMaxExpiresIn" type="number" bind:value={cibaMaxExpiresIn} min={cibaMinExpiresIn} />
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									{Math.floor(cibaMaxExpiresIn / 60)} minutes
+								</p>
+							</div>
+						</div>
+					</div>
+
+					<!-- Polling Interval Settings -->
+					<div>
+						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Polling Interval Settings</h3>
+						<div class="grid gap-4 sm:grid-cols-3">
+							<div>
+								<label for="cibaDefaultInterval" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+									Default Interval (seconds)
+								</label>
+								<Input id="cibaDefaultInterval" type="number" bind:value={cibaDefaultInterval} min={cibaMinInterval} max={cibaMaxInterval} />
+							</div>
+							<div>
+								<label for="cibaMinInterval" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+									Min Interval (seconds)
+								</label>
+								<Input id="cibaMinInterval" type="number" bind:value={cibaMinInterval} min="1" />
+							</div>
+							<div>
+								<label for="cibaMaxInterval" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+									Max Interval (seconds)
+								</label>
+								<Input id="cibaMaxInterval" type="number" bind:value={cibaMaxInterval} min={cibaMinInterval} />
+							</div>
+						</div>
+					</div>
+
+					<!-- Delivery Modes -->
+					<div>
+						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Supported Delivery Modes</h3>
+						<div class="space-y-2">
+							<label class="flex items-center gap-2">
+								<input
+									type="checkbox"
+									checked={cibaSupportedDeliveryModes.includes('poll')}
+									onchange={(e) => {
+										if (e.currentTarget.checked) {
+											cibaSupportedDeliveryModes = [...cibaSupportedDeliveryModes, 'poll'];
+										} else {
+											cibaSupportedDeliveryModes = cibaSupportedDeliveryModes.filter(m => m !== 'poll');
+										}
+									}}
+									class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+								/>
+								<span class="text-sm text-gray-700 dark:text-gray-300">Poll Mode (Client polls for result)</span>
+							</label>
+							<label class="flex items-center gap-2">
+								<input
+									type="checkbox"
+									checked={cibaSupportedDeliveryModes.includes('ping')}
+									onchange={(e) => {
+										if (e.currentTarget.checked) {
+											cibaSupportedDeliveryModes = [...cibaSupportedDeliveryModes, 'ping'];
+										} else {
+											cibaSupportedDeliveryModes = cibaSupportedDeliveryModes.filter(m => m !== 'ping');
+										}
+									}}
+									class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+								/>
+								<span class="text-sm text-gray-700 dark:text-gray-300">Ping Mode (Server notifies client)</span>
+							</label>
+							<label class="flex items-center gap-2">
+								<input
+									type="checkbox"
+									checked={cibaSupportedDeliveryModes.includes('push')}
+									onchange={(e) => {
+										if (e.currentTarget.checked) {
+											cibaSupportedDeliveryModes = [...cibaSupportedDeliveryModes, 'push'];
+										} else {
+											cibaSupportedDeliveryModes = cibaSupportedDeliveryModes.filter(m => m !== 'push');
+										}
+									}}
+									class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+								/>
+								<span class="text-sm text-gray-700 dark:text-gray-300">Push Mode (Server pushes tokens directly)</span>
+							</label>
+						</div>
+					</div>
+
+					<!-- Additional Features -->
+					<div>
+						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Additional Features</h3>
+						<div class="space-y-3">
+							<label class="flex items-center gap-2">
+								<input
+									type="checkbox"
+									bind:checked={cibaUserCodeEnabled}
+									class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+								/>
+								<span class="text-sm text-gray-700 dark:text-gray-300">Enable User Code Generation</span>
+							</label>
+							<div>
+								<label for="cibaBindingMessageMaxLength" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+									Binding Message Max Length
+								</label>
+								<Input id="cibaBindingMessageMaxLength" type="number" bind:value={cibaBindingMessageMaxLength} min="0" max="500" />
+								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+									Maximum characters for binding messages (recommended: 140)
+								</p>
+							</div>
+						</div>
+					</div>
+
+					<!-- Notifications -->
+					<div>
+						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Notifications</h3>
+						<div class="space-y-3">
+							<label class="flex items-center gap-2">
+								<input
+									type="checkbox"
+									bind:checked={cibaNotificationsEnabled}
+									class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+								/>
+								<span class="text-sm font-medium text-gray-700 dark:text-gray-300">Enable Notifications</span>
+							</label>
+
+							{#if cibaNotificationsEnabled}
+								<div class="ml-6 space-y-2">
+									<label class="flex items-center gap-2">
+										<input
+											type="checkbox"
+											bind:checked={cibaNotificationEmail}
+											class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+										/>
+										<span class="text-sm text-gray-700 dark:text-gray-300">Email Notifications</span>
+									</label>
+									<label class="flex items-center gap-2">
+										<input
+											type="checkbox"
+											bind:checked={cibaNotificationSms}
+											class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+										/>
+										<span class="text-sm text-gray-700 dark:text-gray-300">SMS Notifications</span>
+									</label>
+									<label class="flex items-center gap-2">
+										<input
+											type="checkbox"
+											bind:checked={cibaNotificationPush}
+											class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+										/>
+										<span class="text-sm text-gray-700 dark:text-gray-300">Push Notifications</span>
+									</label>
+								</div>
+							{/if}
+						</div>
+					</div>
+				{/if}
 			</div>
 		</Card>
 	{/if}
