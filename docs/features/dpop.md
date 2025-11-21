@@ -4,7 +4,7 @@
 
 **RFC 9449** - OAuth 2.0 Demonstrating Proof of Possession (DPoP)
 
-Hibana implements DPoP, a modern OAuth 2.0 security extension that binds access tokens to a specific client's cryptographic key, preventing token theft and replay attacks even if tokens are intercepted.
+Authrim implements DPoP, a modern OAuth 2.0 security extension that binds access tokens to a specific client's cryptographic key, preventing token theft and replay attacks even if tokens are intercepted.
 
 ## Specification
 
@@ -149,7 +149,7 @@ Hibana implements DPoP, a modern OAuth 2.0 security extension that binds access 
 {
   "jti": "unique-identifier-123",
   "htm": "POST",
-  "htu": "https://hibana.sgrastar.workers.dev/token",
+  "htu": "https://authrim.sgrastar.workers.dev/token",
   "iat": 1699876543,
   "ath": "base64url-hash-of-access-token"
 }
@@ -258,7 +258,7 @@ DPoP: <dpop_proof_jwt>
 {
   "jti": "unique-identifier-456",
   "htm": "GET",
-  "htu": "https://hibana.sgrastar.workers.dev/userinfo",
+  "htu": "https://authrim.sgrastar.workers.dev/userinfo",
   "iat": 1699876600,
   "ath": "fUHyO2r2Z3DZ53EsNrWBb0xWXoaNy59IiKCAqksmQEo"
 }
@@ -362,10 +362,10 @@ const dpopProof = await createDPoPProof(
   privateKey,
   publicKeyJwk,
   'POST',
-  'https://hibana.sgrastar.workers.dev/token'
+  'https://authrim.sgrastar.workers.dev/token'
 );
 
-const tokenResponse = await fetch('https://hibana.sgrastar.workers.dev/token', {
+const tokenResponse = await fetch('https://authrim.sgrastar.workers.dev/token', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/x-www-form-urlencoded',
@@ -394,11 +394,11 @@ const dpopProofUserInfo = await createDPoPProof(
   privateKey,
   publicKeyJwk,
   'GET',
-  'https://hibana.sgrastar.workers.dev/userinfo',
+  'https://authrim.sgrastar.workers.dev/userinfo',
   accessToken // Include access token for ath claim
 );
 
-const userInfoResponse = await fetch('https://hibana.sgrastar.workers.dev/userinfo', {
+const userInfoResponse = await fetch('https://authrim.sgrastar.workers.dev/userinfo', {
   method: 'GET',
   headers: {
     'Authorization': `DPoP ${accessToken}`,
@@ -418,10 +418,10 @@ const dpopProof = await createDPoPProof(
   privateKey,
   publicKeyJwk,
   'POST',
-  'https://hibana.sgrastar.workers.dev/token'
+  'https://authrim.sgrastar.workers.dev/token'
 );
 
-const tokenResponse = await fetch('https://hibana.sgrastar.workers.dev/token', {
+const tokenResponse = await fetch('https://authrim.sgrastar.workers.dev/token', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/x-www-form-urlencoded',
@@ -444,7 +444,7 @@ const tokens = await tokenResponse.json();
 
 ### DPoP Proof Validation
 
-Hibana validates the following:
+Authrim validates the following:
 
 1. **JWT Structure**: Must be valid 3-part JWT (header.payload.signature)
 2. **Header Validation**:
@@ -468,9 +468,9 @@ DPoP-bound access tokens include a `cnf` (confirmation) claim:
 
 ```json
 {
-  "iss": "https://hibana.sgrastar.workers.dev",
+  "iss": "https://authrim.sgrastar.workers.dev",
   "sub": "user-123",
-  "aud": "https://hibana.sgrastar.workers.dev",
+  "aud": "https://authrim.sgrastar.workers.dev",
   "exp": 1699880143,
   "iat": 1699876543,
   "scope": "openid profile email",
@@ -580,7 +580,7 @@ DPoP support is advertised in the OpenID Provider metadata:
 
 ### Test Coverage
 
-Hibana includes comprehensive tests for DPoP:
+Authrim includes comprehensive tests for DPoP:
 
 **Test File**: `test/dpop.test.ts`
 
@@ -658,9 +658,9 @@ class DPoPClient {
   }
 
   async requestToken(authCode: string, clientId: string, clientSecret: string, redirectUri: string) {
-    const dpopProof = await this.createProof('POST', 'https://hibana.sgrastar.workers.dev/token');
+    const dpopProof = await this.createProof('POST', 'https://authrim.sgrastar.workers.dev/token');
 
-    const response = await fetch('https://hibana.sgrastar.workers.dev/token', {
+    const response = await fetch('https://authrim.sgrastar.workers.dev/token', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -680,11 +680,11 @@ class DPoPClient {
   async getUserInfo(accessToken: string) {
     const dpopProof = await this.createProof(
       'GET',
-      'https://hibana.sgrastar.workers.dev/userinfo',
+      'https://authrim.sgrastar.workers.dev/userinfo',
       accessToken
     );
 
-    const response = await fetch('https://hibana.sgrastar.workers.dev/userinfo', {
+    const response = await fetch('https://authrim.sgrastar.workers.dev/userinfo', {
       headers: {
         'Authorization': `DPoP ${accessToken}`,
         'DPoP': dpopProof,
@@ -711,7 +711,7 @@ const userInfo = await client.getUserInfo(tokens.access_token);
 
 ```http
 GET /userinfo HTTP/1.1
-Host: hibana.sgrastar.workers.dev
+Host: authrim.sgrastar.workers.dev
 Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...
 ```
 
@@ -725,7 +725,7 @@ Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...
 
 ```http
 GET /userinfo HTTP/1.1
-Host: hibana.sgrastar.workers.dev
+Host: authrim.sgrastar.workers.dev
 Authorization: DPoP eyJhbGciOiJSUzI1NiJ9...
 DPoP: eyJhbGciOiJSUzI1NiIsInR5cCI6ImRwb3Arand0IiwiandrIjp7Imt0eSI6IlJTQSIsIm4iOiIuLi4iLCJlIjoiQVFBQiJ9fQ.eyJqdGkiOiJ1bmlxdWUtaWQiLCJodG0iOiJHRVQiLCJodHUiOiJodHRwczovL2hpYmFuYS5zZ3Jhc3Rhci53b3JrZXJzLmRldi91c2VyaW5mbyIsImlhdCI6MTY5OTg3NjYwMCwiYXRoIjoiZlVIeU8ycjJaM0RaNTNFc05yV0JiMHhXWG9hTnk1OUlpS0NBcWtzbVFFbyJ9.signature...
 ```
@@ -797,10 +797,10 @@ htm: 'POST'  // Must match actual request method (uppercase)
 **Solution**:
 ```javascript
 // Correct: protocol + host + pathname only
-htu: 'https://hibana.sgrastar.workers.dev/userinfo'
+htu: 'https://authrim.sgrastar.workers.dev/userinfo'
 
 // Incorrect: includes query
-htu: 'https://hibana.sgrastar.workers.dev/userinfo?foo=bar'
+htu: 'https://authrim.sgrastar.workers.dev/userinfo?foo=bar'
 ```
 
 #### "DPoP proof is too old (must be within 60 seconds)"
