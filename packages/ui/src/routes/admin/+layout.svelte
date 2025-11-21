@@ -25,6 +25,11 @@
 			icon: 'i-heroicons-clock'
 		},
 		{
+			path: '/admin/scim-tokens',
+			label: () => $LL.admin_sidebar_scim_tokens?.() || 'SCIM Tokens',
+			icon: 'i-heroicons-key'
+		},
+		{
 			path: '/admin/audit-log',
 			label: () => $LL.admin_sidebar_audit_log(),
 			icon: 'i-heroicons-document-text'

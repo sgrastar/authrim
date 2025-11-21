@@ -115,3 +115,36 @@ export function timingSafeEqual(a: string, b: string): boolean {
 
   return result === 0;
 }
+
+/**
+ * Hash a password using SHA-256
+ *
+ * Note: In production, you should use a proper password hashing algorithm
+ * like bcrypt, scrypt, or Argon2. This is a simplified implementation
+ * suitable for demo/development purposes.
+ *
+ * For production use, consider using Cloudflare Workers' crypto API with
+ * a proper key derivation function.
+ *
+ * @param password - Plain text password
+ * @returns Hashed password (hex string)
+ */
+export async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Verify a password against a hash
+ *
+ * @param password - Plain text password
+ * @param hash - Hashed password
+ * @returns True if password matches hash
+ */
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  const passwordHash = await hashPassword(password);
+  return timingSafeEqual(passwordHash, hash);
+}
