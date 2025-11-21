@@ -17,7 +17,7 @@
 
 ## Overview
 
-This document describes the **envelope encryption** approach for protecting JWT signing keys in Enrai's OpenID Provider implementation. Instead of storing private keys in plaintext within Durable Objects, we employ a two-factor storage model that splits key material across two independent security boundaries.
+This document describes the **envelope encryption** approach for protecting JWT signing keys in Authrim's OpenID Provider implementation. Instead of storing private keys in plaintext within Durable Objects, we employ a two-factor storage model that splits key material across two independent security boundaries.
 
 ### Key Concepts
 
@@ -1160,7 +1160,7 @@ const iterations = 100000; // OWASP 2024 minimum
 - **Durable Objects**: https://developers.cloudflare.com/durable-objects/
 - **Workers Secrets**: https://developers.cloudflare.com/workers/configuration/secrets/
 
-### Related Enrai Documentation
+### Related Authrim Documentation
 
 - [Secret Management](../operations/secret-management.md)
 - [KeyManager Durable Object](../api/durable-objects/KeyManager.md)
