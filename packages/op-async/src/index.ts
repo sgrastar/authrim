@@ -12,6 +12,7 @@ import { cors } from 'hono/cors';
 import type { Env } from '@enrai/shared';
 import { deviceAuthorizationHandler } from './device-authorization';
 import { deviceVerifyHandler } from './device-verify';
+import { deviceVerifyApiHandler } from './device-verify-api';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -58,5 +59,13 @@ app.get('/device', deviceVerifyHandler);
  * Device verification submission (user approves/denies)
  */
 app.post('/device', deviceVerifyHandler);
+
+/**
+ * POST /api/device/verify
+ * Headless JSON API for device verification
+ *
+ * Used by SvelteKit UI and custom WebSDK implementations
+ */
+app.post('/api/device/verify', deviceVerifyApiHandler);
 
 export default app;

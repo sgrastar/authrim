@@ -166,15 +166,21 @@ Enrai leverages **Cloudflare Durable Objects** for stateful operations with stro
 - **Rate Limiting** (strict/moderate/lenient profiles)
 - **Enhanced Security** (CSP, CORS, HSTS, XSS protection)
 
-### 🎯 Next Phase (Phase 6)
+### ⏳ Phase 6 (In Progress)
 
 **Phase 6: Enterprise Features & Advanced Flows** (Jun-Oct 2026)
 
 **Goal:** Enterprise-grade authentication flows and integrations
 
-**Planned Features:**
-- 🏢 **Advanced OAuth Flows** - Hybrid, Device, JWT Bearer
-- 🔐 **CIBA & JWE** - Client Initiated Backchannel Authentication, JSON Web Encryption
+**✅ Completed Features (Nov 2025):**
+- ✅ **Device Flow (RFC 8628)** - Smart TV, CLI, IoT device authentication (70 tests passing)
+- ✅ **JWT Bearer Flow (RFC 7523)** - Service-to-service authentication without user interaction
+- ✅ **JWE (RFC 7516)** - JSON Web Encryption for ID Token and UserInfo responses
+- 📚 **Documentation** - Comprehensive Device Flow guide with examples and security considerations
+
+**🔄 Planned Features:**
+- 🏢 **Hybrid Flow** - OIDC Core 3.3 hybrid response types
+- 🔐 **CIBA** - Client Initiated Backchannel Authentication
 - 🌐 **Social Login** - Google, GitHub, Microsoft, Apple, Facebook, Twitter, LinkedIn (7+ providers)
 - 🔗 **Enterprise Integration** - SAML 2.0 bridge, LDAP/AD, SCIM 2.0 provisioning
 - 🎨 **Visual Flow Builder** - SimCity-inspired drag & drop authentication flow constructor
@@ -185,6 +191,8 @@ Enrai leverages **Cloudflare Durable Objects** for stateful operations with stro
 - Enables enterprise adoption with required authentication methods
 - Provides flexibility for complex authentication scenarios
 - Ensures regulatory compliance (GDPR, SOC 2, ISO 27001)
+
+[📖 Device Flow Documentation](./docs/features/device-flow.md)
 
 ### 🆕 Planned (Phase 7-9)
 

@@ -37,6 +37,7 @@
 		"@testing-library/jest-dom": "^6.9.1",
 		"@testing-library/svelte": "5.2.0-next.3",
 		"@testing-library/user-event": "^14.6.1",
+		"@types/qrcode": "^1.5.6",
 		"@unocss/reset": "^66.5.6",
 		"@vitest/ui": "^4.0.10",
 		"eslint": "^9.39.1",
@@ -47,14 +48,15 @@
 		"prettier-plugin-svelte": "^3.4.0",
 		"svelte": "^5.41.0",
 		"svelte-check": "^4.3.3",
+		"typesafe-i18n": "^5.26.2",
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.46.4",
-		"typesafe-i18n": "^5.26.2",
 		"unocss": "^66.5.6",
 		"vite": "^7.1.10",
 		"vitest": "^4.0.8"
 	},
 	"dependencies": {
-		"@simplewebauthn/browser": "^13.0.0"
+		"@simplewebauthn/browser": "^13.0.0",
+		"qrcode": "^1.5.4"
 	}
 }

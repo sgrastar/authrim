@@ -84,7 +84,9 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     }
 
     // Build verification URIs
-    const baseUri = `${c.env.ISSUER_URL}/device`;
+    // Use UI_BASE_URL if available (for SvelteKit UI), otherwise fall back to ISSUER_URL
+    const uiBaseUrl = c.env.UI_BASE_URL || c.env.ISSUER_URL;
+    const baseUri = `${uiBaseUrl}/device`;
     const verificationUri = baseUri;
     const verificationUriComplete = getVerificationUriComplete(baseUri, userCode);
 

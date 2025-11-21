@@ -17,7 +17,8 @@
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:maku.blog)",
       "Bash(src/routes/admin/clients/[id]/+page.ts)",
-      "Bash(src/routes/admin/users/[id]/+page.ts)"
+      "Bash(src/routes/admin/users/[id]/+page.ts)",
+      "Bash(npx vitest:*)"
     ],
     "deny": [],
     "ask": []
