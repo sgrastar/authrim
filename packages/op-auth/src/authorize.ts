@@ -9,7 +9,15 @@ import {
   validateNonce,
   getClient,
 } from '@authrim/shared';
-import { generateSecureRandomString, parseToken, verifyToken } from '@authrim/shared';
+import {
+  generateSecureRandomString,
+  parseToken,
+  verifyToken,
+  createAccessToken,
+  createIDToken,
+  calculateCHash,
+  calculateAtHash,
+} from '@authrim/shared';
 import { importJWK } from 'jose';
 
 /**
@@ -611,10 +619,22 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     return redirectWithError(c, validRedirectUri, 'invalid_request', stateValidation.error, state);
   }
 
-  // Validate nonce (optional)
+  // Validate nonce (optional for code flow, required for implicit/hybrid flows)
   const nonceValidation = validateNonce(nonce);
   if (!nonceValidation.valid) {
     return redirectWithError(c, validRedirectUri, 'invalid_request', nonceValidation.error, state);
+  }
+
+  // Per OIDC Core 3.2.2.1 and 3.3.2.11: nonce is REQUIRED for Implicit and Hybrid Flows
+  const requiresNonce = response_type !== 'code';
+  if (requiresNonce && !nonce) {
+    return redirectWithError(
+      c,
+      validRedirectUri,
+      'invalid_request',
+      'nonce is required for implicit and hybrid flows',
+      state
+    );
   }
 
   // Validate response_mode (optional)
@@ -632,8 +652,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Validate response_mode compatibility with response_type
-    // For response_type=code, only query and form_post are appropriate
-    // fragment is typically used for implicit/hybrid flows
+    // Per OIDC Core 3.3.2.5: For response_type=code only, fragment is not allowed
+    // For hybrid flows (code + token/id_token), fragment is required by default
     if (response_type === 'code' && response_mode === 'fragment') {
       return redirectWithError(
         c,
@@ -1009,10 +1029,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
-  // Generate authorization code (cryptographically secure random string, base64url format, ~128 characters)
-  // Using 96 bytes results in approximately 128 characters in base64url encoding
-  const code = generateSecureRandomString(96);
-
   // If no session exists and prompt is not 'none', redirect to login screen
   if (!sessionUserId && !prompt?.includes('none')) {
     // Store authorization request parameters in ChallengeStore
@@ -1237,36 +1253,60 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Type narrowing: scope is guaranteed to be a string at this point
   const validScope: string = scope as string;
 
-  // Store authorization code using AuthorizationCodeStore Durable Object
-  // This provides strong consistency guarantees and replay attack prevention
-  try {
-    const authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
-    const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
+  // Type narrowing: response_type is guaranteed to be defined (validated earlier)
+  const validResponseType: string = response_type!;
 
-    const storeResponse = await authCodeStore.fetch(
-      new Request('https://auth-code-store/code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code,
-          clientId: validClientId,
-          redirectUri: validRedirectUri,
-          userId: sub,
-          scope: validScope,
-          codeChallenge: code_challenge,
-          codeChallengeMethod: code_challenge_method,
-          nonce,
-          state,
-          claims,
-          authTime: currentAuthTime,
-          acr: selectedAcr,
-        }),
-      })
-    );
+  // Parse response_type to determine what to return
+  // Per OIDC Core 3.3: Hybrid Flow supports combinations of code, id_token, and token
+  const responseTypes = validResponseType.split(' ');
+  const includesCode = responseTypes.includes('code');
+  const includesIdToken = responseTypes.includes('id_token');
+  const includesToken = responseTypes.includes('token');
 
-    if (!storeResponse.ok) {
-      const errorData = await storeResponse.json();
-      console.error('Failed to store authorization code:', errorData);
+  // Generate authorization code if needed (for code flow and hybrid flows)
+  let code: string | undefined;
+  if (includesCode) {
+    code = generateSecureRandomString(96); // ~128 base64url chars
+
+    // Store authorization code using AuthorizationCodeStore Durable Object
+    try {
+      const authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
+      const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
+
+      const storeResponse = await authCodeStore.fetch(
+        new Request('https://auth-code-store/code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code,
+            clientId: validClientId,
+            redirectUri: validRedirectUri,
+            userId: sub,
+            scope: validScope,
+            codeChallenge: code_challenge,
+            codeChallengeMethod: code_challenge_method,
+            nonce,
+            state,
+            claims,
+            authTime: currentAuthTime,
+            acr: selectedAcr,
+          }),
+        })
+      );
+
+      if (!storeResponse.ok) {
+        const errorData = await storeResponse.json();
+        console.error('Failed to store authorization code:', errorData);
+        return redirectWithError(
+          c,
+          validRedirectUri,
+          'server_error',
+          'Failed to process authorization request',
+          state
+        );
+      }
+    } catch (error) {
+      console.error('AuthCodeStore DO error:', error);
       return redirectWithError(
         c,
         validRedirectUri,
@@ -1275,35 +1315,169 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         state
       );
     }
-  } catch (error) {
-    console.error('AuthCodeStore DO error:', error);
-    return redirectWithError(
-      c,
-      validRedirectUri,
-      'server_error',
-      'Failed to process authorization request',
-      state
-    );
   }
 
-  // Determine response mode (default is 'query' for response_type=code)
-  const effectiveResponseMode = response_mode || 'query';
+  // Generate access token if needed (for implicit and hybrid flows)
+  let accessToken: string | undefined;
+  let accessTokenJti: string | undefined;
+  if (includesToken) {
+    try {
+      // Get issuer from environment
+      const issuer = c.env.ISSUER_URL;
+
+      // Generate access token
+      // Get signing key from KeyManager
+      const keyManagerId = c.env.KEY_MANAGER.idFromName('global');
+      const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
+      const keysResponse = await keyManager.fetch(new Request('https://key-manager/keys'));
+      const keysData = (await keysResponse.json()) as { keys: Array<{ kid: string; alg: string; privateKey: any }> };
+      const signingKey = keysData.keys[0];
+
+      if (!signingKey || !signingKey.privateKey) {
+        console.error('No signing key available');
+        return redirectWithError(
+          c,
+          validRedirectUri,
+          'server_error',
+          'Failed to generate access token',
+          state
+        );
+      }
+
+      const privateKey = (await importJWK(signingKey.privateKey, signingKey.alg)) as CryptoKey;
+      const tokenResult = await createAccessToken(
+        {
+          iss: issuer,
+          sub,
+          aud: validClientId,
+          scope: validScope,
+          client_id: validClientId,
+          claims,
+        },
+        privateKey,
+        signingKey.kid,
+        3600 // 1 hour
+      );
+
+      accessToken = tokenResult.token;
+      accessTokenJti = tokenResult.jti;
+
+      console.log(`[HYBRID/IMPLICIT] Generated access_token for sub=${sub}, client_id=${validClientId}`);
+    } catch (error) {
+      console.error('Failed to generate access token:', error);
+      return redirectWithError(
+        c,
+        validRedirectUri,
+        'server_error',
+        'Failed to generate access token',
+        state
+      );
+    }
+  }
+
+  // Generate ID token if needed (for implicit and hybrid flows)
+  let idToken: string | undefined;
+  if (includesIdToken) {
+    try {
+      // Get issuer from environment
+      const issuer = c.env.ISSUER_URL;
+
+      // Get signing key from KeyManager
+      const keyManagerId = c.env.KEY_MANAGER.idFromName('global');
+      const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
+      const keysResponse = await keyManager.fetch(new Request('https://key-manager/keys'));
+      const keysData = (await keysResponse.json()) as { keys: Array<{ kid: string; alg: string; privateKey: any }> };
+      const signingKey = keysData.keys[0];
+
+      if (!signingKey || !signingKey.privateKey) {
+        console.error('No signing key available');
+        return redirectWithError(
+          c,
+          validRedirectUri,
+          'server_error',
+          'Failed to generate ID token',
+          state
+        );
+      }
+
+      const privateKey = (await importJWK(signingKey.privateKey, signingKey.alg)) as CryptoKey;
+
+      // Calculate c_hash if code is present (for hybrid flows)
+      // Per OIDC Core 3.3.2.11
+      let cHash: string | undefined;
+      if (code) {
+        cHash = await calculateCHash(code, 'SHA-256');
+      }
+
+      // Calculate at_hash if access token is present
+      // Per OIDC Core 3.2.2.9 and 3.3.2.11
+      let atHash: string | undefined;
+      if (accessToken) {
+        atHash = await calculateAtHash(accessToken, 'SHA-256');
+      }
+
+      // Create ID token with appropriate claims
+      idToken = await createIDToken(
+        {
+          iss: issuer,
+          sub,
+          aud: validClientId,
+          auth_time: currentAuthTime,
+          nonce, // Include nonce (required for implicit/hybrid flows)
+          c_hash: cHash,
+          at_hash: atHash,
+        },
+        privateKey,
+        signingKey.kid,
+        3600 // 1 hour
+      );
+
+      console.log(`[HYBRID/IMPLICIT] Generated id_token for sub=${sub}, client_id=${validClientId}, c_hash=${cHash}, at_hash=${atHash}`);
+    } catch (error) {
+      console.error('Failed to generate ID token:', error);
+      return redirectWithError(
+        c,
+        validRedirectUri,
+        'server_error',
+        'Failed to generate ID token',
+        state
+      );
+    }
+  }
+
+  // Determine response mode
+  // Per OIDC Core 3.3.2.5: Default response_mode for hybrid flows is 'fragment'
+  // For response_type=code only, default is 'query'
+  let effectiveResponseMode = response_mode;
+  if (!effectiveResponseMode) {
+    if (includesIdToken || includesToken) {
+      // Implicit or hybrid flow: default to fragment
+      effectiveResponseMode = 'fragment';
+    } else {
+      // Pure code flow: default to query
+      effectiveResponseMode = 'query';
+    }
+  }
+
+  // Build response parameters
+  const responseParams: Record<string, string> = {};
+  if (code) responseParams.code = code;
+  if (accessToken) responseParams.access_token = accessToken;
+  if (accessToken) responseParams.token_type = 'Bearer';
+  if (accessToken) responseParams.expires_in = '3600';
+  if (idToken) responseParams.id_token = idToken;
+  if (state) responseParams.state = state;
 
   // Handle response based on response_mode
   if (effectiveResponseMode === 'form_post') {
     // OAuth 2.0 Form Post Response Mode
-    // Return HTML page with auto-submitting form
-    return createFormPostResponse(c, validRedirectUri, code, state);
+    return createFormPostResponse(c, validRedirectUri, responseParams);
+  } else if (effectiveResponseMode === 'fragment') {
+    // Fragment encoding (for implicit and hybrid flows)
+    return createFragmentResponse(c, validRedirectUri, responseParams);
   } else {
-    // Default: query response mode (redirect with query parameters)
-    const redirectUrl = new URL(validRedirectUri);
-    redirectUrl.searchParams.set('code', code);
-    if (state) {
-      redirectUrl.searchParams.set('state', state);
-    }
-
-    // Redirect to client's redirect_uri
-    return c.redirect(redirectUrl.toString(), 302);
+    // Query mode (for code-only flow)
+    return createQueryResponse(c, validRedirectUri, responseParams);
   }
 }
 
@@ -1338,20 +1512,57 @@ function redirectWithError(
  * Returns an HTML page with an auto-submitting form that POSTs the
  * authorization response parameters to the client's redirect_uri
  */
+/**
+ * Create a query-encoded redirect response
+ * Used for response_type=code (pure authorization code flow)
+ */
+function createQueryResponse(
+  c: Context<{ Bindings: Env }>,
+  redirectUri: string,
+  params: Record<string, string>
+): Response {
+  const url = new URL(redirectUri);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+  return c.redirect(url.toString(), 302);
+}
+
+/**
+ * Create a fragment-encoded redirect response
+ * Used for implicit and hybrid flows per OIDC Core 3.3.2.5
+ */
+function createFragmentResponse(
+  c: Context<{ Bindings: Env }>,
+  redirectUri: string,
+  params: Record<string, string>
+): Response {
+  const url = new URL(redirectUri);
+  // Build fragment from parameters
+  const fragmentParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    fragmentParams.set(key, value);
+  }
+  url.hash = fragmentParams.toString();
+  return c.redirect(url.toString(), 302);
+}
+
+/**
+ * Create a form_post response
+ * Used when response_mode=form_post per OAuth 2.0 Form Post Response Mode
+ */
 function createFormPostResponse(
   c: Context<{ Bindings: Env }>,
   redirectUri: string,
-  code: string,
-  state?: string
+  params: Record<string, string>
 ): Response {
   // Generate nonce for CSP (Content Security Policy)
   const nonce = crypto.randomUUID();
 
-  // Build form inputs
-  const inputs: string[] = [`<input type="hidden" name="code" value="${escapeHtml(code)}" />`];
-
-  if (state) {
-    inputs.push(`<input type="hidden" name="state" value="${escapeHtml(state)}" />`);
+  // Build form inputs from all parameters
+  const inputs: string[] = [];
+  for (const [key, value] of Object.entries(params)) {
+    inputs.push(`<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}" />`);
   }
 
   // Generate HTML page with auto-submitting form
