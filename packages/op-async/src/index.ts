@@ -15,6 +15,11 @@ import { deviceAuthorizationHandler } from './device-authorization';
 import { deviceVerifyHandler } from './device-verify';
 import { deviceVerifyApiHandler } from './device-verify-api';
 import { cibaAuthorizationHandler } from './ciba-authorization';
+import { cibaPendingHandler } from './ciba-pending';
+import { cibaDetailsHandler } from './ciba-details';
+import { cibaApproveHandler } from './ciba-approve';
+import { cibaDenyHandler } from './ciba-deny';
+import { cibaTestPageHandler } from './ciba-test-page';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -88,5 +93,45 @@ app.post('/api/device/verify', deviceVerifyApiHandler);
  *   }
  */
 app.post('/bc-authorize', cibaAuthorizationHandler);
+
+/**
+ * GET /api/ciba/pending
+ * List pending CIBA authentication requests for a user
+ *
+ * Headless JSON API for CIBA request management
+ */
+app.get('/api/ciba/pending', cibaPendingHandler);
+
+/**
+ * GET /api/ciba/request/:auth_req_id
+ * Get details of a specific CIBA request
+ *
+ * Headless JSON API for CIBA request details
+ */
+app.get('/api/ciba/request/:auth_req_id', cibaDetailsHandler);
+
+/**
+ * POST /api/ciba/approve
+ * Approve a CIBA authentication request
+ *
+ * Headless JSON API for CIBA request approval
+ */
+app.post('/api/ciba/approve', cibaApproveHandler);
+
+/**
+ * POST /api/ciba/deny
+ * Deny a CIBA authentication request
+ *
+ * Headless JSON API for CIBA request denial
+ */
+app.post('/api/ciba/deny', cibaDenyHandler);
+
+/**
+ * GET /ciba/test
+ * Simple test page for CIBA flow
+ *
+ * HTML page for testing CIBA flow end-to-end
+ */
+app.get('/ciba/test', cibaTestPageHandler);
 
 export default app;
