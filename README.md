@@ -568,7 +568,7 @@ Built with amazing open source tools:
 
 ## 📄 License
 
-Apache License 2.0 © 2025 [sgrastar](https://github.com/sgrastar)
+Apache License 2.0 © 2025 [Yuta Hoshina](https://github.com/sgrastar)
 
 See [LICENSE](./LICENSE) for details.
 
@@ -579,7 +579,7 @@ See [LICENSE](./LICENSE) for details.
 - 💼 **GitHub**: [sgrastar/authrim](https://github.com/sgrastar/authrim)
 - 🐛 **Issues**: [Report bugs](https://github.com/sgrastar/authrim/issues)
 - 💡 **Discussions**: [Feature requests](https://github.com/sgrastar/authrim/discussions)
-- 📧 **Email**: hello@authrim.org
+- 📧 **Email**: yuta@authrim.com
 
 ---
 
