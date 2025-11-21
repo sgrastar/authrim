@@ -17,8 +17,10 @@ import {
   createIDToken,
   calculateCHash,
   calculateAtHash,
+  getTokenFormat,
+  encryptJWT,
 } from '@authrim/shared';
-import { importJWK } from 'jose';
+import { SignJWT, importJWK, importPKCS8, compactDecrypt } from 'jose';
 
 /**
  * Authorization Endpoint Handler
@@ -278,83 +280,220 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // RFC 9101 (JAR): If request parameter is present, parse JWT request object
   if (request) {
     try {
-      // Parse JWT header to check algorithm
-      const parts = request.split('.');
-      if (parts.length !== 3) {
+      let requestObjectClaims: Record<string, unknown> | undefined;
+
+      // Check if request is JWE (encrypted) or JWT (signed)
+      let tokenFormat = getTokenFormat(request);
+
+      if (tokenFormat === 'unknown') {
         return c.json(
           {
             error: 'invalid_request_object',
-            error_description: 'Request object must be a valid JWT',
+            error_description: 'Request object must be a valid JWT or JWE',
           },
           400
         );
       }
 
-      // Decode header (base64url to JSON)
-      const base64url = parts[0];
-      const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
-      const header = JSON.parse(atob(base64));
-      const alg = header.alg;
-
-      // Parse request object (unsigned or signed)
-      let requestObjectClaims: Record<string, unknown>;
-
-      if (alg === 'none') {
-        // Unsigned request object - just parse without verification
-        requestObjectClaims = parseToken(request) as Record<string, unknown>;
-      } else {
-        // Signed request object - verify signature
-        // Load client's public key from D1/KV (for client-signed requests)
-        // For now, accept unsigned only for conformance testing
-        // Production should verify signatures
-        const publicJwkJson = c.env.PUBLIC_JWK_JSON;
-        if (!publicJwkJson) {
+      // Step 1: Decrypt JWE if needed (RFC 9101 Section 6.1)
+      let jwtRequest = request;
+      if (tokenFormat === 'jwe') {
+        // JWE: Decrypt using server's private key
+        const privateKeyPem = c.env.PRIVATE_KEY_PEM;
+        if (!privateKeyPem) {
           return c.json(
             {
               error: 'server_error',
-              error_description: 'Server configuration error',
+              error_description: 'Server private key not configured',
             },
             500
           );
         }
 
-        let publicJwk;
+        const privateKey = await importPKCS8(privateKeyPem, 'RS256');
+
         try {
-          publicJwk = JSON.parse(publicJwkJson);
-        } catch {
+          // Decrypt JWE to get inner JWT/payload
+          const { plaintext } = await compactDecrypt(request, privateKey);
+          const decoder = new TextDecoder();
+          const decrypted = decoder.decode(plaintext);
+
+          // Check if decrypted content is a JWT (needs verification) or direct JSON payload
+          if (decrypted.startsWith('{')) {
+            // Direct JSON payload
+            requestObjectClaims = JSON.parse(decrypted) as Record<string, unknown>;
+          } else {
+            // Nested JWT - need to verify signature
+            jwtRequest = decrypted;
+            tokenFormat = getTokenFormat(jwtRequest);
+            // Continue to JWT verification below
+          }
+        } catch (decryptError) {
+          console.error('Failed to decrypt JWE request object:', decryptError);
           return c.json(
             {
-              error: 'server_error',
-              error_description: 'Server configuration error',
+              error: 'invalid_request_object',
+              error_description: 'Failed to decrypt request object',
             },
-            500
+            400
           );
         }
+      }
 
-        const publicKey = await importJWK(publicJwk, alg) as CryptoKey;
-        const verified = await verifyToken(request, publicKey, c.env.ISSUER_URL, client_id || '');
-        requestObjectClaims = verified.payload as Record<string, unknown>;
+      // Step 2: Verify JWT signature (if not already decrypted to payload)
+      if (tokenFormat === 'jwt') {
+        // Parse JWT header to check algorithm
+        const parts = jwtRequest.split('.');
+        const base64url = parts[0];
+        const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+        const header = JSON.parse(atob(base64));
+        const alg = header.alg;
+
+        if (alg === 'none') {
+          // Unsigned request object - just parse without verification
+          // Note: This should only be allowed in development/testing
+          requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
+        } else {
+          // Signed request object - verify using client's public key
+          // Get client metadata to retrieve jwks or jwks_uri
+          if (!client_id) {
+            return c.json(
+              {
+                error: 'invalid_request',
+                error_description: 'client_id is required when using signed request objects',
+              },
+              400
+            );
+          }
+
+          const clientResult = await getClient(c.env, client_id);
+          if (!clientResult) {
+            return c.json(
+              {
+                error: 'invalid_client',
+                error_description: 'Client not found',
+              },
+              401
+            );
+          }
+
+          let publicKey: CryptoKey;
+
+          // Try to get public key from client's jwks
+          if (clientResult.jwks && typeof clientResult.jwks === 'object' && clientResult.jwks !== null && 'keys' in clientResult.jwks && Array.isArray(clientResult.jwks.keys)) {
+            // Find a suitable key for signature verification
+            const signingKey = (clientResult.jwks.keys as any[]).find((key: any) => {
+              return key.use === 'sig' || !key.use; // Accept keys with use=sig or no use specified
+            });
+
+            if (!signingKey) {
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description: 'No suitable signing key found in client jwks',
+                },
+                400
+              );
+            }
+
+            publicKey = await importJWK(signingKey, alg) as CryptoKey;
+          } else if (clientResult.jwks_uri && typeof clientResult.jwks_uri === 'string') {
+            // Fetch JWKS from jwks_uri
+            try {
+              const jwksResponse = await fetch(clientResult.jwks_uri);
+              if (!jwksResponse.ok) {
+                return c.json(
+                  {
+                    error: 'invalid_request_object',
+                    error_description: 'Failed to fetch client jwks_uri',
+                  },
+                  400
+                );
+              }
+
+              const jwks = await jwksResponse.json() as { keys: any[] };
+              const signingKey = jwks.keys.find((key: any) => {
+                return key.use === 'sig' || !key.use;
+              });
+
+              if (!signingKey) {
+                return c.json(
+                  {
+                    error: 'invalid_request_object',
+                    error_description: 'No suitable signing key found in client jwks_uri',
+                  },
+                  400
+                );
+              }
+
+              publicKey = await importJWK(signingKey, alg) as CryptoKey;
+            } catch (fetchError) {
+              console.error('Failed to fetch jwks_uri:', fetchError);
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description: 'Failed to fetch client jwks_uri',
+                },
+                400
+              );
+            }
+          } else {
+            // Fallback: Use server's public key (for backward compatibility)
+            // This should be removed in production
+            const publicJwkJson = c.env.PUBLIC_JWK_JSON;
+            if (!publicJwkJson) {
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description: 'No client public key available for verification',
+                },
+                400
+              );
+            }
+
+            let publicJwk;
+            try {
+              publicJwk = JSON.parse(publicJwkJson);
+            } catch {
+              return c.json(
+                {
+                  error: 'server_error',
+                  error_description: 'Server configuration error',
+                },
+                500
+              );
+            }
+
+            publicKey = await importJWK(publicJwk, alg) as CryptoKey;
+          }
+
+          // Verify the signature
+          const verified = await verifyToken(jwtRequest, publicKey, c.env.ISSUER_URL, client_id);
+          requestObjectClaims = verified as Record<string, unknown>;
+        }
       }
 
       // Override parameters with those from request object
       // Per OIDC Core 6.1: request object parameters take precedence
-      if (requestObjectClaims.response_type) response_type = requestObjectClaims.response_type as string;
-      if (requestObjectClaims.client_id) client_id = requestObjectClaims.client_id as string;
-      if (requestObjectClaims.redirect_uri) redirect_uri = requestObjectClaims.redirect_uri as string;
-      if (requestObjectClaims.scope) scope = requestObjectClaims.scope as string;
-      if (requestObjectClaims.state) state = requestObjectClaims.state as string;
-      if (requestObjectClaims.nonce) nonce = requestObjectClaims.nonce as string;
-      if (requestObjectClaims.code_challenge) code_challenge = requestObjectClaims.code_challenge as string;
-      if (requestObjectClaims.code_challenge_method) code_challenge_method = requestObjectClaims.code_challenge_method as string;
-      if (requestObjectClaims.claims) claims = requestObjectClaims.claims as string;
-      if (requestObjectClaims.response_mode) response_mode = requestObjectClaims.response_mode as string;
-      if (requestObjectClaims.prompt) prompt = requestObjectClaims.prompt as string;
-      if (requestObjectClaims.max_age) max_age = requestObjectClaims.max_age as string;
-      if (requestObjectClaims.id_token_hint) id_token_hint = requestObjectClaims.id_token_hint as string;
-      if (requestObjectClaims.acr_values) acr_values = requestObjectClaims.acr_values as string;
-      if (requestObjectClaims.display) display = requestObjectClaims.display as string;
-      if (requestObjectClaims.ui_locales) ui_locales = requestObjectClaims.ui_locales as string;
-      if (requestObjectClaims.login_hint) login_hint = requestObjectClaims.login_hint as string;
+      if (requestObjectClaims) {
+        if (requestObjectClaims.response_type) response_type = requestObjectClaims.response_type as string;
+        if (requestObjectClaims.client_id) client_id = requestObjectClaims.client_id as string;
+        if (requestObjectClaims.redirect_uri) redirect_uri = requestObjectClaims.redirect_uri as string;
+        if (requestObjectClaims.scope) scope = requestObjectClaims.scope as string;
+        if (requestObjectClaims.state) state = requestObjectClaims.state as string;
+        if (requestObjectClaims.nonce) nonce = requestObjectClaims.nonce as string;
+        if (requestObjectClaims.code_challenge) code_challenge = requestObjectClaims.code_challenge as string;
+        if (requestObjectClaims.code_challenge_method) code_challenge_method = requestObjectClaims.code_challenge_method as string;
+        if (requestObjectClaims.claims) claims = requestObjectClaims.claims as string;
+        if (requestObjectClaims.response_mode) response_mode = requestObjectClaims.response_mode as string;
+        if (requestObjectClaims.prompt) prompt = requestObjectClaims.prompt as string;
+        if (requestObjectClaims.max_age) max_age = requestObjectClaims.max_age as string;
+        if (requestObjectClaims.id_token_hint) id_token_hint = requestObjectClaims.id_token_hint as string;
+        if (requestObjectClaims.acr_values) acr_values = requestObjectClaims.acr_values as string;
+        if (requestObjectClaims.display) display = requestObjectClaims.display as string;
+        if (requestObjectClaims.ui_locales) ui_locales = requestObjectClaims.ui_locales as string;
+        if (requestObjectClaims.login_hint) login_hint = requestObjectClaims.login_hint as string;
+      }
     } catch (error) {
       console.error('Failed to parse request object:', error);
       return c.json(
@@ -638,9 +777,17 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Validate response_mode (optional)
-  // Supported modes: query, fragment, form_post
+  // Supported modes: query, fragment, form_post, and their JWT variants (JARM)
   if (response_mode) {
-    const supportedResponseModes = ['query', 'fragment', 'form_post'];
+    const supportedResponseModes = [
+      'query',
+      'fragment',
+      'form_post',
+      'query.jwt',
+      'fragment.jwt',
+      'form_post.jwt',
+      'jwt', // Generic JWT mode (defaults to fragment for implicit/hybrid, query for code)
+    ];
     if (!supportedResponseModes.includes(response_mode)) {
       return redirectWithError(
         c,
@@ -651,10 +798,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // Extract base mode and JWT flag
+    const baseMode = response_mode.replace('.jwt', '');
+    const isJARM = response_mode.includes('.jwt') || response_mode === 'jwt';
+
     // Validate response_mode compatibility with response_type
     // Per OIDC Core 3.3.2.5: For response_type=code only, fragment is not allowed
     // For hybrid flows (code + token/id_token), fragment is required by default
-    if (response_type === 'code' && response_mode === 'fragment') {
+    if (response_type === 'code' && baseMode === 'fragment') {
       return redirectWithError(
         c,
         validRedirectUri,
@@ -1468,7 +1619,28 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (idToken) responseParams.id_token = idToken;
   if (state) responseParams.state = state;
 
-  // Handle response based on response_mode
+  // Check if JARM (JWT-secured Authorization Response Mode) is requested
+  const isJARM = effectiveResponseMode.includes('.jwt') || effectiveResponseMode === 'jwt';
+
+  if (isJARM) {
+    // JARM: Create JWT-secured response
+    // Determine base mode for JWT response
+    let baseMode = effectiveResponseMode.replace('.jwt', '');
+    if (effectiveResponseMode === 'jwt') {
+      // Generic 'jwt' mode: use default based on flow
+      baseMode = (includesIdToken || includesToken) ? 'fragment' : 'query';
+    }
+
+    return await createJARMResponse(
+      c,
+      validRedirectUri,
+      responseParams,
+      baseMode,
+      validClientId
+    );
+  }
+
+  // Handle response based on response_mode (traditional non-JWT modes)
   if (effectiveResponseMode === 'form_post') {
     // OAuth 2.0 Form Post Response Mode
     return createFormPostResponse(c, validRedirectUri, responseParams);
@@ -1628,6 +1800,144 @@ function createFormPostResponse(
   return c.html(html, 200, {
     'Content-Security-Policy': `script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}';`,
   });
+}
+
+/**
+ * Create JARM (JWT-Secured Authorization Response Mode) response
+ * https://openid.net/specs/oauth-v2-jarm.html
+ *
+ * @param c - Hono context
+ * @param redirectUri - Client redirect URI
+ * @param params - Authorization response parameters
+ * @param baseMode - Base response mode (query, fragment, or form_post)
+ * @param clientId - Client identifier
+ * @returns Response with JWT-secured authorization response
+ */
+async function createJARMResponse(
+  c: Context<{ Bindings: Env }>,
+  redirectUri: string,
+  params: Record<string, string>,
+  baseMode: string,
+  clientId: string
+): Promise<Response> {
+  try {
+    // Get client metadata to check for encryption requirements
+    const client = await getClient(c.env, clientId);
+    if (!client) {
+      throw new Error('Client not found');
+    }
+
+    // Build JWT payload from response parameters
+    const now = Math.floor(Date.now() / 1000);
+    const payload: Record<string, unknown> = {
+      iss: c.env.ISSUER_URL, // Issuer
+      aud: clientId, // Audience (client_id)
+      exp: now + 600, // Expires in 10 minutes
+      iat: now, // Issued at
+      ...params, // Include all response parameters
+    };
+
+    // Get server's signing key
+    const privateKeyPem = c.env.PRIVATE_KEY_PEM;
+    if (!privateKeyPem) {
+      throw new Error('Server private key not configured');
+    }
+
+    const privateKey = await importPKCS8(privateKeyPem, 'RS256');
+
+    // Get key ID from KV or use default
+    let kid = 'default';
+    try {
+      if (c.env.KV) {
+        const signingKey = await c.env.KV.get('keys:signing', 'json') as { kid: string } | null;
+        if (signingKey?.kid) {
+          kid = signingKey.kid;
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to get signing key ID, using default:', error);
+    }
+
+    // Sign the JWT
+    const jwt = await new SignJWT(payload)
+      .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+      .sign(privateKey);
+
+    let responseToken = jwt;
+
+    // Check if client requested encryption
+    if (client.authorization_encrypted_response_alg && client.authorization_encrypted_response_enc) {
+      // Encrypt the JWT using client's public key
+      let clientPublicKeyJWK: any;
+
+      if (client.jwks && typeof client.jwks === 'object' && client.jwks !== null && 'keys' in client.jwks && Array.isArray(client.jwks.keys)) {
+        // Find encryption key
+        const encKey = (client.jwks.keys as any[]).find((key: any) => {
+          return key.use === 'enc' || !key.use;
+        });
+
+        if (!encKey) {
+          throw new Error('No suitable encryption key found in client jwks');
+        }
+
+        clientPublicKeyJWK = encKey;
+      } else if (client.jwks_uri && typeof client.jwks_uri === 'string') {
+        // Fetch JWKS from jwks_uri
+        const jwksResponse = await fetch(client.jwks_uri);
+        if (!jwksResponse.ok) {
+          throw new Error('Failed to fetch client jwks_uri');
+        }
+
+        const jwks = await jwksResponse.json() as { keys: any[] };
+        const encKey = jwks.keys.find((key: any) => {
+          return key.use === 'enc' || !key.use;
+        });
+
+        if (!encKey) {
+          throw new Error('No suitable encryption key found in client jwks_uri');
+        }
+
+        clientPublicKeyJWK = encKey;
+      } else {
+        throw new Error('Client requested encryption but no public key available');
+      }
+
+      // Encrypt the signed JWT (using jwe.ts encryptJWT)
+      responseToken = await encryptJWT(
+        jwt, // The signed JWT string
+        clientPublicKeyJWK, // JWK format
+        {
+          alg: client.authorization_encrypted_response_alg as any,
+          enc: client.authorization_encrypted_response_enc as any,
+          cty: 'JWT',
+        }
+      );
+    }
+
+    // Build response with single 'response' parameter containing the JWT
+    const jarmParams: Record<string, string> = {
+      response: responseToken,
+    };
+
+    // Send response using base mode
+    if (baseMode === 'form_post') {
+      return createFormPostResponse(c, redirectUri, jarmParams);
+    } else if (baseMode === 'fragment') {
+      return createFragmentResponse(c, redirectUri, jarmParams);
+    } else {
+      return createQueryResponse(c, redirectUri, jarmParams);
+    }
+  } catch (error) {
+    console.error('Failed to create JARM response:', error);
+    // Fall back to error redirect
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create JWT-secured authorization response',
+      },
+      500
+    );
+  }
 }
 
 /**

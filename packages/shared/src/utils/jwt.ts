@@ -207,6 +207,22 @@ export async function calculateCHash(
 }
 
 /**
+ * Check if a token string is JWE format (5 parts) or JWT format (3 parts)
+ *
+ * @param token - Token string to check
+ * @returns 'jwe' | 'jwt' | 'unknown'
+ */
+export function getTokenFormat(token: string): 'jwe' | 'jwt' | 'unknown' {
+  const parts = token.split('.');
+  if (parts.length === 5) {
+    return 'jwe';
+  } else if (parts.length === 3) {
+    return 'jwt';
+  }
+  return 'unknown';
+}
+
+/**
  * Refresh Token claims interface
  */
 export interface RefreshTokenClaims extends JWTPayload {
