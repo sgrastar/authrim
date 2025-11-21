@@ -76,6 +76,14 @@ interface CustomField {
 	value: unknown;
 }
 
+interface ScimToken {
+	tokenHash: string;
+	description: string;
+	createdAt: string;
+	expiresAt: string | null;
+	enabled: boolean;
+}
+
 interface APIError {
 	error: string;
 	error_description: string;
@@ -507,6 +515,52 @@ export const deviceFlowAPI = {
 				user_code: userCode,
 				approve
 			})
+		});
+	}
+};
+
+/**
+ * SCIM Token Management API
+ * For managing SCIM 2.0 provisioning tokens
+ */
+export const adminScimTokensAPI = {
+	/**
+	 * List all SCIM tokens
+	 */
+	async list() {
+		return apiFetch<{
+			tokens: ScimToken[];
+			total: number;
+		}>('/api/admin/scim-tokens');
+	},
+
+	/**
+	 * Create a new SCIM token
+	 */
+	async create(description?: string, expiresInDays?: number) {
+		return apiFetch<{
+			token: string;
+			tokenHash: string;
+			description: string;
+			expiresInDays: number;
+			message: string;
+		}>('/api/admin/scim-tokens', {
+			method: 'POST',
+			body: JSON.stringify({
+				description,
+				expiresInDays
+			})
+		});
+	},
+
+	/**
+	 * Revoke a SCIM token
+	 */
+	async revoke(tokenHash: string) {
+		return apiFetch<{
+			message: string;
+		}>(`/api/admin/scim-tokens/${tokenHash}`, {
+			method: 'DELETE'
 		});
 	}
 };
