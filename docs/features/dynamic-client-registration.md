@@ -4,7 +4,7 @@
 
 **OpenID Connect Dynamic Client Registration 1.0**
 
-Hibana implements Dynamic Client Registration (DCR), allowing OAuth 2.0 and OpenID Connect clients to register dynamically with the authorization server without requiring manual pre-registration or administrator intervention.
+Authrim implements Dynamic Client Registration (DCR), allowing OAuth 2.0 and OpenID Connect clients to register dynamically with the authorization server without requiring manual pre-registration or administrator intervention.
 
 ## Specification
 
@@ -216,7 +216,7 @@ Plus any optional fields that were provided in the request.
 #### Request
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": ["https://myapp.example.com/callback"]
@@ -245,7 +245,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/register \
 ### Example 2: Full Registration with Optional Fields
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": [
@@ -271,7 +271,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/register \
 ### Example 3: Native Mobile App Registration
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": ["myapp://callback"],
@@ -289,7 +289,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/register \
 ### Example 4: Development with localhost
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": ["http://localhost:3000/callback"],
@@ -304,7 +304,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/register \
 ### Example 5: Pairwise Subject Type
 
 ```bash
-curl -X POST https://hibana.sgrastar.workers.dev/register \
+curl -X POST https://authrim.sgrastar.workers.dev/register \
   -H "Content-Type: application/json" \
   -d '{
     "redirect_uris": ["https://myapp.example.com/callback"],
@@ -321,7 +321,7 @@ curl -X POST https://hibana.sgrastar.workers.dev/register \
 
 ### Client ID Generation
 
-Hibana generates cryptographically secure client IDs:
+Authrim generates cryptographically secure client IDs:
 
 ```typescript
 function generateClientId(): string {
@@ -388,7 +388,7 @@ function generateClientSecret(): string {
 
 ### 1. Redirect URI Validation
 
-Hibana enforces strict redirect URI validation:
+Authrim enforces strict redirect URI validation:
 
 - ✅ **HTTPS Required**: All redirect URIs must use HTTPS (except `http://localhost` for development)
 - ✅ **No Fragments**: Fragment identifiers (`#`) are not allowed in redirect URIs
@@ -477,7 +477,7 @@ DCR endpoints are advertised in the OpenID Provider metadata:
 
 ```json
 {
-  "registration_endpoint": "https://hibana.sgrastar.workers.dev/register",
+  "registration_endpoint": "https://authrim.sgrastar.workers.dev/register",
   "token_endpoint_auth_methods_supported": [
     "client_secret_basic",
     "client_secret_post",
@@ -506,7 +506,7 @@ DCR endpoints are advertised in the OpenID Provider metadata:
 
 ### Test Coverage
 
-Hibana includes comprehensive tests for Dynamic Client Registration:
+Authrim includes comprehensive tests for Dynamic Client Registration:
 
 **Test File**: `test/handlers/register.test.ts`
 
@@ -551,7 +551,7 @@ async function registerClient(config: {
   grantTypes?: string[];
   scope?: string;
 }) {
-  const response = await fetch('https://hibana.sgrastar.workers.dev/register', {
+  const response = await fetch('https://authrim.sgrastar.workers.dev/register', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -620,7 +620,7 @@ def register_client(
         data['scope'] = 'openid profile email'
 
     response = requests.post(
-        'https://hibana.sgrastar.workers.dev/register',
+        'https://authrim.sgrastar.workers.dev/register',
         json=data,
         headers={'Content-Type': 'application/json'}
     )
@@ -655,7 +655,7 @@ const axios = require('axios');
 async function registerClient({ redirectUris, clientName, grantTypes, scope }) {
   try {
     const response = await axios.post(
-      'https://hibana.sgrastar.workers.dev/register',
+      'https://authrim.sgrastar.workers.dev/register',
       {
         redirect_uris: redirectUris,
         client_name: clientName,

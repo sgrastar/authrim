@@ -4,7 +4,7 @@
 
 **RFC 7636** - Proof Key for Code Exchange by OAuth Public Clients
 
-Hibana implements PKCE, a critical security extension that protects authorization codes from interception attacks, especially for public clients (mobile apps, SPAs) that cannot securely store client secrets.
+Authrim implements PKCE, a critical security extension that protects authorization codes from interception attacks, especially for public clients (mobile apps, SPAs) that cannot securely store client secrets.
 
 ## Specification
 
@@ -157,7 +157,7 @@ GET /authorize
   &state=abc123
   &code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
   &code_challenge_method=S256
-Host: hibana.sgrastar.workers.dev
+Host: authrim.sgrastar.workers.dev
 ```
 
 ---
@@ -182,7 +182,7 @@ Host: hibana.sgrastar.workers.dev
 
 ```http
 POST /token HTTP/1.1
-Host: hibana.sgrastar.workers.dev
+Host: authrim.sgrastar.workers.dev
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=authorization_code
@@ -264,7 +264,7 @@ async function startAuthorization() {
   sessionStorage.setItem('code_verifier', codeVerifier);
 
   // Build authorization URL
-  const authUrl = new URL('https://hibana.sgrastar.workers.dev/authorize');
+  const authUrl = new URL('https://authrim.sgrastar.workers.dev/authorize');
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('client_id', 'my_client_id');
   authUrl.searchParams.set('redirect_uri', 'https://myapp.example.com/callback');
@@ -292,7 +292,7 @@ async function handleCallback() {
   }
 
   // Exchange code for tokens
-  const response = await fetch('https://hibana.sgrastar.workers.dev/token', {
+  const response = await fetch('https://authrim.sgrastar.workers.dev/token', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -340,7 +340,7 @@ function AuthComponent() {
     sessionStorage.setItem('code_verifier', codeVerifier);
 
     // Redirect to authorization endpoint
-    const authUrl = new URL('https://hibana.sgrastar.workers.dev/authorize');
+    const authUrl = new URL('https://authrim.sgrastar.workers.dev/authorize');
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('client_id', process.env.REACT_APP_CLIENT_ID!);
     authUrl.searchParams.set('redirect_uri', window.location.origin + '/callback');
@@ -360,7 +360,7 @@ function AuthComponent() {
     }
 
     try {
-      const response = await fetch('https://hibana.sgrastar.workers.dev/token', {
+      const response = await fetch('https://authrim.sgrastar.workers.dev/token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -406,8 +406,8 @@ import * as Crypto from 'expo-crypto';
 import * as AuthSession from 'expo-auth-session';
 
 const discovery = {
-  authorizationEndpoint: 'https://hibana.sgrastar.workers.dev/authorize',
-  tokenEndpoint: 'https://hibana.sgrastar.workers.dev/token',
+  authorizationEndpoint: 'https://authrim.sgrastar.workers.dev/authorize',
+  tokenEndpoint: 'https://authrim.sgrastar.workers.dev/token',
 };
 
 export function useAuth() {
@@ -496,7 +496,7 @@ def start_oauth_flow():
         'code_challenge_method': 'S256',
     }
 
-    auth_url = f'https://hibana.sgrastar.workers.dev/authorize?{urlencode(auth_params)}'
+    auth_url = f'https://authrim.sgrastar.workers.dev/authorize?{urlencode(auth_params)}'
 
     print(f'Opening browser for authorization...')
     webbrowser.open(auth_url)
@@ -507,7 +507,7 @@ def start_oauth_flow():
 
     # Exchange code for tokens
     token_response = requests.post(
-        'https://hibana.sgrastar.workers.dev/token',
+        'https://authrim.sgrastar.workers.dev/token',
         data={
             'grant_type': 'authorization_code',
             'code': code,
@@ -604,7 +604,7 @@ if (authCodeData.code_challenge) {
 
 ### 2. Challenge Method
 
-**Hibana Supports**:
+**Authrim Supports**:
 - ✅ **S256** (SHA-256) - **Recommended and default**
 - ❌ `plain` - **Not supported** (insecure, deprecated)
 
@@ -651,7 +651,7 @@ PKCE support is advertised in OpenID Provider metadata:
 
 ### Test Coverage
 
-Hibana includes comprehensive tests for PKCE:
+Authrim includes comprehensive tests for PKCE:
 
 **Test Files**:
 - `test/handlers/authorize.test.ts` - PKCE parameter validation
