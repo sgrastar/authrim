@@ -1482,6 +1482,24 @@ export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
         passkeyEnabled: true,
         magicLinkEnabled: true,
       },
+      ciba: {
+        enabled: true,
+        defaultExpiresIn: 300, // 5 minutes
+        minExpiresIn: 60, // 1 minute
+        maxExpiresIn: 600, // 10 minutes
+        defaultInterval: 5, // 5 seconds
+        minInterval: 2, // 2 seconds
+        maxInterval: 60, // 60 seconds
+        supportedDeliveryModes: ['poll', 'ping', 'push'],
+        userCodeEnabled: true,
+        bindingMessageMaxLength: 140,
+        notificationsEnabled: false,
+        notificationProviders: {
+          email: false,
+          sms: false,
+          push: false,
+        },
+      },
     };
 
     // Merge with stored settings if they exist
@@ -1520,7 +1538,7 @@ export async function adminSettingsUpdateHandler(c: Context<{ Bindings: Env }>) 
     }
 
     // Validate settings structure
-    const allowedSections = ['general', 'appearance', 'security', 'email', 'advanced'];
+    const allowedSections = ['general', 'appearance', 'security', 'email', 'advanced', 'ciba'];
     const settings = body.settings;
 
     for (const section of Object.keys(settings)) {
