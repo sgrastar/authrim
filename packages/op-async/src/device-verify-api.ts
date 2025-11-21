@@ -40,6 +40,37 @@ import { normalizeUserCode, validateUserCodeFormat } from '@authrim/shared';
  */
 export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
   try {
+    // Get client IP for rate limiting
+    const clientIp = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || 'unknown';
+
+    // Check rate limiting (if USER_CODE_RATE_LIMITER is available)
+    if (c.env.USER_CODE_RATE_LIMITER) {
+      const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName('global');
+      const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
+
+      const checkResponse = await rateLimiter.fetch(
+        new Request('https://internal/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ip: clientIp }),
+        })
+      );
+
+      if (checkResponse.ok) {
+        const result = (await checkResponse.json()) as { blocked: boolean; retry_after?: number };
+        if (result.blocked) {
+          return c.json(
+            {
+              success: false,
+              error: 'slow_down',
+              error_description: `Too many failed attempts. Please try again in ${result.retry_after || 3600} seconds.`,
+            },
+            429
+          );
+        }
+      }
+    }
+
     // Parse JSON request body
     const body = await c.req.json();
     let userCode = body.user_code as string;
@@ -86,6 +117,19 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
     );
 
     if (!getResponse.ok) {
+      // Record failed attempt for rate limiting
+      if (c.env.USER_CODE_RATE_LIMITER) {
+        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName('global');
+        const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
+        await rateLimiter.fetch(
+          new Request('https://internal/record-failure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip: clientIp }),
+          })
+        ).catch(() => { /* Ignore rate limiter errors */ });
+      }
+
       return c.json(
         {
           success: false,
@@ -99,6 +143,19 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
     const metadata: DeviceCodeMetadata | null = await getResponse.json();
 
     if (!metadata) {
+      // Record failed attempt for rate limiting
+      if (c.env.USER_CODE_RATE_LIMITER) {
+        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName('global');
+        const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
+        await rateLimiter.fetch(
+          new Request('https://internal/record-failure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip: clientIp }),
+          })
+        ).catch(() => { /* Ignore rate limiter errors */ });
+      }
+
       return c.json(
         {
           success: false,
@@ -150,6 +207,19 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
           },
           500
         );
+      }
+
+      // Reset rate limiting on successful verification
+      if (c.env.USER_CODE_RATE_LIMITER) {
+        const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName('global');
+        const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
+        await rateLimiter.fetch(
+          new Request('https://internal/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip: clientIp }),
+          })
+        ).catch(() => { /* Ignore rate limiter errors */ });
       }
 
       return c.json(
