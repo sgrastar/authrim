@@ -63,6 +63,10 @@ OpenID Connect conformance testing strategy and test plans.
 - [Protocol Flow](./architecture/protocol-flow.md) - OIDC flow step-by-step
 - [Test Plan](./conformance/test-plan.md) - Testing requirements
 
+### For Security & Operations
+- [Envelope Encryption](./security/envelope-encryption.md) - Private key protection using two-factor storage
+- [Secret Management](./operations/secret-management.md) - Key generation, storage, and rotation
+
 ### For Certification
 - [Conformance Overview](./conformance/overview.md) - Certification strategy
 - [Test Plan](./conformance/test-plan.md) - Conformance test mapping
