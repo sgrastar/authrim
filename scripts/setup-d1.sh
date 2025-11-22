@@ -318,7 +318,7 @@ for pkg_dir in packages/*/; do
         else
             package_name=$(basename "$pkg_dir")
             if [ "$package_name" != "router" ] && [ "$package_name" != "ui" ]; then
-                echo "  ⚠️  Warning: $toml_file not found. Run setup-wrangler.sh first."
+                echo "  ⚠️  Warning: $toml_file not found. Run setup-remote-wrangler.sh first."
             fi
         fi
     fi
@@ -344,24 +344,41 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     # Run migrations using migrate.sh
     if [ -f "migrations/migrate.sh" ]; then
         bash migrations/migrate.sh "$DEPLOY_ENV" up
+    elif [ -f "scripts/apply-migrations.sh" ]; then
+        # Use the apply-migrations.sh script
+        echo "📝 Using apply-migrations.sh script..."
+        bash scripts/apply-migrations.sh --env="$DEPLOY_ENV"
     else
         # Fallback: run migrations directly
-        echo "📝 Applying 001_initial_schema.sql..."
-        wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --file=migrations/001_initial_schema.sql
-        echo "✅ Schema migration complete"
+        echo "📝 Applying migrations..."
         echo ""
 
-        echo "📝 Applying 002_seed_default_data.sql..."
-        echo "⚠️  Warning: This includes test data!"
-        echo "Review migrations/002_seed_default_data.sql before running on production"
-        read -p "Continue? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --file=migrations/002_seed_default_data.sql
-            echo "✅ Seed data migration complete"
-        else
-            echo "⊗ Skipping seed data"
-        fi
+        # Apply all migrations in order
+        for migration_file in migrations/*.sql; do
+            if [ -f "$migration_file" ]; then
+                filename=$(basename "$migration_file")
+                echo "  • Applying ${filename}..."
+
+                # Special handling for seed data
+                if [[ "$filename" == "002_seed_default_data.sql" ]]; then
+                    echo "    ⚠️  Warning: This includes test data!"
+                    read -p "    Apply seed data? (y/N): " -n 1 -r
+                    echo
+                    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                        echo "    ⊗ Skipped"
+                        continue
+                    fi
+                fi
+
+                # Apply migration
+                if wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --file="$migration_file" --yes 2>&1 | grep -q "UNIQUE constraint\|already exists\|duplicate column"; then
+                    echo "    ✓ Already applied"
+                else
+                    echo "    ✓ Applied successfully"
+                fi
+            fi
+        done
+
         echo ""
         echo "✅ All migrations applied!"
     fi

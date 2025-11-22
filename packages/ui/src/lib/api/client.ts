@@ -3,7 +3,7 @@
  * Handles communication with the backend API
  */
 
-import { PUBLIC_API_BASE_URL } from '$env/static/public';
+import { browser } from '$app/environment';
 
 // Type definitions
 interface User {
@@ -89,10 +89,30 @@ interface APIError {
 	error_description: string;
 }
 
-// Get API base URL from environment variable (static build-time value)
+// Get API base URL from environment variable or use default
 // In production (Cloudflare Pages), set PUBLIC_API_BASE_URL in .env file
 // In development, it defaults to localhost:8786
-export const API_BASE_URL = PUBLIC_API_BASE_URL || 'http://localhost:8786';
+// If browser is available, use window.location.origin, otherwise use localhost
+function getApiBaseUrl(): string {
+	// Try to get from environment variable (if set during build)
+	try {
+		// Use dynamic import to avoid build-time errors
+		const envUrl = import.meta.env.PUBLIC_API_BASE_URL;
+		if (envUrl) return envUrl;
+	} catch {
+		// Environment variable not set
+	}
+
+	// In browser, use current origin as fallback
+	if (browser && typeof window !== 'undefined') {
+		return window.location.origin;
+	}
+
+	// Default for SSR/build time
+	return 'http://localhost:8786';
+}
+
+export const API_BASE_URL = getApiBaseUrl();
 
 /**
  * Generic fetch wrapper with error handling

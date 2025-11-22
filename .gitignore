@@ -42,6 +42,7 @@ playwright/.cache/
 wrangler.toml.bak
 **/wrangler.toml  # Contains account-specific KV namespace IDs
 packages/*/wrangler.toml
+packages/*/wrangler.*.toml
 worker/
 
 # Logs
@@ -66,3 +67,5 @@ packages/*/dist/
 packages/*/.wrangler/
 CLAUDE.md
 authrim-config-*.json
+
+packages/shared/wrangler.conformance.toml

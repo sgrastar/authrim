@@ -184,7 +184,7 @@
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-gray-200 bg-white">
-						{#each tokens as token}
+						{#each tokens as token (token.tokenHash)}
 							<tr class="hover:bg-gray-50">
 								<td class="whitespace-nowrap px-6 py-4">
 									<div class="text-sm font-medium text-gray-900">{token.description}</div>
@@ -308,9 +308,9 @@
 	</Alert>
 	<div class="space-y-4">
 		<div>
-			<label class="block text-sm font-medium text-gray-700 mb-2">Token</label>
+			<label for="created-token" class="block text-sm font-medium text-gray-700 mb-2">Token</label>
 			<div class="flex space-x-2">
-				<Input value={createdToken} readonly class="flex-1 font-mono text-sm" />
+				<Input id="created-token" value={createdToken} readonly class="flex-1 font-mono text-sm" />
 				<Button variant="secondary" on:click={() => copyToClipboard(createdToken)}>
 					Copy
 				</Button>

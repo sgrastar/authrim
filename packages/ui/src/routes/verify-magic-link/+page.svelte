@@ -99,7 +99,7 @@
 				<p class="text-gray-600 dark:text-gray-400">
 					{$LL.magicLink_verify_subtitle()}
 				</p>
-			{:else if state === 'success'}
+			{:else if verificationState === 'success'}
 				<!-- Success State -->
 				<div class="flex justify-center mb-6">
 					<div class="rounded-full bg-success-100 dark:bg-success-900/30 p-4">
@@ -114,7 +114,7 @@
 				<p class="text-gray-600 dark:text-gray-400">
 					{$LL.common_loading()}
 				</p>
-			{:else if state === 'error'}
+			{:else if verificationState === 'error'}
 				<!-- Error State -->
 				<div class="flex justify-center mb-6">
 					<div class="rounded-full bg-error-100 dark:bg-error-900/30 p-4">
