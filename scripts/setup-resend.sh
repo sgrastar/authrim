@@ -1,0 +1,271 @@
+#!/bin/bash
+#
+# Authrim Resend Email Configuration Script
+# Configures Resend API for sending magic link emails
+#
+# Usage:
+#   ./setup-resend.sh [--env=local|remote]
+#
+
+set -e
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Parse command line arguments
+ENV=""
+for arg in "$@"; do
+    if [[ $arg == --env=* ]]; then
+        ENV="${arg#--env=}"
+    fi
+done
+
+echo -e "${BLUE}📧 Authrim Resend Email Configuration${NC}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# If environment not specified, prompt for it
+if [ -z "$ENV" ]; then
+    echo "Select environment:"
+    echo "  1) local   (Local development with .dev.vars)"
+    echo "  2) remote  (Remote environment with Cloudflare Secrets)"
+    echo "  3) Cancel"
+    echo ""
+    read -p "Enter your choice (1-3): " -r choice
+    echo ""
+
+    case $choice in
+        1)
+            ENV="local"
+            ;;
+        2)
+            ENV="remote"
+            ;;
+        3|*)
+            echo -e "${BLUE}❌ Setup cancelled${NC}"
+            exit 0
+            ;;
+    esac
+fi
+
+# Validate environment
+if [ "$ENV" != "local" ] && [ "$ENV" != "remote" ]; then
+    echo -e "${RED}❌ Error: Invalid environment '$ENV'${NC}"
+    echo "   Valid options: local, remote"
+    exit 1
+fi
+
+echo "Environment: $ENV"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📧 Resend Email Configuration"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "Authrim uses Resend (https://resend.com) for sending magic link emails."
+echo "This is optional - without it, magic links will return URLs instead."
+echo ""
+echo "Do you want to configure Resend? (y/N): " | tr -d '\n'
+read -n 1 -r
+echo
+echo ""
+
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo -e "${YELLOW}⊗ Resend configuration skipped${NC}"
+    echo "   Magic links will return URLs instead of sending emails"
+    echo ""
+    exit 0
+fi
+
+# Prompt for Resend API key
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "Getting your Resend API key:"
+echo ""
+echo "1. Go to https://resend.com/dashboard/api-keys"
+echo "2. Create a new API key"
+echo "3. Copy the key"
+echo ""
+
+read -sp "Paste your Resend API key: " RESEND_API_KEY
+echo ""
+echo ""
+
+if [ -z "$RESEND_API_KEY" ]; then
+    echo -e "${YELLOW}⊗ No API key provided - skipping Resend configuration${NC}"
+    exit 0
+fi
+
+# Validate API key format (Resend keys start with 're_')
+if [[ ! $RESEND_API_KEY =~ ^re_ ]]; then
+    echo -e "${YELLOW}⚠️  Warning: API key doesn't look like a Resend key (should start with 're_')${NC}"
+    read -p "Continue anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "${BLUE}❌ Setup cancelled${NC}"
+        exit 0
+    fi
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📧 Email From Address"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "Enter the email address to use as the sender for magic links."
+echo ""
+echo "Examples:"
+echo "  • noreply@yourdomain.com"
+echo "  • hello@example.com"
+echo ""
+
+read -p "Email From address: " EMAIL_FROM
+
+if [ -z "$EMAIL_FROM" ]; then
+    EMAIL_FROM="noreply@yourdomain.com"
+fi
+
+echo ""
+echo -e "${GREEN}✅ Configuration:${NC}"
+echo "   API Key: ${RESEND_API_KEY:0:10}...${RESEND_API_KEY: -5}"
+echo "   Email From: $EMAIL_FROM"
+echo ""
+
+# Apply configuration based on environment
+if [ "$ENV" = "local" ]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔧 Updating Local Environment (.dev.vars)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    if [ ! -f ".dev.vars" ]; then
+        echo -e "${RED}❌ Error: .dev.vars file not found${NC}"
+        echo ""
+        echo "Please run setup-local-vars.sh first:"
+        echo "  ./scripts/setup-local-vars.sh"
+        echo ""
+        exit 1
+    fi
+
+    # Check if Resend config already exists
+    if grep -q "^RESEND_API_KEY=" ".dev.vars"; then
+        echo "⚠️  Resend configuration already exists in .dev.vars"
+        read -p "Overwrite? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo -e "${BLUE}❌ Update cancelled${NC}"
+            exit 0
+        fi
+
+        # Remove existing Resend configuration
+        sed -i '' '/^RESEND_API_KEY=/d' ".dev.vars"
+        sed -i '' '/^EMAIL_FROM=/d' ".dev.vars"
+    fi
+
+    # Append Resend configuration
+    cat >> .dev.vars << EOF
+
+# Resend Email Configuration
+RESEND_API_KEY="$RESEND_API_KEY"
+EMAIL_FROM="$EMAIL_FROM"
+EOF
+
+    echo -e "${GREEN}✅ Resend configuration added to .dev.vars${NC}"
+    echo ""
+    echo "📋 Updated file:"
+    echo "   • .dev.vars"
+    echo ""
+    echo "Changes will be applied on the next 'pnpm run dev'"
+    echo ""
+
+else
+    # Remote environment: use wrangler secrets
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔧 Uploading to Cloudflare Secrets"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # Check if wrangler is available
+    if ! command -v wrangler &> /dev/null; then
+        echo -e "${RED}❌ Error: wrangler is not installed${NC}"
+        echo "Please install it with: pnpm install -g wrangler"
+        exit 1
+    fi
+
+    # Check if logged in to Cloudflare
+    if ! wrangler whoami &> /dev/null; then
+        echo -e "${RED}❌ Error: Not logged in to Cloudflare${NC}"
+        echo "Please run: wrangler login"
+        exit 1
+    fi
+
+    echo "Uploading Resend API key as secret..."
+    echo ""
+
+    # Upload secrets to each worker that needs them
+    WORKERS=(
+        "op-auth"
+        "op-management"
+    )
+
+    for worker in "${WORKERS[@]}"; do
+        echo "  • Uploading to authrim-$worker..."
+        echo "$RESEND_API_KEY" | wrangler secret put RESEND_API_KEY --name="authrim-$worker"
+        echo "    ✅ Secret uploaded"
+    done
+
+    echo ""
+    echo "Uploading EMAIL_FROM as environment variable..."
+    echo ""
+
+    for worker in "${WORKERS[@]}"; do
+        echo "  • Setting in authrim-$worker..."
+        wrangler vars set EMAIL_FROM "$EMAIL_FROM" --name="authrim-$worker"
+        echo "    ✅ Environment variable set"
+    done
+
+    echo ""
+    echo -e "${GREEN}✅ Resend configuration uploaded to Cloudflare${NC}"
+    echo ""
+    echo "📋 Updated workers:"
+    for worker in "${WORKERS[@]}"; do
+        echo "   • authrim-$worker"
+    done
+    echo ""
+
+    echo "⚠️  Note: Changes will apply on the next deployment:"
+    echo "   pnpm run deploy:retry"
+    echo ""
+fi
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo -e "${BLUE}🎉 Resend configuration complete!${NC}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "📧 Email Setup Summary:"
+echo "   • Sender: $EMAIL_FROM"
+echo "   • Provider: Resend (https://resend.com)"
+echo "   • Status: ✅ Configured"
+echo ""
+echo "🔐 Security Notes:"
+if [ "$ENV" = "local" ]; then
+    echo "   • API key stored in .dev.vars (gitignored)"
+    echo "   • Never commit .dev.vars to version control"
+else
+    echo "   • API key stored as Cloudflare Secret"
+    echo "   • Email From stored as Cloudflare Environment Variable"
+    echo "   • Secrets are encrypted and never exposed in logs"
+fi
+echo ""
+echo "Next steps:"
+if [ "$ENV" = "local" ]; then
+    echo "   1. Run 'pnpm run dev' to start local development"
+    echo "   2. Magic links will now send emails via Resend"
+else
+    echo "   1. Run 'pnpm run deploy:retry' to deploy with Resend support"
+    echo "   2. Magic links will send emails via Resend"
+fi
+echo ""

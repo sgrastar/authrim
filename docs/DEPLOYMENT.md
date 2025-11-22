@@ -295,12 +295,13 @@ pnpm install
 wrangler login
 
 # 3. Run setup scripts (in order)
-./scripts/setup-dev.sh         # Generate RSA keys & wrangler.toml files (includes DO config)
-./scripts/setup-kv.sh          # Create KV namespaces
-./scripts/setup-d1.sh          # Create D1 database (Phase 5)
-./scripts/setup-secrets.sh     # Upload secrets to Cloudflare
-./scripts/setup-production.sh  # Choose deployment mode & configure URLs
-                               # → Select option 1 (Test) or 2 (Production)
+./scripts/setup-keys.sh                # Generate RSA keys
+./scripts/setup-local-wrangler.sh      # Generate local wrangler.toml files
+                                       # OR ./scripts/setup-remote-wrangler.sh for remote
+./scripts/setup-kv.sh                  # Create KV namespaces
+./scripts/setup-d1.sh                  # Create D1 database (Phase 5)
+./scripts/setup-secrets.sh             # Upload secrets to Cloudflare
+./scripts/setup-resend.sh --env=remote # Optional: Configure email (magic links)
 
 # 4. Build all packages
 pnpm run build
@@ -310,15 +311,24 @@ pnpm run deploy
 # - Deploys in correct order: shared (Durable Objects) → workers → router
 # - Uses sequential deployment with delays to avoid rate limits
 # - Includes automatic retries on failure
+
+# 6. Deploy UI to Cloudflare Pages (Phase 5+)
+./scripts/deploy-remote-ui.sh
+# - Interactive domain configuration (custom domain or Pages.dev)
+# - Builds SvelteKit UI
+# - Deploys to Cloudflare Pages
+# - Auto-configures CORS settings
 ```
 
-**Done!** Your OpenID Provider is now live.
+**Done!** Your OpenID Provider is now live with login UI.
 
 > 💡 **Important**:
-> - Both `deploy:with-router` and `deploy:retry` now use the same sequential deployment script with retry logic
-> - The `deploy:retry` command automatically deploys the `authrim-shared` package (Durable Objects) first
-> - The router is conditionally deployed based on your configuration from `setup-production.sh`
-> - You can optionally use `./scripts/setup-durable-objects.sh` to deploy Durable Objects separately, but this is not required when using `deploy:retry`
+> - `setup-keys.sh` generates RSA keys (required first step)
+> - Use `setup-local-wrangler.sh` for local development or `setup-remote-wrangler.sh` for Cloudflare deployment
+> - `setup-remote-wrangler.sh` requires `ISSUER_URL` (your API domain)
+> - `deploy-remote-ui.sh` is optional but provides login/registration UI (Phase 5+)
+> - The deploy command automatically deploys `authrim-shared` (Durable Objects) first
+> - Router Worker is conditionally deployed based on your configuration
 
 ---
 
@@ -349,24 +359,117 @@ wrangler whoami
 
 You should see your Cloudflare account email and account ID.
 
-### 3. Generate RSA Keys and Base Configuration
+### 3. Generate RSA Keys
 
-**Important:** Generate wrangler.toml files first before creating infrastructure.
+**Important:** Generate RSA keys first, before creating infrastructure.
 
 ```bash
-./scripts/setup-dev.sh
+./scripts/setup-keys.sh
 ```
 
 **What this does:**
-- Generates an RSA-2048 key pair
+- Generates an RSA-2048 key pair using OpenSSL
 - Saves private key to `.keys/private.pem`
 - Saves public key (JWK format) to `.keys/public.jwk.json`
 - Saves key metadata to `.keys/metadata.json`
-- Creates `.dev.vars` for local development
-- **Generates base `wrangler.toml` files for all packages**
-- **Protects existing `wrangler.toml` files** - prompts before overwriting
 
-**⚠️ Important:** If `wrangler.toml` files already exist, the script will ask for confirmation before overwriting. This prevents accidental loss of KV namespace IDs, D1 bindings, and production URLs that were configured by other setup scripts.
+**Output:**
+```
+🔐 Authrim Key Generation
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 Generating RSA keys...
+✅ RSA key pair generated successfully!
+   Key ID: dev-key-1731532800000-abc123
+   Private Key: .keys/private.pem
+   Public JWK: .keys/public.jwk.json
+   Metadata: .keys/metadata.json
+```
+
+### 3b. Generate wrangler.toml Files
+
+**For Local Development:**
+
+```bash
+./scripts/setup-local-wrangler.sh
+```
+
+Creates `wrangler.toml` files with:
+- `ISSUER_URL = "http://localhost:8787"`
+- Local environment variables
+- Placeholder KV/D1 IDs (to be filled in by setup-kv.sh and setup-d1.sh)
+- Router Worker configuration for local testing
+
+**For Remote Deployment (Cloudflare):**
+
+```bash
+./scripts/setup-remote-wrangler.sh
+```
+
+**Interactive Deployment Mode Selection:**
+
+The script will prompt you to choose between two deployment architectures:
+
+#### Option 1: Test Environment (workers.dev + Router Worker)
+```
+📝 Deployment Mode Configuration
+
+  1) Test Environment (workers.dev + Router Worker)
+     • Single unified endpoint via Router Worker
+     • Uses Service Bindings for internal routing
+     • Best for: Development, testing, quick setup
+     • OpenID Connect compliant ✅
+```
+
+**Configuration:**
+- ISSUER_URL: `https://authrim.{subdomain}.workers.dev`
+- workers.dev subdomain auto-detection from Cloudflare account
+- Router Worker enabled with Service Bindings
+- Backend workers hidden (workers_dev=false, routable only via Service Bindings)
+- Generates `packages/router/wrangler.toml` with Service Bindings
+
+**When to use:**
+- Development and testing
+- Quick deployment without custom domain setup
+- OpenID Connect conformance testing
+
+#### Option 2: Production Environment (Custom Domain + Cloudflare Routes)
+```
+  2) Production Environment (Custom Domain + Routes)
+     • Direct routing via Cloudflare Routes
+     • Optimal performance (no extra router hop)
+     • Best for: Production deployments
+     • Requires: Cloudflare-managed domain
+```
+
+**Configuration:**
+- ISSUER_URL: Custom domain (e.g., `https://id.yourdomain.com`)
+- Automatically adds Cloudflare Routes to each worker:
+  - op-discovery: `/.well-known/*`
+  - op-auth: `/authorize`, `/as/*`
+  - op-token: `/token`
+  - op-userinfo: `/userinfo`
+  - op-management: `/register`, `/introspect`, `/revoke`
+- All workers: workers_dev=false
+- Router Worker removed (not needed)
+
+**When to use:**
+- Production deployments
+- Custom domain with Cloudflare DNS management
+- Optimal performance required
+- Direct routing without extra hop
+
+**What this does:**
+- Prompts for deployment mode (Test or Production)
+- Configures ISSUER_URL appropriately
+- Optionally configures UI_BASE_URL (for Device Flow support)
+- Generates all `wrangler.toml` files with correct settings
+- Configures Router Worker (test mode) or Cloudflare Routes (production mode)
+- Sets workers_dev appropriately for each worker
+
+**⚠️ Important:**
+- If `wrangler.toml` files already exist, confirmation is requested before overwriting
+- This prevents accidental loss of KV namespace IDs, D1 bindings, or custom URLs
+- For production mode, your domain must be managed by Cloudflare
 
 **Output:**
 ```
@@ -552,50 +655,27 @@ Upload your private and public keys to Cloudflare Workers secrets:
 
 **⚠️ IMPORTANT:** Never commit `.keys/` to version control! It's already in `.gitignore`.
 
-### 7. Configure Deployment Mode
+### 7. Optional: Configure Email (Resend API)
 
-Choose your deployment mode and configure URLs:
+For production magic link authentication via email:
 
 ```bash
-./scripts/setup-production.sh
+./scripts/setup-resend.sh --env=remote
 ```
 
 **What this does:**
-- Asks you to choose between Test or Production deployment mode
-- Configures wrangler.toml files accordingly
-- Updates `ISSUER_URL` in all worker configurations
+- Prompts for Resend API key (from https://resend.com)
+- Configures email sender address
+- Uploads secrets to Cloudflare Workers
 
-**Interactive prompt:**
+**Note:** This is optional. Without it, magic links will return URLs instead of sending emails (useful for development).
+
+For **local development**, use:
+```bash
+./scripts/setup-resend.sh --env=local
 ```
-📝 Deployment Mode Configuration
 
-   Choose how you want to deploy Authrim:
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  1) Test Environment (workers.dev + Router Worker)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     • Single unified endpoint: https://authrim.subdomain.workers.dev
-     • Uses Router Worker with Service Bindings
-     • All endpoints accessible under one domain
-     • Best for: Development, testing, quick setup
-     • OpenID Connect compliant ✅
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  2) Production Environment (Custom Domain + Routes)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     • Custom domain: https://id.yourdomain.com
-     • Uses Cloudflare Routes (direct routing)
-     • Optimal performance (no extra hop)
-     • Best for: Production deployments
-     • Requires: Cloudflare-managed domain
-
-Enter your choice (1/2):
-
-🔍 Configuration Summary:
-   ISSUER_URL: https://id.example.com
-
-Is this correct? (y/N): y
-```
+This adds email configuration to `.dev.vars` for local testing.
 
 ### 8. Build the Project
 
@@ -712,19 +792,100 @@ https://authrim.your-subdomain.workers.dev
 ⊗ Skipping router (wrangler.toml not found - not needed in production mode)
 ```
 
-### 10. Verify Deployment
+### 10. Deploy UI to Cloudflare Pages (Phase 5+)
 
-Test your deployed OpenID Provider:
+Deploy the SvelteKit login/registration UI to Cloudflare Pages:
+
+```bash
+./scripts/deploy-remote-ui.sh
+```
+
+**What this does:**
+- Interactive setup for UI domain configuration:
+  - **Option 1**: Custom Domain (e.g., `https://login.example.com`)
+  - **Option 2**: Auto-generated Cloudflare Pages URLs
+- Prompts for API Base URL (your deployed workers' issuer URL)
+- Builds SvelteKit UI to `.svelte-kit/cloudflare`
+- Deploys to Cloudflare Pages
+- **Auto-configures CORS** with detected URLs
+
+**Interactive prompts:**
+```
+🚀 Authrim Remote UI Deployment
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📍 Domain Configuration
+
+How would you like to configure UI domains?
+
+  1) Custom Domain (e.g., https://login.example.com)
+  2) Cloudflare Pages auto-generated URL (e.g., https://authrim-login-abc.pages.dev)
+  3) Cancel
+
+Enter your choice (1-3): 1
+
+📝 Enter custom domains:
+Login Page domain (e.g., https://login.example.com): https://login.example.com
+Admin Page domain (e.g., https://admin.example.com): https://admin.example.com
+
+🔌 API Base URL (e.g., https://authrim.subdomain.workers.dev): https://auth.example.com
+
+📦 Which UI components would you like to deploy?
+  1) Login Page only
+  2) Admin Page only
+  3) Both (Login + Admin)
+
+Enter your choice (1-3) [3]: 3
+
+✅ Configuration Summary
+🌐 Domain Configuration:
+   Type: Custom Domain
+   Login Page: https://login.example.com
+   Admin Page: https://admin.example.com
+
+🔌 API Configuration:
+   Base URL: https://auth.example.com
+
+🔒 CORS Configuration
+Configure CORS for these origins? (Y/n): y
+
+🔧 Running CORS configuration...
+```
+
+**Output:**
+```
+🎉 UI Deployment Complete!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 Deployed URLs:
+   🌐 https://login.example.com
+   🌐 https://admin.example.com
+
+✅ CORS Configuration Complete!
+   • Stored in: SETTINGS_KV[cors_settings]
+   • Origins: https://login.example.com, https://admin.example.com
+```
+
+**Note:**
+- This step is **optional but recommended for Phase 5+** (UI/UX implementation)
+- For Phase 1-4, skip this step (API-only deployment)
+- CORS auto-configuration happens after deployment (can be skipped and run later with `./scripts/setup-remote-cors.sh`)
+
+### 11. Verify Deployment
+
+Test your deployed OpenID Provider and UI:
 
 ```bash
 # Replace with your configured ISSUER_URL
 ISSUER_URL="https://id.example.com"
+LOGIN_UI="https://login.example.com"
 
 # Test discovery endpoint
 curl "$ISSUER_URL/.well-known/openid-configuration" | jq
 
 # Test JWKS endpoint
 curl "$ISSUER_URL/.well-known/jwks.json" | jq
+
+# Verify UI is accessible
+curl -I "$LOGIN_UI"
 ```
 
 **Expected discovery response:**

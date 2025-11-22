@@ -10,10 +10,10 @@
 #
 # Usage:
 #   ./delete-all.sh                 - Interactive mode (prompts for environment and confirmation)
-#   ./delete-all.sh dev             - Delete all dev resources with confirmation
-#   ./delete-all.sh prod            - Delete all prod resources with confirmation
+#   ./delete-all.sh local           - Delete all local resources with confirmation
+#   ./delete-all.sh remote          - Delete all remote resources with confirmation
 #   ./delete-all.sh --dry-run       - Dry run mode (shows what would be deleted)
-#   ./delete-all.sh dev --force     - Force deletion without confirmation (USE WITH EXTREME CAUTION)
+#   ./delete-all.sh local --force   - Force deletion without confirmation (USE WITH EXTREME CAUTION)
 #
 
 set -e
@@ -44,14 +44,14 @@ for arg in "$@"; do
             FORCE=true
             shift
             ;;
-        dev|prod|staging)
+        local|remote)
             ENV=$arg
             shift
             ;;
         *)
             if [ -n "$arg" ]; then
                 echo -e "${RED}❌ Unknown option: $arg${NC}"
-                echo "Usage: $0 [dev|prod|staging] [--dry-run] [--force]"
+                echo "Usage: $0 [local|remote] [--dry-run] [--force]"
                 exit 1
             fi
             ;;
@@ -75,34 +75,28 @@ if [ -z "$ENV" ]; then
     echo ""
     echo -e "${YELLOW}⚠️  Environment Explanation:${NC}"
     echo ""
-    echo "  • dev      : Development environment (local testing, wrangler dev)"
-    echo "  • prod     : Production environment (live deployment, *.workers.dev)"
-    echo "  • staging  : Staging environment (pre-production testing)"
+    echo "  • local  : Local development environment (wrangler dev --local)"
+    echo "  • remote : Cloudflare remote environment (workers.dev / custom domain)"
     echo ""
-    echo "ℹ️  Note: Most users only use 'dev' for local development."
-    echo "         'prod' and 'staging' are for deployed workers."
+    echo "ℹ️  Note: Choose the environment where your resources are deployed."
     echo ""
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo "Select environment to delete:"
-    echo "  1) dev      (Development - Local testing)"
-    echo "  2) prod     (Production - Live deployment)"
-    echo "  3) staging  (Staging - Pre-production)"
-    echo "  4) Cancel"
+    echo "  1) local   (Local development)"
+    echo "  2) remote  (Cloudflare remote)"
+    echo "  3) Cancel"
     echo ""
-    read -p "Enter your choice (1-4): " -r choice
+    read -p "Enter your choice (1-3): " -r choice
 
     case $choice in
         1)
-            ENV="dev"
+            ENV="local"
             ;;
         2)
-            ENV="prod"
+            ENV="remote"
             ;;
-        3)
-            ENV="staging"
-            ;;
-        4|*)
+        3|*)
             echo -e "${BLUE}❌ Cancelled${NC}"
             exit 0
             ;;
@@ -138,7 +132,7 @@ echo "     • REVOKED_TOKENS"
 echo "     • INITIAL_ACCESS_TOKENS"
 echo ""
 echo "  3. 🗄️  D1 Database"
-echo "     • authrim-${ENV}"
+echo "     • authrim-users-db (or custom database name)"
 echo ""
 echo -e "${RED}⚠️  WARNING: This action CANNOT be undone!${NC}"
 echo -e "${RED}⚠️  ALL data will be permanently deleted!${NC}"
@@ -182,13 +176,13 @@ if [ "$FORCE" = false ]; then
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
-    if [ "$ENV" = "prod" ]; then
-        echo -e "${RED}⚠️  YOU ARE ABOUT TO DELETE ALL PRODUCTION RESOURCES!${NC}"
-        echo -e "${RED}⚠️  THIS WILL COMPLETELY DESTROY YOUR PRODUCTION ENVIRONMENT!${NC}"
+    if [ "$ENV" = "remote" ]; then
+        echo -e "${RED}⚠️  YOU ARE ABOUT TO DELETE ALL REMOTE RESOURCES!${NC}"
+        echo -e "${RED}⚠️  THIS WILL COMPLETELY DESTROY YOUR REMOTE ENVIRONMENT!${NC}"
         echo ""
-        read -p "Type 'DELETE PRODUCTION' to confirm, or anything else to cancel: " -r
+        read -p "Type 'DELETE REMOTE' to confirm, or anything else to cancel: " -r
         echo ""
-        if [ "$REPLY" != "DELETE PRODUCTION" ]; then
+        if [ "$REPLY" != "DELETE REMOTE" ]; then
             echo -e "${BLUE}❌ Deletion cancelled${NC}"
             exit 0
         fi
@@ -203,10 +197,10 @@ if [ "$FORCE" = false ]; then
         fi
     fi
 
-    # Double confirmation for production
-    if [ "$ENV" = "prod" ]; then
+    # Double confirmation for remote
+    if [ "$ENV" = "remote" ]; then
         echo ""
-        echo -e "${RED}⚠️  FINAL WARNING FOR PRODUCTION!${NC}"
+        echo -e "${RED}⚠️  FINAL WARNING FOR REMOTE RESOURCES!${NC}"
         echo ""
         read -p "Are you absolutely sure? Type 'YES' to proceed: " -r
         echo ""

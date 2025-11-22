@@ -5,10 +5,10 @@
 #
 # Usage:
 #   ./delete-d1.sh                 - Interactive mode (prompts for environment and confirmation)
-#   ./delete-d1.sh dev             - Delete dev database with confirmation
-#   ./delete-d1.sh prod            - Delete prod database with confirmation
+#   ./delete-d1.sh local           - Delete local database with confirmation
+#   ./delete-d1.sh remote          - Delete remote database with confirmation
 #   ./delete-d1.sh --dry-run       - Dry run mode (shows what would be deleted)
-#   ./delete-d1.sh dev --force     - Force deletion without confirmation (USE WITH CAUTION)
+#   ./delete-d1.sh local --force   - Force deletion without confirmation (USE WITH CAUTION)
 #
 
 set -e
@@ -35,14 +35,14 @@ for arg in "$@"; do
             FORCE=true
             shift
             ;;
-        dev|prod|staging)
+        local|remote)
             ENV=$arg
             shift
             ;;
         *)
             if [ -n "$arg" ]; then
                 echo -e "${RED}❌ Unknown option: $arg${NC}"
-                echo "Usage: $0 [dev|prod|staging] [--dry-run] [--force]"
+                echo "Usage: $0 [local|remote] [--dry-run] [--force]"
                 exit 1
             fi
             ;;
@@ -75,24 +75,20 @@ fi
 # If environment not specified, prompt for it
 if [ -z "$ENV" ]; then
     echo "Select environment to delete:"
-    echo "  1) dev"
-    echo "  2) prod"
-    echo "  3) staging"
-    echo "  4) Cancel"
+    echo "  1) local"
+    echo "  2) remote"
+    echo "  3) Cancel"
     echo ""
-    read -p "Enter your choice (1-4): " -r choice
+    read -p "Enter your choice (1-3): " -r choice
 
     case $choice in
         1)
-            ENV="dev"
+            ENV="local"
             ;;
         2)
-            ENV="prod"
+            ENV="remote"
             ;;
-        3)
-            ENV="staging"
-            ;;
-        4|*)
+        3|*)
             echo -e "${BLUE}❌ Cancelled${NC}"
             exit 0
             ;;
@@ -100,7 +96,9 @@ if [ -z "$ENV" ]; then
     echo ""
 fi
 
-DB_NAME="authrim-${ENV}"
+# Prompt for database name
+read -p "Database name [authrim-users-db]: " DB_NAME_INPUT
+DB_NAME=${DB_NAME_INPUT:-authrim-users-db}
 
 echo -e "${BLUE}📊 Checking for D1 database: $DB_NAME${NC}"
 echo ""
@@ -119,7 +117,7 @@ if [ "$DB_EXISTS" = false ]; then
     echo "If you expected to find this database, please check:"
     echo "  1. You are logged in to the correct Cloudflare account"
     echo "  2. The database was created using the setup scripts"
-    echo "  3. The database name is correct (authrim-${ENV})"
+    echo "  3. The database name is correct"
     echo ""
     exit 0
 fi
@@ -176,12 +174,12 @@ fi
 if [ "$FORCE" = false ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    if [ "$ENV" = "prod" ]; then
-        echo -e "${RED}⚠️  YOU ARE ABOUT TO DELETE THE PRODUCTION DATABASE!${NC}"
+    if [ "$ENV" = "remote" ]; then
+        echo -e "${RED}⚠️  YOU ARE ABOUT TO DELETE THE REMOTE DATABASE!${NC}"
         echo ""
-        read -p "Type 'DELETE PRODUCTION' to confirm, or anything else to cancel: " -r
+        read -p "Type 'DELETE REMOTE' to confirm, or anything else to cancel: " -r
         echo ""
-        if [ "$REPLY" != "DELETE PRODUCTION" ]; then
+        if [ "$REPLY" != "DELETE REMOTE" ]; then
             echo -e "${BLUE}❌ Deletion cancelled${NC}"
             exit 0
         fi
