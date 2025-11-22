@@ -133,7 +133,7 @@ if [ "$MISSING_CONFIG" = true ]; then
     echo "❌ Deployment aborted: Missing environment-specific configuration files"
     echo ""
     echo "Please run the setup script first:"
-    echo "  ./scripts/setup-wrangler.sh --env=$DEPLOY_ENV --domain=<your-domain>"
+    echo "  ./scripts/setup-remote-wrangler.sh --env=$DEPLOY_ENV --domain=<your-domain>"
     echo ""
     exit 1
 fi

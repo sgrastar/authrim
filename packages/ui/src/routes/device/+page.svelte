@@ -215,7 +215,7 @@
 			</div>
 
 			<div use:melt={$root} role="group" aria-label={$LL.device_codeLabel()} class="flex gap-2 items-center justify-center">
-				{#each Array(8) as _, i}
+				{#each Array.from({ length: 8 }, (_, i) => i) as i (i)}
 					<!-- Add hyphen separator after 4th digit -->
 					{#if i === 4}
 						<div class="text-2xl font-bold text-gray-400 px-1">-</div>

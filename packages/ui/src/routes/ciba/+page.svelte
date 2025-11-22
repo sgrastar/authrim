@@ -7,7 +7,15 @@
 	let loading = true;
 	let error = '';
 	let successMessage = '';
-	let pendingRequests: any[] = [];
+	let pendingRequests: Array<{
+		auth_req_id: string;
+		client_id: string;
+		scope: string;
+		binding_message?: string;
+		user_code?: string;
+		created_at: number;
+		expires_at: number;
+	}> = [];
 
 	onMount(async () => {
 		await loadPendingRequests();
@@ -235,7 +243,7 @@
 								Requested Access
 							</p>
 							<div class="mt-2 flex flex-wrap gap-2">
-								{#each request.scope.split(' ') as scope}
+								{#each request.scope.split(' ') as scope (scope)}
 									<span class="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-800 dark:bg-gray-700 dark:text-gray-200">
 										{scope}
 									</span>
