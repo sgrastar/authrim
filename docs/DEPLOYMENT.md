@@ -1124,18 +1124,646 @@ Access via: **Cloudflare Dashboard** → **Workers & Pages** → Select worker �
 
 ## Custom Domain Setup
 
-### Using Cloudflare-Managed Domain
+Authrim supports two approaches for custom domains:
+1. **Custom Domains** - Point a full domain/subdomain to a single Worker
+2. **Routes** - Map specific URL patterns to different Workers (recommended for path-based routing)
 
-If your domain is managed by Cloudflare:
+### Understanding Custom Domains vs Routes
+
+| Feature | Custom Domains | Routes |
+|---------|---------------|--------|
+| **Use Case** | Single Worker per domain/subdomain | Multiple Workers per domain with path-based routing |
+| **Path Control** | All paths go to one Worker | Different paths can go to different Workers |
+| **DNS Management** | Automatic | Manual or automatic |
+| **SSL Certificates** | Automatic | Automatic (via Cloudflare) |
+| **Best For** | Simple deployments | Complex routing, microservices |
+
+#### Example Scenarios
+
+**Custom Domains:**
+- `api.example.com` → All paths to API Worker
+- `login.example.com` → All paths to Login Worker
+- `admin.example.com` → All paths to Admin Worker
+
+**Routes (Path-Based):**
+- `example.com/api/*` → API Worker
+- `example.com/login/*` → Login Worker (Cloudflare Pages)
+- `example.com/admin/*` → Admin Worker (Cloudflare Pages)
+- `example.com/.well-known/*` → Discovery Worker
+
+### Method 1: Using Cloudflare Routes (Recommended for Production)
+
+Routes provide fine-grained control over which Worker handles which paths. This is the recommended approach for production deployments and allows all services (API, login, admin) to share the same domain.
+
+#### Step 1: Configure Domain in Cloudflare DNS
+
+1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Select your domain (e.g., `example.com`)
+3. Navigate to **DNS** → **Records**
+4. Add an **A** or **AAAA** record:
+   - **Type**: A
+   - **Name**: `@` (for root domain) or subdomain (e.g., `auth`)
+   - **IPv4 address**: `192.0.2.1` (placeholder, Cloudflare will proxy)
+   - **Proxy status**: ✅ Proxied (orange cloud)
+   - Click **Save**
+
+> **Note:** The IP address is a placeholder. When proxied through Cloudflare, the actual IP doesn't matter as Workers will intercept requests via Routes.
+
+#### Step 2: Configure Routes in wrangler.toml
+
+**Option A: Using `setup-remote-wrangler.sh` (Recommended)**
+
+```bash
+./scripts/setup-remote-wrangler.sh --mode=production --issuer-url=https://auth.example.com
+```
+
+This script automatically:
+- Configures all `wrangler.toml` files with your domain
+- Adds appropriate Routes to each worker
+- Sets `workers_dev = false` for production
+- Removes the Router Worker (not needed in production)
+
+**Option B: Manual Configuration**
+
+Edit each worker's `wrangler.toml` to add Routes. Here's a complete example:
+
+**packages/op-discovery/wrangler.toml:**
+```toml
+name = "authrim-op-discovery"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+# Routes for Discovery endpoints
+[[routes]]
+pattern = "auth.example.com/.well-known/*"
+zone_name = "example.com"
+
+# Durable Objects Bindings
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "authrim-shared"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+script_name = "authrim-shared"
+
+[vars]
+ISSUER_URL = "https://auth.example.com"
+TOKEN_EXPIRY = "3600"
+CODE_EXPIRY = "600"
+STATE_EXPIRY = "600"
+NONCE_EXPIRY = "600"
+REFRESH_TOKEN_EXPIRY = "2592000"
+KEY_ID = "your-key-id"
+ALLOW_HTTP_REDIRECT = "false"
+```
+
+**packages/op-auth/wrangler.toml:**
+```toml
+name = "authrim-op-auth"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+# Routes for Authorization endpoints
+[[routes]]
+pattern = "auth.example.com/authorize"
+zone_name = "example.com"
+
+[[routes]]
+pattern = "auth.example.com/as/*"
+zone_name = "example.com"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "CLIENTS"
+id = "your-kv-namespace-id"
+preview_id = "your-preview-kv-namespace-id"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "authrim-users-db"
+database_id = "your-d1-database-id"
+
+# Durable Objects Bindings
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "authrim-shared"
+
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+script_name = "authrim-shared"
+
+[[durable_objects.bindings]]
+name = "AUTH_CODE_STORE"
+class_name = "AuthorizationCodeStore"
+script_name = "authrim-shared"
+
+[vars]
+ISSUER_URL = "https://auth.example.com"
+TOKEN_EXPIRY = "3600"
+CODE_EXPIRY = "600"
+STATE_EXPIRY = "600"
+NONCE_EXPIRY = "600"
+REFRESH_TOKEN_EXPIRY = "2592000"
+KEY_ID = "your-key-id"
+ALLOW_HTTP_REDIRECT = "false"
+```
+
+**packages/op-token/wrangler.toml:**
+```toml
+name = "authrim-op-token"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+# Routes for Token endpoint
+[[routes]]
+pattern = "auth.example.com/token"
+zone_name = "example.com"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "CLIENTS"
+id = "your-kv-namespace-id"
+preview_id = "your-preview-kv-namespace-id"
+
+# Durable Objects Bindings
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "authrim-shared"
+
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+script_name = "authrim-shared"
+
+[[durable_objects.bindings]]
+name = "AUTH_CODE_STORE"
+class_name = "AuthorizationCodeStore"
+script_name = "authrim-shared"
+
+[[durable_objects.bindings]]
+name = "REFRESH_TOKEN_ROTATOR"
+class_name = "RefreshTokenRotator"
+script_name = "authrim-shared"
+
+[vars]
+ISSUER_URL = "https://auth.example.com"
+TOKEN_EXPIRY = "3600"
+CODE_EXPIRY = "600"
+STATE_EXPIRY = "600"
+NONCE_EXPIRY = "600"
+REFRESH_TOKEN_EXPIRY = "2592000"
+KEY_ID = "your-key-id"
+ALLOW_HTTP_REDIRECT = "false"
+```
+
+**packages/op-userinfo/wrangler.toml:**
+```toml
+name = "authrim-op-userinfo"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+# Routes for UserInfo endpoint
+[[routes]]
+pattern = "auth.example.com/userinfo"
+zone_name = "example.com"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "CLIENTS"
+id = "your-kv-namespace-id"
+preview_id = "your-preview-kv-namespace-id"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "authrim-users-db"
+database_id = "your-d1-database-id"
+
+# Durable Objects Bindings
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "authrim-shared"
+
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+script_name = "authrim-shared"
+
+[vars]
+ISSUER_URL = "https://auth.example.com"
+TOKEN_EXPIRY = "3600"
+CODE_EXPIRY = "600"
+STATE_EXPIRY = "600"
+NONCE_EXPIRY = "600"
+REFRESH_TOKEN_EXPIRY = "2592000"
+KEY_ID = "your-key-id"
+ALLOW_HTTP_REDIRECT = "false"
+```
+
+**packages/op-management/wrangler.toml:**
+```toml
+name = "authrim-op-management"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+# Routes for Management endpoints
+[[routes]]
+pattern = "auth.example.com/register"
+zone_name = "example.com"
+
+[[routes]]
+pattern = "auth.example.com/introspect"
+zone_name = "example.com"
+
+[[routes]]
+pattern = "auth.example.com/revoke"
+zone_name = "example.com"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "CLIENTS"
+id = "your-kv-namespace-id"
+preview_id = "your-preview-kv-namespace-id"
+
+[[kv_namespaces]]
+binding = "INITIAL_ACCESS_TOKENS"
+id = "your-initial-access-tokens-kv-id"
+preview_id = "your-preview-initial-access-tokens-kv-id"
+
+[[kv_namespaces]]
+binding = "SETTINGS"
+id = "your-settings-kv-id"
+preview_id = "your-preview-settings-kv-id"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "authrim-users-db"
+database_id = "your-d1-database-id"
+
+# Durable Objects Bindings
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "authrim-shared"
+
+[[durable_objects.bindings]]
+name = "REFRESH_TOKEN_ROTATOR"
+class_name = "RefreshTokenRotator"
+script_name = "authrim-shared"
+
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+script_name = "authrim-shared"
+
+[vars]
+ISSUER_URL = "https://auth.example.com"
+TOKEN_EXPIRY = "3600"
+CODE_EXPIRY = "600"
+STATE_EXPIRY = "600"
+NONCE_EXPIRY = "600"
+REFRESH_TOKEN_EXPIRY = "2592000"
+KEY_ID = "your-key-id"
+ALLOW_HTTP_REDIRECT = "false"
+```
+
+#### Step 3: Deploy Workers
+
+```bash
+# Build all packages
+pnpm run build
+
+# Deploy with retry logic (recommended)
+pnpm run deploy
+```
+
+#### Step 4: Verify Routes in Cloudflare Dashboard
+
+After deploying, verify that Routes are properly configured in the Cloudflare Dashboard.
+
+**Via Cloudflare Dashboard:**
+
+1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Select your domain (e.g., `example.com`)
+3. Navigate to **Workers Routes** (in the left sidebar)
+4. You should see all routes automatically created by `wrangler deploy`
+
+**Expected Routes:**
+- `auth.example.com/.well-known/*` → `authrim-op-discovery`
+- `auth.example.com/authorize` → `authrim-op-auth`
+- `auth.example.com/as/*` → `authrim-op-auth`
+- `auth.example.com/token` → `authrim-op-token`
+- `auth.example.com/userinfo` → `authrim-op-userinfo`
+- `auth.example.com/register` → `authrim-op-management`
+- `auth.example.com/introspect` → `authrim-op-management`
+- `auth.example.com/revoke` → `authrim-op-management`
+
+**Via Wrangler CLI:**
+
+```bash
+# List all routes for a specific worker
+cd packages/op-discovery
+wrangler deployments list
+
+# View routes in wrangler.toml
+cat wrangler.toml | grep -A 2 "routes"
+```
+
+#### Cloudflare Dashboard Operations Guide
+
+This section provides detailed step-by-step instructions for configuring custom domains and routes in the Cloudflare Dashboard.
+
+##### 1. Adding DNS Records
+
+Before configuring Workers, ensure your domain has proper DNS records:
+
+**Steps:**
+1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Select your domain from the account home
+3. Click **DNS** in the left sidebar
+4. Click **Add record**
+5. Configure the record:
+   - **Type**: Select `A` (IPv4) or `AAAA` (IPv6)
+   - **Name**: Enter subdomain (e.g., `auth` for `auth.example.com`) or `@` for root domain
+   - **IPv4/IPv6 address**: Enter `192.0.2.1` (placeholder, will be proxied)
+   - **Proxy status**: Toggle **ON** (orange cloud icon) - This is critical for Workers to intercept requests
+   - **TTL**: Auto
+6. Click **Save**
+
+**Result:** Your domain/subdomain is now proxied through Cloudflare and ready for Worker Routes.
+
+> **Important:** The "Proxied" status (orange cloud) must be enabled. If it's DNS-only (grey cloud), Workers Routes will not work.
+
+##### 2. Viewing Worker Routes
+
+After deploying workers with `wrangler deploy`, routes are automatically registered.
+
+**Steps to view routes:**
+1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Select your domain
+3. Click **Workers Routes** in the left sidebar (under "Workers & Pages" section)
+4. You'll see a table with columns:
+   - **Route** - URL pattern (e.g., `auth.example.com/token`)
+   - **Worker** - Assigned worker name (e.g., `authrim-op-token`)
+   - **Environment** - Production or Preview
+   - **Status** - Active or Inactive
+
+**What you should see:**
+
+| Route | Worker | Environment |
+|-------|--------|-------------|
+| `auth.example.com/.well-known/*` | `authrim-op-discovery` | Production |
+| `auth.example.com/authorize` | `authrim-op-auth` | Production |
+| `auth.example.com/as/*` | `authrim-op-auth` | Production |
+| `auth.example.com/token` | `authrim-op-token` | Production |
+| `auth.example.com/userinfo` | `authrim-op-userinfo` | Production |
+| `auth.example.com/register` | `authrim-op-management` | Production |
+| `auth.example.com/introspect` | `authrim-op-management` | Production |
+| `auth.example.com/revoke` | `authrim-op-management` | Production |
+
+##### 3. Manually Adding or Editing Routes (if needed)
+
+If routes weren't automatically created or you need to modify them:
+
+**Steps:**
+1. Go to **Workers Routes** (as described above)
+2. Click **Add route**
+3. Fill in the form:
+   - **Route**: Enter the URL pattern (e.g., `auth.example.com/token`)
+   - **Zone**: Select your domain from dropdown
+   - **Worker**: Select the worker from dropdown (e.g., `authrim-op-token`)
+   - **Environment**: Select `Production`
+4. Click **Save**
+
+**Example:** Adding a route for the Token endpoint:
+- **Route**: `auth.example.com/token`
+- **Zone**: `example.com`
+- **Worker**: `authrim-op-token`
+- **Environment**: Production
+
+**Wildcard Routes:**
+
+For path patterns with wildcards (e.g., `/.well-known/*`), use the `*` character:
+- **Route**: `auth.example.com/.well-known/*`
+- This matches: `/.well-known/openid-configuration`, `/.well-known/jwks.json`, etc.
+
+##### 4. Adding Custom Domains to Individual Workers
+
+If you prefer Custom Domains over Routes (simpler but less flexible):
+
+**Steps:**
+1. Go to **Workers & Pages** in the left sidebar
+2. Click on your worker (e.g., `authrim-op-discovery`)
+3. Click **Settings** tab
+4. Click **Domains & Routes**
+5. Under **Custom Domains**, click **Add Custom Domain**
+6. Enter your domain:
+   - **Domain**: `api.example.com` (full domain or subdomain)
+   - Cloudflare automatically:
+     - Creates DNS records (if not exist)
+     - Provisions SSL certificate
+     - Configures routing
+7. Click **Add Custom Domain**
+8. Wait 1-2 minutes for SSL certificate provisioning
+
+**Result:** The worker is now accessible at `https://api.example.com` (all paths)
+
+**Limitations:**
+- All paths under `api.example.com` go to this worker
+- Cannot split paths to different workers (use Routes instead)
+
+##### 5. Monitoring Worker Performance
+
+**Steps:**
+1. Go to **Workers & Pages**
+2. Click on your worker
+3. Click **Metrics** tab
+4. View analytics:
+   - **Requests** - Total requests over time
+   - **Errors** - Error rate and types
+   - **CPU Time** - Average CPU time per request
+   - **Duration** - p50, p95, p99 latency
+   - **Success Rate** - Percentage of successful requests
+
+**Useful for:**
+- Identifying performance bottlenecks
+- Monitoring errors and debugging
+- Analyzing traffic patterns
+
+##### 6. Viewing Worker Logs
+
+**Real-time logs via Dashboard:**
+1. Go to **Workers & Pages**
+2. Click on your worker
+3. Click **Logs** tab
+4. Click **Begin log stream**
+5. View real-time logs as requests come in
+
+**Filtering logs:**
+- Filter by **Status** (e.g., only errors)
+- Filter by **Method** (GET, POST, etc.)
+- Search by **Text** (search log messages)
+
+**Via Wrangler CLI (recommended for development):**
+
+```bash
+# Stream logs for a specific worker
+cd packages/op-token
+wrangler tail
+
+# Filter logs
+wrangler tail --status error
+wrangler tail --method POST
+wrangler tail --search "token"
+```
+
+##### 7. Managing Worker Secrets
+
+Secrets (like `PRIVATE_KEY_PEM`) are managed separately from environment variables.
+
+**Steps to add/update secrets:**
+1. Go to **Workers & Pages**
+2. Click on your worker
+3. Click **Settings** tab
+4. Scroll to **Variables and Secrets**
+5. Click **Add variable**
+6. Select **Secret** (not "Variable")
+7. Enter:
+   - **Variable name**: `PRIVATE_KEY_PEM`
+   - **Value**: Paste your private key
+8. Click **Save**
+
+**Via Wrangler CLI (recommended):**
+
+```bash
+cd packages/op-token
+cat ../../.keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
+```
+
+**Viewing secrets:**
+- Secret values are never displayed in the dashboard (for security)
+- You can only see secret names, not values
+- To update, you must re-upload the secret
+
+##### 8. Rolling Back Deployments
+
+If a deployment causes issues, you can roll back:
+
+**Steps:**
+1. Go to **Workers & Pages**
+2. Click on your worker
+3. Click **Deployments** tab
+4. Find the previous working deployment
+5. Click **⋯** (three dots) → **Rollback to this deployment**
+6. Confirm rollback
+
+**Via Wrangler CLI:**
+
+```bash
+cd packages/op-token
+wrangler deployments list
+# Note the deployment ID of the version you want to roll back to
+wrangler rollback [deployment-id]
+```
+
+##### 9. Configuring Zone Settings for Workers
+
+**SSL/TLS Settings:**
+1. Go to your domain dashboard
+2. Click **SSL/TLS** in the left sidebar
+3. Set **SSL/TLS encryption mode** to **Full** or **Full (strict)** (recommended)
+   - **Flexible**: Not recommended (Cloudflare to origin is HTTP)
+   - **Full**: Cloudflare to origin is HTTPS (self-signed cert OK)
+   - **Full (strict)**: Cloudflare to origin is HTTPS (valid cert required)
+
+For Workers, **Full** is usually sufficient since Workers don't have traditional "origins."
+
+**Security Settings:**
+1. Go to **Security** → **Settings**
+2. Configure:
+   - **Security Level**: Medium or High
+   - **Challenge Passage**: 30 minutes (default)
+   - **Browser Integrity Check**: On (recommended)
+
+**Firewall Rules:**
+1. Go to **Security** → **WAF**
+2. Configure Web Application Firewall rules if needed
+3. For API endpoints, consider:
+   - Rate limiting rules
+   - IP allowlisting/blocklisting
+   - Custom firewall rules
+
+##### 10. Testing Your Configuration
+
+After configuring routes and domains, test your endpoints:
+
+**Test Discovery Endpoint:**
+```bash
+curl https://auth.example.com/.well-known/openid-configuration | jq
+```
+
+**Test JWKS Endpoint:**
+```bash
+curl https://auth.example.com/.well-known/jwks.json | jq
+```
+
+**Test Authorization Endpoint (expect redirect or error):**
+```bash
+curl -I https://auth.example.com/authorize
+```
+
+**Test Token Endpoint (expect error without proper request):**
+```bash
+curl -X POST https://auth.example.com/token
+```
+
+**Check SSL Certificate:**
+```bash
+curl -vI https://auth.example.com/.well-known/openid-configuration 2>&1 | grep -i "SSL"
+```
+
+**Expected Results:**
+- ✅ All endpoints return 200 OK or appropriate errors
+- ✅ SSL certificate is valid (issued by Cloudflare)
+- ✅ Response headers include CORS headers (if configured)
+- ✅ Discovery endpoint returns valid JSON with correct `issuer` URL
+
+### Method 2: Using Custom Domains (Simple Approach)
+
+Custom Domains are simpler but less flexible. Each domain/subdomain points to a single Worker.
+
+#### Using Cloudflare-Managed Domain
 
 1. Go to **Workers & Pages** → Select worker → **Settings** → **Domains & Routes**
 2. Click **Add Custom Domain**
 3. Enter your domain (e.g., `id.example.com`)
 4. Cloudflare will automatically provision SSL certificate
 
-Repeat for all 5 workers or use routes (see Post-Deployment section).
+Repeat for all workers if you want separate subdomains:
+- `api.example.com` → Discovery Worker
+- `auth.example.com` → Auth Worker
+- etc.
 
-### Using External Domain
+#### Using External Domain
 
 1. Add a CNAME record pointing to your Worker:
    ```
@@ -1154,6 +1782,202 @@ Repeat for all 5 workers or use routes (see Post-Deployment section).
    ```bash
    pnpm run deploy
    ```
+
+### Advanced: Path-Based Routing for API + UI on Same Domain
+
+**Question:** Can API, Login UI, and Admin UI all use the same custom domain with different paths?
+
+**Answer:** ✅ **YES!** You can use Cloudflare Routes to achieve this.
+
+#### Example Setup
+
+Let's deploy everything under `example.com`:
+
+**Goal:**
+- `example.com/api/*` → Authrim API (Workers)
+- `example.com/login/*` → Login UI (Cloudflare Pages)
+- `example.com/admin/*` → Admin UI (Cloudflare Pages)
+- `example.com/.well-known/*` → Discovery endpoint
+
+#### Implementation Steps
+
+**1. Configure API Workers with `/api` prefix:**
+
+Modify each worker's Routes to include `/api` prefix:
+
+```toml
+# packages/op-discovery/wrangler.toml
+[[routes]]
+pattern = "example.com/api/.well-known/*"
+zone_name = "example.com"
+
+# packages/op-auth/wrangler.toml
+[[routes]]
+pattern = "example.com/api/authorize"
+zone_name = "example.com"
+
+[[routes]]
+pattern = "example.com/api/as/*"
+zone_name = "example.com"
+
+# packages/op-token/wrangler.toml
+[[routes]]
+pattern = "example.com/api/token"
+zone_name = "example.com"
+
+# packages/op-userinfo/wrangler.toml
+[[routes]]
+pattern = "example.com/api/userinfo"
+zone_name = "example.com"
+
+# packages/op-management/wrangler.toml
+[[routes]]
+pattern = "example.com/api/register"
+zone_name = "example.com"
+
+[[routes]]
+pattern = "example.com/api/introspect"
+zone_name = "example.com"
+
+[[routes]]
+pattern = "example.com/api/revoke"
+zone_name = "example.com"
+```
+
+**Important:** Update `ISSUER_URL` to include `/api`:
+```toml
+[vars]
+ISSUER_URL = "https://example.com/api"
+```
+
+**2. Configure Cloudflare Pages for UI:**
+
+When deploying Login and Admin UIs to Cloudflare Pages:
+
+**Login UI:**
+- Deploy to Cloudflare Pages
+- In Pages Dashboard → Custom domains → Add `example.com`
+- Configure **Path** routing (if available) or use Pages Functions to handle `/login/*`
+
+**Admin UI:**
+- Deploy to separate Cloudflare Pages project
+- Configure **Path** routing for `/admin/*`
+
+**Alternative Approach (Using a Router Worker):**
+
+If Cloudflare Pages doesn't support path-based routing directly, create a Router Worker:
+
+```typescript
+// packages/unified-router/src/index.ts
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+
+    // Route API requests to API Workers
+    if (url.pathname.startsWith('/api/')) {
+      // Strip /api prefix and forward to appropriate worker
+      const apiPath = url.pathname.substring(4);
+
+      if (apiPath.startsWith('/.well-known/')) {
+        return env.OP_DISCOVERY.fetch(request);
+      } else if (apiPath === '/authorize' || apiPath.startsWith('/as/')) {
+        return env.OP_AUTH.fetch(request);
+      } else if (apiPath === '/token') {
+        return env.OP_TOKEN.fetch(request);
+      } else if (apiPath === '/userinfo') {
+        return env.OP_USERINFO.fetch(request);
+      } else if (apiPath.match(/^\/(register|introspect|revoke)/)) {
+        return env.OP_MANAGEMENT.fetch(request);
+      }
+    }
+
+    // Route UI requests to Cloudflare Pages
+    if (url.pathname.startsWith('/login/')) {
+      return fetch(`https://your-login-ui.pages.dev${url.pathname}`);
+    }
+
+    if (url.pathname.startsWith('/admin/')) {
+      return fetch(`https://your-admin-ui.pages.dev${url.pathname}`);
+    }
+
+    return new Response('Not Found', { status: 404 });
+  }
+};
+```
+
+**wrangler.toml for unified router:**
+```toml
+name = "authrim-unified"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+# Catch-all route for entire domain
+[[routes]]
+pattern = "example.com/*"
+zone_name = "example.com"
+
+# Service Bindings to API workers
+[[services]]
+binding = "OP_DISCOVERY"
+service = "authrim-op-discovery"
+
+[[services]]
+binding = "OP_AUTH"
+service = "authrim-op-auth"
+
+[[services]]
+binding = "OP_TOKEN"
+service = "authrim-op-token"
+
+[[services]]
+binding = "OP_USERINFO"
+service = "authrim-op-userinfo"
+
+[[services]]
+binding = "OP_MANAGEMENT"
+service = "authrim-op-management"
+
+[vars]
+LOGIN_UI_URL = "https://your-login-ui.pages.dev"
+ADMIN_UI_URL = "https://your-admin-ui.pages.dev"
+```
+
+**3. Deploy everything:**
+
+```bash
+pnpm run build
+pnpm run deploy
+```
+
+**Result:**
+- `https://example.com/api/.well-known/openid-configuration` → Discovery
+- `https://example.com/api/authorize` → Authorization
+- `https://example.com/api/token` → Token
+- `https://example.com/login/` → Login UI
+- `https://example.com/admin/` → Admin UI
+
+#### CORS Configuration
+
+When using path-based routing on the same domain, configure CORS to allow UI to call API:
+
+```bash
+./scripts/setup-remote-cors.sh --origins="https://example.com"
+```
+
+Or manually in SETTINGS_KV:
+```json
+{
+  "enabled": true,
+  "allowed_origins": ["https://example.com"],
+  "allowed_methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  "allowed_headers": ["Content-Type", "Authorization", "Accept"],
+  "max_age": 86400
+}
+```
+
+> **Note:** When API and UI share the same domain (even with different paths), CORS may not be strictly necessary since they share the same origin. However, it's still recommended for security and flexibility.
 
 ---
 
