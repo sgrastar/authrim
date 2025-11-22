@@ -32,10 +32,13 @@ echo ""
 if [ -z "$ENV" ]; then
     echo "Select environment:"
     echo "  1) local   (Local development with .dev.vars)"
-    echo "  2) remote  (Remote environment with Cloudflare Secrets)"
-    echo "  3) Cancel"
+    echo "  2) dev     (Remote dev environment with Cloudflare Secrets)"
+    echo "  3) staging (Remote staging environment with Cloudflare Secrets)"
+    echo "  4) prod    (Remote production environment with Cloudflare Secrets)"
+    echo "  5) Custom  (Enter custom environment name)"
+    echo "  6) Cancel"
     echo ""
-    read -p "Enter your choice (1-3): " -r choice
+    read -p "Enter your choice (1-6): " -r choice
     echo ""
 
     case $choice in
@@ -43,20 +46,26 @@ if [ -z "$ENV" ]; then
             ENV="local"
             ;;
         2)
-            ENV="remote"
+            ENV="dev"
             ;;
-        3|*)
+        3)
+            ENV="staging"
+            ;;
+        4)
+            ENV="prod"
+            ;;
+        5)
+            read -p "Enter environment name: " -r ENV
+            if [ -z "$ENV" ]; then
+                echo -e "${RED}❌ Error: Environment name cannot be empty${NC}"
+                exit 1
+            fi
+            ;;
+        6|*)
             echo -e "${BLUE}❌ Setup cancelled${NC}"
             exit 0
             ;;
     esac
-fi
-
-# Validate environment
-if [ "$ENV" != "local" ] && [ "$ENV" != "remote" ]; then
-    echo -e "${RED}❌ Error: Invalid environment '$ENV'${NC}"
-    echo "   Valid options: local, remote"
-    exit 1
 fi
 
 echo "Environment: $ENV"
@@ -184,7 +193,7 @@ EOF
 else
     # Remote environment: use wrangler secrets
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🔧 Uploading to Cloudflare Secrets"
+    echo "🔧 Uploading to Cloudflare Secrets - Environment: $ENV"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
 
@@ -206,38 +215,41 @@ else
     echo ""
 
     # Upload secrets to each worker that needs them
-    WORKERS=(
+    BASE_WORKERS=(
         "op-auth"
         "op-management"
     )
 
-    for worker in "${WORKERS[@]}"; do
-        echo "  • Uploading to authrim-$worker..."
-        echo "$RESEND_API_KEY" | wrangler secret put RESEND_API_KEY --name="authrim-$worker"
+    for base_worker in "${BASE_WORKERS[@]}"; do
+        worker_name="${ENV}-authrim-${base_worker}"
+        echo "  • Uploading to $worker_name..."
+        echo "$RESEND_API_KEY" | wrangler secret put RESEND_API_KEY --name="$worker_name"
         echo "    ✅ Secret uploaded"
     done
 
     echo ""
-    echo "Uploading EMAIL_FROM as environment variable..."
+    echo "Uploading EMAIL_FROM as secret (instead of environment variable)..."
     echo ""
 
-    for worker in "${WORKERS[@]}"; do
-        echo "  • Setting in authrim-$worker..."
-        wrangler vars set EMAIL_FROM "$EMAIL_FROM" --name="authrim-$worker"
-        echo "    ✅ Environment variable set"
+    for base_worker in "${BASE_WORKERS[@]}"; do
+        worker_name="${ENV}-authrim-${base_worker}"
+        echo "  • Setting in $worker_name..."
+        echo "$EMAIL_FROM" | wrangler secret put EMAIL_FROM --name="$worker_name"
+        echo "    ✅ Secret uploaded"
     done
 
     echo ""
     echo -e "${GREEN}✅ Resend configuration uploaded to Cloudflare${NC}"
     echo ""
     echo "📋 Updated workers:"
-    for worker in "${WORKERS[@]}"; do
-        echo "   • authrim-$worker"
+    for base_worker in "${BASE_WORKERS[@]}"; do
+        echo "   • ${ENV}-authrim-${base_worker}"
     done
     echo ""
 
-    echo "⚠️  Note: Changes will apply on the next deployment:"
-    echo "   pnpm run deploy:retry"
+    echo "⚠️  Note: Changes are immediate (no redeployment needed for secrets)"
+    echo "   However, if this is a new worker, you'll need to deploy it first:"
+    echo "   pnpm run deploy -- --env=$ENV"
     echo ""
 fi
 
@@ -265,7 +277,7 @@ if [ "$ENV" = "local" ]; then
     echo "   1. Run 'pnpm run dev' to start local development"
     echo "   2. Magic links will now send emails via Resend"
 else
-    echo "   1. Run 'pnpm run deploy:retry' to deploy with Resend support"
+    echo "   1. Run 'pnpm run deploy -- --env=$ENV' to deploy with Resend support"
     echo "   2. Magic links will send emails via Resend"
 fi
 echo ""

@@ -4,19 +4,58 @@
 # This script creates D1 database and updates wrangler.toml files with bindings
 #
 # Usage:
-#   ./setup-d1.sh          - Interactive mode (prompts for existing database)
-#   ./setup-d1.sh --reset  - Reset mode (deletes and recreates database)
+#   ./setup-d1.sh --env=dev           - Set up D1 database for dev environment
+#   ./setup-d1.sh --env=prod --reset  - Reset mode (deletes and recreates database)
 #
 
 set -e
 
 # Parse command line arguments
 RESET_MODE=false
-if [ "$1" = "--reset" ]; then
-    RESET_MODE=true
+DEPLOY_ENV=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --env=*)
+            DEPLOY_ENV="${1#*=}"
+            shift
+            ;;
+        --reset)
+            RESET_MODE=true
+            shift
+            ;;
+        *)
+            echo "❌ Unknown parameter: $1"
+            echo ""
+            echo "Usage: $0 --env=<environment> [--reset]"
+            echo ""
+            echo "Options:"
+            echo "  --env=<name>    Environment name (required, e.g., dev, staging, prod)"
+            echo "  --reset         Delete and recreate database (WARNING: deletes all data)"
+            echo ""
+            echo "Examples:"
+            echo "  $0 --env=dev"
+            echo "  $0 --env=staging"
+            echo "  $0 --env=prod --reset"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required parameters
+if [ -z "$DEPLOY_ENV" ]; then
+    echo "❌ Error: --env parameter is required"
+    echo ""
+    echo "Usage: $0 --env=<environment> [--reset]"
+    echo ""
+    echo "Examples:"
+    echo "  $0 --env=dev"
+    echo "  $0 --env=staging"
+    echo "  $0 --env=prod"
+    exit 1
 fi
 
-echo "⚡️ Authrim D1 Database Setup"
+echo "⚡️ Authrim D1 Database Setup - Environment: $DEPLOY_ENV"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -34,24 +73,17 @@ if ! wrangler whoami &> /dev/null; then
     exit 1
 fi
 
-echo "📦 D1 Database Setup"
+echo "📦 D1 Database Setup for Environment: $DEPLOY_ENV"
 echo ""
 echo "This script will create or update D1 database for your Authrim deployment."
 echo ""
 
-# Determine environment
-read -p "Environment (local/remote) [local]: " ENV
-ENV=${ENV:-local}
+# Determine database name with environment prefix
+read -p "Database name [${DEPLOY_ENV}-authrim-users-db]: " DB_NAME_INPUT
+DB_NAME=${DB_NAME_INPUT:-${DEPLOY_ENV}-authrim-users-db}
 
-# Determine database name and remote flag
-read -p "Database name [authrim-users-db]: " DB_NAME_INPUT
-DB_NAME=${DB_NAME_INPUT:-authrim-users-db}
-
-if [ "$ENV" = "local" ]; then
-    REMOTE_FLAG=""
-else
-    REMOTE_FLAG="--remote"
-fi
+# Always use --remote flag (not using local D1 database)
+REMOTE_FLAG="--remote"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -277,15 +309,23 @@ database_id = \"$DB_ID\"\\
     fi
 }
 
-# Update all package wrangler.toml files
-for toml_file in packages/*/wrangler.toml; do
-    if [ -f "$toml_file" ]; then
-        add_d1_binding "$toml_file"
+# Update all package wrangler.{env}.toml files
+for pkg_dir in packages/*/; do
+    if [ -d "$pkg_dir" ]; then
+        toml_file="${pkg_dir}wrangler.${DEPLOY_ENV}.toml"
+        if [ -f "$toml_file" ]; then
+            add_d1_binding "$toml_file"
+        else
+            package_name=$(basename "$pkg_dir")
+            if [ "$package_name" != "router" ] && [ "$package_name" != "ui" ]; then
+                echo "  ⚠️  Warning: $toml_file not found. Run setup-wrangler.sh first."
+            fi
+        fi
     fi
 done
 
 echo ""
-echo "✅ All wrangler.toml files updated!"
+echo "✅ All wrangler.${DEPLOY_ENV}.toml files updated!"
 echo ""
 
 # Ask if user wants to run migrations
@@ -303,7 +343,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 
     # Run migrations using migrate.sh
     if [ -f "migrations/migrate.sh" ]; then
-        bash migrations/migrate.sh "$ENV" up
+        bash migrations/migrate.sh "$DEPLOY_ENV" up
     else
         # Fallback: run migrations directly
         echo "📝 Applying 001_initial_schema.sql..."
@@ -312,20 +352,15 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo ""
 
         echo "📝 Applying 002_seed_default_data.sql..."
-        if [ "$ENV" = "remote" ]; then
-            echo "⚠️  Warning: This includes test data!"
-            echo "Please review migrations/002_seed_default_data.sql and remove test data before running on production"
-            read -p "Continue? (y/N): " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --file=migrations/002_seed_default_data.sql
-                echo "✅ Seed data migration complete"
-            else
-                echo "⊗ Skipping seed data"
-            fi
-        else
+        echo "⚠️  Warning: This includes test data!"
+        echo "Review migrations/002_seed_default_data.sql before running on production"
+        read -p "Continue? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
             wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --file=migrations/002_seed_default_data.sql
             echo "✅ Seed data migration complete"
+        else
+            echo "⊗ Skipping seed data"
         fi
         echo ""
         echo "✅ All migrations applied!"
@@ -352,42 +387,38 @@ else
     echo "⊗ Migrations skipped"
     echo ""
     echo "To run migrations later:"
-    echo "  bash migrations/migrate.sh $ENV up"
+    echo "  bash migrations/migrate.sh $DEPLOY_ENV up"
 fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🎉 D1 Setup Complete!"
+echo "🎉 D1 Setup Complete for Environment: $DEPLOY_ENV"
 echo ""
 echo "📋 Database Information:"
+echo "  • Environment: $DEPLOY_ENV"
 echo "  • Database Name: $DB_NAME"
 echo "  • Database ID: $DB_ID"
 echo "  • Binding Name: DB"
 echo ""
 echo "📝 Updated Files:"
-for toml_file in packages/*/wrangler.toml; do
-    if [ -f "$toml_file" ]; then
-        package_name=$(basename $(dirname "$toml_file"))
-        if [ "$package_name" != "router" ]; then
-            echo "  • $package_name/wrangler.toml"
+for pkg_dir in packages/*/; do
+    if [ -d "$pkg_dir" ]; then
+        package_name=$(basename "$pkg_dir")
+        toml_file="${pkg_dir}wrangler.${DEPLOY_ENV}.toml"
+        if [ -f "$toml_file" ] && [ "$package_name" != "router" ] && [ "$package_name" != "ui" ]; then
+            echo "  • $package_name/wrangler.${DEPLOY_ENV}.toml"
         fi
     fi
 done
 echo ""
 echo "Next steps:"
-echo "  1. Verify D1 binding in wrangler.toml files"
-echo "  2. Update your TypeScript Env interface to include DB binding"
-echo "  3. Test database access in your workers"
+echo "  1. Verify D1 binding in wrangler.${DEPLOY_ENV}.toml files"
+echo "  2. Run 'pnpm run deploy -- --env=$DEPLOY_ENV' to deploy"
 echo ""
 echo "Useful commands:"
-if [ "$ENV" = "local" ]; then
-    echo "  • List tables:    wrangler d1 execute $DB_NAME --command=\"SELECT name FROM sqlite_master WHERE type='table';\""
-    echo "  • Query data:     wrangler d1 execute $DB_NAME --command=\"SELECT * FROM users LIMIT 5;\""
-else
-    echo "  • List tables:    wrangler d1 execute $DB_NAME --remote --command=\"SELECT name FROM sqlite_master WHERE type='table';\""
-    echo "  • Query data:     wrangler d1 execute $DB_NAME --remote --command=\"SELECT * FROM users LIMIT 5;\""
-fi
-echo "  • Run migrations: bash migrations/migrate.sh $ENV up"
-echo "  • Check status:   bash migrations/migrate.sh $ENV status"
+echo "  • List tables:    wrangler d1 execute $DB_NAME --remote --command=\"SELECT name FROM sqlite_master WHERE type='table';\""
+echo "  • Query data:     wrangler d1 execute $DB_NAME --remote --command=\"SELECT * FROM users LIMIT 5;\""
+echo "  • Run migrations: bash migrations/migrate.sh $DEPLOY_ENV up"
+echo "  • Check status:   bash migrations/migrate.sh $DEPLOY_ENV status"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

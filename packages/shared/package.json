@@ -15,8 +15,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev",
+    "deploy": "[ -n \"$DEPLOY_ENV\" ] && wrangler deploy --config wrangler.$DEPLOY_ENV.toml || wrangler deploy",
+    "dev": "wrangler dev --config wrangler.dev.toml 2>/dev/null || wrangler dev",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'Shared package: lint skipped'",
     "test": "vitest run",

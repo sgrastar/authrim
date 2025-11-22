@@ -3,10 +3,53 @@
 # Authrim Cloudflare Secrets Setup Script
 # This script uploads private and public keys to Cloudflare Workers secrets
 #
+# Usage:
+#   ./setup-secrets.sh --env=dev    - Upload secrets to dev environment workers
+#   ./setup-secrets.sh --env=prod   - Upload secrets to prod environment workers
+#
 
 set -e
 
-echo "🔐 Authrim Cloudflare Secrets Setup"
+# Parse command line arguments
+DEPLOY_ENV=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --env=*)
+            DEPLOY_ENV="${1#*=}"
+            shift
+            ;;
+        *)
+            echo "❌ Unknown parameter: $1"
+            echo ""
+            echo "Usage: $0 --env=<environment>"
+            echo ""
+            echo "Options:"
+            echo "  --env=<name>    Environment name (required, e.g., dev, staging, prod)"
+            echo ""
+            echo "Examples:"
+            echo "  $0 --env=dev"
+            echo "  $0 --env=staging"
+            echo "  $0 --env=prod"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required parameters
+if [ -z "$DEPLOY_ENV" ]; then
+    echo "❌ Error: --env parameter is required"
+    echo ""
+    echo "Usage: $0 --env=<environment>"
+    echo ""
+    echo "Examples:"
+    echo "  $0 --env=dev"
+    echo "  $0 --env=staging"
+    echo "  $0 --env=prod"
+    exit 1
+fi
+
+echo "🔐 Authrim Cloudflare Secrets Setup - Environment: $DEPLOY_ENV"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -51,193 +94,26 @@ echo ""
 # Prepare the public JWK as compact JSON
 PUBLIC_JWK=$(cat .keys/public.jwk.json | jq -c .)
 
-# Get KEY_ID from metadata
-KEY_ID=$(cat .keys/metadata.json | jq -r '.kid')
-
-# Function to generate wrangler.toml for a worker
-generate_wrangler_toml() {
-    local package=$1
-    local port=$2
-    local kv_namespaces=$3
-
-    local file="packages/$package/wrangler.toml"
-
-    cat > "$file" << TOML_EOF
-name = "authrim-$package"
-main = "src/index.ts"
-compatibility_date = "2024-09-23"
-compatibility_flags = ["nodejs_compat"]
-
-# KV Namespaces
-$kv_namespaces
-
-# Environment variables
-[vars]
-ISSUER_URL = "http://localhost:8787"
-TOKEN_EXPIRY = "3600"
-CODE_EXPIRY = "120"
-STATE_EXPIRY = "300"
-NONCE_EXPIRY = "300"
-REFRESH_TOKEN_EXPIRY = "2592000"
-KEY_ID = "$KEY_ID"
-ALLOW_HTTP_REDIRECT = "true"
-
-# Development configuration
-[dev]
-port = $port
-TOML_EOF
-}
-
-# Check if wrangler.toml files exist, generate if missing
-echo "Checking for wrangler.toml files..."
-missing_configs=()
-for package in op-discovery op-auth op-token op-userinfo op-management; do
-    if [ ! -f "packages/$package/wrangler.toml" ]; then
-        missing_configs+=("$package")
-    fi
-done
-
-if [ ${#missing_configs[@]} -gt 0 ]; then
-    echo "⚠️  Missing wrangler.toml files for: ${missing_configs[*]}"
-    echo "📝 Generating missing wrangler.toml files..."
-    echo ""
-
-    # Generate wrangler.toml for op-discovery (if missing)
-    if [[ ! -f "packages/op-discovery/wrangler.toml" ]]; then
-        generate_wrangler_toml "op-discovery" 8787 '[[kv_namespaces]]
-binding = "RATE_LIMIT"
-id = "placeholder"
-preview_id = "placeholder"'
-        echo "  ✅ op-discovery/wrangler.toml"
-    fi
-
-    # Generate wrangler.toml for op-auth (if missing)
-    if [[ ! -f "packages/op-auth/wrangler.toml" ]]; then
-        generate_wrangler_toml "op-auth" 8788 '[[kv_namespaces]]
-binding = "AUTH_CODES"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "STATE_STORE"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "NONCE_STORE"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "CLIENTS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "RATE_LIMIT"
-id = "placeholder"
-preview_id = "placeholder"'
-        echo "  ✅ op-auth/wrangler.toml"
-    fi
-
-    # Generate wrangler.toml for op-token (if missing)
-    if [[ ! -f "packages/op-token/wrangler.toml" ]]; then
-        generate_wrangler_toml "op-token" 8789 '[[kv_namespaces]]
-binding = "AUTH_CODES"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "REFRESH_TOKENS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "REVOKED_TOKENS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "CLIENTS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "RATE_LIMIT"
-id = "placeholder"
-preview_id = "placeholder"'
-        echo "  ✅ op-token/wrangler.toml"
-    fi
-
-    # Generate wrangler.toml for op-userinfo (if missing)
-    if [[ ! -f "packages/op-userinfo/wrangler.toml" ]]; then
-        generate_wrangler_toml "op-userinfo" 8790 '[[kv_namespaces]]
-binding = "CLIENTS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "REVOKED_TOKENS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "RATE_LIMIT"
-id = "placeholder"
-preview_id = "placeholder"'
-        echo "  ✅ op-userinfo/wrangler.toml"
-    fi
-
-    # Generate wrangler.toml for op-management (if missing)
-    if [[ ! -f "packages/op-management/wrangler.toml" ]]; then
-        generate_wrangler_toml "op-management" 8791 '[[kv_namespaces]]
-binding = "CLIENTS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "REFRESH_TOKENS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "REVOKED_TOKENS"
-id = "placeholder"
-preview_id = "placeholder"
-
-[[kv_namespaces]]
-binding = "RATE_LIMIT"
-id = "placeholder"
-preview_id = "placeholder"'
-        echo "  ✅ op-management/wrangler.toml"
-    fi
-
-    echo ""
-fi
-echo "✅ All wrangler.toml files ready"
-echo ""
-
 # Function to upload secrets to a worker
 upload_secrets() {
     local package=$1
     local needs_private=$2
     local needs_public=$3
+    local worker_name="${DEPLOY_ENV}-authrim-${package}"
 
-    echo "📦 Uploading secrets to $package..."
-    cd "packages/$package"
+    echo "📦 Uploading secrets to ${worker_name}..."
 
     if [ "$needs_private" = "true" ]; then
         echo "  • Uploading PRIVATE_KEY_PEM..."
-        cat ../../.keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
+        cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM --name="${worker_name}"
     fi
 
     if [ "$needs_public" = "true" ]; then
         echo "  • Uploading PUBLIC_JWK_JSON..."
-        echo "$PUBLIC_JWK" | wrangler secret put PUBLIC_JWK_JSON
+        echo "$PUBLIC_JWK" | wrangler secret put PUBLIC_JWK_JSON --name="${worker_name}"
     fi
 
-    cd ../..
-    echo "✅ $package secrets uploaded"
+    echo "✅ ${worker_name} secrets uploaded"
     echo ""
 }
 
@@ -273,8 +149,7 @@ read -p "Do you want to configure Resend API Key? (y/N): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo ""
-    echo "📦 Uploading email configuration to op-auth..."
-    cd "packages/op-auth"
+    echo "📦 Uploading email configuration to ${DEPLOY_ENV}-authrim-op-auth..."
 
     echo "  • Enter your Resend API Key:"
     read -s -p "    RESEND_API_KEY: " RESEND_API_KEY
@@ -284,11 +159,10 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     read -p "    EMAIL_FROM: " EMAIL_FROM
 
     # Upload secrets
-    echo "$RESEND_API_KEY" | wrangler secret put RESEND_API_KEY
-    echo "$EMAIL_FROM" | wrangler secret put EMAIL_FROM
+    echo "$RESEND_API_KEY" | wrangler secret put RESEND_API_KEY --name="${DEPLOY_ENV}-authrim-op-auth"
+    echo "$EMAIL_FROM" | wrangler secret put EMAIL_FROM --name="${DEPLOY_ENV}-authrim-op-auth"
 
-    cd ../..
-    echo "✅ Email configuration uploaded to op-auth"
+    echo "✅ Email configuration uploaded to ${DEPLOY_ENV}-authrim-op-auth"
     echo ""
 else
     echo "⊗ Email configuration skipped (magic links will return URLs)"
@@ -296,14 +170,14 @@ else
 fi
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🎉 All secrets uploaded successfully!"
+echo "🎉 All secrets uploaded successfully to environment: $DEPLOY_ENV"
 echo ""
 echo "Next steps:"
-echo "  1. Run './scripts/setup-production.sh' to configure production URLs"
-echo "  2. Run 'pnpm run deploy' to deploy all workers"
+echo "  1. Run './scripts/setup-d1.sh --env=$DEPLOY_ENV' if you haven't already"
+echo "  2. Run 'pnpm run deploy -- --env=$DEPLOY_ENV' to deploy all workers"
 echo ""
 echo "⚠️  Security Note:"
-echo "  Secrets are now stored securely in Cloudflare."
+echo "  Secrets are now stored securely in Cloudflare for $DEPLOY_ENV environment."
 echo "  Never commit .keys/ directory to version control!"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

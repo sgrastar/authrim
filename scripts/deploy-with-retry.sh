@@ -7,7 +7,9 @@
 # - Service unavailable errors (code 7010) from concurrent deployments
 # - API overload from parallel deployments
 #
-# Usage: ./scripts/deploy-with-retry.sh
+# Usage:
+#   ./scripts/deploy-with-retry.sh --env=dev
+#   ./scripts/deploy-with-retry.sh --env=staging --api-only
 
 set -e
 
@@ -15,6 +17,53 @@ set -e
 trap 'echo ""; echo "⚠️  Deployment cancelled by user"; exit 130' INT TERM
 
 INTER_DEPLOY_DELAY=10    # Delay between deployments to avoid rate limits
+DEPLOY_ENV=""
+API_ONLY=false
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --env=*)
+            DEPLOY_ENV="${1#*=}"
+            shift
+            ;;
+        --api-only)
+            API_ONLY=true
+            shift
+            ;;
+        *)
+            echo "❌ Unknown parameter: $1"
+            echo ""
+            echo "Usage: $0 --env=<environment> [--api-only]"
+            echo ""
+            echo "Options:"
+            echo "  --env=<name>    Environment name (required, e.g., dev, staging, prod)"
+            echo "  --api-only      Deploy API packages only (exclude UI)"
+            echo ""
+            echo "Examples:"
+            echo "  $0 --env=dev"
+            echo "  $0 --env=staging --api-only"
+            echo "  $0 --env=prod"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required parameters
+if [ -z "$DEPLOY_ENV" ]; then
+    echo "❌ Error: --env parameter is required"
+    echo ""
+    echo "Usage: $0 --env=<environment> [--api-only]"
+    echo ""
+    echo "Examples:"
+    echo "  $0 --env=dev"
+    echo "  $0 --env=staging"
+    echo "  $0 --env=prod"
+    exit 1
+fi
+
+# Export environment variable for package scripts
+export DEPLOY_ENV
 
 deploy_package() {
     local package_name=$1
@@ -35,38 +84,68 @@ deploy_package() {
 }
 
 # Main deployment sequence
-echo "🚀 Starting deployment..."
+echo "🚀 Starting deployment for environment: $DEPLOY_ENV"
 echo ""
 
-# Validation: Check for placeholder values in wrangler.toml files
+# Validation: Check for environment-specific wrangler config files
 echo "🔍 Validating configuration..."
+MISSING_CONFIG=false
 PLACEHOLDER_FOUND=false
-for toml_file in packages/*/wrangler.toml; do
-    if [ -f "$toml_file" ]; then
-        package_name=$(basename $(dirname "$toml_file"))
+
+for pkg_dir in packages/*/; do
+    if [ -d "$pkg_dir" ]; then
+        package_name=$(basename "$pkg_dir")
+        toml_file="${pkg_dir}wrangler.${DEPLOY_ENV}.toml"
+
+        # Skip router if not needed
+        if [ "$package_name" = "router" ]; then
+            continue
+        fi
+
+        # Skip UI package
+        if [ "$package_name" = "ui" ]; then
+            continue
+        fi
+
+        # Check if environment-specific config exists
+        if [ ! -f "$toml_file" ]; then
+            echo "  ⚠️  Missing: $package_name/wrangler.${DEPLOY_ENV}.toml"
+            MISSING_CONFIG=true
+            continue
+        fi
 
         # Check for placeholder in KV namespaces
         if grep -q 'id = "placeholder"' "$toml_file" 2>/dev/null; then
-            echo "  ❌ Found placeholder KV namespace ID in $package_name/wrangler.toml"
+            echo "  ❌ Found placeholder KV namespace ID in $package_name/wrangler.${DEPLOY_ENV}.toml"
             PLACEHOLDER_FOUND=true
         fi
 
         # Check for placeholder in D1 databases
         if grep -q 'database_id = "placeholder"' "$toml_file" 2>/dev/null; then
-            echo "  ❌ Found placeholder D1 database ID in $package_name/wrangler.toml"
+            echo "  ❌ Found placeholder D1 database ID in $package_name/wrangler.${DEPLOY_ENV}.toml"
             PLACEHOLDER_FOUND=true
         fi
     fi
 done
+
+if [ "$MISSING_CONFIG" = true ]; then
+    echo ""
+    echo "❌ Deployment aborted: Missing environment-specific configuration files"
+    echo ""
+    echo "Please run the setup script first:"
+    echo "  ./scripts/setup-wrangler.sh --env=$DEPLOY_ENV --domain=<your-domain>"
+    echo ""
+    exit 1
+fi
 
 if [ "$PLACEHOLDER_FOUND" = true ]; then
     echo ""
     echo "❌ Deployment aborted: Configuration contains placeholder values"
     echo ""
     echo "Please run the following setup scripts first:"
-    echo "  1. ./scripts/setup-kv.sh        - Create KV namespaces and update IDs"
-    echo "  2. ./scripts/setup-secrets.sh   - Upload secrets to Cloudflare"
-    echo "  3. ./scripts/setup-d1.sh        - Create D1 database (if exists)"
+    echo "  1. ./scripts/setup-kv.sh --env=$DEPLOY_ENV"
+    echo "  2. ./scripts/setup-secrets.sh --env=$DEPLOY_ENV"
+    echo "  3. ./scripts/setup-d1.sh --env=$DEPLOY_ENV"
     echo ""
     exit 1
 fi
@@ -76,7 +155,7 @@ echo ""
 
 # Build first
 echo "🔨 Building packages..."
-if [ "$BUILD_TARGET" = "api" ]; then
+if [ "$API_ONLY" = true ]; then
     echo "   (API only - excluding UI)"
     pnpm run build:api
 else
@@ -104,9 +183,9 @@ FIRST_DEPLOY=true
 for pkg in "${PACKAGES[@]}"; do
     IFS=':' read -r name path <<< "$pkg"
 
-    # Skip router if wrangler.toml doesn't exist (production custom domain mode)
-    if [ "$name" = "router" ] && [ ! -f "$path/wrangler.toml" ]; then
-        echo "⊗ Skipping router (wrangler.toml not found - not needed in production mode)"
+    # Skip router if environment-specific wrangler config doesn't exist
+    if [ "$name" = "router" ] && [ ! -f "$path/wrangler.${DEPLOY_ENV}.toml" ]; then
+        echo "⊗ Skipping router (wrangler.${DEPLOY_ENV}.toml not found - not needed when using custom domains)"
         echo ""
         continue
     fi
@@ -135,10 +214,10 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     echo "✅ All packages deployed successfully!"
     echo ""
 
-    # Extract ISSUER_URL from wrangler.toml
+    # Extract ISSUER_URL from environment-specific wrangler.toml
     ISSUER_URL=""
-    if [ -f "packages/op-discovery/wrangler.toml" ]; then
-        ISSUER_URL=$(grep 'ISSUER_URL = ' packages/op-discovery/wrangler.toml | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
+    if [ -f "packages/op-discovery/wrangler.${DEPLOY_ENV}.toml" ]; then
+        ISSUER_URL=$(grep 'ISSUER_URL = ' "packages/op-discovery/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
     fi
 
     if [ -n "$ISSUER_URL" ]; then

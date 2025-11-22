@@ -8,9 +8,8 @@
 #   2) Production Environment (Custom Domain + Cloudflare Routes)
 #
 # Usage:
-#   ./setup-remote-wrangler.sh
-#   ./setup-remote-wrangler.sh --mode=test|production
-#   ./setup-remote-wrangler.sh --issuer-url=https://...
+#   ./setup-remote-wrangler.sh --env=dev --domain=https://dev-auth.example.com
+#   ./setup-remote-wrangler.sh --env=prod --domain=https://auth.example.com --mode=production
 #
 
 set -e
@@ -23,7 +22,40 @@ BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
 NC='\033[0m'
 
-echo -e "${MAGENTA}🔨 Authrim Remote wrangler.toml Generation${NC}"
+# Parse command line arguments first
+DEPLOY_ENV=""
+ISSUER_URL=""
+DEPLOYMENT_MODE=""
+SUBDOMAIN=""
+
+for arg in "$@"; do
+    if [[ $arg == --env=* ]]; then
+        DEPLOY_ENV="${arg#--env=}"
+    elif [[ $arg == --domain=* ]]; then
+        ISSUER_URL="${arg#--domain=}"
+    elif [[ $arg == --issuer-url=* ]]; then
+        ISSUER_URL="${arg#--issuer-url=}"
+    elif [[ $arg == --mode=* ]]; then
+        DEPLOYMENT_MODE="${arg#--mode=}"
+    elif [[ $arg == --subdomain=* ]]; then
+        SUBDOMAIN="${arg#--subdomain=}"
+    fi
+done
+
+# Validate required parameters
+if [ -z "$DEPLOY_ENV" ]; then
+    echo -e "${RED}❌ Error: --env parameter is required${NC}"
+    echo ""
+    echo "Usage: $0 --env=<environment> --domain=<issuer-url> [--mode=test|production]"
+    echo ""
+    echo "Examples:"
+    echo "  $0 --env=dev --domain=https://dev-auth.example.com"
+    echo "  $0 --env=staging --domain=https://staging-auth.example.com"
+    echo "  $0 --env=prod --domain=https://auth.example.com --mode=production"
+    exit 1
+fi
+
+echo -e "${MAGENTA}🔨 Authrim Remote wrangler.toml Generation - Environment: $DEPLOY_ENV${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -47,22 +79,6 @@ echo "📦 Key Information:"
 echo "   Key ID: $KEY_ID"
 echo ""
 
-# Parse command line arguments
-ISSUER_URL=""
-DEPLOYMENT_MODE=""
-SUBDOMAIN=""
-
-for arg in "$@"; do
-    if [[ $arg == --issuer-url=* ]]; then
-        ISSUER_URL="${arg#--issuer-url=}"
-    fi
-    if [[ $arg == --mode=* ]]; then
-        DEPLOYMENT_MODE="${arg#--mode=}"
-    fi
-    if [[ $arg == --subdomain=* ]]; then
-        SUBDOMAIN="${arg#--subdomain=}"
-    fi
-done
 
 # Prompt for deployment mode if not provided via CLI
 if [ -z "$DEPLOYMENT_MODE" ]; then
@@ -324,8 +340,11 @@ zone_name = \"$ZONE_NAME\""
     fi
 }
 
-# Update all wrangler.toml files
-for toml_file in packages/*/wrangler.toml; do
+# Update all wrangler.${DEPLOY_ENV}.toml files
+for pkg_dir in packages/*/; do
+    pkg_name=$(basename "$pkg_dir")
+    toml_file="packages/${pkg_name}/wrangler.${DEPLOY_ENV}.toml"
+    [ ! -f "$toml_file" ] && continue
     if [ -f "$toml_file" ]; then
         package_name=$(basename $(dirname "$toml_file"))
 
@@ -362,11 +381,11 @@ done
 
 # Handle router wrangler.toml
 if [ "$DEPLOYMENT_MODE" = "test" ]; then
-    # Test mode: generate router wrangler.toml with Service Bindings
-    if [ ! -f "packages/router/wrangler.toml" ]; then
+    # Test mode: generate router wrangler.${DEPLOY_ENV}.toml with Service Bindings
+    if [ ! -f "packages/router/wrangler.${DEPLOY_ENV}.toml" ]; then
         echo "  • Generating router (with Service Bindings)..."
-        cat > packages/router/wrangler.toml << 'EOF'
-name = "authrim-router"
+        cat > "packages/router/wrangler.${DEPLOY_ENV}.toml" << EOF
+name = "${DEPLOY_ENV}-authrim-router"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -375,23 +394,23 @@ workers_dev = true
 # Service Bindings to backend workers
 [[services]]
 binding = "OP_DISCOVERY"
-service = "authrim-op-discovery"
+service = "${DEPLOY_ENV}-authrim-op-discovery"
 
 [[services]]
 binding = "OP_AUTH"
-service = "authrim-op-auth"
+service = "${DEPLOY_ENV}-authrim-op-auth"
 
 [[services]]
 binding = "OP_TOKEN"
-service = "authrim-op-token"
+service = "${DEPLOY_ENV}-authrim-op-token"
 
 [[services]]
 binding = "OP_USERINFO"
-service = "authrim-op-userinfo"
+service = "${DEPLOY_ENV}-authrim-op-userinfo"
 
 [[services]]
 binding = "OP_MANAGEMENT"
-service = "authrim-op-management"
+service = "${DEPLOY_ENV}-authrim-op-management"
 
 [vars]
 KEY_ID = "{{KEY_ID}}"
@@ -431,7 +450,7 @@ if [ "$DEPLOYMENT_MODE" = "test" ]; then
     echo ""
     echo "  Next steps:"
     echo "    1. pnpm run build"
-    echo "    2. pnpm run deploy"
+    echo "    2. pnpm run deploy -- --env=$DEPLOY_ENV"
     echo ""
 else
     echo "📌 Production Environment Configuration:"
@@ -442,14 +461,14 @@ else
     echo ""
     echo "  ⚠️  IMPORTANT: Post-Deployment Steps Required!"
     echo ""
-    echo "  After 'pnpm run deploy', verify:"
+    echo "  After 'pnpm run deploy -- --env=$DEPLOY_ENV', verify:"
     echo "    1. Domain ($ZONE_NAME) is managed by Cloudflare"
     echo "    2. DNS is properly configured"
     echo "    3. Routes are automatically applied"
     echo ""
     echo "  Next steps:"
     echo "    1. pnpm run build"
-    echo "    2. pnpm run deploy"
+    echo "    2. pnpm run deploy -- --env=$DEPLOY_ENV"
     echo ""
 fi
 

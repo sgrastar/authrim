@@ -273,18 +273,24 @@ cd authrim
 # 2. Install dependencies (monorepo setup)
 pnpm install
 
-# 3. Generate RSA keys
+# 3. Generate RSA keys (shared across all environments)
 ./scripts/setup-keys.sh
 
-# 4. Generate wrangler.toml files (local or remote)
-./scripts/setup-local-wrangler.sh    # For local development
-# OR ./scripts/setup-remote-wrangler.sh  # For Cloudflare deployment
+# 4. Generate environment-specific wrangler.toml files
+# For local development:
+./scripts/setup-local-wrangler.sh --env=dev
 
-# 5. Set up KV namespaces
-./scripts/setup-kv.sh
+# OR for remote deployment:
+./scripts/setup-remote-wrangler.sh \
+  --env=dev \
+  --domain=https://dev-auth.yourdomain.com \
+  --mode=test
 
-# 6. Set up D1 database (Phase 5)
-./scripts/setup-d1.sh
+# 5. Set up environment-specific KV namespaces
+./scripts/setup-kv.sh --env=dev
+
+# 6. Set up environment-specific D1 database
+./scripts/setup-d1.sh --env=dev
 
 # 7. Build all packages
 pnpm run build
@@ -292,14 +298,14 @@ pnpm run build
 # 8. Start all workers in parallel (development mode)
 pnpm run dev
 
-# For production deployment:
-# Deploy all workers (including Durable Objects automatically)
-pnpm run deploy
-# - Deploys authrim-shared (Durable Objects) first
+# For remote deployment:
+# Deploy to specific environment (including Durable Objects automatically)
+pnpm run deploy -- --env=dev
+# - Deploys dev-authrim-shared (Durable Objects) first
 # - Then deploys other workers sequentially
 # - Includes retry logic and rate limit protection
 
-# 9. Optional: Deploy UI to Cloudflare Pages (Phase 5+)
+# 9. Optional: Deploy UI to Cloudflare Pages
 ./scripts/deploy-remote-ui.sh
 # - Builds and deploys SvelteKit UI
 # - Configures CORS automatically
@@ -446,81 +452,109 @@ Authrim is primarily a solo development project. See [CONTRIBUTING.md](./CONTRIB
 
 Deploy Authrim to Cloudflare's global edge network and get a production-ready OpenID Provider with a public URL.
 
+Authrim supports **multiple environments** (dev, staging, prod, or custom names) within a single Cloudflare account. See [DEPLOYMENT.md](./DEPLOYMENT.md) for comprehensive multi-environment setup guide.
+
 ```bash
 # 1. Install dependencies
 pnpm install
 
-# 2. Generate RSA keys
+# 2. Generate RSA keys (shared across all environments)
 ./scripts/setup-keys.sh
 
-# 3. Generate wrangler.toml files for Cloudflare
-./scripts/setup-remote-wrangler.sh
+# 3. Generate environment-specific wrangler.toml files
+./scripts/setup-remote-wrangler.sh \
+  --env=dev \
+  --domain=https://dev-auth.yourdomain.com \
+  --mode=test
 
-# 4. Set up KV namespaces
-./scripts/setup-kv.sh
+# 4. Set up environment-specific KV namespaces
+./scripts/setup-kv.sh --env=dev
 
-# 5. Set up D1 database (Phase 5 - optional for Phase 1-4)
-./scripts/setup-d1.sh
+# 5. Set up environment-specific D1 database
+./scripts/setup-d1.sh --env=dev
 
-# 6. Upload secrets to Cloudflare
-./scripts/setup-secrets.sh
+# 6. Upload secrets to environment-specific workers
+./scripts/setup-secrets.sh --env=dev
 
 # 7. Build TypeScript
 pnpm run build
 
-# 8. Deploy with retry logic
-pnpm run deploy
+# 8. Deploy to specific environment
+pnpm run deploy -- --env=dev
 # This uses deploy-with-retry.sh for sequential deployment with delays
-# - Deploys authrim-shared (Durable Objects) first
+# - Deploys dev-authrim-shared (Durable Objects) first
 # - Router Worker is included if wrangler.toml exists (test mode)
 # - Router Worker is skipped if wrangler.toml missing (production mode)
 
-# 9. Optional: Deploy UI to Cloudflare Pages (Phase 5+)
+# 9. Optional: Deploy UI to Cloudflare Pages
 ./scripts/deploy-remote-ui.sh
 # - Builds and deploys SvelteKit login/registration UI
 # - Auto-configures CORS for API integration
+```
+
+**Example: Setting up multiple environments**
+```bash
+# Dev environment
+./scripts/setup-remote-wrangler.sh --env=dev --domain=https://dev-auth.example.com --mode=test
+./scripts/setup-kv.sh --env=dev
+./scripts/setup-d1.sh --env=dev
+./scripts/setup-secrets.sh --env=dev
+pnpm run deploy -- --env=dev
+
+# Production environment
+./scripts/setup-remote-wrangler.sh --env=prod --domain=https://auth.example.com --mode=production
+./scripts/setup-kv.sh --env=prod
+./scripts/setup-d1.sh --env=prod
+./scripts/setup-secrets.sh --env=prod
+pnpm run deploy -- --env=prod
 ```
 
 ### Deployment Modes
 
 Authrim supports two deployment modes to ensure OpenID Connect specification compliance:
 
-#### 1️⃣ Test Environment (workers.dev + Router Worker)
-- **Unified endpoint**: `https://authrim.{subdomain}.workers.dev`
-- **Use case**: Development, testing, quick setup
+#### 1️⃣ Test Mode (workers.dev + Router Worker)
+- **Unified endpoint**: `https://{env}-authrim.{subdomain}.workers.dev`
+- **Use case**: Development, staging, testing environments
 - **Pros**: No custom domain needed, OpenID Connect compliant ✅
-- **Deploy**: `pnpm run deploy` (includes Router Worker)
-- **UI**: Optional - deploy with `./scripts/deploy-remote-ui.sh`
+- **Deploy**: `pnpm run deploy -- --env=dev` (includes Router Worker)
+- **Setup**: `./scripts/setup-remote-wrangler.sh --env=dev --domain=https://dev-auth.example.com --mode=test`
 
 **Workers deployed:**
-- 🌍 **authrim-shared** (Durable Objects - deployed first)
+- 🌍 **{env}-authrim-shared** (Durable Objects - deployed first)
 - 🌍 **authrim** (unified entry point - Router Worker)
-- 🌍 **authrim-op-discovery**, **authrim-op-auth**, **authrim-op-token**, **authrim-op-userinfo**, **authrim-op-management**
-- 🎨 **UI Pages** (Optional - SvelteKit login/admin interface)
+- 🌍 **{env}-authrim-op-discovery**, **{env}-authrim-op-auth**, **{env}-authrim-op-token**, **{env}-authrim-op-userinfo**, **{env}-authrim-op-management**
 
-#### 2️⃣ Production Environment (Custom Domain + Routes)
-- **Custom domain**: `https://id.yourdomain.com`
+#### 2️⃣ Production Mode (Custom Domain + Routes)
+- **Custom domain**: `https://auth.yourdomain.com`
 - **Use case**: Production deployments
 - **Pros**: Optimal performance, professional URL
-- **Deploy**: `pnpm run deploy` (Router Worker skipped automatically)
-- **UI**: Recommended - deploy with `./scripts/deploy-remote-ui.sh` to custom/Pages.dev domain
+- **Deploy**: `pnpm run deploy -- --env=prod` (Router Worker skipped automatically)
+- **Setup**: `./scripts/setup-remote-wrangler.sh --env=prod --domain=https://auth.yourdomain.com --mode=production`
 - **Requires**: Cloudflare-managed domain (for Workers)
 
 **Workers deployed:**
-- 🌍 **authrim-shared** (Durable Objects - deployed first)
-- 🌍 **authrim-op-discovery**, **authrim-op-auth**, **authrim-op-token**, **authrim-op-userinfo**, **authrim-op-management**
-- 🎨 **UI Pages** (Optional - SvelteKit login/admin interface)
+- 🌍 **prod-authrim-shared** (Durable Objects - deployed first)
+- 🌍 **prod-authrim-op-discovery**, **prod-authrim-op-auth**, **prod-authrim-op-token**, **prod-authrim-op-userinfo**, **prod-authrim-op-management**
 - Router Worker is automatically excluded (no wrangler.toml generated in production mode)
 
-> 💡 **Learn more**: See [docs/ROUTER_SETUP.md](./docs/ROUTER_SETUP.md) for detailed architecture and [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for step-by-step instructions.
+> 💡 **Learn more**: See [docs/ROUTER_SETUP.md](./docs/ROUTER_SETUP.md) for detailed architecture and [DEPLOYMENT.md](./DEPLOYMENT.md) for comprehensive multi-environment setup guide.
 
 ### Deployment Commands
 
 All deployment commands now use sequential deployment with retry logic to avoid API rate limits:
 
 ```bash
-# Deploy with retry logic (works for both modes)
-pnpm run deploy
+# Deploy to specific environment
+pnpm run deploy -- --env=dev
+
+# Deploy API only (exclude UI packages)
+pnpm run deploy -- --env=prod --api-only
+
+# Deploy to multiple environments
+pnpm run deploy -- --env=dev
+pnpm run deploy -- --env=staging
+pnpm run deploy -- --env=prod
 ```
 
 **Benefits:**
@@ -529,6 +563,7 @@ pnpm run deploy
 - ✅ Automatic retry with exponential backoff (up to 4 attempts)
 - ✅ 10-second delays between deployments
 - ✅ Conditional router deployment based on configuration
+- ✅ Environment-specific deployments for isolated testing
 
 ### UI Deployment (Phase 5+)
 

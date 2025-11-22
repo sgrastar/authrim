@@ -4,21 +4,61 @@
 # This script creates all required KV namespaces and updates wrangler.toml files
 #
 # Usage:
-#   ./setup-kv.sh          - Interactive mode
-#                            - If all namespaces exist: choose bulk action (use/recreate/interactive)
-#                            - If some missing: create new ones, prompt for existing
-#   ./setup-kv.sh --reset  - Reset mode (deletes and recreates all namespaces)
+#   ./setup-kv.sh --env=dev           - Set up KV namespaces for dev environment
+#   ./setup-kv.sh --env=prod --reset  - Reset mode (deletes and recreates all namespaces)
 #
 
 set -e
 
 # Parse command line arguments
 RESET_MODE=false
-if [ "$1" = "--reset" ]; then
-    RESET_MODE=true
-    echo "⚠️  RESET MODE ENABLED"
+DEPLOY_ENV=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --env=*)
+            DEPLOY_ENV="${1#*=}"
+            shift
+            ;;
+        --reset)
+            RESET_MODE=true
+            shift
+            ;;
+        *)
+            echo "❌ Unknown parameter: $1"
+            echo ""
+            echo "Usage: $0 --env=<environment> [--reset]"
+            echo ""
+            echo "Options:"
+            echo "  --env=<name>    Environment name (required, e.g., dev, staging, prod)"
+            echo "  --reset         Delete and recreate all namespaces (WARNING: deletes all data)"
+            echo ""
+            echo "Examples:"
+            echo "  $0 --env=dev"
+            echo "  $0 --env=staging"
+            echo "  $0 --env=prod --reset"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate required parameters
+if [ -z "$DEPLOY_ENV" ]; then
+    echo "❌ Error: --env parameter is required"
+    echo ""
+    echo "Usage: $0 --env=<environment> [--reset]"
+    echo ""
+    echo "Examples:"
+    echo "  $0 --env=dev"
+    echo "  $0 --env=staging"
+    echo "  $0 --env=prod"
+    exit 1
+fi
+
+if [ "$RESET_MODE" = true ]; then
+    echo "⚠️  RESET MODE ENABLED for environment: $DEPLOY_ENV"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "All existing KV namespaces will be deleted and recreated."
+    echo "All existing KV namespaces for $DEPLOY_ENV will be deleted and recreated."
     echo "This will delete ALL data in the namespaces."
     echo ""
     read -p "Are you sure you want to continue? Type 'YES' to confirm: " -r
@@ -29,7 +69,7 @@ if [ "$1" = "--reset" ]; then
     echo ""
 fi
 
-echo "⚡️ Authrim KV Namespace Setup"
+echo "⚡️ Authrim KV Namespace Setup - Environment: $DEPLOY_ENV"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -47,15 +87,15 @@ if ! wrangler whoami &> /dev/null; then
     exit 1
 fi
 
-echo "📦 KV Namespace Setup"
+echo "📦 KV Namespace Setup for Environment: $DEPLOY_ENV"
 echo ""
 echo "This script will create or update KV namespaces for your Authrim deployment."
 echo ""
 echo "KV namespaces are Cloudflare's key-value storage used by the workers."
 echo "We'll create both production and preview namespaces for:"
-echo "  • CLIENTS - Registered OAuth clients"
-echo "  • INITIAL_ACCESS_TOKENS - Dynamic Client Registration tokens"
-echo "  • SETTINGS - System settings storage"
+echo "  • ${DEPLOY_ENV}-CLIENTS - Registered OAuth clients"
+echo "  • ${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS - Dynamic Client Registration tokens"
+echo "  • ${DEPLOY_ENV}-SETTINGS - System settings storage"
 echo ""
 echo "Note: The following have been migrated to Durable Objects:"
 echo "  • AUTH_CODES → AuthorizationCodeStore DO"
@@ -95,12 +135,18 @@ if [ "$RESET_MODE" = false ]; then
     echo ""
 fi
 
-# Define all required KV namespaces
-declare -a REQUIRED_NAMESPACES=(
+# Define all required KV namespaces (base names)
+declare -a BASE_NAMESPACES=(
     "CLIENTS"
     "INITIAL_ACCESS_TOKENS"
     "SETTINGS"
 )
+
+# Add environment prefix to namespace names
+declare -a REQUIRED_NAMESPACES=()
+for namespace in "${BASE_NAMESPACES[@]}"; do
+    REQUIRED_NAMESPACES+=("${DEPLOY_ENV}-${namespace}")
+done
 
 # Function to get namespace ID from list by exact title match
 get_namespace_id_by_title() {
@@ -476,29 +522,29 @@ create_kv_namespace() {
 }
 
 # Create production namespaces
-echo "Creating production namespaces (for live environment)..."
+echo "Creating production namespaces for environment: $DEPLOY_ENV..."
 
-CLIENTS_ID=$(create_kv_namespace "CLIENTS")
-echo "✅ CLIENTS: $CLIENTS_ID"
+CLIENTS_ID=$(create_kv_namespace "${DEPLOY_ENV}-CLIENTS")
+echo "✅ ${DEPLOY_ENV}-CLIENTS: $CLIENTS_ID"
 
-INITIAL_ACCESS_TOKENS_ID=$(create_kv_namespace "INITIAL_ACCESS_TOKENS")
-echo "✅ INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID"
+INITIAL_ACCESS_TOKENS_ID=$(create_kv_namespace "${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS")
+echo "✅ ${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID"
 
-SETTINGS_ID=$(create_kv_namespace "SETTINGS")
-echo "✅ SETTINGS: $SETTINGS_ID"
+SETTINGS_ID=$(create_kv_namespace "${DEPLOY_ENV}-SETTINGS")
+echo "✅ ${DEPLOY_ENV}-SETTINGS: $SETTINGS_ID"
 
 echo ""
 echo "Creating preview namespaces (for development/testing)..."
 
 # Create preview namespaces
-PREVIEW_CLIENTS_ID=$(create_kv_namespace "CLIENTS" "--preview")
-echo "✅ CLIENTS (preview): $PREVIEW_CLIENTS_ID"
+PREVIEW_CLIENTS_ID=$(create_kv_namespace "${DEPLOY_ENV}-CLIENTS" "--preview")
+echo "✅ ${DEPLOY_ENV}-CLIENTS (preview): $PREVIEW_CLIENTS_ID"
 
-PREVIEW_INITIAL_ACCESS_TOKENS_ID=$(create_kv_namespace "INITIAL_ACCESS_TOKENS" "--preview")
-echo "✅ INITIAL_ACCESS_TOKENS (preview): $PREVIEW_INITIAL_ACCESS_TOKENS_ID"
+PREVIEW_INITIAL_ACCESS_TOKENS_ID=$(create_kv_namespace "${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS" "--preview")
+echo "✅ ${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS (preview): $PREVIEW_INITIAL_ACCESS_TOKENS_ID"
 
-PREVIEW_SETTINGS_ID=$(create_kv_namespace "SETTINGS" "--preview")
-echo "✅ SETTINGS (preview): $PREVIEW_SETTINGS_ID"
+PREVIEW_SETTINGS_ID=$(create_kv_namespace "${DEPLOY_ENV}-SETTINGS" "--preview")
+echo "✅ ${DEPLOY_ENV}-SETTINGS (preview): $PREVIEW_SETTINGS_ID"
 
 echo ""
 echo "📝 Updating wrangler.toml files..."
@@ -569,61 +615,60 @@ update_wrangler_toml() {
 # Update op-auth wrangler.toml
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📝 Updating packages/op-auth/wrangler.toml..."
+echo "📝 Updating packages/op-auth/wrangler.${DEPLOY_ENV}.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_wrangler_toml "packages/op-auth/wrangler.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
+update_wrangler_toml "packages/op-auth/wrangler.${DEPLOY_ENV}.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
 echo "✅ op-auth updated"
 
 # Update op-management wrangler.toml
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📝 Updating packages/op-management/wrangler.toml..."
+echo "📝 Updating packages/op-management/wrangler.${DEPLOY_ENV}.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_wrangler_toml "packages/op-management/wrangler.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
-update_wrangler_toml "packages/op-management/wrangler.toml" "INITIAL_ACCESS_TOKENS" "$INITIAL_ACCESS_TOKENS_ID" "$PREVIEW_INITIAL_ACCESS_TOKENS_ID"
-update_wrangler_toml "packages/op-management/wrangler.toml" "SETTINGS" "$SETTINGS_ID" "$PREVIEW_SETTINGS_ID"
+update_wrangler_toml "packages/op-management/wrangler.${DEPLOY_ENV}.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
+update_wrangler_toml "packages/op-management/wrangler.${DEPLOY_ENV}.toml" "INITIAL_ACCESS_TOKENS" "$INITIAL_ACCESS_TOKENS_ID" "$PREVIEW_INITIAL_ACCESS_TOKENS_ID"
+update_wrangler_toml "packages/op-management/wrangler.${DEPLOY_ENV}.toml" "SETTINGS" "$SETTINGS_ID" "$PREVIEW_SETTINGS_ID"
 echo "✅ op-management updated"
 
 # Update op-token wrangler.toml
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📝 Updating packages/op-token/wrangler.toml..."
+echo "📝 Updating packages/op-token/wrangler.${DEPLOY_ENV}.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_wrangler_toml "packages/op-token/wrangler.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
+update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
 echo "✅ op-token updated"
 
 # Update op-userinfo wrangler.toml
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📝 Updating packages/op-userinfo/wrangler.toml..."
+echo "📝 Updating packages/op-userinfo/wrangler.${DEPLOY_ENV}.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_wrangler_toml "packages/op-userinfo/wrangler.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
+update_wrangler_toml "packages/op-userinfo/wrangler.${DEPLOY_ENV}.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
 echo "✅ op-userinfo updated"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🎉 Setup complete!"
+echo "🎉 Setup complete for environment: $DEPLOY_ENV"
 echo ""
 echo "Created KV namespaces (production / preview):"
-echo "  • CLIENTS: $CLIENTS_ID / $PREVIEW_CLIENTS_ID"
-echo "  • INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID / $PREVIEW_INITIAL_ACCESS_TOKENS_ID"
-echo "  • SETTINGS: $SETTINGS_ID / $PREVIEW_SETTINGS_ID"
+echo "  • ${DEPLOY_ENV}-CLIENTS: $CLIENTS_ID / $PREVIEW_CLIENTS_ID"
+echo "  • ${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID / $PREVIEW_INITIAL_ACCESS_TOKENS_ID"
+echo "  • ${DEPLOY_ENV}-SETTINGS: $SETTINGS_ID / $PREVIEW_SETTINGS_ID"
 echo ""
-echo "All wrangler.toml files have been updated with the correct namespace IDs."
+echo "All wrangler.${DEPLOY_ENV}.toml files have been updated with the correct namespace IDs."
 echo ""
 echo "📁 Updated files:"
-echo "  • packages/op-auth/wrangler.toml"
-echo "  • packages/op-management/wrangler.toml"
-echo "  • packages/op-token/wrangler.toml"
-echo "  • packages/op-userinfo/wrangler.toml"
+echo "  • packages/op-auth/wrangler.${DEPLOY_ENV}.toml"
+echo "  • packages/op-management/wrangler.${DEPLOY_ENV}.toml"
+echo "  • packages/op-token/wrangler.${DEPLOY_ENV}.toml"
+echo "  • packages/op-userinfo/wrangler.${DEPLOY_ENV}.toml"
 echo ""
 echo "⚠️  Important: After creating or updating KV namespaces, wait 10-30 seconds"
 echo "   before deploying to allow Cloudflare to propagate the changes."
 echo ""
 echo "Next steps:"
-echo "  1. Run 'pnpm run deploy:retry' to deploy with retry logic (RECOMMENDED)"
-echo "     This deploys sequentially with delays to avoid rate limits."
-echo "  2. Or run 'pnpm run deploy' for parallel deployment (may fail with rate limits)"
-echo "  3. Or run 'pnpm run dev' for local development"
+echo "  1. Run './scripts/setup-secrets.sh --env=$DEPLOY_ENV' to upload secrets"
+echo "  2. Run './scripts/setup-d1.sh --env=$DEPLOY_ENV' to set up the database (if needed)"
+echo "  3. Run 'pnpm run deploy -- --env=$DEPLOY_ENV' to deploy to $DEPLOY_ENV environment"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
