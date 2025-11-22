@@ -1,92 +1,43 @@
 #!/bin/bash
 #
-# Authrim Development Setup Script
-# This script generates RSA keys and configures .dev.vars for local development
+# Authrim Local wrangler.toml Generation Script
+# Generates wrangler.toml files for local development with localhost ISSUER_URL
+#
+# Usage:
+#   ./setup-local-wrangler.sh
+#
 
 set -e
 
-echo "🔐 Authrim Development Setup"
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${BLUE}🔨 Authrim Local wrangler.toml Generation${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Check if keys already exist
-if [ -f ".keys/private.pem" ]; then
-    echo "⚠️  Keys already exist in .keys/ directory"
-    read -p "Do you want to regenerate keys? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Using existing keys..."
-        PRIVATE_KEY=$(cat .keys/private.pem)
-        PUBLIC_JWK=$(cat .keys/public.jwk.json | jq -c .)
-        KEY_ID=$(cat .keys/metadata.json | jq -r '.kid')
-    else
-        echo "Regenerating keys..."
-        pnpm run generate-keys
-        PRIVATE_KEY=$(cat .keys/private.pem)
-        PUBLIC_JWK=$(cat .keys/public.jwk.json | jq -c .)
-        KEY_ID=$(cat .keys/metadata.json | jq -r '.kid')
-    fi
-else
-    echo "📦 Generating RSA keys..."
-    pnpm run generate-keys
-    PRIVATE_KEY=$(cat .keys/private.pem)
-    PUBLIC_JWK=$(cat .keys/public.jwk.json | jq -c .)
-    KEY_ID=$(cat .keys/metadata.json | jq -r '.kid')
+# Check if keys exist to get KEY_ID
+if [ ! -f ".keys/metadata.json" ]; then
+    echo -e "${RED}❌ Error: Key metadata not found${NC}"
+    echo ""
+    echo "Please run setup-keys.sh first:"
+    echo "  ./scripts/setup-keys.sh"
+    echo ""
+    exit 1
 fi
 
-echo ""
-echo "📝 Creating .dev.vars file..."
-
-# Prompt for optional Resend API Key
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📧 Email Configuration (Optional)"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "Authrim uses Resend for sending magic link emails."
-echo "If you have a Resend API key, enter it now."
-echo "Otherwise, press Enter to skip (magic links will return URLs instead)."
-echo ""
-read -p "Resend API Key (or press Enter to skip): " RESEND_API_KEY
-
-# Set default EMAIL_FROM
-EMAIL_FROM="noreply@yourdomain.com"
-if [ -n "$RESEND_API_KEY" ]; then
-    echo ""
-    read -p "Email From address (default: noreply@yourdomain.com): " EMAIL_FROM_INPUT
-    if [ -n "$EMAIL_FROM_INPUT" ]; then
-        EMAIL_FROM="$EMAIL_FROM_INPUT"
-    fi
+KEY_ID=$(cat .keys/metadata.json | jq -r '.kid' 2>/dev/null || echo "")
+if [ -z "$KEY_ID" ]; then
+    echo -e "${RED}❌ Error: Could not extract KEY_ID from metadata${NC}"
+    exit 1
 fi
 
-# Create .dev.vars file
-cat > .dev.vars << EOF
-PRIVATE_KEY_PEM="$PRIVATE_KEY"
-PUBLIC_JWK_JSON='$PUBLIC_JWK'
-ALLOW_HTTP_REDIRECT="true"
-UI_BASE_URL="http://localhost:5173"
-EOF
-
-# Add email configuration if provided
-if [ -n "$RESEND_API_KEY" ]; then
-    cat >> .dev.vars << EOF
-RESEND_API_KEY="$RESEND_API_KEY"
-EMAIL_FROM="$EMAIL_FROM"
-EOF
-    echo ""
-    echo "✅ Email configuration added:"
-    echo "   • Resend API Key: ${RESEND_API_KEY:0:10}..."
-    echo "   • Email From: $EMAIL_FROM"
-else
-    echo ""
-    echo "⊗ Email configuration skipped (magic links will return URLs)"
-fi
-
-echo ""
-echo "✅ .dev.vars file created successfully!"
-echo ""
-
-echo "📝 Generating wrangler.toml files for each worker..."
+echo "📦 Key Information:"
+echo "   Key ID: $KEY_ID"
 echo ""
 
 # Function to generate wrangler.toml for a worker
@@ -101,7 +52,7 @@ generate_wrangler_toml() {
     # Check if file already exists
     if [ -f "$file" ]; then
         echo "  ⚠️  $file already exists"
-        read -p "    Overwrite? This will reset KV IDs, D1 bindings, and other configurations (y/N): " -n 1 -r
+        read -p "    Overwrite? This will reset KV IDs and D1 bindings (y/N): " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             echo "    ⊗ Skipping $package (keeping existing configuration)"
@@ -144,6 +95,11 @@ TOML_EOF
 
     echo "  ✅ $package/wrangler.toml"
 }
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📝 Generating wrangler.toml files..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
 
 # Generate wrangler.toml for shared package (Durable Objects)
 SHARED_FILE="packages/shared/wrangler.toml"
@@ -293,6 +249,8 @@ KEY_MANAGER_SECRET = "dev-secret-change-in-production"
 SHARED_TOML_EOF
 fi
 
+echo ""
+
 # Generate wrangler.toml for op-discovery
 generate_wrangler_toml "op-discovery" 8787 '' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
@@ -395,9 +353,7 @@ preview_id = "placeholder"
 [[d1_databases]]
 binding = "DB"
 database_name = "authrim-users-db"
-database_id = "placeholder"
-
-# Durable Objects Bindings' '[[durable_objects.bindings]]
+database_id = "placeholder"' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 script_name = "authrim-shared"
@@ -494,25 +450,31 @@ port = 8786
 ROUTER_TOML_EOF
 
 echo ""
-echo "✅ All wrangler.toml files generated!"
+echo -e "${GREEN}✅ All wrangler.toml files generated!${NC}"
 echo ""
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🎉 Setup complete!"
-echo ""
-echo "📋 Key Information:"
-echo "  • Key ID: $KEY_ID"
-echo "  • Private Key: .keys/private.pem"
-echo "  • Public JWK: .keys/public.jwk.json"
-echo ""
-echo "Next steps:"
-echo "  1. Run 'pnpm install' to install dependencies (if not done)"
-echo "  2. Run 'pnpm run build' to build all packages"
-echo "  3. Run 'pnpm run dev' to start all workers"
-echo "  4. Visit http://localhost:8787/.well-known/openid-configuration"
-echo ""
-echo "For production deployment:"
-echo "  • Run './scripts/setup-kv.sh' to create KV namespaces"
-echo "  • Run './scripts/setup-secrets.sh' to configure Cloudflare Secrets"
-echo "  • Run './scripts/setup-production.sh' to set production URLs"
-echo ""
+echo -e "${BLUE}🎉 Local wrangler.toml Setup Complete!${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "📋 Next steps:"
+echo ""
+echo "1. Setup KV namespaces:"
+echo "   ./scripts/setup-kv.sh"
+echo ""
+echo "2. Setup D1 database:"
+echo "   ./scripts/setup-d1.sh"
+echo ""
+echo "3. Deploy Durable Objects:"
+echo "   ./scripts/setup-durable-objects.sh"
+echo ""
+echo "4. Start local development:"
+echo "   pnpm run dev"
+echo ""
+echo "📋 Configuration:"
+echo "   • ISSUER_URL: http://localhost:8787"
+echo "   • KEY_ID: $KEY_ID"
+echo ""
+echo "⚠️  Note: KV namespace IDs and D1 database IDs are set to 'placeholder'"
+echo "       They will be updated after running setup-kv.sh and setup-d1.sh"
+echo ""

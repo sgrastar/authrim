@@ -273,19 +273,23 @@ cd authrim
 # 2. Install dependencies (monorepo setup)
 pnpm install
 
-# 3. Set up RSA keys and generate wrangler.toml files (includes Durable Objects config)
-./scripts/setup-dev.sh
+# 3. Generate RSA keys
+./scripts/setup-keys.sh
 
-# 4. Set up KV namespaces
+# 4. Generate wrangler.toml files (local or remote)
+./scripts/setup-local-wrangler.sh    # For local development
+# OR ./scripts/setup-remote-wrangler.sh  # For Cloudflare deployment
+
+# 5. Set up KV namespaces
 ./scripts/setup-kv.sh
 
-# 5. Set up D1 database (Phase 5)
+# 6. Set up D1 database (Phase 5)
 ./scripts/setup-d1.sh
 
-# 6. Build all packages
+# 7. Build all packages
 pnpm run build
 
-# 7. Start all workers in parallel (development mode)
+# 8. Start all workers in parallel (development mode)
 pnpm run dev
 
 # For production deployment:
@@ -295,7 +299,13 @@ pnpm run deploy
 # - Then deploys other workers sequentially
 # - Includes retry logic and rate limit protection
 
-# Workers start at:
+# 9. Optional: Deploy UI to Cloudflare Pages (Phase 5+)
+./scripts/deploy-remote-ui.sh
+# - Builds and deploys SvelteKit UI
+# - Configures CORS automatically
+# - Provides login/registration interface
+
+# Local workers start at:
 # - op-discovery: http://localhost:8787
 # - op-auth: http://localhost:8788
 # - op-token: http://localhost:8789
@@ -440,22 +450,20 @@ Deploy Authrim to Cloudflare's global edge network and get a production-ready Op
 # 1. Install dependencies
 pnpm install
 
-# 2. Set up RSA keys and generate wrangler.toml files
-./scripts/setup-dev.sh
+# 2. Generate RSA keys
+./scripts/setup-keys.sh
 
-# 3. Set up KV namespaces
+# 3. Generate wrangler.toml files for Cloudflare
+./scripts/setup-remote-wrangler.sh
+
+# 4. Set up KV namespaces
 ./scripts/setup-kv.sh
 
-# 4. Set up D1 database (Phase 5 - optional for Phase 1-4)
+# 5. Set up D1 database (Phase 5 - optional for Phase 1-4)
 ./scripts/setup-d1.sh
 
-# 5. Upload secrets to Cloudflare
+# 6. Upload secrets to Cloudflare
 ./scripts/setup-secrets.sh
-
-# 6. Choose deployment mode and configure
-./scripts/setup-production.sh
-# → Select: 1) Test Environment (Router Worker)
-#       or: 2) Production Environment (Custom Domain + Routes)
 
 # 7. Build TypeScript
 pnpm run build
@@ -466,6 +474,11 @@ pnpm run deploy
 # - Deploys authrim-shared (Durable Objects) first
 # - Router Worker is included if wrangler.toml exists (test mode)
 # - Router Worker is skipped if wrangler.toml missing (production mode)
+
+# 9. Optional: Deploy UI to Cloudflare Pages (Phase 5+)
+./scripts/deploy-remote-ui.sh
+# - Builds and deploys SvelteKit login/registration UI
+# - Auto-configures CORS for API integration
 ```
 
 ### Deployment Modes
@@ -477,22 +490,26 @@ Authrim supports two deployment modes to ensure OpenID Connect specification com
 - **Use case**: Development, testing, quick setup
 - **Pros**: No custom domain needed, OpenID Connect compliant ✅
 - **Deploy**: `pnpm run deploy` (includes Router Worker)
+- **UI**: Optional - deploy with `./scripts/deploy-remote-ui.sh`
 
 **Workers deployed:**
 - 🌍 **authrim-shared** (Durable Objects - deployed first)
 - 🌍 **authrim** (unified entry point - Router Worker)
 - 🌍 **authrim-op-discovery**, **authrim-op-auth**, **authrim-op-token**, **authrim-op-userinfo**, **authrim-op-management**
+- 🎨 **UI Pages** (Optional - SvelteKit login/admin interface)
 
 #### 2️⃣ Production Environment (Custom Domain + Routes)
 - **Custom domain**: `https://id.yourdomain.com`
 - **Use case**: Production deployments
 - **Pros**: Optimal performance, professional URL
 - **Deploy**: `pnpm run deploy` (Router Worker skipped automatically)
-- **Requires**: Cloudflare-managed domain
+- **UI**: Recommended - deploy with `./scripts/deploy-remote-ui.sh` to custom/Pages.dev domain
+- **Requires**: Cloudflare-managed domain (for Workers)
 
 **Workers deployed:**
 - 🌍 **authrim-shared** (Durable Objects - deployed first)
 - 🌍 **authrim-op-discovery**, **authrim-op-auth**, **authrim-op-token**, **authrim-op-userinfo**, **authrim-op-management**
+- 🎨 **UI Pages** (Optional - SvelteKit login/admin interface)
 - Router Worker is automatically excluded (no wrangler.toml generated in production mode)
 
 > 💡 **Learn more**: See [docs/ROUTER_SETUP.md](./docs/ROUTER_SETUP.md) for detailed architecture and [DEPLOYMENT.md](./docs/DEPLOYMENT.md) for step-by-step instructions.
@@ -513,6 +530,21 @@ pnpm run deploy
 - ✅ 10-second delays between deployments
 - ✅ Conditional router deployment based on configuration
 
+### UI Deployment (Phase 5+)
+
+For login/registration UI, deploy to Cloudflare Pages after workers are deployed:
+
+```bash
+# Deploy login and admin pages
+./scripts/deploy-remote-ui.sh
+```
+
+**Features:**
+- Interactive domain configuration (custom domain or auto-generated Pages.dev URL)
+- Automatic CORS configuration with detected UI origins
+- Support for deploying login page only, admin page only, or both
+- SvelteKit build with optimizations
+
 ### Troubleshooting Deployment
 
 If you encounter KV namespace errors during deployment:
@@ -522,7 +554,7 @@ If you encounter KV namespace errors during deployment:
 ./scripts/setup-kv.sh --reset
 
 # Then deploy with retry logic
-pnpm run deploy:with-router
+pnpm run deploy
 ```
 
 The `--reset` option will:

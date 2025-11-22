@@ -40,15 +40,16 @@ echo "This script will create or update D1 database for your Authrim deployment.
 echo ""
 
 # Determine environment
-read -p "Environment (local/dev/prod) [dev]: " ENV
-ENV=${ENV:-dev}
+read -p "Environment (local/remote) [local]: " ENV
+ENV=${ENV:-local}
 
 # Determine database name and remote flag
+read -p "Database name [authrim-users-db]: " DB_NAME_INPUT
+DB_NAME=${DB_NAME_INPUT:-authrim-users-db}
+
 if [ "$ENV" = "local" ]; then
-    DB_NAME="authrim-local"
     REMOTE_FLAG=""
 else
-    DB_NAME="authrim-${ENV}"
     REMOTE_FLAG="--remote"
 fi
 
@@ -311,7 +312,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo ""
 
         echo "📝 Applying 002_seed_default_data.sql..."
-        if [ "$ENV" = "prod" ]; then
+        if [ "$ENV" = "remote" ]; then
             echo "⚠️  Warning: This includes test data!"
             echo "Please review migrations/002_seed_default_data.sql and remove test data before running on production"
             read -p "Continue? (y/N): " -n 1 -r
