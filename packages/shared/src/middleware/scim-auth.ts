@@ -101,7 +101,12 @@ async function hashToken(token: string): Promise<string> {
 /**
  * Return SCIM-compliant error response
  */
-function scimErrorResponse(c: Context, status: number, detail: string, scimType?: string) {
+function scimErrorResponse(
+  c: Context,
+  status: 400 | 401 | 403 | 404 | 409 | 500,
+  detail: string,
+  scimType?: string
+) {
   const error: ScimError = {
     schemas: [SCIM_SCHEMAS.ERROR],
     status: status.toString(),

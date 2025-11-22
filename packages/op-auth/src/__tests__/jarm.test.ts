@@ -313,7 +313,7 @@ describe('JARM (JWT-Secured Authorization Response Mode)', () => {
         authorization_encrypted_response_alg: 'RSA-OAEP',
         authorization_encrypted_response_enc: 'A256GCM',
         // Missing jwks or jwks_uri
-      };
+      } as any;
 
       expect(clientWithoutKey.authorization_encrypted_response_alg).toBeTruthy();
       expect(clientWithoutKey.jwks).toBeUndefined();

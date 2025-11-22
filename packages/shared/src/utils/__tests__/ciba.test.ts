@@ -89,13 +89,13 @@ describe('CIBA Utilities', () => {
     });
 
     it('should accept binding message exactly at limit', () => {
-      const message = 'a'.repeat(CIBA_CONSTANTS.BINDING_MESSAGE_MAX_LENGTH);
+      const message = 'a'.repeat(CIBA_CONSTANTS.MAX_BINDING_MESSAGE_LENGTH);
       const result = validateBindingMessage(message);
       expect(result.valid).toBe(true);
     });
 
     it('should reject binding message exceeding limit', () => {
-      const message = 'a'.repeat(CIBA_CONSTANTS.BINDING_MESSAGE_MAX_LENGTH + 1);
+      const message = 'a'.repeat(CIBA_CONSTANTS.MAX_BINDING_MESSAGE_LENGTH + 1);
       const result = validateBindingMessage(message);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('too long');
@@ -116,7 +116,6 @@ describe('CIBA Utilities', () => {
     it('should accept valid CIBA request', () => {
       const result = validateCIBARequest({
         scope: 'openid profile',
-        client_id: 'test_client',
         login_hint: 'user@example.com',
       });
       expect(result.valid).toBe(true);
@@ -125,27 +124,15 @@ describe('CIBA Utilities', () => {
     it('should require scope', () => {
       const result = validateCIBARequest({
         scope: '',
-        client_id: 'test_client',
         login_hint: 'user@example.com',
       });
       expect(result.valid).toBe(false);
       expect(result.error).toContain('scope');
     });
 
-    it('should require client_id', () => {
-      const result = validateCIBARequest({
-        scope: 'openid profile',
-        client_id: '',
-        login_hint: 'user@example.com',
-      });
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('client_id');
-    });
-
     it('should require at least one login hint', () => {
       const result = validateCIBARequest({
         scope: 'openid profile',
-        client_id: 'test_client',
       });
       expect(result.valid).toBe(false);
       expect(result.error).toContain('login hint');
@@ -154,7 +141,6 @@ describe('CIBA Utilities', () => {
     it('should accept login_hint', () => {
       const result = validateCIBARequest({
         scope: 'openid profile',
-        client_id: 'test_client',
         login_hint: 'user@example.com',
       });
       expect(result.valid).toBe(true);
@@ -164,7 +150,6 @@ describe('CIBA Utilities', () => {
       const longMessage = 'a'.repeat(200);
       const result = validateCIBARequest({
         scope: 'openid profile',
-        client_id: 'test_client',
         login_hint: 'user@example.com',
         binding_message: longMessage,
       });
@@ -232,49 +217,113 @@ describe('CIBA Utilities', () => {
 
   describe('isCIBARequestExpired', () => {
     it('should return false for non-expired request', () => {
-      const futureTime = Math.floor(Date.now() / 1000) + 300;
-      const expired = isCIBARequestExpired(futureTime);
+      const metadata = {
+        auth_req_id: 'auth_123',
+        client_id: 'client_123',
+        scope: 'openid',
+        status: 'pending' as const,
+        delivery_mode: 'poll' as const,
+        created_at: Date.now() - 60 * 1000,
+        expires_at: Date.now() + 300 * 1000, // 5 minutes in future
+        interval: 5,
+      };
+      const expired = isCIBARequestExpired(metadata);
       expect(expired).toBe(false);
     });
 
     it('should return true for expired request', () => {
-      const pastTime = Math.floor(Date.now() / 1000) - 10;
-      const expired = isCIBARequestExpired(pastTime);
+      const metadata = {
+        auth_req_id: 'auth_123',
+        client_id: 'client_123',
+        scope: 'openid',
+        status: 'pending' as const,
+        delivery_mode: 'poll' as const,
+        created_at: Date.now() - 600 * 1000,
+        expires_at: Date.now() - 10 * 1000, // 10 seconds ago
+        interval: 5,
+      };
+      const expired = isCIBARequestExpired(metadata);
       expect(expired).toBe(true);
     });
 
     it('should return true for exactly expired request', () => {
-      const now = Math.floor(Date.now() / 1000);
-      const expired = isCIBARequestExpired(now);
+      const metadata = {
+        auth_req_id: 'auth_123',
+        client_id: 'client_123',
+        scope: 'openid',
+        status: 'pending' as const,
+        delivery_mode: 'poll' as const,
+        created_at: Date.now() - 300 * 1000,
+        expires_at: Date.now(), // Expires now
+        interval: 5,
+      };
+      const expired = isCIBARequestExpired(metadata);
       expect(expired).toBe(true);
     });
   });
 
   describe('isPollingTooFast', () => {
     it('should return false when polling at correct interval', () => {
-      const now = Math.floor(Date.now() / 1000);
-      const lastPoll = now - 5;
-      const tooFast = isPollingTooFast(lastPoll, 5, now);
+      const metadata = {
+        auth_req_id: 'auth_123',
+        client_id: 'client_123',
+        scope: 'openid',
+        status: 'pending' as const,
+        delivery_mode: 'poll' as const,
+        created_at: Date.now() - 300 * 1000,
+        expires_at: Date.now() + 300 * 1000,
+        interval: 5, // 5 seconds
+        last_poll_at: Date.now() - 6 * 1000, // 6 seconds ago
+      };
+      const tooFast = isPollingTooFast(metadata);
       expect(tooFast).toBe(false);
     });
 
     it('should return true when polling too quickly', () => {
-      const now = Math.floor(Date.now() / 1000);
-      const lastPoll = now - 2;
-      const tooFast = isPollingTooFast(lastPoll, 5, now);
+      const metadata = {
+        auth_req_id: 'auth_123',
+        client_id: 'client_123',
+        scope: 'openid',
+        status: 'pending' as const,
+        delivery_mode: 'poll' as const,
+        created_at: Date.now() - 300 * 1000,
+        expires_at: Date.now() + 300 * 1000,
+        interval: 5, // 5 seconds
+        last_poll_at: Date.now() - 2 * 1000, // 2 seconds ago (too fast)
+      };
+      const tooFast = isPollingTooFast(metadata);
       expect(tooFast).toBe(true);
     });
 
     it('should return false for first poll', () => {
-      const now = Math.floor(Date.now() / 1000);
-      const tooFast = isPollingTooFast(null, 5, now);
+      const metadata = {
+        auth_req_id: 'auth_123',
+        client_id: 'client_123',
+        scope: 'openid',
+        status: 'pending' as const,
+        delivery_mode: 'poll' as const,
+        created_at: Date.now() - 10 * 1000,
+        expires_at: Date.now() + 300 * 1000,
+        interval: 5, // 5 seconds
+        // No last_poll_at - first poll
+      };
+      const tooFast = isPollingTooFast(metadata);
       expect(tooFast).toBe(false);
     });
 
     it('should return false when exactly at interval', () => {
-      const now = Math.floor(Date.now() / 1000);
-      const lastPoll = now - 5;
-      const tooFast = isPollingTooFast(lastPoll, 5, now);
+      const metadata = {
+        auth_req_id: 'auth_123',
+        client_id: 'client_123',
+        scope: 'openid',
+        status: 'pending' as const,
+        delivery_mode: 'poll' as const,
+        created_at: Date.now() - 300 * 1000,
+        expires_at: Date.now() + 300 * 1000,
+        interval: 5, // 5 seconds
+        last_poll_at: Date.now() - 5 * 1000, // Exactly 5 seconds ago
+      };
+      const tooFast = isPollingTooFast(metadata);
       expect(tooFast).toBe(false);
     });
   });

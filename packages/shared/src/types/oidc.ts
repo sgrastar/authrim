@@ -484,3 +484,12 @@ export interface CIBARequestMetadata {
   token_issued?: boolean; // True if tokens have been issued
   token_issued_at?: number; // Timestamp when tokens were issued
 }
+
+/**
+ * CIBA Request Row from D1 Database
+ * SQLite stores booleans as integers (0 or 1), so we need a separate type
+ * for data coming directly from the database
+ */
+export interface CIBARequestRow extends Omit<CIBARequestMetadata, 'token_issued'> {
+  token_issued: number; // SQLite boolean: 0 = false, 1 = true
+}

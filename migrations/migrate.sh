@@ -20,7 +20,7 @@ if [ "$ENV" = "local" ]; then
     DB_NAME="authrim-local"
     REMOTE_FLAG=""
 else
-    DB_NAME="authrim-${ENV}"
+    DB_NAME="${ENV}-authrim-users-db"
     REMOTE_FLAG="--remote"
 fi
 

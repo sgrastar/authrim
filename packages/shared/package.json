@@ -11,6 +11,7 @@
     "./middleware/*": "./dist/middleware/*.js",
     "./storage/*": "./dist/storage/*.js",
     "./durable-objects/*": "./dist/durable-objects/*.js",
+    "./notifications": "./dist/notifications/index.js",
     "./constants": "./dist/constants.js"
   },
   "scripts": {

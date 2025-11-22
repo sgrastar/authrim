@@ -108,9 +108,13 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Determine delivery mode based on client configuration
-    const hasNotificationEndpoint = !!clientMetadata.backchannel_client_notification_endpoint;
-    const hasNotificationToken = !!client_notification_token;
-    const deliveryMode = determineDeliveryMode(hasNotificationEndpoint, hasNotificationToken);
+    // CIBA clients can request specific delivery modes via request parameters or client metadata
+    const requestedMode = null; // Could be extracted from request if needed
+    const deliveryMode = determineDeliveryMode(
+      requestedMode,
+      (clientMetadata.backchannel_client_notification_endpoint as string | undefined) ?? null,
+      client_notification_token ?? null
+    );
 
     // For ping/push modes, client_notification_token is required
     if ((deliveryMode === 'ping' || deliveryMode === 'push') && !client_notification_token) {
@@ -124,7 +128,8 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Verify client supports requested delivery mode
-    const supportedModes = clientMetadata.backchannel_token_delivery_mode?.split(',') || ['poll'];
+    const supportedModesStr = (clientMetadata.backchannel_token_delivery_mode as string) || 'poll';
+    const supportedModes = supportedModesStr.split(',').map((m) => m.trim());
     if (!supportedModes.includes(deliveryMode)) {
       return c.json(
         {
@@ -175,7 +180,8 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       status: 'pending',
       delivery_mode: deliveryMode,
       client_notification_token,
-      client_notification_endpoint: clientMetadata.backchannel_client_notification_endpoint,
+      client_notification_endpoint:
+        (clientMetadata.backchannel_client_notification_endpoint as string) || undefined,
       created_at: now,
       expires_at: now + expiresIn * 1000,
       poll_count: 0,

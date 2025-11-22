@@ -28,6 +28,7 @@ export interface Env {
   REFRESH_TOKEN_ROTATOR: DurableObjectNamespace;
   CHALLENGE_STORE: DurableObjectNamespace;
   RATE_LIMITER: DurableObjectNamespace; // #6: Atomic rate limiting
+  USER_CODE_RATE_LIMITER: DurableObjectNamespace; // Device flow user code rate limiting
   PAR_REQUEST_STORE: DurableObjectNamespace; // #11: PAR request_uri single-use
   DPOP_JTI_STORE: DurableObjectNamespace; // #12: DPoP JTI replay protection
   TOKEN_REVOCATION_STORE: DurableObjectNamespace; // Token revocation list

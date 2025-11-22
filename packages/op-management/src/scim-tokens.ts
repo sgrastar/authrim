@@ -5,12 +5,12 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '../../shared/src/types/env';
+import type { Env } from '@authrim/shared/types/env';
 import {
   generateScimToken,
   revokeScimToken,
   listScimTokens,
-} from '../../shared/src/middleware/scim-auth';
+} from '@authrim/shared/middleware/scim-auth';
 
 /**
  * GET /api/admin/scim-tokens - List all SCIM tokens

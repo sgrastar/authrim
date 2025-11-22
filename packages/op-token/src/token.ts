@@ -1372,9 +1372,9 @@ async function handleDeviceCodeGrant(
   // Check status and return appropriate response
   if (metadata.status === 'pending') {
     // User has not yet approved - check if polling too fast
-    const { isPollingTooFast, DEVICE_FLOW_CONSTANTS } = await import('@authrim/shared');
+    const { isDeviceFlowPollingTooFast, DEVICE_FLOW_CONSTANTS } = await import('@authrim/shared');
 
-    if (isPollingTooFast(metadata, DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL)) {
+    if (isDeviceFlowPollingTooFast(metadata, DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL)) {
       return c.json(
         {
           error: 'slow_down',
@@ -1745,7 +1745,7 @@ async function handleCIBAGrant(
   );
 
   if (!markIssuedResponse.ok) {
-    const error = await markIssuedResponse.json();
+    const error = (await markIssuedResponse.json()) as any;
     console.error('Failed to mark tokens as issued:', error);
     // If tokens were already issued, return error
     if (error.error_description?.includes('already issued')) {
@@ -1791,7 +1791,7 @@ async function handleCIBAGrant(
   const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env);
 
   // Extract DPoP proof if present
-  const dpopProof = extractDPoPProof(c.req.raw);
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
   let dpopJkt: string | undefined;
 
   // Validate DPoP proof if provided
@@ -1800,8 +1800,7 @@ async function handleCIBAGrant(
     const dpopValidation = await validateDPoP(
       dpopProof,
       'POST',
-      c.env.ISSUER_URL + '/token',
-      c.env
+      c.env.ISSUER_URL + '/token'
     );
 
     if (dpopValidation.valid && dpopValidation.jkt) {
@@ -1813,46 +1812,36 @@ async function handleCIBAGrant(
   const expiresIn = parseInt(c.env.TOKEN_EXPIRY || '3600', 10);
   const refreshExpiresIn = parseInt(c.env.REFRESH_TOKEN_EXPIRY || '2592000', 10);
 
-  // Create ID Token
-  let idToken = await createIDToken(
-    c.env.ISSUER_URL,
-    metadata.sub,
-    metadata.client_id,
-    privateKey,
-    kid,
-    metadata.nonce,
-    expiresIn,
-    undefined, // at_hash will be calculated after access token creation
-    undefined // auth_time
-  );
+  // Create Access Token FIRST (needed for at_hash in ID token)
+  const accessTokenClaims = {
+    iss: c.env.ISSUER_URL,
+    sub: metadata.sub!,
+    aud: c.env.ISSUER_URL,
+    scope: metadata.scope,
+    client_id: metadata.client_id,
+    ...(dpopJkt && { cnf: { jkt: dpopJkt } }),
+  };
 
-  // Create Access Token
-  const accessToken = await createAccessToken(
-    c.env.ISSUER_URL,
-    metadata.sub,
-    metadata.client_id,
+  const { token: accessToken, jti: tokenJti } = await createAccessToken(
+    accessTokenClaims,
     privateKey,
     kid,
-    expiresIn,
-    metadata.scope,
-    dpopJkt
+    expiresIn
   );
 
   // Calculate at_hash for ID token
   const atHash = await calculateAtHash(accessToken);
 
-  // Recreate ID token with at_hash
-  idToken = await createIDToken(
-    c.env.ISSUER_URL,
-    metadata.sub,
-    metadata.client_id,
-    privateKey,
-    kid,
-    metadata.nonce,
-    expiresIn,
-    atHash,
-    undefined // auth_time
-  );
+  // Create ID token with at_hash
+  const idTokenClaims = {
+    iss: c.env.ISSUER_URL,
+    sub: metadata.sub!,
+    aud: metadata.client_id,
+    ...(metadata.nonce && { nonce: metadata.nonce }),
+    at_hash: atHash,
+  };
+
+  let idToken = await createIDToken(idTokenClaims, privateKey, kid, expiresIn);
 
   // Encrypt ID token if required
   if (isIDTokenEncryptionRequired(clientMetadata)) {
@@ -1881,26 +1870,33 @@ async function handleCIBAGrant(
       );
     }
 
-    idToken = await encryptJWT(idToken, clientPublicKey, alg, enc);
+    idToken = await encryptJWT(idToken, clientPublicKey, { alg, enc });
   }
 
   // Create Refresh Token
-  const refreshToken = await createRefreshToken(
-    metadata.client_id,
-    metadata.sub,
-    metadata.scope,
+  const refreshTokenClaims = {
+    iss: c.env.ISSUER_URL,
+    sub: metadata.sub!,
+    aud: c.env.ISSUER_URL,
+    client_id: metadata.client_id,
+    scope: metadata.scope,
+  };
+
+  const { token: refreshToken, jti: refreshTokenJti } = await createRefreshToken(
+    refreshTokenClaims,
     privateKey,
     kid,
     refreshExpiresIn
   );
 
   // Store refresh token in KV
-  await storeRefreshToken(c.env, refreshToken, {
+  await storeRefreshToken(c.env, refreshTokenJti, {
     client_id: metadata.client_id,
-    sub: metadata.sub,
+    sub: metadata.sub!,
     scope: metadata.scope,
-    iat: Date.now() / 1000,
-    exp: Date.now() / 1000 + refreshExpiresIn,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + refreshExpiresIn,
+    jti: refreshTokenJti,
   });
 
   // Delete the CIBA request after successful token issuance

@@ -268,20 +268,22 @@ export class ScimFilterParser {
     // Standard comparison
     if (this.currentToken?.type === 'OPERATOR') {
       const operator = this.currentToken.value as any;
-      this.advance();
+      this.advance(); // Move to value token
 
+      // After advance(), currentToken is now the value token (not OPERATOR anymore)
+      const valueToken = this.currentToken;
       let value: any;
 
-      if (this.currentToken?.type === 'STRING') {
-        value = this.currentToken.value;
-      } else if (this.currentToken?.type === 'NUMBER') {
-        value = parseFloat(this.currentToken.value);
-      } else if (this.currentToken?.type === 'BOOLEAN') {
-        value = this.currentToken.value === 'true';
-      } else if (this.currentToken?.type === 'NULL') {
+      if (valueToken?.type === 'STRING') {
+        value = valueToken.value;
+      } else if (valueToken?.type === 'NUMBER') {
+        value = parseFloat(valueToken.value);
+      } else if (valueToken?.type === 'BOOLEAN') {
+        value = valueToken.value === 'true';
+      } else if (valueToken?.type === 'NULL') {
         value = null;
       } else {
-        throw new Error(`Expected value but got ${this.currentToken?.type}`);
+        throw new Error(`Expected value but got ${valueToken?.type}`);
       }
 
       this.advance();

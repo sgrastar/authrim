@@ -104,7 +104,7 @@ export function isDeviceCodeExpired(metadata: DeviceCodeMetadata): boolean {
  * @param minimumInterval - Minimum interval in seconds (default 5)
  * @returns true if polling too fast, false otherwise
  */
-export function isPollingTooFast(
+export function isDeviceFlowPollingTooFast(
   metadata: DeviceCodeMetadata,
   minimumInterval: number = 5
 ): boolean {

@@ -238,6 +238,48 @@ echo ""
 echo "📝 Generating wrangler.toml files..."
 echo ""
 
+# Function to generate base wrangler.toml file
+generate_base_wrangler() {
+    local package=$1
+    local kv_namespaces=$2
+    local d1_databases=$3
+    local r2_buckets=$4
+    local do_bindings=$5
+
+    local file="packages/$package/wrangler.${DEPLOY_ENV}.toml"
+
+    cat > "$file" << TOML_EOF
+name = "${DEPLOY_ENV}-authrim-$package"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+# KV Namespaces
+$kv_namespaces
+# D1 Databases
+$d1_databases
+# R2 Buckets
+$r2_buckets
+# Durable Objects Bindings
+$do_bindings
+
+# Environment variables
+[vars]
+ISSUER_URL = "$ISSUER_URL"
+UI_BASE_URL = "$UI_BASE_URL"
+TOKEN_EXPIRY = "3600"
+CODE_EXPIRY = "120"
+STATE_EXPIRY = "300"
+NONCE_EXPIRY = "300"
+REFRESH_TOKEN_EXPIRY = "2592000"
+KEY_ID = "$KEY_ID"
+ALLOW_HTTP_REDIRECT = "false"
+OPEN_REGISTRATION = "false"
+TRUSTED_DOMAINS = "www.certification.openid.net"
+TOML_EOF
+}
+
 # Function to update wrangler.toml with ISSUER_URL
 update_issuer_url() {
     local file=$1
@@ -339,6 +381,250 @@ zone_name = \"$ZONE_NAME\""
         echo "$routes" >> "$file"
     fi
 }
+
+# Generate shared worker wrangler file
+if [ ! -f "packages/shared/wrangler.${DEPLOY_ENV}.toml" ]; then
+    echo "  • Generating shared/wrangler.${DEPLOY_ENV}.toml (Durable Objects)..."
+    cat > "packages/shared/wrangler.${DEPLOY_ENV}.toml" << EOF
+name = "${DEPLOY_ENV}-authrim-shared"
+main = "src/durable-objects/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Durable Objects definitions
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+
+[[durable_objects.bindings]]
+name = "AUTH_CODE_STORE"
+class_name = "AuthorizationCodeStore"
+
+[[durable_objects.bindings]]
+name = "REFRESH_TOKEN_ROTATOR"
+class_name = "RefreshTokenRotator"
+
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+
+[[durable_objects.bindings]]
+name = "CHALLENGE_STORE"
+class_name = "ChallengeStore"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+
+[[durable_objects.bindings]]
+name = "PAR_REQUEST_STORE"
+class_name = "PARRequestStore"
+
+[[durable_objects.bindings]]
+name = "DPOP_JTI_STORE"
+class_name = "DPoPJTIStore"
+
+# Durable Objects migrations
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = [
+  "SessionStore",
+  "AuthorizationCodeStore",
+  "RefreshTokenRotator",
+  "KeyManager",
+  "ChallengeStore",
+  "RateLimiterCounter",
+  "PARRequestStore",
+  "DPoPJTIStore"
+]
+
+[[migrations]]
+tag = "v2"
+# Empty migration to match production state
+# Keeps existing Durable Objects intact
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["RateLimiterCounter", "PARRequestStore", "DPoPJTIStore"]
+
+# Environment variables
+[vars]
+KEY_MANAGER_SECRET = "production-secret-change-me"
+EOF
+fi
+
+# Generate op-discovery wrangler file
+if [ ! -f "packages/op-discovery/wrangler.${DEPLOY_ENV}.toml" ]; then
+    echo "  • Generating op-discovery/wrangler.${DEPLOY_ENV}.toml..."
+    generate_base_wrangler "op-discovery" "" "" "" "[[durable_objects.bindings]]
+name = \"KEY_MANAGER\"
+class_name = \"KeyManager\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"RATE_LIMITER\"
+class_name = \"RateLimiterCounter\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\""
+fi
+
+# Generate op-auth wrangler file
+if [ ! -f "packages/op-auth/wrangler.${DEPLOY_ENV}.toml" ]; then
+    echo "  • Generating op-auth/wrangler.${DEPLOY_ENV}.toml..."
+    generate_base_wrangler "op-auth" "[[kv_namespaces]]
+binding = \"CLIENTS\"
+id = \"placeholder\"
+
+" "[[d1_databases]]
+binding = \"DB\"
+database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+" "[[r2_buckets]]
+binding = \"AVATARS\"
+bucket_name = \"${DEPLOY_ENV}-authrim-avatars\"
+
+" "[[durable_objects.bindings]]
+name = \"KEY_MANAGER\"
+class_name = \"KeyManager\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"SESSION_STORE\"
+class_name = \"SessionStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"AUTH_CODE_STORE\"
+class_name = \"AuthorizationCodeStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"CHALLENGE_STORE\"
+class_name = \"ChallengeStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"RATE_LIMITER\"
+class_name = \"RateLimiterCounter\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"PAR_REQUEST_STORE\"
+class_name = \"PARRequestStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\""
+fi
+
+# Generate op-token wrangler file
+if [ ! -f "packages/op-token/wrangler.${DEPLOY_ENV}.toml" ]; then
+    echo "  • Generating op-token/wrangler.${DEPLOY_ENV}.toml..."
+    generate_base_wrangler "op-token" "[[kv_namespaces]]
+binding = \"CLIENTS\"
+id = \"placeholder\"
+
+" "" "" "[[durable_objects.bindings]]
+name = \"KEY_MANAGER\"
+class_name = \"KeyManager\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"SESSION_STORE\"
+class_name = \"SessionStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"AUTH_CODE_STORE\"
+class_name = \"AuthorizationCodeStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"REFRESH_TOKEN_ROTATOR\"
+class_name = \"RefreshTokenRotator\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"RATE_LIMITER\"
+class_name = \"RateLimiterCounter\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"DPOP_JTI_STORE\"
+class_name = \"DPoPJTIStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\""
+fi
+
+# Generate op-userinfo wrangler file
+if [ ! -f "packages/op-userinfo/wrangler.${DEPLOY_ENV}.toml" ]; then
+    echo "  • Generating op-userinfo/wrangler.${DEPLOY_ENV}.toml..."
+    generate_base_wrangler "op-userinfo" "[[kv_namespaces]]
+binding = \"CLIENTS\"
+id = \"placeholder\"
+
+" "[[d1_databases]]
+binding = \"DB\"
+database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+" "" "[[durable_objects.bindings]]
+name = \"KEY_MANAGER\"
+class_name = \"KeyManager\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"SESSION_STORE\"
+class_name = \"SessionStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"RATE_LIMITER\"
+class_name = \"RateLimiterCounter\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"DPOP_JTI_STORE\"
+class_name = \"DPoPJTIStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\""
+fi
+
+# Generate op-management wrangler file
+if [ ! -f "packages/op-management/wrangler.${DEPLOY_ENV}.toml" ]; then
+    echo "  • Generating op-management/wrangler.${DEPLOY_ENV}.toml..."
+    generate_base_wrangler "op-management" "[[kv_namespaces]]
+binding = \"CLIENTS\"
+id = \"placeholder\"
+
+[[kv_namespaces]]
+binding = \"INITIAL_ACCESS_TOKENS\"
+id = \"placeholder\"
+
+[[kv_namespaces]]
+binding = \"SETTINGS\"
+id = \"placeholder\"
+
+" "[[d1_databases]]
+binding = \"DB\"
+database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+" "" "[[durable_objects.bindings]]
+name = \"KEY_MANAGER\"
+class_name = \"KeyManager\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"REFRESH_TOKEN_ROTATOR\"
+class_name = \"RefreshTokenRotator\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"RATE_LIMITER\"
+class_name = \"RateLimiterCounter\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"SESSION_STORE\"
+class_name = \"SessionStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\""
+fi
 
 # Update all wrangler.${DEPLOY_ENV}.toml files
 for pkg_dir in packages/*/; do

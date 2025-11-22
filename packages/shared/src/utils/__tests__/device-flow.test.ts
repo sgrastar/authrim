@@ -10,7 +10,7 @@ import {
   validateUserCodeFormat,
   normalizeUserCode,
   isDeviceCodeExpired,
-  isPollingTooFast,
+  isDeviceFlowPollingTooFast,
   getVerificationUriComplete,
   DEVICE_FLOW_CONSTANTS,
 } from '../device-flow';
@@ -155,7 +155,7 @@ describe('Device Flow Utilities', () => {
     });
   });
 
-  describe('isPollingTooFast', () => {
+  describe('isDeviceFlowPollingTooFast', () => {
     it('should return false if no previous poll', () => {
       const metadata: DeviceCodeMetadata = {
         device_code: 'device_123',
@@ -168,7 +168,7 @@ describe('Device Flow Utilities', () => {
         // No last_poll_at
       };
 
-      expect(isPollingTooFast(metadata, 5)).toBe(false);
+      expect(isDeviceFlowPollingTooFast(metadata, 5)).toBe(false);
     });
 
     it('should return true if polling too fast', () => {
@@ -183,7 +183,7 @@ describe('Device Flow Utilities', () => {
         last_poll_at: Date.now() - 2000, // 2 seconds ago (< 5 second interval)
       };
 
-      expect(isPollingTooFast(metadata, 5)).toBe(true);
+      expect(isDeviceFlowPollingTooFast(metadata, 5)).toBe(true);
     });
 
     it('should return false if polling at correct interval', () => {
@@ -198,7 +198,7 @@ describe('Device Flow Utilities', () => {
         last_poll_at: Date.now() - 6000, // 6 seconds ago (> 5 second interval)
       };
 
-      expect(isPollingTooFast(metadata, 5)).toBe(false);
+      expect(isDeviceFlowPollingTooFast(metadata, 5)).toBe(false);
     });
 
     it('should use default interval of 5 seconds', () => {
@@ -213,7 +213,7 @@ describe('Device Flow Utilities', () => {
         last_poll_at: Date.now() - 3000, // 3 seconds ago
       };
 
-      expect(isPollingTooFast(metadata)).toBe(true); // Default 5 seconds
+      expect(isDeviceFlowPollingTooFast(metadata)).toBe(true); // Default 5 seconds
     });
   });
 

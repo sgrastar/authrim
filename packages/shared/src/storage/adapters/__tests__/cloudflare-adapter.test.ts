@@ -79,6 +79,16 @@ function createMockEnv(): Env {
           ),
       }),
     } as unknown as DurableObjectNamespace,
+    USER_CODE_RATE_LIMITER: {
+      idFromName: vi.fn().mockReturnValue('user-code-rate-limiter-do-id'),
+      get: vi.fn().mockReturnValue({
+        fetch: vi
+          .fn()
+          .mockResolvedValue(
+            new Response(JSON.stringify({ allowed: true, current: 1, limit: 10 }), { status: 200 })
+          ),
+      }),
+    } as unknown as DurableObjectNamespace,
     PAR_REQUEST_STORE: {
       idFromName: vi.fn().mockReturnValue('par-request-do-id'),
       get: vi.fn().mockReturnValue({
@@ -109,6 +119,14 @@ function createMockEnv(): Env {
         fetch: vi
           .fn()
           .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 })),
+      }),
+    } as unknown as DurableObjectNamespace,
+    CIBA_REQUEST_STORE: {
+      idFromName: vi.fn().mockReturnValue('ciba-request-do-id'),
+      get: vi.fn().mockReturnValue({
+        fetch: vi
+          .fn()
+          .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
       }),
     } as unknown as DurableObjectNamespace,
     STATE_STORE: {} as KVNamespace,

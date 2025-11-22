@@ -115,42 +115,47 @@ export function parseLoginHint(loginHint: string): {
  * Should be human-readable and not too long
  *
  * @param bindingMessage - Binding message to validate
- * @returns true if valid, false otherwise
+ * @returns Validation result with error if invalid
  */
-export function validateBindingMessage(bindingMessage: string): boolean {
-  // Maximum length (implementation-specific, typically 20-140 chars)
-  const MAX_LENGTH = 140;
-  const MIN_LENGTH = 1;
-
-  if (bindingMessage.length < MIN_LENGTH || bindingMessage.length > MAX_LENGTH) {
-    return false;
+export function validateBindingMessage(
+  bindingMessage?: string
+): { valid: boolean; error?: string } {
+  // Empty or undefined is valid
+  if (!bindingMessage) {
+    return { valid: true };
   }
 
-  // Should contain printable characters only
-  // Allow Unicode letters, numbers, punctuation, and spaces
-  const printablePattern = /^[\p{L}\p{N}\p{P}\p{Z}]+$/u;
-  return printablePattern.test(bindingMessage);
+  if (bindingMessage.length > CIBA_CONSTANTS.MAX_BINDING_MESSAGE_LENGTH) {
+    return {
+      valid: false,
+      error: `Binding message too long (max ${CIBA_CONSTANTS.MAX_BINDING_MESSAGE_LENGTH} characters)`,
+    };
+  }
+
+  return { valid: true };
 }
 
 /**
  * Determine token delivery mode from client configuration
  *
- * @param hasNotificationEndpoint - Whether client has notification endpoint
- * @param hasNotificationToken - Whether client provided notification token
+ * @param requestedMode - Requested delivery mode
+ * @param notificationEndpoint - Client notification endpoint URL
+ * @param clientNotificationToken - Client notification token
  * @returns Delivery mode
  */
 export function determineDeliveryMode(
-  hasNotificationEndpoint: boolean,
-  hasNotificationToken: boolean
+  requestedMode: string | null,
+  notificationEndpoint: string | null,
+  clientNotificationToken: string | null
 ): 'poll' | 'ping' | 'push' {
-  // Push mode: Client has notification endpoint and provided token
-  if (hasNotificationEndpoint && hasNotificationToken) {
-    return 'push';
+  // Ping mode: Requires both endpoint and token
+  if (requestedMode === 'ping' && notificationEndpoint && clientNotificationToken) {
+    return 'ping';
   }
 
-  // Ping mode: Client has notification endpoint but no token
-  if (hasNotificationEndpoint && !hasNotificationToken) {
-    return 'ping';
+  // Push mode: Requires both endpoint and token
+  if (requestedMode === 'push' && notificationEndpoint && clientNotificationToken) {
+    return 'push';
   }
 
   // Poll mode: Default fallback
@@ -160,19 +165,26 @@ export function determineDeliveryMode(
 /**
  * Calculate appropriate polling interval based on request expiry
  *
- * @param expiresIn - Expiration time in seconds
+ * @param requestedInterval - Requested interval in seconds (null for default)
  * @returns Polling interval in seconds
  */
-export function calculatePollingInterval(expiresIn: number): number {
-  // For shorter expirations, use shorter intervals
-  if (expiresIn <= 60) {
+export function calculatePollingInterval(requestedInterval: number | null): number {
+  // Use default if not specified
+  if (requestedInterval === null || requestedInterval === undefined) {
+    return CIBA_CONSTANTS.DEFAULT_INTERVAL;
+  }
+
+  // Enforce minimum
+  if (requestedInterval < CIBA_CONSTANTS.MIN_INTERVAL) {
     return CIBA_CONSTANTS.MIN_INTERVAL;
   }
-  if (expiresIn <= 300) {
-    return 3;
+
+  // Enforce maximum
+  if (requestedInterval > CIBA_CONSTANTS.MAX_INTERVAL) {
+    return CIBA_CONSTANTS.MAX_INTERVAL;
   }
-  // Default interval for longer expirations
-  return CIBA_CONSTANTS.DEFAULT_INTERVAL;
+
+  return requestedInterval;
 }
 
 /**
@@ -248,12 +260,15 @@ export function validateCIBARequest(params: {
   }
 
   // Validate binding message if provided
-  if (params.binding_message && !validateBindingMessage(params.binding_message)) {
-    return {
-      valid: false,
-      error: 'invalid_binding_message',
-      error_description: `binding_message must be between ${CIBA_CONSTANTS.MIN_BINDING_MESSAGE_LENGTH} and ${CIBA_CONSTANTS.MAX_BINDING_MESSAGE_LENGTH} characters`,
-    };
+  if (params.binding_message) {
+    const bindingValidation = validateBindingMessage(params.binding_message);
+    if (!bindingValidation.valid) {
+      return {
+        valid: false,
+        error: 'invalid_binding_message',
+        error_description: bindingValidation.error,
+      };
+    }
   }
 
   // Validate requested_expiry if provided

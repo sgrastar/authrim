@@ -57,7 +57,7 @@ describe('Device Flow Security', () => {
       } as any;
 
       const response = await deviceAuthorizationHandler(mockContext);
-      const body = await response.json();
+      const body = (await response.json()) as any;
 
       expect(response.status).toBe(400);
       expect(body.error).toBe('invalid_request');
@@ -89,7 +89,7 @@ describe('Device Flow Security', () => {
       } as any;
 
       const response = await deviceAuthorizationHandler(mockContext);
-      const body = await response.json();
+      const body = (await response.json()) as any;
 
       expect(response.status).toBe(400);
       expect(body.error).toBe('invalid_client');
@@ -126,7 +126,7 @@ describe('Device Flow Security', () => {
       } as any;
 
       const response = await deviceAuthorizationHandler(mockContext);
-      const body = await response.json();
+      const body = (await response.json()) as any;
 
       expect(response.status).toBe(400);
       expect(body.error).toBe('unauthorized_client');
@@ -170,7 +170,7 @@ describe('Device Flow Security', () => {
       } as any;
 
       const response = await deviceVerifyApiHandler(mockContext);
-      const body = await response.json();
+      const body = (await response.json()) as any;
 
       expect(response.status).toBe(429);
       expect(body.error).toBe('slow_down');
@@ -229,7 +229,7 @@ describe('Device Flow Security', () => {
       } as any;
 
       const response = await deviceVerifyApiHandler(mockContext);
-      const body = await response.json();
+      const body = (await response.json()) as any;
 
       expect(response.status).toBe(404);
       expect(body.error).toBe('invalid_code');
@@ -241,7 +241,7 @@ describe('Device Flow Security', () => {
     it('should normalize user code format', async () => {
       const mockDeviceCodeStore = {
         fetch: vi.fn().mockImplementation(async (request: Request) => {
-          const body = await request.json();
+          const body = (await request.json()) as any;
           // Check if user_code was normalized
           if (body.user_code === 'ABCD-1234') {
             return new Response(

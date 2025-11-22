@@ -22,7 +22,7 @@
  */
 
 import { Hono } from 'hono';
-import type { Env } from '../../shared/src/types/env';
+import type { Env } from '@authrim/shared/types/env';
 import {
   SCIM_SCHEMAS,
   type ScimUser,
@@ -31,7 +31,7 @@ import {
   type ScimError,
   type ScimPatchOp,
   type ScimQueryParams,
-} from '../../shared/src/types/scim';
+} from '@authrim/shared/types/scim';
 import {
   userToScim,
   scimToUser,
@@ -44,11 +44,11 @@ import {
   validateScimGroup,
   type InternalUser,
   type InternalGroup,
-} from '../../shared/src/utils/scim-mapper';
-import { parseScimFilter, filterToSql } from '../../shared/src/utils/scim-filter';
-import { scimAuthMiddleware } from '../../shared/src/middleware/scim-auth';
-import { generateId } from '../../shared/src/utils/id';
-import { hashPassword } from '../../shared/src/utils/crypto';
+} from '@authrim/shared/utils/scim-mapper';
+import { parseScimFilter, filterToSql } from '@authrim/shared/utils/scim-filter';
+import { scimAuthMiddleware } from '@authrim/shared/middleware/scim-auth';
+import { generateId } from '@authrim/shared/utils/id';
+import { hashPassword } from '@authrim/shared/utils/crypto';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -107,11 +107,11 @@ function parseQueryParams(c: any): ScimQueryParams {
   if (count) params.count = parseInt(count, 10);
 
   const attributes = c.req.query('attributes');
-  if (attributes) params.attributes = attributes.split(',').map((a) => a.trim());
+  if (attributes) params.attributes = attributes.split(',').map((a: string) => a.trim());
 
   const excludedAttributes = c.req.query('excludedAttributes');
   if (excludedAttributes)
-    params.excludedAttributes = excludedAttributes.split(',').map((a) => a.trim());
+    params.excludedAttributes = excludedAttributes.split(',').map((a: string) => a.trim());
 
   return params;
 }

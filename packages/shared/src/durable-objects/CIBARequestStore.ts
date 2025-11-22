@@ -17,7 +17,7 @@
 
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
-import type { CIBARequestMetadata } from '../types/oidc';
+import type { CIBARequestMetadata, CIBARequestRow } from '../types/oidc';
 import { isCIBARequestExpired, CIBA_CONSTANTS } from '../utils/ciba';
 
 export class CIBARequestStore {
@@ -221,20 +221,20 @@ export class CIBARequestStore {
         'SELECT * FROM ciba_requests WHERE auth_req_id = ?'
       )
         .bind(authReqId)
-        .first<CIBARequestMetadata & { token_issued: number }>();
+        .first<CIBARequestRow>();
 
       if (result) {
-        // Check if expired
-        if (isCIBARequestExpired(result)) {
-          await this.deleteCIBARequest(authReqId);
-          return null;
-        }
-
         // Convert token_issued from integer to boolean
         const metadata: CIBARequestMetadata = {
           ...result,
           token_issued: result.token_issued === 1,
         };
+
+        // Check if expired
+        if (isCIBARequestExpired(metadata)) {
+          await this.deleteCIBARequest(authReqId);
+          return null;
+        }
 
         // Warm up cache
         this.cibaRequests.set(authReqId, metadata);
@@ -263,20 +263,20 @@ export class CIBARequestStore {
     if (this.env.DB) {
       const result = await this.env.DB.prepare('SELECT * FROM ciba_requests WHERE user_code = ?')
         .bind(userCode)
-        .first<CIBARequestMetadata & { token_issued: number }>();
+        .first<CIBARequestRow>();
 
       if (result) {
-        // Check if expired
-        if (isCIBARequestExpired(result)) {
-          await this.deleteCIBARequest(result.auth_req_id);
-          return null;
-        }
-
         // Convert token_issued from integer to boolean
         const metadata: CIBARequestMetadata = {
           ...result,
           token_issued: result.token_issued === 1,
         };
+
+        // Check if expired
+        if (isCIBARequestExpired(metadata)) {
+          await this.deleteCIBARequest(result.auth_req_id);
+          return null;
+        }
 
         // Warm up cache
         this.cibaRequests.set(result.auth_req_id, metadata);
@@ -315,20 +315,20 @@ export class CIBARequestStore {
          ORDER BY created_at DESC LIMIT 1`
       )
         .bind(loginHint, clientId)
-        .first<CIBARequestMetadata & { token_issued: number }>();
+        .first<CIBARequestRow>();
 
       if (result) {
-        // Check if expired
-        if (isCIBARequestExpired(result)) {
-          await this.deleteCIBARequest(result.auth_req_id);
-          return null;
-        }
-
         // Convert token_issued from integer to boolean
         const metadata: CIBARequestMetadata = {
           ...result,
           token_issued: result.token_issued === 1,
         };
+
+        // Check if expired
+        if (isCIBARequestExpired(metadata)) {
+          await this.deleteCIBARequest(result.auth_req_id);
+          return null;
+        }
 
         // Warm up cache
         this.cibaRequests.set(result.auth_req_id, metadata);

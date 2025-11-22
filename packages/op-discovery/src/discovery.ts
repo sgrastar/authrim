@@ -34,7 +34,6 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     backchannel_authentication_request_signing_alg_values_supported: ['RS256', 'ES256'],
     backchannel_user_code_parameter_supported: true,
     response_types_supported: ['code'],
-    response_modes_supported: ['query', 'form_post'],
     grant_types_supported: [
       'authorization_code',
       'refresh_token',

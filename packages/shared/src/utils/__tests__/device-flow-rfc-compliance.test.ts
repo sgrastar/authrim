@@ -12,7 +12,7 @@ import {
   validateUserCodeFormat,
   normalizeUserCode,
   isDeviceCodeExpired,
-  isPollingTooFast,
+  isDeviceFlowPollingTooFast,
   getVerificationUriComplete,
   DEVICE_FLOW_CONSTANTS,
 } from '../device-flow';
@@ -170,11 +170,11 @@ describe('RFC 8628 Compliance Tests', () => {
       const interval = DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL; // 5 seconds
 
       // Polling too fast (less than interval)
-      expect(isPollingTooFast(metadata, interval)).toBe(true);
+      expect(isDeviceFlowPollingTooFast(metadata, interval)).toBe(true);
 
       // Update to respect interval
       metadata.last_poll_at = Date.now() - 6000; // 6 seconds ago
-      expect(isPollingTooFast(metadata, interval)).toBe(false);
+      expect(isDeviceFlowPollingTooFast(metadata, interval)).toBe(false);
     });
 
     it('[RFC 8628 §5] Server MUST respond with slow_down when polling too fast', () => {
@@ -190,7 +190,7 @@ describe('RFC 8628 Compliance Tests', () => {
       };
 
       // Should detect polling too fast
-      expect(isPollingTooFast(metadata, 5)).toBe(true);
+      expect(isDeviceFlowPollingTooFast(metadata, 5)).toBe(true);
     });
   });
 
@@ -282,7 +282,7 @@ describe('RFC 8628 Compliance Tests', () => {
         last_poll_at: Date.now() - 1000, // Too fast
       };
 
-      expect(isPollingTooFast(metadata, interval)).toBe(true);
+      expect(isDeviceFlowPollingTooFast(metadata, interval)).toBe(true);
     });
   });
 });
