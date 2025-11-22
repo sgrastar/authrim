@@ -3,12 +3,15 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, magicLinkAPI } from '$lib/api/client';
-	import { startAuthentication } from '@simplewebauthn/browser';
+	import { startRegistration } from '@simplewebauthn/browser';
 
 	let email = $state('');
+	let name = $state('');
 	let error = $state('');
 	let passkeyLoading = $state(false);
 	let magicLinkLoading = $state(false);
+	let emailError = $state('');
+	let nameError = $state('');
 	let debugInfo = $state<Array<{ step: string; data: unknown; timestamp: string }>>([]);
 
 	// Email validation
@@ -24,46 +27,59 @@
 		typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
 	);
 
-	async function handlePasskeyLogin() {
+	async function handlePasskeyRegister() {
 		// Clear previous errors and debug info
 		error = '';
+		emailError = '';
+		nameError = '';
 		debugInfo = [];
 
 		// Validate email
 		if (!email.trim()) {
-			error = $LL.login_errorEmailRequired();
+			emailError = $LL.login_errorEmailRequired();
 			return;
 		}
 
 		if (!validateEmail(email)) {
-			error = $LL.login_errorEmailInvalid();
+			emailError = $LL.login_errorEmailInvalid();
+			return;
+		}
+
+		// Validate name
+		if (!name.trim()) {
+			nameError = $LL.register_errorNameRequired();
 			return;
 		}
 
 		passkeyLoading = true;
 
 		try {
-			// 1. Get authentication options from server
-			const { data: optionsData, error: optionsError } = await passkeyAPI.getLoginOptions({ email });
+			// 1. Get registration options from server
+			const { data: optionsData, error: optionsError } = await passkeyAPI.getRegisterOptions({
+				email,
+				name
+			});
 
 			debugInfo.push({
-				step: '1. Authentication Options Response',
+				step: '1. Registration Options Response',
 				data: { optionsData, optionsError },
 				timestamp: new Date().toISOString()
 			});
 
 			if (optionsError) {
-				throw new Error(optionsError.error_description || 'Failed to get authentication options');
+				throw new Error(optionsError.error_description || 'Failed to get registration options');
+			}
+
+			if (!optionsData || !optionsData.options) {
+				throw new Error('Invalid response from server: missing options');
 			}
 
 			// 2. Call WebAuthn API using @simplewebauthn/browser
 			// This handles all the base64url to Uint8Array conversions automatically
 			let credential;
 			try {
-				credential = await startAuthentication({
 			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-					optionsJSON: optionsData!.options as any
-				});
+				credential = await startRegistration({ optionsJSON: optionsData.options as any });
 				debugInfo.push({
 					step: '2. WebAuthn Credential Created',
 					data: credential,
@@ -84,8 +100,9 @@
 
 			// 3. Send credential to server for verification
 			const verificationPayload = {
-				challengeId: optionsData!.challengeId,
-				credential
+				userId: optionsData!.userId,
+				credential,
+				deviceName: navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Desktop'
 			};
 
 			debugInfo.push({
@@ -94,7 +111,7 @@
 				timestamp: new Date().toISOString()
 			});
 
-			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyLogin(verificationPayload);
+			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyRegistration(verificationPayload);
 
 			debugInfo.push({
 				step: '4. Verification Response',
@@ -103,30 +120,24 @@
 			});
 
 			if (verifyError) {
-				throw new Error(verifyError.error_description || 'Authentication verification failed');
+				throw new Error(verifyError.error_description || 'Registration verification failed');
 			}
 
-			// 4. Store session and redirect
-			// Store session ID in localStorage
-			if (verifyData!.sessionId) {
-				localStorage.setItem('sessionId', verifyData!.sessionId);
-				localStorage.setItem('userId', verifyData!.userId);
-			}
-
+			// 5. Registration successful
 			debugInfo.push({
 				step: '5. Success - Redirecting',
-				data: { message: 'Login completed successfully', user: verifyData!.user.email },
+				data: { message: 'Registration completed successfully' },
 				timestamp: new Date().toISOString()
 			});
 
-			// Redirect to home page
+			// Redirect to login page after successful registration
 			// Give time for debug info to render before redirect
 			setTimeout(() => {
-				window.location.href = '/';
+				window.location.href = '/login';
 			}, 3000);
 
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred during passkey authentication';
+			error = err instanceof Error ? err.message : 'An error occurred during passkey registration';
 			debugInfo.push({
 				step: 'ERROR',
 				data: {
@@ -141,18 +152,26 @@
 		}
 	}
 
-	async function handleMagicLinkSend() {
+	async function handleMagicLinkSignup() {
 		// Clear previous errors
 		error = '';
+		emailError = '';
+		nameError = '';
 
 		// Validate email
 		if (!email.trim()) {
-			error = $LL.login_errorEmailRequired();
+			emailError = $LL.login_errorEmailRequired();
 			return;
 		}
 
 		if (!validateEmail(email)) {
-			error = $LL.login_errorEmailInvalid();
+			emailError = $LL.login_errorEmailInvalid();
+			return;
+		}
+
+		// Validate name (optional for magic link, but recommended)
+		if (!name.trim()) {
+			nameError = $LL.register_errorNameRequired();
 			return;
 		}
 
@@ -160,7 +179,7 @@
 
 		try {
 			// Call API to send magic link
-			const { error: apiError } = await magicLinkAPI.send({ email });
+			const { error: apiError } = await magicLinkAPI.send({ email, name });
 
 			if (apiError) {
 				throw new Error(apiError.error_description || 'Failed to send magic link');
@@ -181,13 +200,13 @@
 	function handleKeyPress(event: KeyboardEvent) {
 		if (event.key === 'Enter') {
 			// Default to Magic Link on Enter key
-			handleMagicLinkSend();
+			handleMagicLinkSignup();
 		}
 	}
 </script>
 
 <svelte:head>
-	<title>{$LL.login_title()} - {$LL.app_title()}</title>
+	<title>{$LL.register_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
@@ -208,14 +227,14 @@
 			</p>
 		</div>
 
-		<!-- Login Card -->
+		<!-- Registration Card -->
 		<Card class="mb-6">
 			<div class="mb-6">
 				<h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-1">
-					{$LL.login_title()}
+					{$LL.register_title()}
 				</h2>
 				<p class="text-gray-600 dark:text-gray-400 text-sm">
-					{$LL.login_subtitle()}
+					{$LL.register_subtitle()}
 				</p>
 			</div>
 
@@ -226,6 +245,23 @@
 				</Alert>
 			{/if}
 
+			<!-- Name Input -->
+			<div class="mb-4">
+				<Input
+					label={$LL.common_name()}
+					type="text"
+					placeholder={$LL.common_namePlaceholder()}
+					bind:value={name}
+					error={nameError}
+					autocomplete="name"
+					required
+				>
+					{#snippet icon()}
+						<div class="i-heroicons-user h-5 w-5 text-gray-400"></div>
+					{/snippet}
+				</Input>
+			</div>
+
 			<!-- Email Input -->
 			<div class="mb-6">
 				<Input
@@ -233,6 +269,7 @@
 					type="email"
 					placeholder={$LL.common_emailPlaceholder()}
 					bind:value={email}
+					error={emailError}
 					onkeypress={handleKeyPress}
 					autocomplete="email"
 					required
@@ -250,10 +287,10 @@
 					class="w-full mb-3"
 					loading={passkeyLoading}
 					disabled={magicLinkLoading}
-					onclick={handlePasskeyLogin}
+					onclick={handlePasskeyRegister}
 				>
 					<div class="i-heroicons-key h-5 w-5"></div>
-					{$LL.login_continueWithPasskey()}
+					{$LL.register_createWithPasskey()}
 				</Button>
 
 				<!-- Divider -->
@@ -270,11 +307,16 @@
 				class="w-full"
 				loading={magicLinkLoading}
 				disabled={passkeyLoading}
-				onclick={handleMagicLinkSend}
+				onclick={handleMagicLinkSignup}
 			>
 				<div class="i-heroicons-envelope h-5 w-5"></div>
-				{$LL.login_sendMagicLink()}
+				{$LL.register_signupWithMagicLink()}
 			</Button>
+
+			<!-- Terms Agreement -->
+			<p class="mt-4 text-xs text-gray-500 dark:text-gray-400 text-center">
+				{$LL.register_termsAgreement()}
+			</p>
 		</Card>
 
 		<!-- Debug Information -->
@@ -299,13 +341,13 @@
 			</Card>
 		{/if}
 
-		<!-- Create Account Link -->
+		<!-- Sign In Link -->
 		<p class="text-center text-sm text-gray-600 dark:text-gray-400">
 			<a
-				href="/signup"
+				href="/login"
 				class="font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
 			>
-				{$LL.login_createAccount()}
+				{$LL.register_alreadyHaveAccount()}
 			</a>
 		</p>
 	</div>

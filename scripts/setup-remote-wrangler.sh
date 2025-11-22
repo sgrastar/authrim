@@ -443,10 +443,6 @@ tag = "v2"
 # Empty migration to match production state
 # Keeps existing Durable Objects intact
 
-[[migrations]]
-tag = "v3"
-new_sqlite_classes = ["RateLimiterCounter", "PARRequestStore", "DPoPJTIStore"]
-
 # Environment variables
 [vars]
 KEY_MANAGER_SECRET = "production-secret-change-me"
@@ -582,6 +578,30 @@ script_name = \"${DEPLOY_ENV}-authrim-shared\"
 [[durable_objects.bindings]]
 name = \"DPOP_JTI_STORE\"
 class_name = \"DPoPJTIStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\""
+fi
+
+# Generate op-async wrangler file
+if [ ! -f "packages/op-async/wrangler.${DEPLOY_ENV}.toml" ]; then
+    echo "  • Generating op-async/wrangler.${DEPLOY_ENV}.toml..."
+    generate_base_wrangler "op-async" "" "[[d1_databases]]
+binding = \"DB\"
+database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+" "" "[[durable_objects.bindings]]
+name = \"DEVICE_CODE_STORE\"
+class_name = \"DeviceCodeStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"CIBA_REQUEST_STORE\"
+class_name = \"CIBARequestStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"USER_CODE_RATE_LIMITER\"
+class_name = \"RateLimiterCounter\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 
