@@ -20,6 +20,7 @@ export interface OIDCProviderMetadata {
   scopes_supported: string[];
   claims_supported: string[];
   token_endpoint_auth_methods_supported?: string[];
+  token_endpoint_auth_signing_alg_values_supported?: string[];
   code_challenge_methods_supported?: string[];
   registration_endpoint?: string;
   revocation_endpoint?: string;

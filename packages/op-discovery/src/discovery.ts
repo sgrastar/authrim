@@ -80,7 +80,14 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'phone_number',
       'phone_number_verified',
     ],
-    token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic', 'none'],
+    token_endpoint_auth_methods_supported: [
+      'client_secret_basic',
+      'client_secret_post',
+      'client_secret_jwt',
+      'private_key_jwt',
+      'none',
+    ],
+    token_endpoint_auth_signing_alg_values_supported: ['RS256', 'ES256'],
     code_challenge_methods_supported: ['S256'],
     // RFC 9449: DPoP (Demonstrating Proof of Possession) support
     dpop_signing_alg_values_supported: ['RS256', 'ES256'],
