@@ -197,9 +197,39 @@ async function handleAuthorizationCodeGrant(
   const code_verifier = formData.code_verifier;
 
   // Extract client credentials from either form data or Authorization header
-  // Supports both client_secret_post and client_secret_basic authentication
+  // Supports client_secret_post, client_secret_basic, client_secret_jwt, and private_key_jwt
   let client_id = formData.client_id;
   let client_secret = formData.client_secret;
+
+  // Check for JWT-based client authentication (private_key_jwt or client_secret_jwt)
+  const client_assertion = formData.client_assertion;
+  const client_assertion_type = formData.client_assertion_type;
+
+  if (client_assertion && client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer') {
+    // Extract client_id from JWT assertion (from 'sub' or 'iss' claim)
+    try {
+      const assertionPayload = parseToken(client_assertion);
+
+      // Per RFC 7523, the 'sub' claim should contain the client_id
+      // If not present, fall back to 'iss' which also commonly contains the client_id
+      if (!client_id && assertionPayload.sub) {
+        client_id = assertionPayload.sub as string;
+      } else if (!client_id && assertionPayload.iss) {
+        client_id = assertionPayload.iss as string;
+      }
+
+      // JWT assertion will be validated later against the client's registered public key
+      // For now, we just extract the client_id to proceed with the flow
+    } catch {
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: 'Invalid client_assertion JWT format',
+        },
+        401
+      );
+    }
+  }
 
   // Check for HTTP Basic authentication (client_secret_basic)
   const authHeader = c.req.header('Authorization');

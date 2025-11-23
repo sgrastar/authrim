@@ -1478,7 +1478,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
       // Generate access token
       // Get signing key from KeyManager
-      const keyManagerId = c.env.KEY_MANAGER.idFromName('global');
+      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
       const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
       const keysResponse = await keyManager.fetch(new Request('https://key-manager/keys'));
       const keysData = (await keysResponse.json()) as { keys: Array<{ kid: string; alg: string; privateKey: any }> };
@@ -1534,7 +1534,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const issuer = c.env.ISSUER_URL;
 
       // Get signing key from KeyManager
-      const keyManagerId = c.env.KEY_MANAGER.idFromName('global');
+      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
       const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
       const keysResponse = await keyManager.fetch(new Request('https://key-manager/keys'));
       const keysData = (await keysResponse.json()) as { keys: Array<{ kid: string; alg: string; privateKey: any }> };

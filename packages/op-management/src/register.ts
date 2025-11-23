@@ -158,7 +158,13 @@ function validateRegistrationRequest(
 
   // Validate token_endpoint_auth_method
   if (data.token_endpoint_auth_method !== undefined) {
-    const validMethods = ['client_secret_basic', 'client_secret_post', 'none'];
+    const validMethods = [
+      'client_secret_basic',
+      'client_secret_post',
+      'client_secret_jwt',
+      'private_key_jwt',
+      'none',
+    ];
     if (!validMethods.includes(data.token_endpoint_auth_method)) {
       return {
         valid: false,
@@ -222,7 +228,15 @@ function validateRegistrationRequest(
       };
     }
 
-    const validResponseTypes = ['code', 'id_token', 'token'];
+    // Supported response types per OIDC Core 3.3 (Hybrid Flow)
+    const validResponseTypes = [
+      'code',                    // Authorization Code Flow
+      'id_token',                // Implicit Flow (ID Token only)
+      'id_token token',          // Implicit Flow (ID Token + Access Token)
+      'code id_token',           // Hybrid Flow 1
+      'code token',              // Hybrid Flow 2
+      'code id_token token',     // Hybrid Flow 3
+    ];
     for (const responseType of data.response_types) {
       if (!validResponseTypes.includes(responseType)) {
         return {
