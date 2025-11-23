@@ -65,6 +65,39 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
       return next();
     }
 
+    // Check if request is from a trusted domain
+    const trustedDomains = env.TRUSTED_DOMAINS?.split(',').map(d => d.trim()) || [];
+    if (trustedDomains.length > 0) {
+      try {
+        // Clone the request to read body without consuming it
+        const clonedRequest = c.req.raw.clone();
+        const body = await clonedRequest.json() as any;
+
+        // Check if redirect_uris contain any trusted domain
+        if (body && Array.isArray(body.redirect_uris)) {
+          const hasTrustedRedirect = body.redirect_uris.some((uri: string) => {
+            try {
+              const url = new URL(uri);
+              const redirectDomain = url.hostname;
+              return trustedDomains.some(trusted =>
+                redirectDomain === trusted || redirectDomain.endsWith('.' + trusted)
+              );
+            } catch {
+              return false;
+            }
+          });
+
+          if (hasTrustedRedirect) {
+            console.log('Trusted domain detected in redirect_uris - skipping Initial Access Token validation');
+            return next();
+          }
+        }
+      } catch (error) {
+        // If body parsing fails, continue to normal token validation
+        console.log('Failed to parse request body for trusted domain check:', error);
+      }
+    }
+
     // Open registration disabled - Initial Access Token required
     const authHeader = c.req.header('Authorization');
     const token = extractBearerToken(authHeader);

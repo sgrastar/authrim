@@ -14,14 +14,14 @@
   },
   "dependencies": {
     "@authrim/shared": "workspace:*",
-    "hono": "^4.0.0",
+    "hono": "^4.10.6",
     "jose": "^6.1.2"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20240117.0",
-    "@vitest/ui": "^4.0.8",
-    "typescript": "^5.3.3",
-    "vitest": "^4.0.8",
-    "wrangler": "^4.46.0"
+    "@cloudflare/workers-types": "^4.20251121.0",
+    "@vitest/ui": "^4.0.13",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.13",
+    "wrangler": "^4.50.0"
   }
 }

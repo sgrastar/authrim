@@ -180,7 +180,8 @@ export async function revokeToken(
  */
 export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
   if (!env.TOKEN_REVOCATION_STORE) {
-    throw new Error('TOKEN_REVOCATION_STORE Durable Object not available');
+    console.warn('TOKEN_REVOCATION_STORE binding is not configured; skipping revocation check');
+    return false;
   }
 
   const id = env.TOKEN_REVOCATION_STORE.idFromName('global');
