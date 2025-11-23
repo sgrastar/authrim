@@ -14,7 +14,30 @@ const config = {
 			// Cloudflare Pages specific options
 			routes: {
 				include: ['/*'],
-				exclude: ['<all>']
+				exclude: [
+					'<all>',
+					// OAuth/OIDC endpoints handled by Workers
+					'/authorize',
+					'/authorize/*',
+					'/as/*',
+					'/api/auth/*',
+					'/api/sessions/*',
+					'/logout',
+					'/logout/*',
+					'/token',
+					'/userinfo',
+					'/introspect',
+					'/revoke',
+					'/register',
+					'/.well-known/*',
+					// Async flow endpoints
+					'/device_authorization',
+					'/device',
+					'/bc-authorize',
+					'/api/device/*',
+					'/api/ciba/*',
+					'/ciba/*'
+				]
 			}
 		}),
 		alias: {

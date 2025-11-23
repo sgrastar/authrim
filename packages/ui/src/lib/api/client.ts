@@ -296,6 +296,78 @@ export const adminStatsAPI = {
 };
 
 /**
+ * Admin Sessions API
+ */
+export const adminSessionsAPI = {
+	/**
+	 * List sessions with pagination
+	 */
+	async list(params: {
+		page?: number;
+		limit?: number;
+		userId?: string;
+		active?: 'true' | 'false';
+	} = {}) {
+		const queryParams = new URLSearchParams();
+		if (params.page) queryParams.set('page', params.page.toString());
+		if (params.limit) queryParams.set('limit', params.limit.toString());
+		if (params.userId) queryParams.set('userId', params.userId);
+		if (params.active) queryParams.set('active', params.active);
+
+		const query = queryParams.toString();
+		return apiFetch<{
+			sessions: Array<{
+				id: string;
+				user_id: string;
+				user_email: string;
+				user_name?: string;
+				created_at: string;
+				last_accessed_at: string;
+				expires_at: string;
+				ip_address?: string;
+				user_agent?: string;
+				is_active: boolean;
+			}>;
+			pagination: {
+				page: number;
+				limit: number;
+				total: number;
+				totalPages: number;
+				hasNext: boolean;
+				hasPrev: boolean;
+			};
+		}>(`/api/admin/sessions${query ? '?' + query : ''}`);
+	},
+
+	/**
+	 * Get session details by ID
+	 */
+	async get(sessionId: string) {
+		return apiFetch<{
+			id: string;
+			user_id: string;
+			user_email: string;
+			user_name?: string;
+			created_at: string;
+			last_accessed_at: string;
+			expires_at: string;
+			ip_address?: string;
+			user_agent?: string;
+			is_active: boolean;
+		}>(`/api/admin/sessions/${sessionId}`);
+	},
+
+	/**
+	 * Revoke a session
+	 */
+	async revoke(sessionId: string) {
+		return apiFetch<{ success: boolean }>(`/api/admin/sessions/${sessionId}`, {
+			method: 'DELETE'
+		});
+	}
+};
+
+/**
  * Auth API - Passkey
  */
 export const passkeyAPI = {

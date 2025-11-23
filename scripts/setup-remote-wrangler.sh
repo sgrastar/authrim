@@ -79,6 +79,29 @@ echo "📦 Key Information:"
 echo "   Key ID: $KEY_ID"
 echo ""
 
+# Prompt for KEY_MANAGER_SECRET (used for DO auth and token signing)
+EXISTING_KEY_MANAGER_SECRET=${KEY_MANAGER_SECRET:-}
+echo "🔐 Key Manager Authentication"
+echo "   This secret secures requests between workers and the KeyManager Durable Object."
+if [ -n "$EXISTING_KEY_MANAGER_SECRET" ]; then
+    echo "   Existing KEY_MANAGER_SECRET detected (from env). Press Enter to reuse or type a new value."
+else
+    echo "   No KEY_MANAGER_SECRET configured. Enter a strong secret or leave blank to use the"
+    echo "   default 'production-secret-change-me' (development only)."
+fi
+read -s -p "KEY_MANAGER_SECRET: " KEY_MANAGER_SECRET_INPUT
+echo ""
+
+if [ -n "$KEY_MANAGER_SECRET_INPUT" ]; then
+    KEY_MANAGER_SECRET="$KEY_MANAGER_SECRET_INPUT"
+elif [ -n "$EXISTING_KEY_MANAGER_SECRET" ]; then
+    KEY_MANAGER_SECRET="$EXISTING_KEY_MANAGER_SECRET"
+else
+    KEY_MANAGER_SECRET="production-secret-change-me"
+fi
+
+echo ""
+
 
 # Prompt for deployment mode if not provided via CLI
 if [ -z "$DEPLOYMENT_MODE" ]; then
@@ -277,6 +300,7 @@ KEY_ID = "$KEY_ID"
 ALLOW_HTTP_REDIRECT = "false"
 OPEN_REGISTRATION = "false"
 TRUSTED_DOMAINS = "www.certification.openid.net"
+KEY_MANAGER_SECRET = "$KEY_MANAGER_SECRET"
 TOML_EOF
 }
 
@@ -334,37 +358,79 @@ zone_name = \"$ZONE_NAME\""
         op-auth)
             routes="
 [[routes]]
-pattern = \"$DOMAIN_ONLY/authorize\"
+pattern = \"$DOMAIN_ONLY/authorize*\"
 zone_name = \"$ZONE_NAME\"
 
 [[routes]]
 pattern = \"$DOMAIN_ONLY/as/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/api/auth/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/api/sessions/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/logout*\"
 zone_name = \"$ZONE_NAME\""
             ;;
         op-token)
             routes="
 [[routes]]
-pattern = \"$DOMAIN_ONLY/token\"
+pattern = \"$DOMAIN_ONLY/token*\"
 zone_name = \"$ZONE_NAME\""
             ;;
         op-userinfo)
             routes="
 [[routes]]
-pattern = \"$DOMAIN_ONLY/userinfo\"
+pattern = \"$DOMAIN_ONLY/userinfo*\"
 zone_name = \"$ZONE_NAME\""
             ;;
         op-management)
             routes="
 [[routes]]
-pattern = \"$DOMAIN_ONLY/register\"
+pattern = \"$DOMAIN_ONLY/register*\"
 zone_name = \"$ZONE_NAME\"
 
 [[routes]]
-pattern = \"$DOMAIN_ONLY/introspect\"
+pattern = \"$DOMAIN_ONLY/introspect*\"
 zone_name = \"$ZONE_NAME\"
 
 [[routes]]
-pattern = \"$DOMAIN_ONLY/revoke\"
+pattern = \"$DOMAIN_ONLY/revoke*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/api/admin/*\"
+zone_name = \"$ZONE_NAME\""
+            ;;
+        op-async)
+            routes="
+[[routes]]
+pattern = \"$DOMAIN_ONLY/device_authorization*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/device*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/bc-authorize*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/api/device/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/api/ciba/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/ciba/*\"
 zone_name = \"$ZONE_NAME\""
             ;;
     esac
@@ -424,6 +490,18 @@ class_name = "PARRequestStore"
 name = "DPOP_JTI_STORE"
 class_name = "DPoPJTIStore"
 
+[[durable_objects.bindings]]
+name = "DEVICE_CODE_STORE"
+class_name = "DeviceCodeStore"
+
+[[durable_objects.bindings]]
+name = "CIBA_REQUEST_STORE"
+class_name = "CIBARequestStore"
+
+[[durable_objects.bindings]]
+name = "TOKEN_REVOCATION_STORE"
+class_name = "TokenRevocationStore"
+
 # Durable Objects migrations
 [[migrations]]
 tag = "v1"
@@ -443,9 +521,22 @@ tag = "v2"
 # Empty migration to match production state
 # Keeps existing Durable Objects intact
 
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = [
+  "DeviceCodeStore",
+  "CIBARequestStore"
+]
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = [
+  "TokenRevocationStore"
+]
+
 # Environment variables
 [vars]
-KEY_MANAGER_SECRET = "production-secret-change-me"
+KEY_MANAGER_SECRET = "$KEY_MANAGER_SECRET"
 EOF
 fi
 
@@ -545,6 +636,11 @@ script_name = \"${DEPLOY_ENV}-authrim-shared\"
 [[durable_objects.bindings]]
 name = \"DPOP_JTI_STORE\"
 class_name = \"DPoPJTIStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"TOKEN_REVOCATION_STORE\"
+class_name = \"TokenRevocationStore\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 
@@ -578,6 +674,11 @@ script_name = \"${DEPLOY_ENV}-authrim-shared\"
 [[durable_objects.bindings]]
 name = \"DPOP_JTI_STORE\"
 class_name = \"DPoPJTIStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"TOKEN_REVOCATION_STORE\"
+class_name = \"TokenRevocationStore\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 
@@ -643,6 +744,11 @@ script_name = \"${DEPLOY_ENV}-authrim-shared\"
 [[durable_objects.bindings]]
 name = \"SESSION_STORE\"
 class_name = \"SessionStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"TOKEN_REVOCATION_STORE\"
+class_name = \"TokenRevocationStore\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 

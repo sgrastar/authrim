@@ -19,7 +19,10 @@
       "Bash(src/routes/admin/clients/[id]/+page.ts)",
       "Bash(src/routes/admin/users/[id]/+page.ts)",
       "Bash(npx vitest:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(wrangler deployments:*)",
+      "WebFetch(domain:developers.cloudflare.com)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []
