@@ -20,7 +20,7 @@ import {
   getTokenFormat,
   encryptJWT,
 } from '@authrim/shared';
-import { SignJWT, importJWK, importPKCS8, compactDecrypt } from 'jose';
+import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 'jose';
 
 /**
  * Authorization Endpoint Handler
@@ -746,34 +746,39 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Type narrowing: redirect_uri is guaranteed to be a string at this point
   const validRedirectUri: string = redirect_uri as string;
 
+  const sendError = (
+    error: string,
+    description?: string,
+    overrideState: string | undefined = state
+  ) =>
+    redirectWithError(c, validRedirectUri, error, description, overrideState, {
+      responseMode: response_mode,
+      responseType: response_type,
+      clientId: validClientId,
+    });
+
   // Validate scope
   const scopeValidation = validateScope(scope);
   if (!scopeValidation.valid) {
-    return redirectWithError(c, validRedirectUri, 'invalid_scope', scopeValidation.error, state);
+    return sendError('invalid_scope', scopeValidation.error);
   }
 
   // Validate state (optional)
   const stateValidation = validateState(state);
   if (!stateValidation.valid) {
-    return redirectWithError(c, validRedirectUri, 'invalid_request', stateValidation.error, state);
+    return sendError('invalid_request', stateValidation.error);
   }
 
   // Validate nonce (optional for code flow, required for implicit/hybrid flows)
   const nonceValidation = validateNonce(nonce);
   if (!nonceValidation.valid) {
-    return redirectWithError(c, validRedirectUri, 'invalid_request', nonceValidation.error, state);
+    return sendError('invalid_request', nonceValidation.error);
   }
 
   // Per OIDC Core 3.2.2.1 and 3.3.2.11: nonce is REQUIRED for Implicit and Hybrid Flows
   const requiresNonce = response_type !== 'code';
   if (requiresNonce && !nonce) {
-    return redirectWithError(
-      c,
-      validRedirectUri,
-      'invalid_request',
-      'nonce is required for implicit and hybrid flows',
-      state
-    );
+    return sendError('invalid_request', 'nonce is required for implicit and hybrid flows');
   }
 
   // Validate response_mode (optional)
@@ -789,12 +794,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       'jwt', // Generic JWT mode (defaults to fragment for implicit/hybrid, query for code)
     ];
     if (!supportedResponseModes.includes(response_mode)) {
-      return redirectWithError(
-        c,
-        validRedirectUri,
+      return sendError(
         'invalid_request',
-        `Unsupported response_mode. Supported modes: ${supportedResponseModes.join(', ')}`,
-        state
+        `Unsupported response_mode. Supported modes: ${supportedResponseModes.join(', ')}`
       );
     }
 
@@ -806,13 +808,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Per OIDC Core 3.3.2.5: For response_type=code only, fragment is not allowed
     // For hybrid flows (code + token/id_token), fragment is required by default
     if (response_type === 'code' && baseMode === 'fragment') {
-      return redirectWithError(
-        c,
-        validRedirectUri,
-        'invalid_request',
-        'response_mode=fragment is not compatible with response_type=code',
-        state
-      );
+      return sendError('invalid_request', 'response_mode=fragment is not compatible with response_type=code');
     }
   }
 
@@ -827,13 +823,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         parsedClaims === null ||
         Array.isArray(parsedClaims)
       ) {
-        return redirectWithError(
-          c,
-          validRedirectUri,
-          'invalid_request',
-          'claims parameter must be a JSON object',
-          state
-        );
+        return sendError('invalid_request', 'claims parameter must be a JSON object');
       }
 
       // Validate that claims object contains valid sections (userinfo and/or id_token)
@@ -841,82 +831,52 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const claimsSections = Object.keys(parsedClaims as Record<string, unknown>);
 
       if (claimsSections.length === 0) {
-        return redirectWithError(
-          c,
-          validRedirectUri,
+        return sendError(
           'invalid_request',
-          'claims parameter must contain at least one of: userinfo, id_token',
-          state
+          'claims parameter must contain at least one of: userinfo, id_token'
         );
       }
 
       for (const section of claimsSections) {
         if (!validSections.includes(section)) {
-          return redirectWithError(
-            c,
-            validRedirectUri,
+          return sendError(
             'invalid_request',
-            `Invalid claims section: ${section}. Must be one of: ${validSections.join(', ')}`,
-            state
+            `Invalid claims section: ${section}. Must be one of: ${validSections.join(', ')}`
           );
         }
 
         // Validate section contains an object
         const claimsObj = parsedClaims as Record<string, unknown>;
         if (typeof claimsObj[section] !== 'object' || claimsObj[section] === null) {
-          return redirectWithError(
-            c,
-            validRedirectUri,
-            'invalid_request',
-            `claims.${section} must be an object`,
-            state
-          );
+          return sendError('invalid_request', `claims.${section} must be an object`);
         }
       }
     } catch {
-      return redirectWithError(
-        c,
-        validRedirectUri,
-        'invalid_request',
-        'claims parameter must be valid JSON',
-        state
-      );
+      return sendError('invalid_request', 'claims parameter must be valid JSON');
     }
   }
 
   // Validate PKCE parameters if provided
   if (code_challenge) {
     if (!code_challenge_method) {
-      return redirectWithError(
-        c,
-        validRedirectUri,
+      return sendError(
         'invalid_request',
-        'code_challenge_method is required when code_challenge is provided',
-        state
+        'code_challenge_method is required when code_challenge is provided'
       );
     }
 
     // Only support S256 for security (plain is deprecated)
     if (code_challenge_method !== 'S256') {
-      return redirectWithError(
-        c,
-        validRedirectUri,
+      return sendError(
         'invalid_request',
-        'Unsupported code_challenge_method. Only S256 is supported',
-        state
+        'Unsupported code_challenge_method. Only S256 is supported'
       );
     }
 
     // Validate code_challenge format (base64url, 43-128 characters)
     const base64urlPattern = /^[A-Za-z0-9_-]{43,128}$/;
     if (!base64urlPattern.test(code_challenge)) {
-      return redirectWithError(
-        c,
-        validRedirectUri,
-        'invalid_request',
-        'Invalid code_challenge format',
-        state
-      );
+      return sendError('invalid_request', 'Invalid code_challenge format');
     }
   }
 
@@ -1058,26 +1018,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     // Check for invalid prompt combinations
     if (promptValues.includes('none') && promptValues.length > 1) {
-      return redirectWithError(
-        c,
-        validRedirectUri,
-        'invalid_request',
-        'prompt=none cannot be combined with other prompt values',
-        state
-      );
+      return sendError('invalid_request', 'prompt=none cannot be combined with other prompt values');
     }
 
     if (promptValues.includes('none')) {
       // prompt=none: MUST NOT display any authentication or consent UI
       // If not authenticated, return login_required error
       if (!sessionUserId) {
-        return redirectWithError(
-          c,
-          validRedirectUri,
-          'login_required',
-          'User authentication is required',
-          state
-        );
+        return sendError('login_required', 'User authentication is required');
       }
 
       // Check max_age if provided
@@ -1087,13 +1035,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const timeSinceAuth = currentTime - authTime;
 
         if (timeSinceAuth > maxAgeSeconds) {
-          return redirectWithError(
-            c,
-            validRedirectUri,
-            'login_required',
-            'Re-authentication is required due to max_age constraint',
-            state
-          );
+          return sendError('login_required', 'Re-authentication is required due to max_age constraint');
         }
       }
     }
@@ -1235,13 +1177,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Use session user if available, otherwise not allowed (should have been redirected to login)
   if (!sessionUserId) {
     // This should only happen with prompt=none (which should have failed earlier with login_required)
-    return redirectWithError(
-      c,
-      validRedirectUri,
-      'login_required',
-      'User authentication is required',
-      state
-    );
+    return sendError('login_required', 'User authentication is required');
   }
 
   const sub = sessionUserId;
@@ -1327,13 +1263,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     if (consentRequired) {
       // prompt=none requires consent but can't show UI
       if (prompt?.includes('none')) {
-        return redirectWithError(
-          c,
-          validRedirectUri,
-          'consent_required',
-          'User consent is required',
-          state
-        );
+        return sendError('consent_required', 'User consent is required');
       }
 
       // Store authorization request parameters in ChallengeStore for consent flow
@@ -1448,23 +1378,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       if (!storeResponse.ok) {
         const errorData = await storeResponse.json();
         console.error('Failed to store authorization code:', errorData);
-        return redirectWithError(
-          c,
-          validRedirectUri,
-          'server_error',
-          'Failed to process authorization request',
-          state
-        );
+        return sendError('server_error', 'Failed to process authorization request');
       }
     } catch (error) {
       console.error('AuthCodeStore DO error:', error);
-      return redirectWithError(
-        c,
-        validRedirectUri,
-        'server_error',
-        'Failed to process authorization request',
-        state
-      );
+      return sendError('server_error', 'Failed to process authorization request');
     }
   }
 
@@ -1476,26 +1394,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Get issuer from environment
       const issuer = c.env.ISSUER_URL;
 
-      // Generate access token
-      // Get signing key from KeyManager
-      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
-      const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-      const keysResponse = await keyManager.fetch(new Request('https://key-manager/keys'));
-      const keysData = (await keysResponse.json()) as { keys: Array<{ kid: string; alg: string; privateKey: any }> };
-      const signingKey = keysData.keys[0];
-
-      if (!signingKey || !signingKey.privateKey) {
-        console.error('No signing key available');
-        return redirectWithError(
-          c,
-          validRedirectUri,
-          'server_error',
-          'Failed to generate access token',
-          state
-        );
-      }
-
-      const privateKey = (await importJWK(signingKey.privateKey, signingKey.alg)) as CryptoKey;
+      const { privateKey, kid: signingKeyId } = await getSigningKeyFromKeyManager(c.env);
       const tokenResult = await createAccessToken(
         {
           iss: issuer,
@@ -1506,7 +1405,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           claims,
         },
         privateKey,
-        signingKey.kid,
+        signingKeyId,
         3600 // 1 hour
       );
 
@@ -1516,13 +1415,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       console.log(`[HYBRID/IMPLICIT] Generated access_token for sub=${sub}, client_id=${validClientId}`);
     } catch (error) {
       console.error('Failed to generate access token:', error);
-      return redirectWithError(
-        c,
-        validRedirectUri,
-        'server_error',
-        'Failed to generate access token',
-        state
-      );
+      return sendError('server_error', 'Failed to generate access token');
     }
   }
 
@@ -1533,25 +1426,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Get issuer from environment
       const issuer = c.env.ISSUER_URL;
 
-      // Get signing key from KeyManager
-      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
-      const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-      const keysResponse = await keyManager.fetch(new Request('https://key-manager/keys'));
-      const keysData = (await keysResponse.json()) as { keys: Array<{ kid: string; alg: string; privateKey: any }> };
-      const signingKey = keysData.keys[0];
-
-      if (!signingKey || !signingKey.privateKey) {
-        console.error('No signing key available');
-        return redirectWithError(
-          c,
-          validRedirectUri,
-          'server_error',
-          'Failed to generate ID token',
-          state
-        );
-      }
-
-      const privateKey = (await importJWK(signingKey.privateKey, signingKey.alg)) as CryptoKey;
+      const { privateKey, kid: signingKeyId } = await getSigningKeyFromKeyManager(c.env);
 
       // Calculate c_hash if code is present (for hybrid flows)
       // Per OIDC Core 3.3.2.11
@@ -1579,20 +1454,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           at_hash: atHash,
         },
         privateKey,
-        signingKey.kid,
+        signingKeyId,
         3600 // 1 hour
       );
 
       console.log(`[HYBRID/IMPLICIT] Generated id_token for sub=${sub}, client_id=${validClientId}, c_hash=${cHash}, at_hash=${atHash}`);
     } catch (error) {
       console.error('Failed to generate ID token:', error);
-      return redirectWithError(
-        c,
-        validRedirectUri,
-        'server_error',
-        'Failed to generate ID token',
-        state
-      );
+      return sendError('server_error', 'Failed to generate ID token');
     }
   }
 
@@ -1653,27 +1522,114 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 }
 
+async function getSigningKeyFromKeyManager(env: Env): Promise<{ privateKey: CryptoKey; kid: string }> {
+  if (!env.KEY_MANAGER) {
+    throw new Error('KEY_MANAGER binding not available');
+  }
+
+  if (!env.KEY_MANAGER_SECRET) {
+    throw new Error('KEY_MANAGER_SECRET not configured');
+  }
+
+  const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+  const keyManager = env.KEY_MANAGER.get(keyManagerId);
+  const authHeaders = {
+    Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
+  };
+
+  const activeResponse = await keyManager.fetch('http://internal/active-with-private', {
+    method: 'GET',
+    headers: authHeaders,
+  });
+
+  let keyData: { kid: string; privatePEM: string };
+
+  if (activeResponse.ok) {
+    keyData = (await activeResponse.json()) as { kid: string; privatePEM: string };
+  } else {
+    const rotateResponse = await keyManager.fetch('http://internal/rotate', {
+      method: 'POST',
+      headers: authHeaders,
+    });
+
+    if (!rotateResponse.ok) {
+      const errorText = await rotateResponse.text();
+      throw new Error(`Failed to rotate signing key: ${rotateResponse.status} ${errorText}`);
+    }
+
+    const rotateData = (await rotateResponse.json()) as {
+      success: boolean;
+      key: { kid: string; privatePEM: string };
+    };
+    keyData = rotateData.key;
+  }
+
+  const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
+  return { privateKey, kid: keyData.kid };
+}
+
 /**
  * Helper function to redirect with OAuth error parameters
  * https://tools.ietf.org/html/rfc6749#section-4.1.2.1
  */
+interface ErrorRedirectOptions {
+  responseMode?: string;
+  responseType?: string | null;
+  clientId?: string;
+}
+
 function redirectWithError(
   c: Context<{ Bindings: Env }>,
   redirectUri: string,
   error: string,
   errorDescription?: string,
-  state?: string
+  state?: string,
+  options?: ErrorRedirectOptions
 ): Response {
-  const url = new URL(redirectUri);
-  url.searchParams.set('error', error);
+  const params: Record<string, string> = { error };
   if (errorDescription) {
-    url.searchParams.set('error_description', errorDescription);
+    params.error_description = errorDescription;
   }
   if (state) {
-    url.searchParams.set('state', state);
+    params.state = state;
   }
 
-  return c.redirect(url.toString(), 302);
+  const parsedResponseType = options?.responseType?.split(' ') ?? [];
+  const isImplicitOrHybrid = parsedResponseType.some((t) => t === 'id_token' || t === 'token');
+
+  let responseMode = options?.responseMode;
+  let baseMode = responseMode;
+  let isJARM = false;
+
+  if (!responseMode || responseMode === '') {
+    baseMode = isImplicitOrHybrid ? 'fragment' : 'query';
+    responseMode = baseMode;
+  } else if (responseMode === 'jwt') {
+    baseMode = isImplicitOrHybrid ? 'fragment' : 'query';
+    isJARM = true;
+  } else if (responseMode.endsWith('.jwt')) {
+    baseMode = responseMode.replace('.jwt', '');
+    isJARM = true;
+  } else {
+    baseMode = responseMode;
+  }
+
+  if (isJARM) {
+    if (options?.clientId) {
+      return createJARMResponse(c, redirectUri, params, baseMode || 'query', options.clientId);
+    }
+    console.warn('JARM error response requested but client_id unavailable; falling back to base mode');
+  }
+
+  switch (baseMode) {
+    case 'form_post':
+      return createFormPostResponse(c, redirectUri, params);
+    case 'fragment':
+      return createFragmentResponse(c, redirectUri, params);
+    case 'query':
+    default:
+      return createQueryResponse(c, redirectUri, params);
+  }
 }
 
 /**

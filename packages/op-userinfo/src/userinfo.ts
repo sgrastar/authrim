@@ -276,13 +276,19 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     // For UserInfo encryption, we need to sign the claims first (JWT), then encrypt (JWE)
     // This creates a nested JWT: JWS inside JWE
     try {
-      // Import private key for signing
-      const { importPKCS8 } = await import('jose');
-      const privateKeyPEM = c.env.PRIVATE_KEY_PEM;
-      const keyId = c.env.KEY_ID || 'default';
+      // Get signing key from KeyManager
+      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+      const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
+      const keyResponse = await keyManager.fetch(new Request('http://internal/signing-key'));
+      const keyData = await keyResponse.json<{
+        privateKeyPEM: string;
+        publicKeyPEM: string;
+        keyId: string;
+        algorithm: string;
+      }>();
 
-      if (!privateKeyPEM) {
-        console.error('Private key not configured for UserInfo signing');
+      if (!keyData.privateKeyPEM) {
+        console.error('Private key not available from KeyManager');
         return c.json(
           {
             error: 'server_error',
@@ -292,11 +298,13 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      const privateKey = await importPKCS8(privateKeyPEM, 'RS256');
+      // Import private key for signing
+      const { importPKCS8 } = await import('jose');
+      const privateKey = await importPKCS8(keyData.privateKeyPEM, 'RS256');
 
       // Sign UserInfo claims as JWT
       const signedUserInfo = await new SignJWT(userClaims)
-        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: keyId })
+        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: keyData.keyId })
         .setIssuedAt()
         .setIssuer(c.env.ISSUER_URL)
         .setAudience(client_id)
