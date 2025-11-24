@@ -22,7 +22,8 @@
       "Bash(npx tsc:*)",
       "Bash(wrangler deployments:*)",
       "WebFetch(domain:developers.cloudflare.com)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []
