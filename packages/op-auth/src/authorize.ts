@@ -1537,7 +1537,7 @@ async function getSigningKeyFromKeyManager(env: Env): Promise<{ privateKey: Cryp
     Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
   };
 
-  const activeResponse = await keyManager.fetch('http://internal/active-with-private', {
+  const activeResponse = await keyManager.fetch('http://key-manager/internal/active-with-private', {
     method: 'GET',
     headers: authHeaders,
   });
@@ -1545,9 +1545,18 @@ async function getSigningKeyFromKeyManager(env: Env): Promise<{ privateKey: Cryp
   let keyData: { kid: string; privatePEM: string };
 
   if (activeResponse.ok) {
-    keyData = (await activeResponse.json()) as { kid: string; privatePEM: string };
+    const responseData = (await activeResponse.json()) as { kid: string; privatePEM: string };
+    console.log('[getSigningKeyFromKeyManager] Active key response:', {
+      hasKid: !!responseData.kid,
+      hasPrivatePEM: !!responseData.privatePEM,
+      pemLength: responseData.privatePEM?.length,
+      pemStart: responseData.privatePEM?.substring(0, 50),
+      keys: Object.keys(responseData)
+    });
+    keyData = responseData;
   } else {
-    const rotateResponse = await keyManager.fetch('http://internal/rotate', {
+    console.log('[getSigningKeyFromKeyManager] No active key, rotating...');
+    const rotateResponse = await keyManager.fetch('http://key-manager/internal/rotate', {
       method: 'POST',
       headers: authHeaders,
     });
@@ -1561,8 +1570,38 @@ async function getSigningKeyFromKeyManager(env: Env): Promise<{ privateKey: Cryp
       success: boolean;
       key: { kid: string; privatePEM: string };
     };
+    console.log('[getSigningKeyFromKeyManager] Rotated key:', {
+      hasKid: !!rotateData.key?.kid,
+      hasPrivatePEM: !!rotateData.key?.privatePEM,
+      pemLength: rotateData.key?.privatePEM?.length,
+      pemStart: rotateData.key?.privatePEM?.substring(0, 50),
+      keys: Object.keys(rotateData.key || {})
+    });
     keyData = rotateData.key;
   }
+
+  // Validate keyData before using it
+  if (!keyData) {
+    throw new Error('Failed to retrieve signing key: keyData is undefined');
+  }
+
+  if (!keyData.kid) {
+    throw new Error('Failed to retrieve signing key: kid is missing');
+  }
+
+  if (!keyData.privatePEM) {
+    throw new Error('Failed to retrieve signing key: privatePEM is missing');
+  }
+
+  if (typeof keyData.privatePEM !== 'string' || keyData.privatePEM.length === 0) {
+    throw new Error(`Failed to retrieve signing key: privatePEM is invalid (type: ${typeof keyData.privatePEM}, length: ${keyData.privatePEM?.length})`);
+  }
+
+  console.log('[getSigningKeyFromKeyManager] About to import PKCS8:', {
+    kid: keyData.kid,
+    pemLength: keyData.privatePEM.length,
+    pemStart: keyData.privatePEM.substring(0, 50)
+  });
 
   const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
   return { privateKey, kid: keyData.kid };

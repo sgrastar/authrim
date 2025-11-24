@@ -279,15 +279,32 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       // Get signing key from KeyManager
       const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
       const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-      const keyResponse = await keyManager.fetch(new Request('http://internal/signing-key'));
+      const authHeaders = {
+        Authorization: `Bearer ${c.env.KEY_MANAGER_SECRET}`,
+      };
+
+      const keyResponse = await keyManager.fetch('http://key-manager/internal/active-with-private', {
+        method: 'GET',
+        headers: authHeaders,
+      });
+
+      if (!keyResponse.ok) {
+        console.error('Failed to fetch signing key from KeyManager:', keyResponse.status);
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: 'Server configuration error',
+          },
+          500
+        );
+      }
+
       const keyData = await keyResponse.json<{
-        privateKeyPEM: string;
-        publicKeyPEM: string;
-        keyId: string;
-        algorithm: string;
+        kid: string;
+        privatePEM: string;
       }>();
 
-      if (!keyData.privateKeyPEM) {
+      if (!keyData.privatePEM) {
         console.error('Private key not available from KeyManager');
         return c.json(
           {
@@ -300,11 +317,11 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
 
       // Import private key for signing
       const { importPKCS8 } = await import('jose');
-      const privateKey = await importPKCS8(keyData.privateKeyPEM, 'RS256');
+      const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
 
       // Sign UserInfo claims as JWT
       const signedUserInfo = await new SignJWT(userClaims)
-        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: keyData.keyId })
+        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: keyData.kid })
         .setIssuedAt()
         .setIssuer(c.env.ISSUER_URL)
         .setAudience(client_id)

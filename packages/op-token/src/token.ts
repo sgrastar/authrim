@@ -829,7 +829,7 @@ async function handleRefreshTokenGrant(
 
     const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-    const jwksResponse = await keyManager.fetch('http://internal/jwks', { method: 'GET' });
+    const jwksResponse = await keyManager.fetch('http://key-manager/jwks', { method: 'GET' });
 
     if (!jwksResponse.ok) {
       console.error('Failed to fetch JWKS from KeyManager:', jwksResponse.status);
@@ -1057,7 +1057,7 @@ async function handleRefreshTokenGrant(
 
   try {
     // Call RefreshTokenRotator DO to atomically rotate the token
-    const rotateResponse = await rotator.fetch('http://internal/rotate', {
+    const rotateResponse = await rotator.fetch('http://rotator/internal/rotate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
