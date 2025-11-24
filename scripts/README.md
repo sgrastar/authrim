@@ -165,24 +165,58 @@ Create and configure KV namespaces for Authrim.
 
 **Usage:**
 ```bash
-# Interactive mode
-./scripts/setup-kv.sh
+# Setup with environment
+./scripts/setup-kv.sh --env=dev
 
 # Reset mode (deletes and recreates all namespaces)
-./scripts/setup-kv.sh --reset
+./scripts/setup-kv.sh --env=prod --reset
 ```
 
-**KV Namespaces created:**
-- `AUTH_CODES` - OAuth authorization codes
-- `STATE_STORE` - OAuth state parameters
-- `NONCE_STORE` - OpenID Connect nonces
-- `CLIENTS` - Registered OAuth clients
-- `RATE_LIMIT` - Rate limiting counters
-- `REFRESH_TOKENS` - OAuth refresh tokens
-- `REVOKED_TOKENS` - Revoked token list
-- `INITIAL_ACCESS_TOKENS` - Dynamic Client Registration tokens
+**What it does:**
+- Creates KV namespaces for the specified environment
+- Each namespace includes both production and preview versions
+- **Automatically initializes default settings** by calling `setup-default-settings.sh`
+- Updates wrangler.toml files with namespace IDs
 
-Each namespace includes both production and preview versions.
+**KV Namespaces created:**
+- `{ENV}-CLIENTS` - Registered OAuth clients
+- `{ENV}-INITIAL_ACCESS_TOKENS` - Dynamic Client Registration tokens
+- `{ENV}-SETTINGS` - System settings (initialized with basic-op profile)
+
+**Note:** Many KV stores have been migrated to Durable Objects for better consistency:
+- AUTH_CODES → AuthorizationCodeStore DO
+- REFRESH_TOKENS → RefreshTokenRotator DO
+- STATE_STORE → PARRequestStore DO
+- NONCE_STORE → DPoPJTIStore DO
+- RATE_LIMIT → RateLimiterCounter DO
+
+### setup-default-settings.sh
+Initialize default system settings in SETTINGS KV.
+
+**Usage:**
+```bash
+# Initialize with basic-op profile
+./scripts/setup-default-settings.sh --env=dev
+
+# Force overwrite existing settings
+./scripts/setup-default-settings.sh --env=prod --force
+```
+
+**What it does:**
+- Writes default system settings to SETTINGS KV
+- Uses "basic-op" certification profile as the base
+- Initializes FAPI, OIDC, and general configuration
+- Automatically called by `setup-kv.sh`
+
+**Default Configuration:**
+- Profile: basic-op (Standard OpenID Connect Provider)
+- FAPI: Disabled
+- PAR: Not required
+- Public Clients: Allowed
+- Authentication methods: All standard methods enabled
+- 'none' algorithm: Allowed (for testing)
+
+**Note:** This script is automatically called by `setup-kv.sh`. You only need to run it manually if you want to reset settings to defaults.
 
 ### setup-d1.sh
 Create and configure D1 databases for Authrim.
@@ -528,7 +562,7 @@ Create GitHub issues for Phase 1 implementation tasks.
 ./scripts/setup-keys.sh                     # 1. Generate RSA keys
 ./scripts/setup-local-vars.sh               # 2. Create .dev.vars with environment variables
 ./scripts/setup-local-wrangler.sh           # 3. Generate wrangler.toml for local development
-./scripts/setup-kv.sh                       # 4. Create KV namespaces
+./scripts/setup-kv.sh --env=dev             # 4. Create KV namespaces + initialize settings
 ./scripts/setup-d1.sh                       # 5. Create D1 database
 ./scripts/setup-durable-objects.sh          # 6. Deploy Durable Objects
 ./scripts/setup-resend.sh --env=local       # 7. (Optional) Configure Resend for email
@@ -536,6 +570,8 @@ Create GitHub issues for Phase 1 implementation tasks.
 # 3. Start local development
 pnpm run dev
 ```
+
+**Note:** `setup-kv.sh` automatically calls `setup-default-settings.sh` to initialize system settings with the basic-op profile.
 
 #### Remote Environment Deployment
 
@@ -547,7 +583,7 @@ pnpm run dev
 ./scripts/setup-remote-wrangler.sh          # Prompts for ISSUER_URL (your remote endpoint)
 
 # 3. Create cloud resources
-./scripts/setup-kv.sh                       # Create KV namespaces
+./scripts/setup-kv.sh --env=prod            # Create KV namespaces + initialize settings
 ./scripts/setup-d1.sh remote                # Create D1 database
 ./scripts/setup-durable-objects.sh          # Deploy Durable Objects
 
@@ -568,6 +604,8 @@ pnpm run deploy:retry
 # OR manually configure CORS if skipped in step 6
 ./scripts/setup-remote-cors.sh              # Configure CORS for allowed origins
 ```
+
+**Note:** `setup-kv.sh` automatically initializes system settings with the basic-op profile. You can change the profile later using `./scripts/switch-certification-profile.sh`.
 
 **Notes:**
 - `deploy-remote-ui.sh` handles domain selection and CORS configuration
@@ -719,7 +757,9 @@ setup-local-vars.sh
     ↓
 setup-local-wrangler.sh
     ↓
-setup-kv.sh / setup-d1.sh / setup-durable-objects.sh
+setup-kv.sh --env=dev  ← Automatically calls setup-default-settings.sh
+    ↓
+setup-d1.sh / setup-durable-objects.sh
     ↓
 setup-resend.sh --env=local (optional)
     ↓
@@ -732,7 +772,9 @@ setup-keys.sh
     ↓
 setup-remote-wrangler.sh
     ↓
-setup-kv.sh / setup-d1.sh / setup-durable-objects.sh
+setup-kv.sh --env=prod  ← Automatically calls setup-default-settings.sh
+    ↓
+setup-d1.sh / setup-durable-objects.sh
     ↓
 setup-secrets.sh
     ↓
@@ -742,6 +784,8 @@ deploy-remote-ui.sh (UI + optional CORS)
     ↓
 setup-resend.sh --env=remote (optional)
 ```
+
+**Note:** The `setup-kv.sh` script now automatically initializes default system settings (FAPI, OIDC configuration) using the basic-op certification profile.
 
 **OR manually configure CORS:**
 ```

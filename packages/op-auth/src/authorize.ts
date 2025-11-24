@@ -19,6 +19,8 @@ import {
   calculateAtHash,
   getTokenFormat,
   encryptJWT,
+  extractDPoPProof,
+  validateDPoPProof,
 } from '@authrim/shared';
 import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 'jose';
 
@@ -350,8 +352,25 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const alg = header.alg;
 
         if (alg === 'none') {
+          // Check if 'none' algorithm is allowed (read from KV settings)
+          const settingsJson = await c.env.SETTINGS?.get('system_settings');
+          const settings = settingsJson ? JSON.parse(settingsJson) : {};
+          const allowNoneAlgorithm = settings.oidc?.allowNoneAlgorithm ?? false;
+
+          if (!allowNoneAlgorithm) {
+            console.warn('[SECURITY] Rejected unsigned request object (alg=none) - not allowed in current configuration');
+            return c.json(
+              {
+                error: 'invalid_request_object',
+                error_description: 'Unsigned request objects (alg=none) are not allowed in this environment',
+              },
+              400
+            );
+          }
+
           // Unsigned request object - just parse without verification
           // Note: This should only be allowed in development/testing
+          console.warn('[SECURITY] Using unsigned request object (alg=none) - should only be used in development');
           requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
         } else {
           // Signed request object - verify using client's public key
@@ -1401,6 +1420,30 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const includesIdToken = responseTypes.includes('id_token');
   const includesToken = responseTypes.includes('token');
 
+  // Extract and validate DPoP proof (if present) for authorization code binding
+  let dpopJkt: string | undefined;
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+  if (dpopProof) {
+    // Validate DPoP proof
+    const dpopValidation = await validateDPoPProof(
+      dpopProof,
+      c.req.method,
+      c.req.url,
+      undefined, // No access token yet
+      c.env.DPOP_JTI_STORE,
+      validClientId
+    );
+
+    if (dpopValidation.valid && dpopValidation.jkt) {
+      dpopJkt = dpopValidation.jkt; // Store JWK thumbprint for code binding
+      console.log('[DPoP] Authorization code will be bound to DPoP key:', dpopJkt);
+    } else {
+      console.warn('[DPoP] Invalid DPoP proof provided, continuing without binding:', dpopValidation.error_description);
+      // Note: We don't fail the request if DPoP is invalid, just don't bind the code
+      // This allows flexibility for clients that may have optional DPoP support
+    }
+  }
+
   // Generate authorization code if needed (for code flow and hybrid flows)
   let code: string | undefined;
   if (includesCode) {
@@ -1428,6 +1471,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             claims,
             authTime: currentAuthTime,
             acr: selectedAcr,
+            dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
           }),
         })
       );

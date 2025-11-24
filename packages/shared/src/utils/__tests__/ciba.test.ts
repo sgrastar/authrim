@@ -127,7 +127,8 @@ describe('CIBA Utilities', () => {
         login_hint: 'user@example.com',
       });
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('scope');
+      expect(result.error).toBe('invalid_request');
+      expect(result.error_description).toContain('scope');
     });
 
     it('should require at least one login hint', () => {
@@ -135,7 +136,8 @@ describe('CIBA Utilities', () => {
         scope: 'openid profile',
       });
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('login hint');
+      expect(result.error).toBe('invalid_request');
+      expect(result.error_description).toContain('login_hint');
     });
 
     it('should accept login_hint', () => {

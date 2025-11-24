@@ -54,7 +54,7 @@ export function generateCIBAUserCode(): string {
  * @returns true if expired, false otherwise
  */
 export function isCIBARequestExpired(metadata: CIBARequestMetadata): boolean {
-  return Date.now() > metadata.expires_at;
+  return Date.now() >= metadata.expires_at;
 }
 
 /**
@@ -104,6 +104,11 @@ export function parseLoginHint(loginHint: string): {
   // Subject format
   if (loginHint.startsWith('sub:')) {
     return { type: 'sub', value: loginHint.substring(4) };
+  }
+
+  // Username format with explicit prefix
+  if (loginHint.startsWith('username:')) {
+    return { type: 'username', value: loginHint.substring('username:'.length) };
   }
 
   // Default to username

@@ -58,6 +58,29 @@ export async function validateClientAssertion(
       };
     }
 
+    // Step 1.5: Decode header and check algorithm
+    const headerBase64 = parts[0];
+    if (!headerBase64) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion header is missing',
+      };
+    }
+
+    const headerJson = atob(headerBase64.replace(/-/g, '+').replace(/_/g, '/'));
+    const header = JSON.parse(headerJson) as { alg?: string };
+
+    // Reject 'none' algorithm
+    if (header.alg === 'none' || !header.alg) {
+      console.warn('[SECURITY] Rejected unsigned client assertion (alg=none or missing)');
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Unsigned client assertions (alg=none) are not allowed',
+      };
+    }
+
     // Decode payload
     const payloadBase64 = parts[1];
     if (!payloadBase64) {
