@@ -55,7 +55,7 @@ Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 
 **Backend:**
 - ✅ **D1 Database** - 12 tables (users, sessions, passkeys, clients, etc.)
-- ✅ **9 Durable Objects** - SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, etc.
+- ✅ **12 Durable Objects** - SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, ChallengeStore, RateLimiterCounter, PARRequestStore, DPoPJTIStore, TokenRevocationStore, DeviceCodeStore, CIBARequestStore, UserCodeRateLimiter
 - ✅ **WebAuthn/Passkey API** - Full FIDO2 implementation
 - ✅ **Magic Link Auth** - Passwordless email authentication
 - ✅ **Admin APIs** - User/client/session management (20+ endpoints)
@@ -166,33 +166,31 @@ Authrim leverages **Cloudflare Durable Objects** for stateful operations with st
 - **Rate Limiting** (strict/moderate/lenient profiles)
 - **Enhanced Security** (CSP, CORS, HSTS, XSS protection)
 
-### ⏳ Phase 6 (In Progress)
+### ⏳ Phase 6 (In Progress) - **8/11 Features Complete**
 
 **Phase 6: Enterprise Features & Advanced Flows** (Jun-Oct 2026)
 
 **Goal:** Enterprise-grade authentication flows and integrations
 
 **✅ Completed Features (Nov 2025):**
-- ✅ **Device Flow (RFC 8628)** - Smart TV, CLI, IoT device authentication (70 tests passing)
+- ✅ **Device Flow (RFC 8628)** - Smart TV, CLI, IoT device authentication (70 tests passing) [📖 Docs](./docs/features/device-flow.md)
 - ✅ **JWT Bearer Flow (RFC 7523)** - Service-to-service authentication without user interaction
 - ✅ **JWE (RFC 7516)** - JSON Web Encryption for ID Token and UserInfo responses
-- 📚 **Documentation** - Comprehensive Device Flow guide with examples and security considerations
+- ✅ **Hybrid Flow (OIDC Core 3.3)** - All three response types (code id_token, code token, code id_token token)
+- ✅ **CIBA (Client Initiated Backchannel Authentication)** - Backchannel authentication with UI and all 3 modes (poll, ping, push)
+- ✅ **SCIM 2.0 User Provisioning (RFC 7643/7644)** - User/Group endpoints with filtering, pagination, and management UI [📖 Docs](./docs/SCIM.md)
+- ✅ **JAR (JWT-Secured Authorization Request - RFC 9101)** - Request object signing and encryption [📖 Docs](./docs/features/jar-jarm.md)
+- ✅ **JARM (JWT-Secured Authorization Response Mode)** - Response mode JWT support (query.jwt, fragment.jwt, form_post.jwt)
 
-**🔄 Planned Features:**
-- 🏢 **Hybrid Flow** - OIDC Core 3.3 hybrid response types
-- 🔐 **CIBA** - Client Initiated Backchannel Authentication
+**🔄 Remaining Features (3/11):**
 - 🌐 **Social Login** - Google, GitHub, Microsoft, Apple, Facebook, Twitter, LinkedIn (7+ providers)
-- 🔗 **Enterprise Integration** - SAML 2.0 bridge, LDAP/AD, SCIM 2.0 provisioning
+- 🔗 **Enterprise Integration** - SAML 2.0 bridge, LDAP/AD integration
 - 🎨 **Visual Flow Builder** - SimCity-inspired drag & drop authentication flow constructor
-- 🧩 **WebSDK** - Highly customizable Web Components for login/registration
-- ✅ **Compliance** - GDPR automation, Risk-based authentication, ABAC
 
 **Why This Matters:**
 - Enables enterprise adoption with required authentication methods
 - Provides flexibility for complex authentication scenarios
 - Ensures regulatory compliance (GDPR, SOC 2, ISO 27001)
-
-[📖 Device Flow Documentation](./docs/features/device-flow.md)
 
 ### 🆕 Planned (Phase 7-9)
 
@@ -652,6 +650,6 @@ See [LICENSE](./LICENSE) for details.
 
 > **Authrim** ⚡️ — *Authentication at the edge of everywhere*
 >
-> **Status:** Phase 2 Complete (Core API) | **Next:** Phase 3 (Conformance Testing)
+> **Status:** Phase 5 Complete (UI/UX) | Phase 6 In Progress (8/11 Enterprise Features)
 >
 > *From zero to production-ready OpenID Provider in under 5 minutes.* (Goal: Aug 2026)
