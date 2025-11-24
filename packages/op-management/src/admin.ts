@@ -1500,6 +1500,57 @@ export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
           push: false,
         },
       },
+      oidc: {
+        // Discovery metadata configuration
+        requirePar: false, // Require Pushed Authorization Requests
+        claimsSupported: [
+          'sub',
+          'iss',
+          'aud',
+          'exp',
+          'iat',
+          'auth_time',
+          'nonce',
+          'acr',
+          'amr',
+          'azp',
+          'at_hash',
+          'c_hash',
+          'name',
+          'given_name',
+          'family_name',
+          'middle_name',
+          'nickname',
+          'preferred_username',
+          'profile',
+          'picture',
+          'website',
+          'email',
+          'email_verified',
+          'gender',
+          'birthdate',
+          'zoneinfo',
+          'locale',
+          'phone_number',
+          'phone_number_verified',
+          'address',
+          'updated_at',
+        ],
+        responseTypesSupported: ['code'], // Authorization code flow only by default
+        tokenEndpointAuthMethodsSupported: [
+          'client_secret_basic',
+          'client_secret_post',
+          'client_secret_jwt',
+          'private_key_jwt',
+          'none',
+        ],
+      },
+      fapi: {
+        // FAPI 2.0 Security Profile configuration
+        enabled: false, // FAPI 2.0 mode disabled by default
+        requireDpop: false, // Require DPoP (or MTLS) for sender-constrained tokens
+        allowPublicClients: true, // Allow public clients (disable for strict FAPI 2.0)
+      },
     };
 
     // Merge with stored settings if they exist
@@ -1538,7 +1589,7 @@ export async function adminSettingsUpdateHandler(c: Context<{ Bindings: Env }>) 
     }
 
     // Validate settings structure
-    const allowedSections = ['general', 'appearance', 'security', 'email', 'advanced', 'ciba'];
+    const allowedSections = ['general', 'appearance', 'security', 'email', 'advanced', 'ciba', 'oidc', 'fapi'];
     const settings = body.settings;
 
     for (const section of Object.keys(settings)) {

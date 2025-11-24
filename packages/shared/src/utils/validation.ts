@@ -352,7 +352,7 @@ export function validateResponseType(responseType: string | undefined): Validati
 
 /**
  * Authorization code validation
- * Accepts base64url-encoded random strings (recommended minimum 128 characters)
+ * Accepts base64url-encoded random strings (recommended minimum 32 characters)
  *
  * @param code - Authorization code to validate
  * @returns ValidationResult
@@ -391,10 +391,10 @@ export function validateAuthCode(code: string | undefined): ValidationResult {
     };
   }
 
-  if (code.length < 128) {
+  if (code.length < 32) {
     return {
       valid: false,
-      error: 'code is too short (minimum 128 characters recommended)',
+      error: 'code is too short (minimum 32 characters recommended)',
     };
   }
 

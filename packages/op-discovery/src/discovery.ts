@@ -11,6 +11,25 @@ import { SUPPORTED_JWE_ALG, SUPPORTED_JWE_ENC } from '@authrim/shared';
 export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   const issuer = c.env.ISSUER_URL;
 
+  // Load dynamic configuration from SETTINGS KV
+  let oidcConfig: any = {};
+  let fapiConfig: any = {};
+
+  try {
+    const settingsJson = await c.env.SETTINGS?.get('system_settings');
+    if (settingsJson) {
+      const settings = JSON.parse(settingsJson);
+      oidcConfig = settings.oidc || {};
+      fapiConfig = settings.fapi || {};
+    }
+  } catch (error) {
+    console.error('Failed to load settings from KV:', error);
+    // Continue with default values
+  }
+
+  // Determine PAR requirement (FAPI 2.0 mode or OIDC config)
+  const requirePar = fapiConfig.enabled ? true : (oidcConfig.requirePar || false);
+
   const metadata: OIDCProviderMetadata = {
     issuer,
     authorization_endpoint: `${issuer}/authorize`,
@@ -24,8 +43,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     revocation_endpoint: `${issuer}/revoke`,
     // RFC 9126: PAR endpoint
     pushed_authorization_request_endpoint: `${issuer}/as/par`,
-    // RFC 9126: PAR is optional (not required)
-    require_pushed_authorization_requests: false,
+    // RFC 9126: PAR requirement (dynamic based on FAPI/OIDC config)
+    require_pushed_authorization_requests: requirePar,
     // RFC 8628: Device Authorization endpoint
     device_authorization_endpoint: `${issuer}/device_authorization`,
     // OIDC CIBA: Backchannel Authentication endpoint
@@ -33,7 +52,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     backchannel_token_delivery_modes_supported: ['poll', 'ping', 'push'],
     backchannel_authentication_request_signing_alg_values_supported: ['RS256', 'ES256'],
     backchannel_user_code_parameter_supported: true,
-    response_types_supported: ['code'],
+    // Dynamic response_types based on OIDC config
+    response_types_supported: oidcConfig.responseTypesSupported || ['code'],
     grant_types_supported: [
       'authorization_code',
       'refresh_token',
@@ -45,7 +65,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // OIDC Core 8: Both public and pairwise subject identifiers are supported
     subject_types_supported: ['public', 'pairwise'],
     scopes_supported: ['openid', 'profile', 'email', 'address', 'phone'],
-    claims_supported: [
+    // Dynamic claims based on OIDC config
+    claims_supported: oidcConfig.claimsSupported || [
       // Standard claims (always present)
       'sub',
       'iss',
@@ -80,7 +101,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'phone_number',
       'phone_number_verified',
     ],
-    token_endpoint_auth_methods_supported: [
+    // Dynamic token endpoint auth methods based on OIDC config
+    token_endpoint_auth_methods_supported: oidcConfig.tokenEndpointAuthMethodsSupported || [
       'client_secret_basic',
       'client_secret_post',
       'client_secret_jwt',
@@ -123,7 +145,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   };
 
   // Add cache headers for better performance
-  c.header('Cache-Control', 'public, max-age=3600');
+  // Reduced from 3600 to 300 seconds (5 minutes) for dynamic configuration
+  c.header('Cache-Control', 'public, max-age=300');
   c.header('Vary', 'Accept-Encoding');
 
   return c.json(metadata);
