@@ -66,6 +66,10 @@ temp/
 packages/*/dist/
 packages/*/.wrangler/
 CLAUDE.md
+.claude
 authrim-config-*.json
 
 packages/shared/wrangler.conformance.toml
+
+# Backup files
+packages/*/wrangler.toml.backup
