@@ -1578,14 +1578,14 @@ interface ErrorRedirectOptions {
   clientId?: string;
 }
 
-function redirectWithError(
+async function redirectWithError(
   c: Context<{ Bindings: Env }>,
   redirectUri: string,
   error: string,
   errorDescription?: string,
   state?: string,
   options?: ErrorRedirectOptions
-): Response {
+): Promise<Response> {
   const params: Record<string, string> = { error };
   if (errorDescription) {
     params.error_description = errorDescription;
@@ -1616,7 +1616,7 @@ function redirectWithError(
 
   if (isJARM) {
     if (options?.clientId) {
-      return createJARMResponse(c, redirectUri, params, baseMode || 'query', options.clientId);
+      return await createJARMResponse(c, redirectUri, params, baseMode || 'query', options.clientId);
     }
     console.warn('JARM error response requested but client_id unavailable; falling back to base mode');
   }
