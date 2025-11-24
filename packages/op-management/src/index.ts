@@ -34,6 +34,8 @@ import {
   adminAuditLogGetHandler,
   adminSettingsGetHandler,
   adminSettingsUpdateHandler,
+  adminListCertificationProfilesHandler,
+  adminApplyCertificationProfileHandler,
 } from './admin';
 import scimApp from './scim';
 import {
@@ -160,6 +162,10 @@ app.get('/api/admin/audit-log/:id', adminAuditLogGetHandler);
 // Admin Settings endpoints
 app.get('/api/admin/settings', adminSettingsGetHandler);
 app.put('/api/admin/settings', adminSettingsUpdateHandler);
+
+// Admin Certification Profile endpoints (OpenID Certification)
+app.get('/api/admin/settings/profiles', adminListCertificationProfilesHandler);
+app.put('/api/admin/settings/profile/:profileName', adminApplyCertificationProfileHandler);
 
 // Admin SCIM Token Management endpoints
 app.get('/api/admin/scim-tokens', adminScimTokensListHandler);

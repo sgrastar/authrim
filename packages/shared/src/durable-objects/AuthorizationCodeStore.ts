@@ -36,6 +36,7 @@ export interface AuthorizationCode {
   authTime?: number; // OIDC auth_time (authentication timestamp)
   acr?: string; // OIDC acr (Authentication Context Class Reference)
   cHash?: string; // OIDC c_hash for hybrid flows (RFC 3.3.2.11)
+  dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449) - binds code to DPoP key
   used: boolean;
   expiresAt: number;
   createdAt: number;
@@ -58,6 +59,7 @@ export interface StoreCodeRequest {
   authTime?: number;
   acr?: string;
   cHash?: string; // OIDC c_hash for hybrid flows
+  dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
 }
 
 /**
@@ -82,6 +84,7 @@ export interface ConsumeCodeResponse {
   authTime?: number;
   acr?: string;
   cHash?: string; // OIDC c_hash for hybrid flows
+  dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
 }
 
 /**
@@ -270,6 +273,8 @@ export class AuthorizationCodeStore {
       claims: request.claims,
       authTime: request.authTime,
       acr: request.acr,
+      cHash: request.cHash,
+      dpopJkt: request.dpopJkt,
       used: false,
       expiresAt: now + this.CODE_TTL * 1000,
       createdAt: now,
@@ -358,6 +363,8 @@ export class AuthorizationCodeStore {
       claims: stored.claims,
       authTime: stored.authTime,
       acr: stored.acr,
+      cHash: stored.cHash,
+      dpopJkt: stored.dpopJkt,
     };
   }
 

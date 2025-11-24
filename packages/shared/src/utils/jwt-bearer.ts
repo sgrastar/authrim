@@ -75,6 +75,29 @@ export async function validateJWTBearerAssertion(
       };
     }
 
+    // Step 1.5: Decode header and check algorithm
+    const headerBase64 = parts[0];
+    if (!headerBase64) {
+      return {
+        valid: false,
+        error: 'invalid_grant',
+        error_description: 'JWT assertion header is missing',
+      };
+    }
+
+    const headerJson = atob(headerBase64.replace(/-/g, '+').replace(/_/g, '/'));
+    const header = JSON.parse(headerJson) as { alg?: string };
+
+    // Reject 'none' algorithm
+    if (header.alg === 'none' || !header.alg) {
+      console.warn('[SECURITY] Rejected unsigned JWT Bearer assertion (alg=none or missing)');
+      return {
+        valid: false,
+        error: 'invalid_grant',
+        error_description: 'Unsigned JWT assertions (alg=none) are not allowed',
+      };
+    }
+
     // Decode payload (base64url)
     const payloadBase64 = parts[1];
     if (!payloadBase64) {

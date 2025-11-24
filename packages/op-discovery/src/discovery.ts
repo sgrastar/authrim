@@ -116,7 +116,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // RFC 9101 (JAR): Request Object support
     request_parameter_supported: true,
     request_uri_parameter_supported: true,
-    request_object_signing_alg_values_supported: ['RS256', 'none'],
+    request_object_signing_alg_values_supported: oidcConfig.allowNoneAlgorithm
+      ? ['RS256', 'none']
+      : ['RS256'],
     request_object_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
     request_object_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
     // JARM (JWT-Secured Authorization Response Mode) support

@@ -1633,3 +1633,100 @@ export async function adminSettingsUpdateHandler(c: Context<{ Bindings: Env }>) 
     );
   }
 }
+
+/**
+ * GET /api/admin/settings/profiles
+ * List available certification profiles
+ */
+export async function adminListCertificationProfilesHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const { listCertificationProfiles } = await import('./certification-profiles');
+    const profiles = listCertificationProfiles();
+    return c.json({ profiles });
+  } catch (error) {
+    console.error('Admin list profiles error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to list certification profiles',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * PUT /api/admin/settings/profile/:profileName
+ * Apply a certification profile
+ */
+export async function adminApplyCertificationProfileHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const env = c.env as Env;
+    const profileName = c.req.param('profileName');
+
+    if (!profileName) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Profile name is required',
+        },
+        400
+      );
+    }
+
+    const { getCertificationProfile } = await import('./certification-profiles');
+    const profile = getCertificationProfile(profileName);
+
+    if (!profile) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: `Certification profile '${profileName}' not found`,
+        },
+        404
+      );
+    }
+
+    // Get current settings
+    const settingsJson = await env.SETTINGS?.get('system_settings');
+    const currentSettings = settingsJson ? JSON.parse(settingsJson) : {};
+
+    // Merge profile settings with current settings
+    const updatedSettings = {
+      ...currentSettings,
+      ...profile.settings,
+    };
+
+    // Store updated settings
+    if (env.SETTINGS) {
+      await env.SETTINGS.put('system_settings', JSON.stringify(updatedSettings));
+    } else {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Settings storage is not configured',
+        },
+        500
+      );
+    }
+
+    return c.json({
+      success: true,
+      message: `Applied certification profile: ${profile.name}`,
+      profile: {
+        name: profile.name,
+        description: profile.description,
+      },
+      settings: updatedSettings,
+    });
+  } catch (error) {
+    console.error('Admin apply profile error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to apply certification profile',
+      },
+      500
+    );
+  }
+}

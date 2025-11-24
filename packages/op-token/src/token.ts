@@ -49,6 +49,8 @@ interface AuthCodeStoreResponse {
   claims?: string; // JSON string of claims parameter
   authTime?: number;
   acr?: string;
+  cHash?: string; // OIDC c_hash for hybrid flows
+  dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
 }
 
 /**
@@ -351,6 +353,34 @@ async function handleAuthorizationCodeGrant(
     );
   }
 
+  // Validate DPoP proof early to get jkt for authorization code binding verification
+  let dpopJkt: string | undefined;
+  if (dpopProof) {
+    const dpopValidation = await validateDPoPProof(
+      dpopProof,
+      c.req.method,
+      c.req.url,
+      undefined, // No access token yet
+      c.env.DPOP_JTI_STORE,
+      client_id
+    );
+
+    if (!dpopValidation.valid) {
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        {
+          error: dpopValidation.error || 'invalid_dpop_proof',
+          error_description:
+            dpopValidation.error_description || 'Invalid DPoP proof',
+        },
+        400
+      );
+    }
+
+    dpopJkt = dpopValidation.jkt;
+  }
+
   // Consume authorization code using AuthorizationCodeStore Durable Object
   // This replaces KV-based getAuthCode() with strong consistency guarantees
   const authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
@@ -399,6 +429,7 @@ async function handleAuthorizationCodeGrant(
       auth_time: consumedData.authTime || Math.floor(Date.now() / 1000), // OIDC Core: Time when End-User authentication occurred
       acr: consumedData.acr, // OIDC Core: Authentication Context Class Reference
       claims: consumedData.claims,
+      dpopJkt: consumedData.dpopJkt, // DPoP JWK thumbprint for binding verification
     };
   } catch (error) {
     console.error('AuthCodeStore DO error:', error);
@@ -420,6 +451,42 @@ async function handleAuthorizationCodeGrant(
       },
       400
     );
+  }
+
+  // DPoP Authorization Code Binding verification (RFC 9449)
+  // If the authorization code was bound to a DPoP key, verify the same key is used
+  if (authCodeData.dpopJkt) {
+    // Authorization code is bound to a DPoP key, DPoP proof is required
+    if (!dpopProof) {
+      console.warn('[DPoP] Authorization code bound to DPoP key but no DPoP proof provided');
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'DPoP proof required (authorization code is bound to DPoP key)',
+        },
+        400
+      );
+    }
+
+    // Verify the DPoP proof's jkt matches the stored jkt
+    if (dpopJkt !== authCodeData.dpopJkt) {
+      console.warn(
+        '[DPoP] DPoP key mismatch. Expected:',
+        authCodeData.dpopJkt,
+        'Received:',
+        dpopJkt
+      );
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description:
+            'DPoP key mismatch (authorization code is bound to different key)',
+        },
+        400
+      );
+    }
+
+    console.log('[DPoP] Authorization code binding verified successfully');
   }
 
   // Client authentication verification
@@ -479,37 +546,8 @@ async function handleAuthorizationCodeGrant(
   const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
 
   // DPoP support (RFC 9449)
-  // Extract and validate DPoP proof if present
-  let dpopJkt: string | undefined;
-  let tokenType: 'Bearer' | 'DPoP' = 'Bearer';
-
-  if (dpopProof) {
-    // Validate DPoP proof (issue #12: DPoP JTI replay protection via DO)
-    const dpopValidation = await validateDPoPProof(
-      dpopProof,
-      'POST',
-      c.req.url,
-      undefined, // No access token yet (this is token issuance)
-      c.env.DPOP_JTI_STORE, // DPoPJTIStore DO for atomic JTI replay protection
-      client_id // Bind JTI to client_id for additional security
-    );
-
-    if (!dpopValidation.valid) {
-      c.header('Cache-Control', 'no-store');
-      c.header('Pragma', 'no-cache');
-      return c.json(
-        {
-          error: dpopValidation.error || 'invalid_dpop_proof',
-          error_description: dpopValidation.error_description || 'DPoP proof validation failed',
-        },
-        400
-      );
-    }
-
-    // DPoP proof is valid, bind access token to the public key
-    dpopJkt = dpopValidation.jkt;
-    tokenType = 'DPoP';
-  }
+  // dpopJkt was already validated earlier for authorization code binding verification
+  const tokenType: 'Bearer' | 'DPoP' = dpopProof ? 'DPoP' : 'Bearer';
 
   // Note: For Authorization Code Flow (response_type=code), scope-based claims
   // (profile, email, etc.) should be returned from the UserInfo endpoint, NOT in the ID token.

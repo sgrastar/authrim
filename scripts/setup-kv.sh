@@ -666,6 +666,28 @@ echo ""
 echo "⚠️  Important: After creating or updating KV namespaces, wait 10-30 seconds"
 echo "   before deploying to allow Cloudflare to propagate the changes."
 echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🎯 Initializing default settings..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Initialize default settings in SETTINGS KV
+if [ -f "./scripts/setup-default-settings.sh" ]; then
+    if ./scripts/setup-default-settings.sh --env="$DEPLOY_ENV"; then
+        echo ""
+        echo "✅ Default settings initialized successfully"
+    else
+        echo ""
+        echo "⚠️  Warning: Failed to initialize default settings"
+        echo "   You can run it manually later with:"
+        echo "   ./scripts/setup-default-settings.sh --env=$DEPLOY_ENV"
+    fi
+else
+    echo "⚠️  Warning: setup-default-settings.sh not found"
+    echo "   Skipping default settings initialization"
+fi
+
+echo ""
 echo "Next steps:"
 echo "  1. Run './scripts/setup-secrets.sh --env=$DEPLOY_ENV' to upload secrets"
 echo "  2. Run './scripts/setup-d1.sh --env=$DEPLOY_ENV' to set up the database (if needed)"

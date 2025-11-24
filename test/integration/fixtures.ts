@@ -181,6 +181,7 @@ export async function createMockEnv(): Promise<Env> {
         claims?: string;
         authTime?: number;
         acr?: string;
+        dpopJkt?: string;
         used: boolean;
         expiresAt: number;
       }
@@ -269,6 +270,7 @@ export async function createMockEnv(): Promise<Env> {
           claims: record.claims,
           authTime: record.authTime ?? Math.floor(Date.now() / 1000),
           acr: record.acr,
+          dpopJkt: record.dpopJkt,
         });
       }
 
