@@ -971,7 +971,7 @@
 ### Phase 5 Deliverables 📦
 
 - [x] ✅ D1 database with 12 tables (users, oauth_clients, sessions, passkeys, custom_fields, roles, user_roles, scope_mappings, branding_settings, identity_providers, audit_log, oauth_authorization_codes)
-- [x] ✅ 9 Durable Objects (SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, ChallengeStore, RateLimiterCounter, PARRequestStore, DPoPJTIStore, and base class)
+- [x] ✅ 12 Durable Objects (SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, ChallengeStore, RateLimiterCounter, PARRequestStore, DPoPJTIStore, TokenRevocationStore, DeviceCodeStore, CIBARequestStore, UserCodeRateLimiter)
 - [x] ✅ Storage abstraction layer with Cloudflare adapter
 - [x] ✅ 20+ backend API endpoints (auth + admin)
 - [x] ✅ SvelteKit frontend application

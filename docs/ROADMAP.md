@@ -503,7 +503,7 @@ Legend:
 
 **Completed Deliverables:**
 - ✅ **D1 Database** - 12 tables (users, oauth_clients, sessions, passkeys, etc.)
-- ✅ **9 Durable Objects** - SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, etc.
+- ✅ **12 Durable Objects** - SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, ChallengeStore, RateLimiterCounter, PARRequestStore, DPoPJTIStore, TokenRevocationStore, DeviceCodeStore, CIBARequestStore, UserCodeRateLimiter
 - ✅ **Storage Abstraction Layer** - CloudflareAdapter with KV/D1/DO routing
 - ✅ **20+ Backend API Endpoints** - Auth + Admin
 - ✅ **SvelteKit Frontend** - Complete application
@@ -525,23 +525,23 @@ Legend:
 
 ## Phase 6: Enterprise Features & Advanced Flows 🏢
 
-**Timeline:** Jun 1 - Oct 31, 2026 (5 months) | **Status:** ⏳ IN PROGRESS (3/11 features complete)
+**Timeline:** Jun 1 - Oct 31, 2026 (5 months) | **Status:** ⏳ IN PROGRESS (8/11 features complete as of Nov 25, 2025)
 
 **Goal:** Enterprise-grade authentication flows and integrations
 
-**Completion Note:** Device Flow, JWT Bearer Flow, and JWE completed on Nov 21, 2025 (ahead of schedule).
+**Completion Note:** Device Flow, JWT Bearer Flow, JWE, Hybrid Flow, CIBA, SCIM 2.0, JAR, and JARM completed ahead of schedule (Nov 21-25, 2025).
 
 ### Week 23-25: Advanced OAuth Flows (Jun 1-21)
 
 **Key Features:**
-- [ ] Hybrid Flow (OIDC Core 3.3)
+- [x] Hybrid Flow (OIDC Core 3.3) ✅ **COMPLETE** (Nov 25, 2025)
 - [x] Device Authorization Flow (RFC 8628) ✅ **COMPLETE** (Nov 21, 2025)
 - [x] JWT Bearer Flow (RFC 7523) ✅ **COMPLETE** (Nov 21, 2025)
 
 ### Week 26-27: CIBA & Advanced Encryption (Jun 22 - Jul 5)
 
 **Key Features:**
-- [ ] CIBA (Client Initiated Backchannel Authentication)
+- [x] CIBA (Client Initiated Backchannel Authentication) ✅ **COMPLETE** (Nov 25, 2025)
 - [x] JWE (JSON Web Encryption - RFC 7516) ✅ **COMPLETE** (Nov 21, 2025)
 
 ### Week 28-30: Social Login & Identity Federation (Jul 6-26)
@@ -556,7 +556,9 @@ Legend:
 **Key Features:**
 - [ ] SAML 2.0 Bridge (OIDC → SAML)
 - [ ] LDAP/AD Integration
-- [ ] SCIM 2.0 User Provisioning (RFC 7643, RFC 7644)
+- [x] SCIM 2.0 User Provisioning (RFC 7643, RFC 7644) ✅ **COMPLETE** (Nov 25, 2025)
+- [x] JAR (JWT-Secured Authorization Request - RFC 9101) ✅ **COMPLETE** (Nov 25, 2025)
+- [x] JARM (JWT-Secured Authorization Response Mode) ✅ **COMPLETE** (Nov 25, 2025)
 - [ ] CSV/JSON Import/Export
 - [ ] Webhook Integration
 - [ ] Bulk User Operations API
@@ -598,12 +600,14 @@ Legend:
 - [x] Device Flow (RFC 8628) operational ✅ **COMPLETE** (Nov 21, 2025)
 - [x] JWT Bearer Flow (RFC 7523) operational ✅ **COMPLETE** (Nov 21, 2025)
 - [x] JWE (RFC 7516) implemented ✅ **COMPLETE** (Nov 21, 2025)
-- [ ] Hybrid Flow operational
-- [ ] CIBA implemented
+- [x] Hybrid Flow operational ✅ **COMPLETE** (Nov 25, 2025)
+- [x] CIBA implemented ✅ **COMPLETE** (Nov 25, 2025)
+- [x] SCIM 2.0 provisioning operational ✅ **COMPLETE** (Nov 25, 2025)
+- [x] JAR (RFC 9101) operational ✅ **COMPLETE** (Nov 25, 2025)
+- [x] JARM operational ✅ **COMPLETE** (Nov 25, 2025)
 - [ ] Social Login (7+ providers)
 - [ ] SAML 2.0 bridge functional
 - [ ] LDAP/AD integration working
-- [ ] SCIM 2.0 provisioning operational
 - [ ] Risk-based authentication active
 - [ ] ABAC implemented
 - [ ] Visual Flow Builder operational

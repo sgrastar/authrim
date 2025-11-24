@@ -2,15 +2,16 @@
 
 ### Advanced Security Protocols (Pre-Certification)
 
-#### 10.1 JARM (JWT Secured Authorization Response Mode) - JARM Spec
-- [ ] Implement `response_mode=jwt` support
-- [ ] Implement `response_mode=query.jwt` support
-- [ ] Implement `response_mode=fragment.jwt` support
-- [ ] Implement `response_mode=form_post.jwt` support
-- [ ] Add authorization response JWT signing
-- [ ] Implement response JWT encryption (optional)
-- [ ] Add tests & conformance validation
-- [ ] Document JARM configuration
+#### 10.1 JARM (JWT Secured Authorization Response Mode) - JARM Spec ✅ **COMPLETE** (Nov 25, 2025)
+- [x] Implement `response_mode=jwt` support ✅
+- [x] Implement `response_mode=query.jwt` support ✅
+- [x] Implement `response_mode=fragment.jwt` support ✅
+- [x] Implement `response_mode=form_post.jwt` support ✅
+- [x] Add authorization response JWT signing ✅
+- [x] Implement response JWT encryption (optional) ✅
+- [x] Add tests & conformance validation ✅
+- [x] Document JARM configuration ✅
+- **Note:** Completed ahead of schedule in Phase 7 (Nov 25, 2025)
 - **Why:** OpenID認証で高評価、レスポンス改ざん防止
 
 #### 10.2 MTLS (Mutual TLS Client Authentication) - RFC 8705
@@ -24,15 +25,16 @@
 - [ ] Document MTLS setup & configuration
 - **Why:** エンタープライズ必須、最高レベルのセキュリティ、金融業界標準
 
-#### 10.3 JAR (JWT-Secured Authorization Request) - RFC 9101
-- [ ] Implement `request` parameter support (JWT)
-- [ ] Implement `request_uri` parameter support
-- [ ] Add request object validation
-- [ ] Implement request object encryption (JWE)
-- [ ] Add request object signing validation
-- [ ] Implement `request_uri` pre-registration
-- [ ] Add tests & conformance validation
-- [ ] Document JAR usage & examples
+#### 10.3 JAR (JWT-Secured Authorization Request) - RFC 9101 ✅ **COMPLETE** (Nov 25, 2025)
+- [x] Implement `request` parameter support (JWT) ✅
+- [x] Implement `request_uri` parameter support ✅
+- [x] Add request object validation ✅
+- [x] Implement request object encryption (JWE) ✅
+- [x] Add request object signing validation ✅
+- [x] Implement `request_uri` pre-registration ✅
+- [x] Add tests & conformance validation ✅
+- [x] Document JAR usage & examples ✅
+- **Note:** Completed ahead of schedule in Phase 7 (Nov 25, 2025)
 - **Why:** セキュリティ強化、リクエスト改ざん防止、OpenID認証で必須
 
 #### 10.4 Client Credentials Flow - RFC 6749 Section 4.4
@@ -123,9 +125,9 @@
 ---
 
 **Phase 10 Deliverables:**
-- [ ] JARM (JWT Secured Authorization Response) functional
+- [x] JARM (JWT Secured Authorization Response) functional ✅ (Completed in Phase 7 - Nov 25, 2025)
 - [ ] MTLS (Mutual TLS) implemented
-- [ ] JAR (JWT-Secured Authorization Request) operational
+- [x] JAR (JWT-Secured Authorization Request) operational ✅ (Completed in Phase 7 - Nov 25, 2025)
 - [ ] Client Credentials Flow working
 - [ ] Production deployment live (`https://id.authrim.org`)
 - [ ] OpenID Certification obtained ✨
