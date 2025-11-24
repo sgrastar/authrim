@@ -27,6 +27,7 @@ import {
   getClientPublicKey,
   validateJWEOptions,
   validateJWTBearerAssertion,
+  validateClientAssertion,
   parseTrustedIssuers,
   type JWEAlgorithm,
   type JWEEncryption,
@@ -309,6 +310,47 @@ async function handleAuthorizationCodeGrant(
     );
   }
 
+  // Fetch client metadata early (needed for FAPI/DPoP checks)
+  const clientMetadata = await getClient(c.env, client_id);
+  if (!clientMetadata) {
+    return c.json(
+      {
+        error: 'invalid_client',
+        error_description: 'Client not found',
+      },
+      401
+    );
+  }
+
+  // DPoP requirement (FAPI 2.0 / sender-constrained tokens)
+  let requireDpop = false;
+  try {
+    const settingsJson = await c.env.SETTINGS?.get('system_settings');
+    if (settingsJson) {
+      const settings = JSON.parse(settingsJson);
+      const fapi = settings.fapi || {};
+      // If FAPI is enabled, default to requiring DPoP unless explicitly disabled
+      requireDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
+    }
+  } catch (error) {
+    console.error('Failed to load FAPI settings for DPoP:', error);
+  }
+
+  const clientRequiresDpop = Boolean((clientMetadata as any).dpop_bound_access_tokens);
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+
+  if ((requireDpop || clientRequiresDpop) && !dpopProof) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'DPoP proof is required for this request',
+      },
+      400
+    );
+  }
+
   // Consume authorization code using AuthorizationCodeStore Durable Object
   // This replaces KV-based getAuthCode() with strong consistency guarantees
   const authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
@@ -380,6 +422,39 @@ async function handleAuthorizationCodeGrant(
     );
   }
 
+  // Client authentication verification
+  // Supports: client_secret_basic, client_secret_post, client_secret_jwt, private_key_jwt
+  if (client_assertion && client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer') {
+    // private_key_jwt or client_secret_jwt authentication
+    const assertionValidation = await validateClientAssertion(
+      client_assertion,
+      `${c.env.ISSUER_URL}/token`,
+      clientMetadata as unknown as import('@authrim/shared').ClientMetadata
+    );
+
+    if (!assertionValidation.valid) {
+      return c.json(
+        {
+          error: assertionValidation.error || 'invalid_client',
+          error_description: assertionValidation.error_description || 'Client assertion validation failed',
+        },
+        401
+      );
+    }
+  } else if (clientMetadata.client_secret) {
+    // client_secret_basic or client_secret_post authentication
+    if (!client_secret || client_secret !== clientMetadata.client_secret) {
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: 'Client authentication failed',
+        },
+        401
+      );
+    }
+  }
+  // Public clients (no client_secret and no client_assertion) are allowed
+
   // Load private key for signing tokens from KeyManager
   // NOTE: Key loading moved BEFORE code deletion to avoid losing code on key loading failure
   let privateKey: CryptoKey;
@@ -405,7 +480,6 @@ async function handleAuthorizationCodeGrant(
 
   // DPoP support (RFC 9449)
   // Extract and validate DPoP proof if present
-  const dpopProof = extractDPoPProof(c.req.raw.headers);
   let dpopJkt: string | undefined;
   let tokenType: 'Bearer' | 'DPoP' = 'Bearer';
 
@@ -521,8 +595,8 @@ async function handleAuthorizationCodeGrant(
     idToken = await createIDToken(idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>, privateKey, keyId, expiresIn);
 
     // JWE: Check if client requires ID token encryption (RFC 7516)
-    const clientMetadata = await getClient(c.env, client_id);
-    if (clientMetadata && isIDTokenEncryptionRequired(clientMetadata)) {
+    // Note: clientMetadata was already fetched during client authentication above
+    if (isIDTokenEncryptionRequired(clientMetadata)) {
       const alg = clientMetadata.id_token_encrypted_response_alg as string;
       const enc = clientMetadata.id_token_encrypted_response_enc as string;
 
@@ -660,6 +734,32 @@ async function handleRefreshTokenGrant(
   let client_id = formData.client_id;
   let client_secret = formData.client_secret;
 
+  // Check for JWT-based client authentication (private_key_jwt or client_secret_jwt)
+  const client_assertion = formData.client_assertion;
+  const client_assertion_type = formData.client_assertion_type;
+
+  if (client_assertion && client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer') {
+    // Extract client_id from JWT assertion
+    try {
+      const assertionPayload = parseToken(client_assertion);
+      if (!client_id && assertionPayload.sub) {
+        client_id = assertionPayload.sub as string;
+      } else if (!client_id && assertionPayload.iss) {
+        client_id = assertionPayload.iss as string;
+      }
+    } catch {
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: 'Invalid client_assertion JWT format',
+        },
+        401
+      );
+    }
+  }
+
   // Check for HTTP Basic authentication (client_secret_basic)
   const authHeader = c.req.header('Authorization');
   if (authHeader && authHeader.startsWith('Basic ')) {
@@ -714,7 +814,7 @@ async function handleRefreshTokenGrant(
     );
   }
 
-  // Fetch client metadata to verify client_secret (for confidential clients)
+  // Fetch client metadata to verify client authentication
   const clientMetadata = await getClient(c.env, client_id);
   if (!clientMetadata) {
     c.header('Cache-Control', 'no-store');
@@ -728,9 +828,29 @@ async function handleRefreshTokenGrant(
     );
   }
 
-  // Verify client_secret for confidential clients
-  // Public clients (e.g., SPAs, mobile apps) don't have a client_secret
-  if (clientMetadata.client_secret) {
+  // Client authentication verification
+  // Supports: client_secret_basic, client_secret_post, client_secret_jwt, private_key_jwt
+  if (client_assertion && client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer') {
+    // private_key_jwt or client_secret_jwt authentication
+    const assertionValidation = await validateClientAssertion(
+      client_assertion,
+      `${c.env.ISSUER_URL}/token`,
+      clientMetadata as unknown as import('@authrim/shared').ClientMetadata
+    );
+
+    if (!assertionValidation.valid) {
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        {
+          error: assertionValidation.error || 'invalid_client',
+          error_description: assertionValidation.error_description || 'Client assertion validation failed',
+        },
+        401
+      );
+    }
+  } else if (clientMetadata.client_secret) {
+    // client_secret_basic or client_secret_post authentication
     if (!client_secret || client_secret !== clientMetadata.client_secret) {
       c.header('Cache-Control', 'no-store');
       c.header('Pragma', 'no-cache');
@@ -743,6 +863,7 @@ async function handleRefreshTokenGrant(
       );
     }
   }
+  // Public clients (no client_secret and no client_assertion) are allowed
 
   // Parse refresh token to get JTI (without verification yet)
   let refreshTokenPayload;

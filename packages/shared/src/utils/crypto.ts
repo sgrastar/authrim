@@ -148,3 +148,25 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   const passwordHash = await hashPassword(password);
   return timingSafeEqual(passwordHash, hash);
 }
+
+/**
+ * Generate PKCE code challenge from code verifier
+ * Uses S256 method (SHA-256 hash, base64url-encoded)
+ *
+ * @param codeVerifier - The code verifier string
+ * @returns Base64url-encoded SHA-256 hash of the code verifier
+ *
+ * @example
+ * ```ts
+ * const verifier = generateSecureRandomString(32); // 43-128 character string
+ * const challenge = await generateCodeChallenge(verifier);
+ * // Use challenge in authorization request
+ * // Use verifier in token request
+ * ```
+ */
+export async function generateCodeChallenge(codeVerifier: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(codeVerifier);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return arrayBufferToBase64Url(hashBuffer);
+}

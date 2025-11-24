@@ -546,6 +546,63 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
+  // Load FAPI 2.0 configuration from SETTINGS KV
+  let fapiConfig: any = {};
+  let oidcConfig: any = {};
+  try {
+    const settingsJson = await c.env.SETTINGS?.get('system_settings');
+    if (settingsJson) {
+      const settings = JSON.parse(settingsJson);
+      fapiConfig = settings.fapi || {};
+      oidcConfig = settings.oidc || {};
+    }
+  } catch (error) {
+    console.error('Failed to load FAPI settings from KV:', error);
+    // Continue with default values (FAPI disabled)
+  }
+
+  // FAPI 2.0 Security Profile validation
+  if (fapiConfig.enabled) {
+    // FAPI 2.0 SHALL reject authorization requests sent without PAR
+    const requirePar = oidcConfig.requirePar !== false; // Default to true in FAPI mode
+    const usedPAR = request_uri && request_uri.startsWith('urn:ietf:params:oauth:request_uri:');
+
+    if (requirePar && !usedPAR) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'PAR is required in FAPI 2.0 mode. Use /as/par endpoint first.',
+        },
+        400
+      );
+    }
+
+    // FAPI 2.0 SHALL only support confidential clients (unless explicitly allowed)
+    const allowPublicClients = fapiConfig.allowPublicClients !== false;
+    const isPublicClient = !clientMetadata.client_secret;
+
+    if (!allowPublicClients && isPublicClient) {
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: 'Public clients are not allowed in FAPI 2.0 mode',
+        },
+        400
+      );
+    }
+
+    // FAPI 2.0 SHALL require PKCE with S256
+    if (!code_challenge || code_challenge_method !== 'S256') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'PKCE with S256 is required in FAPI 2.0 mode',
+        },
+        400
+      );
+    }
+  }
+
   // Validate redirect_uri format (allow http for development)
   const allowHttp = c.env.ALLOW_HTTP_REDIRECT === 'true';
   const redirectUriValidation = validateRedirectUri(redirect_uri, allowHttp);
@@ -1487,6 +1544,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (accessToken) responseParams.expires_in = '3600';
   if (idToken) responseParams.id_token = idToken;
   if (state) responseParams.state = state;
+  // RFC 9207: Add iss parameter to prevent mix-up attacks
+  responseParams.iss = c.env.ISSUER_URL;
 
   // Check if JARM (JWT-secured Authorization Response Mode) is requested
   const isJARM = effectiveResponseMode.includes('.jwt') || effectiveResponseMode === 'jwt';

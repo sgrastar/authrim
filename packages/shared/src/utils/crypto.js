@@ -131,3 +131,17 @@ export async function verifyPassword(password, hash) {
     const passwordHash = await hashPassword(password);
     return timingSafeEqual(passwordHash, hash);
 }
+
+/**
+ * Generate PKCE code challenge from code verifier
+ * Uses S256 method (SHA-256 hash, base64url-encoded)
+ *
+ * @param {string} codeVerifier - The code verifier string
+ * @returns {Promise<string>} Base64url-encoded SHA-256 hash of the code verifier
+ */
+export async function generateCodeChallenge(codeVerifier) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(codeVerifier);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    return arrayBufferToBase64Url(hashBuffer);
+}

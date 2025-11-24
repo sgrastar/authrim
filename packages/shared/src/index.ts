@@ -4,6 +4,7 @@ export * from './types/env';
 export * from './types/oidc';
 
 // Utils
+export * from './utils/client-authentication';
 export * from './utils/crypto';
 export * from './utils/d1-retry';
 export * from './utils/device-flow';
