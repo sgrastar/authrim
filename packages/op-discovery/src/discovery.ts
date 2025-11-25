@@ -144,6 +144,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     claims_parameter_supported: true,
     // ACR (Authentication Context Class Reference) support
     acr_values_supported: ['urn:mace:incommon:iap:silver', 'urn:mace:incommon:iap:bronze'],
+    // OIDC Session Management 1.0
+    check_session_iframe: `${issuer}/session/check`,
   };
 
   // Add cache headers for better performance
