@@ -12,7 +12,7 @@
     "deploy": "./scripts/deploy-with-retry.sh",
     "deploy:with-router": "./scripts/deploy-with-retry.sh",
     "deploy:retry": "./scripts/deploy-with-retry.sh",
-    "deploy:ui": "pnpm --filter=ui build && wrangler pages deploy packages/ui/.svelte-kit/cloudflare --project-name=authrim-ui",
+    "deploy:ui": "./scripts/deploy-ui.sh",
     "deploy:api": "BUILD_TARGET=api ./scripts/deploy-with-retry.sh",
     "deploy:all": "pnpm run deploy:ui && pnpm run deploy:api",
     "test": "turbo run test",
