@@ -14,7 +14,7 @@
     "deploy:retry": "./scripts/deploy-with-retry.sh",
     "deploy:ui": "./scripts/deploy-ui.sh",
     "deploy:api": "BUILD_TARGET=api ./scripts/deploy-with-retry.sh",
-    "deploy:all": "pnpm run deploy:ui && pnpm run deploy:api",
+    "deploy:all": "./scripts/deploy-all.sh",
     "test": "turbo run test",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
