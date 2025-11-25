@@ -21,6 +21,7 @@ import {
   verifySessionTokenHandler,
   sessionStatusHandler,
   refreshSessionHandler,
+  checkSessionIframeHandler,
 } from './session-management';
 import { frontChannelLogoutHandler, backChannelLogoutHandler } from './logout';
 
@@ -31,9 +32,14 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', logger());
 
 // Enhanced security headers
-app.use(
-  '*',
-  secureHeaders({
+// Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)
+app.use('*', async (c, next) => {
+  // Skip secure headers for /session/check - it returns custom headers for iframe embedding
+  if (c.req.path === '/session/check') {
+    return next();
+  }
+
+  return secureHeaders({
     contentSecurityPolicy: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'"],
@@ -55,8 +61,8 @@ app.use(
       geolocation: [],
       payment: [],
     },
-  })
-);
+  })(c, next);
+});
 
 // CORS configuration with origin validation
 app.use('*', async (c, next) => {
@@ -161,6 +167,9 @@ app.post('/api/sessions/issue', issueSessionTokenHandler);      // Issue new ses
 app.post('/api/sessions/verify', verifySessionTokenHandler);    // Verify session token
 app.get('/api/sessions/status', sessionStatusHandler);          // Check session status
 app.post('/api/sessions/refresh', refreshSessionHandler);       // Refresh session expiration
+
+// OIDC Session Management 1.0 - Check Session Iframe
+app.get('/session/check', checkSessionIframeHandler);           // Check session iframe for RPs
 
 // Logout endpoints
 app.get('/logout', frontChannelLogoutHandler);

@@ -57,6 +57,8 @@ export interface OIDCProviderMetadata {
   claim_types_supported?: string[];
   claims_parameter_supported?: boolean;
   acr_values_supported?: string[];
+  // OIDC Session Management 1.0
+  check_session_iframe?: string;
 }
 
 /**

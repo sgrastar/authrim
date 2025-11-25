@@ -18,6 +18,7 @@ export * from './utils/keys';
 export * from './utils/kv';
 export * from './utils/origin-validator';
 export * from './utils/pairwise';
+export * from './utils/session-state';
 export * from './utils/token-introspection';
 export * from './utils/validation';
 
