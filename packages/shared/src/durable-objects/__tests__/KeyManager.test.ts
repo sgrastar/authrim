@@ -105,17 +105,17 @@ describe('KeyManager Durable Object', () => {
   });
 
   describe('Authentication', () => {
-    it('should require authentication for all endpoints', async () => {
-      const endpoints = [
+    it('should require authentication for all endpoints except /jwks', async () => {
+      // Note: /jwks is public because it only returns public keys for JWT verification
+      const protectedEndpoints = [
         { path: '/active', method: 'GET' },
-        { path: '/jwks', method: 'GET' },
         { path: '/rotate', method: 'POST' },
         { path: '/should-rotate', method: 'GET' },
         { path: '/config', method: 'GET' },
         { path: '/config', method: 'POST' },
       ];
 
-      for (const endpoint of endpoints) {
+      for (const endpoint of protectedEndpoints) {
         const request = createRequest(endpoint.path, endpoint.method);
         const response = await keyManager.fetch(request);
 
@@ -123,6 +123,20 @@ describe('KeyManager Durable Object', () => {
         const data = await response.json();
         expect(data).toHaveProperty('error', 'Unauthorized');
       }
+    });
+
+    it('should allow public access to /jwks endpoint', async () => {
+      // First, rotate to create a key
+      const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
+      await keyManager.fetch(rotateRequest);
+
+      // /jwks should be accessible without authentication
+      const request = createRequest('/jwks', 'GET'); // No auth token
+      const response = await keyManager.fetch(request);
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data).toHaveProperty('keys');
     });
 
     it('should reject requests with invalid Bearer token', async () => {

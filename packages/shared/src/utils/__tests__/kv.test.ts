@@ -1,8 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  storeAuthCode,
-  getAuthCode,
-  deleteAuthCode,
   storeState,
   getState,
   deleteState,
@@ -11,7 +8,6 @@ import {
   deleteNonce,
   storeClient,
   getClient,
-  type AuthCodeData,
 } from '../kv';
 import type { Env } from '../../types/env';
 
@@ -83,62 +79,8 @@ describe('KV Utilities', () => {
     };
   });
 
-  describe('Authorization Code Operations', () => {
-    it('should store and retrieve authorization code', async () => {
-      const code = 'test-auth-code-123';
-      const data: AuthCodeData = {
-        client_id: 'test-client',
-        redirect_uri: 'http://localhost:3000/callback',
-        scope: 'openid profile',
-        sub: 'user-123', // User identifier
-        timestamp: Date.now(),
-      };
-
-      await storeAuthCode(env, code, data);
-      const retrieved = await getAuthCode(env, code);
-
-      expect(retrieved).toEqual(data);
-    });
-
-    it('should return null for non-existent authorization code', async () => {
-      const retrieved = await getAuthCode(env, 'non-existent-code');
-      expect(retrieved).toBeNull();
-    });
-
-    it('should delete authorization code', async () => {
-      const code = 'test-auth-code-delete';
-      const data: AuthCodeData = {
-        client_id: 'test-client',
-        redirect_uri: 'http://localhost:3000/callback',
-        scope: 'openid',
-        sub: 'user-123',
-        timestamp: Date.now(),
-      };
-
-      await storeAuthCode(env, code, data);
-      await deleteAuthCode(env, code);
-
-      const retrieved = await getAuthCode(env, code);
-      expect(retrieved).toBeNull();
-    });
-
-    it('should store authorization code with nonce', async () => {
-      const code = 'test-auth-code-with-nonce';
-      const data: AuthCodeData = {
-        client_id: 'test-client',
-        redirect_uri: 'http://localhost:3000/callback',
-        scope: 'openid',
-        sub: 'user-123',
-        nonce: 'test-nonce-123',
-        timestamp: Date.now(),
-      };
-
-      await storeAuthCode(env, code, data);
-      const retrieved = await getAuthCode(env, code);
-
-      expect(retrieved?.nonce).toBe('test-nonce-123');
-    });
-  });
+  // Note: Authorization Code operations have been migrated to AuthorizationCodeStore Durable Object.
+  // See src/durable-objects/__tests__/AuthorizationCodeStore.test.ts for those tests.
 
   describe('State Parameter Operations', () => {
     it('should store and retrieve state parameter', async () => {

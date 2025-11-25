@@ -232,10 +232,16 @@ describe('Validation Utilities', () => {
       expect(result.error).toContain('Unsupported');
     });
 
-    it('should reject id_token response type', () => {
+    it('should accept id_token response type (Implicit Flow)', () => {
       const result = validateResponseType('id_token');
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Unsupported');
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept hybrid flow response types', () => {
+      expect(validateResponseType('id_token token').valid).toBe(true);
+      expect(validateResponseType('code id_token').valid).toBe(true);
+      expect(validateResponseType('code token').valid).toBe(true);
+      expect(validateResponseType('code id_token token').valid).toBe(true);
     });
   });
 

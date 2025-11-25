@@ -149,8 +149,8 @@ describe('CIBA Push Mode Token Delivery', () => {
             access_token: 'access_token_value',
             token_type: 'Bearer',
             id_token: 'id_token_value',
-            refresh_token: 'refresh_token_value',
             expires_in: 3600,
+            refresh_token: 'refresh_token_value',
           }),
         })
       );
