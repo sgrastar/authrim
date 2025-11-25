@@ -3,6 +3,7 @@
 	import { Card, Button, Input } from '$lib/components';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { adminUsersAPI, adminSessionsAPI } from '$lib/api/client';
 
 	interface User {
 		id: string;
@@ -37,6 +38,7 @@
 	let sessions: Session[] = [];
 	let loading = true;
 	let saving = false;
+	let error = '';
 
 	$: userId = $page.params.id as string;
 
@@ -46,69 +48,107 @@
 
 	async function loadUser() {
 		loading = true;
-		// Simulate API call - would call GET /admin/users/:id in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 500));
+		error = '';
 
-		// Mock data
-		const now = Math.floor(Date.now() / 1000);
-		user = {
-			id: userId,
-			email: 'john.doe@example.com',
-			email_verified: true,
-			name: 'John Doe',
-			given_name: 'John',
-			family_name: 'Doe',
-			phone_number: '+1234567890',
-			phone_number_verified: false,
-			created_at: now - 86400 * 30,
-			updated_at: now - 86400 * 5,
-			last_login_at: now - 3600 * 2
-		};
+		try {
+			const { data, error: apiError } = await adminUsersAPI.get(userId);
 
-		passkeys = [
-			{
-				id: 'passkey-1',
-				device_name: 'MacBook Pro',
-				created_at: now - 86400 * 15,
-				last_used_at: now - 3600 * 2
-			},
-			{
-				id: 'passkey-2',
-				device_name: 'iPhone 15 Pro',
-				created_at: now - 86400 * 10,
-				last_used_at: now - 86400 * 3
+			if (apiError) {
+				error = apiError.error_description || 'Failed to load user';
+				console.error('Failed to load user:', apiError);
+			} else if (data) {
+				user = {
+					id: data.user.id,
+					email: data.user.email,
+					email_verified: data.user.email_verified,
+					name: data.user.name || null,
+					given_name: data.user.given_name || null,
+					family_name: data.user.family_name || null,
+					phone_number: data.user.phone_number || null,
+					phone_number_verified: data.user.phone_number_verified || false,
+					created_at: data.user.created_at,
+					updated_at: data.user.updated_at,
+					last_login_at: data.user.last_login_at || null
+				};
+
+				passkeys = data.passkeys.map((p) => ({
+					id: p.id,
+					device_name: p.device_name || null,
+					created_at: p.created_at,
+					last_used_at: p.last_used_at || null
+				}));
+
+				// Load sessions for this user
+				await loadUserSessions();
 			}
-		];
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'An error occurred';
+			console.error('Error loading user:', err);
+		} finally {
+			loading = false;
+		}
+	}
 
-		sessions = [
-			{
-				id: 'session-1',
-				created_at: now - 3600 * 2,
-				expires_at: now + 86400
+	async function loadUserSessions() {
+		try {
+			const { data } = await adminSessionsAPI.list({
+				userId: userId,
+				active: 'true'
+			});
+
+			if (data) {
+				sessions = data.sessions.map((s) => ({
+					id: s.id,
+					created_at: Math.floor(new Date(s.created_at).getTime() / 1000),
+					expires_at: Math.floor(new Date(s.expires_at).getTime() / 1000)
+				}));
 			}
-		];
-
-		loading = false;
+		} catch (err) {
+			console.error('Error loading sessions:', err);
+		}
 	}
 
 	async function handleSave() {
 		if (!user) return;
 
 		saving = true;
-		// Simulate API call - would call PUT /admin/users/:id in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 1000));
-		saving = false;
+		error = '';
 
-		alert('User updated successfully');
+		try {
+			const { error: apiError } = await adminUsersAPI.update(userId, {
+				name: user.name || undefined,
+				email_verified: user.email_verified,
+				phone_number: user.phone_number || undefined,
+				phone_number_verified: user.phone_number_verified
+			});
+
+			if (apiError) {
+				error = apiError.error_description || 'Failed to update user';
+			} else {
+				alert('User updated successfully');
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'An error occurred';
+		} finally {
+			saving = false;
+		}
 	}
 
 	async function handleDelete() {
 		if (!confirm($LL.admin_user_detail_deleteConfirm())) return;
 
-		// Simulate API call - would call DELETE /admin/users/:id in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 500));
+		try {
+			const { error: apiError } = await adminUsersAPI.delete(userId);
 
-		window.location.href = '/admin/users';
+			if (apiError) {
+				alert('Failed to delete user: ' + (apiError.error_description || 'Unknown error'));
+			} else {
+				window.location.href = '/admin/users';
+			}
+		} catch (err) {
+			console.error('Error deleting user:', err);
+			alert('Failed to delete user');
+		}
 	}
 
 	function formatDate(timestamp: number | null): string {
@@ -118,13 +158,25 @@
 
 	function handleDeletePasskey(passkeyId: string) {
 		if (confirm('Are you sure you want to delete this passkey?')) {
+			// TODO: Implement passkey deletion API
 			passkeys = passkeys.filter((p) => p.id !== passkeyId);
 		}
 	}
 
-	function handleRevokeSession(sessionId: string) {
-		if (confirm('Are you sure you want to revoke this session?')) {
-			sessions = sessions.filter((s) => s.id !== sessionId);
+	async function handleRevokeSession(sessionId: string) {
+		if (!confirm('Are you sure you want to revoke this session?')) return;
+
+		try {
+			const { error: apiError } = await adminSessionsAPI.revoke(sessionId);
+
+			if (apiError) {
+				alert('Failed to revoke session: ' + (apiError.error_description || 'Unknown error'));
+			} else {
+				sessions = sessions.filter((s) => s.id !== sessionId);
+			}
+		} catch (err) {
+			console.error('Error revoking session:', err);
+			alert('Failed to revoke session');
 		}
 	}
 </script>
@@ -160,6 +212,16 @@
 			</Button>
 		</div>
 	</div>
+
+	<!-- Error Message -->
+	{#if error}
+		<div class="rounded-lg bg-red-50 p-4 dark:bg-red-900/20">
+			<div class="flex items-center gap-3">
+				<div class="i-heroicons-exclamation-circle h-5 w-5 text-red-600 dark:text-red-400"></div>
+				<p class="text-sm text-red-800 dark:text-red-200">{error}</p>
+			</div>
+		</div>
+	{/if}
 
 	{#if loading}
 		<Card>
