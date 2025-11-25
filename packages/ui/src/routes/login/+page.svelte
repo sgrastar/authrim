@@ -4,6 +4,7 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI } from '$lib/api/client';
 	import { startAuthentication } from '@simplewebauthn/browser';
+	import { auth } from '$lib/stores/auth';
 
 	let email = $state('');
 	let error = $state('');
@@ -29,22 +30,12 @@
 		error = '';
 		debugInfo = [];
 
-		// Validate email
-		if (!email.trim()) {
-			error = $LL.login_errorEmailRequired();
-			return;
-		}
-
-		if (!validateEmail(email)) {
-			error = $LL.login_errorEmailInvalid();
-			return;
-		}
-
+		// No email validation for Passkey - uses Discoverable Credentials
 		passkeyLoading = true;
 
 		try {
-			// 1. Get authentication options from server
-			const { data: optionsData, error: optionsError } = await passkeyAPI.getLoginOptions({ email });
+			// 1. Get authentication options from server (no email = discoverable credentials mode)
+			const { data: optionsData, error: optionsError } = await passkeyAPI.getLoginOptions({});
 
 			debugInfo.push({
 				step: '1. Authentication Options Response',
@@ -106,11 +97,13 @@
 				throw new Error(verifyError.error_description || 'Authentication verification failed');
 			}
 
-			// 4. Store session and redirect
-			// Store session ID in localStorage
+			// 4. Store session using auth store
 			if (verifyData!.sessionId) {
-				localStorage.setItem('sessionId', verifyData!.sessionId);
-				localStorage.setItem('userId', verifyData!.userId);
+				auth.login(verifyData!.sessionId, {
+					userId: verifyData!.userId,
+					email: verifyData!.user.email,
+					name: verifyData!.user.name || undefined
+				});
 			}
 
 			debugInfo.push({
@@ -123,7 +116,7 @@
 			// Give time for debug info to render before redirect
 			setTimeout(() => {
 				window.location.href = '/';
-			}, 3000);
+			}, 1000);
 
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred during passkey authentication';
@@ -226,8 +219,29 @@
 				</Alert>
 			{/if}
 
-			<!-- Email Input -->
-			<div class="mb-6">
+			<!-- Passkey Button (No email required) -->
+			{#if isPasskeySupported}
+				<Button
+					variant="primary"
+					class="w-full mb-4"
+					loading={passkeyLoading}
+					disabled={emailCodeLoading}
+					onclick={handlePasskeyLogin}
+				>
+					<div class="i-heroicons-key h-5 w-5"></div>
+					{$LL.login_signInWithPasskey()}
+				</Button>
+
+				<!-- Divider -->
+				<div class="flex items-center my-4">
+					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
+					<span class="px-4 text-sm text-gray-500 dark:text-gray-400">{$LL.common_or()}</span>
+					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
+				</div>
+			{/if}
+
+			<!-- Email Input (Only for Email Code) -->
+			<div class="mb-4">
 				<Input
 					label={$LL.common_email()}
 					type="email"
@@ -242,27 +256,6 @@
 					{/snippet}
 				</Input>
 			</div>
-
-			<!-- Passkey Button -->
-			{#if isPasskeySupported}
-				<Button
-					variant="primary"
-					class="w-full mb-3"
-					loading={passkeyLoading}
-					disabled={emailCodeLoading}
-					onclick={handlePasskeyLogin}
-				>
-					<div class="i-heroicons-key h-5 w-5"></div>
-					{$LL.login_continueWithPasskey()}
-				</Button>
-
-				<!-- Divider -->
-				<div class="flex items-center my-4">
-					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
-					<span class="px-4 text-sm text-gray-500 dark:text-gray-400">{$LL.common_or()}</span>
-					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
-				</div>
-			{/if}
 
 			<!-- Email Code Button -->
 			<Button
@@ -281,7 +274,7 @@
 		{#if debugInfo.length > 0}
 			<Card class="mt-6 bg-gray-900 text-white">
 				<div class="mb-4">
-					<h3 class="text-lg font-semibold text-yellow-400">🐛 Debug Information</h3>
+					<h3 class="text-lg font-semibold text-yellow-400">Debug Information</h3>
 					<p class="text-xs text-gray-400 mt-1">This section shows technical details for debugging</p>
 				</div>
 

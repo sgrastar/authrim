@@ -155,6 +155,10 @@ type RootTranslation = {
 	 */
 	login_continueWithPasskey: string
 	/**
+	 * S​i​g​n​ ​i​n​ ​w​i​t​h​ ​P​a​s​s​k​e​y
+	 */
+	login_signInWithPasskey: string
+	/**
 	 * S​e​n​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
 	 */
 	login_sendCode: string
@@ -170,6 +174,18 @@ type RootTranslation = {
 	 * P​l​e​a​s​e​ ​e​n​t​e​r​ ​a​ ​v​a​l​i​d​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s
 	 */
 	login_errorEmailInvalid: string
+	/**
+	 * S​i​g​n​ ​U​p
+	 */
+	header_signUp: string
+	/**
+	 * L​o​g​i​n
+	 */
+	header_login: string
+	/**
+	 * L​o​g​o​u​t
+	 */
+	header_logout: string
 	/**
 	 * C​r​e​a​t​e​ ​y​o​u​r​ ​a​c​c​o​u​n​t
 	 */
@@ -824,6 +840,10 @@ export type TranslationFunctions = {
 	 */
 	login_continueWithPasskey: () => LocalizedString
 	/**
+	 * Sign in with Passkey
+	 */
+	login_signInWithPasskey: () => LocalizedString
+	/**
 	 * Send verification code
 	 */
 	login_sendCode: () => LocalizedString
@@ -839,6 +859,18 @@ export type TranslationFunctions = {
 	 * Please enter a valid email address
 	 */
 	login_errorEmailInvalid: () => LocalizedString
+	/**
+	 * Sign Up
+	 */
+	header_signUp: () => LocalizedString
+	/**
+	 * Login
+	 */
+	header_login: () => LocalizedString
+	/**
+	 * Logout
+	 */
+	header_logout: () => LocalizedString
 	/**
 	 * Create your account
 	 */

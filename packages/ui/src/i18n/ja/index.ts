@@ -38,10 +38,15 @@ const ja = {
 	login_title: 'おかえりなさい',
 	login_subtitle: 'アカウントにサインイン',
 	login_continueWithPasskey: 'Passkeyで続ける',
+	login_signInWithPasskey: 'Passkeyでサインイン',
 	login_sendCode: '認証コードを送信',
 	login_createAccount: 'アカウントをお持ちでない方はこちら',
 	login_errorEmailRequired: 'メールアドレスは必須です',
 	login_errorEmailInvalid: '有効なメールアドレスを入力してください',
+
+	header_signUp: '新規登録',
+	header_login: 'ログイン',
+	header_logout: 'ログアウト',
 
 	register_title: 'アカウント作成',
 	register_subtitle: 'Authrimを始めましょう',

@@ -38,10 +38,15 @@ const en = {
 	login_title: 'Welcome back',
 	login_subtitle: 'Sign in to your account',
 	login_continueWithPasskey: 'Continue with Passkey',
+	login_signInWithPasskey: 'Sign in with Passkey',
 	login_sendCode: 'Send verification code',
 	login_createAccount: "Don't have an account? Create one",
 	login_errorEmailRequired: 'Email address is required',
 	login_errorEmailInvalid: 'Please enter a valid email address',
+
+	header_signUp: 'Sign Up',
+	header_login: 'Login',
+	header_logout: 'Logout',
 
 	register_title: 'Create your account',
 	register_subtitle: 'Get started with Authrim',
