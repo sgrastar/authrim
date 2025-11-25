@@ -14,6 +14,7 @@
 import { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Env } from '@authrim/shared';
+import { generateCheckSessionIframeHtml } from '@authrim/shared';
 
 /**
  * Issue a short-lived session token (5 minute TTL, single-use)
@@ -445,4 +446,34 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
       500
     );
   }
+}
+
+/**
+ * OIDC Session Management - Check Session Iframe
+ * GET /session/check
+ *
+ * Returns an HTML page that can be loaded in an iframe by the RP
+ * to monitor session state changes using postMessage.
+ *
+ * https://openid.net/specs/openid-connect-session-1_0.html#OPiframe
+ */
+export async function checkSessionIframeHandler(c: Context<{ Bindings: Env }>) {
+  const issuerUrl = c.env.ISSUER_URL;
+  const html = generateCheckSessionIframeHtml(issuerUrl);
+
+  // Set appropriate headers for iframe embedding
+  // Note: We need to allow framing for this specific endpoint
+  return new Response(html, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      // Allow framing from any origin (RPs need to embed this)
+      'X-Frame-Options': 'ALLOWALL',
+      // CSP that allows inline scripts (needed for the session check logic)
+      'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *;",
+      // Cache for a short time
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    },
+  });
 }

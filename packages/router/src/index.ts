@@ -25,9 +25,11 @@ app.use('*', logger());
 
 // Enhanced security headers
 // Skip for /authorize endpoint to allow form_post response mode with nonce-based CSP
+// Skip for /session/check to allow iframe embedding (OIDC Session Management)
 app.use('*', async (c, next) => {
   // Skip secure headers for /authorize endpoint (handled by op-auth worker with nonce-based CSP)
-  if (c.req.path === '/authorize' || c.req.path.startsWith('/authorize/')) {
+  // Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)
+  if (c.req.path === '/authorize' || c.req.path.startsWith('/authorize/') || c.req.path === '/session/check') {
     return next();
   }
 
@@ -152,6 +154,15 @@ app.all('/api/auth/*', async (c) => {
  * - /api/sessions/verify - Verify session token
  */
 app.all('/api/sessions/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+/**
+ * OIDC Session Management 1.0 - Check Session Iframe
+ * - /session/check - Iframe for RPs to monitor session state
+ */
+app.get('/session/check', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });

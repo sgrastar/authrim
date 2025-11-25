@@ -21,6 +21,8 @@ import {
   encryptJWT,
   extractDPoPProof,
   validateDPoPProof,
+  calculateSessionState,
+  extractOrigin,
 } from '@authrim/shared';
 import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 'jose';
 
@@ -1590,6 +1592,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (state) responseParams.state = state;
   // RFC 9207: Add iss parameter to prevent mix-up attacks
   responseParams.iss = c.env.ISSUER_URL;
+
+  // OIDC Session Management 1.0: Add session_state parameter
+  // https://openid.net/specs/openid-connect-session-1_0.html#CreatingUpdatingSessions
+  if (sessionId && validRedirectUri) {
+    try {
+      const rpOrigin = extractOrigin(validRedirectUri);
+      if (rpOrigin) {
+        const sessionState = await calculateSessionState(validClientId, rpOrigin, sessionId);
+        responseParams.session_state = sessionState;
+      }
+    } catch (error) {
+      console.error('Failed to calculate session_state:', error);
+      // Continue without session_state - it's optional
+    }
+  }
 
   // Check if JARM (JWT-secured Authorization Response Mode) is requested
   const isJARM = effectiveResponseMode.includes('.jwt') || effectiveResponseMode === 'jwt';
