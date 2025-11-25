@@ -184,6 +184,84 @@ curl -X POST http://localhost:8788/auth/magic-link/send \
 
 ---
 
+## Multiple Environment Support
+
+Authrim supports deploying multiple environments to a single Cloudflare account. Each environment has:
+
+- **Separate Resources**: KV namespaces, D1 databases, Workers all have environment-specific names
+- **Isolated Data**: Dev, staging, and production data are completely separated
+- **Same Codebase**: All environments use the same application code
+
+### Environment Naming Convention
+
+All Cloudflare resources are prefixed with the environment name:
+
+```
+dev-authrim-op-auth          # Dev environment worker
+dev-CLIENTS                  # Dev environment KV namespace
+dev-authrim-users-db         # Dev environment D1 database
+
+staging-authrim-op-auth      # Staging environment worker
+staging-CLIENTS              # Staging KV namespace
+staging-authrim-users-db     # Staging D1 database
+
+prod-authrim-op-auth         # Production environment worker
+prod-CLIENTS                 # Production KV namespace
+prod-authrim-users-db        # Production D1 database
+```
+
+### Environment-Specific Setup
+
+Use the `--env` flag with setup scripts:
+
+```bash
+# Dev environment
+./scripts/setup-remote-wrangler.sh --env=dev --domain=https://dev-auth.yourdomain.com
+./scripts/setup-kv.sh --env=dev
+./scripts/setup-d1.sh --env=dev
+./scripts/setup-secrets.sh --env=dev
+pnpm run deploy -- --env=dev
+
+# Staging environment
+./scripts/setup-remote-wrangler.sh --env=staging --domain=https://staging-auth.yourdomain.com
+./scripts/setup-kv.sh --env=staging
+./scripts/setup-d1.sh --env=staging
+./scripts/setup-secrets.sh --env=staging
+pnpm run deploy -- --env=staging
+
+# Production environment
+./scripts/setup-remote-wrangler.sh --env=prod --domain=https://auth.yourdomain.com --mode=production
+./scripts/setup-kv.sh --env=prod
+./scripts/setup-d1.sh --env=prod
+./scripts/setup-secrets.sh --env=prod
+pnpm run deploy -- --env=prod
+```
+
+### Deployment Options
+
+```bash
+# Deploy specific environment
+pnpm run deploy -- --env=dev
+
+# Deploy API only (exclude UI)
+pnpm run deploy -- --env=dev --api-only
+
+# Deploy individual package
+cd packages/op-auth
+DEPLOY_ENV=dev pnpm run deploy
+```
+
+### Monitor Environment-Specific Resources
+
+View resources in Cloudflare Dashboard:
+
+- **Workers**: Filter by `{env}-authrim-*`
+- **KV**: Look for `{env}-CLIENTS`, `{env}-SETTINGS`, etc.
+- **D1**: Find `{env}-authrim-users-db`
+- **Durable Objects**: Check `{env}-authrim-shared`
+
+---
+
 ## Prerequisites
 
 Before deploying Authrim, ensure you have:

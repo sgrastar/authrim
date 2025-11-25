@@ -3,7 +3,19 @@
 Complete documentation for the Authrim OpenID Connect Provider project.
 
 > **Quick Navigation**: Use the search function (Ctrl+F / Cmd+F) or jump to:
-> [Project Management](#-project-management) | [Architecture](#️-architecture--specifications) | [Conformance Testing](#-conformance-testing) | [Finding Information](#-finding-information)
+> [Getting Started](#-getting-started) | [Architecture](#️-architecture) | [Features](#-features) | [API](#-api-documentation) | [Operations](#-operations)
+
+---
+
+## 🚀 Getting Started
+
+Essential guides for development and deployment.
+
+| Document | Description |
+|:---------|:------------|
+| [Development Guide](./DEVELOPMENT.md) | Development environment setup and workflow |
+| [Deployment Guide](./DEPLOYMENT.md) | Deploying to Cloudflare Workers |
+| [Testing Guide](./TESTING.md) | Testing strategy and test execution |
 
 ---
 
@@ -13,151 +25,177 @@ Documents for planning, scheduling, and tracking project progress.
 
 | Document | Description |
 |:---------|:------------|
-| [Project Schedule](./project-management/SCHEDULE.md) | 6-month timeline with 5 major milestones (M1-M5) |
+| [Vision](./VISION.md) | Long-term vision and strategic goals |
+| [Roadmap](./ROADMAP.md) | Detailed product roadmap with phases 1-9 |
+| [Project Schedule](./project-management/SCHEDULE.md) | Timeline with major milestones |
 | [Task Breakdown](./project-management/TASKS.md) | Detailed week-by-week task checklist (440+ tasks) |
-| [Kickoff Checklist](./project-management/KICKOFF.md) | Week 1 immediate action items and setup guide |
-| [GitHub Workflow](./project-management/GITHUB_WORKFLOW.md) | Issue tracking, labels, milestones, and project board setup |
-
-**Quick Start**: Begin with the [Kickoff Checklist](./project-management/KICKOFF.md) for Week 1 tasks.
+| [Kickoff Checklist](./project-management/KICKOFF.md) | Week 1 immediate action items |
+| [GitHub Workflow](./project-management/GITHUB_WORKFLOW.md) | Issue tracking and project board setup |
 
 ---
 
-## 🏗️ Architecture & Specifications
+## 🏗️ Architecture
 
-Technical specifications and protocol flow documentation.
+Technical specifications and system design documentation.
 
 | Document | Description |
 |:---------|:------------|
-| [Protocol Flow](./architecture/protocol-flow.md) | End-to-end OIDC Authorization Code Flow specification |
-| [Technical Specs](./architecture/technical-specs.md) | System architecture, components, and endpoint specifications |
+| [Technical Specs](./architecture/technical-specs.md) | System architecture and endpoint specifications |
+| [Protocol Flow](./architecture/protocol-flow.md) | End-to-end OIDC Authorization Code Flow |
+| [Workers Architecture](./architecture/workers.md) | Cloudflare Workers monorepo and worker split design |
+| [Architecture Patterns](./architecture/patterns.md) | Deployment architecture patterns (A/B/C/D) |
+| [Router Setup](./architecture/router-setup.md) | Router Worker configuration guide |
+| [Durable Objects](./architecture/durable-objects.md) | Durable Objects design and usage |
+| [Database Schema](./architecture/database-schema.md) | D1 database schema documentation |
+| [Storage Strategy](./architecture/storage-strategy.md) | KV, D1, DO storage selection guide |
+| [Storage Consistency Design](./architecture/storage-consistency-design.md) | Consistency guarantees and design |
+| [Storage Implementation](./architecture/storage-consistency-implementation.md) | Implementation record of storage design |
 
-**For AI/LLM Analysis**: These documents are structured for machine-readable analysis of Authrim's behavior and compliance.
+---
+
+## ⚡ Features
+
+Documentation for OIDC features and extensions.
+
+### Core Features
+| Document | Description |
+|:---------|:------------|
+| [PKCE](./features/pkce.md) | Proof Key for Code Exchange |
+| [Hybrid Flow](./features/hybrid-flow.md) | OAuth 2.0 Hybrid Flow implementation |
+| [Token Management](./features/token-management.md) | Token lifecycle and rotation |
+
+### Advanced Features
+| Document | Description |
+|:---------|:------------|
+| [PAR](./features/par.md) | Pushed Authorization Requests (RFC 9126) |
+| [DPoP](./features/dpop.md) | Demonstrating Proof of Possession |
+| [JAR/JARM](./features/jar-jarm.md) | JWT Secured Authorization Request/Response Mode |
+| [Device Flow](./features/device-flow.md) | OAuth 2.0 Device Authorization Grant |
+| [Dynamic Client Registration](./features/dynamic-client-registration.md) | OpenID Connect DCR |
+| [Form Post Response Mode](./features/form-post-response-mode.md) | OAuth 2.0 Form Post Response Mode |
+| [Pairwise Subject Identifiers](./features/pairwise-subject-identifiers.md) | Privacy-preserving subject identifiers |
+
+### Enterprise Features
+| Document | Description |
+|:---------|:------------|
+| [CIBA](./features/ciba.md) | Client Initiated Backchannel Authentication |
+| [SCIM](./features/scim.md) | System for Cross-domain Identity Management |
+| [SCIM Implementation](./features/scim-implementation.md) | SCIM implementation summary |
+
+### Relying Party Support
+| Document | Description |
+|:---------|:------------|
+| [RP Quick Reference](./features/rp-quick-reference.md) | Quick reference for Relying Parties |
+| [RP Support Analysis](./features/rp-support-analysis.md) | Detailed RP compatibility analysis |
+
+---
+
+## 📡 API Documentation
+
+API endpoint documentation and conventions.
+
+| Document | Description |
+|:---------|:------------|
+| [API Overview](./api/README.md) | API documentation index |
+| [API List](./api/list.md) | Complete API endpoint inventory |
+| [Naming Conventions](./api/naming-conventions.md) | API design and naming standards |
+
+### Admin API
+| Document | Description |
+|:---------|:------------|
+| [Users API](./api/admin/users.md) | User management endpoints |
+| [Clients API](./api/admin/clients.md) | OAuth client management |
+| [Sessions API](./api/admin/sessions.md) | Session management endpoints |
+| [Statistics API](./api/admin/statistics.md) | Analytics and statistics |
+| [Avatars API](./api/admin/avatars.md) | User avatar management |
+
+### Auth API
+| Document | Description |
+|:---------|:------------|
+| [Passkey API](./api/auth/passkey.md) | WebAuthn/Passkey authentication |
+| [Magic Link API](./api/auth/magic-link.md) | Passwordless email authentication |
+| [Consent API](./api/auth/consent.md) | User consent handling |
+| [Logout API](./api/auth/logout.md) | Session logout endpoints |
+| [Session Management](./api/auth/session-management.md) | Active session management |
+
+### Durable Objects API
+| Document | Description |
+|:---------|:------------|
+| [SessionStore](./api/durable-objects/SessionStore.md) | User session Durable Object |
+| [AuthorizationCodeStore](./api/durable-objects/AuthorizationCodeStore.md) | Auth code storage |
+| [RefreshTokenRotator](./api/durable-objects/RefreshTokenRotator.md) | Token rotation logic |
+| [KeyManager](./api/durable-objects/KeyManager.md) | Cryptographic key management |
+
+---
+
+## 🔒 Security
+
+Security documentation and reviews.
+
+| Document | Description |
+|:---------|:------------|
+| [Envelope Encryption](./security/envelope-encryption.md) | Private key protection using two-factor storage |
+| [Device/Hybrid Flow Review](./security/device-hybrid-review.md) | Security analysis of Device Flow and Hybrid Flow |
+
+---
+
+## ⚙️ Operations
+
+Operational guides and performance documentation.
+
+| Document | Description |
+|:---------|:------------|
+| [Secret Management](./operations/secret-management.md) | Key generation, storage, and rotation |
+| [Performance](./operations/performance.md) | Performance optimization and benchmarks |
+
+---
+
+## 🎨 Design
+
+UI/UX design documentation.
+
+| Document | Description |
+|:---------|:------------|
+| [Design System](./design/design-system.md) | Component library and design tokens |
+| [Wireframes](./design/wireframes.md) | UI wireframes and mockups |
+| [Accessibility](./design/accessibility.md) | WCAG compliance and a11y guidelines |
 
 ---
 
 ## ✅ Conformance Testing
 
-OpenID Connect conformance testing strategy and test plans.
+OpenID Connect conformance testing documentation.
 
 | Document | Description |
 |:---------|:------------|
-| [Conformance Overview](./conformance/overview.md) | High-level conformance strategy and certification roadmap |
-| [Test Plan](./conformance/test-plan.md) | Detailed test mapping and conformance requirements |
+| [Conformance Overview](./conformance/README.md) | Conformance testing strategy |
+| [OpenID Certification](./conformance/OPENID-CERTIFICATION.md) | Certification roadmap |
+| [FAPI 2.0 Status](./conformance/FAPI-2.0-STATUS.md) | FAPI 2.0 compliance status |
 
-**Target**: Achieve OpenID Certified™ Basic OP Profile by May 31, 2026.
-
----
-
-## 📖 Document Categories
-
-### For Project Managers
-- [Project Schedule](./project-management/SCHEDULE.md) - Timeline and milestones
-- [GitHub Workflow](./project-management/GITHUB_WORKFLOW.md) - Issue tracking system
-
-### For Developers
-- [Kickoff Checklist](./project-management/KICKOFF.md) - Setup and getting started
-- [Task Breakdown](./project-management/TASKS.md) - Detailed implementation tasks
-- [Technical Specs](./architecture/technical-specs.md) - Architecture overview
-
-### For Implementers
-- [Protocol Flow](./architecture/protocol-flow.md) - OIDC flow step-by-step
-- [Test Plan](./conformance/test-plan.md) - Testing requirements
-
-### For Security & Operations
-- [Envelope Encryption](./security/envelope-encryption.md) - Private key protection using two-factor storage
-- [Secret Management](./operations/secret-management.md) - Key generation, storage, and rotation
-
-### For Certification
-- [Conformance Overview](./conformance/overview.md) - Certification strategy
-- [Test Plan](./conformance/test-plan.md) - Conformance test mapping
+### Test Profiles
+- [OIDC Basic OP](./conformance/OIDC%20Basic%20OP/)
+- [OIDC Config OP](./conformance/OIDC%20Config%20OP/)
+- [OIDC Dynamic OP](./conformance/OIDC%20Dynamic%20OP/)
+- [OIDC Hybrid OP](./conformance/OIDC%20Hybrid%20OP/)
+- [OIDC Form Post OP](./conformance/OIDC%20Form%20Post%20OP/)
+- [OIDC RP-Initiated Logout OP](./conformance/OIDC%20RP-Initiated%20Logout%20OP/)
+- [OIDC FAPI2.0 Security Profile](./conformance/OIDC%20FAPI2.0%20Security%20Profile/)
 
 ---
 
-## 🔄 Document Status
+## 📁 Archive
 
-| Phase | Status | Documentation |
-|:------|:-------|:--------------|
-| **Phase 1: Foundation** | ✅ Complete | All Week 1-5 tasks completed |
-| **Phase 2: Core** | ✅ Complete | All OIDC endpoints functional (178 tests) |
-| **Phase 3: Testing** | ✅ Complete | 95.8% Phase 3 conformance (23/24 tests) |
-| **Phase 4: Extended** | ⏳ In Progress | Core features complete, advanced features planned |
-| **Phase 5: Certification** | 📝 Planning Complete | Certification path defined |
+Historical and completed documents.
 
----
-
-## 📅 Project Timeline Summary
-
-```
-Phase 1: Foundation          [Nov 10 - Dec 15, 2025]  ✅ Complete (Nov 2025)
-Phase 2: Core Implementation [Dec 16 - Jan 31, 2026]  ✅ Complete (Nov 2025)
-Phase 3: Testing & Validation [Feb 1 - Mar 15, 2026]   ✅ Complete (Nov 2025)
-Phase 4: Extended Features   [Mar 16 - Apr 30, 2026]  ⏳ In Progress (partial)
-Phase 5: Certification Prep  [May 1 - May 31, 2026]   ⏳ Planned
-```
-
-**Actual Progress**: Phases 1-3 completed 4+ months ahead of schedule!
-**Target Certification Date**: May 31, 2026
-
----
-
-## 🎯 Key Milestones
-
-| # | Milestone | Date | Status |
-|:--|:----------|:-----|:-------|
-| M1 | Foundation Complete | Nov 2025 | ✅ Complete |
-| M2 | OIDC Core Complete | Nov 2025 | ✅ Complete (178 tests) |
-| M3 | Conformance Suite Passing | Nov 2025 | ✅ Complete (95.8% Phase 3) |
-| M4 | Extended Features Complete | Apr 30, 2026 | ⏳ In Progress (DCR/Rate Limiting done, PAR/DPoP/Refresh Token pending) |
-| M5 | OpenID Certified™ | May 31, 2026 | ⏳ Planned (Goal: ≥95% conformance) |
-
----
-
-## 🔍 Finding Information
-
-### "How do I get started?"
-→ [Kickoff Checklist](./project-management/KICKOFF.md)
-
-### "What's the project timeline?"
-→ [Project Schedule](./project-management/SCHEDULE.md)
-
-### "What tasks do I need to complete?"
-→ [Task Breakdown](./project-management/TASKS.md)
-
-### "How do I track issues?"
-→ [GitHub Workflow](./project-management/GITHUB_WORKFLOW.md)
-
-### "How does OIDC work in Authrim?"
-→ [Protocol Flow](./architecture/protocol-flow.md)
-
-### "What are the technical requirements?"
-→ [Technical Specs](./architecture/technical-specs.md)
-
-### "How do we achieve certification?"
-→ [Conformance Overview](./conformance/overview.md)
-
-### "What tests do we need to pass?"
-→ [Test Plan](./conformance/test-plan.md)
-
----
-
-## 📝 Contributing to Documentation
-
-When adding or updating documentation:
-
-1. **Follow the structure**: Place documents in the appropriate category folder
-2. **Use clear titles**: Make document purpose obvious from the filename
-3. **Link appropriately**: Update this index when adding new documents
-4. **Keep it current**: Update status and dates as project progresses
-5. **Be consistent**: Follow existing formatting and style
-6. **Add cross-references**: Link to related documents at the beginning of each file
-7. **Use examples**: Include `id.example.dev` for examples, `id.authrim.org` for production references
-
-### Documentation Quality Standards
-
-- All markdown files must be properly formatted
-- Code blocks must use correct syntax highlighting
-- All internal links must be tested and working
-- Documents should be understandable without reading others (but with helpful cross-references)
+| Document | Description |
+|:---------|:------------|
+| [Phase 1 Review](./archive/phase1-review-report.md) | Phase 1 completion review |
+| [Phase 2 Code Review](./archive/PHASE2_CODE_REVIEW.md) | Phase 2 code review |
+| [Phase 2 Prerequisites](./archive/phase2-prerequisites-checklist.md) | Phase 2 prerequisites checklist |
+| [Phase 5 Certification Original](./archive/phase5-certification-original.md) | Original certification plan |
+| [CIBA TODO](./archive/ciba-todo.md) | CIBA implementation status (archived) |
+| [CIBA Implementation](./archive/ciba-implementation-complete.md) | CIBA completion summary (archived) |
+| [Recent Fixes 2025-11-20](./archive/recent-fixes-2025-11-20.md) | Recent bug fixes summary |
 
 ---
 
@@ -171,14 +209,11 @@ When adding or updating documentation:
 ### OAuth 2.0 Specifications
 - [RFC 6749 - OAuth 2.0 Framework](https://datatracker.ietf.org/doc/html/rfc6749)
 - [RFC 6750 - Bearer Token Usage](https://datatracker.ietf.org/doc/html/rfc6750)
+- [RFC 9126 - Pushed Authorization Requests](https://datatracker.ietf.org/doc/html/rfc9126)
 
 ### JWT/JWK Specifications
 - [RFC 7519 - JSON Web Token (JWT)](https://datatracker.ietf.org/doc/html/rfc7519)
 - [RFC 7517 - JSON Web Key (JWK)](https://datatracker.ietf.org/doc/html/rfc7517)
-
-### Conformance Testing
-- [OpenID Certification](https://openid.net/certification/)
-- [Conformance Test Suite](https://openid.net/certification/testing/)
 
 ### Technology Stack
 - [Cloudflare Workers](https://developers.cloudflare.com/workers/)
@@ -187,4 +222,4 @@ When adding or updating documentation:
 
 ---
 
-> **Authrim** 🔥 — Comprehensive documentation for edge-native OpenID Connect.
+> **Authrim** — Edge-native OpenID Connect Provider documentation.

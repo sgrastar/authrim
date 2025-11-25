@@ -73,3 +73,4 @@ packages/shared/wrangler.conformance.toml
 
 # Backup files
 packages/*/wrangler.toml.backup
+.claude/settings.local.json
