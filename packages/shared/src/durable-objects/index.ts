@@ -58,21 +58,11 @@ export type {
   IncrementRequest,
 } from './RateLimiterCounter';
 
-export type {
-  PARRequestData,
-  StorePARRequest,
-  ConsumePARRequest,
-} from './PARRequestStore';
+export type { PARRequestData, StorePARRequest, ConsumePARRequest } from './PARRequestStore';
 
-export type {
-  DPoPJTIRecord,
-  CheckAndStoreJTIRequest,
-} from './DPoPJTIStore';
+export type { DPoPJTIRecord, CheckAndStoreJTIRequest } from './DPoPJTIStore';
 
-export type {
-  RevokedTokenRecord,
-  RevokeTokenRequest,
-} from './TokenRevocationStore';
+export type { RevokedTokenRecord, RevokeTokenRequest } from './TokenRevocationStore';
 
 /**
  * Default export for ES Module compatibility

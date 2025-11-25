@@ -86,7 +86,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       login_hint = typeof body.login_hint === 'string' ? body.login_hint : undefined;
       _confirmed = typeof body._confirmed === 'string' ? body._confirmed : undefined;
       _auth_time = typeof body._auth_time === 'string' ? body._auth_time : undefined;
-      _session_user_id = typeof body._session_user_id === 'string' ? body._session_user_id : undefined;
+      _session_user_id =
+        typeof body._session_user_id === 'string' ? body._session_user_id : undefined;
     } catch {
       return c.json(
         {
@@ -133,7 +134,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: 'request_uri must be either urn:ietf:params:oauth:request_uri: or https://',
+          error_description:
+            'request_uri must be either urn:ietf:params:oauth:request_uri: or https://',
         },
         400
       );
@@ -146,7 +148,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const requestObjectResponse = await fetch(request_uri, {
           method: 'GET',
           headers: {
-            'Accept': 'application/oauth-authz-req+jwt, application/jwt',
+            Accept: 'application/oauth-authz-req+jwt, application/jwt',
           },
         });
 
@@ -360,11 +362,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           const allowNoneAlgorithm = settings.oidc?.allowNoneAlgorithm ?? false;
 
           if (!allowNoneAlgorithm) {
-            console.warn('[SECURITY] Rejected unsigned request object (alg=none) - not allowed in current configuration');
+            console.warn(
+              '[SECURITY] Rejected unsigned request object (alg=none) - not allowed in current configuration'
+            );
             return c.json(
               {
                 error: 'invalid_request_object',
-                error_description: 'Unsigned request objects (alg=none) are not allowed in this environment',
+                error_description:
+                  'Unsigned request objects (alg=none) are not allowed in this environment',
               },
               400
             );
@@ -372,7 +377,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
           // Unsigned request object - just parse without verification
           // Note: This should only be allowed in development/testing
-          console.warn('[SECURITY] Using unsigned request object (alg=none) - should only be used in development');
+          console.warn(
+            '[SECURITY] Using unsigned request object (alg=none) - should only be used in development'
+          );
           requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
         } else {
           // Signed request object - verify using client's public key
@@ -401,7 +408,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           let publicKey: CryptoKey;
 
           // Try to get public key from client's jwks
-          if (clientResult.jwks && typeof clientResult.jwks === 'object' && clientResult.jwks !== null && 'keys' in clientResult.jwks && Array.isArray(clientResult.jwks.keys)) {
+          if (
+            clientResult.jwks &&
+            typeof clientResult.jwks === 'object' &&
+            clientResult.jwks !== null &&
+            'keys' in clientResult.jwks &&
+            Array.isArray(clientResult.jwks.keys)
+          ) {
             // Find a suitable key for signature verification
             const signingKey = (clientResult.jwks.keys as any[]).find((key: any) => {
               return key.use === 'sig' || !key.use; // Accept keys with use=sig or no use specified
@@ -417,7 +430,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               );
             }
 
-            publicKey = await importJWK(signingKey, alg) as CryptoKey;
+            publicKey = (await importJWK(signingKey, alg)) as CryptoKey;
           } else if (clientResult.jwks_uri && typeof clientResult.jwks_uri === 'string') {
             // Fetch JWKS from jwks_uri
             try {
@@ -432,7 +445,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 );
               }
 
-              const jwks = await jwksResponse.json() as { keys: any[] };
+              const jwks = (await jwksResponse.json()) as { keys: any[] };
               const signingKey = jwks.keys.find((key: any) => {
                 return key.use === 'sig' || !key.use;
               });
@@ -447,7 +460,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 );
               }
 
-              publicKey = await importJWK(signingKey, alg) as CryptoKey;
+              publicKey = (await importJWK(signingKey, alg)) as CryptoKey;
             } catch (fetchError) {
               console.error('Failed to fetch jwks_uri:', fetchError);
               return c.json(
@@ -485,7 +498,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               );
             }
 
-            publicKey = await importJWK(publicJwk, alg) as CryptoKey;
+            publicKey = (await importJWK(publicJwk, alg)) as CryptoKey;
           }
 
           // Verify the signature
@@ -497,19 +510,25 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Override parameters with those from request object
       // Per OIDC Core 6.1: request object parameters take precedence
       if (requestObjectClaims) {
-        if (requestObjectClaims.response_type) response_type = requestObjectClaims.response_type as string;
+        if (requestObjectClaims.response_type)
+          response_type = requestObjectClaims.response_type as string;
         if (requestObjectClaims.client_id) client_id = requestObjectClaims.client_id as string;
-        if (requestObjectClaims.redirect_uri) redirect_uri = requestObjectClaims.redirect_uri as string;
+        if (requestObjectClaims.redirect_uri)
+          redirect_uri = requestObjectClaims.redirect_uri as string;
         if (requestObjectClaims.scope) scope = requestObjectClaims.scope as string;
         if (requestObjectClaims.state) state = requestObjectClaims.state as string;
         if (requestObjectClaims.nonce) nonce = requestObjectClaims.nonce as string;
-        if (requestObjectClaims.code_challenge) code_challenge = requestObjectClaims.code_challenge as string;
-        if (requestObjectClaims.code_challenge_method) code_challenge_method = requestObjectClaims.code_challenge_method as string;
+        if (requestObjectClaims.code_challenge)
+          code_challenge = requestObjectClaims.code_challenge as string;
+        if (requestObjectClaims.code_challenge_method)
+          code_challenge_method = requestObjectClaims.code_challenge_method as string;
         if (requestObjectClaims.claims) claims = requestObjectClaims.claims as string;
-        if (requestObjectClaims.response_mode) response_mode = requestObjectClaims.response_mode as string;
+        if (requestObjectClaims.response_mode)
+          response_mode = requestObjectClaims.response_mode as string;
         if (requestObjectClaims.prompt) prompt = requestObjectClaims.prompt as string;
         if (requestObjectClaims.max_age) max_age = requestObjectClaims.max_age as string;
-        if (requestObjectClaims.id_token_hint) id_token_hint = requestObjectClaims.id_token_hint as string;
+        if (requestObjectClaims.id_token_hint)
+          id_token_hint = requestObjectClaims.id_token_hint as string;
         if (requestObjectClaims.acr_values) acr_values = requestObjectClaims.acr_values as string;
         if (requestObjectClaims.display) display = requestObjectClaims.display as string;
         if (requestObjectClaims.ui_locales) ui_locales = requestObjectClaims.ui_locales as string;
@@ -886,7 +905,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Per OIDC Core 3.3.2.5: For response_type=code only, fragment is not allowed
     // For hybrid flows (code + token/id_token), fragment is required by default
     if (response_type === 'code' && baseMode === 'fragment') {
-      return sendError('invalid_request', 'response_mode=fragment is not compatible with response_type=code');
+      return sendError(
+        'invalid_request',
+        'response_mode=fragment is not compatible with response_type=code'
+      );
     }
   }
 
@@ -1007,12 +1029,22 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // If this is a re-authentication confirmation callback, restore original auth_time and sessionUserId
   // EXCEPT when prompt=login or max_age re-authentication (which require a new auth_time)
   if (_confirmed === 'true') {
-    console.log('[AUTH] Confirmation callback - prompt:', prompt, 'max_age:', max_age, '_auth_time:', _auth_time);
+    console.log(
+      '[AUTH] Confirmation callback - prompt:',
+      prompt,
+      'max_age:',
+      max_age,
+      '_auth_time:',
+      _auth_time
+    );
 
     // prompt=login or max_age re-authentication requires a new auth_time (user just re-authenticated)
     if (prompt?.includes('login') || max_age) {
       authTime = Math.floor(Date.now() / 1000);
-      console.log('[AUTH] Re-authentication confirmed (prompt=login or max_age), setting new authTime:', authTime);
+      console.log(
+        '[AUTH] Re-authentication confirmed (prompt=login or max_age), setting new authTime:',
+        authTime
+      );
     } else if (_auth_time) {
       // For other scenarios, restore original auth_time
       authTime = parseInt(_auth_time, 10);
@@ -1047,7 +1079,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           const jwksResponse = await keyManager.fetch('http://internal/jwks', { method: 'GET' });
 
           if (jwksResponse.ok) {
-            const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; [key: string]: unknown }> };
+            const jwks = (await jwksResponse.json()) as {
+              keys: Array<{ kid?: string; [key: string]: unknown }>;
+            };
             // Find key by kid
             const jwk = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
             if (jwk) {
@@ -1055,7 +1089,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             }
           }
         } catch (kmError) {
-          console.warn('Failed to fetch key from KeyManager, falling back to PUBLIC_JWK_JSON:', kmError);
+          console.warn(
+            'Failed to fetch key from KeyManager, falling back to PUBLIC_JWK_JSON:',
+            kmError
+          );
         }
       }
 
@@ -1072,14 +1109,24 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       if (publicKey) {
-        const verified = await verifyToken(id_token_hint, publicKey, c.env.ISSUER_URL, client_id || '');
+        const verified = await verifyToken(
+          id_token_hint,
+          publicKey,
+          c.env.ISSUER_URL,
+          client_id || ''
+        );
         const idTokenPayload = verified.payload as Record<string, unknown>;
 
         // Extract user identifier and auth_time from ID token
         sessionUserId = idTokenPayload.sub as string;
         authTime = idTokenPayload.auth_time as number;
         sessionAcr = idTokenPayload.acr as string;
-        console.log('id_token_hint verified successfully, sub:', sessionUserId, 'auth_time:', authTime);
+        console.log(
+          'id_token_hint verified successfully, sub:',
+          sessionUserId,
+          'auth_time:',
+          authTime
+        );
       } else {
         console.error('No matching public key found for id_token_hint verification');
       }
@@ -1096,7 +1143,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     // Check for invalid prompt combinations
     if (promptValues.includes('none') && promptValues.length > 1) {
-      return sendError('invalid_request', 'prompt=none cannot be combined with other prompt values');
+      return sendError(
+        'invalid_request',
+        'prompt=none cannot be combined with other prompt values'
+      );
     }
 
     if (promptValues.includes('none')) {
@@ -1113,7 +1163,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const timeSinceAuth = currentTime - authTime;
 
         if (timeSinceAuth > maxAgeSeconds) {
-          return sendError('login_required', 'Re-authentication is required due to max_age constraint');
+          return sendError(
+            'login_required',
+            'Re-authentication is required due to max_age constraint'
+          );
         }
       }
     }
@@ -1148,7 +1201,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // If re-authentication is required, show confirmation screen (unless already confirmed)
-  if ((requiresReauthentication || (prompt?.includes('login') && sessionUserId)) && _confirmed !== 'true') {
+  if (
+    (requiresReauthentication || (prompt?.includes('login') && sessionUserId)) &&
+    _confirmed !== 'true'
+  ) {
     // Store authorization request parameters in ChallengeStore
     const challengeId = crypto.randomUUID();
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
@@ -1261,14 +1317,20 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const sub = sessionUserId;
 
   // Check if consent is required (unless already confirmed)
-  const _consent_confirmed = c.req.query('_consent_confirmed') || (await c.req.parseBody().then(b => typeof b._consent_confirmed === 'string' ? b._consent_confirmed : undefined).catch(() => undefined));
+  const _consent_confirmed =
+    c.req.query('_consent_confirmed') ||
+    (await c.req
+      .parseBody()
+      .then((b) => (typeof b._consent_confirmed === 'string' ? b._consent_confirmed : undefined))
+      .catch(() => undefined));
 
   if (_consent_confirmed !== 'true') {
     // Get client metadata to check if it's a trusted client
     const clientMetadata = await getClient(c.env, validClientId);
 
     // Check if this is a trusted client that can skip consent
-    const isTrustedClient = clientMetadata && clientMetadata.is_trusted && clientMetadata.skip_consent;
+    const isTrustedClient =
+      clientMetadata && clientMetadata.is_trusted && clientMetadata.skip_consent;
 
     // Trusted clients skip consent (unless prompt=consent is explicitly specified)
     if (isTrustedClient && !prompt?.includes('consent')) {
@@ -1284,15 +1346,19 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const consentId = crypto.randomUUID();
         const now = Date.now();
 
-        await c.env.DB.prepare(`
+        await c.env.DB.prepare(
+          `
           INSERT INTO oauth_client_consents
           (id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-        `)
+        `
+        )
           .bind(consentId, sub, validClientId, scope, now, null)
           .run();
 
-        console.log(`[CONSENT] Auto-granted for trusted client: client_id=${validClientId}, user_id=${sub}`);
+        console.log(
+          `[CONSENT] Auto-granted for trusted client: client_id=${validClientId}, user_id=${sub}`
+        );
       }
 
       // Skip consent screen
@@ -1307,98 +1373,108 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           .bind(sub, validClientId)
           .first();
 
-      if (!existingConsent) {
-        // No consent record exists
-        consentRequired = true;
-      } else {
-        // Check if consent has expired
-        const expiresAt = existingConsent.expires_at as number | null;
-        if (expiresAt && expiresAt < Date.now()) {
+        if (!existingConsent) {
+          // No consent record exists
           consentRequired = true;
         } else {
-          // Check if requested scopes are covered by existing consent
-          const grantedScopes = (existingConsent.scope as string).split(' ');
-          const requestedScopes = (scope as string).split(' ');
-          const hasAllScopes = requestedScopes.every((s) => grantedScopes.includes(s));
-
-          if (!hasAllScopes) {
-            // Requested scopes exceed granted scopes
+          // Check if consent has expired
+          const expiresAt = existingConsent.expires_at as number | null;
+          if (expiresAt && expiresAt < Date.now()) {
             consentRequired = true;
+          } else {
+            // Check if requested scopes are covered by existing consent
+            const grantedScopes = (existingConsent.scope as string).split(' ');
+            const requestedScopes = (scope as string).split(' ');
+            const hasAllScopes = requestedScopes.every((s) => grantedScopes.includes(s));
+
+            if (!hasAllScopes) {
+              // Requested scopes exceed granted scopes
+              consentRequired = true;
+            }
           }
         }
-      }
 
-      // Force consent if prompt=consent
-      if (prompt?.includes('consent')) {
+        // Force consent if prompt=consent
+        if (prompt?.includes('consent')) {
+          consentRequired = true;
+        }
+      } catch (error) {
+        console.error('Failed to check consent:', error);
+        // On error, assume consent is required for safety
         consentRequired = true;
       }
-    } catch (error) {
-      console.error('Failed to check consent:', error);
-      // On error, assume consent is required for safety
-      consentRequired = true;
-    }
 
-    if (consentRequired) {
-      // prompt=none requires consent but can't show UI
-      if (prompt?.includes('none')) {
-        return sendError('consent_required', 'User consent is required');
+      if (consentRequired) {
+        // prompt=none requires consent but can't show UI
+        if (prompt?.includes('none')) {
+          return sendError('consent_required', 'User consent is required');
+        }
+
+        // Store authorization request parameters in ChallengeStore for consent flow
+        const challengeId = crypto.randomUUID();
+        const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+        const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+
+        await challengeStore.fetch(
+          new Request('https://challenge-store/challenge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: challengeId,
+              type: 'consent',
+              userId: sub,
+              challenge: challengeId,
+              ttl: 600, // 10 minutes
+              metadata: {
+                response_type,
+                client_id,
+                redirect_uri,
+                scope,
+                state,
+                nonce,
+                code_challenge,
+                code_challenge_method,
+                claims,
+                response_mode,
+                max_age,
+                prompt,
+                id_token_hint,
+                acr_values,
+                display,
+                ui_locales,
+                login_hint,
+                sessionUserId: sub,
+                authTime, // Preserve auth_time
+              },
+            }),
+          })
+        );
+
+        // Redirect to UI consent screen (if UI_URL is configured)
+        const uiUrl = c.env.UI_URL;
+        if (uiUrl) {
+          return c.redirect(
+            `${uiUrl}/consent?challenge_id=${encodeURIComponent(challengeId)}`,
+            302
+          );
+        } else {
+          // Fallback: redirect to local consent endpoint
+          return c.redirect(`/auth/consent?challenge_id=${encodeURIComponent(challengeId)}`, 302);
+        }
       }
-
-      // Store authorization request parameters in ChallengeStore for consent flow
-      const challengeId = crypto.randomUUID();
-      const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-      const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
-
-      await challengeStore.fetch(
-        new Request('https://challenge-store/challenge', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: challengeId,
-            type: 'consent',
-            userId: sub,
-            challenge: challengeId,
-            ttl: 600, // 10 minutes
-            metadata: {
-              response_type,
-              client_id,
-              redirect_uri,
-              scope,
-              state,
-              nonce,
-              code_challenge,
-              code_challenge_method,
-              claims,
-              response_mode,
-              max_age,
-              prompt,
-              id_token_hint,
-              acr_values,
-              display,
-              ui_locales,
-              login_hint,
-              sessionUserId: sub,
-              authTime, // Preserve auth_time
-            },
-          }),
-        })
-      );
-
-      // Redirect to UI consent screen (if UI_URL is configured)
-      const uiUrl = c.env.UI_URL;
-      if (uiUrl) {
-        return c.redirect(`${uiUrl}/consent?challenge_id=${encodeURIComponent(challengeId)}`, 302);
-      } else {
-        // Fallback: redirect to local consent endpoint
-        return c.redirect(`/auth/consent?challenge_id=${encodeURIComponent(challengeId)}`, 302);
-      }
-    }
     } // End of Third-Party Client consent check
   }
 
   // Record authentication time
   const currentAuthTime = authTime || Math.floor(Date.now() / 1000);
-  console.log('[AUTH] Final authTime for code:', authTime, '-> currentAuthTime:', currentAuthTime, 'prompt:', prompt);
+  console.log(
+    '[AUTH] Final authTime for code:',
+    authTime,
+    '-> currentAuthTime:',
+    currentAuthTime,
+    'prompt:',
+    prompt
+  );
 
   // Handle acr_values parameter (Authentication Context Class Reference)
   let selectedAcr = sessionAcr;
@@ -1440,7 +1516,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       dpopJkt = dpopValidation.jkt; // Store JWK thumbprint for code binding
       console.log('[DPoP] Authorization code will be bound to DPoP key:', dpopJkt);
     } else {
-      console.warn('[DPoP] Invalid DPoP proof provided, continuing without binding:', dpopValidation.error_description);
+      console.warn(
+        '[DPoP] Invalid DPoP proof provided, continuing without binding:',
+        dpopValidation.error_description
+      );
       // Note: We don't fail the request if DPoP is invalid, just don't bind the code
       // This allows flexibility for clients that may have optional DPoP support
     }
@@ -1515,7 +1594,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       accessToken = tokenResult.token;
       accessTokenJti = tokenResult.jti;
 
-      console.log(`[HYBRID/IMPLICIT] Generated access_token for sub=${sub}, client_id=${validClientId}`);
+      console.log(
+        `[HYBRID/IMPLICIT] Generated access_token for sub=${sub}, client_id=${validClientId}`
+      );
     } catch (error) {
       console.error('Failed to generate access token:', error);
       return sendError('server_error', 'Failed to generate access token');
@@ -1561,7 +1642,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         3600 // 1 hour
       );
 
-      console.log(`[HYBRID/IMPLICIT] Generated id_token for sub=${sub}, client_id=${validClientId}, c_hash=${cHash}, at_hash=${atHash}`);
+      console.log(
+        `[HYBRID/IMPLICIT] Generated id_token for sub=${sub}, client_id=${validClientId}, c_hash=${cHash}, at_hash=${atHash}`
+      );
     } catch (error) {
       console.error('Failed to generate ID token:', error);
       return sendError('server_error', 'Failed to generate ID token');
@@ -1617,16 +1700,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     let baseMode = effectiveResponseMode.replace('.jwt', '');
     if (effectiveResponseMode === 'jwt') {
       // Generic 'jwt' mode: use default based on flow
-      baseMode = (includesIdToken || includesToken) ? 'fragment' : 'query';
+      baseMode = includesIdToken || includesToken ? 'fragment' : 'query';
     }
 
-    return await createJARMResponse(
-      c,
-      validRedirectUri,
-      responseParams,
-      baseMode,
-      validClientId
-    );
+    return await createJARMResponse(c, validRedirectUri, responseParams, baseMode, validClientId);
   }
 
   // Handle response based on response_mode (traditional non-JWT modes)
@@ -1642,7 +1719,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 }
 
-async function getSigningKeyFromKeyManager(env: Env): Promise<{ privateKey: CryptoKey; kid: string }> {
+async function getSigningKeyFromKeyManager(
+  env: Env
+): Promise<{ privateKey: CryptoKey; kid: string }> {
   if (!env.KEY_MANAGER) {
     throw new Error('KEY_MANAGER binding not available');
   }
@@ -1671,7 +1750,7 @@ async function getSigningKeyFromKeyManager(env: Env): Promise<{ privateKey: Cryp
       hasPrivatePEM: !!responseData.privatePEM,
       pemLength: responseData.privatePEM?.length,
       pemStart: responseData.privatePEM?.substring(0, 50),
-      keys: Object.keys(responseData)
+      keys: Object.keys(responseData),
     });
     keyData = responseData;
   } else {
@@ -1695,7 +1774,7 @@ async function getSigningKeyFromKeyManager(env: Env): Promise<{ privateKey: Cryp
       hasPrivatePEM: !!rotateData.key?.privatePEM,
       pemLength: rotateData.key?.privatePEM?.length,
       pemStart: rotateData.key?.privatePEM?.substring(0, 50),
-      keys: Object.keys(rotateData.key || {})
+      keys: Object.keys(rotateData.key || {}),
     });
     keyData = rotateData.key;
   }
@@ -1714,13 +1793,15 @@ async function getSigningKeyFromKeyManager(env: Env): Promise<{ privateKey: Cryp
   }
 
   if (typeof keyData.privatePEM !== 'string' || keyData.privatePEM.length === 0) {
-    throw new Error(`Failed to retrieve signing key: privatePEM is invalid (type: ${typeof keyData.privatePEM}, length: ${keyData.privatePEM?.length})`);
+    throw new Error(
+      `Failed to retrieve signing key: privatePEM is invalid (type: ${typeof keyData.privatePEM}, length: ${keyData.privatePEM?.length})`
+    );
   }
 
   console.log('[getSigningKeyFromKeyManager] About to import PKCS8:', {
     kid: keyData.kid,
     pemLength: keyData.privatePEM.length,
-    pemStart: keyData.privatePEM.substring(0, 50)
+    pemStart: keyData.privatePEM.substring(0, 50),
   });
 
   const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
@@ -1775,9 +1856,17 @@ async function redirectWithError(
 
   if (isJARM) {
     if (options?.clientId) {
-      return await createJARMResponse(c, redirectUri, params, baseMode || 'query', options.clientId);
+      return await createJARMResponse(
+        c,
+        redirectUri,
+        params,
+        baseMode || 'query',
+        options.clientId
+      );
     }
-    console.warn('JARM error response requested but client_id unavailable; falling back to base mode');
+    console.warn(
+      'JARM error response requested but client_id unavailable; falling back to base mode'
+    );
   }
 
   switch (baseMode) {
@@ -1964,7 +2053,7 @@ async function createJARMResponse(
     let kid = 'default';
     try {
       if (c.env.KV) {
-        const signingKey = await c.env.KV.get('keys:signing', 'json') as { kid: string } | null;
+        const signingKey = (await c.env.KV.get('keys:signing', 'json')) as { kid: string } | null;
         if (signingKey?.kid) {
           kid = signingKey.kid;
         }
@@ -1981,11 +2070,20 @@ async function createJARMResponse(
     let responseToken = jwt;
 
     // Check if client requested encryption
-    if (client.authorization_encrypted_response_alg && client.authorization_encrypted_response_enc) {
+    if (
+      client.authorization_encrypted_response_alg &&
+      client.authorization_encrypted_response_enc
+    ) {
       // Encrypt the JWT using client's public key
       let clientPublicKeyJWK: any;
 
-      if (client.jwks && typeof client.jwks === 'object' && client.jwks !== null && 'keys' in client.jwks && Array.isArray(client.jwks.keys)) {
+      if (
+        client.jwks &&
+        typeof client.jwks === 'object' &&
+        client.jwks !== null &&
+        'keys' in client.jwks &&
+        Array.isArray(client.jwks.keys)
+      ) {
         // Find encryption key
         const encKey = (client.jwks.keys as any[]).find((key: any) => {
           return key.use === 'enc' || !key.use;
@@ -2003,7 +2101,7 @@ async function createJARMResponse(
           throw new Error('Failed to fetch client jwks_uri');
         }
 
-        const jwks = await jwksResponse.json() as { keys: any[] };
+        const jwks = (await jwksResponse.json()) as { keys: any[] };
         const encKey = jwks.keys.find((key: any) => {
           return key.use === 'enc' || !key.use;
         });
@@ -2235,8 +2333,8 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   if (client_id) {
     const clientMetadata = await getClient(c.env, client_id);
     if (clientMetadata?.redirect_uris && Array.isArray(clientMetadata.redirect_uris)) {
-      isCertificationTest = (clientMetadata.redirect_uris as string[]).some(
-        (uri: string) => uri.includes('certification.openid.net')
+      isCertificationTest = (clientMetadata.redirect_uris as string[]).some((uri: string) =>
+        uri.includes('certification.openid.net')
       );
     }
   }
@@ -2250,15 +2348,16 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     console.log('[LOGIN] Using OIDC Conformance Test user');
 
     // Verify test user exists (should have been created during DCR)
-    const existingUser = await c.env.DB.prepare(
-      'SELECT id FROM users WHERE id = ?'
-    ).bind(userId).first();
+    const existingUser = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?')
+      .bind(userId)
+      .first();
 
     if (!existingUser) {
       console.warn('[LOGIN] Test user not found, creating it now');
       // Create test user if it doesn't exist (fallback)
       const now = Math.floor(Date.now() / 1000);
-      await c.env.DB.prepare(`
+      await c.env.DB.prepare(
+        `
         INSERT INTO users (
           id, email, email_verified, name, given_name, family_name,
           middle_name, nickname, preferred_username, profile, picture,
@@ -2266,38 +2365,42 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
           phone_number, phone_number_verified, address_json,
           created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        userId,
-        'test@example.com',
-        1, // email_verified
-        'John Doe',
-        'John',
-        'Doe',
-        'Q',
-        'Johnny',
-        'test',
-        'https://example.com/johndoe',
-        'https://example.com/avatar.jpg',
-        'https://example.com',
-        'male',
-        '1990-01-01',
-        'America/New_York',
-        'en-US',
-        '+1-555-0100',
-        1, // phone_number_verified
-        JSON.stringify({
-          formatted: '1234 Main St, Anytown, ST 12345, USA',
-          street_address: '1234 Main St',
-          locality: 'Anytown',
-          region: 'ST',
-          postal_code: '12345',
-          country: 'USA',
-        }),
-        now,
-        now
-      ).run().catch((error: unknown) => {
-        console.error('Failed to create test user:', error);
-      });
+      `
+      )
+        .bind(
+          userId,
+          'test@example.com',
+          1, // email_verified
+          'John Doe',
+          'John',
+          'Doe',
+          'Q',
+          'Johnny',
+          'test',
+          'https://example.com/johndoe',
+          'https://example.com/avatar.jpg',
+          'https://example.com',
+          'male',
+          '1990-01-01',
+          'America/New_York',
+          'en-US',
+          '+1-555-0100',
+          1, // phone_number_verified
+          JSON.stringify({
+            formatted: '1234 Main St, Anytown, ST 12345, USA',
+            street_address: '1234 Main St',
+            locality: 'Anytown',
+            region: 'ST',
+            postal_code: '12345',
+            country: 'USA',
+          }),
+          now,
+          now
+        )
+        .run()
+        .catch((error: unknown) => {
+          console.error('Failed to create test user:', error);
+        });
     }
   } else {
     // Normal client: create new random user

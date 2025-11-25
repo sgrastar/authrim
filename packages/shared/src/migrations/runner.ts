@@ -69,9 +69,7 @@ export class MigrationRunner {
     try {
       // Check if schema_migrations table exists
       const result = await this.db
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
-        )
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
         .first<{ name: string }>();
 
       if (!result) {
@@ -144,7 +142,9 @@ export class MigrationRunner {
    * Load all migration files from directory
    */
   private loadMigrations(migrationsDir: string): Migration[] {
-    const files = readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
+    const files = readdirSync(migrationsDir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort();
 
     return files.map((filename) => {
       const match = filename.match(/^(\d+)_(.+)\.sql$/);
@@ -165,10 +165,7 @@ export class MigrationRunner {
   /**
    * Run all pending migrations
    */
-  async runMigrations(
-    migrationsDir: string,
-    options: MigrationRunnerOptions = {}
-  ): Promise<void> {
+  async runMigrations(migrationsDir: string, options: MigrationRunnerOptions = {}): Promise<void> {
     const pending = await this.getPendingMigrations(migrationsDir);
 
     if (pending.length === 0) {
@@ -260,7 +257,9 @@ export class MigrationRunner {
       const fileMig = allMigrations.find((m) => m.version === appliedMig.version);
 
       if (!fileMig) {
-        console.error(`❌ Applied migration ${appliedMig.version} (${appliedMig.name}) not found in files`);
+        console.error(
+          `❌ Applied migration ${appliedMig.version} (${appliedMig.name}) not found in files`
+        );
         isValid = false;
         continue;
       }

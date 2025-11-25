@@ -34,7 +34,7 @@ describe('CIBA Ping Mode Notifications', () => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': 'Bearer token123',
+            Authorization: 'Bearer token123',
           },
           body: JSON.stringify({
             auth_req_id: 'auth_req_id_123',
@@ -52,21 +52,14 @@ describe('CIBA Ping Mode Notifications', () => {
       });
 
       await expect(
-        sendPingNotification(
-          'https://client.example.com/callback',
-          'token123',
-          'auth_req_id_123'
-        )
+        sendPingNotification('https://client.example.com/callback', 'token123', 'auth_req_id_123')
       ).rejects.toThrow();
     });
   });
 
   describe('validatePingModeRequirements', () => {
     it('should validate correct ping mode configuration', () => {
-      const valid = validatePingModeRequirements(
-        'https://client.example.com/callback',
-        'token123'
-      );
+      const valid = validatePingModeRequirements('https://client.example.com/callback', 'token123');
       expect(valid).toBe(true);
     });
 
@@ -76,10 +69,7 @@ describe('CIBA Ping Mode Notifications', () => {
     });
 
     it('should reject missing token', () => {
-      const valid = validatePingModeRequirements(
-        'https://client.example.com/callback',
-        null
-      );
+      const valid = validatePingModeRequirements('https://client.example.com/callback', null);
       expect(valid).toBe(false);
     });
 
@@ -89,26 +79,17 @@ describe('CIBA Ping Mode Notifications', () => {
     });
 
     it('should allow localhost HTTP URLs', () => {
-      const valid = validatePingModeRequirements(
-        'http://localhost:3000/callback',
-        'token123'
-      );
+      const valid = validatePingModeRequirements('http://localhost:3000/callback', 'token123');
       expect(valid).toBe(true);
     });
 
     it('should allow 127.0.0.1 HTTP URLs', () => {
-      const valid = validatePingModeRequirements(
-        'http://127.0.0.1:3000/callback',
-        'token123'
-      );
+      const valid = validatePingModeRequirements('http://127.0.0.1:3000/callback', 'token123');
       expect(valid).toBe(true);
     });
 
     it('should reject non-localhost HTTP URLs', () => {
-      const valid = validatePingModeRequirements(
-        'http://client.example.com/callback',
-        'token123'
-      );
+      const valid = validatePingModeRequirements('http://client.example.com/callback', 'token123');
       expect(valid).toBe(false);
     });
   });
@@ -142,7 +123,7 @@ describe('CIBA Push Mode Token Delivery', () => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': 'Bearer token123',
+            Authorization: 'Bearer token123',
           },
           body: JSON.stringify({
             auth_req_id: 'auth_req_id_123',
@@ -204,10 +185,7 @@ describe('CIBA Push Mode Token Delivery', () => {
 
   describe('validatePushModeRequirements', () => {
     it('should validate correct push mode configuration', () => {
-      const valid = validatePushModeRequirements(
-        'https://client.example.com/callback',
-        'token123'
-      );
+      const valid = validatePushModeRequirements('https://client.example.com/callback', 'token123');
       expect(valid).toBe(true);
     });
 
@@ -217,10 +195,7 @@ describe('CIBA Push Mode Token Delivery', () => {
     });
 
     it('should reject missing token', () => {
-      const valid = validatePushModeRequirements(
-        'https://client.example.com/callback',
-        null
-      );
+      const valid = validatePushModeRequirements('https://client.example.com/callback', null);
       expect(valid).toBe(false);
     });
 
@@ -230,18 +205,12 @@ describe('CIBA Push Mode Token Delivery', () => {
     });
 
     it('should allow localhost HTTP URLs', () => {
-      const valid = validatePushModeRequirements(
-        'http://localhost:3000/callback',
-        'token123'
-      );
+      const valid = validatePushModeRequirements('http://localhost:3000/callback', 'token123');
       expect(valid).toBe(true);
     });
 
     it('should reject non-localhost HTTP URLs', () => {
-      const valid = validatePushModeRequirements(
-        'http://client.example.com/callback',
-        'token123'
-      );
+      const valid = validatePushModeRequirements('http://client.example.com/callback', 'token123');
       expect(valid).toBe(false);
     });
   });

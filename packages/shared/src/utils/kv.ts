@@ -312,11 +312,7 @@ export async function getRefreshToken(
  * @param client_id - Client ID (required to locate the correct DO instance)
  * @returns Promise<void>
  */
-export async function deleteRefreshToken(
-  env: Env,
-  jti: string,
-  client_id: string
-): Promise<void> {
+export async function deleteRefreshToken(env: Env, jti: string, client_id: string): Promise<void> {
   if (!env.REFRESH_TOKEN_ROTATOR) {
     throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
   }

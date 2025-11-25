@@ -21,9 +21,7 @@ describe('Request Object (JAR)', () => {
       };
 
       // Create unsigned JWT (alg: none)
-      const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString(
-        'base64url'
-      );
+      const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
       const payload = Buffer.from(JSON.stringify(requestClaims)).toString('base64url');
       const unsignedJWT = `${header}.${payload}.`;
 

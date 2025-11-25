@@ -66,12 +66,7 @@ function getBaseUrl(c: any): string {
 /**
  * Helper: Return SCIM error response
  */
-function scimError(
-  c: any,
-  status: number,
-  detail: string,
-  scimType?: string
-): Response {
+function scimError(c: any, status: number, detail: string, scimType?: string): Response {
   const error: ScimError = {
     schemas: [SCIM_SCHEMAS.ERROR],
     status: status.toString(),
@@ -186,7 +181,9 @@ app.get('/Users', async (c) => {
     sqlParams.push(count, offset);
 
     // Execute query
-    const result = await c.env.DB.prepare(sql).bind(...sqlParams).all<InternalUser>();
+    const result = await c.env.DB.prepare(sql)
+      .bind(...sqlParams)
+      .all<InternalUser>();
 
     // Convert to SCIM format
     const scimUsers = result.results.map((user) =>
@@ -648,7 +645,9 @@ app.get('/Groups', async (c) => {
     sqlParams.push(count, offset);
 
     // Execute query
-    const result = await c.env.DB.prepare(sql).bind(...sqlParams).all<InternalGroup>();
+    const result = await c.env.DB.prepare(sql)
+      .bind(...sqlParams)
+      .all<InternalGroup>();
 
     // Convert to SCIM format
     const scimGroups: ScimGroup[] = [];

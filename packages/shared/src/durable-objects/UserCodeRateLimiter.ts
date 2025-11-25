@@ -51,7 +51,7 @@ export class UserCodeRateLimiter {
         return new Response(
           JSON.stringify({
             blocked: isBlocked,
-            ...(isBlocked && { retry_after: this.getRetryAfter(ip) })
+            ...(isBlocked && { retry_after: this.getRetryAfter(ip) }),
           }),
           { headers: { 'Content-Type': 'application/json' } }
         );
@@ -62,10 +62,9 @@ export class UserCodeRateLimiter {
         const { ip } = (await request.json()) as { ip: string };
         await this.recordFailure(ip);
 
-        return new Response(
-          JSON.stringify({ success: true }),
-          { headers: { 'Content-Type': 'application/json' } }
-        );
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
 
       // Reset attempts (after successful verification)
@@ -73,10 +72,9 @@ export class UserCodeRateLimiter {
         const { ip } = (await request.json()) as { ip: string };
         this.attempts.delete(ip);
 
-        return new Response(
-          JSON.stringify({ success: true }),
-          { headers: { 'Content-Type': 'application/json' } }
-        );
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
 
       return new Response('Not found', { status: 404 });
@@ -114,7 +112,10 @@ export class UserCodeRateLimiter {
 
     // Check if failure count exceeds threshold within the time window
     const hourAgo = now - 60 * 60 * 1000;
-    if (attempt.firstFailureAt > hourAgo && attempt.failureCount >= UserCodeRateLimiter.MAX_ATTEMPTS_PER_HOUR) {
+    if (
+      attempt.firstFailureAt > hourAgo &&
+      attempt.failureCount >= UserCodeRateLimiter.MAX_ATTEMPTS_PER_HOUR
+    ) {
       return true;
     }
 
@@ -169,7 +170,9 @@ export class UserCodeRateLimiter {
         );
         attempt.blockedUntil = now + blockDuration;
 
-        console.log(`[RATE_LIMIT] Blocking IP ${ip} for ${blockDuration / 1000}s after ${newCount} failed attempts`);
+        console.log(
+          `[RATE_LIMIT] Blocking IP ${ip} for ${blockDuration / 1000}s after ${newCount} failed attempts`
+        );
       }
 
       this.attempts.set(ip, attempt);

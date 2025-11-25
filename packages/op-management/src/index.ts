@@ -79,7 +79,13 @@ app.use(
     origin: '*',
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'If-Match', 'If-None-Match'],
-    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'ETag', 'Location'],
+    exposeHeaders: [
+      'X-RateLimit-Limit',
+      'X-RateLimit-Remaining',
+      'X-RateLimit-Reset',
+      'ETag',
+      'Location',
+    ],
     maxAge: 86400,
     credentials: true,
   })
@@ -152,8 +158,8 @@ app.put('/api/admin/clients/:id', adminClientUpdateHandler);
 // Admin Session Management endpoints (RESTful naming)
 app.get('/api/admin/sessions', adminSessionsListHandler);
 app.get('/api/admin/sessions/:id', adminSessionGetHandler);
-app.delete('/api/admin/sessions/:id', adminSessionRevokeHandler);        // RESTful: DELETE instead of POST
-app.delete('/api/admin/users/:id/sessions', adminUserRevokeAllSessionsHandler);  // RESTful: /sessions instead of /revoke-all-sessions
+app.delete('/api/admin/sessions/:id', adminSessionRevokeHandler); // RESTful: DELETE instead of POST
+app.delete('/api/admin/users/:id/sessions', adminUserRevokeAllSessionsHandler); // RESTful: /sessions instead of /revoke-all-sessions
 
 // Admin Audit Log endpoints
 app.get('/api/admin/audit-log', adminAuditLogListHandler);
@@ -200,9 +206,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 
   try {
     // 1. Cleanup expired sessions (with 1-day grace period)
-    const sessionsResult = await env.DB.prepare(
-      'DELETE FROM sessions WHERE expires_at < ?'
-    )
+    const sessionsResult = await env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?')
       .bind(now - 86400) // 1 day grace period
       .run();
     const sessionsDeleted = sessionsResult.meta?.changes || 0;
@@ -220,9 +224,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     // 3. Cleanup old audit logs (older than 90 days)
     // Keep audit logs for 90 days for compliance (adjust based on requirements)
     const ninetyDaysAgo = now - 90 * 86400;
-    const auditLogsResult = await env.DB.prepare(
-      'DELETE FROM audit_log WHERE created_at < ?'
-    )
+    const auditLogsResult = await env.DB.prepare('DELETE FROM audit_log WHERE created_at < ?')
       .bind(ninetyDaysAgo)
       .run();
     const auditLogsDeleted = auditLogsResult.meta?.changes || 0;

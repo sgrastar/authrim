@@ -4,7 +4,14 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { SignJWT, jwtVerify, generateKeyPair, exportJWK, CompactEncrypt, compactDecrypt } from 'jose';
+import {
+  SignJWT,
+  jwtVerify,
+  generateKeyPair,
+  exportJWK,
+  CompactEncrypt,
+  compactDecrypt,
+} from 'jose';
 import type { JWK } from 'jose';
 import { getTokenFormat } from '@authrim/shared';
 
@@ -21,7 +28,10 @@ describe('JARM (JWT-Secured Authorization Response Mode)', () => {
     serverKeyPair = await generateKeyPair('RS256', { extractable: true });
     clientKeyPair = await generateKeyPair('RS256', { extractable: true });
     // Generate separate encryption key pair for RSA-OAEP
-    clientEncKeyPair = await generateKeyPair('RSA-OAEP', { extractable: true, modulusLength: 2048 });
+    clientEncKeyPair = await generateKeyPair('RSA-OAEP', {
+      extractable: true,
+      modulusLength: 2048,
+    });
 
     serverPublicJWK = await exportJWK(serverKeyPair.publicKey);
     clientPublicJWK = await exportJWK(clientKeyPair.publicKey);
@@ -300,9 +310,7 @@ describe('JARM (JWT-Secured Authorization Response Mode)', () => {
         .setProtectedHeader({ alg: 'RS256' })
         .sign(serverKeyPair.privateKey);
 
-      await expect(
-        jwtVerify(expiredJWT, serverKeyPair.publicKey)
-      ).rejects.toThrow();
+      await expect(jwtVerify(expiredJWT, serverKeyPair.publicKey)).rejects.toThrow();
     });
   });
 
@@ -364,9 +372,7 @@ describe('JARM (JWT-Secured Authorization Response Mode)', () => {
       const parts = validJWT.split('.');
       const tamperedJWT = `${parts[0]}.${parts[1]}.tampered-signature`;
 
-      await expect(
-        jwtVerify(tamperedJWT, serverKeyPair.publicKey)
-      ).rejects.toThrow();
+      await expect(jwtVerify(tamperedJWT, serverKeyPair.publicKey)).rejects.toThrow();
     });
   });
 

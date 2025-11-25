@@ -122,9 +122,10 @@ export function parseLoginHint(loginHint: string): {
  * @param bindingMessage - Binding message to validate
  * @returns Validation result with error if invalid
  */
-export function validateBindingMessage(
-  bindingMessage?: string
-): { valid: boolean; error?: string } {
+export function validateBindingMessage(bindingMessage?: string): {
+  valid: boolean;
+  error?: string;
+} {
   // Empty or undefined is valid
   if (!bindingMessage) {
     return { valid: true };
@@ -250,8 +251,7 @@ export function validateCIBARequest(params: {
     return {
       valid: false,
       error: 'invalid_request',
-      error_description:
-        'One of login_hint, login_hint_token, or id_token_hint is required',
+      error_description: 'One of login_hint, login_hint_token, or id_token_hint is required',
     };
   }
 

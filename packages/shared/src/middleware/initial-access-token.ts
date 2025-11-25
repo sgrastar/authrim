@@ -66,12 +66,12 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
     }
 
     // Check if request is from a trusted domain
-    const trustedDomains = env.TRUSTED_DOMAINS?.split(',').map(d => d.trim()) || [];
+    const trustedDomains = env.TRUSTED_DOMAINS?.split(',').map((d) => d.trim()) || [];
     if (trustedDomains.length > 0) {
       try {
         // Clone the request to read body without consuming it
         const clonedRequest = c.req.raw.clone();
-        const body = await clonedRequest.json() as any;
+        const body = (await clonedRequest.json()) as any;
 
         // Check if redirect_uris contain any trusted domain
         if (body && Array.isArray(body.redirect_uris)) {
@@ -79,8 +79,8 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
             try {
               const url = new URL(uri);
               const redirectDomain = url.hostname;
-              return trustedDomains.some(trusted =>
-                redirectDomain === trusted || redirectDomain.endsWith('.' + trusted)
+              return trustedDomains.some(
+                (trusted) => redirectDomain === trusted || redirectDomain.endsWith('.' + trusted)
               );
             } catch {
               return false;
@@ -88,7 +88,9 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
           });
 
           if (hasTrustedRedirect) {
-            console.log('Trusted domain detected in redirect_uris - skipping Initial Access Token validation');
+            console.log(
+              'Trusted domain detected in redirect_uris - skipping Initial Access Token validation'
+            );
             return next();
           }
         }

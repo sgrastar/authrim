@@ -181,8 +181,12 @@ describe('JWT/JWE Utilities', () => {
     });
 
     it('should reject unsupported algorithms', () => {
-      expect(() => validateJWEOptions('AES128', 'A256GCM')).toThrow('Unsupported JWE key management algorithm');
-      expect(() => validateJWEOptions('RSA-OAEP', 'AES128')).toThrow('Unsupported JWE content encryption algorithm');
+      expect(() => validateJWEOptions('AES128', 'A256GCM')).toThrow(
+        'Unsupported JWE key management algorithm'
+      );
+      expect(() => validateJWEOptions('RSA-OAEP', 'AES128')).toThrow(
+        'Unsupported JWE content encryption algorithm'
+      );
     });
 
     it('should reject invalid algorithm names', () => {
@@ -350,11 +354,11 @@ describe('JWT/JWE Utilities', () => {
       const recommendedAlgs = ['RSA-OAEP', 'RSA-OAEP-256', 'ECDH-ES+A256KW'];
       const recommendedEncs = ['A256GCM', 'A192GCM'];
 
-      recommendedAlgs.forEach(alg => {
+      recommendedAlgs.forEach((alg) => {
         expect(() => validateJWEOptions(alg, 'A256GCM')).not.toThrow();
       });
 
-      recommendedEncs.forEach(enc => {
+      recommendedEncs.forEach((enc) => {
         expect(() => validateJWEOptions('RSA-OAEP', enc)).not.toThrow();
       });
     });

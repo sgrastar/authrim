@@ -5,11 +5,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
 import type { JWK } from 'jose';
-import {
-  validateJWTBearerAssertion,
-  parseTrustedIssuers,
-  type TrustedIssuer,
-} from '../jwt-bearer';
+import { validateJWTBearerAssertion, parseTrustedIssuers, type TrustedIssuer } from '../jwt-bearer';
 
 describe('JWT Bearer Flow Utilities', () => {
   let publicKey: JWK;
@@ -289,7 +285,8 @@ describe('JWT Bearer Flow Utilities', () => {
 
   describe('parseTrustedIssuers', () => {
     it('should parse trusted issuers from environment variable', () => {
-      const envVar = 'https://service1.example.com:https://service1.example.com/jwks,https://service2.example.com:https://service2.example.com/jwks';
+      const envVar =
+        'https://service1.example.com:https://service1.example.com/jwks,https://service2.example.com:https://service2.example.com/jwks';
 
       const result = parseTrustedIssuers(envVar);
 

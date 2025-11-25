@@ -272,12 +272,9 @@ export class TokenRevocationStore {
           );
         }
 
-        return new Response(
-          JSON.stringify({ revoked: false }),
-          {
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
+        return new Response(JSON.stringify({ revoked: false }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
 
       // POST /revoke - Revoke a token
@@ -299,13 +296,10 @@ export class TokenRevocationStore {
 
         await this.revokeToken(body as RevokeTokenRequest);
 
-        return new Response(
-          JSON.stringify({ success: true }),
-          {
-            status: 201,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
+        return new Response(JSON.stringify({ success: true }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
 
       // POST /bulk-revoke - Bulk revoke tokens

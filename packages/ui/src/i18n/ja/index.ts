@@ -1,4 +1,4 @@
-import type { Translation } from '../i18n-types'
+import type { Translation } from '../i18n-types';
 
 const ja = {
 	app_title: 'Authrim',
@@ -16,7 +16,8 @@ const ja = {
 	badge_error: 'エラー',
 	badge_info: '情報',
 	dialog_title: 'Melt UIダイアログ',
-	dialog_description: 'これはMelt UIを使用したテストダイアログです。Melt UIはSvelteのためのヘッドレスでアクセシブルなコンポーネントライブラリです。',
+	dialog_description:
+		'これはMelt UIを使用したテストダイアログです。Melt UIはSvelteのためのヘッドレスでアクセシブルなコンポーネントライブラリです。',
 	dialog_cancel: 'キャンセル',
 	dialog_confirm: '確認',
 	dialog_close: '閉じる',
@@ -53,12 +54,14 @@ const ja = {
 	register_createWithPasskey: 'Passkeyでアカウント作成',
 	register_sendCode: '認証コードで登録',
 	register_alreadyHaveAccount: '既にアカウントをお持ちの方はこちら',
-	register_termsAgreement: 'アカウントを作成することで、利用規約とプライバシーポリシーに同意したことになります',
+	register_termsAgreement:
+		'アカウントを作成することで、利用規約とプライバシーポリシーに同意したことになります',
 	register_errorNameRequired: '氏名は必須です',
 
 	emailCode_title: 'メールを確認してください',
 	emailCode_subtitle: '認証コードを送信しました',
-	emailCode_instructions: 'メールに届いた6桁のコードを入力してください。コードは5分で期限切れになります。',
+	emailCode_instructions:
+		'メールに届いた6桁のコードを入力してください。コードは5分で期限切れになります。',
 	emailCode_codeLabel: '認証コード',
 	emailCode_verifyButton: '確認',
 	emailCode_resendButton: 'コードを再送信',
@@ -66,7 +69,8 @@ const ja = {
 	emailCode_resendSuccess: 'コードを送信しました',
 	emailCode_success: '認証成功！リダイレクト中...',
 	emailCode_errorInvalid: '無効または期限切れのコードです',
-	emailCode_errorSessionMismatch: 'セッションが一致しません。新しいコードをリクエストしてください。',
+	emailCode_errorSessionMismatch:
+		'セッションが一致しません。新しいコードをリクエストしてください。',
 
 	consent_title: '{clientName}があなたのアカウントへのアクセスを要求しています',
 	consent_subtitle: 'このアプリケーションがあなたのAuthrimアカウントへのアクセスを要求しています',
@@ -188,7 +192,7 @@ const ja = {
 	admin_audit_resource: 'リソース',
 	admin_audit_ip: 'IPアドレス',
 	admin_audit_status: 'ステータス',
-	admin_audit_export: 'エクスポート',
-} satisfies Translation
+	admin_audit_export: 'エクスポート'
+} satisfies Translation;
 
-export default ja
+export default ja;

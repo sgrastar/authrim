@@ -267,7 +267,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       return c.json(
         {
           error: 'invalid_client_metadata',
-          error_description: 'Client requires UserInfo encryption but no public key (jwks or jwks_uri) is configured',
+          error_description:
+            'Client requires UserInfo encryption but no public key (jwks or jwks_uri) is configured',
         },
         400
       );
@@ -283,10 +284,13 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         Authorization: `Bearer ${c.env.KEY_MANAGER_SECRET}`,
       };
 
-      const keyResponse = await keyManager.fetch('http://key-manager/internal/active-with-private', {
-        method: 'GET',
-        headers: authHeaders,
-      });
+      const keyResponse = await keyManager.fetch(
+        'http://key-manager/internal/active-with-private',
+        {
+          method: 'GET',
+          headers: authHeaders,
+        }
+      );
 
       if (!keyResponse.ok) {
         console.error('Failed to fetch signing key from KeyManager:', keyResponse.status);

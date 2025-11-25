@@ -159,12 +159,14 @@ export const adminUsersAPI = {
 	/**
 	 * List users with pagination and search
 	 */
-	async list(params: {
-		page?: number;
-		limit?: number;
-		search?: string;
-		verified?: 'true' | 'false';
-	} = {}) {
+	async list(
+		params: {
+			page?: number;
+			limit?: number;
+			search?: string;
+			verified?: 'true' | 'false';
+		} = {}
+	) {
 		const queryParams = new URLSearchParams();
 		if (params.page) queryParams.set('page', params.page.toString());
 		if (params.limit) queryParams.set('limit', params.limit.toString());
@@ -339,12 +341,14 @@ export const adminSessionsAPI = {
 	/**
 	 * List sessions with pagination
 	 */
-	async list(params: {
-		page?: number;
-		limit?: number;
-		userId?: string;
-		active?: 'true' | 'false';
-	} = {}) {
+	async list(
+		params: {
+			page?: number;
+			limit?: number;
+			userId?: string;
+			active?: 'true' | 'false';
+		} = {}
+	) {
 		const queryParams = new URLSearchParams();
 		if (params.page) queryParams.set('page', params.page.toString());
 		if (params.limit) queryParams.set('limit', params.limit.toString());
@@ -422,13 +426,17 @@ export const passkeyAPI = {
 	 * Verify Passkey registration
 	 */
 	async verifyRegistration(data: { userId: string; credential: unknown; deviceName?: string }) {
-		return apiFetch<{ verified: boolean; passkeyId: string; sessionId: string; message: string; userId: string; user: User }>(
-			'/api/auth/passkey/register/verify',
-			{
-				method: 'POST',
-				body: JSON.stringify(data)
-			}
-		);
+		return apiFetch<{
+			verified: boolean;
+			passkeyId: string;
+			sessionId: string;
+			message: string;
+			userId: string;
+			user: User;
+		}>('/api/auth/passkey/register/verify', {
+			method: 'POST',
+			body: JSON.stringify(data)
+		});
 	},
 
 	/**
@@ -499,16 +507,18 @@ export const adminAuditLogAPI = {
 	/**
 	 * List audit log entries with filtering and pagination
 	 */
-	async list(params: {
-		page?: number;
-		limit?: number;
-		user_id?: string;
-		action?: string;
-		resource_type?: string;
-		resource_id?: string;
-		start_date?: string;
-		end_date?: string;
-	} = {}) {
+	async list(
+		params: {
+			page?: number;
+			limit?: number;
+			user_id?: string;
+			action?: string;
+			resource_type?: string;
+			resource_id?: string;
+			start_date?: string;
+			end_date?: string;
+		} = {}
+	) {
 		const queryParams = new URLSearchParams();
 		if (params.page) queryParams.set('page', params.page.toString());
 		if (params.limit) queryParams.set('limit', params.limit.toString());

@@ -50,7 +50,8 @@ describe('Hybrid Flow Security', () => {
   describe('at_hash Calculation', () => {
     it('should calculate valid at_hash for access token', async () => {
       // Simulate a JWT access token
-      const accessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+      const accessToken =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
       const atHash = await calculateAtHash(accessToken, 'SHA-256');
 
       // at_hash should be base64url encoded

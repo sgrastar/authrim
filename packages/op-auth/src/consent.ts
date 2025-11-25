@@ -225,12 +225,16 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
     <p class="client-name">${client.client_name || client_id}</p>
     <p>This application is requesting access to:</p>
     <ul class="scopes">
-      ${scopeDetails.map(s => `
+      ${scopeDetails
+        .map(
+          (s) => `
         <li class="scope-item">
           <div class="scope-title">${s.title}</div>
           <div class="scope-desc">${s.description}</div>
         </li>
-      `).join('')}
+      `
+        )
+        .join('')}
     </ul>
     <div class="button-group">
       <form method="POST" action="/auth/consent" style="flex: 1;">

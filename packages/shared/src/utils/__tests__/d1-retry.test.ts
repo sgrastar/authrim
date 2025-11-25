@@ -3,7 +3,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { retryD1Operation, retryD1Batch, type D1PreparedStatement, type D1Result } from '../d1-retry';
+import {
+  retryD1Operation,
+  retryD1Batch,
+  type D1PreparedStatement,
+  type D1Result,
+} from '../d1-retry';
 
 describe('D1 Retry Utilities', () => {
   // Mock console methods

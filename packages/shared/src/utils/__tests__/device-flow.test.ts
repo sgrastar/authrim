@@ -26,8 +26,7 @@ describe('Device Flow Utilities', () => {
       expect(deviceCode.length).toBeGreaterThan(0);
 
       // UUID v4 format: xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx
-      const uuidRegex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
       expect(deviceCode).toMatch(uuidRegex);
     });
 
@@ -50,7 +49,8 @@ describe('Device Flow Utilities', () => {
       expect(userCode.length).toBe(9); // 4 + hyphen + 4
 
       // Format: XXXX-XXXX (uppercase letters and digits, excluding 0, O, 1, I, L)
-      const userCodeRegex = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
+      const userCodeRegex =
+        /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
       expect(userCode).toMatch(userCodeRegex);
     });
 

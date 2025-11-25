@@ -545,7 +545,10 @@ describe('SessionStore', () => {
         },
       } as unknown as Env;
 
-      const errorSessionStore = new SessionStore(mockState as unknown as DurableObjectState, errorEnv);
+      const errorSessionStore = new SessionStore(
+        mockState as unknown as DurableObjectState,
+        errorEnv
+      );
 
       // Session creation should succeed even if D1 fails
       const request = new Request('http://localhost/session', {
@@ -585,7 +588,10 @@ describe('SessionStore', () => {
         },
       } as unknown as Env;
 
-      const errorSessionStore = new SessionStore(mockState as unknown as DurableObjectState, errorEnv);
+      const errorSessionStore = new SessionStore(
+        mockState as unknown as DurableObjectState,
+        errorEnv
+      );
 
       // Extension should succeed in memory even if D1 fails
       const extendRequest = new Request(`http://localhost/session/${id}/extend`, {
@@ -657,7 +663,10 @@ describe('SessionStore', () => {
         },
       } as unknown as Env;
 
-      const errorSessionStore = new SessionStore(mockState as unknown as DurableObjectState, errorEnv);
+      const errorSessionStore = new SessionStore(
+        mockState as unknown as DurableObjectState,
+        errorEnv
+      );
 
       // Listing should still work with in-memory sessions only
       const listRequest = new Request('http://localhost/sessions/user/user_list_error', {

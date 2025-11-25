@@ -125,7 +125,9 @@ export class ChallengeStore {
 
       if (stored) {
         this.challenges = new Map(Object.entries(stored.challenges));
-        console.log(`ChallengeStore: Restored ${this.challenges.size} challenges from Durable Storage`);
+        console.log(
+          `ChallengeStore: Restored ${this.challenges.size} challenges from Durable Storage`
+        );
       }
     } catch (error) {
       console.error('ChallengeStore: Failed to initialize from Durable Storage:', error);
@@ -317,13 +319,10 @@ export class ChallengeStore {
 
         await this.storeChallenge(body as StoreChallengeRequest);
 
-        return new Response(
-          JSON.stringify({ success: true }),
-          {
-            status: 201,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
+        return new Response(JSON.stringify({ success: true }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
 
       // POST /challenge/consume - Consume challenge (atomic)
@@ -387,13 +386,10 @@ export class ChallengeStore {
         const challenge = await this.getChallenge(id);
 
         if (!challenge) {
-          return new Response(
-            JSON.stringify({ error: 'Challenge not found' }),
-            {
-              status: 404,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
+          return new Response(JSON.stringify({ error: 'Challenge not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
         }
 
         // Don't expose the actual challenge value

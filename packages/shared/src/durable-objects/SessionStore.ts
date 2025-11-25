@@ -404,7 +404,9 @@ export class SessionStore {
    * Batch invalidate multiple sessions
    * Optimized for admin operations (e.g., delete all user sessions)
    */
-  async invalidateSessionsBatch(sessionIds: string[]): Promise<{ deleted: number; failed: string[] }> {
+  async invalidateSessionsBatch(
+    sessionIds: string[]
+  ): Promise<{ deleted: number; failed: string[] }> {
     await this.initializeState();
 
     const deleted: string[] = [];
@@ -453,7 +455,9 @@ export class SessionStore {
 
     await retryD1Operation(
       async () => {
-        await this.env.DB.prepare(query).bind(...sessionIds).run();
+        await this.env.DB.prepare(query)
+          .bind(...sessionIds)
+          .run();
       },
       'SessionStore.batchDeleteFromD1',
       { maxRetries: 3 }

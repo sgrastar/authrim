@@ -3,12 +3,6 @@
  * Exports notification utilities for ping/push modes
  */
 
-export {
-  sendPingNotification,
-  validatePingModeRequirements,
-} from './ciba-ping';
+export { sendPingNotification, validatePingModeRequirements } from './ciba-ping';
 
-export {
-  sendPushModeTokens,
-  validatePushModeRequirements,
-} from './ciba-push';
+export { sendPushModeTokens, validatePushModeRequirements } from './ciba-push';

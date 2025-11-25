@@ -3,7 +3,12 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import type { Env } from '@authrim/shared';
-import { rateLimitMiddleware, RateLimitProfiles, isAllowedOrigin, parseAllowedOrigins } from '@authrim/shared';
+import {
+  rateLimitMiddleware,
+  RateLimitProfiles,
+  isAllowedOrigin,
+  parseAllowedOrigins,
+} from '@authrim/shared';
 
 // Import handlers
 import { authorizeHandler, authorizeConfirmHandler, authorizeLoginHandler } from './authorize';
@@ -163,13 +168,13 @@ app.get('/api/auth/consent', consentGetHandler);
 app.post('/api/auth/consent', consentPostHandler);
 
 // Session Management endpoints (RESTful naming)
-app.post('/api/sessions/issue', issueSessionTokenHandler);      // Issue new session token
-app.post('/api/sessions/verify', verifySessionTokenHandler);    // Verify session token
-app.get('/api/sessions/status', sessionStatusHandler);          // Check session status
-app.post('/api/sessions/refresh', refreshSessionHandler);       // Refresh session expiration
+app.post('/api/sessions/issue', issueSessionTokenHandler); // Issue new session token
+app.post('/api/sessions/verify', verifySessionTokenHandler); // Verify session token
+app.get('/api/sessions/status', sessionStatusHandler); // Check session status
+app.post('/api/sessions/refresh', refreshSessionHandler); // Refresh session expiration
 
 // OIDC Session Management 1.0 - Check Session Iframe
-app.get('/session/check', checkSessionIframeHandler);           // Check session iframe for RPs
+app.get('/session/check', checkSessionIframeHandler); // Check session iframe for RPs
 
 // Logout endpoints
 app.get('/logout', frontChannelLogoutHandler);

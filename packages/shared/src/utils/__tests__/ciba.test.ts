@@ -21,7 +21,9 @@ describe('CIBA Utilities', () => {
   describe('generateAuthReqId', () => {
     it('should generate a valid UUID v4', () => {
       const authReqId = generateAuthReqId();
-      expect(authReqId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+      expect(authReqId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      );
     });
 
     it('should generate unique IDs', () => {
@@ -167,20 +169,12 @@ describe('CIBA Utilities', () => {
     });
 
     it('should select ping mode when requested', () => {
-      const mode = determineDeliveryMode(
-        'ping',
-        'https://client.example.com/callback',
-        'token123'
-      );
+      const mode = determineDeliveryMode('ping', 'https://client.example.com/callback', 'token123');
       expect(mode).toBe('ping');
     });
 
     it('should select push mode when requested', () => {
-      const mode = determineDeliveryMode(
-        'push',
-        'https://client.example.com/callback',
-        'token123'
-      );
+      const mode = determineDeliveryMode('push', 'https://client.example.com/callback', 'token123');
       expect(mode).toBe('push');
     });
 

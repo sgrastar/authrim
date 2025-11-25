@@ -106,7 +106,9 @@ export class PARRequestStore {
 
       if (stored) {
         this.requests = new Map(Object.entries(stored.requests));
-        console.log(`PARRequestStore: Restored ${this.requests.size} requests from Durable Storage`);
+        console.log(
+          `PARRequestStore: Restored ${this.requests.size} requests from Durable Storage`
+        );
       }
     } catch (error) {
       console.error('PARRequestStore: Failed to initialize from Durable Storage:', error);
@@ -306,13 +308,10 @@ export class PARRequestStore {
 
         await this.storeRequest(body as StorePARRequest);
 
-        return new Response(
-          JSON.stringify({ success: true }),
-          {
-            status: 201,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
+        return new Response(JSON.stringify({ success: true }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
 
       // POST /request/consume - Consume PAR request (atomic)

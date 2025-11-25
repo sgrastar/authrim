@@ -334,7 +334,9 @@ export function parseScimFilter(filter: string): ScimFilterNode {
     const parser = new ScimFilterParser(filter);
     return parser.parse();
   } catch (error) {
-    throw new Error(`Invalid SCIM filter: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(
+      `Invalid SCIM filter: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
   }
 }
 

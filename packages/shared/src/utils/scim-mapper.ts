@@ -249,8 +249,7 @@ export function scimToUser(scimUser: Partial<ScimUser>): Partial<InternalUser> {
   }
 
   // Enterprise extension
-  const enterpriseExt =
-    scimUser['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'];
+  const enterpriseExt = scimUser['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'];
   if (enterpriseExt) {
     const customAttrs: any = {};
     if (enterpriseExt.employeeNumber) customAttrs.employeeNumber = enterpriseExt.employeeNumber;

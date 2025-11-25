@@ -17,7 +17,12 @@ import { setCookie, getCookie } from 'hono/cookie';
 import type { Env } from '@authrim/shared';
 import { ResendEmailProvider } from './utils/email/resend-provider';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
-import { generateEmailCode, hashEmailCode, verifyEmailCodeHash, hashEmail } from './utils/email-code-utils';
+import {
+  generateEmailCode,
+  hashEmailCode,
+  verifyEmailCodeHash,
+  hashEmail,
+} from './utils/email-code-utils';
 
 const EMAIL_CODE_TTL = 5 * 60; // 5 minutes in seconds
 const OTP_SESSION_COOKIE = 'authrim_otp_session';
@@ -127,7 +132,13 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
     const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
 
     // Hash the code for storage
-    const codeHash = await hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret);
+    const codeHash = await hashEmailCode(
+      code,
+      email.toLowerCase(),
+      otpSessionId,
+      issuedAt,
+      hmacSecret
+    );
     const emailHash = await hashEmail(email.toLowerCase());
 
     // Store in ChallengeStore DO with TTL (5 minutes)

@@ -1,4 +1,4 @@
-import type { BaseTranslation } from '../i18n-types'
+import type { BaseTranslation } from '../i18n-types';
 
 const en = {
 	app_title: 'Authrim',
@@ -16,7 +16,8 @@ const en = {
 	badge_error: 'Error',
 	badge_info: 'Info',
 	dialog_title: 'Melt UI Dialog',
-	dialog_description: 'This is a test dialog using Melt UI, a headless, accessible component library for Svelte.',
+	dialog_description:
+		'This is a test dialog using Melt UI, a headless, accessible component library for Svelte.',
 	dialog_cancel: 'Cancel',
 	dialog_confirm: 'Confirm',
 	dialog_close: 'Close',
@@ -53,12 +54,14 @@ const en = {
 	register_createWithPasskey: 'Create Account with Passkey',
 	register_sendCode: 'Sign up with verification code',
 	register_alreadyHaveAccount: 'Already have an account? Sign in',
-	register_termsAgreement: 'By creating an account, you agree to our Terms of Service and Privacy Policy',
+	register_termsAgreement:
+		'By creating an account, you agree to our Terms of Service and Privacy Policy',
 	register_errorNameRequired: 'Name is required',
 
 	emailCode_title: 'Check your email',
 	emailCode_subtitle: "We've sent a verification code to",
-	emailCode_instructions: 'Enter the 6-digit code from your email. The code will expire in 5 minutes.',
+	emailCode_instructions:
+		'Enter the 6-digit code from your email. The code will expire in 5 minutes.',
 	emailCode_codeLabel: 'Verification Code',
 	emailCode_verifyButton: 'Verify',
 	emailCode_resendButton: 'Resend code',
@@ -96,7 +99,8 @@ const en = {
 	error_unsupported_response_type: 'The authorization server does not support this response type',
 	error_invalid_scope: 'The requested scope is invalid, unknown, or malformed',
 	error_server_error: 'The authorization server encountered an unexpected error',
-	error_temporarily_unavailable: 'The authorization server is temporarily unable to handle the request',
+	error_temporarily_unavailable:
+		'The authorization server is temporarily unable to handle the request',
 	error_unknown: 'An unknown error occurred',
 
 	device_title: 'Device Verification',
@@ -188,7 +192,7 @@ const en = {
 	admin_audit_resource: 'Resource',
 	admin_audit_ip: 'IP Address',
 	admin_audit_status: 'Status',
-	admin_audit_export: 'Export',
-} satisfies BaseTranslation
+	admin_audit_export: 'Export'
+} satisfies BaseTranslation;
 
-export default en
+export default en;

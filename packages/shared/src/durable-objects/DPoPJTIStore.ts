@@ -264,12 +264,9 @@ export class DPoPJTIStore {
           );
         }
 
-        return new Response(
-          JSON.stringify({ exists: false }),
-          {
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
+        return new Response(JSON.stringify({ exists: false }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
 
       // POST /check-and-store - Atomic check and store
@@ -292,13 +289,10 @@ export class DPoPJTIStore {
         try {
           await this.checkAndStoreJTI(body as CheckAndStoreJTIRequest);
 
-          return new Response(
-            JSON.stringify({ success: true }),
-            {
-              status: 201,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
+          return new Response(JSON.stringify({ success: true }), {
+            status: 201,
+            headers: { 'Content-Type': 'application/json' },
+          });
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown error';
           return new Response(

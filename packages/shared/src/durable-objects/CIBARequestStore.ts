@@ -217,9 +217,7 @@ export class CIBARequestStore {
 
     // Fallback to D1
     if (this.env.DB) {
-      const result = await this.env.DB.prepare(
-        'SELECT * FROM ciba_requests WHERE auth_req_id = ?'
-      )
+      const result = await this.env.DB.prepare('SELECT * FROM ciba_requests WHERE auth_req_id = ?')
         .bind(authReqId)
         .first<CIBARequestRow>();
 

@@ -177,9 +177,7 @@ export class DeviceCodeStore {
 
     // Fallback to D1
     if (this.env.DB) {
-      const result = await this.env.DB.prepare(
-        'SELECT * FROM device_codes WHERE device_code = ?'
-      )
+      const result = await this.env.DB.prepare('SELECT * FROM device_codes WHERE device_code = ?')
         .bind(deviceCode)
         .first<DeviceCodeMetadata>();
 
@@ -237,11 +235,7 @@ export class DeviceCodeStore {
   /**
    * Approve device code (user approved the authorization request)
    */
-  private async approveDeviceCode(
-    userCode: string,
-    userId: string,
-    sub: string
-  ): Promise<void> {
+  private async approveDeviceCode(userCode: string, userId: string, sub: string): Promise<void> {
     const metadata = await this.getByUserCode(userCode);
 
     if (!metadata) {

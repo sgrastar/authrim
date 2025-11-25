@@ -122,7 +122,7 @@ describe('CIBA Flow Integration', () => {
     const lastPoll = now - 2; // Polled 2 seconds ago
     const interval = 5; // Should wait 5 seconds
 
-    const tooFast = (now - lastPoll) < interval;
+    const tooFast = now - lastPoll < interval;
     expect(tooFast).toBe(true);
   });
 

@@ -41,7 +41,8 @@ import { normalizeUserCode, validateUserCodeFormat } from '@authrim/shared';
 export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
   try {
     // Get client IP for rate limiting
-    const clientIp = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || 'unknown';
+    const clientIp =
+      c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || 'unknown';
 
     // Check rate limiting (if USER_CODE_RATE_LIMITER is available)
     if (c.env.USER_CODE_RATE_LIMITER) {
@@ -121,13 +122,17 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       if (c.env.USER_CODE_RATE_LIMITER) {
         const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName('global');
         const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
-        await rateLimiter.fetch(
-          new Request('https://internal/record-failure', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip: clientIp }),
-          })
-        ).catch(() => { /* Ignore rate limiter errors */ });
+        await rateLimiter
+          .fetch(
+            new Request('https://internal/record-failure', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ip: clientIp }),
+            })
+          )
+          .catch(() => {
+            /* Ignore rate limiter errors */
+          });
       }
 
       return c.json(
@@ -147,13 +152,17 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       if (c.env.USER_CODE_RATE_LIMITER) {
         const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName('global');
         const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
-        await rateLimiter.fetch(
-          new Request('https://internal/record-failure', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip: clientIp }),
-          })
-        ).catch(() => { /* Ignore rate limiter errors */ });
+        await rateLimiter
+          .fetch(
+            new Request('https://internal/record-failure', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ip: clientIp }),
+            })
+          )
+          .catch(() => {
+            /* Ignore rate limiter errors */
+          });
       }
 
       return c.json(
@@ -213,13 +222,17 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       if (c.env.USER_CODE_RATE_LIMITER) {
         const rateLimiterId = c.env.USER_CODE_RATE_LIMITER.idFromName('global');
         const rateLimiter = c.env.USER_CODE_RATE_LIMITER.get(rateLimiterId);
-        await rateLimiter.fetch(
-          new Request('https://internal/reset', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip: clientIp }),
-          })
-        ).catch(() => { /* Ignore rate limiter errors */ });
+        await rateLimiter
+          .fetch(
+            new Request('https://internal/reset', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ip: clientIp }),
+            })
+          )
+          .catch(() => {
+            /* Ignore rate limiter errors */
+          });
       }
 
       return c.json(

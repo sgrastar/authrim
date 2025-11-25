@@ -52,13 +52,17 @@ export async function adminScimTokenCreateHandler(c: Context<{ Bindings: Env }>)
     });
 
     // Return the token only once (it won't be shown again)
-    return c.json({
-      token, // Plain text token (show to user only once)
-      tokenHash,
-      description: body.description || 'SCIM provisioning token',
-      expiresInDays: body.expiresInDays || 365,
-      message: 'Token created successfully. Save this token securely - it will not be shown again.',
-    }, 201);
+    return c.json(
+      {
+        token, // Plain text token (show to user only once)
+        tokenHash,
+        description: body.description || 'SCIM provisioning token',
+        expiresInDays: body.expiresInDays || 365,
+        message:
+          'Token created successfully. Save this token securely - it will not be shown again.',
+      },
+      201
+    );
   } catch (error) {
     console.error('Create SCIM token error:', error);
     return c.json(

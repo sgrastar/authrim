@@ -126,10 +126,7 @@ export function isDeviceFlowPollingTooFast(
  * @param userCode - User code to embed
  * @returns Complete verification URI
  */
-export function getVerificationUriComplete(
-  baseUri: string,
-  userCode: string
-): string {
+export function getVerificationUriComplete(baseUri: string, userCode: string): string {
   const url = new URL(baseUri);
   url.searchParams.set('user_code', userCode);
   return url.toString();

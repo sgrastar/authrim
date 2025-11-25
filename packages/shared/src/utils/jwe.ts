@@ -86,13 +86,12 @@ export async function encryptJWT(
   const payloadBytes = encoder.encode(payload);
 
   // Build JWE protected header
-  const jwe = new CompactEncrypt(payloadBytes)
-    .setProtectedHeader({
-      alg: options.alg,
-      enc: options.enc,
-      ...(options.cty && { cty: options.cty }),
-      ...(options.kid && { kid: options.kid }),
-    });
+  const jwe = new CompactEncrypt(payloadBytes).setProtectedHeader({
+    alg: options.alg,
+    enc: options.enc,
+    ...(options.cty && { cty: options.cty }),
+    ...(options.kid && { kid: options.kid }),
+  });
 
   // Encrypt and return compact JWE
   return await jwe.encrypt(cryptoKey);
@@ -157,8 +156,7 @@ export function isIDTokenEncryptionRequired(clientMetadata: {
   id_token_encrypted_response_enc?: string;
 }): boolean {
   return !!(
-    clientMetadata.id_token_encrypted_response_alg &&
-    clientMetadata.id_token_encrypted_response_enc
+    clientMetadata.id_token_encrypted_response_alg && clientMetadata.id_token_encrypted_response_enc
   );
 }
 
@@ -173,8 +171,7 @@ export function isUserInfoEncryptionRequired(clientMetadata: {
   userinfo_encrypted_response_enc?: string;
 }): boolean {
   return !!(
-    clientMetadata.userinfo_encrypted_response_alg &&
-    clientMetadata.userinfo_encrypted_response_enc
+    clientMetadata.userinfo_encrypted_response_alg && clientMetadata.userinfo_encrypted_response_enc
   );
 }
 

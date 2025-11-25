@@ -202,7 +202,9 @@ describe('RFC 8628 Compliance Tests', () => {
       expect(userCode).not.toMatch(/[0O1IL]/);
 
       // Should be formatted for readability (with hyphen separator)
-      expect(userCode).toMatch(/^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/);
+      expect(userCode).toMatch(
+        /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/
+      );
     });
 
     it('[RFC 8628 §6.1] User code validation SHOULD accept case-insensitive input', () => {

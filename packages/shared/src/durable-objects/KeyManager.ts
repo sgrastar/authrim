@@ -124,7 +124,7 @@ export class KeyManager {
       kid,
       hasPEM: !!keySet.privatePEM,
       pemLength: keySet.privatePEM?.length,
-      pemStart: keySet.privatePEM?.substring(0, 50)
+      pemStart: keySet.privatePEM?.substring(0, 50),
     });
 
     const newKey: StoredKey = {
@@ -139,7 +139,7 @@ export class KeyManager {
       kid: newKey.kid,
       hasPEM: !!newKey.privatePEM,
       pemLength: newKey.privatePEM?.length,
-      keys: Object.keys(newKey)
+      keys: Object.keys(newKey),
     });
 
     const state = this.getState();
@@ -235,7 +235,7 @@ export class KeyManager {
       kid: rotatedKey.kid,
       hasPEM: !!rotatedKey.privatePEM,
       pemLength: rotatedKey.privatePEM?.length,
-      keys: Object.keys(rotatedKey)
+      keys: Object.keys(rotatedKey),
     });
 
     // Explicitly reconstruct the object to ensure all properties are enumerable and serializable
@@ -252,14 +252,14 @@ export class KeyManager {
       hasPEM: !!result.privatePEM,
       pemLength: result.privatePEM?.length,
       keys: Object.keys(result),
-      ownPropertyNames: Object.getOwnPropertyNames(result)
+      ownPropertyNames: Object.getOwnPropertyNames(result),
     });
 
     // Verify JSON serialization works
     const testJson = JSON.stringify(result);
     console.log('KeyManager rotateKeys - test JSON serialization:', {
       jsonLength: testJson.length,
-      hasPrivatePEM: testJson.includes('privatePEM')
+      hasPrivatePEM: testJson.includes('privatePEM'),
     });
 
     return result;
@@ -473,7 +473,7 @@ export class KeyManager {
           hasPEM: !!newKey.privatePEM,
           pemLength: newKey.privatePEM?.length,
           pemStart: newKey.privatePEM?.substring(0, 50),
-          keys: Object.keys(newKey)
+          keys: Object.keys(newKey),
         });
 
         // Already reconstructed in rotateKeys(), so newKey should be serializable
@@ -483,7 +483,7 @@ export class KeyManager {
         console.log('KeyManager /internal/rotate - response JSON:', {
           jsonLength: jsonString.length,
           hasPrivatePEM: jsonString.includes('privatePEM'),
-          jsonStart: jsonString.substring(0, 200)
+          jsonStart: jsonString.substring(0, 200),
         });
 
         // Return full key data including privatePEM for internal use

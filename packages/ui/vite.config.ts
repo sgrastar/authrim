@@ -3,10 +3,7 @@ import { defineConfig } from 'vite';
 import UnoCSS from 'unocss/vite';
 
 export default defineConfig({
-	plugins: [
-		UnoCSS(),
-		sveltekit()
-	],
+	plugins: [UnoCSS(), sveltekit()],
 	build: {
 		target: 'esnext',
 		minify: 'esbuild',

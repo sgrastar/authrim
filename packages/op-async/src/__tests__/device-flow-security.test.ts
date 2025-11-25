@@ -45,9 +45,9 @@ describe('Device Flow Security', () => {
       DEVICE_CODE_STORE: {
         idFromName: vi.fn().mockReturnValue('mock-id'),
         get: vi.fn().mockReturnValue({
-          fetch: vi.fn().mockResolvedValue(
-            new Response(JSON.stringify({ success: true }), { status: 200 })
-          ),
+          fetch: vi
+            .fn()
+            .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
         }),
       } as any,
     };
@@ -177,9 +177,9 @@ describe('Device Flow Security', () => {
 
     // TODO: Test requires rate limiter Durable Object implementation
     it.skip('should record failed attempt on invalid user_code', async () => {
-      const recordFailureMock = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ success: true }), { status: 200 })
-      );
+      const recordFailureMock = vi
+        .fn()
+        .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
 
       const mockRateLimiter = {
         fetch: vi.fn().mockImplementation((request: Request) => {

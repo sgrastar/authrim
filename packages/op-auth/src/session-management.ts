@@ -157,7 +157,8 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
         return c.json(
           {
             error: 'invalid_token',
-            error_description: error.error_description || 'Token not found, expired, or already used',
+            error_description:
+              error.error_description || 'Token not found, expired, or already used',
           },
           401
         );
@@ -469,11 +470,12 @@ export async function checkSessionIframeHandler(c: Context<{ Bindings: Env }>) {
       // Allow framing from any origin (RPs need to embed this)
       'X-Frame-Options': 'ALLOWALL',
       // CSP that allows inline scripts (needed for the session check logic)
-      'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *;",
+      'Content-Security-Policy':
+        "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *;",
       // Cache for a short time
       'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0',
+      Pragma: 'no-cache',
+      Expires: '0',
     },
   });
 }

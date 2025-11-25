@@ -106,8 +106,12 @@ describe('Discovery Handler', () => {
       // Dynamic grant types include multiple grant types
       expect(metadata.grant_types_supported).toContain('authorization_code');
       expect(metadata.grant_types_supported).toContain('refresh_token');
-      expect(metadata.grant_types_supported).toContain('urn:ietf:params:oauth:grant-type:jwt-bearer');
-      expect(metadata.grant_types_supported).toContain('urn:ietf:params:oauth:grant-type:device_code');
+      expect(metadata.grant_types_supported).toContain(
+        'urn:ietf:params:oauth:grant-type:jwt-bearer'
+      );
+      expect(metadata.grant_types_supported).toContain(
+        'urn:ietf:params:oauth:grant-type:device_code'
+      );
       expect(metadata.grant_types_supported).toContain('urn:openid:params:grant-type:ciba');
     });
 

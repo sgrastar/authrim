@@ -98,7 +98,9 @@ export class RateLimiterCounter {
 
       if (stored) {
         this.counts = new Map(Object.entries(stored.records));
-        console.log(`RateLimiterCounter: Restored ${this.counts.size} records from Durable Storage`);
+        console.log(
+          `RateLimiterCounter: Restored ${this.counts.size} records from Durable Storage`
+        );
       }
     } catch (error) {
       console.error('RateLimiterCounter: Failed to initialize from Durable Storage:', error);

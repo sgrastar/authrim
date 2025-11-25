@@ -21,7 +21,10 @@ describe('JAR - Advanced Features', () => {
     serverKeyPair = await generateKeyPair('RS256', { extractable: true });
     clientKeyPair = await generateKeyPair('RS256', { extractable: true });
     // Generate separate encryption key pair for RSA-OAEP
-    serverEncKeyPair = await generateKeyPair('RSA-OAEP', { extractable: true, modulusLength: 2048 });
+    serverEncKeyPair = await generateKeyPair('RSA-OAEP', {
+      extractable: true,
+      modulusLength: 2048,
+    });
 
     serverPublicJWK = await exportJWK(serverKeyPair.publicKey);
     clientPublicJWK = await exportJWK(clientKeyPair.publicKey);
@@ -244,11 +247,7 @@ describe('JAR - Advanced Features', () => {
 
   describe('Error Cases', () => {
     it('should reject request object with invalid JWT format', () => {
-      const invalidFormats = [
-        'only-one-part',
-        'only.two-parts',
-        'too.many.parts.in.this.jwt',
-      ];
+      const invalidFormats = ['only-one-part', 'only.two-parts', 'too.many.parts.in.this.jwt'];
 
       invalidFormats.forEach((jwt) => {
         const parts = jwt.split('.');

@@ -28,7 +28,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Determine PAR requirement (FAPI 2.0 mode or OIDC config)
-  const requirePar = fapiConfig.enabled ? true : (oidcConfig.requirePar || false);
+  const requirePar = fapiConfig.enabled ? true : oidcConfig.requirePar || false;
 
   const metadata: OIDCProviderMetadata = {
     issuer,

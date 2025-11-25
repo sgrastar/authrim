@@ -22,7 +22,9 @@ describe('Device Flow Integration Tests', () => {
       // User code should be formatted correctly
       expect(userCode).toBeDefined();
       expect(typeof userCode).toBe('string');
-      expect(userCode).toMatch(/^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/);
+      expect(userCode).toMatch(
+        /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/
+      );
     });
 
     it('should provide verification URIs with proper structure', () => {

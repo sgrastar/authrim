@@ -24,12 +24,15 @@ import { cibaTestPageHandler } from './ciba-test-page';
 const app = new Hono<{ Bindings: Env }>();
 
 // CORS middleware
-app.use('/*', cors({
-  origin: (origin) => origin, // Allow all origins for discovery
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-}));
+app.use(
+  '/*',
+  cors({
+    origin: (origin) => origin, // Allow all origins for discovery
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+  })
+);
 
 /**
  * POST /device_authorization

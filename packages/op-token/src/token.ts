@@ -73,11 +73,14 @@ async function getSigningKeyFromKeyManager(
 
   // Authentication header for KeyManager
   const authHeaders = {
-    'Authorization': `Bearer ${env.KEY_MANAGER_SECRET}`,
+    Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
   };
 
   // Try to get active key (using internal endpoint that returns privatePEM)
-  console.log('Fetching active key with auth:', { hasSecret: !!env.KEY_MANAGER_SECRET, secretLength: env.KEY_MANAGER_SECRET?.length });
+  console.log('Fetching active key with auth:', {
+    hasSecret: !!env.KEY_MANAGER_SECRET,
+    secretLength: env.KEY_MANAGER_SECRET?.length,
+  });
   const activeResponse = await keyManager.fetch('http://dummy/internal/active-with-private', {
     method: 'GET',
     headers: authHeaders,
@@ -88,12 +91,19 @@ async function getSigningKeyFromKeyManager(
   let keyData: { kid: string; privatePEM: string };
 
   if (activeResponse.ok) {
-    keyData = await activeResponse.json() as { kid: string; privatePEM: string };
-    console.log('Got active key from KeyManager:', { kid: keyData.kid, hasPEM: !!keyData.privatePEM, pemLength: keyData.privatePEM?.length });
+    keyData = (await activeResponse.json()) as { kid: string; privatePEM: string };
+    console.log('Got active key from KeyManager:', {
+      kid: keyData.kid,
+      hasPEM: !!keyData.privatePEM,
+      pemLength: keyData.privatePEM?.length,
+    });
   } else {
     // No active key, generate and activate one
     console.log('No active signing key found, generating new key');
-    console.log('Rotate request auth headers:', { hasAuth: !!authHeaders.Authorization, authLength: authHeaders.Authorization?.length });
+    console.log('Rotate request auth headers:', {
+      hasAuth: !!authHeaders.Authorization,
+      authLength: authHeaders.Authorization?.length,
+    });
     const rotateResponse = await keyManager.fetch('http://dummy/internal/rotate', {
       method: 'POST',
       headers: authHeaders,
@@ -109,12 +119,20 @@ async function getSigningKeyFromKeyManager(
     console.log('Received rotate response:', {
       textLength: rotateText.length,
       hasPrivatePEM: rotateText.includes('privatePEM'),
-      textStart: rotateText.substring(0, 200)
+      textStart: rotateText.substring(0, 200),
     });
 
-    const rotateData = JSON.parse(rotateText) as { success: boolean; key: { kid: string; privatePEM: string } };
+    const rotateData = JSON.parse(rotateText) as {
+      success: boolean;
+      key: { kid: string; privatePEM: string };
+    };
     keyData = rotateData.key;
-    console.log('Generated new key from KeyManager:', { kid: keyData.kid, hasPEM: !!keyData.privatePEM, pemLength: keyData.privatePEM?.length, pemStart: keyData.privatePEM?.substring(0, 50) });
+    console.log('Generated new key from KeyManager:', {
+      kid: keyData.kid,
+      hasPEM: !!keyData.privatePEM,
+      pemLength: keyData.privatePEM?.length,
+      pemStart: keyData.privatePEM?.substring(0, 50),
+    });
   }
 
   // Import private key
@@ -208,7 +226,10 @@ async function handleAuthorizationCodeGrant(
   const client_assertion = formData.client_assertion;
   const client_assertion_type = formData.client_assertion_type;
 
-  if (client_assertion && client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer') {
+  if (
+    client_assertion &&
+    client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+  ) {
     // Extract client_id from JWT assertion (from 'sub' or 'iss' claim)
     try {
       const assertionPayload = parseToken(client_assertion);
@@ -371,8 +392,7 @@ async function handleAuthorizationCodeGrant(
       return c.json(
         {
           error: dpopValidation.error || 'invalid_dpop_proof',
-          error_description:
-            dpopValidation.error_description || 'Invalid DPoP proof',
+          error_description: dpopValidation.error_description || 'Invalid DPoP proof',
         },
         400
       );
@@ -479,8 +499,7 @@ async function handleAuthorizationCodeGrant(
       return c.json(
         {
           error: 'invalid_grant',
-          error_description:
-            'DPoP key mismatch (authorization code is bound to different key)',
+          error_description: 'DPoP key mismatch (authorization code is bound to different key)',
         },
         400
       );
@@ -491,7 +510,10 @@ async function handleAuthorizationCodeGrant(
 
   // Client authentication verification
   // Supports: client_secret_basic, client_secret_post, client_secret_jwt, private_key_jwt
-  if (client_assertion && client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer') {
+  if (
+    client_assertion &&
+    client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+  ) {
     // private_key_jwt or client_secret_jwt authentication
     const assertionValidation = await validateClientAssertion(
       client_assertion,
@@ -503,7 +525,8 @@ async function handleAuthorizationCodeGrant(
       return c.json(
         {
           error: assertionValidation.error || 'invalid_client',
-          error_description: assertionValidation.error_description || 'Client assertion validation failed',
+          error_description:
+            assertionValidation.error_description || 'Client assertion validation failed',
         },
         401
       );
@@ -630,7 +653,12 @@ async function handleAuthorizationCodeGrant(
   try {
     // For Authorization Code Flow, ID token should only contain standard claims
     // Scope-based claims (profile, email) are returned from UserInfo endpoint
-    idToken = await createIDToken(idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>, privateKey, keyId, expiresIn);
+    idToken = await createIDToken(
+      idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+      privateKey,
+      keyId,
+      expiresIn
+    );
 
     // JWE: Check if client requires ID token encryption (RFC 7516)
     // Note: clientMetadata was already fetched during client authentication above
@@ -659,7 +687,8 @@ async function handleAuthorizationCodeGrant(
         return c.json(
           {
             error: 'invalid_client_metadata',
-            error_description: 'Client requires ID token encryption but no public key (jwks or jwks_uri) is configured',
+            error_description:
+              'Client requires ID token encryption but no public key (jwks or jwks_uri) is configured',
           },
           400
         );
@@ -776,7 +805,10 @@ async function handleRefreshTokenGrant(
   const client_assertion = formData.client_assertion;
   const client_assertion_type = formData.client_assertion_type;
 
-  if (client_assertion && client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer') {
+  if (
+    client_assertion &&
+    client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+  ) {
     // Extract client_id from JWT assertion
     try {
       const assertionPayload = parseToken(client_assertion);
@@ -868,7 +900,10 @@ async function handleRefreshTokenGrant(
 
   // Client authentication verification
   // Supports: client_secret_basic, client_secret_post, client_secret_jwt, private_key_jwt
-  if (client_assertion && client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer') {
+  if (
+    client_assertion &&
+    client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+  ) {
     // private_key_jwt or client_secret_jwt authentication
     const assertionValidation = await validateClientAssertion(
       client_assertion,
@@ -882,7 +917,8 @@ async function handleRefreshTokenGrant(
       return c.json(
         {
           error: assertionValidation.error || 'invalid_client',
-          error_description: assertionValidation.error_description || 'Client assertion validation failed',
+          error_description:
+            assertionValidation.error_description || 'Client assertion validation failed',
         },
         401
       );
@@ -1003,7 +1039,9 @@ async function handleRefreshTokenGrant(
       );
     }
 
-    const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; [key: string]: unknown }> };
+    const jwks = (await jwksResponse.json()) as {
+      keys: Array<{ kid?: string; [key: string]: unknown }>;
+    };
     // Find key by kid
     const jwk = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
 
@@ -1361,11 +1399,7 @@ async function handleJWTBearerGrant(
   }
 
   // Validate JWT assertion
-  const validation = await validateJWTBearerAssertion(
-    assertion,
-    c.env.ISSUER_URL,
-    trustedIssuers
-  );
+  const validation = await validateJWTBearerAssertion(assertion, c.env.ISSUER_URL, trustedIssuers);
 
   if (!validation.valid || !validation.claims) {
     return c.json(
@@ -1713,7 +1747,12 @@ async function handleDeviceCodeGrant(
       scope: metadata.scope,
       client_id,
     };
-    const result = await createRefreshToken(refreshTokenClaims, privateKey, keyId, refreshTokenExpiry);
+    const result = await createRefreshToken(
+      refreshTokenClaims,
+      privateKey,
+      keyId,
+      refreshTokenExpiry
+    );
     refreshToken = result.token;
     refreshJti = result.jti;
 
@@ -1755,10 +1794,7 @@ async function handleDeviceCodeGrant(
  * OpenID Connect CIBA Flow Core 1.0
  * https://openid.net/specs/openid-client-initiated-backchannel-authentication-core-1_0.html#token_endpoint
  */
-async function handleCIBAGrant(
-  c: Context<{ Bindings: Env }>,
-  formData: Record<string, string>
-) {
+async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<string, string>) {
   const authReqId = formData.auth_req_id;
   const client_id = formData.client_id;
 
@@ -1986,11 +2022,7 @@ async function handleCIBAGrant(
   // Validate DPoP proof if provided
   if (dpopProof) {
     const { validateDPoPProof: validateDPoP } = await import('@authrim/shared');
-    const dpopValidation = await validateDPoP(
-      dpopProof,
-      'POST',
-      c.env.ISSUER_URL + '/token'
-    );
+    const dpopValidation = await validateDPoP(dpopProof, 'POST', c.env.ISSUER_URL + '/token');
 
     if (dpopValidation.valid && dpopValidation.jkt) {
       dpopJkt = dpopValidation.jkt;

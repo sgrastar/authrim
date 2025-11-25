@@ -14,7 +14,7 @@ loadedLocales['ja'] = ja as Translations;
 
 const locale = writable<Locales>('en');
 
-export const LL = derived<typeof locale, TranslationFunctions>(locale, $locale => {
+export const LL = derived<typeof locale, TranslationFunctions>(locale, ($locale) => {
 	return i18nObject($locale);
 });
 
@@ -24,6 +24,6 @@ export const setLocale = (newLocale: Locales) => {
 
 export const getLocale = (): Locales => {
 	let currentLocale: Locales = 'en';
-	locale.subscribe(value => currentLocale = value)();
+	locale.subscribe((value) => (currentLocale = value))();
 	return currentLocale;
 };

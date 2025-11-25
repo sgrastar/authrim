@@ -43,7 +43,7 @@ export async function sendPushModeTokens(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${clientNotificationToken}`,
+        Authorization: `Bearer ${clientNotificationToken}`,
       },
       body: JSON.stringify(payload),
     });
@@ -91,9 +91,11 @@ export function validatePushModeRequirements(
   }
 
   // Ensure HTTPS in production
-  if (!clientNotificationEndpoint.startsWith('https://') &&
-      !clientNotificationEndpoint.startsWith('http://localhost') &&
-      !clientNotificationEndpoint.startsWith('http://127.0.0.1')) {
+  if (
+    !clientNotificationEndpoint.startsWith('https://') &&
+    !clientNotificationEndpoint.startsWith('http://localhost') &&
+    !clientNotificationEndpoint.startsWith('http://127.0.0.1')
+  ) {
     return false;
   }
 

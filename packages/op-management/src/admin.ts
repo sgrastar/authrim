@@ -678,11 +678,13 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Execute update query
-    await c.env.DB.prepare(`
+    await c.env.DB.prepare(
+      `
       UPDATE oauth_clients
       SET ${updates.join(', ')}
       WHERE client_id = ?
-    `)
+    `
+    )
       .bind(...values, clientId)
       .run();
 
@@ -710,7 +712,8 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         contacts: updatedClient.contacts ? JSON.parse(updatedClient.contacts as string) : undefined,
         subject_type: updatedClient.subject_type || 'public',
         sector_identifier_uri: updatedClient.sector_identifier_uri,
-        token_endpoint_auth_method: updatedClient.token_endpoint_auth_method || 'client_secret_basic',
+        token_endpoint_auth_method:
+          updatedClient.token_endpoint_auth_method || 'client_secret_basic',
         created_at: updatedClient.created_at,
         updated_at: updatedClient.updated_at,
         is_trusted: updatedClient.is_trusted === 1,
@@ -1229,10 +1232,7 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
 
     // Get query parameters
     const page = parseInt(c.req.query('page') || '1', 10);
-    const limit = Math.min(
-      parseInt(c.req.query('limit') || '20', 10),
-      100
-    );
+    const limit = Math.min(parseInt(c.req.query('limit') || '20', 10), 100);
     const offset = (page - 1) * limit;
 
     // Filters
@@ -1554,7 +1554,9 @@ export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
     };
 
     // Merge with stored settings if they exist
-    const settings = settingsJson ? { ...defaultSettings, ...JSON.parse(settingsJson) } : defaultSettings;
+    const settings = settingsJson
+      ? { ...defaultSettings, ...JSON.parse(settingsJson) }
+      : defaultSettings;
 
     return c.json({ settings });
   } catch (error) {
@@ -1589,7 +1591,16 @@ export async function adminSettingsUpdateHandler(c: Context<{ Bindings: Env }>) 
     }
 
     // Validate settings structure
-    const allowedSections = ['general', 'appearance', 'security', 'email', 'advanced', 'ciba', 'oidc', 'fapi'];
+    const allowedSections = [
+      'general',
+      'appearance',
+      'security',
+      'email',
+      'advanced',
+      'ciba',
+      'oidc',
+      'fapi',
+    ];
     const settings = body.settings;
 
     for (const section of Object.keys(settings)) {

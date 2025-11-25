@@ -230,12 +230,12 @@ function validateRegistrationRequest(
 
     // Supported response types per OIDC Core 3.3 (Hybrid Flow)
     const validResponseTypes = [
-      'code',                    // Authorization Code Flow
-      'id_token',                // Implicit Flow (ID Token only)
-      'id_token token',          // Implicit Flow (ID Token + Access Token)
-      'code id_token',           // Hybrid Flow 1
-      'code token',              // Hybrid Flow 2
-      'code id_token token',     // Hybrid Flow 3
+      'code', // Authorization Code Flow
+      'id_token', // Implicit Flow (ID Token only)
+      'id_token token', // Implicit Flow (ID Token + Access Token)
+      'code id_token', // Hybrid Flow 1
+      'code token', // Hybrid Flow 2
+      'code id_token token', // Hybrid Flow 3
     ];
     for (const responseType of data.response_types) {
       if (!validResponseTypes.includes(responseType)) {
@@ -337,7 +337,8 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
 
   // Store in D1 for consent foreign key constraints
   const now = Math.floor(Date.now() / 1000);
-  await env.DB.prepare(`
+  await env.DB.prepare(
+    `
     INSERT OR REPLACE INTO oauth_clients (
       client_id, client_secret, client_name, redirect_uris,
       grant_types, response_types, scope, logo_uri,
@@ -347,28 +348,31 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       allow_claims_without_scope,
       created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    clientId,
-    metadata.client_secret || null,
-    metadata.client_name || null,
-    JSON.stringify(metadata.redirect_uris),
-    JSON.stringify(metadata.grant_types || ['authorization_code']),
-    JSON.stringify(metadata.response_types || ['code']),
-    metadata.scope || null,
-    metadata.logo_uri || null,
-    metadata.client_uri || null,
-    metadata.policy_uri || null,
-    metadata.tos_uri || null,
-    metadata.contacts ? JSON.stringify(metadata.contacts) : null,
-    metadata.subject_type || 'public',
-    metadata.sector_identifier_uri || null,
-    metadata.token_endpoint_auth_method || 'client_secret_basic',
-    metadata.is_trusted ? 1 : 0,
-    metadata.skip_consent ? 1 : 0,
-    metadata.allow_claims_without_scope ? 1 : 0,
-    metadata.created_at || now,
-    metadata.updated_at || now
-  ).run();
+  `
+  )
+    .bind(
+      clientId,
+      metadata.client_secret || null,
+      metadata.client_name || null,
+      JSON.stringify(metadata.redirect_uris),
+      JSON.stringify(metadata.grant_types || ['authorization_code']),
+      JSON.stringify(metadata.response_types || ['code']),
+      metadata.scope || null,
+      metadata.logo_uri || null,
+      metadata.client_uri || null,
+      metadata.policy_uri || null,
+      metadata.tos_uri || null,
+      metadata.contacts ? JSON.stringify(metadata.contacts) : null,
+      metadata.subject_type || 'public',
+      metadata.sector_identifier_uri || null,
+      metadata.token_endpoint_auth_method || 'client_secret_basic',
+      metadata.is_trusted ? 1 : 0,
+      metadata.skip_consent ? 1 : 0,
+      metadata.allow_claims_without_scope ? 1 : 0,
+      metadata.created_at || now,
+      metadata.updated_at || now
+    )
+    .run();
 }
 
 /**
@@ -425,11 +429,9 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // Trusted clients can skip consent screens (First-Party clients)
     const redirectDomain = new URL(request.redirect_uris[0]).hostname;
     const issuerDomain = new URL(c.env.ISSUER_URL).hostname;
-    const trustedDomains = c.env.TRUSTED_DOMAINS?.split(',').map(d => d.trim()) || [];
+    const trustedDomains = c.env.TRUSTED_DOMAINS?.split(',').map((d) => d.trim()) || [];
 
-    const isTrusted =
-      redirectDomain === issuerDomain ||
-      trustedDomains.includes(redirectDomain);
+    const isTrusted = redirectDomain === issuerDomain || trustedDomains.includes(redirectDomain);
 
     console.log(`[DCR] Client registration: domain=${redirectDomain}, trusted=${isTrusted}`);
 
@@ -463,8 +465,8 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       response.sector_identifier_uri = request.sector_identifier_uri;
 
     // OIDC Conformance Test: Detect certification.openid.net
-    const isCertificationTest = request.redirect_uris.some(
-      uri => uri.includes('certification.openid.net')
+    const isCertificationTest = request.redirect_uris.some((uri) =>
+      uri.includes('certification.openid.net')
     );
 
     // Store client metadata
@@ -487,7 +489,8 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       console.log('[DCR] OIDC Conformance Test detected, creating test user');
 
       // Create fixed test user with complete profile (INSERT OR IGNORE to avoid duplicates)
-      await c.env.DB.prepare(`
+      await c.env.DB.prepare(
+        `
         INSERT OR IGNORE INTO users (
           id, email, email_verified, name, given_name, family_name,
           middle_name, nickname, preferred_username, profile, picture,
@@ -495,36 +498,39 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
           phone_number, phone_number_verified, address_json,
           created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        'user-oidc-conformance-test',
-        'test@example.com',
-        1, // email_verified
-        'John Doe',
-        'John',
-        'Doe',
-        'Q',
-        'Johnny',
-        'test',
-        'https://example.com/johndoe',
-        'https://example.com/avatar.jpg',
-        'https://example.com',
-        'male',
-        '1990-01-01',
-        'America/New_York',
-        'en-US',
-        '+1-555-0100',
-        1, // phone_number_verified
-        JSON.stringify({
-          formatted: '1234 Main St, Anytown, ST 12345, USA',
-          street_address: '1234 Main St',
-          locality: 'Anytown',
-          region: 'ST',
-          postal_code: '12345',
-          country: 'USA',
-        }),
-        issuedAt,
-        issuedAt
-      ).run();
+      `
+      )
+        .bind(
+          'user-oidc-conformance-test',
+          'test@example.com',
+          1, // email_verified
+          'John Doe',
+          'John',
+          'Doe',
+          'Q',
+          'Johnny',
+          'test',
+          'https://example.com/johndoe',
+          'https://example.com/avatar.jpg',
+          'https://example.com',
+          'male',
+          '1990-01-01',
+          'America/New_York',
+          'en-US',
+          '+1-555-0100',
+          1, // phone_number_verified
+          JSON.stringify({
+            formatted: '1234 Main St, Anytown, ST 12345, USA',
+            street_address: '1234 Main St',
+            locality: 'Anytown',
+            region: 'ST',
+            postal_code: '12345',
+            country: 'USA',
+          }),
+          issuedAt,
+          issuedAt
+        )
+        .run();
 
       console.log('[DCR] Test user created/verified: user-oidc-conformance-test');
     }

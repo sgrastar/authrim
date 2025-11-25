@@ -249,7 +249,8 @@ export async function validateDPoPProof(
           valid: false,
           error: 'use_dpop_nonce',
           error_description:
-            error.error_description || 'DPoP proof jti has already been used (replay attack detected)',
+            error.error_description ||
+            'DPoP proof jti has already been used (replay attack detected)',
         };
       }
       // DO internal error

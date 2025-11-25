@@ -27,7 +27,11 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
 
   const parts = authHeader.split(' ');
   if (parts.length !== 2 || parts[0] !== 'Bearer') {
-    return scimErrorResponse(c, 401, 'Invalid authorization header format. Expected: Bearer <token>');
+    return scimErrorResponse(
+      c,
+      401,
+      'Invalid authorization header format. Expected: Bearer <token>'
+    );
   }
 
   const token = parts[1];
@@ -220,10 +224,7 @@ export async function listScimTokens(env: Env): Promise<
  * If you prefer to store SCIM tokens in the database instead of KV,
  * you can create a `scim_tokens` table and use this function.
  */
-export async function validateScimTokenFromDB(
-  db: D1Database,
-  token: string
-): Promise<boolean> {
+export async function validateScimTokenFromDB(db: D1Database, token: string): Promise<boolean> {
   try {
     const tokenHash = await hashToken(token);
 

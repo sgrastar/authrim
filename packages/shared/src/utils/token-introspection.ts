@@ -74,7 +74,7 @@ async function getPublicKey(publicJWKJson: string, keyId: string): Promise<Crypt
   }
 
   const publicJWK = JSON.parse(publicJWKJson) as JWK;
-  const importedKey = await importJWK(publicJWK, 'RS256') as CryptoKey;
+  const importedKey = (await importJWK(publicJWK, 'RS256')) as CryptoKey;
 
   if (importedKey instanceof Uint8Array) {
     throw new Error('Unexpected key type: expected CryptoKey, got Uint8Array');
@@ -255,7 +255,9 @@ export async function introspectToken(
       const jwksResponse = await keyManager.fetch('http://internal/jwks', { method: 'GET' });
 
       if (jwksResponse.ok) {
-        const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; [key: string]: unknown }> };
+        const jwks = (await jwksResponse.json()) as {
+          keys: Array<{ kid?: string; [key: string]: unknown }>;
+        };
         // Find key by kid
         const jwk = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
         if (jwk) {
@@ -263,7 +265,10 @@ export async function introspectToken(
         }
       }
     } catch (kmError) {
-      console.warn('Failed to fetch key from KeyManager, falling back to PUBLIC_JWK_JSON:', kmError);
+      console.warn(
+        'Failed to fetch key from KeyManager, falling back to PUBLIC_JWK_JSON:',
+        kmError
+      );
     }
   }
 

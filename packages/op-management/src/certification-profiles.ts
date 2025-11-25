@@ -60,11 +60,7 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
       oidc: {
         requirePar: false,
         responseTypesSupported: ['code', 'id_token', 'id_token token'],
-        tokenEndpointAuthMethodsSupported: [
-          'client_secret_basic',
-          'client_secret_post',
-          'none',
-        ],
+        tokenEndpointAuthMethodsSupported: ['client_secret_basic', 'client_secret_post', 'none'],
         allowNoneAlgorithm: true, // Allow for testing
       },
     },
@@ -81,12 +77,7 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
       },
       oidc: {
         requirePar: false,
-        responseTypesSupported: [
-          'code',
-          'code id_token',
-          'code token',
-          'code id_token token',
-        ],
+        responseTypesSupported: ['code', 'code id_token', 'code token', 'code id_token token'],
         tokenEndpointAuthMethodsSupported: [
           'client_secret_basic',
           'client_secret_post',
@@ -132,10 +123,7 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
       oidc: {
         requirePar: true,
         responseTypesSupported: ['code'],
-        tokenEndpointAuthMethodsSupported: [
-          'private_key_jwt',
-          'client_secret_jwt',
-        ],
+        tokenEndpointAuthMethodsSupported: ['private_key_jwt', 'client_secret_jwt'],
         allowNoneAlgorithm: false, // Security: Reject 'none' algorithm
       },
     },
@@ -159,7 +147,7 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
     },
   },
 
-  'development': {
+  development: {
     name: 'Development',
     description: 'Relaxed settings for local development',
     settings: {
@@ -171,11 +159,7 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
       oidc: {
         requirePar: false,
         responseTypesSupported: ['code'],
-        tokenEndpointAuthMethodsSupported: [
-          'client_secret_basic',
-          'client_secret_post',
-          'none',
-        ],
+        tokenEndpointAuthMethodsSupported: ['client_secret_basic', 'client_secret_post', 'none'],
         allowNoneAlgorithm: true, // Allow for development
       },
     },

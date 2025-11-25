@@ -49,7 +49,8 @@ describe('JWE Utilities', () => {
 
   describe('encryptJWT and decryptJWT', () => {
     it('should encrypt and decrypt a JWT with RSA-OAEP + A256GCM', async () => {
-      const payload = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.signature';
+      const payload =
+        'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.signature';
 
       const encrypted = await encryptJWT(payload, rsaPublicKey, {
         alg: 'RSA-OAEP',
@@ -138,13 +139,21 @@ describe('JWE Utilities', () => {
     });
 
     it('should reject unsupported key management algorithms', () => {
-      expect(() => validateJWEOptions('RSA1_5', 'A256GCM')).toThrow('Unsupported JWE key management algorithm');
-      expect(() => validateJWEOptions('dir', 'A256GCM')).toThrow('Unsupported JWE key management algorithm');
+      expect(() => validateJWEOptions('RSA1_5', 'A256GCM')).toThrow(
+        'Unsupported JWE key management algorithm'
+      );
+      expect(() => validateJWEOptions('dir', 'A256GCM')).toThrow(
+        'Unsupported JWE key management algorithm'
+      );
     });
 
     it('should reject unsupported content encryption algorithms', () => {
-      expect(() => validateJWEOptions('RSA-OAEP', 'A128CTR')).toThrow('Unsupported JWE content encryption algorithm');
-      expect(() => validateJWEOptions('RSA-OAEP', 'INVALID')).toThrow('Unsupported JWE content encryption algorithm');
+      expect(() => validateJWEOptions('RSA-OAEP', 'A128CTR')).toThrow(
+        'Unsupported JWE content encryption algorithm'
+      );
+      expect(() => validateJWEOptions('RSA-OAEP', 'INVALID')).toThrow(
+        'Unsupported JWE content encryption algorithm'
+      );
     });
   });
 

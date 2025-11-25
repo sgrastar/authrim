@@ -100,7 +100,12 @@ export async function validateSessionState(
   }
 
   // Recalculate with the same salt
-  const expectedSessionState = await calculateSessionState(clientId, origin, opBrowserState, parsed.salt);
+  const expectedSessionState = await calculateSessionState(
+    clientId,
+    origin,
+    opBrowserState,
+    parsed.salt
+  );
 
   // Compare the full session state values
   return sessionState === expectedSessionState;

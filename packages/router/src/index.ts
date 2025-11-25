@@ -29,7 +29,11 @@ app.use('*', logger());
 app.use('*', async (c, next) => {
   // Skip secure headers for /authorize endpoint (handled by op-auth worker with nonce-based CSP)
   // Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)
-  if (c.req.path === '/authorize' || c.req.path.startsWith('/authorize/') || c.req.path === '/session/check') {
+  if (
+    c.req.path === '/authorize' ||
+    c.req.path.startsWith('/authorize/') ||
+    c.req.path === '/session/check'
+  ) {
     return next();
   }
 
@@ -59,7 +63,13 @@ app.use(
     origin: '*',
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'If-Match', 'If-None-Match'],
-    exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset', 'ETag', 'Location'],
+    exposeHeaders: [
+      'X-RateLimit-Limit',
+      'X-RateLimit-Remaining',
+      'X-RateLimit-Reset',
+      'ETag',
+      'Location',
+    ],
     maxAge: 86400,
     credentials: true,
   })

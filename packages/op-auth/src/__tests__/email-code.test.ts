@@ -45,25 +45,16 @@ describe('Email Code Handlers', () => {
     });
 
     it('should validate email format', () => {
-      const validEmails = [
-        'test@example.com',
-        'user.name@domain.org',
-        'user+tag@example.co.uk',
-      ];
-      const invalidEmails = [
-        'invalid',
-        '@example.com',
-        'user@',
-        'user name@example.com',
-      ];
+      const validEmails = ['test@example.com', 'user.name@domain.org', 'user+tag@example.co.uk'];
+      const invalidEmails = ['invalid', '@example.com', 'user@', 'user name@example.com'];
 
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-      validEmails.forEach(email => {
+      validEmails.forEach((email) => {
         expect(emailRegex.test(email)).toBe(true);
       });
 
-      invalidEmails.forEach(email => {
+      invalidEmails.forEach((email) => {
         expect(emailRegex.test(email)).toBe(false);
       });
     });
@@ -139,7 +130,7 @@ describe('Email Code Handlers', () => {
       const requiredParams = ['code', 'email'];
       const requestBody = { code: '123456', email: 'test@example.com' };
 
-      requiredParams.forEach(param => {
+      requiredParams.forEach((param) => {
         expect(requestBody).toHaveProperty(param);
       });
     });
@@ -150,11 +141,11 @@ describe('Email Code Handlers', () => {
 
       const codeRegex = /^\d{6}$/;
 
-      validCodes.forEach(code => {
+      validCodes.forEach((code) => {
         expect(codeRegex.test(code)).toBe(true);
       });
 
-      invalidCodes.forEach(code => {
+      invalidCodes.forEach((code) => {
         expect(codeRegex.test(code)).toBe(false);
       });
     });
@@ -286,7 +277,7 @@ describe('Email Code Handlers', () => {
       const issuedAt = now - 301000; // 5 minutes + 1 second ago
       const OTP_TTL_MS = 300000;
 
-      const isExpired = (now - issuedAt) > OTP_TTL_MS;
+      const isExpired = now - issuedAt > OTP_TTL_MS;
       expect(isExpired).toBe(true);
     });
 
@@ -295,7 +286,7 @@ describe('Email Code Handlers', () => {
       const issuedAt = now - 299000; // Just under 5 minutes ago
       const OTP_TTL_MS = 300000;
 
-      const isExpired = (now - issuedAt) > OTP_TTL_MS;
+      const isExpired = now - issuedAt > OTP_TTL_MS;
       expect(isExpired).toBe(false);
     });
   });
@@ -383,5 +374,7 @@ describe('Email Code Handlers', () => {
 
 // Helper function for tests
 function generateMockCode(): string {
-  return Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+  return Math.floor(Math.random() * 1000000)
+    .toString()
+    .padStart(6, '0');
 }

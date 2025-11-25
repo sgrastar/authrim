@@ -332,12 +332,12 @@ export function validateResponseType(responseType: string | undefined): Validati
 
   // Supported response types per OIDC Core 3.3 (Hybrid Flow)
   const supportedResponseTypes = [
-    'code',                    // Authorization Code Flow
-    'id_token',                // Implicit Flow (ID Token only)
-    'id_token token',          // Implicit Flow (ID Token + Access Token)
-    'code id_token',           // Hybrid Flow 1
-    'code token',              // Hybrid Flow 2
-    'code id_token token',     // Hybrid Flow 3
+    'code', // Authorization Code Flow
+    'id_token', // Implicit Flow (ID Token only)
+    'id_token token', // Implicit Flow (ID Token + Access Token)
+    'code id_token', // Hybrid Flow 1
+    'code token', // Hybrid Flow 2
+    'code id_token token', // Hybrid Flow 3
   ];
 
   if (!supportedResponseTypes.includes(responseType)) {

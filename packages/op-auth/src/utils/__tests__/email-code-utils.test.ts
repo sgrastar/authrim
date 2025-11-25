@@ -76,25 +76,67 @@ describe('Email Code Utilities', () => {
     const testSecret = 'test-secret-key';
 
     it('should generate a hex string hash', async () => {
-      const hash = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, testSecret);
+      const hash = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
       expect(hash).toMatch(/^[a-f0-9]{64}$/); // SHA-256 produces 64 hex chars
     });
 
     it('should produce consistent hashes for same inputs', async () => {
-      const hash1 = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, testSecret);
-      const hash2 = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, testSecret);
+      const hash1 = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
+      const hash2 = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
       expect(hash1).toBe(hash2);
     });
 
     it('should produce different hashes for different codes', async () => {
-      const hash1 = await hashEmailCode('123456', testEmail, testSessionId, testIssuedAt, testSecret);
-      const hash2 = await hashEmailCode('654321', testEmail, testSessionId, testIssuedAt, testSecret);
+      const hash1 = await hashEmailCode(
+        '123456',
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
+      const hash2 = await hashEmailCode(
+        '654321',
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
       expect(hash1).not.toBe(hash2);
     });
 
     it('should produce different hashes for different emails', async () => {
-      const hash1 = await hashEmailCode(testCode, 'test1@example.com', testSessionId, testIssuedAt, testSecret);
-      const hash2 = await hashEmailCode(testCode, 'test2@example.com', testSessionId, testIssuedAt, testSecret);
+      const hash1 = await hashEmailCode(
+        testCode,
+        'test1@example.com',
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
+      const hash2 = await hashEmailCode(
+        testCode,
+        'test2@example.com',
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
       expect(hash1).not.toBe(hash2);
     });
 
@@ -105,20 +147,56 @@ describe('Email Code Utilities', () => {
     });
 
     it('should produce different hashes for different timestamps', async () => {
-      const hash1 = await hashEmailCode(testCode, testEmail, testSessionId, 1700000000000, testSecret);
-      const hash2 = await hashEmailCode(testCode, testEmail, testSessionId, 1700000001000, testSecret);
+      const hash1 = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        1700000000000,
+        testSecret
+      );
+      const hash2 = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        1700000001000,
+        testSecret
+      );
       expect(hash1).not.toBe(hash2);
     });
 
     it('should produce different hashes for different secrets', async () => {
-      const hash1 = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, 'secret-1');
-      const hash2 = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, 'secret-2');
+      const hash1 = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        'secret-1'
+      );
+      const hash2 = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        'secret-2'
+      );
       expect(hash1).not.toBe(hash2);
     });
 
     it('should normalize email to lowercase', async () => {
-      const hash1 = await hashEmailCode(testCode, 'TEST@EXAMPLE.COM', testSessionId, testIssuedAt, testSecret);
-      const hash2 = await hashEmailCode(testCode, 'test@example.com', testSessionId, testIssuedAt, testSecret);
+      const hash1 = await hashEmailCode(
+        testCode,
+        'TEST@EXAMPLE.COM',
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
+      const hash2 = await hashEmailCode(
+        testCode,
+        'test@example.com',
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
       expect(hash1).toBe(hash2);
     });
   });
@@ -131,51 +209,155 @@ describe('Email Code Utilities', () => {
     const testSecret = 'test-secret-key';
 
     it('should return true for valid code', async () => {
-      const hash = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, testSecret);
-      const isValid = await verifyEmailCodeHash(testCode, testEmail, testSessionId, testIssuedAt, hash, testSecret);
+      const hash = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
+      const isValid = await verifyEmailCodeHash(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        hash,
+        testSecret
+      );
       expect(isValid).toBe(true);
     });
 
     it('should return false for invalid code', async () => {
-      const hash = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, testSecret);
-      const isValid = await verifyEmailCodeHash('000000', testEmail, testSessionId, testIssuedAt, hash, testSecret);
+      const hash = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
+      const isValid = await verifyEmailCodeHash(
+        '000000',
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        hash,
+        testSecret
+      );
       expect(isValid).toBe(false);
     });
 
     it('should return false for wrong email', async () => {
-      const hash = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, testSecret);
-      const isValid = await verifyEmailCodeHash(testCode, 'wrong@example.com', testSessionId, testIssuedAt, hash, testSecret);
+      const hash = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
+      const isValid = await verifyEmailCodeHash(
+        testCode,
+        'wrong@example.com',
+        testSessionId,
+        testIssuedAt,
+        hash,
+        testSecret
+      );
       expect(isValid).toBe(false);
     });
 
     it('should return false for wrong session ID', async () => {
-      const hash = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, testSecret);
-      const isValid = await verifyEmailCodeHash(testCode, testEmail, 'wrong-session', testIssuedAt, hash, testSecret);
+      const hash = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
+      const isValid = await verifyEmailCodeHash(
+        testCode,
+        testEmail,
+        'wrong-session',
+        testIssuedAt,
+        hash,
+        testSecret
+      );
       expect(isValid).toBe(false);
     });
 
     it('should return false for wrong timestamp', async () => {
-      const hash = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, testSecret);
-      const isValid = await verifyEmailCodeHash(testCode, testEmail, testSessionId, testIssuedAt + 1000, hash, testSecret);
+      const hash = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
+      const isValid = await verifyEmailCodeHash(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt + 1000,
+        hash,
+        testSecret
+      );
       expect(isValid).toBe(false);
     });
 
     it('should return false for wrong secret', async () => {
-      const hash = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, testSecret);
-      const isValid = await verifyEmailCodeHash(testCode, testEmail, testSessionId, testIssuedAt, hash, 'wrong-secret');
+      const hash = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
+      const isValid = await verifyEmailCodeHash(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        hash,
+        'wrong-secret'
+      );
       expect(isValid).toBe(false);
     });
 
     it('should handle email case insensitivity in verification', async () => {
-      const hash = await hashEmailCode(testCode, 'TEST@EXAMPLE.COM', testSessionId, testIssuedAt, testSecret);
-      const isValid = await verifyEmailCodeHash(testCode, 'test@example.com', testSessionId, testIssuedAt, hash, testSecret);
+      const hash = await hashEmailCode(
+        testCode,
+        'TEST@EXAMPLE.COM',
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
+      const isValid = await verifyEmailCodeHash(
+        testCode,
+        'test@example.com',
+        testSessionId,
+        testIssuedAt,
+        hash,
+        testSecret
+      );
       expect(isValid).toBe(true);
     });
 
     it('should return false for tampered hash', async () => {
-      const hash = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, testSecret);
+      const hash = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
       const tamperedHash = hash.substring(0, 63) + (hash[63] === '0' ? '1' : '0');
-      const isValid = await verifyEmailCodeHash(testCode, testEmail, testSessionId, testIssuedAt, tamperedHash, testSecret);
+      const isValid = await verifyEmailCodeHash(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        tamperedHash,
+        testSecret
+      );
       expect(isValid).toBe(false);
     });
   });
@@ -213,7 +395,13 @@ describe('Email Code Utilities', () => {
       const testIssuedAt = 1700000000000;
       const testSecret = 'test-secret-key';
 
-      const hash = await hashEmailCode(testCode, testEmail, testSessionId, testIssuedAt, testSecret);
+      const hash = await hashEmailCode(
+        testCode,
+        testEmail,
+        testSessionId,
+        testIssuedAt,
+        testSecret
+      );
 
       // Test multiple verification attempts with different wrong codes
       const wrongCodes = ['000000', '100000', '120000', '123000', '123400', '123450'];
@@ -222,7 +410,14 @@ describe('Email Code Utilities', () => {
       for (const wrongCode of wrongCodes) {
         const start = performance.now();
         for (let i = 0; i < 100; i++) {
-          await verifyEmailCodeHash(wrongCode, testEmail, testSessionId, testIssuedAt, hash, testSecret);
+          await verifyEmailCodeHash(
+            wrongCode,
+            testEmail,
+            testSessionId,
+            testIssuedAt,
+            hash,
+            testSecret
+          );
         }
         const end = performance.now();
         times.push(end - start);
@@ -230,7 +425,7 @@ describe('Email Code Utilities', () => {
 
       // All times should be relatively similar (within reasonable variance)
       const avgTime = times.reduce((a, b) => a + b, 0) / times.length;
-      const maxDeviation = Math.max(...times.map(t => Math.abs(t - avgTime)));
+      const maxDeviation = Math.max(...times.map((t) => Math.abs(t - avgTime)));
 
       // The maximum deviation should be less than 50% of average time
       // This is a rough check - timing attacks are hard to detect in unit tests

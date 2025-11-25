@@ -141,9 +141,9 @@ export async function createMockEnv(): Promise<Env> {
     }
   }
 
-  function createDurableObjectNamespace<T extends { fetch: (input: RequestInfo, init?: RequestInit) => Promise<Response> | Response }>(
-    factory: () => T
-  ): DurableObjectNamespace {
+  function createDurableObjectNamespace<
+    T extends { fetch: (input: RequestInfo, init?: RequestInit) => Promise<Response> | Response },
+  >(factory: () => T): DurableObjectNamespace {
     const objects = new Map<string, T>();
     return {
       idFromName(name: string) {
@@ -380,7 +380,10 @@ export async function createMockEnv(): Promise<Env> {
   }
 
   class MockRefreshTokenRotator {
-    private families = new Map<string, { token: string; userId: string; clientId: string; scope: string; expiresAt: number }>();
+    private families = new Map<
+      string,
+      { token: string; userId: string; clientId: string; scope: string; expiresAt: number }
+    >();
 
     async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
       const request = input instanceof Request ? input : new Request(input, init);

@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  generateRSAKeyPair,
-  exportPublicJWK,
-  exportPrivateKey,
-  generateKeySet,
-} from '../keys';
+import { generateRSAKeyPair, exportPublicJWK, exportPrivateKey, generateKeySet } from '../keys';
 
 describe('Key Generation Utilities', () => {
   describe('generateRSAKeyPair', () => {

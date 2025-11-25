@@ -56,10 +56,30 @@ describe('OIDC Session State Utilities', () => {
     });
 
     it('should produce different results for different inputs', async () => {
-      const sessionState1 = await calculateSessionState('client1', 'https://rp1.com', 'session1', 'salt1');
-      const sessionState2 = await calculateSessionState('client2', 'https://rp1.com', 'session1', 'salt1');
-      const sessionState3 = await calculateSessionState('client1', 'https://rp2.com', 'session1', 'salt1');
-      const sessionState4 = await calculateSessionState('client1', 'https://rp1.com', 'session2', 'salt1');
+      const sessionState1 = await calculateSessionState(
+        'client1',
+        'https://rp1.com',
+        'session1',
+        'salt1'
+      );
+      const sessionState2 = await calculateSessionState(
+        'client2',
+        'https://rp1.com',
+        'session1',
+        'salt1'
+      );
+      const sessionState3 = await calculateSessionState(
+        'client1',
+        'https://rp2.com',
+        'session1',
+        'salt1'
+      );
+      const sessionState4 = await calculateSessionState(
+        'client1',
+        'https://rp1.com',
+        'session2',
+        'salt1'
+      );
 
       expect(sessionState1).not.toBe(sessionState2);
       expect(sessionState1).not.toBe(sessionState3);
@@ -150,8 +170,18 @@ describe('OIDC Session State Utilities', () => {
       const opBrowserState = 'session-123';
       const salt = 'fixed-salt';
 
-      const sessionState = await calculateSessionState('correct-client', origin, opBrowserState, salt);
-      const isValid = await validateSessionState(sessionState, 'wrong-client', origin, opBrowserState);
+      const sessionState = await calculateSessionState(
+        'correct-client',
+        origin,
+        opBrowserState,
+        salt
+      );
+      const isValid = await validateSessionState(
+        sessionState,
+        'wrong-client',
+        origin,
+        opBrowserState
+      );
 
       expect(isValid).toBe(false);
     });
@@ -161,8 +191,18 @@ describe('OIDC Session State Utilities', () => {
       const opBrowserState = 'session-123';
       const salt = 'fixed-salt';
 
-      const sessionState = await calculateSessionState(clientId, 'https://correct.com', opBrowserState, salt);
-      const isValid = await validateSessionState(sessionState, clientId, 'https://wrong.com', opBrowserState);
+      const sessionState = await calculateSessionState(
+        clientId,
+        'https://correct.com',
+        opBrowserState,
+        salt
+      );
+      const isValid = await validateSessionState(
+        sessionState,
+        clientId,
+        'https://wrong.com',
+        opBrowserState
+      );
 
       expect(isValid).toBe(false);
     });
@@ -193,7 +233,12 @@ describe('OIDC Session State Utilities', () => {
       const sessionState = await calculateSessionState(clientId, origin, opBrowserState, salt);
       const tamperedSessionState = 'tamperedhash.' + sessionState.split('.').pop();
 
-      const isValid = await validateSessionState(tamperedSessionState, clientId, origin, opBrowserState);
+      const isValid = await validateSessionState(
+        tamperedSessionState,
+        clientId,
+        origin,
+        opBrowserState
+      );
 
       expect(isValid).toBe(false);
     });
@@ -295,7 +340,12 @@ describe('OIDC Session State Utilities', () => {
 
 describe('Session State Format Compliance', () => {
   it('should produce session state in format: hash.salt', async () => {
-    const sessionState = await calculateSessionState('client', 'https://origin.com', 'session', 'salt');
+    const sessionState = await calculateSessionState(
+      'client',
+      'https://origin.com',
+      'session',
+      'salt'
+    );
     const parts = sessionState.split('.');
 
     // Should have at least 2 parts (hash.salt)
@@ -306,7 +356,12 @@ describe('Session State Format Compliance', () => {
   });
 
   it('should produce base64url-encoded hash', async () => {
-    const sessionState = await calculateSessionState('client', 'https://origin.com', 'session', 'salt');
+    const sessionState = await calculateSessionState(
+      'client',
+      'https://origin.com',
+      'session',
+      'salt'
+    );
     const hash = sessionState.split('.').slice(0, -1).join('.');
 
     // Base64url should not contain +, /, or =

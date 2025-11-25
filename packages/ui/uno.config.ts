@@ -60,39 +60,39 @@ export default defineConfig({
 			success: {
 				50: '#ECFDF5',
 				100: '#D1FAE5',
-			300: '#6EE7B7',
+				300: '#6EE7B7',
 				500: '#10B981',
 				600: '#059669',
 				700: '#047857',
-			800: '#065F46'
+				800: '#065F46'
 			},
 			warning: {
 				50: '#FFFBEB',
 				100: '#FEF3C7',
-			300: '#FCD34D',
+				300: '#FCD34D',
 				500: '#F59E0B',
 				600: '#D97706',
 				700: '#B45309',
-			800: '#92400E'
+				800: '#92400E'
 			},
 			error: {
 				50: '#FEF2F2',
 				100: '#FEE2E2',
-			300: '#FCA5A5',
-			400: '#F87171',
+				300: '#FCA5A5',
+				400: '#F87171',
 				500: '#EF4444',
 				600: '#DC2626',
 				700: '#B91C1C',
-			800: '#991B1B'
+				800: '#991B1B'
 			},
 			info: {
 				50: '#EFF6FF',
 				100: '#DBEAFE',
-			300: '#93C5FD',
+				300: '#93C5FD',
 				500: '#3B82F6',
 				600: '#2563EB',
 				700: '#1D4ED8',
-			800: '#1E40AF'
+				800: '#1E40AF'
 			}
 		},
 		fontFamily: {
@@ -142,7 +142,8 @@ export default defineConfig({
 		// Input shortcuts
 		'input-base':
 			'w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 bg-white focus:outline-none focus:ring-2 focus:ring-primary-700 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed dark:bg-gray-800 dark:border-gray-600 dark:text-white dark:placeholder-gray-500 dark:focus:ring-primary-600 dark:disabled:bg-gray-700',
-		'input-error': 'input-base border-2 border-error-500 focus:ring-error-500 dark:border-error-400 dark:focus:ring-error-400',
+		'input-error':
+			'input-base border-2 border-error-500 focus:ring-error-500 dark:border-error-400 dark:focus:ring-error-400',
 
 		// Card shortcuts
 		card: 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm p-6',

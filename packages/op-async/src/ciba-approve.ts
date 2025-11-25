@@ -30,7 +30,8 @@ import { sendPingNotification } from '@authrim/shared/notifications';
 export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
   try {
     // Get client IP for rate limiting
-    const clientIp = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || 'unknown';
+    const clientIp =
+      c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || 'unknown';
 
     // TODO: Check rate limiting if needed
 

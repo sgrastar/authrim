@@ -162,7 +162,9 @@ describe('SCIM Filter Parser', () => {
     });
 
     it('should validate complex filter', () => {
-      const result = validateScimFilter('(userName eq "john" or userName eq "jane") and active eq true');
+      const result = validateScimFilter(
+        '(userName eq "john" or userName eq "jane") and active eq true'
+      );
       expect(result.valid).toBe(true);
     });
   });
