@@ -116,7 +116,7 @@
 			<h1 class="text-3xl font-bold">SCIM Tokens</h1>
 			<p class="mt-2 text-gray-600">Manage SCIM 2.0 provisioning tokens for user synchronization</p>
 		</div>
-		<Button on:click={() => (showCreateDialog = true)}>
+		<Button onclick={() => (showCreateDialog = true)}>
 			<svg class="mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
 			</svg>
@@ -125,11 +125,11 @@
 	</div>
 
 	{#if error}
-		<Alert type="error" class="mb-4">{error}</Alert>
+		<Alert variant="error" class="mb-4">{error}</Alert>
 	{/if}
 
 	{#if successMessage}
-		<Alert type="success" class="mb-4">{successMessage}</Alert>
+		<Alert variant="success" class="mb-4">{successMessage}</Alert>
 	{/if}
 
 	<Card>
@@ -156,7 +156,7 @@
 					<h3 class="mt-2 text-sm font-medium text-gray-900">No SCIM tokens</h3>
 					<p class="mt-1 text-sm text-gray-500">Get started by creating a new SCIM token.</p>
 					<div class="mt-6">
-						<Button on:click={() => (showCreateDialog = true)}>Create Token</Button>
+						<Button onclick={() => (showCreateDialog = true)}>Create Token</Button>
 					</div>
 				</div>
 			{:else}
@@ -223,7 +223,7 @@
 									<Button
 										variant="danger"
 										size="sm"
-										on:click={() => {
+										onclick={() => {
 											tokenToDelete = token;
 											showDeleteDialog = true;
 										}}
@@ -296,14 +296,14 @@
 		</div>
 	</div>
 	<div slot="footer" class="flex justify-end space-x-3">
-		<Button variant="secondary" on:click={() => (showCreateDialog = false)}>Cancel</Button>
-		<Button on:click={createToken}>Create Token</Button>
+		<Button variant="secondary" onclick={() => (showCreateDialog = false)}>Cancel</Button>
+		<Button onclick={createToken}>Create Token</Button>
 	</div>
 </Dialog>
 
 <!-- Show Token Dialog -->
 <Dialog bind:open={showTokenDialog} title="SCIM Token Created">
-	<Alert type="warning" class="mb-4">
+	<Alert variant="warning" class="mb-4">
 		This token will only be shown once. Make sure to copy it now!
 	</Alert>
 	<div class="space-y-4">
@@ -311,7 +311,7 @@
 			<label for="created-token" class="block text-sm font-medium text-gray-700 mb-2">Token</label>
 			<div class="flex space-x-2">
 				<Input id="created-token" value={createdToken} readonly class="flex-1 font-mono text-sm" />
-				<Button variant="secondary" on:click={() => copyToClipboard(createdToken)}>
+				<Button variant="secondary" onclick={() => copyToClipboard(createdToken)}>
 					Copy
 				</Button>
 			</div>
@@ -325,7 +325,7 @@
 		</div>
 	</div>
 	<div slot="footer" class="flex justify-end">
-		<Button on:click={() => { showTokenDialog = false; createdToken = ''; }}>
+		<Button onclick={() => { showTokenDialog = false; createdToken = ''; }}>
 			Done
 		</Button>
 	</div>
@@ -340,12 +340,12 @@
 		</p>
 	{/if}
 	<div slot="footer" class="flex justify-end space-x-3">
-		<Button variant="secondary" on:click={() => { showDeleteDialog = false; tokenToDelete = null; }}>
+		<Button variant="secondary" onclick={() => { showDeleteDialog = false; tokenToDelete = null; }}>
 			Cancel
 		</Button>
 		<Button
 			variant="danger"
-			on:click={() => tokenToDelete && revokeToken(tokenToDelete.tokenHash)}
+			onclick={() => tokenToDelete && revokeToken(tokenToDelete.tokenHash)}
 		>
 			Revoke Token
 		</Button>

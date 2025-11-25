@@ -21,7 +21,7 @@
 		states: { value }
 	} = createPinInput({
 		placeholder: '0',
-		type: 'alphanumeric',
+		type: 'text',
 		defaultValue: []
 	});
 
@@ -162,13 +162,13 @@
 
 		<!-- Alerts -->
 		{#if error}
-			<Alert type="error" class="mb-6">
+			<Alert variant="error" class="mb-6">
 				{error}
 			</Alert>
 		{/if}
 
 		{#if success}
-			<Alert type="success" class="mb-6">
+			<Alert variant="success" class="mb-6">
 				{success}
 			</Alert>
 		{/if}
@@ -222,7 +222,7 @@
 					{/if}
 
 					<input
-						use:melt={$input(i)}
+						use:melt={$input()}
 						class="w-12 h-14 text-center text-xl font-bold border-2 border-gray-300 dark:border-gray-600 rounded-lg
 						       focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20
 						       bg-white dark:bg-gray-800 text-gray-900 dark:text-white

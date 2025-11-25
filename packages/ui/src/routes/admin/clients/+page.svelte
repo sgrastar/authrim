@@ -106,14 +106,16 @@
 	<!-- Search -->
 	<Card>
 		<div class="max-w-md">
+	{#snippet searchIcon()}
+				<div class="i-heroicons-magnifying-glass h-5 w-5 text-gray-400"></div>
+			{/snippet}
 			<Input
 				type="text"
 				placeholder={$LL.admin_clients_search()}
 				bind:value={searchQuery}
 				oninput={handleSearch}
-			>
-				<div slot="icon" class="i-heroicons-magnifying-glass h-5 w-5"></div>
-			</Input>
+				icon={searchIcon}
+			/>
 		</div>
 	</Card>
 

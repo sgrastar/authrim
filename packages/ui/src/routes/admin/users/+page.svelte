@@ -7,10 +7,10 @@
 	interface User {
 		id: string;
 		email: string;
-		name: string | null;
+		name?: string | null;
 		email_verified: boolean;
 		created_at: number;
-		last_login_at: number | null;
+		last_login_at?: number | null;
 	}
 
 	let users: User[] = [];
@@ -72,7 +72,7 @@
 		loadUsers();
 	}
 
-	function formatDate(timestamp: number | null): string {
+	function formatDate(timestamp: number | null | undefined): string {
 		if (!timestamp) return 'Never';
 		return new Date(timestamp * 1000).toLocaleDateString();
 	}
@@ -137,14 +137,16 @@
 		<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 			<!-- Search -->
 			<div class="flex-1 max-w-md">
+				{#snippet searchIcon()}
+					<div class="i-heroicons-magnifying-glass h-5 w-5 text-gray-400"></div>
+				{/snippet}
 				<Input
 					type="text"
 					placeholder={$LL.admin_users_search()}
 					bind:value={searchQuery}
 					oninput={handleSearch}
-				>
-					<div slot="icon" class="i-heroicons-magnifying-glass h-5 w-5"></div>
-				</Input>
+					icon={searchIcon}
+				/>
 			</div>
 
 			<!-- Filter -->

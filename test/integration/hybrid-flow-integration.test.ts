@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { parseJwt } from '../../packages/shared/src/utils/jwt';
+import { parseJwt } from '@authrim/shared/utils/jwt';
 
 /**
  * Hybrid Flow Integration Tests

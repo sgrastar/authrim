@@ -9,13 +9,15 @@
 		elements: { overlay, content, portalled, close },
 		states: { open: dialogOpen }
 	} = createDialog({
-		open: { set: (value: boolean) => { open = value; } },
-		defaultOpen: open
+		defaultOpen: open,
+		forceVisible: true
 	});
 
-	$: if (open !== $dialogOpen) {
-		dialogOpen.set(open);
-	}
+	// Sync external open prop with internal state
+	$: dialogOpen.set(open);
+
+	// Sync internal state changes back to external prop
+	$: open = $dialogOpen;
 </script>
 
 {#if $dialogOpen}

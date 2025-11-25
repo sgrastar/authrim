@@ -4,8 +4,8 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import type { Env } from '../packages/shared/src/types/env';
-import { rateLimitMiddleware, RateLimitProfiles } from '../packages/shared/src/middleware/rate-limit';
+import type { Env } from '../../types/env';
+import { rateLimitMiddleware, RateLimitProfiles } from '../rate-limit';
 
 // Mock environment
 const mockEnv: Env = {

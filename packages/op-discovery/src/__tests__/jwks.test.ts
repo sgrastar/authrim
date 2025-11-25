@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
 import { Hono } from 'hono';
-import { jwksHandler } from '../packages/op-discovery/src/jwks';
-import type { Env } from '../packages/shared/src/types/env';
-import { generateKeySet } from '../packages/shared/src/utils/keys';
+import { jwksHandler } from '../jwks';
+import type { Env } from '@authrim/shared/types/env';
+import { generateKeySet } from '@authrim/shared/utils/keys';
 
 // Store generated test key
 let testPrivateKey: string;
@@ -53,7 +53,7 @@ describe('JWKS Handler', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('Content-Type')).toContain('application/json');
 
-      const jwks = await response.json();
+      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
       expect(jwks).toHaveProperty('keys');
       expect(Array.isArray(jwks.keys)).toBe(true);
       expect(jwks.keys.length).toBe(1);
@@ -70,7 +70,7 @@ describe('JWKS Handler', () => {
       );
 
       expect(response.status).toBe(200);
-      const jwks = await response.json();
+      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
       expect(jwks).toHaveProperty('keys');
       expect(jwks.keys).toEqual([]);
     });
@@ -85,7 +85,7 @@ describe('JWKS Handler', () => {
         env
       );
 
-      const jwks = await response.json();
+      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
       const jwk = jwks.keys[0];
 
       expect(jwk).toHaveProperty('kty', 'RSA');
@@ -111,7 +111,7 @@ describe('JWKS Handler', () => {
         env
       );
 
-      const jwks = await response.json();
+      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
       const jwk = jwks.keys[0];
 
       expect(jwk.kid).toBe('custom-key-id-123');
@@ -128,7 +128,7 @@ describe('JWKS Handler', () => {
         env
       );
 
-      const jwks = await response.json();
+      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
       const jwk = jwks.keys[0];
 
       expect(jwk.kid).toBe('default');
@@ -179,12 +179,12 @@ describe('JWKS Handler', () => {
         env
       );
 
-      const jwks = await response.json();
+      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
       const jwk = jwks.keys[0];
 
       expect(jwk.n).toBeDefined();
       expect(typeof jwk.n).toBe('string');
-      expect(jwk.n.length).toBeGreaterThan(0);
+      expect((jwk.n as string).length).toBeGreaterThan(0);
     });
 
     it('should include RSA exponent (e)', async () => {
@@ -197,13 +197,13 @@ describe('JWKS Handler', () => {
         env
       );
 
-      const jwks = await response.json();
+      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
       const jwk = jwks.keys[0];
 
       expect(jwk.e).toBeDefined();
       expect(typeof jwk.e).toBe('string');
       // RSA exponent is typically "AQAB" (65537 in base64url)
-      expect(jwk.e.length).toBeGreaterThan(0);
+      expect((jwk.e as string).length).toBeGreaterThan(0);
     });
 
     it('should not include private key material', async () => {
@@ -216,7 +216,7 @@ describe('JWKS Handler', () => {
         env
       );
 
-      const jwks = await response.json();
+      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
       const jwk = jwks.keys[0];
 
       // Private JWK fields should not be present
@@ -284,7 +284,7 @@ describe('JWKS Handler', () => {
         env
       );
 
-      const jwks = await response.json();
+      const jwks = (await response.json()) as { keys: Record<string, unknown>[] };
 
       // JWKS must have "keys" array
       expect(jwks).toHaveProperty('keys');

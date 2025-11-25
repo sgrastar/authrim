@@ -3,7 +3,7 @@
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
 	interface Props extends HTMLButtonAttributes {
-		variant?: 'primary' | 'secondary' | 'ghost';
+		variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
 		size?: 'sm' | 'md' | 'lg';
 		loading?: boolean;
 		children: Snippet;
@@ -23,7 +23,8 @@
 	const variantClasses = {
 		primary: 'btn-primary',
 		secondary: 'btn-secondary',
-		ghost: 'btn-ghost'
+		ghost: 'btn-ghost',
+		danger: 'btn-danger'
 	};
 
 	const sizeClasses = {

@@ -10,7 +10,7 @@ import {
   validateSectorIdentifierConsistency,
   determineEffectiveSectorIdentifier,
   generateSubjectIdentifier,
-} from '../src/utils/pairwise';
+} from '../pairwise';
 
 describe('Pairwise Subject Identifier Utilities', () => {
   describe('generatePairwiseSubject', () => {

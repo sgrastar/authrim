@@ -12,14 +12,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SessionStore } from '../../packages/shared/src/durable-objects/SessionStore';
-import { AuthorizationCodeStore } from '../../packages/shared/src/durable-objects/AuthorizationCodeStore';
-import { RefreshTokenRotator } from '../../packages/shared/src/durable-objects/RefreshTokenRotator';
-import type { Env } from '../../packages/shared/src/types/env';
+import { SessionStore } from '@authrim/shared/durable-objects/SessionStore';
+import { AuthorizationCodeStore } from '@authrim/shared/durable-objects/AuthorizationCodeStore';
+import { RefreshTokenRotator } from '@authrim/shared/durable-objects/RefreshTokenRotator';
+import type { Env } from '@authrim/shared/types/env';
 
 // Mock DurableObjectState for testing
 class MockDurableObjectState implements DurableObjectState {
-  private storage = new Map<string, unknown>();
+  private _storageMap = new Map<string, unknown>();
   id: DurableObjectId = {
     toString: () => 'test-id',
     equals: () => false,
@@ -36,16 +36,16 @@ class MockDurableObjectState implements DurableObjectState {
 
   storage = {
     get: async <T = unknown>(key: string): Promise<T | undefined> => {
-      return this.storage.get(key) as T | undefined;
+      return this._storageMap.get(key) as T | undefined;
     },
     put: async <T = unknown>(key: string, value: T): Promise<void> => {
-      this.storage.set(key, value);
+      this._storageMap.set(key, value);
     },
     delete: async (key: string): Promise<boolean> => {
-      return this.storage.delete(key);
+      return this._storageMap.delete(key);
     },
     list: async (): Promise<Map<string, unknown>> => {
-      return new Map(this.storage);
+      return new Map(this._storageMap);
     },
     transaction: async <T>(closure: () => Promise<T>): Promise<T> => {
       return closure();
@@ -63,36 +63,39 @@ class MockD1Database implements D1Database {
 
   prepare(query: string): D1PreparedStatement {
     const bindings: unknown[] = [];
+    const self = this;
 
-    return {
-      bind: (...values: unknown[]) => {
+    const statement: D1PreparedStatement = {
+      bind(...values: unknown[]) {
         bindings.push(...values);
-        return this;
+        return statement; // Return statement itself for chaining
       },
-      first: async <T = unknown>(): Promise<T | null> => {
+      async first<T = unknown>(): Promise<T | null> {
         // Simple mock implementation for session retrieval
         if (query.includes('SELECT') && query.includes('sessions')) {
-          const sessions = this.data.get('sessions') || [];
+          const sessions = self.data.get('sessions') || [];
           return (sessions[0] as T) || null;
         }
         return null;
       },
-      run: async (): Promise<D1Result> => {
+      async run(): Promise<D1Result> {
         // Mock INSERT/UPDATE/DELETE operations
         return { success: true, meta: {} };
       },
-      all: async <T = unknown>(): Promise<D1Result<T>> => {
-        const results = this.data.get('sessions') || [];
+      async all<T = unknown>(): Promise<D1Result<T>> {
+        const results = self.data.get('sessions') || [];
         return {
           success: true,
           results: results as T[],
           meta: {},
         };
       },
-      raw: async <T = unknown[]>(): Promise<T[]> => {
+      async raw<T = unknown[]>(): Promise<T[]> {
         return [] as T[];
       },
     } as D1PreparedStatement;
+
+    return statement;
   }
 
   dump(): Promise<ArrayBuffer> {

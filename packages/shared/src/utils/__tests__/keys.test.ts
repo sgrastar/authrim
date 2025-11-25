@@ -4,7 +4,7 @@ import {
   exportPublicJWK,
   exportPrivateKey,
   generateKeySet,
-} from '../packages/shared/src/utils/keys';
+} from '../keys';
 
 describe('Key Generation Utilities', () => {
   describe('generateRSAKeyPair', () => {

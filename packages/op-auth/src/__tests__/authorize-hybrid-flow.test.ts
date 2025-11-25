@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { parseJwt } from '../../packages/shared/src/utils/jwt';
+import { parseToken } from '@authrim/shared/utils/jwt';
 
 /**
  * Hybrid Flow Tests
@@ -107,7 +107,7 @@ describe('Hybrid Flow - OIDC Core 3.3', () => {
       expect(params.access_token).toBeUndefined();
 
       // Decode and verify ID token
-      const idTokenPayload = parseJwt(params.id_token);
+      const idTokenPayload = parseToken(params.id_token);
       expect(idTokenPayload.nonce).toBe(TEST_NONCE);
       expect(idTokenPayload.c_hash).toBeTruthy(); // c_hash must be present
       expect(idTokenPayload.at_hash).toBeUndefined(); // at_hash should not be present
@@ -180,7 +180,7 @@ describe('Hybrid Flow - OIDC Core 3.3', () => {
       expect(params.state).toBe(TEST_STATE);
 
       // Decode and verify ID token
-      const idTokenPayload = parseJwt(params.id_token);
+      const idTokenPayload = parseToken(params.id_token);
       expect(idTokenPayload.nonce).toBe(TEST_NONCE);
       expect(idTokenPayload.c_hash).toBeTruthy(); // c_hash must be present
       expect(idTokenPayload.at_hash).toBeTruthy(); // at_hash must be present
@@ -196,7 +196,7 @@ describe('Hybrid Flow - OIDC Core 3.3', () => {
       const params = parseFragment(location);
 
       // Verify ID token structure
-      const idTokenPayload = parseJwt(params.id_token);
+      const idTokenPayload = parseToken(params.id_token);
       expect(idTokenPayload.iss).toBeTruthy();
       expect(idTokenPayload.sub).toBeTruthy();
       expect(idTokenPayload.aud).toBe(TEST_CLIENT_ID);
@@ -205,7 +205,7 @@ describe('Hybrid Flow - OIDC Core 3.3', () => {
       expect(idTokenPayload.auth_time).toBeTruthy();
 
       // Verify access token structure
-      const accessTokenPayload = parseJwt(params.access_token);
+      const accessTokenPayload = parseToken(params.access_token);
       expect(accessTokenPayload.iss).toBeTruthy();
       expect(accessTokenPayload.sub).toBeTruthy();
       expect(accessTokenPayload.aud).toBeTruthy();
@@ -253,7 +253,7 @@ describe('Hybrid Flow - OIDC Core 3.3', () => {
 
       const location = response.headers.get('Location')!;
       const params = parseFragment(location);
-      const idTokenPayload = parseJwt(params.id_token);
+      const idTokenPayload = parseToken(params.id_token);
 
       expect(idTokenPayload.c_hash).toBeTruthy();
       expect(idTokenPayload.c_hash).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -267,7 +267,7 @@ describe('Hybrid Flow - OIDC Core 3.3', () => {
 
       const location = response.headers.get('Location')!;
       const params = parseFragment(location);
-      const idTokenPayload = parseJwt(params.id_token);
+      const idTokenPayload = parseToken(params.id_token);
 
       expect(idTokenPayload.at_hash).toBeTruthy();
       expect(idTokenPayload.at_hash).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -316,7 +316,7 @@ describe('Implicit Flow - OIDC Core 3.2', () => {
       expect(params.state).toBe(TEST_STATE);
 
       // Decode and verify ID token
-      const idTokenPayload = parseJwt(params.id_token);
+      const idTokenPayload = parseToken(params.id_token);
       expect(idTokenPayload.nonce).toBe(TEST_NONCE);
       expect(idTokenPayload.c_hash).toBeUndefined();
       expect(idTokenPayload.at_hash).toBeUndefined();
@@ -343,7 +343,7 @@ describe('Implicit Flow - OIDC Core 3.2', () => {
       expect(params.code).toBeUndefined();
 
       // Decode and verify ID token
-      const idTokenPayload = parseJwt(params.id_token);
+      const idTokenPayload = parseToken(params.id_token);
       expect(idTokenPayload.nonce).toBe(TEST_NONCE);
       expect(idTokenPayload.at_hash).toBeTruthy(); // at_hash must be present
       expect(idTokenPayload.c_hash).toBeUndefined();

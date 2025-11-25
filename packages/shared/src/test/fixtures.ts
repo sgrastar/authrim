@@ -5,8 +5,8 @@
  * for integration testing of OIDC flows.
  */
 
-import type { Env } from '@authrim/shared/types/env';
-import { generateSecureRandomString, generateCodeChallenge } from '@authrim/shared/utils/crypto';
+import type { Env } from '../types/env';
+import { generateSecureRandomString, generateCodeChallenge } from '../utils/crypto';
 
 /**
  * Mock client configuration
@@ -80,7 +80,7 @@ export async function createMockEnv(): Promise<Env> {
   // Generate a test key pair with unique key ID for each test
   // This prevents key caching issues in the userinfo handler
   const uniqueKeyId = `test-key-${Date.now()}-${generateSecureRandomString(8)}`;
-  const { generateKeySet } = await import('@authrim/shared/utils/keys');
+  const { generateKeySet } = await import('../utils/keys');
   const keySet = await generateKeySet(uniqueKeyId, 2048);
 
   const jsonResponse = (data: unknown, status = 200) =>

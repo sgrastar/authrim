@@ -15,7 +15,7 @@ export type Translations = RootTranslation
 
 type RootTranslation = {
 	/**
-	 * E​n​r​a​i
+	 * A​u​t​h​r​i​m
 	 */
 	app_title: string
 	/**
@@ -155,9 +155,9 @@ type RootTranslation = {
 	 */
 	login_continueWithPasskey: string
 	/**
-	 * S​e​n​d​ ​M​a​g​i​c​ ​L​i​n​k
+	 * S​e​n​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
 	 */
-	login_sendMagicLink: string
+	login_sendCode: string
 	/**
 	 * D​o​n​'​t​ ​h​a​v​e​ ​a​n​ ​a​c​c​o​u​n​t​?​ ​C​r​e​a​t​e​ ​o​n​e
 	 */
@@ -175,7 +175,7 @@ type RootTranslation = {
 	 */
 	register_title: string
 	/**
-	 * G​e​t​ ​s​t​a​r​t​e​d​ ​w​i​t​h​ ​E​n​r​a​i
+	 * G​e​t​ ​s​t​a​r​t​e​d​ ​w​i​t​h​ ​A​u​t​h​r​i​m
 	 */
 	register_subtitle: string
 	/**
@@ -183,9 +183,9 @@ type RootTranslation = {
 	 */
 	register_createWithPasskey: string
 	/**
-	 * S​i​g​n​ ​u​p​ ​w​i​t​h​ ​M​a​g​i​c​ ​L​i​n​k
+	 * S​i​g​n​ ​u​p​ ​w​i​t​h​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
 	 */
-	register_signupWithMagicLink: string
+	register_sendCode: string
 	/**
 	 * A​l​r​e​a​d​y​ ​h​a​v​e​ ​a​n​ ​a​c​c​o​u​n​t​?​ ​S​i​g​n​ ​i​n
 	 */
@@ -201,59 +201,55 @@ type RootTranslation = {
 	/**
 	 * C​h​e​c​k​ ​y​o​u​r​ ​e​m​a​i​l
 	 */
-	magicLink_sent_title: string
+	emailCode_title: string
 	/**
-	 * W​e​'​v​e​ ​s​e​n​t​ ​a​ ​m​a​g​i​c​ ​l​i​n​k​ ​t​o
+	 * W​e​'​v​e​ ​s​e​n​t​ ​a​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e​ ​t​o
 	 */
-	magicLink_sent_subtitle: string
+	emailCode_subtitle: string
 	/**
-	 * C​l​i​c​k​ ​t​h​e​ ​l​i​n​k​ ​i​n​ ​t​h​e​ ​e​m​a​i​l​ ​t​o​ ​s​i​g​n​ ​i​n​.​ ​T​h​e​ ​l​i​n​k​ ​w​i​l​l​ ​e​x​p​i​r​e​ ​i​n​ ​1​5​ ​m​i​n​u​t​e​s​.
+	 * E​n​t​e​r​ ​t​h​e​ ​6​-​d​i​g​i​t​ ​c​o​d​e​ ​f​r​o​m​ ​y​o​u​r​ ​e​m​a​i​l​.​ ​T​h​e​ ​c​o​d​e​ ​w​i​l​l​ ​e​x​p​i​r​e​ ​i​n​ ​5​ ​m​i​n​u​t​e​s​.
 	 */
-	magicLink_sent_instructions: string
+	emailCode_instructions: string
 	/**
-	 * R​e​s​e​n​d​ ​e​m​a​i​l
+	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​C​o​d​e
 	 */
-	magicLink_sent_resendButton: string
+	emailCode_codeLabel: string
+	/**
+	 * V​e​r​i​f​y
+	 */
+	emailCode_verifyButton: string
+	/**
+	 * R​e​s​e​n​d​ ​c​o​d​e
+	 */
+	emailCode_resendButton: string
 	/**
 	 * R​e​s​e​n​d​ ​i​n​ ​{​s​e​c​o​n​d​s​}​s
-	 * @param {number} seconds
+	 * @param {unknown} seconds
 	 */
-	magicLink_sent_resendTimer: RequiredParams<'seconds'>
+	emailCode_resendTimer: RequiredParams<'seconds'>
 	/**
-	 * E​m​a​i​l​ ​s​e​n​t​ ​s​u​c​c​e​s​s​f​u​l​l​y
+	 * C​o​d​e​ ​s​e​n​t​ ​s​u​c​c​e​s​s​f​u​l​l​y
 	 */
-	magicLink_sent_resendSuccess: string
-	/**
-	 * V​e​r​i​f​y​i​n​g​ ​y​o​u​r​ ​e​m​a​i​l
-	 */
-	magicLink_verify_title: string
-	/**
-	 * P​l​e​a​s​e​ ​w​a​i​t​ ​w​h​i​l​e​ ​w​e​ ​v​e​r​i​f​y​ ​y​o​u​r​ ​m​a​g​i​c​ ​l​i​n​k​.​.​.
-	 */
-	magicLink_verify_subtitle: string
+	emailCode_resendSuccess: string
 	/**
 	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​s​u​c​c​e​s​s​f​u​l​!​ ​R​e​d​i​r​e​c​t​i​n​g​.​.​.
 	 */
-	magicLink_verify_success: string
+	emailCode_success: string
 	/**
-	 * I​n​v​a​l​i​d​ ​o​r​ ​e​x​p​i​r​e​d​ ​m​a​g​i​c​ ​l​i​n​k
+	 * I​n​v​a​l​i​d​ ​o​r​ ​e​x​p​i​r​e​d​ ​c​o​d​e
 	 */
-	magicLink_verify_errorInvalid: string
+	emailCode_errorInvalid: string
 	/**
-	 * T​h​i​s​ ​m​a​g​i​c​ ​l​i​n​k​ ​h​a​s​ ​a​l​r​e​a​d​y​ ​b​e​e​n​ ​u​s​e​d
+	 * S​e​s​s​i​o​n​ ​m​i​s​m​a​t​c​h​.​ ​P​l​e​a​s​e​ ​r​e​q​u​e​s​t​ ​a​ ​n​e​w​ ​c​o​d​e​.
 	 */
-	magicLink_verify_errorAlreadyUsed: string
-	/**
-	 * R​e​q​u​e​s​t​ ​a​ ​n​e​w​ ​l​i​n​k
-	 */
-	magicLink_verify_requestNew: string
+	emailCode_errorSessionMismatch: string
 	/**
 	 * {​c​l​i​e​n​t​N​a​m​e​}​ ​w​a​n​t​s​ ​t​o​ ​a​c​c​e​s​s​ ​y​o​u​r​ ​a​c​c​o​u​n​t
 	 * @param {string} clientName
 	 */
 	consent_title: RequiredParams<'clientName'>
 	/**
-	 * T​h​i​s​ ​a​p​p​l​i​c​a​t​i​o​n​ ​i​s​ ​r​e​q​u​e​s​t​i​n​g​ ​a​c​c​e​s​s​ ​t​o​ ​y​o​u​r​ ​E​n​r​a​i​ ​a​c​c​o​u​n​t
+	 * T​h​i​s​ ​a​p​p​l​i​c​a​t​i​o​n​ ​i​s​ ​r​e​q​u​e​s​t​i​n​g​ ​a​c​c​e​s​s​ ​t​o​ ​y​o​u​r​ ​A​u​t​h​r​i​m​ ​a​c​c​o​u​n​t
 	 */
 	consent_subtitle: string
 	/**
@@ -357,6 +353,66 @@ type RootTranslation = {
 	 */
 	error_unknown: string
 	/**
+	 * D​e​v​i​c​e​ ​V​e​r​i​f​i​c​a​t​i​o​n
+	 */
+	device_title: string
+	/**
+	 * E​n​t​e​r​ ​t​h​e​ ​c​o​d​e​ ​s​h​o​w​n​ ​o​n​ ​y​o​u​r​ ​d​e​v​i​c​e
+	 */
+	device_subtitle: string
+	/**
+	 * E​n​t​e​r​ ​t​h​e​ ​8​-​c​h​a​r​a​c​t​e​r​ ​c​o​d​e​ ​d​i​s​p​l​a​y​e​d​ ​o​n​ ​y​o​u​r​ ​d​e​v​i​c​e​ ​t​o​ ​a​u​t​h​o​r​i​z​e​ ​i​t
+	 */
+	device_instructions: string
+	/**
+	 * S​c​a​n​ ​t​h​i​s​ ​Q​R​ ​c​o​d​e
+	 */
+	device_qrCodeLabel: string
+	/**
+	 * o​r​ ​e​n​t​e​r​ ​c​o​d​e​ ​m​a​n​u​a​l​l​y
+	 */
+	device_orManual: string
+	/**
+	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​C​o​d​e
+	 */
+	device_codeLabel: string
+	/**
+	 * X​X​X​X​-​X​X​X​X
+	 */
+	device_codePlaceholder: string
+	/**
+	 * A​p​p​r​o​v​e
+	 */
+	device_approveButton: string
+	/**
+	 * D​e​n​y
+	 */
+	device_denyButton: string
+	/**
+	 * D​e​v​i​c​e​ ​a​u​t​h​o​r​i​z​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y​!​ ​Y​o​u​ ​c​a​n​ ​n​o​w​ ​c​l​o​s​e​ ​t​h​i​s​ ​w​i​n​d​o​w​.
+	 */
+	device_success: string
+	/**
+	 * D​e​v​i​c​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​d​e​n​i​e​d
+	 */
+	device_denied: string
+	/**
+	 * I​n​v​a​l​i​d​ ​o​r​ ​e​x​p​i​r​e​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
+	 */
+	device_errorInvalidCode: string
+	/**
+	 * T​h​i​s​ ​c​o​d​e​ ​h​a​s​ ​a​l​r​e​a​d​y​ ​b​e​e​n​ ​u​s​e​d
+	 */
+	device_errorAlreadyUsed: string
+	/**
+	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​f​a​i​l​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	device_errorGeneric: string
+	/**
+	 * P​l​e​a​s​e​ ​e​n​t​e​r​ ​t​h​e​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
+	 */
+	device_errorCodeRequired: string
+	/**
 	 * D​a​s​h​b​o​a​r​d
 	 */
 	admin_sidebar_dashboard: string
@@ -380,6 +436,10 @@ type RootTranslation = {
 	 * S​e​t​t​i​n​g​s
 	 */
 	admin_sidebar_settings: string
+	/**
+	 * S​C​I​M​ ​T​o​k​e​n​s
+	 */
+	admin_sidebar_scim_tokens: string
 	/**
 	 * D​a​s​h​b​o​a​r​d
 	 */
@@ -764,9 +824,9 @@ export type TranslationFunctions = {
 	 */
 	login_continueWithPasskey: () => LocalizedString
 	/**
-	 * Send Magic Link
+	 * Send verification code
 	 */
-	login_sendMagicLink: () => LocalizedString
+	login_sendCode: () => LocalizedString
 	/**
 	 * Don't have an account? Create one
 	 */
@@ -792,9 +852,9 @@ export type TranslationFunctions = {
 	 */
 	register_createWithPasskey: () => LocalizedString
 	/**
-	 * Sign up with Magic Link
+	 * Sign up with verification code
 	 */
-	register_signupWithMagicLink: () => LocalizedString
+	register_sendCode: () => LocalizedString
 	/**
 	 * Already have an account? Sign in
 	 */
@@ -810,51 +870,47 @@ export type TranslationFunctions = {
 	/**
 	 * Check your email
 	 */
-	magicLink_sent_title: () => LocalizedString
+	emailCode_title: () => LocalizedString
 	/**
-	 * We've sent a magic link to
+	 * We've sent a verification code to
 	 */
-	magicLink_sent_subtitle: () => LocalizedString
+	emailCode_subtitle: () => LocalizedString
 	/**
-	 * Click the link in the email to sign in. The link will expire in 15 minutes.
+	 * Enter the 6-digit code from your email. The code will expire in 5 minutes.
 	 */
-	magicLink_sent_instructions: () => LocalizedString
+	emailCode_instructions: () => LocalizedString
 	/**
-	 * Resend email
+	 * Verification Code
 	 */
-	magicLink_sent_resendButton: () => LocalizedString
+	emailCode_codeLabel: () => LocalizedString
+	/**
+	 * Verify
+	 */
+	emailCode_verifyButton: () => LocalizedString
+	/**
+	 * Resend code
+	 */
+	emailCode_resendButton: () => LocalizedString
 	/**
 	 * Resend in {seconds}s
 	 */
-	magicLink_sent_resendTimer: (arg: { seconds: number }) => LocalizedString
+	emailCode_resendTimer: (arg: { seconds: unknown }) => LocalizedString
 	/**
-	 * Email sent successfully
+	 * Code sent successfully
 	 */
-	magicLink_sent_resendSuccess: () => LocalizedString
-	/**
-	 * Verifying your email
-	 */
-	magicLink_verify_title: () => LocalizedString
-	/**
-	 * Please wait while we verify your magic link...
-	 */
-	magicLink_verify_subtitle: () => LocalizedString
+	emailCode_resendSuccess: () => LocalizedString
 	/**
 	 * Verification successful! Redirecting...
 	 */
-	magicLink_verify_success: () => LocalizedString
+	emailCode_success: () => LocalizedString
 	/**
-	 * Invalid or expired magic link
+	 * Invalid or expired code
 	 */
-	magicLink_verify_errorInvalid: () => LocalizedString
+	emailCode_errorInvalid: () => LocalizedString
 	/**
-	 * This magic link has already been used
+	 * Session mismatch. Please request a new code.
 	 */
-	magicLink_verify_errorAlreadyUsed: () => LocalizedString
-	/**
-	 * Request a new link
-	 */
-	magicLink_verify_requestNew: () => LocalizedString
+	emailCode_errorSessionMismatch: () => LocalizedString
 	/**
 	 * {clientName} wants to access your account
 	 */
@@ -964,6 +1020,66 @@ export type TranslationFunctions = {
 	 */
 	error_unknown: () => LocalizedString
 	/**
+	 * Device Verification
+	 */
+	device_title: () => LocalizedString
+	/**
+	 * Enter the code shown on your device
+	 */
+	device_subtitle: () => LocalizedString
+	/**
+	 * Enter the 8-character code displayed on your device to authorize it
+	 */
+	device_instructions: () => LocalizedString
+	/**
+	 * Scan this QR code
+	 */
+	device_qrCodeLabel: () => LocalizedString
+	/**
+	 * or enter code manually
+	 */
+	device_orManual: () => LocalizedString
+	/**
+	 * Verification Code
+	 */
+	device_codeLabel: () => LocalizedString
+	/**
+	 * XXXX-XXXX
+	 */
+	device_codePlaceholder: () => LocalizedString
+	/**
+	 * Approve
+	 */
+	device_approveButton: () => LocalizedString
+	/**
+	 * Deny
+	 */
+	device_denyButton: () => LocalizedString
+	/**
+	 * Device authorized successfully! You can now close this window.
+	 */
+	device_success: () => LocalizedString
+	/**
+	 * Device authorization denied
+	 */
+	device_denied: () => LocalizedString
+	/**
+	 * Invalid or expired verification code
+	 */
+	device_errorInvalidCode: () => LocalizedString
+	/**
+	 * This code has already been used
+	 */
+	device_errorAlreadyUsed: () => LocalizedString
+	/**
+	 * Verification failed. Please try again.
+	 */
+	device_errorGeneric: () => LocalizedString
+	/**
+	 * Please enter the verification code
+	 */
+	device_errorCodeRequired: () => LocalizedString
+	/**
 	 * Dashboard
 	 */
 	admin_sidebar_dashboard: () => LocalizedString
@@ -987,6 +1103,10 @@ export type TranslationFunctions = {
 	 * Settings
 	 */
 	admin_sidebar_settings: () => LocalizedString
+	/**
+	 * SCIM Tokens
+	 */
+	admin_sidebar_scim_tokens: () => LocalizedString
 	/**
 	 * Dashboard
 	 */

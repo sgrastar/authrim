@@ -23,7 +23,7 @@ describe('Email Code Utilities', () => {
       crypto.getRandomValues = vi.fn((array: Uint32Array) => {
         array[0] = 123; // Will result in '000123'
         return array;
-      });
+      }) as unknown as typeof crypto.getRandomValues;
 
       const code = generateEmailCode();
       expect(code).toBe('000123');
@@ -46,7 +46,7 @@ describe('Email Code Utilities', () => {
       crypto.getRandomValues = vi.fn((array: Uint32Array) => {
         array[0] = 999999; // Maximum 6-digit number
         return array;
-      });
+      }) as unknown as typeof crypto.getRandomValues;
 
       const code = generateEmailCode();
       expect(code).toBe('999999');
@@ -59,7 +59,7 @@ describe('Email Code Utilities', () => {
       crypto.getRandomValues = vi.fn((array: Uint32Array) => {
         array[0] = 1000000; // Should wrap to 000000
         return array;
-      });
+      }) as unknown as typeof crypto.getRandomValues;
 
       const code = generateEmailCode();
       expect(code).toBe('000000');

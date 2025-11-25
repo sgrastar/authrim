@@ -10,6 +10,8 @@
 	let pendingRequests: Array<{
 		auth_req_id: string;
 		client_id: string;
+		client_name: string;
+		client_logo_uri: string | null;
 		scope: string;
 		binding_message?: string;
 		user_code?: string;

@@ -235,7 +235,7 @@
 				<div use:melt={$root} class="flex gap-2 items-center justify-center">
 					{#each Array.from({ length: 6 }, (_, i) => i) as i (i)}
 						<input
-							use:melt={$input(i)}
+							use:melt={$input()}
 							autocomplete="one-time-code"
 							inputmode="numeric"
 							pattern="[0-9]*"

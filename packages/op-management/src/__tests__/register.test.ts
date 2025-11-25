@@ -5,11 +5,14 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import type { Env } from '../packages/shared/src/types/env';
-import { registerHandler } from '../packages/op-management/src/register';
+import type { Env } from '@authrim/shared/types/env';
+import { registerHandler } from '../register';
 
-// Mock environment
-const mockEnv: Env = {
+// Type for dynamic client registration response
+type RegistrationResponse = Record<string, unknown>;
+
+// Mock environment (partial - only what's needed for these tests)
+const mockEnv = {
   ISSUER_URL: 'https://id.example.com',
   TOKEN_EXPIRY: '3600',
   CODE_EXPIRY: '120',
@@ -19,12 +22,10 @@ const mockEnv: Env = {
   PRIVATE_KEY_PEM: 'mock-private-key',
   PUBLIC_JWK_JSON: '{"kty":"RSA"}',
   KEY_ID: 'test-key-id',
-  AUTH_CODES: {} as KVNamespace,
   STATE_STORE: {} as KVNamespace,
   NONCE_STORE: {} as KVNamespace,
   CLIENTS: {} as KVNamespace,
-  REVOKED_TOKENS: {} as KVNamespace,
-};
+} as Env;
 
 // Mock KV storage
 const mockKVStore = new Map<string, string>();
@@ -77,7 +78,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(201);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json).toHaveProperty('client_id');
       expect(json).toHaveProperty('client_secret');
       expect(json).toHaveProperty('client_id_issued_at');
@@ -91,7 +92,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       // Verify client_id format (base64url with prefix, ~135 characters total)
       expect(json.client_id).toMatch(/^client_[A-Za-z0-9_-]+$/);
-      expect(json.client_id.length).toBeGreaterThanOrEqual(135); // 'client_' (7 chars) + ~128 chars
+      expect((json.client_id as string).length).toBeGreaterThanOrEqual(135); // 'client_' (7 chars) + ~128 chars
 
       // Verify client_secret is base64url encoded
       expect(json.client_secret).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -134,7 +135,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(201);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.client_name).toBe('Test Application');
       expect(json.client_uri).toBe('https://example.com');
       expect(json.logo_uri).toBe('https://example.com/logo.png');
@@ -171,8 +172,8 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(201);
 
-      const json = await res.json();
-      const clientId = json.client_id;
+      const json = (await res.json()) as RegistrationResponse;
+      const clientId = json.client_id as string;
 
       // Verify client was stored in KV
       const storedData = mockKVStore.get(clientId);
@@ -205,7 +206,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(201);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.redirect_uris).toEqual(['http://localhost:3000/callback']);
     });
   });
@@ -230,7 +231,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_redirect_uri');
       expect(json.error_description).toContain('redirect_uris is required');
     });
@@ -254,7 +255,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_redirect_uri');
       expect(json.error_description).toContain('non-empty array');
     });
@@ -278,7 +279,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_redirect_uri');
     });
 
@@ -301,7 +302,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_redirect_uri');
       expect(json.error_description).toContain('HTTPS');
     });
@@ -325,7 +326,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_redirect_uri');
       expect(json.error_description).toContain('fragment');
     });
@@ -349,7 +350,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_redirect_uri');
       expect(json.error_description).toContain('Invalid URI');
     });
@@ -376,7 +377,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('client_uri');
     });
@@ -401,7 +402,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('logo_uri');
     });
@@ -426,7 +427,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
     });
   });
@@ -452,7 +453,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('contacts must be an array');
     });
@@ -477,7 +478,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('All contacts must be strings');
     });
@@ -507,7 +508,7 @@ describe('Dynamic Client Registration Handler', () => {
 
         expect(res.status).toBe(201);
 
-        const json = await res.json();
+        const json = (await res.json()) as RegistrationResponse;
         expect(json.token_endpoint_auth_method).toBe(method);
       }
     });
@@ -532,7 +533,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('token_endpoint_auth_method');
     });
@@ -562,7 +563,7 @@ describe('Dynamic Client Registration Handler', () => {
 
         expect(res.status).toBe(201);
 
-        const json = await res.json();
+        const json = (await res.json()) as RegistrationResponse;
         expect(json.application_type).toBe(type);
       }
     });
@@ -587,7 +588,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('application_type');
     });
@@ -614,7 +615,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(201);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.grant_types).toEqual(['authorization_code', 'refresh_token']);
     });
 
@@ -638,7 +639,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('grant_types must be an array');
     });
@@ -663,7 +664,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('Unsupported grant_type');
     });
@@ -690,7 +691,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(201);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.response_types).toEqual(['code']);
     });
 
@@ -714,7 +715,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('response_types must be an array');
     });
@@ -739,7 +740,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('Unsupported response_type');
     });
@@ -761,7 +762,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_request');
       expect(json.error_description).toContain('JSON object');
     });
@@ -781,7 +782,7 @@ describe('Dynamic Client Registration Handler', () => {
 
       expect(res.status).toBe(400);
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
       expect(json.error).toBe('invalid_request');
     });
 
@@ -834,8 +835,8 @@ describe('Dynamic Client Registration Handler', () => {
         mockEnv
       );
 
-      const json1 = await res1.json();
-      const json2 = await res2.json();
+      const json1 = (await res1.json()) as RegistrationResponse;
+      const json2 = (await res2.json()) as RegistrationResponse;
 
       expect(json1.client_id).not.toBe(json2.client_id);
     });
@@ -869,8 +870,8 @@ describe('Dynamic Client Registration Handler', () => {
         mockEnv
       );
 
-      const json1 = await res1.json();
-      const json2 = await res2.json();
+      const json1 = (await res1.json()) as RegistrationResponse;
+      const json2 = (await res2.json()) as RegistrationResponse;
 
       expect(json1.client_secret).not.toBe(json2.client_secret);
     });
@@ -892,10 +893,10 @@ describe('Dynamic Client Registration Handler', () => {
         mockEnv
       );
 
-      const json = await res.json();
+      const json = (await res.json()) as RegistrationResponse;
 
       // 32 bytes base64url encoded should be at least 40 characters
-      expect(json.client_secret.length).toBeGreaterThanOrEqual(40);
+      expect((json.client_secret as string).length).toBeGreaterThanOrEqual(40);
     });
   });
 });

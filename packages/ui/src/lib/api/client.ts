@@ -543,6 +543,24 @@ export const adminSettingsAPI = {
 					passkeyEnabled: boolean;
 					magicLinkEnabled: boolean;
 				};
+				ciba?: {
+					enabled: boolean;
+					defaultExpiresIn: number;
+					minExpiresIn: number;
+					maxExpiresIn: number;
+					defaultInterval: number;
+					minInterval: number;
+					maxInterval: number;
+					supportedDeliveryModes: string[];
+					userCodeEnabled: boolean;
+					bindingMessageMaxLength: number;
+					notificationsEnabled: boolean;
+					notificationProviders?: {
+						email?: boolean;
+						sms?: boolean;
+						push?: boolean;
+					};
+				};
 			};
 		}>('/api/admin/settings');
 	},
@@ -581,6 +599,24 @@ export const adminSettingsAPI = {
 			refreshTokenTtl?: number;
 			passkeyEnabled?: boolean;
 			magicLinkEnabled?: boolean;
+		};
+		ciba?: {
+			enabled?: boolean;
+			defaultExpiresIn?: number;
+			minExpiresIn?: number;
+			maxExpiresIn?: number;
+			defaultInterval?: number;
+			minInterval?: number;
+			maxInterval?: number;
+			supportedDeliveryModes?: string[];
+			userCodeEnabled?: boolean;
+			bindingMessageMaxLength?: number;
+			notificationsEnabled?: boolean;
+			notificationProviders?: {
+				email?: boolean;
+				sms?: boolean;
+				push?: boolean;
+			};
 		};
 	}) {
 		return apiFetch<{

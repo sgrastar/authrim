@@ -14,14 +14,14 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import type { Env } from '../packages/shared/src/types/env';
-import { createMockEnv, testClients, testUsers, generateState, generateNonce } from './integration/fixtures';
-import { authorizeHandler } from '../packages/op-auth/src/authorize';
-import { parHandler } from '../packages/op-auth/src/par';
-import { tokenHandler } from '../packages/op-token/src/token';
-import { discoveryHandler } from '../packages/op-discovery/src/discovery';
+import type { Env } from '@authrim/shared/types/env';
+import { createMockEnv, testClients, testUsers, generateState, generateNonce } from './fixtures';
+import { authorizeHandler } from '../../packages/op-auth/src/authorize';
+import { parHandler } from '../../packages/op-auth/src/par';
+import { tokenHandler } from '../../packages/op-token/src/token';
+import { discoveryHandler } from '../../packages/op-discovery/src/discovery';
 import { generateKeyPair, exportJWK, SignJWT, calculateJwkThumbprint } from 'jose';
-import { generateCodeChallenge } from '../packages/shared/src/utils/crypto';
+import { generateCodeChallenge } from '@authrim/shared/utils/crypto';
 
 describe('FAPI 2.0 Security Profile Compliance', () => {
   let app: Hono;

@@ -5,14 +5,41 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./utils/*": "./dist/utils/*.js",
-    "./types/*": "./dist/types/*.js",
-    "./middleware/*": "./dist/middleware/*.js",
-    "./storage/*": "./dist/storage/*.js",
-    "./durable-objects/*": "./dist/durable-objects/*.js",
-    "./notifications": "./dist/notifications/index.js",
-    "./constants": "./dist/constants.js"
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./utils/*": {
+      "import": "./dist/utils/*.js",
+      "default": "./src/utils/*.ts"
+    },
+    "./types/*": {
+      "import": "./dist/types/*.js",
+      "default": "./src/types/*.ts"
+    },
+    "./middleware/*": {
+      "import": "./dist/middleware/*.js",
+      "default": "./src/middleware/*.ts"
+    },
+    "./storage/*": {
+      "import": "./dist/storage/*.js",
+      "default": "./src/storage/*.ts"
+    },
+    "./durable-objects/*": {
+      "import": "./dist/durable-objects/*.js",
+      "default": "./src/durable-objects/*.ts"
+    },
+    "./notifications": {
+      "import": "./dist/notifications/index.js",
+      "default": "./src/notifications/index.ts"
+    },
+    "./constants": {
+      "import": "./dist/constants.js",
+      "default": "./src/constants.ts"
+    },
+    "./test/setup": "./src/test/setup.ts",
+    "./test/fixtures": "./src/test/fixtures.ts"
   },
   "scripts": {
     "build": "tsc",

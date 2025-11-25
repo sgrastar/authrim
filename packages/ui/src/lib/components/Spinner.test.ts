@@ -1,6 +1,10 @@
 import { render, screen } from '@testing-library/svelte';
 import { describe, it, expect } from 'vitest';
-import Spinner from './Spinner.svelte';
+import SpinnerComponent from './Spinner.svelte';
+
+// Cast to any to work around Svelte 5 / @testing-library/svelte type incompatibility
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Spinner = SpinnerComponent as any;
 
 describe('Spinner', () => {
 	it('renders with default props', () => {

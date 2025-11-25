@@ -3,10 +3,10 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { introspectToken } from '../src/utils/token-introspection';
-import { createAccessToken } from '../src/utils/jwt';
-import { SignJWT, generateKeyPair, exportJWK, importPKCS8 } from 'jose';
-import type { Env } from '../src/types/env';
+import { introspectToken } from '../token-introspection';
+import { createAccessToken } from '../jwt';
+import { SignJWT, generateKeyPair, exportJWK } from 'jose';
+import type { Env } from '../../types/env';
 
 describe('Token Introspection Utility', () => {
   let mockEnv: Env;

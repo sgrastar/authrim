@@ -8,8 +8,9 @@ import en from './en';
 import ja from './ja';
 
 // Load all locales
-loadedLocales['en'] = en;
-loadedLocales['ja'] = ja;
+// Type assertions needed due to typesafe-i18n template literal type constraints
+loadedLocales['en'] = en as Translations;
+loadedLocales['ja'] = ja as Translations;
 
 const locale = writable<Locales>('en');
 

@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import { discoveryHandler } from '../packages/op-discovery/src/discovery';
-import type { Env } from '../packages/shared/src/types/env';
+import { discoveryHandler } from '../discovery';
+import type { Env } from '@authrim/shared/types/env';
+import type { OIDCProviderMetadata } from '@authrim/shared/types/oidc';
 
 /**
  * Create a mock environment for testing
@@ -40,7 +41,7 @@ describe('Discovery Handler', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('Content-Type')).toContain('application/json');
 
-      const metadata = await response.json();
+      const metadata = (await response.json()) as OIDCProviderMetadata;
 
       // Required OIDC fields
       expect(metadata).toHaveProperty('issuer');
@@ -69,7 +70,7 @@ describe('Discovery Handler', () => {
         env
       );
 
-      const metadata = await response.json();
+      const metadata = (await response.json()) as OIDCProviderMetadata;
       expect(metadata.issuer).toBe('https://custom.example.com');
       expect(metadata.authorization_endpoint).toBe('https://custom.example.com/authorize');
       expect(metadata.token_endpoint).toBe('https://custom.example.com/token');
@@ -87,7 +88,7 @@ describe('Discovery Handler', () => {
         env
       );
 
-      const metadata = await response.json();
+      const metadata = (await response.json()) as OIDCProviderMetadata;
       expect(metadata.response_types_supported).toEqual(['code']);
     });
 
@@ -101,8 +102,13 @@ describe('Discovery Handler', () => {
         env
       );
 
-      const metadata = await response.json();
-      expect(metadata.grant_types_supported).toEqual(['authorization_code', 'refresh_token']);
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      // Dynamic grant types include multiple grant types
+      expect(metadata.grant_types_supported).toContain('authorization_code');
+      expect(metadata.grant_types_supported).toContain('refresh_token');
+      expect(metadata.grant_types_supported).toContain('urn:ietf:params:oauth:grant-type:jwt-bearer');
+      expect(metadata.grant_types_supported).toContain('urn:ietf:params:oauth:grant-type:device_code');
+      expect(metadata.grant_types_supported).toContain('urn:openid:params:grant-type:ciba');
     });
 
     it('should support RS256 signing algorithm', async () => {
@@ -115,7 +121,7 @@ describe('Discovery Handler', () => {
         env
       );
 
-      const metadata = await response.json();
+      const metadata = (await response.json()) as OIDCProviderMetadata;
       expect(metadata.id_token_signing_alg_values_supported).toEqual(['RS256']);
     });
 
@@ -129,7 +135,7 @@ describe('Discovery Handler', () => {
         env
       );
 
-      const metadata = await response.json();
+      const metadata = (await response.json()) as OIDCProviderMetadata;
       expect(metadata.subject_types_supported).toEqual(['public', 'pairwise']);
     });
 
@@ -143,7 +149,7 @@ describe('Discovery Handler', () => {
         env
       );
 
-      const metadata = await response.json();
+      const metadata = (await response.json()) as OIDCProviderMetadata;
       expect(metadata.scopes_supported).toContain('openid');
       expect(metadata.scopes_supported).toContain('profile');
       expect(metadata.scopes_supported).toContain('email');
@@ -159,7 +165,7 @@ describe('Discovery Handler', () => {
         env
       );
 
-      const metadata = await response.json();
+      const metadata = (await response.json()) as OIDCProviderMetadata;
       expect(metadata.claims_supported).toContain('sub');
       expect(metadata.claims_supported).toContain('iss');
       expect(metadata.claims_supported).toContain('aud');
@@ -179,7 +185,7 @@ describe('Discovery Handler', () => {
         env
       );
 
-      const metadata = await response.json();
+      const metadata = (await response.json()) as OIDCProviderMetadata;
       expect(metadata.token_endpoint_auth_methods_supported).toContain('client_secret_post');
       expect(metadata.token_endpoint_auth_methods_supported).toContain('client_secret_basic');
       expect(metadata.token_endpoint_auth_methods_supported).toContain('none');
@@ -200,7 +206,8 @@ describe('Discovery Handler', () => {
       const cacheControl = response.headers.get('Cache-Control');
       expect(cacheControl).toBeDefined();
       expect(cacheControl).toContain('public');
-      expect(cacheControl).toContain('max-age=3600');
+      // Reduced to 300 seconds (5 minutes) for dynamic configuration
+      expect(cacheControl).toContain('max-age=300');
     });
 
     it('should include Vary header', async () => {
@@ -230,7 +237,7 @@ describe('Discovery Handler', () => {
         env
       );
 
-      const metadata = await response.json();
+      const metadata = (await response.json()) as OIDCProviderMetadata;
       const issuer = metadata.issuer;
 
       expect(metadata.authorization_endpoint).toMatch(new RegExp(`^${issuer}`));

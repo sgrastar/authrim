@@ -57,7 +57,7 @@ const en = {
 	emailCode_codeLabel: 'Verification Code',
 	emailCode_verifyButton: 'Verify',
 	emailCode_resendButton: 'Resend code',
-	emailCode_resendTimer: 'Resend in {seconds:number}s',
+	emailCode_resendTimer: 'Resend in {seconds}s',
 	emailCode_resendSuccess: 'Code sent successfully',
 	emailCode_success: 'Verification successful! Redirecting...',
 	emailCode_errorInvalid: 'Invalid or expired code',
@@ -116,6 +116,7 @@ const en = {
 	admin_sidebar_sessions: 'Sessions',
 	admin_sidebar_audit_log: 'Audit Log',
 	admin_sidebar_settings: 'Settings',
+	admin_sidebar_scim_tokens: 'SCIM Tokens',
 
 	admin_dashboard_title: 'Dashboard',
 	admin_dashboard_activeUsers: 'Active Users',

@@ -4,9 +4,9 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import app from '../src/index';
-import type { Env } from '../src/types/env';
-import { createMockEnv } from './integration/fixtures';
+import app from '../../src/index';
+import type { Env } from '@authrim/shared/types/env';
+import { createMockEnv } from './fixtures';
 
 describe('PAR (Pushed Authorization Requests) - RFC 9126', () => {
   let env: Env;
