@@ -135,7 +135,7 @@ app.post('/userinfo', async (c) => {
 /**
  * Authentication endpoints - Route to OP_AUTH worker
  * - /api/auth/passkey/* - WebAuthn/Passkey authentication
- * - /api/auth/magic-link/* - Magic link authentication
+ * - /api/auth/email-code/* - Email code (OTP) authentication
  * - /api/auth/consent - OAuth consent screen
  * - /api/auth/session/* - ITP-compliant session management (deprecated, use /api/sessions/*)
  */

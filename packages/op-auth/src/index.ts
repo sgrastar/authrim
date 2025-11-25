@@ -14,7 +14,7 @@ import {
   passkeyLoginOptionsHandler,
   passkeyLoginVerifyHandler,
 } from './passkey';
-import { magicLinkSendHandler, magicLinkVerifyHandler } from './magic-link';
+import { emailCodeSendHandler, emailCodeVerifyHandler } from './email-code';
 import { consentGetHandler, consentPostHandler } from './consent';
 import {
   issueSessionTokenHandler,
@@ -148,9 +148,9 @@ app.post('/api/auth/passkey/register/verify', passkeyRegisterVerifyHandler);
 app.post('/api/auth/passkey/login/options', passkeyLoginOptionsHandler);
 app.post('/api/auth/passkey/login/verify', passkeyLoginVerifyHandler);
 
-// Magic Link endpoints
-app.post('/api/auth/magic-link/send', magicLinkSendHandler);
-app.get('/api/auth/magic-link/verify', magicLinkVerifyHandler);
+// Email Code (OTP) endpoints
+app.post('/api/auth/email-code/send', emailCodeSendHandler);
+app.post('/api/auth/email-code/verify', emailCodeVerifyHandler);
 
 // OAuth Consent endpoints
 app.get('/api/auth/consent', consentGetHandler);

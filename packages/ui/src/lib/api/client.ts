@@ -421,32 +421,37 @@ export const passkeyAPI = {
 };
 
 /**
- * Auth API - Magic Link
+ * Auth API - Email Code (OTP)
  */
-export const magicLinkAPI = {
+export const emailCodeAPI = {
 	/**
-	 * Send magic link to email
+	 * Send verification code to email
 	 */
-	async send(data: { email: string; name?: string; redirect_uri?: string }) {
-		return apiFetch<{ success: boolean; message: string; messageId?: string; magic_link_url?: string }>(
-			'/api/auth/magic-link/send',
+	async send(data: { email: string; name?: string }) {
+		return apiFetch<{ success: boolean; message: string; messageId?: string; code?: string }>(
+			'/api/auth/email-code/send',
 			{
 				method: 'POST',
-				body: JSON.stringify(data)
+				body: JSON.stringify(data),
+				credentials: 'include'
 			}
 		);
 	},
 
 	/**
-	 * Verify magic link token
+	 * Verify email code
 	 */
-	async verify(token: string) {
+	async verify(data: { code: string; email: string }) {
 		return apiFetch<{
 			success: boolean;
 			sessionId: string;
 			userId: string;
 			user: User;
-		}>(`/api/auth/magic-link/verify?token=${encodeURIComponent(token)}`);
+		}>('/api/auth/email-code/verify', {
+			method: 'POST',
+			body: JSON.stringify(data),
+			credentials: 'include'
+		});
 	}
 };
 

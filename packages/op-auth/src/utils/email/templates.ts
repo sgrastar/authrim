@@ -3,20 +3,22 @@
  * HTML and plain text templates for authentication emails
  */
 
-export interface MagicLinkTemplateData {
+export interface EmailCodeTemplateData {
   name?: string;
   email: string;
-  magicLink: string;
+  code: string;
   expiresInMinutes: number;
   appName: string;
+  domain: string;
   logoUrl?: string;
 }
 
 /**
- * Generate Magic Link email HTML
+ * Generate Email Code (OTP) email HTML
+ * Safari autofill compatible with @domain #code format
  */
-export function getMagicLinkEmailHtml(data: MagicLinkTemplateData): string {
-  const { name, email, magicLink, expiresInMinutes, appName, logoUrl } = data;
+export function getEmailCodeHtml(data: EmailCodeTemplateData): string {
+  const { name, email, code, expiresInMinutes, appName, domain, logoUrl } = data;
 
   return `
 <!DOCTYPE html>
@@ -24,7 +26,7 @@ export function getMagicLinkEmailHtml(data: MagicLinkTemplateData): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sign in to ${appName}</title>
+  <title>Your verification code for ${appName}</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -71,40 +73,21 @@ export function getMagicLinkEmailHtml(data: MagicLinkTemplateData): string {
       margin-bottom: 30px;
       color: #666;
     }
-    .button-container {
+    .code-container {
       text-align: center;
       margin: 40px 0;
     }
-    .button {
+    .code {
       display: inline-block;
-      padding: 14px 40px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: #ffffff;
-      text-decoration: none;
-      border-radius: 6px;
-      font-weight: 600;
-      font-size: 16px;
-      transition: transform 0.2s;
-    }
-    .button:hover {
-      transform: translateY(-2px);
-    }
-    .link-container {
-      margin-top: 30px;
-      padding: 20px;
+      padding: 20px 40px;
       background-color: #f8f9fa;
-      border-radius: 6px;
-      border-left: 4px solid #667eea;
-    }
-    .link-label {
-      font-size: 14px;
-      color: #666;
-      margin-bottom: 10px;
-    }
-    .link-url {
-      font-size: 12px;
-      color: #667eea;
-      word-break: break-all;
+      border: 2px dashed #667eea;
+      border-radius: 8px;
+      font-size: 36px;
+      font-weight: bold;
+      letter-spacing: 8px;
+      color: #333;
+      font-family: 'Courier New', Courier, monospace;
     }
     .warning {
       margin-top: 30px;
@@ -129,38 +112,41 @@ export function getMagicLinkEmailHtml(data: MagicLinkTemplateData): string {
       color: #667eea;
       text-decoration: none;
     }
+    .autofill-hint {
+      margin-top: 20px;
+      font-size: 12px;
+      color: #999;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
       ${logoUrl ? `<img src="${logoUrl}" alt="${appName}" class="logo" />` : ''}
-      <h1>Sign in to ${appName}</h1>
+      <h1>Verification Code</h1>
     </div>
     <div class="content">
       <p class="greeting">Hello${name ? ` ${name}` : ''},</p>
       <p class="message">
-        We received a request to sign in to your ${appName} account (${email}). Click the button below to securely sign in:
+        We received a request to sign in to your ${appName} account (${email}). Use the verification code below:
       </p>
-      <div class="button-container">
-        <a href="${magicLink}" class="button">Sign in to ${appName}</a>
-      </div>
-      <div class="link-container">
-        <p class="link-label">Or copy and paste this link into your browser:</p>
-        <p class="link-url">${magicLink}</p>
+      <div class="code-container">
+        <div class="code">${code}</div>
       </div>
       <div class="warning">
         <p class="warning-text">
-          ⏱️ This link will expire in ${expiresInMinutes} minutes for security reasons.
+          ⏱️ This code is valid for ${expiresInMinutes} minutes and can be used only once.
         </p>
       </div>
       <p class="message" style="margin-top: 30px; font-size: 14px;">
-        If you didn't request this email, you can safely ignore it. Someone may have entered your email address by mistake.
+        If you didn't request this code, you can safely ignore this email. Someone may have entered your email address by mistake.
       </p>
     </div>
     <div class="footer">
       <p>This email was sent by ${appName}</p>
       <p>© ${new Date().getFullYear()} ${appName}. All rights reserved.</p>
+      <p class="autofill-hint">@${domain} #${code}</p>
     </div>
   </div>
 </body>
@@ -169,25 +155,27 @@ export function getMagicLinkEmailHtml(data: MagicLinkTemplateData): string {
 }
 
 /**
- * Generate Magic Link email plain text
+ * Generate Email Code (OTP) email plain text
+ * Safari autofill compatible with @domain #code format at the end
  */
-export function getMagicLinkEmailText(data: MagicLinkTemplateData): string {
-  const { name, email, magicLink, expiresInMinutes, appName } = data;
+export function getEmailCodeText(data: EmailCodeTemplateData): string {
+  const { name, email, code, expiresInMinutes, appName, domain } = data;
 
   return `
 Hello${name ? ` ${name}` : ''},
 
 We received a request to sign in to your ${appName} account (${email}).
 
-Click the link below to securely sign in:
-${magicLink}
+Your verification code is: ${code}
 
-This link will expire in ${expiresInMinutes} minutes for security reasons.
+This code is valid for ${expiresInMinutes} minutes and can be used only once.
 
-If you didn't request this email, you can safely ignore it. Someone may have entered your email address by mistake.
+If you didn't request this code, you can safely ignore this email. Someone may have entered your email address by mistake.
 
 ---
 This email was sent by ${appName}
 © ${new Date().getFullYear()} ${appName}. All rights reserved.
+
+@${domain} #${code}
   `.trim();
 }

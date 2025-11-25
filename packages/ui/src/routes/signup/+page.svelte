@@ -2,14 +2,14 @@
 	import { Button, Input, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { passkeyAPI, magicLinkAPI } from '$lib/api/client';
+	import { passkeyAPI, emailCodeAPI } from '$lib/api/client';
 	import { startRegistration } from '@simplewebauthn/browser';
 
 	let email = $state('');
 	let name = $state('');
 	let error = $state('');
 	let passkeyLoading = $state(false);
-	let magicLinkLoading = $state(false);
+	let emailCodeLoading = $state(false);
 	let emailError = $state('');
 	let nameError = $state('');
 	let debugInfo = $state<Array<{ step: string; data: unknown; timestamp: string }>>([]);
@@ -152,7 +152,7 @@
 		}
 	}
 
-	async function handleMagicLinkSignup() {
+	async function handleEmailCodeSignup() {
 		// Clear previous errors
 		error = '';
 		emailError = '';
@@ -169,38 +169,38 @@
 			return;
 		}
 
-		// Validate name (optional for magic link, but recommended)
+		// Validate name
 		if (!name.trim()) {
 			nameError = $LL.register_errorNameRequired();
 			return;
 		}
 
-		magicLinkLoading = true;
+		emailCodeLoading = true;
 
 		try {
-			// Call API to send magic link
-			const { error: apiError } = await magicLinkAPI.send({ email, name });
+			// Call API to send verification code
+			const { error: apiError } = await emailCodeAPI.send({ email, name });
 
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to send magic link');
+				throw new Error(apiError.error_description || 'Failed to send verification code');
 			}
 
-			console.log('Magic link sent to:', email);
+			console.log('Verification code sent to:', email);
 
-			// Redirect to magic link sent page
-			window.location.href = `/magic-link-sent?email=${encodeURIComponent(email)}`;
+			// Redirect to email code verification page
+			window.location.href = `/verify-email-code?email=${encodeURIComponent(email)}`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred while sending magic link';
-			console.error('Magic link send error:', err);
+			error = err instanceof Error ? err.message : 'An error occurred while sending verification code';
+			console.error('Email code send error:', err);
 		} finally {
-			magicLinkLoading = false;
+			emailCodeLoading = false;
 		}
 	}
 
 	function handleKeyPress(event: KeyboardEvent) {
 		if (event.key === 'Enter') {
-			// Default to Magic Link on Enter key
-			handleMagicLinkSignup();
+			// Default to Email Code on Enter key
+			handleEmailCodeSignup();
 		}
 	}
 </script>
@@ -286,7 +286,7 @@
 					variant="primary"
 					class="w-full mb-3"
 					loading={passkeyLoading}
-					disabled={magicLinkLoading}
+					disabled={emailCodeLoading}
 					onclick={handlePasskeyRegister}
 				>
 					<div class="i-heroicons-key h-5 w-5"></div>
@@ -301,16 +301,16 @@
 				</div>
 			{/if}
 
-			<!-- Magic Link Button -->
+			<!-- Email Code Button -->
 			<Button
 				variant="secondary"
 				class="w-full"
-				loading={magicLinkLoading}
+				loading={emailCodeLoading}
 				disabled={passkeyLoading}
-				onclick={handleMagicLinkSignup}
+				onclick={handleEmailCodeSignup}
 			>
 				<div class="i-heroicons-envelope h-5 w-5"></div>
-				{$LL.register_signupWithMagicLink()}
+				{$LL.register_sendCode()}
 			</Button>
 
 			<!-- Terms Agreement -->

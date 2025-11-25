@@ -56,6 +56,9 @@ export interface Env {
   // Pairwise subject identifier salt (OIDC Core 8.1)
   PAIRWISE_SALT?: string;
 
+  // Email OTP HMAC secret for code hashing
+  OTP_HMAC_SECRET?: string;
+
   // Admin secrets for Durable Objects management
   KEY_MANAGER_SECRET?: string;
 

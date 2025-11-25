@@ -1,7 +1,7 @@
 /**
  * ChallengeStore Durable Object
  *
- * Manages one-time challenges for Passkey and Magic Link authentication
+ * Manages one-time challenges for Passkey and Email Code authentication
  * with atomic consume operations to prevent replay attacks.
  *
  * Security Features:
@@ -13,7 +13,7 @@
  * Challenge Types:
  * - passkey_registration: WebAuthn registration challenge
  * - passkey_authentication: WebAuthn authentication challenge
- * - magic_link: Email-based magic link token
+ * - email_code: Email-based OTP verification code
  * - session_token: ITP-bypass session token (single-use)
  * - reauth: Re-authentication confirmation challenge (prompt=login, max_age)
  * - login: Login flow challenge (session-less authentication)
@@ -28,7 +28,7 @@ import type { Env } from '../types/env';
 export type ChallengeType =
   | 'passkey_registration'
   | 'passkey_authentication'
-  | 'magic_link'
+  | 'email_code'
   | 'session_token'
   | 'reauth'
   | 'login'
