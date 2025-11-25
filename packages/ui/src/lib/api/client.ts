@@ -42,6 +42,9 @@ interface Client {
 	client_uri?: string | null;
 	policy_uri?: string | null;
 	tos_uri?: string | null;
+	is_trusted?: boolean;
+	skip_consent?: boolean;
+	allow_claims_without_scope?: boolean;
 	created_at: number;
 	updated_at: number;
 }
@@ -271,6 +274,40 @@ export const adminClientsAPI = {
 	 */
 	async get(clientId: string) {
 		return apiFetch<{ client: Client }>(`/api/admin/clients/${clientId}`);
+	},
+
+	/**
+	 * Update client
+	 */
+	async update(
+		clientId: string,
+		updates: {
+			client_name?: string;
+			redirect_uris?: string[];
+			grant_types?: string[];
+			scope?: string;
+			logo_uri?: string | null;
+			client_uri?: string | null;
+			policy_uri?: string | null;
+			tos_uri?: string | null;
+			is_trusted?: boolean;
+			skip_consent?: boolean;
+			allow_claims_without_scope?: boolean;
+		}
+	) {
+		return apiFetch<{ client: Client }>(`/api/admin/clients/${clientId}`, {
+			method: 'PUT',
+			body: JSON.stringify(updates)
+		});
+	},
+
+	/**
+	 * Delete client
+	 */
+	async delete(clientId: string) {
+		return apiFetch<{ success: boolean; message: string }>(`/api/admin/clients/${clientId}`, {
+			method: 'DELETE'
+		});
 	}
 };
 

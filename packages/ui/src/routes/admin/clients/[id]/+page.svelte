@@ -3,6 +3,7 @@
 	import { Card, Button, Input } from '$lib/components';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { adminClientsAPI } from '$lib/api/client';
 
 	interface Client {
 		client_id: string;
@@ -26,6 +27,7 @@
 	let loading = true;
 	let saving = false;
 	let newRedirectUri = '';
+	let error = '';
 
 	$: clientId = $page.params.id as string;
 
@@ -41,58 +43,95 @@
 
 	async function loadClient() {
 		loading = true;
-		// Simulate API call - would call GET /admin/clients/:id in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 500));
+		error = '';
 
-		// Mock data
-		const now = Math.floor(Date.now() / 1000);
-		client = {
-			client_id: clientId,
-			client_name: 'My Application',
-			redirect_uris: ['https://example.com/callback', 'https://example.com/auth/callback'],
-			grant_types: ['authorization_code', 'refresh_token'],
-			scope: 'openid profile email',
-			logo_uri: 'https://example.com/logo.png',
-			client_uri: 'https://example.com',
-			policy_uri: 'https://example.com/privacy',
-			tos_uri: 'https://example.com/terms',
-			is_trusted: false,
-			skip_consent: false,
-			allow_claims_without_scope: false,
-			created_at: now - 86400 * 30,
-			updated_at: now - 86400 * 5
-		};
+		try {
+			const { data, error: apiError } = await adminClientsAPI.get(clientId);
 
-		loading = false;
+			if (apiError) {
+				error = apiError.error_description || 'Failed to load client';
+				console.error('Failed to load client:', apiError);
+			} else if (data) {
+				client = {
+					client_id: data.client.client_id,
+					client_name: data.client.client_name,
+					redirect_uris: data.client.redirect_uris || [],
+					grant_types: data.client.grant_types || [],
+					scope: data.client.scope || '',
+					logo_uri: data.client.logo_uri || null,
+					client_uri: data.client.client_uri || null,
+					policy_uri: data.client.policy_uri || null,
+					tos_uri: data.client.tos_uri || null,
+					is_trusted: data.client.is_trusted || false,
+					skip_consent: data.client.skip_consent || false,
+					allow_claims_without_scope: data.client.allow_claims_without_scope || false,
+					created_at: data.client.created_at,
+					updated_at: data.client.updated_at
+				};
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'An error occurred';
+			console.error('Error loading client:', err);
+		} finally {
+			loading = false;
+		}
 	}
 
 	async function handleSave() {
 		if (!client) return;
 
 		saving = true;
-		// Simulate API call - would call PUT /admin/clients/:id in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 1000));
-		saving = false;
+		error = '';
 
-		alert('Client updated successfully');
+		try {
+			const { error: apiError } = await adminClientsAPI.update(clientId, {
+				client_name: client.client_name,
+				redirect_uris: client.redirect_uris,
+				grant_types: client.grant_types,
+				scope: client.scope,
+				logo_uri: client.logo_uri,
+				client_uri: client.client_uri,
+				policy_uri: client.policy_uri,
+				tos_uri: client.tos_uri,
+				is_trusted: client.is_trusted,
+				skip_consent: client.skip_consent,
+				allow_claims_without_scope: client.allow_claims_without_scope
+			});
+
+			if (apiError) {
+				error = apiError.error_description || 'Failed to update client';
+			} else {
+				alert('Client updated successfully');
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'An error occurred';
+		} finally {
+			saving = false;
+		}
 	}
 
 	async function handleDelete() {
 		if (!confirm($LL.admin_client_detail_deleteClient() + '?')) return;
 
-		// Simulate API call - would call DELETE /admin/clients/:id in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 500));
+		try {
+			const { error: apiError } = await adminClientsAPI.delete(clientId);
 
-		window.location.href = '/admin/clients';
+			if (apiError) {
+				alert('Failed to delete client: ' + (apiError.error_description || 'Unknown error'));
+			} else {
+				window.location.href = '/admin/clients';
+			}
+		} catch (err) {
+			console.error('Error deleting client:', err);
+			alert('Failed to delete client');
+		}
 	}
 
 	async function handleRegenerateSecret() {
 		if (!confirm('Are you sure you want to regenerate the client secret? The old secret will be invalidated.')) return;
 
-		// Simulate API call - would call POST /admin/clients/:id/regenerate-secret in real implementation
-		await new Promise((resolve) => setTimeout(resolve, 500));
-
-		alert('New secret generated: ********************\n\nMake sure to save this secret as it will not be shown again!');
+		// TODO: Implement client secret regeneration API
+		alert('Client secret regeneration is not yet implemented');
 	}
 
 	function formatDate(timestamp: number): string {
@@ -158,6 +197,16 @@
 			</Button>
 		</div>
 	</div>
+
+	<!-- Error Message -->
+	{#if error}
+		<div class="rounded-lg bg-red-50 p-4 dark:bg-red-900/20">
+			<div class="flex items-center gap-3">
+				<div class="i-heroicons-exclamation-circle h-5 w-5 text-red-600 dark:text-red-400"></div>
+				<p class="text-sm text-red-800 dark:text-red-200">{error}</p>
+			</div>
+		</div>
+	{/if}
 
 	{#if loading}
 		<Card>
