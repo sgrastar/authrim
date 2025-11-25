@@ -391,11 +391,11 @@ pnpm run deploy
 # - Includes automatic retries on failure
 
 # 6. Deploy UI to Cloudflare Pages (Phase 5+)
-./scripts/deploy-remote-ui.sh
-# - Interactive domain configuration (custom domain or Pages.dev)
+pnpm run deploy:ui --env=prod
+# - Environment-aware deployment (prod -> authrim-ui, dev -> dev-authrim-ui)
 # - Builds SvelteKit UI
 # - Deploys to Cloudflare Pages
-# - Auto-configures CORS settings
+# Alternative: ./scripts/deploy-remote-ui.sh for interactive setup
 ```
 
 **Done!** Your OpenID Provider is now live with login UI.
@@ -404,7 +404,7 @@ pnpm run deploy
 > - `setup-keys.sh` generates RSA keys (required first step)
 > - Use `setup-local-wrangler.sh` for local development or `setup-remote-wrangler.sh` for Cloudflare deployment
 > - `setup-remote-wrangler.sh` requires `ISSUER_URL` (your API domain)
-> - `deploy-remote-ui.sh` is optional but provides login/registration UI (Phase 5+)
+> - `pnpm run deploy:ui --env=<env>` deploys UI to Cloudflare Pages (Phase 5+)
 > - The deploy command automatically deploys `authrim-shared` (Durable Objects) first
 > - Router Worker is conditionally deployed based on your configuration
 
@@ -875,10 +875,25 @@ https://authrim.your-subdomain.workers.dev
 Deploy the SvelteKit login/registration UI to Cloudflare Pages:
 
 ```bash
+# Environment-aware deployment (recommended)
+pnpm run deploy:ui --env=prod
+
+# Examples for different environments:
+pnpm run deploy:ui --env=dev          # -> dev-authrim-ui
+pnpm run deploy:ui --env=staging      # -> staging-authrim-ui
+pnpm run deploy:ui --env=conformance  # -> conformance-authrim-ui
+pnpm run deploy:ui --env=prod         # -> authrim-ui
+
+# Alternative: Interactive setup with domain configuration
 ./scripts/deploy-remote-ui.sh
 ```
 
-**What this does:**
+**What `pnpm run deploy:ui` does:**
+- Derives Cloudflare Pages project name from environment
+- Builds SvelteKit UI to `.svelte-kit/cloudflare`
+- Deploys to Cloudflare Pages
+
+**What `deploy-remote-ui.sh` does (interactive):**
 - Interactive setup for UI domain configuration:
   - **Option 1**: Custom Domain (e.g., `https://login.example.com`)
   - **Option 2**: Auto-generated Cloudflare Pages URLs
