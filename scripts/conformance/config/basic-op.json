@@ -1,0 +1,13 @@
+{
+  "alias": "authrim-basic-op",
+  "description": "Authrim OpenID Connect Basic OP Certification Automation Test",
+  "server": {
+    "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
+  },
+  "client": {
+    "scope": "openid profile email"
+  },
+  "client2": {
+    "scope": "openid profile email"
+  }
+}

@@ -134,8 +134,18 @@
 		alert('Client secret regeneration is not yet implemented');
 	}
 
-	function formatDate(timestamp: number): string {
-		return new Date(timestamp * 1000).toLocaleString();
+	function formatDateWithMs(timestamp: number): string {
+		const date = new Date(timestamp);
+		const dateStr = date.toLocaleString('ja-JP', {
+			year: 'numeric',
+			month: '2-digit',
+			day: '2-digit',
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit'
+		});
+		const ms = String(date.getMilliseconds()).padStart(3, '0');
+		return `${dateStr}.${ms}`;
 	}
 
 	function addRedirectUri() {
@@ -266,9 +276,9 @@
 				</div>
 			</div>
 
-			<div class="mt-4 grid gap-2 text-sm text-gray-500 dark:text-gray-400">
-				<p>Created: {formatDate(client.created_at)}</p>
-				<p>Last Updated: {formatDate(client.updated_at)}</p>
+			<div class="mt-4 grid gap-2 text-sm text-gray-500 dark:text-gray-400 font-mono">
+				<p>Created: {formatDateWithMs(client.created_at)}</p>
+				<p>Last Updated: {formatDateWithMs(client.updated_at)}</p>
 			</div>
 		</Card>
 

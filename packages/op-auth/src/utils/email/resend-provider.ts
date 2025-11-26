@@ -21,6 +21,7 @@ export class ResendEmailProvider implements IEmailProvider {
         subject: message.subject,
         html: message.html,
         text: message.text,
+        headers: message.headers,
       });
 
       if (error) {

@@ -118,17 +118,15 @@ get_deployment_info() {
     echo "${version_id}|${created_date}|${full_name}"
 }
 
-# Fetch all deployment data
+# Fetch all deployment data (stores result in global DEPLOYMENT_DATA array)
 fetch_all_deployments() {
-    local -n result_array=$1
-
-    # Clear array
-    result_array=()
+    # Clear global array
+    DEPLOYMENT_DATA=()
 
     # Fetch data for all workers
     for worker in "${WORKERS[@]}"; do
         local info=$(get_deployment_info "$worker")
-        result_array+=("$info")
+        DEPLOYMENT_DATA+=("$info")
     done
 }
 
@@ -185,6 +183,9 @@ format_time_remaining() {
     fi
 }
 
+# Global array for deployment data (used instead of nameref for bash 3.x compatibility)
+DEPLOYMENT_DATA=()
+
 # Main loop
 main() {
     setup_terminal
@@ -192,7 +193,6 @@ main() {
     local last_refresh_time=0
     local force_refresh=1
     local last_update=""
-    local -a deployment_data=()
 
     while true; do
         local current_time=$(date +%s)
@@ -200,8 +200,8 @@ main() {
 
         # Check if we need to refresh (auto or manual)
         if [ $force_refresh -eq 1 ] || [ $time_since_refresh -ge $REFRESH_INTERVAL ]; then
-            # Fetch all deployment data first
-            fetch_all_deployments deployment_data
+            # Fetch all deployment data (stores in global DEPLOYMENT_DATA)
+            fetch_all_deployments
 
             last_update=$(date '+%Y-%m-%d %H:%M:%S')
             last_refresh_time=$current_time
@@ -215,7 +215,7 @@ main() {
 
         # Display current information
         local next_refresh_str=$(format_time_remaining $time_until_refresh)
-        display_deployments "$last_update" "$next_refresh_str" "${deployment_data[@]}"
+        display_deployments "$last_update" "$next_refresh_str" "${DEPLOYMENT_DATA[@]}"
 
         # Check for key press (non-blocking)
         local key=""

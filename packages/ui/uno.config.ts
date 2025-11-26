@@ -129,15 +129,15 @@ export default defineConfig({
 	shortcuts: {
 		// Button shortcuts
 		'btn-base':
-			'px-4 py-2 font-medium text-sm rounded-lg transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed',
+			'px-4 py-2 font-medium text-sm rounded-lg transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-md inline-flex items-center justify-center gap-2',
 		'btn-primary':
-			'btn-base bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500 dark:bg-primary-500 dark:hover:bg-primary-600 dark:focus:ring-primary-400',
+			'btn-base bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-800 focus:ring-primary-500 dark:bg-primary-500 dark:hover:bg-primary-400 dark:active:bg-primary-600 dark:focus:ring-primary-400',
 		'btn-secondary':
-			'btn-base bg-gray-200 text-gray-700 hover:bg-gray-300 focus:ring-gray-400 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 dark:focus:ring-gray-500',
+			'btn-base bg-gray-100 text-gray-700 border border-gray-300 hover:bg-gray-200 active:bg-gray-300 focus:ring-gray-400 dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600 dark:hover:bg-gray-600 dark:active:bg-gray-500 dark:focus:ring-gray-500',
 		'btn-ghost':
-			'btn-base text-primary-600 hover:bg-primary-50 focus:ring-primary-500 dark:text-primary-400 dark:hover:bg-primary-900/20 dark:focus:ring-primary-400',
+			'btn-base text-primary-600 hover:bg-primary-50 active:bg-primary-100 focus:ring-primary-500 dark:text-primary-400 dark:hover:bg-primary-900/30 dark:active:bg-primary-900/50 dark:focus:ring-primary-400',
 		'btn-danger':
-			'btn-base bg-error-600 text-white hover:bg-error-700 focus:ring-error-500 dark:bg-error-500 dark:hover:bg-error-600 dark:focus:ring-error-400',
+			'btn-base bg-error-600 text-white hover:bg-error-700 active:bg-error-800 focus:ring-error-500 dark:bg-error-500 dark:hover:bg-error-400 dark:active:bg-error-600 dark:focus:ring-error-400',
 
 		// Input shortcuts
 		'input-base':

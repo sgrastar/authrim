@@ -74,7 +74,8 @@
 
 	function formatDate(timestamp: number | null | undefined): string {
 		if (!timestamp) return 'Never';
-		return new Date(timestamp * 1000).toLocaleDateString();
+		// Timestamps are stored in milliseconds
+		return new Date(timestamp).toLocaleDateString();
 	}
 
 	async function handleDeleteUser(userId: string) {

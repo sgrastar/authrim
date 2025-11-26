@@ -51,6 +51,11 @@ interface AuthCodeStoreResponse {
   acr?: string;
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
+  // Present when replay attack is detected (RFC 6749 Section 4.1.2)
+  replayAttack?: {
+    accessTokenJti?: string;
+    refreshTokenJti?: string;
+  };
 }
 
 /**
@@ -436,8 +441,52 @@ async function handleAuthorizationCodeGrant(
       );
     }
 
-    // AuthCodeStore DO returns: { userId, scope, redirectUri, nonce?, state? }
+    // AuthCodeStore DO returns: { userId, scope, redirectUri, nonce?, state?, replayAttack? }
     const consumedData = (await consumeResponse.json()) as AuthCodeStoreResponse;
+
+    // RFC 6749 Section 4.1.2: Handle replay attack detection
+    // If authorization code was already used, revoke previously issued tokens
+    if (consumedData.replayAttack) {
+      console.warn(
+        '[Security] Authorization code replay attack detected, revoking previously issued tokens'
+      );
+
+      const { accessTokenJti, refreshTokenJti } = consumedData.replayAttack;
+
+      // Revoke the access token that was issued when the code was first used
+      if (accessTokenJti) {
+        try {
+          await revokeToken(c.env, accessTokenJti, 3600, 'Authorization code replay attack');
+          console.log(`[Security] Revoked access token: ${accessTokenJti.substring(0, 8)}...`);
+        } catch (revokeError) {
+          console.error('[Security] Failed to revoke access token:', revokeError);
+        }
+      }
+
+      // Revoke the refresh token that was issued when the code was first used
+      if (refreshTokenJti) {
+        try {
+          await revokeToken(
+            c.env,
+            refreshTokenJti,
+            86400 * 30, // 30 days
+            'Authorization code replay attack'
+          );
+          console.log(`[Security] Revoked refresh token: ${refreshTokenJti.substring(0, 8)}...`);
+        } catch (revokeError) {
+          console.error('[Security] Failed to revoke refresh token:', revokeError);
+        }
+      }
+
+      // Return error to the attacker
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Authorization code already used',
+        },
+        400
+      );
+    }
 
     // Map AuthCodeStore DO response to expected format
     authCodeData = {
@@ -757,6 +806,37 @@ async function handleAuthorizationCodeGrant(
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + refreshTokenExpiresIn,
     });
+
+    // Register refresh token with RefreshTokenRotator for rotation tracking
+    // This is required for refresh_token grant to work correctly
+    if (c.env.REFRESH_TOKEN_ROTATOR) {
+      const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
+      const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
+
+      const familyResponse = await rotator.fetch('http://rotator/family', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: refreshTokenJti,
+          userId: authCodeData.sub,
+          clientId: client_id,
+          scope: authCodeData.scope,
+          ttl: refreshTokenExpiresIn,
+        }),
+      });
+
+      if (!familyResponse.ok) {
+        const errorText = await familyResponse.text();
+        console.error('Failed to register refresh token family:', errorText);
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: 'Failed to register refresh token',
+          },
+          500
+        );
+      }
+    }
   } catch (error) {
     console.error('Failed to create refresh token:', error);
     return c.json(
@@ -771,6 +851,25 @@ async function handleAuthorizationCodeGrant(
   // Authorization code has been consumed and marked as used by AuthCodeStore DO
   // Per RFC 6749 Section 4.1.2: Authorization codes are single-use
   // The DO guarantees atomic consumption and replay attack detection
+
+  // Register issued token JTIs with AuthCodeStore for replay attack revocation
+  // If the authorization code is reused, these tokens will be revoked
+  try {
+    await authCodeStore.fetch(
+      new Request(`https://auth-code-store/code/${encodeURIComponent(validCode)}/tokens`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessTokenJti: tokenJti,
+          refreshTokenJti: refreshTokenJti,
+        }),
+      })
+    );
+  } catch (error) {
+    // Non-fatal: log but don't fail token issuance
+    // The tokens will still be issued, but won't be revoked on code replay
+    console.error('[Security] Failed to register token JTIs for replay protection:', error);
+  }
 
   // Return token response
   c.header('Cache-Control', 'no-store');
@@ -1254,7 +1353,7 @@ async function handleRefreshTokenGrant(
 
   try {
     // Call RefreshTokenRotator DO to atomically rotate the token
-    const rotateResponse = await rotator.fetch('http://rotator/internal/rotate', {
+    const rotateResponse = await rotator.fetch('http://rotator/rotate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -310,6 +310,19 @@ export const adminClientsAPI = {
 		return apiFetch<{ success: boolean; message: string }>(`/api/admin/clients/${clientId}`, {
 			method: 'DELETE'
 		});
+	},
+
+	/**
+	 * Bulk delete clients
+	 */
+	async bulkDelete(clientIds: string[]) {
+		return apiFetch<{ success: boolean; deleted: number; requested: number; errors?: string[] }>(
+			'/api/admin/clients/bulk',
+			{
+				method: 'DELETE',
+				body: JSON.stringify({ client_ids: clientIds })
+			}
+		);
 	}
 };
 

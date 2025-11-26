@@ -24,6 +24,8 @@ import {
   adminClientsListHandler,
   adminClientGetHandler,
   adminClientUpdateHandler,
+  adminClientDeleteHandler,
+  adminClientsBulkDeleteHandler,
   adminUserAvatarUploadHandler,
   adminUserAvatarDeleteHandler,
   adminSessionsListHandler,
@@ -152,8 +154,10 @@ app.delete('/api/admin/users/:id', adminUserDeleteHandler);
 app.post('/api/admin/users/:id/avatar', adminUserAvatarUploadHandler);
 app.delete('/api/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
 app.get('/api/admin/clients', adminClientsListHandler);
+app.delete('/api/admin/clients/bulk', adminClientsBulkDeleteHandler); // Must be before :id route
 app.get('/api/admin/clients/:id', adminClientGetHandler);
 app.put('/api/admin/clients/:id', adminClientUpdateHandler);
+app.delete('/api/admin/clients/:id', adminClientDeleteHandler);
 
 // Admin Session Management endpoints (RESTful naming)
 app.get('/api/admin/sessions', adminSessionsListHandler);

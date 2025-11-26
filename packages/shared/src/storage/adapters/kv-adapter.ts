@@ -96,7 +96,7 @@ export class KVClientRepository implements IClientRepository {
   }
 
   async create(client: Omit<ClientData, 'created_at' | 'updated_at'>): Promise<ClientData> {
-    const now = Math.floor(Date.now() / 1000);
+    const now = Date.now(); // Store in milliseconds
     const clientData: ClientData = {
       ...(client as ClientData),
       created_at: now,
@@ -120,7 +120,7 @@ export class KVClientRepository implements IClientRepository {
       ...existing,
       ...updates,
       client_id: clientId, // Prevent changing client_id
-      updated_at: Math.floor(Date.now() / 1000),
+      updated_at: Date.now(), // Store in milliseconds
     };
 
     const key = `${this.prefix}${clientId}`;

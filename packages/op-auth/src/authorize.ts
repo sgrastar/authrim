@@ -550,6 +550,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const responseTypeValidation = validateResponseType(response_type);
   if (!responseTypeValidation.valid) {
     // OAuth 2.0 spec: use 'unsupported_response_type' for invalid response_type
+    // Redirect to error page for better user experience and conformance testing
+    const uiUrl = c.env.UI_URL;
+    if (uiUrl) {
+      const errorParams = new URLSearchParams({
+        error: 'unsupported_response_type',
+        error_description: responseTypeValidation.error || 'response_type is required',
+      });
+      return c.redirect(`${uiUrl}/error?${errorParams.toString()}`, 302);
+    }
+    // Fallback to JSON response if UI_URL is not configured
     return c.json(
       {
         error: 'unsupported_response_type',

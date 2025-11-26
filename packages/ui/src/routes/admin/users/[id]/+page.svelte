@@ -153,7 +153,8 @@
 
 	function formatDate(timestamp: number | null): string {
 		if (!timestamp) return 'Never';
-		return new Date(timestamp * 1000).toLocaleString();
+		// Timestamps are stored in milliseconds
+		return new Date(timestamp).toLocaleString();
 	}
 
 	function handleDeletePasskey(passkeyId: string) {

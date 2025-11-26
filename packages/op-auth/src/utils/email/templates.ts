@@ -9,16 +9,15 @@ export interface EmailCodeTemplateData {
   code: string;
   expiresInMinutes: number;
   appName: string;
-  domain: string;
   logoUrl?: string;
 }
 
 /**
  * Generate Email Code (OTP) email HTML
- * Safari autofill compatible with @domain #code format
+ * OTP AutoFill is handled via Authentication-Info header
  */
 export function getEmailCodeHtml(data: EmailCodeTemplateData): string {
-  const { name, email, code, expiresInMinutes, appName, domain, logoUrl } = data;
+  const { name, email, code, expiresInMinutes, appName, logoUrl } = data;
 
   return `
 <!DOCTYPE html>
@@ -112,12 +111,6 @@ export function getEmailCodeHtml(data: EmailCodeTemplateData): string {
       color: #667eea;
       text-decoration: none;
     }
-    .autofill-hint {
-      margin-top: 20px;
-      font-size: 12px;
-      color: #999;
-      text-align: center;
-    }
   </style>
 </head>
 <body>
@@ -146,7 +139,6 @@ export function getEmailCodeHtml(data: EmailCodeTemplateData): string {
     <div class="footer">
       <p>This email was sent by ${appName}</p>
       <p>© ${new Date().getFullYear()} ${appName}. All rights reserved.</p>
-      <p class="autofill-hint">@${domain} #${code}</p>
     </div>
   </div>
 </body>
@@ -156,10 +148,10 @@ export function getEmailCodeHtml(data: EmailCodeTemplateData): string {
 
 /**
  * Generate Email Code (OTP) email plain text
- * Safari autofill compatible with @domain #code format at the end
+ * OTP AutoFill is handled via Authentication-Info header
  */
 export function getEmailCodeText(data: EmailCodeTemplateData): string {
-  const { name, email, code, expiresInMinutes, appName, domain } = data;
+  const { name, email, code, expiresInMinutes, appName } = data;
 
   return `
 Hello${name ? ` ${name}` : ''},
@@ -175,7 +167,5 @@ If you didn't request this code, you can safely ignore this email. Someone may h
 ---
 This email was sent by ${appName}
 © ${new Date().getFullYear()} ${appName}. All rights reserved.
-
-@${domain} #${code}
   `.trim();
 }

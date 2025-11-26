@@ -1,0 +1,140 @@
+# OIDC Conformance Test Workflow
+#
+# This workflow runs OIDC conformance tests against Authrim.
+# It is triggered manually via workflow_dispatch.
+#
+# Required Secrets:
+#   - CONFORMANCE_TOKEN: API token for OpenID Conformance Suite
+#   - CONFORMANCE_TEST_EMAIL: (optional) Test user email
+#   - CONFORMANCE_TEST_PASSWORD: (optional) Test user password
+
+name: OIDC Conformance Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_plan:
+        description: 'Test plan to run'
+        required: true
+        type: choice
+        default: 'basic-op'
+        options:
+          - basic-op
+          - config-op
+          - dynamic-op
+          - fapi-2
+          - hybrid-op
+          - all
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        default: 'conformance'
+        options:
+          - conformance
+          - staging
+          - local
+      headless:
+        description: 'Run browser in headless mode'
+        required: false
+        type: boolean
+        default: true
+      skip_profile_switch:
+        description: 'Skip profile switching'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CONFORMANCE_SERVER: https://www.certification.openid.net
+  NODE_VERSION: '22'
+  PNPM_VERSION: '9.0.0'
+
+jobs:
+  conformance-test:
+    name: Run Conformance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install root dependencies
+        run: pnpm install
+
+      - name: Install conformance test dependencies
+        working-directory: scripts/conformance
+        run: pnpm install
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install chromium
+        working-directory: scripts/conformance
+
+      - name: Run Conformance Tests
+        working-directory: scripts/conformance
+        env:
+          CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
+          CONFORMANCE_TEST_EMAIL: ${{ secrets.CONFORMANCE_TEST_EMAIL || 'test@example.com' }}
+          CONFORMANCE_TEST_PASSWORD: ${{ secrets.CONFORMANCE_TEST_PASSWORD || 'testpassword123' }}
+        run: |
+          npx tsx run-conformance.ts \
+            --plan ${{ github.event.inputs.test_plan }} \
+            --environment ${{ github.event.inputs.environment }} \
+            ${{ github.event.inputs.headless == 'true' && '--headless' || '' }} \
+            ${{ github.event.inputs.skip_profile_switch == 'true' && '--skip-profile-switch' || '' }} \
+            --verbose
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-results-${{ github.event.inputs.test_plan }}-${{ github.run_id }}
+          path: |
+            docs/conformance/results/
+            scripts/conformance/screenshots/
+          retention-days: 30
+
+      - name: Upload HTML Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-html-${{ github.event.inputs.test_plan }}-${{ github.run_id }}
+          path: docs/conformance/results/**/*.html
+          retention-days: 30
+
+      - name: Post Summary
+        if: always()
+        run: |
+          echo "## OIDC Conformance Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Plan | ${{ github.event.inputs.test_plan }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ github.event.inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Headless | ${{ github.event.inputs.headless }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Find and display summary files
+          if [ -d "docs/conformance/results" ]; then
+            for summary in docs/conformance/results/*/summary-*.json; do
+              if [ -f "$summary" ]; then
+                echo "### $(basename $(dirname $summary))" >> $GITHUB_STEP_SUMMARY
+                echo '```json' >> $GITHUB_STEP_SUMMARY
+                cat "$summary" >> $GITHUB_STEP_SUMMARY
+                echo '```' >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+              fi
+            done
+          fi

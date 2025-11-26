@@ -1,0 +1,21 @@
+{
+  "alias": "authrim-hybrid-op",
+  "description": "Authrim OpenID Connect Hybrid OP Certification Automation Test",
+  "server": {
+    "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
+  },
+  "client": {
+    "scope": "openid profile email",
+    "redirect_uri": "https://www.certification.openid.net/test/a/{alias}/callback"
+  },
+  "client2": {
+    "scope": "openid profile email",
+    "redirect_uri": "https://www.certification.openid.net/test/a/{alias}/callback"
+  },
+  "browser": {
+    "show_console_log": true
+  },
+  "override": {
+    "resource": "https://www.certification.openid.net/test/a/{alias}/callback"
+  }
+}

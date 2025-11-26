@@ -1,0 +1,25 @@
+{
+  "name": "@authrim/conformance-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "OIDC Conformance Test Automation for Authrim",
+  "scripts": {
+    "run": "tsx run-conformance.ts",
+    "run:basic": "tsx run-conformance.ts --plan basic-op",
+    "run:config": "tsx run-conformance.ts --plan config-op",
+    "run:dynamic": "tsx run-conformance.ts --plan dynamic-op",
+    "run:fapi2": "tsx run-conformance.ts --plan fapi-2",
+    "run:all": "tsx run-conformance.ts --plan all",
+    "run:local": "tsx run-conformance.ts --environment local",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "playwright": "^1.56.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0"
+  }
+}

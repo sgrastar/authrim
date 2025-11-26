@@ -40,6 +40,9 @@ export interface AuthorizationCode {
   used: boolean;
   expiresAt: number;
   createdAt: number;
+  // Token JTIs for replay attack revocation (RFC 6749 Section 4.1.2)
+  issuedAccessTokenJti?: string;
+  issuedRefreshTokenJti?: string;
 }
 
 /**
@@ -85,6 +88,11 @@ export interface ConsumeCodeResponse {
   acr?: string;
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
+  // Present when replay attack is detected - contains JTIs to revoke
+  replayAttack?: {
+    accessTokenJti?: string;
+    refreshTokenJti?: string;
+  };
 }
 
 /**
@@ -110,7 +118,7 @@ export class AuthorizationCodeStore {
   // Configuration
   private readonly CODE_TTL = 60; // 60 seconds per OAuth 2.0 Security BCP
   private readonly CLEANUP_INTERVAL = 30 * 1000; // 30 seconds
-  private readonly MAX_CODES_PER_USER = 5; // DDoS protection
+  private readonly MAX_CODES_PER_USER = 100; // DDoS protection (increased for conformance testing)
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -316,12 +324,25 @@ export class AuthorizationCodeStore {
         `SECURITY: Replay attack detected! Code ${request.code} already used by user ${stored.userId}`
       );
 
-      // OAuth 2.0 Security BCP: Revoke all tokens for this authorization attempt
-      // This prevents attackers from using stolen authorization codes
-      // Note: Token revocation should be handled by the caller (Token Worker)
-      // Here we just mark the replay attack
-
-      throw new Error('invalid_grant: Authorization code already used (replay attack detected)');
+      // OAuth 2.0 Security BCP (RFC 6749 Section 4.1.2):
+      // Revoke all tokens issued based on this authorization code
+      // Return the JTIs so the caller can revoke them
+      return {
+        userId: stored.userId,
+        scope: stored.scope,
+        redirectUri: stored.redirectUri,
+        nonce: stored.nonce,
+        state: stored.state,
+        claims: stored.claims,
+        authTime: stored.authTime,
+        acr: stored.acr,
+        cHash: stored.cHash,
+        dpopJkt: stored.dpopJkt,
+        replayAttack: {
+          accessTokenJti: stored.issuedAccessTokenJti,
+          refreshTokenJti: stored.issuedRefreshTokenJti,
+        },
+      };
     }
 
     // Validate client ID
@@ -387,6 +408,33 @@ export class AuthorizationCodeStore {
       await this.saveState();
     }
     return deleted;
+  }
+
+  /**
+   * Register issued token JTIs for replay attack revocation
+   * Called after tokens are issued for an authorization code
+   */
+  async registerIssuedTokens(
+    code: string,
+    accessTokenJti: string,
+    refreshTokenJti?: string
+  ): Promise<boolean> {
+    await this.initializeState();
+    const stored = this.codes.get(code);
+    if (!stored) {
+      console.warn(`AuthCodeStore: Cannot register tokens for unknown code ${code}`);
+      return false;
+    }
+
+    stored.issuedAccessTokenJti = accessTokenJti;
+    if (refreshTokenJti) {
+      stored.issuedRefreshTokenJti = refreshTokenJti;
+    }
+    this.codes.set(code, stored);
+    await this.saveState();
+
+    console.log(`AuthCodeStore: Registered token JTIs for code ${code.substring(0, 8)}...`);
+    return true;
   }
 
   /**
@@ -477,6 +525,39 @@ export class AuthorizationCodeStore {
         const exists = await this.hasCode(code);
 
         return new Response(JSON.stringify({ exists }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // POST /code/:code/tokens - Register issued token JTIs for replay attack revocation
+      if (path.startsWith('/code/') && path.endsWith('/tokens') && request.method === 'POST') {
+        const code = path.substring(6, path.length - 7); // Remove '/code/' and '/tokens'
+        const body = (await request.json()) as {
+          accessTokenJti?: string;
+          refreshTokenJti?: string;
+        };
+
+        if (!body.accessTokenJti) {
+          return new Response(
+            JSON.stringify({
+              error: 'invalid_request',
+              error_description: 'accessTokenJti is required',
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const success = await this.registerIssuedTokens(
+          code,
+          body.accessTokenJti,
+          body.refreshTokenJti
+        );
+
+        return new Response(JSON.stringify({ success }), {
+          status: success ? 200 : 404,
           headers: { 'Content-Type': 'application/json' },
         });
       }

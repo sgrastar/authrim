@@ -336,7 +336,7 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
   await env.CLIENTS.put(clientId, JSON.stringify(metadata));
 
   // Store in D1 for consent foreign key constraints
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now(); // Store in milliseconds
   await env.DB.prepare(
     `
     INSERT OR REPLACE INTO oauth_clients (

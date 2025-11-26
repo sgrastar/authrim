@@ -1,0 +1,28 @@
+{
+  "alias": "authrim-fapi2",
+  "description": "Authrim FAPI 2.0 Security Profile Certification Automation Test",
+  "server": {
+    "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
+  },
+  "client": {
+    "scope": "openid profile",
+    "redirect_uri": "https://www.certification.openid.net/test/a/{alias}/callback",
+    "token_endpoint_auth_method": "private_key_jwt"
+  },
+  "client2": {
+    "scope": "openid profile",
+    "redirect_uri": "https://www.certification.openid.net/test/a/{alias}/callback",
+    "token_endpoint_auth_method": "private_key_jwt"
+  },
+  "mtls": {
+    "cert": "{CLIENT_CERT}",
+    "key": "{CLIENT_KEY}",
+    "ca": "{CA_CERT}"
+  },
+  "browser": {
+    "show_console_log": true
+  },
+  "override": {
+    "resource": "https://www.certification.openid.net/test/a/{alias}/callback"
+  }
+}

@@ -113,8 +113,8 @@
 <div class="container mx-auto px-4 py-8">
 	<div class="mb-6 flex items-center justify-between">
 		<div>
-			<h1 class="text-3xl font-bold">SCIM Tokens</h1>
-			<p class="mt-2 text-gray-600">Manage SCIM 2.0 provisioning tokens for user synchronization</p>
+			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">SCIM Tokens</h1>
+			<p class="mt-2 text-gray-600 dark:text-gray-400">Manage SCIM 2.0 provisioning tokens for user synchronization</p>
 		</div>
 		<Button onclick={() => (showCreateDialog = true)}>
 			<svg class="mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -153,51 +153,51 @@
 							d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
 						/>
 					</svg>
-					<h3 class="mt-2 text-sm font-medium text-gray-900">No SCIM tokens</h3>
-					<p class="mt-1 text-sm text-gray-500">Get started by creating a new SCIM token.</p>
+					<h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-white">No SCIM tokens</h3>
+					<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Get started by creating a new SCIM token.</p>
 					<div class="mt-6">
 						<Button onclick={() => (showCreateDialog = true)}>Create Token</Button>
 					</div>
 				</div>
 			{:else}
-				<table class="min-w-full divide-y divide-gray-200">
-					<thead class="bg-gray-50">
+				<table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+					<thead class="bg-gray-50 dark:bg-gray-800">
 						<tr>
-							<th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+							<th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
 								Description
 							</th>
-							<th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+							<th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
 								Token Hash
 							</th>
-							<th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+							<th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
 								Created
 							</th>
-							<th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+							<th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
 								Expires
 							</th>
-							<th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+							<th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
 								Status
 							</th>
-							<th class="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+							<th class="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
 								Actions
 							</th>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-gray-200 bg-white">
+					<tbody class="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-900">
 						{#each tokens as token (token.tokenHash)}
-							<tr class="hover:bg-gray-50">
+							<tr class="hover:bg-gray-50 dark:hover:bg-gray-800">
 								<td class="whitespace-nowrap px-6 py-4">
-									<div class="text-sm font-medium text-gray-900">{token.description}</div>
+									<div class="text-sm font-medium text-gray-900 dark:text-white">{token.description}</div>
 								</td>
 								<td class="whitespace-nowrap px-6 py-4">
-									<div class="font-mono text-xs text-gray-500">
+									<div class="font-mono text-xs text-gray-500 dark:text-gray-400">
 										{token.tokenHash.substring(0, 16)}...
 									</div>
 								</td>
-								<td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+								<td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
 									{formatDate(token.createdAt)}
 								</td>
-								<td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+								<td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
 									{#if token.expiresAt}
 										{formatDate(token.expiresAt)}
 									{:else}
@@ -206,15 +206,15 @@
 								</td>
 								<td class="whitespace-nowrap px-6 py-4">
 									{#if !token.enabled}
-										<span class="inline-flex rounded-full bg-gray-100 px-2 text-xs font-semibold leading-5 text-gray-800">
+										<span class="inline-flex rounded-full bg-gray-100 dark:bg-gray-700 px-2 text-xs font-semibold leading-5 text-gray-800 dark:text-gray-300">
 											Disabled
 										</span>
 									{:else if isExpired(token.expiresAt)}
-										<span class="inline-flex rounded-full bg-red-100 px-2 text-xs font-semibold leading-5 text-red-800">
+										<span class="inline-flex rounded-full bg-red-100 dark:bg-red-900 px-2 text-xs font-semibold leading-5 text-red-800 dark:text-red-200">
 											Expired
 										</span>
 									{:else}
-										<span class="inline-flex rounded-full bg-green-100 px-2 text-xs font-semibold leading-5 text-green-800">
+										<span class="inline-flex rounded-full bg-green-100 dark:bg-green-900 px-2 text-xs font-semibold leading-5 text-green-800 dark:text-green-200">
 											Active
 										</span>
 									{/if}
@@ -241,15 +241,15 @@
 
 	<!-- SCIM Documentation Card -->
 	<Card class="mt-6">
-		<h2 class="text-lg font-semibold mb-4">SCIM 2.0 Endpoints</h2>
+		<h2 class="text-lg font-semibold mb-4 dark:text-white">SCIM 2.0 Endpoints</h2>
 		<div class="space-y-3 text-sm">
 			<div>
-				<p class="font-medium mb-2">Base URL:</p>
-				<code class="block bg-gray-50 px-3 py-2 rounded">{window.location.origin}/scim/v2</code>
+				<p class="font-medium mb-2 dark:text-gray-200">Base URL:</p>
+				<code class="block bg-gray-50 dark:bg-gray-800 px-3 py-2 rounded text-gray-900 dark:text-gray-100">{window.location.origin}/scim/v2</code>
 			</div>
 			<div>
-				<p class="font-medium mb-2">Available endpoints:</p>
-				<ul class="list-disc list-inside space-y-1 text-gray-600">
+				<p class="font-medium mb-2 dark:text-gray-200">Available endpoints:</p>
+				<ul class="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-400">
 					<li>GET /scim/v2/Users - List users (with filtering and pagination)</li>
 					<li>GET /scim/v2/Users/{'{id}'} - Get user by ID</li>
 					<li>POST /scim/v2/Users - Create user</li>
@@ -265,8 +265,8 @@
 				</ul>
 			</div>
 			<div>
-				<p class="font-medium mb-2">Authentication:</p>
-				<code class="block bg-gray-50 px-3 py-2 rounded">Authorization: Bearer YOUR_TOKEN</code>
+				<p class="font-medium mb-2 dark:text-gray-200">Authentication:</p>
+				<code class="block bg-gray-50 dark:bg-gray-800 px-3 py-2 rounded text-gray-900 dark:text-gray-100">Authorization: Bearer YOUR_TOKEN</code>
 			</div>
 		</div>
 	</Card>
@@ -276,7 +276,7 @@
 <Dialog bind:open={showCreateDialog} title="Create SCIM Token">
 	<div class="space-y-4">
 		<div>
-			<label for="description" class="block text-sm font-medium text-gray-700 mb-1">
+			<label for="description" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
 				Description
 			</label>
 			<Input
@@ -286,11 +286,11 @@
 			/>
 		</div>
 		<div>
-			<label for="expires" class="block text-sm font-medium text-gray-700 mb-1">
+			<label for="expires" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
 				Expires in (days)
 			</label>
 			<Input id="expires" type="number" bind:value={newTokenExpiresInDays} min="1" max="3650" />
-			<p class="mt-1 text-xs text-gray-500">
+			<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
 				Set to 3650 (10 years) for long-lived tokens
 			</p>
 		</div>
@@ -308,7 +308,7 @@
 	</Alert>
 	<div class="space-y-4">
 		<div>
-			<label for="created-token" class="block text-sm font-medium text-gray-700 mb-2">Token</label>
+			<label for="created-token" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Token</label>
 			<div class="flex space-x-2">
 				<Input id="created-token" value={createdToken} readonly class="flex-1 font-mono text-sm" />
 				<Button variant="secondary" onclick={() => copyToClipboard(createdToken)}>
@@ -316,9 +316,9 @@
 				</Button>
 			</div>
 		</div>
-		<div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-			<h4 class="font-medium text-blue-900 mb-2">Usage:</h4>
-			<code class="block text-sm text-blue-800">
+		<div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+			<h4 class="font-medium text-blue-900 dark:text-blue-200 mb-2">Usage:</h4>
+			<code class="block text-sm text-blue-800 dark:text-blue-300">
 				curl -H "Authorization: Bearer {createdToken.substring(0, 20)}..." \\<br />
 				&nbsp;&nbsp;{window.location.origin}/scim/v2/Users
 			</code>
@@ -334,7 +334,7 @@
 <!-- Delete Confirmation Dialog -->
 <Dialog bind:open={showDeleteDialog} title="Revoke SCIM Token">
 	{#if tokenToDelete}
-		<p class="text-sm text-gray-600">
+		<p class="text-sm text-gray-600 dark:text-gray-400">
 			Are you sure you want to revoke the token "{tokenToDelete.description}"?
 			This action cannot be undone and will immediately invalidate the token.
 		</p>
@@ -351,9 +351,3 @@
 		</Button>
 	</div>
 </Dialog>
-
-<style>
-	:global(body) {
-		@apply bg-gray-50;
-	}
-</style>

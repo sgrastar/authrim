@@ -1,0 +1,18 @@
+{
+  "planId": "q1kAzyhb0g89x",
+  "planName": "OIDC Basic OP Certification",
+  "timestamp": "2025-11-26T00:25:08.302Z",
+  "summary": {
+    "total": 38,
+    "passed": 22,
+    "failed": 12,
+    "warning": 0,
+    "skipped": 4,
+    "passRate": 57.89,
+    "duration": 0
+  },
+  "unexpectedFailures": 7,
+  "unexpectedWarnings": 0,
+  "expectedFailuresMatched": 0,
+  "expectedFailuresUnmatched": 0
+}

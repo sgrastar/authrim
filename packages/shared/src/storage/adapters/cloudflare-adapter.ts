@@ -451,7 +451,7 @@ export class UserStore implements IUserStore {
 
   async create(user: Partial<User>): Promise<User> {
     const id = crypto.randomUUID();
-    const now = Math.floor(Date.now() / 1000);
+    const now = Date.now(); // Store in milliseconds
 
     const newUser: User = {
       id,
@@ -529,7 +529,7 @@ export class UserStore implements IUserStore {
       ...existing,
       ...updates,
       id: userId, // Prevent changing ID
-      updated_at: Math.floor(Date.now() / 1000),
+      updated_at: Date.now(), // Store in milliseconds
     };
 
     await this.adapter.execute(
@@ -588,7 +588,7 @@ export class ClientStore implements IClientStore {
   }
 
   async create(client: Partial<ClientData>): Promise<ClientData> {
-    const now = Math.floor(Date.now() / 1000);
+    const now = Date.now(); // Store in milliseconds
 
     const newClient: ClientData = {
       client_id: client.client_id!,
@@ -638,7 +638,7 @@ export class ClientStore implements IClientStore {
       ...existing,
       ...updates,
       client_id: clientId, // Prevent changing client_id
-      updated_at: Math.floor(Date.now() / 1000),
+      updated_at: Date.now(), // Store in milliseconds
     };
 
     await this.adapter.execute(
@@ -807,7 +807,7 @@ export class PasskeyStore implements IPasskeyStore {
 
   async create(passkey: Partial<Passkey>): Promise<Passkey> {
     const id = crypto.randomUUID();
-    const now = Math.floor(Date.now() / 1000);
+    const now = Date.now(); // Store in milliseconds
 
     const newPasskey: Passkey = {
       id,
@@ -843,7 +843,7 @@ export class PasskeyStore implements IPasskeyStore {
   }
 
   async updateCounter(passkeyId: string, counter: number): Promise<Passkey> {
-    const now = Math.floor(Date.now() / 1000);
+    const now = Date.now(); // Store in milliseconds
     const MAX_RETRIES = 3;
 
     // Retry loop for Compare-and-Swap (CAS) to handle concurrent updates

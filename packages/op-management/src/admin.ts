@@ -7,6 +7,31 @@ import { Context } from 'hono';
 import type { Env } from '@authrim/shared';
 
 /**
+ * Convert timestamp to milliseconds
+ * Handles both seconds (10 digits) and milliseconds (13 digits) timestamps
+ */
+function toMilliseconds(timestamp: number | null | undefined): number | null {
+  if (!timestamp) return null;
+  // If timestamp is less than 10^12, it's in seconds
+  if (timestamp < 1e12) {
+    return timestamp * 1000;
+  }
+  return timestamp;
+}
+
+/**
+ * Convert timestamp to seconds (for OIDC spec compliance)
+ */
+function toSeconds(timestamp: number | null | undefined): number | null {
+  if (!timestamp) return null;
+  // If timestamp is greater than or equal to 10^12, it's in milliseconds
+  if (timestamp >= 1e12) {
+    return Math.floor(timestamp / 1000);
+  }
+  return timestamp;
+}
+
+/**
  * Serve avatar image from R2
  * GET /avatars/:filename
  */
@@ -104,7 +129,7 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
         userId: user.id,
         email: user.email,
         name: user.name,
-        timestamp: user.created_at,
+        timestamp: toMilliseconds(user.created_at),
       })),
     });
   } catch (error) {
@@ -175,8 +200,18 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
     const total = (totalResult?.count as number) || 0;
     const totalPages = Math.ceil(total / limit);
 
+    // Format users with millisecond timestamps and boolean conversions
+    const formattedUsers = users.results.map((user: any) => ({
+      ...user,
+      email_verified: Boolean(user.email_verified),
+      phone_number_verified: Boolean(user.phone_number_verified),
+      created_at: toMilliseconds(user.created_at),
+      updated_at: toMilliseconds(user.updated_at),
+      last_login_at: toMilliseconds(user.last_login_at),
+    }));
+
     return c.json({
-      users: users.results,
+      users: formattedUsers,
       pagination: {
         page,
         limit,
@@ -233,9 +268,26 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       .bind(userId)
       .all();
 
+    // Format user with explicit boolean conversions and millisecond timestamps
+    const formattedUser = {
+      ...user,
+      email_verified: Boolean(user.email_verified),
+      phone_number_verified: Boolean(user.phone_number_verified),
+      created_at: toMilliseconds(user.created_at as number),
+      updated_at: toMilliseconds(user.updated_at as number),
+      last_login_at: toMilliseconds(user.last_login_at as number | null),
+    };
+
+    // Format passkeys with millisecond timestamps
+    const formattedPasskeys = passkeys.results.map((p: any) => ({
+      ...p,
+      created_at: toMilliseconds(p.created_at),
+      last_used_at: toMilliseconds(p.last_used_at),
+    }));
+
     return c.json({
-      user,
-      passkeys: passkeys.results,
+      user: formattedUser,
+      passkeys: formattedPasskeys,
       customFields: customFields.results,
     });
   } catch (error) {
@@ -515,8 +567,16 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
     const total = (totalResult?.count as number) || 0;
     const totalPages = Math.ceil(total / limit);
 
+    // Format clients with millisecond timestamps and parse JSON fields
+    const formattedClients = clients.results.map((client: any) => ({
+      ...client,
+      grant_types: client.grant_types ? JSON.parse(client.grant_types) : [],
+      created_at: toMilliseconds(client.created_at),
+      updated_at: toMilliseconds(client.updated_at),
+    }));
+
     return c.json({
-      clients: clients.results,
+      clients: formattedClients,
       pagination: {
         page,
         limit,
@@ -560,8 +620,19 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // Parse JSON fields and convert timestamps to milliseconds
+    const formattedClient = {
+      ...client,
+      redirect_uris: client.redirect_uris ? JSON.parse(client.redirect_uris as string) : [],
+      grant_types: client.grant_types ? JSON.parse(client.grant_types as string) : [],
+      response_types: client.response_types ? JSON.parse(client.response_types as string) : [],
+      contacts: client.contacts ? JSON.parse(client.contacts as string) : [],
+      created_at: toMilliseconds(client.created_at as number),
+      updated_at: toMilliseconds(client.updated_at as number),
+    };
+
     return c.json({
-      client,
+      client: formattedClient,
     });
   } catch (error) {
     console.error('Admin client get error:', error);
@@ -665,9 +736,9 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       values.push(allow_claims_without_scope ? 1 : 0);
     }
 
-    // Always update updated_at timestamp
+    // Always update updated_at timestamp (in milliseconds)
     updates.push('updated_at = ?');
-    values.push(Math.floor(Date.now() / 1000));
+    values.push(Date.now());
 
     if (updates.length === 1) {
       // Only updated_at, no actual changes
@@ -734,6 +805,123 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       {
         error: 'server_error',
         error_description: 'Failed to update client',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * Delete client
+ * DELETE /admin/clients/:id
+ */
+export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const clientId = c.req.param('id');
+
+    // Check if client exists
+    const existingClient = await c.env.DB.prepare(
+      'SELECT client_id FROM oauth_clients WHERE client_id = ?'
+    )
+      .bind(clientId)
+      .first();
+
+    if (!existingClient) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Client not found',
+        },
+        404
+      );
+    }
+
+    // Delete from D1 database
+    await c.env.DB.prepare('DELETE FROM oauth_clients WHERE client_id = ?').bind(clientId).run();
+
+    // Delete from KV cache
+    await c.env.CLIENTS.delete(clientId);
+
+    return c.json({
+      success: true,
+      message: 'Client deleted successfully',
+    });
+  } catch (error) {
+    console.error('Admin client delete error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to delete client',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * Bulk delete clients
+ * DELETE /admin/clients/bulk
+ */
+export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const body = await c.req.json<{ client_ids: string[] }>();
+    const { client_ids } = body;
+
+    if (!client_ids || !Array.isArray(client_ids) || client_ids.length === 0) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'client_ids array is required',
+        },
+        400
+      );
+    }
+
+    // Limit bulk delete to 100 items at a time
+    if (client_ids.length > 100) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Cannot delete more than 100 clients at once',
+        },
+        400
+      );
+    }
+
+    let deletedCount = 0;
+    const errors: string[] = [];
+
+    for (const clientId of client_ids) {
+      try {
+        // Delete from D1 database
+        const result = await c.env.DB.prepare('DELETE FROM oauth_clients WHERE client_id = ?')
+          .bind(clientId)
+          .run();
+
+        if (result.meta?.changes && result.meta.changes > 0) {
+          // Delete from KV cache
+          await c.env.CLIENTS.delete(clientId);
+          deletedCount++;
+        }
+      } catch (err) {
+        errors.push(
+          `Failed to delete ${clientId}: ${err instanceof Error ? err.message : 'Unknown error'}`
+        );
+      }
+    }
+
+    return c.json({
+      success: true,
+      deleted: deletedCount,
+      requested: client_ids.length,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  } catch (error) {
+    console.error('Admin clients bulk delete error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to delete clients',
       },
       500
     );
@@ -915,8 +1103,9 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const page = parseInt(c.req.query('page') || '1');
     const limit = parseInt(c.req.query('limit') || '20');
-    const userId = c.req.query('user_id');
+    const userId = c.req.query('user_id') || c.req.query('userId');
     const status = c.req.query('status'); // 'active' or 'expired'
+    const active = c.req.query('active'); // 'true' or 'false' (alternative to status)
 
     const offset = (page - 1) * limit;
     const now = Math.floor(Date.now() / 1000);
@@ -933,11 +1122,11 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
       bindings.push(userId);
     }
 
-    // Status filter
-    if (status === 'active') {
+    // Status filter (support both 'status' and 'active' params)
+    if (status === 'active' || active === 'true') {
       whereClauses.push('s.expires_at > ?');
       bindings.push(now);
-    } else if (status === 'expired') {
+    } else if (status === 'expired' || active === 'false') {
       whereClauses.push('s.expires_at <= ?');
       bindings.push(now);
     }
@@ -966,15 +1155,20 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
     const total = (totalResult?.count as number) || 0;
     const totalPages = Math.ceil(total / limit);
 
-    // Format sessions with metadata
+    // Format sessions with metadata (snake_case for UI compatibility)
     const formattedSessions = sessions.results.map((session: any) => ({
       id: session.id,
-      userId: session.user_id,
-      userEmail: session.email,
-      userName: session.name,
-      expiresAt: session.expires_at * 1000, // Convert to milliseconds
-      createdAt: session.created_at * 1000,
-      isActive: session.expires_at > now,
+      user_id: session.user_id,
+      user_email: session.email,
+      user_name: session.name,
+      created_at: new Date(session.created_at * 1000).toISOString(),
+      last_accessed_at: session.last_accessed_at
+        ? new Date(session.last_accessed_at * 1000).toISOString()
+        : new Date(session.created_at * 1000).toISOString(),
+      expires_at: new Date(session.expires_at * 1000).toISOString(),
+      ip_address: session.ip_address || null,
+      user_agent: session.user_agent || null,
+      is_active: session.expires_at > now,
     }));
 
     return c.json({

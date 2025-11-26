@@ -127,7 +127,12 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     birthdate: user.birthdate || undefined,
     zoneinfo: user.zoneinfo || undefined,
     locale: user.locale || undefined,
-    updated_at: user.updated_at ? (user.updated_at as number) : Math.floor(Date.now() / 1000),
+    // OIDC spec requires updated_at in seconds; convert from milliseconds if needed
+    updated_at: user.updated_at
+      ? (user.updated_at as number) >= 1e12
+        ? Math.floor((user.updated_at as number) / 1000)
+        : (user.updated_at as number)
+      : Math.floor(Date.now() / 1000),
     email: user.email || undefined,
     email_verified: user.email_verified === 1,
     phone_number: user.phone_number || undefined,

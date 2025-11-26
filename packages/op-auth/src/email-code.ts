@@ -175,10 +175,6 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       maxAge: EMAIL_CODE_TTL,
     });
 
-    // Get domain from ISSUER_URL for Safari autofill
-    const issuerUrl = new URL(c.env.ISSUER_URL);
-    const domain = issuerUrl.hostname;
-
     // Send email via Resend
     const resendApiKey = c.env.RESEND_API_KEY;
     if (!resendApiKey) {
@@ -194,6 +190,10 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
     const emailProvider = new ResendEmailProvider(resendApiKey);
     const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
 
+    // Authentication-Info header for OTP AutoFill (Safari/iOS)
+    // This enables domain-bound code verification for phishing protection
+    const authenticationInfoHeader = `<${c.env.ISSUER_URL}>; otpauth=email`;
+
     const emailResult = await emailProvider.send({
       to: email,
       from: fromEmail,
@@ -204,7 +204,6 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         code,
         expiresInMinutes: EMAIL_CODE_TTL / 60,
         appName: 'Authrim',
-        domain,
         logoUrl: undefined,
       }),
       text: getEmailCodeText({
@@ -213,8 +212,10 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         code,
         expiresInMinutes: EMAIL_CODE_TTL / 60,
         appName: 'Authrim',
-        domain,
       }),
+      headers: {
+        'Authentication-Info': authenticationInfoHeader,
+      },
     });
 
     if (!emailResult.success) {
