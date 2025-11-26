@@ -1,0 +1,176 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "OIDC Conformance Test Plan Definitions for Authrim",
+  "plans": {
+    "basic-op": {
+      "name": "oidcc-basic-certification-test-plan",
+      "displayName": "OIDC Basic OP Certification",
+      "outputDir": "OIDC Basic OP",
+      "profile": "basic-op",
+      "configFile": "basic-op.json",
+      "requiresBrowser": true,
+      "variants": {
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Basic Certification Profile - Authorization Code Flow"
+    },
+    "implicit-op": {
+      "name": "oidcc-implicit-certification-test-plan",
+      "displayName": "OIDC Implicit OP Certification",
+      "outputDir": "OIDC Implicit OP",
+      "profile": "implicit-op",
+      "configFile": "implicit-op.json",
+      "requiresBrowser": true,
+      "variants": {
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Implicit Certification Profile - Implicit Flow"
+    },
+    "hybrid-op": {
+      "name": "oidcc-hybrid-certification-test-plan",
+      "displayName": "OIDC Hybrid OP Certification",
+      "outputDir": "OIDC Hybrid OP",
+      "profile": "hybrid-op",
+      "configFile": "hybrid-op.json",
+      "requiresBrowser": true,
+      "variants": {
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Hybrid Certification Profile"
+    },
+    "config-op": {
+      "name": "oidcc-config-certification-test-plan",
+      "displayName": "OIDC Config OP Certification",
+      "outputDir": "OIDC Config OP",
+      "profile": "basic-op",
+      "configFile": "config-op.json",
+      "requiresBrowser": false,
+      "variants": {
+        "server_metadata": "discovery"
+      },
+      "description": "OpenID Connect Configuration Certification Profile - Discovery and JWKS"
+    },
+    "dynamic-op": {
+      "name": "oidcc-dynamic-certification-test-plan",
+      "displayName": "OIDC Dynamic OP Certification",
+      "outputDir": "OIDC Dynamic OP",
+      "profile": "basic-op",
+      "configFile": "dynamic-op.json",
+      "requiresBrowser": true,
+      "variants": {
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Dynamic Certification Profile - Dynamic Client Registration"
+    },
+    "formpost-basic": {
+      "name": "oidcc-formpost-basic-certification-test-plan",
+      "displayName": "OIDC Form Post OP Certification",
+      "outputDir": "OIDC Form Post OP",
+      "profile": "basic-op",
+      "configFile": "basic-op.json",
+      "requiresBrowser": true,
+      "variants": {
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Form Post Response Mode - Basic Profile (Authorization Code Flow)"
+    },
+    "formpost-implicit": {
+      "name": "oidcc-formpost-implicit-certification-test-plan",
+      "displayName": "OIDC Form Post Implicit OP Certification",
+      "outputDir": "OIDC Form Post Implicit OP",
+      "profile": "implicit-op",
+      "configFile": "formpost-implicit-op.json",
+      "requiresBrowser": true,
+      "variants": {
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Form Post Response Mode - Implicit Flow"
+    },
+    "formpost-hybrid": {
+      "name": "oidcc-formpost-hybrid-certification-test-plan",
+      "displayName": "OIDC Form Post Hybrid OP Certification",
+      "outputDir": "OIDC Form Post Hybrid OP",
+      "profile": "hybrid-op",
+      "configFile": "formpost-hybrid-op.json",
+      "requiresBrowser": true,
+      "variants": {
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Form Post Response Mode - Hybrid Flow"
+    },
+    "rp-logout-op": {
+      "name": "oidcc-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC RP-Initiated Logout OP Certification",
+      "outputDir": "OIDC RP-Initiated Logout OP",
+      "profile": "basic-op",
+      "configFile": "rp-logout-op.json",
+      "requiresBrowser": true,
+      "variants": {
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect RP-Initiated Logout Certification Profile"
+    },
+    "session-management-op": {
+      "name": "oidcc-session-management-certification-test-plan",
+      "displayName": "OIDC Session Management OP Certification",
+      "outputDir": "OIDC Session Management OP",
+      "profile": "basic-op",
+      "configFile": "session-management-op.json",
+      "requiresBrowser": true,
+      "variants": {
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Session Management Certification Profile"
+    },
+    "3rdparty-login-op": {
+      "name": "oidcc-3rdparty-init-login-certification-test-plan",
+      "displayName": "OIDC 3rd Party Initiated Login OP Certification",
+      "outputDir": "OIDC 3rd Party Initiated Login OP",
+      "profile": "basic-op",
+      "configFile": "3rdparty-login-op.json",
+      "requiresBrowser": true,
+      "variants": {
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect 3rd Party Initiated Login Certification Profile"
+    },
+    "fapi-2": {
+      "name": "fapi2-security-profile-id2-test-plan",
+      "displayName": "FAPI 2.0 Security Profile",
+      "outputDir": "OIDC FAPI2.0 Security Profile",
+      "profile": "fapi-2",
+      "configFile": "fapi-2.json",
+      "requiresBrowser": true,
+      "variants": {
+        "client_auth_type": "private_key_jwt",
+        "sender_constrain": "dpop",
+        "fapi_profile": "plain_fapi"
+      },
+      "description": "Financial-grade API 2.0 Security Profile with PAR and private_key_jwt"
+    }
+  },
+  "environments": {
+    "conformance": {
+      "issuer": "https://conformance.authrim.com",
+      "adminApiUrl": "https://conformance.authrim.com/api/admin"
+    },
+    "staging": {
+      "issuer": "https://staging.authrim.com",
+      "adminApiUrl": "https://staging.authrim.com/api/admin"
+    },
+    "local": {
+      "issuer": "http://localhost:8786",
+      "adminApiUrl": "http://localhost:8786/api/admin"
+    }
+  }
+}

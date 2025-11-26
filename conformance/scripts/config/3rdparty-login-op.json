@@ -1,0 +1,20 @@
+{
+  "alias": "authrim-3rdparty-login-op",
+  "description": "Authrim OpenID Connect 3rd Party Initiated Login OP Certification Automation Test",
+  "server": {
+    "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
+  },
+  "client": {
+    "scope": "openid profile email",
+    "redirect_uri": "https://www.certification.openid.net/test/a/{alias}/callback",
+    "initiate_login_uri": "https://www.certification.openid.net/test/a/{alias}/initiate_login"
+  },
+  "client2": {
+    "scope": "openid profile email",
+    "redirect_uri": "https://www.certification.openid.net/test/a/{alias}/callback",
+    "initiate_login_uri": "https://www.certification.openid.net/test/a/{alias}/initiate_login"
+  },
+  "browser": {
+    "show_console_log": true
+  }
+}

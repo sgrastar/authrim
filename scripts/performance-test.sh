@@ -5,7 +5,7 @@
 set -e
 
 ISSUER="${ISSUER:-https://authrim.sgrastar.workers.dev}"
-RESULTS_DIR="docs/conformance/test-results"
+RESULTS_DIR="conformance/test-results"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 RESULTS_FILE="${RESULTS_DIR}/performance-results-${TIMESTAMP}.md"
 

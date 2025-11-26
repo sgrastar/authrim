@@ -657,7 +657,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
 | docs/project-management/SCHEDULE.md | 10/10 | Detailed timeline |
 | docs/project-management/TASKS.md | 10/10 | 440+ tasks defined |
 | docs/architecture/technical-specs.md | 8/10 | Clear architecture |
-| docs/conformance/overview.md | 8/10 | Clear testing strategy |
+| conformance/overview.md | 8/10 | Clear testing strategy |
 
 ### ❌ Missing Documentation
 
