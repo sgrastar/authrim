@@ -75,15 +75,15 @@ jobs:
         run: pnpm install
 
       - name: Install conformance test dependencies
-        working-directory: scripts/conformance
+        working-directory: conformance/scripts
         run: pnpm install
 
       - name: Install Playwright browsers
         run: pnpm exec playwright install chromium
-        working-directory: scripts/conformance
+        working-directory: conformance/scripts
 
       - name: Run Conformance Tests
-        working-directory: scripts/conformance
+        working-directory: conformance/scripts
         env:
           CONFORMANCE_TOKEN: ${{ secrets.CONFORMANCE_TOKEN }}
           CONFORMANCE_TEST_EMAIL: ${{ secrets.CONFORMANCE_TEST_EMAIL || 'test@example.com' }}
@@ -102,8 +102,8 @@ jobs:
         with:
           name: conformance-results-${{ github.event.inputs.test_plan }}-${{ github.run_id }}
           path: |
-            docs/conformance/results/
-            scripts/conformance/screenshots/
+            conformance/*/results/
+            conformance/scripts/screenshots/
           retention-days: 30
 
       - name: Upload HTML Report
@@ -111,7 +111,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: conformance-html-${{ github.event.inputs.test_plan }}-${{ github.run_id }}
-          path: docs/conformance/results/**/*.html
+          path: conformance/*/results/**/*.html
           retention-days: 30
 
       - name: Post Summary
@@ -127,8 +127,8 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Find and display summary files
-          if [ -d "docs/conformance/results" ]; then
-            for summary in docs/conformance/results/*/summary-*.json; do
+          if [ -d "conformance" ]; then
+            for summary in conformance/*/results/*/summary.json; do
               if [ -f "$summary" ]; then
                 echo "### $(basename $(dirname $summary))" >> $GITHUB_STEP_SUMMARY
                 echo '```json' >> $GITHUB_STEP_SUMMARY

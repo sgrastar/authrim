@@ -14,7 +14,7 @@
   - [x] Client registration: static_client
   - [x] Test credentials
 - [x] Configure test plan (oidcc-basic-certification-test-plan)
-- [x] Document setup process (docs/conformance/testing-guide.md)
+- [x] Document setup process (conformance/testing-guide.md)
 
 #### 13.3 Initial Test Run ✅
 - [x] Run conformance suite (Plan ID: e90FqMh4xG2mg)

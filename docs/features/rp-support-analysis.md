@@ -906,7 +906,7 @@ TOTAL: 169 hours (≈ 4.2 weeks full-time development)
 - `/home/user/authrim/test-e2e/` - E2E tests (Playwright)
 
 **Conformance:**
-- `/home/user/authrim/docs/conformance/` - 7 OP profiles documented
+- `/home/user/authrim/conformance/` - 7 OP profiles documented
 
 ### B. Technology Stack Summary
 

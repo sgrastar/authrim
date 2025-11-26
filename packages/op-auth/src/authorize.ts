@@ -2479,7 +2479,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   if (metadata.prompt) params.set('prompt', metadata.prompt as string);
 
   // Add a flag to indicate login is complete
-  params.set('_login_confirmed', 'true');
+  params.set('_confirmed', 'true');
 
   // Redirect to /authorize with original parameters
   const redirectUrl = `/authorize?${params.toString()}`;

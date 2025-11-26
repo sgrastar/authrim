@@ -181,8 +181,8 @@ Legend:
 ### Week 18: Final Validation ✅ COMPLETE
 - ✅ Complete conformance test run (final) - 33 tests executed
 - ✅ Performance benchmarks completed
-- ✅ Test report generation (docs/conformance/test-results/report-20251112.md)
-- ✅ Conformance Suite detailed results (docs/conformance/test-results/conformance-suite-results-20251112.md)
+- ✅ Test report generation (conformance/test-results/report-20251112.md)
+- ✅ Conformance Suite detailed results (conformance/test-results/conformance-suite-results-20251112.md)
 - ✅ Documentation of results
 - ✅ Action plan for remaining issues (Phase 4-6 roadmap)
 

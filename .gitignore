@@ -74,3 +74,7 @@ packages/shared/wrangler.conformance.toml
 # Backup files
 packages/*/wrangler.toml.backup
 .claude/settings.local.json
+
+# OIDC Conformance Test Results
+conformance/*/results/
+conformance/scripts/screenshots/
