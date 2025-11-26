@@ -28,7 +28,6 @@ export * from './middleware/initial-access-token';
 
 // Storage
 export * from './storage/interfaces';
-export * from './storage/adapters/kv-adapter';
 
 // Durable Objects
 export { KeyManager } from './durable-objects/KeyManager';

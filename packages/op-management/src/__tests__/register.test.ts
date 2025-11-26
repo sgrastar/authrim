@@ -18,13 +18,28 @@ const mockEnv = {
   CODE_EXPIRY: '120',
   STATE_EXPIRY: '300',
   NONCE_EXPIRY: '300',
+  REFRESH_TOKEN_EXPIRY: '2592000',
   ALLOW_HTTP_REDIRECT: 'true',
   PRIVATE_KEY_PEM: 'mock-private-key',
   PUBLIC_JWK_JSON: '{"kty":"RSA"}',
   KEY_ID: 'test-key-id',
   STATE_STORE: {} as KVNamespace,
   NONCE_STORE: {} as KVNamespace,
-  CLIENTS: {} as KVNamespace,
+  CLIENTS_CACHE: {} as KVNamespace,
+  DB: {} as D1Database,
+  AVATARS: {} as R2Bucket,
+  KEY_MANAGER: {} as DurableObjectNamespace,
+  SESSION_STORE: {} as DurableObjectNamespace,
+  AUTH_CODE_STORE: {} as DurableObjectNamespace,
+  REFRESH_TOKEN_ROTATOR: {} as DurableObjectNamespace,
+  CHALLENGE_STORE: {} as DurableObjectNamespace,
+  RATE_LIMITER: {} as DurableObjectNamespace,
+  USER_CODE_RATE_LIMITER: {} as DurableObjectNamespace,
+  PAR_REQUEST_STORE: {} as DurableObjectNamespace,
+  DPOP_JTI_STORE: {} as DurableObjectNamespace,
+  TOKEN_REVOCATION_STORE: {} as DurableObjectNamespace,
+  DEVICE_CODE_STORE: {} as DurableObjectNamespace,
+  CIBA_REQUEST_STORE: {} as DurableObjectNamespace,
 } as Env;
 
 // Mock KV storage
@@ -55,7 +70,7 @@ describe('Dynamic Client Registration Handler', () => {
     app.post('/register', registerHandler);
 
     // Setup mock KV namespaces
-    mockEnv.CLIENTS = createMockKV();
+    mockEnv.CLIENTS_CACHE = createMockKV();
   });
 
   describe('Successful Registration', () => {

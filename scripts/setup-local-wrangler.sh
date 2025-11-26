@@ -274,7 +274,7 @@ script_name = "${DEPLOY_ENV}-authrim-shared"'
 
 # Generate wrangler.toml for op-auth
 generate_wrangler_toml "op-auth" 8788 '[[kv_namespaces]]
-binding = "CLIENTS"
+binding = "CLIENTS_CACHE"
 id = "placeholder"
 preview_id = "placeholder"
 
@@ -319,7 +319,7 @@ script_name = "${DEPLOY_ENV}-authrim-shared"'
 
 # Generate wrangler.toml for op-token
 generate_wrangler_toml "op-token" 8789 '[[kv_namespaces]]
-binding = "CLIENTS"
+binding = "CLIENTS_CACHE"
 id = "placeholder"
 preview_id = "placeholder"
 
@@ -355,7 +355,7 @@ script_name = "${DEPLOY_ENV}-authrim-shared"'
 
 # Generate wrangler.toml for op-userinfo
 generate_wrangler_toml "op-userinfo" 8790 '[[kv_namespaces]]
-binding = "CLIENTS"
+binding = "CLIENTS_CACHE"
 id = "placeholder"
 preview_id = "placeholder"
 
@@ -385,7 +385,7 @@ script_name = "${DEPLOY_ENV}-authrim-shared"'
 
 # Generate wrangler.toml for op-management
 generate_wrangler_toml "op-management" 8791 '[[kv_namespaces]]
-binding = "CLIENTS"
+binding = "CLIENTS_CACHE"
 id = "placeholder"
 preview_id = "placeholder"
 

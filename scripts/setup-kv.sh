@@ -93,7 +93,7 @@ echo "This script will create or update KV namespaces for your Authrim deploymen
 echo ""
 echo "KV namespaces are Cloudflare's key-value storage used by the workers."
 echo "We'll create both production and preview namespaces for:"
-echo "  • ${DEPLOY_ENV}-CLIENTS - Registered OAuth clients"
+echo "  • ${DEPLOY_ENV}-CLIENTS_CACHE - OAuth client metadata cache (Read-Through from D1)"
 echo "  • ${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS - Dynamic Client Registration tokens"
 echo "  • ${DEPLOY_ENV}-SETTINGS - System settings storage"
 echo ""
@@ -137,7 +137,7 @@ fi
 
 # Define all required KV namespaces (base names)
 declare -a BASE_NAMESPACES=(
-    "CLIENTS"
+    "CLIENTS_CACHE"
     "INITIAL_ACCESS_TOKENS"
     "SETTINGS"
 )
@@ -524,8 +524,8 @@ create_kv_namespace() {
 # Create production namespaces
 echo "Creating production namespaces for environment: $DEPLOY_ENV..."
 
-CLIENTS_ID=$(create_kv_namespace "${DEPLOY_ENV}-CLIENTS")
-echo "✅ ${DEPLOY_ENV}-CLIENTS: $CLIENTS_ID"
+CLIENTS_CACHE_ID=$(create_kv_namespace "${DEPLOY_ENV}-CLIENTS_CACHE")
+echo "✅ ${DEPLOY_ENV}-CLIENTS_CACHE: $CLIENTS_CACHE_ID"
 
 INITIAL_ACCESS_TOKENS_ID=$(create_kv_namespace "${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS")
 echo "✅ ${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID"
@@ -537,8 +537,8 @@ echo ""
 echo "Creating preview namespaces (for development/testing)..."
 
 # Create preview namespaces
-PREVIEW_CLIENTS_ID=$(create_kv_namespace "${DEPLOY_ENV}-CLIENTS" "--preview")
-echo "✅ ${DEPLOY_ENV}-CLIENTS (preview): $PREVIEW_CLIENTS_ID"
+PREVIEW_CLIENTS_CACHE_ID=$(create_kv_namespace "${DEPLOY_ENV}-CLIENTS_CACHE" "--preview")
+echo "✅ ${DEPLOY_ENV}-CLIENTS_CACHE (preview): $PREVIEW_CLIENTS_CACHE_ID"
 
 PREVIEW_INITIAL_ACCESS_TOKENS_ID=$(create_kv_namespace "${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS" "--preview")
 echo "✅ ${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS (preview): $PREVIEW_INITIAL_ACCESS_TOKENS_ID"
@@ -617,7 +617,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📝 Updating packages/op-auth/wrangler.${DEPLOY_ENV}.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_wrangler_toml "packages/op-auth/wrangler.${DEPLOY_ENV}.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
+update_wrangler_toml "packages/op-auth/wrangler.${DEPLOY_ENV}.toml" "CLIENTS_CACHE" "$CLIENTS_CACHE_ID" "$PREVIEW_CLIENTS_CACHE_ID"
 echo "✅ op-auth updated"
 
 # Update op-management wrangler.toml
@@ -625,7 +625,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📝 Updating packages/op-management/wrangler.${DEPLOY_ENV}.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_wrangler_toml "packages/op-management/wrangler.${DEPLOY_ENV}.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
+update_wrangler_toml "packages/op-management/wrangler.${DEPLOY_ENV}.toml" "CLIENTS_CACHE" "$CLIENTS_CACHE_ID" "$PREVIEW_CLIENTS_CACHE_ID"
 update_wrangler_toml "packages/op-management/wrangler.${DEPLOY_ENV}.toml" "INITIAL_ACCESS_TOKENS" "$INITIAL_ACCESS_TOKENS_ID" "$PREVIEW_INITIAL_ACCESS_TOKENS_ID"
 update_wrangler_toml "packages/op-management/wrangler.${DEPLOY_ENV}.toml" "SETTINGS" "$SETTINGS_ID" "$PREVIEW_SETTINGS_ID"
 echo "✅ op-management updated"
@@ -635,7 +635,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📝 Updating packages/op-token/wrangler.${DEPLOY_ENV}.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
+update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "CLIENTS_CACHE" "$CLIENTS_CACHE_ID" "$PREVIEW_CLIENTS_CACHE_ID"
 echo "✅ op-token updated"
 
 # Update op-userinfo wrangler.toml
@@ -643,7 +643,7 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📝 Updating packages/op-userinfo/wrangler.${DEPLOY_ENV}.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-update_wrangler_toml "packages/op-userinfo/wrangler.${DEPLOY_ENV}.toml" "CLIENTS" "$CLIENTS_ID" "$PREVIEW_CLIENTS_ID"
+update_wrangler_toml "packages/op-userinfo/wrangler.${DEPLOY_ENV}.toml" "CLIENTS_CACHE" "$CLIENTS_CACHE_ID" "$PREVIEW_CLIENTS_CACHE_ID"
 echo "✅ op-userinfo updated"
 
 echo ""
@@ -651,7 +651,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "🎉 Setup complete for environment: $DEPLOY_ENV"
 echo ""
 echo "Created KV namespaces (production / preview):"
-echo "  • ${DEPLOY_ENV}-CLIENTS: $CLIENTS_ID / $PREVIEW_CLIENTS_ID"
+echo "  • ${DEPLOY_ENV}-CLIENTS_CACHE: $CLIENTS_CACHE_ID / $PREVIEW_CLIENTS_CACHE_ID"
 echo "  • ${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID / $PREVIEW_INITIAL_ACCESS_TOKENS_ID"
 echo "  • ${DEPLOY_ENV}-SETTINGS: $SETTINGS_ID / $PREVIEW_SETTINGS_ID"
 echo ""

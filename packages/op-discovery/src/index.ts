@@ -50,12 +50,13 @@ app.use(
   })
 );
 
-// Lenient rate limiting for public discovery endpoints
+// Lenient rate limiting for JWKS endpoint only
+// Note: Discovery endpoint is excluded to improve performance (fully public, cacheable data)
 app.use(
-  '/.well-known/*',
+  '/.well-known/jwks.json',
   rateLimitMiddleware({
     ...RateLimitProfiles.lenient,
-    endpoints: ['/.well-known'],
+    endpoints: ['/.well-known/jwks.json'],
   })
 );
 

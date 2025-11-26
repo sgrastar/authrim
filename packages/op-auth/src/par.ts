@@ -15,7 +15,7 @@ import type { Env } from '@authrim/shared';
 import { OIDCError } from '@authrim/shared';
 import { ERROR_CODES, HTTP_STATUS } from '@authrim/shared';
 import { validateClientId, validateRedirectUri, validateScope } from '@authrim/shared';
-import { generateSecureRandomString } from '@authrim/shared';
+import { generateSecureRandomString, getClient } from '@authrim/shared';
 
 /**
  * PAR request parameters interface
@@ -136,15 +136,11 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       );
     }
 
-    // Verify client exists (optional: implement client authentication here)
-    const client = await c.env.CLIENTS.get(params.client_id);
-    if (!client) {
+    // Verify client exists (uses Read-Through Cache: CLIENTS_CACHE → D1)
+    const clientData = await getClient(c.env, params.client_id);
+    if (!clientData) {
       throw new OIDCError(ERROR_CODES.INVALID_CLIENT, 'Client not found');
     }
-
-    const clientData = JSON.parse(client) as {
-      redirect_uris: string[];
-    };
 
     // Validate redirect_uri against registered URIs
     const redirectValidation = validateRedirectUri(params.redirect_uri);
@@ -155,7 +151,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       );
     }
 
-    if (!clientData.redirect_uris.includes(params.redirect_uri)) {
+    if (!(clientData.redirect_uris as string[]).includes(params.redirect_uri)) {
       throw new OIDCError(
         ERROR_CODES.INVALID_REQUEST,
         'redirect_uri not registered for this client'

@@ -184,9 +184,11 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    * Get from D1 with KV cache (read-through cache pattern)
    */
   private async getFromD1WithKVCache(key: string): Promise<string | null> {
-    // 1. Try KV cache first (use CLIENTS_CACHE if available)
-    const cacheKV = this.env.CLIENTS_CACHE || this.env.CLIENTS;
-    const cached = await cacheKV.get(key);
+    // 1. Try KV cache first (CLIENTS_CACHE is now required)
+    if (!this.env.CLIENTS_CACHE) {
+      throw new Error('CLIENTS_CACHE binding is required - CLIENTS KV has been deprecated');
+    }
+    const cached = await this.env.CLIENTS_CACHE.get(key);
     if (cached) {
       return cached;
     }
@@ -194,9 +196,9 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
     // 2. Cache miss, query D1
     const value = await this.getFromD1(key);
 
-    // 3. Update cache (5 minutes TTL)
+    // 3. Update cache (1 hour TTL)
     if (value && this.env.CLIENTS_CACHE) {
-      await this.env.CLIENTS_CACHE.put(key, value, { expirationTtl: 300 });
+      await this.env.CLIENTS_CACHE.put(key, value, { expirationTtl: 3600 });
     }
 
     return value;
@@ -410,26 +412,36 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   }
 
   /**
-   * Get from KV storage (fallback)
+   * Get from KV storage (fallback) - DEPRECATED
+   * @deprecated CLIENTS KV has been removed. Use D1+CLIENTS_CACHE instead.
    */
   private async getFromKV(key: string): Promise<string | null> {
-    // Use CLIENTS KV as default fallback
-    return await this.env.CLIENTS.get(key);
+    throw new Error(
+      `getFromKV called with ${key} - CLIENTS KV is deprecated, use D1+CLIENTS_CACHE. ` +
+      `If you need general KV storage, use env.KV or create a specific namespace.`
+    );
   }
 
   /**
-   * Set to KV storage (fallback)
+   * Set to KV storage (fallback) - DEPRECATED
+   * @deprecated CLIENTS KV has been removed. Use D1+CLIENTS_CACHE instead.
    */
   private async setToKV(key: string, value: string, ttl?: number): Promise<void> {
-    const options = ttl ? { expirationTtl: ttl } : undefined;
-    await this.env.CLIENTS.put(key, value, options);
+    throw new Error(
+      `setToKV called with ${key} - CLIENTS KV is deprecated, use D1+CLIENTS_CACHE. ` +
+      `If you need general KV storage, use env.KV or create a specific namespace.`
+    );
   }
 
   /**
-   * Delete from KV storage (fallback)
+   * Delete from KV storage (fallback) - DEPRECATED
+   * @deprecated CLIENTS KV has been removed. Use D1+CLIENTS_CACHE instead.
    */
   private async deleteFromKV(key: string): Promise<void> {
-    await this.env.CLIENTS.delete(key);
+    throw new Error(
+      `deleteFromKV called with ${key} - CLIENTS KV is deprecated, use D1+CLIENTS_CACHE. ` +
+      `If you need general KV storage, use env.KV or create a specific namespace.`
+    );
   }
 }
 

@@ -89,23 +89,12 @@ export async function deleteNonce(env: Env, nonce: string): Promise<void> {
 }
 
 /**
- * Store client metadata in KV (for Dynamic Client Registration)
+ * Retrieve client metadata using Read-Through Cache pattern
  *
- * @param env - Cloudflare environment bindings
- * @param clientId - Client ID
- * @param clientData - Client metadata
- * @returns Promise<void>
- */
-export async function storeClient(
-  env: Env,
-  clientId: string,
-  clientData: Record<string, unknown>
-): Promise<void> {
-  await env.CLIENTS.put(clientId, JSON.stringify(clientData));
-}
-
-/**
- * Retrieve client metadata from KV
+ * Architecture:
+ * - Primary source: D1 database (oauth_clients table)
+ * - Cache: CLIENTS_CACHE KV (1 hour TTL)
+ * - Pattern: Read-Through (cache miss → fetch from D1 → populate cache)
  *
  * @param env - Cloudflare environment bindings
  * @param clientId - Client ID to retrieve
@@ -115,18 +104,91 @@ export async function getClient(
   env: Env,
   clientId: string
 ): Promise<Record<string, unknown> | null> {
-  const data = await env.CLIENTS.get(clientId);
+  // Step 1: Try CLIENTS_CACHE (Read-Through Cache)
+  const cached = await env.CLIENTS_CACHE.get(clientId);
 
-  if (!data) {
+  if (cached) {
+    try {
+      return JSON.parse(cached) as Record<string, unknown>;
+    } catch (error) {
+      // Cache is corrupted - delete it and fetch from D1
+      console.error('Failed to parse cached client data:', error);
+      await env.CLIENTS_CACHE.delete(clientId).catch((e) =>
+        console.warn('Failed to delete corrupted cache:', e)
+      );
+    }
+  }
+
+  // Step 2: Cache miss - fetch from D1 (source of truth)
+  const result = await env.DB.prepare('SELECT * FROM oauth_clients WHERE client_id = ?')
+    .bind(clientId)
+    .first<{
+      client_id: string;
+      client_secret: string | null;
+      client_name: string | null;
+      redirect_uris: string;
+      grant_types: string;
+      response_types: string;
+      scope: string | null;
+      token_endpoint_auth_method: string | null;
+      contacts: string | null;
+      logo_uri: string | null;
+      client_uri: string | null;
+      policy_uri: string | null;
+      tos_uri: string | null;
+      jwks_uri: string | null;
+      jwks: string | null;
+      subject_type: string | null;
+      sector_identifier_uri: string | null;
+      id_token_signed_response_alg: string | null;
+      userinfo_signed_response_alg: string | null;
+      request_object_signing_alg: string | null;
+      created_at: number;
+      updated_at: number;
+    }>();
+
+  if (!result) {
     return null;
   }
 
+  // Step 3: Convert D1 result to client metadata format
+  const clientData: Record<string, unknown> = {
+    client_id: result.client_id,
+    client_secret: result.client_secret,
+    client_name: result.client_name,
+    redirect_uris: JSON.parse(result.redirect_uris),
+    grant_types: JSON.parse(result.grant_types),
+    response_types: JSON.parse(result.response_types),
+    scope: result.scope,
+    token_endpoint_auth_method: result.token_endpoint_auth_method,
+    contacts: result.contacts ? JSON.parse(result.contacts) : undefined,
+    logo_uri: result.logo_uri,
+    client_uri: result.client_uri,
+    policy_uri: result.policy_uri,
+    tos_uri: result.tos_uri,
+    jwks_uri: result.jwks_uri,
+    jwks: result.jwks ? JSON.parse(result.jwks) : undefined,
+    subject_type: result.subject_type,
+    sector_identifier_uri: result.sector_identifier_uri,
+    id_token_signed_response_alg: result.id_token_signed_response_alg,
+    userinfo_signed_response_alg: result.userinfo_signed_response_alg,
+    request_object_signing_alg: result.request_object_signing_alg,
+    created_at: result.created_at,
+    updated_at: result.updated_at,
+  };
+
+  // Step 4: Populate CLIENTS_CACHE (1 hour TTL)
   try {
-    return JSON.parse(data) as Record<string, unknown>;
+    await env.CLIENTS_CACHE.put(clientId, JSON.stringify(clientData), {
+      expirationTtl: 3600, // 1 hour
+    });
   } catch (error) {
-    console.error('Failed to parse client data:', error);
-    return null;
+    // Cache write failure should not block the response
+    // D1 is the source of truth
+    console.warn(`Failed to cache client data for ${clientId}:`, error);
   }
+
+  return clientData;
 }
 
 /**

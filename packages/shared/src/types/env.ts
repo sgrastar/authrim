@@ -11,11 +11,10 @@ export interface Env {
   // KV Namespaces
   STATE_STORE: KVNamespace;
   NONCE_STORE: KVNamespace;
-  CLIENTS: KVNamespace;
+  CLIENTS_CACHE: KVNamespace; // Client metadata cache (Read-Through from D1, 1 hour TTL)
   INITIAL_ACCESS_TOKENS?: KVNamespace; // For Dynamic Client Registration (RFC 7591)
 
   // KV Namespaces for Phase 5
-  CLIENTS_CACHE?: KVNamespace; // Client metadata cache (read-through from D1)
   JWKS_CACHE?: KVNamespace; // JWKs cache (from KeyManager DO)
   MAGIC_LINKS?: KVNamespace; // Magic Link tokens (TTL: 15 min)
   KV?: KVNamespace; // General purpose KV for session tokens and other data

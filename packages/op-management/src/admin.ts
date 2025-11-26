@@ -792,7 +792,15 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         allow_claims_without_scope: updatedClient.allow_claims_without_scope === 1,
       };
 
-      await c.env.CLIENTS.put(clientId, JSON.stringify(clientMetadata));
+      // Invalidate CLIENTS_CACHE (explicit invalidation after D1 update)
+      // D1 is source of truth - cache will be repopulated on next getClient() call
+      try {
+        await c.env.CLIENTS_CACHE.delete(clientId);
+      } catch (error) {
+        console.warn(`Failed to invalidate cache for ${clientId}:`, error);
+        // Cache invalidation failure should not block the response
+        // Worst case: stale cache for up to 5 minutes (TTL)
+      }
     }
 
     return c.json({
@@ -839,8 +847,13 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
     // Delete from D1 database
     await c.env.DB.prepare('DELETE FROM oauth_clients WHERE client_id = ?').bind(clientId).run();
 
-    // Delete from KV cache
-    await c.env.CLIENTS.delete(clientId);
+    // Invalidate CLIENTS_CACHE (explicit invalidation after D1 delete)
+    try {
+      await c.env.CLIENTS_CACHE.delete(clientId);
+    } catch (error) {
+      console.warn(`Failed to invalidate cache for ${clientId}:`, error);
+      // Cache invalidation failure should not block the response
+    }
 
     return c.json({
       success: true,
@@ -899,8 +912,13 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
           .run();
 
         if (result.meta?.changes && result.meta.changes > 0) {
-          // Delete from KV cache
-          await c.env.CLIENTS.delete(clientId);
+          // Invalidate CLIENTS_CACHE (explicit invalidation after D1 delete)
+          try {
+            await c.env.CLIENTS_CACHE.delete(clientId);
+          } catch (error) {
+            console.warn(`Failed to invalidate cache for ${clientId}:`, error);
+            // Cache invalidation failure should not block the bulk delete
+          }
           deletedCount++;
         }
       } catch (err) {

@@ -2,6 +2,10 @@ import type { Context } from 'hono';
 import type { Env, OIDCProviderMetadata } from '@authrim/shared';
 import { SUPPORTED_JWE_ALG, SUPPORTED_JWE_ENC } from '@authrim/shared';
 
+// Cache for metadata to improve performance
+let cachedMetadata: OIDCProviderMetadata | null = null;
+let cachedSettingsHash: string | null = null;
+
 /**
  * OpenID Connect Discovery Endpoint Handler
  * https://openid.net/specs/openid-connect-discovery-1_0.html
@@ -14,9 +18,11 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // Load dynamic configuration from SETTINGS KV
   let oidcConfig: any = {};
   let fapiConfig: any = {};
+  let currentSettingsJson = '';
 
   try {
     const settingsJson = await c.env.SETTINGS?.get('system_settings');
+    currentSettingsJson = settingsJson || '';
     if (settingsJson) {
       const settings = JSON.parse(settingsJson);
       oidcConfig = settings.oidc || {};
@@ -25,6 +31,15 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   } catch (error) {
     console.error('Failed to load settings from KV:', error);
     // Continue with default values
+  }
+
+  // Check if cached metadata is still valid
+  const currentHash = `${issuer}:${currentSettingsJson}`;
+  if (cachedMetadata && cachedSettingsHash === currentHash) {
+    // Cache hit - return cached metadata
+    c.header('Cache-Control', 'public, max-age=300');
+    c.header('Vary', 'Accept-Encoding');
+    return c.json(cachedMetadata);
   }
 
   // Determine PAR requirement (FAPI 2.0 mode or OIDC config)
@@ -147,6 +162,10 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // OIDC Session Management 1.0
     check_session_iframe: `${issuer}/session/check`,
   };
+
+  // Update cache
+  cachedMetadata = metadata;
+  cachedSettingsHash = currentHash;
 
   // Add cache headers for better performance
   // Reduced from 3600 to 300 seconds (5 minutes) for dynamic configuration

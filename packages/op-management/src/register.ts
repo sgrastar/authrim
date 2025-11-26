@@ -329,13 +329,12 @@ function generateClientSecret(): string {
 }
 
 /**
- * Store client metadata in KV and D1
+ * Store client metadata in D1 (source of truth)
+ * Cache will be populated via Read-Through pattern on first access
  */
 async function storeClient(env: Env, clientId: string, metadata: ClientMetadata): Promise<void> {
-  // Store in KV for fast access
-  await env.CLIENTS.put(clientId, JSON.stringify(metadata));
-
-  // Store in D1 for consent foreign key constraints
+  // Store in D1 (source of truth)
+  // CLIENTS_CACHE will be populated via Read-Through pattern on first getClient() call
   const now = Date.now(); // Store in milliseconds
   await env.DB.prepare(
     `
