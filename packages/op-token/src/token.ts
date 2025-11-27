@@ -36,6 +36,12 @@ import {
 import { importPKCS8, importJWK, type CryptoKey } from 'jose';
 import { extractDPoPProof, validateDPoPProof } from '@authrim/shared';
 
+// ===== Key Caching for Performance Optimization =====
+// Cache signing key to avoid expensive RSA key import (5-7ms) on every request
+let cachedSigningKey: { privateKey: CryptoKey; kid: string } | null = null;
+let cachedKeyTimestamp = 0;
+const KEY_CACHE_TTL = 60000; // 60 seconds
+
 /**
  * Response from AuthCodeStore Durable Object
  */
@@ -59,12 +65,23 @@ interface AuthCodeStoreResponse {
 }
 
 /**
- * Get signing key from KeyManager
+ * Get signing key from KeyManager with caching
  * If no active key exists, generates a new one
+ *
+ * Performance optimization: Caches the imported CryptoKey to avoid expensive
+ * RSA key import operation (5-7ms) on every request. Cache TTL is 60 seconds.
  */
 async function getSigningKeyFromKeyManager(
   env: Env
 ): Promise<{ privateKey: CryptoKey; kid: string }> {
+  const now = Date.now();
+
+  // Check cache first (cache hit = avoid KeyManager DO call + RSA import)
+  if (cachedSigningKey && (now - cachedKeyTimestamp) < KEY_CACHE_TTL) {
+    return cachedSigningKey;
+  }
+
+  // Cache miss: fetch from KeyManager
   if (!env.KEY_MANAGER) {
     throw new Error('KEY_MANAGER binding not available');
   }
@@ -140,9 +157,13 @@ async function getSigningKeyFromKeyManager(
     });
   }
 
-  // Import private key
+  // Import private key (expensive operation: 5-7ms)
   console.log('Attempting to import private key...');
   const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
+
+  // Update cache
+  cachedSigningKey = { privateKey, kid: keyData.kid };
+  cachedKeyTimestamp = now;
 
   return { privateKey, kid: keyData.kid };
 }

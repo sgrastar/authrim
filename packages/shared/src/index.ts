@@ -2,8 +2,10 @@
 export * from './constants';
 export * from './types/env';
 export * from './types/oidc';
+export * from './types/admin';
 
 // Utils
+export * from './utils/audit-log';
 export * from './utils/client-authentication';
 export * from './utils/crypto';
 export * from './utils/d1-retry';
@@ -23,6 +25,7 @@ export * from './utils/token-introspection';
 export * from './utils/validation';
 
 // Middleware
+export * from './middleware/admin-auth';
 export * from './middleware/rate-limit';
 export * from './middleware/initial-access-token';
 

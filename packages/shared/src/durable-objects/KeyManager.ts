@@ -19,6 +19,7 @@
 import type { JWK } from 'jose';
 import { generateKeySet } from '../utils/keys';
 import type { Env } from '../types/env';
+import type { KeyStatus } from '../types/admin';
 
 /**
  * Stored key metadata
@@ -28,7 +29,10 @@ interface StoredKey {
   publicJWK: JWK;
   privatePEM: string;
   createdAt: number;
-  isActive: boolean;
+  status: KeyStatus; // 'active' | 'overlap' | 'revoked'
+  expiresAt?: number; // When the key expires (for overlap keys)
+  revokedAt?: number; // When the key was revoked (for revoked keys)
+  revokedReason?: string; // Reason for revocation (for revoked keys)
 }
 
 /**
@@ -76,6 +80,8 @@ export class KeyManager {
 
     if (stored) {
       this.keyManagerState = stored;
+      // Run migration if needed
+      await this.migrateIsActiveToStatus();
     } else {
       // Initialize with default configuration
       this.keyManagerState = {
@@ -88,6 +94,30 @@ export class KeyManager {
         lastRotation: null,
       };
 
+      await this.saveState();
+    }
+  }
+
+  /**
+   * Migrate from old isActive field to new status field
+   * This is a one-time migration for backward compatibility
+   */
+  private async migrateIsActiveToStatus(): Promise<void> {
+    const state = this.getState();
+    let needsMigration = false;
+
+    for (const key of state.keys) {
+      if ('isActive' in key && !('status' in key)) {
+        needsMigration = true;
+        // @ts-expect-error - migration from old schema
+        (key as StoredKey).status = key.isActive ? 'active' : 'overlap';
+        // @ts-expect-error - migration from old schema
+        delete key.isActive;
+      }
+    }
+
+    if (needsMigration) {
+      console.log('[KeyManager] Migrated isActive to status field');
       await this.saveState();
     }
   }
@@ -132,7 +162,7 @@ export class KeyManager {
       publicJWK: keySet.publicJWK,
       privatePEM: keySet.privatePEM,
       createdAt: Date.now(),
-      isActive: false,
+      status: 'overlap', // New keys start as overlap until set as active
     };
 
     console.log('KeyManager generateNewKey - newKey:', {
@@ -161,11 +191,16 @@ export class KeyManager {
       throw new Error(`Key with kid ${kid} not found`);
     }
 
-    // Deactivate all other keys
-    state.keys.forEach((k) => {
-      k.isActive = k.kid === kid;
-    });
+    // Set previous active key to overlap status with expiry
+    const previousActiveKey = state.keys.find((k) => k.status === 'active');
+    if (previousActiveKey) {
+      previousActiveKey.status = 'overlap';
+      // Set expiry to 24 hours from now (overlap period)
+      previousActiveKey.expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+    }
 
+    // Set new key as active
+    key.status = 'active';
     state.activeKeyId = kid;
     await this.saveState();
   }
@@ -186,12 +221,14 @@ export class KeyManager {
 
   /**
    * Get all public keys (for JWKS endpoint)
+   * Excludes revoked keys from JWKS
    */
   async getAllPublicKeys(): Promise<JWK[]> {
     await this.initializeState();
 
     const state = this.getState();
-    return state.keys.map((k) => k.publicJWK);
+    // Only return active and overlap keys, exclude revoked keys
+    return state.keys.filter((k) => k.status !== 'revoked').map((k) => k.publicJWK);
   }
 
   /**
@@ -244,7 +281,10 @@ export class KeyManager {
       publicJWK: rotatedKey.publicJWK,
       privatePEM: rotatedKey.privatePEM,
       createdAt: rotatedKey.createdAt,
-      isActive: rotatedKey.isActive,
+      status: rotatedKey.status,
+      expiresAt: rotatedKey.expiresAt,
+      revokedAt: rotatedKey.revokedAt,
+      revokedReason: rotatedKey.revokedReason,
     };
 
     console.log('KeyManager rotateKeys - reconstructed result:', {
@@ -266,15 +306,82 @@ export class KeyManager {
   }
 
   /**
+   * Emergency key rotation for key compromise scenarios
+   * Immediately revokes the current active key and generates a new one
+   *
+   * @param reason - Reason for emergency rotation (for audit purposes)
+   * @returns Object with old and new key IDs
+   */
+  async emergencyRotateKeys(reason: string): Promise<{ oldKid: string; newKid: string }> {
+    await this.initializeState();
+
+    const state = this.getState();
+    const now = Date.now();
+
+    // Find current active key
+    const currentActiveKey = state.keys.find((k) => k.status === 'active');
+    if (!currentActiveKey) {
+      throw new Error('No active key found to revoke');
+    }
+
+    // Generate new key
+    const newKey = await this.generateNewKey();
+    newKey.status = 'active';
+
+    // Immediately revoke old key (NO overlap period for security)
+    currentActiveKey.status = 'revoked';
+    currentActiveKey.revokedAt = now;
+    currentActiveKey.revokedReason = reason;
+
+    // Update state
+    state.activeKeyId = newKey.kid;
+    state.lastRotation = now;
+    await this.saveState();
+
+    console.warn('[KeyManager] Emergency rotation executed', {
+      oldKid: currentActiveKey.kid,
+      newKid: newKey.kid,
+      reason,
+      timestamp: new Date(now).toISOString(),
+    });
+
+    return {
+      oldKid: currentActiveKey.kid,
+      newKid: newKey.kid,
+    };
+  }
+
+  /**
    * Clean up expired keys based on retention period
+   * - Active keys: never removed
+   * - Overlap keys: removed after expiry
+   * - Revoked keys: kept for retention period for audit purposes
    */
   private async cleanupExpiredKeys(): Promise<void> {
     const state = this.getState();
     const retentionMillis = state.config.retentionPeriodDays * 24 * 60 * 60 * 1000;
-    const cutoffTime = Date.now() - retentionMillis;
+    const now = Date.now();
 
-    // Keep only active key and keys within retention period
-    state.keys = state.keys.filter((k) => k.isActive || k.createdAt > cutoffTime);
+    state.keys = state.keys.filter((k) => {
+      // Always keep active keys
+      if (k.status === 'active') {
+        return true;
+      }
+
+      // Remove overlap keys that have expired
+      if (k.status === 'overlap' && k.expiresAt && k.expiresAt < now) {
+        return false;
+      }
+
+      // Remove revoked keys after retention period (for audit purposes)
+      if (k.status === 'revoked' && k.revokedAt) {
+        const revokedAge = now - k.revokedAt;
+        return revokedAge < retentionMillis;
+      }
+
+      // Keep everything else
+      return true;
+    });
   }
 
   /**
@@ -434,7 +541,10 @@ export class KeyManager {
           publicJWK: activeKey.publicJWK,
           privatePEM: activeKey.privatePEM,
           createdAt: activeKey.createdAt,
-          isActive: activeKey.isActive,
+          status: activeKey.status,
+          expiresAt: activeKey.expiresAt,
+          revokedAt: activeKey.revokedAt,
+          revokedReason: activeKey.revokedReason,
         };
 
         // Return full key data including privatePEM for internal use
@@ -518,6 +628,57 @@ export class KeyManager {
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
         });
+      }
+
+      // POST /emergency-rotate - Emergency key rotation (immediate revocation)
+      if (path === '/emergency-rotate' && request.method === 'POST') {
+        const body = (await request.json()) as { reason: string };
+
+        if (!body.reason || body.reason.length < 10) {
+          return new Response(
+            JSON.stringify({
+              error: 'Bad Request',
+              message: 'Reason is required (minimum 10 characters)',
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const result = await this.emergencyRotateKeys(body.reason);
+
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // GET /status - Get status of all keys (for admin dashboard)
+      if (path === '/status' && request.method === 'GET') {
+        await this.initializeState();
+        const state = this.getState();
+
+        // Sanitize keys (remove private key material)
+        const keys = state.keys.map((k) => ({
+          kid: k.kid,
+          status: k.status,
+          createdAt: k.createdAt,
+          expiresAt: k.expiresAt,
+          revokedAt: k.revokedAt,
+          revokedReason: k.revokedReason,
+        }));
+
+        return new Response(
+          JSON.stringify({
+            keys,
+            activeKeyId: state.activeKeyId,
+            lastRotation: state.lastRotation,
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
       }
 
       return new Response('Not Found', { status: 404 });

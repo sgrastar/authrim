@@ -60,6 +60,7 @@ export interface Env {
 
   // Admin secrets for Durable Objects management
   KEY_MANAGER_SECRET?: string;
+  ADMIN_API_SECRET?: string; // Admin API authentication secret (Bearer token)
 
   // Email configuration (Phase 5)
   RESEND_API_KEY?: string;

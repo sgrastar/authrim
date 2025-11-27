@@ -7,10 +7,16 @@ import {
   rateLimitMiddleware,
   RateLimitProfiles,
   initialAccessTokenMiddleware,
+  adminAuthMiddleware,
 } from '@authrim/shared';
 
 // Import handlers
 import { registerHandler } from './register';
+import {
+  adminSigningKeysStatusHandler,
+  adminSigningKeysRotateHandler,
+  adminSigningKeysEmergencyRotateHandler,
+} from './signing-keys';
 import { introspectHandler } from './introspect';
 import { revokeHandler } from './revoke';
 import {
@@ -144,6 +150,10 @@ app.post('/revoke', revokeHandler);
 // Avatar serving endpoint
 app.get('/api/avatars/:filename', serveAvatarHandler);
 
+// Admin authentication middleware - applies to ALL /api/admin/* routes
+// Supports both Bearer token (for headless/API usage) and session-based auth (for UI)
+app.use('/api/admin/*', adminAuthMiddleware());
+
 // Admin API endpoints
 app.get('/api/admin/stats', adminStatsHandler);
 app.get('/api/admin/users', adminUsersListHandler);
@@ -176,6 +186,11 @@ app.put('/api/admin/settings', adminSettingsUpdateHandler);
 // Admin Certification Profile endpoints (OpenID Certification)
 app.get('/api/admin/settings/profiles', adminListCertificationProfilesHandler);
 app.put('/api/admin/settings/profile/:profileName', adminApplyCertificationProfileHandler);
+
+// Admin Signing Keys Management endpoints
+app.get('/api/admin/signing-keys/status', adminSigningKeysStatusHandler);
+app.post('/api/admin/signing-keys/rotate', adminSigningKeysRotateHandler);
+app.post('/api/admin/signing-keys/emergency-rotate', adminSigningKeysEmergencyRotateHandler);
 
 // Admin SCIM Token Management endpoints
 app.get('/api/admin/scim-tokens', adminScimTokensListHandler);

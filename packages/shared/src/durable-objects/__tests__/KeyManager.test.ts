@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { KeyManager } from '../KeyManager';
 import type { Env } from '../../types/env';
 
@@ -113,6 +113,8 @@ describe('KeyManager Durable Object', () => {
         { path: '/should-rotate', method: 'GET' },
         { path: '/config', method: 'GET' },
         { path: '/config', method: 'POST' },
+        { path: '/emergency-rotate', method: 'POST' },
+        { path: '/status', method: 'GET' },
       ];
 
       for (const endpoint of protectedEndpoints) {
@@ -192,7 +194,7 @@ describe('KeyManager Durable Object', () => {
       expect(data).toHaveProperty('kid');
       expect(data).toHaveProperty('publicJWK');
       expect(data).toHaveProperty('createdAt');
-      expect(data).toHaveProperty('isActive');
+      expect(data).toHaveProperty('status');
     });
 
     it('should not expose private keys in /rotate endpoint', async () => {
@@ -206,6 +208,24 @@ describe('KeyManager Durable Object', () => {
       expect(data.key).not.toHaveProperty('privatePEM');
       expect(data.key).toHaveProperty('kid');
       expect(data.key).toHaveProperty('publicJWK');
+    });
+
+    it('should expose private keys in /internal/active-with-private endpoint', async () => {
+      // First, rotate to create a key
+      const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
+      await keyManager.fetch(rotateRequest);
+
+      // Get active key with private
+      const request = createRequest('/internal/active-with-private', 'GET', 'test-secret-token');
+      const response = await keyManager.fetch(request);
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+
+      // Should contain privatePEM for internal use
+      expect(data).toHaveProperty('privatePEM');
+      expect(data).toHaveProperty('kid');
+      expect(data).toHaveProperty('publicJWK');
     });
   });
 
@@ -222,20 +242,86 @@ describe('KeyManager Durable Object', () => {
       expect(key2.kid).toMatch(/^key-\d+-[0-9a-f-]+$/);
     });
 
-    it('should generate keys with correct properties', async () => {
+    it('should generate keys with correct properties including status', async () => {
       const key = await keyManager.generateNewKey();
 
       expect(key).toHaveProperty('kid');
       expect(key).toHaveProperty('publicJWK');
       expect(key).toHaveProperty('privatePEM');
       expect(key).toHaveProperty('createdAt');
-      expect(key).toHaveProperty('isActive');
+      expect(key).toHaveProperty('status');
 
       expect(typeof key.kid).toBe('string');
       expect(typeof key.publicJWK).toBe('object');
       expect(typeof key.privatePEM).toBe('string');
       expect(typeof key.createdAt).toBe('number');
-      expect(key.isActive).toBe(false);
+      // New keys start as overlap until set as active
+      expect(key.status).toBe('overlap');
+    });
+  });
+
+  describe('Key Status Management', () => {
+    it('should set key status to active after rotation', async () => {
+      const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
+      const response = await keyManager.fetch(rotateRequest);
+      const data = await response.json();
+
+      expect(data.key.status).toBe('active');
+    });
+
+    it('should set previous active key to overlap status after rotation', async () => {
+      // First rotation
+      const rotate1 = createRequest('/rotate', 'POST', 'test-secret-token');
+      const response1 = await keyManager.fetch(rotate1);
+      const data1 = await response1.json();
+      const firstKid = data1.key.kid;
+
+      // Second rotation
+      const rotate2 = createRequest('/rotate', 'POST', 'test-secret-token');
+      const response2 = await keyManager.fetch(rotate2);
+      const data2 = await response2.json();
+
+      expect(data2.key.status).toBe('active');
+      expect(data2.key.kid).not.toBe(firstKid);
+
+      // Check status endpoint to verify first key is now overlap
+      const statusRequest = createRequest('/status', 'GET', 'test-secret-token');
+      const statusResponse = await keyManager.fetch(statusRequest);
+      const statusData = await statusResponse.json();
+
+      const firstKey = statusData.keys.find((k: { kid: string }) => k.kid === firstKid);
+      expect(firstKey.status).toBe('overlap');
+      expect(firstKey).toHaveProperty('expiresAt');
+    });
+
+    it('should exclude revoked keys from JWKS', async () => {
+      // Create and rotate keys
+      const rotate1 = createRequest('/rotate', 'POST', 'test-secret-token');
+      await keyManager.fetch(rotate1);
+
+      // Emergency rotate to revoke the first key
+      const emergencyRequest = createRequest('/emergency-rotate', 'POST', 'test-secret-token', {
+        reason: 'Test key compromise scenario',
+      });
+      await keyManager.fetch(emergencyRequest);
+
+      // Get JWKS
+      const jwksRequest = createRequest('/jwks', 'GET');
+      const jwksResponse = await keyManager.fetch(jwksRequest);
+      const jwksData = await jwksResponse.json();
+
+      // Should only have the new active key, not the revoked one
+      expect(jwksData.keys.length).toBe(1);
+
+      // Get status to verify revoked key exists but not in JWKS
+      const statusRequest = createRequest('/status', 'GET', 'test-secret-token');
+      const statusResponse = await keyManager.fetch(statusRequest);
+      const statusData = await statusResponse.json();
+
+      // Should have 2 keys in status (one revoked, one active)
+      expect(statusData.keys.length).toBe(2);
+      const revokedKey = statusData.keys.find((k: { status: string }) => k.status === 'revoked');
+      expect(revokedKey).toBeDefined();
     });
   });
 
@@ -263,7 +349,7 @@ describe('KeyManager Durable Object', () => {
       const activeData = await activeResponse.json();
 
       expect(activeData.kid).toBe(newKid);
-      expect(activeData.isActive).toBe(true);
+      expect(activeData.status).toBe('active');
     });
 
     it('should handle multiple rotations', async () => {
@@ -287,8 +373,127 @@ describe('KeyManager Durable Object', () => {
     });
   });
 
+  describe('Emergency Key Rotation', () => {
+    it('should perform emergency rotation successfully', async () => {
+      // First create an active key
+      const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
+      await keyManager.fetch(rotateRequest);
+
+      // Emergency rotate
+      const request = createRequest('/emergency-rotate', 'POST', 'test-secret-token', {
+        reason: 'Private key compromised - detected in public repository',
+      });
+      const response = await keyManager.fetch(request);
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+
+      expect(data).toHaveProperty('oldKid');
+      expect(data).toHaveProperty('newKid');
+      expect(data.oldKid).not.toBe(data.newKid);
+    });
+
+    it('should immediately revoke old key on emergency rotation', async () => {
+      // Create active key
+      const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
+      const rotateResponse = await keyManager.fetch(rotateRequest);
+      const rotateData = await rotateResponse.json();
+      const oldKid = rotateData.key.kid;
+
+      // Emergency rotate
+      const emergencyRequest = createRequest('/emergency-rotate', 'POST', 'test-secret-token', {
+        reason: 'Key compromise detected in logs',
+      });
+      await keyManager.fetch(emergencyRequest);
+
+      // Check status
+      const statusRequest = createRequest('/status', 'GET', 'test-secret-token');
+      const statusResponse = await keyManager.fetch(statusRequest);
+      const statusData = await statusResponse.json();
+
+      const oldKey = statusData.keys.find((k: { kid: string }) => k.kid === oldKid);
+      expect(oldKey.status).toBe('revoked');
+      expect(oldKey).toHaveProperty('revokedAt');
+      expect(oldKey.revokedReason).toBe('Key compromise detected in logs');
+    });
+
+    it('should require reason for emergency rotation', async () => {
+      // Create active key first
+      const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
+      await keyManager.fetch(rotateRequest);
+
+      // Try emergency rotate without reason
+      const request = createRequest('/emergency-rotate', 'POST', 'test-secret-token', {});
+      const response = await keyManager.fetch(request);
+
+      expect(response.status).toBe(400);
+      const data = await response.json();
+      expect(data.error).toBe('Bad Request');
+    });
+
+    it('should require minimum 10 characters for reason', async () => {
+      // Create active key first
+      const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
+      await keyManager.fetch(rotateRequest);
+
+      // Try with short reason
+      const request = createRequest('/emergency-rotate', 'POST', 'test-secret-token', {
+        reason: 'short',
+      });
+      const response = await keyManager.fetch(request);
+
+      expect(response.status).toBe(400);
+    });
+
+    it('should fail if no active key exists', async () => {
+      // Try emergency rotate without any keys
+      const request = createRequest('/emergency-rotate', 'POST', 'test-secret-token', {
+        reason: 'Testing without active key',
+      });
+      const response = await keyManager.fetch(request);
+
+      expect(response.status).toBe(500);
+    });
+  });
+
+  describe('Status Endpoint', () => {
+    it('should return status of all keys', async () => {
+      // Create some keys
+      await keyManager.fetch(createRequest('/rotate', 'POST', 'test-secret-token'));
+      await keyManager.fetch(createRequest('/rotate', 'POST', 'test-secret-token'));
+
+      const request = createRequest('/status', 'GET', 'test-secret-token');
+      const response = await keyManager.fetch(request);
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+
+      expect(data).toHaveProperty('keys');
+      expect(data).toHaveProperty('activeKeyId');
+      expect(data).toHaveProperty('lastRotation');
+      expect(Array.isArray(data.keys)).toBe(true);
+      expect(data.keys.length).toBe(2);
+    });
+
+    it('should not expose private keys in status endpoint', async () => {
+      await keyManager.fetch(createRequest('/rotate', 'POST', 'test-secret-token'));
+
+      const request = createRequest('/status', 'GET', 'test-secret-token');
+      const response = await keyManager.fetch(request);
+      const data = await response.json();
+
+      for (const key of data.keys) {
+        expect(key).not.toHaveProperty('privatePEM');
+        expect(key).not.toHaveProperty('publicJWK');
+        expect(key).toHaveProperty('kid');
+        expect(key).toHaveProperty('status');
+        expect(key).toHaveProperty('createdAt');
+      }
+    });
+  });
+
   describe('JWKS Endpoint', () => {
-    it('should return all public keys', async () => {
+    it('should return all public keys except revoked', async () => {
       // Rotate to create some keys
       await keyManager.fetch(createRequest('/rotate', 'POST', 'test-secret-token'));
       await keyManager.fetch(createRequest('/rotate', 'POST', 'test-secret-token'));
@@ -301,7 +506,8 @@ describe('KeyManager Durable Object', () => {
 
       expect(data).toHaveProperty('keys');
       expect(Array.isArray(data.keys)).toBe(true);
-      expect(data.keys.length).toBeGreaterThan(0);
+      // Should have 2 keys (1 active, 1 overlap)
+      expect(data.keys.length).toBe(2);
     });
   });
 
@@ -365,6 +571,56 @@ describe('KeyManager Durable Object', () => {
 
       // Should not need rotation immediately after rotating
       expect(data.shouldRotate).toBe(false);
+    });
+  });
+
+  describe('Migration (isActive to status)', () => {
+    it('should migrate old isActive schema to new status schema', async () => {
+      // Simulate old schema data
+      const oldSchemaState = {
+        keys: [
+          {
+            kid: 'old-key-1',
+            publicJWK: { kty: 'RSA', n: 'test', e: 'AQAB' },
+            privatePEM: '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----',
+            createdAt: Date.now() - 1000000,
+            isActive: false,
+          },
+          {
+            kid: 'old-key-2',
+            publicJWK: { kty: 'RSA', n: 'test2', e: 'AQAB' },
+            privatePEM: '-----BEGIN PRIVATE KEY-----\ntest2\n-----END PRIVATE KEY-----',
+            createdAt: Date.now(),
+            isActive: true,
+          },
+        ],
+        activeKeyId: 'old-key-2',
+        config: {
+          rotationIntervalDays: 90,
+          retentionPeriodDays: 30,
+        },
+        lastRotation: Date.now(),
+      };
+
+      // Set old schema data directly
+      await state.storage.put('state', oldSchemaState);
+
+      // Create new KeyManager instance to trigger migration
+      const newKeyManager = new KeyManager(state as unknown as DurableObjectState, env);
+
+      // Access status endpoint to trigger initialization and migration
+      const request = createRequest('/status', 'GET', 'test-secret-token');
+      const response = await newKeyManager.fetch(request);
+      const data = await response.json();
+
+      // Check migration worked
+      const key1 = data.keys.find((k: { kid: string }) => k.kid === 'old-key-1');
+      const key2 = data.keys.find((k: { kid: string }) => k.kid === 'old-key-2');
+
+      expect(key1.status).toBe('overlap'); // was isActive: false
+      expect(key2.status).toBe('active'); // was isActive: true
+      expect(key1).not.toHaveProperty('isActive');
+      expect(key2).not.toHaveProperty('isActive');
     });
   });
 

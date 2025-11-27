@@ -12,6 +12,65 @@ import {
 } from '@authrim/shared';
 import { SignJWT } from 'jose';
 
+// ===== Key Caching for Performance Optimization =====
+// Cache signing key to avoid expensive RSA key import (5-7ms) on every request
+let cachedSigningKey: { privateKey: CryptoKey; kid: string } | null = null;
+let cachedKeyTimestamp = 0;
+const KEY_CACHE_TTL = 60000; // 60 seconds
+
+/**
+ * Get signing key from KeyManager with caching
+ * Performance optimization: Caches the imported CryptoKey to avoid expensive
+ * RSA key import operation (5-7ms) on every request. Cache TTL is 60 seconds.
+ */
+async function getSigningKeyFromKeyManager(
+  env: Env
+): Promise<{ privateKey: CryptoKey; kid: string }> {
+  const now = Date.now();
+
+  // Check cache first (cache hit = avoid KeyManager DO call + RSA import)
+  if (cachedSigningKey && (now - cachedKeyTimestamp) < KEY_CACHE_TTL) {
+    return cachedSigningKey;
+  }
+
+  // Cache miss: fetch from KeyManager
+  const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+  const keyManager = env.KEY_MANAGER.get(keyManagerId);
+  const authHeaders = {
+    Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
+  };
+
+  const keyResponse = await keyManager.fetch('http://key-manager/internal/active-with-private', {
+    method: 'GET',
+    headers: authHeaders,
+  });
+
+  if (!keyResponse.ok) {
+    console.error('Failed to fetch signing key from KeyManager:', keyResponse.status);
+    throw new Error('Failed to fetch signing key from KeyManager');
+  }
+
+  const keyData = await keyResponse.json<{
+    kid: string;
+    privatePEM: string;
+  }>();
+
+  if (!keyData.privatePEM) {
+    console.error('Private key not available from KeyManager');
+    throw new Error('Private key not available from KeyManager');
+  }
+
+  // Import private key (expensive operation: 5-7ms)
+  const { importPKCS8 } = await import('jose');
+  const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
+
+  // Update cache
+  cachedSigningKey = { privateKey, kid: keyData.kid };
+  cachedKeyTimestamp = now;
+
+  return { privateKey, kid: keyData.kid };
+}
+
 /**
  * UserInfo Endpoint Handler
  * https://openid.net/specs/openid-connect-core-1_0.html#UserInfo
@@ -282,55 +341,12 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     // For UserInfo encryption, we need to sign the claims first (JWT), then encrypt (JWE)
     // This creates a nested JWT: JWS inside JWE
     try {
-      // Get signing key from KeyManager
-      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
-      const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-      const authHeaders = {
-        Authorization: `Bearer ${c.env.KEY_MANAGER_SECRET}`,
-      };
-
-      const keyResponse = await keyManager.fetch(
-        'http://key-manager/internal/active-with-private',
-        {
-          method: 'GET',
-          headers: authHeaders,
-        }
-      );
-
-      if (!keyResponse.ok) {
-        console.error('Failed to fetch signing key from KeyManager:', keyResponse.status);
-        return c.json(
-          {
-            error: 'server_error',
-            error_description: 'Server configuration error',
-          },
-          500
-        );
-      }
-
-      const keyData = await keyResponse.json<{
-        kid: string;
-        privatePEM: string;
-      }>();
-
-      if (!keyData.privatePEM) {
-        console.error('Private key not available from KeyManager');
-        return c.json(
-          {
-            error: 'server_error',
-            error_description: 'Server configuration error',
-          },
-          500
-        );
-      }
-
-      // Import private key for signing
-      const { importPKCS8 } = await import('jose');
-      const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
+      // Get signing key from KeyManager (with caching)
+      const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env);
 
       // Sign UserInfo claims as JWT
       const signedUserInfo = await new SignJWT(userClaims)
-        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: keyData.kid })
+        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
         .setIssuedAt()
         .setIssuer(c.env.ISSUER_URL)
         .setAudience(client_id)
