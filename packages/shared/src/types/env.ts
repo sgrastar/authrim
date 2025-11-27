@@ -33,6 +33,7 @@ export interface Env {
   TOKEN_REVOCATION_STORE: DurableObjectNamespace; // Token revocation list
   DEVICE_CODE_STORE: DurableObjectNamespace; // RFC 8628: Device Authorization Grant
   CIBA_REQUEST_STORE: DurableObjectNamespace; // OpenID Connect CIBA Flow
+  VERSION_MANAGER: DurableObjectNamespace; // Worker bundle version management
 
   // Environment Variables
   ISSUER_URL: string;
@@ -77,4 +78,8 @@ export interface Env {
   // Trusted Client domains (comma-separated)
   // Clients with redirect_uri domains in this list are automatically trusted
   TRUSTED_DOMAINS?: string;
+
+  // Version Management (set by deploy script via --var)
+  CODE_VERSION_UUID?: string; // UUID v4 identifying this deployed bundle
+  DEPLOY_TIME_UTC?: string; // ISO 8601 timestamp of deployment
 }

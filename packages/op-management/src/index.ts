@@ -8,6 +8,7 @@ import {
   RateLimitProfiles,
   initialAccessTokenMiddleware,
   adminAuthMiddleware,
+  versionCheckMiddleware,
 } from '@authrim/shared';
 
 // Import handlers
@@ -57,6 +58,7 @@ const app = new Hono<{ Bindings: Env }>();
 
 // Middleware
 app.use('*', logger());
+app.use('*', versionCheckMiddleware('op-management'));
 
 // Enhanced security headers
 app.use(
@@ -199,6 +201,156 @@ app.delete('/api/admin/scim-tokens/:tokenHash', adminScimTokenRevokeHandler);
 
 // SCIM 2.0 endpoints - RFC 7643, 7644
 app.route('/scim/v2', scimApp);
+
+// =====================================================
+// Internal API - Version Management
+// Used by deploy scripts to register new versions
+// =====================================================
+
+/**
+ * POST /api/internal/version/:workerName
+ * Register a new version for a specific Worker
+ *
+ * Request body:
+ * {
+ *   "uuid": "a1b2c3d4-e5f6-7890-abcd-ef0123456789",
+ *   "deployTime": "2025-11-28T03:20:15Z"
+ * }
+ *
+ * Requires: Bearer token (ADMIN_API_SECRET)
+ */
+app.post('/api/internal/version/:workerName', adminAuthMiddleware(), async (c) => {
+  const workerName = c.req.param('workerName');
+
+  // Validate worker name (only allow known workers)
+  const validWorkers = ['op-auth', 'op-token', 'op-management', 'op-userinfo', 'op-async', 'op-discovery'];
+  if (!validWorkers.includes(workerName)) {
+    return c.json(
+      {
+        error: 'invalid_worker',
+        error_description: `Invalid worker name: ${workerName}`,
+      },
+      400
+    );
+  }
+
+  const body = (await c.req.json()) as { uuid: string; deployTime: string };
+
+  if (!body.uuid || !body.deployTime) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'uuid and deployTime are required',
+      },
+      400
+    );
+  }
+
+  // Validate UUID format
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(body.uuid)) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'uuid must be a valid UUID v4',
+      },
+      400
+    );
+  }
+
+  try {
+    const vmId = c.env.VERSION_MANAGER.idFromName('global');
+    const vm = c.env.VERSION_MANAGER.get(vmId);
+
+    const response = await vm.fetch(
+      new Request(`https://do/version/${workerName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${c.env.ADMIN_API_SECRET}`,
+        },
+        body: JSON.stringify({
+          uuid: body.uuid,
+          deployTime: body.deployTime,
+        }),
+      })
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error(`[Version API] Failed to register version: ${error}`);
+      return c.json(
+        {
+          error: 'internal_error',
+          error_description: 'Failed to register version',
+        },
+        500
+      );
+    }
+
+    console.log(`[Version API] Registered version for ${workerName}`, {
+      uuid: body.uuid.substring(0, 8) + '...',
+      deployTime: body.deployTime,
+    });
+
+    return c.json({ success: true, workerName, uuid: body.uuid });
+  } catch (error) {
+    console.error('[Version API] Error:', error);
+    return c.json(
+      {
+        error: 'internal_error',
+        error_description: 'Failed to register version',
+      },
+      500
+    );
+  }
+});
+
+/**
+ * GET /api/internal/version-manager/status
+ * Get all registered versions
+ *
+ * Requires: Bearer token (ADMIN_API_SECRET)
+ */
+app.get('/api/internal/version-manager/status', adminAuthMiddleware(), async (c) => {
+  try {
+    const vmId = c.env.VERSION_MANAGER.idFromName('global');
+    const vm = c.env.VERSION_MANAGER.get(vmId);
+
+    const response = await vm.fetch(
+      new Request('https://do/version-manager/status', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${c.env.ADMIN_API_SECRET}`,
+        },
+      })
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error(`[Version API] Failed to get status: ${error}`);
+      return c.json(
+        {
+          error: 'internal_error',
+          error_description: 'Failed to get version status',
+        },
+        500
+      );
+    }
+
+    const data = await response.json();
+    return c.json(data);
+  } catch (error) {
+    console.error('[Version API] Error:', error);
+    return c.json(
+      {
+        error: 'internal_error',
+        error_description: 'Failed to get version status',
+      },
+      500
+    );
+  }
+});
 
 // 404 handler
 app.notFound((c) => {

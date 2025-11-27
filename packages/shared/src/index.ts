@@ -28,6 +28,7 @@ export * from './utils/validation';
 export * from './middleware/admin-auth';
 export * from './middleware/rate-limit';
 export * from './middleware/initial-access-token';
+export * from './middleware/version-check';
 
 // Storage
 export * from './storage/interfaces';
@@ -37,3 +38,4 @@ export { KeyManager } from './durable-objects/KeyManager';
 export { ChallengeStore } from './durable-objects/ChallengeStore';
 export { DeviceCodeStore } from './durable-objects/DeviceCodeStore';
 export { CIBARequestStore } from './durable-objects/CIBARequestStore';
+export { VersionManager } from './durable-objects/VersionManager';

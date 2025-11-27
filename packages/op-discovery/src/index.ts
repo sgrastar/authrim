@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import type { Env } from '@authrim/shared';
-import { rateLimitMiddleware, RateLimitProfiles } from '@authrim/shared';
+import { rateLimitMiddleware, RateLimitProfiles, versionCheckMiddleware } from '@authrim/shared';
 
 // Import handlers
 import { discoveryHandler } from './discovery';
@@ -14,6 +14,7 @@ const app = new Hono<{ Bindings: Env }>();
 
 // Middleware
 app.use('*', logger());
+app.use('*', versionCheckMiddleware('op-discovery'));
 
 // Enhanced security headers
 app.use(

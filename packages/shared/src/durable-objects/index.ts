@@ -24,6 +24,7 @@ export { DPoPJTIStore } from './DPoPJTIStore';
 export { TokenRevocationStore } from './TokenRevocationStore';
 export { DeviceCodeStore } from './DeviceCodeStore';
 export { CIBARequestStore } from './CIBARequestStore';
+export { VersionManager } from './VersionManager';
 
 // Export types for external use
 export type { Session, SessionData, CreateSessionRequest, SessionResponse } from './SessionStore';
