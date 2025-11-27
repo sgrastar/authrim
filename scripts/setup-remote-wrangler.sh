@@ -301,6 +301,10 @@ ALLOW_HTTP_REDIRECT = "false"
 OPEN_REGISTRATION = "false"
 TRUSTED_DOMAINS = "www.certification.openid.net"
 KEY_MANAGER_SECRET = "$KEY_MANAGER_SECRET"
+ADMIN_API_SECRET = "$KEY_MANAGER_SECRET"
+# Version management (set by deploy script via --var)
+CODE_VERSION_UUID = ""
+DEPLOY_TIME_UTC = ""
 TOML_EOF
 }
 
@@ -502,6 +506,10 @@ class_name = "CIBARequestStore"
 name = "TOKEN_REVOCATION_STORE"
 class_name = "TokenRevocationStore"
 
+[[durable_objects.bindings]]
+name = "VERSION_MANAGER"
+class_name = "VersionManager"
+
 # Durable Objects migrations
 [[migrations]]
 tag = "v1"
@@ -534,9 +542,16 @@ new_sqlite_classes = [
   "TokenRevocationStore"
 ]
 
+[[migrations]]
+tag = "v5"
+new_sqlite_classes = [
+  "VersionManager"
+]
+
 # Environment variables
 [vars]
 KEY_MANAGER_SECRET = "$KEY_MANAGER_SECRET"
+ADMIN_API_SECRET = "$KEY_MANAGER_SECRET"
 EOF
 fi
 
@@ -551,6 +566,11 @@ script_name = \"${DEPLOY_ENV}-authrim-shared\"
 [[durable_objects.bindings]]
 name = \"RATE_LIMITER\"
 class_name = \"RateLimiterCounter\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"VERSION_MANAGER\"
+class_name = \"VersionManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 
@@ -598,6 +618,11 @@ script_name = \"${DEPLOY_ENV}-authrim-shared\"
 [[durable_objects.bindings]]
 name = \"PAR_REQUEST_STORE\"
 class_name = \"PARRequestStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"VERSION_MANAGER\"
+class_name = \"VersionManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 
@@ -641,6 +666,11 @@ script_name = \"${DEPLOY_ENV}-authrim-shared\"
 [[durable_objects.bindings]]
 name = \"TOKEN_REVOCATION_STORE\"
 class_name = \"TokenRevocationStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"VERSION_MANAGER\"
+class_name = \"VersionManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 
@@ -679,6 +709,11 @@ script_name = \"${DEPLOY_ENV}-authrim-shared\"
 [[durable_objects.bindings]]
 name = \"TOKEN_REVOCATION_STORE\"
 class_name = \"TokenRevocationStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"VERSION_MANAGER\"
+class_name = \"VersionManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 
@@ -703,6 +738,11 @@ script_name = \"${DEPLOY_ENV}-authrim-shared\"
 [[durable_objects.bindings]]
 name = \"USER_CODE_RATE_LIMITER\"
 class_name = \"RateLimiterCounter\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"VERSION_MANAGER\"
+class_name = \"VersionManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 
@@ -749,6 +789,11 @@ script_name = \"${DEPLOY_ENV}-authrim-shared\"
 [[durable_objects.bindings]]
 name = \"TOKEN_REVOCATION_STORE\"
 class_name = \"TokenRevocationStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"VERSION_MANAGER\"
+class_name = \"VersionManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 

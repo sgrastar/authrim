@@ -65,6 +65,21 @@ fi
 # Export environment variable for package scripts
 export DEPLOY_ENV
 
+# Generate version identifiers for this deployment
+# UUID v4 format (lowercase)
+if command -v uuidgen &> /dev/null; then
+    VERSION_UUID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+else
+    # Fallback for systems without uuidgen
+    VERSION_UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c 'import uuid; print(str(uuid.uuid4()))')
+fi
+DEPLOY_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+echo "📋 Version Information:"
+echo "   UUID: ${VERSION_UUID}"
+echo "   Time: ${DEPLOY_TIME}"
+echo ""
+
 deploy_package() {
     local package_name=$1
     local package_path=$2
@@ -73,13 +88,63 @@ deploy_package() {
     echo "📦 Deploying: $package_name"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    if (cd "$package_path" && pnpm run deploy); then
+    # Build the wrangler deploy command with version vars
+    local deploy_cmd="wrangler deploy --config wrangler.${DEPLOY_ENV}.toml"
+
+    # Add version vars for non-shared packages (workers that use version check)
+    if [ "$package_name" != "shared" ] && [ "$package_name" != "router" ]; then
+        deploy_cmd="$deploy_cmd --var CODE_VERSION_UUID:${VERSION_UUID} --var DEPLOY_TIME_UTC:${DEPLOY_TIME}"
+    fi
+
+    if (cd "$package_path" && eval "$deploy_cmd"); then
         echo "✅ Successfully deployed: $package_name"
         return 0
     else
         local exit_code=$?
         echo "❌ Deploy failed: $package_name (exit code: $exit_code)"
         return $exit_code
+    fi
+}
+
+# Register version in VersionManager DO after deployment
+register_versions() {
+    local issuer_url=$1
+    local admin_secret=$2
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📝 Registering versions in VersionManager DO"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    local workers=("op-auth" "op-token" "op-management" "op-userinfo" "op-async" "op-discovery")
+    local success_count=0
+    local fail_count=0
+
+    for worker in "${workers[@]}"; do
+        echo -n "  • Registering $worker... "
+
+        local response=$(curl -s -w "\n%{http_code}" -X POST "${issuer_url}/api/internal/version/${worker}" \
+            -H "Authorization: Bearer ${admin_secret}" \
+            -H "Content-Type: application/json" \
+            -d "{\"uuid\":\"${VERSION_UUID}\",\"deployTime\":\"${DEPLOY_TIME}\"}" 2>/dev/null)
+
+        local http_code=$(echo "$response" | tail -n1)
+        local body=$(echo "$response" | sed '$d')
+
+        if [ "$http_code" = "200" ]; then
+            echo "✅"
+            ((success_count++))
+        else
+            echo "❌ (HTTP $http_code)"
+            ((fail_count++))
+        fi
+    done
+
+    echo ""
+    echo "   Registered: $success_count/${#workers[@]} workers"
+
+    if [ $fail_count -gt 0 ]; then
+        echo "   ⚠️  Some registrations failed. Workers will continue without version check."
     fi
 }
 
@@ -214,10 +279,28 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     echo "✅ All packages deployed successfully!"
     echo ""
 
-    # Extract ISSUER_URL from environment-specific wrangler.toml
+    # Extract ISSUER_URL and ADMIN_API_SECRET from environment-specific wrangler.toml
     ISSUER_URL=""
+    ADMIN_API_SECRET=""
     if [ -f "packages/op-discovery/wrangler.${DEPLOY_ENV}.toml" ]; then
         ISSUER_URL=$(grep 'ISSUER_URL = ' "packages/op-discovery/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
+    fi
+    if [ -f "packages/op-management/wrangler.${DEPLOY_ENV}.toml" ]; then
+        ADMIN_API_SECRET=$(grep 'ADMIN_API_SECRET = ' "packages/op-management/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*ADMIN_API_SECRET = "\(.*\)"/\1/')
+        # Fallback to KEY_MANAGER_SECRET if ADMIN_API_SECRET not found
+        if [ -z "$ADMIN_API_SECRET" ]; then
+            ADMIN_API_SECRET=$(grep 'KEY_MANAGER_SECRET = ' "packages/op-management/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*KEY_MANAGER_SECRET = "\(.*\)"/\1/')
+        fi
+    fi
+
+    # Register versions in VersionManager DO
+    if [ -n "$ISSUER_URL" ] && [ -n "$ADMIN_API_SECRET" ]; then
+        # Wait a moment for workers to be fully available
+        echo "⏳ Waiting 5 seconds for workers to be available..."
+        sleep 5
+        register_versions "$ISSUER_URL" "$ADMIN_API_SECRET"
+    else
+        echo "⚠️  Skipping version registration: ISSUER_URL or ADMIN_API_SECRET not found"
     fi
 
     if [ -n "$ISSUER_URL" ]; then

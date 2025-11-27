@@ -11,6 +11,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '@authrim/shared';
+import { versionCheckMiddleware } from '@authrim/shared';
 import { deviceAuthorizationHandler } from './device-authorization';
 import { deviceVerifyHandler } from './device-verify';
 import { deviceVerifyApiHandler } from './device-verify-api';
@@ -33,6 +34,9 @@ app.use(
     credentials: true,
   })
 );
+
+// Version check middleware
+app.use('/*', versionCheckMiddleware('op-async'));
 
 /**
  * POST /device_authorization
