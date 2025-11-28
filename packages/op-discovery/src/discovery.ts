@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { Env, OIDCProviderMetadata } from '@authrim/shared';
-import { SUPPORTED_JWE_ALG, SUPPORTED_JWE_ENC } from '@authrim/shared';
+import { SUPPORTED_JWE_ALG, SUPPORTED_JWE_ENC, buildIssuerUrl } from '@authrim/shared';
 
 // Cache for metadata to improve performance
 let cachedMetadata: OIDCProviderMetadata | null = null;
@@ -13,7 +13,8 @@ let cachedSettingsHash: string | null = null;
  * Returns metadata about the OpenID Provider's configuration
  */
 export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
-  const issuer = c.env.ISSUER_URL;
+  // Use buildIssuerUrl for future multi-tenant support
+  const issuer = buildIssuerUrl(c.env);
 
   // Load dynamic configuration from SETTINGS KV
   let oidcConfig: any = {};

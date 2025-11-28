@@ -325,24 +325,19 @@ export class AuthorizationCodeStore {
       );
 
       // OAuth 2.0 Security BCP (RFC 6749 Section 4.1.2):
-      // Revoke all tokens issued based on this authorization code
-      // Return the JTIs so the caller can revoke them
-      return {
-        userId: stored.userId,
-        scope: stored.scope,
-        redirectUri: stored.redirectUri,
-        nonce: stored.nonce,
-        state: stored.state,
-        claims: stored.claims,
-        authTime: stored.authTime,
-        acr: stored.acr,
-        cHash: stored.cHash,
-        dpopJkt: stored.dpopJkt,
-        replayAttack: {
-          accessTokenJti: stored.issuedAccessTokenJti,
-          refreshTokenJti: stored.issuedRefreshTokenJti,
-        },
-      };
+      // "If an authorization code is used more than once, the authorization server
+      //  MUST deny the request and SHOULD revoke (when possible) all tokens
+      //  previously issued based on that authorization code."
+      //
+      // Log the JTIs for revocation (to be handled by the caller or a background job)
+      if (stored.issuedAccessTokenJti || stored.issuedRefreshTokenJti) {
+        console.warn(
+          `SECURITY: Tokens to revoke - AccessToken JTI: ${stored.issuedAccessTokenJti}, RefreshToken JTI: ${stored.issuedRefreshTokenJti}`
+        );
+      }
+
+      // Throw error to deny the request per RFC 6749
+      throw new Error('invalid_grant: Authorization code already used (replay attack detected)');
     }
 
     // Validate client ID

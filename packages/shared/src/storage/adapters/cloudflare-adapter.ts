@@ -26,6 +26,7 @@ import type {
 } from '../interfaces';
 import type { Env } from '../../types/env';
 import type { D1Result } from '../../utils/d1-retry';
+import { buildDOInstanceName } from '../../utils/tenant-context';
 
 /**
  * CloudflareStorageAdapter
@@ -125,7 +126,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async getFromSessionStore(key: string): Promise<string | null> {
     const sessionId = key.substring(8); // Remove 'session:' prefix
-    const doId = this.env.SESSION_STORE.idFromName('default');
+    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
     const response = await doStub.fetch(
@@ -149,7 +150,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async setToSessionStore(key: string, value: string, ttl?: number): Promise<void> {
     const sessionData = JSON.parse(value);
-    const doId = this.env.SESSION_STORE.idFromName('default');
+    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
     const response = await doStub.fetch(
@@ -174,7 +175,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async deleteFromSessionStore(key: string): Promise<void> {
     const sessionId = key.substring(8); // Remove 'session:' prefix
-    const doId = this.env.SESSION_STORE.idFromName('default');
+    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
     await doStub.fetch(new Request(`http://internal/session/${sessionId}`, { method: 'DELETE' }));
@@ -299,7 +300,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async getFromAuthCodeStore(key: string): Promise<string | null> {
     const code = key.substring(9); // Remove 'authcode:' prefix
-    const doId = this.env.AUTH_CODE_STORE.idFromName('default');
+    const doId = this.env.AUTH_CODE_STORE.idFromName(buildDOInstanceName('auth-code'));
     const doStub = this.env.AUTH_CODE_STORE.get(doId);
 
     const response = await doStub.fetch(
@@ -319,7 +320,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async setToAuthCodeStore(key: string, value: string, _ttl?: number): Promise<void> {
     const codeData = JSON.parse(value);
-    const doId = this.env.AUTH_CODE_STORE.idFromName('default');
+    const doId = this.env.AUTH_CODE_STORE.idFromName(buildDOInstanceName('auth-code'));
     const doStub = this.env.AUTH_CODE_STORE.get(doId);
 
     const response = await doStub.fetch(
@@ -340,7 +341,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async deleteFromAuthCodeStore(key: string): Promise<void> {
     const code = key.substring(9); // Remove 'authcode:' prefix
-    const doId = this.env.AUTH_CODE_STORE.idFromName('default');
+    const doId = this.env.AUTH_CODE_STORE.idFromName(buildDOInstanceName('auth-code'));
     const doStub = this.env.AUTH_CODE_STORE.get(doId);
 
     await doStub.fetch(new Request(`http://internal/code/${code}`, { method: 'DELETE' }));
@@ -351,7 +352,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async getFromRefreshTokenRotator(key: string): Promise<string | null> {
     const familyId = key.substring(13); // Remove 'refreshtoken:' prefix
-    const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName('default');
+    const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
 
     const response = await doStub.fetch(
@@ -375,7 +376,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async setToRefreshTokenRotator(key: string, value: string, ttl?: number): Promise<void> {
     const familyData = JSON.parse(value);
-    const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName('default');
+    const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
 
     const response = await doStub.fetch(
@@ -399,7 +400,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    */
   private async deleteFromRefreshTokenRotator(key: string): Promise<void> {
     const familyId = key.substring(13); // Remove 'refreshtoken:' prefix
-    const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName('default');
+    const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
 
     await doStub.fetch(
@@ -701,7 +702,7 @@ export class SessionStore implements ISessionStore {
   ) {}
 
   async get(sessionId: string): Promise<Session | null> {
-    const doId = this.env.SESSION_STORE.idFromName('default');
+    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
     const response = await doStub.fetch(
@@ -725,7 +726,7 @@ export class SessionStore implements ISessionStore {
     const now = Date.now();
     const ttl = session.expires_at ? Math.floor((session.expires_at - now) / 1000) : 86400;
 
-    const doId = this.env.SESSION_STORE.idFromName('default');
+    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
     const response = await doStub.fetch(
@@ -749,14 +750,14 @@ export class SessionStore implements ISessionStore {
   }
 
   async delete(sessionId: string): Promise<void> {
-    const doId = this.env.SESSION_STORE.idFromName('default');
+    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
     await doStub.fetch(new Request(`http://internal/session/${sessionId}`, { method: 'DELETE' }));
   }
 
   async listByUser(userId: string): Promise<Session[]> {
-    const doId = this.env.SESSION_STORE.idFromName('default');
+    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
     const response = await doStub.fetch(
@@ -772,7 +773,7 @@ export class SessionStore implements ISessionStore {
   }
 
   async extend(sessionId: string, additionalSeconds: number): Promise<Session | null> {
-    const doId = this.env.SESSION_STORE.idFromName('default');
+    const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
     const response = await doStub.fetch(

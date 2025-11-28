@@ -9,6 +9,7 @@ import {
   initialAccessTokenMiddleware,
   adminAuthMiddleware,
   versionCheckMiddleware,
+  requestContextMiddleware,
 } from '@authrim/shared';
 
 // Import handlers
@@ -59,6 +60,7 @@ const app = new Hono<{ Bindings: Env }>();
 // Middleware
 app.use('*', logger());
 app.use('*', versionCheckMiddleware('op-management'));
+app.use('*', requestContextMiddleware());
 
 // Enhanced security headers
 app.use(

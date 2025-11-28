@@ -189,9 +189,10 @@ describe('CloudflareStorageAdapter', () => {
       expect(env.REFRESH_TOKEN_ROTATOR.get).toHaveBeenCalled();
     });
 
-    it('should fallback to KV for unknown prefixes', async () => {
-      await adapter.get('unknown:key');
-      expect(env.CLIENTS.get).toHaveBeenCalledWith('unknown:key');
+    it('should throw error for unknown prefixes (KV fallback is deprecated)', async () => {
+      await expect(adapter.get('unknown:key')).rejects.toThrow(
+        'getFromKV called with unknown:key - CLIENTS KV is deprecated'
+      );
     });
   });
 
@@ -212,9 +213,10 @@ describe('CloudflareStorageAdapter', () => {
       expect(env.CLIENTS_CACHE?.delete).toHaveBeenCalled();
     });
 
-    it('should set value with TTL to KV for unknown prefixes', async () => {
-      await adapter.set('custom:key', 'value', 3600);
-      expect(env.CLIENTS.put).toHaveBeenCalledWith('custom:key', 'value', { expirationTtl: 3600 });
+    it('should throw error for unknown prefixes (KV fallback is deprecated)', async () => {
+      await expect(adapter.set('custom:key', 'value', 3600)).rejects.toThrow(
+        'setToKV called with custom:key - CLIENTS KV is deprecated'
+      );
     });
   });
 
@@ -235,9 +237,10 @@ describe('CloudflareStorageAdapter', () => {
       expect(env.CLIENTS_CACHE?.delete).toHaveBeenCalled();
     });
 
-    it('should delete from KV for unknown prefixes', async () => {
-      await adapter.delete('custom:key');
-      expect(env.CLIENTS.delete).toHaveBeenCalledWith('custom:key');
+    it('should throw error for unknown prefixes (KV fallback is deprecated)', async () => {
+      await expect(adapter.delete('custom:key')).rejects.toThrow(
+        'deleteFromKV called with custom:key - CLIENTS KV is deprecated'
+      );
     });
   });
 

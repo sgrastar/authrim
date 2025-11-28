@@ -2,6 +2,7 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import { Card, Button, Input, Dialog } from '$lib/components';
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { adminClientsAPI } from '$lib/api/client';
 
 	interface Client {
@@ -20,7 +21,7 @@
 	let itemsPerPage = 20;
 
 	// Selection state
-	let selectedClients: Set<string> = new Set();
+	let selectedClients: SvelteSet<string> = new SvelteSet();
 	$: allSelected = clients.length > 0 && clients.every((c) => selectedClients.has(c.client_id));
 	$: someSelected = selectedClients.size > 0;
 
@@ -62,7 +63,7 @@
 		} finally {
 			loading = false;
 			// Clear selection when clients change
-			selectedClients = new Set();
+			selectedClients = new SvelteSet();
 		}
 	}
 
@@ -98,14 +99,14 @@
 	// Selection functions
 	function toggleSelectAll() {
 		if (allSelected) {
-			selectedClients = new Set();
+			selectedClients = new SvelteSet();
 		} else {
-			selectedClients = new Set(clients.map((c) => c.client_id));
+			selectedClients = new SvelteSet(clients.map((c) => c.client_id));
 		}
 	}
 
 	function toggleClientSelection(clientId: string) {
-		const newSet = new Set(selectedClients);
+		const newSet = new SvelteSet(selectedClients);
 		if (newSet.has(clientId)) {
 			newSet.delete(clientId);
 		} else {
@@ -115,7 +116,7 @@
 	}
 
 	function clearSelection() {
-		selectedClients = new Set();
+		selectedClients = new SvelteSet();
 	}
 
 	// Delete functions

@@ -26,6 +26,8 @@ export interface AdminAuthContext {
 export interface AuditLogEntry {
   /** Unique identifier for this audit log entry */
   id: string;
+  /** Tenant ID for multi-tenant isolation (default: 'default') */
+  tenantId: string;
   /** User ID who performed the action */
   userId: string;
   /** Action performed (e.g., 'signing_keys.rotate.emergency') */

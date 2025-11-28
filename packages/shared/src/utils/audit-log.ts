@@ -14,6 +14,7 @@ import type { Context } from 'hono';
 import type { Env } from '../types/env';
 import type { AuditLogEntry } from '../types/admin';
 import { generateSecureRandomString } from './crypto';
+import { DEFAULT_TENANT_ID } from './tenant-context';
 
 /**
  * Create an audit log entry in the database
@@ -22,24 +23,26 @@ import { generateSecureRandomString } from './crypto';
  * it will log the error but not throw, allowing the main operation to continue.
  *
  * @param env - Cloudflare Workers environment bindings
- * @param entry - Audit log entry data (id and createdAt will be generated)
+ * @param entry - Audit log entry data (id, tenantId, and createdAt will be generated/defaulted)
  */
 export async function createAuditLog(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'createdAt'>
+  entry: Omit<AuditLogEntry, 'id' | 'tenantId' | 'createdAt'> & { tenantId?: string }
 ): Promise<void> {
   try {
     const id = generateSecureRandomString(16);
+    const tenantId = entry.tenantId || DEFAULT_TENANT_ID;
     const createdAt = Date.now();
 
     await env.DB.prepare(
       `INSERT INTO audit_log (
-        id, user_id, action, resource, resource_id,
+        id, tenant_id, user_id, action, resource, resource_id,
         ip_address, user_agent, metadata, severity, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         id,
+        tenantId,
         entry.userId,
         entry.action,
         entry.resource,
@@ -55,6 +58,7 @@ export async function createAuditLog(
     // Log critical operations to console for immediate visibility
     if (entry.severity === 'critical') {
       console.warn('[CRITICAL AUDIT]', {
+        tenantId,
         action: entry.action,
         userId: entry.userId,
         resource: entry.resource,
@@ -72,8 +76,9 @@ export async function createAuditLog(
 /**
  * Helper function to create audit log from Hono context
  *
- * Automatically extracts IP address and user agent from the request.
+ * Automatically extracts tenantId, IP address, and user agent from the request.
  * Requires adminAuth context to be set by adminAuthMiddleware.
+ * tenantId is obtained from requestContextMiddleware if available.
  *
  * @param c - Hono context
  * @param action - Action performed (e.g., 'signing_keys.rotate.emergency')
@@ -98,6 +103,10 @@ export async function createAuditLogFromContext(
     return;
   }
 
+  // Get tenantId from request context (set by requestContextMiddleware)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tenantId = ((c as any).get('tenantId') as string | undefined) || DEFAULT_TENANT_ID;
+
   // Extract IP address (check CF headers first, then fallback)
   const ipAddress =
     c.req.header('CF-Connecting-IP') ||
@@ -109,6 +118,7 @@ export async function createAuditLogFromContext(
   const userAgent = c.req.header('User-Agent') || 'unknown';
 
   await createAuditLog(c.env, {
+    tenantId,
     userId: adminAuth.userId,
     action,
     resource,

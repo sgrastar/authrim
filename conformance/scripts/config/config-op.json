@@ -3,8 +3,5 @@
   "description": "Authrim OpenID Connect Config OP Certification Automation Test",
   "server": {
     "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
-  },
-  "browser": {
-    "show_console_log": true
   }
 }

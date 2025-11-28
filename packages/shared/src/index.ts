@@ -13,14 +13,17 @@ export * from './utils/device-flow';
 export * from './utils/ciba';
 export * from './utils/dpop';
 export * from './utils/errors';
+export * from './utils/issuer';
 export * from './utils/jwe';
 export * from './utils/jwt';
 export * from './utils/jwt-bearer';
 export * from './utils/keys';
 export * from './utils/kv';
+export * from './utils/logger';
 export * from './utils/origin-validator';
 export * from './utils/pairwise';
 export * from './utils/session-state';
+export * from './utils/tenant-context';
 export * from './utils/token-introspection';
 export * from './utils/validation';
 
@@ -28,6 +31,7 @@ export * from './utils/validation';
 export * from './middleware/admin-auth';
 export * from './middleware/rate-limit';
 export * from './middleware/initial-access-token';
+export * from './middleware/request-context';
 export * from './middleware/version-check';
 
 // Storage

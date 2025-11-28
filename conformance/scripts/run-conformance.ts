@@ -416,10 +416,17 @@ async function runTestPlan(
 
   logger.log(`   Total tests to run: ${moduleDefinitions.length}`);
 
+  // Check if the plan defines its own variants externally
+  // If planDef.variants is empty, the plan sets variants internally and we should not pass them again
+  const planDefinesVariants = planDef.variants && Object.keys(planDef.variants).length > 0;
+
   for (const moduleDef of moduleDefinitions) {
     // Get test name from the module definition
     const testModuleName = (moduleDef as unknown as Record<string, unknown>).testModule as string;
-    const moduleVariant = (moduleDef as unknown as Record<string, unknown>).variant as Record<string, string> | undefined;
+    // Only use moduleVariant if the plan expects external variant specification
+    const moduleVariant = planDefinesVariants
+      ? (moduleDef as unknown as Record<string, unknown>).variant as Record<string, string> | undefined
+      : undefined;
 
     if (!testModuleName) {
       logger.log(`   ⚠️ Skipping module with no testModule name`);

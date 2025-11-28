@@ -11,6 +11,7 @@
 
 import type { Env } from '../types/env';
 import type { RefreshTokenData } from '../types/oidc';
+import { buildKVKey, buildDOInstanceName } from './tenant-context';
 
 /**
  * Store state parameter in KV
@@ -22,8 +23,9 @@ import type { RefreshTokenData } from '../types/oidc';
  */
 export async function storeState(env: Env, state: string, clientId: string): Promise<void> {
   const ttl = parseInt(env.STATE_EXPIRY, 10);
+  const key = buildKVKey('state', state);
 
-  await env.STATE_STORE.put(state, clientId, {
+  await env.STATE_STORE.put(key, clientId, {
     expirationTtl: ttl,
   });
 }
@@ -36,7 +38,8 @@ export async function storeState(env: Env, state: string, clientId: string): Pro
  * @returns Promise<string | null> - Returns client_id if valid, null otherwise
  */
 export async function getState(env: Env, state: string): Promise<string | null> {
-  return await env.STATE_STORE.get(state);
+  const key = buildKVKey('state', state);
+  return await env.STATE_STORE.get(key);
 }
 
 /**
@@ -47,7 +50,8 @@ export async function getState(env: Env, state: string): Promise<string | null> 
  * @returns Promise<void>
  */
 export async function deleteState(env: Env, state: string): Promise<void> {
-  await env.STATE_STORE.delete(state);
+  const key = buildKVKey('state', state);
+  await env.STATE_STORE.delete(key);
 }
 
 /**
@@ -60,8 +64,9 @@ export async function deleteState(env: Env, state: string): Promise<void> {
  */
 export async function storeNonce(env: Env, nonce: string, clientId: string): Promise<void> {
   const ttl = parseInt(env.NONCE_EXPIRY, 10);
+  const key = buildKVKey('nonce', nonce);
 
-  await env.NONCE_STORE.put(nonce, clientId, {
+  await env.NONCE_STORE.put(key, clientId, {
     expirationTtl: ttl,
   });
 }
@@ -74,7 +79,8 @@ export async function storeNonce(env: Env, nonce: string, clientId: string): Pro
  * @returns Promise<string | null> - Returns client_id if valid, null otherwise
  */
 export async function getNonce(env: Env, nonce: string): Promise<string | null> {
-  return await env.NONCE_STORE.get(nonce);
+  const key = buildKVKey('nonce', nonce);
+  return await env.NONCE_STORE.get(key);
 }
 
 /**
@@ -85,7 +91,8 @@ export async function getNonce(env: Env, nonce: string): Promise<string | null> 
  * @returns Promise<void>
  */
 export async function deleteNonce(env: Env, nonce: string): Promise<void> {
-  await env.NONCE_STORE.delete(nonce);
+  const key = buildKVKey('nonce', nonce);
+  await env.NONCE_STORE.delete(key);
 }
 
 /**
@@ -104,8 +111,10 @@ export async function getClient(
   env: Env,
   clientId: string
 ): Promise<Record<string, unknown> | null> {
+  const cacheKey = buildKVKey('client', clientId);
+
   // Step 1: Try CLIENTS_CACHE (Read-Through Cache)
-  const cached = await env.CLIENTS_CACHE.get(clientId);
+  const cached = await env.CLIENTS_CACHE.get(cacheKey);
 
   if (cached) {
     try {
@@ -113,7 +122,7 @@ export async function getClient(
     } catch (error) {
       // Cache is corrupted - delete it and fetch from D1
       console.error('Failed to parse cached client data:', error);
-      await env.CLIENTS_CACHE.delete(clientId).catch((e) =>
+      await env.CLIENTS_CACHE.delete(cacheKey).catch((e) =>
         console.warn('Failed to delete corrupted cache:', e)
       );
     }
@@ -181,7 +190,7 @@ export async function getClient(
 
   // Step 4: Populate CLIENTS_CACHE (1 hour TTL)
   try {
-    await env.CLIENTS_CACHE.put(clientId, JSON.stringify(clientData), {
+    await env.CLIENTS_CACHE.put(cacheKey, JSON.stringify(clientData), {
       expirationTtl: 3600, // 1 hour
     });
   } catch (error) {
@@ -215,8 +224,8 @@ export async function revokeToken(
     throw new Error('TOKEN_REVOCATION_STORE Durable Object not available');
   }
 
-  // Use a global singleton Durable Object instance for all token revocations
-  const id = env.TOKEN_REVOCATION_STORE.idFromName('global');
+  // Use a tenant-scoped Durable Object instance for token revocations
+  const id = env.TOKEN_REVOCATION_STORE.idFromName(buildDOInstanceName('token-revocation'));
   const stub = env.TOKEN_REVOCATION_STORE.get(id);
 
   const response = await stub.fetch('http://internal/revoke', {
@@ -248,7 +257,7 @@ export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
     return false;
   }
 
-  const id = env.TOKEN_REVOCATION_STORE.idFromName('global');
+  const id = env.TOKEN_REVOCATION_STORE.idFromName(buildDOInstanceName('token-revocation'));
   const stub = env.TOKEN_REVOCATION_STORE.get(id);
 
   try {

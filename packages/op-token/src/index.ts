@@ -3,7 +3,12 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import type { Env } from '@authrim/shared';
-import { rateLimitMiddleware, RateLimitProfiles, versionCheckMiddleware } from '@authrim/shared';
+import {
+  rateLimitMiddleware,
+  RateLimitProfiles,
+  versionCheckMiddleware,
+  requestContextMiddleware,
+} from '@authrim/shared';
 
 // Import handlers
 import { tokenHandler } from './token';
@@ -14,6 +19,7 @@ const app = new Hono<{ Bindings: Env }>();
 // Middleware
 app.use('*', logger());
 app.use('*', versionCheckMiddleware('op-token'));
+app.use('*', requestContextMiddleware());
 
 // Enhanced security headers
 app.use(

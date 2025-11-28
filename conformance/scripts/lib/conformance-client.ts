@@ -40,7 +40,9 @@ export class ConformanceClient {
     const params = new URLSearchParams();
     params.set('planName', planName);
 
-    if (variant) {
+    // Only pass variant if it has actual properties
+    // Empty variant object causes issues with some test plans
+    if (variant && Object.keys(variant).length > 0) {
       params.set('variant', JSON.stringify(variant));
     }
 
@@ -94,15 +96,22 @@ export class ConformanceClient {
     params.set('plan', planId);
     params.set('test', testName);
 
-    if (variant) {
+    // Only pass variant if it has actual properties
+    // Some test plans (like oidcc-config-certification-test-plan) set variants internally
+    // and passing them again causes ClassCastException on the server
+    if (variant && Object.keys(variant).length > 0) {
       params.set('variant', JSON.stringify(variant));
     }
 
+    // When creating a test from a plan, we don't send a request body
+    // Don't include Content-Type header when there's no body to avoid ClassCastException
     const response = await fetch(
       `${this.serverUrl}/api/runner?${params.toString()}`,
       {
         method: 'POST',
-        headers: this.headers,
+        headers: {
+          Authorization: this.headers.Authorization,
+        },
       }
     );
 

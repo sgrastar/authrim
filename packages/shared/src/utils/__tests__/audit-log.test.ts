@@ -253,6 +253,7 @@ describe('createAuditLogFromContext', () => {
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     expect(bindCall).toHaveBeenCalledWith(
       expect.any(String), // id
+      'default', // tenantId
       'admin-user-456', // userId
       'signing_keys.rotate.normal',
       'signing_keys',
@@ -284,16 +285,17 @@ describe('createAuditLogFromContext', () => {
 
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     expect(bindCall).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
+      expect.any(String), // id
+      expect.any(String), // tenantId
+      expect.any(String), // userId
+      expect.any(String), // action
+      expect.any(String), // resource
+      expect.any(String), // resourceId
       '203.0.113.50', // IP from CF header
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(Number)
+      expect.any(String), // userAgent
+      expect.any(String), // metadata
+      expect.any(String), // severity
+      expect.any(Number) // createdAt
     );
   });
 
@@ -326,16 +328,17 @@ describe('createAuditLogFromContext', () => {
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     // Should use first IP from X-Forwarded-For
     expect(bindCall).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
+      expect.any(String), // id
+      expect.any(String), // tenantId
+      expect.any(String), // userId
+      expect.any(String), // action
+      expect.any(String), // resource
+      expect.any(String), // resourceId
       '10.0.0.1', // First IP from X-Forwarded-For
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(Number)
+      expect.any(String), // userAgent
+      expect.any(String), // metadata
+      expect.any(String), // severity
+      expect.any(Number) // createdAt
     );
   });
 
@@ -363,16 +366,17 @@ describe('createAuditLogFromContext', () => {
 
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     expect(bindCall).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
+      expect.any(String), // id
+      expect.any(String), // tenantId
+      expect.any(String), // userId
+      expect.any(String), // action
+      expect.any(String), // resource
+      expect.any(String), // resourceId
       'unknown', // Fallback IP
       'unknown', // Fallback User-Agent
-      expect.any(String),
-      expect.any(String),
-      expect.any(Number)
+      expect.any(String), // metadata
+      expect.any(String), // severity
+      expect.any(Number) // createdAt
     );
   });
 
@@ -401,16 +405,17 @@ describe('createAuditLogFromContext', () => {
 
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     expect(bindCall).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
+      expect.any(String), // id
+      expect.any(String), // tenantId
+      expect.any(String), // userId
+      expect.any(String), // action
+      expect.any(String), // resource
+      expect.any(String), // resourceId
+      expect.any(String), // ipAddress
+      expect.any(String), // userAgent
       JSON.stringify(metadata), // Metadata should be stringified
-      expect.any(String),
-      expect.any(Number)
+      expect.any(String), // severity
+      expect.any(Number) // createdAt
     );
   });
 
@@ -458,16 +463,17 @@ describe('createAuditLogFromContext', () => {
 
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     expect(bindCall).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
-      expect.any(String),
+      expect.any(String), // id
+      expect.any(String), // tenantId
+      expect.any(String), // userId
+      expect.any(String), // action
+      expect.any(String), // resource
+      expect.any(String), // resourceId
+      expect.any(String), // ipAddress
+      expect.any(String), // userAgent
+      expect.any(String), // metadata
       'info', // Default severity
-      expect.any(Number)
+      expect.any(Number) // createdAt
     );
   });
 });

@@ -9,6 +9,7 @@ import {
   isAllowedOrigin,
   parseAllowedOrigins,
   versionCheckMiddleware,
+  requestContextMiddleware,
 } from '@authrim/shared';
 
 // Import handlers
@@ -37,6 +38,7 @@ const app = new Hono<{ Bindings: Env }>();
 // Middleware
 app.use('*', logger());
 app.use('*', versionCheckMiddleware('op-auth'));
+app.use('*', requestContextMiddleware());
 
 // Enhanced security headers
 // Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)
