@@ -274,14 +274,7 @@ describe('createAuditLogFromContext', () => {
       env: mockEnv,
     });
 
-    await createAuditLogFromContext(
-      context,
-      'test.action',
-      'resource',
-      'id-1',
-      {},
-      'info'
-    );
+    await createAuditLogFromContext(context, 'test.action', 'resource', 'id-1', {}, 'info');
 
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     expect(bindCall).toHaveBeenCalledWith(
@@ -316,14 +309,7 @@ describe('createAuditLogFromContext', () => {
       }),
     } as unknown as Context<{ Bindings: Env }>;
 
-    await createAuditLogFromContext(
-      mockContext,
-      'test.action',
-      'resource',
-      'id-1',
-      {},
-      'info'
-    );
+    await createAuditLogFromContext(mockContext, 'test.action', 'resource', 'id-1', {}, 'info');
 
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     // Should use first IP from X-Forwarded-For
@@ -355,14 +341,7 @@ describe('createAuditLogFromContext', () => {
       }),
     } as unknown as Context<{ Bindings: Env }>;
 
-    await createAuditLogFromContext(
-      mockContext,
-      'test.action',
-      'resource',
-      'id-1',
-      {},
-      'info'
-    );
+    await createAuditLogFromContext(mockContext, 'test.action', 'resource', 'id-1', {}, 'info');
 
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     expect(bindCall).toHaveBeenCalledWith(
@@ -429,14 +408,7 @@ describe('createAuditLogFromContext', () => {
       get: vi.fn(() => undefined), // No adminAuth
     } as unknown as Context<{ Bindings: Env }>;
 
-    await createAuditLogFromContext(
-      mockContext,
-      'test.action',
-      'resource',
-      'id-1',
-      {},
-      'info'
-    );
+    await createAuditLogFromContext(mockContext, 'test.action', 'resource', 'id-1', {}, 'info');
 
     // Should log error and not call DB
     expect(consoleErrorSpy).toHaveBeenCalledWith(

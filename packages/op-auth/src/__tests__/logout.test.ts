@@ -47,7 +47,9 @@ function createMockContext(options: {
   env?: Partial<Env>;
 }) {
   const mockSessionStore = {
-    fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
+    fetch: vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
   };
 
   const mockKeyManager = {
@@ -97,7 +99,9 @@ function createMockContext(options: {
     },
     env: mockEnv as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
-    redirect: vi.fn((url, status = 302) => new Response(null, { status, headers: { Location: url } })),
+    redirect: vi.fn(
+      (url, status = 302) => new Response(null, { status, headers: { Location: url } })
+    ),
     body: vi.fn((body, status = 200) => new Response(body, { status })),
   } as any;
 
@@ -406,13 +410,9 @@ describe('Back-channel Logout', () => {
       });
 
       // Mock session store to handle session deletion (when sid is not provided)
-      mockSessionStore.fetch
-        .mockResolvedValueOnce(
-          new Response(
-            JSON.stringify({ sessions: [] }),
-            { status: 200 }
-          )
-        );
+      mockSessionStore.fetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ sessions: [] }), { status: 200 })
+      );
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockResolvedValue({
@@ -804,7 +804,9 @@ describe('Back-channel Logout', () => {
         },
       });
 
-      mockKeyManager.fetch.mockResolvedValue(new Response('Internal Server Error', { status: 500 }));
+      mockKeyManager.fetch.mockResolvedValue(
+        new Response('Internal Server Error', { status: 500 })
+      );
 
       await backChannelLogoutHandler(c);
 

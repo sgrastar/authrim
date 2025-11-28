@@ -100,7 +100,7 @@ describe('Input Validation Security Tests', () => {
         "1' AND '1'='1",
         'UNION SELECT * FROM users',
         "'; EXEC xp_cmdshell('dir'); --",
-        "1 OR 1=1",
+        '1 OR 1=1',
         "' UNION SELECT NULL, username, password FROM users --",
         "1'; WAITFOR DELAY '00:00:10'--",
       ];
@@ -125,14 +125,17 @@ describe('Input Validation Security Tests', () => {
         '${7*7}',
       ];
 
-      it.each(xssPatterns)('should accept XSS pattern in state (validation only): %s', (pattern) => {
-        // State validation allows any characters, XSS protection should be at output encoding level
-        // This test documents the current behavior
-        const result = validateState(pattern);
-        // The validation should pass (state is for CSRF, not content filtering)
-        // XSS protection is the responsibility of output encoding
-        expect(result).toBeDefined();
-      });
+      it.each(xssPatterns)(
+        'should accept XSS pattern in state (validation only): %s',
+        (pattern) => {
+          // State validation allows any characters, XSS protection should be at output encoding level
+          // This test documents the current behavior
+          const result = validateState(pattern);
+          // The validation should pass (state is for CSRF, not content filtering)
+          // XSS protection is the responsibility of output encoding
+          expect(result).toBeDefined();
+        }
+      );
     });
 
     describe('Command Injection patterns', () => {
@@ -170,13 +173,10 @@ describe('Input Validation Security Tests', () => {
         '..%255c',
       ];
 
-      it.each(pathTraversalPatterns)(
-        'should reject path traversal in client_id: %s',
-        (pattern) => {
-          const result = validateClientId(pattern);
-          expect(result.valid).toBe(false);
-        }
-      );
+      it.each(pathTraversalPatterns)('should reject path traversal in client_id: %s', (pattern) => {
+        const result = validateClientId(pattern);
+        expect(result.valid).toBe(false);
+      });
     });
   });
 
@@ -274,13 +274,10 @@ describe('Input Validation Security Tests', () => {
         '\x7F', // DEL
       ];
 
-      it.each(controlCharacters)(
-        'should reject control character in client_id: 0x%s',
-        (char) => {
-          const result = validateClientId(`client${char}id`);
-          expect(result.valid).toBe(false);
-        }
-      );
+      it.each(controlCharacters)('should reject control character in client_id: 0x%s', (char) => {
+        const result = validateClientId(`client${char}id`);
+        expect(result.valid).toBe(false);
+      });
     });
   });
 

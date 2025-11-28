@@ -197,10 +197,7 @@ describe('KV Utilities', () => {
       };
 
       // Pre-populate cache using tenant-prefixed key pattern
-      await clientsCacheKV.put(
-        `tenant:default:client:${clientId}`,
-        JSON.stringify(cachedData)
-      );
+      await clientsCacheKV.put(`tenant:default:client:${clientId}`, JSON.stringify(cachedData));
 
       const retrieved = await getClient(env, clientId);
 

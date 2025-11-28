@@ -21,9 +21,9 @@ export const DEFAULT_TENANT_ID = 'default';
  * Future MT: This will extract tenant from request context.
  */
 export function getTenantId(): string {
-	// For now, always return default
-	// Future: extract from request context
-	return DEFAULT_TENANT_ID;
+  // For now, always return default
+  // Future: extract from request context
+  return DEFAULT_TENANT_ID;
 }
 
 /**
@@ -37,7 +37,7 @@ export function getTenantId(): string {
  * buildDOKey('session', 'abc123') // => 'tenant:default:session:abc123'
  */
 export function buildDOKey(resourceType: string, resourceId: string): string {
-	return `tenant:${DEFAULT_TENANT_ID}:${resourceType}:${resourceId}`;
+  return `tenant:${DEFAULT_TENANT_ID}:${resourceType}:${resourceId}`;
 }
 
 /**
@@ -51,7 +51,7 @@ export function buildDOKey(resourceType: string, resourceId: string): string {
  * buildKVKey('client', 'my-client-id') // => 'tenant:default:client:my-client-id'
  */
 export function buildKVKey(prefix: string, key: string): string {
-	return `tenant:${DEFAULT_TENANT_ID}:${prefix}:${key}`;
+  return `tenant:${DEFAULT_TENANT_ID}:${prefix}:${key}`;
 }
 
 /**
@@ -66,7 +66,7 @@ export function buildKVKey(prefix: string, key: string): string {
  * env.SESSION_STORE.idFromName(buildDOInstanceName('session'))
  */
 export function buildDOInstanceName(resourceType: string): string {
-	return `tenant:${DEFAULT_TENANT_ID}:${resourceType}`;
+  return `tenant:${DEFAULT_TENANT_ID}:${resourceType}`;
 }
 
 /**
@@ -78,7 +78,7 @@ export function buildDOInstanceName(resourceType: string): string {
  * @returns Tenant-prefixed instance name
  */
 export function buildDOInstanceNameForTenant(tenantId: string, resourceType: string): string {
-	return `tenant:${tenantId}:${resourceType}`;
+  return `tenant:${tenantId}:${resourceType}`;
 }
 
 /**
@@ -91,5 +91,5 @@ export function buildDOInstanceNameForTenant(tenantId: string, resourceType: str
  * @returns Tenant-prefixed key string
  */
 export function buildKVKeyForTenant(tenantId: string, prefix: string, key: string): string {
-	return `tenant:${tenantId}:${prefix}:${key}`;
+  return `tenant:${tenantId}:${prefix}:${key}`;
 }

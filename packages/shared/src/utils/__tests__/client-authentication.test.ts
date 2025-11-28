@@ -141,11 +141,7 @@ describe('Client Authentication', () => {
     it('should reject assertion with more than 3 parts', async () => {
       const client = createClientWithJWKS(clientId);
 
-      const result = await validateClientAssertion(
-        'one.two.three.four',
-        tokenEndpoint,
-        client
-      );
+      const result = await validateClientAssertion('one.two.three.four', tokenEndpoint, client);
 
       expect(result.valid).toBe(false);
       expect(result.error).toBe('invalid_client');

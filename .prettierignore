@@ -1,0 +1,15 @@
+# Build outputs
+dist/
+build/
+.wrangler/
+
+# SvelteKit generated files
+.svelte-kit/
+**/.svelte-kit/
+
+# Dependencies
+node_modules/
+
+# Other
+coverage/
+.turbo/

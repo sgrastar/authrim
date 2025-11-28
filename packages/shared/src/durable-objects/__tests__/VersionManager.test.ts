@@ -429,15 +429,10 @@ describe('VersionManager Durable Object', () => {
       );
 
       // Create a new instance with the same state
-      const newVersionManager = new VersionManager(
-        state as unknown as DurableObjectState,
-        env
-      );
+      const newVersionManager = new VersionManager(state as unknown as DurableObjectState, env);
 
       // Verify the version is still there
-      const response = await newVersionManager.fetch(
-        createRequest('/version/op-auth', 'GET')
-      );
+      const response = await newVersionManager.fetch(createRequest('/version/op-auth', 'GET'));
       const data = await response.json();
 
       expect(data.uuid).toBe(testUUID1);

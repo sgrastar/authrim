@@ -91,9 +91,7 @@ async function authenticateSession(
 ): Promise<AdminAuthContext | null> {
   try {
     // Fetch session from D1 database
-    const session = await c.env.DB.prepare(
-      'SELECT user_id, expires_at FROM sessions WHERE id = ?'
-    )
+    const session = await c.env.DB.prepare('SELECT user_id, expires_at FROM sessions WHERE id = ?')
       .bind(sessionId)
       .first<{ user_id: string; expires_at: number }>();
 
@@ -118,9 +116,7 @@ async function authenticateSession(
     }
 
     // Fetch all roles for this user
-    const roles = await c.env.DB.prepare(
-      'SELECT role FROM user_roles WHERE user_id = ?'
-    )
+    const roles = await c.env.DB.prepare('SELECT role FROM user_roles WHERE user_id = ?')
       .bind(session.user_id)
       .all<{ role: string }>();
 

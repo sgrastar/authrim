@@ -443,9 +443,7 @@ describe('TokenRevocationStore', () => {
         );
       }
 
-      const response = await store.fetch(
-        new Request('http://localhost/health', { method: 'GET' })
-      );
+      const response = await store.fetch(new Request('http://localhost/health', { method: 'GET' }));
 
       expect(response.status).toBe(200);
       const body = (await response.json()) as any;
@@ -483,9 +481,7 @@ describe('TokenRevocationStore', () => {
       // Advance time to expire short TTL
       vi.advanceTimersByTime(61 * 1000);
 
-      const response = await store.fetch(
-        new Request('http://localhost/health', { method: 'GET' })
-      );
+      const response = await store.fetch(new Request('http://localhost/health', { method: 'GET' }));
 
       const body = (await response.json()) as any;
       expect(body.revokedTokens.active).toBe(1);

@@ -19,14 +19,14 @@ import { createLogger, type Logger } from '../utils/logger';
  * Request context available to all handlers via c.get()
  */
 export interface RequestContext {
-	/** Unique request identifier (UUID v4) */
-	requestId: string;
-	/** Tenant identifier ('default' in single-tenant mode) */
-	tenantId: string;
-	/** Request start timestamp for duration calculation */
-	startTime: number;
-	/** Structured logger with request context */
-	logger: Logger;
+  /** Unique request identifier (UUID v4) */
+  requestId: string;
+  /** Tenant identifier ('default' in single-tenant mode) */
+  tenantId: string;
+  /** Request start timestamp for duration calculation */
+  startTime: number;
+  /** Structured logger with request context */
+  logger: Logger;
 }
 
 /**
@@ -48,51 +48,51 @@ export interface RequestContext {
  * logger.info('Processing request', { action: 'process' });
  */
 export function requestContextMiddleware() {
-	return async (c: Context<{ Bindings: Env }>, next: Next) => {
-		const requestId = crypto.randomUUID();
-		const startTime = Date.now();
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const requestId = crypto.randomUUID();
+    const startTime = Date.now();
 
-		// Single-tenant mode: always use default tenant
-		// Future MT: Extract from subdomain
-		// const host = c.req.header('Host') || '';
-		// const tenantId = extractSubdomain(host, env.BASE_DOMAIN) || DEFAULT_TENANT_ID;
-		const tenantId = DEFAULT_TENANT_ID;
+    // Single-tenant mode: always use default tenant
+    // Future MT: Extract from subdomain
+    // const host = c.req.header('Host') || '';
+    // const tenantId = extractSubdomain(host, env.BASE_DOMAIN) || DEFAULT_TENANT_ID;
+    const tenantId = DEFAULT_TENANT_ID;
 
-		// Create logger with request context
-		const logger = createLogger({
-			requestId,
-			tenantId,
-		});
+    // Create logger with request context
+    const logger = createLogger({
+      requestId,
+      tenantId,
+    });
 
-		// Set context values
-		// Using type assertion because Hono's context types don't know about our custom values
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const ctx = c as any;
-		ctx.set('requestId', requestId);
-		ctx.set('tenantId', tenantId);
-		ctx.set('logger', logger);
-		ctx.set('startTime', startTime);
+    // Set context values
+    // Using type assertion because Hono's context types don't know about our custom values
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ctx = c as any;
+    ctx.set('requestId', requestId);
+    ctx.set('tenantId', tenantId);
+    ctx.set('logger', logger);
+    ctx.set('startTime', startTime);
 
-		// Log request start
-		logger.debug('Request started', {
-			method: c.req.method,
-			path: c.req.path,
-			userAgent: c.req.header('User-Agent'),
-		});
+    // Log request start
+    logger.debug('Request started', {
+      method: c.req.method,
+      path: c.req.path,
+      userAgent: c.req.header('User-Agent'),
+    });
 
-		try {
-			await next();
-		} finally {
-			// Log request completion
-			const duration = Date.now() - startTime;
-			logger.debug('Request completed', {
-				method: c.req.method,
-				path: c.req.path,
-				status: c.res.status,
-				durationMs: duration,
-			});
-		}
-	};
+    try {
+      await next();
+    } finally {
+      // Log request completion
+      const duration = Date.now() - startTime;
+      logger.debug('Request completed', {
+        method: c.req.method,
+        path: c.req.path,
+        status: c.res.status,
+        durationMs: duration,
+      });
+    }
+  };
 }
 
 /**
@@ -103,14 +103,14 @@ export function requestContextMiddleware() {
  * @returns Request context object
  */
 export function getRequestContext(c: Context<{ Bindings: Env }>): RequestContext {
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const ctx = c as any;
-	return {
-		requestId: ctx.get('requestId') || 'unknown',
-		tenantId: ctx.get('tenantId') || DEFAULT_TENANT_ID,
-		startTime: ctx.get('startTime') || Date.now(),
-		logger: ctx.get('logger') || createLogger(),
-	};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ctx = c as any;
+  return {
+    requestId: ctx.get('requestId') || 'unknown',
+    tenantId: ctx.get('tenantId') || DEFAULT_TENANT_ID,
+    startTime: ctx.get('startTime') || Date.now(),
+    logger: ctx.get('logger') || createLogger(),
+  };
 }
 
 /**
@@ -121,13 +121,13 @@ export function getRequestContext(c: Context<{ Bindings: Env }>): RequestContext
  * @returns Logger instance
  */
 export function getLogger(c: Context<{ Bindings: Env }>): Logger {
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const logger = (c as any).get('logger');
-	if (logger) {
-		return logger;
-	}
-	// Fallback to a default logger if middleware wasn't applied
-	return createLogger();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const logger = (c as any).get('logger');
+  if (logger) {
+    return logger;
+  }
+  // Fallback to a default logger if middleware wasn't applied
+  return createLogger();
 }
 
 /**
@@ -137,6 +137,6 @@ export function getLogger(c: Context<{ Bindings: Env }>): Logger {
  * @returns Tenant ID string
  */
 export function getTenantIdFromContext(c: Context<{ Bindings: Env }>): string {
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	return (c as any).get('tenantId') || DEFAULT_TENANT_ID;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (c as any).get('tenantId') || DEFAULT_TENANT_ID;
 }

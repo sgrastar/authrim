@@ -225,7 +225,14 @@ app.post('/api/internal/version/:workerName', adminAuthMiddleware(), async (c) =
   const workerName = c.req.param('workerName');
 
   // Validate worker name (only allow known workers)
-  const validWorkers = ['op-auth', 'op-token', 'op-management', 'op-userinfo', 'op-async', 'op-discovery'];
+  const validWorkers = [
+    'op-auth',
+    'op-token',
+    'op-management',
+    'op-userinfo',
+    'op-async',
+    'op-discovery',
+  ];
   if (!validWorkers.includes(workerName)) {
     return c.json(
       {

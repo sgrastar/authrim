@@ -418,10 +418,9 @@ describe('PARRequestStore', () => {
 
       // Get info
       const response = await store.fetch(
-        new Request(
-          `http://localhost/request/${encodeURIComponent(parRequest.requestUri)}`,
-          { method: 'GET' }
-        )
+        new Request(`http://localhost/request/${encodeURIComponent(parRequest.requestUri)}`, {
+          method: 'GET',
+        })
       );
 
       expect(response.status).toBe(200);
@@ -445,10 +444,9 @@ describe('PARRequestStore', () => {
 
     it('should return 404 for non-existent request', async () => {
       const response = await store.fetch(
-        new Request(
-          'http://localhost/request/urn:ietf:params:oauth:request_uri:nonexistent',
-          { method: 'GET' }
-        )
+        new Request('http://localhost/request/urn:ietf:params:oauth:request_uri:nonexistent', {
+          method: 'GET',
+        })
       );
 
       expect(response.status).toBe(404);
@@ -472,10 +470,9 @@ describe('PARRequestStore', () => {
 
       // Get info - should be 404
       const response = await store.fetch(
-        new Request(
-          `http://localhost/request/${encodeURIComponent(parRequest.requestUri)}`,
-          { method: 'GET' }
-        )
+        new Request(`http://localhost/request/${encodeURIComponent(parRequest.requestUri)}`, {
+          method: 'GET',
+        })
       );
 
       expect(response.status).toBe(404);
@@ -497,10 +494,9 @@ describe('PARRequestStore', () => {
 
       // Delete
       const deleteResponse = await store.fetch(
-        new Request(
-          `http://localhost/request/${encodeURIComponent(parRequest.requestUri)}`,
-          { method: 'DELETE' }
-        )
+        new Request(`http://localhost/request/${encodeURIComponent(parRequest.requestUri)}`, {
+          method: 'DELETE',
+        })
       );
 
       expect(deleteResponse.status).toBe(200);
@@ -510,20 +506,18 @@ describe('PARRequestStore', () => {
 
       // Verify deleted
       const getResponse = await store.fetch(
-        new Request(
-          `http://localhost/request/${encodeURIComponent(parRequest.requestUri)}`,
-          { method: 'GET' }
-        )
+        new Request(`http://localhost/request/${encodeURIComponent(parRequest.requestUri)}`, {
+          method: 'GET',
+        })
       );
       expect(getResponse.status).toBe(404);
     });
 
     it('should handle deletion of non-existent request', async () => {
       const response = await store.fetch(
-        new Request(
-          'http://localhost/request/urn:ietf:params:oauth:request_uri:nonexistent',
-          { method: 'DELETE' }
-        )
+        new Request('http://localhost/request/urn:ietf:params:oauth:request_uri:nonexistent', {
+          method: 'DELETE',
+        })
       );
 
       expect(response.status).toBe(200);
@@ -546,9 +540,7 @@ describe('PARRequestStore', () => {
         );
       }
 
-      const response = await store.fetch(
-        new Request('http://localhost/health', { method: 'GET' })
-      );
+      const response = await store.fetch(new Request('http://localhost/health', { method: 'GET' }));
 
       expect(response.status).toBe(200);
       const body = (await response.json()) as any;
@@ -581,9 +573,7 @@ describe('PARRequestStore', () => {
         })
       );
 
-      const response = await store.fetch(
-        new Request('http://localhost/health', { method: 'GET' })
-      );
+      const response = await store.fetch(new Request('http://localhost/health', { method: 'GET' }));
 
       const body = (await response.json()) as any;
       expect(body.requests.active).toBe(0);

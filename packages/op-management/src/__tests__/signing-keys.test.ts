@@ -48,18 +48,25 @@ interface ErrorResponse {
 /**
  * Create a mock KeyManager Durable Object
  */
-function createMockKeyManager(options: {
-  statusResponse?: unknown;
-  rotateResponse?: unknown;
-  emergencyRotateResponse?: unknown;
-  shouldFail?: boolean;
-  failMessage?: string;
-} = {}) {
+function createMockKeyManager(
+  options: {
+    statusResponse?: unknown;
+    rotateResponse?: unknown;
+    emergencyRotateResponse?: unknown;
+    shouldFail?: boolean;
+    failMessage?: string;
+  } = {}
+) {
   const {
     statusResponse = {
       keys: [
         { kid: 'key-123', status: 'active', createdAt: Date.now() },
-        { kid: 'key-122', status: 'overlap', createdAt: Date.now() - 86400000, expiresAt: Date.now() + 86400000 },
+        {
+          kid: 'key-122',
+          status: 'overlap',
+          createdAt: Date.now() - 86400000,
+          expiresAt: Date.now() + 86400000,
+        },
       ],
       activeKeyId: 'key-123',
       lastRotation: Date.now(),
@@ -192,8 +199,19 @@ describe('Signing Keys Admin API', () => {
         statusResponse: {
           keys: [
             { kid: 'active-key', status: 'active', createdAt: Date.now() },
-            { kid: 'overlap-key', status: 'overlap', createdAt: Date.now() - 100000, expiresAt: Date.now() + 86400000 },
-            { kid: 'revoked-key', status: 'revoked', createdAt: Date.now() - 200000, revokedAt: Date.now() - 50000, revokedReason: 'Compromised' },
+            {
+              kid: 'overlap-key',
+              status: 'overlap',
+              createdAt: Date.now() - 100000,
+              expiresAt: Date.now() + 86400000,
+            },
+            {
+              kid: 'revoked-key',
+              status: 'revoked',
+              createdAt: Date.now() - 200000,
+              revokedAt: Date.now() - 50000,
+              revokedReason: 'Compromised',
+            },
           ],
           activeKeyId: 'active-key',
           lastRotation: Date.now(),

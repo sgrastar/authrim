@@ -137,11 +137,7 @@ export function versionCheckMiddleware(workerName: string): MiddlewareHandler<{ 
 
       // Return 503 Service Unavailable with Retry-After header
       // This signals to clients that they should retry shortly
-      return c.json(
-        { error: 'service_unavailable' },
-        503,
-        { 'Retry-After': '5' }
-      );
+      return c.json({ error: 'service_unavailable' }, 503, { 'Retry-After': '5' });
     }
 
     // Version is up-to-date, proceed with request

@@ -77,7 +77,7 @@ async function getSigningKeyFromKeyManager(
   const now = Date.now();
 
   // Check cache first (cache hit = avoid KeyManager DO call + RSA import)
-  if (cachedSigningKey && (now - cachedKeyTimestamp) < KEY_CACHE_TTL) {
+  if (cachedSigningKey && now - cachedKeyTimestamp < KEY_CACHE_TTL) {
     return cachedSigningKey;
   }
 

@@ -51,10 +51,12 @@ function createMockVersionManager(registeredVersion: string | null = null) {
 }
 
 // Base mock environment
-function createMockEnv(options: {
-  codeVersionUuid?: string;
-  versionManager?: ReturnType<typeof createMockVersionManager> | null;
-} = {}): Env {
+function createMockEnv(
+  options: {
+    codeVersionUuid?: string;
+    versionManager?: ReturnType<typeof createMockVersionManager> | null;
+  } = {}
+): Env {
   return {
     ISSUER_URL: 'https://id.example.com',
     TOKEN_EXPIRY: '3600',

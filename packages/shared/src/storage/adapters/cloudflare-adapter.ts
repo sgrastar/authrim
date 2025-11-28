@@ -419,7 +419,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   private async getFromKV(key: string): Promise<string | null> {
     throw new Error(
       `getFromKV called with ${key} - CLIENTS KV is deprecated, use D1+CLIENTS_CACHE. ` +
-      `If you need general KV storage, use env.KV or create a specific namespace.`
+        `If you need general KV storage, use env.KV or create a specific namespace.`
     );
   }
 
@@ -430,7 +430,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   private async setToKV(key: string, value: string, ttl?: number): Promise<void> {
     throw new Error(
       `setToKV called with ${key} - CLIENTS KV is deprecated, use D1+CLIENTS_CACHE. ` +
-      `If you need general KV storage, use env.KV or create a specific namespace.`
+        `If you need general KV storage, use env.KV or create a specific namespace.`
     );
   }
 
@@ -441,7 +441,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   private async deleteFromKV(key: string): Promise<void> {
     throw new Error(
       `deleteFromKV called with ${key} - CLIENTS KV is deprecated, use D1+CLIENTS_CACHE. ` +
-      `If you need general KV storage, use env.KV or create a specific namespace.`
+        `If you need general KV storage, use env.KV or create a specific namespace.`
     );
   }
 }

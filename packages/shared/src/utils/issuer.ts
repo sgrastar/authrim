@@ -30,16 +30,16 @@ import { DEFAULT_TENANT_ID } from './tenant-context';
  * buildIssuerUrl(env, 'acme') // => 'https://acme.authrim.app'
  */
 export function buildIssuerUrl(env: Env, _tenantSubdomain: string = DEFAULT_TENANT_ID): string {
-	// Single-tenant mode: use configured ISSUER_URL
-	return env.ISSUER_URL;
+  // Single-tenant mode: use configured ISSUER_URL
+  return env.ISSUER_URL;
 
-	// Future MT mode (commented out for reference):
-	// if (!env.BASE_DOMAIN) {
-	//   throw new Error('BASE_DOMAIN environment variable is required for multi-tenant mode');
-	// }
-	// const baseDomain = env.BASE_DOMAIN; // e.g., 'authrim.app'
-	// const protocol = 'https';
-	// return `${protocol}://${tenantSubdomain}.${baseDomain}`;
+  // Future MT mode (commented out for reference):
+  // if (!env.BASE_DOMAIN) {
+  //   throw new Error('BASE_DOMAIN environment variable is required for multi-tenant mode');
+  // }
+  // const baseDomain = env.BASE_DOMAIN; // e.g., 'authrim.app'
+  // const protocol = 'https';
+  // return `${protocol}://${tenantSubdomain}.${baseDomain}`;
 }
 
 /**
@@ -55,21 +55,21 @@ export function buildIssuerUrl(env: Env, _tenantSubdomain: string = DEFAULT_TENA
  * extractSubdomain('authrim.app', 'authrim.app') // => null
  */
 export function extractSubdomain(hostname: string, baseDomain: string): string | null {
-	// Remove port if present
-	const host = hostname.split(':')[0];
+  // Remove port if present
+  const host = hostname.split(':')[0];
 
-	// Check if hostname ends with base domain
-	if (!host.endsWith(baseDomain)) {
-		return null;
-	}
+  // Check if hostname ends with base domain
+  if (!host.endsWith(baseDomain)) {
+    return null;
+  }
 
-	// Extract subdomain
-	const subdomain = host.slice(0, -(baseDomain.length + 1)); // +1 for the dot
+  // Extract subdomain
+  const subdomain = host.slice(0, -(baseDomain.length + 1)); // +1 for the dot
 
-	// Return null if no subdomain or if it's empty
-	if (!subdomain || subdomain === '') {
-		return null;
-	}
+  // Return null if no subdomain or if it's empty
+  if (!subdomain || subdomain === '') {
+    return null;
+  }
 
-	return subdomain;
+  return subdomain;
 }
