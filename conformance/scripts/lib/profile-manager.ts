@@ -13,18 +13,34 @@ import type {
 export interface ProfileManagerOptions {
   adminApiUrl: string;
   issuer: string;
+  adminApiToken?: string;
   timeout?: number;
 }
 
 export class ProfileManager {
   private readonly adminApiUrl: string;
   private readonly issuer: string;
+  private readonly adminApiToken?: string;
   private readonly timeout: number;
 
   constructor(options: ProfileManagerOptions) {
     this.adminApiUrl = options.adminApiUrl.replace(/\/$/, '');
     this.issuer = options.issuer.replace(/\/$/, '');
+    this.adminApiToken = options.adminApiToken;
     this.timeout = options.timeout ?? 10000;
+  }
+
+  /**
+   * Get common headers for Admin API requests
+   */
+  private getAdminHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (this.adminApiToken) {
+      headers['Authorization'] = `Bearer ${this.adminApiToken}`;
+    }
+    return headers;
   }
 
   /**
@@ -33,9 +49,7 @@ export class ProfileManager {
   async listProfiles(): Promise<Array<{ name: string; description: string }>> {
     const response = await fetch(`${this.adminApiUrl}/settings/profiles`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getAdminHeaders(),
     });
 
     if (!response.ok) {
@@ -54,9 +68,7 @@ export class ProfileManager {
 
     const response = await fetch(`${this.adminApiUrl}/settings/profile/${profileName}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getAdminHeaders(),
     });
 
     if (!response.ok) {
@@ -76,9 +88,7 @@ export class ProfileManager {
   async getCurrentSettings(): Promise<Record<string, unknown>> {
     const response = await fetch(`${this.adminApiUrl}/settings`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getAdminHeaders(),
     });
 
     if (!response.ok) {
@@ -254,6 +264,7 @@ export class ProfileManager {
 export function createProfileManagerFromEnv(): ProfileManager {
   const adminApiUrl = process.env.ADMIN_API_URL;
   const issuer = process.env.ISSUER;
+  const adminApiToken = process.env.ADMIN_API_SECRET;
 
   if (!adminApiUrl) {
     throw new Error('ADMIN_API_URL environment variable is required');
@@ -266,5 +277,6 @@ export function createProfileManagerFromEnv(): ProfileManager {
   return new ProfileManager({
     adminApiUrl,
     issuer,
+    adminApiToken,
   });
 }

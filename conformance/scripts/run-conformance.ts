@@ -134,6 +134,7 @@ async function main() {
   // Validate environment variables
   const conformanceServer = process.env.CONFORMANCE_SERVER || 'https://www.certification.openid.net';
   const conformanceToken = process.env.CONFORMANCE_TOKEN;
+  const adminApiSecret = process.env.ADMIN_API_SECRET;
 
   if (!conformanceToken) {
     console.error('Error: CONFORMANCE_TOKEN environment variable is required');
@@ -142,6 +143,14 @@ async function main() {
     console.log('1. Login to https://www.certification.openid.net');
     console.log('2. Go to your account settings');
     console.log('3. Generate an API token');
+    process.exit(1);
+  }
+
+  if (!adminApiSecret) {
+    console.error('Error: ADMIN_API_SECRET environment variable is required');
+    console.log('');
+    console.log('This is needed to authenticate with the Admin API for profile switching.');
+    console.log('Set it to the same value as ADMIN_API_SECRET in your wrangler.toml.');
     process.exit(1);
   }
 
@@ -200,6 +209,7 @@ async function main() {
   const profileManager = new ProfileManager({
     adminApiUrl: envConfig.adminApiUrl,
     issuer: envConfig.issuer,
+    adminApiToken: adminApiSecret,
   });
   const resultProcessor = new ResultProcessor();
   const logger = new Logger();

@@ -375,6 +375,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     if (metadata.response_mode) params.set('response_mode', metadata.response_mode as string);
     if (metadata.max_age) params.set('max_age', metadata.max_age as string);
     if (metadata.prompt) params.set('prompt', metadata.prompt as string);
+    if (metadata.acr_values) params.set('acr_values', metadata.acr_values as string);
 
     // Add flag to indicate consent is confirmed
     params.set('_consent_confirmed', 'true');

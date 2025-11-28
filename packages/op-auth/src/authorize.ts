@@ -2502,6 +2502,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   if (metadata.response_mode) params.set('response_mode', metadata.response_mode as string);
   if (metadata.max_age) params.set('max_age', metadata.max_age as string);
   if (metadata.prompt) params.set('prompt', metadata.prompt as string);
+  if (metadata.acr_values) params.set('acr_values', metadata.acr_values as string);
 
   // Add a flag to indicate login is complete
   params.set('_confirmed', 'true');
@@ -2688,6 +2689,7 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
     params.set('prompt', metadata.prompt as string);
     console.log('[AUTH] Passing prompt to confirmation redirect:', metadata.prompt);
   }
+  if (metadata.acr_values) params.set('acr_values', metadata.acr_values as string);
 
   // Add a flag to indicate this is a re-authentication confirmation
   params.set('_confirmed', 'true');

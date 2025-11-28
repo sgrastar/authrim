@@ -166,8 +166,12 @@ app.post('/api/auth/email-code/send', emailCodeSendHandler);
 app.post('/api/auth/email-code/verify', emailCodeVerifyHandler);
 
 // OAuth Consent endpoints
+// /api/auth/consent - API style path
 app.get('/api/auth/consent', consentGetHandler);
 app.post('/api/auth/consent', consentPostHandler);
+// /auth/consent - Fallback path (used when UI_URL is not configured)
+app.get('/auth/consent', consentGetHandler);
+app.post('/auth/consent', consentPostHandler);
 
 // Session Management endpoints (RESTful naming)
 app.post('/api/sessions/issue', issueSessionTokenHandler); // Issue new session token

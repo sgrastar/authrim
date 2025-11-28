@@ -96,6 +96,16 @@ async function getLatestVersion(env: Env, workerName: string): Promise<string | 
  */
 export function versionCheckMiddleware(workerName: string): MiddlewareHandler<{ Bindings: Env }> {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    // Skip version check for internal version management endpoints
+    // This prevents chicken-and-egg problems during deployment:
+    // - New Workers are deployed with new UUID
+    // - Deploy script needs to register new UUID in VersionManager DO
+    // - But if version check blocks this, registration can never succeed
+    const path = c.req.path;
+    if (path.startsWith('/api/internal/version')) {
+      return next();
+    }
+
     const myVersion = c.env.CODE_VERSION_UUID;
 
     // Skip version check if not configured (development environment)

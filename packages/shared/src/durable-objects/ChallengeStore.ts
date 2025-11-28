@@ -392,12 +392,14 @@ export class ChallengeStore {
           });
         }
 
-        // Don't expose the actual challenge value
+        // Return challenge info including metadata (needed for consent flow)
+        // Note: The actual challenge value is not exposed for security
         return new Response(
           JSON.stringify({
             id: challenge.id,
             type: challenge.type,
             userId: challenge.userId,
+            metadata: challenge.metadata, // Include metadata for consent flow
             createdAt: challenge.createdAt,
             expiresAt: challenge.expiresAt,
             consumed: challenge.consumed,
