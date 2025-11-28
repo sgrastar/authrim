@@ -1,6 +1,6 @@
 {
   "alias": "authrim-dynamic-op",
-  "description": "Authrim OpenID Connect Dynamic OP Certification Automation Test",
+  "description": "Automated Certification Test for Authrim Dynamic OP",
   "server": {
     "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
   },

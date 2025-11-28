@@ -1,6 +1,6 @@
 {
   "alias": "authrim-formpost-hybrid-op",
-  "description": "Authrim OpenID Connect Form Post Hybrid OP Certification Automation Test",
+  "description": "Automated Certification Test for Authrim Form Post Hybrid OP",
   "server": {
     "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
   },

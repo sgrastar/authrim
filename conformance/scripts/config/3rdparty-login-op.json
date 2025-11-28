@@ -1,6 +1,6 @@
 {
   "alias": "authrim-3rdparty-login-op",
-  "description": "Authrim OpenID Connect 3rd Party Initiated Login OP Certification Automation Test",
+  "description": "Automated Certification Test for Authrim 3rd Party Initiated Login OP",
   "server": {
     "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
   },

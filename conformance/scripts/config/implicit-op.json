@@ -1,6 +1,6 @@
 {
   "alias": "authrim-implicit-op",
-  "description": "Authrim OpenID Connect Implicit OP Certification Automation Test",
+  "description": "Automated Certification Test for Authrim Implicit OP",
   "server": {
     "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
   },

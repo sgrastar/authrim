@@ -1,6 +1,6 @@
 {
   "alias": "authrim-basic-op",
-  "description": "Authrim OpenID Connect Basic OP Certification Automation Test",
+  "description": "Automated Certification Test for Authrim Basic OP",
   "server": {
     "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
   },

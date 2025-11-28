@@ -1,6 +1,6 @@
 {
   "alias": "authrim-config-op",
-  "description": "Authrim OpenID Connect Config OP Certification Automation Test",
+  "description": "Automated Certification Test for Authrim Config OP",
   "server": {
     "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
   }

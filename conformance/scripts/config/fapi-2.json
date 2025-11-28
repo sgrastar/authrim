@@ -1,6 +1,6 @@
 {
   "alias": "authrim-fapi2",
-  "description": "Authrim FAPI 2.0 Security Profile Certification Automation Test",
+  "description": "Automated Certification Test for Authrim FAPI 2.0 Security Profile",
   "server": {
     "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
   },

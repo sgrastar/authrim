@@ -1,6 +1,6 @@
 {
   "alias": "authrim-session-management-op",
-  "description": "Authrim OpenID Connect Session Management OP Certification Automation Test",
+  "description": "Automated Certification Test for Authrim Session Management OP",
   "server": {
     "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
   },

@@ -1,6 +1,6 @@
 {
   "alias": "authrim-rp-logout-op",
-  "description": "Authrim OpenID Connect RP-Initiated Logout OP Certification Automation Test",
+  "description": "Automated Certification Test for Authrim RP-Initiated Logout OP",
   "server": {
     "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
   },
