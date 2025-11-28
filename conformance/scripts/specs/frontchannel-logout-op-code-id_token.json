@@ -1,0 +1,32 @@
+{
+  "planKey": "frontchannel-logout-op-code-id_token",
+  "planName": "oidcc-frontchannel-rp-initiated-logout-certification-test-plan",
+  "generatedAt": "2025-11-28T10:45:22.335Z",
+  "configFile": "frontchannel-logout-op-code-id_token.json",
+  "tests": [
+    {
+      "testModule": "oidcc-frontchannel-logout-discovery-endpoint-verification",
+      "testSummary": "This test ensures that the server's configurations contains the values required by the specifications, frontchannel_logout_supported,  frontchannel_logout_session_supported and end_session_endpoint. Certification for this profile requires that frontchannel logout session (i.e. 'sid' in the id_token & logout request) is supported.",
+      "variant": {
+        "server_metadata": "discovery"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-frontchannel-rp-initiated-logout",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint. It validates the OP correctly loads the frontchannel_logout_uri and sends the user to the post_logout_redirect_uri, then tries another authentication with prompt=none which must return an error (as the user has been logged out).\n\nIf using static client registration you must register frontchannel_logout_uri to the same url as the redirect url, but replacing the portion after the alias with /frontchannel_logout and similarly register /post_logout_redirect as a post_logout_redirect_uri.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    }
+  ]
+}

@@ -5,7 +5,7 @@
     "basic-op": {
       "name": "oidcc-basic-certification-test-plan",
       "displayName": "OIDC Basic OP Certification",
-      "outputDir": "OIDC Basic OP",
+      "outputDir": "OIDC OP Basic",
       "profile": "basic-op",
       "configFile": "basic-op.json",
       "requiresBrowser": true,
@@ -18,7 +18,7 @@
     "implicit-op": {
       "name": "oidcc-implicit-certification-test-plan",
       "displayName": "OIDC Implicit OP Certification",
-      "outputDir": "OIDC Implicit OP",
+      "outputDir": "OIDC OP Implicit",
       "profile": "implicit-op",
       "configFile": "implicit-op.json",
       "requiresBrowser": true,
@@ -31,7 +31,7 @@
     "hybrid-op": {
       "name": "oidcc-hybrid-certification-test-plan",
       "displayName": "OIDC Hybrid OP Certification",
-      "outputDir": "OIDC Hybrid OP",
+      "outputDir": "OIDC OP Hybrid",
       "profile": "hybrid-op",
       "configFile": "hybrid-op.json",
       "requiresBrowser": true,
@@ -44,7 +44,7 @@
     "config-op": {
       "name": "oidcc-config-certification-test-plan",
       "displayName": "OIDC Config OP Certification",
-      "outputDir": "OIDC Config OP",
+      "outputDir": "OIDC OP Config",
       "profile": "basic-op",
       "configFile": "config-op.json",
       "requiresBrowser": false,
@@ -54,20 +54,19 @@
     "dynamic-op": {
       "name": "oidcc-dynamic-certification-test-plan",
       "displayName": "OIDC Dynamic OP Certification",
-      "outputDir": "OIDC Dynamic OP",
+      "outputDir": "OIDC OP Dynamic",
       "profile": "basic-op",
       "configFile": "dynamic-op.json",
       "requiresBrowser": true,
       "variants": {
-        "server_metadata": "discovery",
-        "client_registration": "dynamic_client"
+        "response_type": "code"
       },
       "description": "OpenID Connect Dynamic Certification Profile - Dynamic Client Registration"
     },
     "formpost-basic": {
       "name": "oidcc-formpost-basic-certification-test-plan",
-      "displayName": "OIDC Form Post OP Certification",
-      "outputDir": "OIDC Form Post OP",
+      "displayName": "OIDC Form Post Basic OP Certification",
+      "outputDir": "OIDC OP Form Post Basic",
       "profile": "basic-op",
       "configFile": "basic-op.json",
       "requiresBrowser": true,
@@ -80,7 +79,7 @@
     "formpost-implicit": {
       "name": "oidcc-formpost-implicit-certification-test-plan",
       "displayName": "OIDC Form Post Implicit OP Certification",
-      "outputDir": "OIDC Form Post Implicit OP",
+      "outputDir": "OIDC OP Form Post Implicit",
       "profile": "implicit-op",
       "configFile": "formpost-implicit-op.json",
       "requiresBrowser": true,
@@ -93,7 +92,7 @@
     "formpost-hybrid": {
       "name": "oidcc-formpost-hybrid-certification-test-plan",
       "displayName": "OIDC Form Post Hybrid OP Certification",
-      "outputDir": "OIDC Form Post Hybrid OP",
+      "outputDir": "OIDC OP Form Post Hybrid",
       "profile": "hybrid-op",
       "configFile": "formpost-hybrid-op.json",
       "requiresBrowser": true,
@@ -106,12 +105,12 @@
     "rp-logout-op": {
       "name": "oidcc-rp-initiated-logout-certification-test-plan",
       "displayName": "OIDC RP-Initiated Logout OP Certification",
-      "outputDir": "OIDC RP-Initiated Logout OP",
+      "outputDir": "OIDC OP RP-Initiated Logout",
       "profile": "basic-op",
       "configFile": "rp-logout-op.json",
       "requiresBrowser": true,
       "variants": {
-        "server_metadata": "discovery",
+        "response_type": "code",
         "client_registration": "dynamic_client"
       },
       "description": "OpenID Connect RP-Initiated Logout Certification Profile"
@@ -119,12 +118,12 @@
     "session-management-op": {
       "name": "oidcc-session-management-certification-test-plan",
       "displayName": "OIDC Session Management OP Certification",
-      "outputDir": "OIDC Session Management OP",
+      "outputDir": "OIDC OP Session Management",
       "profile": "basic-op",
       "configFile": "session-management-op.json",
       "requiresBrowser": true,
       "variants": {
-        "server_metadata": "discovery",
+        "response_type": "code",
         "client_registration": "dynamic_client"
       },
       "description": "OpenID Connect Session Management Certification Profile"
@@ -132,29 +131,515 @@
     "3rdparty-login-op": {
       "name": "oidcc-3rdparty-init-login-certification-test-plan",
       "displayName": "OIDC 3rd Party Initiated Login OP Certification",
-      "outputDir": "OIDC 3rd Party Initiated Login OP",
+      "outputDir": "OIDC OP 3rd Party Initiated Login",
       "profile": "basic-op",
       "configFile": "3rdparty-login-op.json",
       "requiresBrowser": true,
       "variants": {
-        "server_metadata": "discovery",
-        "client_registration": "dynamic_client"
+        "response_type": "code"
       },
       "description": "OpenID Connect 3rd Party Initiated Login Certification Profile"
     },
     "fapi-2": {
       "name": "fapi2-security-profile-id2-test-plan",
       "displayName": "FAPI 2.0 Security Profile",
-      "outputDir": "OIDC FAPI2.0 Security Profile",
+      "outputDir": "OIDC OP FAPI2.0 Security Profile private_key_jwt dpop simple openid_connect plain_fapi",
       "profile": "fapi-2",
       "configFile": "fapi-2.json",
       "requiresBrowser": true,
       "variants": {
         "client_auth_type": "private_key_jwt",
         "sender_constrain": "dpop",
-        "fapi_profile": "plain_fapi"
+        "fapi_profile": "plain_fapi",
+        "openid": "openid_connect"
       },
       "description": "Financial-grade API 2.0 Security Profile with PAR and private_key_jwt"
+    },
+    "dynamic-op-code": {
+      "name": "oidcc-dynamic-certification-test-plan",
+      "displayName": "OIDC Dynamic OP (code)",
+      "outputDir": "OIDC OP Dynamic code",
+      "profile": "basic-op",
+      "configFile": "dynamic-op-code.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code"
+      },
+      "description": "OpenID Connect Dynamic Certification - code response type"
+    },
+    "dynamic-op-id_token": {
+      "name": "oidcc-dynamic-certification-test-plan",
+      "displayName": "OIDC Dynamic OP (id_token)",
+      "outputDir": "OIDC OP Dynamic id_token",
+      "profile": "implicit-op",
+      "configFile": "dynamic-op-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token"
+      },
+      "description": "OpenID Connect Dynamic Certification - id_token response type"
+    },
+    "dynamic-op-id_token-token": {
+      "name": "oidcc-dynamic-certification-test-plan",
+      "displayName": "OIDC Dynamic OP (id_token token)",
+      "outputDir": "OIDC OP Dynamic id_token token",
+      "profile": "implicit-op",
+      "configFile": "dynamic-op-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token token"
+      },
+      "description": "OpenID Connect Dynamic Certification - id_token token response type"
+    },
+    "dynamic-op-code-id_token": {
+      "name": "oidcc-dynamic-certification-test-plan",
+      "displayName": "OIDC Dynamic OP (code id_token)",
+      "outputDir": "OIDC OP Dynamic code id_token",
+      "profile": "hybrid-op",
+      "configFile": "dynamic-op-code-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token"
+      },
+      "description": "OpenID Connect Dynamic Certification - code id_token response type"
+    },
+    "dynamic-op-code-token": {
+      "name": "oidcc-dynamic-certification-test-plan",
+      "displayName": "OIDC Dynamic OP (code token)",
+      "outputDir": "OIDC OP Dynamic code token",
+      "profile": "hybrid-op",
+      "configFile": "dynamic-op-code-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code token"
+      },
+      "description": "OpenID Connect Dynamic Certification - code token response type"
+    },
+    "dynamic-op-code-id_token-token": {
+      "name": "oidcc-dynamic-certification-test-plan",
+      "displayName": "OIDC Dynamic OP (code id_token token)",
+      "outputDir": "OIDC OP Dynamic code id_token token",
+      "profile": "hybrid-op",
+      "configFile": "dynamic-op-code-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token token"
+      },
+      "description": "OpenID Connect Dynamic Certification - code id_token token response type"
+    },
+    "rp-logout-op-code": {
+      "name": "oidcc-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC RP-Initiated Logout (code)",
+      "outputDir": "OIDC OP RP-Initiated Logout code",
+      "profile": "basic-op",
+      "configFile": "rp-logout-op-code.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect RP-Initiated Logout - code response type"
+    },
+    "rp-logout-op-id_token": {
+      "name": "oidcc-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC RP-Initiated Logout (id_token)",
+      "outputDir": "OIDC OP RP-Initiated Logout id_token",
+      "profile": "implicit-op",
+      "configFile": "rp-logout-op-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect RP-Initiated Logout - id_token response type"
+    },
+    "rp-logout-op-id_token-token": {
+      "name": "oidcc-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC RP-Initiated Logout (id_token token)",
+      "outputDir": "OIDC OP RP-Initiated Logout id_token token",
+      "profile": "implicit-op",
+      "configFile": "rp-logout-op-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect RP-Initiated Logout - id_token token response type"
+    },
+    "rp-logout-op-code-id_token": {
+      "name": "oidcc-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC RP-Initiated Logout (code id_token)",
+      "outputDir": "OIDC OP RP-Initiated Logout code id_token",
+      "profile": "hybrid-op",
+      "configFile": "rp-logout-op-code-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect RP-Initiated Logout - code id_token response type"
+    },
+    "rp-logout-op-code-token": {
+      "name": "oidcc-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC RP-Initiated Logout (code token)",
+      "outputDir": "OIDC OP RP-Initiated Logout code token",
+      "profile": "hybrid-op",
+      "configFile": "rp-logout-op-code-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect RP-Initiated Logout - code token response type"
+    },
+    "rp-logout-op-code-id_token-token": {
+      "name": "oidcc-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC RP-Initiated Logout (code id_token token)",
+      "outputDir": "OIDC OP RP-Initiated Logout code id_token token",
+      "profile": "hybrid-op",
+      "configFile": "rp-logout-op-code-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect RP-Initiated Logout - code id_token token response type"
+    },
+    "frontchannel-logout-op-code": {
+      "name": "oidcc-frontchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Frontchannel RP-Initiated Logout (code)",
+      "outputDir": "OIDC OP Frontchannel-RP-Initiated Logout code",
+      "profile": "basic-op",
+      "configFile": "frontchannel-logout-op-code.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Frontchannel RP-Initiated Logout - code response type"
+    },
+    "frontchannel-logout-op-id_token": {
+      "name": "oidcc-frontchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Frontchannel RP-Initiated Logout (id_token)",
+      "outputDir": "OIDC OP Frontchannel-RP-Initiated Logout id_token",
+      "profile": "implicit-op",
+      "configFile": "frontchannel-logout-op-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Frontchannel RP-Initiated Logout - id_token response type"
+    },
+    "frontchannel-logout-op-id_token-token": {
+      "name": "oidcc-frontchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Frontchannel RP-Initiated Logout (id_token token)",
+      "outputDir": "OIDC OP Frontchannel-RP-Initiated Logout id_token token",
+      "profile": "implicit-op",
+      "configFile": "frontchannel-logout-op-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Frontchannel RP-Initiated Logout - id_token token response type"
+    },
+    "frontchannel-logout-op-code-id_token": {
+      "name": "oidcc-frontchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Frontchannel RP-Initiated Logout (code id_token)",
+      "outputDir": "OIDC OP Frontchannel-RP-Initiated Logout code id_token",
+      "profile": "hybrid-op",
+      "configFile": "frontchannel-logout-op-code-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Frontchannel RP-Initiated Logout - code id_token response type"
+    },
+    "frontchannel-logout-op-code-token": {
+      "name": "oidcc-frontchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Frontchannel RP-Initiated Logout (code token)",
+      "outputDir": "OIDC OP Frontchannel-RP-Initiated Logout code token",
+      "profile": "hybrid-op",
+      "configFile": "frontchannel-logout-op-code-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Frontchannel RP-Initiated Logout - code token response type"
+    },
+    "frontchannel-logout-op-code-id_token-token": {
+      "name": "oidcc-frontchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Frontchannel RP-Initiated Logout (code id_token token)",
+      "outputDir": "OIDC OP Frontchannel-RP-Initiated Logout code id_token token",
+      "profile": "hybrid-op",
+      "configFile": "frontchannel-logout-op-code-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Frontchannel RP-Initiated Logout - code id_token token response type"
+    },
+    "backchannel-logout-op-code": {
+      "name": "oidcc-backchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Backchannel RP-Initiated Logout (code)",
+      "outputDir": "OIDC OP Backchannel-RP-Initiated Logout code",
+      "profile": "basic-op",
+      "configFile": "backchannel-logout-op-code.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Backchannel RP-Initiated Logout - code response type"
+    },
+    "backchannel-logout-op-id_token": {
+      "name": "oidcc-backchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Backchannel RP-Initiated Logout (id_token)",
+      "outputDir": "OIDC OP Backchannel-RP-Initiated Logout id_token",
+      "profile": "implicit-op",
+      "configFile": "backchannel-logout-op-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Backchannel RP-Initiated Logout - id_token response type"
+    },
+    "backchannel-logout-op-id_token-token": {
+      "name": "oidcc-backchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Backchannel RP-Initiated Logout (id_token token)",
+      "outputDir": "OIDC OP Backchannel-RP-Initiated Logout id_token token",
+      "profile": "implicit-op",
+      "configFile": "backchannel-logout-op-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Backchannel RP-Initiated Logout - id_token token response type"
+    },
+    "backchannel-logout-op-code-id_token": {
+      "name": "oidcc-backchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Backchannel RP-Initiated Logout (code id_token)",
+      "outputDir": "OIDC OP Backchannel-RP-Initiated Logout code id_token",
+      "profile": "hybrid-op",
+      "configFile": "backchannel-logout-op-code-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Backchannel RP-Initiated Logout - code id_token response type"
+    },
+    "backchannel-logout-op-code-token": {
+      "name": "oidcc-backchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Backchannel RP-Initiated Logout (code token)",
+      "outputDir": "OIDC OP Backchannel-RP-Initiated Logout code token",
+      "profile": "hybrid-op",
+      "configFile": "backchannel-logout-op-code-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Backchannel RP-Initiated Logout - code token response type"
+    },
+    "backchannel-logout-op-code-id_token-token": {
+      "name": "oidcc-backchannel-rp-initiated-logout-certification-test-plan",
+      "displayName": "OIDC Backchannel RP-Initiated Logout (code id_token token)",
+      "outputDir": "OIDC OP Backchannel-RP-Initiated Logout code id_token token",
+      "profile": "hybrid-op",
+      "configFile": "backchannel-logout-op-code-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Backchannel RP-Initiated Logout - code id_token token response type"
+    },
+    "session-management-op-code": {
+      "name": "oidcc-session-management-certification-test-plan",
+      "displayName": "OIDC Session Management (code)",
+      "outputDir": "OIDC OP Session Management code",
+      "profile": "basic-op",
+      "configFile": "session-management-op-code.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Session Management - code response type"
+    },
+    "session-management-op-id_token": {
+      "name": "oidcc-session-management-certification-test-plan",
+      "displayName": "OIDC Session Management (id_token)",
+      "outputDir": "OIDC OP Session Management id_token",
+      "profile": "implicit-op",
+      "configFile": "session-management-op-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Session Management - id_token response type"
+    },
+    "session-management-op-id_token-token": {
+      "name": "oidcc-session-management-certification-test-plan",
+      "displayName": "OIDC Session Management (id_token token)",
+      "outputDir": "OIDC OP Session Management id_token token",
+      "profile": "implicit-op",
+      "configFile": "session-management-op-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Session Management - id_token token response type"
+    },
+    "session-management-op-code-id_token": {
+      "name": "oidcc-session-management-certification-test-plan",
+      "displayName": "OIDC Session Management (code id_token)",
+      "outputDir": "OIDC OP Session Management code id_token",
+      "profile": "hybrid-op",
+      "configFile": "session-management-op-code-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Session Management - code id_token response type"
+    },
+    "session-management-op-code-token": {
+      "name": "oidcc-session-management-certification-test-plan",
+      "displayName": "OIDC Session Management (code token)",
+      "outputDir": "OIDC OP Session Management code token",
+      "profile": "hybrid-op",
+      "configFile": "session-management-op-code-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Session Management - code token response type"
+    },
+    "session-management-op-code-id_token-token": {
+      "name": "oidcc-session-management-certification-test-plan",
+      "displayName": "OIDC Session Management (code id_token token)",
+      "outputDir": "OIDC OP Session Management code id_token token",
+      "profile": "hybrid-op",
+      "configFile": "session-management-op-code-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token token",
+        "client_registration": "dynamic_client"
+      },
+      "description": "OpenID Connect Session Management - code id_token token response type"
+    },
+    "3rdparty-login-op-code": {
+      "name": "oidcc-3rdparty-init-login-certification-test-plan",
+      "displayName": "OIDC 3rd Party Initiated Login (code)",
+      "outputDir": "OIDC OP 3rd Party Initiated Login code",
+      "profile": "basic-op",
+      "configFile": "3rdparty-login-op-code.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code"
+      },
+      "description": "OpenID Connect 3rd Party Initiated Login - code response type"
+    },
+    "3rdparty-login-op-id_token": {
+      "name": "oidcc-3rdparty-init-login-certification-test-plan",
+      "displayName": "OIDC 3rd Party Initiated Login (id_token)",
+      "outputDir": "OIDC OP 3rd Party Initiated Login id_token",
+      "profile": "implicit-op",
+      "configFile": "3rdparty-login-op-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token"
+      },
+      "description": "OpenID Connect 3rd Party Initiated Login - id_token response type"
+    },
+    "3rdparty-login-op-id_token-token": {
+      "name": "oidcc-3rdparty-init-login-certification-test-plan",
+      "displayName": "OIDC 3rd Party Initiated Login (id_token token)",
+      "outputDir": "OIDC OP 3rd Party Initiated Login id_token token",
+      "profile": "implicit-op",
+      "configFile": "3rdparty-login-op-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "id_token token"
+      },
+      "description": "OpenID Connect 3rd Party Initiated Login - id_token token response type"
+    },
+    "3rdparty-login-op-code-id_token": {
+      "name": "oidcc-3rdparty-init-login-certification-test-plan",
+      "displayName": "OIDC 3rd Party Initiated Login (code id_token)",
+      "outputDir": "OIDC OP 3rd Party Initiated Login code id_token",
+      "profile": "hybrid-op",
+      "configFile": "3rdparty-login-op-code-id_token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token"
+      },
+      "description": "OpenID Connect 3rd Party Initiated Login - code id_token response type"
+    },
+    "3rdparty-login-op-code-token": {
+      "name": "oidcc-3rdparty-init-login-certification-test-plan",
+      "displayName": "OIDC 3rd Party Initiated Login (code token)",
+      "outputDir": "OIDC OP 3rd Party Initiated Login code token",
+      "profile": "hybrid-op",
+      "configFile": "3rdparty-login-op-code-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code token"
+      },
+      "description": "OpenID Connect 3rd Party Initiated Login - code token response type"
+    },
+    "3rdparty-login-op-code-id_token-token": {
+      "name": "oidcc-3rdparty-init-login-certification-test-plan",
+      "displayName": "OIDC 3rd Party Initiated Login (code id_token token)",
+      "outputDir": "OIDC OP 3rd Party Initiated Login code id_token token",
+      "profile": "hybrid-op",
+      "configFile": "3rdparty-login-op-code-id_token-token.json",
+      "requiresBrowser": true,
+      "variants": {
+        "response_type": "code id_token token"
+      },
+      "description": "OpenID Connect 3rd Party Initiated Login - code id_token token response type"
+    },
+    "fapi-ciba-id1-ping": {
+      "name": "fapi-ciba-id1-test-plan",
+      "displayName": "FAPI-CIBA-ID1 (ping)",
+      "outputDir": "OIDC OP FAPI-CIBA-ID1 private_key_jwt ping plain_fapi",
+      "profile": "fapi-ciba",
+      "configFile": "fapi-ciba-id1-ping.json",
+      "requiresBrowser": true,
+      "variants": {
+        "client_auth_type": "private_key_jwt",
+        "ciba_mode": "ping",
+        "fapi_profile": "plain_fapi",
+        "client_registration": "dynamic_client"
+      },
+      "description": "FAPI CIBA ID1 - ping mode"
+    },
+    "fapi-ciba-id1-poll": {
+      "name": "fapi-ciba-id1-test-plan",
+      "displayName": "FAPI-CIBA-ID1 (poll)",
+      "outputDir": "OIDC OP FAPI-CIBA-ID1 private_key_jwt poll plain_fapi",
+      "profile": "fapi-ciba",
+      "configFile": "fapi-ciba-id1-poll.json",
+      "requiresBrowser": true,
+      "variants": {
+        "client_auth_type": "private_key_jwt",
+        "ciba_mode": "poll",
+        "fapi_profile": "plain_fapi",
+        "client_registration": "dynamic_client"
+      },
+      "description": "FAPI CIBA ID1 - poll mode"
     }
   },
   "environments": {

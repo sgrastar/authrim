@@ -122,7 +122,7 @@ describe('KeyManager Durable Object', () => {
         const response = await keyManager.fetch(request);
 
         expect(response.status).toBe(401);
-        const data = await response.json();
+        const data = (await response.json()) as Record<string, unknown>;
         expect(data).toHaveProperty('error', 'Unauthorized');
       }
     });
@@ -137,7 +137,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty('keys');
     });
 
@@ -186,7 +186,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(activeRequest);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       // Should not contain privatePEM
       expect(data).not.toHaveProperty('privatePEM');
@@ -202,7 +202,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       expect(data.success).toBe(true);
       expect(data.key).not.toHaveProperty('privatePEM');
@@ -220,7 +220,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       // Should contain privatePEM for internal use
       expect(data).toHaveProperty('privatePEM');
@@ -264,7 +264,7 @@ describe('KeyManager Durable Object', () => {
     it('should set key status to active after rotation', async () => {
       const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
       const response = await keyManager.fetch(rotateRequest);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       expect(data.key.status).toBe('active');
     });
@@ -273,13 +273,13 @@ describe('KeyManager Durable Object', () => {
       // First rotation
       const rotate1 = createRequest('/rotate', 'POST', 'test-secret-token');
       const response1 = await keyManager.fetch(rotate1);
-      const data1 = await response1.json();
+      const data1 = (await response1.json()) as Record<string, unknown>;
       const firstKid = data1.key.kid;
 
       // Second rotation
       const rotate2 = createRequest('/rotate', 'POST', 'test-secret-token');
       const response2 = await keyManager.fetch(rotate2);
-      const data2 = await response2.json();
+      const data2 = (await response2.json()) as Record<string, unknown>;
 
       expect(data2.key.status).toBe('active');
       expect(data2.key.kid).not.toBe(firstKid);
@@ -287,7 +287,7 @@ describe('KeyManager Durable Object', () => {
       // Check status endpoint to verify first key is now overlap
       const statusRequest = createRequest('/status', 'GET', 'test-secret-token');
       const statusResponse = await keyManager.fetch(statusRequest);
-      const statusData = await statusResponse.json();
+      const statusData = (await statusResponse.json()) as Record<string, unknown>;
 
       const firstKey = statusData.keys.find((k: { kid: string }) => k.kid === firstKid);
       expect(firstKey.status).toBe('overlap');
@@ -308,7 +308,7 @@ describe('KeyManager Durable Object', () => {
       // Get JWKS
       const jwksRequest = createRequest('/jwks', 'GET');
       const jwksResponse = await keyManager.fetch(jwksRequest);
-      const jwksData = await jwksResponse.json();
+      const jwksData = (await jwksResponse.json()) as Record<string, unknown>;
 
       // Should only have the new active key, not the revoked one
       expect(jwksData.keys.length).toBe(1);
@@ -316,7 +316,7 @@ describe('KeyManager Durable Object', () => {
       // Get status to verify revoked key exists but not in JWKS
       const statusRequest = createRequest('/status', 'GET', 'test-secret-token');
       const statusResponse = await keyManager.fetch(statusRequest);
-      const statusData = await statusResponse.json();
+      const statusData = (await statusResponse.json()) as Record<string, unknown>;
 
       // Should have 2 keys in status (one revoked, one active)
       expect(statusData.keys.length).toBe(2);
@@ -331,7 +331,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       expect(data.success).toBe(true);
       expect(data.key).toBeDefined();
@@ -341,12 +341,12 @@ describe('KeyManager Durable Object', () => {
     it('should set new key as active after rotation', async () => {
       const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
       const rotateResponse = await keyManager.fetch(rotateRequest);
-      const rotateData = await rotateResponse.json();
+      const rotateData = (await rotateResponse.json()) as Record<string, unknown>;
       const newKid = rotateData.key.kid;
 
       const activeRequest = createRequest('/active', 'GET', 'test-secret-token');
       const activeResponse = await keyManager.fetch(activeRequest);
-      const activeData = await activeResponse.json();
+      const activeData = (await activeResponse.json()) as Record<string, unknown>;
 
       expect(activeData.kid).toBe(newKid);
       expect(activeData.status).toBe('active');
@@ -355,11 +355,11 @@ describe('KeyManager Durable Object', () => {
     it('should handle multiple rotations', async () => {
       const rotateRequest1 = createRequest('/rotate', 'POST', 'test-secret-token');
       const response1 = await keyManager.fetch(rotateRequest1);
-      const data1 = await response1.json();
+      const data1 = (await response1.json()) as Record<string, unknown>;
 
       const rotateRequest2 = createRequest('/rotate', 'POST', 'test-secret-token');
       const response2 = await keyManager.fetch(rotateRequest2);
-      const data2 = await response2.json();
+      const data2 = (await response2.json()) as Record<string, unknown>;
 
       // Keys should be different
       expect(data1.key.kid).not.toBe(data2.key.kid);
@@ -367,7 +367,7 @@ describe('KeyManager Durable Object', () => {
       // Latest key should be active
       const activeRequest = createRequest('/active', 'GET', 'test-secret-token');
       const activeResponse = await keyManager.fetch(activeRequest);
-      const activeData = await activeResponse.json();
+      const activeData = (await activeResponse.json()) as Record<string, unknown>;
 
       expect(activeData.kid).toBe(data2.key.kid);
     });
@@ -386,7 +386,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       expect(data).toHaveProperty('oldKid');
       expect(data).toHaveProperty('newKid');
@@ -397,7 +397,7 @@ describe('KeyManager Durable Object', () => {
       // Create active key
       const rotateRequest = createRequest('/rotate', 'POST', 'test-secret-token');
       const rotateResponse = await keyManager.fetch(rotateRequest);
-      const rotateData = await rotateResponse.json();
+      const rotateData = (await rotateResponse.json()) as Record<string, unknown>;
       const oldKid = rotateData.key.kid;
 
       // Emergency rotate
@@ -409,7 +409,7 @@ describe('KeyManager Durable Object', () => {
       // Check status
       const statusRequest = createRequest('/status', 'GET', 'test-secret-token');
       const statusResponse = await keyManager.fetch(statusRequest);
-      const statusData = await statusResponse.json();
+      const statusData = (await statusResponse.json()) as Record<string, unknown>;
 
       const oldKey = statusData.keys.find((k: { kid: string }) => k.kid === oldKid);
       expect(oldKey.status).toBe('revoked');
@@ -427,7 +427,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(400);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data.error).toBe('Bad Request');
     });
 
@@ -466,7 +466,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       expect(data).toHaveProperty('keys');
       expect(data).toHaveProperty('activeKeyId');
@@ -480,7 +480,7 @@ describe('KeyManager Durable Object', () => {
 
       const request = createRequest('/status', 'GET', 'test-secret-token');
       const response = await keyManager.fetch(request);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       for (const key of data.keys) {
         expect(key).not.toHaveProperty('privatePEM');
@@ -502,7 +502,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       expect(data).toHaveProperty('keys');
       expect(Array.isArray(data.keys)).toBe(true);
@@ -517,7 +517,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const config = await response.json();
+      const config = (await response.json()) as Record<string, unknown>;
 
       expect(config).toHaveProperty('rotationIntervalDays');
       expect(config).toHaveProperty('retentionPeriodDays');
@@ -535,13 +535,13 @@ describe('KeyManager Durable Object', () => {
       const updateResponse = await keyManager.fetch(updateRequest);
 
       expect(updateResponse.status).toBe(200);
-      const updateData = await updateResponse.json();
+      const updateData = (await updateResponse.json()) as Record<string, unknown>;
       expect(updateData.success).toBe(true);
 
       // Verify configuration was updated
       const getRequest = createRequest('/config', 'GET', 'test-secret-token');
       const getResponse = await keyManager.fetch(getRequest);
-      const config = await getResponse.json();
+      const config = (await getResponse.json()) as Record<string, unknown>;
 
       expect(config.rotationIntervalDays).toBe(60);
       expect(config.retentionPeriodDays).toBe(15);
@@ -554,7 +554,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       expect(data.shouldRotate).toBe(true);
     });
@@ -567,7 +567,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       // Should not need rotation immediately after rotating
       expect(data.shouldRotate).toBe(false);
@@ -611,7 +611,7 @@ describe('KeyManager Durable Object', () => {
       // Access status endpoint to trigger initialization and migration
       const request = createRequest('/status', 'GET', 'test-secret-token');
       const response = await newKeyManager.fetch(request);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       // Check migration worked
       const key1 = data.keys.find((k: { kid: string }) => k.kid === 'old-key-1');
@@ -630,7 +630,7 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(404);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data.error).toContain('No active key found');
     });
 

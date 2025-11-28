@@ -1,0 +1,325 @@
+{
+  "planKey": "dynamic-op-code-token",
+  "planName": "oidcc-dynamic-certification-test-plan",
+  "generatedAt": "2025-11-28T10:45:02.172Z",
+  "configFile": "dynamic-op-code-token.json",
+  "tests": [
+    {
+      "testModule": "oidcc-idtoken-rs256",
+      "testSummary": "This test requests an ID token signed with RS256.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-idtoken-unsigned",
+      "testSummary": "This test requests an ID token signed with \"none\".",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-userinfo-rs256",
+      "testSummary": "This test register a client with userinfo_signed_response_alg=RS256 and validates the signed response from the userinfo endpoint",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-redirect-uri-in-authorization-request",
+      "testSummary": "This test registers a client that has two redirect uris and sends a request without redirect_uri to authorization server - this must result in the authorization server showing an error page (a screenshot of which should be uploaded).",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-redirect-uri-query-OK",
+      "testSummary": "This test uses a redirect uri with a query component. Authorization should complete successfully.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-redirect-uri-query-mismatch",
+      "testSummary": "This test uses a redirect uri with a query component that does not match the query in the registered redirect uri. The authorization server should display an error saying the redirect uri is invalid, a screenshot of which should be uploaded.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-redirect-uri-query-added",
+      "testSummary": "This test uses a redirect uri with a query component when the registered redirect uri has no query component. The authorization server should display an error saying the redirect uri is invalid, a screenshot of which should be uploaded.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-redirect-uri-regfrag",
+      "testSummary": "This test calls the dynamic registration endpoint with a redirect URI containing a fragment specifier. This should result in an error from the dynamic registration endpoint.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-discovery-endpoint-verification",
+      "testSummary": "This test ensures that the server's configurations (including scopes, response_types, grant_types etc) contains values required by the specifications",
+      "variant": {
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-server",
+      "testSummary": "Tests primarily 'happy' flows",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-registration-logo-uri",
+      "testSummary": "This test calls the dynamic registration endpoint with a logo URI. This should result in the browser being redirected to a login page with the RP logo displayed. To make sure you get a fresh login page, you need to remove any cookies you may have received from the OP before proceeding. A screenshot of the login page should be uploaded.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-registration-policy-uri",
+      "testSummary": "This test calls the dynamic registration endpoint with a policy URI. This should result in the browser being redirected to a login page with a link to the policy document displayed. To make sure you get a fresh login page, you need to remove any cookies you may have received from the OP before proceeding. A screenshot of the login page should be uploaded.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-registration-tos-uri",
+      "testSummary": "This test calls the dynamic registration endpoint with a TOS URI. This should result in the browser being redirected to a login page with a link to the TOS document displayed. To make sure you get a fresh login page, you need to remove any cookies you may have received from the OP before proceeding. A screenshot of the login page should be uploaded.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-registration-jwks-uri",
+      "testSummary": "This test calls the dynamic registration endpoint with a jwks URI, and continues with authorization. This should result in a successful registration and authorization.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-registration-sector-uri",
+      "testSummary": "This test calls the dynamic registration endpoint with a sector_identifier_uri pointing to a document containing the test's redirect URI. This should result in a successful registration.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-registration-sector-bad",
+      "testSummary": "This test calls the dynamic registration endpoint with a sector_identifier_uri pointing to a document not containing the test's redirect URI. This should result in an error from the dynamic registration endpoint.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-server-rotate-keys",
+      "testSummary": "Test that the authorization server is able to rotate signing keys held in it's jwks_uri, by comparing the contents of the jwks_uri before and after rotation; it must have a new key and should still contain the old key as well. Before pressing the 'Start' button, please trigger a key rotation in your OP. If you are not able to cause the server to rotate the keys while running the test, then you will have to self-assert that your deployment can do OP signing key rotation as part of your certification application, see the section about 'Attestation Statement' on https://openid.net/certification/submission/",
+      "variant": {
+        "server_metadata": "discovery"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-refresh-token-rp-key-rotation",
+      "testSummary": "This test obtains a refresh token (by registering the client for the refresh_token grant and including scope=offline_access in the authorization endpoint request). Once it has obtained the refresh token it rotates the keys (by placing a new RP key with a new kid into the RP's jwks_uri), waits 60 seconds then tries to use the refresh token with a client assertion containing the new kid. Support for private_key_jwt client authentication, scope=offline_access and refresh tokens are not a requirement of the specification but are required to certify for the 'dynamic' profile.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-request-uri-unsigned",
+      "testSummary": "This test calls the authorization endpoint as normal, but passes a request_uri that points at an unsigned jwt. The authorization server must successfully complete the authorization, as request_uri is a mandatory to support feature for dynamic OPs as per OpenID Connect Core section 15.2. Support for unsigned jwts(alg=none) is not required if the server supports signed algorithms; this test will be skipped if none is not listed in the server's discovery endpoint request_object_signing_alg_values_supported.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-request-uri-signed-rs256",
+      "testSummary": "This test calls the authorization endpoint as normal, but passes a request_uri that points at an RS256 signed JWS. The authorization server must successfully complete the authorization - whilst the OpenID Connect Core specification does not require support of RS256 signed request objects, the 'dynamic' certification profile does.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-object-with-redirect-uri",
+      "testSummary": "This test includes two redirect URIs, one in the request object (passed by value) and one as a normal request parameter. The server must either use the redirect_uri in the request object (as per OIDCC-6.1) and process the authentication correctly, or show an invalid redirect_uri error - upload a screenshot of the error page. This is an extra test that wasn't present in the python suite, and ensures implementations are processing request objects correctly. The test will be skipped if the server discovery document indicates the server only supports signed request objects (i.e. the server does not support unsigned request objects, indicated by 'request_object_signing_alg_values_supported' not containing 'none').",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-refresh-token",
+      "testSummary": "This test obtains refresh tokens and performs various checks, including checking that the refresh token works and is correctly bound to the client. Support for refresh tokens is optional and the test will be skipped if the token endpoint response does not return refresh tokens. scope=offline_access will be included in the authorization endpoint request if the server's discovery document indicates support for this scope.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-client-assertion-with-iss-aud-succeeds",
+      "testSummary": "This test passes a client assertion where 'aud' is the Authorization Server's Issuer ID instead of the token endpoint. Per RFC7523-3 and Connect Core 1.0 - 3, the AS must verify that it is the intended audience, but only recommended a value. The AS should accept the AS Issuer ID as valid, but as a recommended value, the AS may reject it with a valid error response and the test will end with a WARNING, which will not affect certification.",
+      "variant": {
+        "client_auth_type": "private_key_jwt",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    }
+  ]
+}

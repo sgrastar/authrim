@@ -53,6 +53,7 @@ interface TestSpecEntry {
 }
 
 interface TestSpec {
+  planKey: string;
   planName: string;
   generatedAt: string;
   configFile: string;
@@ -326,6 +327,7 @@ Examples:
 
   // Create test specification
   const testSpec: TestSpec = {
+    planKey: planKey,
     planName: planDef.name,
     generatedAt: new Date().toISOString(),
     configFile: planDef.configFile,

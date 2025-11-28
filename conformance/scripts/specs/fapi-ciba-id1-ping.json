@@ -1,0 +1,368 @@
+{
+  "planKey": "fapi-ciba-id1-ping",
+  "planName": "fapi-ciba-id1-test-plan",
+  "generatedAt": "2025-11-28T10:45:10.050Z",
+  "configFile": "fapi-ciba-id1-ping.json",
+  "tests": [
+    {
+      "testModule": "fapi-ciba-id1-discovery-end-point-verification",
+      "testSummary": "This test ensures that the server's discovery document (including token_delivery_modes, response_types, grant_types etc) contains correct values.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1",
+      "testSummary": "This test requires two different clients registered under the FAPI-CIBA profile. The test authenticates the user twice (using different variations on the authorization request etc), tests that certificate bound access tokens are implemented correctly. Do not respond to the request until the test enters the 'WAITING' state.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-user-rejects-authentication",
+      "testSummary": "This test requires the user to reject the authentication on their device, for example by pressing the 'cancel' button on the login screen. It verifies that an access_denied error (as per section 11 of the CIBA spec) is correctly notified back to the relying party.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-multiple-call-to-token-endpoint",
+      "testSummary": "This test should end with the token endpoint server showing an error message: authorization_pending or slow_down or invalid_request or 503 Retry later",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-auth-req-id-expired",
+      "testSummary": "This test should end with the token endpoint returning an expired_token error. The user MUST NOT authenticate. requested_expiry is used to request a 30 second expiration time for the authentication request.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-authorization-request-with-binding-message-succeeds",
+      "testSummary": "This test tries sending a binding message of '1234' to authorization endpoint request, the server must authenticate successfully.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-other-scope-order-succeeds",
+      "testSummary": "This test makes a CIBA request but with the order of the entries in the 'scope' reversed, which must succeed. As per RFC6749 section 3.3, 'If the value contains multiple space-delimited strings, their order does not matter'. The reason for this test is that some clients process scopes in a way that the order they are sent to the server is not under the control of a developer using that client, and as per the spec such requests must still be accepted.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-requested-expiry-as-string-succeeds",
+      "testSummary": "This test makes a CIBA request but with the requested_expiry as a JSON string, which must succeed. As per CIBA-7.1.1, 'requested_expiry [...] may be sent as either a JSON string or a JSON number, the OP must accept either type.'",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-authorization-request-with-potentially-bad-binding-message",
+      "testSummary": "This test tries sending a potentially bad binding message to authorization endpoint request - i.e. a message that the Authentication Device may not be able to display, as it is quite long and contains various non-ASCII characters. The server should either:\n\n * showing the correct binding message (a screenshot/photo of which should be uploaded) and the users successfully authenticates\n\n * or, if it is unable to display the message, return the invalid_binding_message error.\n\nThe binding message used is:\n\n1234 👍🏿 品川 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
+      "variant": {},
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-missing-aud-fails",
+      "testSummary": "This test should return an error that the aud value in request object from back channel authentication endpoint request is missing",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-bad-aud-fails",
+      "testSummary": "This test should return an error that the aud value in request object from back channel authentication endpoint request is incorrect (a valid url, but not for the server)",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-missing-iss-fails",
+      "testSummary": "This test should return an error that the 'iss' value in request object from back channel authentication endpoint request is missing",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-bad-iss-fails",
+      "testSummary": "This test should return an error that the 'iss' value in request object from back channel authentication endpoint request is incorrect (a valid client_id, but not for the client in use)",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-missing-exp-fails",
+      "testSummary": "This test should return an error that the 'exp' value in request object from back channel authentication endpoint request is missing",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-expired-exp-fails",
+      "testSummary": "This test should return an error that the 'exp' value in request object from back channel authentication endpoint request already expired",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-exp-is-70-minutes-in-future-fails",
+      "testSummary": "This test should return an error that the 'exp' value in request object from back channel authentication endpoint request is 70 minutes in the future",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-missing-iat-fails",
+      "testSummary": "This test should return an error that the 'iat' value in request object from back channel authentication endpoint request is missing",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-missing-nbf-fails",
+      "testSummary": "This test should return an error that the 'nbf' value in request object from back channel authentication endpoint request is missing",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-nbf-is-10-minutes-in-future-fails",
+      "testSummary": "This test should return an error that the 'nbf' value in request object from back channel authentication endpoint request is 10 minutes in the future",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-nbf-is-70-minutes-in-past-fails",
+      "testSummary": "This test should return an error that the 'nbf' value in request object from back channel authentication endpoint request is 70 minutes in the past",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-missing-jti-fails",
+      "testSummary": "This test should return an error that the 'jti' value in request object from back channel authentication endpoint request is missing",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-signature-algorithm-is-none-fails",
+      "testSummary": "This test should end with the backchannel authorization server returning an error message that the request is invalid.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-signature-algorithm-is-bad-fails",
+      "testSummary": "This test should end with the backchannel authorization server returning an error message that the request is invalid.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-signature-algorithm-is-RS256-fails",
+      "testSummary": "This test should end with the backchannel authorization server returning an error message that the request is invalid.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-request-object-signed-by-other-client-fails",
+      "testSummary": "This test should end with the backchannel authorization server returning an error message that the request is invalid.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-authorization-request-with-multiple-hints-fails",
+      "testSummary": "This test should return an error that try sending two hints value to authorization endpoint request",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-wrong-auth-req-id-in-token-endpoint-request",
+      "testSummary": "This test uses an auth_req_id issued to client 1 at the token endpoint, but authenticates as client 2. The token endpoint server must return an 'invalid_grant' error.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-without-client-assertion-in-token-endpoint-request",
+      "testSummary": "This test passes client_id into token endpoint request instead of client_assertion. The token endpoint return an error message that is 'invalid_request' or 'invalid_client'.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-without-client-assertion-in-backchannel-authorization-request",
+      "testSummary": "This test passes client_id into request instead of client_assertion to the backchannel authorization endpoint, and should end with the server returning an access_denied or invalid_request or invalid_client error",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-client-assertion-signature-algorithm-in-backchannel-authorization-request-is-RS256-fails",
+      "testSummary": "This test passed client_assertion that was signed with algorithm as RS256 to the backchannel authorization endpoint, and should end with the server returning an access_denied or invalid_request or invalid_client error.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-client-assertion-signature-algorithm-in-token-endpoint-request-is-RS256-fails",
+      "testSummary": "This test should end with the token endpoint returning an error message that the client is invalid.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-client-assertion-with-iss-aud-to-token-endpoint-succeeds",
+      "testSummary": "This test passes a client assertion where 'aud' is the Authorization Server's Issuer ID instead of the token endpoint. Per RFC7523-3 and Connect Core 1.0 - 3, the AS must verify that it is the intended audience, but only recommended a value. The AS should accept the AS Issuer ID as valid, but as a recommended value, the AS may reject it with a valid error response and the test will end with a WARNING, which will not affect certification.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ping-backchannel-notification-endpoint-response-has-body",
+      "testSummary": "The client's backchannel_notification_endpoint returns a HTTP 200 OK response with a body, the token endpoint should then return successfully as normal. If the token endpoint does not return success, this test will fail with a warning.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ping-backchannel-notification-endpoint-response-401",
+      "testSummary": "The client's backchannel_notification_endpoint returns a HTTP 401 Unauthorized response and the authentication flow must still complete normally.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ping-backchannel-notification-endpoint-response-403",
+      "testSummary": "The client's backchannel_notification_endpoint returns a HTTP 403 Forbidden and the authentication flow must still complete normally.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ping-with-mtls-ciba-notification-endpoint-response-401-and-require-server-does-not-retry",
+      "testSummary": "The ciba-notification-endpoint will return a HTTP 401 Unauthorized response, the server should not attempt to make the call again thereafter, if it does the test will be failed",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ping-backchannel-notification-endpoint-return-redirect-request",
+      "testSummary": "The client's backchannel_notification_endpoint returns a HTTP 301 Moved_Permanently status and a redirect request. The server must not follow redirect request, if it does then test will fail",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-unsigned-backchannel-authorization-request-fails",
+      "testSummary": "This test should end with the backchannel authorization server returning an error message that the request is invalid, as FAPI-CIBA requires the use of signed authentication requests.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-refresh-token",
+      "testSummary": "This test obtains refresh tokens and performs various checks, including checking that the refresh token is correctly bound to the client.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi-ciba-id1-ensure-mtls-holder-of-key-required",
+      "testSummary": "This test ensures that all endpoints comply with the TLS version/cipher limitations and that the token endpoint returns an error if a valid request is sent without a TLS certificate.",
+      "variant": {},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    }
+  ]
+}

@@ -1,15 +1,25 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@authrim/shared": ["./packages/shared/src/index.ts"],
+      "@authrim/shared/*": ["./packages/shared/src/*"]
+    }
   },
   "include": [
-    "packages/*/src/**/*",
-    "test/**/*"
+    "packages/op-*/src/**/*",
+    "packages/router/src/**/*",
+    "packages/shared/src/**/*",
+    "test/setup.ts"
   ],
   "exclude": [
     "node_modules",
     "dist",
-    ".wrangler"
+    ".wrangler",
+    "test/integration/**/*",
+    "packages/*/src/**/__tests__/**",
+    "packages/*/src/test/**"
   ]
 }

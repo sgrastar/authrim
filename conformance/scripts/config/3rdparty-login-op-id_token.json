@@ -1,0 +1,13 @@
+{
+  "alias": "authrim-3rdparty-login-op-id_token",
+  "description": "Automated Certification Test for Authrim 3rd Party Initiated Login (id_token)",
+  "server": {
+    "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
+  },
+  "client": {
+    "scope": "openid profile email"
+  },
+  "client2": {
+    "scope": "openid profile email"
+  }
+}

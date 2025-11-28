@@ -1,0 +1,32 @@
+{
+  "planKey": "session-management-op-id_token",
+  "planName": "oidcc-session-management-certification-test-plan",
+  "generatedAt": "2025-11-28T10:46:00.406Z",
+  "configFile": "session-management-op-id_token.json",
+  "tests": [
+    {
+      "testModule": "oidcc-session-management-discovery-endpoint-verification",
+      "testSummary": "This test ensures that the server's configurations contains the values required by the specifications, check_session_iframe and end_session_endpoint.",
+      "variant": {
+        "server_metadata": "discovery"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-session-management-rp-initiated-logout",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint, and uses check_session_iframe to check the session state before and after the logout.\n\nIf using static client registration you must register a post_logout_redirect_uri, the same url as the redirect url but replacing the portion after the alias with '/post_logout_redirect'.\n\nPlease note that this test may not work in some browsers.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    }
+  ]
+}

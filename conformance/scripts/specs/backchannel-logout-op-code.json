@@ -1,0 +1,32 @@
+{
+  "planKey": "backchannel-logout-op-code",
+  "planName": "oidcc-backchannel-rp-initiated-logout-certification-test-plan",
+  "generatedAt": "2025-11-28T10:44:39.554Z",
+  "configFile": "backchannel-logout-op-code.json",
+  "tests": [
+    {
+      "testModule": "oidcc-backchannel-logout-discovery-endpoint-verification",
+      "testSummary": "This test ensures that the server's configurations contains the values required by the specifications, backchannel_logout_supported, backchannel_logout_session_supported and end_session_endpoint. Certification for this profile requires that backchannel logout session (i.e. 'sid' in the id_token/logout token) is supported.",
+      "variant": {
+        "server_metadata": "discovery"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-backchannel-rp-initiated-logout",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint. It validates the OP correctly calls the backchannel_logout_uri and sends the user to the post_logout_redirect_uri, then tries another authentication with prompt=none which must return an error (as the user has been logged out).\n\nIf using static client registration you must register backchannel_logout_uri to the same url as the redirect url, but replacing the portion after the alias with /backchannel_logout and similarly register /post_logout_redirect as a post_logout_redirect_uri.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    }
+  ]
+}

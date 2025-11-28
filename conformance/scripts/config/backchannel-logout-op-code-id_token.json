@@ -1,0 +1,13 @@
+{
+  "alias": "authrim-backchannel-logout-op-code-id_token",
+  "description": "Automated Certification Test for Authrim Backchannel-RP-Initiated Logout (code id_token)",
+  "server": {
+    "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
+  },
+  "client": {
+    "scope": "openid profile email"
+  },
+  "client2": {
+    "scope": "openid profile email"
+  }
+}

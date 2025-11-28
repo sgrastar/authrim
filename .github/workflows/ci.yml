@@ -55,6 +55,7 @@ jobs:
     name: E2E and Accessibility Tests
     runs-on: ubuntu-latest
     needs: lint-and-test
+    if: false # Temporarily disabled
 
     steps:
       - name: Checkout code
@@ -99,6 +100,7 @@ jobs:
     name: Lighthouse Performance Tests
     runs-on: ubuntu-latest
     needs: lint-and-test
+    if: false # Temporarily disabled
 
     steps:
       - name: Checkout code

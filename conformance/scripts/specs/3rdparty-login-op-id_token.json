@@ -1,0 +1,36 @@
+{
+  "planKey": "3rdparty-login-op-id_token",
+  "planName": "oidcc-3rdparty-init-login-certification-test-plan",
+  "generatedAt": "2025-11-28T10:44:35.871Z",
+  "configFile": "3rdparty-login-op-id_token.json",
+  "tests": [
+    {
+      "testModule": "oidcc-3rd_party-init-login",
+      "testSummary": "Registers a client including the 'initiate_login_uri' parameter, and verifies that the response includes the initiate_login_uri and that it is returned from the client management endpoint ('registration_client_uri' returned by the OP).",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-3rd_party-init-login-nohttps",
+      "testSummary": "Registers a client including the 'initiate_login_uri' parameter as a non-https url, which the server must reject.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "client_registration": "dynamic_client",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    }
+  ]
+}

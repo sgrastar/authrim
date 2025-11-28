@@ -1,0 +1,704 @@
+{
+  "planKey": "fapi-2",
+  "planName": "fapi2-security-profile-id2-test-plan",
+  "generatedAt": "2025-11-28T10:45:07.984Z",
+  "configFile": "fapi-2.json",
+  "tests": [
+    {
+      "testModule": "fapi2-security-profile-id2-discovery-end-point-verification",
+      "testSummary": "This test ensures that the server's configuration (including scopes, response_types, grant_types etc) contains values required by the specification",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-happy-flow",
+      "testSummary": "Tests primarily 'happy' flows, using two different OAuth2 clients (and hence authenticating the user twice), and uses different variations on request objects, registered redirect uri (both redirect uris must be pre-registered as shown in the instructions). It also tests that sender constrained access tokens (required by the FAPI spec) are correctly implemented.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-user-rejects-authentication",
+      "testSummary": "This test requires the user to reject the authentication or consent, for example by pressing the 'cancel' button on the login screen. It verifies that the user is redirected back to the relying party's redirect_uri with an 'access_denied' error.\n\nYou may need to clear any cookies for the authorization server before running this test, to remove any existing login session and hence ensure the user is offered the opportunity to reject the authentication.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-request-object-with-multiple-aud-succeeds",
+      "testSummary": "This test pass aud value as an array containing good and bad values then server must accept it.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-authorization-request-without-state-success",
+      "testSummary": "This test makes an authentication request that does not include 'state'. State is an optional parameter, so the authorization server must successfully authenticate and must not return state nor s_hash.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-authorization-request-without-nonce-success",
+      "testSummary": "This test makes an authentication request that does not include 'nonce'. nonce is an optional parameter for response_type=code, so the authorization server must successfully authenticate and must not return a nonce.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-request-object-with-64-char-nonce-success",
+      "testSummary": "This test passes a 64 character nonce in the request object. As per https://bitbucket.org/openid/fapi/pull-requests/476/diff, the authorization server must successfully authenticate and return the nonce correctly.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-other-scope-order-succeeds",
+      "testSummary": "This test makes a FAPI authorization request but with the order of the entries in the 'scope' reversed, which must succeed. As per RFC6749 section 3.3, 'If the value contains multiple space-delimited strings, their order does not matter'. The reason for this test is that some OAuth clients process scopes in a way that the order they are sent to the server is not under the control of a developer using that client, and as per the spec such requests must still be accepted.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-test-claims-parameter-identity-claims",
+      "testSummary": "This is an optional test that will be skipped if the server's metadata does not indicate support for requesting identity claims using the claims parameter, as supporting these claims is not mandatory in the specification.\n\nThe test will request all claims listed in the claims_supported server metadata are returned in the id_token and userinfo (using a variety of different forms of request, and including requesting some random unknown claims that should be ignored), and will warn if any are not returned in either - the server is free to decide whether to only make them available via the id_token, via the userinfo endpoint (if it has one), or via both.\n\nThe test should be performed using a user which has all supported claims present on the server.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-access-token-type-header-case-sensitivity",
+      "testSummary": "Tests whether the RS is case sensitive to the access token type in the token request.\n\nAs per https://www.rfc-editor.org/rfc/rfc9110#name-authentication-scheme the authentication scheme name must be treated as case insensitive.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-check-dpop-proof-nbf-exp",
+      "testSummary": "Tests whether the AS can handle the nbf and exp claim in the DPoP Proof",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-dpopproof-with-iat-10seconds-before-succeeds",
+      "testSummary": "This test makes an authentication request using DPOP proofs with 'iat' claim value of 10 seconds in the past to the PAR/token/resource endpoints are accepted.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-dpopproof-with-iat-10seconds-after-succeeds",
+      "testSummary": "This test makes an authentication request using DPOP proofs with 'iat' claim value of 10 seconds in the future to the PAR/token/resource endpoints are accepted.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-mismatched-dpop-jkt-fails",
+      "testSummary": "This test makes an authentication request that includes a 'dpop_jkt' that does not match the DPOP proof's JWK sent with the PAR request. The PAR endpoint must reject the request.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-token-endpoint-fails-with-mismatched-dpop-proof-jkt",
+      "testSummary": "This test makes an authentication request that sends DPOP proofs signed with different keys to the PAR and Token endpoint. The Token endpoint must reject the request.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-token-endpoint-fails-with-mismatched-dpop-jkt",
+      "testSummary": "This test makes an authentication request that includes a 'dpop_jkt' that does not match the DPOP Proof key sent to the token endpoint. The Token endpoint must reject the request.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-dpopproof-at-par-endpoint-binding-success",
+      "testSummary": "This test makes an authentication request that sends a DPOP proof to the PAR endpoint. The same JWK which signed the PAR DPOP Proof is used to sign the DPOP proof sent to the token endpoint to ensure authorization code binding is working correctly.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-dpop-auth-code-binding-success",
+      "testSummary": "This test makes an authentication request that includes a 'dpop_jkt' which matches the DPOP proof's JWK sent with the PAR and token endpoints to ensure authorization code binding is working correctly.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-different-nonce-inside-and-outside-request-object",
+      "testSummary": "This test passes a different nonce in the authorization_endpoint parameters to the one inside the signed request object. There are 3 valid ways the authorization server may handle this: it must either return an invalid_request error back to the client, or must show an error page (saying the request is invalid as the 'nonce' value in the request object and outside it are different - upload a screenshot of the error page), or must successfully authenticate and return the nonce from inside the request object in the id_token.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": "invalid_request",
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-different-state-inside-and-outside-request-object",
+      "testSummary": "This test passes a different state in the authorization_endpoint parameters to the one inside the signed request object. There are 3 valid ways the authorization server may handle this: it must either return an invalid_request error back to the client, or must show an error page (saying the request is invalid as the 'state' value in the request object and outside it are different - upload a screenshot of the error page), or must successfully authenticate and return the state from inside the request object in the id_token.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": "invalid_request",
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-request-object-with-long-nonce",
+      "testSummary": "This test passes a 384 character nonce in the request object. The authorization server must either successfully authenticate and return the nonce correctly, or if it does not support nonces that long it may return an invalid_request error back to the client or show an error page (saying the server rejects long nonce - upload a screenshot of the error page). The server MUST NOT return the nonce corrupted or truncated.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": "invalid_request",
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-request-object-with-long-state",
+      "testSummary": "This test passes a long state in request object as per https://bitbucket.org/openid/fapi/pull-requests/483/diff. The authorization server must either return an invalid_request error back to the client, and must show an error page (saying the server rejects long state - upload a screenshot of the error page) or must successfully authenticate and return the state correctly.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": "invalid_request",
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-state-only-outside-request-object-not-used",
+      "testSummary": "This test uses a request object that does not contain state, but state is passed in the url parameters to the authorization endpoint (hence state should be ignored, as FAPI says only parameters inside the request object should be used). The expected result is a successful authentication that returns neither state nor s_hash. It is also permissible to show (a screenshot of which should be uploaded) or return an error message: invalid_request, invalid_request_object or access_denied.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": "invalid_request|access_denied",
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-request-object-without-redirect-uri-fails",
+      "testSummary": "This test should end with the authorization server showing an error message that the request object is invalid due to the missing redirect uri (a screenshot of which should be uploaded), or in an error from the PAR endpoint, or (in the case where the client only has one redirect_uri registered) with the user being redirected back to the client's registered redirect_uri with a correct error response.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-plain-fapi-ensure-registered-redirect-uri",
+      "testSummary": "This test uses an unregistered redirect uri. The authorization server may allow this as per RFC 9126 Section 2.4 or may display an error saying the redirect uri is invalid, a screenshot of which should be uploaded.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-unsigned-authorization-request-without-using-par-fails",
+      "testSummary": "This test calls the authorization endpoint without using a request object (i.e. with all the parameters passed in the url query), and should end with the authorization server showing an error message that the request is invalid (a screenshot of which should be uploaded) or with the user being redirected back to the conformance suite with an invalid_request error.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": "invalid_request",
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-redirect-uri-in-authorization-request",
+      "testSummary": "This test should result an the authorization server showing an error page saying the redirect url is missing from the request (a screenshot of which should be uploaded)",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-response-type-code-idtoken-fails",
+      "testSummary": "This test uses response_type=code id_token in the authorization request, which is not permitted in FAPI2 Security Profile as it would return an id_token via the browser where it may be leaked - only the authorization code flow ('response_type=code') is permitted. The authorization server should show an error message that the response type is unsupported or the request is invalid (a screenshot of which should be uploaded) or the user should be redirected back to the conformance suite with a correct error response, or an error could be returned from the PAR endpoint.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-response-type-token-fails",
+      "testSummary": "This test uses response_type=token in the authorization request, which is not permitted in FAPI2 Security Profile as it would return an access token via the browser where it may be leaked - only the authorization code flow ('response_type=code') is permitted. The authorization server should show an error message that the response type is unsupported or the request is invalid (a screenshot of which should be uploaded) or the user should be redirected back to the conformance suite with a correct error response, or an error could be returned from the PAR endpoint.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-client-id-in-token-endpoint",
+      "testSummary": "Send client_id for the second client to the token endpoint, which should result in the token endpoint returning an error message that the client is invalid. Note that you must configure the second client to use client credentials that are not equivalent to those for the first client - e.g. if using tls_client_auth_subject_dn, the certificates must have different subject distinguished names.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-holder-of-key-required",
+      "testSummary": "This test ensures that all endpoints comply with the TLS version/cipher limitations and that the token endpoint returns an error if a valid request is sent without a holder of key mechanism (i.e. without DPoP / MTLS).",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-authorization-code-is-bound-to-client",
+      "testSummary": "This test ensures the token endpoint returns an error if a valid authorization code is used with another client's credentials.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-attempt-reuse-authorization-code-after-one-second",
+      "testSummary": "This test tries reusing an authorization code after one second, as the authorization code has already been used this must fail with the AS returning an invalid_grant error.\n\nAny issued access token 'should' also be revoked as per RFC6749 section 4.1.2 (although this is only recommended behaviour and this warning won't prevent you certifying) - see https://bitbucket.org/openid/fapi/issues/397/query-over-certification-test-for-access",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-token-endpoint-fails-with-expired-auth-code",
+      "testSummary": "This test tries using an authorization code, for the first time, after its lifetime of 60 seconds has expired, This must fail with the AS returning an invalid_grant error.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-signed-client-assertion-with-RS256-fails",
+      "testSummary": "This test authenticates as normal except that the client assertion passed to the token endpoint when exchanging the authorization code for tokens is signed using RS256. RS256 is not permitted by the FAPI specification. The test must end with the token endpoint returning an 'invalid_client' error, due to the client authentication being invalid.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-client-assertion-in-token-endpoint",
+      "testSummary": "This test performs a normal authentication but when it calls the token endpoint to exchange the authorization code for tokens, it does not include a client authentication assertion. The token endpoint must return the error 'invalid_client' or 'invalid_request' as client authentication is mandatory at the token endpoint when using private_key_jwt client authentication.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-client-assertion-with-exp-is-5-minutes-in-past-fails",
+      "testSummary": "This test passes client assertion where 'exp' is 5 minutes ago. The server must be rejected at the token endpoint and returning an error message that the expiration time ('exp') of the client assertion is invalid.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-client-assertion-with-wrong-aud-fails",
+      "testSummary": "This test passes client assertion where 'aud' is wrong (is for a different server). The server must be rejected at the token endpoint and returning an error message that the 'aud' claim of the client assertion is invalid.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-client-assertion-with-no-sub-fails",
+      "testSummary": "This test passes a client assertion where 'sub' is missing to the token endpoint. The server must reject this, returning an 'invalid_client' error. It is vital that the server requires the 'sub' claim, as this is the primary reason a signed request object cannot be used as a client authentication assertion.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-client-assertion-with-token-endpoint-aud-succeeds",
+      "testSummary": "This test passes a client assertion to the token endpoint where 'aud' is the Authorization Server's token endpoint instead of the Issuer ID. As per FAPI2 'NOTE: In order to facilitate interoperability the authorization server should also accept its token endpoint URL or the URL of the endpoint at which the assertion was received in the aud claim received in client authentication assertions', but as a recommended ('should') value, the AS may reject it with a valid error response and the test will end with a WARNING, which will not affect certification.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-dpop-negative-tests",
+      "testSummary": "Obtain an access token as normal, check it works, then various negative tests to check the server is implementing the checks required by the DPoP specification.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-refresh-token",
+      "testSummary": "This test obtains refresh tokens and performs various checks, including checking that the refresh token is correctly bound to the client.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-ensure-reused-request-uri-prior-to-auth-completion-succeeds",
+      "testSummary": "This test checks that authorization servers that enforce one-time use of `request_uri` values do so at the point of authorization, not at the point of visiting the authorization endpoint. This is achieved by visiting the authorization endpoint twice with the same 'request_uri' value. On the first visit no login should be attempted. On the second visit the login should be attempted and is expected to succeed. On error a screenshot showing the resulting error needs to be uploaded  This test is as per https://bitbucket.org/openid/fapi/issues/635/one-time-use-of-request_uri-causing-error and https://openid.net/specs/fapi-security-profile-2_0-final.html#section-5.3.2.2 Note 3. This is a recommendation and as such any failure of this test will result in a warning.\n\nYou may need to clear any cookies for the authorization server before running this test, to remove any existing login session and hence ensure the initial visit to the login page does not automatically authenticate the user.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page,on_session_check",
+      "expectedError": null,
+      "notes": "エラーページ、セッションチェックのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-attempt-reuse-request_uri",
+      "testSummary": "This test tries to use a request_uri twice and expects the authorization server either show an error or redirect back with an invalid_request_uri error, PAR section 7.3 states 'the AS SHOULD make the request URIs one-time use'. If the authentication succeeds a warning will be issued.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-attempt-to-use-expired-request_uri",
+      "testSummary": "This test tries to use a request_uri which has expired and expects authorization server to return an error. The test will call the PAR endpoint to create a new request_uri, then sleep until the expiry time for that request_uri before attempting to use it (this means this test may take some minutes to run, depending on the lifetime of the request_uri).",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-test-pushed-authorization-url-as-audience-for-client-JWT-assertion",
+      "testSummary": "This test tries to use the pushed authorization request endpoint url as audience for Client JWT Assertion, the authorization server is expected to accept it",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-ensure-jwt-client-assertions-nbf-8-seconds-in-the-future-is-accepted",
+      "testSummary": "This test makes a PAR request with a client assertion 'nbf' of 8 seconds in the future. This must be accepted by the authentication server as per 'https://bitbucket.org/openid/fapi/pull-requests/497/diff'",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-ensure-jwt-client-assertions-nbf-over-60-seconds-in-the-future-fails",
+      "testSummary": "This test checks the clock skew handling of the PAR endpoint as per https://openid.bitbucket.io/fapi/fapi-2_0-security-profile.html#section-5.3.2.1-2.14. The test makes a PAR request with a client assertion with iat, nbf and exp set > 60s into the future. We expect the request to fail and a server response with status code 400 or 401 with error codes invalid_request or invalid_client.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-test-token-endpoint-url-as-audience-for-client-JWT-assertion",
+      "testSummary": "This test tries to use the token endpoint url as audience for Client JWT Assertion, the authorization server is expected to accept it",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-test-array-as-audience-for-client-JWT-assertion",
+      "testSummary": "This test sets the audience in client assertion claims at the PAR and token endpoints to be an array containing the authorization server issuer and another dummy value. The authorization server is expected to accept both requests as per discussion at https://gitlab.com/openid/conformance-suite/-/issues/1187 - in particular as per RFC7523 section 3 the aud value is only required to contain a value that identifies the authorization server as an intended audience.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-attempt-to-use-request_uri-for-different-client",
+      "testSummary": "This test tries to use a request_uri (meant for client1) with client2 and expects authorization server to return an  error",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-authorization-request-containing-request_uri-form-param",
+      "testSummary": "This test sends a random request_uri form parameter in PAR authorization request and expects authorization server to return an error",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-attempt-invalid-http-method",
+      "testSummary": "This test tries to use an invalid http method and expects authorization server to return an error",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-ensure-pkce-required",
+      "testSummary": "This test makes a FAPI authorization request without using PKCE (RFC7636), which must be rejected. FAPI2-Security-Profile-ID2 requires servers to reject PAR requests that do not use PKCE, clause 5.2.2-18. Depending on when the server chooses to verify the request, the refusal may be an error from the pushed authorization request endpoint, or an invalid_request error may be returned from the authorization endpoint, or an error may be shown to the user (a screenshot of which must be uploaded).",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": "invalid_request",
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-ensure-pkce-code-verifier-required",
+      "testSummary": "This test authenticates as normal except that when calling the token endpoint it omits the 'code_verifier' parameter. The test must end with the token endpoint returning an 'invalid_grant' error, as PKCE is required and requires the code_verifier parameter.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-incorrect-pkce-code-verifier-rejected",
+      "testSummary": "This test authenticates as normal except that when calling the token endpoint it passes an incorrect value in the 'code_verifier' parameter. The test must end with the token endpoint returning an 'invalid_grant' error, due to the incorrect the code_verifier parameter.",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-plain-pkce-rejected",
+      "testSummary": "This test makes a FAPI authorization request using plain PKCE (RFC7636), which must be rejected. FAPI2-Security-Profile-ID2 requires servers to reject PAR requests that do not use S256, clause 5.2.2-18. Depending on when the server chooses to verify the request, the refusal may be an error from the pushed authorization request endpoint, or an invalid_request error may be returned from the authorization endpoint, or an error may be shown to the user (a screenshot of which must be uploaded).",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": "invalid_request",
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "fapi2-security-profile-id2-par-without-duplicate-parameters",
+      "testSummary": "This test makes a PAR request and calls the authorization endpoint passing only the client_id and request_uri parameters - which must succeed, as per section 5 of https://datatracker.ietf.org/doc/html/rfc9101 - this intent was confirmed by the FAPI working group in https://bitbucket.org/openid/fapi/issues/315/par-certification-question-must-servers",
+      "variant": {
+        "fapi_request_method": "unsigned",
+        "fapi_response_mode": "plain_response"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    }
+  ]
+}

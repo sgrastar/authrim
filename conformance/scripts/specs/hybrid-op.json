@@ -1,0 +1,1334 @@
+{
+  "planKey": "hybrid-op",
+  "planName": "oidcc-hybrid-certification-test-plan",
+  "generatedAt": "2025-11-28T10:45:32.829Z",
+  "configFile": "hybrid-op.json",
+  "tests": [
+    {
+      "testModule": "oidcc-server",
+      "testSummary": "Tests primarily 'happy' flows",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-response-type-missing",
+      "testSummary": "This test sends an authorization request that is missing the response_type parameter. The authorization server must either redirect back with an 'unsupported_response_type' or 'invalid_request' error, or must display an error saying the response type is missing, a screenshot of which should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": "unsupported_response_type|invalid_request",
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-idtoken-signature",
+      "testSummary": "This test requests an ID token without specifying an algorithm (which should default to RS256).",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-userinfo-get",
+      "testSummary": "This test makes an authenticated GET request to the UserInfo endpoint and validates the response",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-userinfo-post-header",
+      "testSummary": "This test makes an authenticated POST request to the UserInfo endpoint with the access token in a header and validates the response",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-userinfo-post-body",
+      "testSummary": "This test makes an authenticated POST request to the UserInfo endpoint with the access token in the body and validates the response. Support for passing an access token in the request body is not required by the standards - it is acceptable for servers not to implement this form, and the test will complete with a 'warning' if the server returns a http error response.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-without-nonce-fails",
+      "testSummary": "This test sends a request without a nonce included, and should end with the authorization server showing an error message that the request is invalid (a screenshot of which should be uploaded) or with the user being redirected back to the conformance suite with an invalid_request error (in both cases due to the missing nonce). nonce is required for all flows that return an id_token from the authorization endpoint, see https://openid.net/specs/openid-connect-core-1_0.html#ImplicitAuthRequest or https://openid.net/specs/openid-connect-core-1_0.html#HybridIDToken and https://bitbucket.org/openid/connect/issues/972/nonce-requirement-in-hybrid-auth-request. This is clear in the latest OpenID Connect errata draft, https://openid.net/specs/openid-connect-core-1_0-27.html#NonceNotes",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": "invalid_request",
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-scope-profile",
+      "testSummary": "This test requests authorization with profile scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-email",
+      "testSummary": "This test requests authorization with email scope and issues a warning if an email address isn't returned in the expected place. As per OpenID Connect Core section 5.4, 'The Claims requested by the profile, email, address, and phone scope values are returned from the UserInfo Endpoint', except for response_type=id_token, where they are returned in the id_token (as there is no access token issued that could be used to access the userinfo endpoint).",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-address",
+      "testSummary": "This test requests authorization with address scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-phone",
+      "testSummary": "This test requests authorization with phone scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-all",
+      "testSummary": "This test requests authorization with address, email, phone and profile scopes.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-other-scope-order-succeeds",
+      "testSummary": "This test makes a scope=openid email request, but with the order of the entries in the 'scope' reversed, which must succeed. As per RFC6749 section 3.3, 'If the value contains multiple space-delimited strings, their order does not matter'. The reason for this test is that some OAuth clients process scopes in a way that the order they are sent to the server is not under the control of a developer using that client, and as per the spec such requests must still be accepted.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-display-page",
+      "testSummary": "This test includes the display=page parameter in the request to the authorization endpoint. Use of this parameter in the request must not cause an error at the OP as per 'Mandatory to Implement Features for All OpenID Providers' in the OpenID Connect Core specification. To make sure you get a login page, please remove any cookies you may have received from the OpenID Provider before proceeding. You should get a normal user agent login page view.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-display-popup",
+      "testSummary": "This test includes the display=popup parameter in the request to the authorization endpoint. Use of this parameter in the request must not cause an error at the OP as per 'Mandatory to Implement Features for All OpenID Providers' in the OpenID Connect Core specification. To make sure you get a login page, please remove any cookies you may have received from the OpenID Provider before proceeding. You should get a popup user agent login window.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-prompt-login",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it will include prompt=login, so that the authorization server is required to ask the user to login a second time. If auth_time is present in the id_tokens, the value from the second login must be later than the time in the original token. A screenshot of the second authorization should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_login_2nd",
+      "expectedError": null,
+      "notes": "2回目のログイン画面のスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-prompt-none-not-logged-in",
+      "testSummary": "This test calls the authorization endpoint with prompt=none, expecting that no recent enough authentication is present to enable a silent login and hence the OP will redirect back with an error as per section 3.1.2.6 of OpenID Connect. Please remove any cookies you may have received from the OpenID Provider before proceeding.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-prompt-none-logged-in",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it will include prompt=none, and the authorization server must not request that the user logs in. The test verifies that auth_time (if present) and sub are consistent between the id_tokens from the first and second authorizations.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-max-age-1",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it waits 1 second and includes max_age=1, so that the authorization server is required to ask the user to login a second time and must return an auth_time claim in the second id_token. A screenshot of the second authorization should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_reauth",
+      "expectedError": null,
+      "notes": "再認証画面のスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-max-age-10000",
+      "testSummary": "This test calls the authorization endpoint test twice. The first time it includes max_age=15000 (so that the OP is required to return auth_time in the id_token). The second time it includes max_age=10000, and the authorization server must not request that the user logs in. The test verifies that auth_time and sub are consistent between the id_tokens from the first and second authorizations.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-with-unknown-parameter-succeeds",
+      "testSummary": "The test includes the parameter extra=foobar (which is not defined by any specification) in the request to the authorization endpoint, and the authentication must complete successfully with the extra parameter ignored as per RFC6749-3.1 'The authorization server MUST ignore unrecognized request parameters'",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-id-token-hint",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it will include prompt=none with the id_token_hint set to the id token from the first authorization, and the authorization server must return successfully immediately without interacting with the user. The test verifies that auth_time (if present) and sub are consistent between the id_tokens from the first and second authorizations.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-login-hint",
+      "testSummary": "This test calls the authorization endpoint with a login_hint (provided in configuration, or buffy@<your issuer hostname> if not), which must at a minimum not result in errors. Please remove any cookies you may have received from the OpenID Provider before proceeding. This test requests that you log in as a specific user, so a fresh login page is needed.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ui-locales",
+      "testSummary": "This test includes the ui_locales parameter in the request to the authorization endpoint, with the value set to that provided in the configuration (or 'se' if no value probably). Use of this parameter in the request must not cause an error at the OP. Please remove any cookies you may have received from the OpenID Provider before proceeding. You need to do this so you can check that the login page is displayed using one of the requested locales.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-claims-locales",
+      "testSummary": "This test calls the authorization endpoint with claims_locale=se, which (as per section 15.1 of the OpenID Connect core spec) must at a minimum not result in errors.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-with-acr-values-succeeds",
+      "testSummary": "This test will send an acr_values containing the authorization server's advertised acr_values_supported (or for static server configuration, the user supplied acr_values, or if none advertised/configured, the values '1' and '2'). The authorization must succeed, and the returned id_tokens 'SHOULD' (but is not required to) contain an acr claim with one of the requested values. The test will pass if one of the requested values is returned, otherwise it will end with a warning.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-codereuse",
+      "testSummary": "This test tries using an authorization code for a second time, immediately after the first use. The server should return an invalid_grant error as the authorization code has already been used. If it doesn't, a warning is raised.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-codereuse-30seconds",
+      "testSummary": "This test tries using an authorization code for a second time, 30 seconds after the first use. The server must return an invalid_grant error as the authorization code has already been used. The originally issued access token should be revoked (as per RFC6749-4.1.2) - a warning is issued if the access token still works.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-registered-redirect-uri",
+      "testSummary": "This test uses an unregistered redirect uri. The authorization server should display an error saying the redirect uri is invalid, a screenshot of which should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-server-client-secret-post",
+      "testSummary": "Tests 'happy flow' using client_secret_post client authentication",
+      "variant": {
+        "client_auth_type": "client_secret_post",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported",
+      "testSummary": "This test calls the authorization endpoint as normal, but passes a request_uri that points at an unsigned jwt. The authorization server must successfully complete the authorization, or return a request_uri_not_supported error. This test will be skipped if none is not listed in the server's discovery endpoint request_object_signing_alg_values_supported.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported",
+      "testSummary": "This test sends a unsigned request object (by value) to the authorization endpoint. The server must either accept the request and process the authentication correctly,  or return a request_not_supported error as per OIDCC-3.1.2.6. Note that the python suite allowed implementations to completely ignore the request object - this was not compliant with the spec, and in this test either the object must be processed or request_not_supported must be returned.  The test will be skipped if the server discovery document does not indicate support for unsigned request objects - i.e. if  (alg:none).",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-claims-essential",
+      "testSummary": "This test makes an authorization request requesting the 'name' claim as essential (in the userinfo, except for response_type=id_token where it is requested in the id_token), and the OP must return a successful result. A warning is raised if the OP fails to return a value for the name claim.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-object-with-redirect-uri",
+      "testSummary": "This test includes two redirect URIs, one in the request object (passed by value) and one as a normal request parameter. The server must either use the redirect_uri in the request object (as per OIDCC-6.1) and process the authentication correctly, or show an invalid redirect_uri error - upload a screenshot of the error page. This is an extra test that wasn't present in the python suite, and ensures implementations are processing request objects correctly. The test will be skipped if the server discovery document indicates the server only supports signed request objects (i.e. the server does not support unsigned request objects, indicated by 'request_object_signing_alg_values_supported' not containing 'none').",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-refresh-token",
+      "testSummary": "This test obtains refresh tokens and performs various checks, including checking that the refresh token works and is correctly bound to the client. Support for refresh tokens is optional and the test will be skipped if the token endpoint response does not return refresh tokens. scope=offline_access will be included in the authorization endpoint request if the server's discovery document indicates support for this scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-with-valid-pkce-succeeds",
+      "testSummary": "This test makes an authorization request using valid PKCE (RFC7636), which must succeed. OpenID Connect does not require servers to support PKCE (although it is recommended by the OAuth2 security BCP), but as per https://tools.ietf.org/html/rfc6749#section-3.1 'The authorization server MUST ignore unrecognized request parameters' - i.e. whether the server supports PKCE or not, a valid PKCE request must succeed. The reason for this test is that many OpenID Connect clients speculatively use PKCE, and the OAuth2 standard requires that requests from such clients must not fail.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-server",
+      "testSummary": "Tests primarily 'happy' flows",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-idtoken-signature",
+      "testSummary": "This test requests an ID token without specifying an algorithm (which should default to RS256).",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-userinfo-get",
+      "testSummary": "This test makes an authenticated GET request to the UserInfo endpoint and validates the response",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-userinfo-post-header",
+      "testSummary": "This test makes an authenticated POST request to the UserInfo endpoint with the access token in a header and validates the response",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-userinfo-post-body",
+      "testSummary": "This test makes an authenticated POST request to the UserInfo endpoint with the access token in the body and validates the response. Support for passing an access token in the request body is not required by the standards - it is acceptable for servers not to implement this form, and the test will complete with a 'warning' if the server returns a http error response.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-without-nonce-succeeds-for-code-flow",
+      "testSummary": "This test should end with the authorization server issuing an authorization code, even though a nonce was not supplied. nonce is required for all flows that return an id_token from the authorization endpoint, see https://bitbucket.org/openid/connect/issues/972/nonce-requirement-in-hybrid-auth-request / https://bitbucket.org/openid/connect/issues/1052/make-clear-that-nonce-is-always-required and the latest OpenID Connect errata draft, https://openid.net/specs/openid-connect-core-1_0-27.html#NonceNotes",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-profile",
+      "testSummary": "This test requests authorization with profile scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-email",
+      "testSummary": "This test requests authorization with email scope and issues a warning if an email address isn't returned in the expected place. As per OpenID Connect Core section 5.4, 'The Claims requested by the profile, email, address, and phone scope values are returned from the UserInfo Endpoint', except for response_type=id_token, where they are returned in the id_token (as there is no access token issued that could be used to access the userinfo endpoint).",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-address",
+      "testSummary": "This test requests authorization with address scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-phone",
+      "testSummary": "This test requests authorization with phone scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-all",
+      "testSummary": "This test requests authorization with address, email, phone and profile scopes.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-display-page",
+      "testSummary": "This test includes the display=page parameter in the request to the authorization endpoint. Use of this parameter in the request must not cause an error at the OP as per 'Mandatory to Implement Features for All OpenID Providers' in the OpenID Connect Core specification. To make sure you get a login page, please remove any cookies you may have received from the OpenID Provider before proceeding. You should get a normal user agent login page view.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-display-popup",
+      "testSummary": "This test includes the display=popup parameter in the request to the authorization endpoint. Use of this parameter in the request must not cause an error at the OP as per 'Mandatory to Implement Features for All OpenID Providers' in the OpenID Connect Core specification. To make sure you get a login page, please remove any cookies you may have received from the OpenID Provider before proceeding. You should get a popup user agent login window.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-prompt-login",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it will include prompt=login, so that the authorization server is required to ask the user to login a second time. If auth_time is present in the id_tokens, the value from the second login must be later than the time in the original token. A screenshot of the second authorization should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_login_2nd",
+      "expectedError": null,
+      "notes": "2回目のログイン画面のスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-prompt-none-not-logged-in",
+      "testSummary": "This test calls the authorization endpoint with prompt=none, expecting that no recent enough authentication is present to enable a silent login and hence the OP will redirect back with an error as per section 3.1.2.6 of OpenID Connect. Please remove any cookies you may have received from the OpenID Provider before proceeding.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-prompt-none-logged-in",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it will include prompt=none, and the authorization server must not request that the user logs in. The test verifies that auth_time (if present) and sub are consistent between the id_tokens from the first and second authorizations.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-max-age-1",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it waits 1 second and includes max_age=1, so that the authorization server is required to ask the user to login a second time and must return an auth_time claim in the second id_token. A screenshot of the second authorization should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_reauth",
+      "expectedError": null,
+      "notes": "再認証画面のスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-max-age-10000",
+      "testSummary": "This test calls the authorization endpoint test twice. The first time it includes max_age=15000 (so that the OP is required to return auth_time in the id_token). The second time it includes max_age=10000, and the authorization server must not request that the user logs in. The test verifies that auth_time and sub are consistent between the id_tokens from the first and second authorizations.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-with-unknown-parameter-succeeds",
+      "testSummary": "The test includes the parameter extra=foobar (which is not defined by any specification) in the request to the authorization endpoint, and the authentication must complete successfully with the extra parameter ignored as per RFC6749-3.1 'The authorization server MUST ignore unrecognized request parameters'",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-id-token-hint",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it will include prompt=none with the id_token_hint set to the id token from the first authorization, and the authorization server must return successfully immediately without interacting with the user. The test verifies that auth_time (if present) and sub are consistent between the id_tokens from the first and second authorizations.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-login-hint",
+      "testSummary": "This test calls the authorization endpoint with a login_hint (provided in configuration, or buffy@<your issuer hostname> if not), which must at a minimum not result in errors. Please remove any cookies you may have received from the OpenID Provider before proceeding. This test requests that you log in as a specific user, so a fresh login page is needed.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ui-locales",
+      "testSummary": "This test includes the ui_locales parameter in the request to the authorization endpoint, with the value set to that provided in the configuration (or 'se' if no value probably). Use of this parameter in the request must not cause an error at the OP. Please remove any cookies you may have received from the OpenID Provider before proceeding. You need to do this so you can check that the login page is displayed using one of the requested locales.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-claims-locales",
+      "testSummary": "This test calls the authorization endpoint with claims_locale=se, which (as per section 15.1 of the OpenID Connect core spec) must at a minimum not result in errors.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-with-acr-values-succeeds",
+      "testSummary": "This test will send an acr_values containing the authorization server's advertised acr_values_supported (or for static server configuration, the user supplied acr_values, or if none advertised/configured, the values '1' and '2'). The authorization must succeed, and the returned id_tokens 'SHOULD' (but is not required to) contain an acr claim with one of the requested values. The test will pass if one of the requested values is returned, otherwise it will end with a warning.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-codereuse",
+      "testSummary": "This test tries using an authorization code for a second time, immediately after the first use. The server should return an invalid_grant error as the authorization code has already been used. If it doesn't, a warning is raised.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-codereuse-30seconds",
+      "testSummary": "This test tries using an authorization code for a second time, 30 seconds after the first use. The server must return an invalid_grant error as the authorization code has already been used. The originally issued access token should be revoked (as per RFC6749-4.1.2) - a warning is issued if the access token still works.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-registered-redirect-uri",
+      "testSummary": "This test uses an unregistered redirect uri. The authorization server should display an error saying the redirect uri is invalid, a screenshot of which should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-server-client-secret-post",
+      "testSummary": "Tests 'happy flow' using client_secret_post client authentication",
+      "variant": {
+        "client_auth_type": "client_secret_post",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported",
+      "testSummary": "This test calls the authorization endpoint as normal, but passes a request_uri that points at an unsigned jwt. The authorization server must successfully complete the authorization, or return a request_uri_not_supported error. This test will be skipped if none is not listed in the server's discovery endpoint request_object_signing_alg_values_supported.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported",
+      "testSummary": "This test sends a unsigned request object (by value) to the authorization endpoint. The server must either accept the request and process the authentication correctly,  or return a request_not_supported error as per OIDCC-3.1.2.6. Note that the python suite allowed implementations to completely ignore the request object - this was not compliant with the spec, and in this test either the object must be processed or request_not_supported must be returned.  The test will be skipped if the server discovery document does not indicate support for unsigned request objects - i.e. if  (alg:none).",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-claims-essential",
+      "testSummary": "This test makes an authorization request requesting the 'name' claim as essential (in the userinfo, except for response_type=id_token where it is requested in the id_token), and the OP must return a successful result. A warning is raised if the OP fails to return a value for the name claim.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-object-with-redirect-uri",
+      "testSummary": "This test includes two redirect URIs, one in the request object (passed by value) and one as a normal request parameter. The server must either use the redirect_uri in the request object (as per OIDCC-6.1) and process the authentication correctly, or show an invalid redirect_uri error - upload a screenshot of the error page. This is an extra test that wasn't present in the python suite, and ensures implementations are processing request objects correctly. The test will be skipped if the server discovery document indicates the server only supports signed request objects (i.e. the server does not support unsigned request objects, indicated by 'request_object_signing_alg_values_supported' not containing 'none').",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-refresh-token",
+      "testSummary": "This test obtains refresh tokens and performs various checks, including checking that the refresh token works and is correctly bound to the client. Support for refresh tokens is optional and the test will be skipped if the token endpoint response does not return refresh tokens. scope=offline_access will be included in the authorization endpoint request if the server's discovery document indicates support for this scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-server",
+      "testSummary": "Tests primarily 'happy' flows",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-idtoken-signature",
+      "testSummary": "This test requests an ID token without specifying an algorithm (which should default to RS256).",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-userinfo-get",
+      "testSummary": "This test makes an authenticated GET request to the UserInfo endpoint and validates the response",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-userinfo-post-header",
+      "testSummary": "This test makes an authenticated POST request to the UserInfo endpoint with the access token in a header and validates the response",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-userinfo-post-body",
+      "testSummary": "This test makes an authenticated POST request to the UserInfo endpoint with the access token in the body and validates the response. Support for passing an access token in the request body is not required by the standards - it is acceptable for servers not to implement this form, and the test will complete with a 'warning' if the server returns a http error response.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-without-nonce-fails",
+      "testSummary": "This test sends a request without a nonce included, and should end with the authorization server showing an error message that the request is invalid (a screenshot of which should be uploaded) or with the user being redirected back to the conformance suite with an invalid_request error (in both cases due to the missing nonce). nonce is required for all flows that return an id_token from the authorization endpoint, see https://openid.net/specs/openid-connect-core-1_0.html#ImplicitAuthRequest or https://openid.net/specs/openid-connect-core-1_0.html#HybridIDToken and https://bitbucket.org/openid/connect/issues/972/nonce-requirement-in-hybrid-auth-request. This is clear in the latest OpenID Connect errata draft, https://openid.net/specs/openid-connect-core-1_0-27.html#NonceNotes",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": "invalid_request",
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-scope-profile",
+      "testSummary": "This test requests authorization with profile scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-email",
+      "testSummary": "This test requests authorization with email scope and issues a warning if an email address isn't returned in the expected place. As per OpenID Connect Core section 5.4, 'The Claims requested by the profile, email, address, and phone scope values are returned from the UserInfo Endpoint', except for response_type=id_token, where they are returned in the id_token (as there is no access token issued that could be used to access the userinfo endpoint).",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-address",
+      "testSummary": "This test requests authorization with address scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-phone",
+      "testSummary": "This test requests authorization with phone scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-scope-all",
+      "testSummary": "This test requests authorization with address, email, phone and profile scopes.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-display-page",
+      "testSummary": "This test includes the display=page parameter in the request to the authorization endpoint. Use of this parameter in the request must not cause an error at the OP as per 'Mandatory to Implement Features for All OpenID Providers' in the OpenID Connect Core specification. To make sure you get a login page, please remove any cookies you may have received from the OpenID Provider before proceeding. You should get a normal user agent login page view.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-display-popup",
+      "testSummary": "This test includes the display=popup parameter in the request to the authorization endpoint. Use of this parameter in the request must not cause an error at the OP as per 'Mandatory to Implement Features for All OpenID Providers' in the OpenID Connect Core specification. To make sure you get a login page, please remove any cookies you may have received from the OpenID Provider before proceeding. You should get a popup user agent login window.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-prompt-login",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it will include prompt=login, so that the authorization server is required to ask the user to login a second time. If auth_time is present in the id_tokens, the value from the second login must be later than the time in the original token. A screenshot of the second authorization should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_login_2nd",
+      "expectedError": null,
+      "notes": "2回目のログイン画面のスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-prompt-none-not-logged-in",
+      "testSummary": "This test calls the authorization endpoint with prompt=none, expecting that no recent enough authentication is present to enable a silent login and hence the OP will redirect back with an error as per section 3.1.2.6 of OpenID Connect. Please remove any cookies you may have received from the OpenID Provider before proceeding.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-prompt-none-logged-in",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it will include prompt=none, and the authorization server must not request that the user logs in. The test verifies that auth_time (if present) and sub are consistent between the id_tokens from the first and second authorizations.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-max-age-1",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it waits 1 second and includes max_age=1, so that the authorization server is required to ask the user to login a second time and must return an auth_time claim in the second id_token. A screenshot of the second authorization should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_reauth",
+      "expectedError": null,
+      "notes": "再認証画面のスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-max-age-10000",
+      "testSummary": "This test calls the authorization endpoint test twice. The first time it includes max_age=15000 (so that the OP is required to return auth_time in the id_token). The second time it includes max_age=10000, and the authorization server must not request that the user logs in. The test verifies that auth_time and sub are consistent between the id_tokens from the first and second authorizations.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-with-unknown-parameter-succeeds",
+      "testSummary": "The test includes the parameter extra=foobar (which is not defined by any specification) in the request to the authorization endpoint, and the authentication must complete successfully with the extra parameter ignored as per RFC6749-3.1 'The authorization server MUST ignore unrecognized request parameters'",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-id-token-hint",
+      "testSummary": "This test calls the authorization endpoint test twice. The second time it will include prompt=none with the id_token_hint set to the id token from the first authorization, and the authorization server must return successfully immediately without interacting with the user. The test verifies that auth_time (if present) and sub are consistent between the id_tokens from the first and second authorizations.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-login-hint",
+      "testSummary": "This test calls the authorization endpoint with a login_hint (provided in configuration, or buffy@<your issuer hostname> if not), which must at a minimum not result in errors. Please remove any cookies you may have received from the OpenID Provider before proceeding. This test requests that you log in as a specific user, so a fresh login page is needed.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ui-locales",
+      "testSummary": "This test includes the ui_locales parameter in the request to the authorization endpoint, with the value set to that provided in the configuration (or 'se' if no value probably). Use of this parameter in the request must not cause an error at the OP. Please remove any cookies you may have received from the OpenID Provider before proceeding. You need to do this so you can check that the login page is displayed using one of the requested locales.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-claims-locales",
+      "testSummary": "This test calls the authorization endpoint with claims_locale=se, which (as per section 15.1 of the OpenID Connect core spec) must at a minimum not result in errors.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-with-acr-values-succeeds",
+      "testSummary": "This test will send an acr_values containing the authorization server's advertised acr_values_supported (or for static server configuration, the user supplied acr_values, or if none advertised/configured, the values '1' and '2'). The authorization must succeed, and the returned id_tokens 'SHOULD' (but is not required to) contain an acr claim with one of the requested values. The test will pass if one of the requested values is returned, otherwise it will end with a warning.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-codereuse",
+      "testSummary": "This test tries using an authorization code for a second time, immediately after the first use. The server should return an invalid_grant error as the authorization code has already been used. If it doesn't, a warning is raised.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-codereuse-30seconds",
+      "testSummary": "This test tries using an authorization code for a second time, 30 seconds after the first use. The server must return an invalid_grant error as the authorization code has already been used. The originally issued access token should be revoked (as per RFC6749-4.1.2) - a warning is issued if the access token still works.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-registered-redirect-uri",
+      "testSummary": "This test uses an unregistered redirect uri. The authorization server should display an error saying the redirect uri is invalid, a screenshot of which should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-server-client-secret-post",
+      "testSummary": "Tests 'happy flow' using client_secret_post client authentication",
+      "variant": {
+        "client_auth_type": "client_secret_post",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported",
+      "testSummary": "This test calls the authorization endpoint as normal, but passes a request_uri that points at an unsigned jwt. The authorization server must successfully complete the authorization, or return a request_uri_not_supported error. This test will be skipped if none is not listed in the server's discovery endpoint request_object_signing_alg_values_supported.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-unsigned-request-object-supported-correctly-or-rejected-as-unsupported",
+      "testSummary": "This test sends a unsigned request object (by value) to the authorization endpoint. The server must either accept the request and process the authentication correctly,  or return a request_not_supported error as per OIDCC-3.1.2.6. Note that the python suite allowed implementations to completely ignore the request object - this was not compliant with the spec, and in this test either the object must be processed or request_not_supported must be returned.  The test will be skipped if the server discovery document does not indicate support for unsigned request objects - i.e. if  (alg:none).",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-claims-essential",
+      "testSummary": "This test makes an authorization request requesting the 'name' claim as essential (in the userinfo, except for response_type=id_token where it is requested in the id_token), and the OP must return a successful result. A warning is raised if the OP fails to return a value for the name claim.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-ensure-request-object-with-redirect-uri",
+      "testSummary": "This test includes two redirect URIs, one in the request object (passed by value) and one as a normal request parameter. The server must either use the redirect_uri in the request object (as per OIDCC-6.1) and process the authentication correctly, or show an invalid redirect_uri error - upload a screenshot of the error page. This is an extra test that wasn't present in the python suite, and ensures implementations are processing request objects correctly. The test will be skipped if the server discovery document indicates the server only supports signed request objects (i.e. the server does not support unsigned request objects, indicated by 'request_object_signing_alg_values_supported' not containing 'none').",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page",
+      "expectedError": null,
+      "notes": "エラーページのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-refresh-token",
+      "testSummary": "This test obtains refresh tokens and performs various checks, including checking that the refresh token works and is correctly bound to the client. Support for refresh tokens is optional and the test will be skipped if the token endpoint response does not return refresh tokens. scope=offline_access will be included in the authorization endpoint request if the server's discovery document indicates support for this scope.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "response_type": "code id_token token",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "planKey": "config-op",
+  "planName": "oidcc-config-certification-test-plan",
+  "generatedAt": "2025-11-28T10:44:52.694Z",
+  "configFile": "config-op.json",
+  "tests": [
+    {
+      "testModule": "oidcc-discovery-endpoint-verification",
+      "testSummary": "This test ensures that the server's configurations (including scopes, response_types, grant_types etc) contains values required by the specifications",
+      "variant": {
+        "server_metadata": "discovery",
+        "client_registration": "static_client"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    }
+  ]
+}

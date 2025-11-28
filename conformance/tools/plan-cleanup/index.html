@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Conformance Suite - Plan Cleanup Tool</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 30px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 { color: #333; }
+    code {
+      background: #f4f4f4;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-family: 'SF Mono', Consolas, monospace;
+    }
+    pre {
+      background: #2d2d2d;
+      color: #f8f8f2;
+      padding: 20px;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+    .note {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 15px;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Conformance Suite - Plan Cleanup Tool</h1>
+
+    <div class="note">
+      <strong>Note:</strong> Due to CORS restrictions, this tool runs as a CLI instead of a web app.
+    </div>
+
+    <h2>Usage</h2>
+    <pre>cd /Users/yuta/Documents/Authrim/authrim/conformance/tools/plan-cleanup
+
+CONFORMANCE_TOKEN="your-token-here" npx tsx cleanup.ts</pre>
+
+    <h2>Features</h2>
+    <ul>
+      <li>Lists all your test plans with executed/total test counts</li>
+      <li>Select plans by: <code>all</code>, <code>notrun</code> (no executed tests), numbers (<code>1,2,5</code>), or range (<code>1-10</code>)</li>
+      <li>Deletes with 10-second interval between each deletion</li>
+      <li>Shows progress and countdown</li>
+      <li>Automatically skips immutable (published) plans</li>
+    </ul>
+
+    <h2>Example Output</h2>
+    <pre>Found 50 plans total
+
+  Not executed (0 runs): 45
+  Has executed tests: 5
+
+=== Plans List ===
+  1. 2025-11-11  [0/15]     NOT RUN oidcc-basic-certification-test-plan (authrim-basic-op)
+  2. 2025-11-11  [0/12]     NOT RUN oidcc-dynamic-certification-test-plan (authrim-dynamic-op)
+  3. 2025-11-10  [5/15]     RAN     oidcc-basic-certification-test-plan (authrim-test)
+==================
+
+Selection options:
+  "all"    - Select all plans
+  "notrun" - Select only plans with no executed tests
+  "1,2,5"  - Select specific plans by number
+  "1-10"   - Select range of plans
+  "q"      - Quit
+
+Enter selection: notrun</pre>
+  </div>
+</body>
+</html>

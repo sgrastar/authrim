@@ -1,0 +1,13 @@
+{
+  "alias": "authrim-fapi-ciba-id1-poll",
+  "description": "Automated Certification Test for Authrim FAPI-CIBA-ID1 (poll)",
+  "server": {
+    "discoveryUrl": "{ISSUER}/.well-known/openid-configuration"
+  },
+  "client": {
+    "scope": "openid profile email"
+  },
+  "client2": {
+    "scope": "openid profile email"
+  }
+}

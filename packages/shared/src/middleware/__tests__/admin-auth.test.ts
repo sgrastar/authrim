@@ -73,7 +73,7 @@ describe('adminAuthMiddleware', () => {
       const response = await app.fetch(request);
       expect(response.status).toBe(200);
 
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data.success).toBe(true);
       expect(data.adminAuth).toEqual({
         userId: 'system',
@@ -98,7 +98,7 @@ describe('adminAuthMiddleware', () => {
       const response = await app.fetch(request);
       expect(response.status).toBe(200);
 
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data.adminAuth.authMethod).toBe('bearer');
     });
 
@@ -114,7 +114,7 @@ describe('adminAuthMiddleware', () => {
       const response = await app.fetch(request);
       expect(response.status).toBe(401);
 
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data.error).toBe('unauthorized');
     });
 
@@ -210,7 +210,7 @@ describe('adminAuthMiddleware', () => {
       const response = await app.fetch(request);
       expect(response.status).toBe(200);
 
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data.adminAuth.userId).toBe('user-123');
       expect(data.adminAuth.authMethod).toBe('session');
       expect(data.adminAuth.roles).toContain('admin');
@@ -379,7 +379,7 @@ describe('adminAuthMiddleware', () => {
       const response = await app.fetch(request);
       expect(response.status).toBe(200);
 
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       // Should have used session auth since Bearer failed
       expect(data.adminAuth.authMethod).toBe('session');
     });
@@ -397,7 +397,7 @@ describe('adminAuthMiddleware', () => {
       const response = await app.fetch(request);
       expect(response.status).toBe(200);
 
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       // Should have used Bearer auth
       expect(data.adminAuth.authMethod).toBe('bearer');
     });
@@ -412,7 +412,7 @@ describe('adminAuthMiddleware', () => {
       const response = await app.fetch(request);
       expect(response.status).toBe(401);
 
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data.error).toBe('unauthorized');
       expect(data.error_description).toContain('Admin authentication required');
     });

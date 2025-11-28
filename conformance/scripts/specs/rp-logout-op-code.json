@@ -1,0 +1,149 @@
+{
+  "planKey": "rp-logout-op-code",
+  "planName": "oidcc-rp-initiated-logout-certification-test-plan",
+  "generatedAt": "2025-11-28T10:45:38.908Z",
+  "configFile": "rp-logout-op-code.json",
+  "tests": [
+    {
+      "testModule": "oidcc-rp-initiated-logout-discovery-endpoint-verification",
+      "testSummary": "This test ensures that the server's configurations contains end_session_endpoint.",
+      "variant": {
+        "server_metadata": "discovery"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-rp-initiated-logout",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint. It validates the OP correctly sends the user to the post_logout_redirect_uri, then tries another authentication with prompt=none which must return an error (as the user has been logged out).\n\nIf using static client registration you must register a post_logout_redirect_uri, the same url as the redirect url but replacing the portion after the alias with '/post_logout_redirect'.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-rp-initiated-logout-bad-post-logout-redirect-uri",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint with a post_logout_redirect_uri that is not registered at the OP.\n\nThe OP must not redirect back and must either show an error screen or confirm with the user if they want to logout - a screenshot of which should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page,on_logout,on_session_check",
+      "expectedError": null,
+      "notes": "エラーページ、ログアウト画面、セッションチェックのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-rp-initiated-logout-modified-id-token-hint",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint with an id_token_hint that has been changed to alg:none.\n\nThe OP must not redirect back and must either show an error screen or confirm with the user if they want to logout - a screenshot of which should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page,on_login_2nd,on_logout,on_session_check",
+      "expectedError": null,
+      "notes": "エラーページ、2回目のログイン画面、ログアウト画面、セッションチェックのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-rp-initiated-logout-no-id-token-hint",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint with a post_logout_redirect_uri but no id_token_hint.\n\nThe OP must not redirect back and must either show an error screen or confirm with the user if they want to logout - a screenshot of which should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page,on_login_2nd,on_logout,on_session_check",
+      "expectedError": null,
+      "notes": "エラーページ、2回目のログイン画面、ログアウト画面、セッションチェックのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-rp-initiated-logout-no-params",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint with no parameters - the OP must log the user out, a screenshot of the 'you are logged out' screen should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_logout,on_session_check",
+      "expectedError": null,
+      "notes": "ログアウト画面、セッションチェックのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-rp-initiated-logout-no-post-logout-redirect-uri",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint with no post_logout_redirect_uri - the OP must log the user out, a screenshot of the 'you are logged out' screen should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_logout,on_session_check",
+      "expectedError": null,
+      "notes": "ログアウト画面、セッションチェックのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-rp-initiated-logout-no-state",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint with no state parameter. It validates the OP correctly sends the user to the post_logout_redirect_uri with no state, then tries another authentication with prompt=none which must return an error (as the user has been logged out).\n\nIf using static client registration you must register a post_logout_redirect_uri, the same url as the redirect url but replacing the portion after the alias with '/post_logout_redirect'.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": ""
+    },
+    {
+      "testModule": "oidcc-rp-initiated-logout-only-state",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint with only a state parameter - the OP must log the user out, a screenshot of the 'you are logged out' screen should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_logout,on_session_check",
+      "expectedError": null,
+      "notes": "ログアウト画面、セッションチェックのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-rp-initiated-logout-query-added-to-post-logout-redirect-uri",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint with a post_logout_redirect_uri that has had '?foo=bar' added.\n\nThe OP must not redirect back and must either show an error screen or confirm with the user if they want to logout - a screenshot of which should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page,on_logout,on_session_check",
+      "expectedError": null,
+      "notes": "エラーページ、ログアウト画面、セッションチェックのスクリーンショットが必要"
+    },
+    {
+      "testModule": "oidcc-rp-initiated-logout-bad-id-token-hint",
+      "testSummary": "This test performs a normal authorization flow at the OP, then sends the user to the end_session_endpoint with an id_token_hint signed by the test suite.\n\nThe OP must not redirect back and must either show an error screen or confirm with the user if they want to logout - a screenshot of which should be uploaded.",
+      "variant": {
+        "client_auth_type": "client_secret_basic",
+        "server_metadata": "discovery",
+        "response_mode": "default"
+      },
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_error_page,on_login_2nd,on_logout,on_session_check",
+      "expectedError": null,
+      "notes": "エラーページ、2回目のログイン画面、ログアウト画面、セッションチェックのスクリーンショットが必要"
+    }
+  ]
+}
