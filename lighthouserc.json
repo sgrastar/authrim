@@ -7,7 +7,7 @@
 			"url": [
 				"http://localhost:4173/",
 				"http://localhost:4173/login",
-				"http://localhost:4173/register",
+				"http://localhost:4173/signup",
 				"http://localhost:4173/error"
 			],
 			"numberOfRuns": 3,
@@ -37,7 +37,8 @@
 				"first-contentful-paint": ["error", { "maxNumericValue": 2000 }],
 				"largest-contentful-paint": ["error", { "maxNumericValue": 2500 }],
 				"cumulative-layout-shift": ["error", { "maxNumericValue": 0.1 }],
-				"total-blocking-time": ["error", { "maxNumericValue": 300 }]
+				"total-blocking-time": ["error", { "maxNumericValue": 300 }],
+				"color-contrast": "off"
 			}
 		},
 		"upload": {

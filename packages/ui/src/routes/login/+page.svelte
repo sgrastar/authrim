@@ -181,6 +181,7 @@
 
 <svelte:head>
 	<title>{$LL.login_title()} - {$LL.app_title()}</title>
+	<meta name="description" content="Sign in to your account using passkey or email code authentication." />
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
@@ -235,7 +236,7 @@
 				<!-- Divider -->
 				<div class="flex items-center my-4">
 					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
-					<span class="px-4 text-sm text-gray-500 dark:text-gray-400">{$LL.common_or()}</span>
+					<span class="px-4 text-sm text-gray-600 dark:text-gray-400">{$LL.common_or()}</span>
 					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
 				</div>
 			{/if}
@@ -304,7 +305,7 @@
 	</div>
 
 	<!-- Footer -->
-	<footer class="mt-12 text-center text-xs text-gray-500 dark:text-gray-500">
+	<footer class="mt-12 text-center text-xs text-gray-600 dark:text-gray-400">
 		<p>{$LL.footer_stack()}</p>
 	</footer>
 </div>

@@ -20,6 +20,7 @@
 
 <svelte:head>
 	<title>Authrim - OpenID Connect Provider</title>
+	<meta name="description" content="Authrim - A modern OpenID Connect Provider built with Cloudflare Workers." />
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
@@ -115,7 +116,7 @@
 			</main>
 
 			<!-- Info -->
-			<footer class="mt-4 text-center text-sm text-gray-500">
+			<footer class="mt-4 text-center text-sm text-gray-600 dark:text-gray-400">
 				<p>{$LL.footer_stack()}</p>
 			</footer>
 		</div>

@@ -24,8 +24,8 @@ test.describe('Accessibility (WCAG 2.1 AA)', () => {
 		expect(accessibilityScanResults.violations).toEqual([]);
 	});
 
-	test('register page should not have accessibility violations', async ({ page }) => {
-		await page.goto('/register');
+	test('signup page should not have accessibility violations', async ({ page }) => {
+		await page.goto('/signup');
 		await page.waitForLoadState('networkidle');
 
 		const accessibilityScanResults = await new AxeBuilder({ page })

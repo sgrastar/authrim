@@ -45,6 +45,7 @@
 
 <svelte:head>
 	<title>{$LL.error_title()} - {$LL.app_title()}</title>
+	<meta name="description" content="An error occurred. Please try again or contact support." />
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
@@ -94,7 +95,7 @@
 
 			<!-- Error Code -->
 			<div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 mb-6">
-				<p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+				<p class="text-xs text-gray-600 dark:text-gray-400 mb-1">
 					{$LL.error_errorCode()}
 				</p>
 				<p class="text-sm font-mono text-gray-900 dark:text-white">
@@ -124,14 +125,14 @@
 			</div>
 
 			<!-- Contact Support Text -->
-			<p class="mt-6 text-xs text-gray-500 dark:text-gray-400">
+			<p class="mt-6 text-xs text-gray-600 dark:text-gray-400">
 				{$LL.error_contactSupport()}
 			</p>
 		</Card>
 	</div>
 
 	<!-- Footer -->
-	<footer class="mt-12 text-center text-xs text-gray-500 dark:text-gray-500">
+	<footer class="mt-12 text-center text-xs text-gray-600 dark:text-gray-400">
 		<p>{$LL.footer_stack()}</p>
 	</footer>
 </div>
