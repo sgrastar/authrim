@@ -117,7 +117,7 @@ describe('VersionManager Durable Object', () => {
       const response = await versionManager.fetch(request);
 
       expect(response.status).toBe(401);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty('error', 'Unauthorized');
     });
 
@@ -126,7 +126,7 @@ describe('VersionManager Durable Object', () => {
       const response = await versionManager.fetch(request);
 
       expect(response.status).toBe(401);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty('error', 'Unauthorized');
     });
 
@@ -143,7 +143,7 @@ describe('VersionManager Durable Object', () => {
       const response = await versionManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty('uuid', testUUID1);
     });
 
@@ -191,7 +191,7 @@ describe('VersionManager Durable Object', () => {
       const response = await versionManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty('success', true);
     });
 
@@ -202,7 +202,7 @@ describe('VersionManager Durable Object', () => {
       const response = await versionManager.fetch(request);
 
       expect(response.status).toBe(400);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty('error', 'Bad Request');
     });
 
@@ -213,7 +213,7 @@ describe('VersionManager Durable Object', () => {
       const response = await versionManager.fetch(request);
 
       expect(response.status).toBe(400);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty('error', 'Bad Request');
     });
 
@@ -237,7 +237,7 @@ describe('VersionManager Durable Object', () => {
       const response = await versionManager.fetch(getRequest);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data.uuid).toBe(testUUID2);
       expect(data.deployTime).toBe(testDeployTime2);
     });
@@ -257,7 +257,7 @@ describe('VersionManager Durable Object', () => {
       const response = await versionManager.fetch(getRequest);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty('uuid', testUUID1);
       expect(data).toHaveProperty('deployTime', testDeployTime1);
       expect(data).toHaveProperty('registeredAt');
@@ -268,7 +268,7 @@ describe('VersionManager Durable Object', () => {
       const response = await versionManager.fetch(request);
 
       expect(response.status).toBe(404);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
       expect(data).toHaveProperty('error', 'Version not found');
     });
   });
@@ -290,7 +290,7 @@ describe('VersionManager Durable Object', () => {
       for (let i = 0; i < workers.length; i++) {
         const request = createRequest(`/version/${workers[i]}`, 'GET');
         const response = await versionManager.fetch(request);
-        const data = await response.json();
+        const data = (await response.json()) as Record<string, unknown>;
 
         expect(data.uuid).toBe(`uuid-${i}-${testUUID1.substring(5)}`);
       }
@@ -322,12 +322,12 @@ describe('VersionManager Durable Object', () => {
 
       // Verify op-auth was updated
       const authResponse = await versionManager.fetch(createRequest('/version/op-auth', 'GET'));
-      const authData = await authResponse.json();
+      const authData = (await authResponse.json()) as Record<string, unknown>;
       expect(authData.uuid).toBe(testUUID2);
 
       // Verify op-token was NOT changed
       const tokenResponse = await versionManager.fetch(createRequest('/version/op-token', 'GET'));
-      const tokenData = await tokenResponse.json();
+      const tokenData = (await tokenResponse.json()) as Record<string, unknown>;
       expect(tokenData.uuid).toBe(testUUID1);
     });
   });
@@ -354,7 +354,7 @@ describe('VersionManager Durable Object', () => {
       const response = await versionManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       expect(data).toHaveProperty('versions');
       expect(data).toHaveProperty('workerCount', 2);
@@ -368,7 +368,7 @@ describe('VersionManager Durable Object', () => {
       const response = await versionManager.fetch(request);
 
       expect(response.status).toBe(200);
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       expect(data.workerCount).toBe(0);
       expect(Object.keys(data.versions)).toHaveLength(0);
@@ -433,7 +433,7 @@ describe('VersionManager Durable Object', () => {
 
       // Verify the version is still there
       const response = await newVersionManager.fetch(createRequest('/version/op-auth', 'GET'));
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, unknown>;
 
       expect(data.uuid).toBe(testUUID1);
     });

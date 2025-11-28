@@ -388,7 +388,7 @@ describe('SessionStore', () => {
       const response = await sessionStore.fetch(request);
       expect(response.status).toBe(200);
 
-      const body = await response.json();
+      const body = (await response.json()) as Record<string, unknown>;
       expect(body).toHaveProperty('status', 'ok');
       expect(body).toHaveProperty('sessions');
       expect(body).toHaveProperty('timestamp');
