@@ -162,6 +162,14 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     acr_values_supported: ['urn:mace:incommon:iap:silver', 'urn:mace:incommon:iap:bronze'],
     // OIDC Session Management 1.0
     check_session_iframe: `${issuer}/session/check`,
+    // OIDC RP-Initiated Logout 1.0
+    end_session_endpoint: `${issuer}/logout`,
+    // OIDC Front-Channel Logout 1.0
+    frontchannel_logout_supported: true,
+    frontchannel_logout_session_supported: true,
+    // OIDC Back-Channel Logout 1.0
+    backchannel_logout_supported: true,
+    backchannel_logout_session_supported: true,
   };
 
   // Update cache

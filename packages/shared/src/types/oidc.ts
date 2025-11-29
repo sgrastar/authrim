@@ -25,7 +25,6 @@ export interface OIDCProviderMetadata {
   registration_endpoint?: string;
   revocation_endpoint?: string;
   introspection_endpoint?: string;
-  end_session_endpoint?: string;
   // RFC 9126: PAR (Pushed Authorization Requests)
   pushed_authorization_request_endpoint?: string;
   require_pushed_authorization_requests?: boolean;
@@ -59,6 +58,14 @@ export interface OIDCProviderMetadata {
   acr_values_supported?: string[];
   // OIDC Session Management 1.0
   check_session_iframe?: string;
+  // OIDC RP-Initiated Logout 1.0
+  end_session_endpoint?: string;
+  // OIDC Front-Channel Logout 1.0
+  frontchannel_logout_supported?: boolean;
+  frontchannel_logout_session_supported?: boolean;
+  // OIDC Back-Channel Logout 1.0
+  backchannel_logout_supported?: boolean;
+  backchannel_logout_session_supported?: boolean;
 }
 
 /**
