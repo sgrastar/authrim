@@ -1643,16 +1643,145 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Create ID token with appropriate claims
+      // Build base claims for ID token
+      const idTokenClaims: Record<string, unknown> = {
+        iss: issuer,
+        sub,
+        aud: validClientId,
+        auth_time: currentAuthTime,
+        nonce, // Include nonce (required for implicit/hybrid flows)
+        c_hash: cHash,
+        at_hash: atHash,
+      };
+
+      // Add acr claim if acr_values was requested (OIDC Core 2: SHOULD return acr)
+      if (selectedAcr) {
+        idTokenClaims.acr = selectedAcr;
+      }
+
+      // OIDC Core 5.4: For response_type=id_token (no access token), scope-based claims
+      // must be included in the ID token since UserInfo endpoint is not accessible
+      // Also include essential claims from claims parameter
+      const isIdTokenOnly = includesIdToken && !includesToken && !includesCode;
+      const scopes = validScope.split(' ');
+
+      // Parse claims parameter for id_token essential claims
+      let idTokenEssentialClaims: Record<string, { essential?: boolean; value?: unknown }> = {};
+      if (claims) {
+        try {
+          const parsedClaims = JSON.parse(claims) as Record<string, unknown>;
+          if (parsedClaims.id_token && typeof parsedClaims.id_token === 'object') {
+            idTokenEssentialClaims = parsedClaims.id_token as Record<
+              string,
+              { essential?: boolean; value?: unknown }
+            >;
+          }
+        } catch {
+          // Ignore parsing errors, claims was already validated earlier
+        }
+      }
+
+      // Check if we need to add scope-based or essential claims
+      const hasEssentialClaims = Object.entries(idTokenEssentialClaims).some(
+        ([, v]) => v?.essential === true
+      );
+
+      if (isIdTokenOnly || hasEssentialClaims) {
+        // Fetch user data from database
+        const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(sub).first();
+
+        if (user) {
+          // Parse address JSON if present
+          let address = null;
+          if (user.address_json) {
+            try {
+              address = JSON.parse(user.address_json as string);
+            } catch {
+              // Ignore address parsing errors
+            }
+          }
+
+          // Map user data to OIDC claims
+          const userData: Record<string, unknown> = {
+            name: user.name || undefined,
+            family_name: user.family_name || undefined,
+            given_name: user.given_name || undefined,
+            middle_name: user.middle_name || undefined,
+            nickname: user.nickname || undefined,
+            preferred_username: user.preferred_username || undefined,
+            profile: user.profile || undefined,
+            picture: user.picture || undefined,
+            website: user.website || undefined,
+            gender: user.gender || undefined,
+            birthdate: user.birthdate || undefined,
+            zoneinfo: user.zoneinfo || undefined,
+            locale: user.locale || undefined,
+            updated_at: user.updated_at
+              ? (user.updated_at as number) >= 1e12
+                ? Math.floor((user.updated_at as number) / 1000)
+                : (user.updated_at as number)
+              : Math.floor(Date.now() / 1000),
+            email: user.email || undefined,
+            email_verified: user.email_verified === 1,
+            phone_number: user.phone_number || undefined,
+            phone_number_verified: user.phone_number_verified === 1,
+            address: address || undefined,
+          };
+
+          // Profile scope claims
+          const profileClaims = [
+            'name',
+            'family_name',
+            'given_name',
+            'middle_name',
+            'nickname',
+            'preferred_username',
+            'profile',
+            'picture',
+            'website',
+            'gender',
+            'birthdate',
+            'zoneinfo',
+            'locale',
+            'updated_at',
+          ];
+
+          // Add scope-based claims for response_type=id_token
+          if (isIdTokenOnly) {
+            if (scopes.includes('profile')) {
+              for (const claim of profileClaims) {
+                if (userData[claim] !== undefined) {
+                  idTokenClaims[claim] = userData[claim];
+                }
+              }
+            }
+            if (scopes.includes('email')) {
+              if (userData.email !== undefined) idTokenClaims.email = userData.email;
+              if (userData.email_verified !== undefined)
+                idTokenClaims.email_verified = userData.email_verified;
+            }
+            if (scopes.includes('phone')) {
+              if (userData.phone_number !== undefined)
+                idTokenClaims.phone_number = userData.phone_number;
+              if (userData.phone_number_verified !== undefined)
+                idTokenClaims.phone_number_verified = userData.phone_number_verified;
+            }
+            if (scopes.includes('address') && userData.address !== undefined) {
+              idTokenClaims.address = userData.address;
+            }
+          }
+
+          // Add essential claims from claims parameter
+          for (const [claimName, claimSpec] of Object.entries(idTokenEssentialClaims)) {
+            if (claimSpec?.essential === true && userData[claimName] !== undefined) {
+              idTokenClaims[claimName] = userData[claimName];
+            }
+          }
+        }
+      }
+
       idToken = await createIDToken(
-        {
-          iss: issuer,
-          sub,
-          aud: validClientId,
-          auth_time: currentAuthTime,
-          nonce, // Include nonce (required for implicit/hybrid flows)
-          c_hash: cHash,
-          at_hash: atHash,
-        },
+        idTokenClaims as Parameters<typeof createIDToken>[0],
         privateKey,
         signingKeyId,
         3600 // 1 hour
