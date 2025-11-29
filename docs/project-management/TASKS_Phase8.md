@@ -1,4 +1,9 @@
-## Phase 8: Verifiable Credentials & Next-Gen 🚀 (Nov 3, 2026 - Jan 31, 2027)
+# Phase 8: Verifiable Credentials & Next-Gen
+
+**Timeline:** 2027-Q2
+**Status:** 🔜 Planned
+
+---
 
 ### Week 52-54: OpenID for Verifiable Credentials (Nov 3-23)
 

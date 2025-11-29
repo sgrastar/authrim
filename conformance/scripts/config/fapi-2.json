@@ -19,9 +19,6 @@
     "key": "{CLIENT_KEY}",
     "ca": "{CA_CERT}"
   },
-  "browser": {
-    "show_console_log": true
-  },
   "override": {
     "resource": "https://www.certification.openid.net/test/a/{alias}/callback"
   }

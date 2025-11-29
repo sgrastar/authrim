@@ -147,6 +147,24 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
     },
   },
 
+  'fapi-ciba': {
+    name: 'FAPI CIBA',
+    description: 'FAPI Client Initiated Backchannel Authentication (CIBA)',
+    settings: {
+      fapi: {
+        enabled: true,
+        requireDpop: false,
+        allowPublicClients: false,
+      },
+      oidc: {
+        requirePar: false, // CIBA uses backchannel authentication, not PAR
+        responseTypesSupported: ['code'],
+        tokenEndpointAuthMethodsSupported: ['private_key_jwt'],
+        allowNoneAlgorithm: false, // Security: Reject 'none' algorithm
+      },
+    },
+  },
+
   development: {
     name: 'Development',
     description: 'Relaxed settings for local development',

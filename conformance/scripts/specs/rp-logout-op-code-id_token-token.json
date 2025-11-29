@@ -1,7 +1,11 @@
 {
   "planKey": "rp-logout-op-code-id_token-token",
   "planName": "oidcc-rp-initiated-logout-certification-test-plan",
-  "generatedAt": "2025-11-28T10:45:43.168Z",
+  "planVariant": {
+    "response_type": "code id_token token",
+    "client_registration": "dynamic_client"
+  },
+  "generatedAt": "2025-11-29T02:15:35.190Z",
   "configFile": "rp-logout-op-code-id_token-token.json",
   "tests": [
     {

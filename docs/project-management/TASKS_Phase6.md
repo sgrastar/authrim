@@ -1,253 +1,207 @@
-## Phase 6: CLI & Automation (Jun 12 - Aug 10, 2026)
+# Phase 6: Enterprise Features
 
-### Week 32-33: CLI Tool Development (Jun 12-25)
-
-#### 32.1 `create-authrim` Package Setup
-- [ ] Initialize NPM package
-- [ ] Set up TypeScript configuration
-- [ ] Configure build system (tsup/esbuild)
-- [ ] Add shebang for executable
-- [ ] Set up package.json bin field
-- [ ] Configure ESLint for CLI
-- [ ] Add CLI dependencies (Commander.js, Inquirer, Ora, Chalk)
-
-#### 32.2 Project Scaffolding
-- [ ] Create project template structure
-- [ ] Design file generation system
-- [ ] Implement template variable replacement
-- [ ] Add configuration file generation
-- [ ] Create .env.example template
-- [ ] Add wrangler.toml template
-- [ ] Create package.json template
-- [ ] Test project generation
-
-#### 32.3 Interactive Setup Wizard
-- [ ] Implement welcome screen
-- [ ] Add project name prompt
-- [ ] Add Cloudflare Account ID prompt (with auto-detect)
-- [ ] Add admin email prompt (with validation)
-- [ ] Add password policy selection (strong/medium/basic)
-- [ ] Add storage backend selection (D1/KV/DO)
-- [ ] Add region selection (auto/manual)
-- [ ] Add feature toggles (MFA, social login)
-- [ ] Implement progress indicators
-- [ ] Add error handling
-
-#### 32.4 Deployment Commands
-- [ ] Implement `authrim deploy` command
-- [ ] Add `authrim deploy --production` flag
-- [ ] Implement `authrim rollback` command
-- [ ] Add `authrim status` command
-- [ ] Implement `authrim logs` command
-- [ ] Add deployment progress tracking
-- [ ] Implement error recovery
-- [ ] Test deployment flow
-
-#### 32.5 Management Commands
-- [ ] Implement `authrim user create <email>`
-- [ ] Add `authrim user delete <email>`
-- [ ] Implement `authrim user reset-password <email>`
-- [ ] Add `authrim user list`
-- [ ] Implement `authrim client create <name>`
-- [ ] Add `authrim client list`
-- [ ] Implement `authrim client delete <id>`
-- [ ] Add `authrim keys rotate`
-- [ ] Implement `authrim backup`
-- [ ] Add `authrim restore <file>`
-- [ ] Implement `authrim config get <key>`
-- [ ] Add `authrim config set <key> <value>`
-- [ ] Test all commands
-
-#### 32.6 CLI Testing
-- [ ] Write unit tests for commands
-- [ ] Add integration tests
-- [ ] Test error scenarios
-- [ ] Test with different configurations
-- [ ] Verify help text
-- [ ] Test auto-completion (optional)
+**Timeline:** Jun 1 - Oct 31, 2026
+**Status:** ⏳ 8/11 Complete (73%)
 
 ---
 
-### Week 34-35: Cloudflare Integration (Jun 26 - Jul 9)
+## Overview
 
-#### 34.1 Cloudflare API Client
-- [ ] Set up Cloudflare API SDK
-- [ ] Implement authentication (API token)
-- [ ] Create API wrapper functions
-- [ ] Add retry logic
-- [ ] Implement rate limiting
-- [ ] Add error handling
-- [ ] Test API client
-
-#### 34.2 Worker Deployment API
-- [ ] Implement Worker creation
-- [ ] Add Worker update
-- [ ] Implement Worker deletion
-- [ ] Add Worker script upload
-- [ ] Implement environment variable injection
-- [ ] Add route configuration
-- [ ] Test Worker deployment
-
-#### 34.3 KV Namespace Management
-- [ ] Implement KV namespace creation
-- [ ] Add KV namespace listing
-- [ ] Implement KV namespace deletion
-- [ ] Add KV binding to Worker
-- [ ] Test KV operations
-
-#### 34.4 D1 Database Management
-- [ ] Implement D1 database creation
-- [ ] Add schema migration execution
-- [ ] Implement D1 binding to Worker
-- [ ] Add database backup
-- [ ] Implement database restore
-- [ ] Test D1 operations
-
-#### 34.5 Durable Objects Configuration
-- [ ] Implement DO class registration
-- [ ] Add DO binding to Worker
-- [ ] Test DO deployment
-
-#### 34.6 DNS & Custom Domain
-- [ ] Implement DNS record creation (CNAME)
-- [ ] Add custom domain verification
-- [ ] Implement SSL/TLS certificate provisioning
-- [ ] Add domain validation
-- [ ] Test custom domain setup
-
-#### 34.7 Resource Provisioning Workflow
-- [ ] Implement resource detection
-- [ ] Add resource creation workflow
-- [ ] Implement cleanup on failure
-- [ ] Add cost estimation
-- [ ] Implement resource tagging
-- [ ] Test provisioning end-to-end
+Phase 6 focuses on enterprise-grade authentication flows and integrations required for production deployments in corporate environments.
 
 ---
 
-### Week 36-37: Setup Automation (Jul 10-23)
+## Completed Features (8/11)
 
-#### 36.1 Initial Setup Wizard
-- [ ] Create welcome screen with ASCII art
-- [ ] Add prerequisites check:
-  - [ ] Node.js version
-  - [ ] npm version
-  - [ ] Cloudflare account
-- [ ] Implement Cloudflare authentication flow
-- [ ] Add configuration collection
-- [ ] Implement resource provisioning
-- [ ] Add admin account creation
-- [ ] Implement email configuration (Resend/SendGrid)
-- [ ] Add test email sending
-- [ ] Create success screen with URLs
-- [ ] Add QR code for mobile (optional)
+### Device Flow (RFC 8628) ✅ Nov 21, 2025
 
-#### 36.2 Health Checks
-- [ ] Implement endpoint availability tests
-- [ ] Add JWT signing verification
-- [ ] Implement database connectivity check
-- [ ] Add email delivery test
-- [ ] Implement configuration validation
-- [ ] Add performance baseline measurement
-- [ ] Create health check report
-- [ ] Test health checks
+- [x] Device authorization endpoint (`/device/code`)
+- [x] Device verification endpoint (`/device/verify`)
+- [x] User code generation (8-character, human-readable)
+- [x] Polling with exponential backoff
+- [x] DeviceCodeStore Durable Object
+- [x] Device Flow UI page
+- [x] Integration tests (70+ tests)
+- [x] RFC compliance tests
 
-#### 36.3 Integration Examples
-- [ ] Create Next.js integration template
-- [ ] Add React SPA example
-- [ ] Create Vue.js example
-- [ ] Add Svelte example
-- [ ] Create Express.js backend example
-- [ ] Add Python Flask example
-- [ ] Create documentation for each example
-- [ ] Test all examples
+### JWT Bearer Flow (RFC 7523) ✅ Nov 21, 2025
 
-#### 36.4 Environment Management
-- [ ] Implement secret generation (RSA keys)
-- [ ] Add environment variable injection
-- [ ] Implement secret rotation workflow
-- [ ] Add .env file management
-- [ ] Create environment variable validation
-- [ ] Test secret management
+- [x] JWT Bearer grant type support
+- [x] Client assertion validation
+- [x] Audience and issuer verification
+- [x] Token endpoint integration
+- [x] Unit tests (13 tests)
 
----
+### JWE (RFC 7516) ✅ Nov 21, 2025
 
-### Week 38-39: Production Readiness (Jul 24 - Aug 10)
+- [x] ID Token encryption support
+- [x] UserInfo response encryption
+- [x] Key management algorithms (RSA-OAEP, RSA-OAEP-256, ECDH-ES, etc.)
+- [x] Content encryption algorithms (A128GCM, A256GCM, A128CBC-HS256, etc.)
+- [x] Client-specific encryption key configuration
+- [x] Integration tests (20+ tests)
 
-#### 38.1 Error Handling Enhancement
-- [ ] Implement global error handler
-- [ ] Add user-friendly error messages
-- [ ] Integrate error logging (Sentry)
-- [ ] Implement error recovery strategies
-- [ ] Add automatic retry logic
-- [ ] Create error documentation
-- [ ] Test error scenarios
+### Hybrid Flow (OIDC Core 3.3) ✅ Nov 25, 2025
 
-#### 38.2 Performance Optimization
-- [ ] Implement edge caching strategy
-- [ ] Optimize static assets (images, CSS, JS)
-- [ ] Add database query optimization
-- [ ] Implement connection pooling
-- [ ] Add request batching
-- [ ] Measure performance improvements
-- [ ] Create performance report
+- [x] Response type: `code id_token`
+- [x] Response type: `code token`
+- [x] Response type: `code id_token token`
+- [x] Fragment response mode
+- [x] Nonce requirements enforcement
+- [x] Security tests
 
-#### 38.3 Security Hardening
-- [ ] Implement Content Security Policy (CSP)
-- [ ] Add CSRF token generation & validation
-- [ ] Implement XSS prevention (sanitization)
-- [ ] Add SQL injection prevention
-- [ ] Implement per-endpoint rate limiting
-- [ ] Add IP blocking/allowlisting
-- [ ] Implement comprehensive audit logging
-- [ ] Conduct security audit
-- [ ] Test security measures
+### CIBA (Client Initiated Backchannel Authentication) ✅ Nov 25, 2025
 
-#### 38.4 Monitoring & Observability
-- [ ] Implement metrics collection (Prometheus format)
-- [ ] Enhance health check endpoint
-- [ ] Add logging aggregation (Cloudflare Logs)
-- [ ] Implement alerting (PagerDuty/Slack)
-- [ ] Create Grafana dashboard templates
-- [ ] Add distributed tracing (optional)
-- [ ] Test monitoring setup
+- [x] Backchannel authentication endpoint (`/ciba`)
+- [x] Poll mode implementation
+- [x] Ping mode implementation (callback notifications)
+- [x] Push mode implementation (immediate delivery)
+- [x] Login hint token support
+- [x] Binding message display
+- [x] CIBARequestStore Durable Object
+- [x] CIBA approval/denial UI
+- [x] Notification tests
 
-#### 38.5 CLI Documentation
-- [ ] Write CLI reference documentation
-- [ ] Create deployment guide (step-by-step)
-- [ ] Add troubleshooting guide
-- [ ] Create migration guide (from Auth0, Keycloak, etc.)
-- [ ] Record video tutorials
-- [ ] Expand FAQ
-- [ ] Test documentation accuracy
+### SCIM 2.0 (RFC 7643/7644) ✅ Nov 25, 2025
 
-#### 38.6 NPM Package Publishing
-- [ ] Prepare package for publishing
-- [ ] Add README for NPM
-- [ ] Create CHANGELOG
-- [ ] Add LICENSE file
-- [ ] Set up GitHub Actions for publishing
-- [ ] Test package installation
-- [ ] Publish to NPM registry
-- [ ] Announce release
+- [x] User resource endpoints (`/scim/v2/Users`)
+  - [x] CREATE (POST)
+  - [x] READ (GET)
+  - [x] UPDATE (PUT/PATCH)
+  - [x] DELETE
+  - [x] Search with filtering
+- [x] Group resource endpoints (`/scim/v2/Groups`)
+  - [x] CREATE (POST)
+  - [x] READ (GET)
+  - [x] UPDATE (PUT/PATCH)
+  - [x] DELETE
+- [x] Schema endpoints
+- [x] ServiceProviderConfig endpoint
+- [x] Pagination support
+- [x] SCIM filter parser
+- [x] Admin UI for SCIM tokens
+
+### JAR (RFC 9101) ✅ Nov 25, 2025
+
+- [x] Request object signing (JWS)
+- [x] Request object encryption (JWE)
+- [x] Request URI support
+- [x] Signature verification
+- [x] Decryption support
+- [x] Authorization endpoint integration
+- [x] Advanced tests
+
+### JARM (JWT-Secured Authorization Response Mode) ✅ Nov 25, 2025
+
+- [x] Response mode: `query.jwt`
+- [x] Response mode: `fragment.jwt`
+- [x] Response mode: `form_post.jwt`
+- [x] Response mode: `jwt` (default)
+- [x] Response signing
+- [x] Authorization endpoint integration
 
 ---
 
-## Updated Success Metrics
+## Remaining Features (3/11)
 
-### Phase 6: UI/UX
-- [ ] Login page loads in <5 seconds
-- [ ] Mobile Lighthouse score >90
-- [ ] WCAG 2.1 AA compliance
-- [ ] <3 clicks to any admin function
-- [ ] Responsive on all screen sizes (320px+)
+### Social Login Providers 🔜
 
-### Phase 7: CLI & Automation
-- [ ] <5 minutes from `npx create-authrim` to running IdP
-- [ ] <1 minute deployment time
-- [ ] 100% automated setup (zero manual config)
-- [ ] CLI with 20+ commands
-- [ ] NPM package downloads >100/week
+Integration with major identity providers:
+
+- [ ] Google OAuth 2.0
+- [ ] GitHub OAuth
+- [ ] Microsoft Entra ID (Azure AD)
+- [ ] Apple Sign In
+- [ ] Facebook Login
+- [ ] Twitter OAuth 2.0
+- [ ] LinkedIn OAuth 2.0
+
+**Tasks:**
+- [ ] OAuth 2.0 client implementation
+- [ ] OIDC provider discovery
+- [ ] Token exchange logic
+- [ ] Account linking strategy
+- [ ] Provider configuration UI
+- [ ] User attribute mapping
+- [ ] Testing with each provider
+
+### SAML 2.0 Bridge 🔜
+
+OIDC to SAML 2.0 conversion:
+
+- [ ] SAML assertion generation
+- [ ] SAML metadata endpoint
+- [ ] Signature (RSA-SHA256)
+- [ ] ACS (Assertion Consumer Service) handling
+- [ ] SP metadata import
+- [ ] IdP-initiated SSO
+- [ ] SP-initiated SSO
+- [ ] Single Logout (SLO)
+
+### LDAP/AD Integration 🔜
+
+Enterprise directory integration:
+
+- [ ] LDAP client implementation
+- [ ] Bind authentication
+- [ ] User search (sAMAccountName, userPrincipalName)
+- [ ] Group membership lookup
+- [ ] Attribute mapping (LDAP → OIDC claims)
+- [ ] Connection pooling
+- [ ] TLS/STARTTLS support
+- [ ] Active Directory specific features
+- [ ] Admin UI for LDAP configuration
 
 ---
 
+## Deferred Features
+
+The following features are deferred to future phases or may be implemented as optional extensions:
+
+### Visual Flow Builder
+
+- SimCity-inspired drag & drop UI
+- Visual authentication flow construction
+- Flow preview and testing
+
+### WebSDK
+
+- Web Components architecture
+- High-customization support
+- Custom placeholder system
+
+---
+
+## Testing Requirements
+
+### Conformance Testing
+
+Additional conformance profiles to run:
+
+- [ ] Hybrid OP (all response types)
+- [ ] Dynamic OP
+- [ ] Session Management OP
+- [ ] RP-Initiated Logout OP
+- [ ] Frontchannel/Backchannel Logout OP
+- [ ] FAPI 2.0 Security Profile
+
+### Integration Testing
+
+- [ ] Social login provider end-to-end tests
+- [ ] SAML SP integration tests
+- [ ] LDAP/AD authentication tests
+
+---
+
+## Success Metrics
+
+| Metric | Target | Current |
+|--------|--------|---------|
+| Features complete | 11/11 | 8/11 |
+| Social login providers | 7+ | 0 |
+| SAML SPs tested | 3+ | 0 |
+| LDAP/AD compatibility | Windows AD, OpenLDAP | - |
+
+---
+
+> **Last Update**: 2025-11-29

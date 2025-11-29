@@ -107,7 +107,7 @@ async function main() {
       environment: { type: 'string', short: 'e', default: 'conformance' },
       'show-browser': { type: 'boolean', default: false },
       verbose: { type: 'boolean', short: 'v', default: false },
-      'export-dir': { type: 'string', default: './conformance' },
+      'export-dir': { type: 'string', default: '..' },
       'skip-profile-switch': { type: 'boolean', default: false },
       'report-only': { type: 'boolean', default: false },
       spec: { type: 'string', short: 's' },
@@ -413,8 +413,11 @@ async function runTestPlan(
   let config: TestPlanConfig = JSON.parse(configContent);
 
   // Replace placeholders in config
+  // {ISSUER} - the issuer URL from environment config
+  // {alias} - the alias from the config itself (used in redirect_uri)
   config = replaceConfigPlaceholders(config, {
     ISSUER: envConfig.issuer,
+    alias: config.alias,
   });
 
   logger.debug('Config:', JSON.stringify(config, null, 2));
@@ -444,17 +447,13 @@ async function runTestPlan(
 
   logger.log(`   Total tests to run: ${moduleDefinitions.length}`);
 
-  // Check if the plan defines its own variants externally
-  // If planDef.variants is empty, the plan sets variants internally and we should not pass them again
-  const planDefinesVariants = planDef.variants && Object.keys(planDef.variants).length > 0;
-
   for (const moduleDef of moduleDefinitions) {
     // Get test name from the module definition
     const testModuleName = (moduleDef as unknown as Record<string, unknown>).testModule as string;
-    // Only use moduleVariant if the plan expects external variant specification
-    const moduleVariant = planDefinesVariants
-      ? (moduleDef as unknown as Record<string, unknown>).variant as Record<string, string> | undefined
-      : undefined;
+    // Always pass the module's variant when creating tests
+    // Each module in the plan has its own variant (client_auth_type, response_type, response_mode)
+    // that must be passed to the /api/runner endpoint
+    const moduleVariant = (moduleDef as unknown as Record<string, unknown>).variant as Record<string, string> | undefined;
 
     if (!testModuleName) {
       logger.log(`   ⚠️ Skipping module with no testModule name`);
@@ -831,8 +830,9 @@ Options:
   --show-browser           Show browser window (for debugging, default: headless)
   --skip-profile-switch    Skip switching the certification profile
   --report-only            Only generate reports from previous results
-  --export-dir <path>      Base directory for exporting results (default: ./conformance)
+  --export-dir <path>      Base directory for exporting results (default: ..)
                            Results are saved to: <export-dir>/<display-name>/results/<timestamp>/
+                           When running from scripts/, default outputs to conformance/
   -v, --verbose            Enable verbose output
   -h, --help               Show this help message
 

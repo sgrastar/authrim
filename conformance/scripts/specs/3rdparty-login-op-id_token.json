@@ -1,7 +1,10 @@
 {
   "planKey": "3rdparty-login-op-id_token",
   "planName": "oidcc-3rdparty-init-login-certification-test-plan",
-  "generatedAt": "2025-11-28T10:44:35.871Z",
+  "planVariant": {
+    "response_type": "id_token"
+  },
+  "generatedAt": "2025-11-29T02:14:35.273Z",
   "configFile": "3rdparty-login-op-id_token.json",
   "tests": [
     {

@@ -1,7 +1,11 @@
 {
   "planKey": "frontchannel-logout-op-code-token",
   "planName": "oidcc-frontchannel-rp-initiated-logout-certification-test-plan",
-  "generatedAt": "2025-11-28T10:45:26.048Z",
+  "planVariant": {
+    "response_type": "code token",
+    "client_registration": "dynamic_client"
+  },
+  "generatedAt": "2025-11-29T02:15:19.391Z",
   "configFile": "frontchannel-logout-op-code-token.json",
   "tests": [
     {

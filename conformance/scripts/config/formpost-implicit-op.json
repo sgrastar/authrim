@@ -11,8 +11,5 @@
   "client2": {
     "scope": "openid profile email",
     "redirect_uri": "https://www.certification.openid.net/test/a/{alias}/callback"
-  },
-  "browser": {
-    "show_console_log": true
   }
 }

@@ -1,7 +1,10 @@
 {
   "planKey": "dynamic-op-code-id_token",
   "planName": "oidcc-dynamic-certification-test-plan",
-  "generatedAt": "2025-11-28T10:44:58.409Z",
+  "planVariant": {
+    "response_type": "code id_token"
+  },
+  "generatedAt": "2025-11-29T02:14:57.942Z",
   "configFile": "dynamic-op-code-id_token.json",
   "tests": [
     {

@@ -96,15 +96,14 @@ export class ConformanceClient {
     params.set('plan', planId);
     params.set('test', testName);
 
-    // Only pass variant if it has actual properties
-    // Some test plans (like oidcc-config-certification-test-plan) set variants internally
-    // and passing them again causes ClassCastException on the server
+    // Pass variant if provided - required for certification plans
+    // Each module in a plan has its own variant (client_auth_type, response_type, response_mode)
     if (variant && Object.keys(variant).length > 0) {
       params.set('variant', JSON.stringify(variant));
     }
 
     // When creating a test from a plan, we don't send a request body
-    // Don't include Content-Type header when there's no body to avoid ClassCastException
+    // Don't include Content-Type header when there's no body
     const response = await fetch(
       `${this.serverUrl}/api/runner?${params.toString()}`,
       {

@@ -1,7 +1,11 @@
 {
   "planKey": "formpost-implicit",
   "planName": "oidcc-formpost-implicit-certification-test-plan",
-  "generatedAt": "2025-11-28T10:45:18.539Z",
+  "planVariant": {
+    "server_metadata": "discovery",
+    "client_registration": "dynamic_client"
+  },
+  "generatedAt": "2025-11-29T02:15:11.879Z",
   "configFile": "formpost-implicit-op.json",
   "tests": [
     {

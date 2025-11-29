@@ -1,1009 +1,285 @@
-# Authrim Product Roadmap 🗺️
+# Authrim Product Roadmap
 
 **Vision:** One-command identity infrastructure for the modern web
 
-**Timeline:** November 2025 - August 2026 (10 months)
+**Timeline:** November 2025 - 2027+
 
 ---
 
-## 📅 Timeline Overview
+## Timeline Overview
 
 ```
 2025                 2026                                    2027
-Nov  Dec  Jan  Feb  Mar  Apr  May  Jun  Jul  Aug  Sep  Oct  Nov  Dec  Jan  Feb  Mar+
-│    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
-├─P1─┼─P2─┼─P3─┼────┼─P4─┼─P5─┼─────P6─────────────┼──P7───────┼──P8──┼─────┼─P9
-│    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
-✅   ✅   ✅   ✅   ✅   ✅   🏢   🏢   🏢   🏢   🏢   🏢   🚀   🚀   🚀   🌐   🎓
+Nov  Dec  Jan  Feb  Mar  Apr  May  Jun  Jul  Aug  Sep  Oct  Nov  Dec  Jan  Feb+
+│    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
+├─P1─┼─P2─┼─P3─┼────┼─P4─┼─P5─┼─────────────P6──────────────┼──P7───────┼─P8+
+│    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
+✅   ✅   ✅   ✅   ✅   ✅   ⏳   ⏳   ⏳   ⏳   ⏳   ⏳   🔜   🔜   🔜   🔜
 
 Legend:
 ✅ Complete (Phases 1-5)
-🏢 Planned (Phase 6: Enterprise Features)
-🚀 Planned (Phase 7: Next-Gen Protocols)
-🌐 Planned (Phase 8: SaaS Platform)
-🎓 Final (Phase 9: CLI & Production Launch)
+⏳ In Progress (Phase 6: 8/11 features complete)
+🔜 Planned (Phases 7-10)
 ```
 
 ---
 
-## 🎯 Milestones
+## Milestones
 
 | Milestone | Date | Status | Description |
 |-----------|------|--------|-------------|
 | **M1: Foundation** | 2025-12-15 | ✅ Complete | Project setup, tooling, basic structure |
 | **M2: Core API** | 2026-01-31 | ✅ Complete | All OIDC endpoints functional |
-| **M3: Conformance** | 2026-03-15 | ✅ Complete | OpenID Conformance Suite (95.8% Phase 3) |
-| **M4: Extensions** | 2026-04-30 | ✅ Complete | All extended security features: DCR, Rate Limiting, PAR, DPoP, Pairwise, Token Management, Form Post, Storage Foundation |
-| **M5: UI/UX** | 2026-05-31 | ✅ Complete | D1 Database, 9 Durable Objects, Backend APIs, SvelteKit Frontend, Admin Dashboard, Comprehensive Testing (E2E, Accessibility, Performance) |
-| **M6: Enterprise** | 2026-10-31 | 🏢 Planned | Hybrid, Device, CIBA, Social Login, SAML, LDAP, SCIM, Visual Flow Builder, WebSDK |
-| **M7: Next-Gen** | 2027-01-31 | 🚀 Planned | Verifiable Credentials, OAuth 2.1, Federation, Mobile SDKs, GraphQL |
-| **M8: SaaS** | 2027+ | 🌐 Planned | Multi-tenant platform, Billing, Marketplace |
-| **M9: CLI & Launch** | TBD | 🎓 Final | One-command deployment, OpenID Certification, Production Launch |
+| **M3: Conformance** | 2025-11-12 | ✅ Complete | Basic OP 78.95%, Config OP 100%, Form Post 84.21% |
+| **M4: Extensions** | 2025-11-12 | ✅ Complete | PAR, DPoP, Pairwise, Token Management |
+| **M5: UI/UX** | 2025-11-18 | ✅ Complete | SvelteKit Frontend, Admin Dashboard, 15+ pages |
+| **M6: Enterprise** | 2026-10 | ⏳ 8/11 | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer |
+| **M7: CLI** | 2027-Q1 | 🔜 Planned | create-authrim package, automation |
+| **M8: Next-Gen** | 2027-Q2 | 🔜 Planned | Verifiable Credentials, OAuth 2.1, Federation |
+| **M9: SaaS** | 2027+ | 🔜 Planned | Multi-tenant platform, Billing, Marketplace |
+| **M10: Launch** | TBD | 🔜 Final | OpenID Certification, Production Launch |
 
 ---
 
 ## Phase 1: Foundation ✅ COMPLETE
 
-**Timeline:** Nov 10 - Dec 15, 2025 (5 weeks)
+**Timeline:** Nov 10 - Dec 15, 2025
 
-**Goal:** Establish solid technical foundation
-
-### Achievements
-
-#### Week 1: Project Setup ✅
-- ✅ Git repository initialization
-- ✅ TypeScript configuration
-- ✅ Cloudflare Workers setup
-- ✅ Development environment
-- ✅ Code quality tools (ESLint, Prettier)
-
-#### Week 2: Hono Framework ✅
-- ✅ Hono app initialization
-- ✅ Middleware (CORS, security headers, logging)
-- ✅ Basic routing structure
-- ✅ Environment types
-- ✅ Health check endpoint
-
-#### Week 3: Cloudflare Services ✅
-- ✅ KV Storage integration
-- ✅ JOSE library setup
-- ✅ Durable Objects design
-- ✅ Secret management
-
-#### Week 4: Testing Framework ✅
-- ✅ Vitest configuration
-- ✅ JWT utilities with tests
-- ✅ Validation utilities with tests
-- ✅ Mock Cloudflare environment
-
-#### Week 5: CI/CD ✅
-- ✅ GitHub Actions (CI)
-- ✅ GitHub Actions (Deploy)
-- ✅ Documentation
-- ✅ Code review process
-
-**Deliverables:**
-- ✅ 85 passing tests
-- ✅ TypeScript builds with zero errors
-- ✅ `wrangler dev` working locally
-- ✅ CI/CD pipeline functional
+**Achievements:**
+- ✅ Git repository, TypeScript configuration
+- ✅ Cloudflare Workers setup, Hono framework
+- ✅ KV Storage, JOSE library
+- ✅ Vitest testing framework
+- ✅ CI/CD with GitHub Actions
 
 ---
 
 ## Phase 2: Core API Implementation ✅ COMPLETE
 
-**Timeline:** Dec 16, 2025 - Jan 31, 2026 (7 weeks)
+**Timeline:** Dec 16, 2025 - Jan 31, 2026
 
-**Goal:** Implement all core OpenID Connect endpoints
-
-### Achievements
-
-#### Week 6: Discovery & JWKS ✅
-- ✅ `/.well-known/openid-configuration` endpoint
-- ✅ `/.well-known/jwks.json` endpoint
-- ✅ Cache headers optimization
-- ✅ 29 tests (Discovery + JWKS)
-
-#### Week 7: Authorization Endpoint ✅
-- ✅ `/authorize` endpoint
-- ✅ Parameter validation (response_type, client_id, redirect_uri, scope, state, nonce)
-- ✅ **PKCE support** (code_challenge, S256 method)
-- ✅ Authorization code generation (UUID v4)
-- ✅ KV storage integration
-- ✅ Error handling (direct vs redirect)
-- ✅ 21 comprehensive tests
-
-#### Week 8: Token Endpoint ✅
-- ✅ `/token` endpoint
-- ✅ Authorization code validation
-- ✅ **PKCE verification** (code_verifier)
-- ✅ ID Token generation (with claims)
-- ✅ Access Token generation
-- ✅ Scope-based claims (profile, email)
-- ✅ Single-use code enforcement
-
-#### Week 9: UserInfo Endpoint ✅
-- ✅ `/userinfo` endpoint
-- ✅ Bearer token authentication
-- ✅ JWT signature verification
-- ✅ Scope-based claim filtering
-- ✅ Proper error responses (401, WWW-Authenticate)
-
-#### Week 10-12: Polish & Testing ✅
-- ✅ Error handling enhancement
-- ✅ Input validation hardening
-- ✅ Integration tests (24 tests total)
-- ✅ Code review & refactoring
-- ✅ **Token revocation on code reuse** (RFC 6749 Section 4.1.2)
-- ✅ **Claims parameter support** (OIDC Core 5.5)
-- ✅ **Authorization endpoint POST method** (OIDC Core 3.1.2.1)
-- ✅ **PKCE validation fix** (all RFC 7636 characters)
-- ✅ **Address and phone scope support** (OIDC Core 5.4)
-
-**Deliverables:**
-- ✅ 178 passing tests (24 Authorization + others)
-- ✅ All core OIDC endpoints functional
-- ✅ PKCE support (RFC 7636) - complete
-- ✅ Claims parameter support (essential claims)
-- ✅ Token revocation on code reuse
+**Achievements:**
+- ✅ Discovery & JWKS endpoints
+- ✅ Authorization endpoint with PKCE
+- ✅ Token endpoint (ID Token + Access Token)
+- ✅ UserInfo endpoint
 - ✅ All standard scopes (openid, profile, email, address, phone)
-- ✅ Comprehensive test coverage
 
 ---
 
 ## Phase 3: Testing & Validation ✅ COMPLETE
 
-**Timeline:** Feb 1 - Mar 15, 2026 (6 weeks) - **Completed early (Nov 2025)**
+**Timeline:** Feb 1 - Mar 15, 2026 | **Actual:** Nov 12, 2025
 
-**Goal:** Pass OpenID Conformance Suite (≥85%) - **Phase 3 Scope: 95.8% achieved**
-
-### Week 13: Conformance Suite Setup ✅
-- ✅ OpenID Conformance Suite online access
-- ✅ Configuration for Basic OP profile
-- ✅ Initial test runs completed
-- ✅ Issue identification & prioritization
-- ✅ Test results documentation started
-
-### Week 14-17: Conformance Fixes ✅ (All Phase 3 items complete)
-- ✅ Discovery & metadata compliance
-  - ✅ Added address and phone to scopes_supported
-  - ✅ Added all claims to claims_supported
-- ✅ Core flow compliance (authorize, token, userinfo)
-  - ✅ Token revocation on code reuse (RFC 6749 Section 4.1.2)
-  - ✅ Claims parameter support (OIDC Core 5.5)
-  - ✅ Authorization endpoint POST method (OIDC Core 3.1.2.1)
-  - ✅ PKCE validation (all RFC 7636 characters)
-  - ✅ Address and phone scope implementation
-- ✅ JWT/JWK format compliance
-- ✅ OAuth 2.0 error response compliance
-- ✅ Edge case handling (within Phase 3 scope)
-
-### Week 18: Final Validation ✅ COMPLETE
-- ✅ Complete conformance test run (final) - 33 tests executed
-- ✅ Performance benchmarks completed
-- ✅ Test report generation (conformance/test-results/report-20251112.md)
-- ✅ Conformance Suite detailed results (conformance/test-results/conformance-suite-results-20251112.md)
-- ✅ Documentation of results
-- ✅ Action plan for remaining issues (Phase 4-6 roadmap)
-
-**Success Criteria:**
-- ✅ **Phase 3 Scope Achievement: 95.8%** (23/24 applicable tests)
-- ✅ **Overall Conformance: 72.7%** (24/33 tests)
-- ✅ All critical tests passing (token revocation, claims, POST, PKCE)
-- ✅ No security vulnerabilities
-- ⚠️ Performance benchmarks completed (optimization deferred to Phase 4)
-
-**Final Status (2025-11-12):**
-- ✅ **OpenID Conformance Suite:**
-  - PASSED: 23 tests (69.7%)
-  - REVIEW: 1 test (manual certification team review)
-  - FAILED/INTERRUPTED: 8 tests (Phase 4-6 features)
-  - SKIPPED: 1 test (Refresh token - Phase 4)
-- ✅ **Phase 3 Core Features:** 23/24 tests (95.8%) 🎯
-- ✅ **Unit + Integration Tests:** 178/178 tests (100% pass rate)
-- ✅ **Performance Benchmarks:** Completed (functional, optimization needed in Phase 4)
-- ✅ **Production Deployment:** Validated on Cloudflare Workers
-- ✅ **Documentation:** Comprehensive test reports and implementation notes
-
-**Deferred to Phase 4-6 (By Design):**
-- Phase 4: Refresh token, key rotation, performance optimization
-- Phase 5: Request Object (JAR), Dynamic Client Registration
-- Phase 6: Session management, Login UI, prompt/max_age parameters
+**Achievements:**
+- ✅ OpenID Conformance Suite testing
+- ✅ Basic OP: 78.95% (30/38 tests, 4 intentional skips)
+- ✅ Config OP: 100%
+- ✅ Form Post Basic: 84.21%
 
 ---
 
-## Phase 4: Extended Features & Security ✅ COMPLETE
+## Phase 4: Extended Features ✅ COMPLETE
 
-**Timeline:** Mar 16 - Apr 30, 2026 (6 weeks) - **Completed early (Nov 2025)**
+**Timeline:** Mar 16 - Apr 30, 2026 | **Actual:** Nov 12, 2025
 
-**Goal:** Add security extensions and prepare storage foundation
-
-**Status:** ✅ All features completed (Nov 2025)
-
----
-
-### ✅ COMPLETED (Nov 2025)
-
-#### Week 19-20: Dynamic Client Registration ✅
-
-##### Dynamic Client Registration - RFC 7591 ✅
-- ✅ `POST /register` endpoint
-- ✅ Client metadata validation
-- ✅ Client storage (KV/Durable Objects)
-- ✅ Client secret generation
-- ✅ Registration access token
-- ✅ 56 comprehensive tests
-- **Why:** Basic functionality, essential level for OpenID authentication
-
-#### Week 21-22: Key Rotation & Extended Claims ✅
-
-##### Key Rotation & Management ✅
-- ✅ KeyManager Durable Object implementation
-- ✅ Automatic key rotation
-- ✅ Multiple active keys support
-- ✅ JWKS endpoint update for multi-key
-
-##### Extended Claims Support ✅
-- ✅ Email claim support
-- ✅ Profile claims (name, given_name, family_name, etc.)
-- ✅ Address scope support
-- ✅ Phone scope support
-- ✅ Custom claims capability
-
-##### Nonce Enforcement ✅
-- ✅ Nonce validation (configurable)
-- ✅ Replay protection
-
-#### Week 23-24: Security & Performance ✅
-
-##### Security Enhancements ✅
-- ✅ Security audit completed
-- ✅ CORS configuration (41 tests)
-- ✅ Security headers implementation
-- ✅ CSP (Content Security Policy)
-- ✅ HSTS, XSS protection
-
-##### Rate Limiting ✅
-- ✅ Rate limiting middleware (44 tests)
-- ✅ Configurable profiles (strict/moderate/lenient)
-- ✅ Per-endpoint protection
-
-##### Performance Optimization ✅
-- ✅ Endpoint performance profiling
-- ✅ KV operations optimization
-- ✅ Discovery endpoint caching
-- ✅ Edge latency measurement
-
-#### Week 25: Review & Documentation ✅
-- ✅ Code review
-- ✅ Security review
-- ✅ Performance review
-- ✅ Documentation update
-
-#### Week 26-27: Advanced Security Extensions ✅
-
-##### PAR (Pushed Authorization Requests) - RFC 9126 ✅
-- ✅ `POST /as/par` endpoint
-- ✅ Request object validation
-- ✅ Request URI generation and storage
-- ✅ Authorization endpoint PAR support
-- ✅ Tests & conformance validation (15+ tests)
-- ✅ Documentation (comprehensive guide)
-- **Why:** Security enhancement, phishing protection, highly rated for OpenID authentication
-
-##### DPoP (Demonstrating Proof of Possession) - RFC 9449 ✅
-- ✅ DPoP token validation middleware
-- ✅ DPoP-bound access token generation
-- ✅ Token endpoint DPoP support
-- ✅ UserInfo endpoint DPoP support
-- ✅ Replay attack prevention
-- ✅ Tests & conformance validation (12 tests)
-- ✅ Documentation (inline code documentation)
-- **Why:** Excellent compatibility with edge environments, latest security standard, token theft protection
-
-##### Pairwise Subject Identifiers - OIDC Core 8.1 ✅
-- ✅ Subject type configuration (public/pairwise)
-- ✅ Pairwise identifier generation (per client)
-- ✅ Sector identifier validation
-- ✅ Storage for pairwise mappings
-- ✅ Tests & conformance validation (22 tests)
-- ✅ Documentation (inline code documentation)
-- **Why:** Privacy protection, GDPR compliant, preparation required
-
-#### Week 28-29: Token Management ✅
-
-##### Refresh Token Flow - RFC 6749 Section 6 ✅
-- ✅ Refresh token generation
-- ✅ Refresh token validation
-- ✅ Token rotation (refresh token)
-- ✅ Refresh token revocation
-- ✅ Storage implementation
-- ✅ Tests & conformance validation (47+ tests)
-- ✅ Documentation (comprehensive guide)
-- **Why:** Basic functionality, major implementation, UX improvement
-
-##### Token Introspection & Revocation - RFC 7662, RFC 7009 ✅
-- ✅ `POST /introspect` endpoint
-- ✅ `POST /revoke` endpoint
-- ✅ Token metadata response
-- ✅ Client authentication for introspection
-- ✅ Tests & conformance validation (47+ tests)
-- ✅ Documentation (comprehensive guide)
-- **Why:** Security foundation, essential for enterprise
-
-#### Week 30: Response Modes & Storage Foundation ✅
-
-##### Form Post Response Mode - OAuth 2.0 Form Post ✅
-- ✅ `response_mode=form_post` support
-- ✅ Auto-submit HTML form generation
-- ✅ Authorization endpoint enhancement
-- ✅ Tests & conformance validation (19 tests)
-- ✅ Documentation (comprehensive guide)
-- ✅ XSS prevention with HTML escaping
-- ✅ User-friendly loading UI with spinner
-- **Why:** Security foundation, does not remain in browser history
-
-##### Storage Foundation (Preparation for Phase 6) ✅
-- ✅ Abstract storage interface design
-- ✅ D1 schema design (users, clients, sessions)
-- ✅ Migration system foundation (interfaces defined)
-- ✅ Storage adapter selection logic (KV adapter implemented)
-- ✅ Documentation (comprehensive inline documentation)
+**Achievements:**
+- ✅ Dynamic Client Registration (RFC 7591)
+- ✅ PAR - Pushed Authorization Requests (RFC 9126)
+- ✅ DPoP - Demonstrating Proof of Possession (RFC 9449)
+- ✅ Pairwise Subject Identifiers
+- ✅ Refresh Token with rotation
+- ✅ Token Introspection (RFC 7662) & Revocation (RFC 7009)
+- ✅ Form Post Response Mode
+- ✅ Rate Limiting, Security Headers
 
 ---
 
-**Completed Deliverables:**
-- ✅ **Dynamic Client Registration (RFC 7591)** - 56 tests passing
-- ✅ **Rate Limiting Middleware** - 44 tests passing
-- ✅ **Security Headers & CORS** - 41 tests passing
-- ✅ **Extended Claims Support** - Full OIDC profile
-- ✅ **KeyManager Durable Object** - Multi-key rotation
-- ✅ **Token Management (Refresh Token, Introspection, Revocation)** - 47+ tests, RFC 6749/7662/7009
-- ✅ **PAR (Pushed Authorization Requests)** - 15+ tests, RFC 9126
-- ✅ **Form Post Response Mode** - 19 tests, OAuth 2.0 Form Post
-- ✅ **DPoP (Demonstrating Proof of Possession)** - 12 tests, RFC 9449
-- ✅ **Pairwise Subject Identifiers** - 22 tests, OIDC Core 8.1
-- ✅ **Storage Foundation** - Abstract interfaces for Phase 6
-- ✅ **Total:** 378+ tests passing (200+ new Phase 4 tests)
+## Phase 5: UI/UX Implementation ✅ COMPLETE
 
-**Phase 4 Documentation:**
-- ✅ Token Management Guide (docs/features/token-management.md)
-- ✅ PAR Implementation Guide (docs/features/par.md)
-- ✅ Form Post Response Mode Guide (docs/features/form-post-response-mode.md)
-- ✅ DPoP Implementation (inline code documentation)
-- ✅ Pairwise Subject Identifiers (inline code documentation)
-- ✅ Storage Abstraction Layer (comprehensive interface documentation)
+**Timeline:** May 1-31, 2026 | **Actual:** Nov 18, 2025
+
+**Achievements:**
+- ✅ D1 Database (12 tables)
+- ✅ 14 Durable Objects
+- ✅ SvelteKit + UnoCSS + Melt UI frontend
+- ✅ Authentication UI (login, signup, consent, device, ciba)
+- ✅ Admin Dashboard (7 pages)
+- ✅ WebAuthn/Passkey API
+- ✅ Magic Link authentication
+- ✅ Multi-language support (EN/JA with Paraglide)
+- ✅ E2E Testing (Playwright), Accessibility (axe-core)
 
 ---
 
-## Phase 5: UI/UX Implementation ✅ 100% COMPLETE
+## Phase 6: Enterprise Features ⏳ IN PROGRESS (8/11 Complete)
 
-**Timeline:** May 1-31, 2026 (4 weeks) - **Started early (Nov 2025)**
-
-**Goal:** Best passwordless and user experience
-
-**Priority:** Best user experience, modern UX
-
-**Status:** ✅ 100% COMPLETE (All stages completed including comprehensive testing)
-
-**Tech Stack Decisions:**
-- **Frontend**: Svelte + SvelteKit v5 ✅
-- **CSS**: UnoCSS ✅
-- **Components**: Melt UI (Headless, accessible) ✅
-- **Hosting**: Cloudflare Pages (UI) + Workers (API) - Hybrid ✅
-- **Captcha**: Cloudflare Turnstile ⏳
-- **i18n**: Paraglide (type-safe, lightweight) ✅
-
-### Stage 1: Infrastructure Foundation ✅ COMPLETE
-
-**Completed Features:**
-- ✅ **D1 Database Setup** - 12 tables with migrations
-- ✅ **Durable Objects** - 9 implementations (SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, etc.)
-- ✅ **Storage Abstraction Layer** - CloudflareAdapter with intelligent routing
-- ✅ **Setup Scripts** - `setup-d1.sh` for automated database setup
-
-### Stage 2: Backend API Implementation ✅ COMPLETE
-
-**Completed Features:**
-- ✅ **WebAuthn/Passkey API** - Full FIDO2 implementation
-  - Registration & authentication endpoints
-  - Counter management (replay attack prevention)
-  - @simplewebauthn/server integration
-- ✅ **Magic Link Authentication** - Passwordless email-based auth
-  - Token generation & verification
-  - Resend email provider integration
-  - 15-minute TTL with one-time use
-- ✅ **OAuth Consent Screen API** - Client info & scope display
-- ✅ **Session Management API** - ITP-compliant cross-domain SSO
-  - Server-side session + token exchange
-  - HttpOnly cookies
-  - Session revocation
-- ✅ **Logout API** - Front-channel & back-channel logout (RFC 8725)
-- ✅ **Admin User Management API** - Full CRUD with pagination
-  - Search/filter/sort functionality
-  - Custom fields support
-  - Avatar upload/delete (R2 storage)
-  - RBAC permission checks
-- ✅ **Admin Client Management API** - OAuth client administration
-- ✅ **Admin Session Management API** - Session monitoring & revocation
-- ✅ **Admin Statistics API** - System analytics
-
-### Stage 3: Frontend Foundation ✅ COMPLETE
-
-**Completed Features:**
-- ✅ **SvelteKit Setup** - Project initialized with TypeScript
-- ✅ **UnoCSS Configuration** - Custom theme & shortcuts
-- ✅ **Melt UI Integration** - Headless accessible components
-- ✅ **Paraglide i18n** - English & Japanese support
-- ✅ **Design System** - Design tokens & base components
-- ✅ **Cloudflare Pages** - Build & deployment configuration
-
-### Stage 4: Authentication UI ✅ COMPLETE
-
-**Completed Features:**
-- ✅ **Login Page** (`/login`) - Passkey + Magic Link
-- ✅ **Registration Page** (`/register`) - Account creation
-- ✅ **Magic Link Sent** (`/magic-link-sent`) - Email confirmation
-- ✅ **Verify Magic Link** (`/verify-magic-link`) - Token validation
-- ✅ **Consent Screen** (`/consent`) - OAuth authorization
-- ✅ **Error Page** (`/error`) - User-friendly error handling
-
-### Stage 5: Admin Dashboard ✅ COMPLETE
-
-**Completed Features:**
-- ✅ **Dashboard Overview** (`/admin`) - Statistics & activity feed
-  - Active users, total logins, registered clients
-  - Recent registrations display
-  - Quick actions panel
-- ✅ **User Management** (`/admin/users`) - User list with search/filter
-  - Pagination & sorting
-  - View, edit, delete actions
-- ✅ **User Detail Page** (`/admin/users/[id]`) - Full user profile
-  - User information editing
-  - Passkey management
-  - Session management
-- ✅ **Client Management** (`/admin/clients`) - OAuth client list
-- ✅ **Client Detail Page** (`/admin/clients/[id]`) - Client configuration
-- ✅ **Settings Page** (`/admin/settings`) - System configuration
-  - General, Appearance, Security, Email, Advanced tabs
-- ✅ **Audit Log** (`/admin/audit-log`) - Activity monitoring
-
-### Stage 6: Integration & Testing ✅ COMPLETE
-
-**Completed Features:**
-- ✅ **E2E Testing (Playwright)** - Comprehensive test suite
-  - Homepage tests (4 tests): load, title, keyboard navigation, language switcher
-  - Accessibility tests (15+ tests): WCAG 2.1 AA compliance for all pages
-  - Configuration: `playwright.config.ts` with automatic server startup
-  - CI integration: GitHub Actions workflow
-- ✅ **Unit Testing** - Extensive test coverage
-  - 400+ tests across backend, Durable Objects, and UI components
-  - Durable Objects: 54 tests (AuthorizationCodeStore, SessionStore, RefreshTokenRotator, KeyManager)
-  - Svelte Testing Library: UI component tests (Spinner + 11 tests)
-- ✅ **Performance Testing (Lighthouse CI)** - Automated performance audits
-  - Configuration: `lighthouserc.json` with 90+ score targets
-  - Core Web Vitals: LCP < 2.5s, FCP < 2s, CLS < 0.1, TBT < 300ms
-  - Current scores: Performance 100, Accessibility 89, Best Practices 100, SEO 91
-  - LCP: 0.11s (exceptional)
-- ✅ **Accessibility Testing (axe-core)** - WCAG 2.1 AA compliance
-  - 5 pages tested: Homepage, Login, Register, Consent, Error
-  - Color contrast: 4.5:1 (normal text), 3:1 (large text)
-  - Keyboard navigation: Full keyboard support with visible focus indicators
-  - ARIA validation: All attributes validated
-  - Form labels: All inputs have associated labels
-- ✅ **CI/CD Integration (GitHub Actions)** - Automated testing pipeline
-  - 3 jobs: lint-and-test, e2e-and-accessibility, lighthouse
-  - Artifact uploads: Playwright reports, Lighthouse reports (30-day retention)
-  - Runs on every push and pull request
-- ✅ **Documentation** - Comprehensive testing strategy docs
-  - `docs/TESTING.md`: Test coverage, running tests, CI/CD integration
-  - `docs/PERFORMANCE.md`: Performance benchmarks, optimization guidelines
-  - `docs/ACCESSIBILITY.md`: WCAG compliance, accessibility features
-- [ ] Production Deployment Preparation
-
-**Completed Deliverables:**
-- ✅ **D1 Database** - 12 tables (users, oauth_clients, sessions, passkeys, etc.)
-- ✅ **12 Durable Objects** - SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, ChallengeStore, RateLimiterCounter, PARRequestStore, DPoPJTIStore, TokenRevocationStore, DeviceCodeStore, CIBARequestStore, UserCodeRateLimiter
-- ✅ **Storage Abstraction Layer** - CloudflareAdapter with KV/D1/DO routing
-- ✅ **20+ Backend API Endpoints** - Auth + Admin
-- ✅ **SvelteKit Frontend** - Complete application
-- ✅ **6 User-Facing Pages** - Login, register, magic link, consent, error
-- ✅ **7 Admin Pages** - Dashboard, users, clients, settings, audit log
-- ✅ **Design System** - UnoCSS + Melt UI components
-- ✅ **Multi-language Support** - English & Japanese (Paraglide)
-- ✅ **Cloudflare Pages Deployment** - Build configuration
-- ✅ **E2E Test Suite (Playwright)** - Homepage, accessibility tests (19 tests)
-- ✅ **WCAG 2.1 AA Compliance** - 5 pages tested with axe-core, zero violations
-- ✅ **Performance Testing (Lighthouse CI)** - Performance: 100, LCP: 0.11s (exceptional)
-- ✅ **Comprehensive Testing Strategy** - 400+ unit tests, E2E, accessibility, performance
-- ✅ **CI/CD Integration** - GitHub Actions with automated testing pipeline
-
-**Deferred to Phase 10:**
-- Production Deployment & Launch
-
----
-
-## Phase 6: Enterprise Features & Advanced Flows 🏢
-
-**Timeline:** Jun 1 - Oct 31, 2026 (5 months) | **Status:** ⏳ IN PROGRESS (8/11 features complete as of Nov 25, 2025)
+**Timeline:** Jun 1 - Oct 31, 2026
 
 **Goal:** Enterprise-grade authentication flows and integrations
 
-**Completion Note:** Device Flow, JWT Bearer Flow, JWE, Hybrid Flow, CIBA, SCIM 2.0, JAR, and JARM completed ahead of schedule (Nov 21-25, 2025).
+### Completed Features (Nov 2025)
 
-### Week 23-25: Advanced OAuth Flows (Jun 1-21)
+| Feature | RFC/Spec | Status | Date |
+|---------|----------|--------|------|
+| Device Flow | RFC 8628 | ✅ Complete | Nov 21, 2025 |
+| JWT Bearer Flow | RFC 7523 | ✅ Complete | Nov 21, 2025 |
+| JWE | RFC 7516 | ✅ Complete | Nov 21, 2025 |
+| Hybrid Flow | OIDC Core 3.3 | ✅ Complete | Nov 25, 2025 |
+| CIBA | OpenID Connect | ✅ Complete | Nov 25, 2025 |
+| SCIM 2.0 | RFC 7643/7644 | ✅ Complete | Nov 25, 2025 |
+| JAR | RFC 9101 | ✅ Complete | Nov 25, 2025 |
+| JARM | OIDC JARM | ✅ Complete | Nov 25, 2025 |
 
-**Key Features:**
-- [x] Hybrid Flow (OIDC Core 3.3) ✅ **COMPLETE** (Nov 25, 2025)
-- [x] Device Authorization Flow (RFC 8628) ✅ **COMPLETE** (Nov 21, 2025)
-- [x] JWT Bearer Flow (RFC 7523) ✅ **COMPLETE** (Nov 21, 2025)
+### Remaining Features (3/11)
 
-### Week 26-27: CIBA & Advanced Encryption (Jun 22 - Jul 5)
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Social Login | Google, GitHub, Microsoft, Apple, Facebook, Twitter, LinkedIn | 🔜 Planned |
+| SAML 2.0 Bridge | OIDC ↔ SAML 2.0 conversion | 🔜 Planned |
+| LDAP/AD Integration | Enterprise directory integration | 🔜 Planned |
 
-**Key Features:**
-- [x] CIBA (Client Initiated Backchannel Authentication) ✅ **COMPLETE** (Nov 25, 2025)
-- [x] JWE (JSON Web Encryption - RFC 7516) ✅ **COMPLETE** (Nov 21, 2025)
+### Optional/Deferred
 
-### Week 28-30: Social Login & Identity Federation (Jul 6-26)
-
-**Key Features:**
-- [ ] Social Login Providers (Google, GitHub, Microsoft, Apple, Facebook, Twitter, LinkedIn)
-- [ ] Identity Federation & Transformation
-- [ ] Account linking
-
-### Week 31-33: Enterprise Integration (Jul 27 - Aug 16)
-
-**Key Features:**
-- [ ] SAML 2.0 Bridge (OIDC → SAML)
-- [ ] LDAP/AD Integration
-- [x] SCIM 2.0 User Provisioning (RFC 7643, RFC 7644) ✅ **COMPLETE** (Nov 25, 2025)
-- [x] JAR (JWT-Secured Authorization Request - RFC 9101) ✅ **COMPLETE** (Nov 25, 2025)
-- [x] JARM (JWT-Secured Authorization Response Mode) ✅ **COMPLETE** (Nov 25, 2025)
-- [ ] CSV/JSON Import/Export
-- [ ] Webhook Integration
-- [ ] Bulk User Operations API
-
-### Week 34-35: Advanced Security & RBAC (Aug 17-30)
-
-**Key Features:**
-- [ ] Risk-Based Authentication
-- [ ] ABAC (Attribute-Based Access Control)
-- [ ] GDPR Automation (Right to Erasure, Data Portability)
-- [ ] Compliance Tooling (SOC 2, ISO 27001)
-
-### Week 36-38: Advanced UI Features (Sep 1-21)
-
-**Key Features:**
-- [ ] Visual Authentication Flow Builder (SimCity-inspired UI)
-  - Drag & drop authentication flow construction
-  - Visual components (Passkey, Magic Link, Social Login as "buildings")
-  - Flow visualization (入口→認証→出口)
-- [ ] WebSDK (High-customization)
-  - Web Components architecture
-  - Custom placeholders (`<$$$LoginEmailInput$$$>`, etc.)
-  - Fully styleable
-  - Event handler support (`onLogin`, `onError`)
-- [ ] Advanced Branding & Theming
-  - Custom CSS/HTML/JavaScript injection (sandboxed)
-  - Video backgrounds support
-  - Template gallery
-
-### Week 39-40: Testing & Documentation (Sep 22 - Oct 5)
-
-**Key Features:**
-- [ ] Enterprise feature testing
-- [ ] Integration testing
-- [ ] Documentation updates
-- [ ] Migration guides
-
-**Deliverables:**
-- [x] Device Flow (RFC 8628) operational ✅ **COMPLETE** (Nov 21, 2025)
-- [x] JWT Bearer Flow (RFC 7523) operational ✅ **COMPLETE** (Nov 21, 2025)
-- [x] JWE (RFC 7516) implemented ✅ **COMPLETE** (Nov 21, 2025)
-- [x] Hybrid Flow operational ✅ **COMPLETE** (Nov 25, 2025)
-- [x] CIBA implemented ✅ **COMPLETE** (Nov 25, 2025)
-- [x] SCIM 2.0 provisioning operational ✅ **COMPLETE** (Nov 25, 2025)
-- [x] JAR (RFC 9101) operational ✅ **COMPLETE** (Nov 25, 2025)
-- [x] JARM operational ✅ **COMPLETE** (Nov 25, 2025)
-- [ ] Social Login (7+ providers)
-- [ ] SAML 2.0 bridge functional
-- [ ] LDAP/AD integration working
-- [ ] Risk-based authentication active
-- [ ] ABAC implemented
-- [ ] Visual Flow Builder operational
-- [ ] WebSDK published
-- [ ] GDPR compliance automation
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Visual Flow Builder | SimCity-inspired drag & drop UI | Deferred |
+| WebSDK | High-customization web components | Deferred |
 
 ---
 
-*(See TASKS.md Phase 7 for full Enterprise implementation details)*
+## Phase 7: CLI & Automation 🔜 PLANNED
 
----
+**Timeline:** 2027-Q1
 
-## Phase 7: Verifiable Credentials & Next-Gen Protocols 🚀
+**Goal:** One-command deployment experience
 
-**Timeline:** Nov 1, 2026 - Jan 31, 2027 (3 months)
+### Key Features
 
-**Goal:** Decentralized identity and next-generation protocols
-
-### Week 41-43: OpenID for Verifiable Credentials (Nov 1-21)
-
-**Key Features:**
-- [ ] OpenID4VP (Verifiable Presentations)
-- [ ] OpenID4CI (Credential Issuance)
-- [ ] OpenID4IA (Identity Assurance)
-- [ ] W3C Verifiable Credentials support
-- [ ] DID (Decentralized Identifier) resolution
-
-### Week 44-46: Federation & OAuth 2.1 (Nov 22 - Dec 12)
-
-**Key Features:**
-- [ ] OpenID Federation 1.0
-- [ ] OAuth 2.1 compliance
-- [ ] Trust chain validation
-- [ ] Security best practices enforcement
-
-### Week 47-49: Privacy & Advanced Features (Dec 13, 2026 - Jan 2, 2027)
-
-**Key Features:**
-- [ ] Ephemeral Identity
-- [ ] Differential privacy
-- [ ] Granular consent management
-- [ ] GDPR automation (right to erasure, data portability)
-- [ ] Privacy dashboard
-
-### Week 50-52: Developer Tools & Ecosystem (Jan 3-23, 2027)
-
-**Key Features:**
-- [ ] Mobile SDKs (iOS, Android, React Native, Flutter)
-- [ ] Infrastructure as Code (Terraform, Helm, Pulumi)
-- [ ] GraphQL API
-- [ ] Webhooks & event streaming
-- [ ] Advanced analytics & reporting
-- [ ] Compliance tooling (GDPR, SOC 2, ISO 27001)
-
-**Deliverables:**
-- [ ] OpenID4VP/CI/IA implemented
-- [ ] OpenID Federation 1.0 functional
-- [ ] OAuth 2.1 compliance
-- [ ] Ephemeral Identity working
-- [ ] Mobile SDKs (4 platforms)
-- [ ] Infrastructure as Code (Terraform, Helm, Pulumi)
-- [ ] GraphQL API operational
-- [ ] Advanced analytics & reporting
-- [ ] Full compliance tooling
-
----
-
-*(See TASKS.md Phase 8 for full Next-Gen implementation details)*
-
----
-
-## Phase 8: White-Label & SaaS Platform 🌐
-
-**Timeline:** Feb 1, 2027 onwards (ongoing)
-
-**Goal:** Multi-tenant SaaS platform and marketplace
-
-### Week 53-56: Multi-Tenancy Foundation (Feb 1-28)
-
-**Key Features:**
-- [ ] Multi-tenant architecture
-- [ ] Custom domain per tenant
-- [ ] Tenant management dashboard
-- [ ] Tenant provisioning API
-- [ ] Resource quotas per tenant
-
-### Week 57-60: Billing & Monetization (Mar 1-28, 2027)
-
-**Key Features:**
-- [ ] Stripe integration
-- [ ] Usage metering (MAU, API calls, storage)
-- [ ] Plan/pricing tiers (Free, Pro, Enterprise)
-- [ ] Invoice generation
-- [ ] Subscription management
-
-### Week 61-64: Marketplace (Mar 29 - Apr 25, 2027)
-
-**Key Features:**
-- [ ] Plugin system architecture
-- [ ] Plugin marketplace
-- [ ] Third-party plugin submission
-- [ ] Plugin versioning & updates
-- [ ] Plugin revenue sharing
-
-### Week 65+: Platform Refinement & Growth (Apr 26, 2027 onwards)
-
-**Key Features:**
-- [ ] White-label customization
-- [ ] Advanced monitoring & SLA
-- [ ] Enterprise support features
-- [ ] Marketing & growth
-
-**Deliverables:**
-- [ ] Multi-tenant platform operational
-- [ ] 100+ active tenants
-- [ ] Billing & monetization functional
-- [ ] Plugin marketplace live
-- [ ] White-label features complete
-
----
-
-*(See TASKS.md Phase 9 for full SaaS platform details)*
-
----
-
-## Phase 9: CLI, Automation & Production Launch 🎓
-
-**Timeline:** TBD (Pre-release phase)
-
-**Goal:** One-command deployment + OpenID Certification + Production Launch
-
-**Priority:** Developer experience, production readiness, official certification
-
-### Stage 1: CLI Tool Development
-
-**Key Features:**
 - [ ] `create-authrim` NPM package
 - [ ] Interactive setup wizard
 - [ ] Project scaffolding
-- [ ] Deployment commands
-
-### Stage 2: Cloudflare Integration
-
-**Key Features:**
-- [ ] Cloudflare API client
-- [ ] Worker deployment API
-- [ ] KV/D1/DO management
-- [ ] DNS & custom domain setup
-
-### Stage 3: Production Readiness
-
-**Key Features:**
-- [ ] Setup automation
-- [ ] Error handling & recovery
-- [ ] Performance optimization
-- [ ] Security hardening
-- [ ] Monitoring & observability
-- [ ] Documentation & examples
-- [ ] NPM package publishing
-
-### Stage 4: Production Deployment
-
-**Key Features:**
-- [ ] Production Cloudflare account setup
-- [ ] Custom domain configuration (`id.authrim.org`)
-- [ ] DNS records & SSL/TLS configuration
-- [ ] Production secrets generation
-- [ ] Production deployment & verification
-
-### Stage 5: OpenID Certification Submission
-
-**Key Features:**
-- [ ] Pre-submission testing (full conformance suite)
-- [ ] Application preparation & documentation
-- [ ] Test results compilation
-- [ ] Submission to OpenID Foundation
-- [ ] Certification review & approval
-
-### Stage 6: Release Preparation
-
-**Key Features:**
-- [ ] Release notes & changelog
-- [ ] API documentation finalization
-- [ ] Migration guides (from Auth0/Keycloak)
-- [ ] Video tutorials & blog post
-- [ ] Official announcement
-- [ ] OpenID Certified™ mark display
-
-**Deliverables:**
-- [ ] `create-authrim` package published
-- [ ] One-command deployment functional (<5 min setup)
-- [ ] CLI with 20+ management commands
-- [ ] Production-ready error handling
-- [ ] Complete documentation
-- [ ] OpenID Certification obtained ✨
-- [ ] Production deployment live (`https://id.authrim.org`)
-- [ ] Public announcement ready
-- [ ] Migration guides published
-- [ ] Celebrate! 🎉
+- [ ] Cloudflare API integration (Worker, KV, D1, DO deployment)
+- [ ] Management CLI (20+ commands)
+- [ ] Integration examples (Next.js, React, Vue, Svelte)
 
 ---
 
-*(See TASKS.md Phase 6 + Phase 10 for full implementation details)*
+## Phase 8: Verifiable Credentials & Next-Gen 🔜 PLANNED
 
----
+**Timeline:** 2027-Q2
 
-> **Note:** Phase 10 (Certification & Production Launch) has been merged into **Phase 9** (CLI, Automation & Production Launch) as they are closely related release activities. Phase 9 now serves as the final pre-release and launch phase.
+**Goal:** Decentralized identity and next-generation protocols
 
----
+### Key Features
 
-## 📊 Success Metrics by Phase
-
-### Phase 1-2: Foundation + API ✅
-- ✅ 178 tests passing (all passing)
-- ✅ 0 TypeScript errors
-- ✅ <100ms p95 latency (local)
-- ✅ All core endpoints functional
-- ✅ Token revocation on code reuse
-- ✅ Claims parameter support (essential claims)
-- ✅ All standard scopes (openid, profile, email, address, phone)
-
-### Phase 3: Conformance ✅
-- ✅ 95.8% Phase 3 scope achievement (23/24 tests)
-- ✅ 72.7% overall conformance (24/33 tests)
-- ✅ All critical security tests passing (token revocation, PKCE, claims)
-- [ ] <50ms p95 latency (edge) - deferred to Phase 4
-
-### Phase 4: Extensions ✅
-- ✅ Dynamic Client Registration (RFC 7591) functional - 56 tests
-- ✅ Rate Limiting implemented - 44 tests
-- ✅ Security Headers & CORS - 41 tests
-- ✅ Key Rotation automated (KeyManager Durable Object)
-- ✅ Extended Claims Support (address, phone)
-- ✅ PAR (Pushed Authorization Requests) functional - 15+ tests
-- ✅ DPoP (Proof of Possession) working - 12 tests
-- ✅ Pairwise Subject Identifiers operational - 22 tests
-- ✅ Refresh Token Flow functional - 47+ tests
-- ✅ Token Introspection & Revocation working - 47+ tests
-- ✅ Form Post Response Mode working - 19 tests
-- ✅ Storage Foundation implemented
-- ✅ 378+ total tests passing (200+ new Phase 4 tests)
-- [ ] <50ms p95 latency (edge) - deferred to Phase 5
-
-### Phase 5: UI/UX Implementation ✅ 100% Complete
-- ✅ 🎯 **WebAuthn/Passkey API implemented** (Backend complete)
-- ✅ 🎯 **Magic Link authentication working** (Backend + Frontend)
-- ✅ 🎯 **ITP-compliant cross-domain SSO** (Session management API)
-- ✅ Fully functional login/registration UI (6 pages complete)
-- ✅ Complete admin dashboard (7 pages complete)
-- ✅ Multi-storage backend support (KV, D1, DO)
-- ✅ RBAC foundation (roles & permissions tables)
-- ✅ Multi-language support (EN, JA with Paraglide)
-- ✅ D1 database (12 tables with migrations)
-- ✅ 9 Durable Objects implemented
-- ✅ 20+ backend API endpoints
-- ✅ Design system (UnoCSS + Melt UI)
-- ✅ E2E test suite (Playwright) - 19 tests implemented
-- ✅ Lighthouse Performance score: 100 (LCP: 0.11s - exceptional)
-- ✅ Lighthouse Accessibility score: 89 (good, target 90+)
-- ✅ WCAG 2.1 AA compliance - verified with axe-core (5 pages, zero violations)
-
-### Phase 6: Enterprise 🏢
-- [ ] Hybrid Flow operational
-- [ ] Device Flow functional (IoT/TV)
-- [ ] JWT Bearer Flow working
-- [ ] CIBA implemented
-- [ ] JWE encryption support
-- [ ] 7+ social login providers
-- [ ] SAML 2.0 bridge functional
-- [ ] SCIM 2.0 provisioning
-- [ ] Visual Flow Builder operational
-- [ ] WebSDK published
-- [ ] 10+ enterprise customers (goal)
-
-### Phase 7: Next-Gen 🚀
-- [ ] OpenID4VP/CI/IA implemented
+- [ ] OpenID4VP (Verifiable Presentations)
+- [ ] OpenID4CI (Credential Issuance)
+- [ ] OpenID4IA (Identity Assurance)
 - [ ] OpenID Federation 1.0
 - [ ] OAuth 2.1 compliance
-- [ ] Ephemeral Identity
-- [ ] Mobile SDKs (4 platforms)
-- [ ] GraphQL API
+- [ ] Mobile SDKs (iOS, Android, React Native, Flutter)
 - [ ] Infrastructure as Code (Terraform, Helm, Pulumi)
-- [ ] 100+ GitHub stars (goal)
-
-### Phase 8: SaaS 🌐
-- [ ] Multi-tenant platform
-- [ ] 100+ active tenants
-- [ ] Billing & monetization functional
-- [ ] Plugin marketplace live
-- [ ] $10k+ MRR (goal)
-
-### Phase 9: CLI & Launch 🎓
-- [ ] <5 min from `npx create-authrim` to running IdP
-- [ ] <1 min deployment time
-- [ ] 100% automated setup
-- [ ] OpenID Certification obtained ✨
-- [ ] Production deployment live
-- [ ] 1000+ NPM downloads/month (goal)
+- [ ] GraphQL API
 
 ---
 
-## 🎯 Key Results (Overall)
+## Phase 9: White-Label & SaaS Platform 🔜 PLANNED
 
-### By August 2026 (Phase 7 Complete)
-Authrim will be:
+**Timeline:** 2027+
 
-1. **🏆 OpenID Certified** - Official certification obtained
-2. **🔐 Passwordless-first** - WebAuthn + Magic Link
-3. **⚡ Fully automated** - One command from zero to production
-4. **🌍 Globally distributed** - <50ms latency worldwide (Cloudflare Edge)
-5. **🎨 Beautiful UX** - Modern, accessible, multi-language
-6. **📚 Well-documented** - 100+ pages of docs, 20+ tutorials
-7. **🌟 Open source** - 100+ GitHub stars, 10+ contributors
+**Goal:** Multi-tenant SaaS platform and marketplace
 
-### By November 2026 (Phase 8 Complete)
-Add:
-8. **🏢 Enterprise-ready** - SAML, LDAP, SCIM, Social Login
-9. **🚀 Advanced Flows** - Hybrid, Device, CIBA, JWT Bearer
-10. **🔒 Maximum Security** - MTLS, DPoP, PAR, JARM, JWE
+### Key Features
 
-### By February 2027 (Phase 9 Complete)
-Add:
-11. **🆔 Verifiable Credentials** - OpenID4VP/CI/IA support
-12. **🌐 Federation** - OpenID Federation 1.0
-13. **📱 Mobile-first** - Native SDKs for iOS, Android, React Native, Flutter
-14. **🔮 Future-proof** - OAuth 2.1, Ephemeral Identity
-
-### By 2027+ (Phase 10)
-15. **💰 SaaS Platform** - Multi-tenant, marketplace, revenue
+- [ ] Multi-tenant architecture
+- [ ] Custom domain per tenant
+- [ ] Stripe billing integration
+- [ ] Usage metering (MAU, API calls)
+- [ ] Plugin marketplace
+- [ ] White-label customization
 
 ---
 
-## 🔄 Iteration Cadence
+## Phase 10: Certification & Production Launch 🔜 FINAL
 
-- **Weekly:** Progress updates, planning
-- **Bi-weekly:** Demo, retrospective
-- **Monthly:** Milestone review, roadmap adjustment
-- **Quarterly:** Major release, community update
+**Timeline:** TBD
 
----
+**Goal:** Official OpenID Certification and production deployment
 
-## 📝 Change Log
+### Key Stages
 
-| Date | Change | Reason |
-|------|--------|--------|
-| 2025-11-11 | Initial roadmap | Project kickoff |
-| 2025-12-15 | Phase 1 complete | Foundation finished early |
-| 2026-01-31 | Phase 2 complete | API implementation finished |
-| 2026-01-31 | Added Phase 6-7 | User request for UI/CLI |
-| 2025-11-12 | Phase 3 started early | Conformance testing in progress |
-| 2025-11-12 | Major conformance features complete | Token revocation, claims parameter, POST method, PKCE fix, address/phone scope |
-| 2025-11-12 | 178 tests passing | Added 20+ new integration tests |
-| 2025-11-12 | **Phase 3 COMPLETE** | All Phase 3 scope features implemented and tested (95.8% achievement) |
-| 2025-11-12 | Full conformance suite executed | 33 tests: 23 PASSED, 1 REVIEW, 8 deferred to Phase 4-6, 1 SKIPPED |
-| 2025-11-12 | Performance benchmarks completed | Functional validation complete, optimization planned for Phase 4 |
-| 2025-11-12 | **🚀 MAJOR ROADMAP UPDATE** | All requested features integrated into phases |
-| 2025-11-12 | Phase 4 expanded | Added PAR, DPoP, Pairwise, Form Post, Token Introspection/Revocation |
-| 2025-11-12 | Phase 5 expanded | Added JARM, MTLS, JAR, Client Credentials Flow |
-| 2025-11-12 | Phase 5 reimagined | **Passwordless-first**: WebAuthn/Passkey + Magic Link + ITP-compliant SSO |
-| 2025-11-12 | Phase 6 expanded | Added Session Management, Front/Back-Channel Logout, Audit Log, Scope Extensions |
-| 2025-11-12 | Phase 8 created | Enterprise Flows: Hybrid, Device, JWT Bearer, CIBA, JWE, Social Login, SAML, LDAP, SCIM |
-| 2025-11-12 | Phase 9 created | Next-Gen: OpenID4VP/CI/IA, Federation, OAuth 2.1, Ephemeral Identity, Mobile SDKs |
-| 2025-11-12 | Phase 10 created | SaaS Platform: Multi-tenancy, Billing, Marketplace |
-| 2025-11-12 | Timeline extended | Now covers Nov 2025 - Mar 2027+ (16+ months → 2+ years) |
-| 2025-11-12 | Success metrics updated | Added ambitious goals for each phase |
-| 2025-11-12 | **🔄 PHASE REORDERING** | Phase 5→10, Phases 6-9 shifted up: UI/UX now P5, CLI now P6, Enterprise now P7, VC now P8, SaaS now P9, Certification moved to final P10 |
-| 2025-11-12 | **Phase 4 COMPLETE** ✅ | All Phase 4 features implemented: Token Management, PAR, DPoP, Pairwise, Form Post, Storage Foundation (378+ tests passing) |
-| 2025-11-12 | **Phase 5 planning finalized** | Tech stack decisions: Svelte 5 + UnoCSS + Melt UI, Hybrid hosting, ITP-compliant SSO, RBAC, Custom fields, Multi-language |
-| 2025-11-12 | **Phase 7 expanded** | Added WebSDK, Visual Flow Builder (SimCity-inspired), GDPR automation, CSV/JSON import/export, Webhook integration |
-| 2025-11-18 | **Phase 5: 100% COMPLETE** ✅ | D1 Database (12 tables), 9 Durable Objects, 20+ Backend APIs, SvelteKit Frontend, Admin Dashboard (7 pages), Auth UI (6 pages), i18n (EN/JA), E2E Testing (Playwright), Accessibility (WCAG 2.1 AA), Performance (Lighthouse 100) |
+1. Pre-submission testing (full conformance suite)
+2. OpenID Foundation certification submission
+3. Production deployment (`https://id.authrim.org`)
+4. Public announcement
+5. Migration guides (from Auth0, Keycloak)
 
 ---
 
-> **Last Update:** 2025-11-18 (Phase 5: 100% COMPLETE ✅)
-> **Next Update:** 2026-08-10 (Post Phase 6)
+## Success Metrics
+
+### Phase 1-5 (Complete)
+
+| Metric | Target | Actual |
+|--------|--------|--------|
+| Unit tests | 200+ | 60 files, ~25,270 lines |
+| Conformance (Basic OP) | 85% | 78.95% ✅ |
+| Conformance (Config OP) | 85% | 100% ✅ |
+| UI pages | 10+ | 15+ ✅ |
+| Durable Objects | 10+ | 14 ✅ |
+
+### Phase 6 (In Progress)
+
+| Metric | Target | Actual |
+|--------|--------|--------|
+| Enterprise features | 11 | 8/11 (73%) |
+| Device Flow tests | 50+ | 70+ ✅ |
+| CIBA modes | 3 | 3 (poll, ping, push) ✅ |
+| SCIM endpoints | 4 | 4 (Users + Groups CRUD) ✅ |
+
+### Phase 7-10 (Planned)
+
+| Metric | Target |
+|--------|--------|
+| CLI commands | 20+ |
+| Deployment time | < 5 min |
+| Social login providers | 7+ |
+| Mobile SDKs | 4 platforms |
+| OpenID Certification | ✅ Obtained |
+
+---
+
+## Key Results (Overall)
+
+By 2027, Authrim will be:
+
+1. **OpenID Certified** - Official certification obtained
+2. **Passwordless-first** - WebAuthn + Magic Link
+3. **Fully automated** - One command from zero to production
+4. **Globally distributed** - <50ms latency worldwide
+5. **Enterprise-ready** - SAML, LDAP, SCIM, Social Login
+6. **Advanced Flows** - Hybrid, Device, CIBA, JWT Bearer
+7. **Maximum Security** - DPoP, PAR, JAR, JARM, JWE
+8. **Verifiable Credentials** - OpenID4VP/CI/IA support
+9. **Open Source** - Apache 2.0, self-hosted
+
+---
+
+## Change Log
+
+| Date | Change |
+|------|--------|
+| 2025-11-11 | Initial roadmap |
+| 2025-11-12 | Phase 3 & 4 completed early |
+| 2025-11-18 | Phase 5 completed |
+| 2025-11-25 | Phase 6: 8/11 features complete (Device Flow, JWT Bearer, JWE, Hybrid, CIBA, SCIM, JAR, JARM) |
+| 2025-11-29 | Documentation restructure, Phase numbering clarification |
+
+---
+
+> **Last Update:** 2025-11-29
 >
-> ⚡️ **Authrim** - Building the future of identity infrastructure, one phase at a time.
+> **Current Status:** Phase 6 (8/11 Enterprise Features Complete)
 >
-> **Current Status:**
-> - **Phase 5: 100% COMPLETE** ✅ Full-stack implementation with comprehensive testing
-> - **Tests:** 400+ unit tests + 19 E2E tests + accessibility + performance tests
-> - **Phase 3 Achievement:** 95.8% (23/24 tests) | **Overall Conformance:** 72.7% (24/33 tests)
-> - **Infrastructure:** D1 Database (12 tables), 9 Durable Objects, Storage Abstraction Layer
-> - **Backend:** 20+ API endpoints (Auth + Admin)
-> - **Frontend:** SvelteKit + UnoCSS + Melt UI (13 pages complete)
-> - **Testing:** E2E (Playwright), WCAG 2.1 AA (axe-core), Lighthouse CI (Performance: 100)
-> - **Roadmap:** 10 Phases covering 60+ advanced features
-> - **Vision:** The world's best passwordless OpenID Provider on Cloudflare Edge
->
-> **Key Differentiators:**
-> - 🔐 **Passwordless-first** (WebAuthn + Magic Link) - API & UI Complete
-> - ⚡ **Edge-native** (Cloudflare Workers + Pages) - <50ms worldwide
-> - 🎯 **Advanced Security** (PAR, DPoP, Pairwise, Token Management)
-> - 🎨 **Modern UI/UX** (SvelteKit, i18n, Design System)
-> - 🗄️ **Flexible Storage** (KV, D1, Durable Objects)
-> - ✅ **Comprehensive Testing** (E2E, Accessibility, Performance)
-> - 🆔 **Next-Gen Ready** (Verifiable Credentials, OAuth 2.1, Federation)
-> - 🏢 **Enterprise-ready** (SAML, LDAP, SCIM, CIBA) - Planned
-> - 🌍 **Open Source & Self-hosted** - No vendor lock-in
+> **Authrim** - Building the future of identity infrastructure, one phase at a time.

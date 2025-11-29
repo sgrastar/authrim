@@ -1,7 +1,11 @@
 {
   "planKey": "backchannel-logout-op-code-token",
   "planName": "oidcc-backchannel-rp-initiated-logout-certification-test-plan",
-  "generatedAt": "2025-11-28T10:44:45.095Z",
+  "planVariant": {
+    "response_type": "code token",
+    "client_registration": "dynamic_client"
+  },
+  "generatedAt": "2025-11-29T02:14:44.619Z",
   "configFile": "backchannel-logout-op-code-token.json",
   "tests": [
     {

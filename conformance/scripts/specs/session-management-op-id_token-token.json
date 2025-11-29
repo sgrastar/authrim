@@ -1,7 +1,11 @@
 {
   "planKey": "session-management-op-id_token-token",
   "planName": "oidcc-session-management-certification-test-plan",
-  "generatedAt": "2025-11-28T10:46:02.256Z",
+  "planVariant": {
+    "response_type": "id_token token",
+    "client_registration": "dynamic_client"
+  },
+  "generatedAt": "2025-11-29T02:15:54.049Z",
   "configFile": "session-management-op-id_token-token.json",
   "tests": [
     {

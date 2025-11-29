@@ -26,9 +26,10 @@ Documents for planning, scheduling, and tracking project progress.
 | Document | Description |
 |:---------|:------------|
 | [Vision](./VISION.md) | Long-term vision and strategic goals |
-| [Roadmap](./ROADMAP.md) | Detailed product roadmap with phases 1-9 |
+| [Roadmap](./ROADMAP.md) | Product roadmap (Phase 6: 8/11 complete) |
 | [Project Schedule](./project-management/SCHEDULE.md) | Timeline with major milestones |
-| [Task Breakdown](./project-management/TASKS.md) | Detailed week-by-week task checklist (440+ tasks) |
+| [Task Breakdown](./project-management/TASKS.md) | Task checklist by phase |
+| [API Inventory](./project-management/API_INVENTORY.md) | Complete API endpoint status |
 | [Kickoff Checklist](./project-management/KICKOFF.md) | Week 1 immediate action items |
 | [GitHub Workflow](./project-management/GITHUB_WORKFLOW.md) | Issue tracking and project board setup |
 

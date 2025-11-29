@@ -1,7 +1,11 @@
 {
   "planKey": "hybrid-op",
   "planName": "oidcc-hybrid-certification-test-plan",
-  "generatedAt": "2025-11-28T10:45:32.829Z",
+  "planVariant": {
+    "server_metadata": "discovery",
+    "client_registration": "dynamic_client"
+  },
+  "generatedAt": "2025-11-29T02:15:25.571Z",
   "configFile": "hybrid-op.json",
   "tests": [
     {

@@ -1,7 +1,11 @@
 {
   "planKey": "basic-op",
   "planName": "oidcc-basic-certification-test-plan",
-  "generatedAt": "2025-11-28T10:44:50.836Z",
+  "planVariant": {
+    "server_metadata": "discovery",
+    "client_registration": "dynamic_client"
+  },
+  "generatedAt": "2025-11-29T02:14:50.454Z",
   "configFile": "basic-op.json",
   "tests": [
     {

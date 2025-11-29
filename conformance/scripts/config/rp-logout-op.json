@@ -13,8 +13,5 @@
     "scope": "openid profile email",
     "redirect_uri": "https://www.certification.openid.net/test/a/{alias}/callback",
     "post_logout_redirect_uri": "https://www.certification.openid.net/test/a/{alias}/post_logout_redirect"
-  },
-  "browser": {
-    "show_console_log": true
   }
 }
