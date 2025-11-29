@@ -1597,7 +1597,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         {
           iss: issuer,
           sub,
-          aud: validClientId,
+          aud: issuer, // Access token audience should be issuer (resource server), not client_id
           scope: validScope,
           client_id: validClientId,
           claims,
