@@ -74,6 +74,15 @@ export async function validateClientAssertion(
     // Extract kid for key selection (RFC 7517)
     const kid = header.kid;
 
+    // Debug logging for private_key_jwt investigation
+    console.log('[private_key_jwt] Client:', {
+      client_id: client.client_id,
+      has_jwks: !!client.jwks,
+      has_jwks_uri: !!client.jwks_uri,
+      jwks_keys_count: client.jwks?.keys?.length,
+    });
+    console.log('[private_key_jwt] JWT Header:', { kid, alg: header.alg });
+
     // Reject 'none' algorithm
     if (header.alg === 'none' || !header.alg) {
       console.warn('[SECURITY] Rejected unsigned client assertion (alg=none or missing)');
@@ -188,9 +197,22 @@ export async function validateClientAssertion(
 
     // Find key by kid (or use first key if no kid specified)
     if (jwksKeys.length > 0) {
+      // Debug: Log available keys
+      console.log(
+        '[private_key_jwt] JWKS Keys:',
+        jwksKeys.map((k) => ({
+          kid: k.kid,
+          kty: k.kty,
+          alg: k.alg,
+        }))
+      );
+
       const foundKey = findKeyByKid(jwksKeys, kid);
       if (foundKey) {
         publicKey = foundKey;
+        console.log('[private_key_jwt] Selected key:', { kid: foundKey.kid, kty: foundKey.kty });
+      } else {
+        console.log('[private_key_jwt] No matching key found for kid:', kid);
       }
     }
 

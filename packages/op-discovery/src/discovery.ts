@@ -69,10 +69,19 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     backchannel_authentication_request_signing_alg_values_supported: ['RS256', 'ES256'],
     backchannel_user_code_parameter_supported: true,
     // Dynamic response_types based on OIDC config
-    response_types_supported: oidcConfig.responseTypesSupported || ['code'],
+    // Dynamic OP certification requires all hybrid and implicit response types
+    response_types_supported: oidcConfig.responseTypesSupported || [
+      'code',
+      'id_token',
+      'id_token token',
+      'code id_token',
+      'code token',
+      'code id_token token',
+    ],
     grant_types_supported: [
       'authorization_code',
       'refresh_token',
+      'implicit', // Required for Dynamic OP certification (id_token/token response types)
       'urn:ietf:params:oauth:grant-type:jwt-bearer', // RFC 7523: JWT Bearer Flow
       'urn:ietf:params:oauth:grant-type:device_code', // RFC 8628: Device Authorization Grant
       'urn:openid:params:grant-type:ciba', // OIDC CIBA: Client Initiated Backchannel Authentication

@@ -172,6 +172,11 @@ for pkg_dir in packages/*/; do
             continue
         fi
 
+        # Skip policy-core (it's a library, not a deployable worker)
+        if [ "$package_name" = "policy-core" ]; then
+            continue
+        fi
+
         # Check if environment-specific config exists
         if [ ! -f "$toml_file" ]; then
             echo "  ⚠️  Missing: $package_name/wrangler.${DEPLOY_ENV}.toml"
