@@ -17,6 +17,7 @@ import { check, sleep } from 'k6';
 import { Counter, Trend, Rate } from 'k6/metrics';
 import { SharedArray } from 'k6/data';
 import encoding from 'k6/encoding';
+import exec from 'k6/execution';
 
 // カスタムメトリクス
 const tokenRequestDuration = new Trend('token_request_duration');
@@ -50,6 +51,23 @@ const PRESETS = {
     preAllocatedVUs: 20,
     maxVUs: 30,
   },
+  // 50RPS テスト用プリセット（1分間維持）
+  rps50: {
+    startRate: 10,
+    stages: [
+      { target: 10, duration: '10s' },  // Warm up to 10 RPS
+      { target: 50, duration: '15s' },  // Ramp to 50 RPS
+      { target: 50, duration: '60s' },  // Sustain 50 RPS for 1 minute
+      { target: 10, duration: '10s' },  // Ramp down
+    ],
+    thresholds: {
+      http_req_duration: ['p(99)<300'],
+      http_req_failed: ['rate<0.01'],
+      token_request_duration: ['p(99)<300'],
+    },
+    preAllocatedVUs: 60,
+    maxVUs: 80,
+  },
   standard: {
     startRate: 30,
     stages: [
@@ -65,6 +83,44 @@ const PRESETS = {
     },
     preAllocatedVUs: 100,
     maxVUs: 150,
+  },
+  // 200RPS テスト用プリセット（2分間維持）
+  rps200: {
+    startRate: 50,
+    stages: [
+      { target: 50, duration: '10s' },   // Warm up to 50 RPS
+      { target: 100, duration: '10s' },  // Ramp to 100 RPS
+      { target: 200, duration: '15s' },  // Ramp to 200 RPS
+      { target: 200, duration: '120s' }, // Sustain 200 RPS for 2 minutes
+      { target: 100, duration: '10s' },  // Ramp down
+      { target: 50, duration: '10s' },   // Cool down
+    ],
+    thresholds: {
+      http_req_duration: ['p(99)<500'],
+      http_req_failed: ['rate<0.02'],
+      token_request_duration: ['p(99)<500'],
+    },
+    preAllocatedVUs: 200,
+    maxVUs: 300,
+  },
+  // 300RPS テスト用プリセット
+  rps300: {
+    startRate: 100,
+    stages: [
+      { target: 100, duration: '15s' },  // Warm up to 100 RPS
+      { target: 200, duration: '15s' },  // Ramp to 200 RPS
+      { target: 300, duration: '15s' },  // Ramp to 300 RPS
+      { target: 300, duration: '60s' },  // Sustain 300 RPS for 1 minute
+      { target: 200, duration: '15s' },  // Ramp down
+      { target: 100, duration: '10s' },  // Cool down
+    ],
+    thresholds: {
+      http_req_duration: ['p(99)<600'],
+      http_req_failed: ['rate<0.02'],
+      token_request_duration: ['p(99)<600'],
+    },
+    preAllocatedVUs: 300,
+    maxVUs: 400,
   },
   heavy: {
     startRate: 200,
@@ -157,9 +213,17 @@ export function setup() {
 }
 
 // メインテスト関数
+// 注意: 認可コードは単一使用（RFC 6749）のため、各リクエストで異なるコードを使用する必要がある
+// k6のramping-arrival-rate executorでは execution.scenario.iterationInTest が
+// グローバルな一意のイテレーション番号を提供する
 export default function (data) {
-  // ランダムに認可コードを選択
-  const codeData = authorizationCodes[Math.floor(Math.random() * authorizationCodes.length)];
+  // グローバルイテレーション番号を使用して一意のコードを選択
+  // iterationInTest: テスト全体を通じて一意の番号（0から始まる）
+  const globalIterationId = exec.scenario.iterationInTest;
+
+  // コードが足りない場合は最後から再利用（ただし、invalid_grant エラーになる）
+  const codeIndex = globalIterationId % authorizationCodes.length;
+  const codeData = authorizationCodes[codeIndex];
 
   // /token リクエストのパラメータ
   const params = {

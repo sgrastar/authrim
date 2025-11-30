@@ -72,6 +72,9 @@ export interface ConsumeCodeRequest {
   code: string;
   clientId: string;
   codeVerifier?: string;
+  // Optional: Register issued token JTIs in the same atomic operation (DO hop optimization)
+  accessTokenJti?: string;
+  refreshTokenJti?: string;
 }
 
 /**
@@ -116,13 +119,24 @@ export class AuthorizationCodeStore {
   private initialized: boolean = false;
 
   // Configuration
-  private readonly CODE_TTL = 60; // 60 seconds per OAuth 2.0 Security BCP
+  private readonly CODE_TTL: number; // Default: 60 seconds per OAuth 2.0 Security BCP (configurable via env)
   private readonly CLEANUP_INTERVAL = 30 * 1000; // 30 seconds
-  private readonly MAX_CODES_PER_USER = 100; // DDoS protection (increased for conformance testing)
+  private readonly MAX_CODES_PER_USER: number; // DDoS protection (configurable via env)
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
+
+    // Configure CODE_TTL from environment variable
+    // Default: 60 seconds per OAuth 2.0 Security BCP, but can be increased for load testing
+    const codeTtlEnv = env.AUTH_CODE_TTL;
+    this.CODE_TTL = codeTtlEnv && !isNaN(Number(codeTtlEnv)) ? Number(codeTtlEnv) : 60;
+
+    // Configure MAX_CODES_PER_USER from environment variable
+    // Default: 100, but can be increased for load testing
+    const maxCodesEnv = env.MAX_CODES_PER_USER;
+    this.MAX_CODES_PER_USER =
+      maxCodesEnv && !isNaN(Number(maxCodesEnv)) ? Number(maxCodesEnv) : 100;
 
     // State will be initialized on first request
   }
@@ -364,6 +378,16 @@ export class AuthorizationCodeStore {
     // Mark as used ATOMICALLY
     // Durable Objects guarantee strong consistency, so this is atomic
     stored.used = true;
+
+    // Register issued token JTIs in the same atomic operation (DO hop optimization)
+    // This allows replay attack detection and token revocation without a separate DO call
+    if (request.accessTokenJti) {
+      stored.issuedAccessTokenJti = request.accessTokenJti;
+    }
+    if (request.refreshTokenJti) {
+      stored.issuedRefreshTokenJti = request.refreshTokenJti;
+    }
+
     this.codes.set(request.code, stored);
 
     // Persist to Durable Storage (CRITICAL for DO restart resilience)
