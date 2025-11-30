@@ -345,8 +345,9 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       subject_type, sector_identifier_uri,
       token_endpoint_auth_method, is_trusted, skip_consent,
       allow_claims_without_scope,
+      jwks, jwks_uri,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `
   )
     .bind(
@@ -368,6 +369,8 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       metadata.is_trusted ? 1 : 0,
       metadata.skip_consent ? 1 : 0,
       metadata.allow_claims_without_scope ? 1 : 0,
+      metadata.jwks ? JSON.stringify(metadata.jwks) : null,
+      metadata.jwks_uri || null,
       metadata.created_at || now,
       metadata.updated_at || now
     )
@@ -454,6 +457,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (request.contacts) response.contacts = request.contacts;
     if (request.tos_uri) response.tos_uri = request.tos_uri;
     if (request.policy_uri) response.policy_uri = request.policy_uri;
+    if (request.jwks) response.jwks = request.jwks;
     if (request.jwks_uri) response.jwks_uri = request.jwks_uri;
     if (request.software_id) response.software_id = request.software_id;
     if (request.software_version) response.software_version = request.software_version;

@@ -50,22 +50,23 @@
 - **エンドユーザー 田中**: 自分のプロフィールと利用履歴のみ閲覧
 
 **データモデル**:
-```
-┌──────────────────┐          ┌──────────────────┐
-│   Distributor    │          │  Customer Org    │
-│   Organization   │          │  (End Customer)  │
-│                  │          │                  │
-│  - id: org_dist1 │──reseller_of──▶│  - id: org_cust1│
-│  - type:reseller │          │  - type:customer │
-└──────────────────┘          └──────────────────┘
-        │                              │
-        │ member_of                    │ member_of
-        ▼                              ▼
-┌──────────────────┐          ┌──────────────────┐
-│  Reseller Staff  │          │   End Customer   │
-│  - role:         │          │   User           │
-│    reseller_staff│          │  - role: end_user│
-└──────────────────┘          └──────────────────┘
+```mermaid
+flowchart LR
+    subgraph DistOrg["Distributor Organization"]
+        DO["id: org_dist1<br/>type: reseller"]
+    end
+
+    subgraph CustOrg["Customer Org (End Customer)"]
+        CO["id: org_cust1<br/>type: customer"]
+    end
+
+    DO -->|reseller_of| CO
+
+    RS["Reseller Staff<br/>role: reseller_staff"]
+    EU["End Customer User<br/>role: end_user"]
+
+    RS -->|member_of| DO
+    EU -->|member_of| CO
 ```
 
 **ポリシー例**:
@@ -108,25 +109,12 @@
 - **成人した子 花子（20歳）**: 成人後、自分でアカウントを管理
 
 **データモデル**:
-```
-┌──────────────────┐
-│     Parent       │
-│  - id: user_p1   │
-│  - role: parent  │
-└────────┬─────────┘
-         │
-         │ parent_child (relationship)
-         │ constraints: {
-         │   "can_edit_profile": true,
-         │   "expires_at": "2030-01-01"
-         │ }
-         ▼
-┌──────────────────┐
-│     Child        │
-│  - id: user_c1   │
-│  - role: child   │
-│  - email: null   │
-└──────────────────┘
+```mermaid
+flowchart TB
+    Parent["Parent<br/>id: user_p1<br/>role: parent"]
+    Child["Child<br/>id: user_c1<br/>role: child<br/>email: null"]
+
+    Parent -->|"parent_child<br/>constraints: {<br/>can_edit_profile: true,<br/>expires_at: '2030-01-01'<br/>}"| Child
 ```
 
 **ポリシー例**:
@@ -178,28 +166,25 @@
 - **一般社員 木村**: 許可されたアプリにシングルサインオン
 
 **データモデル**:
-```
-┌──────────────────────────────────────────────────┐
-│                 Enterprise                         │
-│  - id: org_enterprise                              │
-│  - type: enterprise                                │
-│  - plan: enterprise                                │
-└──────────────────────────────────────────────────┘
-                        │
-            ┌───────────┼───────────┐
-            ▼           ▼           ▼
-    ┌────────────┐ ┌────────────┐ ┌────────────┐
-    │ Engineering│ │   Sales    │ │   HR       │
-    │ Department │ │ Department │ │ Department │
-    │  (child)   │ │  (child)   │ │  (child)   │
-    └────────────┘ └────────────┘ └────────────┘
-          │             │              │
-          ▼             ▼              ▼
-    ┌────────────┐ ┌────────────┐ ┌────────────┐
-    │ Engineers  │ │ Sales Reps │ │ HR Staff   │
-    │ + GitLab   │ │ + CRM      │ │ + HRIS     │
-    │ + Jira     │ │ + Salesforce│ │ + ATS     │
-    └────────────┘ └────────────┘ └────────────┘
+```mermaid
+flowchart TB
+    Enterprise["Enterprise<br/>id: org_enterprise<br/>type: enterprise<br/>plan: enterprise"]
+
+    Eng["Engineering Department<br/>(child)"]
+    Sales["Sales Department<br/>(child)"]
+    HR["HR Department<br/>(child)"]
+
+    Enterprise --> Eng
+    Enterprise --> Sales
+    Enterprise --> HR
+
+    EngUsers["Engineers<br/>+ GitLab<br/>+ Jira"]
+    SalesUsers["Sales Reps<br/>+ CRM<br/>+ Salesforce"]
+    HRUsers["HR Staff<br/>+ HRIS<br/>+ ATS"]
+
+    Eng --> EngUsers
+    Sales --> SalesUsers
+    HR --> HRUsers
 ```
 
 **ポリシー例**:
@@ -242,25 +227,22 @@
 - **テナント一般ユーザー**: 自テナント内のリソースのみアクセス
 
 **データモデル**:
-```
-┌─────────────────────────────────────────────────────────┐
-│                    SaaS Platform                         │
-│  tenant_id: 'platform'                                   │
-│  - SystemAdmin (role: system_admin, scope: global)       │
-└─────────────────────────────────────────────────────────┘
-                          │
-        ┌─────────────────┴─────────────────┐
-        ▼                                   ▼
-┌──────────────────┐              ┌──────────────────┐
-│   Tenant A       │              │   Tenant B       │
-│  tenant_id: 'A'  │              │  tenant_id: 'B'  │
-├──────────────────┤              ├──────────────────┤
-│ TenantAdmin      │              │ TenantAdmin      │
-│ (org_admin)      │              │ (org_admin)      │
-├──────────────────┤              ├──────────────────┤
-│ User1, User2...  │              │ User1, User2...  │
-│ (end_user)       │              │ (end_user)       │
-└──────────────────┘              └──────────────────┘
+```mermaid
+flowchart TB
+    Platform["SaaS Platform<br/>tenant_id: 'platform'<br/>SystemAdmin (role: system_admin, scope: global)"]
+
+    subgraph TenantA["Tenant A (tenant_id: 'A')"]
+        TA_Admin["TenantAdmin<br/>(org_admin)"]
+        TA_Users["User1, User2...<br/>(end_user)"]
+    end
+
+    subgraph TenantB["Tenant B (tenant_id: 'B')"]
+        TB_Admin["TenantAdmin<br/>(org_admin)"]
+        TB_Users["User1, User2...<br/>(end_user)"]
+    end
+
+    Platform --> TenantA
+    Platform --> TenantB
 ```
 
 **ポリシー例**:
@@ -296,31 +278,29 @@
 - **医事課 Staff Suzuki**: 会計情報のみ閲覧、診療内容は閲覧不可
 
 **データモデル**:
-```
-┌──────────────────────────────────────────────────┐
-│                   Hospital                         │
-│  - id: org_hospital                                │
-└──────────────────────────────────────────────────┘
-                        │
-            ┌───────────┼───────────┐
-            ▼           ▼           ▼
-    ┌────────────┐ ┌────────────┐ ┌────────────┐
-    │ Internal   │ │ Surgery    │ │ Admin      │
-    │ Medicine   │ │ Dept       │ │ Office     │
-    └────────────┘ └────────────┘ └────────────┘
-          │             │              │
-          ▼             ▼              ▼
-    ┌────────────┐ ┌────────────┐ ┌────────────┐
-    │ Doctors    │ │ Surgeons   │ │ Clerks     │
-    │ Nurses     │ │ Nurses     │ │            │
-    └────────────┘ └────────────┘ └────────────┘
-                        │
-                        ▼
-              ┌─────────────────┐
-              │    Patients     │
-              │ (assigned to    │
-              │  departments)   │
-              └─────────────────┘
+```mermaid
+flowchart TB
+    Hospital["Hospital<br/>id: org_hospital"]
+
+    IntMed["Internal Medicine"]
+    Surgery["Surgery Dept"]
+    Admin["Admin Office"]
+
+    Hospital --> IntMed
+    Hospital --> Surgery
+    Hospital --> Admin
+
+    IntStaff["Doctors<br/>Nurses"]
+    SurgStaff["Surgeons<br/>Nurses"]
+    AdminStaff["Clerks"]
+
+    IntMed --> IntStaff
+    Surgery --> SurgStaff
+    Admin --> AdminStaff
+
+    Patients["Patients<br/>(assigned to departments)"]
+
+    SurgStaff --> Patients
 ```
 
 **ポリシー例**:
@@ -364,29 +344,30 @@
 - **保護者 鈴木花子**: 子供の成績・出席状況の閲覧
 
 **データモデル**:
-```
-┌──────────────────────────────────────────────────┐
-│                    School                          │
-│  - id: org_school                                  │
-└──────────────────────────────────────────────────┘
-                        │
-            ┌───────────┼───────────┐
-            ▼           ▼           ▼
-    ┌────────────┐ ┌────────────┐ ┌────────────┐
-    │ Grade 1    │ │ Grade 2    │ │ Grade 3    │
-    └────────────┘ └────────────┘ └────────────┘
-          │
-          ├─── Class 1-A
-          │       │
-          │       ├── Teacher (role: teacher, scope: org:class_1a)
-          │       └── Students (role: student, scope: org:class_1a)
-          │             │
-          │             └── parent_child relationship
-          │                       │
-          │                       ▼
-          │                   Parents (role: guardian)
-          │
-          └─── Class 1-B
+```mermaid
+flowchart TB
+    School["School<br/>id: org_school"]
+
+    G1["Grade 1"]
+    G2["Grade 2"]
+    G3["Grade 3"]
+
+    School --> G1
+    School --> G2
+    School --> G3
+
+    C1A["Class 1-A"]
+    C1B["Class 1-B"]
+    G1 --> C1A
+    G1 --> C1B
+
+    Teacher["Teacher<br/>role: teacher<br/>scope: org:class_1a"]
+    Students["Students<br/>role: student<br/>scope: org:class_1a"]
+    Parents["Parents<br/>role: guardian"]
+
+    C1A --> Teacher
+    C1A --> Students
+    Students -->|parent_child| Parents
 ```
 
 **ポリシー例**:
@@ -441,32 +422,27 @@
 - **購入者 山田**: 自分の注文履歴閲覧、購入
 
 **データモデル**:
-```
-┌──────────────────────────────────────────────────┐
-│              Marketplace Platform                  │
-│  - PlatformAdmin (role: system_admin)              │
-└──────────────────────────────────────────────────┘
-                        │
-        ┌───────────────┴───────────────┐
-        ▼                               ▼
-┌──────────────────┐          ┌──────────────────┐
-│    Shop A        │          │    Shop B        │
-│  (org: shop_a)   │          │  (org: shop_b)   │
-├──────────────────┤          ├──────────────────┤
-│ ShopOwner        │          │ ShopOwner        │
-│ (shop_admin)     │          │ (shop_admin)     │
-├──────────────────┤          ├──────────────────┤
-│ Staff1, Staff2   │          │ Staff1           │
-│ (shop_staff)     │          │ (shop_staff)     │
-└──────────────────┘          └──────────────────┘
-                        │
-                        ▼
-              ┌─────────────────┐
-              │    Customers    │
-              │ (role: buyer)   │
-              │ - can purchase  │
-              │   from any shop │
-              └─────────────────┘
+```mermaid
+flowchart TB
+    Platform["Marketplace Platform<br/>PlatformAdmin (role: system_admin)"]
+
+    subgraph ShopA["Shop A (org: shop_a)"]
+        SA_Owner["ShopOwner<br/>(shop_admin)"]
+        SA_Staff["Staff1, Staff2<br/>(shop_staff)"]
+    end
+
+    subgraph ShopB["Shop B (org: shop_b)"]
+        SB_Owner["ShopOwner<br/>(shop_admin)"]
+        SB_Staff["Staff1<br/>(shop_staff)"]
+    end
+
+    Platform --> ShopA
+    Platform --> ShopB
+
+    Customers["Customers<br/>(role: buyer)<br/>- can purchase from any shop"]
+
+    ShopA -.-> Customers
+    ShopB -.-> Customers
 ```
 
 **ポリシー例**:
@@ -521,28 +497,24 @@
 - **IoTデバイス**: センサーデータの送信、コマンドの受信
 
 **データモデル**:
-```
-┌──────────────────────────────────────────────────┐
-│              IoT Platform                          │
-│  - SystemAdmin (role: system_admin)                │
-└──────────────────────────────────────────────────┘
-                        │
-        ┌───────────────┴───────────────┐
-        ▼                               ▼
-┌──────────────────┐          ┌──────────────────┐
-│ Factory A        │          │ Factory B        │
-│ (org: factory_a) │          │ (org: factory_b) │
-├──────────────────┤          ├──────────────────┤
-│ FacilityMgr      │          │ FacilityMgr      │
-│ (facility_admin) │          │ (facility_admin) │
-├──────────────────┤          ├──────────────────┤
-│ Operators        │          │ Operators        │
-│ (operator)       │          │ (operator)       │
-├──────────────────┤          ├──────────────────┤
-│ Devices (M2M)    │          │ Devices (M2M)    │
-│ - Sensor1        │          │ - Sensor1        │
-│ - Sensor2        │          │ - Sensor2        │
-└──────────────────┘          └──────────────────┘
+```mermaid
+flowchart TB
+    Platform["IoT Platform<br/>SystemAdmin (role: system_admin)"]
+
+    subgraph FactoryA["Factory A (org: factory_a)"]
+        FA_Mgr["FacilityMgr<br/>(facility_admin)"]
+        FA_Ops["Operators<br/>(operator)"]
+        FA_Dev["Devices (M2M)<br/>- Sensor1<br/>- Sensor2"]
+    end
+
+    subgraph FactoryB["Factory B (org: factory_b)"]
+        FB_Mgr["FacilityMgr<br/>(facility_admin)"]
+        FB_Ops["Operators<br/>(operator)"]
+        FB_Dev["Devices (M2M)<br/>- Sensor1<br/>- Sensor2"]
+    end
+
+    Platform --> FactoryA
+    Platform --> FactoryB
 ```
 
 **ポリシー例**:
@@ -602,28 +574,23 @@
 - **監査担当 鈴木**: 全部署の監査ログ閲覧（読み取り専用）
 
 **データモデル**:
-```
-┌──────────────────────────────────────────────────┐
-│              Government Agency                     │
-│  - Security Level: High                            │
-└──────────────────────────────────────────────────┘
-                        │
-        ┌───────────────┼───────────────┐
-        ▼               ▼               ▼
-┌────────────┐   ┌────────────┐   ┌────────────┐
-│ Tax Dept   │   │ Welfare    │   │ Civil      │
-│            │   │ Dept       │   │ Registry   │
-├────────────┤   ├────────────┤   ├────────────┤
-│ Clearance: │   │ Clearance: │   │ Clearance: │
-│ Level 2    │   │ Level 3    │   │ Level 2    │
-└────────────┘   └────────────┘   └────────────┘
-        │               │               │
-        ▼               ▼               ▼
-┌────────────────────────────────────────────────┐
-│                   Citizens                       │
-│  - Can access own records across departments     │
-│  - Cannot access other citizens' data            │
-└────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    Agency["Government Agency<br/>Security Level: High"]
+
+    Tax["Tax Dept<br/>Clearance: Level 2"]
+    Welfare["Welfare Dept<br/>Clearance: Level 3"]
+    Civil["Civil Registry<br/>Clearance: Level 2"]
+
+    Agency --> Tax
+    Agency --> Welfare
+    Agency --> Civil
+
+    Citizens["Citizens<br/>- Can access own records across departments<br/>- Cannot access other citizens' data"]
+
+    Tax --> Citizens
+    Welfare --> Citizens
+    Civil --> Citizens
 ```
 
 **ポリシー例**:
@@ -666,24 +633,22 @@
 - **コンプライアンスオフィサー 山田**: 高額取引の監視、AML対応
 
 **データモデル**:
-```
-┌──────────────────────────────────────────────────┐
-│           Payment Platform                         │
-│  - Compliance (role: compliance_officer)           │
-│  - Risk Team (role: risk_analyst)                  │
-└──────────────────────────────────────────────────┘
-                        │
-        ┌───────────────┴───────────────┐
-        ▼                               ▼
-┌──────────────────┐          ┌──────────────────┐
-│  Merchant A      │          │  Payment         │
-│  (加盟店)         │          │  Provider X      │
-├──────────────────┤          │  (決済代行)       │
-│ Owner            │          ├──────────────────┤
-│ Staff            │          │ API Access       │
-│ (transaction     │◀─────────│ (role: psp)      │
-│  limits apply)   │          └──────────────────┘
-└──────────────────┘
+```mermaid
+flowchart TB
+    Platform["Payment Platform<br/>- Compliance (role: compliance_officer)<br/>- Risk Team (role: risk_analyst)"]
+
+    subgraph MerchantA["Merchant A (加盟店)"]
+        MA_Owner["Owner"]
+        MA_Staff["Staff<br/>(transaction limits apply)"]
+    end
+
+    subgraph PSP["Payment Provider X (決済代行)"]
+        PSP_API["API Access<br/>(role: psp)"]
+    end
+
+    Platform --> MerchantA
+    Platform --> PSP
+    PSP_API -->|"processes payments"| MerchantA
 ```
 
 **ポリシー例**:
@@ -742,29 +707,23 @@
 - **有料会員 鈴木**: 全コンテンツ閲覧＋ダウンロード
 
 **データモデル**:
-```
-┌──────────────────────────────────────────────────┐
-│              Media Platform                        │
-│  - Editor-in-Chief (role: chief_editor)            │
-└──────────────────────────────────────────────────┘
-                        │
-        ┌───────────────┼───────────────┐
-        ▼               ▼               ▼
-┌────────────┐   ┌────────────┐   ┌────────────┐
-│ Tech       │   │ Business   │   │ Lifestyle  │
-│ Category   │   │ Category   │   │ Category   │
-├────────────┤   ├────────────┤   ├────────────┤
-│ Editors    │   │ Editors    │   │ Editors    │
-│ Authors    │   │ Authors    │   │ Authors    │
-└────────────┘   └────────────┘   └────────────┘
-                        │
-                        ▼
-              ┌─────────────────┐
-              │    Readers      │
-              │ - Free (free)   │
-              │ - Premium       │
-              │   (premium)     │
-              └─────────────────┘
+```mermaid
+flowchart TB
+    Platform["Media Platform<br/>Editor-in-Chief (role: chief_editor)"]
+
+    Tech["Tech Category<br/>Editors / Authors"]
+    Biz["Business Category<br/>Editors / Authors"]
+    Life["Lifestyle Category<br/>Editors / Authors"]
+
+    Platform --> Tech
+    Platform --> Biz
+    Platform --> Life
+
+    Readers["Readers<br/>- Free (free plan)<br/>- Premium (premium plan)"]
+
+    Tech --> Readers
+    Biz --> Readers
+    Life --> Readers
 ```
 
 **ポリシー例**:
@@ -817,39 +776,27 @@
 - **プラットフォーム管理者**: AIエージェントの権限ポリシー管理
 
 **データモデル**:
-```
-┌──────────────────────────────────────────────────┐
-│              MCP Platform                          │
-│  - PlatformAdmin (role: system_admin)              │
-│  - Policy: AI action limits                        │
-└──────────────────────────────────────────────────┘
-                        │
-        ┌───────────────┼───────────────┐
-        ▼               ▼               ▼
-┌────────────┐   ┌────────────┐   ┌────────────┐
-│ Calendar   │   │ Email      │   │ File       │
-│ MCP Server │   │ MCP Server │   │ MCP Server │
-└────────────┘   └────────────┘   └────────────┘
-        ▲               ▲               ▲
-        │               │               │
-        └───────────────┼───────────────┘
-                        │
-              ┌─────────────────┐
-              │   AI Agent      │
-              │  (delegated by  │
-              │   end user)     │
-              └─────────────────┘
-                        ▲
-                        │ delegate relationship
-                        │ constraints: {
-                        │   "actions": ["calendar.read", "calendar.write"],
-                        │   "expires_at": "2025-12-31"
-                        │ }
-                        │
-              ┌─────────────────┐
-              │   End User      │
-              │  (role: user)   │
-              └─────────────────┘
+```mermaid
+flowchart TB
+    Platform["MCP Platform<br/>PlatformAdmin (role: system_admin)<br/>Policy: AI action limits"]
+
+    Calendar["Calendar<br/>MCP Server"]
+    Email["Email<br/>MCP Server"]
+    File["File<br/>MCP Server"]
+
+    Platform --> Calendar
+    Platform --> Email
+    Platform --> File
+
+    Agent["AI Agent<br/>(delegated by end user)"]
+
+    Agent --> Calendar
+    Agent --> Email
+    Agent --> File
+
+    User["End User<br/>(role: user)"]
+
+    User -->|"delegate relationship<br/>constraints: {<br/>actions: [calendar.read, calendar.write],<br/>expires_at: '2025-12-31'<br/>}"| Agent
 ```
 
 **ポリシー例**:
@@ -910,8 +857,15 @@
 ### Pattern A: OIDC × VC Verifier × ABAC (Zero-Trust Integration)
 
 **フロー**:
-```
-Client → API Gateway → OIDC Session Check → VC Verification → ABAC Decision → Allow/Deny
+```mermaid
+flowchart LR
+    Client["Client"]
+    Gateway["API Gateway"]
+    OIDC["OIDC Session Check"]
+    VC["VC Verification"]
+    ABAC["ABAC Decision"]
+    Result["Allow/Deny"]
+    Client --> Gateway --> OIDC --> VC --> ABAC --> Result
 ```
 
 #### Persona A-1: Zero-Trust Banking API
@@ -932,26 +886,27 @@ Client → API Gateway → OIDC Session Check → VC Verification → ABAC Decis
 5. Access granted → Loan status displayed
 
 **データモデル**:
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   OIDC Login    │────▶│  VC Verifier    │────▶│  ABAC Engine    │
-│  (Passkey)      │     │                 │     │                 │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-         │                      │                       │
-         │                      ▼                       │
-         │              ┌─────────────────┐             │
-         │              │  Presented VCs  │             │
-         │              │  - Department   │             │
-         │              │  - Position     │             │
-         │              │  - Clearance    │             │
-         │              └─────────────────┘             │
-         │                                              │
-         └──────────────────────┬───────────────────────┘
-                                ▼
-                     ┌─────────────────────┐
-                     │  Access Decision    │
-                     │  allow + obligations│
-                     └─────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Auth["認証フロー"]
+        OIDC["OIDC Login<br/>(Passkey)"]
+        Verifier["VC Verifier"]
+        ABAC["ABAC Engine"]
+        OIDC --> Verifier --> ABAC
+    end
+
+    subgraph VCs["Presented VCs"]
+        Dept["Department VC"]
+        Pos["Position VC"]
+        Clear["Clearance VC"]
+    end
+
+    Verifier --> VCs
+
+    OIDC --> Decision
+    ABAC --> Decision
+
+    Decision["Access Decision<br/>allow + obligations"]
 ```
 
 **ポリシー例**:
@@ -1023,8 +978,13 @@ Client → API Gateway → OIDC Session Check → VC Verification → ABAC Decis
 ### Pattern B: OIDC AuthN + VC AuthZ
 
 **フロー**:
-```
-OIDC Login → User Presents VC → Verifier Validates → ABAC Determines Access
+```mermaid
+flowchart LR
+    Login["OIDC Login"]
+    Present["User Presents VC"]
+    Validate["Verifier Validates"]
+    ABAC["ABAC Determines Access"]
+    Login --> Present --> Validate --> ABAC
 ```
 
 #### Persona B-1: Medical License for EHR Access
@@ -1116,8 +1076,13 @@ OIDC Login → User Presents VC → Verifier Validates → ABAC Determines Acces
 ### Pattern C: OIDC OP as Issuer (VCの発行者としてのOP)
 
 **フロー**:
-```
-User OIDC Login → Meets Criteria → OP Issues VC → Stored in User's Wallet
+```mermaid
+flowchart LR
+    Login["User OIDC Login"]
+    Criteria["Meets Criteria"]
+    Issue["OP Issues VC"]
+    Store["Stored in User's Wallet"]
+    Login --> Criteria --> Issue --> Store
 ```
 
 #### Persona C-1: KYC Completion VC Issuance

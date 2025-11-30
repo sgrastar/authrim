@@ -36,108 +36,76 @@ Authrimの責務を明確に分離する：
 
 ### Layer Model
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           Layer 5: Token & API                              │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐ │
-│  │    ID Token     │  │  Access Token   │  │    /authz/evaluate API      │ │
-│  │ (UI/ログイン用)   │  │ (API/Backend用) │  │     (PDP REST API)          │ │
-│  └─────────────────┘  └─────────────────┘  └─────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      Layer 4: ABAC / Policy Layer                           │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                         Policy Engine                                │   │
-│  │   Subject + Resource + Action + Context → allow/deny + obligations   │   │
-│  │                                                                      │   │
-│  │   ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐ │   │
-│  │   │   Roles      │  │ Relationships │  │   Verified Attributes    │ │   │
-│  │   │   (RBAC)     │  │   (ReBAC)     │  │   (VC/DID → ABAC)        │ │   │
-│  │   └──────────────┘  └──────────────┘  └───────────────────────────┘ │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Layer 3: RBAC Layer                                 │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │   roles              role_assignments                                │   │
-│  │   - system_admin     - subject_id, role_id                           │   │
-│  │   - distributor_admin - scope_type: global / org / resource          │   │
-│  │   - org_admin        - scope_target: "org:org_123"                   │   │
-│  │   - end_user         - expires_at (optional)                         │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      Layer 2: Relationship Layer                            │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │   relationships                                                      │   │
-│  │   - parent_child: 親子アカウント                                       │   │
-│  │   - guardian: 後見人関係                                               │   │
-│  │   - delegate: 委任アクセス                                             │   │
-│  │   - manager: 上司・部下関係                                            │   │
-│  │   - reseller_of: 販社↔顧客企業（B2B2C）                                │   │
-│  │                                                                      │   │
-│  │   subject_org_membership                                             │   │
-│  │   - subject → organization (member/admin/owner)                      │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                       Layer 1: Identity Layer                               │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │   subjects (users)                                                   │   │
-│  │   - 通常アカウント（email/passkey）                                     │   │
-│  │   - 子アカウント（メールなしでも可）                                     │   │
-│  │                                                                      │   │
-│  │   subject_identifiers (Future: Phase 3)                              │   │
-│  │   - type: email, did, device_id                                      │   │
-│  │   - value: "did:key:...", "user@example.com"                         │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph L5["Layer 5: Token & API"]
+        IDToken["ID Token<br/>(UI/ログイン用)"]
+        AccessToken["Access Token<br/>(API/Backend用)"]
+        AuthzAPI["/authz/evaluate API<br/>(PDP REST API)"]
+    end
+
+    subgraph L4["Layer 4: ABAC / Policy Layer"]
+        subgraph PolicyEngine["Policy Engine"]
+            PE_DESC["Subject + Resource + Action + Context → allow/deny + obligations"]
+            Roles["Roles<br/>(RBAC)"]
+            Relationships["Relationships<br/>(ReBAC)"]
+            VerifiedAttr["Verified Attributes<br/>(VC/DID → ABAC)"]
+        end
+    end
+
+    subgraph L3["Layer 3: RBAC Layer"]
+        RolesTable["roles<br/>- system_admin<br/>- distributor_admin<br/>- org_admin<br/>- end_user"]
+        RoleAssign["role_assignments<br/>- subject_id, role_id<br/>- scope_type: global/org/resource<br/>- scope_target: 'org:org_123'<br/>- expires_at (optional)"]
+    end
+
+    subgraph L2["Layer 2: Relationship Layer"]
+        RelTable["relationships<br/>- parent_child: 親子アカウント<br/>- guardian: 後見人関係<br/>- delegate: 委任アクセス<br/>- manager: 上司・部下関係<br/>- reseller_of: 販社↔顧客企業"]
+        OrgMember["subject_org_membership<br/>- subject → organization<br/>- member/admin/owner"]
+    end
+
+    subgraph L1["Layer 1: Identity Layer"]
+        Subjects["subjects (users)<br/>- 通常アカウント（email/passkey）<br/>- 子アカウント（メールなしでも可）"]
+        SubjectID["subject_identifiers (Future: Phase 3)<br/>- type: email, did, device_id<br/>- value: 'did:key:...', 'user@example.com'"]
+    end
+
+    L5 --> L4
+    L4 --> L3
+    L3 --> L2
+    L2 --> L1
 ```
 
 ### System Architecture (Current Implementation)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Client Application                        │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Authrim OIDC Provider                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
-│  │   op-auth    │  │ op-management│  │     op-token         │  │
-│  │  (consent)   │  │ (admin API)  │  │ (token issuance)     │  │
-│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
-│           │                │                    │               │
-│           └────────────────┼────────────────────┘               │
-│                            ▼                                     │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │                   Policy Service                          │   │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐   │   │
-│  │  │ policy-core │  │   Engine    │  │ Role Checker    │   │   │
-│  │  │   (types)   │  │  (rules)    │  │ (utilities)     │   │   │
-│  │  └─────────────┘  └─────────────┘  └─────────────────┘   │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                         D1 Database                              │
-│  ┌────────────┐ ┌────────────────┐ ┌──────────────────────────┐ │
-│  │   roles    │ │ role_assignments│ │     organizations       │ │
-│  └────────────┘ └────────────────┘ └──────────────────────────┘ │
-│  ┌────────────────────────┐ ┌────────────────────────────────┐  │
-│  │ subject_org_membership │ │       relationships            │  │
-│  └────────────────────────┘ └────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    Client["Client Application"]
+
+    subgraph Authrim["Authrim OIDC Provider"]
+        OpAuth["op-auth<br/>(consent)"]
+        OpMgmt["op-management<br/>(admin API)"]
+        OpToken["op-token<br/>(token issuance)"]
+
+        subgraph PolicySvc["Policy Service"]
+            PolicyCore["policy-core<br/>(types)"]
+            Engine["Engine<br/>(rules)"]
+            RoleChecker["Role Checker<br/>(utilities)"]
+        end
+
+        OpAuth --> PolicySvc
+        OpMgmt --> PolicySvc
+        OpToken --> PolicySvc
+    end
+
+    subgraph D1["D1 Database"]
+        Roles[(roles)]
+        RoleAssignments[(role_assignments)]
+        Orgs[(organizations)]
+        OrgMembership[(subject_org_membership)]
+        Rels[(relationships)]
+    end
+
+    Client --> Authrim
+    Authrim --> D1
 ```
 
 ---
@@ -663,11 +631,16 @@ CREATE TABLE verified_attributes (
 - Hierarchy validation (no cycles)
 
 **Example**:
-```
-system_admin (level 100)
-    └── distributor_admin (level 50)
-            └── org_admin (level 30)
-                    └── end_user (level 0)
+```mermaid
+graph TB
+    SA["system_admin (level 100)"]
+    DA["distributor_admin (level 50)"]
+    OA["org_admin (level 30)"]
+    EU["end_user (level 0)"]
+
+    SA --> DA
+    DA --> OA
+    OA --> EU
 ```
 
 ---

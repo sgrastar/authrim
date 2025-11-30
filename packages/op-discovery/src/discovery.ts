@@ -68,9 +68,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     backchannel_token_delivery_modes_supported: ['poll', 'ping', 'push'],
     backchannel_authentication_request_signing_alg_values_supported: ['RS256', 'ES256'],
     backchannel_user_code_parameter_supported: true,
-    // Dynamic response_types based on OIDC config
     // Dynamic OP certification requires all hybrid and implicit response types
-    response_types_supported: oidcConfig.responseTypesSupported || [
+    // Note: These are mandatory for Dynamic OP certification, not configurable
+    response_types_supported: [
       'code',
       'id_token',
       'id_token token',

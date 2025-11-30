@@ -291,6 +291,9 @@ export interface ClientData {
   // OIDC-specific
   subject_type?: 'public' | 'pairwise';
   sector_identifier_uri?: string;
+  // Client authentication (RFC 7591, RFC 7523)
+  jwks?: { keys: Array<Record<string, unknown>> }; // Embedded JWKS
+  jwks_uri?: string; // URI to fetch JWKS
   // Metadata
   created_at: number;
   updated_at: number;
