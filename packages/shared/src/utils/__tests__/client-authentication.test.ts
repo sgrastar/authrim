@@ -718,4 +718,201 @@ describe('Client Authentication', () => {
       expect(result.valid).toBe(true);
     });
   });
+
+  describe('Key ID (kid) Selection', () => {
+    const tokenEndpoint = 'https://op.example.com/token';
+    const clientId = 'test-client';
+
+    /**
+     * Helper to create a client assertion with a specific kid in the header
+     */
+    async function createClientAssertionWithKid(
+      clientId: string,
+      audience: string,
+      keyPair: Awaited<ReturnType<typeof generateKeyPair>>,
+      kid: string
+    ): Promise<string> {
+      const now = Math.floor(Date.now() / 1000);
+
+      return new SignJWT({
+        iss: clientId,
+        sub: clientId,
+        aud: audience,
+        exp: now + 300,
+        iat: now,
+        jti: `jti-${Math.random()}`,
+      })
+        .setProtectedHeader({ alg: 'RS256', kid })
+        .sign(keyPair.privateKey);
+    }
+
+    it('should select key by kid from embedded JWKS', async () => {
+      // Create a JWK with a specific kid
+      const jwkWithKid = { ...publicJwk, kid: 'test-key-1' };
+
+      const client: ClientMetadata = {
+        client_id: clientId,
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks: {
+          keys: [jwkWithKid],
+        },
+      } as ClientMetadata;
+
+      const assertion = await createClientAssertionWithKid(
+        clientId,
+        tokenEndpoint,
+        rsaKeyPair,
+        'test-key-1'
+      );
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client);
+
+      expect(result.valid).toBe(true);
+      expect(result.client_id).toBe(clientId);
+    });
+
+    it('should select correct key from multiple keys in JWKS by kid', async () => {
+      // Generate a second key pair
+      const secondKeyPair = await generateKeyPair('RS256');
+      const secondPublicJwk = await exportJWK(secondKeyPair.publicKey);
+      secondPublicJwk.alg = 'RS256';
+      secondPublicJwk.kid = 'key-2';
+
+      // First key with kid
+      const firstJwk = { ...publicJwk, kid: 'key-1' };
+
+      const client: ClientMetadata = {
+        client_id: clientId,
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks: {
+          keys: [firstJwk, secondPublicJwk], // key-1 is first, key-2 is second
+        },
+      } as ClientMetadata;
+
+      // Sign with second key pair but specify kid: 'key-2'
+      const assertion = await createClientAssertionWithKid(
+        clientId,
+        tokenEndpoint,
+        secondKeyPair,
+        'key-2'
+      );
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client);
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('should fail when kid is specified but not found in JWKS', async () => {
+      const jwkWithKid = { ...publicJwk, kid: 'existing-key' };
+
+      const client: ClientMetadata = {
+        client_id: clientId,
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks: {
+          keys: [jwkWithKid],
+        },
+      } as ClientMetadata;
+
+      const assertion = await createClientAssertionWithKid(
+        clientId,
+        tokenEndpoint,
+        rsaKeyPair,
+        'non-existent-key'
+      );
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client);
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('invalid_client');
+      expect(result.error_description).toContain("No public key found with kid 'non-existent-key'");
+    });
+
+    it('should select key by kid from jwks_uri', async () => {
+      const client: ClientMetadata = {
+        client_id: clientId,
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks_uri: 'https://client.example.com/.well-known/jwks.json',
+      } as ClientMetadata;
+
+      const jwkWithKid = { ...publicJwk, kid: 'remote-key-1' };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ keys: [jwkWithKid] }),
+      });
+
+      const assertion = await createClientAssertionWithKid(
+        clientId,
+        tokenEndpoint,
+        rsaKeyPair,
+        'remote-key-1'
+      );
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client);
+
+      expect(result.valid).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith(client.jwks_uri);
+    });
+
+    it('should use first key when no kid is specified in assertion', async () => {
+      // Create multiple keys but don't specify kid in assertion
+      const secondKeyPair = await generateKeyPair('RS256');
+      const secondPublicJwk = await exportJWK(secondKeyPair.publicKey);
+      secondPublicJwk.alg = 'RS256';
+      secondPublicJwk.kid = 'key-2';
+
+      const firstJwk = { ...publicJwk, kid: 'key-1' };
+
+      const client: ClientMetadata = {
+        client_id: clientId,
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks: {
+          keys: [firstJwk, secondPublicJwk],
+        },
+      } as ClientMetadata;
+
+      // Sign without kid in header (uses first key pair which matches firstJwk)
+      const assertion = await createClientAssertion(clientId, tokenEndpoint);
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client);
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('should fail when kid specified but JWKS has multiple keys without matching kid', async () => {
+      const secondKeyPair = await generateKeyPair('RS256');
+      const secondPublicJwk = await exportJWK(secondKeyPair.publicKey);
+      secondPublicJwk.alg = 'RS256';
+      secondPublicJwk.kid = 'key-2';
+
+      const firstJwk = { ...publicJwk, kid: 'key-1' };
+
+      const client: ClientMetadata = {
+        client_id: clientId,
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks: {
+          keys: [firstJwk, secondPublicJwk],
+        },
+      } as ClientMetadata;
+
+      // Sign with first key but request key-3 which doesn't exist
+      const assertion = await createClientAssertionWithKid(
+        clientId,
+        tokenEndpoint,
+        rsaKeyPair,
+        'key-3'
+      );
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client);
+
+      expect(result.valid).toBe(false);
+      expect(result.error_description).toContain("No public key found with kid 'key-3'");
+    });
+  });
 });

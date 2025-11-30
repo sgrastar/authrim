@@ -144,105 +144,17 @@ Authrimの責務を明確に分離する：
 
 ## Use Cases
 
-### Use Case 1: B2B2C (Distributor/Reseller)
+> **詳細ドキュメント**: [RBAC_USE_CASES.md](./RBAC_USE_CASES.md)
+>
+> ユースケースの詳細（12種類のRBACユースケース + DID/VC連携ユースケース）は、上記ドキュメントに移行しました。
 
-**シナリオ**:
-- エンドユーザーと販社が同じID基盤（Authrim）でログイン
-- 一般エンドユーザー画面と販社向け管理画面は完全に別UI/権限
-- 販社ユーザーは「自分が担当している顧客」だけ閲覧可
+### サマリー
 
-**データモデル**:
-```
-┌──────────────────┐          ┌──────────────────┐
-│   Distributor    │          │  Customer Org    │
-│   Organization   │          │  (End Customer)  │
-│                  │          │                  │
-│  - id: org_dist1 │──reseller_of──▶│  - id: org_cust1│
-│  - type:reseller │          │  - type:customer │
-└──────────────────┘          └──────────────────┘
-        │                              │
-        │ member_of                    │ member_of
-        ▼                              ▼
-┌──────────────────┐          ┌──────────────────┐
-│  Reseller Staff  │          │   End Customer   │
-│  - role:         │          │   User           │
-│    reseller_staff│          │  - role: end_user│
-└──────────────────┘          └──────────────────┘
-```
-
-**Policy Example** (JSON DSL):
-```json
-{
-  "id": "reseller-can-view-assigned-customers",
-  "description": "販社スタッフは担当顧客企業のユーザーのみ閲覧可能",
-  "effect": "allow",
-  "conditions": [
-    { "type": "has_role", "params": { "role": "reseller_staff" } },
-    { "type": "action_is", "params": { "action": "customer.read" } },
-    { "type": "relationship_exists", "params": {
-        "relation": "reseller_of",
-        "from_org": "${subject.org_id}",
-        "to_org": "${resource.org_id}"
-    }}
-  ]
-}
-```
-
----
-
-### Use Case 2: Parent-Child Accounts (Family)
-
-**シナリオ**:
-- 親が子どものアカウントを作成＆管理
-- 親は子の情報を編集できるが、他人の子は無理
-- 子が成人したら自分で管理権限を持つ（親から権限を引き継ぐ）
-
-**データモデル**:
-```
-┌──────────────────┐
-│     Parent       │
-│  - id: user_p1   │
-│  - role: parent  │
-└────────┬─────────┘
-         │
-         │ parent_child (relationship)
-         │ constraints: {
-         │   "can_edit_profile": true,
-         │   "expires_at": "2030-01-01"
-         │ }
-         ▼
-┌──────────────────┐
-│     Child        │
-│  - id: user_c1   │
-│  - role: child   │
-│  - email: null   │
-└──────────────────┘
-```
-
-**Policy Example**:
-```json
-{
-  "id": "parent-can-edit-child-profile",
-  "description": "親は子のプロフィールを編集可能（有効期限内のみ）",
-  "effect": "allow",
-  "conditions": [
-    { "type": "has_relationship", "params": {
-        "relation": "parent_child",
-        "to_subject": "${resource.owner_id}",
-        "constraint_check": {
-          "can_edit_profile": true,
-          "expires_at": { "after": "now" }
-        }
-    }},
-    { "type": "action_is", "params": { "action": "user.profile.update" } }
-  ]
-}
-```
-
-**子が成人した場合の対応**:
-1. `parent_child` 関係の `expires_at` を過去日に設定
-2. または `can_edit_profile` を `false` に変更
-3. 子本人に `role: self_admin` を付与
+| Category | Use Cases | Status |
+|----------|-----------|--------|
+| Phase 1実装済み | B2B2C (Distributor), Parent-Child (Family) | ✅ |
+| 一般的RBAC | Enterprise SSO, Multi-tenant SaaS, Healthcare, Education, E-commerce, IoT, Government, Fintech, Media, AI Agent/MCP | 📋 |
+| 将来拡張（VC/DID） | Zero-Trust, Medical License VC, Age Verification, KYC VC, Membership VC | 🔮 |
 
 ---
 
@@ -959,3 +871,4 @@ packages/
 |------|---------|--------|---------|
 | 2025-11-30 | 1.0 | Authrim Team | Initial version with Phase 1 complete |
 | 2025-11-30 | 1.1 | Authrim Team | Added use cases, token design, DID/VC phases |
+| 2025-11-30 | 1.2 | Authrim Team | Extracted Use Cases to separate document (USE_CASES.md) |

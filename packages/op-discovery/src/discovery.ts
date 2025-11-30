@@ -155,6 +155,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     id_token_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
     userinfo_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
     userinfo_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
+    // UserInfo signing algorithm support (none = unsigned JSON, RS256 = signed JWT)
+    userinfo_signing_alg_values_supported: ['none', 'RS256'],
     // OIDC Core: Additional metadata
     claim_types_supported: ['normal'],
     claims_parameter_supported: true,
