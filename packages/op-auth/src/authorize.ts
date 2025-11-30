@@ -8,6 +8,10 @@ import {
   validateState,
   validateNonce,
   getClient,
+  getAuthCodeShardIndex,
+  createShardedAuthCode,
+  buildAuthCodeShardInstanceName,
+  DEFAULT_CODE_SHARD_COUNT,
 } from '@authrim/shared';
 import {
   generateSecureRandomString,
@@ -1544,11 +1548,28 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Generate authorization code if needed (for code flow and hybrid flows)
   let code: string | undefined;
   if (includesCode) {
-    code = generateSecureRandomString(96); // ~128 base64url chars
+    const randomCode = generateSecureRandomString(96); // ~128 base64url chars
+
+    // Determine shard count from environment (default: 64, set to 0 to disable sharding)
+    const shardCount = c.env.AUTHRIM_CODE_SHARDS
+      ? parseInt(c.env.AUTHRIM_CODE_SHARDS, 10)
+      : DEFAULT_CODE_SHARD_COUNT;
+
+    // Calculate shard index randomly and create sharded code
+    let authCodeStoreId: DurableObjectId;
+    if (shardCount > 0) {
+      const shardIndex = getAuthCodeShardIndex(shardCount);
+      code = createShardedAuthCode(shardIndex, randomCode);
+      const instanceName = buildAuthCodeShardInstanceName(shardIndex);
+      authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
+    } else {
+      // Sharding disabled - use legacy 'global' instance
+      code = randomCode;
+      authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
+    }
 
     // Store authorization code using AuthorizationCodeStore Durable Object
     try {
-      const authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
       const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
 
       const storeResponse = await authCodeStore.fetch(

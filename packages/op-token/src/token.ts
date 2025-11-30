@@ -5,6 +5,8 @@ import {
   validateAuthCode,
   validateClientId,
   validateRedirectUri,
+  parseShardedAuthCode,
+  buildAuthCodeShardInstanceName,
 } from '@authrim/shared';
 import {
   revokeToken,
@@ -431,7 +433,17 @@ async function handleAuthorizationCodeGrant(
 
   // Consume authorization code using AuthorizationCodeStore Durable Object
   // This replaces KV-based getAuthCode() with strong consistency guarantees
-  const authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
+  // Parse shard index from code to route to the correct DO instance
+  const shardInfo = parseShardedAuthCode(validCode);
+  let authCodeStoreId: DurableObjectId;
+  if (shardInfo) {
+    // Sharded code format: {shardIndex}_{opaqueCode}
+    const instanceName = buildAuthCodeShardInstanceName(shardInfo.shardIndex);
+    authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
+  } else {
+    // Legacy format (no shard prefix) - use 'global' instance
+    authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
+  }
   const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
 
   let authCodeData;
@@ -896,25 +908,11 @@ async function handleAuthorizationCodeGrant(
   // Authorization code has been consumed and marked as used by AuthCodeStore DO
   // Per RFC 6749 Section 4.1.2: Authorization codes are single-use
   // The DO guarantees atomic consumption and replay attack detection
-
-  // Register issued token JTIs with AuthCodeStore for replay attack revocation
-  // If the authorization code is reused, these tokens will be revoked
-  try {
-    await authCodeStore.fetch(
-      new Request(`https://auth-code-store/code/${encodeURIComponent(validCode)}/tokens`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          accessTokenJti: tokenJti,
-          refreshTokenJti: refreshTokenJti,
-        }),
-      })
-    );
-  } catch (error) {
-    // Non-fatal: log but don't fail token issuance
-    // The tokens will still be issued, but won't be revoked on code replay
-    console.error('[Security] Failed to register token JTIs for replay protection:', error);
-  }
+  //
+  // Note: Token JTI registration for replay attack revocation has been removed
+  // as a DO hop optimization. The consume() call now handles code invalidation
+  // atomically, which is the primary security guarantee. Token revocation on
+  // replay is a secondary feature that adds latency for rare attack scenarios.
 
   // Return token response
   c.header('Cache-Control', 'no-store');

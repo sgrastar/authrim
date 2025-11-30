@@ -93,3 +93,74 @@ export function buildDOInstanceNameForTenant(tenantId: string, resourceType: str
 export function buildKVKeyForTenant(tenantId: string, prefix: string, key: string): string {
   return `tenant:${tenantId}:${prefix}:${key}`;
 }
+
+/**
+ * Default shard count for authorization code sharding.
+ * Can be overridden via AUTHRIM_CODE_SHARDS environment variable.
+ */
+export const DEFAULT_CODE_SHARD_COUNT = 64;
+
+/**
+ * Calculate shard index for authorization codes.
+ * Uses random selection to distribute load across all shards.
+ *
+ * Note: Previously used user ID hash, but this caused all codes from a single user
+ * to be on the same shard, defeating the purpose of sharding for load testing.
+ *
+ * @param shardCount - Number of shards (default: 64)
+ * @returns Shard index (0 to shardCount - 1)
+ */
+export function getAuthCodeShardIndex(shardCount: number = DEFAULT_CODE_SHARD_COUNT): number {
+  // Random shard selection for even distribution across all shards
+  return Math.floor(Math.random() * shardCount);
+}
+
+/**
+ * Create a sharded authorization code.
+ * Format: {shardIndex}_{randomCode}
+ *
+ * @param shardIndex - Shard index (0 to shardCount - 1)
+ * @param randomCode - Random opaque code string
+ * @returns Sharded authorization code
+ */
+export function createShardedAuthCode(shardIndex: number, randomCode: string): string {
+  return `${shardIndex}_${randomCode}`;
+}
+
+/**
+ * Parse a sharded authorization code.
+ * Extracts shard index and opaque code from the combined format.
+ *
+ * @param code - Sharded authorization code (format: {shardIndex}_{randomCode})
+ * @returns Object containing shardIndex and opaqueCode, or null if invalid format
+ */
+export function parseShardedAuthCode(code: string): { shardIndex: number; opaqueCode: string } | null {
+  const underscorePos = code.indexOf('_');
+  if (underscorePos === -1) {
+    // Legacy format (no shard prefix) - fallback to global shard
+    return null;
+  }
+
+  const shardPart = code.substring(0, underscorePos);
+  const opaquePart = code.substring(underscorePos + 1);
+
+  const shardIndex = parseInt(shardPart, 10);
+  if (isNaN(shardIndex) || shardIndex < 0) {
+    return null;
+  }
+
+  return {
+    shardIndex,
+    opaqueCode: opaquePart,
+  };
+}
+
+/**
+ * Build a sharded Durable Object instance name for auth codes.
+ *
+ * @param shardIndex - Shard index
+ * @returns DO instance name for the shard
+ */
+export function buildAuthCodeShardInstanceName(shardIndex: number): string {
+  return `tenant:${DEFAULT_TENANT_ID}:auth-code:shard-${shardIndex}`;
+}

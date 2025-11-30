@@ -45,6 +45,9 @@ export interface Env {
   REFRESH_TOKEN_EXPIRY: string;
   REFRESH_TOKEN_ROTATION_ENABLED?: string; // "false" to disable token rotation (for load testing only!)
   ALLOW_HTTP_REDIRECT?: string; // Allow http:// redirect URIs for development
+  MAX_CODES_PER_USER?: string; // Max authorization codes per user (default: 100, increase for load testing)
+  AUTH_CODE_TTL?: string; // Authorization code TTL in seconds (default: 60, increase for load testing)
+  AUTHRIM_CODE_SHARDS?: string; // Number of auth code DO shards (default: 64, set to 0 to disable sharding)
 
   // Dynamic Client Registration settings
   OPEN_REGISTRATION?: string; // "true" to allow registration without Initial Access Token

@@ -257,16 +257,29 @@ async function main() {
   const authCodes = [];
   const refreshTokens = [];
 
+  // 遅延時間（ms）- サーバー負荷を軽減
+  const DELAY_MS = Number.parseInt(process.env.SEED_DELAY || '100', 10);
+  const MAX_RETRIES = 3;
+
   for (let i = 0; i < AUTH_CODE_COUNT; i++) {
-    try {
-      const authz = await fetchAuthorizationCode();
-      authCodes.push(authz);
-      if ((i + 1) % 20 === 0)
-        console.log(`  collected ${i + 1}/${AUTH_CODE_COUNT} authorization codes`);
-      await new Promise((r) => setTimeout(r, 50));
-    } catch (err) {
-      console.error(`❌ authorize failed (#${i + 1}): ${err.message}`);
+    let success = false;
+    for (let retry = 0; retry < MAX_RETRIES && !success; retry++) {
+      try {
+        const authz = await fetchAuthorizationCode();
+        authCodes.push(authz);
+        success = true;
+        if ((i + 1) % 50 === 0)
+          console.log(`  collected ${i + 1}/${AUTH_CODE_COUNT} authorization codes`);
+      } catch (err) {
+        if (retry < MAX_RETRIES - 1) {
+          // リトライ前に少し待つ
+          await new Promise((r) => setTimeout(r, 500));
+        } else {
+          console.error(`❌ authorize failed (#${i + 1}): ${err.message}`);
+        }
+      }
     }
+    await new Promise((r) => setTimeout(r, DELAY_MS));
   }
 
   for (let i = 0; i < REFRESH_COUNT; i++) {
