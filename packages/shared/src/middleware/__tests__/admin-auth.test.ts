@@ -176,17 +176,22 @@ describe('adminAuthMiddleware', () => {
               }),
             };
           }
-          if (query.includes('user_roles') && query.includes('role = ?')) {
-            return {
-              bind: vi.fn().mockReturnThis(),
-              first: vi.fn().mockResolvedValue({ role: 'admin' }),
-            };
-          }
-          if (query.includes('user_roles')) {
+          // role_assignments JOIN roles query
+          if (query.includes('role_assignments')) {
             return {
               bind: vi.fn().mockReturnThis(),
               all: vi.fn().mockResolvedValue({
-                results: [{ role: 'admin' }, { role: 'user' }],
+                results: [{ name: 'admin' }, { name: 'end_user' }],
+              }),
+            };
+          }
+          // users + subject_org_membership query
+          if (query.includes('users')) {
+            return {
+              bind: vi.fn().mockReturnThis(),
+              first: vi.fn().mockResolvedValue({
+                user_type: 'enterprise_admin',
+                org_id: 'org-123',
               }),
             };
           }
@@ -344,17 +349,22 @@ describe('adminAuthMiddleware', () => {
               }),
             };
           }
-          if (query.includes('user_roles') && query.includes('role = ?')) {
-            return {
-              bind: vi.fn().mockReturnThis(),
-              first: vi.fn().mockResolvedValue({ role: 'admin' }),
-            };
-          }
-          if (query.includes('user_roles')) {
+          // role_assignments JOIN roles query
+          if (query.includes('role_assignments')) {
             return {
               bind: vi.fn().mockReturnThis(),
               all: vi.fn().mockResolvedValue({
-                results: [{ role: 'admin' }],
+                results: [{ name: 'admin' }],
+              }),
+            };
+          }
+          // users + subject_org_membership query
+          if (query.includes('users')) {
+            return {
+              bind: vi.fn().mockReturnThis(),
+              first: vi.fn().mockResolvedValue({
+                user_type: null,
+                org_id: null,
               }),
             };
           }
@@ -463,16 +473,23 @@ describe('adminAuthMiddleware', () => {
               }),
             };
           }
-          if (query.includes('user_roles') && query.includes('role = ?')) {
+          // role_assignments JOIN roles query
+          if (query.includes('role_assignments')) {
             return {
               bind: vi.fn().mockReturnThis(),
-              first: vi.fn().mockResolvedValue({ role: 'admin' }),
+              all: vi.fn().mockResolvedValue({
+                results: [{ name: 'admin' }],
+              }),
             };
           }
-          if (query.includes('user_roles')) {
+          // users + subject_org_membership query
+          if (query.includes('users')) {
             return {
               bind: vi.fn().mockReturnThis(),
-              all: vi.fn().mockResolvedValue({ results: [{ role: 'admin' }] }),
+              first: vi.fn().mockResolvedValue({
+                user_type: null,
+                org_id: null,
+              }),
             };
           }
           return {

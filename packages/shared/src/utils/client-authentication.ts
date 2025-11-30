@@ -69,7 +69,10 @@ export async function validateClientAssertion(
     }
 
     const headerJson = atob(headerBase64.replace(/-/g, '+').replace(/_/g, '/'));
-    const header = JSON.parse(headerJson) as { alg?: string };
+    const header = JSON.parse(headerJson) as { alg?: string; kid?: string };
+
+    // Extract kid for key selection (RFC 7517)
+    const kid = header.kid;
 
     // Reject 'none' algorithm
     if (header.alg === 'none' || !header.alg) {
@@ -142,11 +145,27 @@ export async function validateClientAssertion(
     }
 
     // Step 7: Get public key for signature verification
+    // Helper function to find key by kid (RFC 7517 Section 4.5)
+    const findKeyByKid = (keys: JWK[], targetKid?: string): JWK | undefined => {
+      if (targetKid) {
+        // Find key with matching kid
+        const matchingKey = keys.find((k) => k.kid === targetKid);
+        if (matchingKey) {
+          return matchingKey;
+        }
+        // If kid is specified but not found, return undefined (will trigger error)
+        return undefined;
+      }
+      // If no kid specified, use first key (backward compatibility)
+      return keys[0];
+    };
+
     let publicKey: JWK | null = null;
+    let jwksKeys: JWK[] = [];
 
     if (client.jwks?.keys && client.jwks.keys.length > 0) {
       // Use embedded JWKS
-      publicKey = client.jwks.keys[0] as JWK; // Use first key (TODO: support key selection by kid)
+      jwksKeys = client.jwks.keys as JWK[];
     } else if (client.jwks_uri) {
       // Fetch JWKS from URI
       try {
@@ -156,7 +175,7 @@ export async function validateClientAssertion(
         }
         const jwks = (await response.json()) as { keys: JWK[] };
         if (jwks.keys && jwks.keys.length > 0) {
-          publicKey = jwks.keys[0];
+          jwksKeys = jwks.keys;
         }
       } catch (fetchError) {
         return {
@@ -167,11 +186,21 @@ export async function validateClientAssertion(
       }
     }
 
+    // Find key by kid (or use first key if no kid specified)
+    if (jwksKeys.length > 0) {
+      const foundKey = findKeyByKid(jwksKeys, kid);
+      if (foundKey) {
+        publicKey = foundKey;
+      }
+    }
+
     if (!publicKey) {
       return {
         valid: false,
         error: 'invalid_client',
-        error_description: 'No public key available for client signature verification',
+        error_description: kid
+          ? `No public key found with kid '${kid}' in client JWKS`
+          : 'No public key available for client signature verification',
       };
     }
 

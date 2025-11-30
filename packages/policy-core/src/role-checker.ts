@@ -138,7 +138,7 @@ export function isSystemAdmin(subject: PolicySubject | SubjectRole[]): boolean {
 export function isOrgAdmin(subject: PolicySubject | SubjectRole[], orgId?: string): boolean {
   const options: RoleCheckOptions = {};
   if (orgId) {
-    options.scope = 'organization';
+    options.scope = 'org';
     options.scopeTarget = `org:${orgId}`;
   }
   return hasRole(subject, 'org_admin', options);

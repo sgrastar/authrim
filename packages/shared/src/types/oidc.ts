@@ -47,6 +47,8 @@ export interface OIDCProviderMetadata {
   id_token_encryption_enc_values_supported?: string[];
   userinfo_encryption_alg_values_supported?: string[];
   userinfo_encryption_enc_values_supported?: string[];
+  // UserInfo signing algorithm support
+  userinfo_signing_alg_values_supported?: string[];
   // RFC 8628: Device Authorization Grant
   device_authorization_endpoint?: string;
   // OIDC CIBA (Client Initiated Backchannel Authentication)
