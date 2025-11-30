@@ -45,22 +45,28 @@ export * from './middleware/rate-limit';
 **実装期間**: 1-2日
 **効果**: 中（バンドルサイズ10-15%削減）
 
-```
-packages/
-├── shared-core/          # 全Workerで使用
-│   ├── validation.ts
-│   ├── errors.ts
-│   └── types.ts
-├── shared-crypto/        # 暗号化処理のみ
-│   ├── jwt.ts           # jose依存
-│   ├── jwe.ts
-│   └── key-cache.ts
-├── shared-auth/          # 認証処理のみ
-│   ├── passkey.ts       # @simplewebauthn依存
-│   └── webauthn.ts
-└── shared-middleware/    # ミドルウェア
-    ├── rate-limit.ts
-    └── cors.ts
+```mermaid
+graph TB
+    subgraph packages["packages/"]
+        subgraph core["shared-core/ - 全Workerで使用"]
+            C1["validation.ts"]
+            C2["errors.ts"]
+            C3["types.ts"]
+        end
+        subgraph crypto["shared-crypto/ - 暗号化処理のみ"]
+            CR1["jwt.ts (jose依存)"]
+            CR2["jwe.ts"]
+            CR3["key-cache.ts"]
+        end
+        subgraph auth["shared-auth/ - 認証処理のみ"]
+            A1["passkey.ts (@simplewebauthn依存)"]
+            A2["webauthn.ts"]
+        end
+        subgraph middleware["shared-middleware/ - ミドルウェア"]
+            M1["rate-limit.ts"]
+            M2["cors.ts"]
+        end
+    end
 ```
 
 **各Workerでの使用**:
@@ -96,27 +102,28 @@ import { verifyJWT } from '@authrim/shared-crypto';
 
 #### アーキテクチャ
 
-```
-┌─────────────┐
-│ op-token    │─┐
-└─────────────┘ │
-┌─────────────┐ │
-│ op-auth     │─┤
-└─────────────┘ │      ┌────────────────────┐
-┌─────────────┐ │      │ crypto-service     │
-│ op-management│─┼─────>│                    │
-└─────────────┘ │      │ ┌────────────────┐ │
-┌─────────────┐ │      │ │ JWT Engine     │ │
-│ op-userinfo │─┘      │ │ • sign()       │ │
-└─────────────┘        │ │ • verify()     │ │
-                       │ │ • keyCache     │ │
-                       │ └────────────────┘ │
-                       │ ┌────────────────┐ │
-                       │ │ JWE Engine     │ │
-                       │ │ • encrypt()    │ │
-                       │ │ • decrypt()    │ │
-                       │ └────────────────┘ │
-                       └────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Workers["Workers"]
+        T["op-token"]
+        A["op-auth"]
+        M["op-management"]
+        U["op-userinfo"]
+    end
+
+    subgraph Crypto["crypto-service"]
+        subgraph JWT["JWT Engine"]
+            J1["sign()"]
+            J2["verify()"]
+            J3["keyCache"]
+        end
+        subgraph JWE["JWE Engine"]
+            E1["encrypt()"]
+            E2["decrypt()"]
+        end
+    end
+
+    Workers --> Crypto
 ```
 
 #### 実装案
@@ -359,20 +366,21 @@ async function createAccessToken(
 
 #### アーキテクチャ
 
-```
-┌─────────────┐        ┌────────────────────┐
-│  op-auth    │───────>│ auth-helper        │
-│             │Service │                    │
-│             │Binding │ ┌────────────────┐ │
-│             │<───────│ │ Passkey Engine │ │
-└─────────────┘        │ │ • verify()     │ │
-                       │ └────────────────┘ │
-                       │ ┌────────────────┐ │
-                       │ │ Request Object │ │
-                       │ │ • parse()      │ │
-                       │ │ • verify()     │ │
-                       │ └────────────────┘ │
-                       └────────────────────┘
+```mermaid
+flowchart LR
+    A["op-auth"]
+
+    subgraph Helper["auth-helper"]
+        subgraph Passkey["Passkey Engine"]
+            P1["verify()"]
+        end
+        subgraph RO["Request Object"]
+            R1["parse()"]
+            R2["verify()"]
+        end
+    end
+
+    A <-->|Service Binding| Helper
 ```
 
 #### 実装案

@@ -125,8 +125,14 @@ export async function validateClientAssertion(
     }
 
     // Step 4: Verify audience matches token endpoint
+    // URL normalization: remove trailing slashes for comparison
+    const normalizeUrl = (url: string): string => url.replace(/\/+$/, '');
+    const normalizedEndpoint = normalizeUrl(tokenEndpoint);
+
     const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-    if (!audiences.includes(tokenEndpoint)) {
+    const audienceMatches = audiences.some((aud) => normalizeUrl(aud) === normalizedEndpoint);
+
+    if (!audienceMatches) {
       return {
         valid: false,
         error: 'invalid_client',

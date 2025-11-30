@@ -10,17 +10,14 @@ The Router Worker acts as a single entry point (`authrim-router.subdomain.worker
 
 ## Architecture
 
-```
-Client Request → authrim-router.subdomain.workers.dev
-                        ↓
-                  Router Worker
-                  (Service Bindings)
-                        ↓
-        ┌───────────────┼───────────────┐
-        ↓               ↓               ↓
-   op-discovery    op-auth         op-token
-                                   op-userinfo
-                                   op-management
+```mermaid
+flowchart TB
+    Client["Client Request"] --> Router["authrim-router.subdomain.workers.dev<br/>Router Worker<br/>(Service Bindings)"]
+    Router --> Discovery["op-discovery"]
+    Router --> Auth["op-auth"]
+    Router --> Token["op-token"]
+    Router --> UserInfo["op-userinfo"]
+    Router --> Management["op-management"]
 ```
 
 ## Routing Table

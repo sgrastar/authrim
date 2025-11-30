@@ -95,45 +95,41 @@ CREATE INDEX IF NOT EXISTS idx_clients_trusted ON oauth_clients(is_trusted);
 
 ### Trusted Client（skip_consent=1）
 
-```
-1. /authorize リクエスト
-   ↓
-2. クライアント情報取得
-   is_trusted=1 && skip_consent=1 && prompt≠"consent"
-   ↓
-3. 既存Consentをチェック（D1）
-   ├─ Consent存在 → スキップ
-   └─ Consent不在 → 自動付与（D1に保存）
-   ↓
-4. Consent画面スキップ
-   ↓
-5. 認可コード発行
+```mermaid
+flowchart TD
+    A["1. /authorize リクエスト"] --> B["2. クライアント情報取得<br/>is_trusted=1 && skip_consent=1<br/>&& prompt≠consent"]
+    B --> C["3. 既存Consentをチェック（D1）"]
+    C --> D{Consent存在?}
+    D -->|存在| E["スキップ"]
+    D -->|不在| F["自動付与（D1に保存）"]
+    E --> G["4. Consent画面スキップ"]
+    F --> G
+    G --> H["5. 認可コード発行"]
 ```
 
 ### Third-Party Client（skip_consent=0）
 
-```
-1. /authorize リクエスト
-   ↓
-2. クライアント情報取得
-   is_trusted=0 または skip_consent=0
-   ↓
-3. 既存Consentをチェック（D1）
-   ├─ Consent存在 → スコープカバー確認
-   │   ├─ カバー済み → スキップ
-   │   └─ 不足 → Consent画面表示
-   └─ Consent不在 → Consent画面表示
-   ↓
-4. ユーザー承認/拒否
-   ↓
-5. D1に保存 / エラーリダイレクト
+```mermaid
+flowchart TD
+    A["1. /authorize リクエスト"] --> B["2. クライアント情報取得<br/>is_trusted=0 または skip_consent=0"]
+    B --> C["3. 既存Consentをチェック（D1）"]
+    C --> D{Consent存在?}
+    D -->|存在| E{スコープカバー確認}
+    E -->|カバー済み| F["スキップ"]
+    E -->|不足| G["Consent画面表示"]
+    D -->|不在| G
+    G --> H["4. ユーザー承認/拒否"]
+    H -->|承認| I["5. D1に保存"]
+    H -->|拒否| J["5. エラーリダイレクト"]
+    F --> K["認可コード発行"]
+    I --> K
 ```
 
 ### prompt=consent の場合
 
-```
-常にConsent画面を表示
-（is_trusted, skip_consentの値に関係なく）
+```mermaid
+flowchart LR
+    A["prompt=consent"] --> B["常にConsent画面を表示<br/>(is_trusted, skip_consentの値に関係なく)"]
 ```
 
 ---

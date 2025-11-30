@@ -98,32 +98,33 @@
 
 ### 2.1 Overall Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     Cloudflare Edge Network                          │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │         Cloudflare Workers (Hono + TypeScript)              │   │
-│  │                                                              │   │
-│  │  ┌─────────────┬──────────┬──────────┬────────────────┐    │   │
-│  │  │op-discovery │ op-auth  │ op-token │ op-userinfo    │    │   │
-│  │  │op-management│ router   │   ui     │                │    │   │
-│  │  └─────────────┴──────────┴──────────┴────────────────┘    │   │
-│  │                                                              │   │
-│  │  ┌──────────────────────────────────────────────────────┐   │   │
-│  │  │         Shared Library (@authrim/shared)              │   │   │
-│  │  │  Types, Utils, Validation, Crypto, Storage          │   │   │
-│  │  └──────────────────────────────────────────────────────┘   │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│         │                    │                    │                  │
-│         ▼                    ▼                    ▼                  │
-│  ┌─────────────┐  ┌──────────────────┐  ┌──────────────┐            │
-│  │  KV Namespace  │  Durable Objects   │  D1 Database │            │
-│  │  Edge Cache    │ (Consistency)      │  (Persistent)│            │
-│  └─────────────┘  └──────────────────┘  └──────────────┘            │
-│                                                                       │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph CloudflareEdge["Cloudflare Edge Network"]
+        subgraph Workers["Cloudflare Workers (Hono + TypeScript)"]
+            subgraph Packages["Worker Packages"]
+                OPD["op-discovery"]
+                OPA["op-auth"]
+                OPT["op-token"]
+                OPU["op-userinfo"]
+                OPM["op-management"]
+                R["router"]
+                UI["ui"]
+            end
+            subgraph Shared["Shared Library (@authrim/shared)"]
+                SL["Types, Utils, Validation, Crypto, Storage"]
+            end
+        end
+        subgraph Storage["Storage Layer"]
+            KV["KV Namespace<br/>Edge Cache"]
+            DO["Durable Objects<br/>(Consistency)"]
+            D1["D1 Database<br/>(Persistent)"]
+        end
+    end
+
+    Workers --> KV
+    Workers --> DO
+    Workers --> D1
 ```
 
 ### 2.2 Tech Stack Details
@@ -146,22 +147,24 @@
 
 ### 2.3 Package Structure (8 Packages)
 
-```
-packages/
-├── shared/              # Common library (types, utils, storage, crypto)
-│   ├── types/          # TypeScript interfaces (Env, OIDC, etc.)
-│   ├── utils/          # Crypto, JWT, validation, DPoP, pairwise
-│   ├── middleware/     # Rate limiting, CORS, security headers
-│   ├── durable-objects/# 9 Durable Objects (strong consistency)
-│   └── storage/        # Storage abstraction (KV, D1, DO)
-│
-├── op-discovery/       # Discovery & JWKS endpoints (50-70 KB)
-├── op-auth/            # Authorization & PAR endpoints (150-200 KB)
-├── op-token/           # Token endpoint (250-300 KB)
-├── op-userinfo/        # UserInfo endpoint (80-100 KB)
-├── op-management/      # Client registration, introspection, revocation
-├── router/             # Unified endpoint router (test mode)
-└── ui/                 # SvelteKit frontend (Cloudflare Pages)
+```mermaid
+graph TB
+    subgraph packages["packages/"]
+        subgraph shared["shared/ - Common library"]
+            types["types/ - TypeScript interfaces"]
+            utils["utils/ - Crypto, JWT, validation, DPoP"]
+            middleware["middleware/ - Rate limiting, CORS"]
+            do["durable-objects/ - 9 Durable Objects"]
+            storage["storage/ - Storage abstraction"]
+        end
+        opd["op-discovery/ - Discovery & JWKS (50-70 KB)"]
+        opa["op-auth/ - Authorization & PAR (150-200 KB)"]
+        opt["op-token/ - Token endpoint (250-300 KB)"]
+        opu["op-userinfo/ - UserInfo endpoint (80-100 KB)"]
+        opm["op-management/ - Registration, introspection"]
+        router["router/ - Unified endpoint router"]
+        ui["ui/ - SvelteKit frontend (Pages)"]
+    end
 ```
 
 ### 2.4 Durable Objects (9 Implementations)
@@ -243,40 +246,47 @@ settings              -- System configuration
 ### 4.2 Implementation Roadmap for RP Support
 
 #### Phase 6a: RP Foundation (2 weeks)
-```
-├── RP Core Library Package
-│   ├── OAuth 2.0 client implementation
-│   ├── OIDC Discovery consumer
-│   ├── Token validation utilities
-│   └── Session storage
-│
-├── RP Basic Profile
-│   ├── Authorization Code Flow (as client)
-│   ├── Token endpoint consumer
-│   ├── UserInfo endpoint consumer
-│   └── JWT signature verification
-│
-└── Testing Infrastructure
-    ├── RP Basic conformance tests
-    ├── Integration with test OP
-    └── Example client application
+
+```mermaid
+graph TB
+    subgraph Core["RP Core Library Package"]
+        C1["OAuth 2.0 client implementation"]
+        C2["OIDC Discovery consumer"]
+        C3["Token validation utilities"]
+        C4["Session storage"]
+    end
+    subgraph Basic["RP Basic Profile"]
+        B1["Authorization Code Flow (as client)"]
+        B2["Token endpoint consumer"]
+        B3["UserInfo endpoint consumer"]
+        B4["JWT signature verification"]
+    end
+    subgraph Testing["Testing Infrastructure"]
+        T1["RP Basic conformance tests"]
+        T2["Integration with test OP"]
+        T3["Example client application"]
+    end
 ```
 
 #### Phase 6b: Advanced RP Features (3 weeks)
-```
-├── RP Implicit & Hybrid
-├── RP Form Post & Config Discovery
-├── RP Logout (RP-Initiated, Session Management)
-├── RP FAPI (Partial - MTLS preparation)
-└── Conformance Suite Integration
+
+```mermaid
+graph TB
+    A["RP Implicit & Hybrid"]
+    B["RP Form Post & Config Discovery"]
+    C["RP Logout (RP-Initiated, Session Management)"]
+    D["RP FAPI (Partial - MTLS preparation)"]
+    E["Conformance Suite Integration"]
 ```
 
 #### Phase 7: RP SDKs & Examples (1 week)
-```
-├── JavaScript/TypeScript SDK
-├── Python SDK (experimental)
-├── Mobile-friendly RP client
-└── Docker example setup
+
+```mermaid
+graph TB
+    A["JavaScript/TypeScript SDK"]
+    B["Python SDK (experimental)"]
+    C["Mobile-friendly RP client"]
+    D["Docker example setup"]
 ```
 
 ### 4.3 Key Dependencies & Architectural Changes
@@ -307,15 +317,23 @@ settings              -- System configuration
 ### 5.1 RP Basic Profile
 
 **What's Required:**
-```
-User →[clicks login]→ App (RP) →[redirects to]→ OIDC Provider
-    ↓[authorization code]← Provider
-    ↓[token exchange]
-    ↓[access token + ID token]
-    ↓[validates JWT signature]
-    ↓[retrieves user info via access token]
-    ↓[creates session]
-User ←[authenticated]← App (RP)
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant RP as App (RP)
+    participant OP as OIDC Provider
+
+    User->>RP: clicks login
+    RP->>OP: redirects to
+    OP-->>RP: authorization code
+    RP->>OP: token exchange
+    OP-->>RP: access token + ID token
+    Note over RP: validates JWT signature
+    RP->>OP: retrieves user info via access token
+    OP-->>RP: user info
+    Note over RP: creates session
+    RP-->>User: authenticated
 ```
 
 **Implementation Needs:**
@@ -449,23 +467,28 @@ User ←[authenticated]← App (RP)
 - JWKs → KV (cached)
 
 **Proposed RP Storage:**
-```
-KV Namespaces:
-├── RP_SESSIONS            -- RP user sessions (encrypted)
-├── RP_STATE_PARAMS        -- OAuth state validation (120s)
-├── RP_NONCE_STORE         -- Nonce validation (TTL)
-├── RP_TOKEN_CACHE         -- Access token cache (TTL: token exp)
-├── RP_ISSUER_CONFIG       -- Cached discovery metadata
 
-D1 Tables (additions):
-├── rp_clients             -- RP registered clients
-├── rp_sessions            -- Long-lived session records
-├── rp_consents            -- User consent records
-└── rp_audit_log           -- RP-specific audit trail
+```mermaid
+graph TB
+    subgraph KV["KV Namespaces"]
+        KV1["RP_SESSIONS - RP user sessions (encrypted)"]
+        KV2["RP_STATE_PARAMS - OAuth state validation (120s)"]
+        KV3["RP_NONCE_STORE - Nonce validation (TTL)"]
+        KV4["RP_TOKEN_CACHE - Access token cache (TTL: token exp)"]
+        KV5["RP_ISSUER_CONFIG - Cached discovery metadata"]
+    end
 
-Durable Objects (new):
-├── RPSessionManager       -- RP session lifecycle
-└── RPTokenValidator       -- Token validation cache
+    subgraph D1["D1 Tables (additions)"]
+        D1a["rp_clients - RP registered clients"]
+        D1b["rp_sessions - Long-lived session records"]
+        D1c["rp_consents - User consent records"]
+        D1d["rp_audit_log - RP-specific audit trail"]
+    end
+
+    subgraph DO["Durable Objects (new)"]
+        DO1["RPSessionManager - RP session lifecycle"]
+        DO2["RPTokenValidator - Token validation cache"]
+    end
 ```
 
 ---
@@ -514,42 +537,46 @@ import { createErrorResponse, handleValidationError } from '@authrim/shared';
 ### 8.1 Suggested Architecture
 
 **New Package: `@authrim/rp-client`**
-```
-packages/rp-client/
-├── src/
-│   ├── types/              # RP-specific types
-│   │   ├── session.ts      # Session interface
-│   │   ├── config.ts       # Client configuration
-│   │   └── providers.ts    # Provider metadata
-│   │
-│   ├── core/               # Core RP functionality
-│   │   ├── client.ts       # OIDC Client class
-│   │   ├── discovery.ts    # Discovery consumer
-│   │   ├── tokens.ts       # Token validation
-│   │   └── session.ts      # Session manager
-│   │
-│   ├── flows/              # OAuth/OIDC flows
-│   │   ├── auth-code.ts    # Authorization Code Flow
-│   │   ├── implicit.ts     # Implicit Flow
-│   │   ├── hybrid.ts       # Hybrid Flow
-│   │   └── logout.ts       # Logout flows
-│   │
-│   ├── security/           # Security utilities
-│   │   ├── dpop.ts         # DPoP (reuse from shared)
-│   │   ├── mtls.ts         # mTLS support (new)
-│   │   ├── state.ts        # CSRF protection
-│   │   └── nonce.ts        # Nonce validation
-│   │
-│   ├── storage/            # Storage adapters
-│   │   ├── session-store.ts
-│   │   └── token-cache.ts
-│   │
-│   └── middleware/         # Express/Hono middleware
-│       ├── auth-guard.ts
-│       ├── token-refresh.ts
-│       └── error-handler.ts
-│
-└── __tests__/              # 30-40 test files
+
+```mermaid
+graph TB
+    subgraph RPClient["packages/rp-client/"]
+        subgraph src["src/"]
+            subgraph types["types/ - RP-specific types"]
+                T1["session.ts"]
+                T2["config.ts"]
+                T3["providers.ts"]
+            end
+            subgraph core["core/ - Core RP functionality"]
+                C1["client.ts - OIDC Client class"]
+                C2["discovery.ts - Discovery consumer"]
+                C3["tokens.ts - Token validation"]
+                C4["session.ts - Session manager"]
+            end
+            subgraph flows["flows/ - OAuth/OIDC flows"]
+                F1["auth-code.ts"]
+                F2["implicit.ts"]
+                F3["hybrid.ts"]
+                F4["logout.ts"]
+            end
+            subgraph security["security/ - Security utilities"]
+                S1["dpop.ts - DPoP (reuse)"]
+                S2["mtls.ts - mTLS (new)"]
+                S3["state.ts - CSRF"]
+                S4["nonce.ts"]
+            end
+            subgraph storage["storage/ - Storage adapters"]
+                ST1["session-store.ts"]
+                ST2["token-cache.ts"]
+            end
+            subgraph middleware["middleware/ - Express/Hono"]
+                M1["auth-guard.ts"]
+                M2["token-refresh.ts"]
+                M3["error-handler.ts"]
+            end
+        end
+        tests["__tests__/ - 30-40 test files"]
+    end
 ```
 
 ### 8.2 Phase-Based Implementation
@@ -657,28 +684,30 @@ await client.logout(tokens.refresh_token);
 
 ### 10.2 Proposed Test Coverage
 
-```
-RP Tests (estimated 150-200 tests total):
-
-├── Unit Tests (80-100)
-│   ├── Discovery consumer (10 tests)
-│   ├── Authorization flow (15 tests)
-│   ├── Token validation (15 tests)
-│   ├── Session management (15 tests)
-│   ├── Logout flows (15 tests)
-│   ├── DPoP/FAPI (10 tests)
-│   └── Error handling (10 tests)
-│
-├── Integration Tests (40-60)
-│   ├── With existing OP (20 tests)
-│   ├── Real OAuth flows (15 tests)
-│   ├── Conformance suite (15 tests)
-│   └── Cross-domain SSO (10 tests)
-│
-└── E2E Tests (20-30)
-    ├── Complete auth flow (10 tests)
-    ├── Logout sequence (10 tests)
-    └── Error scenarios (10 tests)
+```mermaid
+graph TB
+    subgraph Tests["RP Tests (150-200 tests total)"]
+        subgraph Unit["Unit Tests (80-100)"]
+            U1["Discovery consumer (10)"]
+            U2["Authorization flow (15)"]
+            U3["Token validation (15)"]
+            U4["Session management (15)"]
+            U5["Logout flows (15)"]
+            U6["DPoP/FAPI (10)"]
+            U7["Error handling (10)"]
+        end
+        subgraph Integration["Integration Tests (40-60)"]
+            I1["With existing OP (20)"]
+            I2["Real OAuth flows (15)"]
+            I3["Conformance suite (15)"]
+            I4["Cross-domain SSO (10)"]
+        end
+        subgraph E2E["E2E Tests (20-30)"]
+            E1["Complete auth flow (10)"]
+            E2["Logout sequence (10)"]
+            E3["Error scenarios (10)"]
+        end
+    end
 ```
 
 ---
@@ -743,43 +772,46 @@ RP Tests (estimated 150-200 tests total):
 
 ### 12.1 Engineering Hours Estimate
 
+```mermaid
+graph TB
+    subgraph Effort["RP Package Development"]
+        A["Architecture & Design - 4h"]
+        subgraph Core["Core Client Implementation - 40h"]
+            C1["Discovery consumer - 8h"]
+            C2["Authorization Code - 15h"]
+            C3["Token validation - 10h"]
+            C4["Session management - 7h"]
+        end
+        subgraph Advanced["Advanced Flows - 30h"]
+            AF1["Implicit Flow - 8h"]
+            AF2["Hybrid Flow - 12h"]
+            AF3["Logout handlers - 10h"]
+        end
+        subgraph Security["Security Features - 20h"]
+            S1["DPoP integration - 6h"]
+            S2["mTLS support - 8h"]
+            S3["FAPI compliance - 6h"]
+        end
+        subgraph Test["Testing - 50h"]
+            T1["Unit tests - 20h"]
+            T2["Integration tests - 20h"]
+            T3["Conformance setup - 10h"]
+        end
+        subgraph Docs["Documentation - 15h"]
+            D1["API documentation - 8h"]
+            D2["Examples & tutorials - 5h"]
+            D3["Architecture guides - 2h"]
+        end
+        subgraph Polish["Integration & Polish - 10h"]
+            P1["CI/CD integration - 4h"]
+            P2["Performance tuning - 4h"]
+            P3["Bug fixes - 2h"]
+        end
+    end
 ```
-RP Package Development:
-├── Architecture & Design          4 hours
-├── Core Client Implementation    40 hours
-│   ├── Discovery consumer        8 hours
-│   ├── Authorization Code        15 hours
-│   ├── Token validation          10 hours
-│   └── Session management        7 hours
-│
-├── Advanced Flows               30 hours
-│   ├── Implicit Flow            8 hours
-│   ├── Hybrid Flow             12 hours
-│   └── Logout handlers         10 hours
-│
-├── Security Features           20 hours
-│   ├── DPoP integration         6 hours
-│   ├── mTLS support            8 hours
-│   └── FAPI compliance         6 hours
-│
-├── Testing                     50 hours
-│   ├── Unit tests             20 hours
-│   ├── Integration tests      20 hours
-│   └── Conformance setup      10 hours
-│
-├── Documentation              15 hours
-│   ├── API documentation       8 hours
-│   ├── Examples & tutorials    5 hours
-│   └── Architecture guides     2 hours
-│
-└── Integration & Polish        10 hours
-    ├── CI/CD integration       4 hours
-    ├── Performance tuning      4 hours
-    └── Bug fixes               2 hours
 
-TOTAL: 169 hours (≈ 4.2 weeks full-time development)
-+ 50% contingency = 254 hours (≈ 6.3 weeks)
-```
+**TOTAL: 169 hours (≈ 4.2 weeks full-time development)**
+**+ 50% contingency = 254 hours (≈ 6.3 weeks)**
 
 ### 12.2 Resource Requirements
 
@@ -910,14 +942,14 @@ TOTAL: 169 hours (≈ 4.2 weeks full-time development)
 
 ### B. Technology Stack Summary
 
-```
-Frontend:  SvelteKit 5 + UnoCSS + Melt UI + Paraglide (i18n)
-Backend:   Hono + TypeScript on Cloudflare Workers
-Storage:   D1 (SQLite) + KV (edge cache) + Durable Objects (consistency)
-Crypto:    JOSE 6.1 (JWT/JWK/DPoP)
-Testing:   Vitest + Playwright + axe-core (accessibility)
-Build:     Turborepo + pnpm (monorepo)
-```
+| Layer | Technology |
+|-------|------------|
+| **Frontend** | SvelteKit 5 + UnoCSS + Melt UI + Paraglide (i18n) |
+| **Backend** | Hono + TypeScript on Cloudflare Workers |
+| **Storage** | D1 (SQLite) + KV (edge cache) + Durable Objects (consistency) |
+| **Crypto** | JOSE 6.1 (JWT/JWK/DPoP) |
+| **Testing** | Vitest + Playwright + axe-core (accessibility) |
+| **Build** | Turborepo + pnpm (monorepo) |
 
 ### C. Current Codebase Metrics
 

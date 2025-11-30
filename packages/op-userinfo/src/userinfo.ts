@@ -376,6 +376,39 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
-  // No encryption required, return JSON response
+  // OIDC Core 5.3.3: Check if UserInfo signing is required (signed but not encrypted)
+  const userinfoSignedResponseAlg = clientMetadata?.userinfo_signed_response_alg as
+    | string
+    | undefined;
+
+  if (userinfoSignedResponseAlg && userinfoSignedResponseAlg !== 'none') {
+    try {
+      // Get signing key from KeyManager (with caching)
+      const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env);
+
+      // Sign UserInfo claims as JWT
+      const signedUserInfo = await new SignJWT(userClaims)
+        .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+        .setIssuedAt()
+        .setIssuer(c.env.ISSUER_URL)
+        .setAudience(client_id)
+        .sign(privateKey);
+
+      // Return signed UserInfo as JWT
+      c.header('Content-Type', 'application/jwt');
+      return c.body(signedUserInfo);
+    } catch (signError) {
+      console.error('Failed to sign UserInfo response:', signError);
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to sign UserInfo response',
+        },
+        500
+      );
+    }
+  }
+
+  // No signing or encryption required, return JSON response
   return c.json(userClaims);
 }

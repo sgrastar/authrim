@@ -57,44 +57,17 @@ Authrim implements Dynamic Client Registration (DCR), allowing OAuth 2.0 and Ope
 
 ### Flow Diagram
 
-```
-┌──────────┐                                    ┌────────────────┐
-│  Client  │                                    │ Authorization  │
-│          │                                    │     Server     │
-└─────┬────┘                                    └───────┬────────┘
-      │                                                 │
-      │ 1. POST /register                              │
-      │    {                                            │
-      │      "redirect_uris": [...],                   │
-      │      "client_name": "...",                     │
-      │      "grant_types": [...],                     │
-      │      ...                                        │
-      │    }                                            │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │                                                 │ 2. Validate
-      │                                                 │    Metadata
-      │                                                 │
-      │                                                 │ 3. Generate
-      │                                                 │    Credentials
-      │                                                 │    (client_id,
-      │                                                 │     client_secret)
-      │                                                 │
-      │                                                 │ 4. Store
-      │                                                 │    in KV
-      │                                                 │
-      │ 5. 201 Created                                 │
-      │    {                                            │
-      │      "client_id": "...",                        │
-      │      "client_secret": "...",                    │
-      │      "client_id_issued_at": 1234567890,        │
-      │      ...                                        │
-      │    }                                            │
-      │<────────────────────────────────────────────────┤
-      │                                                 │
-      │ 6. Client can now use OAuth/OIDC flows         │
-      │    with the registered credentials             │
-      │                                                 │
+```mermaid
+sequenceDiagram
+    participant Client
+    participant AS as Authorization Server
+
+    Client->>AS: 1. POST /register<br/>{redirect_uris, client_name, grant_types, ...}
+    Note over AS: 2. Validate Metadata
+    Note over AS: 3. Generate Credentials<br/>(client_id, client_secret)
+    Note over AS: 4. Store in KV
+    AS-->>Client: 5. 201 Created<br/>{client_id, client_secret, ...}
+    Note over Client: 6. Client can now use OAuth/OIDC flows
 ```
 
 ### Step-by-Step Process

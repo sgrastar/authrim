@@ -57,52 +57,21 @@ Authrim implements DPoP, a modern OAuth 2.0 security extension that binds access
 
 ### Flow Diagram
 
-```
-┌──────────┐                                    ┌────────────────┐
-│  Client  │                                    │ Authorization  │
-│          │                                    │     Server     │
-└─────┬────┘                                    └───────┬────────┘
-      │                                                 │
-      │ 1. Generate Key Pair (once)                    │
-      │    Private Key + Public Key (JWK)              │
-      │                                                 │
-      │ 2. POST /token                                 │
-      │    Authorization: Basic client_id:secret       │
-      │    DPoP: <dpop_proof_jwt>                      │
-      │    (body: grant_type, code, ...)               │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │                                                 │ 3. Validate
-      │                                                 │    DPoP Proof
-      │                                                 │    (signature,
-      │                                                 │     claims)
-      │                                                 │
-      │                                                 │ 4. Bind Token
-      │                                                 │    to JWK
-      │                                                 │    (cnf claim)
-      │                                                 │
-      │ 5. 200 OK                                      │
-      │    {                                            │
-      │      "access_token": "...",                     │
-      │      "token_type": "DPoP",  ← bound!           │
-      │      ...                                        │
-      │    }                                            │
-      │<────────────────────────────────────────────────┤
-      │                                                 │
-      │ 6. Use access token with DPoP proof            │
-      │    GET /userinfo                                │
-      │    Authorization: DPoP <access_token>           │
-      │    DPoP: <dpop_proof_jwt>                      │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │                                                 │ 7. Validate
-      │                                                 │    - DPoP proof
-      │                                                 │    - Token cnf
-      │                                                 │    - ath claim
-      │                                                 │
-      │ 8. 200 OK (user info)                          │
-      │<────────────────────────────────────────────────┤
-      │                                                 │
+```mermaid
+sequenceDiagram
+    participant Client
+    participant AS as Authorization Server
+
+    Note over Client: 1. Generate Key Pair (once)<br/>Private Key + Public Key (JWK)
+
+    Client->>AS: 2. POST /token<br/>Authorization: Basic client_id:secret<br/>DPoP: dpop_proof_jwt
+    Note over AS: 3. Validate DPoP Proof<br/>(signature, claims)
+    Note over AS: 4. Bind Token to JWK (cnf claim)
+    AS-->>Client: 5. 200 OK<br/>{access_token, token_type: "DPoP"}
+
+    Client->>AS: 6. GET /userinfo<br/>Authorization: DPoP access_token<br/>DPoP: dpop_proof_jwt
+    Note over AS: 7. Validate<br/>• DPoP proof<br/>• Token cnf<br/>• ath claim
+    AS-->>Client: 8. 200 OK (user info)
 ```
 
 ### Step-by-Step Process

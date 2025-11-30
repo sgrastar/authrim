@@ -35,25 +35,35 @@ It demonstrates that an individual developer can deploy a fully functional, glob
 | **Automatic TLS** | Ensures HTTPS for all endpoints. | Cloudflare Edge Network |
 
 **Storage Architecture**:
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     Cloudflare Workers (Hono)                       │
-└─────────────────────────────────────────────────────────────────────┘
-          │                    │                    │
-          ▼                    ▼                    ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│ Durable Objects │  │   D1 Database   │  │   KV Storage    │
-│  (Consistency)  │  │  (Persistent)   │  │  (Edge Cache)   │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
+```mermaid
+flowchart TB
+    subgraph Worker["Cloudflare Workers (Hono)"]
+        W[HTTP Routes & Business Logic]
+    end
+
+    subgraph Storage["Storage Layer"]
+        DO[Durable Objects<br/>Consistency]
+        D1[D1 Database<br/>Persistent]
+        KV[KV Storage<br/>Edge Cache]
+    end
+
+    W --> DO
+    W --> D1
+    W --> KV
 ```
 
 See [storage-strategy.md](./storage-strategy.md) for detailed architecture
 
 ### 3.2 Logical Flow Diagram
-```
-User → /authorize → [authrim OP] → redirect_uri (with code)
-↳ /token → returns { access_token, id_token }
-↳ /userinfo → user claims (static or dynamic)
+```mermaid
+flowchart LR
+    User([User]) --> A[/authorize]
+    A --> OP["authrim OP"]
+    OP --> R["redirect_uri<br/>(with code)"]
+    R --> T[/token]
+    T --> Token["{access_token, id_token}"]
+    Token --> U[/userinfo]
+    U --> Claims["user claims"]
 ```
 
 ### 3.3 Deployment Characteristics

@@ -51,36 +51,18 @@ Authrim implements Pushed Authorization Requests (PAR), an OAuth 2.0 security ex
 
 ### Flow Diagram
 
-```
-┌──────────┐                                    ┌────────────────┐
-│  Client  │                                    │ Authorization  │
-│          │                                    │     Server     │
-└─────┬────┘                                    └───────┬────────┘
-      │                                                 │
-      │ 1. POST /as/par                                │
-      │    (authorization parameters)                  │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │                                                 │ 2. Store
-      │                                                 │    parameters
-      │                                                 │    (KV)
-      │                                                 │
-      │ 3. 201 Created                                 │
-      │    {request_uri, expires_in}                   │
-      │<────────────────────────────────────────────────┤
-      │                                                 │
-      │ 4. Redirect user to /authorize                 │
-      │    ?request_uri=urn:ietf:...                   │
-      │    &client_id=...                              │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │                                                 │ 5. Retrieve
-      │                                                 │    parameters
-      │                                                 │    from KV
-      │                                                 │
-      │ 6. Authorization response                      │
-      │<────────────────────────────────────────────────┤
-      │                                                 │
+```mermaid
+sequenceDiagram
+    participant Client
+    participant AS as Authorization Server
+
+    Client->>AS: 1. POST /as/par<br/>(authorization parameters)
+    Note over AS: 2. Store parameters (KV)
+    AS-->>Client: 3. 201 Created<br/>{request_uri, expires_in}
+
+    Client->>AS: 4. Redirect user to /authorize<br/>?request_uri=urn:ietf:...&client_id=...
+    Note over AS: 5. Retrieve parameters from KV
+    AS-->>Client: 6. Authorization response
 ```
 
 ### Step-by-Step Process

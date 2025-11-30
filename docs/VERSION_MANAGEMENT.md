@@ -14,31 +14,30 @@ Cloudflare Workers はグローバルに分散した PoP (Point of Presence) で
 
 ### アーキテクチャ
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    デプロイスクリプト                         │
-│  ・UUID v4 生成 (CODE_VERSION_UUID)                         │
-│  ・タイムスタンプ生成 (DEPLOY_TIME_UTC)                       │
-│  ・wrangler deploy --var で各Workerにバージョン埋め込み        │
-│  ・デプロイ完了後、VersionManager DO にバージョン登録          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   VersionManager DO                         │
-│  ・Worker毎のバージョン情報を保持                             │
-│  ・GET /version/:workerName - バージョン取得（認証不要）       │
-│  ・POST /version/:workerName - バージョン登録（認証必要）      │
-│  ・GET /version-manager/status - 全バージョン一覧（認証必要）  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 各 Worker (op-auth 等)                       │
-│  ・versionCheckMiddleware がリクエスト毎にバージョン検証       │
-│  ・最新バージョンと一致 → リクエスト処理続行                   │
-│  ・不一致 → 503 Service Unavailable + Retry-After: 5        │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Deploy["デプロイスクリプト"]
+        D1["UUID v4 生成 (CODE_VERSION_UUID)"]
+        D2["タイムスタンプ生成 (DEPLOY_TIME_UTC)"]
+        D3["wrangler deploy --var で各Workerにバージョン埋め込み"]
+        D4["デプロイ完了後、VersionManager DO にバージョン登録"]
+    end
+
+    subgraph VM["VersionManager DO"]
+        VM1["Worker毎のバージョン情報を保持"]
+        VM2["GET /version/:workerName - バージョン取得（認証不要）"]
+        VM3["POST /version/:workerName - バージョン登録（認証必要）"]
+        VM4["GET /version-manager/status - 全バージョン一覧（認証必要）"]
+    end
+
+    subgraph Worker["各 Worker (op-auth 等)"]
+        W1["versionCheckMiddleware がリクエスト毎にバージョン検証"]
+        W2["最新バージョンと一致 → リクエスト処理続行"]
+        W3["不一致 → 503 Service Unavailable + Retry-After: 5"]
+    end
+
+    Deploy --> VM
+    VM --> Worker
 ```
 
 ### バージョン識別子

@@ -58,59 +58,26 @@ Authrim implements pairwise subject identifiers, a privacy-enhancing feature tha
 
 ### Flow Diagram
 
+```mermaid
+sequenceDiagram
+    participant ClientA as Client A
+    participant AS as Authorization Server
+
+    ClientA->>AS: 1. Client Registration<br/>(subject_type: "pairwise")
+    ClientA->>AS: 2. User Authorization<br/>User ID: "user-12345"
+    Note over AS: 3. Generate Pairwise Sub<br/>SHA-256(sector + user_id + salt)<br/>= "AbC123..."
+    AS-->>ClientA: 4. ID Token<br/>sub: "AbC123..."
 ```
-┌──────────┐                                    ┌────────────────┐
-│  Client  │                                    │ Authorization  │
-│    A     │                                    │     Server     │
-└─────┬────┘                                    └───────┬────────┘
-      │                                                 │
-      │ 1. Client Registration                         │
-      │    (subject_type: "pairwise")                  │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │ 2. User Authorization                          │
-      │    User ID: "user-12345"                       │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │                                                 │ 3. Generate
-      │                                                 │    Pairwise Sub
-      │                                                 │    SHA-256(
-      │                                                 │      sector +
-      │                                                 │      user_id +
-      │                                                 │      salt
-      │                                                 │    )
-      │                                                 │    = "AbC123..."
-      │                                                 │
-      │ 4. ID Token                                    │
-      │    sub: "AbC123..."                            │
-      │<────────────────────────────────────────────────┤
-      │                                                 │
 
+```mermaid
+sequenceDiagram
+    participant ClientB as Client B
+    participant AS as Authorization Server
 
-┌──────────┐                                    ┌────────────────┐
-│  Client  │                                    │ Authorization  │
-│    B     │                                    │     Server     │
-└─────┬────┘                                    └───────┬────────┘
-      │                                                 │
-      │ 1. Client Registration                         │
-      │    (subject_type: "pairwise")                  │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │ 2. Same User Authorization                     │
-      │    User ID: "user-12345" (same user!)          │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │                                                 │ 3. Generate
-      │                                                 │    Different
-      │                                                 │    Pairwise Sub
-      │                                                 │    (different
-      │                                                 │     sector)
-      │                                                 │    = "XyZ789..."
-      │                                                 │
-      │ 4. ID Token                                    │
-      │    sub: "XyZ789..." (different!)               │
-      │<────────────────────────────────────────────────┤
-      │                                                 │
+    ClientB->>AS: 1. Client Registration<br/>(subject_type: "pairwise")
+    ClientB->>AS: 2. Same User Authorization<br/>User ID: "user-12345" (same user!)
+    Note over AS: 3. Generate Different Pairwise Sub<br/>(different sector)<br/>= "XyZ789..."
+    AS-->>ClientB: 4. ID Token<br/>sub: "XyZ789..." (different!)
 ```
 
 **Result**: Same user, different clients → Different `sub` values
