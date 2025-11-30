@@ -237,7 +237,7 @@ curl -X POST "https://your-domain.com/api/admin/clients" \
   -H "Content-Type: application/json" \
   -d '{
     "client_name": "My Application",
-    "redirect_uris": ["https://example.com/callback"],
+    "redirect_uris": ["http://localhost:3000/callback"],
     "grant_types": ["authorization_code", "refresh_token"],
     "scope": "openid profile email"
   }'
@@ -250,7 +250,7 @@ curl -X POST "https://your-domain.com/api/admin/clients" \
     "client_id": "550e8400-e29b-41d4-a716-446655440000",
     "client_secret": "a1b2c3d4e5f6g7h8i9j0...",
     "client_name": "My Application",
-    "redirect_uris": ["https://example.com/callback"],
+    "redirect_uris": ["http://localhost:3000/callback"],
     "grant_types": ["authorization_code", "refresh_token"],
     "response_types": ["code"],
     "scope": "openid profile email",
@@ -348,7 +348,7 @@ curl -X PUT "https://your-domain.com/api/admin/clients/CLIENT_ID" \
   -H "Content-Type: application/json" \
   -d '{
     "client_name": "Updated Application Name",
-    "redirect_uris": ["https://example.com/callback", "https://example.com/new-callback"]
+    "redirect_uris": ["http://localhost:3000/callback", "http://localhost:3000/new-callback"]
   }'
 ```
 
@@ -358,7 +358,7 @@ curl -X PUT "https://your-domain.com/api/admin/clients/CLIENT_ID" \
   "client": {
     "client_id": "550e8400-e29b-41d4-a716-446655440000",
     "client_name": "Updated Application Name",
-    "redirect_uris": ["https://example.com/callback", "https://example.com/new-callback"],
+    "redirect_uris": ["http://localhost:3000/callback", "http://localhost:3000/new-callback"],
     "updated_at": 1732970400000
   }
 }

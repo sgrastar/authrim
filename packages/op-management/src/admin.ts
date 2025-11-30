@@ -2106,3 +2106,113 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
     );
   }
 }
+
+/**
+ * Create test session for load testing
+ * POST /api/admin/test-sessions
+ *
+ * Creates a session for a specified user without requiring login.
+ * This is intended for load testing and conformance testing only.
+ */
+export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const body = await c.req.json<{
+      user_id: string;
+      ttl_seconds?: number;
+    }>();
+
+    const { user_id, ttl_seconds = 3600 } = body;
+
+    if (!user_id) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'user_id is required',
+        },
+        400
+      );
+    }
+
+    // Verify user exists
+    const user = await c.env.DB.prepare('SELECT id, email, name FROM users WHERE id = ?')
+      .bind(user_id)
+      .first();
+
+    if (!user) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'User not found',
+        },
+        404
+      );
+    }
+
+    // Create session in SessionStore DO
+    const sessionId = crypto.randomUUID();
+    const now = Date.now();
+    const expiresAt = now + ttl_seconds * 1000;
+
+    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
+    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+
+    const sessionResponse = await sessionStore.fetch(
+      new Request('https://session-store/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user_id,
+          ttl: ttl_seconds * 1000,
+          data: {
+            amr: ['admin_api'],
+            email: user.email,
+            name: user.name,
+          },
+        }),
+      })
+    );
+
+    if (!sessionResponse.ok) {
+      const errorText = await sessionResponse.text();
+      console.error('Failed to create session:', errorText);
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to create session',
+        },
+        500
+      );
+    }
+
+    const session = (await sessionResponse.json()) as { id: string; expiresAt: number };
+
+    // Also insert into D1 sessions table for consistency
+    await c.env.DB.prepare(
+      'INSERT OR REPLACE INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)'
+    )
+      .bind(session.id, user_id, Math.floor(expiresAt / 1000), Math.floor(now / 1000))
+      .run();
+
+    console.log(`[ADMIN] Created test session for user: ${user_id}, session: ${session.id}`);
+
+    return c.json(
+      {
+        session_id: session.id,
+        user_id: user_id,
+        expires_at: expiresAt,
+        cookie_value: `authrim_session=${session.id}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${ttl_seconds}`,
+      },
+      201
+    );
+  } catch (error) {
+    console.error('Admin test session create error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create test session',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      500
+    );
+  }
+}

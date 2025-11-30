@@ -47,6 +47,7 @@ import {
   adminSettingsUpdateHandler,
   adminListCertificationProfilesHandler,
   adminApplyCertificationProfileHandler,
+  adminTestSessionCreateHandler,
 } from './admin';
 import scimApp from './scim';
 import {
@@ -198,6 +199,7 @@ app.get('/api/admin/sessions', adminSessionsListHandler);
 app.get('/api/admin/sessions/:id', adminSessionGetHandler);
 app.delete('/api/admin/sessions/:id', adminSessionRevokeHandler); // RESTful: DELETE instead of POST
 app.delete('/api/admin/users/:id/sessions', adminUserRevokeAllSessionsHandler); // RESTful: /sessions instead of /revoke-all-sessions
+app.post('/api/admin/test-sessions', adminTestSessionCreateHandler); // For load testing: create session without login
 
 // Admin Audit Log endpoints
 app.get('/api/admin/audit-log', adminAuditLogListHandler);

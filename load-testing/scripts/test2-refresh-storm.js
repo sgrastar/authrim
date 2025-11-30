@@ -16,7 +16,6 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter, Trend, Rate } from 'k6/metrics';
 import { SharedArray } from 'k6/data';
-import { open } from 'k6/fs';
 import encoding from 'k6/encoding';
 
 // カスタムメトリクス
@@ -90,6 +89,26 @@ const PRESETS = {
     preAllocatedVUs: 800,
     maxVUs: 1200,
     thinkTime: 0, // No think time
+  },
+  custom: {
+    startRate: 100,
+    stages: [
+      { target: 100, duration: '30s' },    // Warm up at 100 RPS
+      { target: 200, duration: '60s' },    // Ramp to 200 RPS
+      { target: 400, duration: '60s' },    // Ramp to 400 RPS
+      { target: 600, duration: '60s' },    // Ramp to 600 RPS
+      { target: 600, duration: '180s' },   // Sustain at 600 RPS (3 min)
+      { target: 300, duration: '30s' },    // Ramp down
+    ],
+    thresholds: {
+      http_req_duration: ['p(99)<500'],
+      http_req_failed: ['rate<0.01'],
+      refresh_request_duration: ['p(99)<500'],
+      d1_write_errors: ['count<10'],
+    },
+    preAllocatedVUs: 100,
+    maxVUs: 150,
+    thinkTime: 0, // No think time for max throughput
   },
 };
 
@@ -349,6 +368,13 @@ function textSummary(data, options) {
     summary += `${indent}  ${pass ? '✅ PASS' : '❌ FAIL'}\n`;
     summary += `${indent}  - エラーレート < 2%: ${errorRate < 2 ? '✅' : '❌'} (${errorRate.toFixed(2)}%)\n`;
     summary += `${indent}  - D1 エラー < 2%: ${(d1Errors / totalRequests) < 0.02 ? '✅' : '❌'} (${((d1Errors / totalRequests) * 100).toFixed(2)}%)\n`;
+    summary += `${indent}  - DO 競合観測: ${metrics.do_lock_contention?.values?.count || 0} 件\n`;
+  } else if (PRESET === 'custom') {
+    const pass = p99 < 500 && errorRate < 1 && d1Errors < 10;
+    summary += `${indent}  ${pass ? '✅ PASS' : '❌ FAIL'}\n`;
+    summary += `${indent}  - p99 < 500ms: ${p99 < 500 ? '✅' : '❌'} (${p99.toFixed(2)}ms)\n`;
+    summary += `${indent}  - エラーレート < 1%: ${errorRate < 1 ? '✅' : '❌'} (${errorRate.toFixed(2)}%)\n`;
+    summary += `${indent}  - D1 エラー < 10: ${d1Errors < 10 ? '✅' : '❌'} (${d1Errors})\n`;
     summary += `${indent}  - DO 競合観測: ${metrics.do_lock_contention?.values?.count || 0} 件\n`;
   }
 

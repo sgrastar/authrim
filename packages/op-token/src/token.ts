@@ -1375,89 +1375,101 @@ async function handleRefreshTokenGrant(
     );
   }
 
-  // Implement refresh token rotation using RefreshTokenRotator DO
-  // This provides atomic rotation with theft detection
-  if (!c.env.REFRESH_TOKEN_ROTATOR) {
-    c.header('Cache-Control', 'no-store');
-    c.header('Pragma', 'no-cache');
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Refresh token rotation unavailable',
-      },
-      500
-    );
-  }
-
-  const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
-  const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
+  // Check if Token Rotation is enabled (default: true for security)
+  // Set REFRESH_TOKEN_ROTATION_ENABLED=false to disable (for load testing only!)
+  const rotationEnabled = c.env.REFRESH_TOKEN_ROTATION_ENABLED !== 'false';
 
   let newRefreshToken: string;
-  let newRefreshTokenJti: string;
   const refreshTokenExpiresIn = parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10);
 
-  try {
-    // Call RefreshTokenRotator DO to atomically rotate the token
-    const rotateResponse = await rotator.fetch('http://rotator/rotate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        currentToken: jti,
-        userId: refreshTokenData.sub,
-        clientId: client_id,
-      }),
-    });
-
-    if (!rotateResponse.ok) {
-      const error = (await rotateResponse.json()) as {
-        error?: string;
-        error_description?: string;
-      };
+  if (rotationEnabled) {
+    // Implement refresh token rotation using RefreshTokenRotator DO
+    // This provides atomic rotation with theft detection
+    if (!c.env.REFRESH_TOKEN_ROTATOR) {
       c.header('Cache-Control', 'no-store');
       c.header('Pragma', 'no-cache');
       return c.json(
         {
-          error: error.error || 'invalid_grant',
-          error_description: error.error_description || 'Token rotation failed',
+          error: 'server_error',
+          error_description: 'Refresh token rotation unavailable',
         },
-        400
+        500
       );
     }
 
-    const rotateResult = (await rotateResponse.json()) as {
-      newToken: string;
-    };
-    newRefreshTokenJti = rotateResult.newToken;
+    const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
+    const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
 
-    // Create JWT using the new JTI from RefreshTokenRotator
-    const refreshTokenClaims = {
-      iss: c.env.ISSUER_URL,
-      sub: refreshTokenData.sub,
-      aud: client_id,
-      scope: grantedScope,
-      client_id: client_id,
-    };
+    let newRefreshTokenJti: string;
 
-    // Pass the JTI from RefreshTokenRotator to ensure consistency
-    const result = await createRefreshToken(
-      refreshTokenClaims,
-      privateKey,
-      keyId,
-      refreshTokenExpiresIn,
-      newRefreshTokenJti // Use the JTI from RefreshTokenRotator DO
-    );
-    newRefreshToken = result.token;
-  } catch (error) {
-    console.error('Failed to rotate refresh token:', error);
-    c.header('Cache-Control', 'no-store');
-    c.header('Pragma', 'no-cache');
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to rotate refresh token',
-      },
-      500
-    );
+    try {
+      // Call RefreshTokenRotator DO to atomically rotate the token
+      const rotateResponse = await rotator.fetch('http://rotator/rotate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentToken: jti,
+          userId: refreshTokenData.sub,
+          clientId: client_id,
+        }),
+      });
+
+      if (!rotateResponse.ok) {
+        const error = (await rotateResponse.json()) as {
+          error?: string;
+          error_description?: string;
+        };
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json(
+          {
+            error: error.error || 'invalid_grant',
+            error_description: error.error_description || 'Token rotation failed',
+          },
+          400
+        );
+      }
+
+      const rotateResult = (await rotateResponse.json()) as {
+        newToken: string;
+      };
+      newRefreshTokenJti = rotateResult.newToken;
+
+      // Create JWT using the new JTI from RefreshTokenRotator
+      const refreshTokenClaims = {
+        iss: c.env.ISSUER_URL,
+        sub: refreshTokenData.sub,
+        aud: client_id,
+        scope: grantedScope,
+        client_id: client_id,
+      };
+
+      // Pass the JTI from RefreshTokenRotator to ensure consistency
+      const result = await createRefreshToken(
+        refreshTokenClaims,
+        privateKey,
+        keyId,
+        refreshTokenExpiresIn,
+        newRefreshTokenJti // Use the JTI from RefreshTokenRotator DO
+      );
+      newRefreshToken = result.token;
+    } catch (error) {
+      console.error('Failed to rotate refresh token:', error);
+      c.header('Cache-Control', 'no-store');
+      c.header('Pragma', 'no-cache');
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to rotate refresh token',
+        },
+        500
+      );
+    }
+  } else {
+    // Token Rotation disabled - return the same refresh token
+    // WARNING: This is less secure and should only be used for testing!
+    newRefreshToken = refreshTokenValue;
+    console.log('[TOKEN] Refresh token rotation disabled - returning same token');
   }
 
   // Return token response

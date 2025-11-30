@@ -43,6 +43,7 @@ export interface Env {
   STATE_EXPIRY: string;
   NONCE_EXPIRY: string;
   REFRESH_TOKEN_EXPIRY: string;
+  REFRESH_TOKEN_ROTATION_ENABLED?: string; // "false" to disable token rotation (for load testing only!)
   ALLOW_HTTP_REDIRECT?: string; // Allow http:// redirect URIs for development
 
   // Dynamic Client Registration settings

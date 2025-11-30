@@ -189,7 +189,7 @@ CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz node generate-seeds.js
 | `BASE_URL` | No | `https://conformance.authrim.com` | 対象のAuthrim Worker URL |
 | `CLIENT_ID` | **Yes** | - | OAuthクライアントID |
 | `CLIENT_SECRET` | **Yes** | - | OAuthクライアントシークレット |
-| `REDIRECT_URI` | No | `https://example.com/callback` | リダイレクトURI |
+| `REDIRECT_URI` | No | `https://localhost:3000/callback` | リダイレクトURI |
 | `ADMIN_API_SECRET` | No | - | Admin API認証用Bearerトークン |
 | `AUTH_CODE_COUNT` | No | `200` | 生成するauthorization code数 |
 | `REFRESH_COUNT` | No | `200` | 生成するrefresh token数 |
@@ -205,22 +205,53 @@ seeds/
 
 ### 事前準備：クライアント作成
 
-Admin APIを使用してテスト用クライアントを作成できます：
+Admin APIを使用してテスト用クライアントを作成できます。
+
+> **重要**: クライアント作成時の `redirect_uris` と generate-seeds.js の `REDIRECT_URI` は一致させる必要があります。
 
 ```bash
-# クライアント作成
+# クライアント作成（デフォルトのREDIRECT_URIに合わせる）
 curl -X POST "https://conformance.authrim.com/api/admin/clients" \
   -H "Authorization: Bearer YOUR_ADMIN_API_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
     "client_name": "Load Test Client",
-    "redirect_uris": ["https://example.com/callback"],
+    "redirect_uris": ["https://localhost:3000/callback"],
     "grant_types": ["authorization_code", "refresh_token"],
     "scope": "openid profile email",
     "skip_consent": true
   }'
 
-# レスポンスからclient_idとclient_secretを取得して使用
+# レスポンス例:
+# {
+#   "client": {
+#     "client_id": "550e8400-e29b-...",
+#     "client_secret": "a1b2c3d4e5f6...",
+#     ...
+#   }
+# }
+
+# 取得したclient_idとclient_secretを使用してシード生成
+CLIENT_ID="550e8400-e29b-..." \
+CLIENT_SECRET="a1b2c3d4e5f6..." \
+ADMIN_API_SECRET="YOUR_ADMIN_API_SECRET" \
+node generate-seeds.js
+```
+
+### リダイレクトURIについて
+
+OAuth 2.0のセキュリティ要件として、`/authorize`リクエストの`redirect_uri`はクライアント登録時の`redirect_uris`に含まれている必要があります。
+
+- **デフォルト**: `https://localhost:3000/callback`（テスト用、実際にサーバーを立てる必要なし）
+- **注意**: Conformance環境ではHTTPSが必須です（`http://` は拒否されます）
+- クライアント作成時に別のURIを指定した場合は、`REDIRECT_URI`環境変数で同じ値を指定してください
+
+```bash
+# カスタムリダイレクトURIを使用する場合
+REDIRECT_URI="https://mytest.local/callback" \
+CLIENT_ID=xxx \
+CLIENT_SECRET=yyy \
+node generate-seeds.js
 ```
 
 詳細は [Admin Client API ドキュメント](../docs/api/admin/clients.md) を参照してください。
@@ -230,6 +261,80 @@ curl -X POST "https://conformance.authrim.com/api/admin/clients" \
 - [テスト環境アーキテクチャ](./docs/architecture.md) - テスト環境の詳細構成
 - [テストシナリオ詳細](./docs/test-scenarios.md) - 各テストの詳細仕様
 - [メトリクス収集手順](./docs/metrics-collection.md) - Cloudflare Analytics からの結果取得方法
+
+## 📈 収集メトリクス一覧
+
+テスト完了後、Cloudflare GraphQL API から以下のメトリクスを自動収集します。
+
+### 📗 Worker メトリクス
+
+| メトリクス | 説明 | 単位 |
+|-----------|------|------|
+| `duration` (p50/p90/p99) | Worker実行時間のパーセンタイル | ms |
+| `cpu_time` (p50/p90/p99) | CPU実行時間のパーセンタイル | ms |
+| `memory_max` / `memory_avg` | 使用メモリ（最大/平均） | MB |
+| `cpu_throttling_count` | CPUスロットリング発生回数 | 回 |
+| `worker_errors` (5xx) | 5xxエラー数 | 回 |
+| `requests_by_status` | ステータスコード別リクエスト数 | 回 |
+
+### 📙 Durable Objects メトリクス
+
+| メトリクス | 説明 | 単位 |
+|-----------|------|------|
+| `do_duration` (p50/p90/p99) | DO Wall Time（実行時間）のパーセンタイル | ms |
+| `do_waitTime` (p50/p95/p99) | DO待機時間のパーセンタイル | ms |
+| `do_requests_total` | DO総リクエスト数 | 回 |
+| `do_concurrency` | 同時実行数 | - |
+| `do_errors` | DOエラー数（CPU/メモリ超過含む） | 回 |
+| `storage_read_units` / `storage_write_units` | ストレージ読み書きユニット | units |
+
+### 📕 D1 データベース メトリクス
+
+| メトリクス | 説明 | 単位 |
+|-----------|------|------|
+| `d1_read_count` / `d1_write_count` | 読み取り/書き込みクエリ数 | 回 |
+| `d1_duration` (p50/p95/p99) | クエリ実行時間のパーセンタイル | ms |
+| `d1_rate_limited_count` | レート制限発生回数 | 回 |
+| `rows_read` / `rows_written` | 読み書き行数 | rows |
+
+### 📒 KV メトリクス
+
+| メトリクス | 説明 | 単位 |
+|-----------|------|------|
+| `kv_reads_total` | KV読み取り操作数 | 回 |
+| `kv_writes_total` | KV書き込み操作数 | 回 |
+| `kv_cache_hits` | エッジキャッシュヒット数 | 回 |
+| `kv_cache_misses` | エッジキャッシュミス数 | 回 |
+| `kv_read_duration` | KV読み取りレイテンシ | ms |
+
+### 📓 全体メトリクス
+
+| メトリクス | 説明 | 単位 |
+|-----------|------|------|
+| `requests_by_pop` | エッジロケーション（PoP）別リクエスト分布 | 回 |
+| `retries` | Cloudflare側リトライ数 | 回 |
+| `inflight_requests_peak` | 同時処理中リクエストのピーク | 回 |
+
+### メトリクス収集の使用方法
+
+```bash
+# テスト完了後に手動で取得する場合
+node scripts/fetch-cf-analytics.js --start "2025-11-30T10:20:00Z" --end "2025-11-30T10:35:00Z"
+
+# 過去N分間のデータを取得
+node scripts/fetch-cf-analytics.js --minutes 15
+
+# JSON形式で出力（パイプライン用）
+node scripts/fetch-cf-analytics.js --minutes 10 --json > metrics.json
+
+# テストスクリプト（run-light-test.sh等）は自動でメトリクスを収集
+export CF_API_TOKEN="your_cloudflare_api_token"
+./run-light-test.sh
+```
+
+> 💡 **Tip**: メトリクスは `results/cf-analytics_YYYY-MM-DDTHH-MM-SS.json` に自動保存されます。
+
+---
 
 ## 🎯 テスト基準（判定ライン）
 
