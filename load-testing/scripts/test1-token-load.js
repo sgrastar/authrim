@@ -16,6 +16,7 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter, Trend, Rate } from 'k6/metrics';
 import { SharedArray } from 'k6/data';
+import { open } from 'k6/fs';
 import encoding from 'k6/encoding';
 
 // カスタムメトリクス
@@ -28,7 +29,9 @@ const rateLimitErrors = new Counter('rate_limit_errors');
 const BASE_URL = __ENV.BASE_URL || 'https://conformance.authrim.com';
 const CLIENT_ID = __ENV.CLIENT_ID || 'test_client';
 const CLIENT_SECRET = __ENV.CLIENT_SECRET || 'test_secret';
+const REDIRECT_URI = __ENV.REDIRECT_URI || 'https://example.com/callback';
 const PRESET = __ENV.PRESET || 'light';
+const AUTH_CODE_PATH = __ENV.AUTH_CODE_PATH || '../seeds/authorization_codes.json';
 
 // プリセット設定
 const PRESETS = {
@@ -73,7 +76,9 @@ const PRESETS = {
       { target: 400, duration: '30s' },  // Ramp down
     ],
     thresholds: {
+      http_req_duration: ['p(99)<750'],
       http_req_failed: ['rate<0.05'],
+      token_request_duration: ['p(99)<750'],
     },
     preAllocatedVUs: 200,
     maxVUs: 600,
@@ -82,6 +87,9 @@ const PRESETS = {
 
 // 選択されたプリセット
 const selectedPreset = PRESETS[PRESET];
+if (!selectedPreset) {
+  throw new Error(`Invalid PRESET "${PRESET}". Use one of: ${Object.keys(PRESETS).join(', ')}`);
+}
 
 // テストオプション
 export const options = {
@@ -99,18 +107,35 @@ export const options = {
 };
 
 // テストデータ: 事前生成された認可コード
-// 本番では CSV ファイルから読み込む
 const authorizationCodes = new SharedArray('authz_codes', function () {
-  // サンプルデータ（実際には事前生成したコードを使用）
-  const codes = [];
-  for (let i = 0; i < 10000; i++) {
-    codes.push({
-      code: `test_code_${i}_${Math.random().toString(36).substring(7)}`,
-      verifier: `verifier_${i}_${Math.random().toString(36).substring(7)}`,
-    });
+  try {
+    const raw = open(AUTH_CODE_PATH);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error('authorization_codes is empty');
+    }
+    const normalized = parsed
+      .map((item, idx) => ({
+        code: item.code,
+        verifier: item.code_verifier || item.verifier,
+        redirectUri: item.redirect_uri || REDIRECT_URI,
+        index: idx,
+      }))
+      .filter((item) => item.code && item.verifier);
+
+    if (normalized.length === 0) {
+      throw new Error('authorization_codes has no usable entries');
+    }
+    return normalized;
+  } catch (err) {
+    throw new Error(
+      `Authorization code seed not found or invalid at "${AUTH_CODE_PATH}". Run scripts/generate-seeds.js to create it. (${err.message})`,
+    );
   }
-  return codes;
 });
+if (!authorizationCodes.length) {
+  throw new Error('No authorization codes available for test1. Aborting.');
+}
 
 // Basic 認証ヘッダーの生成
 function getBasicAuthHeader() {
@@ -152,37 +177,29 @@ export default function (data) {
   const payload = [
     `grant_type=authorization_code`,
     `code=${codeData.code}`,
-    `redirect_uri=https://example.com/callback`,
+    `redirect_uri=${encodeURIComponent(codeData.redirectUri || REDIRECT_URI)}`,
     `code_verifier=${codeData.verifier}`,
   ].join('&');
 
   // リクエスト送信
-  const startTime = new Date();
   const response = http.post(`${BASE_URL}/token`, payload, params);
-  const duration = new Date() - startTime;
+  const duration = response.timings.duration;
 
   // メトリクス記録
   tokenRequestDuration.add(duration);
 
   // レスポンスチェック
+  let responseBody = {};
+  try {
+    responseBody = JSON.parse(response.body);
+  } catch (_) {
+    // ignore parse errors
+  }
+
   const success = check(response, {
     'status is 200': (r) => r.status === 200,
-    'has access_token': (r) => {
-      try {
-        const body = JSON.parse(r.body);
-        return body.access_token !== undefined;
-      } catch {
-        return false;
-      }
-    },
-    'has token_type': (r) => {
-      try {
-        const body = JSON.parse(r.body);
-        return body.token_type === 'Bearer';
-      } catch {
-        return false;
-      }
-    },
+    'has access_token': () => responseBody.access_token !== undefined,
+    'has token_type': () => responseBody.token_type === 'Bearer',
     'response time < 1000ms': (r) => r.timings.duration < 1000,
   });
 
@@ -218,9 +235,10 @@ export function teardown(data) {
 export function handleSummary(data) {
   const preset = PRESET;
   const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
+  const resultsDir = __ENV.RESULTS_DIR || '../results';
 
   return {
-    [`../results/test1-${preset}_${timestamp}.json`]: JSON.stringify(data, null, 2),
+    [`${resultsDir}/test1-${preset}_${timestamp}.json`]: JSON.stringify(data, null, 2),
     'stdout': textSummary(data, { indent: ' ', enableColors: true }),
   };
 }

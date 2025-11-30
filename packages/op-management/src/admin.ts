@@ -526,6 +526,159 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
+ * Create a new OAuth client
+ * POST /admin/clients
+ */
+export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const body = await c.req.json<{
+      client_name: string;
+      redirect_uris: string[];
+      grant_types?: string[];
+      response_types?: string[];
+      scope?: string;
+      logo_uri?: string;
+      client_uri?: string;
+      policy_uri?: string;
+      tos_uri?: string;
+      contacts?: string[];
+      token_endpoint_auth_method?: string;
+      subject_type?: string;
+      sector_identifier_uri?: string;
+      is_trusted?: boolean;
+      skip_consent?: boolean;
+      allow_claims_without_scope?: boolean;
+    }>();
+
+    // Validate required fields
+    if (!body.client_name) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'client_name is required',
+        },
+        400
+      );
+    }
+
+    if (
+      !body.redirect_uris ||
+      !Array.isArray(body.redirect_uris) ||
+      body.redirect_uris.length === 0
+    ) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'redirect_uris is required and must be a non-empty array',
+        },
+        400
+      );
+    }
+
+    // Validate redirect_uris
+    for (const uri of body.redirect_uris) {
+      try {
+        new URL(uri);
+      } catch {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: `Invalid redirect_uri: ${uri}`,
+          },
+          400
+        );
+      }
+    }
+
+    // Generate client_id and client_secret
+    const clientId = crypto.randomUUID();
+    const clientSecret =
+      crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
+
+    const now = Date.now();
+
+    // Default values
+    const grantTypes = body.grant_types || ['authorization_code'];
+    const responseTypes = body.response_types || ['code'];
+    const scope = body.scope || 'openid profile email';
+    const tokenEndpointAuthMethod = body.token_endpoint_auth_method || 'client_secret_basic';
+    const subjectType = body.subject_type || 'public';
+
+    // Insert into database
+    await c.env.DB.prepare(
+      `INSERT INTO oauth_clients (
+        client_id, client_secret, client_name, redirect_uris, grant_types,
+        response_types, scope, logo_uri, client_uri, policy_uri, tos_uri,
+        contacts, token_endpoint_auth_method, subject_type, sector_identifier_uri,
+        is_trusted, skip_consent, allow_claims_without_scope, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        clientId,
+        clientSecret,
+        body.client_name,
+        JSON.stringify(body.redirect_uris),
+        JSON.stringify(grantTypes),
+        JSON.stringify(responseTypes),
+        scope,
+        body.logo_uri || null,
+        body.client_uri || null,
+        body.policy_uri || null,
+        body.tos_uri || null,
+        body.contacts ? JSON.stringify(body.contacts) : null,
+        tokenEndpointAuthMethod,
+        subjectType,
+        body.sector_identifier_uri || null,
+        body.is_trusted ? 1 : 0,
+        body.skip_consent ? 1 : 0,
+        body.allow_claims_without_scope ? 1 : 0,
+        now,
+        now
+      )
+      .run();
+
+    // Return the created client (including client_secret only on creation)
+    return c.json(
+      {
+        client: {
+          client_id: clientId,
+          client_secret: clientSecret,
+          client_name: body.client_name,
+          redirect_uris: body.redirect_uris,
+          grant_types: grantTypes,
+          response_types: responseTypes,
+          scope,
+          logo_uri: body.logo_uri || null,
+          client_uri: body.client_uri || null,
+          policy_uri: body.policy_uri || null,
+          tos_uri: body.tos_uri || null,
+          contacts: body.contacts || [],
+          token_endpoint_auth_method: tokenEndpointAuthMethod,
+          subject_type: subjectType,
+          sector_identifier_uri: body.sector_identifier_uri || null,
+          is_trusted: body.is_trusted || false,
+          skip_consent: body.skip_consent || false,
+          allow_claims_without_scope: body.allow_claims_without_scope || false,
+          created_at: now,
+          updated_at: now,
+        },
+      },
+      201
+    );
+  } catch (error) {
+    console.error('Admin client create error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create client',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      500
+    );
+  }
+}
+
+/**
  * Get paginated list of OAuth clients
  * GET /admin/clients
  */

@@ -272,6 +272,33 @@ export const adminClientsAPI = {
 	},
 
 	/**
+	 * Create a new OAuth client
+	 */
+	async create(clientData: {
+		client_name: string;
+		redirect_uris: string[];
+		grant_types?: string[];
+		response_types?: string[];
+		scope?: string;
+		logo_uri?: string;
+		client_uri?: string;
+		policy_uri?: string;
+		tos_uri?: string;
+		contacts?: string[];
+		token_endpoint_auth_method?: string;
+		subject_type?: string;
+		sector_identifier_uri?: string;
+		is_trusted?: boolean;
+		skip_consent?: boolean;
+		allow_claims_without_scope?: boolean;
+	}) {
+		return apiFetch<{ client: Client & { client_secret: string } }>('/api/admin/clients', {
+			method: 'POST',
+			body: JSON.stringify(clientData)
+		});
+	},
+
+	/**
 	 * Get client details by ID
 	 */
 	async get(clientId: string) {

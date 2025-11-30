@@ -155,7 +155,9 @@ load-testing/
 │   ├── test2-refresh-storm.js         # TEST 2: Refresh Storm
 │   ├── test3-full-oidc.js             # TEST 3: フル OIDC
 │   ├── run-test.sh                    # テスト実行ヘルパー
-│   └── collect-metrics.sh             # メトリクス収集スクリプト
+│   ├── collect-metrics.sh             # メトリクス収集スクリプト
+│   └── generate-seeds.js              # シードデータ生成スクリプト
+├── seeds/                             # シードデータ出力先
 ├── queries/                           # GraphQL クエリ
 │   └── worker_stats.graphql           # Worker 統計取得クエリ
 ├── presets/                           # プリセット設定
@@ -164,6 +166,64 @@ load-testing/
 │   └── heavy.json                     # Heavy プリセット
 └── results/                           # テスト結果（gitignore）
 ```
+
+---
+
+## 🔧 シードデータ生成（generate-seeds.js）
+
+負荷テスト用のauthorization codeやrefresh tokenを事前生成するスクリプトです。
+
+### 使用方法
+
+```bash
+cd load-testing/scripts
+
+# 基本的な使い方
+CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz node generate-seeds.js
+```
+
+### 環境変数
+
+| 変数 | 必須 | デフォルト | 説明 |
+|------|------|----------|------|
+| `BASE_URL` | No | `https://conformance.authrim.com` | 対象のAuthrim Worker URL |
+| `CLIENT_ID` | **Yes** | - | OAuthクライアントID |
+| `CLIENT_SECRET` | **Yes** | - | OAuthクライアントシークレット |
+| `REDIRECT_URI` | No | `https://example.com/callback` | リダイレクトURI |
+| `ADMIN_API_SECRET` | No | - | Admin API認証用Bearerトークン |
+| `AUTH_CODE_COUNT` | No | `200` | 生成するauthorization code数 |
+| `REFRESH_COUNT` | No | `200` | 生成するrefresh token数 |
+| `OUTPUT_DIR` | No | `../seeds` | 出力ディレクトリ |
+
+### 出力ファイル
+
+```
+seeds/
+├── auth_codes.json        # authorization code + PKCE verifier
+└── refresh_tokens.json    # refresh token
+```
+
+### 事前準備：クライアント作成
+
+Admin APIを使用してテスト用クライアントを作成できます：
+
+```bash
+# クライアント作成
+curl -X POST "https://conformance.authrim.com/api/admin/clients" \
+  -H "Authorization: Bearer YOUR_ADMIN_API_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "Load Test Client",
+    "redirect_uris": ["https://example.com/callback"],
+    "grant_types": ["authorization_code", "refresh_token"],
+    "scope": "openid profile email",
+    "skip_consent": true
+  }'
+
+# レスポンスからclient_idとclient_secretを取得して使用
+```
+
+詳細は [Admin Client API ドキュメント](../docs/api/admin/clients.md) を参照してください。
 
 ## 📚 詳細ドキュメント
 

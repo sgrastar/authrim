@@ -30,6 +30,7 @@ import {
   adminUserUpdateHandler,
   adminUserDeleteHandler,
   adminClientsListHandler,
+  adminClientCreateHandler,
   adminClientGetHandler,
   adminClientUpdateHandler,
   adminClientDeleteHandler,
@@ -186,6 +187,7 @@ app.delete('/api/admin/users/:id', adminUserDeleteHandler);
 app.post('/api/admin/users/:id/avatar', adminUserAvatarUploadHandler);
 app.delete('/api/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
 app.get('/api/admin/clients', adminClientsListHandler);
+app.post('/api/admin/clients', adminClientCreateHandler);
 app.delete('/api/admin/clients/bulk', adminClientsBulkDeleteHandler); // Must be before :id route
 app.get('/api/admin/clients/:id', adminClientGetHandler);
 app.put('/api/admin/clients/:id', adminClientUpdateHandler);

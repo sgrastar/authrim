@@ -468,11 +468,45 @@ async function runTestPlan(
     // session to test that prompt=login forces re-authentication
     const testsRequiringFreshSession = [
       'oidcc-prompt-none-not-logged-in',
+      // These tests require displaying logo/policy/tos on the login page
+      // A fresh session ensures the user sees the login page (not auto-redirect)
+      'oidcc-registration-logo-uri',
+      'oidcc-registration-policy-uri',
+      'oidcc-registration-tos-uri',
     ];
 
     if (testsRequiringFreshSession.includes(testModuleName) && browserAutomator) {
       logger.log(`      Clearing session cookies for ${testModuleName}`);
       await browserAutomator.createFreshContext();
+    }
+
+    // Some tests require special OP-side actions before starting
+    // oidcc-server-rotate-keys requires triggering key rotation before the test
+    const testsRequiringKeyRotation = ['oidcc-server-rotate-keys'];
+
+    if (testsRequiringKeyRotation.includes(testModuleName)) {
+      logger.log(`      Triggering key rotation for ${testModuleName}`);
+      try {
+        const rotateUrl = `${envConfig.adminApiUrl}/signing-keys/rotate`;
+        const rotateResponse = await fetch(rotateUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.ADMIN_API_SECRET}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        if (rotateResponse.ok) {
+          const rotateResult = await rotateResponse.json();
+          logger.log(`      ✅ Key rotation triggered successfully: ${JSON.stringify(rotateResult)}`);
+          // Wait a moment for JWKS cache to be invalidated
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        } else {
+          const errorText = await rotateResponse.text();
+          logger.log(`      ⚠️ Key rotation failed: ${rotateResponse.status} - ${errorText}`);
+        }
+      } catch (rotateError) {
+        logger.log(`      ⚠️ Key rotation error: ${rotateError}`);
+      }
     }
 
     try {

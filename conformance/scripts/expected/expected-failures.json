@@ -4,6 +4,12 @@
   "basic-op": [],
   "config-op": [],
   "dynamic-op": [],
+  "dynamic-op-code": [
+    {
+      "testModule": "oidcc-ensure-request-object-with-redirect-uri",
+      "reason": "Conformance Suite framework bug (Java runtime exception: runInBackground called after runFinalisation)"
+    }
+  ],
   "fapi-2": [],
   "hybrid-op": []
 }
