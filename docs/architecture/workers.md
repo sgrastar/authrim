@@ -4,61 +4,47 @@
 
 ## 📦 Monorepo構造
 
-```
-authrim/
-├── packages/
-│   ├── shared/              # 共通ライブラリ
-│   │   ├── src/
-│   │   │   ├── utils/       # JWT, crypto, validation etc.
-│   │   │   ├── types/       # TypeScript型定義
-│   │   │   ├── middleware/  # レート制限など
-│   │   │   ├── storage/     # KV抽象化レイヤー
-│   │   │   ├── durable-objects/ # KeyManager
-│   │   │   └── constants.ts
-│   │   └── package.json
-│   │
-│   ├── op-discovery/        # Discovery & JWKS Worker
-│   │   ├── src/
-│   │   │   ├── index.ts
-│   │   │   ├── discovery.ts
-│   │   │   └── jwks.ts
-│   │   ├── wrangler.toml
-│   │   └── package.json
-│   │
-│   ├── op-auth/             # Authorization & PAR Worker
-│   │   ├── src/
-│   │   │   ├── index.ts
-│   │   │   ├── authorize.ts
-│   │   │   └── par.ts
-│   │   ├── wrangler.toml
-│   │   └── package.json
-│   │
-│   ├── op-token/            # Token Endpoint Worker
-│   │   ├── src/
-│   │   │   ├── index.ts
-│   │   │   └── token.ts
-│   │   ├── wrangler.toml
-│   │   └── package.json
-│   │
-│   ├── op-userinfo/         # UserInfo Endpoint Worker
-│   │   ├── src/
-│   │   │   ├── index.ts
-│   │   │   └── userinfo.ts
-│   │   ├── wrangler.toml
-│   │   └── package.json
-│   │
-│   └── op-management/       # Management Endpoints Worker
-│       ├── src/
-│       │   ├── index.ts
-│       │   ├── register.ts  # Dynamic Client Registration
-│       │   ├── introspect.ts # Token Introspection
-│       │   └── revoke.ts    # Token Revocation
-│       ├── wrangler.toml
-│       └── package.json
-│
-├── pnpm-workspace.yaml     # Monorepo設定
-├── turbo.json              # Turborepo設定
-└── package.json            # ルートpackage.json
+```mermaid
+graph TB
+    subgraph Root["authrim/"]
+        subgraph Packages["packages/"]
+            subgraph Shared["shared/ (共通ライブラリ)"]
+                S_Utils["utils/ - JWT, crypto, validation"]
+                S_Types["types/ - TypeScript型定義"]
+                S_MW["middleware/ - レート制限など"]
+                S_Storage["storage/ - KV抽象化レイヤー"]
+                S_DO["durable-objects/ - KeyManager"]
+            end
+
+            subgraph Discovery["op-discovery/"]
+                D_Desc["Discovery & JWKS Worker"]
+            end
+
+            subgraph Auth["op-auth/"]
+                A_Desc["Authorization & PAR Worker"]
+            end
+
+            subgraph Token["op-token/"]
+                T_Desc["Token Endpoint Worker"]
+            end
+
+            subgraph UserInfo["op-userinfo/"]
+                U_Desc["UserInfo Endpoint Worker"]
+            end
+
+            subgraph Management["op-management/"]
+                M_Desc["Management Endpoints Worker<br/>register, introspect, revoke"]
+            end
+        end
+
+        Config["pnpm-workspace.yaml<br/>turbo.json<br/>package.json"]
+    end
+
+    Shared --> Discovery
+    Shared --> Auth
+    Shared --> Token
+    Shared --> UserInfo
+    Shared --> Management
 ```
 
 ## 🎯 Worker分割の目的
@@ -134,10 +120,26 @@ pnpm run deploy
 
 各Workerは**独立して動作**し、KV Namespaceを通じて間接的にデータを共有しています:
 
-```
-op-auth (認可コード生成) → AUTH_CODES KV → op-token (コード検証)
-op-management (クライアント登録) → CLIENTS KV → 全Worker (クライアント認証)
-op-token (トークン発行) → REFRESH_TOKENS KV → op-token (リフレッシュ)
+```mermaid
+flowchart LR
+    subgraph Workers
+        Auth["op-auth<br/>(認可コード生成)"]
+        Mgmt["op-management<br/>(クライアント登録)"]
+        Token["op-token<br/>(トークン発行)"]
+    end
+
+    subgraph KV["KV Namespaces"]
+        AC[AUTH_CODES]
+        CL[CLIENTS]
+        RT[REFRESH_TOKENS]
+    end
+
+    Auth -->|write| AC
+    AC -->|read| Token
+    Mgmt -->|write| CL
+    CL -->|read| Auth
+    CL -->|read| Token
+    Token -->|write/read| RT
 ```
 
 **この方法のメリット:**

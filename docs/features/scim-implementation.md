@@ -77,19 +77,31 @@ Authrimに完全なSCIM 2.0 User Provisioningサポートを実装しました�
 
 ### データフロー
 
-```
-IdP (Okta/Azure AD)
-    ↓ SCIM Request (Bearer token)
-Router Worker (/scim/v2/*)
-    ↓
-OP-Management Worker
-    ↓ scimAuthMiddleware (token validation)
-SCIM Endpoints (scim.ts)
-    ↓ userToScim / scimToUser
-Database (D1)
-    - users table
-    - roles table
-    - user_roles table
+```mermaid
+flowchart TB
+    IdP["IdP (Okta/Azure AD)"]
+    Router["Router Worker (/scim/v2/*)"]
+    OP["OP-Management Worker"]
+    Middleware["scimAuthMiddleware (token validation)"]
+    SCIM["SCIM Endpoints (scim.ts)"]
+    Mapper["userToScim / scimToUser"]
+    DB["Database (D1)"]
+
+    IdP -->|"SCIM Request (Bearer token)"| Router
+    Router --> OP
+    OP --> Middleware
+    Middleware --> SCIM
+    SCIM --> Mapper
+    Mapper --> DB
+
+    subgraph Tables
+        direction LR
+        T1["users table"]
+        T2["roles table"]
+        T3["user_roles table"]
+    end
+
+    DB --- Tables
 ```
 
 ### 使用技術

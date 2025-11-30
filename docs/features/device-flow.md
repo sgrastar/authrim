@@ -58,71 +58,30 @@ Authrim implements Device Flow, an OAuth 2.0 extension designed for input-constr
 
 ## Flow Diagram
 
-```
-┌─────────────┐                                    ┌──────────────┐
-│  TV / IoT   │                                    │ Smartphone/  │
-│   Device    │                                    │      PC      │
-└──────┬──────┘                                    └──────┬───────┘
-       │                                                  │
-       │ 1. POST /device_authorization                   │
-       │    (client_id, scope)                           │
-       ├────────────────────────────►                    │
-       │                                                  │
-       │ 2. Response:                                    │
-       │    {                                            │
-       │      device_code: "uuid",                       │
-       │      user_code: "WDJB-MJHT",                    │
-       │      verification_uri: "https://ui.../device",  │
-       │      verification_uri_complete: "...?code=...", │
-       │      expires_in: 600,                           │
-       │      interval: 5                                │
-       │    }                                            │
-       │◄────────────────────────────                    │
-       │                                                  │
-       │ 3. Display QR Code + User Code                  │
-       │    ┌──────────────┐                             │
-       │    │  QR CODE     │                             │
-       │    │  ████████    │                             │
-       │    └──────────────┘                             │
-       │    "WDJB-MJHT"                                  │
-       │                                                  │
-       │                                                  │ 4. Scan QR or
-       │                                                  │    Visit URL
-       │                                                  │
-       │                                                  ├──► GET /device?user_code=WDJB-MJHT
-       │                                                  │
-       │                                                  │ 5. Enter code (if manual)
-       │                                                  │    Approve/Deny
-       │                                                  │
-       │                                                  │ 6. POST /api/device/verify
-       │                                                  │    { user_code: "WDJB-MJHT",
-       │                                                  │      approve: true }
-       │                                                  │
-       │ 7. Poll for authorization                       │
-       │    POST /token                                  │
-       │    (grant_type=device_code)                     │
-       ├────────────────────────────►                    │
-       │                                                  │
-       │ 8a. authorization_pending                       │
-       │    (user hasn't approved yet)                   │
-       │◄────────────────────────────                    │
-       │                                                  │
-       │ ... wait 5 seconds ...                          │
-       │                                                  │
-       │ 9. Poll again                                   │
-       ├────────────────────────────►                    │
-       │                                                  │
-       │ 10. Success! Token Response:                    │
-       │     {                                           │
-       │       access_token: "...",                      │
-       │       id_token: "...",                          │
-       │       refresh_token: "...",                     │
-       │       expires_in: 3600                          │
-       │     }                                           │
-       │◄────────────────────────────                    │
-       │                                                  │
-       │ 11. Logged in!                                  │
-       │                                                  │
+```mermaid
+sequenceDiagram
+    participant Device as TV / IoT Device
+    participant OP as Authrim OP
+    participant User as Smartphone/PC
+
+    Device->>OP: 1. POST /device_authorization<br/>(client_id, scope)
+    OP-->>Device: 2. Response: device_code, user_code,<br/>verification_uri, expires_in, interval
+
+    Note over Device: 3. Display QR Code + User Code<br/>"WDJB-MJHT"
+
+    User->>OP: 4. Scan QR or Visit URL
+    User->>OP: 5. Enter code (if manual)
+    User->>OP: 6. POST /api/device/verify<br/>{ user_code, approve: true }
+
+    Device->>OP: 7. Poll POST /token<br/>(grant_type=device_code)
+    OP-->>Device: 8a. authorization_pending
+
+    Note over Device: ... wait 5 seconds ...
+
+    Device->>OP: 9. Poll again
+    OP-->>Device: 10. Success! Token Response<br/>{access_token, id_token, refresh_token}
+
+    Note over Device: 11. Logged in!
 ```
 
 ---

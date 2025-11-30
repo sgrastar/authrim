@@ -182,68 +182,30 @@ pnpm run generate-keys    # Generate RSA key pair
 
 ### Project Structure
 
-```
-authrim/
-├── .github/
-│   └── workflows/           # GitHub Actions CI/CD
-├── docs/
-│   ├── architecture/        # Architecture documentation
-│   ├── conformance/         # OpenID conformance testing
-│   ├── features/            # Feature documentation (device-flow.md, etc.)
-│   └── project-management/  # Project plans and tasks
-├── packages/
-│   ├── shared/              # Shared utilities and Durable Objects
-│   │   ├── src/
-│   │   │   ├── durable-objects/  # SessionStore, AuthCodeStore, KeyManager, etc.
-│   │   │   └── utils/            # Shared utilities
-│   │   └── wrangler.toml         # Durable Objects configuration
-│   ├── op-discovery/        # Discovery and JWKS endpoints
-│   │   ├── src/
-│   │   │   ├── discovery.ts
-│   │   │   └── jwks.ts
-│   │   └── wrangler.toml
-│   ├── op-auth/             # Authorization and consent endpoints
-│   │   ├── src/
-│   │   │   ├── authorize.ts
-│   │   │   └── consent.ts
-│   │   └── wrangler.toml
-│   ├── op-token/            # Token endpoint (all grant types)
-│   │   ├── src/
-│   │   │   └── token.ts
-│   │   └── wrangler.toml
-│   ├── op-userinfo/         # UserInfo endpoint
-│   │   ├── src/
-│   │   │   └── userinfo.ts
-│   │   └── wrangler.toml
-│   ├── op-management/       # Admin API and dynamic client registration
-│   │   ├── src/
-│   │   │   ├── admin/
-│   │   │   └── register.ts
-│   │   └── wrangler.toml
-│   ├── op-async/            # Device Flow (RFC 8628) + future CIBA
-│   │   ├── src/
-│   │   │   ├── device-authorization.ts
-│   │   │   ├── device-verify.ts
-│   │   │   └── device-verify-api.ts
-│   │   └── wrangler.toml
-│   ├── router/              # Optional unified router (test/dev mode)
-│   │   ├── src/
-│   │   │   └── index.ts
-│   │   └── wrangler.toml
-│   └── ui/                  # SvelteKit frontend (Cloudflare Pages)
-│       ├── src/
-│       │   ├── routes/      # Pages (login, register, device, admin)
-│       │   ├── lib/         # Components and utilities
-│       │   └── i18n/        # Multi-language support (EN/JA)
-│       └── svelte.config.js
-├── scripts/                 # Setup and deployment scripts
-│   ├── setup-dev.sh
-│   ├── setup-production.sh
-│   ├── setup-kv.sh
-│   └── deploy-with-retry.sh
-├── package.json
-├── pnpm-workspace.yaml      # Monorepo configuration
-└── turbo.json               # Turborepo build configuration
+```mermaid
+graph TB
+    subgraph root["authrim/"]
+        github[".github/<br/>└── workflows/ - GitHub Actions CI/CD"]
+        subgraph docs["docs/"]
+            da["architecture/ - Architecture documentation"]
+            dc["conformance/ - OpenID conformance testing"]
+            df["features/ - Feature documentation"]
+            dp["project-management/ - Project plans"]
+        end
+        subgraph packages["packages/"]
+            shared["shared/ - Shared utilities & Durable Objects"]
+            opd["op-discovery/ - Discovery & JWKS endpoints"]
+            opa["op-auth/ - Authorization & consent"]
+            opt["op-token/ - Token endpoint"]
+            opu["op-userinfo/ - UserInfo endpoint"]
+            opm["op-management/ - Admin API & registration"]
+            opas["op-async/ - Device Flow & CIBA"]
+            router["router/ - Unified router (test/dev)"]
+            ui["ui/ - SvelteKit frontend (Pages)"]
+        end
+        scripts["scripts/ - Setup & deployment scripts"]
+        pkg["package.json, pnpm-workspace.yaml, turbo.json"]
+    end
 ```
 
 ### Making Changes
@@ -279,14 +241,18 @@ Coverage reports are generated in `coverage/` directory.
 
 ### Test Structure
 
-```
-test/
-├── unit/
-│   ├── jwt.test.ts          # JWT utilities
-│   ├── kv.test.ts           # KV operations
-│   └── validation.test.ts   # Validation functions
-└── integration/
-    └── endpoints.test.ts    # Endpoint integration tests
+```mermaid
+graph TB
+    subgraph test["test/"]
+        subgraph unit["unit/"]
+            U1["jwt.test.ts - JWT utilities"]
+            U2["kv.test.ts - KV operations"]
+            U3["validation.test.ts - Validation functions"]
+        end
+        subgraph integration["integration/"]
+            I1["endpoints.test.ts - Endpoint integration tests"]
+        end
+    end
 ```
 
 ### Writing Tests

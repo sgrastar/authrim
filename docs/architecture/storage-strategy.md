@@ -74,33 +74,45 @@ This design optimizes for **performance**, **cost**, and **consistency** based o
 
 ### Overall Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Client Application                          │
-└─────────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                     Cloudflare Workers (Hono)                       │
-│                                                                     │
-│  ┌────────────────────────────────────────────────────────────┐   │
-│  │           Storage Abstraction Layer (IStorage)              │   │
-│  └────────────────────────────────────────────────────────────┘   │
-│         │                    │                    │                │
-└─────────┼────────────────────┼────────────────────┼────────────────┘
-          │                    │                    │
-          ▼                    ▼                    ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│ Durable Objects │  │   D1 Database   │  │   KV Storage    │
-│                 │  │                 │  │                 │
-│ • Session Store │  │ • users         │  │ • JWKs cache    │
-│ • Auth Codes    │  │ • oauth_clients │  │ • Discovery     │
-│ • Token Rotator │  │ • sessions (log)│  │ • Client cache  │
-│ • KeyManager    │  │ • audit_log     │  │ • Magic Links   │
-│                 │  │ • passkeys      │  │ • CSRF tokens   │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
-     Real-time           Persistent           Edge Cache
-  Strong Consistency  Relational Data      Global CDN
+```mermaid
+flowchart TB
+    subgraph Client["Client Application"]
+        C[Client App]
+    end
+
+    subgraph Worker["Cloudflare Workers (Hono)"]
+        W[HTTP Handler]
+        SA["Storage Abstraction Layer<br/>(IStorage)"]
+        W --> SA
+    end
+
+    subgraph DO["Durable Objects<br/>Real-time / Strong Consistency"]
+        SS[Session Store]
+        AC[Auth Codes]
+        TR[Token Rotator]
+        KM[KeyManager]
+    end
+
+    subgraph D1["D1 Database<br/>Persistent / Relational Data"]
+        U[users]
+        OC[oauth_clients]
+        SL[sessions log]
+        AL[audit_log]
+        PK[passkeys]
+    end
+
+    subgraph KV["KV Storage<br/>Edge Cache / Global CDN"]
+        JC[JWKs cache]
+        DC[Discovery]
+        CC[Client cache]
+        ML[Magic Links]
+        CS[CSRF tokens]
+    end
+
+    C --> W
+    SA --> DO
+    SA --> D1
+    SA --> KV
 ```
 
 ### Storage Tier Responsibilities
@@ -109,86 +121,44 @@ This design optimizes for **performance**, **cost**, and **consistency** based o
 
 **Purpose**: Real-time state management requiring strong consistency
 
-```
-[ Durable Objects ]
-   ┝── Authorization Code Store
-   │    ├─ One-time use guarantee (replay attack prevention)
-   │    ├─ TTL: 60 seconds
-   │    └─ Strong consistency required
-   │
-   ┝── Refresh Token Rotator
-   │    ├─ Atomic token rotation (prevent race conditions)
-   │    ├─ Concurrency control
-   │    └─ Token family tracking
-   │
-   ┝── Session Store (Active Sessions)
-   │    ├─ In-memory hot data
-   │    ├─ Real-time session state
-   │    ├─ Instant invalidation
-   │    └─ Fallback to D1 for cold sessions
-   │
-   └── KeyManager (Existing)
-        ├─ RSA key generation & rotation
-        ├─ Multi-key management
-        └─ JWKS source of truth
+```mermaid
+graph LR
+    subgraph DO["Durable Objects"]
+        AC["Authorization Code Store<br/>• One-time use guarantee<br/>• TTL: 60 seconds<br/>• Strong consistency required"]
+        RT["Refresh Token Rotator<br/>• Atomic token rotation<br/>• Concurrency control<br/>• Token family tracking"]
+        SS["Session Store<br/>• In-memory hot data<br/>• Real-time session state<br/>• Instant invalidation<br/>• D1 fallback for cold sessions"]
+        KM["KeyManager<br/>• RSA key generation & rotation<br/>• Multi-key management<br/>• JWKS source of truth"]
+    end
 ```
 
 #### 🔶 D1 Database (Persistent Data Layer)
 
 **Purpose**: Long-term storage, relational queries, audit trails
 
-```
-[ D1 ]
-   ┝── User Data
-   │    ├─ users (master records)
-   │    ├─ user_custom_fields (searchable attributes)
-   │    └─ passkeys (WebAuthn credentials)
-   │
-   ┝── OAuth Data
-   │    ├─ oauth_clients (registered apps)
-   │    └─ scope_mappings (claim definitions)
-   │
-   ┝── Session Logs
-   │    ├─ sessions (historical records)
-   │    └─ Active session → DO, Expired session → D1
-   │
-   ┝── Access Control
-   │    ├─ roles (RBAC definitions)
-   │    └─ user_roles (role assignments)
-   │
-   ┝── Audit & Compliance
-   │    ├─ audit_log (all operations)
-   │    └─ refresh_token_log (rotation history)
-   │
-   └── Configuration
-        ├─ branding_settings (UI customization)
-        └─ identity_providers (SAML/LDAP configs)
+```mermaid
+graph LR
+    subgraph D1["D1 Database"]
+        UD["User Data<br/>• users (master records)<br/>• user_custom_fields<br/>• passkeys (WebAuthn)"]
+        OD["OAuth Data<br/>• oauth_clients<br/>• scope_mappings"]
+        SL["Session Logs<br/>• sessions (historical)<br/>• Active → DO, Expired → D1"]
+        AC["Access Control<br/>• roles (RBAC)<br/>• user_roles"]
+        AU["Audit & Compliance<br/>• audit_log<br/>• refresh_token_log"]
+        CF["Configuration<br/>• branding_settings<br/>• identity_providers"]
+    end
 ```
 
 #### 🔵 KV Storage (Edge Cache Layer)
 
 **Purpose**: Global CDN cache, static metadata, short-lived tokens
 
-```
-[ KV ]
-   ┝── Public Keys & Discovery
-   │    ├─ JWKs (from KeyManager DO, cached)
-   │    ├─ /.well-known/openid-configuration (cached)
-   │    └─ TTL: 1 hour, invalidate on key rotation
-   │
-   ┝── Client Metadata Cache
-   │    ├─ Source: D1 oauth_clients
-   │    ├─ Read-through cache pattern
-   │    └─ TTL: 5 minutes
-   │
-   ┝── Short-Lived Tokens
-   │    ├─ Magic Link tokens (TTL: 15 min)
-   │    ├─ CSRF tokens (TTL: 1 hour)
-   │    └─ Email verification codes (TTL: 1 hour)
-   │
-   └── Rate Limiting (Existing)
-        ├─ IP-based counters
-        └─ Endpoint-specific limits
+```mermaid
+graph LR
+    subgraph KV["KV Storage"]
+        PK["Public Keys & Discovery<br/>• JWKs (cached from DO)<br/>• openid-configuration<br/>• TTL: 1 hour"]
+        CM["Client Metadata Cache<br/>• Source: D1 oauth_clients<br/>• Read-through pattern<br/>• TTL: 5 minutes"]
+        ST["Short-Lived Tokens<br/>• Magic Links (15 min)<br/>• CSRF tokens (1 hour)<br/>• Email verification (1 hour)"]
+        RL["Rate Limiting<br/>• IP-based counters<br/>• Endpoint-specific limits"]
+    end
 ```
 
 ---
@@ -424,17 +394,20 @@ class AuthorizationCodeStore {
 
 ### Phase 1: Current State (Before Phase 5)
 
-```
-All data in KV:
-- AUTH_CODES (KV)
-- STATE_STORE (KV)
-- NONCE_STORE (KV)
-- CLIENTS (KV)
-- REFRESH_TOKENS (KV)
-- REVOKED_TOKENS (KV)
+```mermaid
+graph TB
+    subgraph KV["All data in KV"]
+        AC[AUTH_CODES]
+        SS[STATE_STORE]
+        NS[NONCE_STORE]
+        CL[CLIENTS]
+        RT[REFRESH_TOKENS]
+        RV[REVOKED_TOKENS]
+    end
 
-Durable Objects:
-- KeyManager (implemented)
+    subgraph DO["Durable Objects"]
+        KM[KeyManager - implemented]
+    end
 ```
 
 ### Phase 2: Phase 5 Migration Plan

@@ -58,35 +58,21 @@ Login screen is shown when:
 
 ### Flow Diagram
 
-```
-┌─────────────────────────────┐
-│ /authorize request          │
-│ (no session, prompt ≠ none) │
-└──────────┬──────────────────┘
-           │
-           ├─ Store params in ChallengeStore (type: 'login')
-           │
-           ├─ UI_URL set?
-           │   ├─ Yes: Redirect to ${UI_URL}/login?challenge_id=xxx
-           │   └─ No:  Redirect to /authorize/login?challenge_id=xxx
-           │
-┌──────────▼──────────────────┐
-│ Login Screen                │
-│ (Username + Password form)  │
-└──────────┬──────────────────┘
-           │
-           ├─ POST /authorize/login
-           │   ├─ Consume challenge from ChallengeStore
-           │   ├─ Create user (stub: any credentials accepted)
-           │   ├─ Create session in SessionStore
-           │   └─ Set session cookie
-           │
-┌──────────▼──────────────────┐
-│ Redirect to /authorize      │
-│ with _login_confirmed=true  │
-└──────────┬──────────────────┘
-           │
-           └─ Continue to Consent Flow (if needed) or Issue Code
+```mermaid
+flowchart TD
+    A["/authorize request<br/>(no session, prompt ≠ none)"] --> B{Store params in ChallengeStore<br/>type: 'login'}
+    B --> C{UI_URL set?}
+    C -->|Yes| D["Redirect to ${UI_URL}/login?challenge_id=xxx"]
+    C -->|No| E["Redirect to /authorize/login?challenge_id=xxx"]
+    D --> F["Login Screen<br/>(Username + Password form)"]
+    E --> F
+    F --> G["POST /authorize/login"]
+    G --> H["Consume challenge from ChallengeStore"]
+    H --> I["Create user (stub: any credentials accepted)"]
+    I --> J["Create session in SessionStore"]
+    J --> K["Set session cookie"]
+    K --> L["Redirect to /authorize<br/>with _login_confirmed=true"]
+    L --> M["Continue to Consent Flow<br/>(if needed) or Issue Code"]
 ```
 
 ### API Endpoints
@@ -113,38 +99,24 @@ Re-authentication confirmation is shown when:
 
 ### Flow Diagram
 
-```
-┌─────────────────────────────┐
-│ /authorize request          │
-│ (prompt=login or max_age)   │
-└──────────┬──────────────────┘
-           │
-           ├─ Store params in ChallengeStore (type: 'reauth')
-           │   └─ Preserve original authTime in metadata
-           │
-           ├─ UI_URL set?
-           │   ├─ Yes: Redirect to ${UI_URL}/reauth?challenge_id=xxx
-           │   └─ No:  Redirect to /authorize/confirm?challenge_id=xxx
-           │
-┌──────────▼──────────────────┐
-│ Re-auth Screen              │
-│ (Username + Password form)  │
-└──────────┬──────────────────┘
-           │
-           ├─ POST /authorize/confirm
-           │   ├─ Consume challenge from ChallengeStore
-           │   └─ Extract metadata (authTime, prompt, etc.)
-           │
-┌──────────▼──────────────────┐
-│ Redirect to /authorize      │
-│ with _confirmed=true        │
-└──────────┬──────────────────┘
-           │
-           ├─ Check if prompt=login or max_age?
-           │   ├─ Yes: Set NEW authTime (user just re-authenticated)
-           │   └─ No:  Restore original authTime from metadata
-           │
-           └─ Continue to Consent Flow (if needed) or Issue Code
+```mermaid
+flowchart TD
+    A["/authorize request<br/>(prompt=login or max_age)"] --> B["Store params in ChallengeStore<br/>type: 'reauth'"]
+    B --> B1["Preserve original authTime in metadata"]
+    B1 --> C{UI_URL set?}
+    C -->|Yes| D["Redirect to ${UI_URL}/reauth?challenge_id=xxx"]
+    C -->|No| E["Redirect to /authorize/confirm?challenge_id=xxx"]
+    D --> F["Re-auth Screen<br/>(Username + Password form)"]
+    E --> F
+    F --> G["POST /authorize/confirm"]
+    G --> H["Consume challenge from ChallengeStore"]
+    H --> I["Extract metadata (authTime, prompt, etc.)"]
+    I --> J["Redirect to /authorize<br/>with _confirmed=true"]
+    J --> K{prompt=login or max_age?}
+    K -->|Yes| L["Set NEW authTime<br/>(user just re-authenticated)"]
+    K -->|No| M["Restore original authTime<br/>from metadata"]
+    L --> N["Continue to Consent Flow<br/>(if needed) or Issue Code"]
+    M --> N
 ```
 
 ### API Endpoints
@@ -204,35 +176,22 @@ if (prompt?.includes('consent')) {
 
 ### Flow Diagram
 
-```
-┌─────────────────────────────┐
-│ /authorize request          │
-│ (after login, consent needed)│
-└──────────┬──────────────────┘
-           │
-           ├─ Store params in ChallengeStore (type: 'consent')
-           │   └─ Preserve authTime in metadata
-           │
-           ├─ UI_URL set?
-           │   ├─ Yes: Redirect to ${UI_URL}/consent?challenge_id=xxx
-           │   └─ No:  Redirect to /auth/consent?challenge_id=xxx
-           │
-┌──────────▼──────────────────┐
-│ Consent Screen              │
-│ (Scope list + Approve/Deny) │
-└──────────┬──────────────────┘
-           │
-           ├─ POST /auth/consent
-           │   ├─ Consume challenge from ChallengeStore
-           │   ├─ If approved:
-           │   │   ├─ Save consent to D1
-           │   │   └─ Redirect to /authorize with _consent_confirmed=true
-           │   └─ If denied:
-           │       └─ Redirect to client with error=access_denied
-           │
-└──────────▼──────────────────┘
-           │
-           └─ Continue to Issue Code
+```mermaid
+flowchart TD
+    A["/authorize request<br/>(after login, consent needed)"] --> B["Store params in ChallengeStore<br/>type: 'consent'"]
+    B --> B1["Preserve authTime in metadata"]
+    B1 --> C{UI_URL set?}
+    C -->|Yes| D["Redirect to ${UI_URL}/consent?challenge_id=xxx"]
+    C -->|No| E["Redirect to /auth/consent?challenge_id=xxx"]
+    D --> F["Consent Screen<br/>(Scope list + Approve/Deny)"]
+    E --> F
+    F --> G["POST /auth/consent"]
+    G --> H["Consume challenge from ChallengeStore"]
+    H --> I{Approved?}
+    I -->|Yes| J["Save consent to D1"]
+    J --> K["Redirect to /authorize<br/>with _consent_confirmed=true"]
+    I -->|No| L["Redirect to client with<br/>error=access_denied"]
+    K --> M["Continue to Issue Code"]
 ```
 
 ### API Endpoints
@@ -410,19 +369,20 @@ Run the OpenID Connect Conformance Suite to test:
 
 ## Flow Summary
 
-```
-┌───────────────────┐
-│ /authorize        │
-└────────┬──────────┘
-         │
-         ├─ No session? ────────────► Login Flow
-         │
-         ├─ prompt=login?   ────────► Re-auth Flow
-         ├─ max_age exceeded? ──────► Re-auth Flow
-         │
-         ├─ Consent needed? ────────► Consent Flow
-         │
-         └─ All checks passed ──────► Issue Authorization Code
+```mermaid
+flowchart TD
+    A[/authorize] --> B{No session?}
+    B -->|Yes| C[Login Flow]
+    B -->|No| D{prompt=login?}
+    D -->|Yes| E[Re-auth Flow]
+    D -->|No| F{max_age exceeded?}
+    F -->|Yes| E
+    F -->|No| G{Consent needed?}
+    G -->|Yes| H[Consent Flow]
+    G -->|No| I[Issue Authorization Code]
+    C --> D
+    E --> G
+    H --> I
 ```
 
 ---

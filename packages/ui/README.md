@@ -13,27 +13,26 @@ Frontend application for Authrim - OpenID Connect Provider on Cloudflare Workers
 
 ## Project Structure
 
-```
-packages/ui/
-├── src/
-│   ├── lib/
-│   │   ├── components/       # Reusable Svelte components
-│   │   │   ├── TestDialog.svelte
-│   │   │   └── LanguageSwitcher.svelte
-│   │   └── paraglide/        # Generated i18n code
-│   ├── routes/               # SvelteKit routes
-│   │   ├── +layout.svelte    # Root layout
-│   │   └── +page.svelte      # Homepage
-│   ├── app.css               # Global styles
-│   └── app.html              # HTML template
-├── messages/                 # i18n translation files
-│   ├── en.json               # English
-│   └── ja.json               # Japanese
-├── static/                   # Static assets
-├── project.inlang/           # Paraglide i18n config
-├── uno.config.ts             # UnoCSS configuration
-├── svelte.config.js          # SvelteKit configuration
-└── vite.config.ts            # Vite configuration
+```mermaid
+graph TB
+    subgraph UI["packages/ui/"]
+        subgraph Src["src/"]
+            subgraph Lib["lib/"]
+                Components["components/<br/>• TestDialog.svelte<br/>• LanguageSwitcher.svelte"]
+                Paraglide["paraglide/<br/>Generated i18n code"]
+            end
+            subgraph Routes["routes/"]
+                Layout["+layout.svelte"]
+                Page["+page.svelte"]
+            end
+            AppCSS["app.css"]
+            AppHTML["app.html"]
+        end
+        Messages["messages/<br/>• en.json<br/>• ja.json"]
+        Static["static/"]
+        Inlang["project.inlang/"]
+        Config["Config files<br/>• uno.config.ts<br/>• svelte.config.js<br/>• vite.config.ts"]
+    end
 ```
 
 ## Development

@@ -52,32 +52,16 @@ Authrim implements Form Post Response Mode as specified in the [OAuth 2.0 Form P
 
 ### Flow Diagram
 
-```
-┌──────────┐                                    ┌────────────────┐
-│  Client  │                                    │ Authorization  │
-│   (RP)   │                                    │     Server     │
-└─────┬────┘                                    └───────┬────────┘
-      │                                                 │
-      │ 1. Authorization Request                       │
-      │    (response_mode=form_post)                   │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │                                                 │ 2. User
-      │                                                 │    Authentication
-      │                                                 │
-      │ 3. HTML Page with Auto-Submit Form            │
-      │    <form method="post" action="redirect_uri">  │
-      │      <input name="code" value="...">           │
-      │      <input name="state" value="...">          │
-      │    </form>                                      │
-      │<────────────────────────────────────────────────┤
-      │                                                 │
-      │ 4. Browser Auto-Submits Form (POST)           │
-      │    to Client's redirect_uri                    │
-      │                                                 │
-      v                                                 │
-  POST /callback                                        │
-  code=...&state=...                                    │
+```mermaid
+sequenceDiagram
+    participant Client as Client (RP)
+    participant AS as Authorization Server
+
+    Client->>AS: 1. Authorization Request<br/>(response_mode=form_post)
+    Note over AS: 2. User Authentication
+    AS-->>Client: 3. HTML Page with Auto-Submit Form<br/>&lt;form method="post" action="redirect_uri"&gt;<br/>&lt;input name="code" value="..."&gt;<br/>&lt;input name="state" value="..."&gt;<br/>&lt;/form&gt;
+    Note over Client: 4. Browser Auto-Submits Form (POST)<br/>to Client's redirect_uri
+    Note over Client: POST /callback<br/>code=...&state=...
 ```
 
 ### Step-by-Step Process

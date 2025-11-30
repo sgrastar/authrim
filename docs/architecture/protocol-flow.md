@@ -169,13 +169,15 @@ private_key = from Durable Object / Secret
 
 ### 5.2 State Transitions
 
-```
-IDLE
-  └── /authorize → AUTH_REQUESTED
-        └── KV.put(code,state,nonce)
-        └── redirect → CODE_ISSUED
-              └── /token exchange → TOKEN_EXCHANGED
-                    └── /userinfo → USERINFO_REQUESTED → COMPLETED
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> AUTH_REQUESTED : /authorize
+    AUTH_REQUESTED --> CODE_ISSUED : KV.put(code,state,nonce) → redirect
+    CODE_ISSUED --> TOKEN_EXCHANGED : /token exchange
+    TOKEN_EXCHANGED --> USERINFO_REQUESTED : /userinfo
+    USERINFO_REQUESTED --> COMPLETED : return user claims
+    COMPLETED --> [*]
 ```
 
 ---
@@ -194,25 +196,25 @@ IDLE
 
 ## 7. Sequence Diagram (Logical Representation)
 
-```text
- RP                    authrim (OP)                 KV Store
- │                          │                          │
- │  GET /.well-known        │                          │
- │──────────────────────────>│                          │
- │                          │                          │
- │  /authorize?client_id=.. │                          │
- │──────────────────────────>│  generate code,state     │
- │                          │───────────────PUT────────>│
- │                          │ redirect_uri?code&state  │
- │<──────────────────────────│                          │
- │  POST /token (code)       │                          │
- │──────────────────────────>│ validate & sign JWT      │
- │                          │───────────────GET────────>│
- │                          │ return id_token + access │
- │<──────────────────────────│                          │
- │  GET /userinfo (Bearer)  │                          │
- │──────────────────────────>│ return user claims       │
- │<──────────────────────────│                          │
+```mermaid
+sequenceDiagram
+    participant RP as RP (Relying Party)
+    participant OP as authrim (OP)
+    participant KV as KV Store
+
+    RP->>OP: GET /.well-known/openid-configuration
+    OP-->>RP: Discovery metadata
+
+    RP->>OP: /authorize?client_id=...
+    OP->>KV: PUT (code, state, nonce)
+    OP-->>RP: redirect_uri?code&state
+
+    RP->>OP: POST /token (code)
+    OP->>KV: GET (validate code)
+    OP-->>RP: id_token + access_token
+
+    RP->>OP: GET /userinfo (Bearer token)
+    OP-->>RP: user claims
 ```
 
 ---

@@ -44,38 +44,21 @@ Authrim supports all three CIBA delivery modes:
 
 ## Flow Diagram
 
-```
-┌─────────┐                                  ┌──────────┐
-│         │                                  │          │
-│  Client │                                  │ Authrim  │
-│         │                                  │   OP     │
-└─────────┘                                  └──────────┘
-     │                                            │
-     │  1. POST /bc-authorize                    │
-     │     (scope, login_hint, etc.)             │
-     ├──────────────────────────────────────────>│
-     │                                            │
-     │  2. auth_req_id, expires_in, interval     │
-     │<──────────────────────────────────────────┤
-     │                                            │
-     │                                            │  3. User notification
-     │                                            │     (push, SMS, email)
-     │                                            ├────────────┐
-     │                                            │            │
-     │                                            │<───────────┘
-     │                                            │
-     │                                            │  4. User approves
-     │                                            │     on mobile/web
-     │                                            ├────────────┐
-     │                                            │            │
-     │                                            │<───────────┘
-     │  5. POST /token                            │
-     │     (grant_type=ciba, auth_req_id)        │
-     ├──────────────────────────────────────────>│
-     │                                            │
-     │  6. access_token, id_token, refresh_token │
-     │<──────────────────────────────────────────┤
-     │                                            │
+```mermaid
+sequenceDiagram
+    participant Client
+    participant OP as Authrim OP
+    participant User as User Device
+
+    Client->>OP: 1. POST /bc-authorize<br/>(scope, login_hint, etc.)
+    OP-->>Client: 2. auth_req_id, expires_in, interval
+
+    Note over OP,User: 3. User notification<br/>(push, SMS, email)
+    OP->>User: Send notification
+    User->>OP: 4. User approves<br/>on mobile/web
+
+    Client->>OP: 5. POST /token<br/>(grant_type=ciba, auth_req_id)
+    OP-->>Client: 6. access_token, id_token, refresh_token
 ```
 
 ## Implementation Guide

@@ -8,19 +8,24 @@
 
 ## Timeline Overview
 
+```mermaid
+timeline
+    title Authrim Development Timeline
+    section 2025
+        Nov-Dec : ✅ P1-P2 Complete
+    section 2026
+        Jan-Feb : ✅ P3 Complete
+        Mar-Apr : ✅ P4-P5 Complete
+        May-Oct : ⏳ P6 Enterprise (8/11 Complete)
+    section 2027
+        Q1 : 🔜 P7 CLI & Automation
+        Q2+ : 🔜 P8 Verifiable Credentials & SaaS
 ```
-2025                 2026                                    2027
-Nov  Dec  Jan  Feb  Mar  Apr  May  Jun  Jul  Aug  Sep  Oct  Nov  Dec  Jan  Feb+
-│    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
-├─P1─┼─P2─┼─P3─┼────┼─P4─┼─P5─┼─────────────P6──────────────┼──P7───────┼─P8+
-│    │    │    │    │    │    │    │    │    │    │    │    │    │    │    │
-✅   ✅   ✅   ✅   ✅   ✅   ⏳   ⏳   ⏳   ⏳   ⏳   ⏳   🔜   🔜   🔜   🔜
 
-Legend:
-✅ Complete (Phases 1-5)
-⏳ In Progress (Phase 6: 8/11 features complete)
-🔜 Planned (Phases 7-10)
-```
+**Legend:**
+- ✅ Complete (Phases 1-5)
+- ⏳ In Progress (Phase 6: 8/11 features complete)
+- 🔜 Planned (Phases 7-10)
 
 ---
 

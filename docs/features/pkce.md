@@ -58,49 +58,21 @@ Authrim implements PKCE, a critical security extension that protects authorizati
 
 ### Flow Diagram
 
-```
-┌──────────┐                                    ┌────────────────┐
-│  Client  │                                    │ Authorization  │
-│          │                                    │     Server     │
-└─────┬────┘                                    └───────┬────────┘
-      │                                                 │
-      │ 1. Generate code_verifier (random string)      │
-      │    code_verifier = "dBjftJe...z1LTQ" (43-128)  │
-      │                                                 │
-      │ 2. Calculate code_challenge                    │
-      │    code_challenge = BASE64URL(SHA256(verifier))│
-      │                   = "E9Melhoa2Owv...cM"         │
-      │                                                 │
-      │ 3. Authorization Request                       │
-      │    /authorize?...                              │
-      │    &code_challenge=E9Melhoa2Owv...cM           │
-      │    &code_challenge_method=S256                 │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │                                                 │ 4. Store
-      │                                                 │    challenge
-      │                                                 │    with code
-      │                                                 │
-      │ 5. Authorization Code                          │
-      │    ?code=abc123&state=xyz                      │
-      │<────────────────────────────────────────────────┤
-      │                                                 │
-      │ 6. Token Request                                │
-      │    POST /token                                  │
-      │    code=abc123                                  │
-      │    &code_verifier=dBjftJe...z1LTQ              │
-      ├────────────────────────────────────────────────>│
-      │                                                 │
-      │                                                 │ 7. Verify
-      │                                                 │    SHA256(
-      │                                                 │      verifier
-      │                                                 │    ) ==
-      │                                                 │    challenge
-      │                                                 │
-      │ 8. Tokens                                      │
-      │    {access_token, id_token, ...}               │
-      │<────────────────────────────────────────────────┤
-      │                                                 │
+```mermaid
+sequenceDiagram
+    participant Client
+    participant AS as Authorization Server
+
+    Note over Client: 1. Generate code_verifier<br/>(random string 43-128 chars)
+    Note over Client: 2. Calculate code_challenge<br/>= BASE64URL(SHA256(verifier))
+
+    Client->>AS: 3. Authorization Request<br/>/authorize?...&code_challenge=...&code_challenge_method=S256
+    Note over AS: 4. Store challenge with code
+    AS-->>Client: 5. Authorization Code<br/>?code=abc123&state=xyz
+
+    Client->>AS: 6. Token Request<br/>POST /token<br/>code=abc123&code_verifier=...
+    Note over AS: 7. Verify<br/>SHA256(verifier) == challenge
+    AS-->>Client: 8. Tokens<br/>{access_token, id_token, ...}
 ```
 
 ### PKCE Algorithm

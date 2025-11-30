@@ -46,13 +46,13 @@
 - **Frontend:** SvelteKit 5 + UnoCSS + Melt UI
 
 ### Architecture
-```
-8 Packages (op-discovery, op-auth, op-token, op-userinfo, 
-op-management, router, shared, ui)
-9,000+ lines TypeScript
-400+ tests (Vitest + Playwright)
-95.8% OpenID conformance score (Phase 3)
-```
+
+| Metric | Value |
+|--------|-------|
+| **Packages** | 8 (op-discovery, op-auth, op-token, op-userinfo, op-management, router, shared, ui) |
+| **TypeScript** | 9,000+ lines |
+| **Tests** | 400+ (Vitest + Playwright) |
+| **Conformance** | 95.8% OpenID score (Phase 3) |
 
 ---
 
@@ -144,16 +144,19 @@ op-management, router, shared, ui)
 
 ## New Package Structure
 
-```
-packages/rp-client/
-├── src/
-│   ├── types/           # RP-specific types
-│   ├── core/            # OIDC Client, Discovery consumer
-│   ├── flows/           # Auth Code, Implicit, Hybrid, Logout
-│   ├── security/        # DPoP, mTLS, state, nonce
-│   ├── storage/         # Session & token cache
-│   └── middleware/      # Auth guards, token refresh
-└── __tests__/           # 30-40 test files
+```mermaid
+graph TB
+    subgraph RPClient["packages/rp-client/"]
+        subgraph src["src/"]
+            types["types/ - RP-specific types"]
+            core["core/ - OIDC Client, Discovery consumer"]
+            flows["flows/ - Auth Code, Implicit, Hybrid, Logout"]
+            security["security/ - DPoP, mTLS, state, nonce"]
+            storage["storage/ - Session & token cache"]
+            middleware["middleware/ - Auth guards, token refresh"]
+        end
+        tests["__tests__/ - 30-40 test files"]
+    end
 ```
 
 ---

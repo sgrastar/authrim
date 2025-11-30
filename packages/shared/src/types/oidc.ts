@@ -240,6 +240,8 @@ export interface ClientRegistrationRequest {
   id_token_encrypted_response_enc?: string;
   userinfo_encrypted_response_alg?: string;
   userinfo_encrypted_response_enc?: string;
+  // UserInfo signing - OIDC Core 5.3.3
+  userinfo_signed_response_alg?: string;
 }
 
 /**
@@ -274,6 +276,8 @@ export interface ClientRegistrationResponse {
   id_token_encrypted_response_enc?: string;
   userinfo_encrypted_response_alg?: string;
   userinfo_encrypted_response_enc?: string;
+  // UserInfo signing - OIDC Core 5.3.3
+  userinfo_signed_response_alg?: string;
   // JAR (JWT-Secured Authorization Request) - RFC 9101
   request_object_signing_alg?: string;
   request_object_encryption_alg?: string;

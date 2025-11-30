@@ -26,22 +26,35 @@ Authrim uses Cloudflare Durable Objects for managing **strong consistency requir
 
 ### Architecture Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     Cloudflare Workers (Hono)                       │
-└─────────────────────────────────────────────────────────────────────┘
-                │              │              │              │
-                ▼              ▼              ▼              ▼
-       ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐
-       │KeyManager  │  │SessionStore│  │AuthCodeStore│ │TokenRotator│
-       │            │  │            │  │            │  │            │
-       │• Keys JWKS │  │• Hot       │  │• Codes TTL │  │• Rotation  │
-       │• Rotation  │  │  Sessions  │  │• Replay    │  │• Audit Log │
-       └────────────┘  └────────────┘  └────────────┘  └────────────┘
-              │                │                │              │
-              ▼                ▼                ▼              ▼
-       [ Persistent ]   [ In-memory + ]  [ In-memory ]  [ In-memory +]
-       [ Storage    ]   [ D1 fallback]   [ TTL-based ]  [ D1 audit  ]
+```mermaid
+flowchart TB
+    subgraph Worker["Cloudflare Workers (Hono)"]
+        W[HTTP Handler]
+    end
+
+    subgraph DOs["Durable Objects"]
+        KM["KeyManager<br/>• Keys JWKS<br/>• Rotation"]
+        SS["SessionStore<br/>• Hot Sessions"]
+        ACS["AuthCodeStore<br/>• Codes TTL<br/>• Replay"]
+        TR["TokenRotator<br/>• Rotation<br/>• Audit Log"]
+    end
+
+    subgraph Storage["Storage Backend"]
+        KM_S["Persistent Storage"]
+        SS_S["In-memory + D1 fallback"]
+        ACS_S["In-memory TTL-based"]
+        TR_S["In-memory + D1 audit"]
+    end
+
+    W --> KM
+    W --> SS
+    W --> ACS
+    W --> TR
+
+    KM --> KM_S
+    SS --> SS_S
+    ACS --> ACS_S
+    TR --> TR_S
 ```
 
 ---
@@ -59,26 +72,16 @@ The `KeyManager` Durable Object is responsible for:
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     KeyManager Durable Object                │
-│                                                               │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │  Durable Storage                                       │  │
-│  │                                                        │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │  │
-│  │  │  Key 1       │  │  Key 2       │  │  Key 3     │  │  │
-│  │  │  kid: key-1  │  │  kid: key-2  │  │  kid: key-3│  │  │
-│  │  │  active: no  │  │  active: yes │  │  active: no│  │  │
-│  │  │  created: T1 │  │  created: T2 │  │  created:T3│  │  │
-│  │  └──────────────┘  └──────────────┘  └────────────┘  │  │
-│  └────────────────────────────────────────────────────────┘  │
-│                                                               │
-│  Configuration:                                               │
-│  - rotationIntervalDays: 90                                   │
-│  - retentionPeriodDays: 30                                    │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph KM["KeyManager Durable Object"]
+        subgraph Storage["Durable Storage"]
+            K1["Key 1<br/>kid: key-1<br/>active: no<br/>created: T1"]
+            K2["Key 2<br/>kid: key-2<br/>active: yes<br/>created: T2"]
+            K3["Key 3<br/>kid: key-3<br/>active: no<br/>created: T3"]
+        end
+        Config["Configuration<br/>• rotationIntervalDays: 90<br/>• retentionPeriodDays: 30"]
+    end
 ```
 
 ### Key Rotation Strategy
@@ -107,23 +110,23 @@ The `KeyManager` Durable Object is responsible for:
 
 #### Timeline Example
 
-```
-Day 0:   Generate Key 1 (active)
-         └─ Sign all tokens with Key 1
-
-Day 90:  Generate Key 2 (active), deactivate Key 1
-         ├─ Sign new tokens with Key 2
-         └─ Key 1 still available for verification
-
-Day 120: Remove Key 1 (30 days after rotation)
-         └─ Only Key 2 remains
-
-Day 180: Generate Key 3 (active), deactivate Key 2
-         ├─ Sign new tokens with Key 3
-         └─ Key 2 still available for verification
-
-Day 210: Remove Key 2
-         └─ Only Key 3 remains
+```mermaid
+timeline
+    title Key Rotation Timeline
+    Day 0 : Generate Key 1 (active)
+          : Sign all tokens with Key 1
+    Day 90 : Generate Key 2 (active)
+           : Deactivate Key 1
+           : Sign new tokens with Key 2
+           : Key 1 still available for verification
+    Day 120 : Remove Key 1 (30 days after rotation)
+            : Only Key 2 remains
+    Day 180 : Generate Key 3 (active)
+            : Deactivate Key 2
+            : Sign new tokens with Key 3
+            : Key 2 still available for verification
+    Day 210 : Remove Key 2
+            : Only Key 3 remains
 ```
 
 ### API Endpoints
@@ -306,24 +309,20 @@ The `SessionStore` Durable Object manages **active user sessions** with:
 
 ### Architecture
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                  SessionStore Durable Object                  │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │  In-Memory Storage (Hot Sessions)                        │ │
-│  │                                                          │ │
-│  │  session:abc123 → { userId, expiresAt, data, ... }      │ │
-│  │  session:def456 → { userId, expiresAt, data, ... }      │ │
-│  └──────────────────────────────────────────────────────────┘ │
-│                           │                                    │
-│                           │ (fallback on miss)                 │
-│                           ▼                                    │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │  D1 Database (Cold Sessions)                             │ │
-│  │  SELECT * FROM sessions WHERE id = ? AND expires_at > ?  │ │
-│  └──────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph SS["SessionStore Durable Object"]
+        subgraph Hot["In-Memory Storage (Hot Sessions)"]
+            S1["session:abc123 → { userId, expiresAt, data, ... }"]
+            S2["session:def456 → { userId, expiresAt, data, ... }"]
+        end
+
+        subgraph Cold["D1 Database (Cold Sessions)"]
+            D1["SELECT * FROM sessions<br/>WHERE id = ? AND expires_at > ?"]
+        end
+
+        Hot -->|fallback on miss| Cold
+    end
 ```
 
 ### API Endpoints
@@ -461,24 +460,13 @@ The `AuthorizationCodeStore` Durable Object manages **one-time authorization cod
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│            AuthorizationCodeStore Durable Object            │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │  In-Memory Storage (TTL: 60 seconds)                  │ │
-│  │                                                       │ │
-│  │  code:abc123 → {                                      │ │
-│  │    clientId: "client_1",                              │ │
-│  │    redirectUri: "https://...",                        │ │
-│  │    userId: "user_123",                                │ │
-│  │    scope: "openid profile",                           │ │
-│  │    codeChallenge: "sha256...",                        │ │
-│  │    used: false,                                       │ │
-│  │    expiresAt: 1700000060                              │ │
-│  │  }                                                     │ │
-│  └───────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph ACS["AuthorizationCodeStore Durable Object"]
+        subgraph Mem["In-Memory Storage (TTL: 60 seconds)"]
+            Code["code:abc123 → {<br/>  clientId: 'client_1',<br/>  redirectUri: 'https://...',<br/>  userId: 'user_123',<br/>  scope: 'openid profile',<br/>  codeChallenge: 'sha256...',<br/>  used: false,<br/>  expiresAt: 1700000060<br/>}"]
+        end
+    end
 ```
 
 ### API Endpoints
@@ -612,28 +600,19 @@ The `RefreshTokenRotator` Durable Object manages **atomic refresh token rotation
 
 ### Architecture
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│           RefreshTokenRotator Durable Object                 │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │  Token Family Tracking                                 │ │
-│  │                                                        │ │
-│  │  family:xyz → {                                        │ │
-│  │    currentToken: "rt_v3",                              │ │
-│  │    previousTokens: ["rt_v1", "rt_v2"],                 │ │
-│  │    userId: "user_123",                                 │ │
-│  │    clientId: "client_1",                               │ │
-│  │    rotationCount: 2                                    │ │
-│  │  }                                                      │ │
-│  └────────────────────────────────────────────────────────┘ │
-│                           │                                  │
-│                           ▼                                  │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │  D1 Audit Log (refresh_token_log)                      │ │
-│  │  INSERT INTO refresh_token_log (action, token_id, ...)│ │
-│  └────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph RTR["RefreshTokenRotator Durable Object"]
+        subgraph TF["Token Family Tracking"]
+            Family["family:xyz → {<br/>  currentToken: 'rt_v3',<br/>  previousTokens: ['rt_v1', 'rt_v2'],<br/>  userId: 'user_123',<br/>  clientId: 'client_1',<br/>  rotationCount: 2<br/>}"]
+        end
+
+        subgraph Audit["D1 Audit Log"]
+            Log["INSERT INTO refresh_token_log<br/>(action, token_id, ...)"]
+        end
+
+        TF --> Audit
+    end
 ```
 
 ### API Endpoints

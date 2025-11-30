@@ -19,6 +19,69 @@ import type {
 import { generateSecureRandomString } from '@authrim/shared';
 
 /**
+ * Validate sector_identifier_uri content (OIDC Core 8.1)
+ * Fetches the URI and verifies that all redirect_uris are included in the returned JSON array
+ */
+async function validateSectorIdentifierContent(
+  sectorUri: string,
+  redirectUris: string[]
+): Promise<{ valid: boolean; error?: OAuthErrorResponse }> {
+  try {
+    const response = await fetch(sectorUri, {
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: `Failed to fetch sector_identifier_uri: HTTP ${response.status}`,
+        },
+      };
+    }
+
+    const content = (await response.json()) as unknown;
+
+    if (!Array.isArray(content)) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: 'sector_identifier_uri must return a JSON array of redirect_uris',
+        },
+      };
+    }
+
+    // Verify all redirect_uris are included in the sector_identifier_uri content
+    for (const uri of redirectUris) {
+      if (!content.includes(uri)) {
+        return {
+          valid: false,
+          error: {
+            error: 'invalid_client_metadata',
+            error_description: `redirect_uri '${uri}' not found in sector_identifier_uri content`,
+          },
+        };
+      }
+    }
+
+    return { valid: true };
+  } catch (error) {
+    console.error('[DCR] sector_identifier_uri validation error:', error);
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_client_metadata',
+        error_description: 'Failed to validate sector_identifier_uri content',
+      },
+    };
+  }
+}
+
+/**
  * Validate client registration request
  */
 function validateRegistrationRequest(
@@ -346,8 +409,9 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       token_endpoint_auth_method, is_trusted, skip_consent,
       allow_claims_without_scope,
       jwks, jwks_uri,
+      userinfo_signed_response_alg,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `
   )
     .bind(
@@ -371,6 +435,7 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       metadata.allow_claims_without_scope ? 1 : 0,
       metadata.jwks ? JSON.stringify(metadata.jwks) : null,
       metadata.jwks_uri || null,
+      metadata.userinfo_signed_response_alg || null,
       metadata.created_at || now,
       metadata.updated_at || now
     )
@@ -413,6 +478,18 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
           },
           400
         );
+      }
+    }
+
+    // OIDC Core 8.1: Validate sector_identifier_uri content
+    // Fetch the URI and verify that all redirect_uris are included
+    if (request.sector_identifier_uri) {
+      const sectorValidation = await validateSectorIdentifierContent(
+        request.sector_identifier_uri,
+        request.redirect_uris
+      );
+      if (!sectorValidation.valid) {
+        return c.json(sectorValidation.error, 400);
       }
     }
 
@@ -466,6 +543,9 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     response.subject_type = subjectType;
     if (request.sector_identifier_uri)
       response.sector_identifier_uri = request.sector_identifier_uri;
+    // OIDC Core 5.3.3: UserInfo signing algorithm
+    if (request.userinfo_signed_response_alg)
+      response.userinfo_signed_response_alg = request.userinfo_signed_response_alg;
 
     // OIDC Conformance Test: Detect certification.openid.net
     const isCertificationTest = request.redirect_uris.some((uri) =>

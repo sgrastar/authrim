@@ -19,29 +19,47 @@ Phase 5で実装された統合ストレージ抽象化層です。Cloudflare Wo
 
 ## アーキテクチャ
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                  CloudflareStorageAdapter                    │
-│                    (Unified Interface)                       │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-          ┌───────────────┼───────────────┐
-          │               │               │
-          ▼               ▼               ▼
-    ┌─────────┐     ┌─────────┐   ┌─────────────┐
-    │   D1    │     │   KV    │   │   Durable   │
-    │Database │     │ Storage │   │   Objects   │
-    └─────────┘     └─────────┘   └─────────────┘
-         │               │               │
-         │               │               ├─ SessionStore
-         │               │               ├─ AuthCodeStore
-         │               │               └─ RefreshTokenRotator
-         │               │
-    ┌────▼────┐     ┌────▼────┐
-    │ Users   │     │ Cache   │
-    │ Clients │     │         │
-    │ Passkeys│     └─────────┘
-    └─────────┘
+```mermaid
+flowchart TB
+    subgraph Adapter["CloudflareStorageAdapter (Unified Interface)"]
+        A[Routing Logic]
+    end
+
+    subgraph Storage["Storage Backends"]
+        D1["D1 Database"]
+        KV["KV Storage"]
+        DO["Durable Objects"]
+    end
+
+    subgraph D1Data["D1 Tables"]
+        Users[Users]
+        Clients[Clients]
+        Passkeys[Passkeys]
+    end
+
+    subgraph KVData["KV Data"]
+        Cache[Cache]
+    end
+
+    subgraph DOInstances["DO Instances"]
+        SS[SessionStore]
+        ACS[AuthCodeStore]
+        RTR[RefreshTokenRotator]
+    end
+
+    A --> D1
+    A --> KV
+    A --> DO
+
+    D1 --> Users
+    D1 --> Clients
+    D1 --> Passkeys
+
+    KV --> Cache
+
+    DO --> SS
+    DO --> ACS
+    DO --> RTR
 ```
 
 ## 使用方法
@@ -207,19 +225,26 @@ Passkey（WebAuthn）管理用のストアインターフェース。
 
 ### リードスルーキャッシュ（Client）
 
-```
-1. KVキャッシュをチェック → ヒット? 返却
-2. キャッシュミス → D1クエリ
-3. D1結果をKVにキャッシュ（TTL: 5分）
-4. 結果を返却
+```mermaid
+flowchart LR
+    A["1. KVキャッシュをチェック"] --> B{ヒット?}
+    B -->|Yes| C["返却"]
+    B -->|No| D["2. D1クエリ"]
+    D --> E["3. KVにキャッシュ<br/>(TTL: 5分)"]
+    E --> F["4. 結果を返却"]
 ```
 
 ### ホット/コールドパターン（Session）
 
-```
-1. Durable Object（ホット）をチェック → ヒット? 返却
-2. D1（コールド）をチェック → ヒット? DOに昇格
-3. 結果を返却
+```mermaid
+flowchart LR
+    A["1. DO（ホット）をチェック"] --> B{ヒット?}
+    B -->|Yes| C["返却"]
+    B -->|No| D["2. D1（コールド）をチェック"]
+    D --> E{ヒット?}
+    E -->|Yes| F["DOに昇格"]
+    F --> G["3. 結果を返却"]
+    E -->|No| H["null返却"]
 ```
 
 ### ワンタイムユーザー保証（AuthCode）
