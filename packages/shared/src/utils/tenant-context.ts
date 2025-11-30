@@ -134,7 +134,9 @@ export function createShardedAuthCode(shardIndex: number, randomCode: string): s
  * @param code - Sharded authorization code (format: {shardIndex}_{randomCode})
  * @returns Object containing shardIndex and opaqueCode, or null if invalid format
  */
-export function parseShardedAuthCode(code: string): { shardIndex: number; opaqueCode: string } | null {
+export function parseShardedAuthCode(
+  code: string
+): { shardIndex: number; opaqueCode: string } | null {
   const underscorePos = code.indexOf('_');
   if (underscorePos === -1) {
     // Legacy format (no shard prefix) - fallback to global shard

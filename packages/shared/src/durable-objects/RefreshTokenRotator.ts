@@ -90,13 +90,23 @@ interface AuditLogEntry {
 }
 
 /**
- * Persistent state stored in Durable Storage
+ * Persistent state stored in Durable Storage (legacy format for migration)
  */
 interface RefreshTokenRotatorState {
   families: Record<string, TokenFamily>; // Serializable format (Map cannot be serialized directly)
   tokenToFamily: Record<string, string>; // Reverse index
   lastCleanup: number;
 }
+
+/**
+ * Storage key prefixes for granular storage
+ * Using prefix-based keys allows for efficient incremental updates
+ */
+const STORAGE_PREFIX = {
+  FAMILY: 'f:', // f:{familyId} → TokenFamily
+  TOKEN: 't:', // t:{token} → familyId
+  META: 'm:', // m:migrated → boolean (migration flag)
+} as const;
 
 /**
  * RefreshTokenRotator Durable Object
@@ -110,6 +120,12 @@ export class RefreshTokenRotator {
   private tokenToFamily: Map<string, string> = new Map(); // Reverse index: token → familyId
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
+  private usesGranularStorage: boolean = false; // Flag for new storage format
+
+  // Async audit log buffering
+  private pendingAuditLogs: AuditLogEntry[] = [];
+  private flushScheduled: boolean = false;
+  private readonly AUDIT_FLUSH_DELAY = 100; // ms - batch logs within this window
 
   // Configuration
   private readonly DEFAULT_TTL = 30 * 24 * 60 * 60; // 30 days in seconds
@@ -125,7 +141,8 @@ export class RefreshTokenRotator {
 
   /**
    * Initialize state from Durable Storage
-   * Must be called before any token operations
+   * Supports both legacy (single 'state' key) and granular (prefix-based) storage formats.
+   * Migrates from legacy to granular format on first access.
    */
   private async initializeState(): Promise<void> {
     if (this.initialized) {
@@ -133,15 +150,32 @@ export class RefreshTokenRotator {
     }
 
     try {
-      const stored = await this.state.storage.get<RefreshTokenRotatorState>('state');
+      // Check if already migrated to granular storage
+      const migrated = await this.state.storage.get<boolean>(`${STORAGE_PREFIX.META}migrated`);
 
-      if (stored) {
-        // Restore token families from Durable Storage
-        this.families = new Map(Object.entries(stored.families));
-        this.tokenToFamily = new Map(Object.entries(stored.tokenToFamily));
-        console.log(
-          `RefreshTokenRotator: Restored ${this.families.size} token families from Durable Storage`
-        );
+      if (migrated) {
+        // Load from granular storage (new format)
+        await this.loadFromGranularStorage();
+        this.usesGranularStorage = true;
+      } else {
+        // Try legacy format first
+        const stored = await this.state.storage.get<RefreshTokenRotatorState>('state');
+
+        if (stored) {
+          // Restore from legacy format
+          this.families = new Map(Object.entries(stored.families));
+          this.tokenToFamily = new Map(Object.entries(stored.tokenToFamily));
+          console.log(
+            `RefreshTokenRotator: Restored ${this.families.size} token families from legacy storage`
+          );
+
+          // Migrate to granular storage in background (non-blocking)
+          void this.migrateToGranularStorage();
+        } else {
+          // Fresh instance - use granular storage from start
+          this.usesGranularStorage = true;
+          await this.state.storage.put(`${STORAGE_PREFIX.META}migrated`, true);
+        }
       }
     } catch (error) {
       console.error('RefreshTokenRotator: Failed to initialize from Durable Storage:', error);
@@ -155,10 +189,80 @@ export class RefreshTokenRotator {
   }
 
   /**
+   * Load state from granular storage (prefix-based keys)
+   */
+  private async loadFromGranularStorage(): Promise<void> {
+    // Load all families
+    const familyEntries = await this.state.storage.list<TokenFamily>({
+      prefix: STORAGE_PREFIX.FAMILY,
+    });
+    for (const [key, family] of familyEntries) {
+      const familyId = key.substring(STORAGE_PREFIX.FAMILY.length);
+      this.families.set(familyId, family);
+    }
+
+    // Load token→family index
+    const tokenEntries = await this.state.storage.list<string>({
+      prefix: STORAGE_PREFIX.TOKEN,
+    });
+    for (const [key, familyId] of tokenEntries) {
+      const token = key.substring(STORAGE_PREFIX.TOKEN.length);
+      this.tokenToFamily.set(token, familyId);
+    }
+
+    console.log(`RefreshTokenRotator: Loaded ${this.families.size} families from granular storage`);
+  }
+
+  /**
+   * Migrate from legacy storage to granular storage
+   * Runs in background to avoid blocking the current request
+   */
+  private async migrateToGranularStorage(): Promise<void> {
+    try {
+      console.log('RefreshTokenRotator: Starting migration to granular storage...');
+
+      // Write each family and token index as separate keys
+      const writes: Map<string, TokenFamily | string | boolean> = new Map();
+
+      for (const [familyId, family] of this.families) {
+        writes.set(`${STORAGE_PREFIX.FAMILY}${familyId}`, family);
+      }
+
+      for (const [token, familyId] of this.tokenToFamily) {
+        writes.set(`${STORAGE_PREFIX.TOKEN}${token}`, familyId);
+      }
+
+      // Mark as migrated
+      writes.set(`${STORAGE_PREFIX.META}migrated`, true);
+
+      // Batch write all entries
+      await this.state.storage.put(Object.fromEntries(writes));
+
+      // Delete legacy state key
+      await this.state.storage.delete('state');
+
+      this.usesGranularStorage = true;
+      console.log(
+        `RefreshTokenRotator: Migration complete. ${this.families.size} families migrated.`
+      );
+    } catch (error) {
+      console.error('RefreshTokenRotator: Migration failed:', error);
+      // Continue using legacy format - will retry on next DO restart
+    }
+  }
+
+  /**
    * Save current state to Durable Storage
-   * Converts Maps to serializable objects
+   * Uses granular storage if migrated, otherwise falls back to legacy format.
+   * @deprecated Use saveFamily() for incremental updates
    */
   private async saveState(): Promise<void> {
+    if (this.usesGranularStorage) {
+      // Already using granular storage - no need to save entire state
+      // Individual operations use saveFamily() instead
+      return;
+    }
+
     try {
       const stateToSave: RefreshTokenRotatorState = {
         families: Object.fromEntries(this.families),
@@ -175,6 +279,73 @@ export class RefreshTokenRotator {
   }
 
   /**
+   * Save a single family and update token indexes (granular storage)
+   * Much more efficient than saveState() for incremental updates.
+   *
+   * @param family - The token family to save
+   * @param newToken - New token to add to index (optional)
+   * @param removedTokens - Tokens to remove from index (optional)
+   */
+  private async saveFamily(
+    family: TokenFamily,
+    newToken?: string,
+    removedTokens?: string[]
+  ): Promise<void> {
+    if (!this.usesGranularStorage) {
+      // Fall back to legacy full save
+      await this.saveState();
+      return;
+    }
+
+    try {
+      // Batch all writes for atomicity
+      const writes: Record<string, TokenFamily | string> = {
+        [`${STORAGE_PREFIX.FAMILY}${family.id}`]: family,
+      };
+
+      if (newToken) {
+        writes[`${STORAGE_PREFIX.TOKEN}${newToken}`] = family.id;
+      }
+
+      await this.state.storage.put(writes);
+
+      // Delete removed tokens
+      if (removedTokens && removedTokens.length > 0) {
+        const keysToDelete = removedTokens.map((t) => `${STORAGE_PREFIX.TOKEN}${t}`);
+        await this.state.storage.delete(keysToDelete);
+      }
+    } catch (error) {
+      console.error('RefreshTokenRotator: Failed to save family:', error);
+      throw error; // Propagate error for token operations
+    }
+  }
+
+  /**
+   * Delete a family and all its token indexes (granular storage)
+   */
+  private async deleteFamily(family: TokenFamily): Promise<void> {
+    if (!this.usesGranularStorage) {
+      // Fall back to legacy full save
+      await this.saveState();
+      return;
+    }
+
+    try {
+      // Collect all keys to delete
+      const keysToDelete = [
+        `${STORAGE_PREFIX.FAMILY}${family.id}`,
+        `${STORAGE_PREFIX.TOKEN}${family.currentToken}`,
+        ...family.previousTokens.map((t) => `${STORAGE_PREFIX.TOKEN}${t}`),
+      ];
+
+      await this.state.storage.delete(keysToDelete);
+    } catch (error) {
+      console.error('RefreshTokenRotator: Failed to delete family:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Start periodic cleanup of expired token families
    */
   private startCleanup(): void {
@@ -187,38 +358,44 @@ export class RefreshTokenRotator {
 
   /**
    * Cleanup expired token families
+   * Uses granular storage for efficient deletion without full state serialization.
    */
   private async cleanupExpiredFamilies(): Promise<void> {
     const now = Date.now();
-    let cleaned = 0;
+    const expiredFamilies: TokenFamily[] = [];
 
     for (const [familyId, family] of this.families.entries()) {
       if (family.expiresAt <= now) {
-        // Remove from families map
-        this.families.delete(familyId);
+        expiredFamilies.push(family);
 
-        // Remove from reverse index
+        // Remove from in-memory maps
+        this.families.delete(familyId);
         this.tokenToFamily.delete(family.currentToken);
         for (const token of family.previousTokens) {
           this.tokenToFamily.delete(token);
         }
-
-        cleaned++;
-
-        // Log cleanup
-        await this.logToD1({
-          action: 'expired',
-          familyId,
-          userId: family.userId,
-          timestamp: now,
-        });
       }
     }
 
-    if (cleaned > 0) {
-      console.log(`RefreshTokenRotator: Cleaned up ${cleaned} expired token families`);
-      // Persist cleanup to Durable Storage
-      await this.saveState();
+    if (expiredFamilies.length === 0) {
+      return;
+    }
+
+    console.log(
+      `RefreshTokenRotator: Cleaning up ${expiredFamilies.length} expired token families`
+    );
+
+    // Delete from storage (granular or legacy)
+    for (const family of expiredFamilies) {
+      await this.deleteFamily(family);
+
+      // Log cleanup (non-critical, async)
+      await this.logToD1({
+        action: 'expired',
+        familyId: family.id,
+        userId: family.userId,
+        timestamp: now,
+      });
     }
   }
 
@@ -250,14 +427,33 @@ export class RefreshTokenRotator {
 
   /**
    * Log audit entry to D1
-   * Uses retry logic with exponential backoff for reliability
-   * CRITICAL: Audit logs are required for security compliance (SOC 2, GDPR)
+   * Security-critical events (theft_detected, family_revoked) are logged synchronously.
+   * Non-critical events are batched for performance.
+   *
+   * SECURITY: theft_detected and family_revoked MUST be logged synchronously
+   * to ensure audit trail integrity for security incident response.
    */
   private async logToD1(entry: AuditLogEntry): Promise<void> {
     if (!this.env.DB) {
       return;
     }
 
+    // CRITICAL events: log synchronously to ensure audit trail
+    const isCritical = entry.action === 'theft_detected' || entry.action === 'family_revoked';
+
+    if (isCritical) {
+      await this.syncLogToD1(entry);
+    } else {
+      // Non-critical events: batch for performance
+      this.pendingAuditLogs.push(entry);
+      this.scheduleAuditFlush();
+    }
+  }
+
+  /**
+   * Synchronously log a single entry to D1 (for critical events)
+   */
+  private async syncLogToD1(entry: AuditLogEntry): Promise<void> {
     await retryD1Operation(
       async () => {
         await this.env.DB.prepare(
@@ -275,13 +471,71 @@ export class RefreshTokenRotator {
           )
           .run();
       },
-      'RefreshTokenRotator.logToD1',
+      'RefreshTokenRotator.syncLogToD1',
       { maxRetries: 3 }
     );
   }
 
   /**
+   * Schedule a flush of pending audit logs
+   */
+  private scheduleAuditFlush(): void {
+    if (this.flushScheduled) {
+      return;
+    }
+
+    this.flushScheduled = true;
+    setTimeout(() => {
+      void this.flushAuditLogs();
+    }, this.AUDIT_FLUSH_DELAY);
+  }
+
+  /**
+   * Flush all pending audit logs to D1 in a batch
+   */
+  private async flushAuditLogs(): Promise<void> {
+    this.flushScheduled = false;
+
+    if (this.pendingAuditLogs.length === 0 || !this.env.DB) {
+      return;
+    }
+
+    const logsToFlush = [...this.pendingAuditLogs];
+    this.pendingAuditLogs = [];
+
+    try {
+      // Batch insert using D1's batch API
+      const statements = logsToFlush.map((entry) =>
+        this.env.DB.prepare(
+          `INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, metadata_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          `audit_${crypto.randomUUID()}`,
+          entry.userId || null,
+          `refresh_token.${entry.action}`,
+          'refresh_token_family',
+          entry.familyId,
+          entry.metadata ? JSON.stringify(entry.metadata) : null,
+          Math.floor(entry.timestamp / 1000)
+        )
+      );
+
+      await this.env.DB.batch(statements);
+    } catch (error) {
+      console.error('RefreshTokenRotator: Failed to flush audit logs:', error);
+      // Re-queue failed logs for retry (limited to prevent memory leak)
+      if (this.pendingAuditLogs.length < 100) {
+        this.pendingAuditLogs.push(...logsToFlush);
+        this.scheduleAuditFlush();
+      } else {
+        console.error('RefreshTokenRotator: Audit log buffer overflow, dropping logs');
+      }
+    }
+  }
+
+  /**
    * Create new token family
+   * Uses granular storage for efficient incremental writes.
    */
   async createFamily(request: CreateFamilyRequest): Promise<TokenFamily> {
     await this.initializeState();
@@ -302,16 +556,16 @@ export class RefreshTokenRotator {
       expiresAt: now + request.ttl * 1000,
     };
 
-    // Store family
+    // Store family in memory
     this.families.set(familyId, family);
 
-    // Update reverse index
+    // Update reverse index in memory
     this.tokenToFamily.set(request.token, familyId);
 
-    // Persist to Durable Storage
-    await this.saveState();
+    // Persist to Durable Storage (granular: saves only this family + token index)
+    await this.saveFamily(family, request.token);
 
-    // Audit log
+    // Audit log (non-critical, async)
     await this.logToD1({
       action: 'created',
       familyId,
@@ -326,6 +580,10 @@ export class RefreshTokenRotator {
 
   /**
    * Rotate refresh token (atomic operation)
+   * Uses granular storage for efficient incremental updates.
+   *
+   * SECURITY: DO guarantees single-threaded execution, so rotation is atomic.
+   * Old tokens are kept in previousTokens for theft detection (replay attack detection).
    */
   async rotate(request: RotateTokenRequest): Promise<RotateTokenResponse> {
     await this.initializeState();
@@ -347,6 +605,7 @@ export class RefreshTokenRotator {
       // Cleanup expired family
       this.families.delete(family.id);
       this.tokenToFamily.delete(request.currentToken);
+      await this.deleteFamily(family);
       throw new Error('invalid_grant: Refresh token expired');
     }
 
@@ -368,7 +627,7 @@ export class RefreshTokenRotator {
         reason: 'theft_detected',
       });
 
-      // Audit log
+      // Audit log (CRITICAL event - logged synchronously)
       await this.logToD1({
         action: 'theft_detected',
         familyId: family.id,
@@ -394,24 +653,28 @@ export class RefreshTokenRotator {
     family.rotationCount++;
     family.lastRotation = Date.now();
 
+    // Track removed tokens for storage cleanup
+    const removedTokens: string[] = [];
+
     // Trim previous tokens (keep only MAX_PREVIOUS_TOKENS)
     if (family.previousTokens.length > this.MAX_PREVIOUS_TOKENS) {
       const removed = family.previousTokens.shift();
       if (removed) {
         this.tokenToFamily.delete(removed);
+        removedTokens.push(removed);
       }
     }
 
-    // Update families map
+    // Update families map in memory
     this.families.set(family.id, family);
 
-    // Update reverse index (add new token, keep old token for theft detection)
+    // Update reverse index in memory (add new token, keep old token for theft detection)
     this.tokenToFamily.set(newToken, family.id);
 
-    // Persist to Durable Storage
-    await this.saveState();
+    // Persist to Durable Storage (granular: saves only changed family + new token index + removes old)
+    await this.saveFamily(family, newToken, removedTokens);
 
-    // Audit log
+    // Audit log (non-critical, async)
     await this.logToD1({
       action: 'rotated',
       familyId: family.id,
@@ -433,6 +696,10 @@ export class RefreshTokenRotator {
 
   /**
    * Revoke all tokens in a token family
+   * Uses granular storage for efficient deletion.
+   *
+   * SECURITY: This operation is typically triggered by theft detection.
+   * Audit logging is SYNCHRONOUS to ensure the security event is recorded.
    */
   async revokeFamilyTokens(request: RevokeFamilyRequest): Promise<void> {
     await this.initializeState();
@@ -444,19 +711,17 @@ export class RefreshTokenRotator {
       return;
     }
 
-    // Remove from families map
+    // Remove from in-memory maps
     this.families.delete(request.familyId);
-
-    // Remove from reverse index
     this.tokenToFamily.delete(family.currentToken);
     for (const token of family.previousTokens) {
       this.tokenToFamily.delete(token);
     }
 
-    // Persist to Durable Storage
-    await this.saveState();
+    // Persist deletion to Durable Storage (granular deletion)
+    await this.deleteFamily(family);
 
-    // Audit log
+    // Audit log (CRITICAL event - logged synchronously)
     await this.logToD1({
       action: 'family_revoked',
       familyId: request.familyId,

@@ -41,10 +41,14 @@ import { importPKCS8, importJWK, type CryptoKey } from 'jose';
 import { extractDPoPProof, validateDPoPProof } from '@authrim/shared';
 
 // ===== Key Caching for Performance Optimization =====
-// Cache signing key to avoid expensive RSA key import (5-7ms) on every request
+// Cache signing key to avoid expensive RSA key import (5-7ms) and DO hop on every request
+// Security considerations:
+// - Private key remains in Worker memory (same security boundary as DO)
+// - TTL limits exposure window if key is rotated
+// - kid is cached to detect rotation (new kid = cache invalidation)
 let cachedSigningKey: { privateKey: CryptoKey; kid: string } | null = null;
 let cachedKeyTimestamp = 0;
-const KEY_CACHE_TTL = 60000; // 60 seconds
+const KEY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes - balances security and performance
 
 /**
  * Response from AuthCodeStore Durable Object
@@ -103,71 +107,43 @@ async function getSigningKeyFromKeyManager(
   };
 
   // Try to get active key (using internal endpoint that returns privatePEM)
-  console.log('Fetching active key with auth:', {
-    hasSecret: !!env.KEY_MANAGER_SECRET,
-    secretLength: env.KEY_MANAGER_SECRET?.length,
-  });
   const activeResponse = await keyManager.fetch('http://dummy/internal/active-with-private', {
     method: 'GET',
     headers: authHeaders,
   });
 
-  console.log('Active key response:', { status: activeResponse.status, ok: activeResponse.ok });
-
   let keyData: { kid: string; privatePEM: string };
 
   if (activeResponse.ok) {
     keyData = (await activeResponse.json()) as { kid: string; privatePEM: string };
-    console.log('Got active key from KeyManager:', {
-      kid: keyData.kid,
-      hasPEM: !!keyData.privatePEM,
-      pemLength: keyData.privatePEM?.length,
-    });
   } else {
     // No active key, generate and activate one
-    console.log('No active signing key found, generating new key');
-    console.log('Rotate request auth headers:', {
-      hasAuth: !!authHeaders.Authorization,
-      authLength: authHeaders.Authorization?.length,
-    });
+    console.log('[KeyManager] No active signing key found, generating new key');
     const rotateResponse = await keyManager.fetch('http://dummy/internal/rotate', {
       method: 'POST',
       headers: authHeaders,
     });
 
     if (!rotateResponse.ok) {
-      const errorText = await rotateResponse.text();
-      console.error('Failed to rotate key:', rotateResponse.status, errorText);
+      console.error('[KeyManager] Failed to rotate key:', rotateResponse.status);
       throw new Error('Failed to generate signing key');
     }
 
-    const rotateText = await rotateResponse.text();
-    console.log('Received rotate response:', {
-      textLength: rotateText.length,
-      hasPrivatePEM: rotateText.includes('privatePEM'),
-      textStart: rotateText.substring(0, 200),
-    });
-
-    const rotateData = JSON.parse(rotateText) as {
+    const rotateData = (await rotateResponse.json()) as {
       success: boolean;
       key: { kid: string; privatePEM: string };
     };
     keyData = rotateData.key;
-    console.log('Generated new key from KeyManager:', {
-      kid: keyData.kid,
-      hasPEM: !!keyData.privatePEM,
-      pemLength: keyData.privatePEM?.length,
-      pemStart: keyData.privatePEM?.substring(0, 50),
-    });
+    console.log('[KeyManager] Generated new signing key:', { kid: keyData.kid });
   }
 
   // Import private key (expensive operation: 5-7ms)
-  console.log('Attempting to import private key...');
   const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
 
-  // Update cache
+  // Update cache with new key
   cachedSigningKey = { privateKey, kid: keyData.kid };
   cachedKeyTimestamp = now;
+  console.log('[KeyManager] Signing key cached:', { kid: keyData.kid, ttlMs: KEY_CACHE_TTL });
 
   return { privateKey, kid: keyData.kid };
 }
