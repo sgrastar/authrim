@@ -29,6 +29,8 @@ import {
   validateJWTBearerAssertion,
   validateClientAssertion,
   parseTrustedIssuers,
+  getIDTokenRBACClaims,
+  getAccessTokenRBACClaims,
   type JWEAlgorithm,
   type JWEEncryption,
   type IDTokenClaims,
@@ -648,6 +650,19 @@ async function handleAuthorizationCodeGrant(
   // See OpenID Connect Core 5.4: "The Claims requested by the profile, email, address, and
   // phone scope values are returned from the UserInfo Endpoint"
 
+  // Phase 1 RBAC: Fetch RBAC claims for tokens
+  let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
+  let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
+  try {
+    [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
+      getAccessTokenRBACClaims(c.env.DB, authCodeData.sub),
+      getIDTokenRBACClaims(c.env.DB, authCodeData.sub),
+    ]);
+  } catch (rbacError) {
+    // Log but don't fail - RBAC claims are optional for backward compatibility
+    console.warn('Failed to fetch RBAC claims:', rbacError);
+  }
+
   // Generate Access Token FIRST (needed for at_hash in ID token)
   const accessTokenClaims: {
     iss: string;
@@ -657,12 +672,18 @@ async function handleAuthorizationCodeGrant(
     client_id: string;
     claims?: string;
     cnf?: { jkt: string };
+    // Phase 1 RBAC claims
+    authrim_roles?: string[];
+    authrim_org_id?: string;
+    authrim_org_type?: string;
   } = {
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
     aud: c.env.ISSUER_URL, // For MVP, access token audience is the issuer
     scope: authCodeData.scope,
     client_id: client_id,
+    // Phase 1 RBAC: Add RBAC claims to access token
+    ...accessTokenRBACClaims,
   };
 
   // Add claims parameter if it was requested during authorization
@@ -709,6 +730,7 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Generate ID Token with at_hash and auth_time
+  // Phase 1 RBAC: Include RBAC claims in ID Token
   const idTokenClaims = {
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
@@ -717,6 +739,8 @@ async function handleAuthorizationCodeGrant(
     at_hash: atHash, // OIDC spec requirement for code flow
     auth_time: authCodeData.auth_time, // OIDC Core Section 2: Time when End-User authentication occurred
     ...(authCodeData.acr && { acr: authCodeData.acr }),
+    // Phase 1 RBAC: Add RBAC claims to ID token
+    ...idTokenRBACClaims,
   };
 
   let idToken: string;

@@ -2,6 +2,8 @@
  * OpenID Connect and OAuth 2.0 Type Definitions
  */
 
+import type { OrganizationType, PlanType, UserType } from './rbac';
+
 /**
  * OpenID Provider Metadata (Discovery Document)
  * https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata
@@ -152,6 +154,19 @@ export interface IDTokenClaims {
     postal_code?: string;
     country?: string;
   };
+  // ==========================================================================
+  // Authrim RBAC Claims (namespaced to avoid conflicts with standard claims)
+  // ==========================================================================
+  /** User's effective roles */
+  authrim_roles?: string[];
+  /** User type classification (for UI/logging purposes) */
+  authrim_user_type?: UserType;
+  /** Primary organization ID */
+  authrim_org_id?: string;
+  /** Organization's subscription plan */
+  authrim_plan?: PlanType;
+  /** Organization type */
+  authrim_org_type?: OrganizationType;
 }
 
 /**

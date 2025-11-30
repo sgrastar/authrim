@@ -3,6 +3,7 @@ export * from './constants';
 export * from './types/env';
 export * from './types/oidc';
 export * from './types/admin';
+export * from './types/rbac';
 
 // Utils
 export * from './utils/audit-log';
@@ -26,9 +27,11 @@ export * from './utils/session-state';
 export * from './utils/tenant-context';
 export * from './utils/token-introspection';
 export * from './utils/validation';
+export * from './utils/rbac-claims';
 
 // Middleware
 export * from './middleware/admin-auth';
+export * from './middleware/rbac';
 export * from './middleware/rate-limit';
 export * from './middleware/initial-access-token';
 export * from './middleware/request-context';
@@ -36,6 +39,7 @@ export * from './middleware/version-check';
 
 // Storage
 export * from './storage/interfaces';
+export * from './storage/repositories';
 
 // Durable Objects
 export { KeyManager } from './durable-objects/KeyManager';

@@ -19,11 +19,21 @@ import type {
   IClientStore,
   ISessionStore,
   IPasskeyStore,
+  IOrganizationStore,
+  IRoleStore,
+  IRoleAssignmentStore,
+  IRelationshipStore,
   User,
   ClientData,
   Session,
   Passkey,
 } from '../interfaces';
+import {
+  OrganizationStore,
+  RoleStore,
+  RoleAssignmentStore,
+  RelationshipStore,
+} from '../repositories';
 import type { Env } from '../../types/env';
 import type { D1Result } from '../../utils/d1-retry';
 import { buildDOInstanceName } from '../../utils/tenant-context';
@@ -924,7 +934,18 @@ export class PasskeyStore implements IPasskeyStore {
 /**
  * Factory function to create CloudflareStorageAdapter with stores
  */
-export function createStorageAdapter(env: Env) {
+export function createStorageAdapter(env: Env): {
+  adapter: CloudflareStorageAdapter;
+  userStore: IUserStore;
+  clientStore: IClientStore;
+  sessionStore: ISessionStore;
+  passkeyStore: IPasskeyStore;
+  // RBAC stores (Phase 1)
+  organizationStore: IOrganizationStore;
+  roleStore: IRoleStore;
+  roleAssignmentStore: IRoleAssignmentStore;
+  relationshipStore: IRelationshipStore;
+} {
   const adapter = new CloudflareStorageAdapter(env);
 
   return {
@@ -933,5 +954,10 @@ export function createStorageAdapter(env: Env) {
     clientStore: new ClientStore(adapter),
     sessionStore: new SessionStore(adapter, env),
     passkeyStore: new PasskeyStore(adapter),
+    // RBAC stores (Phase 1)
+    organizationStore: new OrganizationStore(adapter),
+    roleStore: new RoleStore(adapter),
+    roleAssignmentStore: new RoleAssignmentStore(adapter),
+    relationshipStore: new RelationshipStore(adapter),
   };
 }

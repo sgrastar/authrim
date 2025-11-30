@@ -1,7 +1,7 @@
 # Authrim API Endpoints List
 
-**Last Updated**: 2025-11-21
-**Total Endpoints**: 46
+**Last Updated**: 2025-11-30
+**Total Endpoints**: 63
 
 This document provides a concise list of all available API endpoints in Authrim OIDC Provider.
 
@@ -139,6 +139,56 @@ This document provides a concise list of all available API endpoints in Authrim 
 |--------|----------|-------------|
 | GET | `/api/avatars/:filename` | Serve user avatar images |
 
+### RBAC - Organizations
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/organizations` | List all organizations with pagination |
+| POST | `/api/admin/organizations` | Create new organization |
+| GET | `/api/admin/organizations/:id` | Get specific organization details |
+| PUT | `/api/admin/organizations/:id` | Update organization information |
+| DELETE | `/api/admin/organizations/:id` | Delete organization |
+| GET | `/api/admin/organizations/:id/members` | List organization members |
+| POST | `/api/admin/organizations/:id/members` | Add member to organization |
+| DELETE | `/api/admin/organizations/:id/members/:subjectId` | Remove member from organization |
+
+### RBAC - Roles
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/roles` | List all available roles |
+| GET | `/api/admin/roles/:id` | Get specific role details |
+
+### RBAC - User Roles
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/users/:id/roles` | List user's role assignments |
+| POST | `/api/admin/users/:id/roles` | Assign role to user |
+| DELETE | `/api/admin/users/:id/roles/:assignmentId` | Remove role assignment from user |
+
+### RBAC - Relationships
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/users/:id/relationships` | List user's relationships (parent/guardian) |
+| POST | `/api/admin/users/:id/relationships` | Create relationship between users |
+| DELETE | `/api/admin/users/:id/relationships/:relationshipId` | Delete relationship |
+
+---
+
+## Policy Service
+
+Internal service for policy evaluation (service-to-service communication).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/evaluate` | Evaluate policy for a given context |
+| POST | `/check-role` | Quick role check for subject |
+| POST | `/check-access` | Check access for resource/action combination |
+| POST | `/is-admin` | Check if subject has admin privileges |
+| GET | `/health` | Policy service health check |
+
 ---
 
 ## Health Check
@@ -156,7 +206,9 @@ This document provides a concise list of all available API endpoints in Authrim 
 - **Public Endpoints**: Discovery, Authorization, Token, Health Check
 - **User Authentication**: UserInfo, Consent, Session Management, Logout
 - **Admin Authentication**: All `/api/admin/*` endpoints require admin privileges
+- **RBAC Admin**: Organization, Role, and Relationship management endpoints require system_admin or distributor_admin role
 - **Client Authentication**: Token, Introspect, Revoke endpoints
+- **Service-to-Service**: Policy Service endpoints require POLICY_API_SECRET bearer token
 
 ### Rate Limiting
 
