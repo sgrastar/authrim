@@ -15,6 +15,7 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter, Trend, Rate } from 'k6/metrics';
+import { sha256 } from 'k6/crypto';
 import encoding from 'k6/encoding';
 import { randomString, randomIntBetween } from 'https://jslib.k6.io/k6-utils/1.2.0/index.js';
 
@@ -34,6 +35,7 @@ const CLIENT_ID = __ENV.CLIENT_ID || 'test_client';
 const CLIENT_SECRET = __ENV.CLIENT_SECRET || 'test_secret';
 const REDIRECT_URI = __ENV.REDIRECT_URI || 'https://example.com/callback';
 const PRESET = __ENV.PRESET || 'light';
+const SESSION_COOKIE = __ENV.SESSION_COOKIE || '';
 
 // プリセット設定
 const PRESETS = {
@@ -94,6 +96,9 @@ const PRESETS = {
 
 // 選択されたプリセット
 const selectedPreset = PRESETS[PRESET];
+if (!selectedPreset) {
+  throw new Error(`Invalid PRESET "${PRESET}". Use one of: ${Object.keys(PRESETS).join(', ')}`);
+}
 
 // テストオプション
 export const options = {
@@ -117,10 +122,8 @@ function generateCodeVerifier() {
 }
 
 function generateCodeChallenge(verifier) {
-  // 実際には SHA256 ハッシュが必要だが、k6 では crypto が制限されているため
-  // テスト環境では簡易的に base64 エンコードのみ使用
-  // 本番環境では正しい SHA256 ハッシュを使用すること
-  return encoding.b64encode(verifier, 'url');
+  const hashed = sha256(verifier, 'arraybuffer');
+  return encoding.b64encode(hashed, 'url');
 }
 
 // Basic 認証ヘッダーの生成
@@ -170,15 +173,15 @@ export default function (data) {
 
   const authorizeUrl = `${BASE_URL}/authorize?${authorizeParams.toString()}`;
 
-  const authorizeStartTime = new Date();
   const authorizeResponse = http.get(authorizeUrl, {
     redirects: 0, // リダイレクトを自動で追わない
+    headers: SESSION_COOKIE ? { Cookie: SESSION_COOKIE } : undefined,
     tags: {
       name: 'AuthorizeRequest',
       preset: PRESET,
     },
   });
-  const authorizeDuration = new Date() - authorizeStartTime;
+  const authorizeDuration = authorizeResponse.timings.duration;
 
   authorizeRequestDuration.add(authorizeDuration);
 
@@ -186,9 +189,11 @@ export default function (data) {
   const authorizeOk = check(authorizeResponse, {
     'authorize: status is 302 or 200': (r) => r.status === 302 || r.status === 200,
     'authorize: has location or code': (r) => {
-      // リダイレクトの場合は Location ヘッダー、
-      // またはボディに code が含まれている場合もある
-      return r.headers['Location'] !== undefined || r.body.includes('code=');
+      return r.headers['Location'] !== undefined || (r.body && r.body.includes('code='));
+    },
+    'authorize: not redirected to login': (r) => {
+      const location = r.headers['Location'] || '';
+      return !(location.includes('login') || location.includes('signin'));
     },
   });
 
@@ -196,6 +201,9 @@ export default function (data) {
 
   if (!authorizeOk) {
     console.error(`❌ Authorize failed: ${authorizeResponse.status}`);
+    if (SESSION_COOKIE === '') {
+      console.error('ℹ️ SESSION_COOKIE が設定されていないため、ログイン/コンセントで停止している可能性があります。');
+    }
     flowCompletionRate.add(0);
     return;
   }
@@ -242,6 +250,7 @@ export default function (data) {
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
       'Authorization': getBasicAuthHeader(),
+      ...(SESSION_COOKIE ? { Cookie: SESSION_COOKIE } : {}),
     },
     tags: {
       name: 'TokenRequest',
@@ -256,9 +265,8 @@ export default function (data) {
     `code_verifier=${codeVerifier}`,
   ].join('&');
 
-  const tokenStartTime = new Date();
   const tokenResponse = http.post(`${BASE_URL}/token`, tokenPayload, tokenParams);
-  const tokenDuration = new Date() - tokenStartTime;
+  const tokenDuration = tokenResponse.timings.duration;
 
   tokenRequestDuration.add(tokenDuration);
 
@@ -312,9 +320,10 @@ export function teardown(data) {
 export function handleSummary(data) {
   const preset = PRESET;
   const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
+  const resultsDir = __ENV.RESULTS_DIR || '../results';
 
   return {
-    [`../results/test3-${preset}_${timestamp}.json`]: JSON.stringify(data, null, 2),
+    [`${resultsDir}/test3-${preset}_${timestamp}.json`]: JSON.stringify(data, null, 2),
     'stdout': textSummary(data, { indent: ' ', enableColors: true }),
   };
 }

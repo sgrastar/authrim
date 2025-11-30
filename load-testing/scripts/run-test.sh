@@ -27,6 +27,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BASE_URL="${BASE_URL:-https://conformance.authrim.com}"
 CLIENT_ID="${CLIENT_ID}"
 CLIENT_SECRET="${CLIENT_SECRET}"
+RESULTS_DIR="${RESULTS_DIR:-$PROJECT_ROOT/results}"
 
 # ヘルプ表示
 show_help() {
@@ -183,6 +184,8 @@ fi
 echo -e "${GREEN}🚀 テスト開始...${NC}"
 echo ""
 
+mkdir -p "$RESULTS_DIR"
+
 # k6 実行
 cd "$SCRIPT_DIR"
 
@@ -190,6 +193,7 @@ k6 run \
   --env BASE_URL="$BASE_URL" \
   --env CLIENT_ID="$CLIENT_ID" \
   --env CLIENT_SECRET="$CLIENT_SECRET" \
+  --env RESULTS_DIR="$RESULTS_DIR" \
   --env PRESET="$PRESET" \
   "$TEST_SCRIPT"
 
@@ -210,10 +214,10 @@ echo "  1. メトリクス収集（5-10分待機後）:"
 echo "     ./scripts/collect-metrics.sh --test-name \"${TEST_NAME}-${PRESET}\""
 echo ""
 echo "  2. 結果の確認:"
-echo "     ls -la ../results/"
+echo "     ls -la \"$RESULTS_DIR\""
 echo ""
 echo "  3. 詳細な分析:"
-echo "     cat ../results/${TEST_NAME}-${PRESET}_*.json | jq ."
+echo "     cat \"$RESULTS_DIR/${TEST_NAME}-${PRESET}_\"*.json | jq ."
 echo ""
 
 exit $TEST_EXIT_CODE

@@ -16,6 +16,7 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter, Trend, Rate } from 'k6/metrics';
 import { SharedArray } from 'k6/data';
+import { open } from 'k6/fs';
 import encoding from 'k6/encoding';
 
 // カスタムメトリクス
@@ -31,6 +32,7 @@ const BASE_URL = __ENV.BASE_URL || 'https://conformance.authrim.com';
 const CLIENT_ID = __ENV.CLIENT_ID || 'test_client';
 const CLIENT_SECRET = __ENV.CLIENT_SECRET || 'test_secret';
 const PRESET = __ENV.PRESET || 'light';
+const REFRESH_TOKEN_PATH = __ENV.REFRESH_TOKEN_PATH || '../seeds/refresh_tokens.json';
 
 // プリセット設定
 const PRESETS = {
@@ -78,8 +80,12 @@ const PRESETS = {
       { target: 600, duration: '120s' },   // Ramp down
     ],
     thresholds: {
+      http_req_duration: ['p(99)<1000'],
       http_req_failed: ['rate<0.02'],
+      refresh_request_duration: ['p(99)<1000'],
       d1_write_errors: ['rate<0.02'],
+      refresh_request_success: ['rate>0.90'],
+      token_rotation_success: ['rate>0.90'],
     },
     preAllocatedVUs: 800,
     maxVUs: 1200,
@@ -89,6 +95,9 @@ const PRESETS = {
 
 // 選択されたプリセット
 const selectedPreset = PRESETS[PRESET];
+if (!selectedPreset) {
+  throw new Error(`Invalid PRESET "${PRESET}". Use one of: ${Object.keys(PRESETS).join(', ')}`);
+}
 
 // テストオプション
 export const options = {
@@ -106,17 +115,33 @@ export const options = {
 };
 
 // テストデータ: 事前生成された Refresh Token
-// 本番では CSV ファイルから読み込む
 const refreshTokens = new SharedArray('refresh_tokens', function () {
-  const tokens = [];
-  for (let i = 0; i < 50000; i++) {
-    tokens.push({
-      token: `refresh_token_${i}_${Math.random().toString(36).substring(7)}`,
-      userId: `user_${i % 1000}`, // 1000ユーザーで循環
-    });
+  try {
+    const raw = open(REFRESH_TOKEN_PATH);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error('refresh_tokens is empty');
+    }
+    const normalized = parsed
+      .map((item, idx) => ({
+        token: item.refresh_token || item.token,
+        userId: item.user_id || item.userId || `user_${idx}`,
+      }))
+      .filter((item) => item.token);
+
+    if (normalized.length === 0) {
+      throw new Error('refresh_tokens has no usable entries');
+    }
+    return normalized;
+  } catch (err) {
+    throw new Error(
+      `Refresh token seed not found or invalid at "${REFRESH_TOKEN_PATH}". Run scripts/generate-seeds.js to create it. (${err.message})`,
+    );
   }
-  return tokens;
 });
+if (!refreshTokens.length) {
+  throw new Error('No refresh tokens available for test2. Aborting.');
+}
 
 // VU ごとの状態管理（Token Rotation 追跡用）
 let currentToken = null;
@@ -166,9 +191,8 @@ export default function (data) {
   ].join('&');
 
   // リクエスト送信
-  const startTime = new Date();
   const response = http.post(`${BASE_URL}/token`, payload, params);
-  const duration = new Date() - startTime;
+  const duration = response.timings.duration;
 
   // メトリクス記録
   refreshRequestDuration.add(duration);
@@ -251,9 +275,10 @@ export function teardown(data) {
 export function handleSummary(data) {
   const preset = PRESET;
   const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
+  const resultsDir = __ENV.RESULTS_DIR || '../results';
 
   return {
-    [`../results/test2-${preset}_${timestamp}.json`]: JSON.stringify(data, null, 2),
+    [`${resultsDir}/test2-${preset}_${timestamp}.json`]: JSON.stringify(data, null, 2),
     'stdout': textSummary(data, { indent: ' ', enableColors: true }),
   };
 }
