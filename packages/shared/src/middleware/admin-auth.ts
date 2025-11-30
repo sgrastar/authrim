@@ -79,7 +79,8 @@ async function authenticateBearer(
 /**
  * Authenticate using session cookie
  *
- * Validates session and checks for admin role in user_roles table
+ * Validates session and checks for admin role in role_assignments table.
+ * Phase 1 RBAC: Uses role_assignments with scope support.
  *
  * @param c - Hono context
  * @param sessionId - Session ID from cookie
@@ -99,31 +100,55 @@ async function authenticateSession(
       return null;
     }
 
-    // Check if session is expired
+    // Check if session is expired (sessions use milliseconds)
     if (session.expires_at < Date.now()) {
       return null;
     }
 
-    // Check if user has admin role
-    const userRole = await c.env.DB.prepare(
-      'SELECT role FROM user_roles WHERE user_id = ? AND role = ?'
-    )
-      .bind(session.user_id, 'admin')
-      .first<{ role: string }>();
+    const now = Math.floor(Date.now() / 1000); // UNIX seconds for role_assignments
 
-    if (!userRole) {
+    // Fetch all effective roles for this user from role_assignments
+    // Includes roles that are:
+    // 1. Not expired (expires_at IS NULL or expires_at > now)
+    // 2. Either global scope or any scope (we're checking admin access)
+    const rolesResult = await c.env.DB.prepare(
+      `SELECT DISTINCT r.name
+       FROM role_assignments ra
+       JOIN roles r ON ra.role_id = r.id
+       WHERE ra.subject_id = ?
+         AND (ra.expires_at IS NULL OR ra.expires_at > ?)
+       ORDER BY r.name ASC`
+    )
+      .bind(session.user_id, now)
+      .all<{ name: string }>();
+
+    const roles = rolesResult.results.map((r) => r.name);
+
+    // Check if user has any admin role (system_admin, distributor_admin, org_admin, or legacy 'admin')
+    const adminRoles = ['system_admin', 'distributor_admin', 'org_admin', 'admin'];
+    const hasAdminRole = roles.some((role) => adminRoles.includes(role));
+
+    if (!hasAdminRole) {
       return null;
     }
 
-    // Fetch all roles for this user
-    const roles = await c.env.DB.prepare('SELECT role FROM user_roles WHERE user_id = ?')
+    // Fetch user type and primary organization (Phase 1 RBAC extensions)
+    const userInfo = await c.env.DB.prepare(
+      `SELECT u.user_type, m.org_id
+       FROM users u
+       LEFT JOIN subject_org_membership m ON u.id = m.subject_id AND m.is_primary = 1
+       WHERE u.id = ?`
+    )
       .bind(session.user_id)
-      .all<{ role: string }>();
+      .first<{ user_type: string | null; org_id: string | null }>();
 
     return {
       userId: session.user_id,
       authMethod: 'session',
-      roles: roles.results.map((r) => r.role),
+      roles,
+      // Phase 1 RBAC extensions (optional fields)
+      user_type: (userInfo?.user_type as AdminAuthContext['user_type']) || undefined,
+      org_id: userInfo?.org_id || undefined,
     };
   } catch (error) {
     console.error('Session authentication failed:', error);

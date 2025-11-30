@@ -574,3 +574,166 @@ export interface Passkey {
   created_at: number; // Unix timestamp
   last_used_at?: number; // Unix timestamp
 }
+
+// =============================================================================
+// RBAC Interfaces (Phase 1)
+// =============================================================================
+
+import type {
+  Organization,
+  OrganizationRow,
+  SubjectOrgMembership,
+  SubjectOrgMembershipRow,
+  Role,
+  RoleRow,
+  RoleAssignment,
+  RoleAssignmentRow,
+  Relationship,
+  RelationshipRow,
+  ScopeType,
+} from '../types/rbac';
+
+// Re-export RBAC types for convenience
+export type {
+  Organization,
+  OrganizationRow,
+  SubjectOrgMembership,
+  SubjectOrgMembershipRow,
+  Role,
+  RoleRow,
+  RoleAssignment,
+  RoleAssignmentRow,
+  Relationship,
+  RelationshipRow,
+  ScopeType,
+};
+
+/**
+ * IOrganizationStore interface
+ * Manages organizations and subject-organization memberships
+ */
+export interface IOrganizationStore {
+  // Organization CRUD
+  getOrganization(orgId: string): Promise<Organization | null>;
+  getOrganizationByName(tenantId: string, name: string): Promise<Organization | null>;
+  createOrganization(
+    org: Omit<Organization, 'id' | 'created_at' | 'updated_at'>
+  ): Promise<Organization>;
+  updateOrganization(orgId: string, updates: Partial<Organization>): Promise<Organization>;
+  deleteOrganization(orgId: string): Promise<void>;
+  listOrganizations(
+    tenantId: string,
+    options?: { limit?: number; offset?: number; parentOrgId?: string }
+  ): Promise<Organization[]>;
+
+  // Membership CRUD
+  getMembership(membershipId: string): Promise<SubjectOrgMembership | null>;
+  getMembershipBySubjectAndOrg(
+    subjectId: string,
+    orgId: string
+  ): Promise<SubjectOrgMembership | null>;
+  createMembership(
+    membership: Omit<SubjectOrgMembership, 'id' | 'created_at' | 'updated_at'>
+  ): Promise<SubjectOrgMembership>;
+  updateMembership(
+    membershipId: string,
+    updates: Partial<SubjectOrgMembership>
+  ): Promise<SubjectOrgMembership>;
+  deleteMembership(membershipId: string): Promise<void>;
+
+  // Membership queries
+  listMembershipsBySubject(subjectId: string): Promise<SubjectOrgMembership[]>;
+  listMembershipsByOrg(
+    orgId: string,
+    options?: { limit?: number; offset?: number }
+  ): Promise<SubjectOrgMembership[]>;
+  getPrimaryOrganization(subjectId: string): Promise<Organization | null>;
+}
+
+/**
+ * IRoleStore interface
+ * Manages roles with extended attributes
+ */
+export interface IRoleStore {
+  getRole(roleId: string): Promise<Role | null>;
+  getRoleByName(tenantId: string, name: string): Promise<Role | null>;
+  createRole(role: Omit<Role, 'id' | 'created_at'>): Promise<Role>;
+  updateRole(roleId: string, updates: Partial<Role>): Promise<Role>;
+  deleteRole(roleId: string): Promise<void>;
+  listRoles(
+    tenantId: string,
+    options?: { limit?: number; offset?: number; roleType?: string }
+  ): Promise<Role[]>;
+  getChildRoles(roleId: string): Promise<Role[]>;
+}
+
+/**
+ * IRoleAssignmentStore interface
+ * Manages role assignments with scope support
+ */
+export interface IRoleAssignmentStore {
+  getRoleAssignment(assignmentId: string): Promise<RoleAssignment | null>;
+  createRoleAssignment(
+    assignment: Omit<RoleAssignment, 'id' | 'created_at' | 'updated_at'>
+  ): Promise<RoleAssignment>;
+  updateRoleAssignment(
+    assignmentId: string,
+    updates: Partial<RoleAssignment>
+  ): Promise<RoleAssignment>;
+  deleteRoleAssignment(assignmentId: string): Promise<void>;
+
+  // Assignment queries
+  listAssignmentsBySubject(
+    subjectId: string,
+    options?: { scopeType?: ScopeType; scopeTarget?: string; includeExpired?: boolean }
+  ): Promise<RoleAssignment[]>;
+  listAssignmentsByRole(
+    roleId: string,
+    options?: { limit?: number; offset?: number }
+  ): Promise<RoleAssignment[]>;
+  getEffectiveRoles(
+    subjectId: string,
+    options?: { scopeType?: ScopeType; scopeTarget?: string }
+  ): Promise<string[]>;
+  hasRole(
+    subjectId: string,
+    roleName: string,
+    options?: { scopeType?: ScopeType; scopeTarget?: string }
+  ): Promise<boolean>;
+}
+
+/**
+ * IRelationshipStore interface
+ * Manages subject-subject (and future org-org) relationships
+ */
+export interface IRelationshipStore {
+  getRelationship(relationshipId: string): Promise<Relationship | null>;
+  createRelationship(
+    relationship: Omit<Relationship, 'id' | 'created_at' | 'updated_at'>
+  ): Promise<Relationship>;
+  updateRelationship(relationshipId: string, updates: Partial<Relationship>): Promise<Relationship>;
+  deleteRelationship(relationshipId: string): Promise<void>;
+
+  // Relationship queries
+  listRelationshipsFrom(
+    fromType: string,
+    fromId: string,
+    options?: { relationshipType?: string; includeExpired?: boolean }
+  ): Promise<Relationship[]>;
+  listRelationshipsTo(
+    toType: string,
+    toId: string,
+    options?: { relationshipType?: string; includeExpired?: boolean }
+  ): Promise<Relationship[]>;
+  findRelationship(
+    fromType: string,
+    fromId: string,
+    toType: string,
+    toId: string,
+    relationshipType: string
+  ): Promise<Relationship | null>;
+
+  // Parent-child convenience methods
+  getParentSubjects(childSubjectId: string): Promise<Relationship[]>;
+  getChildSubjects(parentSubjectId: string): Promise<Relationship[]>;
+}

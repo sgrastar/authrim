@@ -53,6 +53,24 @@ import {
   adminScimTokenCreateHandler,
   adminScimTokenRevokeHandler,
 } from './scim-tokens';
+import {
+  adminOrganizationsListHandler,
+  adminOrganizationGetHandler,
+  adminOrganizationCreateHandler,
+  adminOrganizationUpdateHandler,
+  adminOrganizationDeleteHandler,
+  adminOrganizationMembersListHandler,
+  adminOrganizationMemberAddHandler,
+  adminOrganizationMemberRemoveHandler,
+  adminRolesListHandler,
+  adminRoleGetHandler,
+  adminUserRolesListHandler,
+  adminUserRoleAssignHandler,
+  adminUserRoleRemoveHandler,
+  adminUserRelationshipsListHandler,
+  adminUserRelationshipCreateHandler,
+  adminUserRelationshipDeleteHandler,
+} from './admin-rbac';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -200,6 +218,37 @@ app.post('/api/admin/signing-keys/emergency-rotate', adminSigningKeysEmergencyRo
 app.get('/api/admin/scim-tokens', adminScimTokensListHandler);
 app.post('/api/admin/scim-tokens', adminScimTokenCreateHandler);
 app.delete('/api/admin/scim-tokens/:tokenHash', adminScimTokenRevokeHandler);
+
+// Admin RBAC endpoints - Phase 1
+
+// Organization management
+app.get('/api/admin/organizations', adminOrganizationsListHandler);
+app.get('/api/admin/organizations/:id', adminOrganizationGetHandler);
+app.post('/api/admin/organizations', adminOrganizationCreateHandler);
+app.put('/api/admin/organizations/:id', adminOrganizationUpdateHandler);
+app.delete('/api/admin/organizations/:id', adminOrganizationDeleteHandler);
+
+// Organization membership management
+app.get('/api/admin/organizations/:id/members', adminOrganizationMembersListHandler);
+app.post('/api/admin/organizations/:id/members', adminOrganizationMemberAddHandler);
+app.delete('/api/admin/organizations/:id/members/:subjectId', adminOrganizationMemberRemoveHandler);
+
+// Role management (read-only for system roles)
+app.get('/api/admin/roles', adminRolesListHandler);
+app.get('/api/admin/roles/:id', adminRoleGetHandler);
+
+// User role assignment management
+app.get('/api/admin/users/:id/roles', adminUserRolesListHandler);
+app.post('/api/admin/users/:id/roles', adminUserRoleAssignHandler);
+app.delete('/api/admin/users/:id/roles/:assignmentId', adminUserRoleRemoveHandler);
+
+// User relationship management
+app.get('/api/admin/users/:id/relationships', adminUserRelationshipsListHandler);
+app.post('/api/admin/users/:id/relationships', adminUserRelationshipCreateHandler);
+app.delete(
+  '/api/admin/users/:id/relationships/:relationshipId',
+  adminUserRelationshipDeleteHandler
+);
 
 // SCIM 2.0 endpoints - RFC 7643, 7644
 app.route('/scim/v2', scimApp);

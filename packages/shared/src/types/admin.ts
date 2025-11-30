@@ -7,6 +7,8 @@
  * - Signing key management
  */
 
+import type { UserType } from './rbac';
+
 /**
  * Admin authentication context
  * Contains authenticated user information and authentication method
@@ -18,6 +20,13 @@ export interface AdminAuthContext {
   authMethod: 'bearer' | 'session';
   /** User roles (e.g., ['admin', 'superadmin']) */
   roles: string[];
+  // ==========================================================================
+  // RBAC Extensions (Phase 1)
+  // ==========================================================================
+  /** User type classification (for UI/logging purposes) */
+  user_type?: UserType;
+  /** Primary organization ID */
+  org_id?: string;
 }
 
 /**
