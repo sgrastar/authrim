@@ -1,0 +1,31 @@
+# 環境変数
+.env
+
+# テスト結果
+results/
+*.json
+*.csv
+*.html
+
+# ログファイル
+*.log
+
+# データファイル
+data/
+*.dat
+
+# OS 固有
+.DS_Store
+Thumbs.db
+
+# エディタ
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 一時ファイル
+tmp/
+temp/
+*.tmp
