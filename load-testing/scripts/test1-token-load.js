@@ -51,14 +51,14 @@ const PRESETS = {
     preAllocatedVUs: 20,
     maxVUs: 30,
   },
-  // 50RPS テスト用プリセット（1分間維持）
+  // 50RPS テスト用プリセット（2分間維持）
   rps50: {
     startRate: 10,
     stages: [
-      { target: 10, duration: '10s' },  // Warm up to 10 RPS
-      { target: 50, duration: '15s' },  // Ramp to 50 RPS
-      { target: 50, duration: '60s' },  // Sustain 50 RPS for 1 minute
-      { target: 10, duration: '10s' },  // Ramp down
+      { target: 10, duration: '10s' },   // Warm up to 10 RPS
+      { target: 50, duration: '15s' },   // Ramp to 50 RPS
+      { target: 50, duration: '120s' },  // Sustain 50 RPS for 2 minutes
+      { target: 10, duration: '10s' },   // Ramp down
     ],
     thresholds: {
       http_req_duration: ['p(99)<300'],
@@ -67,6 +67,25 @@ const PRESETS = {
     },
     preAllocatedVUs: 60,
     maxVUs: 80,
+  },
+  // 100RPS テスト用プリセット（2分間維持）
+  rps100: {
+    startRate: 20,
+    stages: [
+      { target: 20, duration: '10s' },   // Warm up to 20 RPS
+      { target: 50, duration: '10s' },   // Ramp to 50 RPS
+      { target: 100, duration: '15s' },  // Ramp to 100 RPS
+      { target: 100, duration: '120s' }, // Sustain 100 RPS for 2 minutes
+      { target: 50, duration: '10s' },   // Ramp down
+      { target: 20, duration: '10s' },   // Cool down
+    ],
+    thresholds: {
+      http_req_duration: ['p(99)<400'],
+      http_req_failed: ['rate<0.01'],
+      token_request_duration: ['p(99)<400'],
+    },
+    preAllocatedVUs: 120,
+    maxVUs: 150,
   },
   standard: {
     startRate: 30,
@@ -110,7 +129,7 @@ const PRESETS = {
       { target: 100, duration: '15s' },  // Warm up to 100 RPS
       { target: 200, duration: '15s' },  // Ramp to 200 RPS
       { target: 300, duration: '15s' },  // Ramp to 300 RPS
-      { target: 300, duration: '60s' },  // Sustain 300 RPS for 1 minute
+      { target: 300, duration: '120s' }, // Sustain 300 RPS for 2 minutes
       { target: 200, duration: '15s' },  // Ramp down
       { target: 100, duration: '10s' },  // Cool down
     ],

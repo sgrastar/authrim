@@ -177,11 +177,11 @@ async function fetchAuthorizationCode() {
 
   if (location.includes('code=')) {
     const match = location.match(/code=([^&]+)/);
-    if (match) code = match[1];
+    if (match) code = decodeURIComponent(match[1]);
   }
   if (!code && body.includes('code=')) {
     const match = body.match(/code=([^&"'>]+)/);
-    if (match) code = match[1];
+    if (match) code = decodeURIComponent(match[1]);
   }
 
   if (!code) {
