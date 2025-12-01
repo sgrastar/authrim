@@ -1,300 +1,302 @@
-## Phase 7: Enterprise Flows & Advanced Features 🏢 (Aug 11 - Oct 31, 2026)
+# Phase 7: VC/DID & Access Control
 
-**Status:** ⏳ IN PROGRESS (8/11 features complete as of Nov 25, 2025)
-
-**Completed Ahead of Schedule:**
-- ✅ Device Authorization Flow (RFC 8628) - 16 tasks complete, 70 tests passing
-- ✅ JWT Bearer Flow (RFC 7523) - 14 tasks complete, 13 tests passing
-- ✅ JWE (JSON Web Encryption - RFC 7516) - 18 tasks complete, 20+ tests passing
-- ✅ Hybrid Flow (OIDC Core 3.3) - 12 tasks complete, all 3 response types implemented (Nov 25, 2025)
-- ✅ CIBA (Client Initiated Backchannel Authentication) - 17 tasks complete, UI & all 3 modes implemented (Nov 25, 2025)
-- ✅ SCIM 2.0 User Provisioning (RFC 7643/7644) - 18 tasks complete, full User/Group endpoints with management UI (Nov 25, 2025)
-- ✅ JAR (JWT-Secured Authorization Request - RFC 9101) - 8 tasks complete, request object signing and encryption (Nov 25, 2025)
-- ✅ JARM (JWT-Secured Authorization Response Mode) - 8 tasks complete, all response mode variants (Nov 25, 2025)
+**Timeline:** 2026-Q3 to Q4
+**Status:** ⏳ Partial (Policy Core/Service Complete)
 
 ---
 
-### Week 40-42: Advanced OAuth Flows (Aug 11-31)
+## Overview
 
-#### 40.1 Hybrid Flow Implementation - OIDC Core 3.3 ✅ **COMPLETE** (Nov 25, 2025)
-- [x] Implement `response_type=code id_token` support ✅
-- [x] Add `response_type=code token` support ✅
-- [x] Implement `response_type=code id_token token` support ✅
-- [x] Update authorization endpoint to handle hybrid flows ✅
-- [x] Implement fragment encoding for tokens in response ✅
-- [x] Add nonce validation for hybrid flow ✅
-- [x] Update ID token generation for hybrid flow ✅
-- [x] Implement access token validation in hybrid context ✅
-- [x] Create unit tests for hybrid flow ✅
-- [x] Create integration tests for all hybrid response types ✅
-- [x] Test with conformance suite ✅
-- [x] Document hybrid flow implementation ✅
-
-#### 40.2 Device Authorization Flow - RFC 8628 ✅ **COMPLETE** (Nov 21, 2025)
-- [x] Implement `POST /device_authorization` endpoint ✅
-- [x] Create device code generation logic (UUID v4) ✅
-- [x] Create user code generation (8-char alphanumeric, human-readable) ✅
-- [x] Store device code with metadata in KV/D1 ✅ (Using DeviceCodeStore Durable Object + D1)
-- [x] Set appropriate TTL (300-600 seconds) ✅ (Default: 600 seconds)
-- [x] Implement `POST /device/verify` endpoint (user-facing) ✅ (Minimal HTML + JSON API)
-- [x] Create device verification UI page ✅ (SvelteKit Pages with Melt UI Pin Input)
-- [x] Add user code input validation ✅
-- [x] Implement device code validation logic ✅
-- [x] Add polling mechanism support in token endpoint ✅
-- [x] Implement interval and slow_down responses ✅
-- [x] Create QR code generation for device URL ✅ (Client-side and Pages UI)
-- [x] Add rate limiting for polling requests ✅
-- [x] Test device flow end-to-end (CLI, TV, IoT) ✅ (70 tests passing)
-- [x] Create device flow documentation ✅ (docs/features/device-flow.md - 879 lines)
-- [x] Add device flow examples ✅ (Smart TV and CLI examples included)
-
-#### 40.3 JWT Bearer Flow - RFC 7523 ✅ **COMPLETE** (Nov 21, 2025)
-- [x] Implement `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` support ✅
-- [x] Create JWT assertion validation logic ✅
-- [x] Implement signature verification for assertions ✅
-- [x] Add issuer trust configuration ✅
-- [x] Implement subject trust validation ✅
-- [x] Create service account support ✅
-- [x] Add scope-based access control for service accounts ✅
-- [x] Implement token issuance for JWT bearer flow ✅
-- [x] Create admin UI for trusted issuers management ✅
-- [x] Add unit tests for JWT bearer flow ✅ (13 tests passing)
-- [x] Create integration tests ✅
-- [x] Test with service-to-service scenarios ✅
-- [x] Document JWT bearer flow setup ✅
-- [x] Add examples for common use cases ✅
+Phase 7 focuses on completing the access control system (RBAC/ABAC/ReBAC) and implementing Verifiable Credentials support. This phase builds the foundational authorization layer that other phases will depend on.
 
 ---
 
-### Week 43-44: CIBA & Advanced Encryption (Sep 1-14)
+## Completed Features (Dec 2025)
 
-#### 43.1 CIBA (Client Initiated Backchannel Authentication) - CIBA Spec ✅ **COMPLETE** (Nov 25, 2025)
-- [x] Implement `POST /bc-authorize` endpoint ✅
-- [x] Create authentication request parsing ✅
-- [x] Implement `login_hint` processing ✅
-- [x] Add `binding_message` support ✅
-- [x] Create user notification system (push/SMS integration) ✅
-- [x] Implement polling mode support ✅
-- [x] Add ping mode support (callback URL) ✅
-- [x] Implement push mode support (callback with token) ✅
-- [x] Create user approval UI (mobile/web) ✅
-- [x] Implement authentication request storage ✅
-- [x] Add user consent handling ✅
-- [x] Implement token issuance for CIBA ✅
-- [x] Create CIBA-specific error responses ✅
-- [x] Add unit tests for CIBA flows ✅
-- [x] Test all three modes (poll, ping, push) ✅
-- [x] Document CIBA implementation ✅
-- [x] Add mobile app integration example ✅
+### Policy Core (@authrim/policy-core) ✅
 
-#### 43.2 JWE (JSON Web Encryption) - RFC 7516 ✅ **COMPLETE** (Nov 21, 2025)
-- [x] Install and configure JWE libraries (jose) ✅
-- [x] Implement ID Token encryption support ✅
-- [x] Add `id_token_encrypted_response_alg` to client metadata ✅
-- [x] Add `id_token_encrypted_response_enc` to client metadata ✅
-- [x] Implement UserInfo response encryption ✅
-- [x] Add `userinfo_encrypted_response_alg` to client metadata ✅
-- [x] Add `userinfo_encrypted_response_enc` to client metadata ✅
-- [x] Implement request object encryption (JAR with JWE) ✅
-- [x] Create key management for client public keys ✅
-- [x] Implement RSA-OAEP algorithm support ✅
-- [x] Add A256GCM encryption support ✅
-- [x] Add A128CBC-HS256 encryption support ✅
-- [x] Create encryption utilities ✅
-- [x] Add unit tests for encryption/decryption ✅ (20+ tests passing)
-- [x] Test encrypted ID token flow ✅
-- [x] Test encrypted UserInfo response ✅
-- [x] Document JWE configuration ✅
-- [x] Add examples for encrypted flows ✅
+The core policy evaluation engine has been implemented:
 
----
+- [x] `PolicyEngine` class with configurable default decision
+- [x] RBAC (Role-Based Access Control) evaluation
+  - [x] `has_role` condition type
+  - [x] `has_any_role` condition type
+  - [x] `has_all_roles` condition type
+  - [x] Role scope support (global, organization, resource)
+  - [x] Role expiration support
+- [x] ABAC (Attribute-Based Access Control) evaluation
+  - [x] `attribute_equals` condition type
+  - [x] `attribute_exists` condition type
+  - [x] `attribute_in` condition type
+  - [x] Verified attributes with expiry checking
+- [x] Ownership conditions
+  - [x] `is_resource_owner` check
+  - [x] `same_organization` check
+- [x] Relationship conditions
+  - [x] `has_relationship` check (guardian, parent, etc.)
+  - [x] `user_type_is` check
+  - [x] `plan_allows` check
+- [x] Default rules (5 built-in rules)
+  - [x] `system_admin_full_access` (priority 1000)
+  - [x] `distributor_admin_access` (priority 900)
+  - [x] `org_admin_same_org` (priority 800)
+  - [x] `owner_full_access` (priority 700)
+  - [x] `guardian_access` (priority 600)
+- [x] Custom rule support via `addRule()` API
+- [x] Unit tests (53 tests passing)
 
-### Week 45-47: Social Login & Identity Federation (Sep 15 - Oct 5)
+### Policy Service (@authrim/policy-service) ✅
 
-#### 45.1 Social Login Providers Integration
-- [ ] Design social provider abstraction layer
-- [ ] Create OAuth client configuration storage
-- [ ] Implement Google OAuth integration:
-  - [ ] OAuth authorization flow
-  - [ ] Token exchange
-  - [ ] Profile fetching
-  - [ ] Email verification
-- [ ] Implement GitHub OAuth integration
-- [ ] Implement Microsoft Azure AD / Entra ID integration
-- [ ] Implement Apple Sign In:
-  - [ ] Handle Apple's specific requirements
-  - [ ] Implement Sign in with Apple JS
-  - [ ] Handle private email relay
-- [ ] Implement Facebook Login
-- [ ] Implement Twitter/X Login
-- [ ] Implement LinkedIn Login
-- [ ] Create generic OIDC provider integration (for any OIDC-compliant provider)
-- [ ] Test each provider integration
+REST API service for policy evaluation:
 
-#### 45.2 Social Login UI
-- [ ] Design provider selection screen
-- [ ] Create social login buttons (branded)
-- [ ] Implement provider icons and styling
-- [ ] Add "Or" separator between social and password login
-- [ ] Create provider selection UI
-- [ ] Implement progressive enhancement
-- [ ] Test responsive design
-- [ ] Ensure accessibility (WCAG 2.1 AA)
-- [ ] Test with various screen sizes
+- [x] `GET /policy/health` - Health check
+- [x] `POST /policy/evaluate` - Full policy evaluation
+- [x] `POST /policy/check-role` - Quick role check (single/multiple)
+- [x] `POST /policy/check-access` - Simplified access check
+- [x] `POST /policy/is-admin` - Admin status check
+- [x] Bearer token authentication
+- [x] Integration tests (31 tests passing)
+- [x] Cloudflare Workers deployment
+- [x] Custom domain routing (`/policy/*`)
 
-#### 45.3 Identity Federation & Transformation
-- [ ] Design identity mapping schema
-- [ ] Implement social identity to Authrim user mapping
-- [ ] Create account linking logic (same email, multiple providers)
-- [ ] Implement first-time social login flow
-- [ ] Add profile synchronization from social providers
-- [ ] Create provider-specific claim mapping
-- [ ] Implement profile update on social login
-- [ ] Add conflict resolution (email already exists)
-- [ ] Create admin UI for linked accounts
-- [ ] Implement unlink social account functionality
-- [ ] Add unit tests for identity mapping
-- [ ] Test account linking scenarios
-- [ ] Test conflict scenarios
-- [ ] Document social login architecture
+### API Documentation ✅
+
+- [x] `/docs/api/policy/README.md` - Comprehensive usage guide
+- [x] cURL examples
+- [x] TypeScript integration examples
+- [x] Error response documentation
 
 ---
 
-### Week 48-50: Enterprise Integration (Oct 6-26)
+## Planned Features
 
-#### 48.1 SAML 2.0 Bridge (OIDC → SAML)
-- [ ] Install and configure SAML libraries
-- [ ] Implement SAML 2.0 assertion generation
-- [ ] Create `POST /saml/sso` endpoint (SAML SSO)
-- [ ] Implement `GET /saml/metadata` endpoint
-- [ ] Add SAML attribute mapping (OIDC claims → SAML attributes)
-- [ ] Implement signature generation for SAML assertions
-- [ ] Add encryption support for SAML assertions
-- [ ] Implement SAML request signature validation
-- [ ] Create SAML response builder
-- [ ] Add RelayState handling
-- [ ] Implement NameID format support
-- [ ] Add unit tests for SAML generation
-- [ ] Test with Okta as SAML SP
-- [ ] Test with Azure AD as SAML SP
-- [ ] Document SAML bridge configuration
-- [ ] Add SAML troubleshooting guide
+### Feature Flags System 🔜
 
-#### 48.2 LDAP/AD Integration
-- [ ] Install and configure LDAP client library
-- [ ] Design LDAP configuration schema
-- [ ] Implement LDAP connection management
-- [ ] Create LDAP authentication backend
-- [ ] Implement Active Directory support
-- [ ] Add user synchronization (LDAP → D1)
-- [ ] Implement scheduled sync job
-- [ ] Create group mapping (LDAP groups → OIDC scopes)
-- [ ] Implement password validation via LDAP bind
-- [ ] Add fallback to local authentication
-- [ ] Create LDAP configuration UI (admin dashboard)
-- [ ] Implement LDAP connection testing
-- [ ] Add unit tests for LDAP operations
-- [ ] Test with OpenLDAP
-- [ ] Test with Active Directory
-- [ ] Document LDAP/AD setup guide
-- [ ] Add troubleshooting for common LDAP issues
+Implement feature flags to safely enable/disable policy features:
 
-#### 48.3 SCIM 2.0 User Provisioning - RFC 7643, RFC 7644 ✅ **COMPLETE** (Nov 25, 2025)
-- [x] Implement SCIM server endpoints: ✅
-  - [x] `GET /scim/v2/Users` (list users with pagination) ✅
-  - [x] `GET /scim/v2/Users/{id}` (get user) ✅
-  - [x] `POST /scim/v2/Users` (create user) ✅
-  - [x] `PUT /scim/v2/Users/{id}` (replace user) ✅
-  - [x] `PATCH /scim/v2/Users/{id}` (update user) ✅
-  - [x] `DELETE /scim/v2/Users/{id}` (delete user) ✅
-- [x] Implement SCIM schema for User resource ✅
-- [x] Add support for SCIM filter queries ✅
-- [x] Implement pagination (startIndex, count) ✅
-- [x] Create SCIM error responses ✅
-- [x] Implement group provisioning: ✅
-  - [x] `GET /scim/v2/Groups` ✅
-  - [x] `POST /scim/v2/Groups` ✅
-  - [x] `PUT /scim/v2/Groups/{id}` ✅
-  - [x] `DELETE /scim/v2/Groups/{id}` ✅
-- [x] Add SCIM authentication (Bearer token) ✅
-- [x] Implement resource versioning (etag) ✅
-- [x] Create unit tests for SCIM endpoints ✅
-- [x] Test SCIM compliance with SCIM validator ✅
-- [x] Document SCIM API ✅
-- [x] Add SCIM integration examples (Okta, OneLogin) ✅
+- [ ] Create `FeatureFlags` type definition
+  ```typescript
+  interface FeatureFlags {
+    ENABLE_REBAC_CHECK: boolean;
+    ENABLE_ABAC_ATTRIBUTES: boolean;
+    ENABLE_POLICY_LOGGING: boolean;
+  }
+  ```
+- [ ] Add environment variable support for flags
+- [ ] Implement flag checking in policy service
+- [ ] Add flag status to health endpoint
+- [ ] Create admin UI for flag management
+- [ ] Add unit tests for flag behavior
+- [ ] Document feature flag usage
 
-#### 48.4 JAR (JWT-Secured Authorization Request) - RFC 9101 ✅ **COMPLETE** (Nov 25, 2025)
-- [x] Implement `request` parameter support (JWT) ✅
-- [x] Implement `request_uri` parameter support ✅
-- [x] Add request object validation ✅
-- [x] Implement request object encryption (JWE) ✅
-- [x] Add request object signing validation ✅
-- [x] Implement `request_uri` pre-registration ✅
-- [x] Add tests & conformance validation ✅
-- [x] Document JAR usage & examples ✅
+### ReBAC Check API (Zanzibar-style) 🔜
 
-#### 48.5 JARM (JWT-Secured Authorization Response Mode) ✅ **COMPLETE** (Nov 25, 2025)
-- [x] Implement `response_mode=jwt` support ✅
-- [x] Implement `response_mode=query.jwt` support ✅
-- [x] Implement `response_mode=fragment.jwt` support ✅
-- [x] Implement `response_mode=form_post.jwt` support ✅
-- [x] Add authorization response JWT signing ✅
-- [x] Implement response JWT encryption (optional) ✅
-- [x] Add tests & conformance validation ✅
-- [x] Document JARM configuration ✅
+Complete the Relationship-Based Access Control implementation:
+
+- [ ] Design relation tuple schema
+  ```
+  (subject, relation, object)
+  e.g., (user:123, viewer, document:456)
+  ```
+- [ ] Implement recursive CTE queries for transitive checks
+- [ ] Add KV caching for relation lookups
+- [ ] Implement `POST /api/rebac/check` endpoint (currently placeholder)
+- [ ] Add `POST /api/rebac/write` for relation management
+- [ ] Implement `POST /api/rebac/expand` for relation expansion
+- [ ] Create namespace/relation type definitions
+- [ ] Add unit tests for ReBAC operations
+- [ ] Test with hierarchical structures (org → team → user)
+- [ ] Document ReBAC API and concepts
+
+### Database Migrations 🔜
+
+Add required tables for full policy support:
+
+- [ ] Migration 017: `relation_tuples` table
+  ```sql
+  CREATE TABLE relation_tuples (
+    id TEXT PRIMARY KEY,
+    namespace TEXT NOT NULL,
+    object_id TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(namespace, object_id, relation, subject_type, subject_id)
+  );
+  ```
+- [ ] Migration 018: `relation_definitions` table
+  ```sql
+  CREATE TABLE relation_definitions (
+    id TEXT PRIMARY KEY,
+    namespace TEXT NOT NULL,
+    name TEXT NOT NULL,
+    direct_members TEXT,
+    computed_userset TEXT,
+    tuple_to_userset TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(namespace, name)
+  );
+  ```
+- [ ] Migration 019: `verified_attributes` table
+  ```sql
+  CREATE TABLE verified_attributes (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    issuer TEXT,
+    issued_at TEXT,
+    expires_at TEXT,
+    created_at TEXT NOT NULL
+  );
+  ```
+- [ ] Run migrations on dev/staging/production
+
+### JWT-SD (Selective Disclosure) 🔜
+
+Implement SD-JWT for privacy-preserving credentials:
+
+- [ ] Research SD-JWT specification (draft-ietf-oauth-selective-disclosure-jwt)
+- [ ] Implement SD-JWT issuing
+  - [ ] Hash-based disclosure
+  - [ ] Salt generation
+  - [ ] Disclosure array creation
+- [ ] Implement SD-JWT verification
+  - [ ] Disclosure reconstruction
+  - [ ] Hash verification
+- [ ] Add `sd_jwt` claim support to ID Token
+- [ ] Create presentation endpoint
+- [ ] Add unit tests
+- [ ] Document SD-JWT usage
+
+### OpenID4VP (Verifiable Presentations) 🔜
+
+Implement OpenID for Verifiable Presentations:
+
+- [ ] Research OpenID4VP specification
+- [ ] Implement presentation definition
+- [ ] Create authorization request for VP
+- [ ] Implement VP Token validation
+- [ ] Add presentation submission handling
+- [ ] Support multiple credential formats
+  - [ ] JWT-VC
+  - [ ] SD-JWT
+  - [ ] JSON-LD VC (optional)
+- [ ] Create verifier UI
+- [ ] Add unit tests
+- [ ] Document OpenID4VP flow
+
+### OpenID4CI (Credential Issuance) 🔜
+
+Implement OpenID for Verifiable Credential Issuance:
+
+- [ ] Research OpenID4CI specification
+- [ ] Implement credential offer endpoint
+- [ ] Create credential issuer metadata
+- [ ] Implement pre-authorized code flow
+- [ ] Implement authorization code flow for issuance
+- [ ] Add credential endpoint
+- [ ] Support multiple credential formats
+- [ ] Create issuer UI
+- [ ] Add unit tests
+- [ ] Document credential issuance
+
+### DID Resolver 🔜
+
+Implement Decentralized Identifier resolution:
+
+- [ ] Research DID Core specification (W3C)
+- [ ] Implement `did:web` resolver
+  - [ ] Fetch `.well-known/did.json`
+  - [ ] Parse DID document
+  - [ ] Extract verification methods
+- [ ] Implement `did:key` resolver
+  - [ ] Parse multibase-encoded public key
+  - [ ] Support Ed25519, P-256, secp256k1
+- [ ] Create DID document generation
+- [ ] Add DID authentication support
+- [ ] Integrate with VP/VC verification
+- [ ] Add unit tests
+- [ ] Document DID support
 
 ---
 
-### Week 51: Advanced Security & RBAC (Oct 27 - Nov 2)
+## Integration with Other Components
 
-#### 51.1 Risk-Based Authentication
-- [ ] Design risk scoring system
-- [ ] Implement IP reputation checking (Cloudflare API)
-- [ ] Create device fingerprinting analysis
-- [ ] Implement geolocation-based risk scoring
-- [ ] Add velocity checks (login attempts per time window)
-- [ ] Create anomaly detection logic:
-  - [ ] Unusual time of login
-  - [ ] Unusual location
-  - [ ] New device
-- [ ] Implement risk score calculation
-- [ ] Add step-up authentication trigger (high risk → MFA)
-- [ ] Create risk dashboard (admin)
-- [ ] Add risk logging and audit trail
-- [ ] Implement configurable risk thresholds
-- [ ] Test risk-based flows
-- [ ] Document risk-based authentication
+### Consent Screen Integration
 
-#### 51.2 RBAC (Role-Based Access Control)
-- [ ] Design role schema
-- [ ] Create roles table (D1)
-- [ ] Implement role definition API
-- [ ] Create permission system (resource:action format)
-- [ ] Implement role assignment to users
-- [ ] Create role-based scope mapping
-- [ ] Add role inheritance support
-- [ ] Implement permission checking middleware
-- [ ] Create admin UI for role management
-- [ ] Add unit tests for RBAC
-- [ ] Test role hierarchy
-- [ ] Document RBAC architecture
+The consent screen (`/auth/consent`) currently calls RBAC functions:
 
-#### 51.3 ABAC (Attribute-Based Access Control)
-- [ ] Design attribute schema
-- [ ] Implement attribute storage
-- [ ] Create policy definition language
-- [ ] Implement policy evaluation engine
-- [ ] Add attribute-based rules (optional, research OPA integration)
-- [ ] Create policy management UI
-- [ ] Test ABAC policies
-- [ ] Document ABAC usage
+- `getConsentRBACData()` - Fetches organization roles
+- `getRolesInOrganization()` - Gets user's roles in org
 
-#### 51.4 Phase 8 Review & Testing
-- [ ] Full integration testing of all Phase 8 features
-- [ ] Security audit for new features
-- [ ] Performance testing
-- [ ] Update documentation
-- [ ] Create migration guides
+These functions gracefully degrade when tables are empty, ensuring no impact on OIDC Conformance tests.
+
+### Token Endpoint Integration
+
+Access tokens can include policy-related claims:
+
+- `authrim_roles` - User's assigned roles
+- `authrim_permissions` - Derived permissions
+- `authrim_org_id` - Organization context
 
 ---
 
+## Testing Requirements
+
+### Unit Tests
+
+- [ ] Feature flag tests (enable/disable behavior)
+- [ ] ReBAC recursive query tests
+- [ ] SD-JWT generation/verification tests
+- [ ] DID resolver tests
+
+### Integration Tests
+
+- [ ] End-to-end policy evaluation
+- [ ] VP presentation flow
+- [ ] Credential issuance flow
+
+### Conformance Testing
+
+Ensure no regression in OIDC Conformance:
+
+- [ ] Re-run Basic OP tests after each major change
+- [ ] Verify consent flow still works
+- [ ] Test with feature flags disabled
+
+---
+
+## Success Metrics
+
+| Metric | Target | Current |
+|--------|--------|---------|
+| Policy Core tests | 50+ | 53 ✅ |
+| Policy Service tests | 30+ | 31 ✅ |
+| ReBAC tests | 30+ | - |
+| SD-JWT tests | 20+ | - |
+| DID resolver tests | 15+ | - |
+| OpenID4VP tests | 25+ | - |
+
+---
+
+## Dependencies
+
+- Policy Core/Service: **Complete**
+- D1 Database migrations: Required for ReBAC
+- KV Storage: Required for caching
+- jose library: Already integrated
+
+---
+
+## Related Documents
+
+- [Policy Service API Guide](../api/policy/README.md)
+- [API Inventory](./API_INVENTORY.md)
+- [Database Schema](../architecture/database-schema.md)
+- [ROADMAP](../ROADMAP.md)
+
+---
+
+> **Last Update**: 2025-12-02

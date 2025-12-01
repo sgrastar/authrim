@@ -1,7 +1,7 @@
 # Phase 6: Enterprise Features
 
 **Timeline:** Jun 1 - Oct 31, 2026
-**Status:** ⏳ 8/11 Complete (73%)
+**Status:** ⏳ 8/10 Complete (80%)
 
 ---
 
@@ -11,7 +11,7 @@ Phase 6 focuses on enterprise-grade authentication flows and integrations requir
 
 ---
 
-## Completed Features (8/11)
+## Completed Features (8/10)
 
 ### Device Flow (RFC 8628) ✅ Nov 21, 2025
 
@@ -102,28 +102,7 @@ Phase 6 focuses on enterprise-grade authentication flows and integrations requir
 
 ---
 
-## Remaining Features (3/11)
-
-### Social Login Providers 🔜
-
-Integration with major identity providers:
-
-- [ ] Google OAuth 2.0
-- [ ] GitHub OAuth
-- [ ] Microsoft Entra ID (Azure AD)
-- [ ] Apple Sign In
-- [ ] Facebook Login
-- [ ] Twitter OAuth 2.0
-- [ ] LinkedIn OAuth 2.0
-
-**Tasks:**
-- [ ] OAuth 2.0 client implementation
-- [ ] OIDC provider discovery
-- [ ] Token exchange logic
-- [ ] Account linking strategy
-- [ ] Provider configuration UI
-- [ ] User attribute mapping
-- [ ] Testing with each provider
+## Remaining Features (2/10)
 
 ### SAML 2.0 Bridge 🔜
 
@@ -154,6 +133,16 @@ Enterprise directory integration:
 
 ---
 
+## Moved to Other Phases
+
+### Social Login Providers → Phase 8 (Login Console & UI)
+
+> **Note**: Social Login has been moved to Phase 8 to be implemented alongside the Login Console and UI customization features. This allows for a more cohesive user experience design.
+
+See [TASKS_Phase8.md](./TASKS_Phase8.md) for details.
+
+---
+
 ## Deferred Features
 
 The following features are deferred to future phases or may be implemented as optional extensions:
@@ -164,11 +153,13 @@ The following features are deferred to future phases or may be implemented as op
 - Visual authentication flow construction
 - Flow preview and testing
 
-### WebSDK
+### WebSDK → Phase 9
 
 - Web Components architecture
 - High-customization support
 - Custom placeholder system
+
+See [TASKS_Phase9.md](./TASKS_Phase9.md) for WebSDK details.
 
 ---
 
@@ -187,7 +178,6 @@ Additional conformance profiles to run:
 
 ### Integration Testing
 
-- [ ] Social login provider end-to-end tests
 - [ ] SAML SP integration tests
 - [ ] LDAP/AD authentication tests
 
@@ -197,11 +187,10 @@ Additional conformance profiles to run:
 
 | Metric | Target | Current |
 |--------|--------|---------|
-| Features complete | 11/11 | 8/11 |
-| Social login providers | 7+ | 0 |
+| Features complete | 10/10 | 8/10 |
 | SAML SPs tested | 3+ | 0 |
 | LDAP/AD compatibility | Windows AD, OpenLDAP | - |
 
 ---
 
-> **Last Update**: 2025-11-29
+> **Last Update**: 2025-12-02

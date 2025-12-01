@@ -208,22 +208,30 @@ Policy Service provides centralized access control for RBAC/ABAC/ReBAC.
 
 ## Future Extensions (Phase 7+)
 
-### CLI & Automation (Phase 7)
+### VC/DID & Access Control (Phase 7)
+
+- ReBAC Check API (Zanzibar-style)
+- JWT-SD (Selective Disclosure)
+- OpenID4VP - Verifiable Presentations API
+- OpenID4CI - Credential Issuance API
+- DID Resolver API
+
+### Login Console & UI (Phase 8)
+
+- Social Login APIs (`/auth/social/:provider`)
+- Theme/Branding APIs
+- Email Template APIs
+
+### SDK & API (Phase 9)
+
+- @authrim/sdk-core
+- @authrim/sdk-web
+- API Documentation Portal
+
+### CLI & Release (Phase 12)
 
 - Deployment APIs
 - Configuration management
-
-### Verifiable Credentials (Phase 8)
-
-- OpenID4VP - Verifiable Presentations API
-- OpenID4CI - Credential Issuance API
-- OpenID Federation - Trust Chain API
-
-### SaaS Platform (Phase 9)
-
-- Multi-tenant APIs
-- Billing APIs
-- Marketplace APIs
 
 ---
 
@@ -251,4 +259,4 @@ Policy Service provides centralized access control for RBAC/ABAC/ReBAC.
 
 ---
 
-> **Last Update**: 2025-12-01
+> **Last Update**: 2025-12-02

@@ -15,7 +15,7 @@ A lightweight, serverless **OpenID Connect Provider** that deploys to **Cloudfla
 **Authrim** makes identity infrastructure as simple as deploying a website:
 
 ```bash
-# Future goal (Phase 7)
+# Future goal (Phase 12)
 npx create-authrim my-identity-provider
 ```
 
@@ -48,9 +48,9 @@ Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 
 ## Current Status
 
-### Phase 6: Enterprise Features (8/11 Complete)
+### Phase 6: Enterprise Features (8/10 Complete)
 
-**Latest Achievements (Nov 2025):**
+**Latest Achievements (Nov-Dec 2025):**
 - ✅ **Device Flow (RFC 8628)** - Smart TV, CLI, IoT authentication
 - ✅ **JWT Bearer Flow (RFC 7523)** - Service-to-service authentication
 - ✅ **JWE (RFC 7516)** - ID Token and UserInfo encryption
@@ -59,20 +59,24 @@ Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 - ✅ **SCIM 2.0 (RFC 7643/7644)** - User/Group provisioning
 - ✅ **JAR (RFC 9101)** - JWT-Secured Authorization Requests
 - ✅ **JARM** - JWT-Secured Authorization Response Mode
+- ✅ **Policy Service** - RBAC/ABAC engine (84 tests)
 
-**Remaining (3/11):**
-- Social Login (Google, GitHub, Microsoft, Apple, etc.)
-- SAML 2.0 Bridge / LDAP Integration
-- Visual Flow Builder
+**Remaining:**
+- SAML 2.0 Bridge
+- LDAP/AD Integration
 
-### Previous Phases (Complete)
+### Phase Overview
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 1-2 | Foundation & Core API | ✅ Complete |
-| 3 | Testing & Conformance (Basic OP 78.95%) | ✅ Complete |
-| 4 | Extended Features (PAR, DPoP, Pairwise, Token Management) | ✅ Complete |
-| 5 | UI/UX (SvelteKit, Admin Dashboard, 15+ pages) | ✅ Complete |
+| Phase | Name | Status |
+|-------|------|--------|
+| 1-5 | Foundation, Core API, UI/UX | ✅ Complete |
+| 6 | Enterprise Features | ⏳ 8/10 Complete |
+| 7 | VC/DID & Access Control | 🔜 Policy Core/Service done |
+| 8 | Login Console & UI | 🔜 Planned |
+| 9 | SDK & API | 🔜 Planned |
+| 10 | Security & QA | 🔜 Planned |
+| 11 | Certification | 🔜 Planned |
+| 12 | CLI & Release | 🔜 Final |
 
 ### Conformance Test Results
 
@@ -167,12 +171,12 @@ Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 
 ### Planned
 
-- Social Login (7+ providers)
-- SAML 2.0 Bridge
-- LDAP/AD Integration
-- Visual Flow Builder
-- CLI (`create-authrim`)
-- Verifiable Credentials (OpenID4VP/CI/IA)
+- Social Login (7+ providers) - Phase 8
+- SAML 2.0 Bridge / LDAP Integration - Phase 6
+- WebSDK (@authrim/sdk-core, @authrim/sdk-web) - Phase 9
+- CLI (`create-authrim`) - Phase 12
+- Verifiable Credentials (OpenID4VP/CI, JWT-SD) - Phase 7
+- OpenID Certification - Phase 11
 
 ---
 
@@ -314,6 +318,6 @@ See [LICENSE](./LICENSE) for details.
 
 > **Authrim** — *Authentication at the edge of everywhere*
 >
-> **Status:** Phase 6 (8/11 Enterprise Features Complete)
+> **Status:** Phase 6 (8/10 Enterprise Features Complete) + Policy Service Implemented
 >
-> *From zero to production-ready OpenID Provider in under 5 minutes.* (Goal: 2026)
+> *From zero to production-ready OpenID Provider in under 5 minutes.* (Goal: 2027)

@@ -12,20 +12,21 @@
 timeline
     title Authrim Development Timeline
     section 2025
-        Nov-Dec : ✅ P1-P2 Complete
+        Nov-Dec : ✅ P1-P5 Complete
     section 2026
-        Jan-Feb : ✅ P3 Complete
-        Mar-Apr : ✅ P4-P5 Complete
-        May-Oct : ⏳ P6 Enterprise (8/11 Complete)
+        Q1-Q2 : ⏳ P6 Enterprise (8/10 Complete)
+        Q3-Q4 : 🔜 P7 VC/DID & Access Control
     section 2027
-        Q1 : 🔜 P7 CLI & Automation
-        Q2+ : 🔜 P8 Verifiable Credentials & SaaS
+        Q1 : 🔜 P8 Login Console & UI
+        Q2 : 🔜 P9 SDK & API
+        Q3 : 🔜 P10-P11 Security & Certification
+        Q4 : 🔜 P12 CLI & Release
 ```
 
 **Legend:**
 - ✅ Complete (Phases 1-5)
-- ⏳ In Progress (Phase 6: 8/11 features complete)
-- 🔜 Planned (Phases 7-10)
+- ⏳ In Progress (Phase 6: 8/10 features complete)
+- 🔜 Planned (Phases 7-12)
 
 ---
 
@@ -38,11 +39,13 @@ timeline
 | **M3: Conformance** | 2025-11-12 | ✅ Complete | Basic OP 78.95%, Config OP 100%, Form Post 84.21% |
 | **M4: Extensions** | 2025-11-12 | ✅ Complete | PAR, DPoP, Pairwise, Token Management |
 | **M5: UI/UX** | 2025-11-18 | ✅ Complete | SvelteKit Frontend, Admin Dashboard, 15+ pages |
-| **M6: Enterprise** | 2026-10 | ⏳ 8/11 | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer |
-| **M7: CLI** | 2027-Q1 | 🔜 Planned | create-authrim package, automation |
-| **M8: Next-Gen** | 2027-Q2 | 🔜 Planned | Verifiable Credentials, OAuth 2.1, Federation |
-| **M9: SaaS** | 2027+ | 🔜 Planned | Multi-tenant platform, Billing, Marketplace |
-| **M10: Launch** | TBD | 🔜 Final | OpenID Certification, Production Launch |
+| **M6: Enterprise** | 2026-Q2 | ⏳ 8/10 | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer |
+| **M7: VC/DID** | 2026-Q4 | 🔜 Planned | RBAC/ABAC/ReBAC, JWT-SD, OpenID4VP/CI |
+| **M8: Console** | 2027-Q1 | 🔜 Planned | Social Login, Admin Console, UI Customization |
+| **M9: SDK** | 2027-Q2 | 🔜 Planned | WebSDK, API Documentation |
+| **M10: QA** | 2027-Q3 | 🔜 Planned | Security Audit, Load Testing |
+| **M11: Certification** | 2027-Q3 | 🔜 Planned | OpenID Certification |
+| **M12: Release** | 2027-Q4 | 🔜 Final | CLI, Public Release |
 
 ---
 
@@ -117,7 +120,7 @@ timeline
 
 ---
 
-## Phase 6: Enterprise Features ⏳ IN PROGRESS (8/11 Complete)
+## Phase 6: Enterprise Features ⏳ IN PROGRESS (8/10 Complete)
 
 **Timeline:** Jun 1 - Oct 31, 2026
 
@@ -136,89 +139,132 @@ timeline
 | JAR | RFC 9101 | ✅ Complete | Nov 25, 2025 |
 | JARM | OIDC JARM | ✅ Complete | Nov 25, 2025 |
 
-### Remaining Features (3/11)
+### Remaining Features (2/10)
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| SAML 2.0 Bridge | OIDC ↔ SAML 2.0 conversion | 🔜 Planned |
+| LDAP/AD Integration | Enterprise directory integration | 🔜 Planned |
+
+> **Note:** Social Login has been moved to Phase 8 (Login Console & UI)
+
+---
+
+## Phase 7: VC/DID & Access Control 🔜 PLANNED
+
+**Timeline:** 2026-Q3 to Q4
+
+**Goal:** Complete access control system and Verifiable Credentials support
+
+### Completed (Dec 2025)
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Policy Core | ✅ Complete | RBAC/ABAC engine (`@authrim/policy-core`) |
+| Policy Service | ✅ Complete | REST API (`@authrim/policy-service`) |
+| Policy Tests | ✅ Complete | 84 tests (53 core + 31 service) |
+| API Documentation | ✅ Complete | `/docs/api/policy/README.md` |
+
+### Planned Features
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| Feature Flags | ENABLE_REBAC_CHECK, ENABLE_ABAC_ATTRIBUTES | 🔜 Planned |
+| ReBAC Check API | Zanzibar-style relationship checks | 🔜 Planned |
+| DB Migrations | closure, relation_definitions, verified_attributes | 🔜 Planned |
+| JWT-SD | Selective Disclosure for JWTs | 🔜 Planned |
+| OpenID4VP | Verifiable Presentations | 🔜 Planned |
+| OpenID4CI | Credential Issuance | 🔜 Planned |
+| DID Resolver | did:web, did:key support | 🔜 Planned |
+
+---
+
+## Phase 8: Login Console & UI 🔜 PLANNED
+
+**Timeline:** 2027-Q1
+
+**Goal:** Complete admin console and login customization
+
+### Key Features
 
 | Feature | Description | Status |
 |---------|-------------|--------|
 | Social Login | Google, GitHub, Microsoft, Apple, Facebook, Twitter, LinkedIn | 🔜 Planned |
-| SAML 2.0 Bridge | OIDC ↔ SAML 2.0 conversion | 🔜 Planned |
-| LDAP/AD Integration | Enterprise directory integration | 🔜 Planned |
-
-### Optional/Deferred
-
-| Feature | Description | Status |
-|---------|-------------|--------|
-| Visual Flow Builder | SimCity-inspired drag & drop UI | Deferred |
-| WebSDK | High-customization web components | Deferred |
+| Admin Console | Complete settings management in KV/D1 | 🔜 Planned |
+| Browser Login | Full browser-based authentication | 🔜 Planned |
+| Theme Customization | Branding, logos, colors | 🔜 Planned |
+| Email Templates | Customizable email templates | 🔜 Planned |
 
 ---
 
-## Phase 7: CLI & Automation 🔜 PLANNED
-
-**Timeline:** 2027-Q1
-
-**Goal:** One-command deployment experience
-
-### Key Features
-
-- [ ] `create-authrim` NPM package
-- [ ] Interactive setup wizard
-- [ ] Project scaffolding
-- [ ] Cloudflare API integration (Worker, KV, D1, DO deployment)
-- [ ] Management CLI (20+ commands)
-- [ ] Integration examples (Next.js, React, Vue, Svelte)
-
----
-
-## Phase 8: Verifiable Credentials & Next-Gen 🔜 PLANNED
+## Phase 9: SDK & API 🔜 PLANNED
 
 **Timeline:** 2027-Q2
 
-**Goal:** Decentralized identity and next-generation protocols
+**Goal:** Developer SDKs and API documentation
 
 ### Key Features
 
-- [ ] OpenID4VP (Verifiable Presentations)
-- [ ] OpenID4CI (Credential Issuance)
-- [ ] OpenID4IA (Identity Assurance)
-- [ ] OpenID Federation 1.0
-- [ ] OAuth 2.1 compliance
-- [ ] Mobile SDKs (iOS, Android, React Native, Flutter)
-- [ ] Infrastructure as Code (Terraform, Helm, Pulumi)
-- [ ] GraphQL API
+| Feature | Description | Status |
+|---------|-------------|--------|
+| @authrim/sdk-core | Headless OIDC/PKCE client | 🔜 Planned |
+| @authrim/sdk-web | Web Components (Lit/Stencil) | 🔜 Planned |
+| CDN Bundle | `authrim-sdk.min.js` for `<script>` usage | 🔜 Planned |
+| OpenAPI Spec | Complete API specification | 🔜 Planned |
+| API Portal | Interactive documentation | 🔜 Planned |
 
 ---
 
-## Phase 9: White-Label & SaaS Platform 🔜 PLANNED
+## Phase 10: Security & QA 🔜 PLANNED
 
-**Timeline:** 2027+
+**Timeline:** 2027-Q3
 
-**Goal:** Multi-tenant SaaS platform and marketplace
+**Goal:** Security hardening and quality assurance
 
 ### Key Features
 
-- [ ] Multi-tenant architecture
-- [ ] Custom domain per tenant
-- [ ] Stripe billing integration
-- [ ] Usage metering (MAU, API calls)
-- [ ] Plugin marketplace
-- [ ] White-label customization
+| Feature | Description | Status |
+|---------|-------------|--------|
+| MTLS | Mutual TLS (RFC 8705) | 🔜 Planned |
+| Client Credentials | RFC 6749 Section 4.4 | 🔜 Planned |
+| Security Audit | External security review | 🔜 Planned |
+| Load Testing | Performance benchmarks | 🔜 Planned |
+| Bug Fixes | Issue resolution | 🔜 Planned |
+| Conformance Tests | Hybrid OP, Dynamic OP profiles | 🔜 Planned |
 
 ---
 
-## Phase 10: Certification & Production Launch 🔜 FINAL
+## Phase 11: Certification 🔜 PLANNED
 
-**Timeline:** TBD
+**Timeline:** 2027-Q3
 
-**Goal:** Official OpenID Certification and production deployment
+**Goal:** OpenID Certification
 
 ### Key Stages
 
-1. Pre-submission testing (full conformance suite)
-2. OpenID Foundation certification submission
-3. Production deployment (`https://id.authrim.org`)
-4. Public announcement
-5. Migration guides (from Auth0, Keycloak)
+1. GitHub private → public
+2. License and documentation review
+3. OpenID Foundation submission
+4. Test environment provision
+5. Certification obtained
+
+---
+
+## Phase 12: CLI & Release 🔜 FINAL
+
+**Timeline:** 2027-Q4
+
+**Goal:** Official public release
+
+### Key Features
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| create-authrim | NPM package for project scaffolding | 🔜 Planned |
+| Setup Wizard | Interactive configuration | 🔜 Planned |
+| Cloudflare Integration | Worker, KV, D1, DO deployment | 🔜 Planned |
+| Migration Guides | From Auth0, Keycloak | 🔜 Planned |
+| Public Launch | Official announcement | 🔜 Final |
 
 ---
 
@@ -238,19 +284,19 @@ timeline
 
 | Metric | Target | Actual |
 |--------|--------|--------|
-| Enterprise features | 11 | 8/11 (73%) |
+| Enterprise features | 10 | 8/10 (80%) |
 | Device Flow tests | 50+ | 70+ ✅ |
 | CIBA modes | 3 | 3 (poll, ping, push) ✅ |
 | SCIM endpoints | 4 | 4 (Users + Groups CRUD) ✅ |
 
-### Phase 7-10 (Planned)
+### Phase 7-12 (Planned)
 
 | Metric | Target |
 |--------|--------|
-| CLI commands | 20+ |
-| Deployment time | < 5 min |
+| Policy tests | 100+ |
 | Social login providers | 7+ |
-| Mobile SDKs | 4 platforms |
+| WebSDK components | 5+ |
+| CLI commands | 20+ |
 | OpenID Certification | ✅ Obtained |
 
 ---
@@ -261,13 +307,14 @@ By 2027, Authrim will be:
 
 1. **OpenID Certified** - Official certification obtained
 2. **Passwordless-first** - WebAuthn + Magic Link
-3. **Fully automated** - One command from zero to production
-4. **Globally distributed** - <50ms latency worldwide
-5. **Enterprise-ready** - SAML, LDAP, SCIM, Social Login
-6. **Advanced Flows** - Hybrid, Device, CIBA, JWT Bearer
-7. **Maximum Security** - DPoP, PAR, JAR, JARM, JWE
-8. **Verifiable Credentials** - OpenID4VP/CI/IA support
-9. **Open Source** - Apache 2.0, self-hosted
+3. **Complete Access Control** - RBAC, ABAC, ReBAC
+4. **Verifiable Credentials** - OpenID4VP/CI support
+5. **Globally distributed** - <50ms latency worldwide
+6. **Enterprise-ready** - SAML, LDAP, SCIM, Social Login
+7. **Advanced Flows** - Hybrid, Device, CIBA, JWT Bearer
+8. **Maximum Security** - DPoP, PAR, JAR, JARM, JWE, MTLS
+9. **Developer-friendly** - WebSDK, CLI, comprehensive docs
+10. **Open Source** - Apache 2.0, self-hosted
 
 ---
 
@@ -278,13 +325,14 @@ By 2027, Authrim will be:
 | 2025-11-11 | Initial roadmap |
 | 2025-11-12 | Phase 3 & 4 completed early |
 | 2025-11-18 | Phase 5 completed |
-| 2025-11-25 | Phase 6: 8/11 features complete (Device Flow, JWT Bearer, JWE, Hybrid, CIBA, SCIM, JAR, JARM) |
-| 2025-11-29 | Documentation restructure, Phase numbering clarification |
+| 2025-11-25 | Phase 6: 8/11 features complete |
+| 2025-11-29 | Documentation restructure |
+| 2025-12-02 | Major roadmap restructure: Phase 7-12 redefined, SaaS removed, Policy Service added |
 
 ---
 
-> **Last Update:** 2025-11-29
+> **Last Update:** 2025-12-02
 >
-> **Current Status:** Phase 6 (8/11 Enterprise Features Complete)
+> **Current Status:** Phase 6 (8/10 Enterprise Features Complete)
 >
 > **Authrim** - Building the future of identity infrastructure, one phase at a time.
