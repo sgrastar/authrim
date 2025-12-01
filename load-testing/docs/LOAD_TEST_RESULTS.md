@@ -156,6 +156,25 @@ Authrim OAuth2/OIDC サーバーの `/token` エンドポイント負荷テス�
 | p95 レスポンス | **119.17ms** |
 | p99 レスポンス | 127.58ms |
 
+**Cloudflare Analytics:**
+- ファイル: `results/cf-analytics_2025-12-01T02-52-03.json`
+- 期間: 2025-12-01T00:48:00Z ~ 2025-12-01T00:52:00Z
+
+| メトリクス | 値 |
+|-----------|-----|
+| Worker Duration p50 | 17.20 ms |
+| Worker Duration p75 | 18.21 ms |
+| Worker Duration p90 | 19.26 ms |
+| Worker Duration p99 | 22.57 ms |
+| Worker Duration p999 | 157.26 ms |
+| CPU Time p50 | 2.18 ms |
+| CPU Time p99 | 6.00 ms |
+| DO Wall Time p50 | 10.08 ms |
+| DO Wall Time p99 | 2,789.84 ms |
+| DO Wall Time p999 | 107,490.74 ms |
+| D1 Read Queries | 150,114 |
+| D1 Write Queries | 209,835 |
+
 ---
 
 ## 200RPS テスト
@@ -180,6 +199,25 @@ Authrim OAuth2/OIDC サーバーの `/token` エンドポイント負荷テス�
 | p90 レスポンス | 117.40ms |
 | p95 レスポンス | **123.66ms** |
 | p99 レスポンス | 131.59ms |
+
+**Cloudflare Analytics:**
+- ファイル: `results/cf-analytics_2025-12-01T02-53-41.json`
+- 期間: 2025-12-01T02:12:00Z ~ 2025-12-01T02:16:00Z
+
+| メトリクス | 値 |
+|-----------|-----|
+| Worker Duration p50 | 11.58 ms |
+| Worker Duration p75 | 12.14 ms |
+| Worker Duration p90 | 12.80 ms |
+| Worker Duration p99 | 25.50 ms |
+| Worker Duration p999 | 426.66 ms |
+| CPU Time p50 | 4.65 ms |
+| CPU Time p99 | 9.82 ms |
+| DO Wall Time p50 | 9.42 ms |
+| DO Wall Time p99 | 2,658.30 ms |
+| DO Wall Time p999 | 41,864.63 ms |
+| D1 Read Queries | 150,114 |
+| D1 Write Queries | 209,835 |
 
 **スケーリング特性:**
 - 100→200RPS: リクエスト数2倍増加
@@ -210,6 +248,25 @@ Authrim OAuth2/OIDC サーバーの `/token` エンドポイント負荷テス�
 | p90 レスポンス | 124.35ms |
 | p95 レスポンス | **138.75ms** |
 | p99 レスポンス | 1,027.85ms |
+
+**Cloudflare Analytics:**
+- ファイル: `results/cf-analytics_2025-12-01T02-54-07.json`
+- 期間: 2025-12-01T02:21:00Z ~ 2025-12-01T02:25:00Z
+
+| メトリクス | 値 |
+|-----------|-----|
+| Worker Duration p50 | 17.58 ms |
+| Worker Duration p75 | 18.66 ms |
+| Worker Duration p90 | 19.85 ms |
+| Worker Duration p99 | 34.00 ms |
+| Worker Duration p999 | 416.31 ms |
+| CPU Time p50 | 4.59 ms |
+| CPU Time p99 | 10.80 ms |
+| DO Wall Time p50 | 10.10 ms |
+| DO Wall Time p99 | 1,875.07 ms |
+| DO Wall Time p999 | 34,270.47 ms |
+| D1 Read Queries | 150,114 |
+| D1 Write Queries | 209,835 |
 
 **スケーリング特性:**
 - 200→300RPS: リクエスト数1.5倍増加
@@ -263,7 +320,9 @@ Authrim OAuth2/OIDC サーバーの `/token` エンドポイント負荷テス�
 ### Analytics データ
 - `results/cf-analytics_2025-11-30T19-11-07.json` - ベースライン (50RPS)
 - `results/cf-analytics_2025-12-01T00-02-31.json` - 最適化後 (50RPS)
-- `results/cf-analytics_2025-12-01T00-32-03.json` - 100RPSテスト
+- `results/cf-analytics_2025-12-01T02-52-03.json` - 100RPSテスト
+- `results/cf-analytics_2025-12-01T02-53-41.json` - 200RPSテスト
+- `results/cf-analytics_2025-12-01T02-54-07.json` - 300RPSテスト
 
 ### テストスクリプト
 - `scripts/test1-token-load.js` - トークンエンドポイント負荷テスト
