@@ -286,21 +286,119 @@ export type UserType = 'end_user' | 'distributor_admin' | 'enterprise_admin' | '
 // =============================================================================
 
 /**
+ * Organization info for token claims (multiple orgs support)
+ */
+export interface TokenOrgInfo {
+  /** Organization ID */
+  id: string;
+  /** Organization name */
+  name: string;
+  /** Organization type */
+  type: OrganizationType;
+  /** Whether this is the user's primary organization */
+  is_primary: boolean;
+}
+
+/**
+ * Scoped role for token claims (includes scope info)
+ */
+export interface TokenScopedRole {
+  /** Role name */
+  name: string;
+  /** Scope type */
+  scope: ScopeType;
+  /** Scope target (e.g., "org:org_123") */
+  scopeTarget?: string;
+}
+
+/**
+ * Relationships summary for ID token
+ */
+export interface RelationshipsSummary {
+  /** IDs of child accounts */
+  children_ids: string[];
+  /** IDs of parent accounts */
+  parent_ids: string[];
+}
+
+/**
+ * Organization context for Access Token
+ */
+export interface OrgContext {
+  /** Organization ID the user is acting as */
+  acting_as_org_id?: string;
+  /** Organization ID the user is acting on behalf of */
+  on_behalf_of_org_id?: string;
+}
+
+/**
  * RBAC claims to be added to tokens
  * Uses authrim_ prefix to avoid conflicts with standard claims.
  */
 export interface RBACTokenClaims {
-  /** User's effective roles */
+  /** User's effective roles (simple string array) */
   authrim_roles?: string[];
+  /** User's effective roles with scope info (Phase 2) */
+  authrim_scoped_roles?: TokenScopedRole[];
   /** User type classification */
   authrim_user_type?: UserType;
   /** Primary organization ID */
   authrim_org_id?: string;
+  /** Primary organization name (Phase 2) */
+  authrim_org_name?: string;
   /** Organization's subscription plan */
   authrim_plan?: PlanType;
   /** Organization type */
   authrim_org_type?: OrganizationType;
+  /** All organizations the user belongs to (Phase 2) */
+  authrim_orgs?: TokenOrgInfo[];
+  /** Relationships summary (Phase 2) */
+  authrim_relationships_summary?: RelationshipsSummary;
+  /** Resolved permissions from roles (Phase 2) */
+  authrim_permissions?: string[];
+  /** Organization context for acting as/on behalf of (Phase 2) */
+  authrim_org_context?: OrgContext;
 }
+
+/**
+ * Available RBAC claim keys for ID Token
+ * Used for environment variable configuration
+ */
+export type IDTokenClaimKey =
+  | 'roles'
+  | 'scoped_roles'
+  | 'user_type'
+  | 'org_id'
+  | 'org_name'
+  | 'plan'
+  | 'org_type'
+  | 'orgs'
+  | 'relationships_summary';
+
+/**
+ * Available RBAC claim keys for Access Token
+ * Used for environment variable configuration
+ */
+export type AccessTokenClaimKey =
+  | 'roles'
+  | 'scoped_roles'
+  | 'org_id'
+  | 'org_type'
+  | 'permissions'
+  | 'org_context';
+
+/**
+ * Default claim sets for backward compatibility
+ */
+export const DEFAULT_ID_TOKEN_CLAIMS: IDTokenClaimKey[] = [
+  'roles',
+  'user_type',
+  'org_id',
+  'plan',
+  'org_type',
+];
+
+export const DEFAULT_ACCESS_TOKEN_CLAIMS: AccessTokenClaimKey[] = ['roles', 'org_id', 'org_type'];
 
 // =============================================================================
 // Default Role Names

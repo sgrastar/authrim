@@ -286,7 +286,11 @@ async function main() {
     try {
       const authz = await fetchAuthorizationCode();
       const refresh = await exchangeForRefreshToken(authz);
-      refreshTokens.push({ refresh_token: refresh });
+      refreshTokens.push({
+        token: refresh,
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+      });
       if ((i + 1) % 20 === 0) console.log(`  collected ${i + 1}/${REFRESH_COUNT} refresh tokens`);
       await new Promise((r) => setTimeout(r, 50));
     } catch (err) {

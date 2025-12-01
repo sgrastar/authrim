@@ -784,3 +784,157 @@ export const adminScimTokensAPI = {
 		});
 	}
 };
+
+// =============================================================================
+// Consent Screen API (Phase 2-B RBAC)
+// =============================================================================
+
+/**
+ * Consent screen data types
+ */
+interface ConsentScopeInfo {
+	name: string;
+	title: string;
+	description: string;
+	required: boolean;
+}
+
+interface ConsentClientInfo {
+	client_id: string;
+	client_name: string;
+	logo_uri?: string;
+	client_uri?: string;
+	policy_uri?: string;
+	tos_uri?: string;
+	is_trusted?: boolean;
+}
+
+interface ConsentUserInfo {
+	id: string;
+	email: string;
+	name?: string;
+	picture?: string;
+}
+
+interface ConsentOrgInfo {
+	id: string;
+	name: string;
+	type: string;
+	is_primary: boolean;
+	plan?: string;
+}
+
+interface ConsentActingAsInfo {
+	id: string;
+	name?: string;
+	email: string;
+	relationship_type: string;
+	permission_level: string;
+}
+
+interface ConsentFeatureFlags {
+	org_selector_enabled: boolean;
+	acting_as_enabled: boolean;
+	show_roles: boolean;
+}
+
+interface ConsentScreenData {
+	challenge_id: string;
+	client: ConsentClientInfo;
+	scopes: ConsentScopeInfo[];
+	user: ConsentUserInfo;
+	organizations: ConsentOrgInfo[];
+	primary_org: ConsentOrgInfo | null;
+	roles: string[];
+	acting_as: ConsentActingAsInfo | null;
+	target_org_id: string | null;
+	features: ConsentFeatureFlags;
+}
+
+interface ConsentSubmission {
+	challenge_id: string;
+	approved: boolean;
+	selected_org_id?: string;
+	acting_as_user_id?: string;
+}
+
+/**
+ * Consent Screen API
+ * Handles OAuth2/OIDC consent flow with RBAC support
+ */
+export const consentAPI = {
+	/**
+	 * Get consent screen data
+	 * Uses OP API URL if configured, otherwise same origin
+	 */
+	async getData(challengeId: string) {
+		const apiBaseUrl = import.meta.env.VITE_OP_API_URL || API_BASE_URL;
+		try {
+			const response = await fetch(`${apiBaseUrl}/auth/consent?challenge_id=${challengeId}`, {
+				method: 'GET',
+				headers: {
+					Accept: 'application/json'
+				},
+				credentials: 'include'
+			});
+
+			if (!response.ok) {
+				const errorData = await response.json().catch(() => ({}));
+				return {
+					error: {
+						error: errorData.error || 'consent_error',
+						error_description: errorData.error_description || 'Failed to load consent data'
+					}
+				};
+			}
+
+			const data: ConsentScreenData = await response.json();
+			return { data };
+		} catch (error) {
+			return {
+				error: {
+					error: 'network_error',
+					error_description: error instanceof Error ? error.message : 'Network error occurred'
+				}
+			};
+		}
+	},
+
+	/**
+	 * Submit consent decision
+	 * Returns redirect URL on success
+	 */
+	async submit(submission: ConsentSubmission) {
+		const apiBaseUrl = import.meta.env.VITE_OP_API_URL || API_BASE_URL;
+		try {
+			const response = await fetch(`${apiBaseUrl}/auth/consent`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				credentials: 'include',
+				body: JSON.stringify(submission)
+			});
+
+			if (!response.ok) {
+				const errorData = await response.json().catch(() => ({}));
+				return {
+					error: {
+						error: errorData.error || 'consent_error',
+						error_description: errorData.error_description || 'Failed to process consent'
+					}
+				};
+			}
+
+			const data: { redirect_url: string } = await response.json();
+			return { data };
+		} catch (error) {
+			return {
+				error: {
+					error: 'network_error',
+					error_description: error instanceof Error ? error.message : 'Network error occurred'
+				}
+			};
+		}
+	}
+};

@@ -88,6 +88,17 @@ const en = {
 	consent_scope_address: 'View your address',
 	consent_scope_offline_access: "Maintain access when you're not using the app",
 
+	consent_organizationSelect: 'Select organization',
+	consent_primaryOrg: 'Primary',
+	consent_currentOrganization: 'Current organization',
+	consent_actingOnBehalfOf: 'Acting on behalf of {name:string}',
+	consent_delegatedAccess: 'Delegated Access',
+	consent_delegatedAccessWarning:
+		"You are authorizing this application to access {name}'s account on their behalf",
+	consent_yourRoles: 'Your roles',
+	consent_noOrganization: 'No organization',
+	consent_trustedClient: 'Trusted application',
+
 	error_title: 'Oops! Something went wrong',
 	error_subtitle: 'We encountered an error while processing your request',
 	error_contactSupport: 'If this problem persists, please contact support',

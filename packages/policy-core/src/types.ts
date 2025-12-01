@@ -181,11 +181,44 @@ export interface PolicyCondition {
  * Types of policy conditions
  */
 export type ConditionType =
+  // Role-based conditions (RBAC)
   | 'has_role' // Subject has specific role
   | 'has_any_role' // Subject has any of specified roles
   | 'has_all_roles' // Subject has all specified roles
+  // Ownership conditions
   | 'is_resource_owner' // Subject owns the resource
   | 'same_organization' // Subject and resource in same org
+  // Relationship conditions
   | 'has_relationship' // Subject has relationship with resource owner
+  // User type conditions
   | 'user_type_is' // Subject's user type matches
-  | 'plan_allows'; // Organization plan allows action
+  | 'plan_allows' // Organization plan allows action
+  // Attribute-based conditions (ABAC) - Phase 3
+  | 'attribute_equals' // Subject has attribute with specific value
+  | 'attribute_exists' // Subject has attribute (any value)
+  | 'attribute_in'; // Subject attribute value is in a list
+
+/**
+ * Verified attribute for ABAC evaluation
+ * Stored in verified_attributes table, populated by manual entry or VC (Phase 4+)
+ */
+export interface VerifiedAttribute {
+  /** Attribute name (e.g., 'age_over_18', 'subscription_tier') */
+  name: string;
+  /** Attribute value */
+  value: string | null;
+  /** Source of the attribute (manual, vc, jwt_sd) */
+  source: string;
+  /** Issuer (DID or URL) for VC-sourced attributes */
+  issuer?: string;
+  /** Expiration timestamp (UNIX seconds) */
+  expiresAt?: number;
+}
+
+/**
+ * Extended PolicySubject with verified attributes for ABAC
+ */
+export interface PolicySubjectWithAttributes extends PolicySubject {
+  /** Verified attributes for ABAC evaluation */
+  verifiedAttributes?: VerifiedAttribute[];
+}

@@ -12,6 +12,8 @@ import type {
   PolicyCondition,
   SubjectRole,
   ConditionType,
+  VerifiedAttribute,
+  PolicySubjectWithAttributes,
 } from './types';
 
 /**
@@ -215,7 +217,105 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
     const allowedPlans = params.plans as string[];
     return context.subject.plan !== undefined && allowedPlans.includes(context.subject.plan);
   },
+
+  // ==========================================================================
+  // ABAC Conditions (Phase 3)
+  // ==========================================================================
+
+  /**
+   * Check if subject has a verified attribute with a specific value
+   *
+   * Params:
+   * - name: Attribute name (required)
+   * - value: Expected value (required)
+   * - checkExpiry: Whether to check expiration (default: true)
+   *
+   * Example:
+   * { type: 'attribute_equals', params: { name: 'subscription_tier', value: 'premium' } }
+   */
+  attribute_equals: (params, context) => {
+    const attributeName = params.name as string;
+    const expectedValue = params.value as string;
+    const checkExpiry = params.checkExpiry !== false;
+
+    const attributes = getVerifiedAttributes(context);
+    if (!attributes) return false;
+
+    const now = Math.floor(Date.now() / 1000);
+
+    return attributes.some((attr) => {
+      if (attr.name !== attributeName) return false;
+      if (attr.value !== expectedValue) return false;
+      if (checkExpiry && attr.expiresAt && attr.expiresAt <= now) return false;
+      return true;
+    });
+  },
+
+  /**
+   * Check if subject has a verified attribute (any value)
+   *
+   * Params:
+   * - name: Attribute name (required)
+   * - checkExpiry: Whether to check expiration (default: true)
+   *
+   * Example:
+   * { type: 'attribute_exists', params: { name: 'medical_license' } }
+   */
+  attribute_exists: (params, context) => {
+    const attributeName = params.name as string;
+    const checkExpiry = params.checkExpiry !== false;
+
+    const attributes = getVerifiedAttributes(context);
+    if (!attributes) return false;
+
+    const now = Math.floor(Date.now() / 1000);
+
+    return attributes.some((attr) => {
+      if (attr.name !== attributeName) return false;
+      if (checkExpiry && attr.expiresAt && attr.expiresAt <= now) return false;
+      return true;
+    });
+  },
+
+  /**
+   * Check if subject's attribute value is in a list of allowed values
+   *
+   * Params:
+   * - name: Attribute name (required)
+   * - values: Array of allowed values (required)
+   * - checkExpiry: Whether to check expiration (default: true)
+   *
+   * Example:
+   * { type: 'attribute_in', params: { name: 'role_level', values: ['senior', 'lead', 'manager'] } }
+   */
+  attribute_in: (params, context) => {
+    const attributeName = params.name as string;
+    const allowedValues = params.values as string[];
+    const checkExpiry = params.checkExpiry !== false;
+
+    const attributes = getVerifiedAttributes(context);
+    if (!attributes) return false;
+
+    const now = Math.floor(Date.now() / 1000);
+
+    return attributes.some((attr) => {
+      if (attr.name !== attributeName) return false;
+      if (attr.value === null) return false;
+      if (!allowedValues.includes(attr.value)) return false;
+      if (checkExpiry && attr.expiresAt && attr.expiresAt <= now) return false;
+      return true;
+    });
+  },
 };
+
+/**
+ * Get verified attributes from context
+ * Handles both PolicySubject and PolicySubjectWithAttributes
+ */
+function getVerifiedAttributes(context: PolicyContext): VerifiedAttribute[] | undefined {
+  const subject = context.subject as PolicySubjectWithAttributes;
+  return subject.verifiedAttributes;
+}
 
 /**
  * Check if subject has a role with optional scope matching

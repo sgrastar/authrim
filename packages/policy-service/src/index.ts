@@ -6,11 +6,17 @@
  *
  * Phase 1: Role-based access control with scoped roles.
  *
+ * Routes handled by this worker (via Cloudflare custom domain routes):
+ * - /policy/* - Policy evaluation endpoints
+ * - /api/rebac/* - ReBAC relationship endpoints
+ *
  * Endpoints:
- * - POST /evaluate - Evaluate policy for a given context
- * - POST /check-role - Quick role check
- * - POST /check-access - Check access for resource/action
- * - GET /health - Health check
+ * - POST /policy/evaluate - Evaluate policy for a given context
+ * - POST /policy/check-role - Quick role check
+ * - POST /policy/check-access - Check access for resource/action
+ * - GET /policy/health - Health check
+ * - POST /api/rebac/check - ReBAC relationship check
+ * - GET /api/rebac/health - ReBAC health check
  */
 
 import { Hono } from 'hono';
@@ -18,8 +24,8 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import type { Env as SharedEnv } from '@authrim/shared';
+import { versionCheckMiddleware } from '@authrim/shared';
 import {
-  PolicyEngine,
   createDefaultPolicyEngine,
   hasRole,
   hasAnyRole,
@@ -39,14 +45,19 @@ interface Env extends SharedEnv {
   POLICY_API_SECRET: string;
 }
 
-// Create Hono app
+// Create main Hono app
 const app = new Hono<{ Bindings: Env }>();
+
+// Create sub-apps for different route prefixes
+const policyRoutes = new Hono<{ Bindings: Env }>();
+const rebacRoutes = new Hono<{ Bindings: Env }>();
 
 // Create default policy engine
 const policyEngine = createDefaultPolicyEngine();
 
-// Middleware
+// Global middleware
 app.use('*', logger());
+app.use('*', versionCheckMiddleware('policy-service'));
 app.use(
   '*',
   secureHeaders({
@@ -82,11 +93,15 @@ function authenticateRequest(c: {
   return token === c.env.POLICY_API_SECRET;
 }
 
+// ============================================================
+// Policy Routes (/policy/*)
+// ============================================================
+
 /**
  * Health check endpoint
- * GET /health
+ * GET /policy/health
  */
-app.get('/health', (c) => {
+policyRoutes.get('/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'policy-service',
@@ -97,25 +112,9 @@ app.get('/health', (c) => {
 
 /**
  * Evaluate policy for a given context
- * POST /evaluate
- *
- * Request body:
- * {
- *   "subject": { "id": "...", "roles": [...], ... },
- *   "resource": { "type": "...", "id": "...", ... },
- *   "action": { "name": "..." },
- *   "timestamp": 1234567890
- * }
- *
- * Response:
- * {
- *   "allowed": true,
- *   "reason": "...",
- *   "decidedBy": "..."
- * }
+ * POST /policy/evaluate
  */
-app.post('/evaluate', async (c) => {
-  // Authenticate request
+policyRoutes.post('/evaluate', async (c) => {
   if (!authenticateRequest(c)) {
     return c.json(
       {
@@ -129,7 +128,6 @@ app.post('/evaluate', async (c) => {
   try {
     const body = await c.req.json<PolicyContext>();
 
-    // Validate required fields
     if (!body.subject || !body.resource || !body.action) {
       return c.json(
         {
@@ -140,15 +138,12 @@ app.post('/evaluate', async (c) => {
       );
     }
 
-    // Ensure timestamp is set
     const context: PolicyContext = {
       ...body,
       timestamp: body.timestamp || Date.now(),
     };
 
-    // Evaluate policy
     const decision = policyEngine.evaluate(context);
-
     return c.json(decision);
   } catch (error) {
     console.error('Policy evaluation error:', error);
@@ -164,25 +159,9 @@ app.post('/evaluate', async (c) => {
 
 /**
  * Quick role check endpoint
- * POST /check-role
- *
- * Request body:
- * {
- *   "subject": { "roles": [...] } | { "claims": {...} },
- *   "role": "role_name" | "roles": ["role1", "role2"],
- *   "mode": "any" | "all",
- *   "scope": "global",
- *   "scopeTarget": "org:org_123"
- * }
- *
- * Response:
- * {
- *   "hasRole": true,
- *   "activeRoles": ["role1", "role2"]
- * }
+ * POST /policy/check-role
  */
-app.post('/check-role', async (c) => {
-  // Authenticate request
+policyRoutes.post('/check-role', async (c) => {
   if (!authenticateRequest(c)) {
     return c.json(
       {
@@ -213,7 +192,6 @@ app.post('/check-role', async (c) => {
       );
     }
 
-    // Convert claims to subject if needed
     let subject: PolicySubject;
     if ('claims' in body.subject) {
       subject = subjectFromClaims(body.subject.claims as Record<string, unknown>);
@@ -229,10 +207,8 @@ app.post('/check-role', async (c) => {
     let hasRequiredRole = false;
 
     if (body.role) {
-      // Single role check
       hasRequiredRole = hasRole(subject, body.role, options);
     } else if (body.roles && body.roles.length > 0) {
-      // Multiple roles check
       if (body.mode === 'all') {
         hasRequiredRole = hasAllRoles(subject, body.roles, options);
       } else {
@@ -248,7 +224,6 @@ app.post('/check-role', async (c) => {
       );
     }
 
-    // Get active role names
     const activeRoles = subject.roles
       .filter((r) => !r.expiresAt || r.expiresAt > Date.now())
       .map((r) => r.name);
@@ -271,29 +246,9 @@ app.post('/check-role', async (c) => {
 
 /**
  * Check access for resource/action
- * POST /check-access
- *
- * Convenience endpoint that builds a PolicyContext and evaluates.
- *
- * Request body:
- * {
- *   "subjectId": "user_123",
- *   "claims": { "authrim_roles": [...], ... },
- *   "resourceType": "organization",
- *   "resourceId": "org_456",
- *   "resourceOwnerId": "user_789",
- *   "resourceOrgId": "org_456",
- *   "action": "manage"
- * }
- *
- * Response:
- * {
- *   "allowed": true,
- *   "reason": "..."
- * }
+ * POST /policy/check-access
  */
-app.post('/check-access', async (c) => {
-  // Authenticate request
+policyRoutes.post('/check-access', async (c) => {
   if (!authenticateRequest(c)) {
     return c.json(
       {
@@ -317,7 +272,6 @@ app.post('/check-access', async (c) => {
       operation?: string;
     }>();
 
-    // Validate required fields
     if (!body.resourceType || !body.resourceId || !body.action) {
       return c.json(
         {
@@ -328,7 +282,6 @@ app.post('/check-access', async (c) => {
       );
     }
 
-    // Build subject from claims or roles
     let subject: PolicySubject;
     if (body.claims) {
       subject = subjectFromClaims(body.claims);
@@ -350,7 +303,6 @@ app.post('/check-access', async (c) => {
       );
     }
 
-    // Build context
     const context: PolicyContext = {
       subject,
       resource: {
@@ -366,7 +318,6 @@ app.post('/check-access', async (c) => {
       timestamp: Date.now(),
     };
 
-    // Evaluate policy
     const decision = policyEngine.evaluate(context);
 
     return c.json({
@@ -387,19 +338,9 @@ app.post('/check-access', async (c) => {
 
 /**
  * Check if subject is an admin
- * POST /is-admin
- *
- * Request body:
- * {
- *   "claims": { "authrim_roles": [...] }
- * }
- * OR
- * {
- *   "roles": ["role1", "role2"]
- * }
+ * POST /policy/is-admin
  */
-app.post('/is-admin', async (c) => {
-  // Authenticate request
+policyRoutes.post('/is-admin', async (c) => {
   if (!authenticateRequest(c)) {
     return c.json(
       {
@@ -450,12 +391,105 @@ app.post('/is-admin', async (c) => {
   }
 });
 
+// ============================================================
+// ReBAC Routes (/api/rebac/*)
+// ============================================================
+
+/**
+ * ReBAC health check
+ * GET /api/rebac/health
+ */
+rebacRoutes.get('/health', (c) => {
+  return c.json({
+    status: 'ok',
+    service: 'rebac-service',
+    version: '0.1.0',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+/**
+ * Check relationship (ReBAC)
+ * POST /api/rebac/check
+ *
+ * Request body:
+ * {
+ *   "subject": "user:user_123",
+ *   "relation": "viewer",
+ *   "object": "document:doc_456"
+ * }
+ */
+rebacRoutes.post('/check', async (c) => {
+  if (!authenticateRequest(c)) {
+    return c.json(
+      {
+        error: 'unauthorized',
+        error_description: 'Valid Bearer token required',
+      },
+      401
+    );
+  }
+
+  try {
+    const body = await c.req.json<{
+      subject: string;
+      relation: string;
+      object: string;
+    }>();
+
+    if (!body.subject || !body.relation || !body.object) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'subject, relation, and object are required',
+        },
+        400
+      );
+    }
+
+    // TODO: Implement actual ReBAC check using D1 database
+    // For now, return a placeholder response
+    return c.json({
+      allowed: false,
+      reason: 'ReBAC check not yet implemented - use policy endpoints',
+    });
+  } catch (error) {
+    console.error('ReBAC check error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to check relationship',
+      },
+      500
+    );
+  }
+});
+
+// ============================================================
+// Mount sub-apps to main app
+// ============================================================
+
+// Mount policy routes at /policy/* (for custom domain routes)
+app.route('/policy', policyRoutes);
+
+// Mount ReBAC routes at /api/rebac/* (for custom domain routes)
+app.route('/api/rebac', rebacRoutes);
+
+// Also mount at root for workers.dev access via router (Service Bindings)
+// When accessed via router, the path comes without /policy prefix
+app.route('/', policyRoutes);
+
+// ============================================================
+// Error handlers
+// ============================================================
+
 // 404 handler
 app.notFound((c) => {
   return c.json(
     {
       error: 'not_found',
       error_description: 'The requested resource was not found',
+      path: c.req.path,
     },
     404
   );

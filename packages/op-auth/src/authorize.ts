@@ -69,6 +69,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let _confirmed: string | undefined;
   let _auth_time: string | undefined;
   let _session_user_id: string | undefined;
+  // Phase 2-B RBAC extensions
+  let org_id: string | undefined; // Target organization ID
+  let acting_as: string | undefined; // Acting on behalf of user ID
+  let _consent_confirmed: string | undefined; // Internal: consent was confirmed
 
   if (c.req.method === 'POST') {
     // Parse POST body (application/x-www-form-urlencoded)
@@ -98,6 +102,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       _auth_time = typeof body._auth_time === 'string' ? body._auth_time : undefined;
       _session_user_id =
         typeof body._session_user_id === 'string' ? body._session_user_id : undefined;
+      // Phase 2-B RBAC extensions
+      org_id = typeof body.org_id === 'string' ? body.org_id : undefined;
+      acting_as = typeof body.acting_as === 'string' ? body.acting_as : undefined;
+      _consent_confirmed =
+        typeof body._consent_confirmed === 'string' ? body._consent_confirmed : undefined;
     } catch {
       return c.json(
         {
@@ -131,6 +140,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     _confirmed = c.req.query('_confirmed');
     _auth_time = c.req.query('_auth_time');
     _session_user_id = c.req.query('_session_user_id');
+    // Phase 2-B RBAC extensions
+    org_id = c.req.query('org_id');
+    acting_as = c.req.query('acting_as');
+    _consent_confirmed = c.req.query('_consent_confirmed');
   }
 
   // RFC 9126: If request_uri is present, fetch parameters from PAR storage
@@ -1337,13 +1350,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const sub = sessionUserId;
 
   // Check if consent is required (unless already confirmed)
-  const _consent_confirmed =
-    c.req.query('_consent_confirmed') ||
-    (await c.req
-      .parseBody()
-      .then((b) => (typeof b._consent_confirmed === 'string' ? b._consent_confirmed : undefined))
-      .catch(() => undefined));
-
+  // Note: _consent_confirmed is already parsed at the top of this function
   if (_consent_confirmed !== 'true') {
     // Get client metadata to check if it's a trusted client
     const clientMetadata = await getClient(c.env, validClientId);
@@ -1465,6 +1472,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 login_hint,
                 sessionUserId: sub,
                 authTime, // Preserve auth_time
+                // Phase 2-B RBAC extensions
+                org_id,
+                acting_as,
               },
             }),
           })

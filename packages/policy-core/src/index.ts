@@ -50,6 +50,9 @@ export type {
   PolicyRule,
   PolicyCondition,
   ConditionType,
+  // ABAC types (Phase 3)
+  VerifiedAttribute,
+  PolicySubjectWithAttributes,
 } from './types';
 
 // Policy Engine

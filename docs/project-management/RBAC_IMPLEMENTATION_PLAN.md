@@ -1,7 +1,7 @@
 # RBAC/ABAC Implementation Plan
 
-**Last Updated**: 2025-11-30
-**Status**: Phase 1 Complete, Phase 2 Planned
+**Last Updated**: 2025-12-01
+**Status**: Phase 1 Complete (incl. ReBAC endpoints), Phase 2 Planned
 **Owner**: Authrim Team
 
 ---
@@ -468,17 +468,30 @@ interface PolicyDecision {
 
 **Package**: `packages/policy-service`
 
-**Endpoints**:
+**Routes** (Custom Domain):
+- `conformance.authrim.com/policy/*`
+- `conformance.authrim.com/api/rebac/*`
+
+**Policy Endpoints** (`/policy/*`):
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/evaluate` | Full policy evaluation |
-| POST | `/check-role` | Quick role check |
-| POST | `/check-access` | Simplified access check |
-| POST | `/is-admin` | Admin status check |
-| GET | `/health` | Health check |
+| GET | `/policy/health` | Health check |
+| POST | `/policy/evaluate` | Full policy evaluation |
+| POST | `/policy/check-role` | Quick role check |
+| POST | `/policy/check-access` | Simplified access check |
+| POST | `/policy/is-admin` | Admin status check |
+
+**ReBAC Endpoints** (`/api/rebac/*`):
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/rebac/health` | ReBAC health check |
+| POST | `/api/rebac/check` | Relationship check (Zanzibar-style) |
 
 **Authentication**: Bearer token (`POLICY_API_SECRET`)
+
+**Note**: For workers.dev access (via router), the same endpoints are available without the `/policy` prefix (e.g., `/health`, `/evaluate`).
 
 ---
 
@@ -793,11 +806,16 @@ packages/
 
 ## Testing Strategy
 
-### Unit Tests
+### Unit Tests ✅
 
-- Policy engine condition evaluators
-- Role checker utilities
+- Policy engine condition evaluators (24 tests)
+- Role checker utilities (29 tests)
+- Policy service API endpoints (31 tests)
 - Token claim generation
+
+**Test Coverage**:
+- `@authrim/policy-core`: 53 tests passing
+- `@authrim/policy-service`: 31 tests passing
 
 ### Integration Tests
 
@@ -845,3 +863,4 @@ packages/
 | 2025-11-30 | 1.0 | Authrim Team | Initial version with Phase 1 complete |
 | 2025-11-30 | 1.1 | Authrim Team | Added use cases, token design, DID/VC phases |
 | 2025-11-30 | 1.2 | Authrim Team | Extracted Use Cases to separate document (USE_CASES.md) |
+| 2025-12-01 | 1.3 | Authrim Team | Added ReBAC endpoints, updated routes for custom domain, added test coverage |

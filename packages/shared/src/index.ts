@@ -4,6 +4,7 @@ export * from './types/env';
 export * from './types/oidc';
 export * from './types/admin';
 export * from './types/rbac';
+export * from './types/consent';
 
 // Utils
 export * from './utils/audit-log';
@@ -28,6 +29,7 @@ export * from './utils/tenant-context';
 export * from './utils/token-introspection';
 export * from './utils/validation';
 export * from './utils/rbac-claims';
+export * from './utils/consent-rbac';
 
 // Middleware
 export * from './middleware/admin-auth';

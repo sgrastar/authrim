@@ -643,8 +643,8 @@ async function handleAuthorizationCodeGrant(
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, authCodeData.sub),
-      getIDTokenRBACClaims(c.env.DB, authCodeData.sub),
+      getAccessTokenRBACClaims(c.env.DB, authCodeData.sub, c.env.RBAC_ACCESS_TOKEN_CLAIMS),
+      getIDTokenRBACClaims(c.env.DB, authCodeData.sub, c.env.RBAC_ID_TOKEN_CLAIMS),
     ]);
   } catch (rbacError) {
     // Log but don't fail - RBAC claims are optional for backward compatibility
@@ -1252,6 +1252,20 @@ async function handleRefreshTokenGrant(
   // Token expiration
   const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
 
+  // Phase 2 RBAC: Fetch fresh RBAC claims for token refresh
+  // User's roles/organization may have changed since the original token was issued
+  let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
+  let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
+  try {
+    [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
+      getAccessTokenRBACClaims(c.env.DB, refreshTokenData.sub, c.env.RBAC_ACCESS_TOKEN_CLAIMS),
+      getIDTokenRBACClaims(c.env.DB, refreshTokenData.sub, c.env.RBAC_ID_TOKEN_CLAIMS),
+    ]);
+  } catch (rbacError) {
+    // Log but don't fail - RBAC claims are optional for backward compatibility
+    console.warn('Failed to fetch RBAC claims for refresh token:', rbacError);
+  }
+
   // DPoP support (RFC 9449)
   // Extract and validate DPoP proof if present
   const dpopProof = extractDPoPProof(c.req.raw.headers);
@@ -1289,24 +1303,19 @@ async function handleRefreshTokenGrant(
   // Generate new Access Token
   let accessToken: string;
   try {
-    const accessTokenClaims: {
-      iss: string;
-      sub: string;
-      aud: string;
-      scope: string;
-      client_id: string;
-      cnf?: { jkt: string };
-    } = {
+    const accessTokenClaims = {
       iss: c.env.ISSUER_URL,
       sub: refreshTokenData.sub,
       aud: c.env.ISSUER_URL,
       scope: grantedScope,
       client_id: client_id,
+      // Phase 2 RBAC: Add RBAC claims to access token
+      ...accessTokenRBACClaims,
     };
 
     // Add DPoP confirmation (cnf) claim if DPoP is used
     if (dpopJkt) {
-      accessTokenClaims.cnf = { jkt: dpopJkt };
+      (accessTokenClaims as { cnf?: { jkt: string } }).cnf = { jkt: dpopJkt };
     }
 
     const result = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
@@ -1333,6 +1342,8 @@ async function handleRefreshTokenGrant(
       sub: refreshTokenData.sub,
       aud: client_id,
       at_hash: atHash,
+      // Phase 2 RBAC: Add RBAC claims to ID token
+      ...idTokenRBACClaims,
     };
 
     idToken = await createIDToken(idTokenClaims, privateKey, keyId, expiresIn);
@@ -1815,6 +1826,19 @@ async function handleDeviceCodeGrant(
 
   const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
 
+  // Phase 2 RBAC: Fetch RBAC claims for device flow tokens
+  let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
+  let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
+  try {
+    [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
+      getAccessTokenRBACClaims(c.env.DB, metadata.sub!, c.env.RBAC_ACCESS_TOKEN_CLAIMS),
+      getIDTokenRBACClaims(c.env.DB, metadata.sub!, c.env.RBAC_ID_TOKEN_CLAIMS),
+    ]);
+  } catch (rbacError) {
+    // Log but don't fail - RBAC claims are optional for backward compatibility
+    console.warn('Failed to fetch RBAC claims for device flow:', rbacError);
+  }
+
   // Generate ID Token
   const idTokenClaims = {
     iss: c.env.ISSUER_URL,
@@ -1822,6 +1846,8 @@ async function handleDeviceCodeGrant(
     aud: client_id,
     nonce: undefined, // Device flow doesn't use nonce
     auth_time: Math.floor(Date.now() / 1000),
+    // Phase 2 RBAC: Add RBAC claims to ID token
+    ...idTokenRBACClaims,
   };
 
   let idToken: string;
@@ -1850,6 +1876,8 @@ async function handleDeviceCodeGrant(
     aud: c.env.ISSUER_URL,
     scope: metadata.scope,
     client_id,
+    // Phase 2 RBAC: Add RBAC claims to access token
+    ...accessTokenRBACClaims,
   };
 
   let accessToken: string;
@@ -2163,6 +2191,19 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const expiresIn = parseInt(c.env.TOKEN_EXPIRY || '3600', 10);
   const refreshExpiresIn = parseInt(c.env.REFRESH_TOKEN_EXPIRY || '2592000', 10);
 
+  // Phase 2 RBAC: Fetch RBAC claims for CIBA flow tokens
+  let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
+  let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
+  try {
+    [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
+      getAccessTokenRBACClaims(c.env.DB, metadata.sub!, c.env.RBAC_ACCESS_TOKEN_CLAIMS),
+      getIDTokenRBACClaims(c.env.DB, metadata.sub!, c.env.RBAC_ID_TOKEN_CLAIMS),
+    ]);
+  } catch (rbacError) {
+    // Log but don't fail - RBAC claims are optional for backward compatibility
+    console.warn('Failed to fetch RBAC claims for CIBA flow:', rbacError);
+  }
+
   // Create Access Token FIRST (needed for at_hash in ID token)
   const accessTokenClaims = {
     iss: c.env.ISSUER_URL,
@@ -2171,6 +2212,8 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     scope: metadata.scope,
     client_id: metadata.client_id,
     ...(dpopJkt && { cnf: { jkt: dpopJkt } }),
+    // Phase 2 RBAC: Add RBAC claims to access token
+    ...accessTokenRBACClaims,
   };
 
   const { token: accessToken, jti: tokenJti } = await createAccessToken(
@@ -2190,6 +2233,8 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     aud: metadata.client_id,
     ...(metadata.nonce && { nonce: metadata.nonce }),
     at_hash: atHash,
+    // Phase 2 RBAC: Add RBAC claims to ID token
+    ...idTokenRBACClaims,
   };
 
   let idToken = await createIDToken(idTokenClaims, privateKey, kid, expiresIn);

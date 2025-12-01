@@ -86,4 +86,17 @@ export interface Env {
   // Version Management (set by deploy script via --var)
   CODE_VERSION_UUID?: string; // UUID v4 identifying this deployed bundle
   DEPLOY_TIME_UTC?: string; // ISO 8601 timestamp of deployment
+
+  // RBAC Claims Configuration (Phase 2)
+  // Comma-separated list of claims to include in tokens
+  // ID Token: roles,scoped_roles,user_type,org_id,org_name,plan,org_type,orgs,relationships_summary
+  // Access Token: roles,scoped_roles,org_id,org_type,permissions,org_context
+  RBAC_ID_TOKEN_CLAIMS?: string; // Default: "roles,user_type,org_id,plan,org_type"
+  RBAC_ACCESS_TOKEN_CLAIMS?: string; // Default: "roles,org_id,org_type"
+
+  // RBAC Consent Screen Configuration (Phase 2-B)
+  // Feature flags to control consent screen RBAC features
+  RBAC_CONSENT_ORG_SELECTOR?: string; // "true" to show organization selector for multi-org users
+  RBAC_CONSENT_ACTING_AS?: string; // "true" to enable acting-as (delegation) feature
+  RBAC_CONSENT_SHOW_ROLES?: string; // "true" to display user's roles on consent screen
 }

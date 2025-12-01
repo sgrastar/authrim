@@ -12,10 +12,11 @@ Authrim OAuth2/OIDC サーバーの `/token` エンドポイント負荷テス�
 
 ### テスト環境の設定（本番との差分）
 
-| 設定項目 | テスト環境 | 本番推奨値 | 理由 |
-|---------|-----------|-----------|------|
-| `CODE_EXPIRY` | 3600秒 (1時間) | 120秒 (2分) | シード事前生成のため延長。トークン発行処理自体は同一 |
-| `REFRESH_TOKEN_ROTATION_ENABLED` | false | true | 今回は authorization_code フローのみテスト。リフレッシュフローは別途テスト予定 |
+| 設定項目 | Test1 (authorization_code) | Test2 (refresh_token) | 本番推奨値 | 理由 |
+|---------|---------------------------|----------------------|-----------|------|
+| `CODE_EXPIRY` | 3600秒 (1時間) | 3600秒 (1時間) | 120秒 (2分) | シード事前生成のため延長。トークン発行処理自体は同一 |
+| `REFRESH_TOKEN_ROTATION_ENABLED` | false | **true** | true | Test1はauth_codeのみ。Test2では本番同様のrotation動作を検証 |
+| `AUTHRIM_CODE_SHARDS` | 128 | 128 | 64-128 | 負荷分散強化のため増強 |
 
 **実運用との整合性:**
 - `/token` エンドポイントの authorization_code grant 処理は本番と**完全に同一**

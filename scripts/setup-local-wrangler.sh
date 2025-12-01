@@ -425,6 +425,21 @@ name = "SESSION_STORE"
 class_name = "SessionStore"
 script_name = "${DEPLOY_ENV}-authrim-shared"'
 
+# Generate wrangler.toml for policy-service (ReBAC)
+generate_wrangler_toml "policy-service" 8792 '[[kv_namespaces]]
+binding = "REBAC_CACHE"
+id = "placeholder"
+preview_id = "placeholder"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "authrim-users-db"
+database_id = "placeholder"' '[[durable_objects.bindings]]
+name = "VERSION_MANAGER"
+class_name = "VersionManager"
+script_name = "${DEPLOY_ENV}-authrim-shared"'
+
 # Generate wrangler.toml for router (with Service Bindings)
 echo "  ✅ router/wrangler.toml (with Service Bindings)"
 cat > packages/router/wrangler.toml << 'ROUTER_TOML_EOF'

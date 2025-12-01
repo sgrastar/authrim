@@ -323,6 +323,44 @@ type RootTranslation = {
 	 */
 	consent_scope_offline_access: string;
 	/**
+	 * S​e​l​e​c​t​ ​o​r​g​a​n​i​z​a​t​i​o​n
+	 */
+	consent_organizationSelect: string;
+	/**
+	 * P​r​i​m​a​r​y
+	 */
+	consent_primaryOrg: string;
+	/**
+	 * C​u​r​r​e​n​t​ ​o​r​g​a​n​i​z​a​t​i​o​n
+	 */
+	consent_currentOrganization: string;
+	/**
+	 * A​c​t​i​n​g​ ​o​n​ ​b​e​h​a​l​f​ ​o​f​ ​{​n​a​m​e​}
+	 * @param {string} name
+	 */
+	consent_actingOnBehalfOf: RequiredParams<'name'>;
+	/**
+	 * D​e​l​e​g​a​t​e​d​ ​A​c​c​e​s​s
+	 */
+	consent_delegatedAccess: string;
+	/**
+	 * Y​o​u​ ​a​r​e​ ​a​u​t​h​o​r​i​z​i​n​g​ ​t​h​i​s​ ​a​p​p​l​i​c​a​t​i​o​n​ ​t​o​ ​a​c​c​e​s​s​ ​{​n​a​m​e​}​'​s​ ​a​c​c​o​u​n​t​ ​o​n​ ​t​h​e​i​r​ ​b​e​h​a​l​f
+	 * @param {unknown} name
+	 */
+	consent_delegatedAccessWarning: RequiredParams<'name'>;
+	/**
+	 * Y​o​u​r​ ​r​o​l​e​s
+	 */
+	consent_yourRoles: string;
+	/**
+	 * N​o​ ​o​r​g​a​n​i​z​a​t​i​o​n
+	 */
+	consent_noOrganization: string;
+	/**
+	 * T​r​u​s​t​e​d​ ​a​p​p​l​i​c​a​t​i​o​n
+	 */
+	consent_trustedClient: string;
+	/**
 	 * O​o​p​s​!​ ​S​o​m​e​t​h​i​n​g​ ​w​e​n​t​ ​w​r​o​n​g
 	 */
 	error_title: string;
@@ -1005,6 +1043,42 @@ export type TranslationFunctions = {
 	 * Maintain access when you're not using the app
 	 */
 	consent_scope_offline_access: () => LocalizedString;
+	/**
+	 * Select organization
+	 */
+	consent_organizationSelect: () => LocalizedString;
+	/**
+	 * Primary
+	 */
+	consent_primaryOrg: () => LocalizedString;
+	/**
+	 * Current organization
+	 */
+	consent_currentOrganization: () => LocalizedString;
+	/**
+	 * Acting on behalf of {name}
+	 */
+	consent_actingOnBehalfOf: (arg: { name: string }) => LocalizedString;
+	/**
+	 * Delegated Access
+	 */
+	consent_delegatedAccess: () => LocalizedString;
+	/**
+	 * You are authorizing this application to access {name}'s account on their behalf
+	 */
+	consent_delegatedAccessWarning: (arg: { name: unknown }) => LocalizedString;
+	/**
+	 * Your roles
+	 */
+	consent_yourRoles: () => LocalizedString;
+	/**
+	 * No organization
+	 */
+	consent_noOrganization: () => LocalizedString;
+	/**
+	 * Trusted application
+	 */
+	consent_trustedClient: () => LocalizedString;
 	/**
 	 * Oops! Something went wrong
 	 */

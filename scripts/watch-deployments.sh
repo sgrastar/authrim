@@ -38,7 +38,10 @@ WORKERS=(
     "op-management"
     "op-token"
     "op-userinfo"
+    "policy-core"
+    "policy-service"
     "shared"
+    "router"
 )
 
 # Auto-refresh interval (10 minutes = 600 seconds)

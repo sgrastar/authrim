@@ -1,7 +1,7 @@
 # Authrim API Inventory
 
-**Last Updated**: 2025-11-29
-**Status**: Phase 6 (8/11 Enterprise Features Complete)
+**Last Updated**: 2025-12-01
+**Status**: Phase 6 (8/11 Enterprise Features Complete) + Policy Service
 
 ---
 
@@ -21,8 +21,9 @@ This document records the current status of all API endpoints in Authrim.
 | **Auth UI** | 6 | 0 | 6 |
 | **Admin API** | 9 | 0 | 9 |
 | **Session/Logout** | 6 | 0 | 6 |
+| **Policy/ReBAC** | 7 | 0 | 7 |
 | **Enterprise** | 4 | 3 | 7 |
-| **Total** | **42** | **3** | **45** |
+| **Total** | **49** | **3** | **52** |
 
 ---
 
@@ -145,6 +146,35 @@ This document records the current status of all API endpoints in Authrim.
 
 ---
 
+## Policy & ReBAC APIs ✅ Implemented
+
+Policy Service provides centralized access control for RBAC/ABAC/ReBAC.
+
+**Authentication**: All endpoints (except health) require Bearer token (`POLICY_API_SECRET`).
+
+### Policy Endpoints
+
+| Endpoint | Method | Status | Purpose |
+|----------|--------|--------|---------|
+| `/policy/health` | GET | ✅ | Health check |
+| `/policy/evaluate` | POST | ✅ | Full policy evaluation (subject, resource, action) |
+| `/policy/check-role` | POST | ✅ | Quick role check (single or multiple) |
+| `/policy/check-access` | POST | ✅ | Simplified access check |
+| `/policy/is-admin` | POST | ✅ | Admin status check |
+
+### ReBAC Endpoints (Zanzibar-style)
+
+| Endpoint | Method | Status | Purpose |
+|----------|--------|--------|---------|
+| `/api/rebac/health` | GET | ✅ | ReBAC health check |
+| `/api/rebac/check` | POST | ✅ | Relationship check (subject, relation, object) |
+
+**Routing**:
+- Custom domain: `/policy/*` and `/api/rebac/*` routed directly to policy-service
+- workers.dev: Endpoints available at root level via router (e.g., `/health`, `/evaluate`)
+
+---
+
 ## Enterprise APIs
 
 ### SCIM 2.0 ✅ Implemented
@@ -221,4 +251,4 @@ This document records the current status of all API endpoints in Authrim.
 
 ---
 
-> **Last Update**: 2025-11-29
+> **Last Update**: 2025-12-01

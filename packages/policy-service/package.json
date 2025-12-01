@@ -9,7 +9,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'policy-service: lint skipped'",
-    "test": "echo 'policy-service: tests skipped'",
+    "test": "vitest run",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -20,6 +20,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",
     "typescript": "^5.9.3",
+    "vitest": "^4.0.13",
     "wrangler": "^4.50.0"
   }
 }

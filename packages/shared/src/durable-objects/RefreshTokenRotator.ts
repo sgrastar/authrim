@@ -120,6 +120,7 @@ export class RefreshTokenRotator {
   private tokenToFamily: Map<string, string> = new Map(); // Reverse index: token → familyId
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
+  private initializePromise: Promise<void> | null = null; // Promise-based lock for initialization
   private usesGranularStorage: boolean = false; // Flag for new storage format
 
   // Async audit log buffering
@@ -141,14 +142,38 @@ export class RefreshTokenRotator {
 
   /**
    * Initialize state from Durable Storage
-   * Supports both legacy (single 'state' key) and granular (prefix-based) storage formats.
-   * Migrates from legacy to granular format on first access.
+   * Uses Promise-based lock to prevent race conditions when multiple
+   * concurrent requests arrive before initialization completes.
    */
   private async initializeState(): Promise<void> {
     if (this.initialized) {
       return;
     }
 
+    // If initialization is in progress, wait for it to complete (race condition prevention)
+    if (this.initializePromise) {
+      await this.initializePromise;
+      return;
+    }
+
+    // Start initialization
+    this.initializePromise = this.doInitialize();
+
+    try {
+      await this.initializePromise;
+    } catch (error) {
+      // Clear promise on error to allow retry
+      this.initializePromise = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Actual initialization logic (internal method)
+   * Supports both legacy (single 'state' key) and granular (prefix-based) storage formats.
+   * Migrates from legacy to granular format on first access.
+   */
+  private async doInitialize(): Promise<void> {
     try {
       // Check if already migrated to granular storage
       const migrated = await this.state.storage.get<boolean>(`${STORAGE_PREFIX.META}migrated`);
@@ -746,6 +771,10 @@ export class RefreshTokenRotator {
    * Handle HTTP requests to the RefreshTokenRotator Durable Object
    */
   async fetch(request: Request): Promise<Response> {
+    // CRITICAL: Initialize state before any operations
+    // This ensures granular storage migration is complete
+    await this.initializeState();
+
     const url = new URL(request.url);
     const path = url.pathname;
 

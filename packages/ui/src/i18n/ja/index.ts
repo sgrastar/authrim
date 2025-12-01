@@ -89,6 +89,17 @@ const ja = {
 	consent_scope_address: '住所の閲覧',
 	consent_scope_offline_access: 'アプリを使用していないときもアクセスを維持',
 
+	consent_organizationSelect: '組織を選択',
+	consent_primaryOrg: 'プライマリ',
+	consent_currentOrganization: '現在の組織',
+	consent_actingOnBehalfOf: '{name}の代理としてアクセス',
+	consent_delegatedAccess: '代理アクセス',
+	consent_delegatedAccessWarning:
+		'{name}のアカウントへのアクセスをこのアプリケーションに許可します',
+	consent_yourRoles: 'あなたのロール',
+	consent_noOrganization: '組織なし',
+	consent_trustedClient: '信頼済みアプリケーション',
+
 	error_title: 'エラーが発生しました',
 	error_subtitle: 'リクエストの処理中にエラーが発生しました',
 	error_contactSupport: 'この問題が解決しない場合は、サポートまでお問い合わせください',

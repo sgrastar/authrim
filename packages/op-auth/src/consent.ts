@@ -4,11 +4,31 @@
  *
  * Flow:
  * 1. GET /auth/consent?challenge_id=xxx - Show consent screen
- * 2. POST /auth/consent with { challenge_id, approved } - Process consent
+ *    - Accept: application/json -> Returns JSON with RBAC data
+ *    - Accept: text/html -> Returns HTML page (fallback)
+ * 2. POST /auth/consent with { challenge_id, approved, ... } - Process consent
+ *
+ * Phase 2-B: Consent Screen Enhancement
+ * - Organization info display
+ * - Organization switching (via selected_org_id)
+ * - Acting-as (delegation) support
  */
 
 import { Context } from 'hono';
 import type { Env } from '@authrim/shared';
+import type {
+  ConsentScreenData,
+  ConsentClientInfo,
+  ConsentScopeInfo,
+  ConsentChallengeMetadata,
+} from '@authrim/shared';
+import {
+  getConsentRBACData,
+  getConsentUserInfo,
+  getActingAsUserInfo,
+  parseConsentFeatureFlags,
+  getRolesInOrganization,
+} from '@authrim/shared';
 
 // Scope descriptions (human-readable)
 const SCOPE_DESCRIPTIONS: Record<string, { title: string; description: string }> = {
@@ -39,8 +59,34 @@ const SCOPE_DESCRIPTIONS: Record<string, { title: string; description: string }>
 };
 
 /**
+ * Check if the request accepts JSON
+ */
+function acceptsJson(c: Context): boolean {
+  const accept = c.req.header('Accept') || '';
+  return accept.includes('application/json');
+}
+
+/**
+ * Parse scope string to ConsentScopeInfo array
+ */
+function parseScopesToInfo(scope: string): ConsentScopeInfo[] {
+  const requestedScopes = scope.split(' ').filter((s) => s.length > 0);
+  return requestedScopes.map((scopeName) => {
+    const scopeInfo = SCOPE_DESCRIPTIONS[scopeName];
+    return {
+      name: scopeName,
+      title: scopeInfo?.title || scopeName,
+      description: scopeInfo?.description || `Access ${scopeName} data`,
+      required: scopeName === 'openid',
+    };
+  });
+}
+
+/**
  * Get consent screen data and show consent UI
  * GET /auth/consent?challenge_id=xxx
+ *
+ * Returns JSON if Accept: application/json, otherwise HTML
  */
 export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
   try {
@@ -80,11 +126,7 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
       id: string;
       type: string;
       userId: string;
-      metadata?: {
-        client_id?: string;
-        scope?: string;
-        [key: string]: unknown;
-      };
+      metadata?: ConsentChallengeMetadata;
     };
 
     if (challengeData.type !== 'consent') {
@@ -100,15 +142,25 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
     const metadata = challengeData.metadata || {};
     const client_id = metadata.client_id as string;
     const scope = metadata.scope as string;
+    const userId = challengeData.userId;
 
     // Load client metadata from D1
-    const client = await c.env.DB.prepare(
-      'SELECT client_id, client_name, logo_uri, client_uri, policy_uri, tos_uri FROM oauth_clients WHERE client_id = ?'
+    const clientRow = await c.env.DB.prepare(
+      `SELECT client_id, client_name, logo_uri, client_uri, policy_uri, tos_uri, is_trusted
+       FROM oauth_clients WHERE client_id = ?`
     )
       .bind(client_id)
-      .first();
+      .first<{
+        client_id: string;
+        client_name: string | null;
+        logo_uri: string | null;
+        client_uri: string | null;
+        policy_uri: string | null;
+        tos_uri: string | null;
+        is_trusted: number | null;
+      }>();
 
-    if (!client) {
+    if (!clientRow) {
       return c.json(
         {
           error: 'invalid_client',
@@ -118,20 +170,145 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Parse scopes and convert to human-readable format
-    const requestedScopes = scope.split(' ').filter((s) => s.length > 0);
-    const scopeDetails = requestedScopes.map((scopeName) => {
-      const scopeInfo = SCOPE_DESCRIPTIONS[scopeName];
-      return {
-        name: scopeName,
-        title: scopeInfo?.title || scopeName,
-        description: scopeInfo?.description || `Access ${scopeName} data`,
-        required: scopeName === 'openid', // openid is always required
-      };
-    });
+    // Parse scopes
+    const scopeDetails = parseScopesToInfo(scope);
 
-    // Render simple consent screen (HTML stub)
-    return c.html(`<!DOCTYPE html>
+    // If JSON is accepted, return full consent screen data with RBAC info
+    if (acceptsJson(c)) {
+      return handleJsonConsentGet(c, {
+        challenge_id,
+        userId,
+        clientRow,
+        scopeDetails,
+        metadata,
+      });
+    }
+
+    // Otherwise, return HTML (legacy fallback)
+    return renderHtmlConsent(c, {
+      challenge_id,
+      clientRow,
+      scopeDetails,
+      client_id,
+    });
+  } catch (error) {
+    console.error('Consent get error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to retrieve consent data',
+      },
+      500
+    );
+  }
+}
+
+/**
+ * Handle JSON consent GET request with RBAC data
+ */
+async function handleJsonConsentGet(
+  c: Context<{ Bindings: Env }>,
+  params: {
+    challenge_id: string;
+    userId: string;
+    clientRow: {
+      client_id: string;
+      client_name: string | null;
+      logo_uri: string | null;
+      client_uri: string | null;
+      policy_uri: string | null;
+      tos_uri: string | null;
+      is_trusted: number | null;
+    };
+    scopeDetails: ConsentScopeInfo[];
+    metadata: ConsentChallengeMetadata;
+  }
+): Promise<Response> {
+  const { challenge_id, userId, clientRow, scopeDetails, metadata } = params;
+
+  // Build client info
+  const client: ConsentClientInfo = {
+    client_id: clientRow.client_id,
+    client_name: clientRow.client_name || clientRow.client_id,
+    logo_uri: clientRow.logo_uri || undefined,
+    client_uri: clientRow.client_uri || undefined,
+    policy_uri: clientRow.policy_uri || undefined,
+    tos_uri: clientRow.tos_uri || undefined,
+    is_trusted: clientRow.is_trusted === 1,
+  };
+
+  // Get user info
+  const userInfo = await getConsentUserInfo(c.env.DB, userId);
+  if (!userInfo) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'User not found',
+      },
+      400
+    );
+  }
+
+  // Get RBAC data (organizations, roles)
+  const rbacData = await getConsentRBACData(c.env.DB, userId);
+
+  // Parse feature flags from environment
+  const features = parseConsentFeatureFlags(
+    c.env.RBAC_CONSENT_ORG_SELECTOR,
+    c.env.RBAC_CONSENT_ACTING_AS,
+    c.env.RBAC_CONSENT_SHOW_ROLES
+  );
+
+  // Get acting-as info if present in metadata
+  let actingAsInfo = null;
+  if (metadata.acting_as && features.acting_as_enabled) {
+    actingAsInfo = await getActingAsUserInfo(c.env.DB, userId, metadata.acting_as);
+  }
+
+  // Determine target org and get roles for that org
+  const targetOrgId = metadata.org_id || rbacData.primary_org?.id || null;
+  let roles = rbacData.roles;
+
+  // If targeting a specific org, get roles for that org
+  if (targetOrgId) {
+    roles = await getRolesInOrganization(c.env.DB, userId, targetOrgId);
+  }
+
+  // Build response
+  const responseData: ConsentScreenData = {
+    challenge_id,
+    client,
+    scopes: scopeDetails,
+    user: userInfo,
+    organizations: rbacData.organizations,
+    primary_org: rbacData.primary_org,
+    roles,
+    acting_as: actingAsInfo,
+    target_org_id: targetOrgId,
+    features,
+  };
+
+  return c.json(responseData);
+}
+
+/**
+ * Render HTML consent page (legacy fallback)
+ */
+function renderHtmlConsent(
+  c: Context<{ Bindings: Env }>,
+  params: {
+    challenge_id: string;
+    clientRow: {
+      client_id: string;
+      client_name: string | null;
+    };
+    scopeDetails: ConsentScopeInfo[];
+    client_id: string;
+  }
+): Response {
+  const { challenge_id, clientRow, scopeDetails, client_id } = params;
+
+  return c.html(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -222,7 +399,7 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
 <body>
   <div class="container">
     <h1>Consent Required</h1>
-    <p class="client-name">${client.client_name || client_id}</p>
+    <p class="client-name">${clientRow.client_name || client_id}</p>
     <p>This application is requesting access to:</p>
     <ul class="scopes">
       ${scopeDetails
@@ -251,28 +428,47 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
   </div>
 </body>
 </html>`);
-  } catch (error) {
-    console.error('Consent get error:', error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to retrieve consent data',
-      },
-      500
-    );
-  }
 }
 
 /**
  * Handle consent approval/denial
  * POST /auth/consent
+ *
+ * Supports both form data and JSON body:
+ * - Form: challenge_id, approved, selected_org_id (optional)
+ * - JSON: { challenge_id, approved, selected_org_id, acting_as_user_id, selected_scopes }
  */
 export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
   try {
-    // Parse form data
-    const body = await c.req.parseBody();
-    const challenge_id = typeof body.challenge_id === 'string' ? body.challenge_id : undefined;
-    const approved = body.approved === 'true';
+    // Determine content type and parse body
+    const contentType = c.req.header('Content-Type') || '';
+    let challenge_id: string | undefined;
+    let approved: boolean;
+    let selected_org_id: string | undefined;
+    let acting_as_user_id: string | undefined;
+
+    if (contentType.includes('application/json')) {
+      // Parse JSON body
+      const jsonBody = await c.req.json<{
+        challenge_id?: string;
+        approved?: boolean;
+        selected_org_id?: string;
+        acting_as_user_id?: string;
+        selected_scopes?: string[];
+      }>();
+      challenge_id = jsonBody.challenge_id;
+      approved = jsonBody.approved === true;
+      selected_org_id = jsonBody.selected_org_id;
+      acting_as_user_id = jsonBody.acting_as_user_id;
+    } else {
+      // Parse form data
+      const body = await c.req.parseBody();
+      challenge_id = typeof body.challenge_id === 'string' ? body.challenge_id : undefined;
+      approved = body.approved === 'true';
+      selected_org_id = typeof body.selected_org_id === 'string' ? body.selected_org_id : undefined;
+      acting_as_user_id =
+        typeof body.acting_as_user_id === 'string' ? body.acting_as_user_id : undefined;
+    }
 
     if (!challenge_id) {
       return c.json(
@@ -312,19 +508,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
 
     const challengeData = (await consumeResponse.json()) as {
       userId: string;
-      metadata?: {
-        response_type?: string;
-        client_id?: string;
-        redirect_uri?: string;
-        scope?: string;
-        state?: string;
-        nonce?: string;
-        code_challenge?: string;
-        code_challenge_method?: string;
-        claims?: string;
-        response_mode?: string;
-        [key: string]: unknown;
-      };
+      metadata?: ConsentChallengeMetadata;
     };
 
     const metadata = challengeData.metadata || {};
@@ -340,6 +524,10 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
         redirectUrl.searchParams.set('state', metadata.state as string);
       }
 
+      // For JSON requests, return redirect URL instead of redirecting
+      if (contentType.includes('application/json')) {
+        return c.json({ redirect_url: redirectUrl.toString() });
+      }
       return c.redirect(redirectUrl.toString(), 302);
     }
 
@@ -349,6 +537,9 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const consentId = crypto.randomUUID();
     const now = Date.now();
     const expiresAt = null; // No expiration (permanent consent)
+
+    // Use selected_org_id if provided, otherwise use metadata.org_id
+    const effectiveOrgId = selected_org_id || metadata.org_id || null;
 
     await c.env.DB.prepare(
       `INSERT OR REPLACE INTO oauth_client_consents
@@ -377,11 +568,24 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     if (metadata.prompt) params.set('prompt', metadata.prompt as string);
     if (metadata.acr_values) params.set('acr_values', metadata.acr_values as string);
 
+    // Add RBAC parameters
+    if (effectiveOrgId) {
+      params.set('org_id', effectiveOrgId);
+    }
+    if (acting_as_user_id || metadata.acting_as) {
+      params.set('acting_as', acting_as_user_id || (metadata.acting_as as string));
+    }
+
     // Add flag to indicate consent is confirmed
     params.set('_consent_confirmed', 'true');
 
     // Redirect to /authorize with original parameters
     const redirectUrl = `/authorize?${params.toString()}`;
+
+    // For JSON requests, return redirect URL instead of redirecting
+    if (contentType.includes('application/json')) {
+      return c.json({ redirect_url: redirectUrl });
+    }
     return c.redirect(redirectUrl, 302);
   } catch (error) {
     console.error('Consent post error:', error);

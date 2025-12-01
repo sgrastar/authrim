@@ -110,42 +110,78 @@ deploy_package() {
 register_versions() {
     local issuer_url=$1
     local admin_secret=$2
+    local max_retries=3
+    local retry_delay=5
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "📝 Registering versions in VersionManager DO"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    local workers=("op-auth" "op-token" "op-management" "op-userinfo" "op-async" "op-discovery")
+    # Workers that support version registration via /api/internal/version endpoint
+    local workers=("op-auth" "op-token" "op-management" "op-userinfo" "op-async" "op-discovery" "policy-service")
     local success_count=0
     local fail_count=0
+    local skip_count=0
 
     for worker in "${workers[@]}"; do
         echo -n "  • Registering $worker... "
 
-        local response=$(curl -s -w "\n%{http_code}" -X POST "${issuer_url}/api/internal/version/${worker}" \
-            -H "Authorization: Bearer ${admin_secret}" \
-            -H "Content-Type: application/json" \
-            -d "{\"uuid\":\"${VERSION_UUID}\",\"deployTime\":\"${DEPLOY_TIME}\"}" 2>/dev/null)
+        local attempt=1
+        local registered=false
 
-        local http_code=$(echo "$response" | tail -n1)
-        local body=$(echo "$response" | sed '$d')
+        while [ $attempt -le $max_retries ] && [ "$registered" = false ]; do
+            local response=$(curl -s -w "\n%{http_code}" -X POST "${issuer_url}/api/internal/version/${worker}" \
+                -H "Authorization: Bearer ${admin_secret}" \
+                -H "Content-Type: application/json" \
+                -d "{\"uuid\":\"${VERSION_UUID}\",\"deployTime\":\"${DEPLOY_TIME}\"}" \
+                --connect-timeout 10 \
+                --max-time 30 2>/dev/null)
 
-        if [ "$http_code" = "200" ]; then
-            echo "✅"
-            ((success_count++))
-        else
-            echo "❌ (HTTP $http_code)"
-            ((fail_count++))
-        fi
+            local http_code=$(echo "$response" | tail -n1)
+            local body=$(echo "$response" | sed '$d')
+
+            if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
+                echo "✅"
+                ((success_count++))
+                registered=true
+            elif [ "$http_code" = "000" ] || [ "$http_code" = "502" ] || [ "$http_code" = "503" ] || [ "$http_code" = "504" ]; then
+                # Connection error or service unavailable - retry
+                if [ $attempt -lt $max_retries ]; then
+                    echo -n "⏳ (retry $attempt/$max_retries)... "
+                    sleep $retry_delay
+                    ((attempt++))
+                else
+                    echo "⏭️  (skipped - service not ready)"
+                    ((skip_count++))
+                    registered=true  # Exit retry loop
+                fi
+            elif [ "$http_code" = "404" ]; then
+                # Endpoint not found - first deploy or route not configured
+                echo "⏭️  (skipped - endpoint not available yet)"
+                ((skip_count++))
+                registered=true  # Exit retry loop
+            else
+                # Other error - don't retry
+                echo "⚠️  (HTTP $http_code - non-critical)"
+                ((fail_count++))
+                registered=true  # Exit retry loop
+            fi
+        done
     done
 
     echo ""
-    echo "   Registered: $success_count/${#workers[@]} workers"
-
-    if [ $fail_count -gt 0 ]; then
-        echo "   ⚠️  Some registrations failed. Workers will continue without version check."
+    if [ $success_count -gt 0 ]; then
+        echo "   ✅ Registered: $success_count/${#workers[@]} workers"
     fi
+    if [ $skip_count -gt 0 ]; then
+        echo "   ⏭️  Skipped: $skip_count (first deploy or service not ready)"
+    fi
+    if [ $fail_count -gt 0 ]; then
+        echo "   ⚠️  Failed: $fail_count (non-critical - workers will continue)"
+    fi
+    echo ""
+    echo "   💡 Note: Version registration is optional. Workers function normally without it."
 }
 
 # Main deployment sequence
@@ -244,6 +280,8 @@ PACKAGES=(
     "op-auth:packages/op-auth"
     "op-token:packages/op-token"
     "op-userinfo:packages/op-userinfo"
+    "op-async:packages/op-async"
+    "policy-service:packages/policy-service"
     "router:packages/router"
 )
 

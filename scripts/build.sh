@@ -706,7 +706,7 @@ deploy_workers() {
     ./scripts/deploy-with-retry.sh
   else
     # Sequential deployment
-    WORKERS=("shared" "op-discovery" "op-auth" "op-token" "op-userinfo" "op-management")
+    WORKERS=("shared" "op-discovery" "op-auth" "op-token" "op-userinfo" "op-management" "op-async" "policy-service")
 
     if [[ "$USE_ROUTER" == "true" ]]; then
       WORKERS+=("router")

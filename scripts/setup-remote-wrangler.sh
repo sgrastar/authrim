@@ -437,6 +437,16 @@ zone_name = \"$ZONE_NAME\"
 pattern = \"$DOMAIN_ONLY/ciba/*\"
 zone_name = \"$ZONE_NAME\""
             ;;
+        policy-service)
+            routes="
+[[routes]]
+pattern = \"$DOMAIN_ONLY/policy/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/api/rebac/*\"
+zone_name = \"$ZONE_NAME\""
+            ;;
     esac
 
     if [ -n "$routes" ]; then
@@ -792,6 +802,24 @@ class_name = \"TokenRevocationStore\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\"
 
 [[durable_objects.bindings]]
+name = \"VERSION_MANAGER\"
+class_name = \"VersionManager\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\""
+fi
+
+# Generate policy-service wrangler file (ReBAC)
+if [ ! -f "packages/policy-service/wrangler.${DEPLOY_ENV}.toml" ]; then
+    echo "  • Generating policy-service/wrangler.${DEPLOY_ENV}.toml..."
+    generate_base_wrangler "policy-service" "[[kv_namespaces]]
+binding = \"REBAC_CACHE\"
+id = \"placeholder\"
+
+" "[[d1_databases]]
+binding = \"DB\"
+database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+" "" "[[durable_objects.bindings]]
 name = \"VERSION_MANAGER\"
 class_name = \"VersionManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
