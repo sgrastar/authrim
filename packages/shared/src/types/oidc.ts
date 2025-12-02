@@ -242,6 +242,11 @@ export interface ClientRegistrationRequest {
   userinfo_encrypted_response_enc?: string;
   // UserInfo signing - OIDC Core 5.3.3
   userinfo_signed_response_alg?: string;
+  // SD-JWT (Selective Disclosure JWT) - RFC 9901
+  // When set to 'sd-jwt', ID tokens will be issued as SD-JWT format
+  id_token_signed_response_type?: 'jwt' | 'sd-jwt';
+  // Claims to be selectively disclosable in SD-JWT (default: email, phone_number, address, birthdate)
+  sd_jwt_selective_claims?: string[];
 }
 
 /**
@@ -286,6 +291,9 @@ export interface ClientRegistrationResponse {
   authorization_signed_response_alg?: string;
   authorization_encrypted_response_alg?: string;
   authorization_encrypted_response_enc?: string;
+  // SD-JWT (Selective Disclosure JWT) - RFC 9901
+  id_token_signed_response_type?: 'jwt' | 'sd-jwt';
+  sd_jwt_selective_claims?: string[];
 }
 
 /**

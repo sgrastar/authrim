@@ -100,4 +100,8 @@ export interface Env {
   RBAC_CONSENT_ORG_SELECTOR?: string; // "true" to show organization selector for multi-org users
   RBAC_CONSENT_ACTING_AS?: string; // "true" to enable acting-as (delegation) feature
   RBAC_CONSENT_SHOW_ROLES?: string; // "true" to display user's roles on consent screen
+
+  // SD-JWT Feature Flag (RFC 9901)
+  // When "true", clients with id_token_signed_response_type="sd-jwt" will receive SD-JWT ID tokens
+  ENABLE_SD_JWT?: string;
 }

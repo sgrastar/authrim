@@ -9,7 +9,9 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'op-auth: lint skipped'",
-    "test": "echo 'op-auth: tests skipped'",
+    "test": "npx vitest run",
+    "test:unit": "npx vitest run",
+    "test:passkey": "npx vitest run --config vitest.passkey.config.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -23,6 +25,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",
     "typescript": "^5.9.3",
+    "vitest": "^2.1.8",
     "wrangler": "^4.50.0"
   }
 }

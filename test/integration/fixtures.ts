@@ -9,6 +9,43 @@ import type { Env } from '@authrim/shared/types/env';
 import { generateSecureRandomString, generateCodeChallenge } from '@authrim/shared/utils/crypto';
 
 /**
+ * Shared key set for all tests in the suite.
+ * This prevents module-level key caching issues in userinfo.ts
+ * where the cached signing key would mismatch with newly generated keys.
+ */
+let sharedKeySet: {
+  kid: string;
+  privatePEM: string;
+  publicJWK: Record<string, unknown>;
+} | null = null;
+
+/**
+ * Get or create the shared key set for tests.
+ * All tests in the suite will use the same keys, avoiding cache invalidation issues.
+ */
+async function getSharedKeySet(): Promise<{
+  kid: string;
+  privatePEM: string;
+  publicJWK: Record<string, unknown>;
+}> {
+  if (sharedKeySet) {
+    return sharedKeySet;
+  }
+
+  const { generateKeySet } = await import('@authrim/shared/utils/keys');
+  const kid = `test-key-shared-${Date.now()}`;
+  const keySet = await generateKeySet(kid, 2048);
+
+  sharedKeySet = {
+    kid,
+    privatePEM: keySet.privatePEM,
+    publicJWK: keySet.publicJWK,
+  };
+
+  return sharedKeySet;
+}
+
+/**
  * Mock client configuration
  */
 export interface MockClient {
@@ -18,6 +55,8 @@ export interface MockClient {
   grant_types: string[];
   response_types: string[];
   scope: string;
+  /** Allow claims parameter to request claims without corresponding scope (OIDC conformance) */
+  allow_claims_without_scope?: boolean;
 }
 
 /**
@@ -50,6 +89,16 @@ export const testClients: Record<string, MockClient> = {
     response_types: ['code'],
     scope: 'openid profile',
   },
+  /** Client with flexible claims parameter handling (for OIDC conformance tests) */
+  conformance: {
+    client_id: 'test-client-conformance',
+    client_secret: 'conformance-secret-456',
+    redirect_uris: ['https://example.com/callback'],
+    grant_types: ['authorization_code'],
+    response_types: ['code'],
+    scope: 'openid profile email address phone',
+    allow_claims_without_scope: true,
+  },
 };
 
 /**
@@ -77,11 +126,9 @@ export const testUsers: Record<string, MockUser> = {
  * Note: This function is async because it needs to generate test keys
  */
 export async function createMockEnv(): Promise<Env> {
-  // Generate a test key pair with unique key ID for each test
-  // This prevents key caching issues in the userinfo handler
-  const uniqueKeyId = `test-key-${Date.now()}-${generateSecureRandomString(8)}`;
-  const { generateKeySet } = await import('@authrim/shared/utils/keys');
-  const keySet = await generateKeySet(uniqueKeyId, 2048);
+  // Use shared key set across all tests to avoid module-level key caching issues
+  // in userinfo.ts - the cached signing key will match the shared keys
+  const keySet = await getSharedKeySet();
 
   const jsonResponse = (data: unknown, status = 200) =>
     new Response(JSON.stringify(data), {
@@ -357,9 +404,14 @@ export async function createMockEnv(): Promise<Env> {
 
   class MockKeyManager {
     private getKey: () => { kid: string; privatePEM: string };
+    private publicJWK: Record<string, unknown>;
 
-    constructor(getKey: () => { kid: string; privatePEM: string }) {
+    constructor(
+      getKey: () => { kid: string; privatePEM: string },
+      publicJWK: Record<string, unknown>
+    ) {
       this.getKey = getKey;
+      this.publicJWK = publicJWK;
     }
 
     async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
@@ -367,12 +419,18 @@ export async function createMockEnv(): Promise<Env> {
       const url = new URL(request.url);
       const path = url.pathname;
 
-      if (path.endsWith('/active-with-private')) {
+      if (path.endsWith('/active-with-private') || path === '/internal/active-with-private') {
         return jsonResponse(this.getKey());
       }
 
       if (path.endsWith('/rotate')) {
         return jsonResponse({ success: true, key: this.getKey() });
+      }
+
+      // JWKS endpoint for token introspection
+      // Called as http://internal/jwks from token-introspection.ts
+      if (path.endsWith('/jwks') || path === '/jwks') {
+        return jsonResponse({ keys: [this.publicJWK] });
       }
 
       return jsonResponse({ error: 'not_found' }, 404);
@@ -425,6 +483,437 @@ export async function createMockEnv(): Promise<Env> {
     }
   }
 
+  /**
+   * Mock Challenge Store for Passkey/Consent tests
+   * Stores temporary challenges for WebAuthn registration/authentication
+   */
+  class MockChallengeStore {
+    private challenges = new Map<
+      string,
+      {
+        id: string;
+        challenge: string;
+        userId?: string;
+        clientId?: string;
+        redirectUri?: string;
+        scope?: string;
+        state?: string;
+        nonce?: string;
+        claims?: string;
+        consumed: boolean;
+        expiresAt: number;
+      }
+    >();
+
+    async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      const path = url.pathname;
+
+      // GET /challenge/:id - チャレンジ取得
+      if (request.method === 'GET' && path.includes('/challenge')) {
+        const id = url.searchParams.get('id') || path.split('/').pop() || '';
+        const record = this.challenges.get(id);
+
+        if (!record || record.expiresAt <= Date.now()) {
+          return jsonResponse({ error: 'not_found' }, 404);
+        }
+
+        return jsonResponse({
+          id: record.id,
+          challenge: record.challenge,
+          userId: record.userId,
+          clientId: record.clientId,
+          redirectUri: record.redirectUri,
+          scope: record.scope,
+          state: record.state,
+          nonce: record.nonce,
+          claims: record.claims,
+          consumed: record.consumed,
+        });
+      }
+
+      // POST /challenge - チャレンジ保存
+      if (request.method === 'POST' && path.endsWith('/challenge')) {
+        const body = (await request.json()) as {
+          id: string;
+          challenge: string;
+          userId?: string;
+          clientId?: string;
+          redirectUri?: string;
+          scope?: string;
+          state?: string;
+          nonce?: string;
+          claims?: string;
+          ttl?: number;
+        };
+
+        this.challenges.set(body.id, {
+          id: body.id,
+          challenge: body.challenge,
+          userId: body.userId,
+          clientId: body.clientId,
+          redirectUri: body.redirectUri,
+          scope: body.scope,
+          state: body.state,
+          nonce: body.nonce,
+          claims: body.claims,
+          consumed: false,
+          expiresAt: Date.now() + (body.ttl ?? 300) * 1000,
+        });
+
+        return jsonResponse({ success: true });
+      }
+
+      // POST /challenge/consume - チャレンジ消費（原子的操作）
+      if (request.method === 'POST' && path.endsWith('/challenge/consume')) {
+        const body = (await request.json()) as { id: string };
+        const record = this.challenges.get(body.id);
+
+        if (!record || record.expiresAt <= Date.now()) {
+          return jsonResponse({ error: 'not_found', error_description: 'Challenge not found or expired' }, 404);
+        }
+
+        if (record.consumed) {
+          return jsonResponse({ error: 'already_consumed', error_description: 'Challenge already consumed' }, 400);
+        }
+
+        record.consumed = true;
+        this.challenges.set(body.id, record);
+
+        return jsonResponse({
+          id: record.id,
+          challenge: record.challenge,
+          userId: record.userId,
+          clientId: record.clientId,
+          redirectUri: record.redirectUri,
+          scope: record.scope,
+          state: record.state,
+          nonce: record.nonce,
+          claims: record.claims,
+        });
+      }
+
+      return jsonResponse({ error: 'not_found' }, 404);
+    }
+  }
+
+  /**
+   * Mock Session Store for session management tests
+   * Stores user sessions with authentication metadata
+   */
+  class MockSessionStore {
+    private sessions = new Map<
+      string,
+      {
+        id: string;
+        userId: string;
+        email?: string;
+        authTime: number;
+        acr?: string;
+        amr?: string[];
+        expiresAt: number;
+      }
+    >();
+
+    async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      const path = url.pathname;
+
+      // POST /session - 新規セッション作成
+      if (request.method === 'POST' && path.endsWith('/session')) {
+        const body = (await request.json()) as {
+          id: string;
+          userId: string;
+          email?: string;
+          authTime?: number;
+          acr?: string;
+          amr?: string[];
+          ttl?: number;
+        };
+
+        const session = {
+          id: body.id,
+          userId: body.userId,
+          email: body.email,
+          authTime: body.authTime ?? Math.floor(Date.now() / 1000),
+          acr: body.acr,
+          amr: body.amr,
+          expiresAt: Date.now() + (body.ttl ?? 86400) * 1000,
+        };
+
+        this.sessions.set(body.id, session);
+
+        return jsonResponse({ success: true, session });
+      }
+
+      // GET /session/:id - セッション取得
+      if (request.method === 'GET' && path.includes('/session')) {
+        const id = url.searchParams.get('id') || path.split('/').pop() || '';
+        const session = this.sessions.get(id);
+
+        if (!session || session.expiresAt <= Date.now()) {
+          return jsonResponse({ error: 'not_found' }, 404);
+        }
+
+        return jsonResponse(session);
+      }
+
+      // DELETE /session/:id - セッション削除
+      if (request.method === 'DELETE' && path.includes('/session')) {
+        const id = url.searchParams.get('id') || path.split('/').pop() || '';
+        const existed = this.sessions.delete(id);
+
+        return jsonResponse({ success: existed });
+      }
+
+      return jsonResponse({ error: 'not_found' }, 404);
+    }
+  }
+
+  /**
+   * Mock Rate Limiter for device flow and security tests
+   * Implements rate limiting with failure tracking
+   */
+  class MockRateLimiter {
+    private failures = new Map<string, { count: number; blockedUntil: number }>();
+    private readonly maxAttempts: number;
+    private readonly blockDurationMs: number;
+
+    constructor(maxAttempts = 5, blockDurationMs = 300000) {
+      this.maxAttempts = maxAttempts;
+      this.blockDurationMs = blockDurationMs;
+    }
+
+    async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      const path = url.pathname;
+
+      // POST /check - ブロック状態確認
+      if (request.method === 'POST' && path.endsWith('/check')) {
+        const body = (await request.json()) as { key: string };
+        const record = this.failures.get(body.key);
+
+        if (record && record.blockedUntil > Date.now()) {
+          return jsonResponse({
+            blocked: true,
+            remainingMs: record.blockedUntil - Date.now(),
+            attempts: record.count,
+          });
+        }
+
+        return jsonResponse({
+          blocked: false,
+          attempts: record?.count ?? 0,
+        });
+      }
+
+      // POST /record-failure - 失敗記録
+      if (request.method === 'POST' && path.endsWith('/record-failure')) {
+        const body = (await request.json()) as { key: string };
+        const record = this.failures.get(body.key) || { count: 0, blockedUntil: 0 };
+
+        record.count += 1;
+
+        if (record.count >= this.maxAttempts) {
+          record.blockedUntil = Date.now() + this.blockDurationMs;
+        }
+
+        this.failures.set(body.key, record);
+
+        return jsonResponse({
+          success: true,
+          attempts: record.count,
+          blocked: record.count >= this.maxAttempts,
+        });
+      }
+
+      // POST /reset - レート制限リセット
+      if (request.method === 'POST' && path.endsWith('/reset')) {
+        const body = (await request.json()) as { key: string };
+        this.failures.delete(body.key);
+
+        return jsonResponse({ success: true });
+      }
+
+      return jsonResponse({ error: 'not_found' }, 404);
+    }
+  }
+
+  /**
+   * Mock Device Code Store for Device Authorization Flow tests
+   * Stores device codes with user code mapping
+   */
+  class MockDeviceCodeStore {
+    private deviceCodes = new Map<
+      string,
+      {
+        deviceCode: string;
+        userCode: string;
+        clientId: string;
+        scope: string;
+        verificationUri: string;
+        verificationUriComplete?: string;
+        expiresIn: number;
+        interval: number;
+        status: 'pending' | 'authorized' | 'denied' | 'expired';
+        userId?: string;
+        expiresAt: number;
+      }
+    >();
+    private userCodeIndex = new Map<string, string>(); // userCode -> deviceCode
+
+    async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      const path = url.pathname;
+
+      // POST /store - デバイスコード保存
+      if (request.method === 'POST' && path.endsWith('/store')) {
+        const body = (await request.json()) as {
+          deviceCode: string;
+          userCode: string;
+          clientId: string;
+          scope: string;
+          verificationUri: string;
+          verificationUriComplete?: string;
+          expiresIn: number;
+          interval: number;
+        };
+
+        const record = {
+          ...body,
+          status: 'pending' as const,
+          expiresAt: Date.now() + body.expiresIn * 1000,
+        };
+
+        this.deviceCodes.set(body.deviceCode, record);
+        // Store normalized user code (uppercase, no dashes)
+        const normalizedUserCode = body.userCode.toUpperCase().replace(/-/g, '');
+        this.userCodeIndex.set(normalizedUserCode, body.deviceCode);
+
+        return jsonResponse({ success: true });
+      }
+
+      // POST /get-by-user-code - ユーザーコードで検索
+      if (request.method === 'POST' && path.endsWith('/get-by-user-code')) {
+        const body = (await request.json()) as { userCode: string };
+        // Normalize the input user code
+        const normalizedUserCode = body.userCode.toUpperCase().replace(/-/g, '');
+        const deviceCode = this.userCodeIndex.get(normalizedUserCode);
+
+        if (!deviceCode) {
+          return jsonResponse({ error: 'not_found' }, 404);
+        }
+
+        const record = this.deviceCodes.get(deviceCode);
+        if (!record || record.expiresAt <= Date.now()) {
+          return jsonResponse({ error: 'expired' }, 404);
+        }
+
+        return jsonResponse(record);
+      }
+
+      // GET /device-code/:code - デバイスコード取得
+      if (request.method === 'GET' && path.includes('/device-code')) {
+        const code = url.searchParams.get('code') || path.split('/').pop() || '';
+        const record = this.deviceCodes.get(code);
+
+        if (!record || record.expiresAt <= Date.now()) {
+          return jsonResponse({ error: 'not_found' }, 404);
+        }
+
+        return jsonResponse(record);
+      }
+
+      // POST /authorize - デバイス認可
+      if (request.method === 'POST' && path.endsWith('/authorize')) {
+        const body = (await request.json()) as { deviceCode: string; userId: string };
+        const record = this.deviceCodes.get(body.deviceCode);
+
+        if (!record || record.expiresAt <= Date.now()) {
+          return jsonResponse({ error: 'not_found' }, 404);
+        }
+
+        record.status = 'authorized';
+        record.userId = body.userId;
+        this.deviceCodes.set(body.deviceCode, record);
+
+        return jsonResponse({ success: true });
+      }
+
+      // POST /deny - デバイス拒否
+      if (request.method === 'POST' && path.endsWith('/deny')) {
+        const body = (await request.json()) as { deviceCode: string };
+        const record = this.deviceCodes.get(body.deviceCode);
+
+        if (!record || record.expiresAt <= Date.now()) {
+          return jsonResponse({ error: 'not_found' }, 404);
+        }
+
+        record.status = 'denied';
+        this.deviceCodes.set(body.deviceCode, record);
+
+        return jsonResponse({ success: true });
+      }
+
+      return jsonResponse({ error: 'not_found' }, 404);
+    }
+  }
+
+  /**
+   * Mock Token Revocation Store for token revocation tests
+   * Stores revoked token JTIs with TTL
+   */
+  class MockTokenRevocationStore {
+    private revokedTokens = new Map<string, { revokedAt: number; reason?: string; expiresAt: number }>();
+
+    async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      const path = url.pathname;
+
+      // POST /revoke - トークン失効
+      if (request.method === 'POST' && path.endsWith('/revoke')) {
+        const body = (await request.json()) as { jti: string; ttl: number; reason?: string };
+
+        this.revokedTokens.set(body.jti, {
+          revokedAt: Date.now(),
+          reason: body.reason,
+          expiresAt: Date.now() + body.ttl * 1000,
+        });
+
+        return jsonResponse({ success: true });
+      }
+
+      // GET /check - 失効確認
+      if (request.method === 'GET' && path.endsWith('/check')) {
+        const jti = url.searchParams.get('jti') || '';
+        const record = this.revokedTokens.get(jti);
+
+        if (!record) {
+          return jsonResponse({ revoked: false });
+        }
+
+        // Clean up expired entries
+        if (record.expiresAt <= Date.now()) {
+          this.revokedTokens.delete(jti);
+          return jsonResponse({ revoked: false });
+        }
+
+        return jsonResponse({
+          revoked: true,
+          revokedAt: record.revokedAt,
+          reason: record.reason,
+        });
+      }
+
+      return jsonResponse({ error: 'not_found' }, 404);
+    }
+  }
+
   // Mock D1 Database implementation
   class MockD1Database {
     private clientsKV: MockKVNamespace;
@@ -443,29 +932,54 @@ export async function createMockEnv(): Promise<Env> {
         },
         run: async () => {
           if (sql.includes('INSERT INTO oauth_clients')) {
+            // Parse column names from SQL to properly map bound parameters
             const hasSecret = sql.includes('client_secret');
             const hasDpopFlag = sql.includes('dpop_bound_access_tokens');
-            const client_id = boundParams[0];
-            const client_secret = hasSecret ? boundParams[1] : undefined;
-            const redirect_uris = hasSecret ? boundParams[2] : boundParams[1];
-            const grant_types = hasSecret ? boundParams[3] : boundParams[2];
-            const response_types = hasSecret ? boundParams[4] : boundParams[3];
-            const scope = hasSecret ? boundParams[5] : boundParams[4];
-            const dpop_bound_access_tokens = hasDpopFlag
-              ? boundParams[hasSecret ? 6 : 5]
-              : undefined;
+            const hasClaimsFlag = sql.includes('allow_claims_without_scope');
 
-            const clientData = {
+            // Build client data object by parsing SQL columns and bound params
+            // This is a simplified parser that handles our test SQL patterns
+            let paramIndex = 0;
+            const client_id = boundParams[paramIndex++];
+            const client_secret = hasSecret ? boundParams[paramIndex++] : undefined;
+            const redirect_uris = boundParams[paramIndex++];
+            const grant_types = boundParams[paramIndex++];
+            const response_types = boundParams[paramIndex++];
+            const scope = boundParams[paramIndex++];
+
+            // Optional flags
+            let allow_claims_without_scope: number | undefined;
+            let dpop_bound_access_tokens: number | undefined;
+
+            if (hasClaimsFlag) {
+              allow_claims_without_scope = boundParams[paramIndex++];
+            }
+            if (hasDpopFlag) {
+              dpop_bound_access_tokens = boundParams[paramIndex++];
+            }
+
+            // Store data in D1-compatible format (JSON strings for arrays)
+            // The getClient function in kv.ts will JSON.parse these fields
+            const clientData: Record<string, unknown> = {
               client_id,
               client_secret,
-              redirect_uris: JSON.parse(redirect_uris || '[]'),
-              grant_types: JSON.parse(grant_types || '[]'),
-              response_types: JSON.parse(response_types || '[]'),
+              redirect_uris, // Keep as JSON string (like real D1)
+              grant_types, // Keep as JSON string (like real D1)
+              response_types, // Keep as JSON string (like real D1)
               scope,
-              dpop_bound_access_tokens,
             };
 
-            await this.clientsKV.put(client_id, JSON.stringify(clientData));
+            // Add optional fields if present
+            // Store as numbers (0/1) to match real D1 behavior
+            // getClient() in kv.ts checks `result.allow_claims_without_scope === 1`
+            if (allow_claims_without_scope !== undefined) {
+              clientData.allow_claims_without_scope = allow_claims_without_scope;
+            }
+            if (dpop_bound_access_tokens !== undefined) {
+              clientData.dpop_bound_access_tokens = dpop_bound_access_tokens;
+            }
+
+            await this.clientsKV.put(client_id as string, JSON.stringify(clientData));
             return { success: true };
           }
 
@@ -477,6 +991,34 @@ export async function createMockEnv(): Promise<Env> {
             const stored = clientId ? await this.clientsKV.get(clientId) : null;
             return stored ? JSON.parse(stored) : null;
           }
+          // Mock user data for UserInfo tests
+          if (sql.includes('SELECT') && sql.includes('users')) {
+            const userId = boundParams[0];
+            // Return test user data for known test users
+            if (userId === 'test-user') {
+              return {
+                id: 'test-user',
+                email: 'test@example.com',
+                email_verified: 1,
+                name: 'Test User',
+                given_name: 'Test',
+                family_name: 'User',
+                preferred_username: 'testuser',
+                phone_number: '+81 90-1234-5678',
+                phone_number_verified: 1,
+                // Note: userinfo.ts expects address_json field, not address
+                address_json: JSON.stringify({
+                  formatted: '123 Test St, Test City, TC 12345, Test Country',
+                  street_address: '123 Test St',
+                  locality: 'Test City',
+                  region: 'TC',
+                  postal_code: '12345',
+                  country: 'Test Country',
+                }),
+                picture: 'https://example.com/avatar.png',
+              };
+            }
+          }
           return null;
         },
         all: async () => ({ results: [] }),
@@ -487,6 +1029,7 @@ export async function createMockEnv(): Promise<Env> {
   }
 
   const clientsKV = new MockKVNamespace();
+  const clientsCacheKV = new MockKVNamespace();
   const authCodesKV = new MockKVNamespace();
   const stateKV = new MockKVNamespace();
   const nonceKV = new MockKVNamespace();
@@ -499,6 +1042,7 @@ export async function createMockEnv(): Promise<Env> {
     STATE_STORE: stateKV as unknown as KVNamespace,
     NONCE_STORE: nonceKV as unknown as KVNamespace,
     CLIENTS: clientsKV as unknown as KVNamespace,
+    CLIENTS_CACHE: clientsCacheKV as unknown as KVNamespace,
     REVOKED_TOKENS: revokedKV as unknown as KVNamespace,
     REFRESH_TOKENS: refreshKV as unknown as KVNamespace,
     SETTINGS: settingsKV as unknown as KVNamespace,
@@ -509,24 +1053,28 @@ export async function createMockEnv(): Promise<Env> {
     CODE_EXPIRY: '120',
     STATE_EXPIRY: '300',
     NONCE_EXPIRY: '300',
-    KEY_ID: uniqueKeyId,
+    KEY_ID: keySet.kid,
     PRIVATE_KEY_PEM: keySet.privatePEM,
     PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
     KEY_MANAGER_SECRET: 'test-key-manager-secret',
     AVATARS: new MockR2Bucket() as unknown as R2Bucket,
     KEY_MANAGER: createDurableObjectNamespace(
-      () => new MockKeyManager(() => ({ kid: uniqueKeyId, privatePEM: keySet.privatePEM }))
+      () =>
+        new MockKeyManager(
+          () => ({ kid: keySet.kid, privatePEM: keySet.privatePEM }),
+          keySet.publicJWK
+        )
     ),
     AUTH_CODE_STORE: createDurableObjectNamespace(() => new MockAuthorizationCodeStore()),
     PAR_REQUEST_STORE: createDurableObjectNamespace(() => new MockPARRequestStore()),
     DPOP_JTI_STORE: createDurableObjectNamespace(() => new MockDPoPJTIStore()),
-    SESSION_STORE: createDurableObjectNamespace(() => new MockAuthorizationCodeStore()),
+    SESSION_STORE: createDurableObjectNamespace(() => new MockSessionStore()),
     REFRESH_TOKEN_ROTATOR: createDurableObjectNamespace(() => new MockRefreshTokenRotator()),
-    CHALLENGE_STORE: createDurableObjectNamespace(() => new MockAuthorizationCodeStore()),
-    RATE_LIMITER: createDurableObjectNamespace(() => new MockAuthorizationCodeStore()),
-    USER_CODE_RATE_LIMITER: createDurableObjectNamespace(() => new MockAuthorizationCodeStore()),
-    TOKEN_REVOCATION_STORE: createDurableObjectNamespace(() => new MockAuthorizationCodeStore()),
-    DEVICE_CODE_STORE: createDurableObjectNamespace(() => new MockAuthorizationCodeStore()),
+    CHALLENGE_STORE: createDurableObjectNamespace(() => new MockChallengeStore()),
+    RATE_LIMITER: createDurableObjectNamespace(() => new MockRateLimiter()),
+    USER_CODE_RATE_LIMITER: createDurableObjectNamespace(() => new MockRateLimiter()),
+    TOKEN_REVOCATION_STORE: createDurableObjectNamespace(() => new MockTokenRevocationStore()),
+    DEVICE_CODE_STORE: createDurableObjectNamespace(() => new MockDeviceCodeStore()),
     CIBA_REQUEST_STORE: createDurableObjectNamespace(() => new MockAuthorizationCodeStore()),
   };
 

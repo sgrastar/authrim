@@ -292,6 +292,7 @@ app.post('/api/internal/version/:workerName', adminAuthMiddleware(), async (c) =
     'op-async',
     'op-discovery',
     'policy-service',
+    'op-saml',
   ];
   if (!validWorkers.includes(workerName)) {
     return c.json(

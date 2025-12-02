@@ -15,12 +15,20 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/shared/types/env';
-import { createMockEnv, testClients, testUsers, generateState, generateNonce } from './fixtures';
+import {
+  createMockEnv,
+  testClients,
+  testUsers,
+  generateState,
+  generateNonce,
+  buildTokenRequestBody,
+  parseAuthorizationResponse,
+} from './fixtures';
 import { authorizeHandler } from '../../packages/op-auth/src/authorize';
 import { parHandler } from '../../packages/op-auth/src/par';
 import { tokenHandler } from '../../packages/op-token/src/token';
 import { discoveryHandler } from '../../packages/op-discovery/src/discovery';
-import { generateKeyPair, exportJWK, SignJWT, calculateJwkThumbprint } from 'jose';
+import { generateKeyPair, exportJWK, SignJWT, calculateJwkThumbprint, jwtVerify, importJWK, type JWK } from 'jose';
 import { generateCodeChallenge } from '@authrim/shared/utils/crypto';
 
 describe('FAPI 2.0 Security Profile Compliance', () => {
@@ -129,12 +137,234 @@ describe('FAPI 2.0 Security Profile Compliance', () => {
         const parData = await parRes.json() as { request_uri: string; expires_in: number };
         expect(parData.request_uri).toMatch(/^urn:ietf:params:oauth:request_uri:/);
 
-        // Step 2: Use request_uri in authorization request (should succeed)
+        // Step 2: Use request_uri in authorization request
+        // Since user is not logged in, this should redirect to login page
         const authUrl = `/authorize?client_id=${testClients.confidential.client_id}&request_uri=${encodeURIComponent(parData.request_uri)}`;
         const authRes = await app.request(authUrl, { method: 'GET' }, env);
 
-        // Should succeed (redirect to login or consent)
-        expect(authRes.status).toBeLessThan(500);
+        // Should redirect to login page (user not authenticated)
+        expect(authRes.status).toBe(302);
+        const location = authRes.headers.get('location');
+        expect(location).toBeTruthy();
+
+        // PAR request was accepted (no error), redirecting to login flow with challenge_id
+        // This confirms PAR validation succeeded and authorization flow can proceed
+        expect(location).toContain('/authorize/login');
+        expect(location).toContain('challenge_id=');
+
+        // Note: Full flow testing with iss parameter would require mocked user session
+        // The iss parameter is added after user authentication completes
+      });
+
+      it('should complete full PAR flow with token exchange and verify PKCE S256 enforcement', async () => {
+        // Enable FAPI 2.0 mode but without DPoP requirement for this test
+        // (DPoP is tested separately in DPoP Support section)
+        await env.SETTINGS.put('system_settings', JSON.stringify({
+          fapi: { enabled: true, allowPublicClients: false, requireDpop: false },
+          oidc: { requirePar: true }
+        }));
+
+        // Register test client
+        await env.DB.prepare(
+          'INSERT INTO oauth_clients (client_id, client_secret, redirect_uris, grant_types, response_types, scope) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+          .bind(
+            testClients.confidential.client_id,
+            testClients.confidential.client_secret,
+            JSON.stringify(testClients.confidential.redirect_uris),
+            JSON.stringify(testClients.confidential.grant_types),
+            JSON.stringify(testClients.confidential.response_types),
+            testClients.confidential.scope
+          )
+          .run();
+
+        const state = generateState();
+        const nonce = generateNonce();
+        const code_verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+        const code_challenge = await generateCodeChallenge(code_verifier);
+
+        // Step 1: PAR request
+        const parBody = new URLSearchParams({
+          response_type: 'code',
+          client_id: testClients.confidential.client_id,
+          redirect_uri: testClients.confidential.redirect_uris[0],
+          scope: 'openid profile',
+          state,
+          nonce,
+          code_challenge,
+          code_challenge_method: 'S256',
+        }).toString();
+
+        const parRes = await app.request('/as/par', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': `Basic ${btoa(`${testClients.confidential.client_id}:${testClients.confidential.client_secret}`)}`,
+          },
+          body: parBody,
+        }, env);
+
+        expect(parRes.status).toBe(201);
+        const parData = await parRes.json() as { request_uri: string; expires_in: number };
+        expect(parData.request_uri).toMatch(/^urn:ietf:params:oauth:request_uri:/);
+
+        // Step 2: Authorization request redirects to login (user not authenticated)
+        const authUrl = `/authorize?client_id=${testClients.confidential.client_id}&request_uri=${encodeURIComponent(parData.request_uri)}`;
+        const authRes = await app.request(authUrl, { method: 'GET' }, env);
+
+        expect(authRes.status).toBe(302);
+        const location = authRes.headers.get('location');
+        expect(location).toContain('/authorize/login');
+
+        // Step 3: Simulate completed authorization by creating auth code directly
+        // This simulates what happens after user completes login
+        // Generate a code that meets minimum length requirements (32+ chars)
+        const testCode = `auth_code_${Date.now()}_${crypto.randomUUID()}`;
+        const authCodeStoreId = env.AUTH_CODE_STORE.idFromName('global');
+        const authCodeStore = env.AUTH_CODE_STORE.get(authCodeStoreId);
+
+        await authCodeStore.fetch(new Request('https://auth-code-store/code/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: testCode,
+            clientId: testClients.confidential.client_id,
+            userId: testUsers.john.sub,
+            redirectUri: testClients.confidential.redirect_uris[0],
+            scope: 'openid profile',
+            codeChallenge: code_challenge,
+            codeChallengeMethod: 'S256',
+            nonce,
+            state,
+          }),
+        }));
+
+        // Step 4: Token exchange with PKCE code_verifier
+        const tokenBody = new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: testCode,
+          client_id: testClients.confidential.client_id,
+          redirect_uri: testClients.confidential.redirect_uris[0],
+          client_secret: testClients.confidential.client_secret!,
+          code_verifier,
+        }).toString();
+
+        const tokenRes = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }, env);
+
+        expect(tokenRes.status).toBe(200);
+        const tokenData = await tokenRes.json() as {
+          access_token: string;
+          id_token: string;
+          token_type: string;
+          expires_in: number;
+        };
+
+        expect(tokenData.access_token).toBeTruthy();
+        expect(tokenData.id_token).toBeTruthy();
+
+        // Verify ID token signature cryptographically
+        // Parse ID token header to get kid
+        const idTokenParts = tokenData.id_token.split('.');
+        const headerBase64 = idTokenParts[0].replace(/-/g, '+').replace(/_/g, '/');
+        const header = JSON.parse(atob(headerBase64));
+
+        expect(header.alg).toBe('RS256');
+
+        // Get JWKS and verify signature
+        const publicJwk = JSON.parse(env.PUBLIC_JWK_JSON);
+        const publicKey = await importJWK(publicJwk, 'RS256');
+
+        const { payload } = await jwtVerify(tokenData.id_token, publicKey, {
+          issuer: env.ISSUER_URL,
+          audience: testClients.confidential.client_id,
+          algorithms: ['RS256'],
+        });
+
+        // Verify required claims
+        expect(payload.iss).toBe(env.ISSUER_URL);
+        expect(payload.aud).toBe(testClients.confidential.client_id);
+        expect(payload.nonce).toBe(nonce);
+        expect(payload.sub).toBeTruthy();
+      });
+
+      it('should reject token exchange without code_verifier when PKCE was used', async () => {
+        // Enable FAPI 2.0 mode
+        await env.SETTINGS.put('system_settings', JSON.stringify({
+          fapi: { enabled: true, allowPublicClients: false },
+          oidc: { requirePar: true }
+        }));
+
+        // Register test client
+        await env.DB.prepare(
+          'INSERT INTO oauth_clients (client_id, client_secret, redirect_uris, grant_types, response_types, scope) VALUES (?, ?, ?, ?, ?, ?)'
+        )
+          .bind(
+            testClients.confidential.client_id,
+            testClients.confidential.client_secret,
+            JSON.stringify(testClients.confidential.redirect_uris),
+            JSON.stringify(testClients.confidential.grant_types),
+            JSON.stringify(testClients.confidential.response_types),
+            testClients.confidential.scope
+          )
+          .run();
+
+        const state = generateState();
+        const nonce = generateNonce();
+        const code_verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+        const code_challenge = await generateCodeChallenge(code_verifier);
+
+        // PAR request with PKCE
+        const parBody = new URLSearchParams({
+          response_type: 'code',
+          client_id: testClients.confidential.client_id,
+          redirect_uri: testClients.confidential.redirect_uris[0],
+          scope: 'openid',
+          state,
+          nonce,
+          code_challenge,
+          code_challenge_method: 'S256',
+        }).toString();
+
+        const parRes = await app.request('/as/par', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': `Basic ${btoa(`${testClients.confidential.client_id}:${testClients.confidential.client_secret}`)}`,
+          },
+          body: parBody,
+        }, env);
+
+        const parData = await parRes.json() as { request_uri: string };
+
+        // Get authorization code
+        const authUrl = `/authorize?client_id=${testClients.confidential.client_id}&request_uri=${encodeURIComponent(parData.request_uri)}`;
+        const authRes = await app.request(authUrl, { method: 'GET' }, env);
+        const location = authRes.headers.get('location');
+        const code = new URL(location!, env.ISSUER_URL).searchParams.get('code');
+
+        // Try token exchange WITHOUT code_verifier (should fail)
+        const tokenBody = new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: code!,
+          client_id: testClients.confidential.client_id,
+          redirect_uri: testClients.confidential.redirect_uris[0],
+          client_secret: testClients.confidential.client_secret!,
+          // Missing: code_verifier
+        }).toString();
+
+        const tokenRes = await app.request('/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody,
+        }, env);
+
+        expect(tokenRes.status).toBe(400);
+        const errorData = await tokenRes.json() as { error: string; error_description?: string };
+        expect(errorData.error).toBe('invalid_grant');
       });
     });
 

@@ -3,44 +3,65 @@
  * https://openid.net/specs/openid-connect-registration-1_0.html
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/shared/types/env';
 import { registerHandler } from '../register';
 
+// Helper to create mock D1Database
+function createMockDB() {
+  const mockStatement = {
+    bind: vi.fn().mockReturnThis(),
+    first: vi.fn().mockResolvedValue(null),
+    all: vi.fn().mockResolvedValue({ results: [] }),
+    run: vi.fn().mockResolvedValue({ success: true }),
+  };
+
+  return {
+    prepare: vi.fn().mockReturnValue(mockStatement),
+    batch: vi.fn().mockResolvedValue([]),
+    _mockStatement: mockStatement,
+  } as unknown as D1Database & { _mockStatement: typeof mockStatement };
+}
+
 // Type for dynamic client registration response
 type RegistrationResponse = Record<string, unknown>;
 
-// Mock environment (partial - only what's needed for these tests)
-const mockEnv = {
-  ISSUER_URL: 'https://id.example.com',
-  TOKEN_EXPIRY: '3600',
-  CODE_EXPIRY: '120',
-  STATE_EXPIRY: '300',
-  NONCE_EXPIRY: '300',
-  REFRESH_TOKEN_EXPIRY: '2592000',
-  ALLOW_HTTP_REDIRECT: 'true',
-  PRIVATE_KEY_PEM: 'mock-private-key',
-  PUBLIC_JWK_JSON: '{"kty":"RSA"}',
-  KEY_ID: 'test-key-id',
-  STATE_STORE: {} as KVNamespace,
-  NONCE_STORE: {} as KVNamespace,
-  CLIENTS_CACHE: {} as KVNamespace,
-  DB: {} as D1Database,
-  AVATARS: {} as R2Bucket,
-  KEY_MANAGER: {} as DurableObjectNamespace,
-  SESSION_STORE: {} as DurableObjectNamespace,
-  AUTH_CODE_STORE: {} as DurableObjectNamespace,
-  REFRESH_TOKEN_ROTATOR: {} as DurableObjectNamespace,
-  CHALLENGE_STORE: {} as DurableObjectNamespace,
-  RATE_LIMITER: {} as DurableObjectNamespace,
-  USER_CODE_RATE_LIMITER: {} as DurableObjectNamespace,
-  PAR_REQUEST_STORE: {} as DurableObjectNamespace,
-  DPOP_JTI_STORE: {} as DurableObjectNamespace,
-  TOKEN_REVOCATION_STORE: {} as DurableObjectNamespace,
-  DEVICE_CODE_STORE: {} as DurableObjectNamespace,
-  CIBA_REQUEST_STORE: {} as DurableObjectNamespace,
-} as Env;
+// Mock environment factory (partial - only what's needed for these tests)
+function createMockEnv(options?: { db?: D1Database }) {
+  return {
+    ISSUER_URL: 'https://id.example.com',
+    TOKEN_EXPIRY: '3600',
+    CODE_EXPIRY: '120',
+    STATE_EXPIRY: '300',
+    NONCE_EXPIRY: '300',
+    REFRESH_TOKEN_EXPIRY: '2592000',
+    ALLOW_HTTP_REDIRECT: 'true',
+    PRIVATE_KEY_PEM: 'mock-private-key',
+    PUBLIC_JWK_JSON: '{"kty":"RSA"}',
+    KEY_ID: 'test-key-id',
+    STATE_STORE: {} as KVNamespace,
+    NONCE_STORE: {} as KVNamespace,
+    CLIENTS_CACHE: {} as KVNamespace,
+    DB: options?.db ?? createMockDB(),
+    AVATARS: {} as R2Bucket,
+    KEY_MANAGER: {} as DurableObjectNamespace,
+    SESSION_STORE: {} as DurableObjectNamespace,
+    AUTH_CODE_STORE: {} as DurableObjectNamespace,
+    REFRESH_TOKEN_ROTATOR: {} as DurableObjectNamespace,
+    CHALLENGE_STORE: {} as DurableObjectNamespace,
+    RATE_LIMITER: {} as DurableObjectNamespace,
+    USER_CODE_RATE_LIMITER: {} as DurableObjectNamespace,
+    PAR_REQUEST_STORE: {} as DurableObjectNamespace,
+    DPOP_JTI_STORE: {} as DurableObjectNamespace,
+    TOKEN_REVOCATION_STORE: {} as DurableObjectNamespace,
+    DEVICE_CODE_STORE: {} as DurableObjectNamespace,
+    CIBA_REQUEST_STORE: {} as DurableObjectNamespace,
+  } as Env;
+}
+
+// Default mock environment (re-created in beforeEach)
+let mockEnv: Env;
 
 // Mock KV storage
 const mockKVStore = new Map<string, string>();
@@ -62,8 +83,12 @@ describe('Dynamic Client Registration Handler', () => {
   let app: Hono<{ Bindings: Env }>;
 
   beforeEach(() => {
-    // Reset mock KV store
+    // Reset mocks
+    vi.clearAllMocks();
     mockKVStore.clear();
+
+    // Create fresh mock environment with working DB
+    mockEnv = createMockEnv();
 
     // Create fresh app instance
     app = new Hono<{ Bindings: Env }>();
@@ -167,7 +192,11 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.scope).toBe('openid profile email');
     });
 
-    it('should store client metadata in KV', async () => {
+    it('should store client metadata in D1 database', async () => {
+      const mockDB = createMockDB();
+      const localMockEnv = createMockEnv({ db: mockDB });
+      localMockEnv.CLIENTS_CACHE = createMockKV();
+
       const requestBody = {
         redirect_uris: ['https://example.com/callback'],
         client_name: 'Test Client',
@@ -182,24 +211,23 @@ describe('Dynamic Client Registration Handler', () => {
           },
           body: JSON.stringify(requestBody),
         },
-        mockEnv
+        localMockEnv
       );
 
       expect(res.status).toBe(201);
 
       const json = (await res.json()) as RegistrationResponse;
-      const clientId = json.client_id as string;
+      expect(json.client_id).toBeDefined();
+      expect(json.client_name).toBe('Test Client');
 
-      // Verify client was stored in KV
-      const storedData = mockKVStore.get(clientId);
-      expect(storedData).toBeDefined();
+      // Verify client was stored in D1 (source of truth)
+      // The implementation uses INSERT OR REPLACE into oauth_clients table
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT OR REPLACE INTO oauth_clients')
+      );
 
-      const storedClient = JSON.parse(storedData!);
-      expect(storedClient.client_id).toBe(clientId);
-      expect(storedClient.client_name).toBe('Test Client');
-      expect(storedClient.created_at).toBeDefined();
-      expect(storedClient.updated_at).toBeDefined();
-      expect(storedClient.created_at).toBe(storedClient.updated_at);
+      // Verify the run method was called (client was actually inserted)
+      expect(mockDB._mockStatement.run).toHaveBeenCalled();
     });
 
     it('should accept http://localhost redirect_uri for development', async () => {

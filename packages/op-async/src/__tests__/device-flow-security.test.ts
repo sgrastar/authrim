@@ -175,29 +175,25 @@ describe('Device Flow Security', () => {
       expect(body.error_description).toContain('3600 seconds');
     });
 
-    // TODO: Test requires rate limiter Durable Object implementation
-    it.skip('should record failed attempt on invalid user_code', async () => {
-      const recordFailureMock = vi
-        .fn()
-        .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
+    it('should record failed attempt on invalid user_code', async () => {
+      const recordFailureCalls: Request[] = [];
 
       const mockRateLimiter = {
-        fetch: vi.fn().mockImplementation((request: Request) => {
+        fetch: vi.fn().mockImplementation(async (request: Request) => {
           const url = new URL(request.url);
           if (url.pathname === '/check') {
-            return Promise.resolve(
-              new Response(JSON.stringify({ blocked: false }), { status: 200 })
-            );
+            return new Response(JSON.stringify({ blocked: false }), { status: 200 });
           } else if (url.pathname === '/record-failure') {
-            return recordFailureMock(request);
+            recordFailureCalls.push(request);
+            return new Response(JSON.stringify({ success: true }), { status: 200 });
           }
-          return Promise.resolve(new Response('Not found', { status: 404 }));
+          return new Response('Not found', { status: 404 });
         }),
       };
 
       const mockDeviceCodeStore = {
         fetch: vi.fn().mockResolvedValue(
-          new Response(null, { status: 404 }) // Invalid user code
+          new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }) // Invalid user code
         ),
       };
 
@@ -216,7 +212,8 @@ describe('Device Flow Security', () => {
       const mockContext = {
         req: {
           json: vi.fn().mockResolvedValue({
-            user_code: 'INVALID-CODE',
+            // Use valid format chars (excluding 0,1,O,I,L) - but code not found in store
+            user_code: 'WDJB-MJHT',
           }),
           header: vi.fn().mockReturnValue('192.168.1.1'),
         },
@@ -231,29 +228,39 @@ describe('Device Flow Security', () => {
 
       expect(response.status).toBe(404);
       expect(body.error).toBe('invalid_code');
-      expect(recordFailureMock).toHaveBeenCalled();
+      // Verify that /record-failure was called
+      expect(recordFailureCalls.length).toBeGreaterThan(0);
     });
   });
 
   describe('User Code Validation', () => {
-    // TODO: Test requires device code store integration
-    it.skip('should normalize user code format', async () => {
+    it('should normalize user code format', async () => {
+      const receivedUserCodes: string[] = [];
+
       const mockDeviceCodeStore = {
         fetch: vi.fn().mockImplementation(async (request: Request) => {
-          const body = (await request.json()) as any;
-          // Check if user_code was normalized
-          if (body.user_code === 'ABCD-1234') {
-            return new Response(
-              JSON.stringify({
-                device_code: 'device-123',
-                user_code: 'ABCD-1234',
-                status: 'pending',
-                client_id: 'test-client',
-              }),
-              { status: 200 }
-            );
+          const url = new URL(request.url);
+          if (url.pathname === '/get-by-user-code') {
+            const body = (await request.json()) as any;
+            receivedUserCodes.push(body.user_code);
+            // Return success with normalized code (WDJBMJHT -> WDJB-MJHT)
+            if (body.user_code === 'WDJB-MJHT') {
+              return new Response(
+                JSON.stringify({
+                  device_code: 'device-123',
+                  user_code: 'WDJB-MJHT',
+                  status: 'pending',
+                  client_id: 'test-client',
+                  scope: 'openid',
+                }),
+                { status: 200 }
+              );
+            }
           }
-          return new Response(null, { status: 404 });
+          if (url.pathname === '/approve') {
+            return new Response(JSON.stringify({ success: true }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
         }),
       };
 
@@ -268,7 +275,8 @@ describe('Device Flow Security', () => {
       const mockContext = {
         req: {
           json: vi.fn().mockResolvedValue({
-            user_code: 'abcd1234', // No hyphen, lowercase
+            // No hyphen, lowercase - should be normalized to WDJB-MJHT
+            user_code: 'wdjbmjht',
           }),
           header: vi.fn().mockReturnValue('192.168.1.1'),
         },
@@ -280,13 +288,9 @@ describe('Device Flow Security', () => {
 
       await deviceVerifyApiHandler(mockContext);
 
-      // Verify the store was called with normalized code
-      const fetchCall = mockDeviceCodeStore.fetch.mock.calls.find((call: any[]) => {
-        const url = new URL(call[0].url);
-        return url.pathname === '/get-by-user-code';
-      });
-
-      expect(fetchCall).toBeDefined();
+      // Verify the store was called with normalized code (uppercase with hyphen)
+      expect(receivedUserCodes.length).toBeGreaterThan(0);
+      expect(receivedUserCodes[0]).toBe('WDJB-MJHT');
     });
   });
 });
