@@ -7,54 +7,57 @@
 
 ## Overview
 
-Policy Service は、Authrim のアクセス制御を担当する独立したマイクロサービスです。
-RBAC (Role-Based Access Control) と ABAC (Attribute-Based Access Control) を統合した柔軟なポリシー評価を提供します。
+Policy Service is an independent microservice responsible for access control in Authrim.
+It provides flexible policy evaluation that integrates RBAC (Role-Based Access Control) and ABAC (Attribute-Based Access Control).
 
-### 現在の機能
+### Current Features
 
-| 機能 | 状態 | 説明 |
-|------|------|------|
-| **RBAC (Role-Based)** | ✅ 実装済み | ロールベースのアクセス制御 |
-| **ABAC (Attribute-Based)** | ✅ 実装済み | 属性ベースのアクセス制御 |
-| **ReBAC (Relationship-Based)** | 🔜 プレースホルダー | Zanzibar スタイルの関係ベース制御 (将来実装) |
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **RBAC (Role-Based)** | Implemented | Role-based access control |
+| **ABAC (Attribute-Based)** | Implemented | Attribute-based access control |
+| **ReBAC (Relationship-Based)** | Placeholder | Zanzibar-style relationship-based control (future implementation) |
 
 ---
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Client Applications                   │
-└─────────────────────┬───────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────┐
-│                   Policy Service API                     │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │  /policy/evaluate  │  /policy/check-role  │ ...     ││
-│  └─────────────────────────────────────────────────────┘│
-│                          │                               │
-│                          ▼                               │
-│  ┌─────────────────────────────────────────────────────┐│
-│  │              Policy Engine (@authrim/policy-core)    ││
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ││
-│  │  │ RBAC Rules  │  │ ABAC Conds  │  │ Ownership   │  ││
-│  │  └─────────────┘  └─────────────┘  └─────────────┘  ││
-│  └─────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Clients["Client Applications"]
+        C1["App 1"]
+        C2["App 2"]
+    end
+
+    subgraph PSA["Policy Service API"]
+        subgraph Endpoints["Endpoints"]
+            E1["/policy/evaluate"]
+            E2["/policy/check-role"]
+            E3["..."]
+        end
+
+        subgraph Engine["Policy Engine (@authrim/policy-core)"]
+            R1["RBAC Rules"]
+            R2["ABAC Conditions"]
+            R3["Ownership"]
+        end
+    end
+
+    Clients --> PSA
+    Endpoints --> Engine
 ```
 
 ---
 
 ## Authentication
 
-Policy Service の全エンドポイント（`/policy/health` と `/api/rebac/health` を除く）は Bearer トークン認証が必要です。
+All Policy Service endpoints (except `/policy/health` and `/api/rebac/health`) require Bearer token authentication.
 
 ```http
 Authorization: Bearer <POLICY_API_SECRET>
 ```
 
-`POLICY_API_SECRET` は Cloudflare Workers の環境変数として設定されます。
+`POLICY_API_SECRET` is configured as a Cloudflare Workers environment variable.
 
 ---
 
@@ -64,7 +67,7 @@ Authorization: Bearer <POLICY_API_SECRET>
 
 #### `GET /policy/health`
 
-認証不要。サービスの稼働状態を確認します。
+No authentication required. Checks the operational status of the service.
 
 **Response:**
 ```json
@@ -82,7 +85,7 @@ Authorization: Bearer <POLICY_API_SECRET>
 
 #### `POST /policy/evaluate`
 
-フルポリシー評価を実行します。最も柔軟なエンドポイントで、subject、resource、action の完全な情報を指定できます。
+Performs full policy evaluation. The most flexible endpoint that allows specifying complete information about subject, resource, and action.
 
 **Request:**
 ```json
@@ -118,28 +121,28 @@ Authorization: Bearer <POLICY_API_SECRET>
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | string | ✅ | ユーザーID |
-| `roles` | SubjectRole[] | ✅ | 割り当てられたロール |
-| `orgId` | string | - | 所属組織ID |
-| `userType` | string | - | ユーザー種別 |
-| `plan` | string | - | 契約プラン |
-| `relationships` | SubjectRelationship[] | - | 他ユーザーとの関係 |
-| `verifiedAttributes` | VerifiedAttribute[] | - | 検証済み属性 (ABAC) |
+| `id` | string | Yes | User ID |
+| `roles` | SubjectRole[] | Yes | Assigned roles |
+| `orgId` | string | - | Organization ID |
+| `userType` | string | - | User type |
+| `plan` | string | - | Subscription plan |
+| `relationships` | SubjectRelationship[] | - | Relationships with other users |
+| `verifiedAttributes` | VerifiedAttribute[] | - | Verified attributes (ABAC) |
 
 **Role Fields:**
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | ✅ | ロール名 (`system_admin`, `org_admin`, `end_user` など) |
-| `scope` | string | ✅ | スコープ (`global`, `organization`, `resource`) |
-| `scopeTarget` | string | - | スコープ対象 (例: `org:org_123`) |
-| `expiresAt` | number | - | 有効期限 (UNIX ms) |
+| `name` | string | Yes | Role name (`system_admin`, `org_admin`, `end_user`, etc.) |
+| `scope` | string | Yes | Scope (`global`, `organization`, `resource`) |
+| `scopeTarget` | string | - | Scope target (e.g., `org:org_123`) |
+| `expiresAt` | number | - | Expiration time (UNIX ms) |
 
 ---
 
 #### `POST /policy/check-role`
 
-ユーザーが特定のロールを持っているかを簡易チェックします。
+Simple check whether a user has a specific role.
 
 **Single Role Check:**
 ```json
@@ -191,9 +194,9 @@ Authorization: Bearer <POLICY_API_SECRET>
 
 #### `POST /policy/check-access`
 
-簡易アクセスチェック。`/policy/evaluate` の簡略版です。
+Simple access check. Simplified version of `/policy/evaluate`.
 
-**Using Claims (JWT からの変換):**
+**Using Claims (conversion from JWT):**
 ```json
 {
   "claims": {
@@ -231,7 +234,7 @@ Authorization: Bearer <POLICY_API_SECRET>
 
 #### `POST /policy/is-admin`
 
-ユーザーが管理者権限を持つかを判定します。
+Determines whether a user has administrator privileges.
 
 **Request:**
 ```json
@@ -240,7 +243,7 @@ Authorization: Bearer <POLICY_API_SECRET>
 }
 ```
 
-または claims から:
+Or from claims:
 ```json
 {
   "claims": {
@@ -270,11 +273,11 @@ Authorization: Bearer <POLICY_API_SECRET>
 
 #### `GET /api/rebac/health`
 
-ReBAC サービスの稼働状態を確認します。
+Checks the operational status of the ReBAC service.
 
 #### `POST /api/rebac/check`
 
-Zanzibar スタイルの関係チェック（現在はプレースホルダー）。
+Zanzibar-style relationship check (currently a placeholder).
 
 **Request:**
 ```json
@@ -299,63 +302,63 @@ Zanzibar スタイルの関係チェック（現在はプレースホルダー�
 
 ### Default Rules (Built-in)
 
-Policy Engine には以下のデフォルトルールが組み込まれています:
+The Policy Engine has the following default rules built-in:
 
 | Priority | Rule ID | Description |
 |----------|---------|-------------|
-| 1000 | `system_admin_full_access` | システム管理者は全リソースにアクセス可能 |
-| 900 | `distributor_admin_access` | ディストリビューター管理者の広範なアクセス |
-| 800 | `org_admin_same_org` | 組織管理者は同一組織内リソースを管理可能 |
-| 700 | `owner_full_access` | リソース所有者は自身のリソースにフルアクセス |
-| 600 | `guardian_access` | 保護者は被保護者のリソースにアクセス可能 |
+| 1000 | `system_admin_full_access` | System administrators can access all resources |
+| 900 | `distributor_admin_access` | Distributor administrators have broad access |
+| 800 | `org_admin_same_org` | Organization administrators can manage resources within their organization |
+| 700 | `owner_full_access` | Resource owners have full access to their own resources |
+| 600 | `guardian_access` | Guardians can access their ward's resources |
 
 ### Condition Types
 
-ポリシールールで使用可能な条件タイプ:
+Condition types available for policy rules:
 
 #### RBAC Conditions
 
 | Type | Description | Params |
 |------|-------------|--------|
-| `has_role` | 特定ロールを持つか | `role`, `scope?`, `scopeTarget?` |
-| `has_any_role` | いずれかのロールを持つか | `roles[]`, `scope?`, `scopeTarget?` |
-| `has_all_roles` | 全ロールを持つか | `roles[]`, `scope?`, `scopeTarget?` |
+| `has_role` | Has specific role | `role`, `scope?`, `scopeTarget?` |
+| `has_any_role` | Has any of the roles | `roles[]`, `scope?`, `scopeTarget?` |
+| `has_all_roles` | Has all roles | `roles[]`, `scope?`, `scopeTarget?` |
 
 #### Ownership Conditions
 
 | Type | Description | Params |
 |------|-------------|--------|
-| `is_resource_owner` | リソース所有者か | なし |
-| `same_organization` | 同一組織か | なし |
+| `is_resource_owner` | Is resource owner | None |
+| `same_organization` | Same organization | None |
 
 #### Relationship Conditions
 
 | Type | Description | Params |
 |------|-------------|--------|
-| `has_relationship` | 関係を持つか | `types[]` |
-| `user_type_is` | ユーザー種別が一致するか | `types[]` |
-| `plan_allows` | プランが許可するか | `plans[]` |
+| `has_relationship` | Has relationship | `types[]` |
+| `user_type_is` | User type matches | `types[]` |
+| `plan_allows` | Plan allows | `plans[]` |
 
 #### ABAC Conditions
 
 | Type | Description | Params |
 |------|-------------|--------|
-| `attribute_equals` | 属性値が一致するか | `name`, `value`, `checkExpiry?` |
-| `attribute_exists` | 属性が存在するか | `name`, `checkExpiry?` |
-| `attribute_in` | 属性値がリスト内か | `name`, `values[]`, `checkExpiry?` |
+| `attribute_equals` | Attribute value matches | `name`, `value`, `checkExpiry?` |
+| `attribute_exists` | Attribute exists | `name`, `checkExpiry?` |
+| `attribute_in` | Attribute value in list | `name`, `values[]`, `checkExpiry?` |
 
 ---
 
 ## Custom Rules
 
-カスタムルールを追加する場合は、`PolicyEngine.addRule()` を使用します:
+Use `PolicyEngine.addRule()` to add custom rules:
 
 ```typescript
 import { PolicyEngine } from '@authrim/policy-core';
 
 const engine = new PolicyEngine({ defaultDecision: 'deny' });
 
-// Premium ユーザーのみ高度な機能を使用可能
+// Only premium users can use advanced features
 engine.addRule({
   id: 'premium_features',
   name: 'Premium Feature Access',
@@ -367,7 +370,7 @@ engine.addRule({
   ],
 });
 
-// 同一組織内の編集者のみドキュメント編集可能
+// Only editors within the same organization can edit documents
 engine.addRule({
   id: 'org_editor_write',
   name: 'Organization Editor Write Access',
@@ -496,16 +499,16 @@ const canDelete = await checkAccess('user_123', ['org_admin'], 'document', 'doc_
 
 ## Routing Notes
 
-Policy Service は以下の2つのアクセスパターンをサポートします:
+Policy Service supports the following two access patterns:
 
 ### Custom Domain (Production)
 - URL: `https://policy.authrim.com/policy/*`
-- パスはそのまま Worker に転送されます
+- Path is forwarded directly to the Worker
 
 ### workers.dev (Development/Router)
 - URL: `https://router.authrim.workers.dev/policy/*`
-- Service Binding 経由でルーティングされます
-- パスのプレフィックスは Router が処理します
+- Routed via Service Binding
+- Path prefix is handled by the Router
 
 ---
 

@@ -1,81 +1,81 @@
 # SCIM 2.0 Implementation Summary
 
-## 実装完了
+## Implementation Complete
 
-Authrimに完全なSCIM 2.0 User Provisioningサポートを実装しました。
+Full SCIM 2.0 User Provisioning support has been implemented in Authrim.
 
-### 実装された機能
+### Implemented Features
 
-#### ✅ コア機能
+#### ✅ Core Features
 
 1. **SCIM 2.0 Type Definitions** (`packages/shared/src/types/scim.ts`)
-   - User, Group, ListResponse, Error型定義
-   - RFC 7643/7644準拠のスキーマ
+   - User, Group, ListResponse, Error type definitions
+   - RFC 7643/7644 compliant schemas
 
-2. **フィルタークエリパーサー** (`packages/shared/src/utils/scim-filter.ts`)
-   - SCIM filter構文の完全サポート (eq, ne, co, sw, ew, pr, gt, ge, lt, le)
-   - 論理演算子 (and, or, not)
-   - SQLクエリへの変換機能
+2. **Filter Query Parser** (`packages/shared/src/utils/scim-filter.ts`)
+   - Complete SCIM filter syntax support (eq, ne, co, sw, ew, pr, gt, ge, lt, le)
+   - Logical operators (and, or, not)
+   - SQL query conversion functionality
 
-3. **リソースマッパー** (`packages/shared/src/utils/scim-mapper.ts`)
-   - 内部DBモデル ⟷ SCIMリソースの変換
-   - Enterprise User Extension対応
-   - ETag生成・検証
+3. **Resource Mapper** (`packages/shared/src/utils/scim-mapper.ts`)
+   - Internal DB model ⟷ SCIM resource conversion
+   - Enterprise User Extension support
+   - ETag generation/validation
 
-4. **SCIM認証ミドルウェア** (`packages/shared/src/middleware/scim-auth.ts`)
-   - Bearer token認証
-   - トークン生成・検証・取り消し機能
+4. **SCIM Authentication Middleware** (`packages/shared/src/middleware/scim-auth.ts`)
+   - Bearer token authentication
+   - Token generation/validation/revocation functionality
 
-#### ✅ エンドポイント
+#### ✅ Endpoints
 
 **User Endpoints** (`packages/op-management/src/scim.ts`)
-- `GET /scim/v2/Users` - ユーザー一覧 (フィルタリング・ページネーション対応)
-- `GET /scim/v2/Users/{id}` - ユーザー詳細取得
-- `POST /scim/v2/Users` - ユーザー作成
-- `PUT /scim/v2/Users/{id}` - ユーザー完全置換
-- `PATCH /scim/v2/Users/{id}` - ユーザー部分更新
-- `DELETE /scim/v2/Users/{id}` - ユーザー削除
+- `GET /scim/v2/Users` - User list (with filtering/pagination)
+- `GET /scim/v2/Users/{id}` - Get user details
+- `POST /scim/v2/Users` - Create user
+- `PUT /scim/v2/Users/{id}` - Full user replacement
+- `PATCH /scim/v2/Users/{id}` - Partial user update
+- `DELETE /scim/v2/Users/{id}` - Delete user
 
 **Group Endpoints**
-- `GET /scim/v2/Groups` - グループ一覧
-- `GET /scim/v2/Groups/{id}` - グループ詳細取得
-- `POST /scim/v2/Groups` - グループ作成
-- `PUT /scim/v2/Groups/{id}` - グループ完全置換
-- `PATCH /scim/v2/Groups/{id}` - グループ部分更新
-- `DELETE /scim/v2/Groups/{id}` - グループ削除
+- `GET /scim/v2/Groups` - Group list
+- `GET /scim/v2/Groups/{id}` - Get group details
+- `POST /scim/v2/Groups` - Create group
+- `PUT /scim/v2/Groups/{id}` - Full group replacement
+- `PATCH /scim/v2/Groups/{id}` - Partial group update
+- `DELETE /scim/v2/Groups/{id}` - Delete group
 
 **SCIM Token Management**
-- `GET /api/admin/scim-tokens` - トークン一覧
-- `POST /api/admin/scim-tokens` - トークン作成
-- `DELETE /api/admin/scim-tokens/{tokenHash}` - トークン取り消し
+- `GET /api/admin/scim-tokens` - Token list
+- `POST /api/admin/scim-tokens` - Create token
+- `DELETE /api/admin/scim-tokens/{tokenHash}` - Revoke token
 
-#### ✅ 管理UI
+#### ✅ Management UI
 
 **SCIM Token Management Page** (`packages/ui/src/routes/admin/scim-tokens/+page.svelte`)
-- トークンの作成・一覧表示・取り消し
-- トークン情報のコピー機能
-- SCIM endpoint情報の表示
-- 管理画面ナビゲーションへの統合
+- Token creation/listing/revocation
+- Token information copy functionality
+- SCIM endpoint information display
+- Integration with admin dashboard navigation
 
-#### ✅ テスト
+#### ✅ Tests
 
 **Unit Tests**
-- `packages/shared/src/utils/__tests__/scim-filter.test.ts` - フィルターパーサーテスト
-- `packages/shared/src/utils/__tests__/scim-mapper.test.ts` - マッパーテスト
+- `packages/shared/src/utils/__tests__/scim-filter.test.ts` - Filter parser tests
+- `packages/shared/src/utils/__tests__/scim-mapper.test.ts` - Mapper tests
 
-#### ✅ ドキュメント
+#### ✅ Documentation
 
-- `docs/SCIM.md` - 包括的なSCIM実装ガイド
+- `docs/SCIM.md` - Comprehensive SCIM implementation guide
   - API reference
-  - フィルタリング・ページネーション
-  - 統合ガイド (Okta, Azure AD, OneLogin, Google Workspace)
-  - トラブルシューティング
+  - Filtering/pagination
+  - Integration guides (Okta, Azure AD, OneLogin, Google Workspace)
+  - Troubleshooting
 
 ---
 
-## アーキテクチャ
+## Architecture
 
-### データフロー
+### Data Flow
 
 ```mermaid
 flowchart TB
@@ -104,25 +104,25 @@ flowchart TB
     DB --- Tables
 ```
 
-### 使用技術
+### Technologies Used
 
-- **Hono**: ルーティング・ミドルウェア
-- **Cloudflare D1**: データベース
-- **Cloudflare KV**: トークンストレージ
-- **SvelteKit**: 管理UI
-- **Vitest**: テストフレームワーク
+- **Hono**: Routing/middleware
+- **Cloudflare D1**: Database
+- **Cloudflare KV**: Token storage
+- **SvelteKit**: Management UI
+- **Vitest**: Test framework
 
 ---
 
-## 使用方法
+## Usage
 
-### 1. SCIM Tokenの作成
+### 1. Create SCIM Token
 
 ```bash
-# 管理UIから作成
+# Create from management UI
 https://YOUR_DOMAIN/admin/scim-tokens
 
-# または、APIから直接作成 (開発時)
+# Or create directly via API (during development)
 curl -X POST https://YOUR_DOMAIN/api/admin/scim-tokens \
   -H "Content-Type: application/json" \
   -d '{
@@ -131,18 +131,18 @@ curl -X POST https://YOUR_DOMAIN/api/admin/scim-tokens \
   }'
 ```
 
-### 2. SCIM APIの使用
+### 2. Use SCIM API
 
 ```bash
-# ユーザー一覧取得
+# Get user list
 curl -H "Authorization: Bearer YOUR_TOKEN" \
   https://YOUR_DOMAIN/scim/v2/Users
 
-# フィルタリング
+# Filtering
 curl -H "Authorization: Bearer YOUR_TOKEN" \
   "https://YOUR_DOMAIN/scim/v2/Users?filter=userName%20eq%20%22john@example.com%22"
 
-# ユーザー作成
+# Create user
 curl -X POST https://YOUR_DOMAIN/scim/v2/Users \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
@@ -158,27 +158,27 @@ curl -X POST https://YOUR_DOMAIN/scim/v2/Users \
   }'
 ```
 
-### 3. IdP統合
+### 3. IdP Integration
 
-各IdP (Okta, Azure AD, OneLogin, Google Workspace) の統合手順は `docs/SCIM.md` を参照してください。
+Refer to `docs/SCIM.md` for integration procedures for each IdP (Okta, Azure AD, OneLogin, Google Workspace).
 
 ---
 
-## ファイル構成
+## File Structure
 
 ```
 packages/
 ├── shared/src/
-│   ├── types/scim.ts                      # SCIM型定義
+│   ├── types/scim.ts                      # SCIM type definitions
 │   ├── utils/
-│   │   ├── scim-filter.ts                 # フィルターパーサー
-│   │   ├── scim-mapper.ts                 # リソースマッパー
-│   │   ├── id.ts                          # ID生成
-│   │   ├── crypto.ts                      # パスワードハッシュ
+│   │   ├── scim-filter.ts                 # Filter parser
+│   │   ├── scim-mapper.ts                 # Resource mapper
+│   │   ├── id.ts                          # ID generation
+│   │   ├── crypto.ts                      # Password hashing
 │   │   └── __tests__/
-│   │       ├── scim-filter.test.ts        # フィルターテスト
-│   │       └── scim-mapper.test.ts        # マッパーテスト
-│   └── middleware/scim-auth.ts            # SCIM認証
+│   │       ├── scim-filter.test.ts        # Filter tests
+│   │       └── scim-mapper.test.ts        # Mapper tests
+│   └── middleware/scim-auth.ts            # SCIM authentication
 │
 ├── op-management/src/
 │   ├── scim.ts                            # SCIM endpoints
@@ -201,19 +201,19 @@ docs/
 
 ---
 
-## データベース
+## Database
 
-### 既存テーブルの利用
+### Using Existing Tables
 
-SCIM実装は既存のデータベーススキーマを利用します：
+The SCIM implementation uses existing database schema:
 
-- **users**: SCIM Userリソース
-- **roles**: SCIM Groupリソース
-- **user_roles**: グループメンバーシップ
+- **users**: SCIM User resource
+- **roles**: SCIM Group resource
+- **user_roles**: Group membership
 
-### 必要なカラム
+### Required Columns
 
-既存のusersテーブルに`external_id`カラムが必要です。存在しない場合はマイグレーションを実行してください：
+The `external_id` column is required in the existing users table. If it doesn't exist, run the migration:
 
 ```sql
 -- Add external_id column if not exists
@@ -227,73 +227,73 @@ CREATE INDEX IF NOT EXISTS idx_roles_external_id ON roles(external_id);
 
 ---
 
-## セキュリティ
+## Security
 
-### トークン管理
+### Token Management
 
-- トークンはSHA-256でハッシュ化してKVストアに保存
-- Bearer token認証をすべてのSCIM endpointに適用
-- トークンの有効期限設定可能
-- トークンの無効化機能
+- Tokens are hashed with SHA-256 and stored in KV store
+- Bearer token authentication applied to all SCIM endpoints
+- Token expiration dates configurable
+- Token revocation functionality
 
 ### Best Practices
 
-1. **トークンは定期的にローテーション** (推奨: 90日)
-2. **統合ごとに別々のトークンを使用**
-3. **未使用のトークンは即座に取り消し**
-4. **監査ログでトークン使用状況を監視**
-5. **HTTPSのみ使用**
+1. **Rotate tokens regularly** (recommended: 90 days)
+2. **Use separate tokens for each integration**
+3. **Revoke unused tokens immediately**
+4. **Monitor token usage with audit logs**
+5. **Use HTTPS only**
 
 ---
 
-## パフォーマンス
+## Performance
 
-### 最適化
+### Optimizations
 
-- **フィルタリング**: SQLクエリレベルで適用
-- **ページネーション**: 最大1000件/ページ
-- **ETag**: 不要な更新を回避
-- **インデックス**: external_id, email, preferred_usernameにインデックス
+- **Filtering**: Applied at SQL query level
+- **Pagination**: Maximum 1000 items/page
+- **ETag**: Avoid unnecessary updates
+- **Indexes**: Indexes on external_id, email, preferred_username
 
-### レート制限
+### Rate Limiting
 
-- **100 requests/分** (トークンごと)
-- `429 Too Many Requests` レスポンス
-- `Retry-After` ヘッダーで待機時間を通知
+- **100 requests/minute** (per token)
+- `429 Too Many Requests` response
+- Wait time communicated via `Retry-After` header
 
 ---
 
-## テスト
+## Testing
 
-### 単体テストの実行
+### Running Unit Tests
 
 ```bash
-# すべてのテスト
+# All tests
 pnpm test
 
-# SCIMテストのみ
+# SCIM tests only
 pnpm test scim
 
-# フィルターテスト
+# Filter tests
 pnpm test scim-filter
 
-# マッパーテスト
+# Mapper tests
 pnpm test scim-mapper
 ```
 
-### 手動テスト
+### Manual Testing
 
 ```bash
-# トークン作成
+# Create token
 curl -X POST http://localhost:8786/api/admin/scim-tokens \
   -H "Content-Type: application/json" \
   -d '{"description": "Test token", "expiresInDays": 1}'
 
-# ユーザー一覧
+# User list
 curl http://localhost:8786/scim/v2/Users \
   -H "Authorization: Bearer YOUR_TOKEN"
 
-# ユーザー作成
+# Create user
 curl -X POST http://localhost:8786/scim/v2/Users \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
@@ -307,72 +307,72 @@ curl -X POST http://localhost:8786/scim/v2/Users \
 
 ---
 
-## トラブルシューティング
+## Troubleshooting
 
-### よくある問題
+### Common Issues
 
 **401 Unauthorized**
-- トークンが正しいか確認
-- トークンが期限切れでないか確認
-- `Authorization: Bearer TOKEN` ヘッダーが正しいか確認
+- Verify token is correct
+- Check token is not expired
+- Verify `Authorization: Bearer TOKEN` header is correct
 
 **400 Invalid Filter**
-- フィルター構文を確認
-- 文字列は引用符で囲む
-- 演算子のスペルを確認
+- Check filter syntax
+- Strings must be quoted
+- Verify operator spelling
 
 **409 Conflict (uniqueness)**
-- 同じemailのユーザーが既に存在
-- GETで確認してからPATCHで更新
+- User with same email already exists
+- GET to verify, then PATCH to update
 
 **412 Precondition Failed**
-- ETagが古い
-- 最新のリソースを取得してから再試行
+- ETag is outdated
+- Fetch latest resource and retry
 
 ---
 
-## 次のステップ
+## Next Steps
 
-### 推奨される機能追加
+### Recommended Feature Additions
 
 1. **Bulk Operations** (RFC 7644 Section 3.7)
-   - 複数リソースの一括作成・更新・削除
-   - パフォーマンス向上
+   - Batch create/update/delete for multiple resources
+   - Performance improvement
 
 2. **Complex Filter Support**
-   - `emails[type eq "work"].value`のような複雑なフィルター
-   - JSON列のクエリ最適化
+   - Complex filters like `emails[type eq "work"].value`
+   - JSON column query optimization
 
 3. **SCIM Service Provider Config**
    - `GET /scim/v2/ServiceProviderConfig`
-   - サーバーのSCIM機能を返す
+   - Return server's SCIM capabilities
 
 4. **SCIM Schemas Endpoint**
    - `GET /scim/v2/Schemas`
-   - サポートされるスキーマ情報
+   - Supported schema information
 
 5. **SCIM Resource Types**
    - `GET /scim/v2/ResourceTypes`
-   - 利用可能なリソースタイプ
+   - Available resource types
 
 6. **Webhook Notifications**
-   - リソース変更時の通知
-   - IdPへのリアルタイム同期
+   - Notifications on resource changes
+   - Real-time sync to IdP
 
 ---
 
-## まとめ
+## Summary
 
-SCIM 2.0実装により、Authrimは主要なIdentity Provider (Okta, Azure AD, OneLogin, Google Workspace) とシームレスに統合できるようになりました。
+With SCIM 2.0 implementation, Authrim can now seamlessly integrate with major Identity Providers (Okta, Azure AD, OneLogin, Google Workspace).
 
-### 実装規模
+### Implementation Scale
 
-- **新規ファイル**: 11個
-- **コード行数**: 約3,500行
-- **テスト**: 80+ テストケース
-- **ドキュメント**: 600+ 行
+- **New Files**: 11
+- **Lines of Code**: Approximately 3,500
+- **Tests**: 80+ test cases
+- **Documentation**: 600+ lines
 
-### RFC準拠
+### RFC Compliance
 
 - ✅ RFC 7643: SCIM Core Schema
 - ✅ RFC 7644: SCIM Protocol
@@ -382,14 +382,14 @@ SCIM 2.0実装により、Authrimは主要なIdentity Provider (Okta, Azure AD, 
 - ✅ ETags
 - ✅ PATCH Operations
 
-### 推定工数
+### Estimated Effort
 
-- **実装**: 4-5日 ✅ 完了
-- **テスト**: 1日 ✅ 完了
-- **ドキュメント**: 1日 ✅ 完了
+- **Implementation**: 4-5 days ✅ Complete
+- **Testing**: 1 day ✅ Complete
+- **Documentation**: 1 day ✅ Complete
 
 ---
 
-**実装完了日**: 2024-11-21
-**担当者**: Claude (AI Assistant)
-**レビュー**: Pending
+**Implementation Completed**: 2024-11-21
+**Implementer**: Claude (AI Assistant)
+**Review**: Pending

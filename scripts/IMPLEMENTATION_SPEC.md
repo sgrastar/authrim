@@ -1,52 +1,52 @@
-# Authrim スクリプト改良実装仕様書
+# Authrim Script Improvement Implementation Specification
 
-**作成日:** 2025-01-17
-**バージョン:** 1.0.0
-**目的:** スクリプト改良のための技術仕様書（改良完了後に削除）
-
----
-
-## 目次
-
-1. [概要](#概要)
-2. [設定ファイルスキーマ](#設定ファイルスキーマ)
-3. [設定ファイル作成スクリプト仕様](#設定ファイル作成スクリプト仕様)
-4. [構築スクリプト仕様](#構築スクリプト仕様)
-5. [アーキテクチャパターン対応](#アーキテクチャパターン対応)
-6. [コンフリクトチェック](#コンフリクトチェック)
-7. [エラーハンドリング](#エラーハンドリング)
-8. [既存スクリプトとの統合](#既存スクリプトとの統合)
+**Created:** 2025-01-17
+**Version:** 1.0.0
+**Purpose:** Technical specification for script improvements (to be deleted after implementation is complete)
 
 ---
 
-## 概要
+## Table of Contents
 
-### 目標
-
-ユーザーが実行するスクリプトを**2つ**に集約：
-
-1. **`setup-config.sh`** - 設定ファイル作成スクリプト
-2. **`build.sh`** - 構築スクリプト
-
-### 実装方針
-
-- ARCHITECTURE_PATTERNS.mdの4パターン（A-D）すべてに対応
-- 設定ファイルベースの宣言的セットアップ
-- 既存スクリプトのロジックを内部的に統合または再利用
-- インタラクティブなユーザー体験
-- バージョン管理と段階的アップグレード対応
+1. [Overview](#overview)
+2. [Configuration File Schema](#configuration-file-schema)
+3. [Configuration File Creation Script Specification](#configuration-file-creation-script-specification)
+4. [Build Script Specification](#build-script-specification)
+5. [Architecture Pattern Support](#architecture-pattern-support)
+6. [Conflict Checking](#conflict-checking)
+7. [Error Handling](#error-handling)
+8. [Integration with Existing Scripts](#integration-with-existing-scripts)
 
 ---
 
-## 設定ファイルスキーマ
+## Overview
 
-### ファイル形式
+### Goals
 
-- **フォーマット:** JSON
-- **ファイル名:** `authrim-config-{version}.json`
-- **保存場所:** プロジェクトルート（`.gitignore`に追加）
+Consolidate scripts that users execute into **two**:
 
-### スキーマ定義
+1. **`setup-config.sh`** - Configuration file creation script
+2. **`build.sh`** - Build script
+
+### Implementation Policy
+
+- Support all 4 patterns (A-D) from ARCHITECTURE_PATTERNS.md
+- Declarative setup based on configuration files
+- Internally integrate or reuse existing script logic
+- Interactive user experience
+- Version management and gradual upgrade support
+
+---
+
+## Configuration File Schema
+
+### File Format
+
+- **Format:** JSON
+- **Filename:** `authrim-config-{version}.json`
+- **Location:** Project root (add to `.gitignore`)
+
+### Schema Definition
 
 ```json
 {
@@ -56,36 +56,36 @@
   "properties": {
     "version": {
       "type": "string",
-      "description": "設定ファイルのバージョン（例: 1.0.0）"
+      "description": "Configuration file version (e.g., 1.0.0)"
     },
     "created_at": {
       "type": "string",
       "format": "date-time",
-      "description": "設定ファイルの作成日時（ISO 8601形式）"
+      "description": "Configuration file creation date (ISO 8601 format)"
     },
     "updated_at": {
       "type": "string",
       "format": "date-time",
-      "description": "設定ファイルの更新日時（ISO 8601形式）"
+      "description": "Configuration file update date (ISO 8601 format)"
     },
     "environment": {
       "type": "string",
       "enum": ["local", "remote"],
-      "description": "ローカル開発環境かリモート環境か"
+      "description": "Local development environment or remote environment"
     },
     "operation_mode": {
       "type": "string",
       "enum": ["new", "update", "version_upgrade"],
-      "description": "新規作成、既存設定の変更、バージョンアップ"
+      "description": "New creation, modify existing configuration, or version upgrade"
     },
     "pattern": {
       "type": "string",
       "enum": ["pattern-a", "pattern-b", "pattern-c", "pattern-d"],
-      "description": "デプロイメントパターン"
+      "description": "Deployment pattern"
     },
     "components": {
       "type": "object",
-      "description": "各コンポーネントの設定",
+      "description": "Configuration for each component",
       "properties": {
         "api": {
           "type": "object",
@@ -93,20 +93,20 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "APIを有効にするか"
+              "description": "Whether to enable API"
             },
             "custom_domain": {
               "type": "boolean",
-              "description": "カスタムドメインを使用するか"
+              "description": "Whether to use custom domain"
             },
             "domain": {
               "type": "string",
-              "description": "ドメイン名（例: https://id.example.com）",
+              "description": "Domain name (e.g., https://id.example.com)",
               "format": "uri"
             },
             "worker_name": {
               "type": "string",
-              "description": "Workerの名前（カスタムドメイン不使用時）"
+              "description": "Worker name (when not using custom domain)"
             }
           }
         },
@@ -116,25 +116,25 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "Login Pageを有効にするか"
+              "description": "Whether to enable Login Page"
             },
             "hosting": {
               "type": "string",
               "enum": ["cloudflare-pages", "external"],
-              "description": "ホスティング方法"
+              "description": "Hosting method"
             },
             "custom_domain": {
               "type": "boolean",
-              "description": "カスタムドメインを使用するか"
+              "description": "Whether to use custom domain"
             },
             "domain": {
               "type": "string",
-              "description": "ドメイン名（例: https://login.example.com）",
+              "description": "Domain name (e.g., https://login.example.com)",
               "format": "uri"
             },
             "pages_project_name": {
               "type": "string",
-              "description": "Pagesプロジェクト名（カスタムドメイン不使用時）"
+              "description": "Pages project name (when not using custom domain)"
             }
           }
         },
@@ -144,25 +144,25 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "Admin Pageを有効にするか"
+              "description": "Whether to enable Admin Page"
             },
             "hosting": {
               "type": "string",
               "enum": ["cloudflare-pages", "external"],
-              "description": "ホスティング方法"
+              "description": "Hosting method"
             },
             "custom_domain": {
               "type": "boolean",
-              "description": "カスタムドメインを使用するか"
+              "description": "Whether to use custom domain"
             },
             "domain": {
               "type": "string",
-              "description": "ドメイン名（例: https://admin.example.com）",
+              "description": "Domain name (e.g., https://admin.example.com)",
               "format": "uri"
             },
             "pages_project_name": {
               "type": "string",
-              "description": "Pagesプロジェクト名（カスタムドメイン不使用時）"
+              "description": "Pages project name (when not using custom domain)"
             }
           }
         }
@@ -174,15 +174,15 @@
       "properties": {
         "account_name": {
           "type": "string",
-          "description": "Cloudflareアカウント名（workers.dev使用時）"
+          "description": "Cloudflare account name (for workers.dev usage)"
         },
         "account_id": {
           "type": "string",
-          "description": "CloudflareアカウントID（自動取得または手動入力）"
+          "description": "Cloudflare account ID (auto-fetched or manually entered)"
         },
         "use_router": {
           "type": "boolean",
-          "description": "Router Workerを使用するか（テスト環境用）",
+          "description": "Whether to use Router Worker (for test environments)",
           "default": true
         }
       }
@@ -192,12 +192,12 @@
       "properties": {
         "generate_keys": {
           "type": "boolean",
-          "description": "秘密鍵を生成するか",
+          "description": "Whether to generate secret keys",
           "default": true
         },
         "reuse_existing": {
           "type": "boolean",
-          "description": "既存の鍵を再利用するか",
+          "description": "Whether to reuse existing keys",
           "default": false
         },
         "key_locations": {
@@ -205,12 +205,12 @@
           "properties": {
             "local": {
               "type": "string",
-              "description": "ローカルの鍵保存パス",
+              "description": "Local key storage path",
               "default": ".keys/"
             },
             "remote_checked": {
               "type": "boolean",
-              "description": "リモートの鍵をチェックしたか"
+              "description": "Whether remote keys were checked"
             }
           }
         }
@@ -218,11 +218,11 @@
     },
     "resources": {
       "type": "object",
-      "description": "Cloudflareリソースの設定",
+      "description": "Cloudflare resource configuration",
       "properties": {
         "kv_namespaces": {
           "type": "array",
-          "description": "KV Namespace一覧",
+          "description": "KV Namespace list",
           "items": {
             "type": "object",
             "properties": {
@@ -234,7 +234,7 @@
         },
         "durable_objects": {
           "type": "array",
-          "description": "Durable Objects一覧",
+          "description": "Durable Objects list",
           "items": {
             "type": "object",
             "properties": {
@@ -246,7 +246,7 @@
         },
         "d1_databases": {
           "type": "array",
-          "description": "D1 Database一覧",
+          "description": "D1 Database list",
           "items": {
             "type": "object",
             "properties": {
@@ -260,21 +260,21 @@
     },
     "cors": {
       "type": "object",
-      "description": "CORS設定（Pattern B, C用）",
+      "description": "CORS configuration (for Pattern B, C)",
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "CORSを有効にするか"
+          "description": "Whether to enable CORS"
         },
         "allowed_origins": {
           "type": "array",
           "items": {"type": "string"},
-          "description": "許可するオリジン一覧"
+          "description": "Allowed origins list"
         },
         "allowed_patterns": {
           "type": "array",
           "items": {"type": "string"},
-          "description": "許可するオリジンのパターン（正規表現）"
+          "description": "Allowed origin patterns (regex)"
         }
       }
     }
@@ -282,9 +282,9 @@
 }
 ```
 
-### 設定ファイル例
+### Configuration File Examples
 
-#### Pattern A（統合ドメイン - カスタムドメイン使用）
+#### Pattern A (Unified Domain - Custom Domain)
 
 ```json
 {
@@ -326,7 +326,7 @@
 }
 ```
 
-#### Pattern A（統合ドメイン - workers.dev使用、開発環境）
+#### Pattern A (Unified Domain - workers.dev, Development Environment)
 
 ```json
 {
@@ -373,7 +373,7 @@
 }
 ```
 
-#### Pattern B（分離Admin UI）
+#### Pattern B (Separated Admin UI)
 
 ```json
 {
@@ -419,7 +419,7 @@
 }
 ```
 
-#### Pattern C（マルチドメインSSO）
+#### Pattern C (Multi-Domain SSO)
 
 ```json
 {
@@ -469,7 +469,7 @@
 }
 ```
 
-#### Pattern D（ヘッドレス）
+#### Pattern D (Headless)
 
 ```json
 {
@@ -508,222 +508,208 @@
 
 ---
 
-## 設定ファイル作成スクリプト仕様
+## Configuration File Creation Script Specification
 
-### スクリプト名
+### Script Name
 
 `scripts/setup-config.sh`
 
-### 処理フロー
+### Process Flow
 
-```
-開始
-  ↓
-[1] 前提条件チェック
-  ├─ Wranglerインストール済み？
-  ├─ Cloudflareログイン済み？
-  └─ エラーの場合：終了
-  ↓
-[2] 環境選択
-  ├─ ローカル環境（local）
-  └─ リモート環境（remote）
-  ↓
-[3] 操作モード選択
-  ├─ 新規作成（new）
-  ├─ 既存設定の変更（update）
-  └─ バージョンアップ（version_upgrade）
-  ↓
-[4] パターン選択
-  ├─ Pattern A（統合ドメイン）
-  ├─ Pattern B（分離Admin UI）
-  ├─ Pattern C（マルチドメインSSO）
-  └─ Pattern D（ヘッドレス）
-  ↓
-[5] コンポーネント選択
-  ├─ API（有効/無効）
-  ├─ Login Page（有効/無効）
-  └─ Admin Page（有効/無効）
-  ↓
-[6] ドメイン設定（remote環境の場合）
-  ├─ カスタムドメイン使用？
-  ├─ 各コンポーネントのドメイン設定
-  │   ├─ API: カスタムドメイン or worker_name
-  │   ├─ Login Page: カスタムドメイン or pages_project_name
-  │   └─ Admin Page: カスタムドメイン or pages_project_name
-  └─ Cloudflareアカウント名の入力
-  ↓
-[7] ホスティング設定
-  ├─ Login Page: Cloudflare Pages or 外部
-  └─ Admin Page: Cloudflare Pages or 外部
-  ↓
-[8] 秘密鍵設定
-  └─ 秘密鍵を生成するか？
-  ↓
-[9] CORS設定（Pattern B, C, D の場合）
-  ├─ 許可するオリジンの入力
-  └─ パターンマッチング（正規表現）
-  ↓
-[10] 設定内容の確認
-  └─ 入力内容を表示
-  ↓
-[11] 設定ファイルの生成
-  ├─ ファイル名: authrim-config-{version}.json
-  ├─ バージョン: セマンティックバージョニング
-  └─ .gitignore に追加
-  ↓
-[12] 構築実行の確認
-  ├─ はい → build.sh を実行
-  └─ いいえ → 終了
+```mermaid
+flowchart TD
+    Start([Start]) --> A[1. Prerequisites Check]
+    A --> A1{Wrangler installed?}
+    A1 -->|No| Error1[Exit with error]
+    A1 -->|Yes| A2{Logged in to Cloudflare?}
+    A2 -->|No| Error2[Exit with error]
+    A2 -->|Yes| B[2. Environment Selection]
+
+    B --> B1{Select environment}
+    B1 -->|local| C[3. Operation Mode Selection]
+    B1 -->|remote| C
+
+    C --> C1{Select mode}
+    C1 -->|new| D[4. Pattern Selection]
+    C1 -->|update| LoadConfig[Load existing config]
+    C1 -->|version_upgrade| LoadConfig
+    LoadConfig --> D
+
+    D --> D1{Select pattern}
+    D1 -->|Pattern A| E[5. Component Selection]
+    D1 -->|Pattern B| E
+    D1 -->|Pattern C| E
+    D1 -->|Pattern D| E_Limited[5. API Only]
+
+    E --> F{6. Domain Settings}
+    E_Limited --> F
+    F -->|Custom domain| F1[Enter custom domains]
+    F -->|workers.dev| F2[Enter worker/project names]
+
+    F1 --> G[7. Hosting Settings]
+    F2 --> G
+
+    G --> H[8. Secret Key Settings]
+    H --> I{Pattern B/C/D?}
+    I -->|Yes| J[9. CORS Settings]
+    I -->|No| K[10. Configuration Review]
+    J --> K
+
+    K --> L[11. Generate Configuration File]
+    L --> M{12. Run build?}
+    M -->|Yes| N[Execute build.sh]
+    M -->|No| End([End])
+    N --> End
 ```
 
-### 機能詳細
+### Function Details
 
-#### [1] 前提条件チェック
+#### [1] Prerequisites Check
 
 ```bash
-# Wranglerのインストール確認
+# Wrangler installation check
 if ! command -v wrangler &> /dev/null; then
-  echo "エラー: Wranglerがインストールされていません"
-  echo "インストール: npm install -g wrangler"
+  echo "Error: Wrangler is not installed"
+  echo "Install: npm install -g wrangler"
   exit 1
 fi
 
-# Cloudflareログイン確認
+# Cloudflare login check
 if ! wrangler whoami &> /dev/null; then
-  echo "エラー: Cloudflareにログインしていません"
-  echo "ログイン: wrangler login"
+  echo "Error: Not logged in to Cloudflare"
+  echo "Login: wrangler login"
   exit 1
 fi
 ```
 
-#### [2] 環境選択
+#### [2] Environment Selection
 
 ```bash
-echo "環境を選択してください："
-echo "1) ローカル開発環境（local）"
-echo "2) リモート環境（remote）"
-read -p "選択 [1-2]: " env_choice
+echo "Select environment:"
+echo "1) Local development environment (local)"
+echo "2) Remote environment (remote)"
+read -p "Selection [1-2]: " env_choice
 
 case $env_choice in
   1) ENVIRONMENT="local" ;;
   2) ENVIRONMENT="remote" ;;
-  *) echo "無効な選択"; exit 1 ;;
+  *) echo "Invalid selection"; exit 1 ;;
 esac
 ```
 
-#### [3] 操作モード選択
+#### [3] Operation Mode Selection
 
 ```bash
-echo "操作モードを選択してください："
-echo "1) 新規作成"
-echo "2) 既存設定の変更"
-echo "3) バージョンアップ（既存設定を保持）"
-read -p "選択 [1-3]: " mode_choice
+echo "Select operation mode:"
+echo "1) New creation"
+echo "2) Modify existing configuration"
+echo "3) Version upgrade (preserve existing settings)"
+read -p "Selection [1-3]: " mode_choice
 
 case $mode_choice in
   1) OPERATION_MODE="new" ;;
   2) OPERATION_MODE="update" ;;
   3) OPERATION_MODE="version_upgrade" ;;
-  *) echo "無効な選択"; exit 1 ;;
+  *) echo "Invalid selection"; exit 1 ;;
 esac
 
-# 既存設定の変更・バージョンアップの場合、既存ファイルを読み込む
+# For modify/upgrade, load existing file
 if [[ "$OPERATION_MODE" != "new" ]]; then
-  echo "既存の設定ファイルを選択してください："
+  echo "Select existing configuration file:"
   select config_file in authrim-config-*.json; do
     if [[ -f "$config_file" ]]; then
       EXISTING_CONFIG="$config_file"
       break
     else
-      echo "ファイルが見つかりません"
+      echo "File not found"
     fi
   done
 fi
 ```
 
-#### [4] パターン選択
+#### [4] Pattern Selection
 
 ```bash
-echo "デプロイメントパターンを選択してください："
-echo "1) Pattern A - 統合ドメイン（推奨、シンプル）"
-echo "2) Pattern B - 分離Admin UI（セキュリティ強化）"
-echo "3) Pattern C - マルチドメインSSO（エンタープライズ）"
-echo "4) Pattern D - ヘッドレス（API のみ）"
-read -p "選択 [1-4]: " pattern_choice
+echo "Select deployment pattern:"
+echo "1) Pattern A - Unified Domain (recommended, simple)"
+echo "2) Pattern B - Separated Admin UI (enhanced security)"
+echo "3) Pattern C - Multi-Domain SSO (enterprise)"
+echo "4) Pattern D - Headless (API only)"
+read -p "Selection [1-4]: " pattern_choice
 
 case $pattern_choice in
   1) PATTERN="pattern-a" ;;
   2) PATTERN="pattern-b" ;;
   3) PATTERN="pattern-c" ;;
   4) PATTERN="pattern-d" ;;
-  *) echo "無効な選択"; exit 1 ;;
+  *) echo "Invalid selection"; exit 1 ;;
 esac
 ```
 
-#### [5] コンポーネント選択
+#### [5] Component Selection
 
 ```bash
-# Pattern Dの場合、APIのみ有効
+# For Pattern D, only API is enabled
 if [[ "$PATTERN" == "pattern-d" ]]; then
   ENABLE_API=true
   ENABLE_LOGIN_PAGE=false
   ENABLE_ADMIN_PAGE=false
 else
-  read -p "API を有効にしますか？ [Y/n]: " enable_api
+  read -p "Enable API? [Y/n]: " enable_api
   ENABLE_API=${enable_api:-Y}
 
-  read -p "Login Page を有効にしますか？ [Y/n]: " enable_login
+  read -p "Enable Login Page? [Y/n]: " enable_login
   ENABLE_LOGIN_PAGE=${enable_login:-Y}
 
-  read -p "Admin Page を有効にしますか？ [Y/n]: " enable_admin
+  read -p "Enable Admin Page? [Y/n]: " enable_admin
   ENABLE_ADMIN_PAGE=${enable_admin:-Y}
 fi
 ```
 
-#### [6] ドメイン設定
+#### [6] Domain Settings
 
 ```bash
 if [[ "$ENVIRONMENT" == "remote" ]]; then
-  read -p "カスタムドメインを使用しますか？ [y/N]: " use_custom_domain
+  read -p "Use custom domain? [y/N]: " use_custom_domain
 
   if [[ "$use_custom_domain" =~ ^[Yy]$ ]]; then
-    # 各コンポーネントのカスタムドメイン設定
+    # Custom domain settings for each component
     if [[ "$ENABLE_API" == "Y" ]]; then
-      read -p "API のカスタムドメインを入力 (例: https://id.example.com): " api_domain
+      read -p "Enter API custom domain (e.g., https://id.example.com): " api_domain
       API_CUSTOM_DOMAIN=true
       API_DOMAIN="$api_domain"
     fi
 
     if [[ "$ENABLE_LOGIN_PAGE" == "Y" ]]; then
-      read -p "Login Page のカスタムドメインを入力 (例: https://login.example.com): " login_domain
+      read -p "Enter Login Page custom domain (e.g., https://login.example.com): " login_domain
       LOGIN_CUSTOM_DOMAIN=true
       LOGIN_DOMAIN="$login_domain"
     fi
 
     if [[ "$ENABLE_ADMIN_PAGE" == "Y" ]]; then
-      read -p "Admin Page のカスタムドメインを入力 (例: https://admin.example.com): " admin_domain
+      read -p "Enter Admin Page custom domain (e.g., https://admin.example.com): " admin_domain
       ADMIN_CUSTOM_DOMAIN=true
       ADMIN_DOMAIN="$admin_domain"
     fi
   else
-    # workers.dev / pages.dev 使用
-    read -p "Cloudflareアカウント名を入力: " account_name
+    # Use workers.dev / pages.dev
+    read -p "Enter Cloudflare account name: " account_name
     ACCOUNT_NAME="$account_name"
 
     if [[ "$ENABLE_API" == "Y" ]]; then
-      read -p "API Worker名を入力 [デフォルト: authrim]: " worker_name
+      read -p "Enter API Worker name [default: authrim]: " worker_name
       WORKER_NAME="${worker_name:-authrim}"
       API_DOMAIN="https://${WORKER_NAME}.${ACCOUNT_NAME}.workers.dev"
     fi
 
     if [[ "$ENABLE_LOGIN_PAGE" == "Y" ]]; then
-      read -p "Login Page プロジェクト名を入力 [デフォルト: authrim-${ACCOUNT_NAME}-login]: " login_project
+      read -p "Enter Login Page project name [default: authrim-${ACCOUNT_NAME}-login]: " login_project
       LOGIN_PROJECT="${login_project:-authrim-${ACCOUNT_NAME}-login}"
       LOGIN_DOMAIN="https://${LOGIN_PROJECT}.pages.dev"
     fi
 
     if [[ "$ENABLE_ADMIN_PAGE" == "Y" ]]; then
-      read -p "Admin Page プロジェクト名を入力 [デフォルト: authrim-${ACCOUNT_NAME}-admin]: " admin_project
+      read -p "Enter Admin Page project name [default: authrim-${ACCOUNT_NAME}-admin]: " admin_project
       ADMIN_PROJECT="${admin_project:-authrim-${ACCOUNT_NAME}-admin}"
       ADMIN_DOMAIN="https://${ADMIN_PROJECT}.pages.dev"
     fi
@@ -731,108 +717,108 @@ if [[ "$ENVIRONMENT" == "remote" ]]; then
 fi
 ```
 
-#### [7] ホスティング設定
+#### [7] Hosting Settings
 
 ```bash
 if [[ "$ENABLE_LOGIN_PAGE" == "Y" ]]; then
-  echo "Login Page のホスティング方法を選択してください："
+  echo "Select Login Page hosting method:"
   echo "1) Cloudflare Pages"
-  echo "2) 外部ホスティング"
-  read -p "選択 [1-2]: " login_hosting_choice
+  echo "2) External hosting"
+  read -p "Selection [1-2]: " login_hosting_choice
 
   case $login_hosting_choice in
     1) LOGIN_HOSTING="cloudflare-pages" ;;
     2) LOGIN_HOSTING="external" ;;
-    *) echo "無効な選択"; exit 1 ;;
+    *) echo "Invalid selection"; exit 1 ;;
   esac
 fi
 
 if [[ "$ENABLE_ADMIN_PAGE" == "Y" ]]; then
-  echo "Admin Page のホスティング方法を選択してください："
+  echo "Select Admin Page hosting method:"
   echo "1) Cloudflare Pages"
-  echo "2) 外部ホスティング"
-  read -p "選択 [1-2]: " admin_hosting_choice
+  echo "2) External hosting"
+  read -p "Selection [1-2]: " admin_hosting_choice
 
   case $admin_hosting_choice in
     1) ADMIN_HOSTING="cloudflare-pages" ;;
     2) ADMIN_HOSTING="external" ;;
-    *) echo "無効な選択"; exit 1 ;;
+    *) echo "Invalid selection"; exit 1 ;;
   esac
 fi
 ```
 
-#### [8] 秘密鍵設定
+#### [8] Secret Key Settings
 
 ```bash
-read -p "秘密鍵を生成しますか？ [Y/n]: " generate_keys
+read -p "Generate secret keys? [Y/n]: " generate_keys
 GENERATE_KEYS=${generate_keys:-Y}
 ```
 
-#### [9] CORS設定
+#### [9] CORS Settings
 
 ```bash
-# Pattern B, C, D の場合、CORS設定が必要
+# CORS settings required for Pattern B, C, D
 if [[ "$PATTERN" == "pattern-b" ]] || [[ "$PATTERN" == "pattern-c" ]] || [[ "$PATTERN" == "pattern-d" ]]; then
-  echo "CORS設定を行います"
-  echo "許可するオリジンを入力してください（カンマ区切り）："
-  echo "例: https://admin.example.com,http://localhost:5173"
-  read -p "オリジン: " cors_origins
+  echo "Configuring CORS"
+  echo "Enter allowed origins (comma-separated):"
+  echo "Example: https://admin.example.com,http://localhost:5173"
+  read -p "Origins: " cors_origins
 
   IFS=',' read -ra CORS_ORIGINS <<< "$cors_origins"
 
-  read -p "パターンマッチング（正規表現）を追加しますか？ [y/N]: " add_cors_patterns
+  read -p "Add pattern matching (regex)? [y/N]: " add_cors_patterns
   if [[ "$add_cors_patterns" =~ ^[Yy]$ ]]; then
-    echo "正規表現パターンを入力してください（カンマ区切り）："
-    echo "例: ^https://.*\\.example\\.com$"
-    read -p "パターン: " cors_patterns
+    echo "Enter regex patterns (comma-separated):"
+    echo "Example: ^https://.*\\.example\\.com$"
+    read -p "Patterns: " cors_patterns
     IFS=',' read -ra CORS_PATTERNS <<< "$cors_patterns"
   fi
 fi
 ```
 
-#### [10] 設定内容の確認
+#### [10] Configuration Review
 
 ```bash
 echo "========================================="
-echo "設定内容の確認"
+echo "Configuration Review"
 echo "========================================="
-echo "環境: $ENVIRONMENT"
-echo "操作モード: $OPERATION_MODE"
-echo "パターン: $PATTERN"
+echo "Environment: $ENVIRONMENT"
+echo "Operation Mode: $OPERATION_MODE"
+echo "Pattern: $PATTERN"
 echo ""
-echo "コンポーネント:"
+echo "Components:"
 echo "  API: $ENABLE_API"
-[[ "$ENABLE_API" == "Y" ]] && echo "    ドメイン: $API_DOMAIN"
+[[ "$ENABLE_API" == "Y" ]] && echo "    Domain: $API_DOMAIN"
 echo "  Login Page: $ENABLE_LOGIN_PAGE"
-[[ "$ENABLE_LOGIN_PAGE" == "Y" ]] && echo "    ドメイン: $LOGIN_DOMAIN"
+[[ "$ENABLE_LOGIN_PAGE" == "Y" ]] && echo "    Domain: $LOGIN_DOMAIN"
 echo "  Admin Page: $ENABLE_ADMIN_PAGE"
-[[ "$ENABLE_ADMIN_PAGE" == "Y" ]] && echo "    ドメイン: $ADMIN_DOMAIN"
+[[ "$ENABLE_ADMIN_PAGE" == "Y" ]] && echo "    Domain: $ADMIN_DOMAIN"
 echo ""
-echo "Cloudflareアカウント名: $ACCOUNT_NAME"
-echo "秘密鍵生成: $GENERATE_KEYS"
+echo "Cloudflare Account Name: $ACCOUNT_NAME"
+echo "Generate Secret Keys: $GENERATE_KEYS"
 echo "========================================="
-read -p "この設定でよろしいですか？ [Y/n]: " confirm
+read -p "Is this configuration correct? [Y/n]: " confirm
 if [[ ! "$confirm" =~ ^[Yy]?$ ]]; then
-  echo "中止しました"
+  echo "Cancelled"
   exit 0
 fi
 ```
 
-#### [11] 設定ファイルの生成
+#### [11] Generate Configuration File
 
 ```bash
-# バージョンの決定
+# Determine version
 VERSION="1.0.0"
 if [[ "$OPERATION_MODE" != "new" ]]; then
-  # 既存設定からバージョンを取得してインクリメント
+  # Get version from existing config and increment
   EXISTING_VERSION=$(jq -r '.version' "$EXISTING_CONFIG")
-  # セマンティックバージョニング: マイナーバージョンをインクリメント
+  # Semantic versioning: increment minor version
   VERSION=$(echo "$EXISTING_VERSION" | awk -F. '{$2 = $2 + 1; print $1"."$2"."$3}')
 fi
 
 CONFIG_FILE="authrim-config-${VERSION}.json"
 
-# JSON生成
+# Generate JSON
 cat > "$CONFIG_FILE" <<EOF
 {
   "version": "$VERSION",
@@ -878,105 +864,85 @@ cat > "$CONFIG_FILE" <<EOF
 }
 EOF
 
-# jqでフォーマット
+# Format with jq
 jq . "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
 
-echo "設定ファイルを生成しました: $CONFIG_FILE"
+echo "Generated configuration file: $CONFIG_FILE"
 
-# .gitignoreに追加
+# Add to .gitignore
 if ! grep -q "authrim-config-*.json" .gitignore 2>/dev/null; then
   echo "authrim-config-*.json" >> .gitignore
-  echo ".gitignoreに追加しました"
+  echo "Added to .gitignore"
 fi
 ```
 
-#### [12] 構築実行の確認
+#### [12] Build Execution Confirmation
 
 ```bash
-read -p "構築を実行しますか？ [Y/n]: " run_build
+read -p "Run build? [Y/n]: " run_build
 if [[ "$run_build" =~ ^[Yy]?$ ]]; then
   ./scripts/build.sh --config "$CONFIG_FILE"
 else
-  echo "構築は後で実行できます: ./scripts/build.sh --config $CONFIG_FILE"
+  echo "You can run build later: ./scripts/build.sh --config $CONFIG_FILE"
 fi
 ```
 
 ---
 
-## 構築スクリプト仕様
+## Build Script Specification
 
-### スクリプト名
+### Script Name
 
 `scripts/build.sh`
 
-### 処理フロー
+### Process Flow
 
-```
-開始
-  ↓
-[1] 引数解析
-  ├─ --config <file>: 設定ファイル指定
-  ├─ --mode <new|update|delete>: 操作モード
-  └─ --skip-deploy: デプロイをスキップ
-  ↓
-[2] 設定ファイルの読み込み
-  ├─ 引数から指定されている場合: 使用
-  ├─ 設定ファイル作成スクリプトから呼ばれた場合: 使用
-  └─ いずれでもない場合: ユーザーに選択させる
-  ↓
-[3] 操作モードの確認
-  ├─ 新規構築（new）
-  ├─ 既存設定の変更（update）
-  └─ データ削除・初期化（delete）
-  ↓
-[4] 設定内容の表示
-  └─ 設定ファイルの内容を整形して表示
-  ↓
-[5] コンフリクトチェック（new/updateの場合）
-  ├─ リモートのWorker一覧を取得
-  ├─ リモートのPages一覧を取得
-  ├─ リモートのKV一覧を取得
-  ├─ リモートのDO一覧を取得
-  ├─ リモートのD1一覧を取得
-  └─ コンフリクトがある場合: 警告表示
-  ↓
-[6] packages生成・更新
-  ├─ wrangler.toml生成（各worker用）
-  ├─ .dev.vars生成（ローカル環境）
-  └─ 環境変数の設定
-  ↓
-[7] Cloudflareリソースの設定
-  ├─ KV Namespaceの作成・更新
-  ├─ Durable Objectsの設定
-  ├─ D1 Databaseの作成・更新
-  └─ 設定ファイルにリソースIDを記録
-  ↓
-[8] 秘密鍵の管理
-  ├─ ローカルの既存鍵をチェック
-  ├─ リモートの既存鍵をチェック
-  ├─ 既存鍵がある場合: 再利用確認
-  └─ 新規生成またはアップロード
-  ↓
-[9] CORS設定（Pattern B, C, Dの場合）
-  └─ KVに CORS_SETTINGS を保存
-  ↓
-[10] デプロイ確認
-  ├─ --skip-deploy フラグがある場合: スキップ
-  └─ ない場合: デプロイ実行確認
-  ↓
-[11] デプロイ実行
-  ├─ Shared packageのビルド
-  ├─ 各Workerのデプロイ（順次）
-  ├─ UIのビルドとデプロイ
-  └─ エラー時はリトライ
-  ↓
-[12] 結果表示
-  └─ デプロイ完了、URLを表示
+```mermaid
+flowchart TD
+    Start([Start]) --> A[1. Parse Arguments]
+    A --> B[2. Load Configuration File]
+    B --> C[3. Confirm Operation Mode]
+    C --> C1{Mode?}
+    C1 -->|delete| Delete[Execute deletion]
+    Delete --> End([End])
+
+    C1 -->|new/update| D[4. Display Configuration]
+    D --> E[5. Conflict Check]
+    E --> E1{Conflicts found?}
+    E1 -->|Yes| E2{Continue?}
+    E2 -->|No| End
+    E2 -->|Yes| F[6. Generate Packages]
+    E1 -->|No| F
+
+    F --> G[7. Configure Cloudflare Resources]
+    G --> G1[Create/Update KV Namespaces]
+    G1 --> G2[Create/Update D1 Databases]
+    G2 --> G3[Record resource IDs in config]
+
+    G3 --> H[8. Secret Key Management]
+    H --> H1{Local keys exist?}
+    H1 -->|Yes| H2{Reuse?}
+    H2 -->|Yes| I
+    H2 -->|No| H3[Generate new keys]
+    H1 -->|No| H3
+    H3 --> I[9. CORS Settings]
+
+    I --> J{Skip deploy?}
+    J -->|Yes| End
+    J -->|No| K[10. Deploy Confirmation]
+    K --> K1{Deploy?}
+    K1 -->|No| End
+    K1 -->|Yes| L[11. Execute Deployment]
+    L --> L1[Build Shared package]
+    L1 --> L2[Deploy Workers]
+    L2 --> L3[Deploy UI]
+    L3 --> M[12. Display Results]
+    M --> End
 ```
 
-### 機能詳細
+### Function Details
 
-#### [1] 引数解析
+#### [1] Parse Arguments
 
 ```bash
 #!/bin/bash
@@ -1000,138 +966,138 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "不明なオプション: $1"
+      echo "Unknown option: $1"
       exit 1
       ;;
   esac
 done
 ```
 
-#### [2] 設定ファイルの読み込み
+#### [2] Load Configuration File
 
 ```bash
 if [[ -z "$CONFIG_FILE" ]]; then
-  echo "設定ファイルを選択してください："
+  echo "Select configuration file:"
   select config_file in authrim-config-*.json; do
     if [[ -f "$config_file" ]]; then
       CONFIG_FILE="$config_file"
       break
     else
-      echo "ファイルが見つかりません"
+      echo "File not found"
     fi
   done
 fi
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
-  echo "エラー: 設定ファイルが見つかりません: $CONFIG_FILE"
+  echo "Error: Configuration file not found: $CONFIG_FILE"
   exit 1
 fi
 
-echo "設定ファイルを読み込みました: $CONFIG_FILE"
+echo "Loaded configuration file: $CONFIG_FILE"
 
-# jqで設定値を読み取る
+# Read configuration values with jq
 ENVIRONMENT=$(jq -r '.environment' "$CONFIG_FILE")
 PATTERN=$(jq -r '.pattern' "$CONFIG_FILE")
 OPERATION_MODE=$(jq -r '.operation_mode' "$CONFIG_FILE")
-# ... 以下、必要な値をすべて読み取る
+# ... read all required values
 ```
 
-#### [3] 操作モードの確認
+#### [3] Confirm Operation Mode
 
 ```bash
 if [[ -z "$MODE" ]]; then
-  echo "操作モードを選択してください："
-  echo "1) 新規構築（追加）"
-  echo "2) 既存設定の変更"
-  echo "3) データ削除・初期化"
-  read -p "選択 [1-3]: " mode_choice
+  echo "Select operation mode:"
+  echo "1) New build (add)"
+  echo "2) Modify existing configuration"
+  echo "3) Delete/initialize data"
+  read -p "Selection [1-3]: " mode_choice
 
   case $mode_choice in
     1) MODE="new" ;;
     2) MODE="update" ;;
     3) MODE="delete" ;;
-    *) echo "無効な選択"; exit 1 ;;
+    *) echo "Invalid selection"; exit 1 ;;
   esac
 fi
 
-# deleteモードの場合、確認
+# Confirmation for delete mode
 if [[ "$MODE" == "delete" ]]; then
-  echo "警告: すべてのリソースとデータが削除されます"
-  read -p "本当に削除しますか？ [yes/no]: " confirm_delete
+  echo "Warning: All resources and data will be deleted"
+  read -p "Are you sure you want to delete? [yes/no]: " confirm_delete
   if [[ "$confirm_delete" != "yes" ]]; then
-    echo "中止しました"
+    echo "Cancelled"
     exit 0
   fi
 fi
 ```
 
-#### [4] 設定内容の表示
+#### [4] Display Configuration
 
 ```bash
 echo "========================================="
-echo "設定内容"
+echo "Configuration"
 echo "========================================="
-echo "環境: $ENVIRONMENT"
-echo "パターン: $PATTERN"
-echo "操作モード: $MODE"
+echo "Environment: $ENVIRONMENT"
+echo "Pattern: $PATTERN"
+echo "Operation Mode: $MODE"
 echo ""
 
 jq -r '
-  "コンポーネント:",
+  "Components:",
   "  API: \(.components.api.enabled)",
-  (if .components.api.enabled then "    ドメイン: \(.components.api.domain)" else "" end),
+  (if .components.api.enabled then "    Domain: \(.components.api.domain)" else "" end),
   "  Login Page: \(.components.login_page.enabled)",
-  (if .components.login_page.enabled then "    ドメイン: \(.components.login_page.domain)" else "" end),
+  (if .components.login_page.enabled then "    Domain: \(.components.login_page.domain)" else "" end),
   "  Admin Page: \(.components.admin_page.enabled)",
-  (if .components.admin_page.enabled then "    ドメイン: \(.components.admin_page.domain)" else "" end),
+  (if .components.admin_page.enabled then "    Domain: \(.components.admin_page.domain)" else "" end),
   "",
-  "Cloudflareアカウント名: \(.cloudflare.account_name)",
-  "秘密鍵生成: \(.secrets.generate_keys)"
+  "Cloudflare Account Name: \(.cloudflare.account_name)",
+  "Generate Secret Keys: \(.secrets.generate_keys)"
 ' "$CONFIG_FILE"
 
 echo "========================================="
 ```
 
-#### [5] コンフリクトチェック
+#### [5] Conflict Check
 
 ```bash
 check_conflicts() {
-  echo "リモートリソースをチェック中..."
+  echo "Checking remote resources..."
 
-  # Workerのチェック
+  # Check Workers
   if jq -e '.components.api.enabled' "$CONFIG_FILE" &>/dev/null; then
     WORKER_NAME=$(jq -r '.components.api.worker_name // ""' "$CONFIG_FILE")
     if [[ -n "$WORKER_NAME" ]]; then
       if wrangler deployments list --name="$WORKER_NAME" &>/dev/null; then
-        echo "警告: Worker '$WORKER_NAME' は既に存在します"
+        echo "Warning: Worker '$WORKER_NAME' already exists"
         CONFLICTS=true
       fi
     fi
   fi
 
-  # KV Namespaceのチェック
+  # Check KV Namespaces
   EXISTING_KV=$(wrangler kv namespace list --json 2>/dev/null)
-  # KV一覧と比較
+  # Compare with KV list
   # ...
 
-  # Durable Objectsのチェック
+  # Check Durable Objects
   # ...
 
-  # D1 Databaseのチェック
+  # Check D1 Databases
   EXISTING_D1=$(wrangler d1 list --json 2>/dev/null)
-  # D1一覧と比較
+  # Compare with D1 list
   # ...
 
   if [[ "$CONFLICTS" == "true" ]]; then
     echo ""
-    echo "警告: 既存のリソースとコンフリクトが検出されました"
-    read -p "続行しますか？ [y/N]: " continue_confirm
+    echo "Warning: Conflicts detected with existing resources"
+    read -p "Continue? [y/N]: " continue_confirm
     if [[ ! "$continue_confirm" =~ ^[Yy]$ ]]; then
-      echo "中止しました"
+      echo "Cancelled"
       exit 0
     fi
   else
-    echo "コンフリクトは検出されませんでした"
+    echo "No conflicts detected"
   fi
 }
 
@@ -1140,14 +1106,14 @@ if [[ "$MODE" != "delete" ]]; then
 fi
 ```
 
-#### [6] packages生成・更新
+#### [6] Generate Packages
 
 ```bash
 generate_packages() {
-  echo "packages設定を生成中..."
+  echo "Generating package configuration..."
 
-  # 各workerのwrangler.toml生成
-  # Pattern別に適切な設定を生成
+  # Generate wrangler.toml for each worker
+  # Generate appropriate configuration by pattern
 
   case "$PATTERN" in
     pattern-a)
@@ -1164,15 +1130,15 @@ generate_packages() {
       ;;
   esac
 
-  # .dev.vars生成（ローカル環境）
+  # Generate .dev.vars (local environment)
   if [[ "$ENVIRONMENT" == "local" ]]; then
     generate_dev_vars
   fi
 }
 
 generate_pattern_a_config() {
-  # Pattern A用のwrangler.toml生成
-  # 統合ドメイン設定
+  # Generate wrangler.toml for Pattern A
+  # Unified domain configuration
 
   API_DOMAIN=$(jq -r '.components.api.domain' "$CONFIG_FILE")
   ACCOUNT_NAME=$(jq -r '.cloudflare.account_name' "$CONFIG_FILE")
@@ -1188,12 +1154,12 @@ name = "authrim-router"
 route = { pattern = "$API_DOMAIN/*", custom_domain = true }
 EOF
 
-  # 各専用worker
+  # Individual workers
   # ...
 }
 
 generate_dev_vars() {
-  # .dev.vars生成
+  # Generate .dev.vars
   API_DOMAIN=$(jq -r '.components.api.domain' "$CONFIG_FILE")
   LOGIN_DOMAIN=$(jq -r '.components.login_page.domain' "$CONFIG_FILE")
   ADMIN_DOMAIN=$(jq -r '.components.admin_page.domain' "$CONFIG_FILE")
@@ -1206,48 +1172,47 @@ EOF
 }
 ```
 
-#### [7] Cloudflareリソースの設定
+#### [7] Configure Cloudflare Resources
 
 ```bash
 setup_cloudflare_resources() {
-  echo "Cloudflareリソースを設定中..."
+  echo "Configuring Cloudflare resources..."
 
   # KV Namespace
   setup_kv_namespaces
 
   # Durable Objects
-  # (wrangler.tomlで定義済み、デプロイ時に自動作成)
+  # (Defined in wrangler.toml, automatically created during deployment)
 
   # D1 Database
   setup_d1_databases
 
-  # 設定ファイルにリソースIDを記録
+  # Record resource IDs in configuration file
   update_config_with_resource_ids
 }
 
 setup_kv_namespaces() {
-  echo "KV Namespaceを設定中..."
+  echo "Setting up KV Namespaces..."
 
-  # 必要なKV一覧
+  # Required KV list
   KV_BINDINGS=("AUTH_CODES" "CLIENTS" "REFRESH_TOKENS" "SESSIONS" "SETTINGS_KV")
 
   for binding in "${KV_BINDINGS[@]}"; do
-    # 既存チェック
+    # Check existing
     existing_id=$(jq -r --arg binding "$binding" \
       '.resources.kv_namespaces[] | select(.binding == $binding) | .id' \
       "$CONFIG_FILE" 2>/dev/null)
 
     if [[ -n "$existing_id" && "$existing_id" != "null" ]]; then
-      echo "  $binding: 既存のNamespaceを使用 (ID: $existing_id)"
+      echo "  $binding: Using existing Namespace (ID: $existing_id)"
     else
-      # 新規作成
+      # Create new
       result=$(wrangler kv namespace create "$binding" --json 2>/dev/null)
       namespace_id=$(echo "$result" | jq -r '.id')
 
-      echo "  $binding: 作成しました (ID: $namespace_id)"
+      echo "  $binding: Created (ID: $namespace_id)"
 
-      # 設定ファイルに追加
-      # jqを使ってresources.kv_namespacesに追加
+      # Add to configuration file
       jq --arg binding "$binding" --arg id "$namespace_id" \
         '.resources.kv_namespaces += [{"binding": $binding, "id": $id}]' \
         "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
@@ -1256,7 +1221,7 @@ setup_kv_namespaces() {
 }
 
 setup_d1_databases() {
-  echo "D1 Databaseを設定中..."
+  echo "Setting up D1 Database..."
 
   DB_NAME="authrim-users-db"
 
@@ -1265,18 +1230,18 @@ setup_d1_databases() {
     "$CONFIG_FILE" 2>/dev/null)
 
   if [[ -n "$existing_id" && "$existing_id" != "null" ]]; then
-    echo "  $DB_NAME: 既存のDatabaseを使用 (ID: $existing_id)"
+    echo "  $DB_NAME: Using existing Database (ID: $existing_id)"
   else
-    # 新規作成
+    # Create new
     result=$(wrangler d1 create "$DB_NAME" --json 2>/dev/null)
     db_id=$(echo "$result" | jq -r '.database_id')
 
-    echo "  $DB_NAME: 作成しました (ID: $db_id)"
+    echo "  $DB_NAME: Created (ID: $db_id)"
 
-    # マイグレーション実行
+    # Execute migration
     wrangler d1 execute "$DB_NAME" --file=./migrations/0001_initial.sql
 
-    # 設定ファイルに追加
+    # Add to configuration file
     jq --arg name "$DB_NAME" --arg id "$db_id" \
       '.resources.d1_databases += [{"binding": "USERS_DB", "database_name": $name, "database_id": $id}]' \
       "$CONFIG_FILE" > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
@@ -1284,118 +1249,118 @@ setup_d1_databases() {
 }
 ```
 
-#### [8] 秘密鍵の管理
+#### [8] Secret Key Management
 
 ```bash
 setup_secrets() {
   GENERATE_KEYS=$(jq -r '.secrets.generate_keys' "$CONFIG_FILE")
 
   if [[ "$GENERATE_KEYS" == "true" ]]; then
-    echo "秘密鍵を設定中..."
+    echo "Setting up secret keys..."
 
-    # ローカルの既存鍵をチェック
+    # Check for existing local keys
     if [[ -f ".keys/private.pem" && -f ".keys/public.pem" ]]; then
-      echo "ローカルに既存の鍵が見つかりました"
-      read -p "既存の鍵を使用しますか？ [Y/n]: " use_existing
+      echo "Existing keys found locally"
+      read -p "Use existing keys? [Y/n]: " use_existing
       if [[ ! "$use_existing" =~ ^[Nn]$ ]]; then
         REUSE_LOCAL_KEYS=true
       fi
     fi
 
-    # リモートの既存鍵をチェック
+    # Check for existing remote keys
     if wrangler secret list --name="authrim-shared" 2>/dev/null | grep -q "RSA_PRIVATE_KEY"; then
-      echo "リモートに既存の鍵が見つかりました"
-      read -p "既存のリモート鍵を使用しますか？ [Y/n]: " use_remote
+      echo "Existing keys found remotely"
+      read -p "Use existing remote keys? [Y/n]: " use_remote
       if [[ ! "$use_remote" =~ ^[Nn]$ ]]; then
         REUSE_REMOTE_KEYS=true
       fi
     fi
 
-    # 新規生成
+    # Generate new keys
     if [[ "$REUSE_LOCAL_KEYS" != "true" && "$REUSE_REMOTE_KEYS" != "true" ]]; then
-      echo "新しい鍵を生成します..."
+      echo "Generating new keys..."
       mkdir -p .keys
 
-      # RSA鍵生成
+      # Generate RSA keys
       openssl genrsa -out .keys/private.pem 2048
       openssl rsa -in .keys/private.pem -pubout -out .keys/public.pem
 
-      echo "鍵を生成しました: .keys/private.pem, .keys/public.pem"
+      echo "Generated keys: .keys/private.pem, .keys/public.pem"
     fi
 
-    # リモートにアップロード
+    # Upload to remote
     if [[ "$REUSE_REMOTE_KEYS" != "true" ]]; then
-      echo "秘密鍵をCloudflareにアップロード中..."
+      echo "Uploading secret keys to Cloudflare..."
       cat .keys/private.pem | wrangler secret put RSA_PRIVATE_KEY --name="authrim-shared"
       cat .keys/public.pem | wrangler secret put RSA_PUBLIC_KEY --name="authrim-shared"
-      echo "秘密鍵をアップロードしました"
+      echo "Secret keys uploaded"
     fi
   fi
 }
 ```
 
-#### [9] CORS設定
+#### [9] CORS Settings
 
 ```bash
 setup_cors() {
   CORS_ENABLED=$(jq -r '.cors.enabled' "$CONFIG_FILE")
 
   if [[ "$CORS_ENABLED" == "true" ]]; then
-    echo "CORS設定を適用中..."
+    echo "Applying CORS settings..."
 
-    # KVに保存
+    # Save to KV
     CORS_SETTINGS=$(jq -c '.cors' "$CONFIG_FILE")
 
-    # SETTINGS_KV に保存
+    # Save to SETTINGS_KV
     echo "$CORS_SETTINGS" | wrangler kv key put "cors_settings" \
       --binding=SETTINGS_KV \
       --path=/dev/stdin
 
-    echo "CORS設定を保存しました"
+    echo "CORS settings saved"
   fi
 }
 ```
 
-#### [10-11] デプロイ確認と実行
+#### [10-11] Deploy Confirmation and Execution
 
 ```bash
 deploy() {
   if [[ "$SKIP_DEPLOY" == "true" ]]; then
-    echo "デプロイをスキップしました（--skip-deploy）"
+    echo "Deployment skipped (--skip-deploy)"
     return
   fi
 
-  read -p "デプロイを実行しますか？ [Y/n]: " run_deploy
+  read -p "Execute deployment? [Y/n]: " run_deploy
   if [[ ! "$run_deploy" =~ ^[Yy]?$ ]]; then
-    echo "デプロイをスキップしました"
-    echo "後で実行できます: pnpm run deploy:with-router"
+    echo "Deployment skipped"
+    echo "You can run later: pnpm run deploy:with-router"
     return
   fi
 
-  echo "デプロイを開始します..."
+  echo "Starting deployment..."
 
-  # Sharedパッケージのビルド
-  echo "Sharedパッケージをビルド中..."
+  # Build Shared package
+  echo "Building Shared package..."
   pnpm --filter=shared build
 
-  # 各Workerのデプロイ（順次、リトライ付き）
+  # Deploy each Worker (sequential, with retry)
   deploy_workers
 
-  # UIのデプロイ
+  # Deploy UI
   deploy_ui
 
-  echo "デプロイが完了しました"
+  echo "Deployment complete"
   show_deployment_urls
 }
 
 deploy_workers() {
-  # 既存のdeploy-with-retry.shのロジックを統合
-  # または直接呼び出し
+  # Integrate existing deploy-with-retry.sh logic
+  # Or call directly
 
   if [[ -f "scripts/deploy-with-retry.sh" ]]; then
     ./scripts/deploy-with-retry.sh
   else
-    # 順次デプロイ
+    # Sequential deployment
     WORKERS=("shared" "op-discovery" "op-auth" "op-token" "op-userinfo" "op-management")
     USE_ROUTER=$(jq -r '.cloudflare.use_router' "$CONFIG_FILE")
 
@@ -1404,9 +1369,9 @@ deploy_workers() {
     fi
 
     for worker in "${WORKERS[@]}"; do
-      echo "デプロイ中: $worker"
+      echo "Deploying: $worker"
       pnpm --filter="$worker" deploy
-      sleep 10  # Rate limit回避
+      sleep 10  # Avoid rate limit
     done
   fi
 }
@@ -1416,14 +1381,14 @@ deploy_ui() {
   ENABLE_ADMIN=$(jq -r '.components.admin_page.enabled' "$CONFIG_FILE")
 
   if [[ "$ENABLE_LOGIN" == "true" ]] || [[ "$ENABLE_ADMIN" == "true" ]]; then
-    echo "UIをデプロイ中..."
+    echo "Deploying UI..."
     pnpm run deploy:ui
   fi
 }
 
 show_deployment_urls() {
   echo "========================================="
-  echo "デプロイ完了！"
+  echo "Deployment Complete!"
   echo "========================================="
 
   API_DOMAIN=$(jq -r '.components.api.domain' "$CONFIG_FILE")
@@ -1437,36 +1402,36 @@ show_deployment_urls() {
 }
 ```
 
-#### [12] 削除モード
+#### [12] Delete Mode
 
 ```bash
 delete_all_resources() {
-  echo "すべてのリソースを削除中..."
+  echo "Deleting all resources..."
 
-  # 既存のdelete-all.shを呼び出し、または統合
+  # Call existing delete-all.sh, or integrate
   if [[ -f "scripts/delete-all.sh" ]]; then
     ./scripts/delete-all.sh
   else
-    # Workers削除
-    # KV削除
-    # D1削除
-    # DO削除（自動）
+    # Delete Workers
+    # Delete KV
+    # Delete D1
+    # Delete DO (automatic)
     # ...
   fi
 
-  echo "すべてのリソースを削除しました"
+  echo "All resources deleted"
 }
 ```
 
 ---
 
-## アーキテクチャパターン対応
+## Architecture Pattern Support
 
-### Pattern A: 統合ドメイン
+### Pattern A: Unified Domain
 
-#### 環境変数設定
+#### Environment Variable Settings
 
-**カスタムドメイン使用時:**
+**With Custom Domain:**
 
 ```bash
 # .dev.vars (local)
@@ -1475,7 +1440,7 @@ PUBLIC_API_BASE_URL=https://id.example.com
 CORS_ORIGINS=https://id.example.com
 ```
 
-**workers.dev使用時:**
+**With workers.dev:**
 
 ```bash
 # .dev.vars (local)
@@ -1485,23 +1450,23 @@ ADMIN_UI_ORIGIN=https://authrim-login.pages.dev,https://authrim-admin.pages.dev,
 CORS_ORIGINS=https://authrim-login.pages.dev,https://authrim-admin.pages.dev,http://localhost:5173
 ```
 
-#### wrangler.toml設定
+#### wrangler.toml Configuration
 
 ```toml
-# カスタムドメイン使用時
+# With custom domain
 [env.production]
 name = "authrim-router"
 route = { pattern = "id.example.com/*", custom_domain = true }
 
-# workers.dev使用時
+# With workers.dev
 name = "authrim"
 ```
 
 ---
 
-### Pattern B: 分離Admin UI
+### Pattern B: Separated Admin UI
 
-#### 環境変数設定
+#### Environment Variable Settings
 
 ```bash
 # API Worker (.dev.vars)
@@ -1509,12 +1474,12 @@ ISSUER_URL=https://id.example.com
 PUBLIC_API_BASE_URL=https://id.example.com
 ADMIN_UI_ORIGIN=https://admin.example.com,http://localhost:5173
 
-# Admin UI (Cloudflare Pages環境変数)
+# Admin UI (Cloudflare Pages environment variables)
 PUBLIC_API_BASE_URL=https://id.example.com
 PUBLIC_OIDC_BASE_URL=https://id.example.com
 ```
 
-#### CORS設定（KV）
+#### CORS Settings (KV)
 
 ```json
 {
@@ -1527,26 +1492,26 @@ PUBLIC_OIDC_BASE_URL=https://id.example.com
 
 ---
 
-### Pattern C: マルチドメインSSO
+### Pattern C: Multi-Domain SSO
 
-#### 環境変数設定
+#### Environment Variable Settings
 
 ```bash
 # API Worker (.dev.vars)
 ISSUER_URL=https://api.example.com
 PUBLIC_API_BASE_URL=https://api.example.com
 
-# Login UI (Cloudflare Pages環境変数)
+# Login UI (Cloudflare Pages environment variables)
 PUBLIC_API_BASE_URL=https://api.example.com
 PUBLIC_OIDC_BASE_URL=https://api.example.com
 PUBLIC_REDIRECT_URI=https://service1.com/callback
 
-# Admin UI (Cloudflare Pages環境変数)
+# Admin UI (Cloudflare Pages environment variables)
 PUBLIC_API_BASE_URL=https://api.example.com
 PUBLIC_OIDC_BASE_URL=https://api.example.com
 ```
 
-#### CORS設定（KV）
+#### CORS Settings (KV)
 
 ```json
 {
@@ -1566,9 +1531,9 @@ PUBLIC_OIDC_BASE_URL=https://api.example.com
 
 ---
 
-### Pattern D: ヘッドレス
+### Pattern D: Headless
 
-#### 環境変数設定
+#### Environment Variable Settings
 
 ```bash
 # API Worker (.dev.vars)
@@ -1577,101 +1542,101 @@ PUBLIC_API_BASE_URL=https://authrim.sgrastar.workers.dev
 CORS_ORIGINS=*
 ```
 
-#### wrangler.toml設定
+#### wrangler.toml Configuration
 
 ```toml
 name = "authrim"
-# UIはデプロイしない
+# UI is not deployed
 ```
 
 ---
 
-## コンフリクトチェック
+## Conflict Checking
 
-### チェック項目
+### Check Items
 
-1. **Worker名の重複**
+1. **Duplicate Worker Names**
    - `wrangler deployments list --name=<worker_name>`
-   - 既存のWorkerと名前が重複していないか
+   - Check if name conflicts with existing Workers
 
-2. **KV Namespace名の重複**
+2. **Duplicate KV Namespace Names**
    - `wrangler kv namespace list --json`
-   - 既存のNamespaceと名前が重複していないか
+   - Check if name conflicts with existing Namespaces
 
-3. **D1 Database名の重複**
+3. **Duplicate D1 Database Names**
    - `wrangler d1 list --json`
-   - 既存のDatabaseと名前が重複していないか
+   - Check if name conflicts with existing Databases
 
 4. **Durable Objects**
-   - Durable Objectsは自動管理されるため、明示的なチェックは不要
-   - Workerがデプロイされていれば自動的に利用可能
+   - Durable Objects are automatically managed, no explicit check required
+   - Automatically available when Worker is deployed
 
-5. **カスタムドメインの競合**
+5. **Custom Domain Conflicts**
    - `wrangler domains list`
-   - 既存のドメイン設定と重複していないか
+   - Check if conflicts with existing domain settings
 
-### コンフリクト検出時の動作
+### Behavior When Conflicts Detected
 
-- **警告を表示**: 既存のリソースと重複していることを通知
-- **ユーザーに確認**: 続行するか、中止するかを選択
-- **updateモード**: 既存のリソースを更新する場合は続行
-- **newモード**: 重複は基本的にエラーとして扱う
+- **Display Warning**: Notify that there are duplicates with existing resources
+- **Ask User**: Choose to continue or cancel
+- **update mode**: Continue if updating existing resources
+- **new mode**: Treat duplicates as errors
 
-### コンフリクト解決戦略
+### Conflict Resolution Strategies
 
-1. **リソース名の変更**
-   - ユーザーに異なる名前を入力させる
-   - 自動的にサフィックスを追加（例: `authrim-2`）
+1. **Change Resource Name**
+   - Have user enter a different name
+   - Automatically add suffix (e.g., `authrim-2`)
 
-2. **既存リソースの再利用**
-   - 既存のKV、D1を再利用する
-   - 設定ファイルにIDを記録
+2. **Reuse Existing Resources**
+   - Reuse existing KV, D1
+   - Record ID in configuration file
 
-3. **削除と再作成**
-   - 既存のリソースを削除してから新規作成
-   - データ損失のリスクがあるため、確認必須
+3. **Delete and Recreate**
+   - Delete existing resources and create new ones
+   - Risk of data loss, confirmation required
 
 ---
 
-## エラーハンドリング
+## Error Handling
 
-### エラーカテゴリ
+### Error Categories
 
-1. **前提条件エラー**
-   - Wrangler未インストール
-   - Cloudflare未ログイン
-   - 必要なパッケージ（jq、openssl等）が未インストール
+1. **Prerequisites Errors**
+   - Wrangler not installed
+   - Not logged in to Cloudflare
+   - Required packages (jq, openssl, etc.) not installed
 
-2. **設定エラー**
-   - 無効な設定ファイル（JSON解析エラー）
-   - 必須フィールドの欠落
-   - 無効な値（例: 不正なURL）
+2. **Configuration Errors**
+   - Invalid configuration file (JSON parse error)
+   - Missing required fields
+   - Invalid values (e.g., invalid URL)
 
-3. **リソースエラー**
-   - KV作成失敗
-   - D1作成失敗
-   - Worker デプロイ失敗
+3. **Resource Errors**
+   - KV creation failure
+   - D1 creation failure
+   - Worker deployment failure
 
-4. **ネットワークエラー**
-   - Cloudflare API接続エラー
-   - Rate limit超過
+4. **Network Errors**
+   - Cloudflare API connection error
+   - Rate limit exceeded
 
-### エラーハンドリング戦略
+### Error Handling Strategy
 
 ```bash
-# エラートラップ
-set -e  # エラー時に即座に終了
+# Error trap
+set -e  # Exit immediately on error
 trap 'error_handler $? $LINENO' ERR
 
 error_handler() {
   local exit_code=$1
   local line_number=$2
-  echo "エラーが発生しました (行: $line_number, コード: $exit_code)"
-  echo "詳細はログを確認してください"
+  echo "Error occurred (line: $line_number, code: $exit_code)"
+  echo "Please check the logs for details"
   exit $exit_code
 }
 
-# リトライロジック
+# Retry logic
 retry() {
   local max_attempts=3
   local attempt=1
@@ -1681,31 +1646,31 @@ retry() {
     if "$@"; then
       return 0
     else
-      echo "失敗しました。リトライします... ($attempt/$max_attempts)"
+      echo "Failed. Retrying... ($attempt/$max_attempts)"
       sleep $delay
       delay=$((delay * 2))  # Exponential backoff
       attempt=$((attempt + 1))
     fi
   done
 
-  echo "最大リトライ回数に達しました"
+  echo "Maximum retry attempts reached"
   return 1
 }
 
-# 使用例
+# Usage example
 retry wrangler kv namespace create AUTH_CODES
 ```
 
-### ロールバック戦略
+### Rollback Strategy
 
-デプロイ中にエラーが発生した場合のロールバック:
+Rollback when errors occur during deployment:
 
 ```bash
 rollback() {
-  echo "エラーが発生しました。ロールバックを実行します..."
+  echo "Error occurred. Executing rollback..."
 
-  # 作成したリソースを記録
-  # エラー発生時に削除
+  # Record created resources
+  # Delete on error
 
   if [[ -n "$CREATED_KV_IDS" ]]; then
     for kv_id in $CREATED_KV_IDS; do
@@ -1719,7 +1684,7 @@ rollback() {
     done
   fi
 
-  echo "ロールバックが完了しました"
+  echo "Rollback complete"
 }
 
 trap rollback ERR
@@ -1727,31 +1692,31 @@ trap rollback ERR
 
 ---
 
-## 既存スクリプトとの統合
+## Integration with Existing Scripts
 
-### 統合方針
+### Integration Policy
 
-既存のスクリプトを**内部的に呼び出す**または**ロジックを統合する**:
+**Internally call** or **integrate logic** from existing scripts:
 
-1. **setup-kv.sh** → `build.sh`に統合（`setup_kv_namespaces()`）
-2. **setup-d1.sh** → `build.sh`に統合（`setup_d1_databases()`）
-3. **setup-secrets.sh** → `build.sh`に統合（`setup_secrets()`）
-4. **deploy-with-retry.sh** → `build.sh`から呼び出し（`deploy_workers()`）
-5. **delete-all.sh** → `build.sh`から呼び出し（deleteモード）
+1. **setup-kv.sh** → Integrate into `build.sh` (`setup_kv_namespaces()`)
+2. **setup-d1.sh** → Integrate into `build.sh` (`setup_d1_databases()`)
+3. **setup-secrets.sh** → Integrate into `build.sh` (`setup_secrets()`)
+4. **deploy-with-retry.sh** → Call from `build.sh` (`deploy_workers()`)
+5. **delete-all.sh** → Call from `build.sh` (delete mode)
 
-### 既存スクリプトの保持
+### Preserving Existing Scripts
 
-- **後方互換性**: 既存のスクリプトは削除せず、非推奨として保持
-- **ドキュメント更新**: `DEVELOPMENT.md`、`CLAUDE.md`に新しいワークフローを記載
-- **移行ガイド**: 既存のユーザー向けに移行手順を提供
+- **Backward Compatibility**: Keep existing scripts, mark as deprecated
+- **Documentation Updates**: Document new workflow in `DEVELOPMENT.md`, `CLAUDE.md`
+- **Migration Guide**: Provide migration instructions for existing users
 
-### 非推奨化
+### Deprecation
 
 ```bash
-# setup-kv.sh の先頭に追加
-echo "警告: このスクリプトは非推奨です"
-echo "新しいワークフロー: ./scripts/setup-config.sh を使用してください"
-read -p "続行しますか？ [y/N]: " continue
+# Add to top of setup-kv.sh
+echo "Warning: This script is deprecated"
+echo "New workflow: Use ./scripts/setup-config.sh"
+read -p "Continue? [y/N]: " continue
 if [[ ! "$continue" =~ ^[Yy]$ ]]; then
   exit 0
 fi
@@ -1759,123 +1724,123 @@ fi
 
 ---
 
-## テスト計画
+## Test Plan
 
-### 単体テスト
+### Unit Tests
 
-- 各関数の動作確認
-- エラーハンドリングのテスト
-- バリデーションのテスト
+- Verify each function works correctly
+- Test error handling
+- Test validation
 
-### 統合テスト
+### Integration Tests
 
-1. **Pattern A（カスタムドメイン）**
-   - 設定ファイル作成
-   - 構築実行
-   - デプロイ確認
+1. **Pattern A (Custom Domain)**
+   - Create configuration file
+   - Execute build
+   - Verify deployment
 
-2. **Pattern A（workers.dev）**
-   - 設定ファイル作成
-   - 構築実行
-   - CORS動作確認
+2. **Pattern A (workers.dev)**
+   - Create configuration file
+   - Execute build
+   - Verify CORS functionality
 
 3. **Pattern B**
-   - 設定ファイル作成
-   - 構築実行
-   - Admin UI分離確認
-   - CORS動作確認
+   - Create configuration file
+   - Execute build
+   - Verify Admin UI separation
+   - Verify CORS functionality
 
 4. **Pattern C**
-   - 設定ファイル作成
-   - 構築実行
-   - マルチドメインCORS確認
+   - Create configuration file
+   - Execute build
+   - Verify multi-domain CORS
 
 5. **Pattern D**
-   - 設定ファイル作成
-   - 構築実行（API のみ）
-   - UIデプロイがスキップされることを確認
+   - Create configuration file
+   - Execute build (API only)
+   - Verify UI deployment is skipped
 
-### エンドツーエンドテスト
+### End-to-End Tests
 
-- ローカル環境での動作確認
-- リモート環境での動作確認
-- 各パターンでのOIDCフロー確認
-
----
-
-## 実装チェックリスト
-
-### Phase 1: 基本機能
-
-- [ ] 設定ファイルスキーマの定義
-- [ ] `setup-config.sh`の実装
-  - [ ] 前提条件チェック
-  - [ ] 環境選択
-  - [ ] 操作モード選択
-  - [ ] パターン選択
-  - [ ] コンポーネント選択
-  - [ ] ドメイン設定
-  - [ ] 秘密鍵設定
-  - [ ] CORS設定
-  - [ ] 設定ファイル生成
-- [ ] `build.sh`の実装
-  - [ ] 引数解析
-  - [ ] 設定ファイル読み込み
-  - [ ] 操作モード確認
-  - [ ] 設定内容表示
-  - [ ] コンフリクトチェック
-  - [ ] packages生成
-  - [ ] Cloudflareリソース設定
-  - [ ] 秘密鍵管理
-  - [ ] CORS設定
-  - [ ] デプロイ実行
-
-### Phase 2: Pattern対応
-
-- [ ] Pattern A（カスタムドメイン）
-- [ ] Pattern A（workers.dev）
-- [ ] Pattern B（分離Admin UI）
-- [ ] Pattern C（マルチドメインSSO）
-- [ ] Pattern D（ヘッドレス）
-
-### Phase 3: エラーハンドリング
-
-- [ ] エラートラップ
-- [ ] リトライロジック
-- [ ] ロールバック機能
-- [ ] ユーザーフレンドリーなエラーメッセージ
-
-### Phase 4: ドキュメント
-
-- [ ] `DEVELOPMENT.md`更新
-- [ ] `CLAUDE.md`更新
-- [ ] 既存スクリプトの非推奨化
-- [ ] 移行ガイドの作成
-
-### Phase 5: テスト
-
-- [ ] 単体テスト
-- [ ] 統合テスト（各Pattern）
-- [ ] エンドツーエンドテスト
-
-### Phase 6: クリーンアップ
-
-- [ ] このドキュメント（`IMPLEMENTATION_SPEC.md`）の削除
-- [ ] 不要なスクリプトの整理（必要に応じて）
+- Verify operation in local environment
+- Verify operation in remote environment
+- Verify OIDC flow for each pattern
 
 ---
 
-## まとめ
+## Implementation Checklist
 
-この仕様書に基づいて、以下の2つのスクリプトを実装します：
+### Phase 1: Basic Functionality
 
-1. **`setup-config.sh`** - インタラクティブな設定ファイル作成
-2. **`build.sh`** - 設定ファイルベースの自動構築
+- [ ] Define configuration file schema
+- [ ] Implement `setup-config.sh`
+  - [ ] Prerequisites check
+  - [ ] Environment selection
+  - [ ] Operation mode selection
+  - [ ] Pattern selection
+  - [ ] Component selection
+  - [ ] Domain settings
+  - [ ] Secret key settings
+  - [ ] CORS settings
+  - [ ] Configuration file generation
+- [ ] Implement `build.sh`
+  - [ ] Argument parsing
+  - [ ] Configuration file loading
+  - [ ] Operation mode confirmation
+  - [ ] Configuration display
+  - [ ] Conflict check
+  - [ ] Package generation
+  - [ ] Cloudflare resource setup
+  - [ ] Secret key management
+  - [ ] CORS settings
+  - [ ] Deploy execution
 
-これにより、ARCHITECTURE_PATTERNS.mdの4つのパターン（A-D）すべてに対応した、柔軟でユーザーフレンドリーなセットアップ環境が実現されます。
+### Phase 2: Pattern Support
+
+- [ ] Pattern A (Custom Domain)
+- [ ] Pattern A (workers.dev)
+- [ ] Pattern B (Separated Admin UI)
+- [ ] Pattern C (Multi-Domain SSO)
+- [ ] Pattern D (Headless)
+
+### Phase 3: Error Handling
+
+- [ ] Error trap
+- [ ] Retry logic
+- [ ] Rollback functionality
+- [ ] User-friendly error messages
+
+### Phase 4: Documentation
+
+- [ ] Update `DEVELOPMENT.md`
+- [ ] Update `CLAUDE.md`
+- [ ] Deprecate existing scripts
+- [ ] Create migration guide
+
+### Phase 5: Testing
+
+- [ ] Unit tests
+- [ ] Integration tests (each Pattern)
+- [ ] End-to-end tests
+
+### Phase 6: Cleanup
+
+- [ ] Delete this document (`IMPLEMENTATION_SPEC.md`)
+- [ ] Clean up unnecessary scripts (as needed)
 
 ---
 
-**作成日:** 2025-01-17
-**作成者:** Claude Code
-**ステータス:** 実装準備完了
+## Summary
+
+Based on this specification, implement the following two scripts:
+
+1. **`setup-config.sh`** - Interactive configuration file creation
+2. **`build.sh`** - Configuration file-based automated build
+
+This enables a flexible and user-friendly setup environment that supports all four patterns (A-D) from ARCHITECTURE_PATTERNS.md.
+
+---
+
+**Created:** 2025-01-17
+**Author:** Claude Code
+**Status:** Ready for Implementation

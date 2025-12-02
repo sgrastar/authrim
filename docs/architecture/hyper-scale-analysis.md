@@ -1,127 +1,142 @@
-# Authrim ハイパースケール分析：1億〜2億MAU
+# Authrim Hyper-Scale Analysis: 100M-200M MAU
 
-**作成日**: 2025-11-20
-**対象**: 1億MAU、2億MAU（LINEクラス）での運用評価
-
----
-
-## エグゼクティブサマリー
-
-**結論**: 現在のCloudflare中心アーキテクチャは、**1億MAUで限界**に達します。2億MAU（LINEレベル）では**アーキテクチャの根本的な再設計が必須**です。
-
-### スケール比較
-
-| 項目 | 1000万MAU | 1億MAU | 2億MAU | 評価 |
-|------|-----------|--------|--------|------|
-| **同時アクティブユーザー** | 100万 | 1000万 | 2000万 | - |
-| **1日あたりログイン** | 1000万 | 1億 | 2億 | - |
-| **推定QPS** | 1万 | 10万 | 20万 | - |
-| **D1単一DB** | ⚠️限界近い | ❌不可能 | ❌不可能 | 要分散DB |
-| **SessionStore DO** | ✅ | ⚠️要最適化 | ❌要再設計 | マルチリージョン必須 |
-| **月額コスト** | $12,600 | $126,000 | $252,000 | コスト最適化必須 |
-| **平均レイテンシ** | 50-100ms | 100-200ms | 150-300ms | 地理的分散必須 |
+**Created**: 2025-11-20
+**Target**: Evaluation of operations at 100M MAU and 200M MAU (LINE-class)
 
 ---
 
-## 1. 1億MAU での分析
+## Executive Summary
 
-### 1.1 データベース（D1）
+**Conclusion**: The current Cloudflare-centric architecture **reaches its limit at 100M MAU**. At 200M MAU (LINE level), **fundamental architecture redesign is mandatory**.
 
-#### 問題点
-🔴 **破綻確実**:
+### Scale Comparison
 
-1. **データ量の爆発**
-   - `users`: 1億行 × 1KB = **100GB**
-   - D1の制限: 10GB（無料）/ 50GB（有料）
-   - **→ 完全に容量オーバー**
+| Item | 10M MAU | 100M MAU | 200M MAU | Evaluation |
+|------|---------|----------|----------|------------|
+| **Concurrent Active Users** | 1M | 10M | 20M | - |
+| **Daily Logins** | 10M | 100M | 200M | - |
+| **Estimated QPS** | 10K | 100K | 200K | - |
+| **D1 Single DB** | ⚠️ Near limit | ❌ Impossible | ❌ Impossible | Requires distributed DB |
+| **SessionStore DO** | ✅ | ⚠️ Requires optimization | ❌ Requires redesign | Multi-region required |
+| **Monthly Cost** | $12,600 | $126,000 | $252,000 | Cost optimization required |
+| **Average Latency** | 50-100ms | 100-200ms | 150-300ms | Geographic distribution required |
 
-2. **クエリパフォーマンスの限界**
-   - 1億行のフルテーブルスキャン: 数十秒〜数分
-   - インデックスがあっても、B-treeの深さが増加
-   - 推定クエリ時間: 500ms〜2秒
+---
 
-3. **書き込みボトルネック**
-   - 1億MAU → 約10万QPS（ピーク時）
-   - D1のプライマリDB：単一リージョン
-   - **→ 物理的な限界**
+## 1. Analysis at 100M MAU
 
-4. **audit_log の無限増殖**
-   - 1日1億ログイン = 1億行/日
-   - 1年で365億行
-   - **→ 完全に管理不能**
+### 1.1 Database (D1)
 
-#### 必須対策：分散データベースへの移行
+#### Issues
+🔴 **Certain Failure**:
 
-**Option A: Cloudflare D1 + シャーディング戦略**
+1. **Data Volume Explosion**
+   - `users`: 100M rows × 1KB = **100GB**
+   - D1 limits: 10GB (free) / 50GB (paid)
+   - **→ Complete capacity overflow**
+
+2. **Query Performance Limits**
+   - Full table scan of 100M rows: tens of seconds to minutes
+   - Even with indexes, B-tree depth increases
+   - Estimated query time: 500ms~2s
+
+3. **Write Bottleneck**
+   - 100M MAU → approximately 100K QPS (peak)
+   - D1 primary DB: Single region
+   - **→ Physical limitation**
+
+4. **audit_log Infinite Growth**
+   - 100M logins/day = 100M rows/day
+   - 36.5B rows in 1 year
+   - **→ Completely unmanageable**
+
+#### Essential Countermeasures: Migration to Distributed Database
+
+**Option A: Cloudflare D1 + Sharding Strategy**
 ```typescript
-// ユーザーIDベースでデータベースを分割
+// Divide database based on user ID
 function getUserDatabaseShard(userId: string): string {
   const hash = simpleHash(userId);
-  const shardCount = 100; // 100個のD1データベース
+  const shardCount = 100; // 100 D1 databases
   return `authrim-users-shard-${hash % shardCount}`;
 }
 
-// 例：100シャード × 50GB = 5TB総容量
-// 1シャード = 100万ユーザー
+// Example: 100 shards × 50GB = 5TB total capacity
+// 1 shard = 1M users
 ```
 
-**問題点**:
-- Cloudflare D1は現在、複数DBのクエリ結合（JOIN）非対応
-- 管理が複雑
-- コスト: 100データベース × $5/月 = $500/月（D1のみ）
+**Issues**:
+- Cloudflare D1 currently doesn't support cross-DB query joining
+- Complex management
+- Cost: 100 databases × $5/month = $500/month (D1 only)
 
-**Option B: 外部分散データベース（推奨）**
+**Option B: External Distributed Database (Recommended)**
 
 1. **Neon (Serverless Postgres)**
-   - オートスケーリング
-   - Branch機能（dev/stagingの分離）
-   - Cloudflare Workersとの統合が容易
-   - コスト: 約$1,000〜2,000/月
+   - Auto-scaling
+   - Branch functionality (dev/staging separation)
+   - Easy integration with Cloudflare Workers
+   - Cost: approximately $1,000~2,000/month
 
 2. **PlanetScale (Serverless MySQL)**
-   - 水平シャーディング自動対応
-   - クエリインサイト
-   - コスト: 約$1,500〜3,000/月
+   - Automatic horizontal sharding support
+   - Query insights
+   - Cost: approximately $1,500~3,000/month
 
 3. **CockroachDB Serverless**
-   - グローバル分散
-   - 強整合性
-   - PostgreSQL互換
-   - コスト: 約$2,000〜4,000/月
+   - Global distribution
+   - Strong consistency
+   - PostgreSQL compatible
+   - Cost: approximately $2,000~4,000/month
 
-**推奨アーキテクチャ（1億MAU）**:
+**Recommended Architecture (100M MAU)**:
+
+```mermaid
+graph TB
+    subgraph Edge["Cloudflare Workers (Global Edge)"]
+        W[Worker Instances]
+    end
+
+    subgraph DO["Durable Objects"]
+        DO1["SessionStore<br/>(Sharded: 1000 divisions)"]
+        DO2["Other DOs<br/>(As current)"]
+    end
+
+    subgraph DB["Neon / PlanetScale (Distributed DB)"]
+        R1["Read Replica: Region 1"]
+        R2["Read Replica: Region 2"]
+        R3["Read Replica: Region 3"]
+        M["Master DB<br/>(Writes)"]
+    end
+
+    subgraph Cache["KV (Cache Layer)"]
+        K1["User Profiles<br/>(TTL: 1 hour)"]
+        K2["Client Info<br/>(TTL: 24 hours)"]
+    end
+
+    W --> DO
+    W --> Cache
+    DO --> DB
+    Cache --> DB
+    R1 --> M
+    R2 --> M
+    R3 --> M
 ```
-┌─────────────────────────────────────────────────┐
-│ Cloudflare Workers (グローバルエッジ)              │
-├─────────────────────────────────────────────────┤
-│ Durable Objects                                  │
-│ - SessionStore (シャーディング: 1000分割)         │
-│ - その他のDO（既存通り）                          │
-├─────────────────────────────────────────────────┤
-│ Neon / PlanetScale (分散DB)                      │
-│ - 読み取りレプリカ: 各リージョンに配置             │
-│ - 書き込み: マスターDBへ                          │
-├─────────────────────────────────────────────────┤
-│ KV (キャッシュ層)                                │
-│ - ユーザープロファイル（TTL: 1時間）              │
-│ - クライアント情報（TTL: 24時間）                 │
-└─────────────────────────────────────────────────┘
-```
 
-#### データ移行戦略
-1. **Phase 1: Read Replica追加（既存D1維持）**
-   - Neonに読み取り専用レプリカを作成
-   - 読み取りトラフィックの50%をNeonに移行
-   - D1の負荷を半減
+#### Data Migration Strategy
+1. **Phase 1: Add Read Replica (Keep existing D1)**
+   - Create read-only replica in Neon
+   - Migrate 50% of read traffic to Neon
+   - Halve D1 load
 
-2. **Phase 2: 段階的移行**
-   - 新規ユーザーはNeonに書き込み
-   - 既存ユーザーはD1からNeonへ段階的に移行
-   - 並行運用期間: 3〜6ヶ月
+2. **Phase 2: Gradual Migration**
+   - New users write to Neon
+   - Existing users gradually migrate from D1 to Neon
+   - Parallel operation period: 3~6 months
 
-3. **Phase 3: D1完全廃止**
-   - 全トラフィックをNeonに移行
-   - D1はバックアップのみ使用
+3. **Phase 3: Complete D1 Deprecation**
+   - Migrate all traffic to Neon
+   - D1 used only for backup
 
 ---
 
@@ -129,139 +144,139 @@ function getUserDatabaseShard(userId: string): string {
 
 #### SessionStore
 
-**現状の限界**:
-- 1億MAU、アクティブ率10% = **1000万セッション**
-- 100シャード → 1シャード = 10万セッション = **100MB**
-- DOメモリ制限: 128MB
-- **→ ギリギリ、最適化必須**
+**Current Limitations**:
+- 100M MAU, 10% active rate = **10M sessions**
+- 100 shards → 1 shard = 100K sessions = **100MB**
+- DO memory limit: 128MB
+- **→ Barely fits, optimization required**
 
-**必須対策**:
+**Essential Countermeasures**:
 
-**Option A: シャーディング数を増やす**
+**Option A: Increase Sharding Count**
 ```typescript
-// 1000シャードに増やす
+// Increase to 1000 shards
 function getSessionShardId(userId: string): string {
   const hash = simpleHash(userId);
   return `shard-${hash % 1000}`; // 100 → 1000
 }
 
-// 1シャード = 1万セッション = 10MB
-// 十分な余裕
+// 1 shard = 10K sessions = 10MB
+// Sufficient margin
 ```
 
-**コスト影響**:
-- 100シャード → 1000シャード
-- アクティブDO数: 1000個
-- ただし、Cold Startのリスク増加
-- **Warm-up戦略が必須**
+**Cost Impact**:
+- 100 shards → 1000 shards
+- Active DO count: 1000
+- However, Cold Start risk increases
+- **Warm-up strategy required**
 
-**Option B: マルチリージョン配置（推奨）**
+**Option B: Multi-Region Deployment (Recommended)**
 ```typescript
-// ユーザーの地理的位置に基づいてシャード選択
+// Select shard based on user's geographic location
 function getSessionShardIdWithRegion(userId: string, region: string): string {
   const hash = simpleHash(userId);
   return `${region}-shard-${hash % 100}`;
 }
 
-// リージョン: us-west, us-east, eu-west, ap-northeast, ap-southeast
-// 5リージョン × 100シャード = 500シャード
-// 各リージョン: 200万セッション ÷ 100 = 2万セッション/シャード = 20MB
+// Regions: us-west, us-east, eu-west, ap-northeast, ap-southeast
+// 5 regions × 100 shards = 500 shards
+// Per region: 2M sessions ÷ 100 = 20K sessions/shard = 20MB
 ```
 
-**メリット**:
-- レイテンシ改善（ユーザーに近いリージョンで処理）
-- 負荷分散
-- 地理的冗長性
+**Benefits**:
+- Latency improvement (process in region close to user)
+- Load distribution
+- Geographic redundancy
 
-#### その他のDO
+#### Other DOs
 
-| DO | 1000万MAU | 1億MAU | 対策 |
-|----|-----------|--------|------|
-| **RateLimiterCounter** | 1000シャード | **10000シャード** | シャード数10倍 |
-| **RefreshTokenRotator** | client_id | client_id | 問題なし（自然分散） |
-| **ChallengeStore** | シングルトン | **100シャード** | user_idベース分散 |
-| **DPoPJTIStore** | シングルトン | **client_id** | シャーディング実装 |
-| **その他** | 現状維持 | 現状維持 | 問題なし |
+| DO | 10M MAU | 100M MAU | Countermeasure |
+|----|---------|----------|----------------|
+| **RateLimiterCounter** | 1000 shards | **10000 shards** | 10x shard count |
+| **RefreshTokenRotator** | client_id | client_id | No issue (natural distribution) |
+| **ChallengeStore** | Singleton | **100 shards** | user_id-based distribution |
+| **DPoPJTIStore** | Singleton | **client_id** | Implement sharding |
+| **Others** | Current state | Current state | No issue |
 
 ---
 
-### 1.3 R2ストレージ
+### 1.3 R2 Storage
 
-#### スケーラビリティ
-✅ **問題なし** - R2は無限にスケール可能
+#### Scalability
+✅ **No Issues** - R2 scales infinitely
 
-#### コスト推定（1億MAU）
-- ストレージ: 1億ユーザー × 500KB = **50TB**
-- 費用: $0.015/GB/月 × 50,000GB = **$750/月**
-- Read操作: 1億リクエスト/月 = **$36/月**
-- **合計: 約$786/月**
+#### Cost Estimation (100M MAU)
+- Storage: 100M users × 500KB = **50TB**
+- Cost: $0.015/GB/month × 50,000GB = **$750/month**
+- Read operations: 100M requests/month = **$36/month**
+- **Total: approximately $786/month**
 
-#### 最適化戦略
-1. **画像圧縮**
-   - WebPフォーマットへの変換
-   - サイズ削減: 500KB → 200KB
-   - ストレージ費用: $750 → $300
+#### Optimization Strategy
+1. **Image Compression**
+   - Conversion to WebP format
+   - Size reduction: 500KB → 200KB
+   - Storage cost: $750 → $300
 
 2. **Cloudflare Image Resizing**
-   - リアルタイムリサイズ
-   - 複数サイズを保存不要
+   - Real-time resizing
+   - No need to store multiple sizes
 
-3. **CDNキャッシュ最適化**
+3. **CDN Cache Optimization**
    - Cache-Control: immutable
-   - エッジキャッシュヒット率: 95%以上
+   - Edge cache hit rate: 95%+
 
 ---
 
-### 1.4 KVストレージ
+### 1.4 KV Storage
 
-#### スケーラビリティ
-✅ **十分対応可能**
+#### Scalability
+✅ **Fully Capable**
 
-#### 使用量推定（1億MAU）
-- **CLIENTS**: 100万クライアント → 2GB
-- **STATE_STORE**: 10万同時フロー → 200MB
-- **キャッシュ**: ユーザープロファイル1000万件 → 10GB
+#### Usage Estimation (100M MAU)
+- **CLIENTS**: 1M clients → 2GB
+- **STATE_STORE**: 100K concurrent flows → 200MB
+- **Cache**: 10M user profiles → 10GB
 
-#### コスト推定（1億MAU）
-- ストレージ: 12GB × $0.50/GB = **$6/月**
-- Read: 50億回/月（無料枠: 100億回）= **$0**
-- Write: 10億回/月（無料枠: 10億回）= **$0**
-- **合計: 約$6/月**
+#### Cost Estimation (100M MAU)
+- Storage: 12GB × $0.50/GB = **$6/month**
+- Read: 5B/month (free tier: 10B) = **$0**
+- Write: 1B/month (free tier: 1B) = **$0**
+- **Total: approximately $6/month**
 
 ---
 
-### 1.5 総合コスト推定（1億MAU、月間）
+### 1.5 Total Cost Estimation (100M MAU, Monthly)
 
-| サービス | 使用量 | 費用 |
+| Service | Usage | Cost |
 |---------|-------|------|
-| **Cloudflare Workers** | 100億リクエスト | $500（Bundleプラン） |
-| **Durable Objects** | 100億リクエスト | **$125,000** 🔴 |
-| **D1 (移行前)** | - | 使用不可 |
-| **Neon / PlanetScale** | 分散DB | **$2,000〜4,000** |
-| **R2** | 50TB、Read: 1億回 | $786 |
-| **KV** | 12GB、Read: 50億回 | $6 |
-| **CDN/Image Resizing** | 追加サービス | $500 |
-| **合計** | - | **約$128,800/月** |
+| **Cloudflare Workers** | 10B requests | $500 (Bundle plan) |
+| **Durable Objects** | 10B requests | **$125,000** 🔴 |
+| **D1 (pre-migration)** | - | Not usable |
+| **Neon / PlanetScale** | Distributed DB | **$2,000~4,000** |
+| **R2** | 50TB, Read: 100M | $786 |
+| **KV** | 12GB, Read: 5B | $6 |
+| **CDN/Image Resizing** | Additional services | $500 |
+| **Total** | - | **approximately $128,800/month** |
 
-**1ユーザーあたり**: $0.00129/月
+**Per user**: $0.00129/month
 
-#### コスト最適化の鍵：Durable Objects
-🔴 **DOが最大コスト要因**（全体の97%）
+#### Key to Cost Optimization: Durable Objects
+🔴 **DO is the largest cost factor** (97% of total)
 
-**最適化戦略**:
+**Optimization Strategy**:
 
-1. **キャッシング層の強化**
+1. **Strengthen Caching Layer**
    ```typescript
-   // SessionStoreアクセス前にKVでチェック
+   // Check KV before SessionStore access
    async function getSession(sessionId: string) {
-     // 1. KVキャッシュ（5ms）
+     // 1. KV cache (5ms)
      const cached = await env.KV.get(`session:${sessionId}`);
      if (cached) return JSON.parse(cached);
 
-     // 2. SessionStore DO（50ms）
+     // 2. SessionStore DO (50ms)
      const session = await fetchFromSessionStore(sessionId);
 
-     // 3. KVにキャッシュ（TTL: 5分）
+     // 3. Cache in KV (TTL: 5 minutes)
      await env.KV.put(`session:${sessionId}`, JSON.stringify(session), {
        expirationTtl: 300
      });
@@ -270,152 +285,174 @@ function getSessionShardIdWithRegion(userId: string, region: string): string {
    }
    ```
 
-   **効果**:
-   - キャッシュヒット率80% → DOリクエスト20%削減
-   - コスト削減: $125,000 → $100,000（**$25,000/月削減**）
+   **Effect**:
+   - 80% cache hit rate → 20% DO request reduction
+   - Cost reduction: $125,000 → $100,000 (**$25,000/month savings**)
 
-2. **セッション有効期限の最適化**
-   - 現在: 24時間
-   - 最適化: 4時間（非アクティブなら失効）
-   - アクティブセッション数: 50%削減
-   - メモリ使用量: 半減
+2. **Session Expiry Optimization**
+   - Current: 24 hours
+   - Optimized: 4 hours (expire if inactive)
+   - Active session count: 50% reduction
+   - Memory usage: halved
 
-3. **Read-only操作のKV化**
-   - セッション検証（読み取りのみ）→ KV
-   - セッション更新（書き込み）→ DO
-   - DOリクエスト: さらに30%削減
+3. **KV-ify Read-only Operations**
+   - Session validation (read-only) → KV
+   - Session updates (write) → DO
+   - DO requests: further 30% reduction
 
-**最終最適化後コスト**:
-- DO: $125,000 → **$50,000**（60%削減）
-- 総コスト: $128,800 → **$53,800/月**
+**Final Optimized Cost**:
+- DO: $125,000 → **$50,000** (60% reduction)
+- Total cost: $128,800 → **$53,800/month**
 
 ---
 
-## 2. 2億MAU（LINEレベル）での分析
+## 2. Analysis at 200M MAU (LINE Level)
 
-### 2.1 スケールの現実
+### 2.1 Scale Reality
 
-#### 数値で見るLINEレベル
-- **2億MAU**
-- **アクティブ率**: 30%（LINEの実績）= **6000万DAU**
-- **ピーク同時接続**: 1000万〜2000万
-- **1日あたりメッセージ**: 数十億
-- **QPS**: 平均20万、ピーク50万
+#### LINE Level in Numbers
+- **200M MAU**
+- **Active Rate**: 30% (LINE's track record) = **60M DAU**
+- **Peak Concurrent Connections**: 10M~20M
+- **Daily Messages**: Billions
+- **QPS**: Average 200K, Peak 500K
 
-#### Cloudflareの限界
-⚠️ Cloudflare単独では対応困難
+#### Cloudflare Limitations
+⚠️ Difficult to handle with Cloudflare alone
 
-**理由**:
-1. **Durable Objectsのコスト爆発**
-   - 2億MAU → 200億DO リクエスト/月
-   - コスト: **$250,000/月**（DOのみ）
-   - **コスト最適化しても$100,000/月以上**
+**Reasons**:
+1. **Durable Objects Cost Explosion**
+   - 200M MAU → 20B DO requests/month
+   - Cost: **$250,000/month** (DO only)
+   - **Even with cost optimization, over $100,000/month**
 
-2. **グローバルレイテンシ**
-   - 単一リージョンDB: 世界中から200-500ms
-   - **ユーザー体験の劣化**
+2. **Global Latency**
+   - Single-region DB: 200-500ms worldwide
+   - **User experience degradation**
 
-3. **管理複雑性**
-   - 1000+のDOシャード
-   - 複数の外部DB
-   - 監視・運用コストの増大
+3. **Management Complexity**
+   - 1000+ DO shards
+   - Multiple external DBs
+   - Increased monitoring & operational costs
 
-### 2.2 必要なアーキテクチャ変更
+### 2.2 Required Architecture Changes
 
-#### Option A: ハイブリッドアーキテクチャ（推奨）
+#### Option A: Hybrid Architecture (Recommended)
 
+```mermaid
+graph TB
+    subgraph GLB["Global Load Balancer<br/>(Cloudflare / AWS Global Accelerator)"]
+        LB[Load Balancer]
+    end
+
+    subgraph Regions["Regional Deployments"]
+        subgraph USW["US-West Region"]
+            W1["Cloudflare<br/>Workers"]
+            R1["Redis<br/>Cluster"]
+            DB1["DB<br/>Replica"]
+            S1["R2/S3<br/>Storage"]
+        end
+
+        subgraph USE["US-East Region"]
+            W2["Cloudflare<br/>Workers"]
+            R2["Redis<br/>Cluster"]
+            DB2["DB<br/>Replica"]
+            S2["R2/S3<br/>Storage"]
+        end
+
+        subgraph EU["EU-West Region"]
+            W3["Cloudflare<br/>Workers"]
+            R3["Redis<br/>Cluster"]
+            DB3["DB<br/>Replica"]
+            S3["R2/S3<br/>Storage"]
+        end
+
+        subgraph AP["AP-Northeast Region"]
+            W4["Cloudflare<br/>Workers"]
+            R4["Redis<br/>Cluster"]
+            DB4["DB<br/>Replica"]
+            S4["R2/S3<br/>Storage"]
+        end
+    end
+
+    subgraph GlobalDB["CockroachDB / Vitess<br/>(Global Distributed DB)"]
+        GDB["Automatic Sharding<br/>Multi-region Replication<br/>Strong Consistency"]
+    end
+
+    LB --> W1
+    LB --> W2
+    LB --> W3
+    LB --> W4
+
+    W1 --> R1
+    W2 --> R2
+    W3 --> R3
+    W4 --> R4
+
+    R1 --> GDB
+    R2 --> GDB
+    R3 --> GDB
+    R4 --> GDB
+
+    DB1 --> GDB
+    DB2 --> GDB
+    DB3 --> GDB
+    DB4 --> GDB
 ```
-┌─────────────────────────────────────────────────────────┐
-│ グローバルロードバランサー (Cloudflare / AWS Global       │
-│ Accelerator)                                            │
-└───────────────────┬─────────────────────────────────────┘
-                    │
-        ┌───────────┴───────────┬──────────────┬─────────────┐
-        │                       │              │             │
-    ┌───▼────┐            ┌────▼───┐     ┌───▼────┐   ┌───▼────┐
-    │ US-West│            │US-East │     │EU-West │   │AP-NE   │
-    │ リージョン│            │リージョン │     │リージョン │   │リージョン │
-    └───┬────┘            └────┬───┘     └───┬────┘   └───┬────┘
-        │                      │             │            │
-    ┌───▼──────────────────────▼─────────────▼────────────▼───┐
-    │ Cloudflare Workers (エッジコンピューティング)            │
-    │ - ステートレスロジック                                   │
-    │ - 認証・認可                                            │
-    │ - レート制限                                            │
-    └───┬──────────────────────┬─────────────┬────────────┬───┘
-        │                      │             │            │
-    ┌───▼───┐            ┌────▼───┐     ┌───▼────┐  ┌───▼────┐
-    │ Redis │            │ Redis  │     │ Redis  │  │ Redis  │
-    │Cluster│            │Cluster │     │Cluster │  │Cluster │
-    │(Cache)│            │(Cache) │     │(Cache) │  │(Cache) │
-    └───┬───┘            └────┬───┘     └───┬────┘  └───┬────┘
-        │                     │              │           │
-    ┌───▼──────────────────────▼──────────────▼───────────▼───┐
-    │ CockroachDB / Vitess (グローバル分散DB)                │
-    │ - 強整合性                                              │
-    │ - 自動シャーディング                                     │
-    │ - マルチリージョンレプリケーション                        │
-    └───┬──────────────────────┬─────────────┬────────────┬───┘
-        │                      │             │            │
-    ┌───▼───┐            ┌────▼───┐     ┌───▼────┐  ┌───▼────┐
-    │R2/S3  │            │R2/S3   │     │R2/S3   │  │R2/S3   │
-    │(Files)│            │(Files) │     │(Files) │  │(Files) │
-    └───────┘            └────────┘     └────────┘  └────────┘
-```
 
-#### 各レイヤーの役割
+#### Each Layer's Role
 
-**1. Cloudflare Workers（エッジ層）**
-- 役割: ステートレスな認証・認可ロジック
-- 保持: なし（完全ステートレス化）
-- レイテンシ: <10ms
+**1. Cloudflare Workers (Edge Layer)**
+- Role: Stateless authentication & authorization logic
+- Retention: None (complete stateless)
+- Latency: <10ms
 
-**2. Redis Cluster（キャッシュ層）**
-- 役割: セッション、ユーザープロファイル、クライアント情報
-- TTL: 5分〜1時間
-- キャッシュヒット率: 95%以上
-- レイテンシ: 1-5ms
-- コスト: AWS ElastiCache約$5,000/月（各リージョン）
+**2. Redis Cluster (Cache Layer)**
+- Role: Sessions, user profiles, client info
+- TTL: 5 minutes~1 hour
+- Cache hit rate: 95%+
+- Latency: 1-5ms
+- Cost: AWS ElastiCache approximately $5,000/month (per region)
 
-**3. CockroachDB / Vitess（データ層）**
-- 役割: 永続データストレージ
-- シャーディング: 自動（ユーザーID、地理情報）
-- レプリケーション: マルチリージョン
-- レイテンシ: 10-50ms（同一リージョン）、50-200ms（クロスリージョン）
-- コスト: 約$10,000〜20,000/月
+**3. CockroachDB / Vitess (Data Layer)**
+- Role: Persistent data storage
+- Sharding: Automatic (user ID, geographic info)
+- Replication: Multi-region
+- Latency: 10-50ms (same region), 50-200ms (cross-region)
+- Cost: approximately $10,000~20,000/month
 
-**4. R2/S3（オブジェクトストレージ）**
-- 役割: アバター、ファイル
-- 分散: グローバルCDN
-- レイテンシ: 10-50ms
-- コスト: 約$1,500/月（2億ユーザー × 500KB = 100TB）
+**4. R2/S3 (Object Storage)**
+- Role: Avatars, files
+- Distribution: Global CDN
+- Latency: 10-50ms
+- Cost: approximately $1,500/month (200M users × 500KB = 100TB)
 
-#### Durable Objectsの使用変更
+#### Changes to Durable Objects Usage
 
-**現在のDO使用**:
+**Current DO Usage**:
 - SessionStore ❌ → Redis Cluster
-- AuthorizationCodeStore ❌ → Redis（TTL: 60秒）
-- RefreshTokenRotator ⚠️ → 部分的に残す（盗難検知ロジック）
-- KeyManager ✅ → 継続使用（軽量）
-- ChallengeStore ❌ → Redis（TTL: 15分）
-- RateLimiterCounter ❌ → Redis（sliding windowアルゴリズム）
-- PARRequestStore ❌ → Redis（TTL: 10分）
-- DPoPJTIStore ❌ → Redis（TTL: 1時間）
-- TokenRevocationStore ✅ → 継続使用（グローバル共有）
-- DeviceCodeStore ❌ → Redis（TTL: 15分）
+- AuthorizationCodeStore ❌ → Redis (TTL: 60 seconds)
+- RefreshTokenRotator ⚠️ → Partially retain (theft detection logic)
+- KeyManager ✅ → Continue use (lightweight)
+- ChallengeStore ❌ → Redis (TTL: 15 minutes)
+- RateLimiterCounter ❌ → Redis (sliding window algorithm)
+- PARRequestStore ❌ → Redis (TTL: 10 minutes)
+- DPoPJTIStore ❌ → Redis (TTL: 1 hour)
+- TokenRevocationStore ✅ → Continue use (global sharing)
+- DeviceCodeStore ❌ → Redis (TTL: 15 minutes)
 
-**DO使用率**: 90% → 10%
-**DOコスト**: $250,000 → **$25,000/月**
+**DO Usage Rate**: 90% → 10%
+**DO Cost**: $250,000 → **$25,000/month**
 
 ---
 
-### 2.3 Redis Cluster設計
+### 2.3 Redis Cluster Design
 
-#### キャッシュ戦略
+#### Cache Strategy
 
-**1. セッション管理**
+**1. Session Management**
 ```typescript
-// Redis Cluster（各リージョン）
+// Redis Cluster (per region)
 interface SessionCache {
   sessionId: string;
   userId: string;
@@ -427,10 +464,10 @@ interface SessionCache {
 async function createSession(userId: string, ttl: number) {
   const session = { ... };
 
-  // 1. DBに書き込み
+  // 1. Write to DB
   await db.prepare("INSERT INTO sessions ...").run();
 
-  // 2. Redisにキャッシュ
+  // 2. Cache in Redis
   await redis.setex(
     `session:${sessionId}`,
     ttl,
@@ -440,17 +477,17 @@ async function createSession(userId: string, ttl: number) {
 
 // Read-through cache
 async function getSession(sessionId: string) {
-  // 1. Redisから取得
+  // 1. Retrieve from Redis
   const cached = await redis.get(`session:${sessionId}`);
   if (cached) return JSON.parse(cached);
 
-  // 2. DBから取得
+  // 2. Retrieve from DB
   const session = await db.prepare(
     "SELECT * FROM sessions WHERE id = ?"
   ).bind(sessionId).first();
 
   if (session) {
-    // 3. Redisにキャッシュ
+    // 3. Cache in Redis
     await redis.setex(
       `session:${sessionId}`,
       3600,
@@ -462,25 +499,25 @@ async function getSession(sessionId: string) {
 }
 ```
 
-**2. レート制限**
+**2. Rate Limiting**
 ```typescript
-// Redisのsliding window
+// Redis sliding window
 async function checkRateLimit(clientIP: string, maxRequests: number, windowSeconds: number) {
   const now = Date.now();
   const key = `ratelimit:${clientIP}`;
   const windowStart = now - windowSeconds * 1000;
 
-  // 1. 古いエントリを削除
+  // 1. Remove old entries
   await redis.zremrangebyscore(key, 0, windowStart);
 
-  // 2. 現在のカウント取得
+  // 2. Get current count
   const count = await redis.zcard(key);
 
   if (count >= maxRequests) {
     return { allowed: false, retryAfter: windowSeconds };
   }
 
-  // 3. 新しいリクエストを追加
+  // 3. Add new request
   await redis.zadd(key, now, `${now}:${Math.random()}`);
   await redis.expire(key, windowSeconds);
 
@@ -488,9 +525,9 @@ async function checkRateLimit(clientIP: string, maxRequests: number, windowSecon
 }
 ```
 
-**3. ユーザープロファイルキャッシュ**
+**3. User Profile Cache**
 ```typescript
-// TTL: 1時間
+// TTL: 1 hour
 async function getUserProfile(userId: string) {
   const key = `user:${userId}`;
 
@@ -510,56 +547,80 @@ async function getUserProfile(userId: string) {
 }
 ```
 
-#### Redis Clusterサイジング
+#### Redis Cluster Sizing
 
-**1リージョンあたり**:
-- メモリ: 100GB（セッション、キャッシュ）
-- ノード数: 6ノード（3マスター + 3レプリカ）
-- スループット: 100万ops/秒
-- 可用性: 99.99%
+**Per Region**:
+- Memory: 100GB (sessions, cache)
+- Node count: 6 nodes (3 masters + 3 replicas)
+- Throughput: 1M ops/second
+- Availability: 99.99%
 
-**全体**:
-- 4リージョン × 6ノード = 24ノード
-- 総メモリ: 400GB
-- コスト: AWS ElastiCache
-  - 4リージョン × $1,200/月 = **$4,800/月**
+**Total**:
+- 4 regions × 6 nodes = 24 nodes
+- Total memory: 400GB
+- Cost: AWS ElastiCache
+  - 4 regions × $1,200/month = **$4,800/month**
 
 ---
 
-### 2.4 データベース設計
+### 2.4 Database Design
 
-#### CockroachDBの選択理由
+#### Why Choose CockroachDB
 
-✅ **PostgreSQL互換**（移行が容易）
-✅ **グローバル分散**（マルチリージョン対応）
-✅ **強整合性**（ACID保証）
-✅ **自動シャーディング**（管理不要）
-✅ **水平スケーラビリティ**（無限にスケール）
+✅ **PostgreSQL Compatible** (Easy migration)
+✅ **Global Distribution** (Multi-region support)
+✅ **Strong Consistency** (ACID guarantee)
+✅ **Automatic Sharding** (No management required)
+✅ **Horizontal Scalability** (Scales infinitely)
 
-#### クラスター構成
+#### Cluster Configuration
 
+```mermaid
+graph TB
+    subgraph CockroachDB["CockroachDB Serverless (Managed)"]
+        subgraph USW["US-West<br/>3 Nodes"]
+            N1["Node 1"]
+            N2["Node 2"]
+            N3["Node 3"]
+        end
+
+        subgraph USE["US-East<br/>3 Nodes"]
+            N4["Node 4"]
+            N5["Node 5"]
+            N6["Node 6"]
+        end
+
+        subgraph EU["EU-West<br/>3 Nodes"]
+            N7["Node 7"]
+            N8["Node 8"]
+            N9["Node 9"]
+        end
+
+        subgraph AP["AP-Northeast<br/>3 Nodes"]
+            N10["Node 10"]
+            N11["Node 11"]
+            N12["Node 12"]
+        end
+    end
+
+    Repl["Automatic Data Replication<br/>(3 Replicas)<br/>Sharding: User ID Range"]
+
+    N1 -.-> Repl
+    N4 -.-> Repl
+    N7 -.-> Repl
+    N10 -.-> Repl
 ```
-┌─────────────────────────────────────────────────────┐
-│ CockroachDB Serverless（マネージド）                  │
-├─────────────────────────────────────────────────────┤
-│ US-West      US-East      EU-West      AP-Northeast │
-│ 3ノード      3ノード      3ノード      3ノード        │
-├─────────────────────────────────────────────────────┤
-│ データ自動レプリケーション（3レプリカ）                │
-│ シャーディング: ユーザーID範囲                        │
-└─────────────────────────────────────────────────────┘
-```
 
-**データ配置戦略**:
-- **users**: 地理的配置（ユーザーの主要アクセスリージョン）
-- **sessions**: 地理的配置
-- **oauth_clients**: グローバルレプリケーション（全リージョン）
-- **audit_log**: US-Westプライマリ（コスト削減）
+**Data Placement Strategy**:
+- **users**: Geographic placement (user's primary access region)
+- **sessions**: Geographic placement
+- **oauth_clients**: Global replication (all regions)
+- **audit_log**: US-West primary (cost reduction)
 
-#### シャーディング戦略
+#### Sharding Strategy
 
 ```sql
--- CockroachDB自動シャーディング
+-- CockroachDB automatic sharding
 CREATE TABLE users (
   id UUID PRIMARY KEY,
   region TEXT NOT NULL, -- 'us-west', 'us-east', 'eu-west', 'ap-ne'
@@ -567,7 +628,7 @@ CREATE TABLE users (
   ...
 ) PARTITION BY LIST (region);
 
--- リージョンごとのパーティション
+-- Partition per region
 ALTER TABLE users PARTITION VALUES IN ('us-west')
   CONFIGURE ZONE USING
     constraints = '[+region=us-west]',
@@ -578,326 +639,326 @@ ALTER TABLE users PARTITION VALUES IN ('us-east')
     constraints = '[+region=us-east]',
     num_replicas = 3;
 
--- 以下同様に他リージョンも設定
+-- Configure other regions similarly
 ```
 
-#### コスト推定
+#### Cost Estimation
 
 **CockroachDB Serverless**:
-- ストレージ: 500GB × $1/GB = $500/月
-- コンピュート: 100万Request Units/月 = $10,000/月
-- バックアップ: $500/月
-- **合計: 約$11,000/月**
+- Storage: 500GB × $1/GB = $500/month
+- Compute: 1M Request Units/month = $10,000/month
+- Backup: $500/month
+- **Total: approximately $11,000/month**
 
-**代替案: Vitess + MySQL**:
-- 自己管理が必要
-- コスト: 約$8,000/月（EC2 + RDS）
-- 運用コスト: エンジニア2名 × $10,000 = $20,000/月
-- **総コスト: $28,000/月**
+**Alternative: Vitess + MySQL**:
+- Self-management required
+- Cost: approximately $8,000/month (EC2 + RDS)
+- Operational cost: 2 engineers × $10,000 = $20,000/month
+- **Total cost: $28,000/month**
 
-**結論**: CockroachDB Serverlessの方がコスト効率的
+**Conclusion**: CockroachDB Serverless is more cost-effective
 
 ---
 
-### 2.5 総合コスト推定（2億MAU、月間）
+### 2.5 Total Cost Estimation (200M MAU, Monthly)
 
-| カテゴリ | サービス | 費用 |
-|---------|---------|------|
-| **コンピュート** | Cloudflare Workers | $1,000 |
-| | Durable Objects（10%使用） | $25,000 |
-| **データベース** | CockroachDB Serverless | $11,000 |
-| **キャッシュ** | Redis Cluster（4リージョン） | $4,800 |
-| **ストレージ** | R2/S3（100TB） | $1,500 |
+| Category | Service | Cost |
+|----------|---------|------|
+| **Compute** | Cloudflare Workers | $1,000 |
+| | Durable Objects (10% usage) | $25,000 |
+| **Database** | CockroachDB Serverless | $11,000 |
+| **Cache** | Redis Cluster (4 regions) | $4,800 |
+| **Storage** | R2/S3 (100TB) | $1,500 |
 | **CDN** | Cloudflare Image Resizing | $1,000 |
-| **監視** | Datadog / Grafana Cloud | $2,000 |
-| **バックアップ** | 各種バックアップ | $1,000 |
-| **合計** | - | **約$47,300/月** |
+| **Monitoring** | Datadog / Grafana Cloud | $2,000 |
+| **Backup** | Various backups | $1,000 |
+| **Total** | - | **approximately $47,300/month** |
 
-**1ユーザーあたり**: $0.00024/月
+**Per user**: $0.00024/month
 
-#### コスト比較
+#### Cost Comparison
 
-| MAU | 月額コスト | 1ユーザーコスト | 主要コスト要因 |
-|-----|-----------|----------------|---------------|
-| 1000万 | $12,600 | $0.00126 | DO (99%) |
-| 1億（最適化前） | $128,800 | $0.00129 | DO (97%) |
-| 1億（最適化後） | $53,800 | $0.00054 | DO (93%), DB (7%) |
-| 2億（ハイブリッド） | $47,300 | $0.00024 | DO (53%), DB (23%), Redis (10%) |
+| MAU | Monthly Cost | Per User Cost | Main Cost Drivers |
+|-----|--------------|---------------|-------------------|
+| 10M | $12,600 | $0.00126 | DO (99%) |
+| 100M (pre-optimization) | $128,800 | $0.00129 | DO (97%) |
+| 100M (post-optimization) | $53,800 | $0.00054 | DO (93%), DB (7%) |
+| 200M (hybrid) | $47,300 | $0.00024 | DO (53%), DB (23%), Redis (10%) |
 
-**結論**: **2億MAUでは、1ユーザーコストが1/5に削減**
+**Conclusion**: **At 200M MAU, per-user cost is reduced to 1/5**
 
-理由:
-- DOの大幅削減（90%削減）
-- Redisによる効率的キャッシング
-- スケールメリット
+Reasons:
+- Significant DO reduction (90% reduction)
+- Efficient caching with Redis
+- Economies of scale
 
 ---
 
-### 2.6 レイテンシ分析
+### 2.6 Latency Analysis
 
-#### リージョン別レイテンシ（2億MAU、ハイブリッドアーキテクチャ）
+#### Regional Latency (200M MAU, Hybrid Architecture)
 
-| 操作 | 同一リージョン | クロスリージョン | 旧アーキテクチャ（1000万MAU） |
-|------|---------------|-----------------|------------------------------|
-| **セッション検証** | 5-10ms（Redis） | 50-100ms | 50-100ms（DO） |
-| **ログイン** | 20-50ms | 100-200ms | 50-100ms |
-| **トークン発行** | 15-40ms | 80-150ms | 30-80ms |
-| **UserInfo取得** | 10-30ms | 60-120ms | 20-50ms |
-| **プロファイル更新** | 30-80ms | 150-300ms | 50-150ms |
+| Operation | Same Region | Cross Region | Old Architecture (10M MAU) |
+|-----------|-------------|--------------|----------------------------|
+| **Session Validation** | 5-10ms (Redis) | 50-100ms | 50-100ms (DO) |
+| **Login** | 20-50ms | 100-200ms | 50-100ms |
+| **Token Issuance** | 15-40ms | 80-150ms | 30-80ms |
+| **UserInfo Retrieval** | 10-30ms | 60-120ms | 20-50ms |
+| **Profile Update** | 30-80ms | 150-300ms | 50-150ms |
 
-**平均レイテンシ**:
-- 同一リージョン: **20-50ms** ✅
-- クロスリージョン: **100-200ms** ⚠️
+**Average Latency**:
+- Same region: **20-50ms** ✅
+- Cross region: **100-200ms** ⚠️
 
-#### レイテンシ最適化戦略
+#### Latency Optimization Strategy
 
-1. **地理的ルーティング**
+1. **Geographic Routing**
    ```typescript
    // Cloudflare Workers
    export default {
      async fetch(request: Request, env: Env) {
-       // リクエストの地理情報を取得
+       // Get request's geographic info
        const region = request.cf?.region || 'us-west';
 
-       // 最寄りのRedisに接続
+       // Connect to nearest Redis
        const redis = getRedisForRegion(region);
 
-       // 処理
+       // Processing
        const session = await redis.get(`session:${sessionId}`);
        ...
      }
    }
    ```
 
-2. **データローカリティ**
-   - ユーザーデータを主要アクセスリージョンに配置
-   - 90%以上のリクエストが同一リージョンで完結
+2. **Data Locality**
+   - Place user data in primary access region
+   - 90%+ of requests complete in same region
 
-3. **リードレプリカの活用**
-   - 読み取り操作は最寄りのレプリカから
-   - 書き込み操作のみプライマリへ
+3. **Utilize Read Replicas**
+   - Read operations from nearest replica
+   - Write operations only to primary
 
 ---
 
-### 2.7 移行ロードマップ（1億 → 2億MAU）
+### 2.7 Migration Roadmap (100M → 200M MAU)
 
-#### Phase 1: Redis Cluster導入（3ヶ月）
+#### Phase 1: Introduce Redis Cluster (3 months)
 
-**目標**: DOコストの50%削減
+**Goal**: 50% DO cost reduction
 
-**タスク**:
-1. **Redis Cluster構築**（1ヶ月）
-   - 4リージョンにクラスター配置
-   - セキュリティグループ設定
-   - 監視・アラート設定
+**Tasks**:
+1. **Build Redis Cluster** (1 month)
+   - Deploy clusters in 4 regions
+   - Configure security groups
+   - Set up monitoring & alerts
 
-2. **SessionStoreのRedis移行**（1ヶ月）
-   - 新規セッション: Redisに書き込み
-   - 既存セッション: DO + Redis（並行運用）
-   - 検証期間: 2週間
+2. **Migrate SessionStore to Redis** (1 month)
+   - New sessions: Write to Redis
+   - Existing sessions: DO + Redis (parallel operation)
+   - Validation period: 2 weeks
 
-3. **その他DOのRedis移行**（1ヶ月）
+3. **Migrate Other DOs to Redis** (1 month)
    - ChallengeStore → Redis
    - RateLimiterCounter → Redis
    - DPoPJTIStore → Redis
    - PARRequestStore → Redis
 
-**効果**:
-- DOリクエスト: 50%削減
-- コスト: $125,000 → $62,500（$62,500削減）
+**Effect**:
+- DO requests: 50% reduction
+- Cost: $125,000 → $62,500 ($62,500 savings)
 
-#### Phase 2: CockroachDB導入（3ヶ月）
+#### Phase 2: Introduce CockroachDB (3 months)
 
-**目標**: D1からの完全移行
+**Goal**: Complete migration from D1
 
-**タスク**:
-1. **CockroachDBクラスター構築**（1ヶ月）
-   - 4リージョンに配置
-   - レプリケーション設定
-   - バックアップ設定
+**Tasks**:
+1. **Build CockroachDB Cluster** (1 month)
+   - Deploy in 4 regions
+   - Configure replication
+   - Set up backups
 
-2. **スキーマ移行**（2週間）
-   - D1スキーマをCockroachDB用に変換
-   - インデックス最適化
-   - パーティショニング設定
+2. **Schema Migration** (2 weeks)
+   - Convert D1 schema for CockroachDB
+   - Optimize indexes
+   - Configure partitioning
 
-3. **データ移行**（1ヶ月）
-   - バッチ移行ツール開発
-   - 段階的データ移行（1日100万ユーザー）
-   - 整合性チェック
+3. **Data Migration** (1 month)
+   - Develop batch migration tool
+   - Gradual data migration (1M users/day)
+   - Consistency checks
 
-4. **アプリケーション移行**（1ヶ月）
-   - 読み取り: CockroachDB（50% → 100%）
-   - 書き込み: 並行運用（2週間）→ CockroachDB（100%）
+4. **Application Migration** (1 month)
+   - Reads: CockroachDB (50% → 100%)
+   - Writes: Parallel operation (2 weeks) → CockroachDB (100%)
 
-**効果**:
-- スケーラビリティ: 無限
-- レイテンシ: 改善（特にグローバル）
+**Effect**:
+- Scalability: Infinite
+- Latency: Improved (especially global)
 
-#### Phase 3: グローバル最適化（3ヶ月）
+#### Phase 3: Global Optimization (3 months)
 
-**目標**: レイテンシ最適化
+**Goal**: Latency optimization
 
-**タスク**:
-1. **地理的ルーティング実装**（1ヶ月）
-   - Cloudflare Workersでリージョン判定
-   - 最寄りのRedis/DBに接続
+**Tasks**:
+1. **Implement Geographic Routing** (1 month)
+   - Region detection in Cloudflare Workers
+   - Connect to nearest Redis/DB
 
-2. **データローカリティ最適化**（1ヶ月）
-   - ユーザーデータを主要リージョンに再配置
-   - マイグレーションツール開発
+2. **Optimize Data Locality** (1 month)
+   - Relocate user data to primary region
+   - Develop migration tool
 
-3. **キャッシング戦略の洗練**（1ヶ月）
-   - TTL最適化
-   - キャッシュウォーミング
-   - キャッシュ無効化戦略
+3. **Refine Caching Strategy** (1 month)
+   - TTL optimization
+   - Cache warming
+   - Cache invalidation strategy
 
-**効果**:
-- 同一リージョンレイテンシ: 20-50ms
-- キャッシュヒット率: 95%以上
+**Effect**:
+- Same-region latency: 20-50ms
+- Cache hit rate: 95%+
 
-#### Phase 4: 運用自動化（継続）
+#### Phase 4: Operational Automation (Ongoing)
 
-**タスク**:
-1. **監視ダッシュボード構築**
-   - リアルタイムメトリクス
-   - アラート設定
-   - インシデント管理
+**Tasks**:
+1. **Build Monitoring Dashboard**
+   - Real-time metrics
+   - Alert configuration
+   - Incident management
 
-2. **自動スケーリング**
-   - Redisクラスターの自動スケール
-   - CockroachDBの自動スケール
+2. **Auto-scaling**
+   - Automatic scaling of Redis clusters
+   - Automatic scaling of CockroachDB
 
-3. **災害復旧訓練**
-   - リージョン障害シミュレーション
-   - データ復旧手順の確立
+3. **Disaster Recovery Drills**
+   - Region failure simulation
+   - Establish data recovery procedures
 
 ---
 
-## 3. LINEとの比較
+## 3. Comparison with LINE
 
-### LINEのアーキテクチャ（推測）
+### LINE's Architecture (Estimated)
 
-LINEは2億MAU以上を持つグローバルメッセージングプラットフォームです。公開情報から推測されるアーキテクチャ:
+LINE is a global messaging platform with 200M+ MAU. Architecture inferred from public information:
 
-#### データストア
-- **HBase**（分散NoSQL）
-  - メッセージ履歴
-  - ユーザープロファイル
-- **Cassandra**（分散NoSQL）
-  - タイムライン
-  - 通知
+#### Data Stores
+- **HBase** (Distributed NoSQL)
+  - Message history
+  - User profiles
+- **Cassandra** (Distributed NoSQL)
+  - Timeline
+  - Notifications
 - **Redis**
-  - セッション管理
-  - キャッシュ
-- **MySQL**（シャーディング）
-  - ユーザー認証情報
-  - 友達関係
+  - Session management
+  - Cache
+- **MySQL** (Sharding)
+  - User authentication info
+  - Friend relationships
 
-#### コンピューティング
-- **独自データセンター**（日本、韓国、台湾、タイ、インドネシア）
-- **Kubernetes**（コンテナオーケストレーション）
-- **gRPC**（マイクロサービス間通信）
+#### Computing
+- **Own Data Centers** (Japan, Korea, Taiwan, Thailand, Indonesia)
+- **Kubernetes** (Container orchestration)
+- **gRPC** (Microservice communication)
 
 #### CDN
-- **Akamai / Cloudflare**（画像、動画配信）
+- **Akamai / Cloudflare** (Image, video distribution)
 
-#### 推定コスト（2億MAU）
-- インフラ: $500,000〜1,000,000/月
-- 人件費（100+エンジニア）: $1,000,000/月
-- **総コスト: $1.5M〜2M/月**
+#### Estimated Cost (200M MAU)
+- Infrastructure: $500,000~1,000,000/month
+- Personnel (100+ engineers): $1,000,000/month
+- **Total cost: $1.5M~2M/month**
 
-### Authrimハイブリッドアーキテクチャとの比較
+### Comparison with Authrim Hybrid Architecture
 
-| 項目 | LINE（推測） | Authrimハイブリッド | 評価 |
-|------|-------------|------------------|------|
-| **インフラ** | 独自DC + クラウド | Cloudflare + マネージドDB | Authrim有利（管理コスト低） |
-| **月額コスト** | $1.5M〜2M | $47,300 | Authrim圧勝（1/30） |
-| **スケーラビリティ** | 無限 | 無限 | 同等 |
-| **レイテンシ** | 10-30ms | 20-50ms | LINE有利（独自DC） |
-| **可用性** | 99.99% | 99.9% | LINE有利 |
-| **開発速度** | 遅い（複雑） | 速い（マネージド） | Authrim有利 |
-| **運用負荷** | 高い | 低い | Authrim有利 |
+| Item | LINE (Estimated) | Authrim Hybrid | Evaluation |
+|------|-----------------|----------------|------------|
+| **Infrastructure** | Own DC + Cloud | Cloudflare + Managed DB | Authrim advantage (low management cost) |
+| **Monthly Cost** | $1.5M~2M | $47,300 | Authrim wins (1/30) |
+| **Scalability** | Infinite | Infinite | Equal |
+| **Latency** | 10-30ms | 20-50ms | LINE advantage (own DC) |
+| **Availability** | 99.99% | 99.9% | LINE advantage |
+| **Development Speed** | Slow (complex) | Fast (managed) | Authrim advantage |
+| **Operational Load** | High | Low | Authrim advantage |
 
-**結論**:
-- **コスト効率**: Authrimが圧倒的に有利
-- **パフォーマンス**: LINEが若干有利（独自DCのため）
-- **開発・運用**: Authrimが有利（マネージドサービス活用）
-
----
-
-## 4. 推奨アーキテクチャ決定木
-
-```
-1000万MAU以下
-├─ 現行アーキテクチャ（Cloudflare中心）
-└─ Phase 2最適化（DOシャーディング）実装
-
-1000万〜5000万MAU
-├─ D1 → Neon/PlanetScale移行
-├─ SessionStore: 1000シャード
-└─ キャッシング強化
-
-5000万〜1億MAU
-├─ Redis Cluster導入
-├─ DOの部分的Redis移行（50%削減）
-└─ マルチリージョン配置開始
-
-1億〜2億MAU
-├─ ハイブリッドアーキテクチャ（本ドキュメント）
-├─ CockroachDB導入
-├─ DO 90%削減（Redis置き換え）
-└─ グローバル最適化
-
-2億MAU以上
-├─ マイクロサービス化検討
-├─ 独自データセンター検討
-├─ Kafka等のメッセージング基盤
-└─ 専任インフラチーム組成
-```
+**Conclusion**:
+- **Cost Efficiency**: Authrim overwhelmingly advantageous
+- **Performance**: LINE slightly advantageous (own DC)
+- **Development & Operations**: Authrim advantageous (managed services)
 
 ---
 
-## 5. まとめ
+## 4. Recommended Architecture Decision Tree
 
-### 1億MAU
-✅ **対応可能** - ただし、以下が必須:
-1. D1 → Neon/PlanetScale移行
-2. SessionStore: 1000シャードに拡張
-3. キャッシング強化（KV活用）
-4. コスト: 約$54,000/月（最適化後）
+```
+10M MAU or less
+├─ Current architecture (Cloudflare-centric)
+└─ Implement Phase 2 optimization (DO sharding)
 
-### 2億MAU（LINEレベル）
-✅ **対応可能** - アーキテクチャの根本的変更が必須:
-1. **ハイブリッドアーキテクチャ**
-   - Cloudflare Workers（エッジ）
-   - Redis Cluster（キャッシュ）
-   - CockroachDB（DB）
-   - R2/S3（ストレージ）
+10M~50M MAU
+├─ D1 → Neon/PlanetScale migration
+├─ SessionStore: 1000 shards
+└─ Strengthen caching
 
-2. **DOの役割変更**
-   - 90%削減（Redis置き換え）
-   - 残り10%: KeyManager等の軽量DO
+50M~100M MAU
+├─ Introduce Redis Cluster
+├─ Partial Redis migration of DOs (50% reduction)
+└─ Start multi-region deployment
 
-3. **マルチリージョン配置**
-   - 4リージョン（US-West, US-East, EU-West, AP-NE）
-   - 地理的ルーティング
+100M~200M MAU
+├─ Hybrid architecture (this document)
+├─ Introduce CockroachDB
+├─ 90% DO reduction (Redis replacement)
+└─ Global optimization
 
-4. **コスト**: 約$47,000/月
-   - 1ユーザー: $0.00024/月
-   - LINEの1/30のコスト効率
+200M MAU+
+├─ Consider microservice architecture
+├─ Consider own data centers
+├─ Messaging infrastructure like Kafka
+└─ Form dedicated infrastructure team
+```
 
-### 実装タイムライン
+---
 
-| フェーズ | 期間 | 対象MAU | 必須タスク |
-|---------|------|---------|-----------|
-| Phase 1 | 0-6ヶ月 | 〜1000万 | 現行最適化 |
-| Phase 2 | 6-12ヶ月 | 1000万〜5000万 | Neon移行 |
-| Phase 3 | 12-18ヶ月 | 5000万〜1億 | Redis導入 |
-| Phase 4 | 18-24ヶ月 | 1億〜2億 | ハイブリッド化 |
+## 5. Summary
 
-### 結論
+### 100M MAU
+✅ **Feasible** - However, the following are required:
+1. D1 → Neon/PlanetScale migration
+2. SessionStore: Expand to 1000 shards
+3. Strengthen caching (KV utilization)
+4. Cost: approximately $54,000/month (post-optimization)
 
-**AuthrimはCloudflareのエッジコンピューティングを活用することで、LINEレベル（2億MAU）まで、従来の1/30のコストで対応可能です。**
+### 200M MAU (LINE Level)
+✅ **Feasible** - Fundamental architecture change required:
+1. **Hybrid Architecture**
+   - Cloudflare Workers (edge)
+   - Redis Cluster (cache)
+   - CockroachDB (DB)
+   - R2/S3 (storage)
 
-ただし、1億MAU以降はアーキテクチャの根本的な変更（ハイブリッドアーキテクチャへの移行）が必須です。段階的に移行することで、サービス断なく成長できます。
+2. **Change DO Role**
+   - 90% reduction (Redis replacement)
+   - Remaining 10%: Lightweight DOs like KeyManager
+
+3. **Multi-Region Deployment**
+   - 4 regions (US-West, US-East, EU-West, AP-NE)
+   - Geographic routing
+
+4. **Cost**: approximately $47,000/month
+   - Per user: $0.00024/month
+   - 1/30 cost efficiency of LINE
+
+### Implementation Timeline
+
+| Phase | Duration | Target MAU | Essential Tasks |
+|-------|----------|------------|-----------------|
+| Phase 1 | 0-6 months | ~10M | Current optimization |
+| Phase 2 | 6-12 months | 10M~50M | Neon migration |
+| Phase 3 | 12-18 months | 50M~100M | Redis introduction |
+| Phase 4 | 18-24 months | 100M~200M | Hybrid transformation |
+
+### Conclusion
+
+**Authrim can handle up to LINE level (200M MAU) at 1/30 the traditional cost by leveraging Cloudflare's edge computing.**
+
+However, fundamental architecture changes (migration to hybrid architecture) are required beyond 100M MAU. Gradual migration enables service growth without disruption.

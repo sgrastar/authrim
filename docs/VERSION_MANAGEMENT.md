@@ -1,97 +1,97 @@
-# Worker バージョン管理システム
+# Worker Version Management System
 
-Cloudflare Workers のグローバル分散環境における Stale Bundle 問題を解決するための内部バージョン管理システム。
+An internal version management system to solve the Stale Bundle problem in Cloudflare Workers' globally distributed environment.
 
-## 背景
+## Background
 
-Cloudflare Workers はグローバルに分散した PoP (Point of Presence) で動作するため、デプロイ直後に以下の問題が発生する：
+Because Cloudflare Workers operate on globally distributed PoPs (Points of Presence), the following issues occur immediately after deployment:
 
-- 一部の PoP が古いバンドルを実行し続ける
-- 新旧バンドルが混在し、一貫性のない動作が発生
-- 特に認証フロー（authorize → token）で問題が顕在化
+- Some PoPs continue to run old bundles
+- Old and new bundles coexist, causing inconsistent behavior
+- Issues become particularly apparent in authentication flows (authorize → token)
 
-## 解決策
+## Solution
 
-### アーキテクチャ
+### Architecture
 
 ```mermaid
 flowchart TB
-    subgraph Deploy["デプロイスクリプト"]
-        D1["UUID v4 生成 (CODE_VERSION_UUID)"]
-        D2["タイムスタンプ生成 (DEPLOY_TIME_UTC)"]
-        D3["wrangler deploy --var で各Workerにバージョン埋め込み"]
-        D4["デプロイ完了後、VersionManager DO にバージョン登録"]
+    subgraph Deploy["Deploy Script"]
+        D1["Generate UUID v4 (CODE_VERSION_UUID)"]
+        D2["Generate Timestamp (DEPLOY_TIME_UTC)"]
+        D3["Embed version in each Worker with wrangler deploy --var"]
+        D4["After deployment, register version in VersionManager DO"]
     end
 
     subgraph VM["VersionManager DO"]
-        VM1["Worker毎のバージョン情報を保持"]
-        VM2["GET /version/:workerName - バージョン取得（認証不要）"]
-        VM3["POST /version/:workerName - バージョン登録（認証必要）"]
-        VM4["GET /version-manager/status - 全バージョン一覧（認証必要）"]
+        VM1["Hold version info per Worker"]
+        VM2["GET /version/:workerName - Get version (no auth)"]
+        VM3["POST /version/:workerName - Register version (auth required)"]
+        VM4["GET /version-manager/status - All versions list (auth required)"]
     end
 
-    subgraph Worker["各 Worker (op-auth 等)"]
-        W1["versionCheckMiddleware がリクエスト毎にバージョン検証"]
-        W2["最新バージョンと一致 → リクエスト処理続行"]
-        W3["不一致 → 503 Service Unavailable + Retry-After: 5"]
+    subgraph Worker["Each Worker (op-auth, etc.)"]
+        W1["versionCheckMiddleware validates version per request"]
+        W2["Matches latest version → Continue request processing"]
+        W3["Mismatch → 503 Service Unavailable + Retry-After: 5"]
     end
 
     Deploy --> VM
     VM --> Worker
 ```
 
-### バージョン識別子
+### Version Identifiers
 
-| 変数名 | 形式 | 例 |
-|--------|------|-----|
+| Variable | Format | Example |
+|----------|--------|---------|
 | `CODE_VERSION_UUID` | UUID v4 | `a1b2c3d4-e5f6-7890-abcd-ef0123456789` |
 | `DEPLOY_TIME_UTC` | ISO 8601 | `2025-11-28T10:30:00Z` |
 
-### ミドルウェア動作
+### Middleware Behavior
 
 ```typescript
-// 各Workerの index.ts
+// Each Worker's index.ts
 import { versionCheckMiddleware } from '@authrim/shared';
 
 app.use('*', logger());
-app.use('*', versionCheckMiddleware('op-auth')); // Worker名を指定
+app.use('*', versionCheckMiddleware('op-auth')); // Specify Worker name
 ```
 
-**キャッシュ**: Worker内メモリに5秒間キャッシュ（DO アクセス削減）
+**Cache**: Cached in Worker memory for 5 seconds (reduces DO access)
 
-**Fail-Open**: DO エラー時はリクエストを通過（可用性優先）
+**Fail-Open**: Requests pass through on DO errors (prioritizes availability)
 
-## セキュリティ
+## Security
 
-- バージョン UUID は外部に公開されない
-- 503 レスポンスには `{ "error": "service_unavailable" }` のみ
-- ログにも UUID は先頭8文字のみ出力
+- Version UUID is not exposed externally
+- 503 responses only contain `{ "error": "service_unavailable" }`
+- Logs only output first 8 characters of UUID
 
-## デプロイフロー
+## Deploy Flow
 
 ```bash
 ./scripts/deploy-with-retry.sh --env=dev
 ```
 
-1. UUID v4 とタイムスタンプを生成
-2. 各 Worker を `--var` オプション付きでデプロイ
-3. デプロイ完了後、`POST /api/internal/version/:workerName` でバージョン登録
-4. 古いバンドルは 503 を返し、クライアントはリトライ
+1. Generate UUID v4 and timestamp
+2. Deploy each Worker with `--var` options
+3. After deployment, register version via `POST /api/internal/version/:workerName`
+4. Old bundles return 503, clients retry
 
-## 関連ファイル
+## Related Files
 
-| ファイル | 説明 |
-|----------|------|
-| `packages/shared/src/durable-objects/VersionManager.ts` | バージョン管理 DO |
-| `packages/shared/src/middleware/version-check.ts` | バージョン検証ミドルウェア |
-| `scripts/deploy-with-retry.sh` | デプロイスクリプト |
+| File | Description |
+|------|-------------|
+| `packages/shared/src/durable-objects/VersionManager.ts` | Version management DO |
+| `packages/shared/src/middleware/version-check.ts` | Version check middleware |
+| `scripts/deploy-with-retry.sh` | Deploy script |
 
-## テスト
+## Testing
 
 ```bash
-# VersionManager DO テスト
+# VersionManager DO tests
 npx vitest run packages/shared/src/durable-objects/__tests__/VersionManager.test.ts
 
-# ミドルウェアテスト
+# Middleware tests
 npx vitest run packages/shared/src/middleware/__tests__/version-check.test.ts
 ```

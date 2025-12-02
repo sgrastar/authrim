@@ -1,93 +1,93 @@
-# ストレージ一貫性設計 - 実装記録
+# Storage Consistency Design - Implementation Record
 
-**実装日**: 2025-11-16 (更新: 全DO統合完了)
-**ブランチ**: claude/storage-consistency-audit-012q29GoqGNjumv1NvkAMUEA
-**元ドキュメント**: docs/architecture/storage-consistency-design.md
-
----
-
-## 実装概要
-
-storage-consistency-design.mdで特定された24の課題のうち、**9つのCRITICAL問題、2つのHIGH問題、11つのMEDIUM/LOW問題（計22問題）を実装完了**しました。セキュリティ脆弱性、DO永続性欠如、OAuth準拠の問題、D1リトライロジック、KVキャッシュ無効化、チャレンジReplay攻撃防止、セッショントークン競合状態、Rate Limiting精度、PAR request_uri単一使用、DPoP JTI replay protection、JWKS動的取得を解決し、**全8つのDurable Objects実装・統合完了**によりシステムの信頼性とセキュリティを大幅に向上させました。
-
-### 🎯 全DO統合完了（v7.0 - 2025-11-16）
-
-**実装完了したDurable Objects（8個）**:
-1. ✅ SessionStore - 永続化実装 + セッショントークン統合
-2. ✅ AuthorizationCodeStore - 永続化実装 + Token endpoint統合
-3. ✅ RefreshTokenRotator - 永続化実装 + Token endpoint統合
-4. ✅ KeyManager - 既存正常動作 + JWKS endpoint統合
-5. ✅ ChallengeStore - 統合実装（Session Token, Passkey, Magic Link）
-6. ✅ **RateLimiterCounter** - 新規実装・統合完了（#6: 100%精度保証）
-7. ✅ **PARRequestStore** - 新規実装・統合完了（#11: RFC 9126完全準拠）
-8. ✅ **DPoPJTIStore** - 新規実装・統合完了（#12: Replay攻撃完全防止）
-
-**セキュリティ・準拠性の向上**:
-- ✅ RFC 9126 (PAR) 完全準拠 - request_uri単一使用保証
-- ✅ RFC 9449 (DPoP) 完全準拠 - JTI replay attack完全防止
-- ✅ Rate Limiting 100%精度保証 - race condition完全排除
-- ✅ JWKS Endpoint動的取得 - KeyManager DO経由で鍵ローテーション即時反映
-- ✅ アトミック操作統一 - すべての状態管理がDO経由
+**Implementation Date**: 2025-11-16 (Updated: All DO Integration Completed)
+**Branch**: claude/storage-consistency-audit-012q29GoqGNjumv1NvkAMUEA
+**Original Document**: docs/architecture/storage-consistency-design.md
 
 ---
 
-## ✅ 完了した実装 (18問題: 9 CRITICAL + 2 HIGH + 7 MEDIUM)
+## Implementation Overview
 
-### 1. 問題#15: Client Secret タイミング攻撃対策 ⚠️ CRITICAL
+Out of 24 issues identified in storage-consistency-design.md, **22 issues have been completed: 9 CRITICAL, 2 HIGH, and 11 MEDIUM/LOW** (total 22 issues). Security vulnerabilities, lack of DO persistence, OAuth compliance issues, D1 retry logic, KV cache invalidation, challenge replay attack prevention, session token race conditions, rate limiting accuracy, PAR request_uri single-use, DPoP JTI replay protection, and JWKS dynamic retrieval have been resolved. **All 8 Durable Objects have been implemented and integrated**, significantly improving system reliability and security.
 
-**問題**: client_secretの比較に通常の文字列比較（`!==`）を使用しており、タイミング攻撃でsecretを統計的に推測可能でした。
+### 🎯 All DO Integration Completed (v7.0 - 2025-11-16)
 
-**実装内容**:
-1. **新しいヘルパー関数の追加** (`packages/shared/src/utils/crypto.ts`)
-   - `timingSafeEqual(a: string, b: string): boolean` を実装
-   - 定数時間比較により、比較時間が文字列の一致度に依存しないように修正
-   - TextEncoderでバイト配列に変換し、XOR演算で比較
+**Implemented Durable Objects (8 total)**:
+1. ✅ SessionStore - Persistence implementation + Session token integration
+2. ✅ AuthorizationCodeStore - Persistence implementation + Token endpoint integration
+3. ✅ RefreshTokenRotator - Persistence implementation + Token endpoint integration
+4. ✅ KeyManager - Already working correctly + JWKS endpoint integration
+5. ✅ ChallengeStore - Integrated implementation (Session Token, Passkey, Magic Link)
+6. ✅ **RateLimiterCounter** - New implementation & integration completed (#6: 100% accuracy guaranteed)
+7. ✅ **PARRequestStore** - New implementation & integration completed (#11: Full RFC 9126 compliance)
+8. ✅ **DPoPJTIStore** - New implementation & integration completed (#12: Complete replay attack prevention)
 
-2. **修正したファイル**:
+**Security & Compliance Improvements**:
+- ✅ RFC 9126 (PAR) Full Compliance - request_uri single-use guaranteed
+- ✅ RFC 9449 (DPoP) Full Compliance - JTI replay attack completely prevented
+- ✅ Rate Limiting 100% Accuracy - Race conditions completely eliminated
+- ✅ JWKS Endpoint Dynamic Retrieval - Key rotation immediately reflected via KeyManager DO
+- ✅ Unified Atomic Operations - All state management via DO
+
+---
+
+## ✅ Completed Implementations (18 issues: 9 CRITICAL + 2 HIGH + 7 MEDIUM)
+
+### 1. Issue #15: Client Secret Timing Attack Protection ⚠️ CRITICAL
+
+**Problem**: client_secret comparison used regular string comparison (`!==`), making it statistically possible to guess the secret via timing attacks.
+
+**Implementation**:
+1. **Added new helper function** (`packages/shared/src/utils/crypto.ts`)
+   - Implemented `timingSafeEqual(a: string, b: string): boolean`
+   - Fixed to use constant-time comparison, making comparison time independent of string match degree
+   - Converts to byte arrays with TextEncoder and compares using XOR operations
+
+2. **Modified files**:
    - `packages/op-auth/src/logout.ts:217-221`
      - `client.client_secret !== secret` → `!timingSafeEqual(client.client_secret, secret)`
 
-**セキュリティ上の効果**:
-- タイミング攻撃によるclient_secret推測を防止
-- OAuth 2.0 セキュリティベストプラクティスに準拠
+**Security Impact**:
+- Prevents client_secret guessing via timing attacks
+- Compliant with OAuth 2.0 security best practices
 
 ---
 
-### 2. 問題#16: /revoke, /introspect 認証欠如 ⚠️ CRITICAL
+### 2. Issue #16: /revoke, /introspect Authentication Missing ⚠️ CRITICAL
 
-**問題**: `/revoke`と`/introspect`エンドポイントでclient_secretの検証が完全に欠如しており、RFC 7009/7662違反でした。
+**Problem**: `/revoke` and `/introspect` endpoints completely lacked client_secret verification, violating RFC 7009/7662.
 
-**実装内容**:
+**Implementation**:
 1. **revoke.ts** (`packages/op-management/src/revoke.ts:98-125`)
-   - client_idの検証後に、DBからclient_secretを取得
-   - `timingSafeEqual()`を使用してclient_secretを検証
-   - RFC 7009 Section 2.1 に準拠
+   - Retrieve client_secret from DB after client_id verification
+   - Verify client_secret using `timingSafeEqual()`
+   - Compliant with RFC 7009 Section 2.1
 
 2. **introspect.ts** (`packages/op-management/src/introspect.ts:100-127`)
-   - client_idの検証後に、DBからclient_secretを取得
-   - `timingSafeEqual()`を使用してclient_secretを検証
-   - RFC 7662 Section 2.1 に準拠
+   - Retrieve client_secret from DB after client_id verification
+   - Verify client_secret using `timingSafeEqual()`
+   - Compliant with RFC 7662 Section 2.1
 
-**セキュリティ上の効果**:
-- 不正なクライアントによるトークン失効・検証を防止
-- RFC 7009/7662完全準拠
+**Security Impact**:
+- Prevents token revocation/verification by unauthorized clients
+- Full RFC 7009/7662 compliance
 
-**修正前の攻撃シナリオ**:
+**Attack Scenario Before Fix**:
 ```
-1. 攻撃者が有効なclient_idを取得（公開情報）
-2. 他のクライアントのaccess_tokenを盗聴
+1. Attacker obtains valid client_id (public information)
+2. Intercepts access_token of another client
 3. POST /revoke with client_id=victim&token=stolen_token
-4. 認証なしで実行成功 → 他のクライアントのトークンを失効可能
+4. Executes successfully without authentication → Can revoke other clients' tokens
 ```
 
 ---
 
-### 3. 問題#9: SessionStore DO 永続化実装 ⚠️ CRITICAL
+### 3. Issue #9: SessionStore DO Persistence Implementation ⚠️ CRITICAL
 
-**問題**: SessionStoreがメモリのみにセッションを保存しており、DO再起動時に全ユーザーが強制ログアウトされる問題がありました。
+**Problem**: SessionStore only saved sessions in memory, causing all users to be forcibly logged out when DO restarted.
 
-**実装内容**:
-1. **新しいインターフェースの追加** (`packages/shared/src/durable-objects/SessionStore.ts`)
+**Implementation**:
+1. **Added new interface** (`packages/shared/src/durable-objects/SessionStore.ts`)
    ```typescript
    interface SessionStoreState {
      sessions: Record<string, Session>;
@@ -95,41 +95,41 @@ storage-consistency-design.mdで特定された24の課題のうち、**9つのC
    }
    ```
 
-2. **永続化メソッドの実装**:
-   - `initializeState()`: Durable Storageからセッション情報を復元
-   - `saveState()`: セッション情報をDurable Storageに保存
+2. **Implemented persistence methods**:
+   - `initializeState()`: Restore session information from Durable Storage
+   - `saveState()`: Save session information to Durable Storage
 
-3. **修正したメソッド**:
-   - `createSession()`: セッション作成後に`saveState()`を呼び出し
-   - `invalidateSession()`: セッション削除後に`saveState()`を呼び出し
-   - `extendSession()`: セッション延長後に`saveState()`を呼び出し
-   - `getSession()`: 初回呼び出し時に`initializeState()`を実行
-   - `listUserSessions()`: 初回呼び出し時に`initializeState()`を実行
-   - `cleanupExpiredSessions()`: クリーンアップ後に`saveState()`を呼び出し
+3. **Modified methods**:
+   - `createSession()`: Call `saveState()` after session creation
+   - `invalidateSession()`: Call `saveState()` after session deletion
+   - `extendSession()`: Call `saveState()` after session extension
+   - `getSession()`: Execute `initializeState()` on first call
+   - `listUserSessions()`: Execute `initializeState()` on first call
+   - `cleanupExpiredSessions()`: Call `saveState()` after cleanup
 
-4. **データ構造の変換**:
-   - メモリ内: `Map<string, Session>`（高速アクセス）
-   - Durable Storage: `Record<string, Session>`（シリアライゼーション可能）
-   - `Object.fromEntries()`と`new Map(Object.entries())`で相互変換
+4. **Data structure conversion**:
+   - In-memory: `Map<string, Session>` (fast access)
+   - Durable Storage: `Record<string, Session>` (serializable)
+   - Convert between using `Object.fromEntries()` and `new Map(Object.entries())`
 
-**影響**:
-- ✅ DO再起動時にセッションが復元される
-- ✅ デプロイ時にユーザーが強制ログアウトされない
-- ✅ 全ユーザーへの影響を解消
+**Impact**:
+- ✅ Sessions are restored on DO restart
+- ✅ Users are not forcibly logged out during deployment
+- ✅ Impact to all users eliminated
 
-**パフォーマンス考慮**:
-- メモリ内MapとDurable Storageの二層構造を維持
-- 読み取りは高速なMapから実行
-- 書き込み時のみDurable Storageに同期
+**Performance Considerations**:
+- Maintains two-tier structure of in-memory Map and Durable Storage
+- Reads execute from fast Map
+- Synchronizes to Durable Storage only on writes
 
 ---
 
-### 4. 問題#4: RefreshTokenRotator DO 永続化実装 ⚠️ CRITICAL
+### 4. Issue #4: RefreshTokenRotator DO Persistence Implementation ⚠️ CRITICAL
 
-**問題**: RefreshTokenRotatorがメモリのみにトークンファミリーを保存しており、DO再起動時に全トークンファミリーが失われ、全ユーザーが再認証必須となる問題がありました。
+**Problem**: RefreshTokenRotator only saved token families in memory, causing all token families to be lost on DO restart, requiring all users to re-authenticate.
 
-**実装内容**:
-1. **新しいインターフェースの追加** (`packages/shared/src/durable-objects/RefreshTokenRotator.ts`)
+**Implementation**:
+1. **Added new interface** (`packages/shared/src/durable-objects/RefreshTokenRotator.ts`)
    ```typescript
    interface RefreshTokenRotatorState {
      families: Record<string, TokenFamily>;
@@ -138,99 +138,99 @@ storage-consistency-design.mdで特定された24の課題のうち、**9つのC
    }
    ```
 
-2. **永続化メソッドの実装**:
-   - `initializeState()`: Durable Storageからトークンファミリーを復元
-   - `saveState()`: トークンファミリーをDurable Storageに保存
+2. **Implemented persistence methods**:
+   - `initializeState()`: Restore token families from Durable Storage
+   - `saveState()`: Save token families to Durable Storage
 
-3. **修正したメソッド**:
-   - `createFamily()`: ファミリー作成後に`saveState()`を呼び出し
-   - `rotate()`: トークンローテーション後に`saveState()`を呼び出し
-   - `revokeFamilyTokens()`: ファミリー無効化後に`saveState()`を呼び出し
-   - `getFamilyInfo()`: 初回呼び出し時に`initializeState()`を実行
-   - `cleanupExpiredFamilies()`: クリーンアップ後に`saveState()`を呼び出し
+3. **Modified methods**:
+   - `createFamily()`: Call `saveState()` after family creation
+   - `rotate()`: Call `saveState()` after token rotation
+   - `revokeFamilyTokens()`: Call `saveState()` after family revocation
+   - `getFamilyInfo()`: Execute `initializeState()` on first call
+   - `cleanupExpiredFamilies()`: Call `saveState()` after cleanup
 
-4. **データ構造**:
-   - `families`: トークンファミリー情報
-   - `tokenToFamily`: リバースインデックス（token → familyId）
-   - 両方をDurable Storageに永続化
+4. **Data structure**:
+   - `families`: Token family information
+   - `tokenToFamily`: Reverse index (token → familyId)
+   - Both persisted to Durable Storage
 
-**影響**:
-- ✅ DO再起動時にトークンファミリーが復元される
-- ✅ デプロイ時にユーザーが再認証を強制されない
-- ✅ トークンローテーション履歴が保持される
-- ✅ トークン盗難検出機能が継続的に動作
+**Impact**:
+- ✅ Token families are restored on DO restart
+- ✅ Users are not forced to re-authenticate during deployment
+- ✅ Token rotation history is preserved
+- ✅ Token theft detection functionality continues to operate
 
-**セキュリティ上の効果**:
-- トークンファミリー追跡による盗難検出が永続化
-- DO再起動後もセキュリティ機能が継続
+**Security Impact**:
+- Token family tracking for theft detection is persisted
+- Security functionality continues after DO restart
 
-### 5. 問題#10/#3: AuthCodeStore DO 永続化 + Token移行 ⚠️ CRITICAL
+### 5. Issue #10/#3: AuthCodeStore DO Persistence + Token Migration ⚠️ CRITICAL
 
-**問題**: AuthorizationCodeStoreは実装済みだが、Durable Storageへの永続化が未実装で、token.tsでKVが直接使用されていました。
+**Problem**: AuthorizationCodeStore was implemented but lacked Durable Storage persistence, and token.ts was using KV directly.
 
-**実装内容**:
-1. **AuthCodeStore.tsに永続化を追加**
-   - `AuthorizationCodeStoreState`インターフェースを追加
-   - `initializeState()` / `saveState()`メソッドを実装
-   - `storeCode()`, `consumeCode()`, `deleteCode()`で永続化を実行
+**Implementation**:
+1. **Added persistence to AuthCodeStore.ts**
+   - Added `AuthorizationCodeStoreState` interface
+   - Implemented `initializeState()` / `saveState()` methods
+   - Execute persistence in `storeCode()`, `consumeCode()`, `deleteCode()`
 
-2. **token.tsをAuthCodeStore DOに移行**
-   - KV関数（`getAuthCode()`, `markAuthCodeAsUsed()`）を削除
-   - AuthCodeStore DOの`/code/consume`エンドポイントを使用
-   - client_id、redirect_uri、PKCE検証がDO内で実行されるように変更
+2. **Migrated token.ts to AuthCodeStore DO**
+   - Removed KV functions (`getAuthCode()`, `markAuthCodeAsUsed()`)
+   - Use AuthCodeStore DO's `/code/consume` endpoint
+   - Changed to execute client_id, redirect_uri, PKCE verification within DO
 
-3. **セキュリティ改善**
-   - KVの結果整合性→DOの強一貫性に変更
-   - 認可コードの再利用攻撃検出が確実に動作
-   - PKCE検証がアトミックに実行
+3. **Security improvements**
+   - Changed from KV eventual consistency → DO strong consistency
+   - Authorization code reuse attack detection now works reliably
+   - PKCE verification executes atomically
 
-**修正ファイル**:
+**Modified Files**:
 - `packages/shared/src/durable-objects/AuthorizationCodeStore.ts`
 - `packages/op-token/src/token.ts`
 
-**影響**:
-- ✅ DO再起動時に認可コードが復元される
-- ✅ OAuth フローの信頼性向上
-- ✅ PKCE検証の一貫性保証
-- ✅ 再利用攻撃の確実な検出
+**Impact**:
+- ✅ Authorization codes are restored on DO restart
+- ✅ Improved OAuth flow reliability
+- ✅ PKCE verification consistency guaranteed
+- ✅ Reliable detection of reuse attacks
 
 ---
 
-### 6. 問題#7: Passkey Counter CAS実装 ⚠️ CRITICAL
+### 6. Issue #7: Passkey Counter CAS Implementation ⚠️ CRITICAL
 
-**問題**: Passkey Counterの更新に競合状態があり、WebAuthn仕様違反の可能性がありました。
+**Problem**: Passkey Counter updates had race conditions, potentially violating WebAuthn specifications.
 
-**実装内容**:
-1. **Compare-and-Swap (CAS) パターンの実装**
-   - 現在のcounter値を読み取り
-   - 新しいcounterが現在より大きいことを確認（WebAuthn要件）
-   - 条件付きUPDATE (`WHERE id = ? AND counter = ?`)
-   - 更新失敗時は最大3回リトライ
+**Implementation**:
+1. **Implemented Compare-and-Swap (CAS) pattern**
+   - Read current counter value
+   - Verify new counter is greater than current (WebAuthn requirement)
+   - Conditional UPDATE (`WHERE id = ? AND counter = ?`)
+   - Retry up to 3 times on update failure
 
-2. **Counter rollback検出**
-   - 新しいcounter ≤ 現在のcounterの場合はエラー
-   - クローン化されたAuthenticatorの検出
+2. **Counter rollback detection**
+   - Error if new counter ≤ current counter
+   - Detection of cloned Authenticators
 
-3. **リトライロジック**
-   - 並行更新時の競合を自動的に解決
-   - 指数バックオフでリトライ間隔を調整
+3. **Retry logic**
+   - Automatically resolves conflicts during concurrent updates
+   - Adjusts retry intervals with exponential backoff
 
-**修正ファイル**:
+**Modified File**:
 - `packages/shared/src/storage/adapters/cloudflare-adapter.ts:819-878`
 
-**影響**:
-- ✅ WebAuthn仕様完全準拠
-- ✅ Passkey cloning攻撃の検出
-- ✅ 並行認証リクエストの正しい処理
+**Impact**:
+- ✅ Full WebAuthn specification compliance
+- ✅ Detection of Passkey cloning attacks
+- ✅ Correct handling of concurrent authentication requests
 
 ---
 
-### 8. 問題#1: D1書き込みリトライロジック実装 🔴 CRITICAL
+### 8. Issue #1: D1 Write Retry Logic Implementation 🔴 CRITICAL
 
-**問題**: SessionStoreとRefreshTokenRotatorのD1書き込みが非同期で、失敗が無視されるため、監査証跡が欠落する可能性がありました。特にコンプライアンス要件（SOC 2、GDPR）において致命的な問題でした。
+**Problem**: D1 writes in SessionStore and RefreshTokenRotator were asynchronous and failures were ignored, potentially causing audit trail gaps. This was a critical issue particularly for compliance requirements (SOC 2, GDPR).
 
-**実装内容**:
-1. **新しいヘルパー関数の追加** (`packages/shared/src/utils/d1-retry.ts`)
+**Implementation**:
+1. **Added new helper function** (`packages/shared/src/utils/d1-retry.ts`)
    ```typescript
    export async function retryD1Operation<T>(
      operation: () => Promise<T>,
@@ -238,40 +238,40 @@ storage-consistency-design.mdで特定された24の課題のうち、**9つのC
      config: RetryConfig = {}
    ): Promise<T | null>
    ```
-   - エクスポネンシャルバックオフによるリトライロジック
-   - デフォルト: 最大3回リトライ、初期遅延100ms、最大遅延5秒
-   - リトライ失敗時の詳細ログ出力
+   - Retry logic with exponential backoff
+   - Default: Max 3 retries, initial delay 100ms, max delay 5 seconds
+   - Detailed log output on retry failure
 
-2. **修正したファイル**:
+2. **Modified files**:
    - `packages/shared/src/durable-objects/SessionStore.ts`
-     - `saveToD1()` メソッドにリトライロジックを追加
-     - `deleteFromD1()` メソッドにリトライロジックを追加
+     - Added retry logic to `saveToD1()` method
+     - Added retry logic to `deleteFromD1()` method
    - `packages/shared/src/durable-objects/RefreshTokenRotator.ts`
-     - `logToD1()` メソッドにリトライロジックを追加（監査ログ）
+     - Added retry logic to `logToD1()` method (audit log)
 
-3. **リトライ戦略の詳細**:
-   - 初回: 即座に実行
-   - 2回目: 100ms待機後
-   - 3回目: 200ms待機後
-   - 4回目: 400ms待機後（最終リトライ）
-   - すべて失敗した場合: エラーログを出力して null を返す（メイン処理は中断しない）
+3. **Retry strategy details**:
+   - 1st attempt: Execute immediately
+   - 2nd attempt: After 100ms wait
+   - 3rd attempt: After 200ms wait
+   - 4th attempt: After 400ms wait (final retry)
+   - If all fail: Output error log and return null (don't interrupt main processing)
 
-**影響**:
-- ✅ D1書き込み失敗時に自動リトライで回復
-- ✅ 監査ログの信頼性向上（コンプライアンス要件を満たす）
-- ✅ 一時的なネットワーク問題に対する耐性強化
+**Impact**:
+- ✅ Automatic recovery with retry on D1 write failure
+- ✅ Improved audit log reliability (meets compliance requirements)
+- ✅ Enhanced resilience to temporary network issues
 
-**コード例**:
+**Code Example**:
 ```typescript
-// Before (リトライなし)
+// Before (no retry)
 try {
   await this.env.DB.prepare('INSERT ...').run();
 } catch (error) {
   console.error('Error:', error);
-  // 失敗したら終わり
+  // Done if it fails
 }
 
-// After (リトライあり)
+// After (with retry)
 await retryD1Operation(
   async () => {
     await this.env.DB.prepare('INSERT ...').run();
@@ -279,29 +279,29 @@ await retryD1Operation(
   'SessionStore.saveToD1',
   { maxRetries: 3 }
 );
-// 3回リトライ後も失敗したらログ出力
+// Log output if still failing after 3 retries
 ```
 
 ---
 
-### 9. 問題#2: KVキャッシュ無効化修正 ⚠️ HIGH
+### 9. Issue #2: KV Cache Invalidation Fix ⚠️ HIGH
 
-**問題**: `setToD1WithKVCache()`と`deleteFromD1WithKVCache()`が「D1書き込み → KV削除」の順序で実行されており、KV削除失敗時に古いキャッシュが残る問題がありました。
+**Problem**: `setToD1WithKVCache()` and `deleteFromD1WithKVCache()` executed in the order "D1 write → KV delete", leaving stale cache when KV deletion failed.
 
-**一貫性の窓**:
+**Consistency window**:
 ```
-T0: D1更新成功
-T1: KV削除失敗（ネットワークエラー）
-T2: 次回読み取り → KV Hit (stale data!) → 古いデータが返される
+T0: D1 update successful
+T1: KV deletion failed (network error)
+T2: Next read → KV Hit (stale data!) → Returns old data
 ```
 
-**実装内容**:
-1. **Delete-Then-Write戦略の実装** (`packages/shared/src/storage/adapters/cloudflare-adapter.ts`)
-   - 順序を逆転: KV削除 → D1書き込み
-   - KV削除失敗時のエラーハンドリング追加
-   - D1が常にSource of Truthとして機能
+**Implementation**:
+1. **Implemented Delete-Then-Write strategy** (`packages/shared/src/storage/adapters/cloudflare-adapter.ts`)
+   - Reversed order: KV deletion → D1 write
+   - Added error handling for KV deletion failure
+   - D1 always functions as Source of Truth
 
-2. **修正したメソッド**:
+2. **Modified methods**:
    - `setToD1WithKVCache()` (lines 204-228)
      ```typescript
      // Step 1: Invalidate KV cache BEFORE updating D1
@@ -317,128 +317,128 @@ T2: 次回読み取り → KV Hit (stale data!) → 古いデータが返され�
      ```
 
    - `deleteFromD1WithKVCache()` (lines 230-253)
-     - 同じパターンを適用
+     - Applied same pattern
 
-**効果**:
-- ✅ KV削除失敗時も、次回読み取りでD1から正しいデータを取得
-- ✅ 一貫性の窓を最小化（D1書き込み失敗時のみ）
-- ✅ Cache-Aside Patternのベストプラクティスに準拠
+**Effect**:
+- ✅ Even if KV deletion fails, next read fetches correct data from D1
+- ✅ Minimizes consistency window (only on D1 write failure)
+- ✅ Compliant with Cache-Aside Pattern best practices
 
-**タイムライン比較**:
+**Timeline Comparison**:
 ```
-修正前:
-T0: D1更新成功
-T1: KV削除失敗
-T2: 読み取り → KV Hit (stale!) ❌
+Before fix:
+T0: D1 update successful
+T1: KV deletion failed
+T2: Read → KV Hit (stale!) ❌
 
-修正後:
-T0: KV削除成功
-T1: D1更新成功
-T2: 読み取り → KV Miss → D1から取得 ✅
+After fix:
+T0: KV deletion successful
+T1: D1 update successful
+T2: Read → KV Miss → Fetch from D1 ✅
 
-または:
-T0: KV削除成功
-T1: D1更新失敗
-T2: 読み取り → KV Miss → D1から取得（古いデータだが一貫性あり）✅
+Or:
+T0: KV deletion successful
+T1: D1 update failed
+T2: Read → KV Miss → Fetch from D1 (old data but consistent) ✅
 ```
 
 ---
 
-## 📊 実装統計
+## 📊 Implementation Statistics
 
-| 問題 | 優先度 | ステータス | 影響範囲 |
+| Issue | Priority | Status | Impact Scope |
 |------|--------|-----------|---------|
-| #15 | CRITICAL (セキュリティ) | ✅ 完了 | logout.ts, revoke.ts, introspect.ts, crypto.ts |
-| #16 | CRITICAL (セキュリティ) | ✅ 完了 | revoke.ts, introspect.ts |
-| #9 | CRITICAL (永続性) | ✅ 完了 | SessionStore.ts (全メソッド) |
-| #4 | CRITICAL (永続性) | ✅ 完了 | RefreshTokenRotator.ts (全メソッド) |
-| #10/#3 | CRITICAL (OAuth) | ✅ 完了 | AuthorizationCodeStore.ts, token.ts |
-| #7 | CRITICAL (WebAuthn) | ✅ 完了 | cloudflare-adapter.ts (CAS実装) |
-| #1 | CRITICAL (監査) | ✅ 完了 | d1-retry.ts, SessionStore.ts, RefreshTokenRotator.ts |
-| #2 | HIGH (キャッシュ) | ✅ 完了 | cloudflare-adapter.ts (Delete-Then-Write) |
-| #18 | HIGH (運用) | ✅ 完了 | index.ts (Cron scheduled handler) |
-| #19 | MEDIUM (OIDC) | ✅ 完了 | token.ts (auth_time追加) |
-| #22 | MEDIUM (信頼性) | ✅ 完了 | magic-link.ts, passkey.ts (順序変更) |
-| #23 | MEDIUM (本番対応) | ✅ 完了 | userinfo.ts (実データ取得) |
-| #24 | MEDIUM (パフォーマンス) | ✅ 完了 | SessionStore.ts, admin.ts (バッチAPI) |
-| #21 | MEDIUM (セキュリティ) | ⏸️ 評価のみ | ドキュメント化（軽減要因十分） |
+| #15 | CRITICAL (Security) | ✅ Complete | logout.ts, revoke.ts, introspect.ts, crypto.ts |
+| #16 | CRITICAL (Security) | ✅ Complete | revoke.ts, introspect.ts |
+| #9 | CRITICAL (Persistence) | ✅ Complete | SessionStore.ts (all methods) |
+| #4 | CRITICAL (Persistence) | ✅ Complete | RefreshTokenRotator.ts (all methods) |
+| #10/#3 | CRITICAL (OAuth) | ✅ Complete | AuthorizationCodeStore.ts, token.ts |
+| #7 | CRITICAL (WebAuthn) | ✅ Complete | cloudflare-adapter.ts (CAS implementation) |
+| #1 | CRITICAL (Audit) | ✅ Complete | d1-retry.ts, SessionStore.ts, RefreshTokenRotator.ts |
+| #2 | HIGH (Cache) | ✅ Complete | cloudflare-adapter.ts (Delete-Then-Write) |
+| #18 | HIGH (Operations) | ✅ Complete | index.ts (Cron scheduled handler) |
+| #19 | MEDIUM (OIDC) | ✅ Complete | token.ts (added auth_time) |
+| #22 | MEDIUM (Reliability) | ✅ Complete | magic-link.ts, passkey.ts (order change) |
+| #23 | MEDIUM (Production) | ✅ Complete | userinfo.ts (fetch actual data) |
+| #24 | MEDIUM (Performance) | ✅ Complete | SessionStore.ts, admin.ts (batch API) |
+| #21 | MEDIUM (Security) | ⏸️ Assessment only | Documented (sufficient mitigations) |
 
-**完了**: 13問題（7 CRITICAL + 2 HIGH + 4 MEDIUM）
-**評価のみ**: 1問題（#21: リスク許容範囲内）
-**未実装**: 0問題（実装が必要な高優先度問題はすべて完了）
-
----
-
-## 🎯 今後の改善案
-
-### 高優先度の実装はすべて完了
-
-すべてのCRITICALおよびHIGH優先度の問題を解決しました。残りのMEDIUM/LOW優先度の問題は以下の通りです：
-
-### 推奨される次のステップ（オプション）
-
-1. **問題#21: Passkey/Magic Link チャレンジ再利用脆弱性** (MEDIUM)
-   - Durable Object化による完全なアトミック操作
-   - または、ドキュメント化のみ（軽減要因を考慮）
-
-2. **問題#22: Magic Link/Passkey登録の部分失敗リスク** (MEDIUM)
-   - 逆順実行（削除を最後に）
-   - リトライロジック追加
-
-3. **問題#23: userinfo エンドポイントがハードコードデータ返却** (MEDIUM)
-   - D1から実際のユーザーデータを取得
-
-4. **問題#24: セッション一括削除のN+1 DO呼び出し** (MEDIUM)
-   - バッチ削除エンドポイントの実装
-
-5. **監視・アラート統合** (推奨)
-   - Cloudflare Analytics Engineとの統合
-   - D1リトライ失敗時のアラート
-   - パフォーマンスメトリクスの収集
+**Completed**: 13 issues (7 CRITICAL + 2 HIGH + 4 MEDIUM)
+**Assessment only**: 1 issue (#21: within risk tolerance)
+**Not implemented**: 0 issues (all high-priority issues completed)
 
 ---
 
-## 🔐 セキュリティ改善の効果
+## 🎯 Future Improvement Proposals
 
-### 即座に改善された脆弱性
-1. ✅ **タイミング攻撃の防止**: client_secret推測が不可能に
-2. ✅ **認証欠如の修正**: /revoke, /introspectへの不正アクセス防止
-3. ✅ **DO再起動時のデータ損失防止**: SessionStore, RefreshTokenRotator, AuthCodeStore永続化
-4. ✅ **OAuth フローの一貫性保証**: AuthCodeStore DO使用で競合状態を解消
-5. ✅ **WebAuthn仕様準拠**: Passkey Counter CASでcloning攻撃を検出
-6. ✅ **監査ログの信頼性向上**: D1リトライロジックでコンプライアンス要件を満たす
-7. ✅ **キャッシュ一貫性の保証**: Delete-Then-Writeで古いキャッシュ読み取りを防止
+### All high-priority implementations completed
 
-### ユーザー体験の改善
-1. ✅ **デプロイ時の強制ログアウト解消**: SessionStore永続化により実現
-2. ✅ **トークン失効の防止**: RefreshTokenRotator永続化により実現
-3. ✅ **セッション継続性の保証**: DO再起動に耐性
-4. ✅ **OAuth認証の信頼性向上**: 認可コードの再利用攻撃を確実に検出
-5. ✅ **Passkey認証の安全性向上**: cloned authenticatorの検出
-6. ✅ **一時的なネットワーク障害への耐性**: D1リトライロジックで自動回復
+All CRITICAL and HIGH priority issues have been resolved. The remaining MEDIUM/LOW priority issues are as follows:
 
-### コンプライアンス対応
-1. ✅ **SOC 2 要件**: 監査ログの完全性保証（D1リトライ）
-2. ✅ **GDPR 要件**: データ処理の透明性と追跡可能性
-3. ✅ **OAuth 2.0 Security BCP**: 完全準拠
-4. ✅ **WebAuthn仕様**: Counter管理の正確性
+### Recommended Next Steps (Optional)
+
+1. **Issue #21: Passkey/Magic Link Challenge Reuse Vulnerability** (MEDIUM)
+   - Complete atomic operations via Durable Object
+   - Or, documentation only (considering mitigations)
+
+2. **Issue #22: Magic Link/Passkey Registration Partial Failure Risk** (MEDIUM)
+   - Reverse order execution (deletion last)
+   - Add retry logic
+
+3. **Issue #23: userinfo endpoint returns hardcoded data** (MEDIUM)
+   - Fetch actual user data from D1
+
+4. **Issue #24: Session bulk deletion N+1 DO calls** (MEDIUM)
+   - Implement batch deletion endpoint
+
+5. **Monitoring & Alerting Integration** (Recommended)
+   - Integration with Cloudflare Analytics Engine
+   - Alerts on D1 retry failures
+   - Performance metrics collection
 
 ---
 
-## 📝 技術的な実装パターン
+## 🔐 Security Improvement Effects
 
-### Durable Storage永続化パターン
+### Immediately Improved Vulnerabilities
+1. ✅ **Timing Attack Prevention**: client_secret guessing impossible
+2. ✅ **Authentication Missing Fix**: Prevents unauthorized access to /revoke, /introspect
+3. ✅ **DO Restart Data Loss Prevention**: SessionStore, RefreshTokenRotator, AuthCodeStore persistence
+4. ✅ **OAuth Flow Consistency Guarantee**: Eliminated race conditions using AuthCodeStore DO
+5. ✅ **WebAuthn Specification Compliance**: Passkey Counter CAS detects cloning attacks
+6. ✅ **Audit Log Reliability Improvement**: D1 retry logic meets compliance requirements
+7. ✅ **Cache Consistency Guarantee**: Delete-Then-Write prevents stale cache reads
 
-すべてのDO永続化で共通のパターンを使用しました：
+### User Experience Improvements
+1. ✅ **Deployment Forced Logout Elimination**: Realized through SessionStore persistence
+2. ✅ **Token Revocation Prevention**: Realized through RefreshTokenRotator persistence
+3. ✅ **Session Continuity Guarantee**: Resilient to DO restarts
+4. ✅ **OAuth Authentication Reliability Improvement**: Reliably detects authorization code reuse attacks
+5. ✅ **Passkey Authentication Safety Improvement**: Detects cloned authenticators
+6. ✅ **Temporary Network Failure Resilience**: Automatic recovery with D1 retry logic
+
+### Compliance Support
+1. ✅ **SOC 2 Requirements**: Audit log integrity guarantee (D1 retry)
+2. ✅ **GDPR Requirements**: Data processing transparency and traceability
+3. ✅ **OAuth 2.0 Security BCP**: Full compliance
+4. ✅ **WebAuthn Specification**: Counter management accuracy
+
+---
+
+## 📝 Technical Implementation Patterns
+
+### Durable Storage Persistence Pattern
+
+Used common pattern across all DO persistence:
 
 ```typescript
-// 1. Stateインターフェースの定義
+// 1. Define State interface
 interface XxxStoreState {
-  data: Record<string, DataType>; // Mapの代わりにRecord
+  data: Record<string, DataType>; // Record instead of Map
   lastCleanup: number;
 }
 
-// 2. 初期化メソッド
+// 2. Initialization method
 private async initializeState(): Promise<void> {
   if (this.initialized) return;
 
@@ -449,7 +449,7 @@ private async initializeState(): Promise<void> {
   this.initialized = true;
 }
 
-// 3. 保存メソッド
+// 3. Save method
 private async saveState(): Promise<void> {
   const stateToSave: XxxStoreState = {
     data: Object.fromEntries(this.data),
@@ -458,18 +458,18 @@ private async saveState(): Promise<void> {
   await this.state.storage.put('state', stateToSave);
 }
 
-// 4. 全メソッドで使用
+// 4. Use in all methods
 async someMethod() {
-  await this.initializeState(); // 読み取り前
-  // ... 処理 ...
-  await this.saveState(); // 書き込み後
+  await this.initializeState(); // Before read
+  // ... processing ...
+  await this.saveState(); // After write
 }
 ```
 
-### タイミング攻撃対策パターン
+### Timing Attack Protection Pattern
 
 ```typescript
-// 定数時間比較の実装
+// Constant-time comparison implementation
 export function timingSafeEqual(a: string, b: string): boolean {
   const encoder = new TextEncoder();
   const aBuffer = encoder.encode(a);
@@ -490,32 +490,32 @@ export function timingSafeEqual(a: string, b: string): boolean {
 
 ---
 
-## 🚀 次のステップ
+## 🚀 Next Steps
 
-### 即座に実施すべき作業
-1. **AuthCodeStore DO 永続化の完了**
-   - 問題#10/#3の完全解決
-   - OAuth フローのセキュリティと信頼性向上
+### Immediate Actions Required
+1. **Complete AuthCodeStore DO Persistence**
+   - Full resolution of issues #10/#3
+   - Improved OAuth flow security and reliability
 
-2. **Passkey Counter CAS実装**
-   - WebAuthn仕様準拠
-   - セキュリティリスクの解消
+2. **Implement Passkey Counter CAS**
+   - WebAuthn specification compliance
+   - Security risk elimination
 
-### 中期的な作業
-3. **D1書き込みリトライロジック**
-   - 監査ログの信頼性向上
-   - コンプライアンス要件への対応
+### Medium-term Work
+3. **D1 Write Retry Logic**
+   - Improved audit log reliability
+   - Compliance requirements support
 
-4. **KV関連の問題をDO化で根本解決**
-   - クライアントメタデータのDO化
-   - 一貫性の窓の完全解消
+4. **Fundamental Resolution of KV-related Issues with DO**
+   - DO-ify client metadata
+   - Complete elimination of consistency window
 
 ---
 
-## 📖 参考資料
+## 📖 References
 
-- **元ドキュメント**: `docs/architecture/storage-consistency-design.md`
-- **実装ブランチ**: `claude/review-storage-consistency-01N2kdCXrjWb2XQbtF3Mn3W3`
+- **Original Document**: `docs/architecture/storage-consistency-design.md`
+- **Implementation Branch**: `claude/review-storage-consistency-01N2kdCXrjWb2XQbtF3Mn3W3`
 - **OAuth 2.0 Security BCP**: Draft 16
 - **RFC 7009**: Token Revocation
 - **RFC 7662**: Token Introspection
@@ -524,59 +524,59 @@ export function timingSafeEqual(a: string, b: string): boolean {
 
 ---
 
-## ✍️ 実装者ノート
+## ✍️ Implementer Notes
 
-### 実装で学んだこと
-1. **Durable Storageの制約**: MapやSetを直接保存できないため、RecordやArrayに変換が必要
-2. **初期化タイミング**: constructorではasync処理ができないため、lazy initializationを採用
-3. **パフォーマンスとの両立**: メモリ内構造（Map）とDurable Storage（Record）の使い分け
+### What I Learned from Implementation
+1. **Durable Storage Constraints**: Cannot directly save Map or Set, must convert to Record or Array
+2. **Initialization Timing**: Since constructor cannot do async processing, adopted lazy initialization
+3. **Balancing Performance**: Differentiating use of in-memory structure (Map) and Durable Storage (Record)
 
-### 注意点
-1. **saveState()の頻度**: 頻繁な書き込みはパフォーマンスに影響する可能性
-2. **エラーハンドリング**: saveState()の失敗は無視（ログのみ）、本来は監視・アラートが必要
-3. **マイグレーション**: 既存のDOインスタンスは古いデータ構造を持つ可能性があるため、マイグレーション戦略が必要
+### Points of Caution
+1. **saveState() frequency**: Frequent writes may impact performance
+2. **Error handling**: saveState() failures are ignored (log only), monitoring and alerts actually needed
+3. **Migration**: Existing DO instances may have old data structures, migration strategy needed
 
-### 今後の改善案
-1. **バッチ書き込み**: 複数の変更をまとめて保存してパフォーマンス向上
-2. **差分更新**: 全体を保存する代わりに、変更部分のみ保存
-3. **圧縮**: 大きなStateオブジェクトの圧縮を検討
-
----
-
-## 📈 第2回コミット (2025-11-15)
-
-### 追加実装
-1. **問題#10/#3: AuthCodeStore DO 永続化 + Token移行** - 完了
-2. **問題#7: Passkey Counter CAS実装** - 完了
-
-### 変更ファイル
-- `packages/shared/src/durable-objects/AuthorizationCodeStore.ts` - 永続化実装
-- `packages/op-token/src/token.ts` - KVからDOへ移行
-- `packages/shared/src/storage/adapters/cloudflare-adapter.ts` - CAS実装
-
-### 成果
-- **7つのCRITICAL問題をすべて解決**
-- OAuth 2.0 / OIDC / WebAuthn 完全準拠
-- システムの信頼性とセキュリティを大幅に向上
+### Future Improvement Ideas
+1. **Batch writes**: Save multiple changes together for performance improvement
+2. **Differential updates**: Save only changed parts instead of entire state
+3. **Compression**: Consider compressing large State objects
 
 ---
 
-## 📈 第3回コミット (2025-11-16)
+## 📈 2nd Commit (2025-11-15)
 
-### 追加実装
-1. **問題#1: D1書き込みリトライロジック実装** (CRITICAL) - 完了
-2. **問題#2: KVキャッシュ無効化修正** (HIGH) - 完了
+### Additional Implementation
+1. **Issue #10/#3: AuthCodeStore DO Persistence + Token Migration** - Complete
+2. **Issue #7: Passkey Counter CAS Implementation** - Complete
 
-### 変更ファイル
-- `packages/shared/src/utils/d1-retry.ts` - **新規作成**: リトライヘルパー関数
-- `packages/shared/src/index.ts` - d1-retryのエクスポート追加
-- `packages/shared/src/durable-objects/SessionStore.ts` - D1リトライロジック適用
-- `packages/shared/src/durable-objects/RefreshTokenRotator.ts` - D1リトライロジック適用
-- `packages/shared/src/storage/adapters/cloudflare-adapter.ts` - Delete-Then-Write戦略
+### Changed Files
+- `packages/shared/src/durable-objects/AuthorizationCodeStore.ts` - Persistence implementation
+- `packages/op-token/src/token.ts` - Migration from KV to DO
+- `packages/shared/src/storage/adapters/cloudflare-adapter.ts` - CAS implementation
 
-### 実装の詳細
+### Results
+- **Resolved all 7 CRITICAL issues**
+- OAuth 2.0 / OIDC / WebAuthn full compliance
+- Significantly improved system reliability and security
 
-#### D1リトライロジック (`d1-retry.ts`)
+---
+
+## 📈 3rd Commit (2025-11-16)
+
+### Additional Implementation
+1. **Issue #1: D1 Write Retry Logic Implementation** (CRITICAL) - Complete
+2. **Issue #2: KV Cache Invalidation Fix** (HIGH) - Complete
+
+### Changed Files
+- `packages/shared/src/utils/d1-retry.ts` - **Newly Created**: Retry helper function
+- `packages/shared/src/index.ts` - Added d1-retry export
+- `packages/shared/src/durable-objects/SessionStore.ts` - Applied D1 retry logic
+- `packages/shared/src/durable-objects/RefreshTokenRotator.ts` - Applied D1 retry logic
+- `packages/shared/src/storage/adapters/cloudflare-adapter.ts` - Delete-Then-Write strategy
+
+### Implementation Details
+
+#### D1 Retry Logic (`d1-retry.ts`)
 ```typescript
 export async function retryD1Operation<T>(
   operation: () => Promise<T>,
@@ -584,70 +584,70 @@ export async function retryD1Operation<T>(
   config: RetryConfig = {}
 ): Promise<T | null>
 ```
-- エクスポネンシャルバックオフ（100ms → 200ms → 400ms）
-- 最大3回リトライ
-- 失敗時の詳細ログ出力
-- メイン処理を中断しない設計
+- Exponential backoff (100ms → 200ms → 400ms)
+- Max 3 retries
+- Detailed log output on failure
+- Designed not to interrupt main processing
 
-#### KVキャッシュ無効化修正
-**修正前**:
+#### KV Cache Invalidation Fix
+**Before fix**:
 ```typescript
-await this.setToD1(key, value);          // D1更新
-await this.env.CLIENTS_CACHE.delete(key); // KV削除
-// ← ここでKV削除失敗すると、古いキャッシュが残る
+await this.setToD1(key, value);          // D1 update
+await this.env.CLIENTS_CACHE.delete(key); // KV delete
+// ← If KV deletion fails here, stale cache remains
 ```
 
-**修正後**:
+**After fix**:
 ```typescript
-// Step 1: KV削除（失敗してもエラーハンドリング）
+// Step 1: KV deletion (error handling even if fails)
 try {
   await this.env.CLIENTS_CACHE.delete(key);
 } catch (error) {
   console.warn('KV cache delete failed, proceeding with D1 write', error);
 }
-// Step 2: D1更新（Source of Truth）
+// Step 2: D1 update (Source of Truth)
 await this.setToD1(key, value);
 ```
 
-### 成果
-- ✅ **すべてのCRITICALおよびHIGH優先度問題を解決**（9問題完了）
-- ✅ **監査ログの信頼性向上**: SOC 2/GDPR要件を満たす
-- ✅ **キャッシュ一貫性の保証**: stale dataの読み取りを防止
-- ✅ **一時的障害への耐性**: ネットワークエラー時の自動回復
+### Results
+- ✅ **Resolved all CRITICAL and HIGH priority issues** (9 issues completed)
+- ✅ **Audit Log Reliability Improvement**: Meets SOC 2/GDPR requirements
+- ✅ **Cache Consistency Guarantee**: Prevents stale data reads
+- ✅ **Temporary Failure Resilience**: Automatic recovery from network errors
 
-### 技術的な改善点
-1. **コンプライアンス**: 監査ログの完全性保証により、SOC 2/GDPR要件を満たす
-2. **データ一貫性**: Cache-Aside Patternのベストプラクティスに準拠
-3. **運用性**: リトライロジックにより、一時的なネットワーク問題に対する耐性が向上
-4. **保守性**: 汎用的なリトライヘルパー関数により、他のD1操作にも適用可能
+### Technical Improvements
+1. **Compliance**: Audit log integrity guarantee meets SOC 2/GDPR requirements
+2. **Data Consistency**: Compliant with Cache-Aside Pattern best practices
+3. **Operability**: Improved resilience to temporary network issues with retry logic
+4. **Maintainability**: Reusable retry helper function applicable to other D1 operations
 
 ---
 
-## 📈 第4回コミット (2025-11-16)
+## 📈 4th Commit (2025-11-16)
 
-### 追加実装 (MEDIUM優先度問題を完全解決)
-1. **問題#19: ID トークンに auth_time クレーム追加** (MEDIUM) - 完了
-2. **問題#23: userinfo エンドポイント実データ取得** (MEDIUM) - 完了
-3. **問題#24: セッション一括削除のバッチAPI実装** (MEDIUM) - 完了
-4. **問題#22: Magic Link/Passkey登録の順序変更** (MEDIUM) - 完了
-5. **問題#18: D1クリーンアップジョブ実装** (HIGH) - 完了
+### Additional Implementation (Completely Resolved MEDIUM Priority Issues)
+1. **Issue #19: Added auth_time claim to ID Token** (MEDIUM) - Complete
+2. **Issue #23: userinfo endpoint fetches actual data** (MEDIUM) - Complete
+3. **Issue #24: Implemented batch API for session bulk deletion** (MEDIUM) - Complete
+4. **Issue #22: Changed order for Magic Link/Passkey registration** (MEDIUM) - Complete
+5. **Issue #18: Implemented D1 cleanup job** (HIGH) - Complete
 
-### 変更ファイル
-- `packages/op-token/src/token.ts` - auth_timeクレーム追加
-- `packages/op-userinfo/src/userinfo.ts` - D1から実データ取得
-- `packages/shared/src/durable-objects/SessionStore.ts` - バッチ削除API追加
-- `packages/op-management/src/admin.ts` - バッチAPI使用に変更
-- `packages/op-auth/src/magic-link.ts` - 順序変更（削除を最後に）
-- `packages/op-auth/src/passkey.ts` - 順序変更（削除を最後に）
-- `packages/op-management/src/index.ts` - Cron scheduled handler追加
+### Changed Files
+- `packages/op-token/src/token.ts` - Added auth_time claim
+- `packages/op-userinfo/src/userinfo.ts` - Fetch actual data from D1
+- `packages/shared/src/durable-objects/SessionStore.ts` - Added batch deletion API
+- `packages/op-management/src/admin.ts` - Changed to use batch API
+- `packages/op-auth/src/magic-link.ts` - Changed order (deletion last)
+- `packages/op-auth/src/passkey.ts` - Changed order (deletion last)
+- `packages/op-management/src/index.ts` - Added Cron scheduled handler
 
-### 実装の詳細
+### Implementation Details
 
-#### 1. 問題#19: auth_time クレーム追加
-**OIDC Core仕様準拠**:
-- auth_timeは認証発生時刻を示す標準クレーム
-- max_ageパラメータ使用時に必須
-- AuthorizationCodeのcreatedAtをauth_timeとして使用
+#### 1. Issue #19: auth_time Claim Addition
+**OIDC Core Specification Compliance**:
+- auth_time is a standard claim indicating authentication occurrence time
+- Required when max_age parameter is used
+- Uses AuthorizationCode's createdAt as auth_time
 
 ```typescript
 // token.ts
@@ -657,13 +657,13 @@ const idTokenClaims = {
   aud: client_id,
   nonce: authCodeData.nonce,
   at_hash: atHash,
-  auth_time: authCodeData.auth_time, // 追加
+  auth_time: authCodeData.auth_time, // Added
 };
 ```
 
-#### 2. 問題#23: userinfo エンドポイント実データ取得
-**修正前**: ハードコードされたテストデータを全ユーザーに返却
-**修正後**: D1 usersテーブルから実際のユーザーデータを取得
+#### 2. Issue #23: userinfo Endpoint Fetches Actual Data
+**Before fix**: Returns hardcoded test data to all users
+**After fix**: Fetches actual user data from D1 users table
 
 ```typescript
 // userinfo.ts
@@ -676,60 +676,60 @@ const userData = {
   name: user.name || undefined,
   email: user.email || undefined,
   email_verified: user.email_verified === 1,
-  // ... D1から実データをマッピング
+  // ... Map actual data from D1
 };
 ```
 
-#### 3. 問題#24: セッション一括削除のバッチAPI
-**問題**: N+1 DO呼び出し（100セッション = 100回のHTTPリクエスト）
-**解決**: バッチ削除API実装
+#### 3. Issue #24: Session Bulk Deletion Batch API
+**Problem**: N+1 DO calls (100 sessions = 100 HTTP requests)
+**Solution**: Implemented batch deletion API
 
-**SessionStore.ts に追加**:
+**Added to SessionStore.ts**:
 ```typescript
 async invalidateSessionsBatch(sessionIds: string[]): Promise<{ deleted: number; failed: string[] }>
-private async batchDeleteFromD1(sessionIds: string[]): Promise<void>  // SQL IN句で一括削除
+private async batchDeleteFromD1(sessionIds: string[]): Promise<void>  // Bulk delete with SQL IN clause
 ```
 
-**admin.ts の修正**:
+**Modified admin.ts**:
 ```typescript
-// 修正前: Promise.all + map (N+1問題)
+// Before fix: Promise.all + map (N+1 problem)
 await Promise.all(data.sessions.map(async (session) => {
   await sessionStore.fetch(new Request(`/session/${session.id}`, { method: 'DELETE' }));
 }));
 
-// 修正後: バッチAPI (1回のDO呼び出し)
+// After fix: Batch API (1 DO call)
 await sessionStore.fetch(new Request('/sessions/batch-delete', {
   method: 'POST',
   body: JSON.stringify({ sessionIds: data.sessions.map(s => s.id) }),
 }));
 ```
 
-**効果**:
-- 100セッション削除: 100回 → 1回のDO呼び出し
-- レイテンシ: 大幅削減
-- コスト: DO呼び出し課金が1/100に削減
+**Effect**:
+- 100 session deletion: 100 calls → 1 DO call
+- Latency: Significantly reduced
+- Cost: DO call billing reduced to 1/100
 
-#### 4. 問題#22: Magic Link/Passkey登録の順序変更
-**問題**: トークン/チャレンジ削除後にセッション作成失敗 → ユーザー再試行不可
+#### 4. Issue #22: Changed Order for Magic Link/Passkey Registration
+**Problem**: Token/challenge deletion followed by session creation failure → User cannot retry
 
-**修正前の順序**:
+**Order Before Fix**:
 1. DB UPDATE (email_verified = 1)
-2. SessionStore DO (セッション作成)
-3. トークン削除
+2. SessionStore DO (session creation)
+3. Token deletion
 
-**修正後の順序**:
-1. SessionStore DO (セッション作成) ← 最初に実行
+**Order After Fix**:
+1. SessionStore DO (session creation) ← Execute first
 2. DB UPDATE (email_verified = 1)
-3. トークン削除 ← 最後に実行
+3. Token deletion ← Execute last
 
-**効果**:
-- セッション作成失敗時もトークンが残る → ユーザーが再試行可能
-- 部分失敗状態を最小化
+**Effect**:
+- Token remains even if session creation fails → User can retry
+- Minimizes partial failure state
 
-#### 5. 問題#18: D1クリーンアップジョブ
-**問題**: 期限切れデータの蓄積 → ストレージコスト増大、パフォーマンス劣化
+#### 5. Issue #18: D1 Cleanup Job
+**Problem**: Accumulation of expired data → Storage cost increase, performance degradation
 
-**実装**: Cloudflare Workers Cron Trigger
+**Implementation**: Cloudflare Workers Cron Trigger
 
 ```typescript
 // op-management/src/index.ts
@@ -738,46 +738,46 @@ export default {
   scheduled: async (event, env) => {
     const now = Math.floor(Date.now() / 1000);
 
-    // 1. 期限切れセッション削除（1日の猶予期間）
+    // 1. Delete expired sessions (1 day grace period)
     await env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?')
       .bind(now - 86400).run();
 
-    // 2. 期限切れ/使用済みパスワードリセットトークン削除
+    // 2. Delete expired/used password reset tokens
     await env.DB.prepare('DELETE FROM password_reset_tokens WHERE expires_at < ? OR used = 1')
       .bind(now).run();
 
-    // 3. 古い監査ログ削除（90日保持）
+    // 3. Delete old audit logs (90 day retention)
     await env.DB.prepare('DELETE FROM audit_log WHERE created_at < ?')
       .bind(now - 90 * 86400).run();
   },
 };
 ```
 
-**Cron設定** (wrangler.toml):
+**Cron Configuration** (wrangler.toml):
 ```toml
 [triggers]
-crons = ["0 2 * * *"]  # 毎日午前2時UTC
+crons = ["0 2 * * *"]  # Daily at 2 AM UTC
 ```
 
-**効果**:
-- ストレージコスト削減
-- クエリパフォーマンス維持
-- コンプライアンス準拠（監査ログ90日保持）
+**Effect**:
+- Storage cost reduction
+- Maintains query performance
+- Compliance adherence (90-day audit log retention)
 
-### 成果
-- ✅ **すべてのHIGH + MEDIUM優先度問題を解決**（14問題完了）
-- ✅ **OIDC Core完全準拠**: auth_timeクレーム追加
-- ✅ **本番環境対応**: ハードコードデータ除去、実データ取得
-- ✅ **パフォーマンス改善**: N+1問題解決、バッチAPI実装
-- ✅ **運用性向上**: 自動クリーンアップジョブ
-- ✅ **ユーザー体験改善**: 部分失敗時の再試行可能化
+### Results
+- ✅ **Resolved all HIGH + MEDIUM priority issues** (14 issues completed)
+- ✅ **OIDC Core Full Compliance**: Added auth_time claim
+- ✅ **Production Environment Ready**: Removed hardcoded data, fetch actual data
+- ✅ **Performance Improvement**: Resolved N+1 problem, implemented batch API
+- ✅ **Operability Improvement**: Automatic cleanup job
+- ✅ **User Experience Improvement**: Retry possible on partial failure
 
-### 13. 問題#21: Passkey/Magic Link チャレンジ再利用脆弱性 ⚠️ MEDIUM
+### 13. Issue #21: Passkey/Magic Link Challenge Reuse Vulnerability ⚠️ MEDIUM
 
-**問題**: PasskeyチャレンジとMagic Linkトークンに競合状態があり、並行リクエストで同じチャレンジ/トークンを複数回使用可能でした（Replay攻撃の可能性）。
+**Problem**: Passkey challenges and Magic Link tokens had race conditions, allowing the same challenge/token to be used multiple times in concurrent requests (replay attack possibility).
 
-**実装内容**:
-1. **ChallengeStore Durable Objectの作成** (`packages/shared/src/durable-objects/ChallengeStore.ts`)
+**Implementation**:
+1. **Created ChallengeStore Durable Object** (`packages/shared/src/durable-objects/ChallengeStore.ts`)
    ```typescript
    export type ChallengeType =
      | 'passkey_registration'
@@ -785,52 +785,52 @@ crons = ["0 2 * * *"]  # 毎日午前2時UTC
      | 'magic_link'
      | 'session_token';
 
-   // 原子的消費メソッド
+   // Atomic consumption method
    async consumeChallenge(request: ConsumeChallengeRequest): Promise<ConsumeChallengeResponse> {
-     // 1. チャレンジ存在確認
-     // 2. タイプ検証
-     // 3. 消費済みチェック
-     // 4. 有効期限チェック
-     // 5. 原子的に consumed = true に設定
-     // 6. Durable Storageに保存
-     // 7. チャレンジ値を返却
+     // 1. Check challenge existence
+     // 2. Validate type
+     // 3. Check if consumed
+     // 4. Check expiration
+     // 5. Atomically set consumed = true
+     // 6. Save to Durable Storage
+     // 7. Return challenge value
    }
    ```
 
-2. **Passkey登録の修正** (`packages/op-auth/src/passkey.ts`)
-   - チャレンジ保存: KV → ChallengeStore DO
-   - チャレンジ検証: KV get + delete → 原子的consume操作
-   - 並行リクエストの場合、2つ目は`Challenge already consumed`エラー
+2. **Modified Passkey Registration** (`packages/op-auth/src/passkey.ts`)
+   - Challenge save: KV → ChallengeStore DO
+   - Challenge verification: KV get + delete → Atomic consume operation
+   - For concurrent requests, second returns `Challenge already consumed` error
 
-3. **Passkey認証の修正** (`packages/op-auth/src/passkey.ts`)
-   - 同様にChallengeStore DO使用
-   - 原子的consume操作により並行リクエスト防止
+3. **Modified Passkey Authentication** (`packages/op-auth/src/passkey.ts`)
+   - Similarly uses ChallengeStore DO
+   - Prevents concurrent requests with atomic consume operation
 
-4. **Magic Link の修正** (`packages/op-auth/src/magic-link.ts`)
-   - トークン保存: KV (`MAGIC_LINKS`) → ChallengeStore DO
-   - トークン検証: KV get + delete → 原子的consume操作
-   - KV依存を完全除去
+4. **Modified Magic Link** (`packages/op-auth/src/magic-link.ts`)
+   - Token save: KV (`MAGIC_LINKS`) → ChallengeStore DO
+   - Token verification: KV get + delete → Atomic consume operation
+   - Completely removed KV dependency
 
-**セキュリティ効果**:
-- ✅ Replay攻撃の完全防止（並行リクエストでも単一使用保証）
-- ✅ DO内で原子的操作のため競合状態なし
-- ✅ consumed フラグで使用済みチャレンジを追跡
-- ✅ 自動クリーンアップ（TTL超過 + consumed フラグで削除）
+**Security Effect**:
+- ✅ Complete replay attack prevention (single-use guarantee even with concurrent requests)
+- ✅ No race conditions due to atomic operations within DO
+- ✅ Tracks consumed challenges with consumed flag
+- ✅ Automatic cleanup (delete with TTL exceeded + consumed flag)
 
 ---
 
-### 14. 問題#8: Session Token 競合状態 ⚠️ MEDIUM
+### 14. Issue #8: Session Token Race Condition ⚠️ MEDIUM
 
-**問題**: ITP対策のセッショントークン（5分TTL、単一使用）に競合状態があり、並行リクエストで同じトークンを複数回使用可能でした。
+**Problem**: ITP countermeasure session tokens (5-minute TTL, single-use) had race conditions, allowing the same token to be used multiple times in concurrent requests.
 
-**実装内容**:
-1. **ChallengeStore DO に session_token タイプ追加**
-   - 既存のChallengeStoreを再利用（コード重複回避）
-   - `session_token` を新しいChallengeTypeとして追加
+**Implementation**:
+1. **Added session_token type to ChallengeStore DO**
+   - Reused existing ChallengeStore (avoid code duplication)
+   - Added `session_token` as new ChallengeType
 
-2. **session-management.ts の修正** (`packages/op-auth/src/session-management.ts`)
+2. **Modified session-management.ts** (`packages/op-auth/src/session-management.ts`)
 
-   **トークン発行** (`issueSessionTokenHandler`):
+   **Token Issuance** (`issueSessionTokenHandler`):
    ```typescript
    // Before: KV.put(tokenKey, JSON.stringify({sessionId, userId, used: false}))
    // After: ChallengeStore DO
@@ -849,10 +849,10 @@ crons = ["0 2 * * *"]  # 毎日午前2時UTC
    );
    ```
 
-   **トークン検証** (`verifySessionTokenHandler`):
+   **Token Verification** (`verifySessionTokenHandler`):
    ```typescript
    // Before: KV get → check used flag → KV put (race condition)
-   // After: 原子的consume操作
+   // After: Atomic consume operation
    const consumeResponse = await challengeStore.fetch(
      new Request('https://challenge-store/challenge/consume', {
        method: 'POST',
@@ -865,124 +865,124 @@ crons = ["0 2 * * *"]  # 毎日午前2時UTC
    );
    ```
 
-**セキュリティ効果**:
-- ✅ 単一使用保証（並行リクエストでも2つ目は失敗）
-- ✅ ITP対策フローのセキュリティ強化
-- ✅ KV依存除去（STATE_STORE fallback不要）
+**Security Effect**:
+- ✅ Single-use guarantee (second request fails even with concurrent requests)
+- ✅ Enhanced ITP countermeasure flow security
+- ✅ Removed KV dependency (no STATE_STORE fallback needed)
 
 ---
 
-### 19. 問題#6: RateLimiterCounter DO実装・統合 🌟 NEW (MEDIUM → 実装完了)
+### 19. Issue #6: RateLimiterCounter DO Implementation & Integration 🌟 NEW (MEDIUM → Implementation Complete)
 
-**問題**: KVベースのrate limitingは結果整合性のため、並行リクエストでカウントが不正確になる可能性があり、100%の精度保証ができませんでした。
+**Problem**: KV-based rate limiting had eventual consistency, making counts inaccurate with concurrent requests, unable to guarantee 100% accuracy.
 
-**実装内容**:
-1. **RateLimiterCounter DO新規作成** (`packages/shared/src/durable-objects/RateLimiterCounter.ts`)
-   - アトミックなインクリメント操作
-   - スライディングウィンドウ方式のレートリミット
-   - 永続化によりDO再起動後も状態を保持
+**Implementation**:
+1. **Created RateLimiterCounter DO** (`packages/shared/src/durable-objects/RateLimiterCounter.ts`)
+   - Atomic increment operations
+   - Sliding window rate limiting
+   - Persistence maintains state after DO restart
 
-2. **Rate Limitingミドルウェア更新** (`packages/shared/src/middleware/rate-limit.ts`)
-   - DO-firstアプローチ + KVフォールバック
-   - 全エンドポイントでRateLimiterCounter DO使用
+2. **Updated Rate Limiting Middleware** (`packages/shared/src/middleware/rate-limit.ts`)
+   - DO-first approach + KV fallback
+   - Uses RateLimiterCounter DO across all endpoints
 
-3. **wrangler.toml更新** (`scripts/setup-dev.sh`)
-   - 全workerにRATE_LIMITERバインディング追加
+3. **Updated wrangler.toml** (`scripts/setup-dev.sh`)
+   - Added RATE_LIMITER binding to all workers
 
-**アーキテクチャ改善**:
-- ✅ 100%精度保証（race condition完全排除）
-- ✅ アトミック操作により並行リクエストでも正確
-- ✅ 高可用性維持（DO障害時はKVフォールバック）
-
----
-
-### 20. 問題#11: PARRequestStore DO実装・統合 🌟 NEW (MEDIUM → 実装完了)
-
-**問題**: PAR request_uriの単一使用保証がKVの結果整合性により完全ではなく、RFC 9126違反のリスクがありました。
-
-**実装内容**:
-1. **PARRequestStore DO新規作成** (`packages/shared/src/durable-objects/PARRequestStore.ts`)
-   - アトミックなconsume操作（check + delete）
-   - client_id検証
-   - TTL管理（10分）
-
-2. **PAR endpoint統合** (`packages/op-auth/src/par.ts:224-254`)
-   - PARRequestStore DOにリクエスト保存
-   - KVフォールバック維持
-
-3. **Authorize endpoint統合** (`packages/op-auth/src/authorize.ts:104-140`)
-   - PARRequestStore DOから原子的consume
-   - 並行リクエストでも2つ目は確実に失敗
-
-**RFC準拠性**:
-- ✅ RFC 9126完全準拠（request_uri単一使用保証）
-- ✅ Replay攻撃完全防止
-- ✅ 並行リクエスト対応
+**Architecture Improvements**:
+- ✅ 100% accuracy guarantee (complete race condition elimination)
+- ✅ Accurate even with concurrent requests due to atomic operations
+- ✅ Maintains high availability (KV fallback on DO failure)
 
 ---
 
-### 21. 問題#12: DPoPJTIStore DO実装・統合 🌟 NEW (LOW → 実装完了)
+### 20. Issue #11: PARRequestStore DO Implementation & Integration 🌟 NEW (MEDIUM → Implementation Complete)
 
-**問題**: DPoP JTI replay protectionがKVベースのため、並行リクエストで同じJTIが複数回使用される可能性がありました。
+**Problem**: PAR request_uri single-use guarantee was not complete due to KV's eventual consistency, risking RFC 9126 violation.
 
-**実装内容**:
-1. **DPoPJTIStore DO新規作成** (`packages/shared/src/durable-objects/DPoPJTIStore.ts`)
-   - アトミックなcheck-and-store操作
-   - client_idとJTIのバインディング
-   - 1時間TTL管理
+**Implementation**:
+1. **Created PARRequestStore DO** (`packages/shared/src/durable-objects/PARRequestStore.ts`)
+   - Atomic consume operation (check + delete)
+   - client_id verification
+   - TTL management (10 minutes)
 
-2. **DPoP validation更新** (`packages/shared/src/utils/dpop.ts:212-278`)
-   - DPoPJTIStore DOでJTI検証
-   - アトミック操作によりreplayを100%防止
+2. **PAR Endpoint Integration** (`packages/op-auth/src/par.ts:224-254`)
+   - Save request to PARRequestStore DO
+   - Maintains KV fallback
 
-3. **Token endpoint統合** (`packages/op-token/src/token.ts`)
-   - 認可コードフロー (line 302-310)
-   - リフレッシュトークンフロー (line 692-700)
+3. **Authorize Endpoint Integration** (`packages/op-auth/src/authorize.ts:104-140`)
+   - Atomic consume from PARRequestStore DO
+   - Second request reliably fails even with concurrent requests
 
-4. **Token introspection統合** (`packages/shared/src/utils/token-introspection.ts:263-276`)
-   - Protected Resource向けDPoP検証
-
-**RFC準拠性**:
-- ✅ RFC 9449 (DPoP) 完全準拠
-- ✅ JTI replay attack完全防止
-- ✅ client_idバインディングでセキュリティ強化
+**RFC Compliance**:
+- ✅ Full RFC 9126 compliance (request_uri single-use guarantee)
+- ✅ Complete replay attack prevention
+- ✅ Concurrent request support
 
 ---
 
-### 22. 問題#13: JWKS Endpoint動的取得実装 🌟 NEW (DESIGN → 実装完了)
+### 21. Issue #12: DPoPJTIStore DO Implementation & Integration 🌟 NEW (LOW → Implementation Complete)
 
-**問題**: JWKS Endpointが環境変数から静的に公開鍵を返しており、KeyManager DOで鍵ローテーションしても即座に反映されない不整合がありました。
+**Problem**: DPoP JTI replay protection was KV-based, potentially allowing the same JTI to be used multiple times in concurrent requests.
 
-**実装内容**:
-1. **JWKS endpoint完全書き直し** (`packages/op-discovery/src/jwks.ts`)
-   - KeyManager DOから動的に鍵取得
-   - /jwksエンドポイントを公開（認証不要）
-   - 環境変数フォールバック維持
+**Implementation**:
+1. **Created DPoPJTIStore DO** (`packages/shared/src/durable-objects/DPoPJTIStore.ts`)
+   - Atomic check-and-store operation
+   - Binding of client_id and JTI
+   - 1-hour TTL management
 
-2. **KeyManager DO更新** (`packages/shared/src/durable-objects/KeyManager.ts`)
-   - /jwksエンドポイントを公開に変更
-   - 認証チェックをスキップ（公開鍵のみ返すため）
+2. **Updated DPoP Validation** (`packages/shared/src/utils/dpop.ts:212-278`)
+   - JTI verification with DPoPJTIStore DO
+   - 100% replay prevention with atomic operations
 
-**アーキテクチャ改善**:
-- ✅ 鍵ローテーション即時反映（5分キャッシュ）
-- ✅ 複数アクティブ鍵対応（ローテーション期間中）
-- ✅ 環境変数依存除去
+3. **Token Endpoint Integration** (`packages/op-token/src/token.ts`)
+   - Authorization code flow (line 302-310)
+   - Refresh token flow (line 692-700)
+
+4. **Token Introspection Integration** (`packages/shared/src/utils/token-introspection.ts:263-276`)
+   - DPoP verification for Protected Resources
+
+**RFC Compliance**:
+- ✅ RFC 9449 (DPoP) Full Compliance
+- ✅ Complete JTI replay attack prevention
+- ✅ Enhanced security with client_id binding
 
 ---
 
-### 23. 問題#14: スキーマバージョン管理実装 🌟 NEW (FUTURE → 実装完了)
+### 22. Issue #13: JWKS Endpoint Dynamic Retrieval Implementation 🌟 NEW (DESIGN → Implementation Complete)
 
-**問題**: データベーススキーマとDurable Objects data structureのバージョン管理が欠如しており、将来的なマイグレーションやロールバックが困難でした。
+**Problem**: JWKS Endpoint statically returned public keys from environment variables, not immediately reflecting key rotations from KeyManager DO.
 
-**実装内容**:
+**Implementation**:
+1. **Completely Rewrote JWKS Endpoint** (`packages/op-discovery/src/jwks.ts`)
+   - Dynamically retrieve keys from KeyManager DO
+   - Exposed /jwks endpoint (no authentication required)
+   - Maintains environment variable fallback
 
-1. **D1マイグレーション管理テーブル作成** (`migrations/000_schema_migrations.sql`)
-   - `schema_migrations` テーブル: 適用済みマイグレーション履歴
-   - `migration_metadata` テーブル: 現在のスキーマバージョン
-   - チェックサム検証（SHA-256）
-   - 実行時間記録
+2. **Updated KeyManager DO** (`packages/shared/src/durable-objects/KeyManager.ts`)
+   - Changed /jwks endpoint to public
+   - Skip authentication check (returns public keys only)
 
-2. **MigrationRunnerクラス実装** (`packages/shared/src/migrations/runner.ts`)
+**Architecture Improvements**:
+- ✅ Key rotation immediately reflected (5-minute cache)
+- ✅ Multiple active key support (during rotation period)
+- ✅ Removed environment variable dependency
+
+---
+
+### 23. Issue #14: Schema Version Management Implementation 🌟 NEW (FUTURE → Implementation Complete)
+
+**Problem**: Database schema and Durable Objects data structure lacked version management, making future migrations and rollbacks difficult.
+
+**Implementation**:
+
+1. **Created D1 Migration Management Table** (`migrations/000_schema_migrations.sql`)
+   - `schema_migrations` table: Applied migration history
+   - `migration_metadata` table: Current schema version
+   - Checksum verification (SHA-256)
+   - Execution time recording
+
+2. **Implemented MigrationRunner Class** (`packages/shared/src/migrations/runner.ts`)
    ```typescript
    class MigrationRunner {
      async runMigrations(migrationsDir: string): Promise<void>
@@ -990,18 +990,18 @@ crons = ["0 2 * * *"]  # 毎日午前2時UTC
      async showStatus(migrationsDir: string): Promise<void>
    }
    ```
-   - べき等性保証（同じマイグレーションを複数回実行しても安全）
-   - チェックサム検証（ファイル改ざん検出）
-   - 自動バージョン追跡
+   - Idempotency guarantee (safe to run same migration multiple times)
+   - Checksum verification (file tampering detection)
+   - Automatic version tracking
 
-3. **CLIツール実装** (`scripts/create-migration.ts`)
+3. **Implemented CLI Tool** (`scripts/create-migration.ts`)
    ```bash
-   # マイグレーション作成
+   # Create migration
    pnpm migrate:create add_user_preferences
-   # → migrations/003_add_user_preferences.sql が生成される
+   # → Generates migrations/003_add_user_preferences.sql
    ```
 
-4. **Durable Objects data structure versioning** (`SessionStore.ts`)
+4. **Durable Objects Data Structure Versioning** (`SessionStore.ts`)
    ```typescript
    interface SessionStoreState {
      version: number;  // Data structure version
@@ -1009,82 +1009,82 @@ crons = ["0 2 * * *"]  # 毎日午前2時UTC
      lastCleanup: number;
    }
 
-   // 自動マイグレーション
+   // Automatic migration
    async migrateData(oldState: SessionStoreState): Promise<SessionStoreState>
    ```
-   - バージョン検出
-   - 自動マイグレーション実行
-   - 永続化
+   - Version detection
+   - Automatic migration execution
+   - Persistence
 
-5. **マイグレーションREADME更新** (`migrations/README.md`)
-   - マイグレーション規約
-   - ベストプラクティス
-   - 3フェーズデプロイ戦略
+5. **Updated Migration README** (`migrations/README.md`)
+   - Migration conventions
+   - Best practices
+   - 3-phase deployment strategy
 
-**メリット**:
-- ✅ マイグレーション履歴の可視化
-- ✅ チェックサム検証による改ざん検出
-- ✅ べき等性保証（冪等性）
-- ✅ ロールバック戦略の文書化
-- ✅ DO data structure進化のサポート
-- ✅ ゼロダウンタイムデプロイ対応
+**Benefits**:
+- ✅ Migration history visualization
+- ✅ Tampering detection with checksum verification
+- ✅ Idempotency guarantee
+- ✅ Documented rollback strategy
+- ✅ DO data structure evolution support
+- ✅ Zero-downtime deployment support
 
-**実装ファイル**:
-- `migrations/000_schema_migrations.sql` - マイグレーション管理テーブル
+**Implementation Files**:
+- `migrations/000_schema_migrations.sql` - Migration management table
 - `packages/shared/src/migrations/runner.ts` - MigrationRunner
 - `scripts/create-migration.ts` - CLI tool
-- `migrations/README.md` - ドキュメント
+- `migrations/README.md` - Documentation
 - `packages/shared/src/durable-objects/SessionStore.ts` - DO versioning example
 
 ---
 
-## 🎯 最終実装サマリー
+## 🎯 Final Implementation Summary
 
-**実装完了日**: 2025-11-16 (全DO統合 + スキーマバージョン管理完了)
+**Implementation Completion Date**: 2025-11-16 (All DO Integration + Schema Version Management Complete)
 
-### 実装した問題の内訳
-- **CRITICAL優先度**: 9問題 ✅
-- **HIGH優先度**: 2問題 ✅
-- **MEDIUM/LOW/FUTURE優先度**: 12問題 ✅
-- **合計**: **23問題を完全解決**（全24問題中）
+### Breakdown of Implemented Issues
+- **CRITICAL Priority**: 9 issues ✅
+- **HIGH Priority**: 2 issues ✅
+- **MEDIUM/LOW/FUTURE Priority**: 12 issues ✅
+- **Total**: **23 issues completely resolved** (out of 24 total)
 
-### 問題リスト
-1. ✅ #15: Client Secret タイミング攻撃 (CRITICAL)
-2. ✅ #16: /revoke, /introspect 認証欠如 (CRITICAL)
-3. ✅ #9: SessionStore DO 永続化 (CRITICAL)
-4. ✅ #10: AuthCodeStore DO 永続化 (CRITICAL)
-5. ✅ #3: AuthCodeStore 単一使用保証 (CRITICAL)
-6. ✅ #4: RefreshTokenRotator DO 永続化 (CRITICAL)
-7. ✅ #7: Passkey Counter CAS実装 (CRITICAL)
-8. ✅ #17: AuthCode/Token移行 (CRITICAL)
-9. ✅ #20: Password Reset Token確認 (CRITICAL - 検証のみ)
-10. ✅ #1: D1リトライロジック (HIGH)
-11. ✅ #2: KVキャッシュ無効化 (HIGH)
-12. ✅ #19: auth_time クレーム追加 (MEDIUM)
-13. ✅ #23: userinfo ハードコードデータ除去 (MEDIUM)
-14. ✅ #24: セッション一括削除 N+1 問題 (MEDIUM)
-15. ✅ #22: Magic Link/Passkey 部分失敗リスク (MEDIUM)
-16. ✅ #18: D1クリーンアップジョブ (MEDIUM)
-17. ✅ #5: 監査ログ信頼性 (MEDIUM - D1リトライで解決)
-18. ✅ #21: Passkey/Magic Link チャレンジ再利用 (MEDIUM)
-19. ✅ #8: Session Token 競合状態 (MEDIUM)
-20. ✅ **#6: Rate Limiting精度** (MEDIUM) 🌟 **NEW**
-21. ✅ **#11: PAR request_uri 競合** (MEDIUM) 🌟 **NEW**
-22. ✅ **#12: DPoP JTI 競合** (LOW) 🌟 **NEW**
-23. ✅ **#13: JWKS/KeyManager不整合** (DESIGN) 🌟 **NEW**
+### Issue List
+1. ✅ #15: Client Secret Timing Attack (CRITICAL)
+2. ✅ #16: /revoke, /introspect Authentication Missing (CRITICAL)
+3. ✅ #9: SessionStore DO Persistence (CRITICAL)
+4. ✅ #10: AuthCodeStore DO Persistence (CRITICAL)
+5. ✅ #3: AuthCodeStore Single-Use Guarantee (CRITICAL)
+6. ✅ #4: RefreshTokenRotator DO Persistence (CRITICAL)
+7. ✅ #7: Passkey Counter CAS Implementation (CRITICAL)
+8. ✅ #17: AuthCode/Token Migration (CRITICAL)
+9. ✅ #20: Password Reset Token Verification (CRITICAL - Verification only)
+10. ✅ #1: D1 Retry Logic (HIGH)
+11. ✅ #2: KV Cache Invalidation (HIGH)
+12. ✅ #19: auth_time Claim Addition (MEDIUM)
+13. ✅ #23: userinfo Hardcoded Data Removal (MEDIUM)
+14. ✅ #24: Session Bulk Deletion N+1 Issue (MEDIUM)
+15. ✅ #22: Magic Link/Passkey Partial Failure Risk (MEDIUM)
+16. ✅ #18: D1 Cleanup Job (MEDIUM)
+17. ✅ #5: Audit Log Reliability (MEDIUM - Resolved with D1 retry)
+18. ✅ #21: Passkey/Magic Link Challenge Reuse (MEDIUM)
+19. ✅ #8: Session Token Race Condition (MEDIUM)
+20. ✅ **#6: Rate Limiting Accuracy** (MEDIUM) 🌟 **NEW**
+21. ✅ **#11: PAR request_uri Race** (MEDIUM) 🌟 **NEW**
+22. ✅ **#12: DPoP JTI Race** (LOW) 🌟 **NEW**
+23. ✅ **#13: JWKS/KeyManager Inconsistency** (DESIGN) 🌟 **NEW**
 
-24. ✅ **#14: スキーマバージョン管理** (FUTURE) 🌟 **NEW**
+24. ✅ **#14: Schema Version Management** (FUTURE) 🌟 **NEW**
 
-### 全Durable Objects実装完了（8個）
-1. ✅ **SessionStore** - 永続化実装 + セッショントークン統合
-2. ✅ **AuthorizationCodeStore** - 永続化実装 + Token endpoint統合
-3. ✅ **RefreshTokenRotator** - 永続化実装 + Token endpoint統合
-4. ✅ **KeyManager** - 既存正常動作 + JWKS endpoint統合
-5. ✅ **ChallengeStore** - 統合実装（Session Token, Passkey, Magic Link）
-6. ✅ **RateLimiterCounter** - 新規実装・統合完了（#6）
-7. ✅ **PARRequestStore** - 新規実装・統合完了（#11）
-8. ✅ **DPoPJTIStore** - 新規実装・統合完了（#12）
+### All Durable Objects Implementation Complete (8 total)
+1. ✅ **SessionStore** - Persistence implementation + Session token integration
+2. ✅ **AuthorizationCodeStore** - Persistence implementation + Token endpoint integration
+3. ✅ **RefreshTokenRotator** - Persistence implementation + Token endpoint integration
+4. ✅ **KeyManager** - Already working correctly + JWKS endpoint integration
+5. ✅ **ChallengeStore** - Integrated implementation (Session Token, Passkey, Magic Link)
+6. ✅ **RateLimiterCounter** - New implementation & integration complete (#6)
+7. ✅ **PARRequestStore** - New implementation & integration complete (#11)
+8. ✅ **DPoPJTIStore** - New implementation & integration complete (#12)
 
 ---
 
-**すべてのCRITICAL + HIGH + MEDIUM優先度問題を解決完了**
+**All CRITICAL + HIGH + MEDIUM priority issues resolved and complete**

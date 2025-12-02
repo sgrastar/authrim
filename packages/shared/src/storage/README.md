@@ -1,23 +1,23 @@
 # Storage Abstraction Layer
 
-Phase 5で実装された統合ストレージ抽象化層です。Cloudflare Workers環境（D1、KV、Durable Objects）に対応した統一的なインターフェースを提供します。
+This is the unified storage abstraction layer implemented in Phase 5. It provides a unified interface for Cloudflare Workers environment (D1, KV, Durable Objects).
 
-## 概要
+## Overview
 
-ストレージ抽象化層は、複数のストレージバックエンドを統合し、インテリジェントなルーティングロジックを提供します。
+The storage abstraction layer integrates multiple storage backends and provides intelligent routing logic.
 
-### ルーティング戦略
+### Routing Strategy
 
-| プレフィックス | ルーティング先 | 説明 |
-|---------------|--------------|------|
-| `session:*` | SessionStore Durable Object + D1 fallback | ホットデータはDO、コールドデータはD1 |
-| `client:*` | D1 + KVキャッシュ | リードスルーキャッシュパターン |
-| `user:*` | D1 Database | ユーザーデータ |
-| `authcode:*` | AuthorizationCodeStore Durable Object | ワンタイムユーザー保証 |
-| `refreshtoken:*` | RefreshTokenRotator Durable Object | アトミックローテーション |
-| その他 | KV Storage | フォールバック |
+| Prefix | Routing Target | Description |
+|--------|---------------|-------------|
+| `session:*` | SessionStore Durable Object + D1 fallback | Hot data in DO, cold data in D1 |
+| `client:*` | D1 + KV Cache | Read-through cache pattern |
+| `user:*` | D1 Database | User data |
+| `authcode:*` | AuthorizationCodeStore Durable Object | One-time use guarantee |
+| `refreshtoken:*` | RefreshTokenRotator Durable Object | Atomic rotation |
+| Others | KV Storage | Fallback |
 
-## アーキテクチャ
+## Architecture
 
 ```mermaid
 flowchart TB
@@ -62,26 +62,26 @@ flowchart TB
     DO --> RTR
 ```
 
-## 使用方法
+## Usage
 
-### 基本的な使い方
+### Basic Usage
 
 ```typescript
 import { createStorageAdapter } from '@authrim/shared/storage/adapters/cloudflare-adapter';
 import type { Env } from '@authrim/shared/types/env';
 
-// ハンドラー内でストレージアダプターを作成
+// Create storage adapter in handler
 export default {
   async fetch(request: Request, env: Env) {
     const { adapter, userStore, clientStore, sessionStore, passkeyStore } = createStorageAdapter(env);
 
-    // ユーザーを取得
+    // Get user
     const user = await userStore.get('user_123');
 
-    // クライアントを取得（D1 + KVキャッシュ）
+    // Get client (D1 + KV cache)
     const client = await clientStore.get('client_abc');
 
-    // セッションを作成（Durable Object + D1）
+    // Create session (Durable Object + D1)
     const session = await sessionStore.create({
       user_id: 'user_123',
       data: { amr: ['pwd'] },
@@ -92,52 +92,52 @@ export default {
 };
 ```
 
-### IStorageAdapterインターフェース
+### IStorageAdapter Interface
 
-低レベルAPIを使用する場合:
+For low-level API usage:
 
 ```typescript
-// キーベースのアクセス（自動ルーティング）
+// Key-based access (automatic routing)
 const value = await adapter.get('client:test-client');
 await adapter.set('custom:key', 'value', 3600); // TTL: 1 hour
 await adapter.delete('session:abc123');
 
-// D1 SQLクエリ
+// D1 SQL queries
 const users = await adapter.query<User>('SELECT * FROM users WHERE email = ?', ['user@example.com']);
 await adapter.execute('DELETE FROM sessions WHERE expires_at < ?', [Date.now()]);
 ```
 
-### ストア別API
+### Store-Specific APIs
 
 #### UserStore
 
 ```typescript
-// ユーザーを取得
+// Get user
 const user = await userStore.get('user_123');
 const userByEmail = await userStore.getByEmail('user@example.com');
 
-// ユーザーを作成
+// Create user
 const newUser = await userStore.create({
   email: 'newuser@example.com',
   name: 'New User',
 });
 
-// ユーザーを更新
+// Update user
 const updated = await userStore.update('user_123', {
   name: 'Updated Name',
 });
 
-// ユーザーを削除
+// Delete user
 await userStore.delete('user_123');
 ```
 
 #### ClientStore
 
 ```typescript
-// クライアントを取得（自動キャッシュ）
+// Get client (auto-cached)
 const client = await clientStore.get('client_abc');
 
-// クライアントを作成
+// Create client
 const newClient = await clientStore.create({
   client_id: 'new-client',
   client_name: 'New Client App',
@@ -146,47 +146,47 @@ const newClient = await clientStore.create({
   response_types: ['code'],
 });
 
-// クライアントを更新（キャッシュ無効化）
+// Update client (cache invalidation)
 const updated = await clientStore.update('client_abc', {
   client_name: 'Updated Client Name',
 });
 
-// クライアント一覧を取得
+// List clients
 const clients = await clientStore.list({ limit: 10, offset: 0 });
 ```
 
 #### SessionStore
 
 ```typescript
-// セッションを取得（Durable Object → D1フォールバック）
+// Get session (Durable Object → D1 fallback)
 const session = await sessionStore.get('session_abc123');
 
-// セッションを作成（Durable Object + D1）
+// Create session (Durable Object + D1)
 const newSession = await sessionStore.create({
   user_id: 'user_123',
   data: { amr: ['pwd', 'mfa'] },
 });
 
-// セッションを無効化
+// Invalidate session
 await sessionStore.delete('session_abc123');
 
-// ユーザーの全セッションを取得
+// Get all sessions for user
 const sessions = await sessionStore.listByUser('user_123');
 
-// セッション有効期限を延長（Active TTL）
+// Extend session expiration (Active TTL)
 const extended = await sessionStore.extend('session_abc123', 3600); // +1 hour
 ```
 
 #### PasskeyStore
 
 ```typescript
-// Passkeyを取得
+// Get passkey
 const passkey = await passkeyStore.getByCredentialId('cred_abc123');
 
-// ユーザーの全Passkeyを取得
+// Get all passkeys for user
 const passkeys = await passkeyStore.listByUser('user_123');
 
-// Passkeyを作成
+// Create passkey
 const newPasskey = await passkeyStore.create({
   user_id: 'user_123',
   credential_id: 'cred_xyz789',
@@ -195,80 +195,80 @@ const newPasskey = await passkeyStore.create({
   device_name: 'iPhone 15',
 });
 
-// Passkeyカウンターを更新（リプレイアタック防止）
+// Update passkey counter (replay attack prevention)
 const updated = await passkeyStore.updateCounter('passkey_123', 5);
 ```
 
-## インターフェース
+## Interfaces
 
 ### IStorageAdapter
 
-統一的なストレージアダプターインターフェース。キーベースのアクセスとD1 SQLクエリをサポート。
+Unified storage adapter interface. Supports key-based access and D1 SQL queries.
 
 ### IUserStore
 
-ユーザー管理用のストアインターフェース。
+Store interface for user management.
 
 ### IClientStore
 
-OAuthクライアント管理用のストアインターフェース。
+Store interface for OAuth client management.
 
 ### ISessionStore
 
-セッション管理用のストアインターフェース。
+Store interface for session management.
 
 ### IPasskeyStore
 
-Passkey（WebAuthn）管理用のストアインターフェース。
+Store interface for Passkey (WebAuthn) management.
 
-## パフォーマンス最適化
+## Performance Optimization
 
-### リードスルーキャッシュ（Client）
-
-```mermaid
-flowchart LR
-    A["1. KVキャッシュをチェック"] --> B{ヒット?}
-    B -->|Yes| C["返却"]
-    B -->|No| D["2. D1クエリ"]
-    D --> E["3. KVにキャッシュ<br/>(TTL: 5分)"]
-    E --> F["4. 結果を返却"]
-```
-
-### ホット/コールドパターン（Session）
+### Read-Through Cache (Client)
 
 ```mermaid
 flowchart LR
-    A["1. DO（ホット）をチェック"] --> B{ヒット?}
-    B -->|Yes| C["返却"]
-    B -->|No| D["2. D1（コールド）をチェック"]
-    D --> E{ヒット?}
-    E -->|Yes| F["DOに昇格"]
-    F --> G["3. 結果を返却"]
-    E -->|No| H["null返却"]
+    A["1. Check KV Cache"] --> B{Hit?}
+    B -->|Yes| C["Return"]
+    B -->|No| D["2. D1 Query"]
+    D --> E["3. Cache to KV<br/>(TTL: 5 min)"]
+    E --> F["4. Return Result"]
 ```
 
-### ワンタイムユーザー保証（AuthCode）
+### Hot/Cold Pattern (Session)
 
-Authorization Codeは、Durable Objectsの強い一貫性保証により、ワンタイムユーザーが保証されます。リプレイアタックを防止します。
+```mermaid
+flowchart LR
+    A["1. Check DO (Hot)"] --> B{Hit?}
+    B -->|Yes| C["Return"]
+    B -->|No| D["2. Check D1 (Cold)"]
+    D --> E{Hit?}
+    E -->|Yes| F["Promote to DO"]
+    F --> G["3. Return Result"]
+    E -->|No| H["Return null"]
+```
 
-## テスト
+### One-Time Use Guarantee (AuthCode)
 
-ユニットテストは、37個のテストケースで以下をカバーしています:
+Authorization Codes are guaranteed to be one-time use through Durable Objects' strong consistency guarantees. This prevents replay attacks.
 
-- ルーティングロジック（6テスト）
-- Set/Deleteオペレーション（6テスト）
-- SQLオペレーション（2テスト）
-- UserStore（6テスト）
-- ClientStore（5テスト）
-- SessionStore（6テスト）
-- PasskeyStore（5テスト）
-- ファクトリー関数（1テスト）
+## Tests
+
+Unit tests cover 37 test cases including:
+
+- Routing logic (6 tests)
+- Set/Delete operations (6 tests)
+- SQL operations (2 tests)
+- UserStore (6 tests)
+- ClientStore (5 tests)
+- SessionStore (6 tests)
+- PasskeyStore (5 tests)
+- Factory function (1 test)
 
 ```bash
 pnpm test src/storage/adapters/__tests__/cloudflare-adapter.test.ts
 ```
 
-## 参考資料
+## References
 
 - [Storage Strategy](../../../docs/architecture/storage-strategy.md)
 - [Database Schema](../../../docs/architecture/database-schema.md)

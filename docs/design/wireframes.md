@@ -150,7 +150,7 @@ graph TD
 └─────────────────────────────────────────┘
 ```
 
-**コンポーネント構成**:
+**Component Structure**:
 
 ```html
 <main class="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
@@ -308,7 +308,7 @@ graph TD
 └─────────────────────────────────────────┘
 ```
 
-**コンポーネント構成**:
+**Component Structure**:
 
 ```html
 <main class="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
@@ -441,7 +441,7 @@ graph TD
 └─────────────────────────────────────────┘
 ```
 
-**コンポーネント構成**:
+**Component Structure**:
 
 ```html
 <main class="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
@@ -563,7 +563,7 @@ graph TD
 └─────────────────────────────────────────┘
 ```
 
-**コンポーネント構成**:
+**Component Structure**:
 
 ```html
 <main class="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
@@ -666,7 +666,7 @@ graph TD
 └─────────────────────────────────────────┘
 ```
 
-**コンポーネント構成**:
+**Component Structure**:
 
 ```html
 <main class="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4 py-8">
@@ -793,7 +793,7 @@ graph TD
 └─────────────────────────────────────────┘
 ```
 
-**コンポーネント構成**:
+**Component Structure**:
 
 ```html
 <main class="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 px-4">
@@ -886,7 +886,7 @@ graph TD
 └──────────┴──────────────────────────────────────────────────────┘
 ```
 
-**コンポーネント構成**:
+**Component Structure**:
 
 ```html
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -1076,7 +1076,7 @@ graph TD
 └──────────┴──────────────────────────────────────────────────────┘
 ```
 
-**コンポーネント構成**:
+**Component Structure**:
 
 ```html
 <main class="flex-1 p-6">
