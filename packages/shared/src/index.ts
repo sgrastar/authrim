@@ -51,3 +51,61 @@ export { DeviceCodeStore } from './durable-objects/DeviceCodeStore';
 export { CIBARequestStore } from './durable-objects/CIBARequestStore';
 export { VersionManager } from './durable-objects/VersionManager';
 export { SAMLRequestStore } from './durable-objects/SAMLRequestStore';
+
+// ReBAC (Relationship-Based Access Control)
+export {
+  // Service
+  ReBACService,
+  createReBACService,
+  // Cache manager
+  ReBACCacheManager,
+  RequestScopedCache,
+  // Closure manager
+  ClosureManager,
+  createClosureManager,
+  // Relation parser
+  RelationParser,
+  createEvaluationContext,
+  parseObjectString,
+  buildObjectString,
+  // Constants
+  DEFAULT_CACHE_TTL,
+  DEFAULT_MAX_DEPTH,
+  REBAC_CACHE_PREFIX,
+  DEFAULT_CLOSURE_BATCH_SIZE,
+} from './rebac';
+
+export type {
+  // Check API types
+  CheckRequest,
+  CheckResponse,
+  BatchCheckRequest,
+  BatchCheckResponse,
+  CheckResolutionMethod,
+  // List API types
+  ListObjectsRequest,
+  ListObjectsResponse,
+  ListUsersRequest,
+  ListUsersResponse,
+  // Relation DSL types
+  RelationExpression,
+  DirectRelation,
+  UnionRelation,
+  TupleToUsersetRelation,
+  RelationDefinition,
+  // Cache types
+  CheckCacheKey,
+  CachedCheckResult,
+  // Tuple types
+  RelationshipTuple,
+  ParsedObject,
+  // Config
+  ReBACConfig,
+  // Interfaces
+  IReBACService,
+  IRelationDefinitionStore,
+  IClosureManager,
+  IReBACCacheManager,
+  IRelationParser,
+  RelationEvaluationContext,
+} from './rebac';

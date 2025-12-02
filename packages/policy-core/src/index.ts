@@ -71,3 +71,13 @@ export {
   subjectFromClaims,
 } from './role-checker';
 export type { RoleCheckOptions } from './role-checker';
+
+// Feature Flags
+export {
+  FeatureFlagsManager,
+  createFeatureFlagsManager,
+  getFlagsFromEnv,
+  DEFAULT_FLAGS,
+  FLAG_NAMES,
+} from './feature-flags';
+export type { PolicyFeatureFlags, FlagName, KVNamespace } from './feature-flags';

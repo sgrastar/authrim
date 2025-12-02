@@ -59,14 +59,39 @@ describe('Policy Service API', () => {
   });
 
   describe('GET /api/rebac/health', () => {
-    it('should return ReBAC health status', async () => {
+    it('should return ReBAC health status (limited when DB/ReBAC not configured)', async () => {
       const req = createRequest('/api/rebac/health', { withAuth: false });
       const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.status).toBe('ok');
+      // Status is 'limited' when ENABLE_REBAC is not set and DB is not configured
+      expect(body.status).toBe('limited');
       expect(body.service).toBe('rebac-service');
+      expect(body.enabled).toBe(false);
+      expect(body.database).toBe(false);
+    });
+
+    it('should return ok status when ReBAC is enabled and DB is configured', async () => {
+      const mockEnvWithRebac = {
+        ...mockEnv,
+        ENABLE_REBAC: 'true',
+        DB: {
+          prepare: vi.fn(() => ({
+            bind: vi.fn().mockReturnThis(),
+            all: vi.fn(() => Promise.resolve({ results: [] })),
+            run: vi.fn(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
+          })),
+        },
+      };
+      const req = createRequest('/api/rebac/health', { withAuth: false });
+      const res = await app.fetch(req, mockEnvWithRebac);
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.status).toBe('ok');
+      expect(body.enabled).toBe(true);
+      expect(body.database).toBe(true);
     });
   });
 
@@ -446,31 +471,66 @@ describe('Policy Service API', () => {
       expect(res.status).toBe(401);
     });
 
-    it('should return 400 for missing required fields', async () => {
+    it('should return 503 when ReBAC is not enabled', async () => {
       const req = createRequest('/api/rebac/check', {
         method: 'POST',
-        body: { subject: 'user:123' },
+        body: { user_id: 'user:123', relation: 'viewer', object: 'document:doc_1' },
       });
       const res = await app.fetch(req, mockEnv);
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.error).toBe('feature_disabled');
     });
 
-    it('should return placeholder response for ReBAC check', async () => {
+    it('should return 400 for missing required fields when ReBAC is enabled', async () => {
+      const mockEnvWithRebac = {
+        ...mockEnv,
+        ENABLE_REBAC: 'true',
+        DB: {
+          prepare: vi.fn(() => ({
+            bind: vi.fn().mockReturnThis(),
+            all: vi.fn(() => Promise.resolve({ results: [] })),
+            run: vi.fn(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
+          })),
+        },
+      };
+      const req = createRequest('/api/rebac/check', {
+        method: 'POST',
+        body: { user_id: 'user:123' }, // missing relation and object
+      });
+      const res = await app.fetch(req, mockEnvWithRebac);
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('invalid_request');
+    });
+
+    it('should perform ReBAC check when enabled with DB', async () => {
+      const mockEnvWithRebac = {
+        ...mockEnv,
+        ENABLE_REBAC: 'true',
+        DB: {
+          prepare: vi.fn(() => ({
+            bind: vi.fn().mockReturnThis(),
+            all: vi.fn(() => Promise.resolve({ results: [] })), // No relationships found
+            run: vi.fn(() => Promise.resolve({ success: true, meta: { changes: 0 } })),
+          })),
+        },
+      };
       const req = createRequest('/api/rebac/check', {
         method: 'POST',
         body: {
-          subject: 'user:user_123',
+          user_id: 'user:user_123',
           relation: 'viewer',
           object: 'document:doc_456',
         },
       });
-      const res = await app.fetch(req, mockEnv);
+      const res = await app.fetch(req, mockEnvWithRebac);
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.allowed).toBe(false);
-      expect(body.reason).toContain('not yet implemented');
+      expect(body.allowed).toBe(false); // No relationships = not allowed
     });
   });
 
