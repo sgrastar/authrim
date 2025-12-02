@@ -1,14 +1,14 @@
-# 最近の修正サマリー (2025-11-20)
+# Recent Fixes Summary (2025-11-20)
 
-## 1. HTTPS request_uri サポートの追加
+## 1. Added HTTPS request_uri Support
 
-### 問題
-- テスト `oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported` が失敗
-- エラー: `{"error":"invalid_request","error_description":"Invalid request_uri format"}`
-- 原因: URN形式（PAR）のrequest_uriのみ対応していて、HTTPS URLからのJWT取得に未対応
+### Problem
+- Test `oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported` failed
+- Error: `{"error":"invalid_request","error_description":"Invalid request_uri format"}`
+- Cause: Only URN format (PAR) request_uri was supported, HTTPS URL JWT retrieval was not supported
 
-### 修正内容
-**ファイル:** `packages/op-auth/src/authorize.ts` (Lines 111-267)
+### Fix Details
+**File:** `packages/op-auth/src/authorize.ts` (Lines 111-267)
 
 ```typescript
 // Check if this is a PAR request_uri (URN) or HTTPS request_uri
@@ -42,34 +42,34 @@ if (isHTTPS) {
 }
 ```
 
-### 結果
-- HTTPS形式のrequest_uri（OIDC Core 6.2 Request Object by Reference）に対応
-- URN形式のrequest_uri（PAR - RFC 9126）も引き続き動作
-- 両方のフォーマットをサポート
+### Result
+- Supports HTTPS format request_uri (OIDC Core 6.2 Request Object by Reference)
+- URN format request_uri (PAR - RFC 9126) continues to work
+- Supports both formats
 
 ---
 
-## 2. KeyManager 内部エンドポイントへの認証追加
+## 2. Added Authentication to KeyManager Internal Endpoints
 
-### 問題
-- トークンエンドポイントが500エラー: `"Failed to load signing key"`
-- さらに詳細なエラー: `TypeError: "pkcs8" must be PKCS#8 formatted string`
-- 原因: KeyManagerの既存エンドポイント (`/active`, `/rotate`) が `sanitizeKey()` で `privatePEM` を削除していた
+### Problem
+- Token endpoint returned 500 error: `"Failed to load signing key"`
+- More detailed error: `TypeError: "pkcs8" must be PKCS#8 formatted string`
+- Cause: Existing KeyManager endpoints (`/active`, `/rotate`) were removing `privatePEM` with `sanitizeKey()`
 
-### セキュリティ上の懸念
-- ユーザーの指摘: "理由があって削除していたんじゃないの？大丈夫なの？"
-- 秘密鍵を含むエンドポイントは公開してはいけない
+### Security Concerns
+- User concern: "Wasn't there a reason it was being removed? Is this safe?"
+- Endpoints containing private keys should not be exposed publicly
 
-### 修正内容
+### Fix Details
 
-#### 2.1 新しい内部エンドポイントの追加
-**ファイル:** `packages/shared/src/durable-objects/KeyManager.ts`
+#### 2.1 Added New Internal Endpoints
+**File:** `packages/shared/src/durable-objects/KeyManager.ts`
 
-**新規エンドポイント:**
-- `GET /internal/active-with-private` - アクティブキー取得（privatePEM含む）
-- `POST /internal/rotate` - キーローテーション（privatePEM含む）
+**New Endpoints:**
+- `GET /internal/active-with-private` - Get active key (includes privatePEM)
+- `POST /internal/rotate` - Key rotation (includes privatePEM)
 
-**実装 (Lines 420-443):**
+**Implementation (Lines 420-443):**
 ```typescript
 // GET /internal/active-with-private - Get active signing key with private key (for internal use by op-token)
 if (path === '/internal/active-with-private' && request.method === 'GET') {
@@ -98,8 +98,8 @@ if (path === '/internal/active-with-private' && request.method === 'GET') {
 }
 ```
 
-#### 2.2 認証の実装
-**既存の認証メソッド (Lines 336-354):**
+#### 2.2 Authentication Implementation
+**Existing Authentication Method (Lines 336-354):**
 ```typescript
 private authenticate(request: Request): boolean {
   const authHeader = request.headers.get('Authorization');
@@ -122,7 +122,7 @@ private authenticate(request: Request): boolean {
 }
 ```
 
-**認証チェック (Lines 391-398):**
+**Authentication Check (Lines 391-398):**
 ```typescript
 // Public endpoints (no authentication required)
 // /jwks is public because it only returns public keys for JWT verification
@@ -134,13 +134,13 @@ if (!isPublicEndpoint && !this.authenticate(request)) {
 }
 ```
 
-#### 2.3 op-token側の修正
-**ファイル:** `packages/op-token/src/token.ts` (Lines 57-120)
+#### 2.3 op-token Modifications
+**File:** `packages/op-token/src/token.ts` (Lines 57-120)
 
-**変更点:**
-1. 認証ヘッダーの追加
-2. 内部エンドポイントの使用
-3. Durable Objectインスタンス名を `default-v3` に変更（デプロイ反映のため）
+**Changes:**
+1. Added authentication header
+2. Using internal endpoints
+3. Changed Durable Object instance name to `default-v3` (to reflect deployment)
 
 ```typescript
 async function getSigningKeyFromKeyManager(
@@ -196,8 +196,8 @@ async function getSigningKeyFromKeyManager(
 }
 ```
 
-#### 2.4 環境変数の追加
-**ファイル:** `packages/op-token/wrangler.toml` (Line 66)
+#### 2.4 Environment Variable Addition
+**File:** `packages/op-token/wrangler.toml` (Line 66)
 
 ```toml
 KEY_MANAGER_SECRET = "dev-secret-change-in-production"
@@ -205,16 +205,16 @@ KEY_MANAGER_SECRET = "dev-secret-change-in-production"
 
 ---
 
-## 3. JSON シリアライゼーション問題の修正
+## 3. Fixed JSON Serialization Issue
 
-### 問題
-- Durable Object storage から取得したオブジェクトが `JSON.stringify()` で正しくシリアライズされない
-- `privatePEM` プロパティが存在するが、JSONに含まれない
+### Problem
+- Objects retrieved from Durable Object storage were not serializing correctly with `JSON.stringify()`
+- `privatePEM` property existed but was not included in JSON
 
-### 修正内容
-**ファイル:** `packages/shared/src/durable-objects/KeyManager.ts`
+### Fix Details
+**File:** `packages/shared/src/durable-objects/KeyManager.ts`
 
-**rotateKeys() メソッドで明示的に再構築 (Lines 241-248):**
+**Explicit reconstruction in rotateKeys() method (Lines 241-248):**
 ```typescript
 // Explicitly reconstruct the object to ensure all properties are enumerable and serializable
 const result: StoredKey = {
@@ -226,83 +226,132 @@ const result: StoredKey = {
 };
 ```
 
-**内部エンドポイントでも同様に再構築:**
+**Similar reconstruction in internal endpoints:**
 - `/internal/active-with-private` (Lines 432-438)
 - `/internal/rotate` (Lines 468-492)
 
 ---
 
-## 4. デプロイメント
+## 4. Deployment
 
-### デプロイ完了
-**最新バージョン (2025-11-20T04:10):**
+### Deployment Completed
+**Latest Version (2025-11-20T04:10):**
 - `authrim-shared`: `94e5306d-9db0-4b5c-a4cc-2176e0facb1c`
 - `authrim-op-token`: `4f29c961-4d1a-406e-956a-116c9d02efb6`
 - `authrim-op-auth`: `f36a992c-f7bf-439a-b1dc-ca8ba98af2e4`
 
-### デプロイ時の問題と対処
-- Cloudflare のデプロイは eventually consistent（最終的整合性）
-- Durable Object インスタンスが古いコードを実行し続ける問題
-- 対処: インスタンス名を `default` → `default-v2` → `default-v3` と変更して強制リフレッシュ
+### Deployment Issues and Solutions
+- Cloudflare deployment is eventually consistent
+- Durable Object instances continued running old code
+- Solution: Changed instance name from `default` → `default-v2` → `default-v3` to force refresh
 
 ---
 
-## 5. セキュリティ改善まとめ
+## 5. Security Improvements Summary
 
-### Before（問題あり）
-- `/active` と `/rotate` が公開エンドポイントだが認証必須
-- これらのエンドポイントは `sanitizeKey()` で `privatePEM` を削除
-- 秘密鍵が必要な op-token がエラーになる
+### Architecture Overview
 
-### After（改善後）
-1. **公開エンドポイント**（認証必須、秘密鍵なし）:
-   - `GET /active` - `sanitizeKey()` でprivatePEMを削除
-   - `POST /rotate` - `sanitizeKey()` でprivatePEMを削除
-   - `GET /jwks` - 公開鍵のみ（認証不要）
+```mermaid
+graph TB
+    subgraph "Public Endpoints"
+        JWKS[GET /jwks<br/>Public keys only<br/>No auth required]
+        Active[GET /active<br/>Sanitized keys<br/>Auth required]
+        Rotate[POST /rotate<br/>Sanitized keys<br/>Auth required]
+    end
 
-2. **内部エンドポイント**（認証必須、秘密鍵あり）:
-   - `GET /internal/active-with-private` - privatePEM含む（**新規**）
-   - `POST /internal/rotate` - privatePEM含む（**新規**）
+    subgraph "Internal Endpoints"
+        InternalActive[GET /internal/active-with-private<br/>Includes privatePEM<br/>Auth required]
+        InternalRotate[POST /internal/rotate<br/>Includes privatePEM<br/>Auth required]
+    end
 
-3. **認証方式**:
+    subgraph "KeyManager DO"
+        Storage[(Storage)]
+        Auth{Authentication<br/>Check}
+    end
+
+    Client[Client Apps] -->|No auth| JWKS
+    Client -->|Bearer token| Active
+    Client -->|Bearer token| Rotate
+
+    OpToken[op-token Worker] -->|Bearer token| InternalActive
+    OpToken -->|Bearer token| InternalRotate
+
+    JWKS --> Auth
+    Active --> Auth
+    Rotate --> Auth
+    InternalActive --> Auth
+    InternalRotate --> Auth
+
+    Auth -->|Valid| Storage
+    Auth -->|Invalid| Error[401 Unauthorized]
+
+    Storage -->|sanitizeKey| Active
+    Storage -->|sanitizeKey| Rotate
+    Storage -->|Full key data| InternalActive
+    Storage -->|Full key data| InternalRotate
+
+    style JWKS fill:#90EE90
+    style Active fill:#FFD700
+    style Rotate fill:#FFD700
+    style InternalActive fill:#FF6B6B
+    style InternalRotate fill:#FF6B6B
+    style Auth fill:#87CEEB
+```
+
+### Before (Problem)
+- `/active` and `/rotate` were public endpoints but required authentication
+- These endpoints removed `privatePEM` with `sanitizeKey()`
+- op-token requiring private key would error
+
+### After (Improved)
+1. **Public Endpoints** (authentication required, no private key):
+   - `GET /active` - Removes privatePEM with `sanitizeKey()`
+   - `POST /rotate` - Removes privatePEM with `sanitizeKey()`
+   - `GET /jwks` - Public keys only (no authentication required)
+
+2. **Internal Endpoints** (authentication required, includes private key):
+   - `GET /internal/active-with-private` - Includes privatePEM (**New**)
+   - `POST /internal/rotate` - Includes privatePEM (**New**)
+
+3. **Authentication Method**:
    - Bearer token (`Authorization: Bearer ${KEY_MANAGER_SECRET}`)
-   - タイミング攻撃を防ぐ定数時間比較
-   - 秘密が設定されていない場合はすべて拒否
+   - Constant-time comparison to prevent timing attacks
+   - Denies all requests if secret is not configured
 
 ---
 
-## 6. 次のステップ
+## 6. Next Steps
 
-### テスト項目
-1. **トークンエンドポイントのテスト**
-   - OIDC適合性テストスイートで実行
-   - 期待される結果: 500エラーではなく200 OK
-   - ログ確認: `Received rotate response: { textLength: 2327, hasPrivatePEM: true }`
+### Test Items
+1. **Token Endpoint Testing**
+   - Run in OIDC conformance test suite
+   - Expected result: 200 OK instead of 500 error
+   - Log verification: `Received rotate response: { textLength: 2327, hasPrivatePEM: true }`
 
-2. **request_uri テスト**
-   - テスト: `oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported`
-   - HTTPS request_uri が正しく処理されることを確認
+2. **request_uri Testing**
+   - Test: `oidcc-request-uri-unsigned-supported-correctly-or-rejected-as-unsupported`
+   - Verify HTTPS request_uri is processed correctly
 
-3. **PAR互換性確認**
-   - URN形式のrequest_uriが引き続き動作することを確認
+3. **PAR Compatibility Verification**
+   - Verify URN format request_uri continues to work
 
-### 監視ポイント
+### Monitoring Points
 ```bash
-# KeyManagerのログを監視
+# Monitor KeyManager logs
 npx wrangler tail
 
-# 期待されるログ:
+# Expected logs:
 # KeyManager /internal/rotate - response JSON: { jsonLength: 2327, hasPrivatePEM: true }
 # Received rotate response: { textLength: 2327, hasPrivatePEM: true }
 ```
 
 ---
 
-## 7. 変更されたファイル一覧
+## 7. Changed Files List
 
-1. `packages/op-auth/src/authorize.ts` - HTTPS request_uri サポート追加
-2. `packages/shared/src/durable-objects/KeyManager.ts` - 内部エンドポイント追加、認証強化
-3. `packages/op-token/src/token.ts` - 認証ヘッダー追加、内部エンドポイント使用
-4. `packages/op-token/wrangler.toml` - KEY_MANAGER_SECRET 追加
+1. `packages/op-auth/src/authorize.ts` - Added HTTPS request_uri support
+2. `packages/shared/src/durable-objects/KeyManager.ts` - Added internal endpoints, enhanced authentication
+3. `packages/op-token/src/token.ts` - Added authentication header, using internal endpoints
+4. `packages/op-token/wrangler.toml` - Added KEY_MANAGER_SECRET
 
-すべての変更はビルド・デプロイ済みです。
+All changes have been built and deployed.

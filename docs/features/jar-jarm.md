@@ -1,24 +1,24 @@
-# JAR (JWT-Secured Authorization Request) と JARM (JWT-Secured Authorization Response Mode)
+# JAR (JWT-Secured Authorization Request) and JARM (JWT-Secured Authorization Response Mode)
 
-このドキュメントでは、Authrim の JAR と JARM の実装について説明します。
+This document describes the implementation of JAR and JARM in Authrim.
 
-## 概要
+## Overview
 
 ### JAR (JWT-Secured Authorization Request) - RFC 9101
 
-JAR は、Authorization Request のパラメータを JWT として署名・暗号化することで、セキュリティを強化する仕様です。
+JAR is a specification that enhances security by signing and encrypting Authorization Request parameters as JWT.
 
 ### JARM (JWT-Secured Authorization Response Mode)
 
-JARM は、Authorization Response を JWT として署名・暗号化することで、レスポンスの完全性と機密性を保証する仕様です。
+JARM is a specification that guarantees the integrity and confidentiality of responses by signing and encrypting Authorization Responses as JWT.
 
 ## JAR (JWT-Secured Authorization Request)
 
-### 実装済み機能
+### Implemented Features
 
-#### 1. `request` パラメータ (RFC 9101)
+#### 1. `request` Parameter (RFC 9101)
 
-Authorization Request に JWT 形式の Request Object を含めることができます。
+You can include a Request Object in JWT format in the Authorization Request.
 
 ```http
 GET /authorize?
@@ -27,49 +27,49 @@ GET /authorize?
   request=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
-**サポートされる署名アルゴリズム:**
-- `RS256` - RSA 署名（推奨）
-- `none` - 署名なし（開発環境のみ）
+**Supported Signature Algorithms:**
+- `RS256` - RSA signature (recommended)
+- `none` - No signature (development environment only)
 
-#### 2. `request_uri` パラメータ (RFC 9101)
+#### 2. `request_uri` Parameter (RFC 9101)
 
-Request Object を URL 経由で取得できます。
+Request Objects can be retrieved via URL.
 
-**PAR (Pushed Authorization Request) の場合:**
+**For PAR (Pushed Authorization Request):**
 ```http
 GET /authorize?
   client_id=client123&
   request_uri=urn:ietf:params:oauth:request_uri:abc123
 ```
 
-**HTTPS URL の場合:**
+**For HTTPS URL:**
 ```http
 GET /authorize?
   client_id=client123&
   request_uri=https://client.example.com/request/xyz789
 ```
 
-#### 3. Request Object の JWE 暗号化
+#### 3. Request Object JWE Encryption
 
-Request Object を JWE 形式で暗号化できます（5 パート形式）。
+Request Objects can be encrypted in JWE format (5-part format).
 
-**サポートされる暗号化アルゴリズム:**
-- **alg (鍵管理):** RSA-OAEP, RSA-OAEP-256, ECDH-ES, ECDH-ES+A128KW, ECDH-ES+A192KW, ECDH-ES+A256KW
-- **enc (コンテンツ暗号化):** A128GCM, A192GCM, A256GCM, A128CBC-HS256, A192CBC-HS384, A256CBC-HS512
+**Supported Encryption Algorithms:**
+- **alg (key management):** RSA-OAEP, RSA-OAEP-256, ECDH-ES, ECDH-ES+A128KW, ECDH-ES+A192KW, ECDH-ES+A256KW
+- **enc (content encryption):** A128GCM, A192GCM, A256GCM, A128CBC-HS256, A192CBC-HS384, A256CBC-HS512
 
-**処理フロー:**
-1. JWE を検出（5 パート形式）
-2. サーバーの秘密鍵で復号化
-3. 内部の JWT を検証（ネストされている場合）
-4. パラメータを抽出
+**Processing Flow:**
+1. Detect JWE (5-part format)
+2. Decrypt with server's private key
+3. Verify internal JWT (if nested)
+4. Extract parameters
 
-#### 4. クライアント公開鍵による署名検証
+#### 4. Signature Verification with Client Public Key
 
-Request Object の署名は、クライアントが登録した公開鍵で検証されます。
+Request Object signatures are verified with the public key registered by the client.
 
-**公開鍵の取得方法:**
+**Methods for Obtaining Public Keys:**
 
-1. **クライアント登録時の `jwks` フィールド:**
+1. **`jwks` field at client registration:**
 ```json
 {
   "client_id": "client123",
@@ -87,7 +87,7 @@ Request Object の署名は、クライアントが登録した公開鍵で検�
 }
 ```
 
-2. **`jwks_uri` からの動的取得:**
+2. **Dynamic retrieval from `jwks_uri`:**
 ```json
 {
   "client_id": "client123",
@@ -95,9 +95,9 @@ Request Object の署名は、クライアントが登録した公開鍵で検�
 }
 ```
 
-### Request Object の例
+### Request Object Example
 
-**JWT ヘッダー:**
+**JWT Header:**
 ```json
 {
   "alg": "RS256",
@@ -105,7 +105,7 @@ Request Object の署名は、クライアントが登録した公開鍵で検�
 }
 ```
 
-**JWT ペイロード:**
+**JWT Payload:**
 ```json
 {
   "iss": "https://op.example.com",
@@ -123,17 +123,17 @@ Request Object の署名は、クライアントが登録した公開鍵で検�
 
 ## JARM (JWT-Secured Authorization Response Mode)
 
-### 実装済み機能
+### Implemented Features
 
-#### 1. JWT 形式の Response Mode
+#### 1. JWT Format Response Mode
 
-**サポートされる Response Mode:**
-- `query.jwt` - URL クエリパラメータとして JWT を返す
-- `fragment.jwt` - URL フラグメントとして JWT を返す
-- `form_post.jwt` - HTML フォーム POST として JWT を返す
-- `jwt` - ジェネリック JWT モード（flow に応じて自動選択）
+**Supported Response Modes:**
+- `query.jwt` - Return JWT as URL query parameter
+- `fragment.jwt` - Return JWT as URL fragment
+- `form_post.jwt` - Return JWT as HTML form POST
+- `jwt` - Generic JWT mode (automatically selected based on flow)
 
-**使用例:**
+**Usage Example:**
 ```http
 GET /authorize?
   response_type=code&
@@ -143,11 +143,11 @@ GET /authorize?
   response_mode=query.jwt
 ```
 
-#### 2. Response JWT の署名
+#### 2. Response JWT Signature
 
-Authorization Response は、サーバーの秘密鍵で署名された JWT として返されます。
+Authorization Responses are returned as JWTs signed with the server's private key.
 
-**JWT ペイロード例:**
+**JWT Payload Example:**
 ```json
 {
   "iss": "https://op.example.com",
@@ -159,17 +159,17 @@ Authorization Response は、サーバーの秘密鍵で署名された JWT と�
 }
 ```
 
-**レスポンス形式 (query.jwt の場合):**
+**Response Format (for query.jwt):**
 ```http
 HTTP/1.1 302 Found
 Location: https://client.example.com/callback?response=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
-#### 3. Response JWT の暗号化（オプション）
+#### 3. Response JWT Encryption (Optional)
 
-クライアントが暗号化を要求した場合、署名済み JWT をさらに暗号化します。
+If the client requests encryption, the signed JWT is further encrypted.
 
-**クライアント設定:**
+**Client Configuration:**
 ```json
 {
   "client_id": "client123",
@@ -179,47 +179,47 @@ Location: https://client.example.com/callback?response=eyJhbGciOiJSUzI1NiIsInR5c
 }
 ```
 
-**処理フロー:**
-1. Authorization Response パラメータを JWT ペイロードとして構築
-2. サーバーの秘密鍵で JWT を署名
-3. クライアントが暗号化を要求している場合、クライアントの公開鍵で JWE に暗号化
-4. `response` パラメータとして返す
+**Processing Flow:**
+1. Build Authorization Response parameters as JWT payload
+2. Sign JWT with server's private key
+3. If client requests encryption, encrypt to JWE with client's public key
+4. Return as `response` parameter
 
-### JARM レスポンスの検証（クライアント側）
+### JARM Response Verification (Client-Side)
 
 ```javascript
-// 1. response パラメータを取得
+// 1. Get response parameter
 const params = new URLSearchParams(window.location.search);
 const responseJWT = params.get('response');
 
-// 2. JWT の検証
-const publicKey = await getOPPublicKey(); // OP の公開鍵を取得
+// 2. Verify JWT
+const publicKey = await getOPPublicKey(); // Get OP's public key
 const verified = await jose.jwtVerify(responseJWT, publicKey, {
   issuer: 'https://op.example.com',
   audience: 'client123'
 });
 
-// 3. 暗号化されている場合は復号化
+// 3. Decrypt if encrypted
 if (isJWE(responseJWT)) {
   const privateKey = await getClientPrivateKey();
   const decrypted = await jose.compactDecrypt(responseJWT, privateKey);
-  // ... デコードと検証
+  // ... decode and verify
 }
 
-// 4. Authorization Code を取得
+// 4. Get Authorization Code
 const code = verified.payload.code;
 const state = verified.payload.state;
 ```
 
-## Discovery メタデータ
+## Discovery Metadata
 
-JAR/JARM のサポートは、Discovery エンドポイントで確認できます。
+JAR/JARM support can be confirmed at the Discovery endpoint.
 
 ```http
 GET /.well-known/openid-configuration
 ```
 
-**レスポンス例:**
+**Response Example:**
 ```json
 {
   "issuer": "https://op.example.com",
@@ -243,58 +243,58 @@ GET /.well-known/openid-configuration
 }
 ```
 
-## セキュリティ考慮事項
+## Security Considerations
 
 ### JAR
 
-1. **署名検証:** 本番環境では、必ずクライアントの公開鍵で Request Object の署名を検証してください
-2. **暗号化の推奨:** 機密性の高いパラメータを含む場合は、JWE 暗号化を使用してください
-3. **request_uri の検証:** HTTPS URL からの Request Object 取得時は、TLS 証明書を検証してください
-4. **再生攻撃対策:** Request Object に `exp` (有効期限) を含めることを推奨します
+1. **Signature Verification:** In production environments, always verify Request Object signatures with the client's public key
+2. **Encryption Recommended:** Use JWE encryption when including sensitive parameters
+3. **request_uri Validation:** When retrieving Request Objects from HTTPS URLs, verify TLS certificates
+4. **Replay Attack Prevention:** Recommended to include `exp` (expiration time) in Request Objects
 
 ### JARM
 
-1. **署名の必須化:** すべての Authorization Response は署名されます
-2. **暗号化の推奨:** 機密性の高いレスポンス（アクセストークンを含む）には暗号化を使用してください
-3. **JWT の検証:** クライアント側で必ず `iss` (issuer) と `aud` (audience) を検証してください
-4. **短い有効期限:** Response JWT は 10 分の有効期限を持ちます（デフォルト）
+1. **Mandatory Signatures:** All Authorization Responses are signed
+2. **Encryption Recommended:** Use encryption for sensitive responses (containing access tokens)
+3. **JWT Verification:** Clients must verify `iss` (issuer) and `aud` (audience)
+4. **Short Expiration:** Response JWTs have a 10-minute expiration (default)
 
-## エラーハンドリング
+## Error Handling
 
-### JAR エラー
+### JAR Errors
 
-| エラーコード | 説明 |
-|------------|------|
-| `invalid_request_object` | Request Object の形式が不正 |
-| `invalid_request_object` | JWT の検証に失敗 |
-| `invalid_request_uri` | request_uri の取得に失敗 |
-| `server_error` | サーバー設定エラー（秘密鍵未設定など） |
+| Error Code | Description |
+|------------|-------------|
+| `invalid_request_object` | Invalid Request Object format |
+| `invalid_request_object` | JWT verification failed |
+| `invalid_request_uri` | Failed to retrieve request_uri |
+| `server_error` | Server configuration error (private key not configured, etc.) |
 
-### JARM エラー
+### JARM Errors
 
-| エラーコード | 説明 |
-|------------|------|
-| `server_error` | Response JWT の生成に失敗 |
-| `invalid_client` | クライアント情報の取得に失敗 |
+| Error Code | Description |
+|------------|-------------|
+| `server_error` | Failed to generate Response JWT |
+| `invalid_client` | Failed to retrieve client information |
 
-## 実装ファイル
+## Implementation Files
 
-### JAR 関連
+### JAR Related
 
-- `/packages/op-auth/src/authorize.ts` - Request Object 処理（行 281-505）
-- `/packages/shared/src/utils/jwt.ts` - JWT ユーティリティ
-- `/packages/shared/src/utils/jwe.ts` - JWE ユーティリティ
+- `/packages/op-auth/src/authorize.ts` - Request Object processing (lines 281-505)
+- `/packages/shared/src/utils/jwt.ts` - JWT utilities
+- `/packages/shared/src/utils/jwe.ts` - JWE utilities
 
-### JARM 関連
+### JARM Related
 
-- `/packages/op-auth/src/authorize.ts` - JARM レスポンス生成（行 1610-1641, 1804-1924）
-- `/packages/op-discovery/src/discovery.ts` - Discovery メタデータ（行 88-106）
+- `/packages/op-auth/src/authorize.ts` - JARM response generation (lines 1610-1641, 1804-1924)
+- `/packages/op-discovery/src/discovery.ts` - Discovery metadata (lines 88-106)
 
-### 型定義
+### Type Definitions
 
 - `/packages/shared/src/types/oidc.ts` - ClientMetadata, OIDCProviderMetadata
 
-## 参考資料
+## References
 
 - [RFC 9101: The OAuth 2.0 Authorization Framework: JWT-Secured Authorization Request (JAR)](https://datatracker.ietf.org/doc/html/rfc9101)
 - [JARM: JWT-Secured Authorization Response Mode for OAuth 2.0](https://openid.net/specs/oauth-v2-jarm.html)

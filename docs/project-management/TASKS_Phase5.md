@@ -12,9 +12,9 @@
 
 ---
 
-### ステージ1: インフラ基盤構築 (Week 26, Day 1-4: May 1-4) ✅ COMPLETE
+### Stage 1: Infrastructure Foundation (Week 26, Day 1-4: May 1-4) ✅ COMPLETE
 
-#### 26.1 D1データベースセットアップ
+#### 26.1 D1 Database Setup
 - [x] Create D1 database via Wrangler CLI
   ```bash
   wrangler d1 create authrim-production
@@ -23,7 +23,7 @@
 - [x] Test D1 connectivity from Workers
 - [x] Document D1 setup process (setup-d1.sh script created)
 
-#### 26.2 D1 マイグレーション実行
+#### 26.2 D1 Migration Execution
 - [x] Create migration files in `migrations/` directory
   - [x] `001_initial_schema.sql` - Core tables (users, oauth_clients, sessions) - All 11 tables in single file
   - [x] `002_seed_default_data.sql` - Seed data with default roles, scope mappings, test users
@@ -40,7 +40,7 @@
 - [ ] Test migration rollback process (optional)
 - [x] Document migration workflow (setup-d1.sh handles full workflow)
 
-#### 26.3 シードデータ投入
+#### 26.3 Seed Data Injection
 - [x] Create seed data script `migrations/seed_default_data.sql`:
   - [x] Insert default roles (super_admin, admin, viewer, support)
   - [x] Insert default branding settings
@@ -51,7 +51,7 @@
 - [x] Document seed data structure (comments in SQL file)
 - [ ] Create script to generate test data (1000+ users for testing) (deferred to later)
 
-#### 26.4 Durable Objects実装 - SessionStore
+#### 26.4 Durable Objects Implementation - SessionStore
 - [x] Create `src/durable-objects/SessionStore.ts`
 - [x] Implement SessionStore class:
   - [x] `constructor()` - Initialize in-memory session map
@@ -75,7 +75,7 @@
 - [x] Test D1 fallback for cold sessions
 - [x] Document SessionStore API (docs/api/durable-objects/SessionStore.md)
 
-#### 26.5 Durable Objects実装 - AuthorizationCodeStore
+#### 26.5 Durable Objects Implementation - AuthorizationCodeStore
 - [x] Create `src/durable-objects/AuthorizationCodeStore.ts`
 - [x] Implement AuthorizationCodeStore class:
   - [x] `constructor()` - Initialize in-memory code map
@@ -98,7 +98,7 @@
 - [x] Test PKCE validation
 - [x] Document AuthorizationCodeStore API (docs/api/durable-objects/AuthorizationCodeStore.md)
 
-#### 26.6 Durable Objects実装 - RefreshTokenRotator
+#### 26.6 Durable Objects Implementation - RefreshTokenRotator
 - [x] Create `src/durable-objects/RefreshTokenRotator.ts`
 - [x] Implement RefreshTokenRotator class:
   - [x] `constructor()` - Initialize token family map
@@ -197,7 +197,7 @@
   - [ ] Integrate with existing `docs/api/openapi.yaml`
 - [x] Update README.md with Durable Objects section
 
-#### 26.7 ストレージ抽象化層実装
+#### 26.7 Storage Abstraction Layer Implementation
 - [x] Create `packages/shared/src/storage/interfaces.ts`:
   - [x] Define `IStorageAdapter` interface
   - [x] Define `IUserStore` interface
@@ -215,9 +215,9 @@
 
 ---
 
-### ステージ2: バックエンドAPI実装 (Week 26-27: May 5-14) ✅
+### Stage 2: Backend API Implementation (Week 26-27: May 5-14) ✅
 
-#### 27.1 WebAuthn/Passkey実装 ✅
+#### 27.1 WebAuthn/Passkey Implementation ✅
 - [x] Install `@simplewebauthn/server` and `@simplewebauthn/browser`
 - [x] Create `src/handlers/auth/passkey.ts`
 - [x] Implement `POST /auth/passkey/register/options` - Generate registration options
@@ -231,7 +231,7 @@
 - [ ] Test Passkey authentication flow (deferred to integration testing)
 - [x] Document Passkey API - `docs/api/auth/passkey.md`
 
-#### 27.2 Magic Link実装 ✅
+#### 27.2 Magic Link Implementation ✅
 - [x] Choose email provider (Resend recommended)
 - [x] Create `src/utils/email/` directory:
   - [x] `interfaces.ts` - `IEmailProvider` interface
@@ -259,7 +259,7 @@
 - [ ] Test token expiration (deferred to integration testing)
 - [x] Document Magic Link API - `docs/api/auth/magic-link.md`
 
-#### 27.3 OAuth同意画面API ✅
+#### 27.3 OAuth Consent Screen API ✅
 - [x] Implement `GET /auth/consent` endpoint:
   - [x] Retrieve authorization request from session
   - [x] Load client metadata from D1
@@ -277,7 +277,7 @@
 - [ ] Test consent denial flow (deferred to integration testing)
 - [x] Document consent API - `docs/api/auth/consent.md`
 
-#### 27.4 ITP対応セッション管理API ✅
+#### 27.4 ITP-Compatible Session Management API ✅
 - [x] Implement `POST /auth/session/token` - Issue short-lived token (5min TTL, single-use)
   - [x] Generate secure token (UUID)
   - [x] Store in KV with TTL (5 minutes)
@@ -303,7 +303,7 @@
 - [ ] Test ITP compatibility (Safari)
 - [x] Document session management API - `docs/api/auth/session-management.md`
 
-#### 27.5 Logout機能API ✅
+#### 27.5 Logout Functionality API ✅
 - [x] Implement `GET /logout` - Front-channel Logout
   - [x] Parse `id_token_hint` parameter
   - [x] Validate ID token
@@ -321,7 +321,7 @@
 - [ ] Test back-channel logout
 - [x] Document logout API - `docs/api/auth/logout.md`
 
-#### 27.6 管理者API - ユーザー管理 ✅
+#### 27.6 Admin API - User Management ✅
 - [x] Implement `GET /admin/users` - List users with pagination
   - [x] Query parameters: `q` (search), `filter` (status), `sort`, `page`, `limit`
   - [x] Search by email, name
@@ -359,7 +359,7 @@
 - [x] Document admin user API - `docs/api/admin/users.md`
 - [x] Add avatar upload/delete functionality (R2 storage)
 
-#### 27.6.1 管理者API - 統計情報 ✅
+#### 27.6.1 Admin API - Statistics ✅
 - [x] Implement `GET /admin/stats` - System statistics and analytics
   - [x] Count active users (logged in within last 30 days)
   - [x] Count total users
@@ -374,7 +374,7 @@
 - [ ] Add caching for statistics (5 min TTL) - Phase 6
 - [ ] Add advanced analytics (user growth trends, auth method breakdown) - Phase 6
 
-#### 27.7 管理者API - クライアント管理 ✅
+#### 27.7 Admin API - Client Management ✅
 - [x] Implement `GET /admin/clients` - List OAuth clients
   - [x] Query parameters: `q` (search), `sort`, `page`, `limit`
   - [x] Search by client_name, client_id
@@ -410,7 +410,7 @@
 - [x] Test secret regeneration
 - [x] Document admin client API - `docs/api/admin/clients.md`
 
-#### 27.8 管理者API - セッション管理 ✅
+#### 27.8 Admin API - Session Management ✅
 - [x] Implement `GET /admin/sessions` - List sessions
   - [x] Query parameters: `user_id`, `status` (active/expired), `page`, `limit`
   - [x] Load sessions from SessionStore DO + D1
@@ -437,9 +437,9 @@
 
 ---
 
-### ステージ3: フロントエンド基盤 (Week 27-28: May 11-18) ✅
+### Stage 3: Frontend Foundation (Week 27-28: May 11-18) ✅
 
-#### 28.1 SvelteKit環境構築 ✅
+#### 28.1 SvelteKit Environment Setup ✅
 - [x] Initialize new SvelteKit project:
   ```bash
   npm create svelte@latest packages/ui
@@ -461,7 +461,7 @@
 - [x] Test production build: `npm run build`
 - [x] Document SvelteKit setup
 
-#### 28.2 UnoCSS設定 ✅
+#### 28.2 UnoCSS Configuration ✅
 - [x] Install UnoCSS:
   ```bash
   npm install -D unocss @unocss/reset
@@ -475,7 +475,7 @@
 - [x] Test UnoCSS classes in development
 - [x] Document UnoCSS configuration
 
-#### 28.3 Melt UI導入 ✅
+#### 28.3 Melt UI Integration ✅
 - [x] Install Melt UI:
   ```bash
   npm install @melt-ui/svelte @melt-ui/pp
@@ -488,7 +488,7 @@
 - [x] Test Melt UI components
 - [x] Document Melt UI usage
 
-#### 28.4 Paraglide (i18n) 設定 ✅
+#### 28.4 Paraglide (i18n) Configuration ✅
 - [x] Install Paraglide:
   ```bash
   npm install @inlang/paraglide-js @inlang/paraglide-sveltekit
@@ -504,7 +504,7 @@
 - [x] Test i18n in development
 - [x] Document Paraglide setup
 
-#### 28.5 Cloudflare Pages連携 ✅
+#### 28.5 Cloudflare Pages Integration ✅
 - [x] Create `packages/ui/wrangler.toml` for Pages Functions
 - [x] Configure Pages build settings:
   - [x] Build command: `npm run build`
@@ -517,7 +517,7 @@
 - [x] Test Pages deployment (preview)
 - [x] Document Pages deployment
 
-#### 28.6 デザインシステム実装 ✅
+#### 28.6 Design System Implementation ✅
 - [x] Create `packages/ui/src/lib/design-system/` directory
 - [x] Define design tokens:
   - [x] `tokens/colors.ts` - Color palette (primary, secondary, neutral, semantic)
@@ -542,9 +542,9 @@
 
 ---
 
-### ステージ4: 認証UI実装 (Week 28-29: May 15-25) ✅ COMPLETE
+### Stage 4: Authentication UI Implementation (Week 28-29: May 15-25) ✅ COMPLETE
 
-#### 29.1 ログイン画面 (`/login`)
+#### 29.1 Login Screen (`/login`)
 - [x] Create `packages/ui/src/routes/login/+page.svelte`
 - [x] Design login layout:
   - [x] Authrim logo at top
@@ -565,7 +565,7 @@
 - [ ] Test screen reader compatibility (deferred to accessibility review)
 - [x] Document login page (code comments)
 
-#### 29.2 アカウント登録画面 (`/register`)
+#### 29.2 Account Registration Screen (`/register`)
 - [x] Create `packages/ui/src/routes/register/+page.svelte`
 - [x] Design registration layout:
   - [x] Email input field
@@ -582,7 +582,7 @@
 - [x] Test registration flow (basic UI testing)
 - [x] Document registration page (code comments)
 
-#### 29.3 Magic Link送信完了画面 (`/magic-link-sent`)
+#### 29.3 Magic Link Sent Confirmation Screen (`/magic-link-sent`)
 - [x] Create `packages/ui/src/routes/magic-link-sent/+page.svelte`
 - [x] Design success message:
   - [x] "Check your email" heading
@@ -594,7 +594,7 @@
 - [x] Test resend flow (basic UI testing)
 - [x] Document magic link sent page (code comments)
 
-#### 29.4 Magic Link検証画面 (`/verify-magic-link`)
+#### 29.4 Magic Link Verification Screen (`/verify-magic-link`)
 - [x] Create `packages/ui/src/routes/verify-magic-link/+page.svelte`
 - [x] Show loading spinner immediately
 - [x] Extract token from URL query parameter
@@ -604,7 +604,7 @@
 - [x] Test verification flow (basic UI testing)
 - [x] Document verification page (code comments)
 
-#### 29.5 OAuth同意画面 (`/consent`)
+#### 29.5 OAuth Consent Screen (`/consent`)
 - [x] Create `packages/ui/src/routes/consent/+page.svelte`
 - [x] Design consent layout:
   - [x] Client logo and name
@@ -623,7 +623,7 @@
 - [x] Test consent flow with various scopes (mock data testing)
 - [x] Document consent page (code comments)
 
-#### 29.6 エラーページ (`/error`)
+#### 29.6 Error Page (`/error`)
 - [x] Create `packages/ui/src/routes/error/+page.svelte`
 - [x] Design error layout:
   - [x] Error icon
@@ -645,9 +645,9 @@
 
 ---
 
-### ステージ5: 管理画面実装 (Week 29-30: May 22-31) ✅
+### Stage 5: Admin Dashboard Implementation (Week 29-30: May 22-31) ✅
 
-#### 30.1 管理者ダッシュボード (`/admin`) ✅
+#### 30.1 Admin Dashboard (`/admin`) ✅
 - [x] Create `packages/ui/src/routes/admin/+layout.svelte`:
   - [x] Sidebar navigation
   - [x] Top bar (logo, search, notifications, profile menu)
@@ -666,7 +666,7 @@
 - [x] Test dashboard layout and responsiveness
 - [x] Document admin dashboard (code comments)
 
-#### 30.2 ユーザー管理 (`/admin/users`) ✅
+#### 30.2 User Management (`/admin/users`) ✅
 - [x] Create `packages/ui/src/routes/admin/users/+page.svelte`:
   - [x] User list table with pagination
   - [x] Search bar (search by email, name)
@@ -681,7 +681,7 @@
 - [ ] Test with large datasets (1000+ users) - Deferred to integration testing
 - [x] Document user list page (code comments)
 
-#### 30.3 ユーザー詳細/編集 (`/admin/users/:id`) ✅
+#### 30.3 User Detail/Edit (`/admin/users/:id`) ✅
 - [x] Create `packages/ui/src/routes/admin/users/[id]/+page.svelte`:
   - [x] User information form (email, name, phone, etc.)
   - [ ] Custom fields section (deferred to Phase 6)
@@ -699,7 +699,7 @@
 - [ ] Test user editing and deletion (deferred to integration testing)
 - [x] Document user detail page (code comments)
 
-#### 30.4 クライアント管理 (`/admin/clients`) ✅
+#### 30.4 Client Management (`/admin/clients`) ✅
 - [x] Create `packages/ui/src/routes/admin/clients/+page.svelte`:
   - [x] Client list table (client_id, client_name, created_at, grant_types)
   - [x] Search bar
@@ -711,7 +711,7 @@
 - [x] Test client list page (basic UI testing)
 - [x] Document client list page (code comments)
 
-#### 30.5 クライアント詳細/編集 (`/admin/clients/:id`) ✅
+#### 30.5 Client Detail/Edit (`/admin/clients/:id`) ✅
 - [x] Create `packages/ui/src/routes/admin/clients/[id]/+page.svelte`:
   - [x] Client information form (client_name, redirect_uris, grant_types, scope)
   - [x] Redirect URIs management (add/remove)
@@ -731,7 +731,7 @@
 - [ ] Test client editing and deletion (deferred to integration testing)
 - [x] Document client detail page (code comments)
 
-#### 30.6 設定 (`/admin/settings`) ✅
+#### 30.6 Settings (`/admin/settings`) ✅
 - [x] Create `packages/ui/src/routes/admin/settings/+page.svelte`:
   - [x] Tabs: General, Appearance, Security, Email, Advanced
   - [x] General tab:
@@ -783,9 +783,9 @@
 
 ---
 
-### ステージ6: 統合・テスト (Week 30-31: May 26-31) ✅ COMPLETE
+### Stage 6: Integration & Testing (Week 30-31: May 26-31) ✅ COMPLETE
 
-#### 31.1 E2Eテスト (Playwright) ✅
+#### 31.1 E2E Testing (Playwright) ✅
 - [x] Install Playwright:
   ```bash
   pnpm add -D @playwright/test @axe-core/playwright
@@ -813,7 +813,7 @@
 - [x] Document E2E testing (docs/TESTING.md)
 - [x] **Result**: 14/14 tests passing (100% success rate)
 
-#### 31.2 セキュリティテスト
+#### 31.2 Security Testing
 - [ ] Test CSRF protection:
   - [ ] Verify CSRF token on all POST endpoints
   - [ ] Test CSRF token validation
@@ -829,7 +829,7 @@
   - [ ] Try accessing other users' data
 - [ ] Document security test results
 
-#### 31.3 パフォーマンス最適化 ✅
+#### 31.3 Performance Optimization ✅
 - [x] Run Lighthouse audit on all pages:
   - [x] Login page: Performance 100, Accessibility 89, Best Practices 100, SEO 91
   - [x] Homepage: LCP 0.11s (Excellent)
@@ -846,7 +846,7 @@
 - [x] Document performance benchmarks (docs/PERFORMANCE.md)
 - [x] **Result**: Excellent performance scores across all pages
 
-#### 31.4 アクセシビリティ改善 (WCAG 2.1 AA) ✅
+#### 31.4 Accessibility Improvement (WCAG 2.1 AA) ✅
 - [x] Install axe-core for automated testing
 - [x] Run axe-core on all pages via Playwright
 - [x] Fix accessibility issues found:
@@ -862,7 +862,7 @@
 - [x] Document accessibility compliance (docs/ACCESSIBILITY.md)
 - [x] **Result**: WCAG 2.1 AA compliant, 0 accessibility violations
 
-#### 31.5 ユニットテストカバレッジ向上 ✅
+#### 31.5 Unit Test Coverage Improvement ✅
 - [x] Run coverage analysis:
   ```bash
   pnpm --filter=shared test -- --coverage
@@ -880,7 +880,7 @@
 - [x] Document testing strategy (docs/TESTING.md)
 - [x] **Result**: 81.6% overall coverage, comprehensive test suite
 
-#### 31.6 環境設定フロー改善 ✅
+#### 31.6 Environment Setup Flow Improvement ✅
 - [x] Add Resend API Key setup to `setup-dev.sh`:
   - [x] Interactive prompt for API key during setup
   - [x] Optional configuration (skip if not available)
@@ -897,7 +897,7 @@
   - [x] Resend API Key setup instructions
 - [x] **Result**: Streamlined setup process for all environments
 
-#### 31.7 CI/CD統合 ✅
+#### 31.7 CI/CD Integration ✅
 - [x] Extend GitHub Actions workflow:
   - [x] E2E testing job (Playwright + axe-core)
   - [x] Lighthouse CI job (performance monitoring)
@@ -989,4 +989,3 @@
 ---
 
 ---
-

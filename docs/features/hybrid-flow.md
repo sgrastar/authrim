@@ -1,22 +1,22 @@
 # Hybrid Flow - OIDC Core 3.3
 
-## 概要
+## Overview
 
-Authrimは、OpenID Connect Core 1.0仕様の3.3節で定義されているHybrid Flowを完全にサポートしています。Hybrid Flowは、Authorization Code FlowとImplicit Flowの利点を組み合わせたフローで、以下の3つのresponse_typeをサポートします：
+Authrim fully supports the Hybrid Flow defined in Section 3.3 of the OpenID Connect Core 1.0 specification. Hybrid Flow combines the benefits of Authorization Code Flow and Implicit Flow, supporting the following three response_types:
 
-1. **`code id_token`** - Authorization Codeと ID Tokenを返す
-2. **`code token`** - Authorization Codeと Access Tokenを返す
-3. **`code id_token token`** - Authorization Code、ID Token、Access Tokenを返す
+1. **`code id_token`** - Returns Authorization Code and ID Token
+2. **`code token`** - Returns Authorization Code and Access Token
+3. **`code id_token token`** - Returns Authorization Code, ID Token, and Access Token
 
-## 仕様準拠
+## Specification Compliance
 
 - **OIDC Core 3.3**: Hybrid Flow
 - **OIDC Core 3.3.2.11**: ID Token validation (c_hash, at_hash)
 - **OAuth 2.0 Multiple Response Type Encoding Practices**: Fragment encoding
 
-## 使用方法
+## Usage
 
-### 基本的なHybrid Flowリクエスト
+### Basic Hybrid Flow Request
 
 ```http
 GET /authorize?
@@ -28,9 +28,9 @@ GET /authorize?
   nonce=abc123
 ```
 
-### レスポンス
+### Response
 
-Hybrid Flowでは、レスポンスはデフォルトでfragmentエンコーディングを使用してリダイレクトURIに返されます：
+In Hybrid Flow, responses are returned to the redirect URI using fragment encoding by default:
 
 ```
 https://example.com/callback#
@@ -39,13 +39,13 @@ https://example.com/callback#
   state=xyz
 ```
 
-## Response Typeの詳細
+## Response Type Details
 
 ### 1. `code id_token`
 
-Authorization Codeと ID Tokenの両方を返します。
+Returns both Authorization Code and ID Token.
 
-**リクエスト例：**
+**Request Example:**
 ```http
 GET /authorize?
   response_type=code%20id_token&
@@ -56,7 +56,7 @@ GET /authorize?
   nonce=abc123
 ```
 
-**レスポンス例：**
+**Response Example:**
 ```
 https://example.com/callback#
   code=SplxlOBeZQQYbYS6WxSbIA&
@@ -64,7 +64,7 @@ https://example.com/callback#
   state=xyz
 ```
 
-**ID Tokenのクレーム：**
+**ID Token Claims:**
 ```json
 {
   "iss": "https://your-issuer.com",
@@ -78,17 +78,17 @@ https://example.com/callback#
 }
 ```
 
-`c_hash`は、Authorization Codeのハッシュ値で、ID Tokenとcodeが同じ発行元であることを検証するために使用されます。
+`c_hash` is the hash value of the Authorization Code, used to verify that the ID Token and code are from the same issuer.
 
-**使用ケース：**
-- フロントエンドでユーザー情報をすぐに表示したい場合
-- バックエンドでアクセストークンとリフレッシュトークンを取得したい場合
+**Use Cases:**
+- When you want to display user information immediately on the frontend
+- When you need to obtain access tokens and refresh tokens on the backend
 
 ### 2. `code token`
 
-Authorization Codeと Access Tokenの両方を返します。
+Returns both Authorization Code and Access Token.
 
-**リクエスト例：**
+**Request Example:**
 ```http
 GET /authorize?
   response_type=code%20token&
@@ -99,7 +99,7 @@ GET /authorize?
   nonce=abc123
 ```
 
-**レスポンス例：**
+**Response Example:**
 ```
 https://example.com/callback#
   code=SplxlOBeZQQYbYS6WxSbIA&
@@ -109,15 +109,15 @@ https://example.com/callback#
   state=xyz
 ```
 
-**使用ケース：**
-- フロントエンドでAPIにすぐにアクセスしたい場合
-- バックエンドで長期的なアクセス（リフレッシュトークン）が必要な場合
+**Use Cases:**
+- When you want to access APIs immediately from the frontend
+- When long-term access (refresh token) is needed on the backend
 
 ### 3. `code id_token token`
 
-Authorization Code、ID Token、Access Tokenのすべてを返します。
+Returns all: Authorization Code, ID Token, and Access Token.
 
-**リクエスト例：**
+**Request Example:**
 ```http
 GET /authorize?
   response_type=code%20id_token%20token&
@@ -128,7 +128,7 @@ GET /authorize?
   nonce=abc123
 ```
 
-**レスポンス例：**
+**Response Example:**
 ```
 https://example.com/callback#
   code=SplxlOBeZQQYbYS6WxSbIA&
@@ -139,7 +139,7 @@ https://example.com/callback#
   state=xyz
 ```
 
-**ID Tokenのクレーム：**
+**ID Token Claims:**
 ```json
 {
   "iss": "https://your-issuer.com",
@@ -154,20 +154,20 @@ https://example.com/callback#
 }
 ```
 
-`at_hash`は、Access Tokenのハッシュ値で、ID TokenとAccess Tokenが同じ発行元であることを検証するために使用されます。
+`at_hash` is the hash value of the Access Token, used to verify that the ID Token and Access Token are from the same issuer.
 
-**使用ケース：**
-- フロントエンドでユーザー情報を表示し、APIにアクセスしたい場合
-- バックエンドで長期的なアクセスが必要な場合
-- 最も包括的なHybrid Flow
+**Use Cases:**
+- When you want to display user information and access APIs from the frontend
+- When long-term access is needed on the backend
+- The most comprehensive Hybrid Flow
 
 ## Response Mode
 
-Hybrid Flowでは、以下のresponse_modeがサポートされています：
+Hybrid Flow supports the following response_modes:
 
-### Fragment (デフォルト)
+### Fragment (Default)
 
-デフォルトでは、Hybrid FlowはfragmentエンコーディングでレスポンスパラメータをURLフラグメントに含めます。
+By default, Hybrid Flow includes response parameters in the URL fragment using fragment encoding.
 
 ```
 https://example.com/callback#
@@ -178,9 +178,9 @@ https://example.com/callback#
 
 ### Form Post
 
-`response_mode=form_post`を指定すると、レスポンスパラメータはPOSTリクエストでクライアントに送信されます。
+Specifying `response_mode=form_post` sends response parameters to the client via POST request.
 
-**リクエスト例：**
+**Request Example:**
 ```http
 GET /authorize?
   response_type=code%20id_token&
@@ -192,8 +192,8 @@ GET /authorize?
   response_mode=form_post
 ```
 
-**レスポンス：**
-クライアントのredirect_uriに、以下のパラメータを含むHTML formが自動的にPOSTされます：
+**Response:**
+An HTML form containing the following parameters is automatically POSTed to the client's redirect_uri:
 
 ```html
 <form method="post" action="https://example.com/callback">
@@ -203,13 +203,13 @@ GET /authorize?
 </form>
 ```
 
-### Query (非推奨)
+### Query (Not Recommended)
 
-`response_mode=query`は、Hybrid Flowでは推奨されません。セキュリティ上の理由から、トークンはURLクエリパラメータに含めるべきではありません。
+`response_mode=query` is not recommended for Hybrid Flow. For security reasons, tokens should not be included in URL query parameters.
 
-## Nonce検証
+## Nonce Validation
 
-**重要**: Hybrid FlowおよびImplicit Flowでは、`nonce`パラメータが**必須**です。
+**Important**: The `nonce` parameter is **required** for Hybrid Flow and Implicit Flow.
 
 ```http
 GET /authorize?
@@ -218,18 +218,18 @@ GET /authorize?
   redirect_uri=https://example.com/callback&
   scope=openid&
   state=xyz&
-  nonce=abc123  ← 必須
+  nonce=abc123  ← Required
 ```
 
-nonceは、リプレイアタックを防ぐために使用されます。クライアントは、ランダムな値を生成し、リクエストに含める必要があります。ID Tokenのnonceクレームがリクエストのnonceと一致することを確認してください。
+The nonce is used to prevent replay attacks. Clients must generate a random value and include it in the request. Verify that the nonce claim in the ID Token matches the nonce in the request.
 
-### Nonceの生成
+### Generating Nonce
 
 ```javascript
-// ランダムなnonceを生成
+// Generate random nonce
 const nonce = crypto.randomUUID() + '-' + Date.now();
 
-// Authorization requestに含める
+// Include in authorization request
 const authUrl = `https://your-issuer.com/authorize?` +
   `response_type=code+id_token&` +
   `client_id=${clientId}&` +
@@ -238,14 +238,14 @@ const authUrl = `https://your-issuer.com/authorize?` +
   `state=${state}&` +
   `nonce=${nonce}`;
 
-// nonceをセッションに保存
+// Save nonce in session
 sessionStorage.setItem('oauth_nonce', nonce);
 ```
 
-### Nonceの検証
+### Validating Nonce
 
 ```javascript
-// Callbackでnonceを検証
+// Validate nonce in callback
 const idToken = parseJwt(params.id_token);
 const savedNonce = sessionStorage.getItem('oauth_nonce');
 
@@ -253,31 +253,31 @@ if (idToken.nonce !== savedNonce) {
   throw new Error('Nonce mismatch');
 }
 
-// 検証後、nonceを削除
+// Remove nonce after validation
 sessionStorage.removeItem('oauth_nonce');
 ```
 
-## ハッシュクレーム検証
+## Hash Claim Validation
 
 ### c_hash (Code Hash)
 
-`c_hash`は、ID Tokenに含まれるAuthorization Codeのハッシュ値です。以下の場合に含まれます：
+`c_hash` is the hash value of the Authorization Code included in the ID Token. It is included in the following cases:
 - `response_type=code id_token`
 - `response_type=code id_token token`
 
-**検証方法：**
+**Validation Method:**
 
 ```javascript
 import { createHash } from 'crypto';
 
 function verifyCHash(code, cHash) {
-  // SHA-256でコードをハッシュ化
+  // Hash code with SHA-256
   const hash = createHash('sha256').update(code).digest();
 
-  // 左半分を取得
+  // Get left half
   const leftHalf = hash.slice(0, hash.length / 2);
 
-  // Base64url エンコード
+  // Base64url encode
   const computed = base64UrlEncode(leftHalf);
 
   return computed === cHash;
@@ -286,21 +286,21 @@ function verifyCHash(code, cHash) {
 
 ### at_hash (Access Token Hash)
 
-`at_hash`は、ID Tokenに含まれるAccess Tokenのハッシュ値です。以下の場合に含まれます：
+`at_hash` is the hash value of the Access Token included in the ID Token. It is included in the following cases:
 - `response_type=id_token token` (Implicit Flow)
 - `response_type=code id_token token` (Hybrid Flow)
 
-**検証方法：**
+**Validation Method:**
 
 ```javascript
 function verifyAtHash(accessToken, atHash) {
-  // SHA-256でトークンをハッシュ化
+  // Hash token with SHA-256
   const hash = createHash('sha256').update(accessToken).digest();
 
-  // 左半分を取得
+  // Get left half
   const leftHalf = hash.slice(0, hash.length / 2);
 
-  // Base64url エンコード
+  // Base64url encode
   const computed = base64UrlEncode(leftHalf);
 
   return computed === atHash;
@@ -309,9 +309,9 @@ function verifyAtHash(accessToken, atHash) {
 
 ## Token Exchange
 
-Hybrid Flowで取得したAuthorization Codeは、Token Endpointで交換してアクセストークンとリフレッシュトークンを取得できます。
+The Authorization Code obtained in Hybrid Flow can be exchanged at the Token Endpoint to obtain access tokens and refresh tokens.
 
-**リクエスト例：**
+**Request Example:**
 
 ```http
 POST /token
@@ -323,7 +323,7 @@ code=SplxlOBeZQQYbYS6WxSbIA&
 redirect_uri=https://example.com/callback
 ```
 
-**レスポンス例：**
+**Response Example:**
 
 ```json
 {
@@ -335,38 +335,38 @@ redirect_uri=https://example.com/callback
 }
 ```
 
-このトークンは、Authorization Endpointで取得したトークンとは異なる場合がありますが、同じユーザーに対して発行されます。
+These tokens may differ from the tokens obtained at the Authorization Endpoint, but are issued for the same user.
 
-## セキュリティ考慮事項
+## Security Considerations
 
-### 1. Nonceの使用
+### 1. Nonce Usage
 
-Hybrid FlowおよびImplicit Flowでは、nonceが必須です。これにより、リプレイアタックを防ぎます。
+Nonce is required for Hybrid Flow and Implicit Flow. This prevents replay attacks.
 
-### 2. State パラメータ
+### 2. State Parameter
 
-CSRFアタックを防ぐために、常に`state`パラメータを使用してください。
+Always use the `state` parameter to prevent CSRF attacks.
 
-### 3. ハッシュクレームの検証
+### 3. Hash Claim Validation
 
-`c_hash`と`at_hash`を検証して、ID Tokenと他のトークンが同じ発行元であることを確認してください。
+Validate `c_hash` and `at_hash` to verify that the ID Token and other tokens are from the same issuer.
 
-### 4. HTTPS必須
+### 4. HTTPS Required
 
-本番環境では、必ずHTTPSを使用してください。トークンがURLフラグメントに含まれるため、TLSによる保護が重要です。
+Always use HTTPS in production environments. Since tokens are included in URL fragments, protection by TLS is important.
 
-### 5. トークンの保存
+### 5. Token Storage
 
-- **ID Token**: ローカルストレージまたはセッションストレージに保存可能
-- **Access Token**: メモリまたはセッションストレージに保存（できるだけ短時間）
-- **Refresh Token**: セキュアなHTTP-onlyクッキーまたはサーバーサイドに保存
+- **ID Token**: Can be stored in local storage or session storage
+- **Access Token**: Store in memory or session storage (for as short a time as possible)
+- **Refresh Token**: Store in secure HTTP-only cookies or server-side
 
-### 6. トークンの有効期限
+### 6. Token Expiration
 
-- Authorization Endpointで発行されるAccess Tokenは短命（1時間）
-- 長期的なアクセスが必要な場合は、Token Endpointでリフレッシュトークンを取得
+- Access Tokens issued at the Authorization Endpoint are short-lived (1 hour)
+- For long-term access, obtain refresh tokens at the Token Endpoint
 
-## クライアント実装例
+## Client Implementation Example
 
 ### JavaScript/TypeScript
 
@@ -468,13 +468,13 @@ function parseJwt(token) {
 }
 ```
 
-## トラブルシューティング
+## Troubleshooting
 
-### エラー: "nonce is required for implicit and hybrid flows"
+### Error: "nonce is required for implicit and hybrid flows"
 
-**原因**: Hybrid FlowまたはImplicit Flowのリクエストに`nonce`パラメータが含まれていない。
+**Cause**: The `nonce` parameter is not included in the Hybrid Flow or Implicit Flow request.
 
-**解決方法**: リクエストに`nonce`パラメータを追加してください。
+**Solution**: Add the `nonce` parameter to the request.
 
 ```http
 GET /authorize?
@@ -483,11 +483,11 @@ GET /authorize?
   nonce=YOUR_RANDOM_NONCE
 ```
 
-### エラー: "Unsupported response_type"
+### Error: "Unsupported response_type"
 
-**原因**: サポートされていない`response_type`が指定されている。
+**Cause**: An unsupported `response_type` is specified.
 
-**解決方法**: 以下のいずれかを使用してください：
+**Solution**: Use one of the following:
 - `code`
 - `id_token`
 - `id_token token`
@@ -495,33 +495,33 @@ GET /authorize?
 - `code token`
 - `code id_token token`
 
-注意: `response_type`の値はスペース区切りです。URLエンコードすると`+`または`%20`になります。
+Note: `response_type` values are space-separated. When URL-encoded, they become `+` or `%20`.
 
-### c_hash/at_hash の検証失敗
+### c_hash/at_hash Validation Failure
 
-**原因**: ハッシュクレームの計算が正しくない。
+**Cause**: Hash claim calculation is incorrect.
 
-**確認事項**:
-1. SHA-256アルゴリズムを使用していますか？
-2. ハッシュの左半分（16バイト）を取得していますか？
-3. Base64url エンコーディング（パディングなし）を使用していますか？
+**Check:**
+1. Are you using the SHA-256 algorithm?
+2. Are you getting the left half (16 bytes) of the hash?
+3. Are you using Base64url encoding (without padding)?
 
-## 参考資料
+## References
 
 - [OpenID Connect Core 1.0 - Section 3.3: Hybrid Flow](https://openid.net/specs/openid-connect-core-1_0.html#HybridFlowAuth)
 - [OAuth 2.0 Multiple Response Type Encoding Practices](https://openid.net/specs/oauth-v2-multiple-response-types-1_0.html)
 - [OpenID Connect Core 1.0 - Section 3.3.2.11: ID Token Validation](https://openid.net/specs/openid-connect-core-1_0.html#HybridIDToken)
 
-## まとめ
+## Summary
 
-Authrimの Hybrid Flow 実装は、OIDC Core 1.0仕様に完全に準拠しており、以下の機能を提供します：
+Authrim's Hybrid Flow implementation fully complies with the OIDC Core 1.0 specification and provides the following features:
 
-✅ 3つのHybrid Flow response_type (`code id_token`, `code token`, `code id_token token`)
-✅ Fragment encoding（デフォルト）
+✅ 3 Hybrid Flow response_types (`code id_token`, `code token`, `code id_token token`)
+✅ Fragment encoding (default)
 ✅ Form Post response mode
-✅ Nonce検証（必須）
-✅ c_hash および at_hash の生成と検証
-✅ セキュアなトークン発行
-✅ 包括的なテストカバレッジ
+✅ Nonce validation (required)
+✅ c_hash and at_hash generation and validation
+✅ Secure token issuance
+✅ Comprehensive test coverage
 
-Hybrid Flowを使用することで、フロントエンドでのユーザー情報の即時表示と、バックエンドでの安全なトークン交換の両方を実現できます。
+By using Hybrid Flow, you can achieve both immediate display of user information on the frontend and secure token exchange on the backend.

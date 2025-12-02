@@ -1,35 +1,35 @@
-# Trusted Client機能仕様
+# Trusted Client Feature Specification
 
-## 概要
+## Overview
 
-Trusted Client機能により、First-Partyクライアント（同一組織が所有・運営するクライアント）のユーザー体験を最適化します。Trusted Clientとして登録されたクライアントは、初回アクセス時のConsent画面をスキップできます。
+The Trusted Client feature optimizes user experience for First-Party clients (clients owned and operated by the same organization). Clients registered as Trusted Clients can skip the Consent screen on first access.
 
-## 目的
+## Purpose
 
-1. **UXの最適化**: First-Partyクライアントで不要なConsent画面を削減
-2. **セキュリティの維持**: Third-Partyクライアントは引き続きConsent必須
-3. **柔軟性**: クライアントごとにTrusted/Untrustedを設定可能
-4. **OIDC Conformance Suite対応**: テスト用ドメインをTrusted扱い
-
----
-
-## 用語定義
-
-### First-Party Client（Trusted Client）
-- 同一組織が所有・運営するクライアントアプリケーション
-- 例: 自社サービス、社内ツール、開発/テスト環境
-
-### Third-Party Client（Untrusted Client）
-- 外部開発者/組織が作成したクライアントアプリケーション
-- 例: サードパーティアプリ、パートナー連携
+1. **UX Optimization**: Reduce unnecessary Consent screens for First-Party clients
+2. **Security Maintenance**: Third-Party clients still require Consent
+3. **Flexibility**: Trusted/Untrusted can be configured per client
+4. **OIDC Conformance Suite Support**: Treat test domains as Trusted
 
 ---
 
-## Trusted判定ロジック
+## Terminology
 
-### 1. redirect_uriのドメインによる自動判定
+### First-Party Client (Trusted Client)
+- Client applications owned and operated by the same organization
+- Examples: Internal services, internal tools, development/test environments
 
-Dynamic Client Registration時に、`redirect_uris`の最初のURLからドメインを抽出し、以下の条件でTrusted判定を行います：
+### Third-Party Client (Untrusted Client)
+- Client applications created by external developers/organizations
+- Examples: Third-party apps, partner integrations
+
+---
+
+## Trusted Determination Logic
+
+### 1. Automatic Determination by redirect_uri Domain
+
+During Dynamic Client Registration, the domain is extracted from the first URL in `redirect_uris`, and Trusted determination is performed based on the following conditions:
 
 ```typescript
 const redirectDomain = new URL(redirect_uris[0]).hostname;
@@ -37,34 +37,34 @@ const issuerDomain = new URL(env.ISSUER_URL).hostname;
 const trustedDomains = env.TRUSTED_DOMAINS?.split(',') || [];
 
 const isTrusted =
-  redirectDomain === issuerDomain ||           // 同一ドメイン
-  trustedDomains.includes(redirectDomain);     // ホワイトリスト
+  redirectDomain === issuerDomain ||           // Same domain
+  trustedDomains.includes(redirectDomain);     // Whitelist
 ```
 
-#### 判定条件
+#### Determination Conditions
 
-| 条件 | 判定 | 例 |
-|------|------|-----|
-| redirect_uriのドメイン == ISSUER_URLのドメイン | ✅ Trusted | `authrim.sgrastar.workers.dev` |
-| redirect_uriのドメイン ∈ TRUSTED_DOMAINS | ✅ Trusted | `www.certification.openid.net` |
-| 上記以外 | ❌ Untrusted | `example.com` |
+| Condition | Determination | Example |
+|-----------|---------------|---------|
+| redirect_uri domain == ISSUER_URL domain | Trusted | `authrim.sgrastar.workers.dev` |
+| redirect_uri domain ∈ TRUSTED_DOMAINS | Trusted | `www.certification.openid.net` |
+| Otherwise | Untrusted | `example.com` |
 
-### 2. 環境変数設定
+### 2. Environment Variable Configuration
 
-**TRUSTED_DOMAINS** (カンマ区切り)
+**TRUSTED_DOMAINS** (comma-separated)
 
 ```bash
-# .dev.vars または wrangler.toml
+# .dev.vars or wrangler.toml
 TRUSTED_DOMAINS=www.certification.openid.net,localhost,127.0.0.1
 ```
 
-**デフォルト値**: 空（ISSUER_URLのドメインのみTrusted）
+**Default Value**: Empty (only ISSUER_URL domain is Trusted)
 
 ---
 
-## データベーススキーマ
+## Database Schema
 
-### oauth_clients テーブル拡張
+### oauth_clients Table Extension
 
 ```sql
 -- Migration: 004_add_client_trust_settings.sql
@@ -73,89 +73,89 @@ ALTER TABLE oauth_clients ADD COLUMN skip_consent INTEGER DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_clients_trusted ON oauth_clients(is_trusted);
 ```
 
-#### カラム定義
+#### Column Definitions
 
-| カラム | 型 | デフォルト | 説明 |
-|--------|-----|-----------|------|
+| Column | Type | Default | Description |
+|--------|------|---------|-------------|
 | `is_trusted` | INTEGER | 0 | 1=Trusted Client, 0=Third-Party Client |
-| `skip_consent` | INTEGER | 0 | 1=Consent画面スキップ, 0=Consent必須 |
+| `skip_consent` | INTEGER | 0 | 1=Skip Consent screen, 0=Consent required |
 
-#### 設定パターン
+#### Configuration Patterns
 
-| is_trusted | skip_consent | 動作 |
-|-----------|--------------|------|
-| 0 | 0 | Third-Party Client（初回Consent必須） |
-| 1 | 0 | Trusted Clientだが、Consent表示 |
-| 1 | 1 | **Trusted Client（Consentスキップ）** ← 推奨 |
-| 0 | 1 | ❌ 無効な組み合わせ |
+| is_trusted | skip_consent | Behavior |
+|-----------|--------------|----------|
+| 0 | 0 | Third-Party Client (initial Consent required) |
+| 1 | 0 | Trusted Client but Consent displayed |
+| 1 | 1 | **Trusted Client (Consent skipped)** ← Recommended |
+| 0 | 1 | Invalid combination |
 
 ---
 
-## Consent処理フロー
+## Consent Processing Flow
 
-### Trusted Client（skip_consent=1）
+### Trusted Client (skip_consent=1)
 
 ```mermaid
 flowchart TD
-    A["1. /authorize リクエスト"] --> B["2. クライアント情報取得<br/>is_trusted=1 && skip_consent=1<br/>&& prompt≠consent"]
-    B --> C["3. 既存Consentをチェック（D1）"]
-    C --> D{Consent存在?}
-    D -->|存在| E["スキップ"]
-    D -->|不在| F["自動付与（D1に保存）"]
-    E --> G["4. Consent画面スキップ"]
+    A["1. /authorize Request"] --> B["2. Get Client Info<br/>is_trusted=1 && skip_consent=1<br/>&& prompt≠consent"]
+    B --> C["3. Check Existing Consent (D1)"]
+    C --> D{Consent Exists?}
+    D -->|Exists| E["Skip"]
+    D -->|Not Exists| F["Auto-grant (Save to D1)"]
+    E --> G["4. Skip Consent Screen"]
     F --> G
-    G --> H["5. 認可コード発行"]
+    G --> H["5. Issue Authorization Code"]
 ```
 
-### Third-Party Client（skip_consent=0）
+### Third-Party Client (skip_consent=0)
 
 ```mermaid
 flowchart TD
-    A["1. /authorize リクエスト"] --> B["2. クライアント情報取得<br/>is_trusted=0 または skip_consent=0"]
-    B --> C["3. 既存Consentをチェック（D1）"]
-    C --> D{Consent存在?}
-    D -->|存在| E{スコープカバー確認}
-    E -->|カバー済み| F["スキップ"]
-    E -->|不足| G["Consent画面表示"]
-    D -->|不在| G
-    G --> H["4. ユーザー承認/拒否"]
-    H -->|承認| I["5. D1に保存"]
-    H -->|拒否| J["5. エラーリダイレクト"]
-    F --> K["認可コード発行"]
+    A["1. /authorize Request"] --> B["2. Get Client Info<br/>is_trusted=0 or skip_consent=0"]
+    B --> C["3. Check Existing Consent (D1)"]
+    C --> D{Consent Exists?}
+    D -->|Exists| E{Scope Coverage Check}
+    E -->|Covered| F["Skip"]
+    E -->|Insufficient| G["Display Consent Screen"]
+    D -->|Not Exists| G
+    G --> H["4. User Approves/Denies"]
+    H -->|Approved| I["5. Save to D1"]
+    H -->|Denied| J["5. Error Redirect"]
+    F --> K["Issue Authorization Code"]
     I --> K
 ```
 
-### prompt=consent の場合
+### When prompt=consent
 
 ```mermaid
 flowchart LR
-    A["prompt=consent"] --> B["常にConsent画面を表示<br/>(is_trusted, skip_consentの値に関係なく)"]
+    A["prompt=consent"] --> B["Always display Consent screen<br/>(regardless of is_trusted, skip_consent values)"]
 ```
 
 ---
 
-## 実装詳細
+## Implementation Details
 
 ### 1. Dynamic Client Registration
 
-**ファイル**: `packages/op-dcr/src/register.ts`
+**File**: `packages/op-dcr/src/register.ts`
 
-**修正箇所**: クライアント登録時にTrusted判定
+**Modification**: Trusted determination during client registration
 
 ```typescript
-// redirect_uriからドメイン抽出
+// Extract domain from redirect_uri
 const redirectDomain = new URL(redirect_uris[0]).hostname;
 const issuerDomain = new URL(c.env.ISSUER_URL).hostname;
 const trustedDomains = c.env.TRUSTED_DOMAINS?.split(',').map(d => d.trim()) || [];
 
-// Trusted判定
+// Trusted determination
 const isTrusted =
   redirectDomain === issuerDomain ||
   trustedDomains.includes(redirectDomain);
 
 console.log(`[DCR] Client registration: domain=${redirectDomain}, trusted=${isTrusted}`);
 
-// INSERT時にis_trusted, skip_consentを設定
+// Set is_trusted, skip_consent during INSERT
 await c.env.DB.prepare(`
   INSERT INTO oauth_clients (
     client_id, client_secret, client_name, redirect_uris,
@@ -173,27 +173,27 @@ await c.env.DB.prepare(`
 
 ### 2. Authorization Endpoint
 
-**ファイル**: `packages/op-auth/src/authorize.ts`
+**File**: `packages/op-auth/src/authorize.ts`
 
-**修正箇所**: Consent判定ロジック（行1082-1187付近）
+**Modification**: Consent determination logic (around lines 1082-1187)
 
 ```typescript
 // Check if consent is required (unless already confirmed)
 const _consent_confirmed = c.req.query('_consent_confirmed') || ...;
 
 if (_consent_confirmed !== 'true') {
-  // クライアント情報取得
+  // Get client info
   const client = await getClient(c.env, validClientId);
 
-  // Trusted clientでskip_consentが有効、かつprompt≠consentの場合
+  // If Trusted client with skip_consent enabled and prompt≠consent
   if (client.is_trusted && client.skip_consent && !prompt?.includes('consent')) {
-    // 既存Consentをチェック
+    // Check existing Consent
     const existingConsent = await c.env.DB.prepare(
       'SELECT id FROM oauth_client_consents WHERE user_id = ? AND client_id = ?'
     ).bind(sub, validClientId).first();
 
     if (!existingConsent) {
-      // Consentを自動付与（D1に保存）
+      // Auto-grant Consent (save to D1)
       const consentId = crypto.randomUUID();
       const now = Date.now();
 
@@ -206,10 +206,10 @@ if (_consent_confirmed !== 'true') {
       console.log(`[CONSENT] Auto-granted for trusted client: client_id=${validClientId}, user_id=${sub}`);
     }
 
-    // Consent画面をスキップ
+    // Skip Consent screen
     consentRequired = false;
   } else {
-    // 既存のConsent判定ロジック（Third-Party Client）
+    // Existing Consent determination logic (Third-Party Client)
     let consentRequired = false;
     try {
       const existingConsent = await c.env.DB.prepare(...).bind(...).first();
@@ -217,11 +217,11 @@ if (_consent_confirmed !== 'true') {
       if (!existingConsent) {
         consentRequired = true;
       } else {
-        // スコープカバー確認、有効期限確認
+        // Scope coverage check, expiration check
         ...
       }
 
-      // prompt=consentは常にConsent表示
+      // prompt=consent always shows Consent
       if (prompt?.includes('consent')) {
         consentRequired = true;
       }
@@ -232,17 +232,17 @@ if (_consent_confirmed !== 'true') {
   }
 
   if (consentRequired) {
-    // Consent画面へリダイレクト
+    // Redirect to Consent screen
     ...
   }
 }
 ```
 
-### 3. Client Utility拡張
+### 3. Client Utility Extension
 
-**ファイル**: `packages/shared/src/utils/client.ts`
+**File**: `packages/shared/src/utils/client.ts`
 
-**修正箇所**: getClient関数とClientMetadata型
+**Modification**: getClient function and ClientMetadata type
 
 ```typescript
 export interface ClientMetadata {
@@ -254,8 +254,8 @@ export interface ClientMetadata {
   response_types?: string[];
   token_endpoint_auth_method?: string;
   jwks?: unknown;
-  is_trusted?: boolean;     // 追加
-  skip_consent?: boolean;   // 追加
+  is_trusted?: boolean;     // Added
+  skip_consent?: boolean;   // Added
   // ...
 }
 
@@ -280,15 +280,15 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     response_types: client.response_types ? JSON.parse(client.response_types as string) : undefined,
     token_endpoint_auth_method: client.token_endpoint_auth_method as string | undefined,
     jwks: client.jwks ? JSON.parse(client.jwks as string) : undefined,
-    is_trusted: client.is_trusted === 1,       // 追加
-    skip_consent: client.skip_consent === 1,   // 追加
+    is_trusted: client.is_trusted === 1,       // Added
+    skip_consent: client.skip_consent === 1,   // Added
   };
 }
 ```
 
-### 4. 環境変数型定義
+### 4. Environment Variable Type Definition
 
-**ファイル**: `packages/shared/src/types/env.ts`
+**File**: `packages/shared/src/types/env.ts`
 
 ```typescript
 export interface Env {
@@ -301,106 +301,106 @@ export interface Env {
 
 ---
 
-## セキュリティ考慮事項
+## Security Considerations
 
-### 1. ドメイン検証
+### 1. Domain Validation
 
-- redirect_uriのドメイン抽出時に、URLパースエラーを適切にハンドリング
-- ワイルドカードドメインは**サポートしない**（例: `*.example.com`）
-- サブドメインは個別に指定する必要がある
+- Properly handle URL parse errors when extracting domain from redirect_uri
+- Wildcard domains are **not supported** (e.g., `*.example.com`)
+- Subdomains must be specified individually
 
-### 2. Trusted設定の変更
+### 2. Changing Trusted Settings
 
-- **Dynamic Registrationのみ**でTrusted判定を実施
-- 既存クライアントのTrusted設定は**管理APIでのみ変更可能**（将来実装）
-- Trustedフラグの変更は監査ログに記録（将来実装）
+- Trusted determination is performed **only during Dynamic Registration**
+- Trusted settings for existing clients can **only be changed via Admin API** (future implementation)
+- Changes to Trusted flag will be recorded in audit logs (future implementation)
 
-### 3. prompt=consentの尊重
+### 3. Respecting prompt=consent
 
-- **prompt=consentが指定された場合、is_trustedに関係なく常にConsent画面を表示**
-- これはOIDC仕様の要件
+- **When prompt=consent is specified, always display Consent screen regardless of is_trusted**
+- This is an OIDC specification requirement
 
-### 4. Third-Party Clientへの影響
+### 4. Impact on Third-Party Clients
 
-- Trusted判定に該当しないクライアントは、従来通りConsent必須
-- 既存のConsent機能に影響を与えない
+- Clients that don't match Trusted criteria still require Consent
+- Does not affect existing Consent functionality
 
 ---
 
-## テストケース
+## Test Cases
 
-### 1. Trusted Client（Conformance Suite）
+### 1. Trusted Client (Conformance Suite)
 
-**前提条件**:
+**Prerequisites**:
 - TRUSTED_DOMAINS=`www.certification.openid.net`
 - Dynamic Registration: redirect_uri=`https://www.certification.openid.net/test/a/Authrim-basic-test/callback`
 
-**期待動作**:
+**Expected Behavior**:
 ```
 1. DCR → is_trusted=1, skip_consent=1
-2. /authorize (初回) → Consent自動付与、画面スキップ
-3. /authorize (2回目) → Consent画面スキップ
-4. /authorize + prompt=consent → Consent画面表示
+2. /authorize (first time) → Consent auto-granted, screen skipped
+3. /authorize (second time) → Consent screen skipped
+4. /authorize + prompt=consent → Consent screen displayed
 ```
 
-### 2. Trusted Client（同一ドメイン）
+### 2. Trusted Client (Same Domain)
 
-**前提条件**:
+**Prerequisites**:
 - ISSUER_URL=`https://authrim.sgrastar.workers.dev`
 - redirect_uri=`https://authrim.sgrastar.workers.dev/callback`
 
-**期待動作**:
+**Expected Behavior**:
 ```
 1. DCR → is_trusted=1, skip_consent=1
-2. 以降、Consent画面スキップ（prompt=consent除く）
+2. Thereafter, Consent screen skipped (except prompt=consent)
 ```
 
 ### 3. Third-Party Client
 
-**前提条件**:
+**Prerequisites**:
 - redirect_uri=`https://example.com/callback`
 
-**期待動作**:
+**Expected Behavior**:
 ```
 1. DCR → is_trusted=0, skip_consent=0
-2. /authorize (初回) → Consent画面表示
-3. ユーザー承認 → D1に保存
-4. /authorize (2回目) → Consent画面スキップ
-5. Scope変更 → Consent画面表示
+2. /authorize (first time) → Consent screen displayed
+3. User approves → Saved to D1
+4. /authorize (second time) → Consent screen skipped
+5. Scope change → Consent screen displayed
 ```
 
-### 4. prompt=consent（Trusted Client）
+### 4. prompt=consent (Trusted Client)
 
-**前提条件**:
+**Prerequisites**:
 - is_trusted=1, skip_consent=1
 - prompt=consent
 
-**期待動作**:
+**Expected Behavior**:
 ```
-1. /authorize + prompt=consent → 常にConsent画面表示
-2. Trustedフラグは無視される
+1. /authorize + prompt=consent → Always display Consent screen
+2. Trusted flag is ignored
 ```
 
 ---
 
-## マイグレーション手順
+## Migration Procedure
 
 ```bash
-# 1. マイグレーション実行
+# 1. Run migration
 wrangler d1 execute authrim-prod --file=migrations/004_add_client_trust_settings.sql
 
-# 2. 環境変数設定
-# wrangler.toml または Cloudflare Dashboardで設定
+# 2. Set environment variables
+# Configure in wrangler.toml or Cloudflare Dashboard
 TRUSTED_DOMAINS=www.certification.openid.net
 
-# 3. デプロイ
+# 3. Deploy
 pnpm run build
 pnpm run deploy
 ```
 
 ---
 
-## 将来の拡張
+## Future Extensions
 
 ### 1. Admin API
 
@@ -412,7 +412,7 @@ pnpm run deploy
 ### 2. Audit Logging
 
 ```typescript
-// Trusted設定変更の監査ログ
+// Audit log for Trusted setting changes
 await logAudit({
   event: 'client.trust.updated',
   client_id: clientId,
@@ -425,20 +425,20 @@ await logAudit({
 ### 3. User Consent Management
 
 ```typescript
-// GET /api/user/consents - 自分のConsent一覧
-// DELETE /api/user/consents/:client_id - Consent取り消し
+// GET /api/user/consents - List own consents
+// DELETE /api/user/consents/:client_id - Revoke consent
 ```
 
 ### 4. Granular Consent
 
 ```typescript
-// ユーザーが個別scopeを承認/拒否
-// 例: profileは承認、emailは拒否
+// User approves/denies individual scopes
+// Example: approve profile, deny email
 ```
 
 ---
 
-## 参考資料
+## References
 
 - [OAuth 2.0 RFC 6749](https://tools.ietf.org/html/rfc6749)
 - [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)

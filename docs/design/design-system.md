@@ -1,4 +1,4 @@
-# Authrim Design System 🎨
+# Authrim Design System
 
 **Last Updated**: 2025-11-13
 **Version**: 1.0.0
@@ -6,7 +6,7 @@
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 1. [Overview](#overview)
 2. [Design Principles](#design-principles)
@@ -125,16 +125,16 @@ export default defineConfig({
 
 | Name | Light Mode | Dark Mode | Usage |
 |------|-----------|-----------|------|
-| `gray-50` | `#F9FAFB` | `#1A202C` | 背景 |
-| `gray-100` | `#F3F4F6` | `#2D3748` | カード背景 |
-| `gray-200` | `#E5E7EB` | `#4A5568` | ボーダー |
-| `gray-300` | `#D1D5DB` | `#718096` | ボーダー（強調） |
-| `gray-400` | `#9CA3AF` | `#A0AEC0` | プレースホルダー |
-| `gray-500` | `#6B7280` | `#CBD5E0` | 無効テキスト |
-| `gray-600` | `#4B5563` | `#E2E8F0` | セカンダリテキスト |
-| `gray-700` | `#374151` | `#EDF2F7` | メインテキスト |
-| `gray-800` | `#1F2937` | `#F7FAFC` | ヘッダーテキスト |
-| `gray-900` | `#111827` | `#FFFFFF` | 最も強い強調 |
+| `gray-50` | `#F9FAFB` | `#1A202C` | Background |
+| `gray-100` | `#F3F4F6` | `#2D3748` | Card background |
+| `gray-200` | `#E5E7EB` | `#4A5568` | Border |
+| `gray-300` | `#D1D5DB` | `#718096` | Border (emphasized) |
+| `gray-400` | `#9CA3AF` | `#A0AEC0` | Placeholder |
+| `gray-500` | `#6B7280` | `#CBD5E0` | Disabled text |
+| `gray-600` | `#4B5563` | `#E2E8F0` | Secondary text |
+| `gray-700` | `#374151` | `#EDF2F7` | Main text |
+| `gray-800` | `#1F2937` | `#F7FAFC` | Header text |
+| `gray-900` | `#111827` | `#FFFFFF` | Strongest emphasis |
 
 ### Semantic Colors
 
@@ -142,39 +142,39 @@ export default defineConfig({
 
 | State | Light Mode | Dark Mode | Usage |
 |------|-----------|-----------|------|
-| `success-500` | `#10B981` (Green) | `#48BB78` | 成功メッセージ、認証成功 |
-| `warning-500` | `#F59E0B` (Amber) | `#ECC94B` | 警告、注意喚起 |
-| `error-500` | `#EF4444` (Red) | `#FC8181` | エラー、失敗 |
-| `info-500` | `#3B82F6` (Blue) | `#63B3ED` | 情報、ヒント |
+| `success-500` | `#10B981` (Green) | `#48BB78` | Success message, authentication success |
+| `warning-500` | `#F59E0B` (Amber) | `#ECC94B` | Warning, caution |
+| `error-500` | `#EF4444` (Red) | `#FC8181` | Error, failure |
+| `info-500` | `#3B82F6` (Blue) | `#63B3ED` | Information, hint |
 
-### カラー使用ガイドライン
+### Color Usage Guidelines
 
 ```css
-/* Primary - CTA、リンク、フォーカス */
+/* Primary - CTA, links, focus */
 .btn-primary { @apply bg-primary-500 text-white hover:bg-primary-600; }
 
-/* Secondary - サブアクション */
+/* Secondary - Sub-actions */
 .btn-secondary { @apply bg-secondary-500 text-white hover:bg-secondary-600; }
 
-/* Neutral - キャンセル、通常ボタン */
+/* Neutral - Cancel, normal buttons */
 .btn-neutral { @apply bg-gray-200 text-gray-700 hover:bg-gray-300; }
 
-/* Success - 認証成功、完了 */
+/* Success - Authentication success, completion */
 .alert-success { @apply bg-success-50 border-success-500 text-success-700; }
 
-/* Error - エラーメッセージ */
+/* Error - Error messages */
 .alert-error { @apply bg-error-50 border-error-500 text-error-700; }
 ```
 
-### カスタマイズ（ブランディング設定）
+### Customization (Branding Settings)
 
-管理画面から変更可能（`branding_settings`テーブル）：
+Can be changed from the admin panel (`branding_settings` table):
 
 ```sql
 UPDATE branding_settings SET
-  primary_color = '#FF5733',    -- カスタムプライマリ
-  secondary_color = '#28A745',  -- カスタムセカンダリ
-  font_family = 'Poppins'       -- カスタムフォント
+  primary_color = '#FF5733',    -- Custom primary
+  secondary_color = '#28A745',  -- Custom secondary
+  font_family = 'Poppins'       -- Custom font
 WHERE id = 'default';
 ```
 
@@ -200,49 +200,49 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 
 | Class | Size | Line Height | Usage |
 |--------|--------|-------------|------|
-| `text-xs` | 12px (0.75rem) | 16px (1rem) | 補足、メタ情報 |
-| `text-sm` | 14px (0.875rem) | 20px (1.25rem) | 本文（小）、ラベル |
-| `text-base` | 16px (1rem) | 24px (1.5rem) | **メイン本文** |
-| `text-lg` | 18px (1.125rem) | 28px (1.75rem) | 強調本文 |
-| `text-xl` | 20px (1.25rem) | 28px (1.75rem) | サブ見出し |
-| `text-2xl` | 24px (1.5rem) | 32px (2rem) | 見出し H3 |
-| `text-3xl` | 30px (1.875rem) | 36px (2.25rem) | 見出し H2 |
-| `text-4xl` | 36px (2.25rem) | 40px (2.5rem) | 見出し H1 |
-| `text-5xl` | 48px (3rem) | 48px (3rem) | ヒーロー見出し |
+| `text-xs` | 12px (0.75rem) | 16px (1rem) | Supplementary, meta information |
+| `text-sm` | 14px (0.875rem) | 20px (1.25rem) | Body text (small), labels |
+| `text-base` | 16px (1rem) | 24px (1.5rem) | **Main body text** |
+| `text-lg` | 18px (1.125rem) | 28px (1.75rem) | Emphasized body text |
+| `text-xl` | 20px (1.25rem) | 28px (1.75rem) | Subheadings |
+| `text-2xl` | 24px (1.5rem) | 32px (2rem) | Heading H3 |
+| `text-3xl` | 30px (1.875rem) | 36px (2.25rem) | Heading H2 |
+| `text-4xl` | 36px (2.25rem) | 40px (2.5rem) | Heading H1 |
+| `text-5xl` | 48px (3rem) | 48px (3rem) | Hero heading |
 
-### フォントウェイト
+### Font Weight
 
-| クラス | Weight | 用途 |
+| Class | Weight | Usage |
 |--------|--------|------|
-| `font-normal` | 400 | 通常本文 |
-| `font-medium` | 500 | 強調、ボタン |
-| `font-semibold` | 600 | 見出し、ナビゲーション |
-| `font-bold` | 700 | 強い強調、アラート |
+| `font-normal` | 400 | Normal body text |
+| `font-medium` | 500 | Emphasis, buttons |
+| `font-semibold` | 600 | Headings, navigation |
+| `font-bold` | 700 | Strong emphasis, alerts |
 
-### タイポグラフィ使用例
+### Typography Usage Examples
 
 ```html
-<!-- ヒーロー見出し -->
+<!-- Hero heading -->
 <h1 class="text-4xl font-bold text-gray-900 dark:text-white">
   Welcome to Authrim
 </h1>
 
-<!-- セクション見出し -->
+<!-- Section heading -->
 <h2 class="text-2xl font-semibold text-gray-800 dark:text-gray-100">
   Sign in to your account
 </h2>
 
-<!-- 本文 -->
+<!-- Body text -->
 <p class="text-base text-gray-600 dark:text-gray-300">
   Enter your email address to continue
 </p>
 
-<!-- ラベル -->
+<!-- Label -->
 <label class="text-sm font-medium text-gray-700 dark:text-gray-200">
   Email address
 </label>
 
-<!-- エラーメッセージ -->
+<!-- Error message -->
 <p class="text-sm text-error-600 dark:text-error-400">
   Invalid email address
 </p>
@@ -256,39 +256,39 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 
 8px-based spacing system (multiples of 8)
 
-| クラス | サイズ | px | 用途 |
+| Class | Size | px | Usage |
 |--------|--------|-----|------|
-| `0` | 0 | 0px | なし |
-| `0.5` | 0.125rem | 2px | 極小 |
-| `1` | 0.25rem | 4px | 最小 |
-| `2` | 0.5rem | 8px | 小 |
-| `3` | 0.75rem | 12px | 中 |
-| `4` | 1rem | 16px | **標準** |
-| `5` | 1.25rem | 20px | やや大 |
-| `6` | 1.5rem | 24px | 大 |
-| `8` | 2rem | 32px | 特大 |
-| `10` | 2.5rem | 40px | セクション間 |
-| `12` | 3rem | 48px | 大セクション間 |
-| `16` | 4rem | 64px | ページ間 |
-| `20` | 5rem | 80px | ヒーローセクション |
+| `0` | 0 | 0px | None |
+| `0.5` | 0.125rem | 2px | Extra small |
+| `1` | 0.25rem | 4px | Minimum |
+| `2` | 0.5rem | 8px | Small |
+| `3` | 0.75rem | 12px | Medium |
+| `4` | 1rem | 16px | **Standard** |
+| `5` | 1.25rem | 20px | Slightly large |
+| `6` | 1.5rem | 24px | Large |
+| `8` | 2rem | 32px | Extra large |
+| `10` | 2.5rem | 40px | Between sections |
+| `12` | 3rem | 48px | Between large sections |
+| `16` | 4rem | 64px | Between pages |
+| `20` | 5rem | 80px | Hero section |
 
-### スペーシング使用ガイドライン
+### Spacing Usage Guidelines
 
 ```html
-<!-- カード内パディング -->
+<!-- Card padding -->
 <div class="p-6"><!-- 24px padding --></div>
 
-<!-- ボタン -->
-<button class="px-4 py-2"><!-- 16px横、8px縦 --></button>
+<!-- Button -->
+<button class="px-4 py-2"><!-- 16px horizontal, 8px vertical --></button>
 
-<!-- フォームフィールド間 -->
-<div class="space-y-4"><!-- 16px縦方向マージン --></div>
+<!-- Form field spacing -->
+<div class="space-y-4"><!-- 16px vertical margin --></div>
 
-<!-- セクション間 -->
-<section class="py-12"><!-- 48px上下 --></section>
+<!-- Section spacing -->
+<section class="py-12"><!-- 48px top and bottom --></section>
 
-<!-- ページコンテナ -->
-<div class="px-4 sm:px-6 lg:px-8"><!-- レスポンシブ横パディング --></div>
+<!-- Page container -->
+<div class="px-4 sm:px-6 lg:px-8"><!-- Responsive horizontal padding --></div>
 ```
 
 ---
@@ -299,39 +299,39 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 
 | Breakpoint | Max Width | Usage |
 |-----------------|--------|------|
-| `xs` (< 640px) | 100% | モバイル |
-| `sm` (640px+) | 640px | 小タブレット |
-| `md` (768px+) | 768px | タブレット |
-| `lg` (1024px+) | 1024px | デスクトップ |
-| `xl` (1280px+) | 1280px | 大デスクトップ |
-| `2xl` (1536px+) | 1536px | 特大画面 |
+| `xs` (< 640px) | 100% | Mobile |
+| `sm` (640px+) | 640px | Small tablet |
+| `md` (768px+) | 768px | Tablet |
+| `lg` (1024px+) | 1024px | Desktop |
+| `xl` (1280px+) | 1280px | Large desktop |
+| `2xl` (1536px+) | 1536px | Extra large screen |
 
-### レイアウトパターン
+### Layout Patterns
 
-#### 中央寄せコンテナ
+#### Centered Container
 
 ```html
 <div class="container mx-auto px-4 max-w-7xl">
-  <!-- コンテンツ -->
+  <!-- Content -->
 </div>
 ```
 
-#### 2カラムレイアウト（サイドバー + メイン）
+#### 2-Column Layout (Sidebar + Main)
 
 ```html
 <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-  <aside class="lg:col-span-3"><!-- サイドバー --></aside>
-  <main class="lg:col-span-9"><!-- メインコンテンツ --></main>
+  <aside class="lg:col-span-3"><!-- Sidebar --></aside>
+  <main class="lg:col-span-9"><!-- Main content --></main>
 </div>
 ```
 
-#### カードグリッド
+#### Card Grid
 
 ```html
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-  <div class="card"><!-- カード1 --></div>
-  <div class="card"><!-- カード2 --></div>
-  <div class="card"><!-- カード3 --></div>
+  <div class="card"><!-- Card 1 --></div>
+  <div class="card"><!-- Card 2 --></div>
+  <div class="card"><!-- Card 3 --></div>
 </div>
 ```
 
@@ -559,7 +559,7 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 </svg>
 ```
 
-### Melt UI コンポーネント統合
+### Melt UI Component Integration
 
 ```svelte
 <script>
@@ -597,22 +597,22 @@ font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
 pnpm install lucide-svelte
 ```
 
-### よく使うアイコン
+### Commonly Used Icons
 
-| アイコン | 用途 |
+| Icon | Usage |
 |---------|------|
-| `Check` | 成功、完了、選択 |
-| `X` | 閉じる、エラー、削除 |
-| `AlertCircle` | 警告、注意 |
-| `Info` | 情報、ヘルプ |
-| `Lock` | セキュリティ、認証 |
-| `Mail` | メール、Magic Link |
-| `Key` | Passkey、認証情報 |
-| `User` | ユーザープロファイル |
-| `Settings` | 設定 |
-| `LogOut` | ログアウト |
+| `Check` | Success, completion, selection |
+| `X` | Close, error, delete |
+| `AlertCircle` | Warning, caution |
+| `Info` | Information, help |
+| `Lock` | Security, authentication |
+| `Mail` | Email, Magic Link |
+| `Key` | Passkey, credentials |
+| `User` | User profile |
+| `Settings` | Settings |
+| `LogOut` | Logout |
 
-### アイコン使用例
+### Icon Usage Examples
 
 ```svelte
 <script>
@@ -636,21 +636,21 @@ pnpm install lucide-svelte
 ### Transitions
 
 ```css
-/* 標準トランジション */
+/* Standard transition */
 .transition-base {
   transition-property: background-color, border-color, color, fill, stroke;
   transition-duration: 150ms;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ホバーエフェクト */
+/* Hover effect */
 .btn:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   transition: all 150ms ease-out;
 }
 
-/* フェードイン */
+/* Fade in */
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -661,12 +661,12 @@ pnpm install lucide-svelte
 }
 ```
 
-### アニメーション原則
+### Animation Principles
 
-1. **控えめに** - 不必要なアニメーションは避ける
-2. **高速** - 150-300msが理想
-3. **意味がある** - ユーザーの理解を助けるアニメーション
-4. **アクセシビリティ** - `prefers-reduced-motion` 対応
+1. **Subtle** - Avoid unnecessary animations
+2. **Fast** - 150-300ms is ideal
+3. **Meaningful** - Animations that help user understanding
+4. **Accessibility** - Support `prefers-reduced-motion`
 
 ```css
 @media (prefers-reduced-motion: reduce) {
@@ -684,55 +684,55 @@ pnpm install lucide-svelte
 
 ### WCAG 2.1 AA Compliance Checklist
 
-#### ✅ Color Contrast
+#### Color Contrast
 
-| 要素 | 最低比率 | 推奨比率 |
+| Element | Minimum Ratio | Recommended Ratio |
 |------|---------|---------|
-| 通常テキスト (16px+) | 4.5:1 | 7:1 |
-| 大テキスト (24px+) | 3:1 | 4.5:1 |
-| UIコンポーネント | 3:1 | - |
+| Normal text (16px+) | 4.5:1 | 7:1 |
+| Large text (24px+) | 3:1 | 4.5:1 |
+| UI components | 3:1 | - |
 
-**検証済みの組み合わせ**:
+**Verified Combinations**:
 - `text-gray-900` on `bg-white` ✅ 21:1
 - `text-gray-700` on `bg-white` ✅ 10.4:1
 - `text-primary-600` on `bg-white` ✅ 7.2:1
 - `text-white` on `bg-primary-500` ✅ 4.9:1
 
-#### ✅ キーボード操作
+#### Keyboard Navigation
 
 ```html
-<!-- すべてのインタラクティブ要素はフォーカス可能 -->
+<!-- All interactive elements are focusable -->
 <button tabindex="0" class="focus:ring-2 focus:ring-primary-500">
   Click me
 </button>
 
-<!-- スキップリンク -->
+<!-- Skip link -->
 <a href="#main-content" class="sr-only focus:not-sr-only">
   Skip to main content
 </a>
 
-<!-- フォーカストラップ（モーダル内） -->
+<!-- Focus trap (within modal) -->
 <div role="dialog" aria-modal="true">
-  <!-- 最初のフォーカス可能要素 -->
+  <!-- First focusable element -->
   <button>First</button>
-  <!-- コンテンツ -->
+  <!-- Content -->
   <button>Last</button>
 </div>
 ```
 
-#### ✅ ARIA属性
+#### ARIA Attributes
 
 ```html
-<!-- ボタン状態 -->
+<!-- Button state -->
 <button aria-pressed="true">Toggle</button>
 
-<!-- 展開可能セクション -->
+<!-- Expandable section -->
 <button aria-expanded="false" aria-controls="section-1">
   Expand
 </button>
 <div id="section-1" hidden>Content</div>
 
-<!-- フォームバリデーション -->
+<!-- Form validation -->
 <input
   type="email"
   aria-invalid="true"
@@ -740,47 +740,47 @@ pnpm install lucide-svelte
 />
 <p id="email-error" role="alert">Invalid email</p>
 
-<!-- ローディング状態 -->
+<!-- Loading state -->
 <div role="status" aria-live="polite" aria-label="Loading">
   <svg class="spinner" aria-hidden="true">...</svg>
   Loading...
 </div>
 ```
 
-#### ✅ セマンティックHTML
+#### Semantic HTML
 
 ```html
-<!-- 正しい見出し階層 -->
+<!-- Proper heading hierarchy -->
 <h1>Page Title</h1>
   <h2>Section</h2>
     <h3>Subsection</h3>
 
-<!-- ランドマーク -->
+<!-- Landmarks -->
 <header role="banner">
   <nav role="navigation" aria-label="Main">...</nav>
 </header>
 <main role="main" id="main-content">...</main>
 <footer role="contentinfo">...</footer>
 
-<!-- リスト -->
+<!-- Lists -->
 <ul role="list">
   <li>Item 1</li>
   <li>Item 2</li>
 </ul>
 ```
 
-#### ✅ スクリーンリーダー対応
+#### Screen Reader Support
 
 ```html
-<!-- 視覚的に隠す（SR用） -->
+<!-- Visually hidden (for SR) -->
 <span class="sr-only">Email address</span>
 
-<!-- アイコンのラベル -->
+<!-- Icon labels -->
 <button aria-label="Close dialog">
   <X aria-hidden="true" />
 </button>
 
-<!-- ライブリージョン -->
+<!-- Live regions -->
 <div role="alert" aria-live="assertive">
   Error: Invalid credentials
 </div>
@@ -792,21 +792,21 @@ pnpm install lucide-svelte
 
 ### Implementation Method
 
-UnoCSS + CSS変数で実装：
+Implemented with UnoCSS + CSS variables:
 
 ```typescript
 // uno.config.ts
 export default defineConfig({
-  darkMode: 'class', // .dark クラスでトグル
+  darkMode: 'class', // Toggle with .dark class
   theme: {
     colors: {
-      // Light & Dark両対応
+      // Support both Light & Dark
     }
   }
 })
 ```
 
-### ダークモード切り替え
+### Dark Mode Toggle
 
 ```svelte
 <script>
@@ -834,19 +834,19 @@ export default defineConfig({
 </button>
 ```
 
-### ダークモード対応クラス
+### Dark Mode Classes
 
 ```html
-<!-- 背景色 -->
+<!-- Background color -->
 <div class="bg-white dark:bg-gray-900">
 
-<!-- テキスト色 -->
+<!-- Text color -->
 <p class="text-gray-900 dark:text-white">
 
-<!-- ボーダー -->
+<!-- Border -->
 <div class="border-gray-200 dark:border-gray-700">
 
-<!-- カード -->
+<!-- Card -->
 <div class="bg-white dark:bg-gray-800 shadow-sm dark:shadow-gray-900/50">
 ```
 
@@ -858,35 +858,35 @@ export default defineConfig({
 
 | Prefix | Min Width | Device |
 |--------|----------|---------|
-| (なし) | 0px | モバイル（デフォルト） |
-| `sm:` | 640px | 大型モバイル、小タブレット |
-| `md:` | 768px | タブレット |
-| `lg:` | 1024px | デスクトップ |
-| `xl:` | 1280px | 大型デスクトップ |
-| `2xl:` | 1536px | 特大画面 |
+| (none) | 0px | Mobile (default) |
+| `sm:` | 640px | Large mobile, small tablet |
+| `md:` | 768px | Tablet |
+| `lg:` | 1024px | Desktop |
+| `xl:` | 1280px | Large desktop |
+| `2xl:` | 1536px | Extra large screen |
 
-### モバイルファースト
+### Mobile First
 
 ```html
-<!-- モバイル: 1列、デスクトップ: 3列 -->
+<!-- Mobile: 1 column, Desktop: 3 columns -->
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 
-<!-- モバイル: text-base、デスクトップ: text-lg -->
+<!-- Mobile: text-base, Desktop: text-lg -->
 <h1 class="text-base md:text-lg lg:text-xl">
 
-<!-- モバイル: p-4、デスクトップ: p-8 -->
+<!-- Mobile: p-4, Desktop: p-8 -->
 <div class="p-4 md:p-6 lg:p-8">
 ```
 
-### レスポンシブパディング
+### Responsive Padding
 
 ```html
-<!-- コンテナ -->
+<!-- Container -->
 <div class="px-4 sm:px-6 lg:px-8">
   <!-- 4px → 24px → 32px -->
 </div>
 
-<!-- セクション -->
+<!-- Section -->
 <section class="py-8 md:py-12 lg:py-16">
   <!-- 32px → 48px → 64px -->
 </section>
@@ -920,7 +920,7 @@ The following can be customized from the admin panel:
 ### Customization Examples
 
 ```css
-/* カスタムCSS例（branding_settings.custom_css） */
+/* Custom CSS example (branding_settings.custom_css) */
 :root {
   --color-primary: #FF5733;
   --font-family: 'Poppins', sans-serif;

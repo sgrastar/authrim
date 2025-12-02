@@ -1,22 +1,22 @@
-# Phase 4+ ロードマップ
+# Phase 4+ Roadmap
 
-## 概要
+## Overview
 
-Phase 3でReBAC + RBAC + ABACの基盤が完成しました。このドキュメントでは、Phase 4以降で予定されている機能拡張について説明します。
+With Phase 3, the foundation for ReBAC + RBAC + ABAC is complete. This document describes the feature extensions planned for Phase 4 and beyond.
 
-## Phase 4: VC/DID統合 & 高度なReBAC
+## Phase 4: VC/DID Integration & Advanced ReBAC
 
-### 4.1 Verifiable Credentials (VC) サポート
+### 4.1 Verifiable Credentials (VC) Support
 
-#### 目標
-- W3C Verifiable Credentials標準に準拠したクレーム検証
-- VCから検証済み属性への自動マッピング
-- 発行者（Issuer）の信頼チェーン管理
+#### Goals
+- Claims verification compliant with W3C Verifiable Credentials standard
+- Automatic mapping from VC to verified attributes
+- Issuer trust chain management
 
-#### 実装予定
+#### Planned Implementation
 
 ```typescript
-// VCを検証して属性を抽出
+// Verify VC and extract attributes
 interface VCVerificationResult {
   valid: boolean;
   claims: Record<string, unknown>;
@@ -24,21 +24,21 @@ interface VCVerificationResult {
   expiresAt?: number;
 }
 
-// verified_attributesテーブルにVC由来の属性を格納
+// Store VC-derived attributes in verified_attributes table
 interface VerifiedAttribute {
   name: string;
   value: string;
-  source: 'vc';           // VC由来
-  issuer: string;         // VC発行者DID
-  credential_id: string;  // 元のVCへの参照
+  source: 'vc';           // VC-derived
+  issuer: string;         // VC issuer DID
+  credential_id: string;  // Reference to original VC
   expiresAt: number;
 }
 ```
 
-#### データベース拡張
+#### Database Extensions
 
 ```sql
--- VC検証結果を格納
+-- Store VC verification results
 CREATE TABLE verified_credentials (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE verified_credentials (
   revocation_status TEXT DEFAULT 'valid'
 );
 
--- 信頼できる発行者リスト
+-- Trusted issuer list
 CREATE TABLE trusted_issuers (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -63,26 +63,26 @@ CREATE TABLE trusted_issuers (
 );
 ```
 
-### 4.2 Decentralized Identifier (DID) サポート
+### 4.2 Decentralized Identifier (DID) Support
 
-#### 目標
-- DID:web, DID:key メソッドのサポート
-- DID Document解決
-- subject_identifiersテーブルへのDID統合
+#### Goals
+- Support for DID:web, DID:key methods
+- DID Document resolution
+- DID integration with subject_identifiers table
 
-#### 実装予定
+#### Planned Implementation
 
 ```typescript
-// DID解決
+// DID resolution
 interface DIDResolver {
   resolve(did: string): Promise<DIDDocument>;
   verify(did: string, signature: string, data: string): Promise<boolean>;
 }
 
-// サポートするDIDメソッド
+// Supported DID methods
 type SupportedDIDMethod = 'did:web' | 'did:key';
 
-// subject_identifiersの拡張
+// Extension of subject_identifiers
 interface SubjectIdentifier {
   identifier: string;      // email, DID, etc.
   identifier_type: 'email' | 'did:web' | 'did:key' | 'external_id';
@@ -91,9 +91,9 @@ interface SubjectIdentifier {
 }
 ```
 
-### 4.3 Relation DSL拡張
+### 4.3 Relation DSL Extensions
 
-#### Intersection（AND）
+#### Intersection (AND)
 
 ```json
 {
@@ -105,7 +105,7 @@ interface SubjectIdentifier {
 }
 ```
 
-#### Exclusion（NOT / Deny）
+#### Exclusion (NOT / Deny)
 
 ```json
 {
@@ -124,14 +124,14 @@ interface SubjectIdentifier {
 }
 ```
 
-### 4.4 RelationGraphDO（Durable Object）
+### 4.4 RelationGraphDO (Durable Object)
 
-#### 目標
-- グローバル分散でのリレーションシップグラフ管理
-- 強い整合性を必要とする操作の最適化
-- リアルタイム権限変更通知
+#### Goals
+- Global distributed relationship graph management
+- Optimization of operations requiring strong consistency
+- Real-time permission change notifications
 
-#### アーキテクチャ
+#### Architecture
 
 ```mermaid
 graph TB
@@ -160,31 +160,31 @@ graph TB
     DO2 --> KV
 ```
 
-#### 実装予定
+#### Planned Implementation
 
 ```typescript
 // RelationGraphDO
 export class RelationGraphDO implements DurableObject {
-  // グラフデータ（メモリ内）
+  // Graph data (in-memory)
   private graph: Map<string, Set<string>>;
 
-  // リレーションシップ追加（強い整合性）
+  // Add relationship (strong consistency)
   async addRelationship(from: string, to: string, relation: string): Promise<void>;
 
-  // リレーションシップ削除（強い整合性）
+  // Remove relationship (strong consistency)
   async removeRelationship(from: string, to: string, relation: string): Promise<void>;
 
-  // パス検索（メモリ内グラフで高速）
+  // Path search (fast with in-memory graph)
   async findPath(from: string, to: string): Promise<string[] | null>;
 
-  // WebSocket通知
+  // WebSocket notifications
   async notify(event: RelationshipChangeEvent): Promise<void>;
 }
 ```
 
-## Phase 5: 高度な機能
+## Phase 5: Advanced Features
 
-### 5.1 Conditional Relations（条件付きリレーション）
+### 5.1 Conditional Relations
 
 ```json
 {
@@ -205,7 +205,7 @@ export class RelationGraphDO implements DurableObject {
 ### 5.2 Audit Log & Compliance
 
 ```sql
--- 認可決定の監査ログ
+-- Authorization decision audit log
 CREATE TABLE authorization_audit_log (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -223,111 +223,111 @@ CREATE TABLE authorization_audit_log (
 ### 5.3 Policy Simulation & Testing
 
 ```typescript
-// ポリシーシミュレーター
+// Policy simulator
 interface PolicySimulator {
-  // "もし〜だったら"のシミュレーション
+  // "What if" simulation
   whatIf(scenario: SimulationScenario): Promise<SimulationResult>;
 
-  // ポリシー変更の影響分析
+  // Impact analysis of policy changes
   analyzeImpact(proposedChange: PolicyChange): Promise<ImpactAnalysis>;
 
-  // ポリシーテスト実行
+  // Run policy tests
   runTests(testSuite: PolicyTestSuite): Promise<TestResults>;
 }
 ```
 
-### 5.4 グラフ可視化UI
+### 5.4 Graph Visualization UI
 
-- リレーションシップグラフのインタラクティブ表示
-- 権限パスのハイライト
-- ポリシーシミュレーション結果の可視化
+- Interactive display of relationship graphs
+- Permission path highlighting
+- Policy simulation result visualization
 
-## 実装優先順位
+## Implementation Priority
 
-### 高優先度（Phase 4.0）
-1. ✅ ReBAC基盤（完了）
-2. VC検証の基本実装
-3. DID:webサポート
-4. Intersection式のサポート
+### High Priority (Phase 4.0)
+1. ReBAC foundation (completed)
+2. Basic VC verification implementation
+3. DID:web support
+4. Intersection expression support
 
-### 中優先度（Phase 4.1）
-1. Exclusion式（Deny効果）
+### Medium Priority (Phase 4.1)
+1. Exclusion expression (Deny effect)
 2. RelationGraphDO
-3. Audit Log基盤
-4. DID:keyサポート
+3. Audit Log foundation
+4. DID:key support
 
-### 低優先度（Phase 5）
+### Low Priority (Phase 5)
 1. Conditional Relations
 2. Policy Simulation
-3. グラフ可視化UI
-4. コンプライアンスレポート
+3. Graph visualization UI
+4. Compliance reports
 
-## マイルストーン
+## Milestones
 
 ```mermaid
 gantt
-    title Phase 4-5 実装ロードマップ
+    title Phase 4-5 Implementation Roadmap
     dateFormat  YYYY-MM
     section Phase 4.0
-    VC検証基本           :2025-01, 2025-02
-    DID:web              :2025-02, 2025-03
-    Intersection式       :2025-02, 2025-03
+    VC Verification Basic     :2025-01, 2025-02
+    DID:web                   :2025-02, 2025-03
+    Intersection Expression   :2025-02, 2025-03
 
     section Phase 4.1
-    Exclusion式          :2025-03, 2025-04
-    RelationGraphDO      :2025-04, 2025-05
-    Audit Log            :2025-04, 2025-05
+    Exclusion Expression      :2025-03, 2025-04
+    RelationGraphDO           :2025-04, 2025-05
+    Audit Log                 :2025-04, 2025-05
 
     section Phase 5
-    Conditional Relations :2025-06, 2025-07
-    Policy Simulation     :2025-07, 2025-08
-    グラフ可視化UI       :2025-08, 2025-09
+    Conditional Relations     :2025-06, 2025-07
+    Policy Simulation         :2025-07, 2025-08
+    Graph Visualization UI    :2025-08, 2025-09
 ```
 
-## 技術的考慮事項
+## Technical Considerations
 
-### パフォーマンス
+### Performance
 
-| 機能 | 目標レイテンシ | 戦略 |
-|------|--------------|------|
+| Feature | Target Latency | Strategy |
+|---------|---------------|----------|
 | check() | < 10ms (p99) | KV Cache + Recursive CTE |
 | listObjects | < 50ms (p99) | Closure Table + Pagination |
-| VC検証 | < 100ms | 事前検証 + キャッシュ |
-| DID解決 | < 200ms | DNS/HTTP キャッシュ |
+| VC Verification | < 100ms | Pre-verification + Cache |
+| DID Resolution | < 200ms | DNS/HTTP Cache |
 
-### セキュリティ
+### Security
 
-- VC署名検証の厳格化
-- 発行者信頼チェーンの管理
-- 失効（Revocation）チェック
-- 監査ログの改ざん防止
+- Strict VC signature verification
+- Issuer trust chain management
+- Revocation checks
+- Audit log tampering prevention
 
-### スケーラビリティ
+### Scalability
 
-- テナントごとのRelationGraphDO分離
-- Closure Table更新の非同期化
-- KV Cacheのリージョン分散
+- Tenant-based RelationGraphDO isolation
+- Asynchronous Closure Table updates
+- Regional distribution of KV Cache
 
-## 移行ガイド
+## Migration Guide
 
-### Phase 3 → Phase 4への移行
+### Phase 3 → Phase 4 Migration
 
-1. **データベースマイグレーション**
-   - 新テーブル追加（verified_credentials, trusted_issuers）
-   - 既存データは影響なし
+1. **Database Migration**
+   - Add new tables (verified_credentials, trusted_issuers)
+   - Existing data is not affected
 
-2. **API互換性**
-   - 既存APIは維持
-   - 新機能は追加エンドポイントで提供
+2. **API Compatibility**
+   - Existing APIs are maintained
+   - New features provided via additional endpoints
 
-3. **設定変更**
-   - VC検証を有効化する環境変数追加
-   - 信頼できる発行者の登録
+3. **Configuration Changes**
+   - Add environment variables to enable VC verification
+   - Register trusted issuers
 
-## 参考資料
+## References
 
 - [Google Zanzibar Paper](https://research.google/pubs/pub48190/)
 - [W3C Verifiable Credentials](https://www.w3.org/TR/vc-data-model/)
 - [W3C Decentralized Identifiers](https://www.w3.org/TR/did-core/)
-- [OpenFGA](https://openfga.dev/) - Zanzibar OSS実装
-- [SpiceDB](https://authzed.com/spicedb) - Zanzibar OSS実装
+- [OpenFGA](https://openfga.dev/) - Zanzibar OSS Implementation
+- [SpiceDB](https://authzed.com/spicedb) - Zanzibar OSS Implementation

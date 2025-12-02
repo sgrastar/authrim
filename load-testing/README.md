@@ -1,201 +1,218 @@
-# 🚀 Authrim 負荷テスト仕様書
+# Authrim Load Testing Specification
 
-Authrim の家庭用〜準商用向け負荷テストプリセット
+Load testing presets for Authrim, targeting home and semi-commercial use cases.
 
-## 📋 目次
+## Table of Contents
 
-- [全体方針](#全体方針)
-- [テスト環境アーキテクチャ](#テスト環境アーキテクチャ)
-- [テストプリセット](#テストプリセット)
-- [クイックスタート](#クイックスタート)
-- [詳細ドキュメント](#詳細ドキュメント)
+- [Overview](#overview)
+- [Test Environment Architecture](#test-environment-architecture)
+- [Test Presets](#test-presets)
+- [Quick Start](#quick-start)
+- [Detailed Documentation](#detailed-documentation)
 
-## 🎯 全体方針
+## Overview
 
-このテストフレームワークの目的は以下の通りです：
+The purpose of this test framework is:
 
-1. **現在の Authrim architecture（Worker + DO + KV + D1）で耐えられるRPSの実測値を出す**
-2. **軽負荷〜重負荷まで、家庭環境で再現可能な現実的プリセットを提供する**
-3. **テスト後に Cloudflare Analytics API / Graph API から実際のCPU・メモリ・リクエスト統計を wrangler 経由で収集する**
-4. **すべて k6 OSS と家庭の光回線・MacBook/Mac mini で実行可能**
+1. **Measure actual RPS capacity of current Authrim architecture (Worker + DO + KV + D1)**
+2. **Provide realistic presets from light to heavy load, reproducible in home environment**
+3. **Collect actual CPU, memory, and request statistics from Cloudflare Analytics API / Graph API via wrangler after tests**
+4. **All executable with k6 OSS and home fiber internet / MacBook / Mac mini**
 
-## 🏗️ テスト環境アーキテクチャ
+## Test Environment Architecture
 
-### テスト実行環境（ローカル）
+### Test Execution Environment (Local)
 
-- **マシン**: macOS (M1/M2/M3)
-- **回線**: 上り 50〜200Mbps の一般家庭用光回線
-- **必要なツール**:
+- **Machine**: macOS (M1/M2/M3)
+- **Internet**: Standard home fiber with 50-200Mbps upload
+- **Required Tools**:
   - [k6 OSS](https://k6.io/)
   - [wrangler](https://developers.cloudflare.com/workers/wrangler/)
-  - jq（結果整形用・任意）
+  - jq (optional, for result formatting)
 
-### Authrim 側構成
+### Authrim Architecture
 
+```mermaid
+flowchart TB
+    subgraph Local["Local Environment"]
+        k6["k6 (Local)"]
+    end
+
+    subgraph CF["Cloudflare"]
+        Edge["Cloudflare Edge"]
+
+        subgraph Worker["Authrim Worker"]
+            W["Worker + KeyManager (cache)"]
+        end
+
+        subgraph Storage["Storage Layer"]
+            KV["KV (JWK)"]
+            DO1["DO: AuthorizationCodeStore"]
+            DO2["DO: TokenRotator"]
+            D1["D1: token/session storage"]
+        end
+    end
+
+    k6 --> Edge
+    Edge --> W
+    W --> KV
+    W --> DO1
+    W --> DO2
+    W --> D1
 ```
-k6 (ローカル)
-    ↓
-Cloudflare Edge
-    ↓
-Authrim Worker + KeyManager (cache)
-    ├→ KV (JWK)
-    ├→ DO: AuthorizationCodeStore
-    ├→ DO: TokenRotator
-    └→ D1: token/session storage
-```
 
-詳細は [docs/architecture.md](./docs/architecture.md) を参照してください。
+For details, see [docs/architecture.md](./docs/architecture.md).
 
-## 📊 テストプリセット
+## Test Presets
 
-### TEST 1: /token 単体負荷テスト
+### TEST 1: /token Endpoint Load Test
 
-認証フローのピーク耐性を測定
+Measures peak tolerance of authentication flow.
 
-| プリセット | RPS | Duration | VUs | 期待値 |
-|-----------|-----|----------|-----|--------|
-| **Light** | 5 → 20 | 60秒 | 20 | p99 < 250ms |
-| **Standard** | 30 → 100 | 120秒 | 100 | p99 < 500ms |
-| **Heavy** | 200 → 600 | 180秒 | 200〜600 | 429/500エラーレート測定 |
+| Preset | RPS | Duration | VUs | Expected |
+|--------|-----|----------|-----|----------|
+| **Light** | 5 → 20 | 60s | 20 | p99 < 250ms |
+| **Standard** | 30 → 100 | 120s | 100 | p99 < 500ms |
+| **Heavy** | 200 → 600 | 180s | 200-600 | Measure 429/500 error rate |
 
 ### TEST 2: Refresh Token Storm
 
-実世界の最大トラフィック測定
+Measures real-world maximum traffic handling.
 
-| プリセット | RPS | Duration | 期待値 |
-|-----------|-----|----------|--------|
-| **Light** | 50 | 5分 | p99 < 300ms |
-| **Standard** | 200–500 | 10分 | error rate < 0.1% |
-| **Heavy** | 800–1200 | 10分 | DO ロック競合測定 |
+| Preset | RPS | Duration | Expected |
+|--------|-----|----------|----------|
+| **Light** | 50 | 5min | p99 < 300ms |
+| **Standard** | 200-500 | 10min | error rate < 0.1% |
+| **Heavy** | 800-1200 | 10min | Measure DO lock contention |
 
-### TEST 3: フル OIDC 認証フロー
+### TEST 3: Full OIDC Authentication Flow
 
-実サービス最も近いワークロード
+Workload closest to real service usage.
 
-| プリセット | RPS | Duration | 期待値 |
-|-----------|-----|----------|--------|
-| **Light** | 10–20 | 120秒 | p99 < 300ms |
-| **Standard** | 30–50 | 180秒 | p99 < 500ms |
-| **Heavy** | 80–100 | 180秒 | レイテンシ跳ね上がり地点測定 |
+| Preset | RPS | Duration | Expected |
+|--------|-----|----------|----------|
+| **Light** | 10-20 | 120s | p99 < 300ms |
+| **Standard** | 30-50 | 180s | p99 < 500ms |
+| **Heavy** | 80-100 | 180s | Measure latency spike threshold |
 
-詳細は [docs/test-scenarios.md](./docs/test-scenarios.md) を参照してください。
+For details, see [docs/test-scenarios.md](./docs/test-scenarios.md).
 
-## 🚀 クイックスタート
+## Quick Start
 
-### 1. 環境セットアップ
+### 1. Environment Setup
 
 ```bash
-# k6 のインストール（macOS）
+# Install k6 (macOS)
 brew install k6
 
-# wrangler のインストール
+# Install wrangler
 npm install -g wrangler
 
-# wrangler ログイン
+# Login to wrangler
 wrangler login
 ```
 
-### 2. テスト対象環境の設定
+### 2. Configure Target Environment
 
-`.env` ファイルを作成：
+Create `.env` file:
 
 ```bash
 cp .env.example .env
 ```
 
-以下を設定：
+Configure the following:
 
 ```env
-# テスト対象の Authrim Worker URL
+# Target Authrim Worker URL
 BASE_URL=https://conformance.authrim.com
 
-# テスト用クライアント情報
+# Test client credentials
 CLIENT_ID=test_client_id
 CLIENT_SECRET=test_client_secret
 
-# Cloudflare 設定（メトリクス収集用）
+# Cloudflare settings (for metrics collection)
 CLOUDFLARE_ACCOUNT_ID=your_account_id
 CLOUDFLARE_API_TOKEN=your_api_token
 ```
 
-### 3. テスト実行
+### 3. Run Tests
 
 ```bash
-# Light プリセットで TEST 1 を実行
+# Run TEST 1 with Light preset
 ./scripts/run-test.sh test1 light
 
-# Standard プリセットで TEST 2 を実行
+# Run TEST 2 with Standard preset
 ./scripts/run-test.sh test2 standard
 
-# Heavy プリセットで TEST 3 を実行
+# Run TEST 3 with Heavy preset
 ./scripts/run-test.sh test3 heavy
 ```
 
-### 4. 結果収集
+### 4. Collect Results
 
 ```bash
-# Cloudflare Analytics からメトリクスを取得
+# Fetch metrics from Cloudflare Analytics
 ./scripts/collect-metrics.sh
 
-# 結果は results/ ディレクトリに保存されます
+# Results are saved in results/ directory
 ls -la results/
 ```
 
-## 📁 ディレクトリ構成
+## Directory Structure
 
 ```
 load-testing/
-├── README.md                          # このファイル
-├── docs/                              # 詳細ドキュメント
-│   ├── architecture.md                # テスト環境アーキテクチャ
-│   ├── test-scenarios.md              # テストシナリオ詳細
-│   └── metrics-collection.md          # メトリクス収集手順
-├── scripts/                           # テストスクリプト
-│   ├── test1-token-load.js            # TEST 1: /token 単体
+├── README.md                          # This file
+├── docs/                              # Detailed documentation
+│   ├── architecture.md                # Test environment architecture
+│   ├── test-scenarios.md              # Test scenario details
+│   └── metrics-collection.md          # Metrics collection procedures
+├── scripts/                           # Test scripts
+│   ├── test1-token-load.js            # TEST 1: /token endpoint
 │   ├── test2-refresh-storm.js         # TEST 2: Refresh Storm
-│   ├── test3-full-oidc.js             # TEST 3: フル OIDC
-│   ├── run-test.sh                    # テスト実行ヘルパー
-│   ├── collect-metrics.sh             # メトリクス収集スクリプト
-│   └── generate-seeds.js              # シードデータ生成スクリプト
-├── seeds/                             # シードデータ出力先
-├── queries/                           # GraphQL クエリ
-│   └── worker_stats.graphql           # Worker 統計取得クエリ
-├── presets/                           # プリセット設定
-│   ├── light.json                     # Light プリセット
-│   ├── standard.json                  # Standard プリセット
-│   └── heavy.json                     # Heavy プリセット
-└── results/                           # テスト結果（gitignore）
+│   ├── test3-full-oidc.js             # TEST 3: Full OIDC
+│   ├── run-test.sh                    # Test execution helper
+│   ├── collect-metrics.sh             # Metrics collection script
+│   └── generate-seeds.js              # Seed data generation script
+├── seeds/                             # Seed data output directory
+├── queries/                           # GraphQL queries
+│   └── worker_stats.graphql           # Worker statistics query
+├── presets/                           # Preset configurations
+│   ├── light.json                     # Light preset
+│   ├── standard.json                  # Standard preset
+│   └── heavy.json                     # Heavy preset
+└── results/                           # Test results (gitignored)
 ```
 
 ---
 
-## 🔧 シードデータ生成（generate-seeds.js）
+## Seed Data Generation (generate-seeds.js)
 
-負荷テスト用のauthorization codeやrefresh tokenを事前生成するスクリプトです。
+Script to pre-generate authorization codes and refresh tokens for load testing.
 
-### 使用方法
+### Usage
 
 ```bash
 cd load-testing/scripts
 
-# 基本的な使い方
+# Basic usage
 CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz node generate-seeds.js
 ```
 
-### 環境変数
+### Environment Variables
 
-| 変数 | 必須 | デフォルト | 説明 |
-|------|------|----------|------|
-| `BASE_URL` | No | `https://conformance.authrim.com` | 対象のAuthrim Worker URL |
-| `CLIENT_ID` | **Yes** | - | OAuthクライアントID |
-| `CLIENT_SECRET` | **Yes** | - | OAuthクライアントシークレット |
-| `REDIRECT_URI` | No | `https://localhost:3000/callback` | リダイレクトURI |
-| `ADMIN_API_SECRET` | No | - | Admin API認証用Bearerトークン |
-| `AUTH_CODE_COUNT` | No | `200` | 生成するauthorization code数 |
-| `REFRESH_COUNT` | No | `200` | 生成するrefresh token数 |
-| `OUTPUT_DIR` | No | `../seeds` | 出力ディレクトリ |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BASE_URL` | No | `https://conformance.authrim.com` | Target Authrim Worker URL |
+| `CLIENT_ID` | **Yes** | - | OAuth client ID |
+| `CLIENT_SECRET` | **Yes** | - | OAuth client secret |
+| `REDIRECT_URI` | No | `https://localhost:3000/callback` | Redirect URI |
+| `ADMIN_API_SECRET` | No | - | Admin API Bearer token |
+| `AUTH_CODE_COUNT` | No | `200` | Number of authorization codes to generate |
+| `REFRESH_COUNT` | No | `200` | Number of refresh tokens to generate |
+| `OUTPUT_DIR` | No | `../seeds` | Output directory |
 
-### 出力ファイル
+### Output Files
 
 ```
 seeds/
@@ -203,14 +220,14 @@ seeds/
 └── refresh_tokens.json    # refresh token
 ```
 
-### 事前準備：クライアント作成
+### Prerequisites: Client Creation
 
-Admin APIを使用してテスト用クライアントを作成できます。
+You can create a test client using the Admin API.
 
-> **重要**: クライアント作成時の `redirect_uris` と generate-seeds.js の `REDIRECT_URI` は一致させる必要があります。
+> **Important**: The `redirect_uris` during client creation must match the `REDIRECT_URI` in generate-seeds.js.
 
 ```bash
-# クライアント作成（デフォルトのREDIRECT_URIに合わせる）
+# Create client (matching default REDIRECT_URI)
 curl -X POST "https://conformance.authrim.com/api/admin/clients" \
   -H "Authorization: Bearer YOUR_ADMIN_API_SECRET" \
   -H "Content-Type: application/json" \
@@ -222,7 +239,7 @@ curl -X POST "https://conformance.authrim.com/api/admin/clients" \
     "skip_consent": true
   }'
 
-# レスポンス例:
+# Example response:
 # {
 #   "client": {
 #     "client_id": "550e8400-e29b-...",
@@ -231,132 +248,132 @@ curl -X POST "https://conformance.authrim.com/api/admin/clients" \
 #   }
 # }
 
-# 取得したclient_idとclient_secretを使用してシード生成
+# Generate seeds using the obtained client_id and client_secret
 CLIENT_ID="550e8400-e29b-..." \
 CLIENT_SECRET="a1b2c3d4e5f6..." \
 ADMIN_API_SECRET="YOUR_ADMIN_API_SECRET" \
 node generate-seeds.js
 ```
 
-### リダイレクトURIについて
+### About Redirect URIs
 
-OAuth 2.0のセキュリティ要件として、`/authorize`リクエストの`redirect_uri`はクライアント登録時の`redirect_uris`に含まれている必要があります。
+As an OAuth 2.0 security requirement, the `redirect_uri` in the `/authorize` request must be included in the `redirect_uris` registered with the client.
 
-- **デフォルト**: `https://localhost:3000/callback`（テスト用、実際にサーバーを立てる必要なし）
-- **注意**: Conformance環境ではHTTPSが必須です（`http://` は拒否されます）
-- クライアント作成時に別のURIを指定した場合は、`REDIRECT_URI`環境変数で同じ値を指定してください
+- **Default**: `https://localhost:3000/callback` (for testing, no actual server needed)
+- **Note**: HTTPS is required in conformance environment (`http://` will be rejected)
+- If you specified a different URI during client creation, use the same value in the `REDIRECT_URI` environment variable
 
 ```bash
-# カスタムリダイレクトURIを使用する場合
+# Using custom redirect URI
 REDIRECT_URI="https://mytest.local/callback" \
 CLIENT_ID=xxx \
 CLIENT_SECRET=yyy \
 node generate-seeds.js
 ```
 
-詳細は [Admin Client API ドキュメント](../docs/api/admin/clients.md) を参照してください。
+For details, see [Admin Client API Documentation](../docs/api/admin/clients.md).
 
-## 📚 詳細ドキュメント
+## Detailed Documentation
 
-- [テスト環境アーキテクチャ](./docs/architecture.md) - テスト環境の詳細構成
-- [テストシナリオ詳細](./docs/test-scenarios.md) - 各テストの詳細仕様
-- [メトリクス収集手順](./docs/metrics-collection.md) - Cloudflare Analytics からの結果取得方法
+- [Test Environment Architecture](./docs/architecture.md) - Detailed test environment configuration
+- [Test Scenario Details](./docs/test-scenarios.md) - Detailed specifications for each test
+- [Metrics Collection Procedures](./docs/metrics-collection.md) - How to retrieve results from Cloudflare Analytics
 
-## 📈 収集メトリクス一覧
+## Collected Metrics
 
-テスト完了後、Cloudflare GraphQL API から以下のメトリクスを自動収集します。
+After test completion, the following metrics are automatically collected from the Cloudflare GraphQL API.
 
-### 📗 Worker メトリクス
+### Worker Metrics
 
-| メトリクス | 説明 | 単位 |
-|-----------|------|------|
-| `duration` (p50/p90/p99) | Worker実行時間のパーセンタイル | ms |
-| `cpu_time` (p50/p90/p99) | CPU実行時間のパーセンタイル | ms |
-| `memory_max` / `memory_avg` | 使用メモリ（最大/平均） | MB |
-| `cpu_throttling_count` | CPUスロットリング発生回数 | 回 |
-| `worker_errors` (5xx) | 5xxエラー数 | 回 |
-| `requests_by_status` | ステータスコード別リクエスト数 | 回 |
+| Metric | Description | Unit |
+|--------|-------------|------|
+| `duration` (p50/p90/p99) | Worker execution time percentiles | ms |
+| `cpu_time` (p50/p90/p99) | CPU execution time percentiles | ms |
+| `memory_max` / `memory_avg` | Memory usage (max/average) | MB |
+| `cpu_throttling_count` | CPU throttling occurrences | count |
+| `worker_errors` (5xx) | 5xx error count | count |
+| `requests_by_status` | Requests by status code | count |
 
-### 📙 Durable Objects メトリクス
+### Durable Objects Metrics
 
-| メトリクス | 説明 | 単位 |
-|-----------|------|------|
-| `do_duration` (p50/p90/p99) | DO Wall Time（実行時間）のパーセンタイル | ms |
-| `do_waitTime` (p50/p95/p99) | DO待機時間のパーセンタイル | ms |
-| `do_requests_total` | DO総リクエスト数 | 回 |
-| `do_concurrency` | 同時実行数 | - |
-| `do_errors` | DOエラー数（CPU/メモリ超過含む） | 回 |
-| `storage_read_units` / `storage_write_units` | ストレージ読み書きユニット | units |
+| Metric | Description | Unit |
+|--------|-------------|------|
+| `do_duration` (p50/p90/p99) | DO Wall Time (execution time) percentiles | ms |
+| `do_waitTime` (p50/p95/p99) | DO wait time percentiles | ms |
+| `do_requests_total` | Total DO requests | count |
+| `do_concurrency` | Concurrent executions | - |
+| `do_errors` | DO errors (including CPU/memory exceeded) | count |
+| `storage_read_units` / `storage_write_units` | Storage read/write units | units |
 
-### 📕 D1 データベース メトリクス
+### D1 Database Metrics
 
-| メトリクス | 説明 | 単位 |
-|-----------|------|------|
-| `d1_read_count` / `d1_write_count` | 読み取り/書き込みクエリ数 | 回 |
-| `d1_duration` (p50/p95/p99) | クエリ実行時間のパーセンタイル | ms |
-| `d1_rate_limited_count` | レート制限発生回数 | 回 |
-| `rows_read` / `rows_written` | 読み書き行数 | rows |
+| Metric | Description | Unit |
+|--------|-------------|------|
+| `d1_read_count` / `d1_write_count` | Read/write query count | count |
+| `d1_duration` (p50/p95/p99) | Query execution time percentiles | ms |
+| `d1_rate_limited_count` | Rate limit occurrences | count |
+| `rows_read` / `rows_written` | Rows read/written | rows |
 
-### 📒 KV メトリクス
+### KV Metrics
 
-| メトリクス | 説明 | 単位 |
-|-----------|------|------|
-| `kv_reads_total` | KV読み取り操作数 | 回 |
-| `kv_writes_total` | KV書き込み操作数 | 回 |
-| `kv_cache_hits` | エッジキャッシュヒット数 | 回 |
-| `kv_cache_misses` | エッジキャッシュミス数 | 回 |
-| `kv_read_duration` | KV読み取りレイテンシ | ms |
+| Metric | Description | Unit |
+|--------|-------------|------|
+| `kv_reads_total` | KV read operations | count |
+| `kv_writes_total` | KV write operations | count |
+| `kv_cache_hits` | Edge cache hits | count |
+| `kv_cache_misses` | Edge cache misses | count |
+| `kv_read_duration` | KV read latency | ms |
 
-### 📓 全体メトリクス
+### Overall Metrics
 
-| メトリクス | 説明 | 単位 |
-|-----------|------|------|
-| `requests_by_pop` | エッジロケーション（PoP）別リクエスト分布 | 回 |
-| `retries` | Cloudflare側リトライ数 | 回 |
-| `inflight_requests_peak` | 同時処理中リクエストのピーク | 回 |
+| Metric | Description | Unit |
+|--------|-------------|------|
+| `requests_by_pop` | Request distribution by edge location (PoP) | count |
+| `retries` | Cloudflare-side retry count | count |
+| `inflight_requests_peak` | Peak concurrent in-flight requests | count |
 
-### メトリクス収集の使用方法
+### Metrics Collection Usage
 
 ```bash
-# テスト完了後に手動で取得する場合
+# Manually fetch after test completion
 node scripts/fetch-cf-analytics.js --start "2025-11-30T10:20:00Z" --end "2025-11-30T10:35:00Z"
 
-# 過去N分間のデータを取得
+# Fetch data for last N minutes
 node scripts/fetch-cf-analytics.js --minutes 15
 
-# JSON形式で出力（パイプライン用）
+# Output in JSON format (for pipelines)
 node scripts/fetch-cf-analytics.js --minutes 10 --json > metrics.json
 
-# テストスクリプト（run-light-test.sh等）は自動でメトリクスを収集
+# Test scripts (run-light-test.sh etc.) automatically collect metrics
 export CF_API_TOKEN="your_cloudflare_api_token"
 ./run-light-test.sh
 ```
 
-> 💡 **Tip**: メトリクスは `results/cf-analytics_YYYY-MM-DDTHH-MM-SS.json` に自動保存されます。
+> **Tip**: Metrics are automatically saved to `results/cf-analytics_YYYY-MM-DDTHH-MM-SS.json`.
 
 ---
 
-## 🎯 テスト基準（判定ライン）
+## Test Criteria (Pass/Fail Thresholds)
 
-### ① /token 単体
+### 1. /token Endpoint
 - p99 < 500ms
 - error rate < 1%
-- 200–300 RPS が安定すれば本番耐性十分
+- Stable 200-300 RPS indicates sufficient production capacity
 
-### ② refresh storm
+### 2. Refresh Storm
 - p99 < 700ms
 - error rate < 2%
-- 300–800 RPS 安定が理想
-- D1 書き込みエラーが0であること
+- Stable 300-800 RPS is ideal
+- D1 write errors must be 0
 
-### ③ フル OIDC
+### 3. Full OIDC
 - p99 < 500ms
 - error rate < 1%
-- 50RPS 安定 → 実サービス 10万MAU で十分余裕
+- Stable 50 RPS → Sufficient headroom for 100K MAU real service
 
-## 🔧 トラブルシューティング
+## Troubleshooting
 
-### k6 が見つからない
+### k6 not found
 
 ```bash
 # macOS
@@ -370,27 +387,27 @@ sudo apt-get update
 sudo apt-get install k6
 ```
 
-### wrangler 認証エラー
+### wrangler authentication error
 
 ```bash
-# ログアウトして再ログイン
+# Logout and re-login
 wrangler logout
 wrangler login
 
-# または API トークンを直接設定
+# Or set API token directly
 export CLOUDFLARE_API_TOKEN=your_token_here
 ```
 
-### テストが 429 エラーで失敗する
+### Tests failing with 429 errors
 
-- Cloudflare Workers プランを確認（Unlimited 推奨）
-- Rate Limit 設定を確認
-- プリセットを Light に変更して再試行
+- Check Cloudflare Workers plan (Unlimited recommended)
+- Check Rate Limit settings
+- Switch to Light preset and retry
 
-## 📝 ライセンス
+## License
 
-このテストフレームワークは Authrim プロジェクトの一部です。
+This test framework is part of the Authrim project.
 
-## 🤝 コントリビューション
+## Contributing
 
-改善提案やバグ報告は Issue または PR でお願いします。
+Please report improvements or bugs via Issue or PR.

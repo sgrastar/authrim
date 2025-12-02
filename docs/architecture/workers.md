@@ -1,18 +1,18 @@
-# Authrim Worker分割アーキテクチャ
+# Authrim Worker Partitioning Architecture
 
-このドキュメントは、Authrimの新しいWorker分割アーキテクチャについて説明します。
+This document describes Authrim's new Worker partitioning architecture.
 
-## 📦 Monorepo構造
+## 📦 Monorepo Structure
 
 ```mermaid
 graph TB
     subgraph Root["authrim/"]
         subgraph Packages["packages/"]
-            subgraph Shared["shared/ (共通ライブラリ)"]
+            subgraph Shared["shared/ (Shared Libraries)"]
                 S_Utils["utils/ - JWT, crypto, validation"]
-                S_Types["types/ - TypeScript型定義"]
-                S_MW["middleware/ - レート制限など"]
-                S_Storage["storage/ - KV抽象化レイヤー"]
+                S_Types["types/ - TypeScript type definitions"]
+                S_MW["middleware/ - Rate limiting, etc."]
+                S_Storage["storage/ - KV abstraction layer"]
                 S_DO["durable-objects/ - KeyManager"]
             end
 
@@ -47,85 +47,85 @@ graph TB
     Shared --> Management
 ```
 
-## 🎯 Worker分割の目的
+## 🎯 Purpose of Worker Partitioning
 
-### ファイル容量の最適化
-各Workerが独立してバンドル → 不要な依存関係を排除
-- **Before**: 単一Worker 229KB, 7,061行
-- **After**: 5つの独立Worker (各100-200KB程度)
+### File Size Optimization
+Each Worker bundles independently → Eliminates unnecessary dependencies
+- **Before**: Single Worker 229KB, 7,061 lines
+- **After**: 5 independent Workers (each ~100-200KB)
 
-### メモリ使用量の削減
-- 各リクエストで必要なコードのみロード
-- 128MBメモリ制限の圧力が減少
+### Memory Usage Reduction
+- Only necessary code is loaded per request
+- Reduces pressure on 128MB memory limit
 
-### デプロイの柔軟性
-- エンドポイント単位でのデプロイ・ロールバック可能
-- 影響範囲の局所化
+### Deployment Flexibility
+- Deploy and rollback per endpoint
+- Localize impact scope
 
-### スケーラビリティ
-- エンドポイント別にスケール可能
-- 高負荷エンドポイント（/token）を独立スケール
+### Scalability
+- Scale independently per endpoint
+- Scale high-load endpoints (/token) independently
 
-## 📊 Worker一覧
+## 📊 Worker List
 
-| Worker | エンドポイント | 責務 | サイズ予測 |
-|--------|---------------|------|-----------|
-| **op-discovery** | `/.well-known/openid-configuration`<br>`/.well-known/jwks.json` | 設定情報公開<br>公開鍵公開<br>(CDNキャッシュ推奨) | ~50-70KB |
-| **op-auth** | `GET/POST /authorize`<br>`POST /as/par` | 認証リクエスト処理<br>PKCE検証<br>Consent UI (Phase 5) | ~150-200KB |
-| **op-token** | `POST /token` | トークン発行<br>code交換<br>refresh_token<br>client認証 | ~250-300KB |
-| **op-userinfo** | `GET/POST /userinfo` | ユーザークレーム返却<br>アクセストークン検証 | ~80-100KB |
-| **op-management** | `POST /register`<br>`POST /introspect`<br>`POST /revoke` | クライアント管理<br>トークン検証<br>トークン無効化 | ~180-220KB |
+| Worker | Endpoints | Responsibilities | Estimated Size |
+|--------|----------|------------------|----------------|
+| **op-discovery** | `/.well-known/openid-configuration`<br>`/.well-known/jwks.json` | Publish configuration<br>Publish public keys<br>(CDN cache recommended) | ~50-70KB |
+| **op-auth** | `GET/POST /authorize`<br>`POST /as/par` | Handle authorization requests<br>PKCE verification<br>Consent UI (Phase 5) | ~150-200KB |
+| **op-token** | `POST /token` | Issue tokens<br>Code exchange<br>refresh_token<br>Client authentication | ~250-300KB |
+| **op-userinfo** | `GET/POST /userinfo` | Return user claims<br>Access token verification | ~80-100KB |
+| **op-management** | `POST /register`<br>`POST /introspect`<br>`POST /revoke` | Client management<br>Token verification<br>Token revocation | ~180-220KB |
 
-## 🔧 ビルド & 開発
+## 🔧 Build & Development
 
-### セットアップ
+### Setup
 
 ```bash
-# 依存関係のインストール
+# Install dependencies
 pnpm install
 
-# 全Workerをビルド
+# Build all Workers
 pnpm run build
 
-# 特定のWorkerをビルド
+# Build specific Worker
 cd packages/op-discovery
 pnpm run build
 ```
 
-### 開発サーバー
+### Development Server
 
 ```bash
-# 全Workerを並列起動
+# Start all Workers in parallel
 pnpm run dev
 
-# 特定のWorkerを起動
+# Start specific Worker
 cd packages/op-auth
 pnpm run dev
 ```
 
-### デプロイ
+### Deployment
 
 ```bash
-# 全Workerをデプロイ
+# Deploy all Workers
 pnpm run deploy
 
-# 特定のWorkerをデプロイ
+# Deploy specific Worker
 cd packages/op-token
 pnpm run deploy
 ```
 
-## 🔗 Worker間連携
+## 🔗 Worker Communication
 
-### 現在の実装: KV Namespace経由のデータ共有
+### Current Implementation: Data Sharing via KV Namespace
 
-各Workerは**独立して動作**し、KV Namespaceを通じて間接的にデータを共有しています:
+Each Worker operates **independently** and shares data indirectly through KV Namespaces:
 
 ```mermaid
 flowchart LR
     subgraph Workers
-        Auth["op-auth<br/>(認可コード生成)"]
-        Mgmt["op-management<br/>(クライアント登録)"]
-        Token["op-token<br/>(トークン発行)"]
+        Auth["op-auth<br/>(Generate auth code)"]
+        Mgmt["op-management<br/>(Client registration)"]
+        Token["op-token<br/>(Issue token)"]
     end
 
     subgraph KV["KV Namespaces"]
@@ -142,88 +142,88 @@ flowchart LR
     Token -->|write/read| RT
 ```
 
-**この方法のメリット:**
-- ✅ 各Workerが完全に独立してデプロイ・ロールバック可能
-- ✅ 依存関係が少なくシンプル
-- ✅ 現時点で十分なパフォーマンスと機能を実現
+**Benefits of this approach:**
+- ✅ Each Worker can be deployed and rolled back completely independently
+- ✅ Few dependencies, simple architecture
+- ✅ Sufficient performance and functionality at this time
 
-### Service Bindingsを現在使用していない理由
+### Reasons for Not Currently Using Service Bindings
 
-**技術的な制約ではなく、設計思想です:**
+**This is a design decision, not a technical constraint:**
 
-1. **YAGNI原則 (You Aren't Gonna Need It)**
-   現在の要件ではKV Namespaceで十分に機能している
+1. **YAGNI Principle (You Aren't Gonna Need It)**
+   KV Namespaces are sufficient for current requirements
 
-2. **TypeScript型の厳密性**
-   未使用の機能は型定義に含めない方針（`packages/shared/src/types/env.ts`参照）
+2. **TypeScript Type Strictness**
+   Unused features should not be included in type definitions (see `packages/shared/src/types/env.ts`)
 
-3. **段階的な実装アプローチ**
-   必要になったときに追加する
+3. **Incremental Implementation Approach**
+   Add when needed
 
-**なお、`wrangler.toml`にはすでにService Bindingsの定義が存在します（準備済み）:**
+**Note: Service Bindings definitions already exist in `wrangler.toml` (prepared):**
 
 ```typescript
-// wrangler.tomlの例（既に定義済み）
+// Example from wrangler.toml (already defined)
 [[services]]
 binding = "OP_TOKEN"
 service = "authrim-op-token"
 
-// コード内での使用（将来的に実装予定）
+// Usage in code (planned for future implementation)
 const response = await env.OP_TOKEN.fetch(request);
 ```
 
-### 将来的なユースケース
+### Future Use Cases
 
-Service Bindingsが有用になる場面:
+Scenarios where Service Bindings would be useful:
 
-1. **リアルタイムなトークン失効**
-   op-managementがトークンを失効させたとき、op-userinfoに即座に通知
+1. **Real-time Token Revocation**
+   When op-management revokes a token, notify op-userinfo immediately
 
-2. **KeyManager（Durable Object）の本格活用**
-   キーローテーション機能を複数Workerから統一的に利用
+2. **Full Utilization of KeyManager (Durable Object)**
+   Unified use of key rotation functionality across multiple Workers
 
-3. **クライアント情報のキャッシング**
-   op-managementでクライアント更新時、他Workerのキャッシュを無効化
+3. **Client Information Caching**
+   When updating clients in op-management, invalidate caches in other Workers
 
-## 📝 設定
+## 📝 Configuration
 
-各Workerの`wrangler.toml`で、以下を設定します:
+In each Worker's `wrangler.toml`, configure the following:
 
-1. **環境変数** (`[vars]`セクション)
+1. **Environment Variables** (`[vars]` section)
    - `ISSUER_URL`
-   - `TOKEN_EXPIRY`, `CODE_EXPIRY`など
+   - `TOKEN_EXPIRY`, `CODE_EXPIRY`, etc.
 
 2. **KV Namespaces** (`[[kv_namespaces]]`)
-   - 各Workerが必要なKVのみバインド
+   - Each Worker binds only the KV it needs
 
 3. **Durable Objects** (`[[durable_objects.bindings]]`)
-   - KeyManagerへの参照
+   - Reference to KeyManager
 
-4. **Routes** (本番環境)
-   - ドメインごとのルーティング設定
+4. **Routes** (production environment)
+   - Routing configuration per domain
 
-## 🚀 デプロイ戦略
+## 🚀 Deployment Strategy
 
-### 段階的デプロイ
-1. **op-discovery** → 最もシンプル、影響範囲小
-2. **op-userinfo** → 依存関係少ない
-3. **op-auth, op-token** → コア機能
-4. **op-management** → 管理系
+### Gradual Deployment
+1. **op-discovery** → Simplest, smallest impact scope
+2. **op-userinfo** → Few dependencies
+3. **op-auth, op-token** → Core functionality
+4. **op-management** → Management functions
 
-### ロールバック
-Workerごとに独立してロールバックが可能。
+### Rollback
+Independent rollback per Worker is possible.
 
-### モニタリング
-各Workerのメトリクスを個別に監視:
-- リクエスト数
-- エラー率
-- レスポンスタイム
-- メモリ使用量
+### Monitoring
+Monitor metrics for each Worker individually:
+- Request count
+- Error rate
+- Response time
+- Memory usage
 
-## ⚠️ 注意事項
+## ⚠️ Notes
 
-### KV Namespace IDの設定
-各`wrangler.toml`の`id`と`preview_id`を実際の値に更新してください:
+### Setting KV Namespace IDs
+Update the `id` and `preview_id` in each `wrangler.toml` with actual values:
 
 ```toml
 [[kv_namespaces]]
@@ -232,8 +232,8 @@ id = "your_actual_namespace_id"
 preview_id = "your_preview_namespace_id"
 ```
 
-### Durable Objectsの共有
-KeyManagerは`op-discovery`に配置し、他のWorkerから参照します:
+### Sharing Durable Objects
+KeyManager is placed in `op-discovery` and referenced by other Workers:
 
 ```toml
 [[durable_objects.bindings]]
@@ -242,15 +242,15 @@ class_name = "KeyManager"
 script_name = "authrim-op-discovery"
 ```
 
-### 共通パッケージの変更
-`packages/shared`を変更した場合、全Workerの再ビルドが必要です:
+### Changes to Shared Packages
+When `packages/shared` changes, all Workers need to be rebuilt:
 
 ```bash
 pnpm run build
 ```
 
-## 📚 参考資料
+## 📚 References
 
-- [Turborepo ドキュメント](https://turbo.build/repo/docs)
-- [Cloudflare Workers ドキュメント](https://developers.cloudflare.com/workers/)
+- [Turborepo Documentation](https://turbo.build/repo/docs)
+- [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
 - [pnpm Workspaces](https://pnpm.io/workspaces)

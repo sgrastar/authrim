@@ -1,1454 +1,1454 @@
-# エンタープライズ機能評価ドキュメント 🏢
+# Enterprise Features Evaluation Document 🏢
 
-**作成日:** 2025-11-19
-**対象フェーズ:** Phase 6 & Phase 7
-**目的:** 追加すべきエンタープライズ機能の詳細評価と優先順位付け
+**Created:** 2025-11-19
+**Target Phases:** Phase 6 & Phase 7
+**Purpose:** Detailed evaluation and prioritization of additional enterprise features
 
 ---
 
-## 📋 評価基準
+## 📋 Evaluation Criteria
 
-各機能は以下の基準で評価されています：
+Each feature is evaluated based on the following criteria:
 
-| 評価項目 | 説明 |
+| Evaluation Item | Description |
 |---------|------|
-| **優先度** | 🔴 高 / 🟡 中 / 🟢 低 |
-| **実装難易度** | 高 / 中 / 低 |
-| **ビジネス価値** | エンタープライズ採用への影響度 |
-| **想定負荷** | CPU時間、メモリ、リクエスト処理時間 |
-| **ファイルサイズ** | 実装コード量、依存関係、データストレージ |
+| **Priority** | 🔴 High / 🟡 Medium / 🟢 Low |
+| **Implementation Difficulty** | High / Medium / Low |
+| **Business Value** | Impact on enterprise adoption |
+| **Expected Load** | CPU time, memory, request processing time |
+| **File Size** | Implementation code volume, dependencies, data storage |
 
 ---
 
-## 🔒 カテゴリ1: セキュリティ強化
+## 🔒 Category 1: Security Enhancements
 
-### 1.1 Bot検知・不正検知
+### 1.1 Bot Detection & Fraud Detection
 
-**機能概要:**
-- Cloudflare Turnstile統合による自動Bot検知
-- 異常IPアドレスのブロック（レート制限超過、ブルートフォース攻撃）
-- リアルタイム脅威インテリジェンス連携
-- 機械学習ベースの異常検知（ログインパターン分析）
+**Feature Overview:**
+- Cloudflare Turnstile integration for automatic bot detection
+- Abnormal IP address blocking (rate limit exceeded, brute force attacks)
+- Real-time threat intelligence integration
+- Machine learning-based anomaly detection (login pattern analysis)
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +5-10ms/リクエスト（Turnstile検証） |
-| メモリ使用量 | +2-3MB（脅威DB、ルールエンジン） |
-| リクエスト処理時間 | +10-20ms（外部API呼び出し含む） |
-| 追加Workers呼び出し | Turnstile API: 1回/ログイン、脅威DB: 1回/ログイン |
-| ストレージI/O | KV読み取り: IPブロックリスト（1-5KB）、書き込み: ログ（0.5-1KB/イベント） |
+| CPU time | +5-10ms/request (Turnstile verification) |
+| Memory usage | +2-3MB (threat DB, rules engine) |
+| Request processing time | +10-20ms (including external API calls) |
+| Additional Workers calls | Turnstile API: 1/login, Threat DB: 1/login |
+| Storage I/O | KV read: IP blocklist (1-5KB), write: logs (0.5-1KB/event) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~3,000行（検知ロジック、Turnstile統合、ルールエンジン） |
-| 依存関係 | @cloudflare/turnstile: ~15KB（gzip）、脅威DB SDK: ~20KB |
-| データストレージ | IPブロックリスト: 100KB-1MB、ログ: 10MB/月（1万ユーザー想定） |
-| KVストレージ | ~50MB（ブロックリスト、履歴データ） |
+| Implementation code | ~3,000 lines (detection logic, Turnstile integration, rules engine) |
+| Dependencies | @cloudflare/turnstile: ~15KB (gzip), threat DB SDK: ~20KB |
+| Data storage | IP blocklist: 100KB-1MB, logs: 10MB/month (assuming 10K users) |
+| KV storage | ~50MB (blocklist, historical data) |
 
-**ユースケース例:**
-1. **金融機関のオンラインバンキング**
-   - シナリオ: 深夜に海外IPから大量のログイン試行
-   - 動作: 自動的にIPブロック、管理者にSlack通知、MFA強制
+**Use Case Examples:**
+1. **Financial Institution Online Banking**
+   - Scenario: Mass login attempts from overseas IP at midnight
+   - Action: Automatically block IP, notify admin via Slack, force MFA
 
-2. **Eコマースサイト**
-   - シナリオ: Botによる大量アカウント作成試行
-   - 動作: Turnstileチャレンジ表示、疑わしいIPを一時ブロック
+2. **E-commerce Site**
+   - Scenario: Bot mass account creation attempts
+   - Action: Display Turnstile challenge, temporarily block suspicious IPs
 
-3. **SaaSプラットフォーム**
-   - シナリオ: クレデンシャルスタッフィング攻撃
-   - 動作: 脅威DB照合、侵害されたパスワード検知、強制パスワードリセット
+3. **SaaS Platform**
+   - Scenario: Credential stuffing attack
+   - Action: Threat DB comparison, detect compromised passwords, force password reset
 
-**優先度:** 🔴 高
-**推奨フェーズ:** Phase 6 (Week 41-42)
+**Priority:** 🔴 High
+**Recommended Phase:** Phase 6 (Week 41-42)
 
 ---
 
-### 1.2 デバイスフィンガープリント
+### 1.2 Device Fingerprinting
 
-**機能概要:**
-- ブラウザ、OS、デバイス特性の収集・分析
-- デバイス識別子生成（ハッシュベース、プライバシー配慮）
-- 新規デバイス検知と通知
-- デバイス履歴管理
+**Feature Overview:**
+- Browser, OS, device characteristics collection & analysis
+- Device identifier generation (hash-based, privacy-aware)
+- New device detection and notification
+- Device history management
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +3-5ms/リクエスト（フィンガープリント生成） |
-| メモリ使用量 | +1-2MB（フィンガープリントライブラリ） |
-| リクエスト処理時間 | +5-10ms（計算処理） |
-| 追加Workers呼び出し | なし（インライン処理） |
-| ストレージI/O | D1書き込み: デバイス情報（1-2KB/デバイス）、読み取り: 既存デバイス照合 |
+| CPU time | +3-5ms/request (fingerprint generation) |
+| Memory usage | +1-2MB (fingerprinting library) |
+| Request processing time | +5-10ms (calculation processing) |
+| Additional Workers calls | None (inline processing) |
+| Storage I/O | D1 write: device info (1-2KB/device), read: existing device matching |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~2,000行（フィンガープリント生成、デバイス管理） |
-| 依存関係 | fingerprintjs: ~30KB（gzip）|
-| データストレージ | D1: 5KB/ユーザー（平均3デバイス想定）、合計: 50MB/1万ユーザー |
-| クライアントJS | ~40KB（フィンガープリント収集スクリプト） |
+| Implementation code | ~2,000 lines (fingerprint generation, device management) |
+| Dependencies | fingerprintjs: ~30KB (gzip)|
+| Data storage | D1: 5KB/user (assuming 3 devices avg), total: 50MB/10K users |
+| Client JS | ~40KB (fingerprint collection script) |
 
-**ユースケース例:**
-1. **企業VPNアクセス**
-   - シナリオ: 従業員が会社PCから初めてアクセス
-   - 動作: デバイス登録、以降は信頼済みデバイスとして認識
+**Use Case Examples:**
+1. **Corporate VPN Access**
+   - Scenario: Employee first access from company PC
+   - Action: Device registration, subsequently recognized as trusted device
 
-2. **医療記録システム**
-   - シナリオ: 医師が新しいタブレットからアクセス
-   - 動作: 新規デバイス通知メール送信、MFA要求、管理者承認待ち
+2. **Medical Records System**
+   - Scenario: Doctor accessing from new tablet
+   - Action: Send new device notification email, require MFA, await admin approval
 
-3. **オンライン教育プラットフォーム**
-   - シナリオ: 学生が個人PCと学校PCの両方から利用
-   - 動作: 各デバイスを記録、同時ログイン制限（不正アカウント共有防止）
+3. **Online Education Platform**
+   - Scenario: Student using both personal PC and school PC
+   - Action: Record each device, limit concurrent logins (prevent account sharing)
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 41-42)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 41-42)
 
 ---
 
-### 1.3 アノマリー検知
+### 1.3 Anomaly Detection
 
-**機能概要:**
-- 異常なログインパターン検知（時間、位置、デバイス、頻度）
-- ユーザー行動プロファイリング
-- リスクスコア算出（0-100）
-- 自動応答アクション（MFA強制、ブロック、通知）
+**Feature Overview:**
+- Abnormal login pattern detection (time, location, device, frequency)
+- User behavior profiling
+- Risk score calculation (0-100)
+- Automatic response actions (force MFA, block, notify)
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +8-15ms/リクエスト（ML推論、統計計算） |
-| メモリ使用量 | +5-8MB（行動プロファイル、MLモデル） |
-| リクエスト処理時間 | +15-25ms（スコア計算） |
-| 追加Workers呼び出し | なし（Durable Object経由でプロファイル取得） |
-| ストレージI/O | D1読み取り: ログイン履歴（10-20KB/ユーザー）、書き込み: 新規ログイン（1KB） |
+| CPU time | +8-15ms/request (ML inference, statistical calculations) |
+| Memory usage | +5-8MB (behavior profile, ML model) |
+| Request processing time | +15-25ms (score calculation) |
+| Additional Workers calls | None (via Durable Object for profile retrieval) |
+| Storage I/O | D1 read: login history (10-20KB/user), write: new login (1KB) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~4,000行（アノマリー検知エンジン、スコアリング、プロファイリング） |
-| 依存関係 | tensorflow.js（軽量版）: ~200KB、統計ライブラリ: ~50KB |
-| データストレージ | D1: ログイン履歴30日分（20KB/ユーザー）、プロファイル（5KB/ユーザー） |
-| MLモデル | ~500KB（異常検知モデル、ONNX形式） |
+| Implementation code | ~4,000 lines (anomaly detection engine, scoring, profiling) |
+| Dependencies | tensorflow.js (lightweight): ~200KB, statistics library: ~50KB |
+| Data storage | D1: 30-day login history (20KB/user), profile (5KB/user) |
+| ML model | ~500KB (anomaly detection model, ONNX format) |
 
-**ユースケース例:**
-1. **銀行のモバイルアプリ**
-   - シナリオ: ユーザーが通常の勤務地（東京）から夜間にログイン後、1時間後にシンガポールからアクセス試行
-   - 動作: Impossible Travelを検知、リスクスコア95、アクセス拒否、SMS認証要求
+**Use Case Examples:**
+1. **Bank Mobile App**
+   - Scenario: User normally logs in from Tokyo workplace, 1 hour later access attempt from Singapore
+   - Action: Detect impossible travel, risk score 95, deny access, require SMS authentication
 
-2. **企業SaaS**
-   - シナリオ: 通常9-18時にアクセスするユーザーが深夜3時にログイン
-   - 動作: リスクスコア60、MFA要求、セキュリティチームに通知
+2. **Enterprise SaaS**
+   - Scenario: User who normally accesses 9-18h logs in at 3am
+   - Action: Risk score 60, require MFA, notify security team
 
-3. **クラウドストレージ**
-   - シナリオ: 1日に通常5回ログインするユーザーが1時間で50回ログイン
-   - 動作: リスクスコア85、アカウント一時ロック、管理者に緊急通知
+3. **Cloud Storage**
+   - Scenario: User who normally logs in 5 times/day attempts 50 logins in 1 hour
+   - Action: Risk score 85, temporarily lock account, emergency notify admin
 
-**優先度:** 🔴 高
-**推奨フェーズ:** Phase 6 (Week 41-42)
+**Priority:** 🔴 High
+**Recommended Phase:** Phase 6 (Week 41-42)
 
 ---
 
-### 1.4 脅威インテリジェンス統合
+### 1.4 Threat Intelligence Integration
 
-**機能概要:**
-- Have I Been Pwned (HIBP) API連携
-- 侵害されたパスワードデータベース照合
-- リアルタイム脅威フィード統合
-- ダークウェブモニタリング（オプション）
+**Feature Overview:**
+- Have I Been Pwned (HIBP) API integration
+- Compromised password database checking
+- Real-time threat feed integration
+- Dark web monitoring (optional)
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +2-5ms/リクエスト（SHA-1ハッシュ計算） |
-| メモリ使用量 | +1MB（ハッシュライブラリ） |
-| リクエスト処理時間 | +50-150ms（外部API呼び出し） |
-| 追加Workers呼び出し | HIBP API: 1回/パスワード変更、非同期推奨 |
-| ストレージI/O | KV書き込み: キャッシュ（1-2KB/ハッシュ、TTL: 24時間） |
+| CPU time | +2-5ms/request (SHA-1 hash calculation) |
+| Memory usage | +1MB (hash library) |
+| Request processing time | +50-150ms (external API call) |
+| Additional Workers calls | HIBP API: 1/password change, async recommended |
+| Storage I/O | KV write: cache (1-2KB/hash, TTL: 24h) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~1,500行（HIBP統合、キャッシング、通知） |
-| 依存関係 | crypto（標準ライブラリ）、HIBP SDK: ~10KB |
-| データストレージ | KVキャッシュ: ~10MB（頻繁に使われるハッシュ） |
-| 外部API | HIBP API: 無料（レート制限: 1,500リクエスト/分） |
+| Implementation code | ~1,500 lines (HIBP integration, caching, notifications) |
+| Dependencies | crypto (standard library), HIBP SDK: ~10KB |
+| Data storage | KV cache: ~10MB (frequently used hashes) |
+| External API | HIBP API: free (rate limit: 1,500 requests/min) |
 
-**ユースケース例:**
-1. **従業員ポータル**
-   - シナリオ: 従業員がパスワード変更時に "Password123" を入力
-   - 動作: HIBP照合、500万件のデータ侵害で発見、拒否、強力なパスワード要求
+**Use Case Examples:**
+1. **Employee Portal**
+   - Scenario: Employee enters "Password123" when changing password
+   - Action: HIBP check, found in 5M breaches, reject, require strong password
 
-2. **顧客管理システム**
-   - シナリオ: ユーザーが過去に侵害されたメールアドレスで登録
-   - 動作: 登録許可、ただし強制MFA有効化、通知メール送信
+2. **Customer Management System**
+   - Scenario: User registers with previously compromised email
+   - Action: Allow registration but force MFA enable, send notification email
 
-3. **開発者プラットフォーム**
-   - シナリオ: 新規登録時にパスワード "admin123" を使用
-   - 動作: 即座に拒否、パスワード強度メーターで警告表示
+3. **Developer Platform**
+   - Scenario: New registration uses password "admin123"
+   - Action: Immediately reject, display warning in password strength meter
 
-**優先度:** 🔴 高
-**推奨フェーズ:** Phase 6 (Week 41-42)
+**Priority:** 🔴 High
+**Recommended Phase:** Phase 6 (Week 41-42)
 
 ---
 
-### 1.5 セキュリティスコアリング
+### 1.5 Security Scoring
 
-**機能概要:**
-- ユーザーごとのリスクスコア算出（0-100）
-- 複数要因の加重評価（デバイス、位置、時間、行動、脅威DB）
-- スコアベースのポリシー適用
-- リアルタイムスコア更新
+**Feature Overview:**
+- Per-user risk score calculation (0-100)
+- Weighted evaluation of multiple factors (device, location, time, behavior, threat DB)
+- Score-based policy application
+- Real-time score updates
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +5-10ms/リクエスト（スコア計算） |
-| メモリ使用量 | +3-5MB（スコアリングエンジン） |
-| リクエスト処理時間 | +10-20ms（複数データソース統合） |
-| 追加Workers呼び出し | Durable Object: UserRiskProfiler（1回/ログイン） |
-| ストレージI/O | D1読み取り: リスク履歴（5-10KB/ユーザー）、書き込み: 新規スコア（0.5KB） |
+| CPU time | +5-10ms/request (score calculation) |
+| Memory usage | +3-5MB (scoring engine) |
+| Request processing time | +10-20ms (multiple data source integration) |
+| Additional Workers calls | Durable Object: UserRiskProfiler (1/login) |
+| Storage I/O | D1 read: risk history (5-10KB/user), write: new score (0.5KB) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~3,500行（スコアリングロジック、ポリシーエンジン、Durable Object） |
-| 依存関係 | なし（標準ライブラリのみ） |
-| データストレージ | D1: スコア履歴30日分（10KB/ユーザー）、ポリシー設定（50KB） |
-| Durable Objects | UserRiskProfiler: 1オブジェクト/アクティブユーザー |
+| Implementation code | ~3,500 lines (scoring logic, policy engine, Durable Object) |
+| Dependencies | None (standard library only) |
+| Data storage | D1: 30-day score history (10KB/user), policy settings (50KB) |
+| Durable Objects | UserRiskProfiler: 1 object/active user |
 
-**ユースケース例:**
-1. **金融トレーディングプラットフォーム**
-   - シナリオ: ユーザーが通常デバイス（スコア20）から大口取引実行
-   - 動作: スコア低い→取引即時実行、監査ログ記録
+**Use Case Examples:**
+1. **Financial Trading Platform**
+   - Scenario: User executes large transaction from normal device (score 20)
+   - Action: Low score → execute transaction immediately, record audit log
 
-2. **医療記録アクセス**
-   - シナリオ: 新規デバイス（+30）、深夜（+20）、海外IP（+30）= スコア80
-   - 動作: 高リスク→MFA+セキュリティ質問、管理者承認待ち
+2. **Medical Records Access**
+   - Scenario: New device (+30), midnight (+20), overseas IP (+30) = score 80
+   - Action: High risk → MFA + security questions, await admin approval
 
-3. **企業リソースアクセス**
-   - シナリオ: VPN経由（-10）、信頼デバイス（-20）、通常時間（-10）= スコア10
-   - 動作: 低リスク→シームレスアクセス、軽量ログのみ
+3. **Enterprise Resource Access**
+   - Scenario: VPN connection (-10), trusted device (-20), normal hours (-10) = score 10
+   - Action: Low risk → seamless access, lightweight logging only
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 41-42)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 41-42)
 
 ---
 
-## 🔐 カテゴリ2: 認証方式の拡張
+## 🔐 Category 2: Authentication Method Extensions
 
-### 2.1 アダプティブMFA
+### 2.1 Adaptive MFA
 
-**機能概要:**
-- リスクスコアに基づく動的MFA要求
-- コンテキスト認識（デバイス、位置、時間、操作内容）
-- MFAスキップ条件設定（信頼デバイス、低リスク環境）
-- 複数MFA方式のフォールバック
+**Feature Overview:**
+- Dynamic MFA requirements based on risk score
+- Context-aware (device, location, time, operation content)
+- MFA skip conditions (trusted device, low-risk environment)
+- Multiple MFA method fallback
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +3-7ms/リクエスト（リスク評価、ポリシー判定） |
-| メモリ使用量 | +2-4MB（ポリシーエンジン） |
-| リクエスト処理時間 | +10-15ms（MFA不要時）、+2-5秒（MFA必要時：ユーザー入力待ち） |
-| 追加Workers呼び出し | MFA検証Worker: 1回/MFA要求 |
-| ストレージI/O | D1読み取り: MFAデバイス情報（1-3KB/ユーザー）、書き込み: MFA履歴（0.5KB） |
+| CPU time | +3-7ms/request (risk assessment, policy decision) |
+| Memory usage | +2-4MB (policy engine) |
+| Request processing time | +10-15ms (MFA not required), +2-5s (MFA required: waiting for user input) |
+| Additional Workers calls | MFA verification Worker: 1/MFA request |
+| Storage I/O | D1 read: MFA device info (1-3KB/user), write: MFA history (0.5KB) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~3,000行（アダプティブロジック、ポリシーエンジン、MFA統合） |
-| 依存関係 | TOTP: ~15KB、WebAuthn: ~20KB |
-| データストレージ | D1: MFAデバイス（3KB/ユーザー）、ポリシー（100KB） |
-| フロントエンド | MFA UI: ~25KB（WebAuthn JS含む） |
+| Implementation code | ~3,000 lines (adaptive logic, policy engine, MFA integration) |
+| Dependencies | TOTP: ~15KB, WebAuthn: ~20KB |
+| Data storage | D1: MFA devices (3KB/user), policy (100KB) |
+| Frontend | MFA UI: ~25KB (including WebAuthn JS) |
 
-**ユースケース例:**
-1. **企業クラウドストレージ**
-   - シナリオA: 従業員が会社WiFi、信頼PCからアクセス→MFAスキップ
-   - シナリオB: 同じ従業員が空港WiFi、個人スマホからアクセス→TOTP要求
+**Use Case Examples:**
+1. **Enterprise Cloud Storage**
+   - Scenario A: Employee accesses from company WiFi, trusted PC → skip MFA
+   - Scenario B: Same employee accesses from airport WiFi, personal phone → require TOTP
 
-2. **銀行モバイルアプリ**
-   - シナリオA: 残高照会（低リスク操作）→MFAなし
-   - シナリオB: 海外送金（高リスク操作）→SMS + 生体認証
+2. **Bank Mobile App**
+   - Scenario A: Balance inquiry (low-risk operation) → no MFA
+   - Scenario B: International transfer (high-risk operation) → SMS + biometric
 
-3. **SaaSプラットフォーム**
-   - シナリオ: 管理者が設定変更→操作内容リスク高→WebAuthn要求
+3. **SaaS Platform**
+   - Scenario: Admin changes settings → high operation risk → require WebAuthn
 
-**優先度:** 🔴 高
-**推奨フェーズ:** Phase 6 (Week 43)
+**Priority:** 🔴 High
+**Recommended Phase:** Phase 6 (Week 43)
 
 ---
 
-### 2.2 ステップアップ認証
+### 2.2 Step-up Authentication
 
-**機能概要:**
-- 機密操作時の追加認証要求
-- 操作レベル別の認証強度設定
-- セッション内での再認証
-- 時間制限付き権限昇格
+**Feature Overview:**
+- Additional authentication requirement for sensitive operations
+- Authentication strength by operation level
+- Re-authentication within session
+- Time-limited privilege escalation
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +2-5ms/リクエスト（権限レベルチェック） |
-| メモリ使用量 | +1-2MB（権限マトリックス） |
-| リクエスト処理時間 | +5-10ms（通常）、+2-5秒（再認証時） |
-| 追加Workers呼び出し | AuthorizationWorker: 1回/機密操作 |
-| ストレージI/O | Durable Object: 昇格セッション管理（SessionStore拡張） |
+| CPU time | +2-5ms/request (permission level check) |
+| Memory usage | +1-2MB (permission matrix) |
+| Request processing time | +5-10ms (normal), +2-5s (re-authentication) |
+| Additional Workers calls | AuthorizationWorker: 1/sensitive operation |
+| Storage I/O | Durable Object: escalated session management (SessionStore extension) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~2,500行（ステップアップロジック、権限マトリックス、セッション管理） |
-| 依存関係 | なし（既存MFA機能活用） |
-| データストレージ | SessionStore拡張: +2KB/昇格セッション、TTL: 5-15分 |
-| フロントエンド | 再認証UI: ~15KB |
+| Implementation code | ~2,500 lines (step-up logic, permission matrix, session management) |
+| Dependencies | None (leverage existing MFA features) |
+| Data storage | SessionStore extension: +2KB/escalated session, TTL: 5-15min |
+| Frontend | Re-authentication UI: ~15KB |
 
-**ユースケース例:**
-1. **管理者ダッシュボード**
-   - シナリオ: 管理者がユーザー一覧閲覧（操作レベル1）→認証なし
-   - シナリオ: 同じ管理者がユーザー削除（操作レベル3）→パスワード再入力要求
+**Use Case Examples:**
+1. **Admin Dashboard**
+   - Scenario: Admin views user list (operation level 1) → no authentication
+   - Scenario: Same admin deletes user (operation level 3) → require password re-entry
 
-2. **クラウドコンソール**
-   - シナリオ: インスタンス起動/停止→通常権限でOK
-   - シナリオ: インスタンス削除→MFA再認証、15分間の昇格権限付与
+2. **Cloud Console**
+   - Scenario: Start/stop instance → normal permissions OK
+   - Scenario: Delete instance → MFA re-authentication, 15-minute escalated permission grant
 
-3. **決済システム**
-   - シナリオ: トランザクション履歴閲覧→通常セッション
-   - シナリオ: 返金処理→SMS認証、5分間の昇格セッション
+3. **Payment System**
+   - Scenario: View transaction history → normal session
+   - Scenario: Process refund → SMS authentication, 5-minute escalated session
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 43)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 43)
 
 ---
 
-### 2.3 外部MFA統合
+### 2.3 External MFA Integration
 
-**機能概要:**
-- Duo Security、Okta Verify、Microsoft Authenticator統合
-- プッシュ通知ベースMFA
-- ハードウェアトークン対応（YubiKey）
-- MFAプロバイダーのフォールバック
+**Feature Overview:**
+- Duo Security, Okta Verify, Microsoft Authenticator integration
+- Push notification-based MFA
+- Hardware token support (YubiKey)
+- MFA provider fallback
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +2-5ms/リクエスト（API呼び出し準備） |
-| メモリ使用量 | +3-5MB（複数SDK） |
-| リクエスト処理時間 | +100-300ms（外部API呼び出し） |
-| 追加Workers呼び出し | Duo API: 1回/MFA、Okta API: 1回/MFA |
-| ストレージI/O | D1読み取り/書き込み: プロバイダー設定（2-5KB/ユーザー） |
+| CPU time | +2-5ms/request (API call preparation) |
+| Memory usage | +3-5MB (multiple SDKs) |
+| Request processing time | +100-300ms (external API call) |
+| Additional Workers calls | Duo API: 1/MFA, Okta API: 1/MFA |
+| Storage I/O | D1 read/write: provider settings (2-5KB/user) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~4,500行（各プロバイダー統合、アダプター、フォールバック） |
-| 依存関係 | Duo SDK: ~30KB、Okta SDK: ~40KB、Microsoft SDK: ~35KB |
-| データストレージ | D1: プロバイダー設定（5KB/ユーザー）、デバイス登録（3KB/デバイス） |
-| 外部API | Duo/Okta: 有料（$3-$9/ユーザー/月） |
+| Implementation code | ~4,500 lines (per-provider integration, adapters, fallback) |
+| Dependencies | Duo SDK: ~30KB, Okta SDK: ~40KB, Microsoft SDK: ~35KB |
+| Data storage | D1: provider settings (5KB/user), device registration (3KB/device) |
+| External API | Duo/Okta: paid ($3-$9/user/month) |
 
-**ユースケース例:**
-1. **大企業の統一認証基盤**
-   - シナリオ: 既存Duo導入済み、Authrimと統合
-   - 動作: ログイン時にDuoプッシュ通知→スマホで承認
+**Use Case Examples:**
+1. **Large Enterprise Unified Authentication**
+   - Scenario: Already deployed Duo, integrate with Authrim
+   - Action: Duo push notification on login → approve on smartphone
 
-2. **政府機関システム**
-   - シナリオ: PIV/CAC（政府発行カード）によるMFA
-   - 動作: YubiKeyをUSBに挿入、証明書ベース認証
+2. **Government Agency System**
+   - Scenario: PIV/CAC (government-issued card) MFA
+   - Action: Insert YubiKey in USB, certificate-based authentication
 
-3. **マルチテナントSaaS**
-   - シナリオ: テナントAはDuo、テナントBはOkta Verify利用
-   - 動作: テナントごとにMFAプロバイダー切り替え
+3. **Multi-tenant SaaS**
+   - Scenario: Tenant A uses Duo, Tenant B uses Okta Verify
+   - Action: Switch MFA provider per tenant
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 43)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 43)
 
 ---
 
-### 2.4 SMS/音声MFA
+### 2.4 SMS/Voice MFA
 
-**機能概要:**
-- Twilio統合によるSMS/音声認証
-- グローバル対応（200+国/地域）
-- ワンタイムパスワード（OTP）生成
-- レート制限・コスト管理
+**Feature Overview:**
+- Twilio integration for SMS/voice authentication
+- Global support (200+ countries/regions)
+- One-time password (OTP) generation
+- Rate limiting & cost management
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +2-3ms/リクエスト（OTP生成） |
-| メモリ使用量 | +1-2MB（Twilio SDK） |
-| リクエスト処理時間 | +200-500ms（SMS送信API） |
-| 追加Workers呼び出し | Twilio API: 1回/SMS送信 |
-| ストレージI/O | KV書き込み: OTP（0.5KB、TTL: 5分）、読み取り: 検証時 |
+| CPU time | +2-3ms/request (OTP generation) |
+| Memory usage | +1-2MB (Twilio SDK) |
+| Request processing time | +200-500ms (SMS send API) |
+| Additional Workers calls | Twilio API: 1/SMS send |
+| Storage I/O | KV write: OTP (0.5KB, TTL: 5min), read: on verification |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~2,000行（Twilio統合、OTP生成/検証、レート制限） |
-| 依存関係 | Twilio SDK: ~25KB、OTP生成: ~5KB |
-| データストレージ | KV: OTP一時保存（0.5KB、TTL: 5分）、送信履歴（D1: 1KB/送信） |
-| 外部API | Twilio: 従量課金（$0.0075/SMS～） |
+| Implementation code | ~2,000 lines (Twilio integration, OTP generation/verification, rate limiting) |
+| Dependencies | Twilio SDK: ~25KB, OTP generation: ~5KB |
+| Data storage | KV: OTP temporary storage (0.5KB, TTL: 5min), send history (D1: 1KB/send) |
+| External API | Twilio: pay-per-use ($0.0075/SMS~) |
 
-**ユースケース例:**
-1. **新興市場向けサービス**
-   - シナリオ: スマートフォン普及率が低い地域
-   - 動作: SMS OTP送信、ユーザーが6桁コード入力
+**Use Case Examples:**
+1. **Emerging Market Service**
+   - Scenario: Regions with low smartphone penetration
+   - Action: Send SMS OTP, user enters 6-digit code
 
-2. **高齢者向けサービス**
-   - シナリオ: アプリインストールが困難
-   - 動作: 音声通話でOTP読み上げ
+2. **Senior Citizen Service**
+   - Scenario: App installation difficult
+   - Action: Voice call reads OTP aloud
 
-3. **アカウント復旧**
-   - シナリオ: MFAデバイス紛失
-   - 動作: 登録電話番号にSMS送信、バックアップコード発行
+3. **Account Recovery**
+   - Scenario: MFA device lost
+   - Action: Send SMS to registered phone, issue backup code
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 43)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 43)
 
 ---
 
-## 📊 カテゴリ3: 運用・モニタリング強化
+## 📊 Category 3: Operations & Monitoring Enhancements
 
-### 3.1 詳細な監査ログ
+### 3.1 Detailed Audit Logs
 
-**機能概要:**
-- 全イベントの完全追跡（WHO、WHAT、WHEN、WHERE、WHY）
-- ログの改ざん防止（署名、Immutable storage）
-- 高速検索・フィルタリング
-- 長期保管とアーカイブ（S3/R2連携）
+**Feature Overview:**
+- Complete tracking of all events (WHO, WHAT, WHEN, WHERE, WHY)
+- Tamper-proof logs (signature, Immutable storage)
+- High-speed search & filtering
+- Long-term storage and archiving (S3/R2 integration)
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +1-3ms/リクエスト（ログ生成、署名） |
-| メモリ使用量 | +0.5-1MB（ログバッファ） |
-| リクエスト処理時間 | +5-10ms（非同期書き込み、ユーザー体感なし） |
-| 追加Workers呼び出し | なし（バックグラウンドWorker経由） |
-| ストレージI/O | D1書き込み: 1-3KB/イベント、R2: バッチアップロード（1MB/10分） |
+| CPU time | +1-3ms/request (log generation, signing) |
+| Memory usage | +0.5-1MB (log buffer) |
+| Request processing time | +5-10ms (async write, no user impact) |
+| Additional Workers calls | None (via background Worker) |
+| Storage I/O | D1 write: 1-3KB/event, R2: batch upload (1MB/10min) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~3,500行（ログ収集、署名、検索、エクスポート） |
-| 依存関係 | crypto（署名）、検索ライブラリ: ~20KB |
-| データストレージ | D1: 直近30日分（~3KB/ログ、1万ユーザーで~30MB/日） |
-| R2アーカイブ | 月次アーカイブ（~1GB/月、1万ユーザー想定） |
+| Implementation code | ~3,500 lines (log collection, signing, search, export) |
+| Dependencies | crypto (signing), search library: ~20KB |
+| Data storage | D1: last 30 days (~3KB/log, 10K users ~30MB/day) |
+| R2 archive | Monthly archive (~1GB/month, 10K users) |
 
-**ユースケース例:**
-1. **金融機関コンプライアンス**
-   - シナリオ: 監査人が「特定ユーザーの6ヶ月間の全ログイン履歴」を要求
-   - 動作: 検索クエリ実行、CSV/JSONエクスポート、電子署名付きレポート生成
+**Use Case Examples:**
+1. **Financial Institution Compliance**
+   - Scenario: Auditor requests "specific user's 6-month login history"
+   - Action: Execute search query, export CSV/JSON, generate electronically signed report
 
-2. **セキュリティインシデント調査**
-   - シナリオ: 不正アクセス疑惑、過去3日間の全アクティビティ分析
-   - 動作: タイムライン表示、関連ユーザー抽出、IPアドレス追跡
+2. **Security Incident Investigation**
+   - Scenario: Unauthorized access suspected, analyze all activity last 3 days
+   - Action: Timeline display, extract related users, IP address tracking
 
-3. **GDPR準拠**
-   - シナリオ: ユーザーが「自分のデータへのアクセス履歴」を要求
-   - 動作: 個人別ログ抽出、可読形式で提供、削除オプション
+3. **GDPR Compliance**
+   - Scenario: User requests "access history to my data"
+   - Action: Extract personal logs, provide in readable format, deletion option
 
-**優先度:** 🔴 高
-**推奨フェーズ:** Phase 6 (Week 41-42)
+**Priority:** 🔴 High
+**Recommended Phase:** Phase 6 (Week 41-42)
 
 ---
 
-### 3.2 リアルタイム監視とアラート
+### 3.2 Real-time Monitoring and Alerts
 
-**機能概要:**
-- メトリクス収集（ログイン数、失敗率、レイテンシ、エラー率）
-- リアルタイムダッシュボード（Grafana/Cloudflare Analytics）
-- 閾値ベースアラート（Slack、PagerDuty、メール）
-- 異常検知とインシデント管理
+**Feature Overview:**
+- Metrics collection (login count, failure rate, latency, error rate)
+- Real-time dashboard (Grafana/Cloudflare Analytics)
+- Threshold-based alerts (Slack, PagerDuty, email)
+- Anomaly detection and incident management
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +0.5-2ms/リクエスト（メトリクス送信） |
-| メモリ使用量 | +0.5-1MB（メトリクスバッファ） |
-| リクエスト処理時間 | +2-5ms（非同期、ユーザー体感なし） |
-| 追加Workers呼び出し | Analytics Worker: バッチ処理（1回/分） |
-| ストレージI/O | Analytics Engine: 書き込み（0.1KB/イベント） |
+| CPU time | +0.5-2ms/request (metrics transmission) |
+| Memory usage | +0.5-1MB (metrics buffer) |
+| Request processing time | +2-5ms (async, no user impact) |
+| Additional Workers calls | Analytics Worker: batch processing (1/min) |
+| Storage I/O | Analytics Engine: write (0.1KB/event) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~3,000行（メトリクス収集、アラート、ダッシュボードAPI） |
-| 依存関係 | Cloudflare Analytics Engine SDK、アラートSDK（Slack等）: ~30KB |
-| データストレージ | Analytics Engine: 時系列データ（無制限、Cloudflare管理） |
-| 外部統合 | Grafana Cloud: $0-$49/月、PagerDuty: $21/ユーザー/月 |
+| Implementation code | ~3,000 lines (metrics collection, alerts, dashboard API) |
+| Dependencies | Cloudflare Analytics Engine SDK, alert SDKs (Slack etc): ~30KB |
+| Data storage | Analytics Engine: time-series data (unlimited, Cloudflare managed) |
+| External integration | Grafana Cloud: $0-$49/month, PagerDuty: $21/user/month |
 
-**ユースケース例:**
-1. **SaaSプラットフォーム運用**
-   - シナリオ: ログイン失敗率が5%→30%に急増
-   - 動作: Slackに緊急アラート、運用チームが調査、DDoS攻撃を特定
+**Use Case Examples:**
+1. **SaaS Platform Operations**
+   - Scenario: Login failure rate spikes from 5% to 30%
+   - Action: Emergency Slack alert, ops team investigates, DDoS attack identified
 
-2. **Eコマースピーク時監視**
-   - シナリオ: ブラックフライデー、認証リクエストが通常の10倍
-   - 動作: ダッシュボードで負荷監視、自動スケーリング、レイテンシ正常維持
+2. **E-commerce Peak Monitoring**
+   - Scenario: Black Friday, auth requests 10x normal
+   - Action: Monitor load on dashboard, auto-scaling, maintain normal latency
 
-3. **セキュリティ異常検知**
-   - シナリオ: 深夜2-4時に通常の20倍の新規登録
-   - 動作: PagerDutyで当直エンジニアに通知、Bot検知強化
+3. **Security Anomaly Detection**
+   - Scenario: 2-4am, 20x normal new registrations
+   - Action: PagerDuty notifies on-duty engineer, strengthen bot detection
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 41-42)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 41-42)
 
 ---
 
-### 3.3 SLA管理とダッシュボード
+### 3.3 SLA Management and Dashboard
 
-**機能概要:**
-- SLI（Service Level Indicator）定義と計測
-- SLO（Service Level Objective）設定（可用性99.9%、レイテンシp95<50ms等）
-- エラーバジェット計算
-- SLA違反時の自動アラート
+**Feature Overview:**
+- SLI (Service Level Indicator) definition and measurement
+- SLO (Service Level Objective) settings (99.9% availability, p95 latency <50ms etc.)
+- Error budget calculation
+- Automatic alerts on SLA violations
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +0.5-1ms/リクエスト（メトリクス記録） |
-| メモリ使用量 | +0.5MB（SLI計算） |
-| リクエスト処理時間 | +1-3ms（非同期） |
-| 追加Workers呼び出し | なし（Analytics Engine活用） |
-| ストレージI/O | Analytics Engine: 自動集計 |
+| CPU time | +0.5-1ms/request (metrics recording) |
+| Memory usage | +0.5MB (SLI calculation) |
+| Request processing time | +1-3ms (async) |
+| Additional Workers calls | None (leverage Analytics Engine) |
+| Storage I/O | Analytics Engine: automatic aggregation |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~2,500行（SLI/SLO管理、ダッシュボードAPI、エラーバジェット） |
-| 依存関係 | なし（Cloudflare Analytics Engine活用） |
-| データストレージ | Analytics Engine: 時系列メトリクス（Cloudflare管理） |
-| フロントエンド | SLAダッシュボード: ~30KB |
+| Implementation code | ~2,500 lines (SLI/SLO management, dashboard API, error budget) |
+| Dependencies | None (leverage Cloudflare Analytics Engine) |
+| Data storage | Analytics Engine: time-series metrics (Cloudflare managed) |
+| Frontend | SLA dashboard: ~30KB |
 
-**ユースケース例:**
-1. **エンタープライズSLA契約**
-   - シナリオ: 顧客と99.9%可用性SLA締結
-   - 動作: リアルタイムで稼働率計測、月次レポート自動生成、SLA違反時に補償計算
+**Use Case Examples:**
+1. **Enterprise SLA Contract**
+   - Scenario: Contract 99.9% availability SLA with customer
+   - Action: Real-time uptime measurement, auto-generate monthly report, calculate compensation on SLA violation
 
-2. **パフォーマンス改善**
-   - シナリオ: p95レイテンシ目標50ms、現在70ms
-   - 動作: エラーバジェット警告、最適化タスク優先度アップ
+2. **Performance Improvement**
+   - Scenario: p95 latency target 50ms, currently 70ms
+   - Action: Error budget warning, prioritize optimization tasks
 
-3. **透明性向上**
-   - シナリオ: 公開ステータスページで顧客に可用性表示
-   - 動作: 99.95%稼働率を公開、信頼性アピール
+3. **Transparency Improvement**
+   - Scenario: Display availability to customers on public status page
+   - Action: Publish 99.95% uptime, promote reliability
 
-**優先度:** 🟢 低
-**推奨フェーズ:** Phase 6 (Week 41-42) または Phase 7
+**Priority:** 🟢 Low
+**Recommended Phase:** Phase 6 (Week 41-42) or Phase 7
 
 ---
 
-### 3.4 ヘルスチェックとステータスページ
+### 3.4 Health Check and Status Page
 
-**機能概要:**
-- 公開ステータスページ（Statuspage.io風）
-- コンポーネント別ヘルスチェック（Auth、Token、UserInfo等）
-- インシデント履歴とアップデート
-- RSS/Atom フィード、メール通知
+**Feature Overview:**
+- Public status page (Statuspage.io style)
+- Component-level health checks (Auth, Token, UserInfo etc.)
+- Incident history and updates
+- RSS/Atom feed, email notifications
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +1-2ms/リクエスト（ヘルスチェック） |
-| メモリ使用量 | +0.5MB（チェックロジック） |
-| リクエスト処理時間 | +5-10ms（各コンポーネントping） |
-| 追加Workers呼び出し | 各Worker: 1回/ヘルスチェック（5秒ごと） |
-| ストレージI/O | KV読み取り: ステータスキャッシュ（1KB、TTL: 5秒） |
+| CPU time | +1-2ms/request (health check) |
+| Memory usage | +0.5MB (check logic) |
+| Request processing time | +5-10ms (ping each component) |
+| Additional Workers calls | Each Worker: 1/health check (every 5s) |
+| Storage I/O | KV read: status cache (1KB, TTL: 5s) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~2,000行（ヘルスチェック、ステータスページ、通知） |
-| 依存関係 | RSS生成: ~10KB |
-| データストレージ | D1: インシデント履歴（5KB/インシデント、90日保管） |
-| フロントエンド | ステータスページ: ~40KB（公開UI） |
+| Implementation code | ~2,000 lines (health check, status page, notifications) |
+| Dependencies | RSS generation: ~10KB |
+| Data storage | D1: incident history (5KB/incident, 90-day retention) |
+| Frontend | Status page: ~40KB (public UI) |
 
-**ユースケース例:**
-1. **透明な運用**
-   - シナリオ: 顧客が「今ログインできない」と問い合わせ
-   - 動作: ステータスページで「Token Workerメンテナンス中」と表示、問い合わせ削減
+**Use Case Examples:**
+1. **Transparent Operations**
+   - Scenario: Customer inquires "cannot login now"
+   - Action: Status page shows "Token Worker under maintenance", reduce inquiries
 
-2. **計画メンテナンス**
-   - シナリオ: 週末にデータベース移行
-   - 動作: 事前にステータスページでアナウンス、メール通知、影響範囲表示
+2. **Planned Maintenance**
+   - Scenario: Database migration weekend
+   - Action: Pre-announce on status page, email notification, display impact scope
 
-3. **インシデント対応**
-   - シナリオ: Cloudflareの一部リージョンで障害
-   - 動作: 自動検知、ステータスページ更新、RSS購読者に通知
+3. **Incident Response**
+   - Scenario: Cloudflare partial region failure
+   - Action: Auto-detect, update status page, notify RSS subscribers
 
-**優先度:** 🟢 低
-**推奨フェーズ:** Phase 7
+**Priority:** 🟢 Low
+**Recommended Phase:** Phase 7
 
 ---
 
-## 🔗 カテゴリ4: 企業統合の拡張
+## 🔗 Category 4: Enterprise Integration Extensions
 
-### 4.1 API Gateway統合
+### 4.1 API Gateway Integration
 
-**機能概要:**
-- Kong、Apigee、AWS API Gateway、Azure API Managementプラグイン
-- JWT検証プラグイン（API Gateway側で認証）
-- レート制限・クォータ管理連携
-- APIキー発行・管理
+**Feature Overview:**
+- Kong, Apigee, AWS API Gateway, Azure API Management plugins
+- JWT verification plugin (authentication on API Gateway side)
+- Rate limiting & quota management integration
+- API key issuance & management
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +1-3ms/リクエスト（JWT検証のみ、Gateway側で実施） |
-| メモリ使用量 | +0.5-1MB（検証ライブラリ） |
-| リクエスト処理時間 | +5-10ms（JWKSエンドポイント取得、キャッシュあり） |
-| 追加Workers呼び出し | なし（Gateway側で処理） |
-| ストレージI/O | なし（ステートレス検証） |
+| CPU time | +1-3ms/request (JWT verification only, performed on Gateway side) |
+| Memory usage | +0.5-1MB (verification library) |
+| Request processing time | +5-10ms (JWKS endpoint retrieval, with cache) |
+| Additional Workers calls | None (processed on Gateway side) |
+| Storage I/O | None (stateless verification) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~1,500行（プラグイン開発、ドキュメント） |
-| 依存関係 | なし（各Gateway SDKは別途） |
-| プラグイン | Kong: Lua 300行、Apigee: Java 500行、AWS: Lambda 200行 |
-| ドキュメント | 統合ガイド（各Gatewayごと100-200行） |
+| Implementation code | ~1,500 lines (plugin development, documentation) |
+| Dependencies | None (separate Gateway SDKs) |
+| Plugins | Kong: Lua 300 lines, Apigee: Java 500 lines, AWS: Lambda 200 lines |
+| Documentation | Integration guides (100-200 lines per Gateway) |
 
-**ユースケース例:**
-1. **マイクロサービスアーキテクチャ**
-   - シナリオ: 50個のAPIをKongで管理、Authrimで認証
-   - 動作: Kong JWTプラグインでAuthrim発行トークン検証、認証成功後API呼び出し
+**Use Case Examples:**
+1. **Microservices Architecture**
+   - Scenario: Manage 50 APIs with Kong, authenticate with Authrim
+   - Action: Kong JWT plugin verifies Authrim-issued tokens, call API on auth success
 
-2. **レガシーシステム統合**
-   - シナリオ: 既存APIはOAuth未対応、Authrim+Apigeeで認証レイヤー追加
-   - 動作: Apigeeが認証、バックエンドAPIにはヘッダーでユーザー情報渡す
+2. **Legacy System Integration**
+   - Scenario: Existing API not OAuth-compatible, add auth layer with Authrim+Apigee
+   - Action: Apigee authenticates, pass user info to backend API via header
 
-3. **マルチクラウド環境**
-   - シナリオ: AWS、Azure、GCPに分散したAPI群
-   - 動作: 各クラウドのAPI Gateway+Authrim JWT検証で統一認証
+3. **Multi-cloud Environment**
+   - Scenario: API groups distributed across AWS, Azure, GCP
+   - Action: Unified authentication via each cloud's API Gateway + Authrim JWT verification
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 31-33)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 31-33)
 
 ---
 
-### 4.2 カスタム属性ストア
+### 4.2 Custom Attribute Store
 
-**機能概要:**
-- 外部システムから動的にユーザー属性取得（REST API、GraphQL）
-- 属性キャッシング（TTL設定）
-- ID Token/Access Tokenにカスタムクレーム追加
-- 属性変換ルール（JSONata、JavaScript）
+**Feature Overview:**
+- Dynamic user attribute retrieval from external systems (REST API, GraphQL)
+- Attribute caching (TTL settings)
+- Add custom claims to ID Token/Access Token
+- Attribute transformation rules (JSONata, JavaScript)
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +5-15ms/リクエスト（変換ロジック実行） |
-| メモリ使用量 | +3-5MB（変換エンジン） |
-| リクエスト処理時間 | +50-200ms（外部API呼び出し）、+5ms（キャッシュヒット） |
-| 追加Workers呼び出し | 外部API: 1-3回/トークン発行（キャッシュミス時） |
-| ストレージI/O | KV書き込み: 属性キャッシュ（5-20KB/ユーザー、TTL: 5-60分） |
+| CPU time | +5-15ms/request (transformation logic execution) |
+| Memory usage | +3-5MB (transformation engine) |
+| Request processing time | +50-200ms (external API call), +5ms (cache hit) |
+| Additional Workers calls | External API: 1-3/token issuance (on cache miss) |
+| Storage I/O | KV write: attribute cache (5-20KB/user, TTL: 5-60min) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~3,000行（API統合、キャッシング、変換エンジン） |
-| 依存関係 | JSONata: ~50KB、axios: ~30KB |
-| データストレージ | KV: 属性キャッシュ（~100MB、1万ユーザー×10KB/ユーザー） |
-| 設定 | 変換ルール（1-5KB/ルール） |
+| Implementation code | ~3,000 lines (API integration, caching, transformation engine) |
+| Dependencies | JSONata: ~50KB, axios: ~30KB |
+| Data storage | KV: attribute cache (~100MB, 10K users × 10KB/user) |
+| Configuration | Transformation rules (1-5KB/rule) |
 
-**ユースケース例:**
-1. **CRM統合**
-   - シナリオ: ユーザーのVIPステータスをSalesforceから取得
-   - 動作: ログイン時にSalesforce API呼び出し、"vip_status": "gold"をトークンに追加
+**Use Case Examples:**
+1. **CRM Integration**
+   - Scenario: Retrieve user VIP status from Salesforce
+   - Action: Call Salesforce API on login, add "vip_status": "gold" to token
 
-2. **在庫システム統合**
-   - シナリオ: 従業員の所属部署・権限を社内人事DBから取得
-   - 動作: 人事DB REST API経由で部署情報取得、30分キャッシュ、アクセス制御に活用
+2. **Inventory System Integration**
+   - Scenario: Retrieve employee department/permissions from internal HR DB
+   - Action: Retrieve department info via HR DB REST API, cache 30 min, use for access control
 
-3. **動的ロール割り当て**
-   - シナリオ: プロジェクト管理システムでユーザーのロールが頻繁に変わる
-   - 動作: 5分ごとにロール更新、新ロールでトークン再発行
+3. **Dynamic Role Assignment**
+   - Scenario: User roles frequently change in project management system
+   - Action: Update roles every 5 min, reissue token with new role
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 31-33)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 31-33)
 
 ---
 
-### 4.3 カスタムメール/SMSプロバイダー
+### 4.3 Custom Email/SMS Providers
 
-**機能概要:**
-- SendGrid、Mailgun、AWS SES、Postmark対応
-- Twilio、Nexmo、Vonage（SMS）対応
-- テンプレート管理（Handlebars、Liquid）
-- 送信ログ・配信率追跡
+**Feature Overview:**
+- SendGrid, Mailgun, AWS SES, Postmark support
+- Twilio, Nexmo, Vonage (SMS) support
+- Template management (Handlebars, Liquid)
+- Send logs & delivery rate tracking
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +2-5ms/リクエスト（テンプレート処理） |
-| メモリ使用量 | +2-4MB（テンプレートエンジン、SDK） |
-| リクエスト処理時間 | +100-300ms（メール送信API） |
-| 追加Workers呼び出し | SendGrid/Twilio API: 1回/送信 |
-| ストレージI/O | D1書き込み: 送信ログ（2KB/送信） |
+| CPU time | +2-5ms/request (template processing) |
+| Memory usage | +2-4MB (template engine, SDK) |
+| Request processing time | +100-300ms (email send API) |
+| Additional Workers calls | SendGrid/Twilio API: 1/send |
+| Storage I/O | D1 write: send logs (2KB/send) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~3,500行（各プロバイダー統合、テンプレート、ログ） |
-| 依存関係 | SendGrid SDK: ~40KB、Handlebars: ~30KB |
-| データストレージ | D1: テンプレート（5-20KB/テンプレート）、送信ログ（~10MB/月） |
-| 外部API | SendGrid: $14.95-$89.95/月、Twilio: 従量課金 |
+| Implementation code | ~3,500 lines (per-provider integration, templates, logs) |
+| Dependencies | SendGrid SDK: ~40KB, Handlebars: ~30KB |
+| Data storage | D1: templates (5-20KB/template), send logs (~10MB/month) |
+| External API | SendGrid: $14.95-$89.95/month, Twilio: pay-per-use |
 
-**ユースケース例:**
-1. **ブランドカスタマイズ**
-   - シナリオ: 企業ロゴ、カラー、フッターをメールテンプレートに反映
-   - 動作: Handlebarsテンプレート編集、SendGrid経由で送信
+**Use Case Examples:**
+1. **Brand Customization**
+   - Scenario: Reflect company logo, colors, footer in email templates
+   - Action: Edit Handlebars template, send via SendGrid
 
-2. **多言語対応**
-   - シナリオ: ユーザーの言語設定に応じてメール言語切り替え
-   - 動作: 日本語/英語/中国語テンプレート用意、自動選択
+2. **Multi-language Support**
+   - Scenario: Switch email language based on user language setting
+   - Action: Prepare Japanese/English/Chinese templates, auto-select
 
-3. **到達率向上**
-   - シナリオ: SendGridで配信率低下、AWS SESに切り替え
-   - 動作: 設定変更のみで即座にプロバイダー切り替え
+3. **Improve Delivery Rate**
+   - Scenario: SendGrid delivery rate drops, switch to AWS SES
+   - Action: Immediately switch provider with setting change only
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 31-33)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 31-33)
 
 ---
 
-### 4.4 イベントストリーミング
+### 4.4 Event Streaming
 
-**機能概要:**
-- Kafka、Amazon Kinesis、Google Pub/Sub、Azure Event Hubs連携
-- リアルタイムイベント配信（ログイン、登録、削除等）
-- イベントスキーマ定義（JSON Schema、Avro）
-- At-least-once配信保証
+**Feature Overview:**
+- Kafka, Amazon Kinesis, Google Pub/Sub, Azure Event Hubs integration
+- Real-time event delivery (login, registration, deletion etc.)
+- Event schema definition (JSON Schema, Avro)
+- At-least-once delivery guarantee
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +2-5ms/リクエスト（イベント生成） |
-| メモリ使用量 | +2-4MB（SDK、バッファ） |
-| リクエスト処理時間 | +5-15ms（非同期送信、ユーザー体感なし） |
-| 追加Workers呼び出し | バックグラウンドWorker: バッチ送信（1回/10秒） |
-| ストレージI/O | Queue: イベントバッファ（1KB/イベント、処理待ち） |
+| CPU time | +2-5ms/request (event generation) |
+| Memory usage | +2-4MB (SDK, buffer) |
+| Request processing time | +5-15ms (async send, no user impact) |
+| Additional Workers calls | Background Worker: batch send (1/10s) |
+| Storage I/O | Queue: event buffer (1KB/event, processing queue) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~3,000行（各プラットフォーム統合、スキーマ、バッファ） |
-| 依存関係 | kafkajs: ~100KB、AWS SDK: ~150KB、GCP SDK: ~120KB |
-| データストレージ | Queue: イベントバッファ（~10MB、瞬間的） |
-| 外部サービス | Kafka: $0.10-$0.30/GB、Kinesis: $0.015/100万PUT |
+| Implementation code | ~3,000 lines (per-platform integration, schema, buffer) |
+| Dependencies | kafkajs: ~100KB, AWS SDK: ~150KB, GCP SDK: ~120KB |
+| Data storage | Queue: event buffer (~10MB, momentary) |
+| External service | Kafka: $0.10-$0.30/GB, Kinesis: $0.015/1M PUT |
 
-**ユースケース例:**
-1. **リアルタイム分析**
-   - シナリオ: 全ログインイベントをKafkaに送信、Spark Streamingで分析
-   - 動作: ログイン成功→Kafkaトピック"user.login"に発行→ダッシュボード更新
+**Use Case Examples:**
+1. **Real-time Analytics**
+   - Scenario: Send all login events to Kafka, analyze with Spark Streaming
+   - Action: Login success → publish to Kafka topic "user.login" → update dashboard
 
-2. **データレイク構築**
-   - シナリオ: 全認証イベントをS3にアーカイブ、BigQueryで分析
-   - 動作: イベント→Kinesis→S3→BigQuery ETL→可視化
+2. **Data Lake Construction**
+   - Scenario: Archive all auth events to S3, analyze with BigQuery
+   - Action: Event → Kinesis → S3 → BigQuery ETL → visualization
 
-3. **マイクロサービス連携**
-   - シナリオ: ユーザー登録時に複数サービスに通知
-   - 動作: 登録イベント→Pub/Sub→メール送信サービス、CRM更新サービス並列実行
+3. **Microservice Integration**
+   - Scenario: Notify multiple services on user registration
+   - Action: Registration event → Pub/Sub → email send service, CRM update service parallel execution
 
-**優先度:** 🟢 低
-**推奨フェーズ:** Phase 7
+**Priority:** 🟢 Low
+**Recommended Phase:** Phase 7
 
 ---
 
-### 4.5 カスタム認証フロー
+### 4.5 Custom Authentication Flow
 
-**機能概要:**
-- 認証フロー中の外部API呼び出し（カスタムバリデーション）
-- 条件分岐（ユーザー属性、リスクスコア等で認証方法変更）
-- JavaScriptによるカスタムロジック（サンドボックス実行）
-- ビジュアルフローエディタ連携（Phase 6 Visual Flow Builder）
+**Feature Overview:**
+- External API calls during authentication flow (custom validation)
+- Conditional branching (change auth method based on user attributes, risk score etc.)
+- Custom logic via JavaScript (sandboxed execution)
+- Visual flow editor integration (Phase 6 Visual Flow Builder)
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +10-50ms/リクエスト（カスタムロジック実行、複雑さに依存） |
-| メモリ使用量 | +5-10MB（V8 isolate、サンドボックス） |
-| リクエスト処理時間 | +50-500ms（外部API呼び出し含む） |
-| 追加Workers呼び出し | 外部API: 0-5回/認証（フローに依存） |
-| ストレージI/O | D1読み取り: フロー定義（10-50KB/フロー） |
+| CPU time | +10-50ms/request (custom logic execution, depends on complexity) |
+| Memory usage | +5-10MB (V8 isolate, sandbox) |
+| Request processing time | +50-500ms (including external API calls) |
+| Additional Workers calls | External API: 0-5/authentication (depends on flow) |
+| Storage I/O | D1 read: flow definition (10-50KB/flow) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~5,000行（フローエンジン、サンドボックス、外部API統合） |
-| 依存関係 | quickjs-emscripten: ~200KB（サンドボックス実行） |
-| データストレージ | D1: フロー定義（50KB/フロー）、実行ログ（5KB/実行） |
-| フロントエンド | ビジュアルエディタ: ~150KB（Phase 6で実装予定） |
+| Implementation code | ~5,000 lines (flow engine, sandbox, external API integration) |
+| Dependencies | quickjs-emscripten: ~200KB (sandbox execution) |
+| Data storage | D1: flow definitions (50KB/flow), execution logs (5KB/execution) |
+| Frontend | Visual editor: ~150KB (planned for Phase 6) |
 
-**ユースケース例:**
-1. **企業間取引プラットフォーム**
-   - シナリオ: 新規登録時に企業DBで実在確認
-   - 動作: 企業名入力→外部API（帝国データバンク等）で照合→承認/拒否
+**Use Case Examples:**
+1. **B2B Trading Platform**
+   - Scenario: Verify company exists in company DB on new registration
+   - Action: Enter company name → external API (Teikoku Databank etc) check → approve/reject
 
-2. **地域制限**
-   - シナリオ: 特定国からのアクセス禁止
-   - 動作: IPアドレス→GeoIP照合→許可国ならログイン、禁止国ならブロック
+2. **Regional Restrictions**
+   - Scenario: Block access from specific countries
+   - Action: IP address → GeoIP check → allow if permitted country, block if prohibited
 
-3. **カスタムパスワードポリシー**
-   - シナリオ: 過去5世代のパスワード禁止、辞書攻撃対策
-   - 動作: パスワード履歴取得→カスタムJS実行→禁止ワードチェック→OK/NG
+3. **Custom Password Policy**
+   - Scenario: Prohibit last 5 password generations, dictionary attack protection
+   - Action: Retrieve password history → execute custom JS → check prohibited words → OK/NG
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 36-38、Visual Flow Builder実装後)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 36-38, after Visual Flow Builder implementation)
 
 ---
 
-## 📱 カテゴリ5: セッション・デバイス管理
+## 📱 Category 5: Session & Device Management
 
-### 5.1 デバイス管理ダッシュボード
+### 5.1 Device Management Dashboard
 
-**機能概要:**
-- ユーザー向けデバイス一覧表示UI
-- デバイス詳細（OS、ブラウザ、最終アクセス、位置）
-- リモートログアウト（デバイス単位）
-- デバイス名変更（"自宅PC"、"会社iPhone"等）
+**Feature Overview:**
+- User-facing device list display UI
+- Device details (OS, browser, last access, location)
+- Remote logout (per device)
+- Device name change ("Home PC", "Work iPhone" etc.)
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +2-5ms/リクエスト（デバイス一覧取得） |
-| メモリ使用量 | +1-2MB（UIレンダリング） |
-| リクエスト処理時間 | +10-20ms（D1クエリ） |
-| 追加Workers呼び出し | なし（既存API活用） |
-| ストレージI/O | D1読み取り: デバイス一覧（5-15KB/ユーザー） |
+| CPU time | +2-5ms/request (device list retrieval) |
+| Memory usage | +1-2MB (UI rendering) |
+| Request processing time | +10-20ms (D1 query) |
+| Additional Workers calls | None (leverage existing API) |
+| Storage I/O | D1 read: device list (5-15KB/user) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~2,000行（API、UIコンポーネント） |
-| 依存関係 | なし（既存フレームワーク活用） |
-| データストレージ | D1: デバイステーブル（既存、拡張） |
-| フロントエンド | デバイス管理UI: ~40KB（Svelte） |
+| Implementation code | ~2,000 lines (API, UI components) |
+| Dependencies | None (leverage existing framework) |
+| Data storage | D1: device table (existing, extended) |
+| Frontend | Device management UI: ~40KB (Svelte) |
 
-**ユースケース例:**
-1. **セキュリティ意識の高いユーザー**
-   - シナリオ: ユーザーが見覚えのないデバイスを発見
-   - 動作: ダッシュボードで"Unknown Windows PC"を発見→即座にログアウト→パスワード変更
+**Use Case Examples:**
+1. **Security-conscious User**
+   - Scenario: User discovers unfamiliar device
+   - Action: Find "Unknown Windows PC" on dashboard → immediately logout → change password
 
-2. **デバイス紛失**
-   - シナリオ: スマホを紛失
-   - 動作: PC から自分のアカウントにログイン→デバイス一覧で"iPhone 13"を選択→ログアウト
+2. **Device Lost**
+   - Scenario: Lost smartphone
+   - Action: Login from PC to own account → select "iPhone 13" from device list → logout
 
-3. **家族共有端末**
-   - シナリオ: 家族のPCから誤ってログインしたまま
-   - 動作: 自分のPCから"リビングPC"を確認→ログアウト
+3. **Shared Family Device**
+   - Scenario: Still logged in from family PC by mistake
+   - Action: Confirm "Living Room PC" from own PC → logout
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 31-33)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 31-33)
 
 ---
 
-### 5.2 デバイス信頼
+### 5.2 Device Trust
 
-**機能概要:**
-- 信頼済みデバイス登録
-- デバイス証明書発行（クライアント証明書）
-- 信頼デバイスからのアクセス時はMFAスキップ
-- デバイス信頼期限設定（30日、90日、無期限）
+**Feature Overview:**
+- Trusted device registration
+- Device certificate issuance (client certificate)
+- Skip MFA when accessing from trusted device
+- Device trust expiration settings (30 days, 90 days, unlimited)
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +5-10ms/リクエスト（証明書検証） |
-| メモリ使用量 | +2-4MB（証明書ライブラリ） |
-| リクエスト処理時間 | +10-20ms（信頼チェック） |
-| 追加Workers呼び出し | なし（Durable Object: TrustedDeviceManager） |
-| ストレージI/O | D1読み取り/書き込み: 信頼デバイス（3-5KB/デバイス） |
+| CPU time | +5-10ms/request (certificate verification) |
+| Memory usage | +2-4MB (certificate library) |
+| Request processing time | +10-20ms (trust check) |
+| Additional Workers calls | None (Durable Object: TrustedDeviceManager) |
+| Storage I/O | D1 read/write: trusted devices (3-5KB/device) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~3,000行（証明書管理、信頼ロジック、Durable Object） |
-| 依存関係 | PKI.js: ~100KB（証明書処理） |
-| データストレージ | D1: 信頼デバイステーブル（5KB/デバイス） |
-| Durable Objects | TrustedDeviceManager: 1オブジェクト/ユーザー |
+| Implementation code | ~3,000 lines (certificate management, trust logic, Durable Object) |
+| Dependencies | PKI.js: ~100KB (certificate processing) |
+| Data storage | D1: trusted device table (5KB/device) |
+| Durable Objects | TrustedDeviceManager: 1 object/user |
 
-**ユースケース例:**
-1. **日常業務の効率化**
-   - シナリオ: 従業員が会社PCを信頼デバイス登録
-   - 動作: 初回ログイン時にMFA→「このデバイスを信頼する」チェック→以降30日間MFAスキップ
+**Use Case Examples:**
+1. **Daily Work Efficiency**
+   - Scenario: Employee registers company PC as trusted device
+   - Action: MFA on first login → check "Trust this device" → skip MFA for 30 days
 
-2. **BYOD環境**
-   - シナリオ: 個人デバイスから業務システムアクセス
-   - 動作: IT部門が承認したデバイスのみ信頼→未承認デバイスは毎回MFA
+2. **BYOD Environment**
+   - Scenario: Access business system from personal device
+   - Action: Trust only IT-approved devices → unapproved devices require MFA every time
 
-3. **一時デバイス**
-   - シナリオ: 出張先で借りたPCからアクセス
-   - 動作: 信頼しない→毎回MFA→ログアウト後に自動削除
+3. **Temporary Device**
+   - Scenario: Access from borrowed PC on business trip
+   - Action: Don't trust → MFA every time → auto-delete after logout
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 31-33)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 31-33)
 
 ---
 
-### 5.3 同時セッション制限
+### 5.3 Concurrent Session Limits
 
-**機能概要:**
-- ユーザーごとの最大デバイス数制限
-- 新規ログイン時の最古セッション自動削除
-- 同時ログイン数の可視化
-- 管理者による制限値設定
+**Feature Overview:**
+- Maximum device limit per user
+- Auto-delete oldest session on new login
+- Concurrent login count visualization
+- Admin-configurable limit values
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +2-5ms/リクエスト（セッション数カウント） |
-| メモリ使用量 | +1-2MB（セッション管理） |
-| リクエスト処理時間 | +5-10ms（セッション取得・削除） |
-| 追加Workers呼び出し | Durable Object: SessionStore（既存、拡張） |
-| ストレージI/O | SessionStore: セッション数カウント、古いセッション削除 |
+| CPU time | +2-5ms/request (session count) |
+| Memory usage | +1-2MB (session management) |
+| Request processing time | +5-10ms (session retrieve/delete) |
+| Additional Workers calls | Durable Object: SessionStore (existing, extended) |
+| Storage I/O | SessionStore: session count, delete old sessions |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~1,500行（SessionStore拡張、制限ロジック） |
-| 依存関係 | なし（既存機能拡張） |
-| データストレージ | SessionStore: 既存データ活用 |
-| 設定 | ユーザー/グループごとの制限値（D1: 1KB/設定） |
+| Implementation code | ~1,500 lines (SessionStore extension, limit logic) |
+| Dependencies | None (extend existing features) |
+| Data storage | SessionStore: leverage existing data |
+| Configuration | Per-user/group limit values (D1: 1KB/setting) |
 
-**ユースケース例:**
-1. **アカウント共有防止**
-   - シナリオ: 動画配信サービス、同時ログイン3台まで
-   - 動作: 4台目のログイン試行→最古のセッション自動ログアウト→警告表示
+**Use Case Examples:**
+1. **Prevent Account Sharing**
+   - Scenario: Video streaming service, max 3 concurrent logins
+   - Action: 4th login attempt → auto-logout oldest session → display warning
 
-2. **ライセンス管理**
-   - シナリオ: 企業ソフトウェア、ユーザーごと2台まで
-   - 動作: 3台目でログイン試行→エラー「既に2台でログイン中」→既存セッション確認UI表示
+2. **License Management**
+   - Scenario: Enterprise software, max 2 devices per user
+   - Action: 3rd login attempt → error "Already logged in on 2 devices" → display existing session confirmation UI
 
-3. **セキュリティ強化**
-   - シナリオ: 金融機関、1ユーザー1セッションのみ
-   - 動作: 新規ログイン→既存セッション即座に無効化→「別の場所からログインされました」通知
+3. **Security Enhancement**
+   - Scenario: Financial institution, 1 session per user only
+   - Action: New login → immediately invalidate existing session → notify "Logged in from another location"
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 31-33)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 31-33)
 
 ---
 
-### 5.4 強制ログアウト
+### 5.4 Forced Logout
 
-**機能概要:**
-- 管理者による特定ユーザーの全セッション無効化
-- 一括ログアウト（全ユーザー、グループ単位）
-- セキュリティインシデント時の緊急対応
-- ログアウト理由の記録
+**Feature Overview:**
+- Admin invalidates all sessions for specific user
+- Batch logout (all users, per group)
+- Emergency response on security incident
+- Record logout reason
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +10-50ms/リクエスト（セッション数に依存） |
-| メモリ使用量 | +2-5MB（一括処理） |
-| リクエスト処理時間 | +50-500ms（ユーザー数に依存） |
-| 追加Workers呼び出し | Durable Object: SessionStore（複数） |
-| ストレージI/O | SessionStore: 全セッション削除、D1: 監査ログ書き込み |
+| CPU time | +10-50ms/request (depends on session count) |
+| Memory usage | +2-5MB (batch processing) |
+| Request processing time | +50-500ms (depends on user count) |
+| Additional Workers calls | Durable Object: SessionStore (multiple) |
+| Storage I/O | SessionStore: delete all sessions, D1: audit log write |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~2,000行（管理API、一括処理、監査） |
-| 依存関係 | なし（既存機能活用） |
-| データストレージ | D1: 強制ログアウト履歴（2KB/イベント） |
-| フロントエンド | 管理UI: ~20KB（ボタン、確認ダイアログ） |
+| Implementation code | ~2,000 lines (admin API, batch processing, audit) |
+| Dependencies | None (leverage existing features) |
+| Data storage | D1: forced logout history (2KB/event) |
+| Frontend | Admin UI: ~20KB (button, confirmation dialog) |
 
-**ユースケース例:**
-1. **アカウント侵害対応**
-   - シナリオ: ユーザーから「不正アクセスされた」報告
-   - 動作: 管理者が該当ユーザーの全セッション削除→パスワードリセット強制→調査開始
+**Use Case Examples:**
+1. **Account Compromise Response**
+   - Scenario: User reports "unauthorized access"
+   - Action: Admin deletes all sessions for user → force password reset → start investigation
 
-2. **従業員退職**
-   - シナリオ: 従業員が即日退職
-   - 動作: 管理者が退職者アカウントの全セッション無効化→アカウント無効化→監査ログ記録
+2. **Employee Termination**
+   - Scenario: Employee immediate termination
+   - Action: Admin invalidates all termination account sessions → disable account → record audit log
 
-3. **セキュリティパッチ適用**
-   - シナリオ: 重大な脆弱性発見、全ユーザー再ログイン必要
-   - 動作: 管理者が全ユーザー一括ログアウト→通知メール送信→再ログイン誘導
+3. **Security Patch Application**
+   - Scenario: Critical vulnerability discovered, all users must re-login
+   - Action: Admin batch logout all users → send notification email → guide re-login
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 31-33)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 31-33)
 
 ---
 
-## 🔄 カテゴリ6: 移行・オンボーディング
+## 🔄 Category 6: Migration & Onboarding
 
-### 6.1 既存IdPからの移行ツール
+### 6.1 Migration Tools from Existing IdP
 
-**機能概要:**
-- Auth0、Keycloak、Cognito、Oktaからのデータエクスポート
-- ユーザーデータ変換（スキーママッピング）
-- バッチインポート（数万〜数十万ユーザー対応）
-- 移行検証（データ整合性チェック）
+**Feature Overview:**
+- Auth0, Keycloak, Cognito, Okta data export
+- User data transformation (schema mapping)
+- Batch import (support tens to hundreds of thousands of users)
+- Migration verification (data integrity check)
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +100-500ms/バッチ（1,000ユーザー単位） |
-| メモリ使用量 | +50-100MB（大量データ処理） |
-| リクエスト処理時間 | 数分〜数時間（バックグラウンド処理） |
-| 追加Workers呼び出し | バッチWorker: 専用Worker（Cron Trigger） |
-| ストレージI/O | D1書き込み: 大量INSERT（5KB/ユーザー×数万） |
+| CPU time | +100-500ms/batch (1,000 user units) |
+| Memory usage | +50-100MB (large data processing) |
+| Request processing time | Minutes to hours (background processing) |
+| Additional Workers calls | Batch Worker: dedicated Worker (Cron Trigger) |
+| Storage I/O | D1 write: mass INSERT (5KB/user × tens of thousands) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~6,000行（各IdP統合、変換、バッチ処理、検証） |
-| 依存関係 | Auth0 SDK: ~50KB、AWS SDK: ~150KB、csv-parser: ~30KB |
-| データストレージ | 一時ストレージ（R2: 移行データファイル、数GB） |
-| CLI Tool | マイグレーションツール: ~2,000行（Node.js） |
+| Implementation code | ~6,000 lines (per-IdP integration, transformation, batch processing, verification) |
+| Dependencies | Auth0 SDK: ~50KB, AWS SDK: ~150KB, csv-parser: ~30KB |
+| Data storage | Temporary storage (R2: migration data files, several GB) |
+| CLI Tool | Migration tool: ~2,000 lines (Node.js) |
 
-**ユースケース例:**
-1. **Auth0からの移行**
-   - シナリオ: 料金高騰により10万ユーザーをAuthrimに移行
-   - 動作: Auth0 Management APIでユーザーエクスポート→CSV変換→Authrimバッチインポート→検証
+**Use Case Examples:**
+1. **Migration from Auth0**
+   - Scenario: Migrate 100K users to Authrim due to cost increase
+   - Action: Export users via Auth0 Management API → CSV conversion → Authrim batch import → verification
 
-2. **Keycloakからの移行**
-   - シナリオ: 自社サーバー廃止、クラウド移行
-   - 動作: KeycloakエクスポートJSON→スキーママッピング→段階的移行（10%→50%→100%）
+2. **Migration from Keycloak**
+   - Scenario: Abolish own server, move to cloud
+   - Action: Keycloak export JSON → schema mapping → staged migration (10%→50%→100%)
 
-3. **ハイブリッド運用**
-   - シナリオ: 旧システムと並行運用しながら徐々に移行
-   - 動作: 新規ユーザーはAuthrim、既存ユーザーは旧IdP→徐々にAuthrimへ移行
+3. **Hybrid Operations**
+   - Scenario: Gradual migration while running old system in parallel
+   - Action: New users on Authrim, existing users on old IdP → gradually migrate to Authrim
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 44-45)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 44-45)
 
 ---
 
-### 6.2 パスワードハッシュ移行
+### 6.2 Password Hash Migration
 
-**機能概要:**
-- bcrypt、Argon2、PBKDF2、scryptサポート
-- ハッシュパラメータ保持（rounds、salt）
-- 初回ログイン時の再ハッシュ（Authrim標準形式へ）
-- ハッシュアルゴリズム検証
+**Feature Overview:**
+- bcrypt, Argon2, PBKDF2, scrypt support
+- Maintain hash parameters (rounds, salt)
+- Re-hash on first login (to Authrim standard format)
+- Hash algorithm verification
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +50-200ms/リクエスト（bcrypt検証、コストに依存） |
-| メモリ使用量 | +5-10MB（ハッシュライブラリ） |
-| リクエスト処理時間 | +100-300ms（初回ログイン時のみ） |
-| 追加Workers呼び出し | なし（インライン処理） |
-| ストレージI/O | D1書き込み: 新ハッシュ保存（初回ログイン時） |
+| CPU time | +50-200ms/request (bcrypt verification, depends on cost) |
+| Memory usage | +5-10MB (hash libraries) |
+| Request processing time | +100-300ms (first login only) |
+| Additional Workers calls | None (inline processing) |
+| Storage I/O | D1 write: save new hash (on first login) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~2,500行（各アルゴリズム実装、移行ロジック） |
-| 依存関係 | bcryptjs: ~30KB、argon2-browser: ~200KB（WASM） |
-| データストレージ | D1: パスワードハッシュ（100-200バイト/ユーザー） |
-| ドキュメント | 移行ガイド（各IdPごとのハッシュ形式） |
+| Implementation code | ~2,500 lines (per-algorithm implementation, migration logic) |
+| Dependencies | bcryptjs: ~30KB, argon2-browser: ~200KB (WASM) |
+| Data storage | D1: password hash (100-200 bytes/user) |
+| Documentation | Migration guide (hash format per IdP) |
 
-**ユースケース例:**
-1. **Keycloak移行（bcrypt）**
-   - シナリオ: Keycloakでbcrypt（rounds=10）使用
-   - 動作: ユーザーインポート時にハッシュそのまま保存→初回ログイン時にbcrypt検証→成功したらArgon2で再ハッシュ
+**Use Case Examples:**
+1. **Keycloak Migration (bcrypt)**
+   - Scenario: Keycloak uses bcrypt (rounds=10)
+   - Action: Save hash as-is on user import → bcrypt verification on first login → re-hash with Argon2 on success
 
-2. **WordPress移行（MD5）**
-   - シナリオ: 古いWordPressサイトからの移行（MD5ハッシュ）
-   - 動作: インポート→初回ログイン時にMD5検証→強制パスワード変更要求
+2. **WordPress Migration (MD5)**
+   - Scenario: Migration from old WordPress site (MD5 hash)
+   - Action: Import → MD5 verification on first login → force password change
 
-3. **カスタムハッシュ**
-   - シナリオ: 独自実装のハッシュ関数
-   - 動作: カスタムバリデーター実装→検証成功後に標準ハッシュへ移行
+3. **Custom Hash**
+   - Scenario: Original implementation hash function
+   - Action: Implement custom validator → migrate to standard hash after successful verification
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 44-45)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 44-45)
 
 ---
 
-### 6.3 段階的移行（ハイブリッドモード）
+### 6.3 Staged Migration (Hybrid Mode)
 
-**機能概要:**
-- 旧IdPとAuthrimの並行運用
-- ユーザーごとの移行ステータス管理
-- 段階的移行計画（10%→25%→50%→100%）
-- ロールバック機能
+**Feature Overview:**
+- Parallel operation of old IdP and Authrim
+- Per-user migration status management
+- Staged migration plan (10%→25%→50%→100%)
+- Rollback function
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +5-10ms/リクエスト（移行ステータスチェック） |
-| メモリ使用量 | +2-4MB（ルーティングロジック） |
-| リクエスト処理時間 | +10-20ms（D1クエリ） |
-| 追加Workers呼び出し | 旧IdP API: 移行前ユーザーのみ |
-| ストレージI/O | D1読み取り: 移行ステータス（1KB/ユーザー） |
+| CPU time | +5-10ms/request (migration status check) |
+| Memory usage | +2-4MB (routing logic) |
+| Request processing time | +10-20ms (D1 query) |
+| Additional Workers calls | Old IdP API: pre-migration users only |
+| Storage I/O | D1 read: migration status (1KB/user) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~3,500行（ハイブリッドロジック、ルーティング、管理UI） |
-| 依存関係 | なし（既存IdP SDK活用） |
-| データストレージ | D1: 移行ステータステーブル（1KB/ユーザー） |
-| フロントエンド | 移行ダッシュボード: ~50KB |
+| Implementation code | ~3,500 lines (hybrid logic, routing, admin UI) |
+| Dependencies | None (leverage existing IdP SDK) |
+| Data storage | D1: migration status table (1KB/user) |
+| Frontend | Migration dashboard: ~50KB |
 
-**ユースケース例:**
-1. **リスク最小化移行**
-   - 週1: 内部テストユーザー10名→Authrimへ
-   - 週2: 一般ユーザー10%（1万人）→Authrimへ
-   - 週3: 25%→週4: 50%→週5: 100%
-   - 各段階で監視、問題あればロールバック
+**Use Case Examples:**
+1. **Risk Minimization Migration**
+   - Week 1: 10 internal test users → to Authrim
+   - Week 2: 10% general users (10K people) → to Authrim
+   - Week 3: 25% → Week 4: 50% → Week 5: 100%
+   - Monitor each stage, rollback if issues
 
-2. **地域別移行**
-   - フェーズ1: 北米ユーザー→Authrim
-   - フェーズ2: 欧州ユーザー→Authrim
-   - フェーズ3: APAC→Authrim
+2. **Regional Migration**
+   - Phase 1: North America users → Authrim
+   - Phase 2: Europe users → Authrim
+   - Phase 3: APAC → Authrim
 
-3. **VIPユーザー優先**
-   - シナリオ: 有料ユーザーを先に移行、無料ユーザーは後回し
-   - 動作: 有料ユーザーで検証、安定後に無料ユーザー移行
+3. **VIP User Priority**
+   - Scenario: Migrate paying users first, free users later
+   - Action: Verify with paying users, migrate free users after stabilization
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 44-45)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 44-45)
 
 ---
 
-### 6.4 データ検証ツール
+### 6.4 Data Verification Tools
 
-**機能概要:**
-- 移行前後のデータ整合性チェック
-- ユーザー数、メールアドレス、属性の一致確認
-- 差分レポート生成
-- 自動修正提案
+**Feature Overview:**
+- Pre/post-migration data integrity check
+- User count, email addresses, attribute match confirmation
+- Difference report generation
+- Automatic fix suggestions
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +10-50ms/ユーザー（比較処理） |
-| メモリ使用量 | +50-100MB（大量データ比較） |
-| リクエスト処理時間 | 数分〜数時間（バックグラウンド処理） |
-| 追加Workers呼び出し | なし（専用バッチWorker） |
-| ストレージI/O | R2読み取り: エクスポートデータ、D1読み取り: Authrimデータ |
+| CPU time | +10-50ms/user (comparison processing) |
+| Memory usage | +50-100MB (large data comparison) |
+| Request processing time | Minutes to hours (background processing) |
+| Additional Workers calls | None (dedicated batch Worker) |
+| Storage I/O | R2 read: export data, D1 read: Authrim data |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~2,500行（比較ロジック、レポート生成） |
-| 依存関係 | fast-csv: ~30KB、diff: ~20KB |
-| データストレージ | R2: 検証レポート（数MB〜数十MB） |
-| CLI Tool | 検証ツール: ~1,000行 |
+| Implementation code | ~2,500 lines (comparison logic, report generation) |
+| Dependencies | fast-csv: ~30KB, diff: ~20KB |
+| Data storage | R2: verification report (several MB to tens of MB) |
+| CLI Tool | Verification tool: ~1,000 lines |
 
-**ユースケース例:**
-1. **移行後検証**
-   - シナリオ: 10万ユーザー移行完了後
-   - 動作: 旧IdPとAuthrimのユーザーデータ比較→差分レポート生成→「98,523件一致、1,477件差分あり」
+**Use Case Examples:**
+1. **Post-migration Verification**
+   - Scenario: After 100K user migration completion
+   - Action: Compare old IdP and Authrim user data → generate difference report → "98,523 matches, 1,477 differences"
 
-2. **属性検証**
-   - シナリオ: カスタム属性の移行確認
-   - 動作: 各ユーザーの"department"属性比較→不一致リスト生成→手動修正
+2. **Attribute Verification**
+   - Scenario: Confirm custom attribute migration
+   - Action: Compare each user's "department" attribute → generate mismatch list → manual correction
 
-3. **継続的検証**
-   - シナリオ: ハイブリッド運用中の整合性監視
-   - 動作: 毎日自動検証→差分増加時にアラート
+3. **Continuous Verification**
+   - Scenario: Monitor integrity during hybrid operations
+   - Action: Auto-verify daily → alert when differences increase
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 44-45)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 44-45)
 
 ---
 
-### 6.5 マイグレーションウィザード
+### 6.5 Migration Wizard
 
-**機能概要:**
-- ステップバイステップの移行UI
-- 移行元IdP自動検出
-- 進捗バー、ログリアルタイム表示
-- エラーハンドリングとリトライ
+**Feature Overview:**
+- Step-by-step migration UI
+- Auto-detect migration source IdP
+- Progress bar, real-time log display
+- Error handling and retry
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +5-10ms/リクエスト（進捗管理） |
-| メモリ使用量 | +10-20MB（ウィザードUI） |
-| リクエスト処理時間 | +10-50ms（ステップ遷移） |
-| 追加Workers呼び出し | バックグラウンド移行Worker |
-| ストレージI/O | D1読み取り/書き込み: 移行ジョブステータス（10KB/ジョブ） |
+| CPU time | +5-10ms/request (progress management) |
+| Memory usage | +10-20MB (wizard UI) |
+| Request processing time | +10-50ms (step transition) |
+| Additional Workers calls | Background migration Worker |
+| Storage I/O | D1 read/write: migration job status (10KB/job) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~4,000行（ウィザードロジック、UI、進捗管理） |
-| 依存関係 | なし（既存UI framework） |
-| データストレージ | D1: 移行ジョブテーブル（10KB/ジョブ） |
-| フロントエンド | ウィザードUI: ~100KB（Svelte、多ステップ） |
+| Implementation code | ~4,000 lines (wizard logic, UI, progress management) |
+| Dependencies | None (existing UI framework) |
+| Data storage | D1: migration job table (10KB/job) |
+| Frontend | Wizard UI: ~100KB (Svelte, multi-step) |
 
-**ユースケース例:**
-1. **初めての移行**
-   - ステップ1: 移行元選択（Auth0/Keycloak/Cognito/Okta）
-   - ステップ2: 認証情報入力（API Key等）
-   - ステップ3: データプレビュー（100ユーザー表示）
-   - ステップ4: スキーママッピング（自動+手動調整）
-   - ステップ5: 移行実行（進捗バー、ログ表示）
-   - ステップ6: 検証レポート、完了
+**Use Case Examples:**
+1. **First Migration**
+   - Step 1: Select migration source (Auth0/Keycloak/Cognito/Okta)
+   - Step 2: Enter credentials (API Key etc.)
+   - Step 3: Data preview (display 100 users)
+   - Step 4: Schema mapping (auto + manual adjustment)
+   - Step 5: Execute migration (progress bar, log display)
+   - Step 6: Verification report, completion
 
-2. **エラーリカバリ**
-   - シナリオ: 移行中にネットワークエラー
-   - 動作: 自動リトライ→失敗したら中断点保存→「500/10,000件完了、残り9,500件」→再開ボタン
+2. **Error Recovery**
+   - Scenario: Network error during migration
+   - Action: Auto-retry → save breakpoint if failed → "500/10,000 complete, 9,500 remaining" → resume button
 
-3. **段階的移行UI**
-   - シナリオ: まず10%テスト移行
-   - 動作: ウィザードで「10%移行」選択→ランダム抽出→実行→検証→「50%移行」→...
+3. **Staged Migration UI**
+   - Scenario: First test 10% migration
+   - Action: Select "10% migration" in wizard → random extraction → execute → verify → "50% migration" → ...
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 6 (Week 44-45)
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 6 (Week 44-45)
 
 ---
 
-## ⚡ カテゴリ7: 高度な認可（Phase 7推奨）
+## ⚡ Category 7: Advanced Authorization (Phase 7 Recommended)
 
 ### 7.1 Fine-Grained Authorization (FGA)
 
-**機能概要:**
-- Zanzibar風の関係ベース認可（Google Zanzibar論文）
-- Auth0 FGA、OpenFGA、SpiceDB対応
-- リレーションシップタプル管理（user:alice, document:doc1, relation:viewer）
-- Check API（"aliceはdoc1を閲覧可能か？"）
+**Feature Overview:**
+- Zanzibar-style relationship-based authorization (Google Zanzibar paper)
+- Auth0 FGA, OpenFGA, SpiceDB support
+- Relationship tuple management (user:alice, document:doc1, relation:viewer)
+- Check API ("Can alice view doc1?")
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +10-30ms/リクエスト（グラフ探索） |
-| メモリ使用量 | +10-20MB（グラフデータ構造） |
-| リクエスト処理時間 | +20-100ms（リレーション深さに依存） |
-| 追加Workers呼び出し | FGA Worker: 1回/認可チェック |
-| ストレージI/O | D1読み取り: リレーションシップ（10-100KB/チェック、複雑さに依存） |
+| CPU time | +10-30ms/request (graph traversal) |
+| Memory usage | +10-20MB (graph data structure) |
+| Request processing time | +20-100ms (depends on relation depth) |
+| Additional Workers calls | FGA Worker: 1/authorization check |
+| Storage I/O | D1 read: relationships (10-100KB/check, depends on complexity) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~8,000行（FGAエンジン、グラフ探索、API） |
-| 依存関係 | OpenFGA SDK: ~100KB、グラフライブラリ: ~50KB |
-| データストレージ | D1: リレーションシップテーブル（1KB/タプル、数万〜数十万タプル） |
-| API | Check API、Write API、Read API、Expand API |
+| Implementation code | ~8,000 lines (FGA engine, graph traversal, API) |
+| Dependencies | OpenFGA SDK: ~100KB, graph library: ~50KB |
+| Data storage | D1: relationship table (1KB/tuple, tens to hundreds of thousands of tuples) |
+| API | Check API, Write API, Read API, Expand API |
 
-**ユースケース例:**
-1. **ドキュメント共有（Google Docs風）**
-   - シナリオ: Aliceがdoc1を作成→Bobに"viewer"権限付与→Charlieに"editor"権限
-   - クエリ: "Bobはdoc1を編集可能か？" → NO（viewerのみ）
-   - クエリ: "Charlieはdoc1を削除可能か？" → NO（ownerのみ）
+**Use Case Examples:**
+1. **Document Sharing (Google Docs style)**
+   - Scenario: Alice creates doc1 → grant Bob "viewer" permission → grant Charlie "editor" permission
+   - Query: "Can Bob edit doc1?" → NO (viewer only)
+   - Query: "Can Charlie delete doc1?" → NO (owner only)
 
-2. **組織階層**
-   - シナリオ: 部門長は配下全員のデータ閲覧可能
-   - リレーション: user:manager, org:engineering, relation:member
-   - クエリ: "Managerはエンジニア全員のタイムシート閲覧可能か？" → YES（継承）
+2. **Organization Hierarchy**
+   - Scenario: Department head can view all subordinate data
+   - Relation: user:manager, org:engineering, relation:member
+   - Query: "Can Manager view all engineer timesheets?" → YES (inheritance)
 
-3. **プロジェクト管理**
-   - シナリオ: プロジェクトメンバーはタスク編集可能、外部は閲覧のみ
-   - リレーション: user:alice, project:proj1, relation:member
-   - クエリ: "Aliceはproj1のtask5を編集可能か？" → YES（メンバー権限）
+3. **Project Management**
+   - Scenario: Project members can edit tasks, external can view only
+   - Relation: user:alice, project:proj1, relation:member
+   - Query: "Can Alice edit task5 of proj1?" → YES (member permission)
 
-**優先度:** 🟢 低（高度な機能）
-**推奨フェーズ:** Phase 7
+**Priority:** 🟢 Low (advanced feature)
+**Recommended Phase:** Phase 7
 
 ---
 
-### 7.2 ポリシーエンジン統合
+### 7.2 Policy Engine Integration
 
-**機能概要:**
-- Open Policy Agent (OPA) 統合
-- Cedar Policy Language対応（AWS発）
-- Regoポリシー実行（OPA）
-- リアルタイムポリシー評価
+**Feature Overview:**
+- Open Policy Agent (OPA) integration
+- Cedar Policy Language support (from AWS)
+- Rego policy execution (OPA)
+- Real-time policy evaluation
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +15-50ms/リクエスト（ポリシー評価、複雑さに依存） |
-| メモリ使用量 | +20-50MB（OPAランタイム、WASM） |
-| リクエスト処理時間 | +30-100ms（ポリシー実行） |
-| 追加Workers呼び出し | なし（Workers内でOPA実行） |
-| ストレージI/O | KV読み取り: ポリシー定義（10-100KB/ポリシー） |
+| CPU time | +15-50ms/request (policy evaluation, depends on complexity) |
+| Memory usage | +20-50MB (OPA runtime, WASM) |
+| Request processing time | +30-100ms (policy execution) |
+| Additional Workers calls | None (execute OPA within Workers) |
+| Storage I/O | KV read: policy definitions (10-100KB/policy) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~5,000行（OPA統合、Cedar統合、ポリシー管理） |
-| 依存関係 | OPA WASM: ~5MB、Cedar SDK: ~200KB |
-| データストレージ | KV: ポリシー（100KB/ポリシー）、D1: ポリシー履歴 |
-| ポリシー例 | Rego: 50-500行/ポリシー |
+| Implementation code | ~5,000 lines (OPA integration, Cedar integration, policy management) |
+| Dependencies | OPA WASM: ~5MB, Cedar SDK: ~200KB |
+| Data storage | KV: policies (100KB/policy), D1: policy history |
+| Policy examples | Rego: 50-500 lines/policy |
 
-**ユースケース例:**
-1. **ABAC（属性ベースアクセス制御）**
-   - ポリシー: "部門がHRかつ勤続年数3年以上なら給与データ閲覧可"
-   - 評価: user.department == "HR" && user.tenure >= 3 → ALLOW
+**Use Case Examples:**
+1. **ABAC (Attribute-Based Access Control)**
+   - Policy: "If department is HR and tenure ≥3 years, can view salary data"
+   - Evaluation: user.department == "HR" && user.tenure >= 3 → ALLOW
 
-2. **時間ベース制限**
-   - ポリシー: "平日9-18時のみ機密データアクセス可"
-   - 評価: time.now().hour >= 9 && time.now().hour < 18 && time.now().weekday < 6 → ALLOW
+2. **Time-based Restrictions**
+   - Policy: "Can access sensitive data only weekdays 9-18h"
+   - Evaluation: time.now().hour >= 9 && time.now().hour < 18 && time.now().weekday < 6 → ALLOW
 
-3. **地域制限（GDPR）**
-   - ポリシー: "EU市民データはEUリージョンからのみアクセス可"
-   - 評価: data.region == "EU" && request.ip_country in ["DE", "FR", "IT", ...] → ALLOW
+3. **Regional Restrictions (GDPR)**
+   - Policy: "EU citizen data can only be accessed from EU region"
+   - Evaluation: data.region == "EU" && request.ip_country in ["DE", "FR", "IT", ...] → ALLOW
 
-**優先度:** 🟢 低（高度な機能）
-**推奨フェーズ:** Phase 7
+**Priority:** 🟢 Low (advanced feature)
+**Recommended Phase:** Phase 7
 
 ---
 
-## 🛠️ カテゴリ8: 開発者体験強化（Phase 7推奨）
+## 🛠️ Category 8: Developer Experience Enhancement (Phase 7 Recommended)
 
-### 8.1 テストモード/サンドボックス
+### 8.1 Test Mode/Sandbox
 
-**機能概要:**
-- 本番環境と分離したテスト環境
-- テストデータ自動生成
-- テストトークン発行（test_プレフィックス）
-- テストモード表示UI
+**Feature Overview:**
+- Test environment separated from production
+- Automatic test data generation
+- Test token issuance (test_ prefix)
+- Test mode display UI
 
-**Workersの想定負荷:**
-| 指標 | 値 |
+**Expected Workers Load:**
+| Metric | Value |
 |------|-----|
-| CPU時間 | +1-2ms/リクエスト（モード判定） |
-| メモリ使用量 | +0.5-1MB（モード管理） |
-| リクエスト処理時間 | +2-5ms（フラグチェック） |
-| 追加Workers呼び出し | なし（既存Worker拡張） |
-| ストレージI/O | D1: テストデータ（本番と分離） |
+| CPU time | +1-2ms/request (mode determination) |
+| Memory usage | +0.5-1MB (mode management) |
+| Request processing time | +2-5ms (flag check) |
+| Additional Workers calls | None (extend existing Worker) |
+| Storage I/O | D1: test data (separate from production) |
 
-**想定ファイルサイズ:**
-| コンポーネント | サイズ |
+**Expected File Size:**
+| Component | Size |
 |--------------|------|
-| 実装コード | ~2,000行（モード管理、テストデータ生成） |
-| 依存関係 | faker.js: ~500KB（テストデータ生成） |
-| データストレージ | D1: テスト環境DB（本番と別） |
-| フロントエンド | テストモード表示: ~10KB（バナー） |
+| Implementation code | ~2,000 lines (mode management, test data generation) |
+| Dependencies | faker.js: ~500KB (test data generation) |
+| Data storage | D1: test environment DB (separate from production) |
+| Frontend | Test mode display: ~10KB (banner) |
 
-**ユースケース例:**
-1. **開発中のテスト**
-   - シナリオ: 新機能開発、本番データに影響を与えずテスト
-   - 動作: テストモード有効化→faker.jsで100ユーザー自動生成→機能テスト→削除
+**Use Case Examples:**
+1. **Development Testing**
+   - Scenario: Develop new features, test without affecting production data
+   - Action: Enable test mode → faker.js auto-generates 100 users → test features → delete
 
-2. **統合テスト**
-   - シナリオ: CI/CDパイプラインでE2Eテスト
-   - 動作: テストモードAPI呼び出し→自動テスト実行→テストデータ自動削除
+2. **Integration Testing**
+   - Scenario: E2E testing in CI/CD pipeline
+   - Action: Call test mode API → run automated tests → auto-delete test data
 
-3. **デモ環境**
-   - シナリオ: 営業デモ用の安全な環境
-   - 動作: テストモード+サンプルデータ→顧客にデモ→本番影響なし
+3. **Demo Environment**
+   - Scenario: Safe environment for sales demos
+   - Action: Test mode + sample data → customer demo → no production impact
 
-**優先度:** 🟡 中
-**推奨フェーズ:** Phase 7
+**Priority:** 🟡 Medium
+**Recommended Phase:** Phase 7
 
 ---
 
-## 📊 優先度マトリックス（全機能）
+## 📊 Priority Matrix (All Features)
 
-| 機能 | 優先度 | 実装難易度 | ビジネス価値 | 想定コードサイズ | 推奨フェーズ |
+| Feature | Priority | Implementation Difficulty | Business Value | Expected Code Size | Recommended Phase |
 |------|--------|------------|--------------|------------------|--------------|
-| **Bot検知・不正検知** | 🔴 高 | 中 | 高 | 3,000行 | Phase 6 Week 41-42 |
-| **詳細な監査ログ** | 🔴 高 | 低-中 | 高 | 3,500行 | Phase 6 Week 41-42 |
-| **アノマリー検知** | 🔴 高 | 高 | 高 | 4,000行 | Phase 6 Week 41-42 |
-| **脅威インテリジェンス統合** | 🔴 高 | 低 | 高 | 1,500行 | Phase 6 Week 41-42 |
-| **アダプティブMFA** | 🔴 高 | 高 | 高 | 3,000行 | Phase 6 Week 43 |
-| **デバイスフィンガープリント** | 🟡 中 | 中 | 中 | 2,000行 | Phase 6 Week 41-42 |
-| **セキュリティスコアリング** | 🟡 中 | 中 | 中 | 3,500行 | Phase 6 Week 41-42 |
-| **ステップアップ認証** | 🟡 中 | 中 | 中 | 2,500行 | Phase 6 Week 43 |
-| **外部MFA統合** | 🟡 中 | 中 | 中 | 4,500行 | Phase 6 Week 43 |
-| **SMS/音声MFA** | 🟡 中 | 低 | 中 | 2,000行 | Phase 6 Week 43 |
-| **リアルタイム監視** | 🟡 中 | 中 | 高 | 3,000行 | Phase 6 Week 41-42 |
-| **API Gateway統合** | 🟡 中 | 中 | 中 | 1,500行 | Phase 6 Week 31-33 |
-| **カスタム属性ストア** | 🟡 中 | 中 | 中 | 3,000行 | Phase 6 Week 31-33 |
-| **カスタムメール/SMS** | 🟡 中 | 低-中 | 中 | 3,500行 | Phase 6 Week 31-33 |
-| **デバイス管理ダッシュボード** | 🟡 中 | 低-中 | 中 | 2,000行 | Phase 6 Week 31-33 |
-| **デバイス信頼** | 🟡 中 | 中 | 中 | 3,000行 | Phase 6 Week 31-33 |
-| **同時セッション制限** | 🟡 中 | 低 | 中 | 1,500行 | Phase 6 Week 31-33 |
-| **強制ログアウト** | 🟡 中 | 低 | 中 | 2,000行 | Phase 6 Week 31-33 |
-| **既存IdP移行ツール** | 🟡 中 | 高 | 高 | 6,000行 | Phase 6 Week 44-45 |
-| **パスワードハッシュ移行** | 🟡 中 | 中 | 高 | 2,500行 | Phase 6 Week 44-45 |
-| **段階的移行** | 🟡 中 | 高 | 高 | 3,500行 | Phase 6 Week 44-45 |
-| **データ検証ツール** | 🟡 中 | 中 | 中 | 2,500行 | Phase 6 Week 44-45 |
-| **マイグレーションウィザード** | 🟡 中 | 中 | 高 | 4,000行 | Phase 6 Week 44-45 |
-| **カスタム認証フロー** | 🟡 中 | 高 | 中 | 5,000行 | Phase 6 Week 36-38 |
-| **SLA管理** | 🟢 低 | 中 | 中 | 2,500行 | Phase 6-7 |
-| **ヘルスチェック** | 🟢 低 | 低 | 低 | 2,000行 | Phase 7 |
-| **イベントストリーミング** | 🟢 低 | 中 | 中 | 3,000行 | Phase 7 |
-| **FGA** | 🟢 低 | 高 | 高（特定業界） | 8,000行 | Phase 7 |
-| **ポリシーエンジン** | 🟢 低 | 高 | 中 | 5,000行 | Phase 7 |
-| **テストモード** | 🟡 中 | 中 | 中 | 2,000行 | Phase 7 |
+| **Bot Detection & Fraud Detection** | 🔴 High | Medium | High | 3,000 lines | Phase 6 Week 41-42 |
+| **Detailed Audit Logs** | 🔴 High | Low-Medium | High | 3,500 lines | Phase 6 Week 41-42 |
+| **Anomaly Detection** | 🔴 High | High | High | 4,000 lines | Phase 6 Week 41-42 |
+| **Threat Intelligence Integration** | 🔴 High | Low | High | 1,500 lines | Phase 6 Week 41-42 |
+| **Adaptive MFA** | 🔴 High | High | High | 3,000 lines | Phase 6 Week 43 |
+| **Device Fingerprinting** | 🟡 Medium | Medium | Medium | 2,000 lines | Phase 6 Week 41-42 |
+| **Security Scoring** | 🟡 Medium | Medium | Medium | 3,500 lines | Phase 6 Week 41-42 |
+| **Step-up Authentication** | 🟡 Medium | Medium | Medium | 2,500 lines | Phase 6 Week 43 |
+| **External MFA Integration** | 🟡 Medium | Medium | Medium | 4,500 lines | Phase 6 Week 43 |
+| **SMS/Voice MFA** | 🟡 Medium | Low | Medium | 2,000 lines | Phase 6 Week 43 |
+| **Real-time Monitoring** | 🟡 Medium | Medium | High | 3,000 lines | Phase 6 Week 41-42 |
+| **API Gateway Integration** | 🟡 Medium | Medium | Medium | 1,500 lines | Phase 6 Week 31-33 |
+| **Custom Attribute Store** | 🟡 Medium | Medium | Medium | 3,000 lines | Phase 6 Week 31-33 |
+| **Custom Email/SMS** | 🟡 Medium | Low-Medium | Medium | 3,500 lines | Phase 6 Week 31-33 |
+| **Device Management Dashboard** | 🟡 Medium | Low-Medium | Medium | 2,000 lines | Phase 6 Week 31-33 |
+| **Device Trust** | 🟡 Medium | Medium | Medium | 3,000 lines | Phase 6 Week 31-33 |
+| **Concurrent Session Limits** | 🟡 Medium | Low | Medium | 1,500 lines | Phase 6 Week 31-33 |
+| **Forced Logout** | 🟡 Medium | Low | Medium | 2,000 lines | Phase 6 Week 31-33 |
+| **Existing IdP Migration Tools** | 🟡 Medium | High | High | 6,000 lines | Phase 6 Week 44-45 |
+| **Password Hash Migration** | 🟡 Medium | Medium | High | 2,500 lines | Phase 6 Week 44-45 |
+| **Staged Migration** | 🟡 Medium | High | High | 3,500 lines | Phase 6 Week 44-45 |
+| **Data Verification Tools** | 🟡 Medium | Medium | Medium | 2,500 lines | Phase 6 Week 44-45 |
+| **Migration Wizard** | 🟡 Medium | Medium | High | 4,000 lines | Phase 6 Week 44-45 |
+| **Custom Authentication Flow** | 🟡 Medium | High | Medium | 5,000 lines | Phase 6 Week 36-38 |
+| **SLA Management** | 🟢 Low | Medium | Medium | 2,500 lines | Phase 6-7 |
+| **Health Check** | 🟢 Low | Low | Low | 2,000 lines | Phase 7 |
+| **Event Streaming** | 🟢 Low | Medium | Medium | 3,000 lines | Phase 7 |
+| **FGA** | 🟢 Low | High | High (specific industries) | 8,000 lines | Phase 7 |
+| **Policy Engine** | 🟢 Low | High | Medium | 5,000 lines | Phase 7 |
+| **Test Mode** | 🟡 Medium | Medium | Medium | 2,000 lines | Phase 7 |
 
 ---
 
-## 📈 実装コスト見積もり
+## 📈 Implementation Cost Estimates
 
-### Phase 6追加機能の総コストサマリー
+### Phase 6 Additional Features Total Cost Summary
 
-| カテゴリ | 機能数 | 総コード行数 | 総依存関係サイズ | 想定開発期間 |
+| Category | Feature Count | Total Code Lines | Total Dependency Size | Expected Development Period |
 |---------|--------|--------------|------------------|--------------|
-| **セキュリティ強化** | 5機能 | ~16,000行 | ~600KB | 4週間 |
-| **認証方式拡張** | 4機能 | ~11,500行 | ~100KB | 2週間 |
-| **運用・モニタリング** | 4機能 | ~11,000行 | ~80KB | 3週間 |
-| **企業統合拡張** | 5機能 | ~16,000行 | ~400KB | 3週間 |
-| **セッション・デバイス** | 4機能 | ~8,500行 | ~100KB | 2週間 |
-| **移行・オンボーディング** | 5機能 | ~18,500行 | ~230KB | 2週間 |
-| **合計（Phase 6）** | **27機能** | **~81,500行** | **~1.5MB** | **16週間（4ヶ月）** |
+| **Security Enhancements** | 5 features | ~16,000 lines | ~600KB | 4 weeks |
+| **Authentication Extensions** | 4 features | ~11,500 lines | ~100KB | 2 weeks |
+| **Operations & Monitoring** | 4 features | ~11,000 lines | ~80KB | 3 weeks |
+| **Enterprise Integration** | 5 features | ~16,000 lines | ~400KB | 3 weeks |
+| **Session & Device** | 4 features | ~8,500 lines | ~100KB | 2 weeks |
+| **Migration & Onboarding** | 5 features | ~18,500 lines | ~230KB | 2 weeks |
+| **Total (Phase 6)** | **27 features** | **~81,500 lines** | **~1.5MB** | **16 weeks (4 months)** |
 
-### Phase 7追加機能
+### Phase 7 Additional Features
 
-| カテゴリ | 機能数 | 総コード行数 | 想定開発期間 |
+| Category | Feature Count | Total Code Lines | Expected Development Period |
 |---------|--------|--------------|--------------|
-| **高度な認可** | 2機能 | ~13,000行 | 4週間 |
-| **開発者体験** | 1機能 | ~2,000行 | 1週間 |
-| **その他** | 2機能 | ~5,000行 | 2週間 |
-| **合計（Phase 7）** | **5機能** | **~20,000行** | **7週間** |
+| **Advanced Authorization** | 2 features | ~13,000 lines | 4 weeks |
+| **Developer Experience** | 1 feature | ~2,000 lines | 1 week |
+| **Other** | 2 features | ~5,000 lines | 2 weeks |
+| **Total (Phase 7)** | **5 features** | **~20,000 lines** | **7 weeks** |
 
 ---
 
-## 🎯 推奨実装順序
+## 🎯 Recommended Implementation Order
 
-### Phase 6実装順序（優先度順）
+### Phase 6 Implementation Order (by priority)
 
-#### Tier 1: 必須（Week 41-43）
-1. ✅ **Bot検知・不正検知** - セキュリティの基盤
-2. ✅ **詳細な監査ログ** - コンプライアンス必須
-3. ✅ **アノマリー検知** - セキュリティ強化
-4. ✅ **脅威インテリジェンス** - パスワード保護
-5. ✅ **アダプティブMFA** - ユーザー体験とセキュリティのバランス
+#### Tier 1: Essential (Week 41-43)
+1. ✅ **Bot Detection & Fraud Detection** - Security foundation
+2. ✅ **Detailed Audit Logs** - Compliance essential
+3. ✅ **Anomaly Detection** - Security enhancement
+4. ✅ **Threat Intelligence** - Password protection
+5. ✅ **Adaptive MFA** - Balance of UX and security
 
-#### Tier 2: 重要（Week 44-48）
-6. ✅ **既存IdP移行ツール** - 顧客獲得の鍵
-7. ✅ **パスワードハッシュ移行** - 移行ツールと同時
-8. ✅ **段階的移行** - 大規模顧客向け
-9. ✅ **マイグレーションウィザード** - DX向上
-10. ✅ **リアルタイム監視** - 運用効率化
+#### Tier 2: Important (Week 44-48)
+6. ✅ **Existing IdP Migration Tools** - Key to customer acquisition
+7. ✅ **Password Hash Migration** - Simultaneous with migration tools
+8. ✅ **Staged Migration** - For large-scale customers
+9. ✅ **Migration Wizard** - DX improvement
+10. ✅ **Real-time Monitoring** - Operations efficiency
 
-#### Tier 3: あると良い（Week 49-52）
-11. **デバイスフィンガープリント** - セキュリティ補強
-12. **カスタム属性ストア** - 柔軟性向上
-13. **デバイス管理ダッシュボード** - エンドユーザー体験
-14. **外部MFA統合** - エンタープライズ要件
+#### Tier 3: Nice to Have (Week 49-52)
+11. **Device Fingerprinting** - Security reinforcement
+12. **Custom Attribute Store** - Flexibility improvement
+13. **Device Management Dashboard** - End-user experience
+14. **External MFA Integration** - Enterprise requirements
 
-#### Tier 4: オプション（Phase 7へ繰り延べ検討）
-15. **イベントストリーミング** - 大規模システム向け
-16. **FGA** - 高度な認可が必要な業界向け
-17. **SLA管理** - エンタープライズSLA契約時
-18. **テストモード** - 開発者向け
-
----
-
-## 💡 次のステップ
-
-1. **優先度確認**
-   - 上記のTier 1-4分類についてレビュー
-   - ビジネス要件に応じて順序調整
-
-2. **Phase 6ロードマップ更新**
-   - `docs/ROADMAP.md`にWeek 41-52の詳細追加
-   - マイルストーン設定
-
-3. **技術検証**
-   - 高難易度機能（FGA、OPA等）のPoC実施
-   - Cloudflare Workers制約確認
-
-4. **リソース計画**
-   - 開発期間: 4-6ヶ月
-   - コスト見積もり（外部API、依存関係ライセンス）
+#### Tier 4: Optional (Consider deferring to Phase 7)
+15. **Event Streaming** - For large-scale systems
+16. **FGA** - For industries requiring advanced authorization
+17. **SLA Management** - For enterprise SLA contracts
+18. **Test Mode** - For developers
 
 ---
 
-**最終更新:** 2025-11-19
-**ドキュメント作成者:** Claude (Anthropic)
-**レビュー状況:** 初版ドラフト
+## 💡 Next Steps
+
+1. **Priority Confirmation**
+   - Review Tier 1-4 classification above
+   - Adjust order based on business requirements
+
+2. **Phase 6 Roadmap Update**
+   - Add Week 41-52 details to `docs/ROADMAP.md`
+   - Set milestones
+
+3. **Technical Validation**
+   - Conduct PoC for high-difficulty features (FGA, OPA etc.)
+   - Confirm Cloudflare Workers constraints
+
+4. **Resource Planning**
+   - Development period: 4-6 months
+   - Cost estimates (external APIs, dependency licenses)
+
+---
+
+**Last Updated:** 2025-11-19
+**Document Creator:** Claude (Anthropic)
+**Review Status:** First Draft

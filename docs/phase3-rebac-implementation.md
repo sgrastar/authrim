@@ -1,11 +1,11 @@
-# Phase 3: ReBAC + RBAC + ABAC 実装ドキュメント
+# Phase 3: ReBAC + RBAC + ABAC Implementation Documentation
 
-## 概要
+## Overview
 
-Phase 3では、Zanzibar-liteスタイルのRelationship-Based Access Control (ReBAC)を実装しました。
-これにより、既存のRBAC（Role-Based Access Control）に加えて、より柔軟なリレーションシップベースの権限管理が可能になります。
+In Phase 3, we implemented Zanzibar-lite style Relationship-Based Access Control (ReBAC).
+This enables more flexible relationship-based permission management in addition to existing RBAC (Role-Based Access Control).
 
-## アーキテクチャ
+## Architecture
 
 ```mermaid
 graph TB
@@ -30,14 +30,14 @@ graph TB
     end
 ```
 
-## 実装コンポーネント
+## Implementation Components
 
-### 1. データベースマイグレーション
+### 1. Database Migrations
 
-#### Migration 017: relationship_closure テーブル
-- **目的**: `listObjects` / `listUsers` クエリの高速化
-- **テーブル**: `relationship_closure`
-- **特徴**: 事前計算されたトランジティブリレーションシップを格納
+#### Migration 017: relationship_closure Table
+- **Purpose**: Speed up `listObjects` / `listUsers` queries
+- **Table**: `relationship_closure`
+- **Features**: Stores pre-computed transitive relationships
 
 ```sql
 CREATE TABLE relationship_closure (
@@ -56,9 +56,9 @@ CREATE TABLE relationship_closure (
 );
 ```
 
-#### Migration 018: relation_definitions テーブル
-- **目的**: Relation DSL（union, tuple-to-userset）の定義を格納
-- **テーブル**: `relation_definitions`
+#### Migration 018: relation_definitions Table
+- **Purpose**: Store Relation DSL definitions (union, tuple-to-userset)
+- **Table**: `relation_definitions`
 
 ```sql
 CREATE TABLE relation_definitions (
@@ -73,41 +73,41 @@ CREATE TABLE relation_definitions (
 );
 ```
 
-#### Migration 019: VC/DID抽象化レイヤー
-- **目的**: 将来のVC/DIDサポートのための基盤
-- **テーブル**:
-  - `subject_identifiers`: ユーザー識別子の抽象化
-  - `verified_attributes`: 検証済み属性（空、将来のVC claims用）
-- **変更**: `relationships`テーブルに`evidence_type`、`evidence_ref`カラム追加
+#### Migration 019: VC/DID Abstraction Layer
+- **Purpose**: Foundation for future VC/DID support
+- **Tables**:
+  - `subject_identifiers`: User identifier abstraction
+  - `verified_attributes`: Verified attributes (empty, for future VC claims)
+- **Changes**: Added `evidence_type`, `evidence_ref` columns to `relationships` table
 
-### 2. ReBAC サービス
+### 2. ReBAC Service
 
-#### 主要インターフェース
+#### Main Interfaces
 
 ```typescript
 interface IReBACService {
-  // 認可チェック
+  // Authorization check
   check(request: CheckRequest): Promise<CheckResponse>;
   batchCheck(request: BatchCheckRequest): Promise<BatchCheckResponse>;
 
-  // リスト操作
+  // List operations
   listObjects(request: ListObjectsRequest): Promise<ListObjectsResponse>;
   listUsers(request: ListUsersRequest): Promise<ListUsersResponse>;
 
-  // キャッシュ管理
+  // Cache management
   invalidateCache(tenantId, objectType, objectId, relation?): Promise<void>;
   invalidateUserCache(tenantId, userId): Promise<void>;
 }
 ```
 
-#### check() の解決順序
+#### check() Resolution Order
 
-1. **Request-scoped Cache**: 同一リクエスト内の重複クエリ防止
-2. **KV Cache**: TTL 60秒のキャッシュ
-3. **Recursive CTE**: D1データベースでの再帰クエリ
+1. **Request-scoped Cache**: Prevent duplicate queries within the same request
+2. **KV Cache**: Cache with 60-second TTL
+3. **Recursive CTE**: Recursive query in D1 database
 
 ```typescript
-// 使用例
+// Usage example
 const result = await rebacService.check({
   tenant_id: 'tenant_123',
   user_id: 'user_456',
@@ -119,10 +119,10 @@ const result = await rebacService.check({
 
 ### 3. Relation DSL
 
-Phase 3では以下の式タイプをサポート:
+Phase 3 supports the following expression types:
 
 #### Direct Relation
-直接のリレーションシップタプルをマッチ
+Matches direct relationship tuples
 
 ```json
 {
@@ -132,7 +132,7 @@ Phase 3では以下の式タイプをサポート:
 ```
 
 #### Union Relation
-複数の式のOR
+OR of multiple expressions
 
 ```json
 {
@@ -146,7 +146,7 @@ Phase 3では以下の式タイプをサポート:
 ```
 
 #### Tuple-to-Userset
-関連オブジェクトからの継承
+Inheritance from related objects
 
 ```json
 {
@@ -158,10 +158,10 @@ Phase 3では以下の式タイプをサポート:
 
 ### 4. Closure Manager
 
-`listObjects` / `listUsers` クエリ用の事前計算テーブルを管理
+Manages pre-computed tables for `listObjects` / `listUsers` queries
 
 ```typescript
-// ユーザーがアクセスできるオブジェクト一覧
+// List of objects accessible to a user
 const { objectIds } = await closureManager.getObjectsForUser(
   'tenant_123',
   'user_456',
@@ -169,7 +169,7 @@ const { objectIds } = await closureManager.getObjectsForUser(
   'document'
 );
 
-// オブジェクトにアクセスできるユーザー一覧
+// List of users who can access an object
 const { userIds } = await closureManager.getUsersForObject(
   'tenant_123',
   'document',
@@ -180,54 +180,54 @@ const { userIds } = await closureManager.getUsersForObject(
 
 ### 5. KV Cache Manager
 
-KVベースのキャッシュ管理（TTL: 60秒）
+KV-based cache management (TTL: 60 seconds)
 
 ```typescript
-// キャッシュキー形式
+// Cache key format
 // rebac:check:{tenant_id}:{user_id}:{relation}:{object_type}:{object_id}
 
-// キャッシュ無効化
+// Cache invalidation
 await cacheManager.invalidateObject('tenant_123', 'document', 'doc_789');
 await cacheManager.invalidateUser('tenant_123', 'user_456');
 ```
 
-### 6. ABAC拡張（Policy Engine）
+### 6. ABAC Extension (Policy Engine)
 
-Policy Engineに属性ベースの条件を追加:
+Added attribute-based conditions to the Policy Engine:
 
 ```typescript
-// 新しい条件タイプ
+// New condition types
 type ConditionType =
-  | 'attribute_equals'   // 属性値の一致
-  | 'attribute_exists'   // 属性の存在
-  | 'attribute_in';      // 属性値がリストに含まれる
+  | 'attribute_equals'   // Attribute value match
+  | 'attribute_exists'   // Attribute existence
+  | 'attribute_in';      // Attribute value in list
 
-// 検証済み属性
+// Verified attributes
 interface VerifiedAttribute {
   name: string;
   value: string | null;
   source: string;       // 'manual' | 'vc' | 'external'
-  issuer?: string;      // VC発行者（将来用）
-  expiresAt?: number;   // 有効期限
+  issuer?: string;      // VC issuer (for future use)
+  expiresAt?: number;   // Expiration time
 }
 ```
 
-## ファイル構成
+## File Structure
 
 ```
 packages/shared/src/rebac/
-├── types.ts           # 型定義
-├── interfaces.ts      # インターフェース定義
-├── cache-manager.ts   # KVキャッシュ管理
-├── relation-parser.ts # Relation DSLパーサー
-├── rebac-service.ts   # メインサービス実装
-├── closure-manager.ts # Closure Table管理
-└── index.ts           # エクスポート
+├── types.ts           # Type definitions
+├── interfaces.ts      # Interface definitions
+├── cache-manager.ts   # KV cache management
+├── relation-parser.ts # Relation DSL parser
+├── rebac-service.ts   # Main service implementation
+├── closure-manager.ts # Closure Table management
+└── index.ts           # Exports
 
 packages/policy-core/src/
-├── types.ts           # ABAC型追加
-├── engine.ts          # ABAC条件評価追加
-└── index.ts           # 新型エクスポート追加
+├── types.ts           # ABAC type additions
+├── engine.ts          # ABAC condition evaluation additions
+└── index.ts           # New type exports added
 
 migrations/
 ├── 017_rebac_closure_table.sql
@@ -235,40 +235,40 @@ migrations/
 └── 019_vc_did_abstraction.sql
 ```
 
-## 設計上の決定
+## Design Decisions
 
-### check() でClosure Tableを使わない理由
+### Why check() Doesn't Use Closure Table
 
-| 観点 | Recursive CTE | Closure Table |
-|------|--------------|---------------|
-| 鮮度 | 常に最新 | 遅延あり |
-| 書き込みコスト | なし | 関係変更時に再計算 |
-| 読み取りコスト | 中程度 | 低い |
-| 柔軟性 | 高い | 中程度 |
+| Aspect | Recursive CTE | Closure Table |
+|--------|--------------|---------------|
+| Freshness | Always current | Has latency |
+| Write Cost | None | Recompute on relationship changes |
+| Read Cost | Moderate | Low |
+| Flexibility | High | Moderate |
 
-**結論**: `check()` はリアルタイム性が重要なため、Recursive CTE + KV Cacheを採用。
-`listObjects/listUsers` は大量データのページネーションが必要なため、Closure Tableを採用。
+**Conclusion**: `check()` uses Recursive CTE + KV Cache because real-time accuracy is critical.
+`listObjects/listUsers` uses Closure Table because pagination of large datasets is required.
 
-### Allow Only (No Deny) の理由
+### Why Allow Only (No Deny)
 
-Phase 3ではDeny効果を実装しない:
-- 複雑性の低減
-- パフォーマンスの最適化
-- MVPとして十分な機能
+Phase 3 does not implement deny effects:
+- Reduced complexity
+- Performance optimization
+- Sufficient functionality for MVP
 
-Deny効果はPhase 4+で`exclusion`式として実装予定。
+Deny effects will be implemented as `exclusion` expressions in Phase 4+.
 
-## テスト結果
+## Test Results
 
-- **総テスト数**: 957件
-- **成功率**: 100%
-- **Typecheck**: 13パッケージすべて成功
-- **Lint**: 警告なし
-- **Format**: 整形済み
+- **Total Tests**: 957
+- **Success Rate**: 100%
+- **Typecheck**: All 13 packages passed
+- **Lint**: No warnings
+- **Format**: Formatted
 
-## 使用方法
+## Usage
 
-### ReBACサービスの初期化
+### Initializing the ReBAC Service
 
 ```typescript
 import {
@@ -291,10 +291,10 @@ const rebacService = new ReBACService(
 );
 ```
 
-### 認可チェック
+### Authorization Check
 
 ```typescript
-// 単一チェック
+// Single check
 const result = await rebacService.check({
   tenant_id: 'tenant_123',
   user_id: 'user_456',
@@ -303,10 +303,10 @@ const result = await rebacService.check({
 });
 
 if (result.allowed) {
-  // アクセス許可
+  // Access permitted
 }
 
-// バッチチェック
+// Batch check
 const batchResult = await rebacService.batchCheck({
   checks: [
     { tenant_id: 't1', user_id: 'u1', relation: 'viewer', object: 'doc:d1' },
@@ -315,10 +315,10 @@ const batchResult = await rebacService.batchCheck({
 });
 ```
 
-### リスト操作
+### List Operations
 
 ```typescript
-// ユーザーがアクセスできるドキュメント一覧
+// List of documents accessible to user
 const { object_ids, next_cursor } = await rebacService.listObjects({
   tenant_id: 'tenant_123',
   user_id: 'user_456',
@@ -327,7 +327,7 @@ const { object_ids, next_cursor } = await rebacService.listObjects({
   limit: 100,
 });
 
-// ドキュメントにアクセスできるユーザー一覧
+// List of users who can access a document
 const { user_ids } = await rebacService.listUsers({
   tenant_id: 'tenant_123',
   object: 'document:doc_789',
@@ -335,8 +335,8 @@ const { user_ids } = await rebacService.listUsers({
 });
 ```
 
-## 注意事項
+## Notes
 
-1. **マイグレーション適用**: 本番環境へのデプロイ前に、マイグレーション017〜019を適用してください
-2. **KV Namespace**: `REBAC_CACHE` という名前のKV Namespaceを作成・バインドしてください
-3. **Closure Table更新**: 関係が変更された際は、`closureManager.recomputeForObject/User()` を呼び出してください
+1. **Apply Migrations**: Before deploying to production, apply migrations 017-019
+2. **KV Namespace**: Create and bind a KV Namespace named `REBAC_CACHE`
+3. **Closure Table Updates**: When relationships change, call `closureManager.recomputeForObject/User()`
