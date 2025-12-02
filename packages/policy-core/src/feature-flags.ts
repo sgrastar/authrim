@@ -26,6 +26,9 @@ export interface PolicyFeatureFlags {
 
   /** Enable custom policy rules (beyond default rules) */
   ENABLE_CUSTOM_RULES: boolean;
+
+  /** Enable SD-JWT (Selective Disclosure JWT) for ID Token issuance */
+  ENABLE_SD_JWT: boolean;
 }
 
 /**
@@ -38,6 +41,7 @@ export const DEFAULT_FLAGS: PolicyFeatureFlags = {
   ENABLE_POLICY_LOGGING: false,
   ENABLE_VERIFIED_ATTRIBUTES: false,
   ENABLE_CUSTOM_RULES: true,
+  ENABLE_SD_JWT: false,
 };
 
 /**
@@ -54,6 +58,7 @@ export const FLAG_NAMES = [
   'ENABLE_POLICY_LOGGING',
   'ENABLE_VERIFIED_ATTRIBUTES',
   'ENABLE_CUSTOM_RULES',
+  'ENABLE_SD_JWT',
 ] as const;
 
 export type FlagName = (typeof FLAG_NAMES)[number];
@@ -85,6 +90,7 @@ export function getFlagsFromEnv(env: Record<string, string | undefined>): Policy
       DEFAULT_FLAGS.ENABLE_VERIFIED_ATTRIBUTES
     ),
     ENABLE_CUSTOM_RULES: parseBool(env.ENABLE_CUSTOM_RULES, DEFAULT_FLAGS.ENABLE_CUSTOM_RULES),
+    ENABLE_SD_JWT: parseBool(env.ENABLE_SD_JWT, DEFAULT_FLAGS.ENABLE_SD_JWT),
   };
 }
 
@@ -274,6 +280,13 @@ export class FeatureFlagsManager {
    */
   async isLoggingEnabled(): Promise<boolean> {
     return this.getFlag('ENABLE_POLICY_LOGGING');
+  }
+
+  /**
+   * Check if SD-JWT is enabled
+   */
+  async isSdJwtEnabled(): Promise<boolean> {
+    return this.getFlag('ENABLE_SD_JWT');
   }
 
   /**

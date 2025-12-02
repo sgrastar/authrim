@@ -213,6 +213,16 @@ describe('Feature Flags', () => {
       const manager = createFeatureFlagsManager({ ENABLE_POLICY_LOGGING: 'true' });
       expect(await manager.isLoggingEnabled()).toBe(true);
     });
+
+    it('should check SD-JWT enabled', async () => {
+      const manager = createFeatureFlagsManager({ ENABLE_SD_JWT: 'true' });
+      expect(await manager.isSdJwtEnabled()).toBe(true);
+    });
+
+    it('should have SD-JWT disabled by default', async () => {
+      const manager = createFeatureFlagsManager({});
+      expect(await manager.isSdJwtEnabled()).toBe(false);
+    });
   });
 
   describe('getFlagSources', () => {

@@ -25,6 +25,7 @@ export * from './utils/kv';
 export * from './utils/logger';
 export * from './utils/origin-validator';
 export * from './utils/pairwise';
+export * from './utils/sd-jwt';
 export * from './utils/session-state';
 export * from './utils/tenant-context';
 export * from './utils/token-introspection';

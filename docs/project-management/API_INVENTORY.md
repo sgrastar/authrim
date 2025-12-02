@@ -21,9 +21,9 @@ This document records the current status of all API endpoints in Authrim.
 | **Auth UI** | 6 | 0 | 6 |
 | **Admin API** | 9 | 0 | 9 |
 | **Session/Logout** | 6 | 0 | 6 |
-| **Policy/ReBAC** | 7 | 0 | 7 |
+| **Policy/Flags/ReBAC** | 16 | 0 | 16 |
 | **Enterprise** | 4 | 3 | 7 |
-| **Total** | **49** | **3** | **52** |
+| **Total** | **58** | **3** | **61** |
 
 ---
 
@@ -156,18 +156,40 @@ Policy Service provides centralized access control for RBAC/ABAC/ReBAC.
 
 | Endpoint | Method | Status | Purpose |
 |----------|--------|--------|---------|
-| `/policy/health` | GET | ✅ | Health check |
+| `/policy/health` | GET | ✅ | Health check (includes feature flag status) |
 | `/policy/evaluate` | POST | ✅ | Full policy evaluation (subject, resource, action) |
 | `/policy/check-role` | POST | ✅ | Quick role check (single or multiple) |
 | `/policy/check-access` | POST | ✅ | Simplified access check |
 | `/policy/is-admin` | POST | ✅ | Admin status check |
 
+### Feature Flags Management
+
+| Endpoint | Method | Status | Purpose |
+|----------|--------|--------|---------|
+| `/policy/flags` | GET | ✅ | Get all flags with sources (kv/env/default) |
+| `/policy/flags/:name` | PUT | ✅ | Set flag override in KV |
+| `/policy/flags/:name` | DELETE | ✅ | Clear flag override (revert to env/default) |
+
+**Available Flags** (hybrid: env defaults + KV dynamic override):
+- `ENABLE_ABAC` - Attribute-Based Access Control
+- `ENABLE_REBAC` - Relationship-Based Access Control
+- `ENABLE_POLICY_LOGGING` - Detailed policy evaluation logging
+- `ENABLE_VERIFIED_ATTRIBUTES` - Verified attributes checking
+- `ENABLE_CUSTOM_RULES` - Custom policy rules
+- `ENABLE_SD_JWT` - SD-JWT for ID Token issuance
+
 ### ReBAC Endpoints (Zanzibar-style)
 
 | Endpoint | Method | Status | Purpose |
 |----------|--------|--------|---------|
-| `/api/rebac/health` | GET | ✅ | ReBAC health check |
-| `/api/rebac/check` | POST | ✅ | Relationship check (subject, relation, object) |
+| `/api/rebac/health` | GET | ✅ | ReBAC health check with status |
+| `/api/rebac/check` | POST | ✅ | Single relationship check |
+| `/api/rebac/batch-check` | POST | ✅ | Batch relationship check (max 100) |
+| `/api/rebac/list-objects` | POST | ✅ | List user's accessible objects |
+| `/api/rebac/list-users` | POST | ✅ | List users with access to object |
+| `/api/rebac/write` | POST | ✅ | Create relationship tuple |
+| `/api/rebac/tuple` | DELETE | ✅ | Delete relationship tuple |
+| `/api/rebac/invalidate` | POST | ✅ | Invalidate ReBAC cache |
 
 **Routing**:
 - Custom domain: `/policy/*` and `/api/rebac/*` routed directly to policy-service
@@ -210,11 +232,11 @@ Policy Service provides centralized access control for RBAC/ABAC/ReBAC.
 
 ### VC/DID & Access Control (Phase 7)
 
-- ReBAC Check API (Zanzibar-style)
-- JWT-SD (Selective Disclosure)
-- OpenID4VP - Verifiable Presentations API
-- OpenID4CI - Credential Issuance API
-- DID Resolver API
+- ✅ ReBAC Check API (Zanzibar-style) - Implemented
+- ✅ SD-JWT (Selective Disclosure JWT, RFC 9901) - Implemented
+- 🔜 OpenID4VP - Verifiable Presentations API
+- 🔜 OpenID4CI - Credential Issuance API
+- 🔜 DID Resolver API
 
 ### Login Console & UI (Phase 8)
 
@@ -248,6 +270,7 @@ Policy Service provides centralized access control for RBAC/ABAC/ReBAC.
 - [RFC 9126 - PAR](https://tools.ietf.org/html/rfc9126)
 - [RFC 9449 - DPoP](https://tools.ietf.org/html/rfc9449)
 - [RFC 9101 - JAR](https://tools.ietf.org/html/rfc9101)
+- [RFC 9901 - SD-JWT](https://www.rfc-editor.org/rfc/rfc9901.html)
 - [RFC 7643/7644 - SCIM 2.0](https://tools.ietf.org/html/rfc7643)
 
 ### Related Documents

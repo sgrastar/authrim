@@ -5,10 +5,57 @@ Load testing presets for Authrim, targeting home and semi-commercial use cases.
 ## Table of Contents
 
 - [Overview](#overview)
+- [Performance Benchmarks](#performance-benchmarks)
 - [Test Environment Architecture](#test-environment-architecture)
 - [Test Presets](#test-presets)
 - [Quick Start](#quick-start)
+- [Distributed Load Testing (TEST 4)](#distributed-load-testing-test-4)
 - [Detailed Documentation](#detailed-documentation)
+
+---
+
+## Performance Benchmarks
+
+> Tested with distributed load across multiple OAuth clients (realistic multi-tenant simulation)
+
+### MAU Capacity
+
+| Target MAU | Peak RPS | Clients | p95 Latency | p99 Latency | Success Rate | Token Rotation |
+|------------|----------|---------|-------------|-------------|--------------|----------------|
+| 100K       | 20 RPS   | 10      | TBD         | TBD         | TBD          | TBD            |
+| 500K       | 100 RPS  | 20      | TBD         | TBD         | TBD          | TBD            |
+| 1M         | 200 RPS  | 30      | TBD         | TBD         | TBD          | TBD            |
+| 2M         | 400 RPS  | 40      | TBD         | TBD         | TBD          | TBD            |
+
+> **Note**: Run `node scripts/generate-report.js` after load tests to update these values.
+
+### Key Metrics Explained
+
+- **Peak RPS**: Requests per second during peak load (refresh token operations)
+- **p95/p99 Latency**: 95th/99th percentile response time
+- **Success Rate**: Percentage of successful requests (>99.9% target)
+- **Token Rotation**: Successful refresh token rotation rate (>99% target)
+
+### MAU to RPS Conversion
+
+```
+RPS_peak = (MAU × DAU_Ratio × Requests_Per_DAU) / (Active_Hours × 3600) × Peak_Factor
+        ≈ MAU / 5,000
+```
+
+**Default Parameters:**
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| DAU/MAU Ratio | 20% | B2B SaaS industry standard |
+| Logins/Day | 1.5 | Business application typical |
+| Refreshes/Day | 8 | 1-hour access token assumption |
+| Requests/Login | 3.1 | authorize + token + userinfo |
+| Requests/Refresh | 1.2 | token + occasional userinfo |
+| Peak Factor | 2.0x | Industry benchmark |
+| Active Hours | 8 | Business hours |
+
+---
 
 ## Overview
 
@@ -158,6 +205,71 @@ CLOUDFLARE_API_TOKEN=your_api_token
 ls -la results/
 ```
 
+---
+
+## Distributed Load Testing (TEST 4)
+
+TEST 4 simulates realistic multi-tenant production environments by distributing load across multiple OAuth clients.
+
+### Why Distributed Testing?
+
+- **RefreshTokenRotator DO**: Sharded by `client_id` - single client testing measures worst-case scenario
+- **Production Reality**: Multiple tenants (clients) with varying load levels
+- **Realistic Benchmarks**: Weighted distribution matches real-world usage patterns
+
+### Client Distribution
+
+| Load Level | Share | Example (100 RPS) | Description |
+|------------|-------|-------------------|-------------|
+| High | 45% | 3 clients × 15 RPS | Large enterprise tenants |
+| Medium | 35% | 7 clients × 5 RPS | Mid-size business tenants |
+| Low | 20% | 10 clients × 2 RPS | Small/individual tenants |
+
+### Quick Start for TEST 4
+
+```bash
+cd load-testing/scripts
+
+# 1. Create test clients (20 clients for 100 RPS target)
+ADMIN_API_SECRET=xxx TARGET_RPS=100 node setup-test-clients.js
+
+# 2. Generate distributed seeds (refresh tokens for each client)
+ADMIN_API_SECRET=xxx TEST_DURATION=600 node generate-distributed-seeds.js
+
+# 3. Run distributed load test
+cd .. && k6 run --env MAU_PRESET=mau-500k scripts/test4-distributed-load.js
+
+# 4. Generate performance report
+node scripts/generate-report.js
+
+# 5. Cleanup (after testing)
+ADMIN_API_SECRET=xxx node scripts/cleanup-test-clients.js
+```
+
+### Available MAU Presets
+
+| Preset | MAU | Target RPS | Clients | Duration |
+|--------|-----|------------|---------|----------|
+| `mau-100k` | 100K | 20 RPS | 10 | 5 min |
+| `mau-500k` | 500K | 100 RPS | 20 | 10 min |
+| `mau-1m` | 1M | 200 RPS | 30 | 10 min |
+| `mau-2m` | 2M | 400 RPS | 40 | 10 min |
+
+### Generated Reports
+
+After running `generate-report.js`:
+
+```
+results/reports/
+├── performance-report-YYYY-MM-DD.html  # Interactive HTML with charts
+├── performance-report-YYYY-MM-DD.md    # Markdown for README
+├── performance-report-YYYY-MM-DD.csv   # Raw data export
+├── report.html                         # Latest report link
+└── summary.md                          # Latest summary link
+```
+
+---
+
 ## Directory Structure
 
 ```
@@ -171,9 +283,16 @@ load-testing/
 │   ├── test1-token-load.js            # TEST 1: /token endpoint
 │   ├── test2-refresh-storm.js         # TEST 2: Refresh Storm
 │   ├── test3-full-oidc.js             # TEST 3: Full OIDC
+│   ├── test4-distributed-load.js      # TEST 4: Distributed multi-client load
 │   ├── run-test.sh                    # Test execution helper
 │   ├── collect-metrics.sh             # Metrics collection script
-│   └── generate-seeds.js              # Seed data generation script
+│   ├── generate-seeds.js              # Seed data generation script
+│   ├── setup-test-clients.js          # Create test clients for distributed test
+│   ├── cleanup-test-clients.js        # Remove test clients after testing
+│   ├── generate-distributed-seeds.js  # Generate seeds for each client
+│   └── generate-report.js             # Generate HTML/MD/CSV reports
+├── scenarios/                         # Test scenario configurations
+│   └── mau-presets.js                 # MAU-based test presets
 ├── seeds/                             # Seed data output directory
 ├── queries/                           # GraphQL queries
 │   └── worker_stats.graphql           # Worker statistics query

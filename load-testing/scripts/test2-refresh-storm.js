@@ -23,6 +23,7 @@ const refreshRequestSuccess = new Rate('refresh_request_success');
 const tokenRotationSuccess = new Rate('token_rotation_success');
 const d1WriteErrors = new Counter('d1_write_errors');
 const familyDepthMetric = new Trend('token_family_depth');
+const serverErrors = new Counter('server_errors');
 
 // 環境変数
 const BASE_URL = __ENV.BASE_URL || 'https://conformance.authrim.com';
@@ -98,21 +99,6 @@ if (!selectedPreset) {
   throw new Error(`Invalid PRESET "${PRESET}". Use one of: ${Object.keys(PRESETS).join(', ')}`);
 }
 
-// テストオプション
-export const options = {
-  scenarios: {
-    refresh_storm: {
-      executor: 'ramping-arrival-rate',
-      startRate: selectedPreset.stages[0].target,
-      timeUnit: '1s',
-      preAllocatedVUs: selectedPreset.preAllocatedVUs,
-      maxVUs: selectedPreset.maxVUs,
-      stages: selectedPreset.stages,
-    },
-  },
-  thresholds: selectedPreset.thresholds,
-};
-
 // テストデータ: 事前生成された Refresh Token
 const refreshTokens = new SharedArray('refresh_tokens', function () {
   try {
@@ -143,10 +129,31 @@ const refreshTokens = new SharedArray('refresh_tokens', function () {
 if (!refreshTokens.length) {
   throw new Error('No refresh tokens available for test2. Aborting.');
 }
+if (refreshTokens.length < selectedPreset.maxVUs) {
+  throw new Error(
+    `Not enough refresh tokens for preset "${PRESET}". Required at least ${selectedPreset.maxVUs} (max VUs), found ${refreshTokens.length}. Increase REFRESH_COUNT or lower maxVUs.`,
+  );
+}
+
+// テストオプション
+export const options = {
+  scenarios: {
+    refresh_storm: {
+      executor: 'ramping-arrival-rate',
+      startRate: selectedPreset.stages[0].target,
+      timeUnit: '1s',
+      preAllocatedVUs: selectedPreset.preAllocatedVUs,
+      maxVUs: selectedPreset.maxVUs,
+      stages: selectedPreset.stages,
+    },
+  },
+  thresholds: selectedPreset.thresholds,
+};
 
 // VU ごとの独立した token family（VU初期化時に設定）
 let vuTokenFamily = null;
 let familyDepth = 0;
+let hasLoggedServerError = false;
 
 // Basic 認証ヘッダーの生成
 function getBasicAuthHeader() {
@@ -167,6 +174,7 @@ export function setup() {
   console.log(`   - VU ごとに独立した token family`);
   console.log(`   - すべて正常な rotation path（エラーケースなし）`);
   console.log(`   - Family depth = 1 で常に rotation`);
+  console.log(`   - Token pool: ${refreshTokens.length} (requires >= ${selectedPreset.maxVUs} for 1 token/VU)`);
 
   return {
     baseUrl: BASE_URL,
@@ -181,12 +189,18 @@ export default function (data) {
   if (!vuTokenFamily) {
     // VU ID をベースにユニークなインデックスを生成
     const vuId = __VU;
-    const tokenIndex = (vuId - 1) % refreshTokens.length;
+    const tokenIndex = vuId - 1;
+    if (tokenIndex >= refreshTokens.length) {
+      throw new Error(
+        `No refresh token available for VU ${vuId}. Token pool=${refreshTokens.length}, required=${selectedPreset.maxVUs}`,
+      );
+    }
     vuTokenFamily = {
       ...refreshTokens[tokenIndex],
       vuId: vuId,
     };
     familyDepth = 0;
+    hasLoggedServerError = false;
   }
 
   // /token リクエストのパラメータ
@@ -259,9 +273,15 @@ export default function (data) {
   }
 
   // エラーハンドリング
-  if (response.status === 500) {
+  if (response.status >= 500) {
+    serverErrors.add(1);
+    if (!hasLoggedServerError) {
+      console.error(`❌ 5xx from /token (VU ${vuTokenFamily.vuId}): status=${response.status}, body=${response.body}`);
+      hasLoggedServerError = true;
+    }
+
     // D1 書き込みエラーの可能性
-    if (response.body.includes('D1') || response.body.includes('database')) {
+    if (response.status === 500 && (response.body.includes('D1') || response.body.includes('database'))) {
       d1WriteErrors.add(1);
     }
   }
@@ -342,6 +362,7 @@ function textSummary(data, options) {
 
   // エラー統計
   summary += `${indent}❌ エラー統計:\n`;
+  summary += `${indent}  5xx 応答: ${metrics.server_errors?.values?.count || 0}\n`;
   summary += `${indent}  D1 書き込みエラー: ${metrics.d1_write_errors?.values?.count || 0}\n\n`;
 
   // 判定
