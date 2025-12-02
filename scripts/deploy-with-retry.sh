@@ -119,7 +119,7 @@ register_versions() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     # Workers that support version registration via /api/internal/version endpoint
-    local workers=("op-auth" "op-token" "op-management" "op-userinfo" "op-async" "op-discovery" "policy-service")
+    local workers=("op-auth" "op-token" "op-management" "op-userinfo" "op-async" "op-discovery" "policy-service" "op-saml")
     local success_count=0
     local fail_count=0
     local skip_count=0
@@ -282,6 +282,7 @@ PACKAGES=(
     "op-userinfo:packages/op-userinfo"
     "op-async:packages/op-async"
     "policy-service:packages/policy-service"
+    "op-saml:packages/op-saml"
     "router:packages/router"
 )
 
@@ -344,6 +345,30 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
         register_versions "$ISSUER_URL" "$ADMIN_API_SECRET"
     else
         echo "⚠️  Skipping version registration: ISSUER_URL or ADMIN_API_SECRET not found"
+    fi
+
+    # Set PUBLIC_JWK_JSON secret for op-token worker (DO bypass optimization)
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔑 Setting PUBLIC_JWK_JSON secret for op-token"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if [ -n "$ISSUER_URL" ]; then
+        echo "   Fetching JWKS from ${ISSUER_URL}/.well-known/jwks.json..."
+        JWKS=$(curl -s "${ISSUER_URL}/.well-known/jwks.json" --connect-timeout 10 --max-time 30 2>/dev/null)
+        if [ -n "$JWKS" ] && echo "$JWKS" | jq -e '.keys' > /dev/null 2>&1; then
+            echo "   Setting PUBLIC_JWK_JSON secret..."
+            echo "$JWKS" | wrangler secret put PUBLIC_JWK_JSON --name "${DEPLOY_ENV}-authrim-op-token" > /dev/null 2>&1
+            if [ $? -eq 0 ]; then
+                echo "   ✅ PUBLIC_JWK_JSON secret set successfully"
+            else
+                echo "   ⚠️  Failed to set PUBLIC_JWK_JSON secret (non-critical)"
+            fi
+        else
+            echo "   ⚠️  Could not fetch valid JWKS from ${ISSUER_URL}/.well-known/jwks.json"
+            echo "   💡 You may need to manually set PUBLIC_JWK_JSON after deployment"
+        fi
+    else
+        echo "   ⚠️  Skipping: ISSUER_URL not configured"
     fi
 
     if [ -n "$ISSUER_URL" ]; then

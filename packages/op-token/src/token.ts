@@ -22,6 +22,7 @@ import {
   createRefreshToken,
   parseToken,
   verifyToken,
+  createSDJWTIDTokenFromClaims,
 } from '@authrim/shared';
 import {
   encryptJWT,
@@ -46,9 +47,176 @@ import { extractDPoPProof, validateDPoPProof } from '@authrim/shared';
 // - Private key remains in Worker memory (same security boundary as DO)
 // - TTL limits exposure window if key is rotated
 // - kid is cached to detect rotation (new kid = cache invalidation)
+// Note: 10 minutes is still very conservative compared to industry standards
+// (Auth0/Okta cache in-memory until process restart, which can be hours)
 let cachedSigningKey: { privateKey: CryptoKey; kid: string } | null = null;
 let cachedKeyTimestamp = 0;
-const KEY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes - balances security and performance
+const KEY_CACHE_TTL = 10 * 60 * 1000; // 10 minutes - industry standard safe TTL
+
+// ===== JWKS (Public Key) Caching for Refresh Token Verification =====
+// Cache JWKS to avoid KeyManager DO hop and expensive RSA key import on every refresh token request
+//
+// ARCHITECTURE OPTIMIZATION (issue #DO-bottleneck):
+// - Priority 1: Use PUBLIC_JWK_JSON env variable if available (DO access = 0)
+// - Priority 2: Fall back to KeyManager DO if env not set
+//
+// Security considerations:
+// - Public keys only (no security risk if exposed)
+// - Short TTL ensures timely rotation detection
+// - kid mismatch triggers IMMEDIATE re-fetch (supports emergency rotation with overlap=0)
+// - Normal rotation (overlap 5-10 min) keeps old keys in JWKS during overlap period
+interface CachedJWKS {
+  keys: Map<string, CryptoKey>; // kid → CryptoKey
+  fetchedAt: number;
+  source: 'env' | 'do'; // Track where keys came from
+}
+let cachedJWKS: CachedJWKS | null = null;
+const JWKS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes - aligned with signing key cache
+
+/**
+ * Get verification key from JWKS with caching
+ *
+ * ARCHITECTURE OPTIMIZATION (DO Bottleneck Fix):
+ * 1. Priority 1: Use PUBLIC_JWK_JSON env variable (zero DO access)
+ * 2. Priority 2: Fall back to KeyManager DO only if env not configured
+ *
+ * Performance optimization: Caches imported CryptoKeys to avoid:
+ * 1. KeyManager DO hop on every refresh token request (when using DO fallback)
+ * 2. Expensive RSA key import (importJWK takes 5-7ms)
+ *
+ * Security considerations:
+ * - Public keys only (no security risk if exposed)
+ * - TTL aligned with signing key cache (5 minutes)
+ * - kid mismatch triggers IMMEDIATE re-fetch (supports emergency rotation with overlap=0)
+ * - Normal rotation (overlap 5-10 min) keeps old keys in JWKS during overlap period
+ *
+ * Emergency Rotation Support:
+ * - When kid mismatch detected, cache is invalidated immediately
+ * - If using env-based JWKS, rotation requires redeployment or env update
+ * - If using DO-based JWKS, rotation is automatic via KeyManager
+ *
+ * @param env - Environment bindings
+ * @param kid - Key ID from JWT header (optional, uses first key if not specified)
+ * @returns CryptoKey for verification
+ */
+async function getVerificationKeyFromJWKS(env: Env, kid?: string): Promise<CryptoKey> {
+  const now = Date.now();
+
+  // Check if cache is valid and contains the requested kid
+  if (cachedJWKS && now - cachedJWKS.fetchedAt < JWKS_CACHE_TTL) {
+    // If kid specified, look for it in cache
+    if (kid) {
+      const cachedKey = cachedJWKS.keys.get(kid);
+      if (cachedKey) {
+        return cachedKey;
+      }
+      // kid not in cache - EMERGENCY ROTATION detected!
+      // Immediately invalidate cache and re-fetch
+      console.warn(
+        `[JWKS] kid=${kid} not found in cache (source=${cachedJWKS.source}), forcing re-fetch (possible emergency rotation)`
+      );
+      cachedJWKS = null; // Force cache invalidation
+    } else {
+      // No kid specified, return first cached key
+      const firstKey = cachedJWKS.keys.values().next().value;
+      if (firstKey) {
+        return firstKey;
+      }
+    }
+  }
+
+  // ===== PRIORITY 1: Use PUBLIC_JWK_JSON environment variable (DO access = 0) =====
+  // This eliminates the KeyManager DO bottleneck for verification
+  if (env.PUBLIC_JWK_JSON) {
+    try {
+      const publicJwk = JSON.parse(env.PUBLIC_JWK_JSON) as { kid?: string; [key: string]: unknown };
+      const keyKid = publicJwk.kid || 'default';
+      const importedKey = (await importJWK(publicJwk, 'RS256')) as CryptoKey;
+
+      // Build single-key cache from env
+      const envKeys = new Map<string, CryptoKey>();
+      envKeys.set(keyKid, importedKey);
+
+      cachedJWKS = {
+        keys: envKeys,
+        fetchedAt: now,
+        source: 'env',
+      };
+
+      // If kid is specified and doesn't match env key, we have a problem
+      // This means rotation happened but env wasn't updated
+      if (kid && kid !== keyKid) {
+        console.warn(
+          `[JWKS] CRITICAL: Token kid=${kid} does not match env PUBLIC_JWK_JSON kid=${keyKid}. ` +
+            `Env needs update or falling back to DO.`
+        );
+        // Fall through to DO fallback below
+      } else {
+        console.log(`[JWKS] Using PUBLIC_JWK_JSON (DO access=0), kid=${keyKid}`);
+        return importedKey;
+      }
+    } catch (err) {
+      console.error('[JWKS] Failed to parse PUBLIC_JWK_JSON, falling back to KeyManager DO:', err);
+      // Fall through to DO fallback
+    }
+  }
+
+  // ===== PRIORITY 2: Fall back to KeyManager DO =====
+  // Only used when PUBLIC_JWK_JSON is not configured or doesn't match kid
+  if (!env.KEY_MANAGER) {
+    throw new Error('KEY_MANAGER binding not available and PUBLIC_JWK_JSON not configured');
+  }
+
+  console.log(`[JWKS] Fetching from KeyManager DO (kid=${kid || 'any'})`);
+
+  const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+  const keyManager = env.KEY_MANAGER.get(keyManagerId);
+  const jwksResponse = await keyManager.fetch('http://key-manager/jwks', { method: 'GET' });
+
+  if (!jwksResponse.ok) {
+    throw new Error(`Failed to fetch JWKS from KeyManager: ${jwksResponse.status}`);
+  }
+
+  const jwks = (await jwksResponse.json()) as {
+    keys: Array<{ kid?: string; [key: string]: unknown }>;
+  };
+
+  // Import all keys and build cache
+  const newKeys = new Map<string, CryptoKey>();
+  for (const jwk of jwks.keys) {
+    const keyKid = jwk.kid || 'default';
+    try {
+      const importedKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
+      newKeys.set(keyKid, importedKey);
+    } catch (err) {
+      console.error(`[JWKS] Failed to import key kid=${keyKid}:`, err);
+    }
+  }
+
+  if (newKeys.size === 0) {
+    throw new Error('No valid keys in JWKS');
+  }
+
+  // Update cache
+  cachedJWKS = {
+    keys: newKeys,
+    fetchedAt: now,
+    source: 'do',
+  };
+
+  // Return requested key or first key
+  if (kid) {
+    const requestedKey = newKeys.get(kid);
+    if (requestedKey) {
+      return requestedKey;
+    }
+    // After fetching from DO, kid still not found = token signed with revoked key
+    throw new Error(`Key not found for kid=${kid} (key may have been revoked)`);
+  }
+
+  // Return first key
+  return newKeys.values().next().value as CryptoKey;
+}
 
 /**
  * Response from AuthCodeStore Durable Object
@@ -76,17 +244,45 @@ interface AuthCodeStoreResponse {
  * Get signing key from KeyManager with caching
  * If no active key exists, generates a new one
  *
- * Performance optimization: Caches the imported CryptoKey to avoid expensive
- * RSA key import operation (5-7ms) on every request. Cache TTL is 60 seconds.
+ * Performance optimization:
+ * 1. Caches the imported CryptoKey to avoid expensive RSA key import (5-7ms)
+ * 2. Uses kid mismatch trigger: Only fetches from DO when:
+ *    - No cache exists (cold start)
+ *    - TTL expired (safety refresh)
+ *    - kid mismatch (key rotation detected from incoming token)
+ *
+ * This dramatically reduces DO access under high load where many isolates
+ * start simultaneously - each isolate only needs ONE initial DO call,
+ * then serves from cache until TTL expires or key rotates.
+ *
+ * @param env - Environment bindings
+ * @param expectedKid - Optional kid from incoming token. If provided and matches cache, skip TTL check.
  */
 async function getSigningKeyFromKeyManager(
-  env: Env
+  env: Env,
+  expectedKid?: string
 ): Promise<{ privateKey: CryptoKey; kid: string }> {
   const now = Date.now();
 
-  // Check cache first (cache hit = avoid KeyManager DO call + RSA import)
-  if (cachedSigningKey && now - cachedKeyTimestamp < KEY_CACHE_TTL) {
-    return cachedSigningKey;
+  // Check cache with kid mismatch logic
+  if (cachedSigningKey) {
+    const ttlValid = now - cachedKeyTimestamp < KEY_CACHE_TTL;
+
+    // Case 1: expectedKid provided and matches cache → return immediately (skip TTL check)
+    // This is the "kid mismatch trigger" pattern - if the incoming token's kid matches
+    // our cached key, we know the cache is still valid for signing responses
+    if (expectedKid && cachedSigningKey.kid === expectedKid) {
+      return cachedSigningKey;
+    }
+
+    // Case 2: No expectedKid but TTL valid → return from cache
+    if (!expectedKid && ttlValid) {
+      return cachedSigningKey;
+    }
+
+    // Case 3: expectedKid provided but doesn't match → need to fetch new key (key rotation)
+    // Case 4: TTL expired → need to refresh cache
+    // Both cases fall through to fetch from DO
   }
 
   // Cache miss: fetch from KeyManager
@@ -733,16 +929,40 @@ async function handleAuthorizationCodeGrant(
 
   let idToken: string;
   try {
-    // For Authorization Code Flow, ID token should only contain standard claims
-    // Scope-based claims (profile, email) are returned from UserInfo endpoint
-    idToken = await createIDToken(
-      idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-      privateKey,
-      keyId,
-      expiresIn
-    );
+    // Check if client requests SD-JWT ID Token (RFC 9901)
+    const useSDJWT =
+      (clientMetadata as any).id_token_signed_response_type === 'sd-jwt' &&
+      c.env.ENABLE_SD_JWT === 'true';
+
+    if (useSDJWT) {
+      // Create SD-JWT ID Token with selective disclosure
+      const selectiveClaims = (clientMetadata as any).sd_jwt_selective_claims || [
+        'email',
+        'phone_number',
+        'address',
+        'birthdate',
+      ];
+      idToken = await createSDJWTIDTokenFromClaims(
+        idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+        privateKey,
+        keyId,
+        expiresIn,
+        selectiveClaims
+      );
+      console.log('[SD-JWT] Created SD-JWT ID Token for client:', client_id);
+    } else {
+      // For Authorization Code Flow, ID token should only contain standard claims
+      // Scope-based claims (profile, email) are returned from UserInfo endpoint
+      idToken = await createIDToken(
+        idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+        privateKey,
+        keyId,
+        expiresIn
+      );
+    }
 
     // JWE: Check if client requires ID token encryption (RFC 7516)
+    // Note: SD-JWT can also be encrypted (nested: SD-JWT inside JWE)
     // Note: clientMetadata was already fetched during client authentication above
     if (isIDTokenEncryptionRequired(clientMetadata)) {
       const alg = clientMetadata.id_token_encrypted_response_alg as string;
@@ -1113,9 +1333,10 @@ async function handleRefreshTokenGrant(
     );
   }
 
-  // Load public key for verification
-  // Decode JWT header to get kid (Key ID)
-  let publicKey: CryptoKey | null = null;
+  // Load public key for verification using cached JWKS
+  // Extract kid from JWT header for key lookup
+  let publicKey: CryptoKey;
+  let refreshTokenKid: string | undefined;
   try {
     const parts = refreshTokenValue.split('.');
     if (parts.length !== 3) {
@@ -1124,61 +1345,12 @@ async function handleRefreshTokenGrant(
     const headerBase64url = parts[0];
     const headerBase64 = headerBase64url.replace(/-/g, '+').replace(/_/g, '/');
     const headerJson = JSON.parse(atob(headerBase64)) as { kid?: string; alg?: string };
-    const kid = headerJson.kid;
+    refreshTokenKid = headerJson.kid;
 
-    // Fetch JWKS from KeyManager DO
-    if (!c.env.KEY_MANAGER) {
-      console.error('KEY_MANAGER binding not available');
-      c.header('Cache-Control', 'no-store');
-      c.header('Pragma', 'no-cache');
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'KeyManager not configured',
-        },
-        500
-      );
-    }
-
-    const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
-    const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-    const jwksResponse = await keyManager.fetch('http://key-manager/jwks', { method: 'GET' });
-
-    if (!jwksResponse.ok) {
-      console.error('Failed to fetch JWKS from KeyManager:', jwksResponse.status);
-      c.header('Cache-Control', 'no-store');
-      c.header('Pragma', 'no-cache');
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Failed to fetch verification keys',
-        },
-        500
-      );
-    }
-
-    const jwks = (await jwksResponse.json()) as {
-      keys: Array<{ kid?: string; [key: string]: unknown }>;
-    };
-    // Find key by kid
-    const jwk = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
-
-    if (!jwk) {
-      console.error(`No matching public key found for kid: ${kid}`);
-      c.header('Cache-Control', 'no-store');
-      c.header('Pragma', 'no-cache');
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Verification key not found',
-        },
-        500
-      );
-    }
-
-    publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
+    // Use cached JWKS for performance (avoids KeyManager DO hop + RSA import on every request)
+    publicKey = await getVerificationKeyFromJWKS(c.env, refreshTokenKid);
   } catch (err) {
-    console.error('Failed to import public key:', err);
+    console.error('Failed to load verification key:', err);
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json(
@@ -1229,11 +1401,13 @@ async function handleRefreshTokenGrant(
   }
 
   // Load private key for signing new tokens from KeyManager
+  // Pass the incoming token's kid as expectedKid for cache optimization:
+  // If the cache has a key with matching kid, it can skip TTL check (kid mismatch trigger)
   let privateKey: CryptoKey;
   let keyId: string;
 
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env);
+    const signingKey = await getSigningKeyFromKeyManager(c.env, refreshTokenKid);
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -1346,7 +1520,28 @@ async function handleRefreshTokenGrant(
       ...idTokenRBACClaims,
     };
 
-    idToken = await createIDToken(idTokenClaims, privateKey, keyId, expiresIn);
+    // Check if client requests SD-JWT ID Token (RFC 9901)
+    const useSDJWT =
+      (clientMetadata as any).id_token_signed_response_type === 'sd-jwt' &&
+      c.env.ENABLE_SD_JWT === 'true';
+
+    if (useSDJWT) {
+      const selectiveClaims = (clientMetadata as any).sd_jwt_selective_claims || [
+        'email',
+        'phone_number',
+        'address',
+        'birthdate',
+      ];
+      idToken = await createSDJWTIDTokenFromClaims(
+        idTokenClaims,
+        privateKey,
+        keyId,
+        expiresIn,
+        selectiveClaims
+      );
+    } else {
+      idToken = await createIDToken(idTokenClaims, privateKey, keyId, expiresIn);
+    }
   } catch (error) {
     console.error('Failed to create ID token:', error);
     c.header('Cache-Control', 'no-store');

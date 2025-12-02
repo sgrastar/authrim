@@ -53,6 +53,45 @@ export async function createIDToken(
 }
 
 /**
+ * Create SD-JWT ID Token (Selective Disclosure JWT)
+ *
+ * Creates an ID Token in SD-JWT format per RFC 9901.
+ * Sensitive claims (email, phone_number, address, birthdate by default)
+ * are made selectively disclosable.
+ *
+ * @param claims - ID token claims (some will be made selective)
+ * @param privateKey - Private key for signing
+ * @param kid - Key ID
+ * @param expiresIn - Token expiration time in seconds (default: 3600)
+ * @param selectiveClaims - Claims to make selectively disclosable
+ * @returns Promise<string> - SD-JWT combined string (JWT~disclosure1~...~)
+ */
+export async function createSDJWTIDTokenFromClaims(
+  claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
+  privateKey: CryptoKey,
+  kid: string,
+  expiresIn: number = 3600,
+  selectiveClaims: string[] = ['email', 'phone_number', 'address', 'birthdate']
+): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+
+  // Import SD-JWT functions
+  const { createSDJWTIDToken } = await import('./sd-jwt');
+
+  // Add iat and exp to claims
+  const fullClaims = {
+    ...claims,
+    iat: now,
+    exp: now + expiresIn,
+  };
+
+  // Create SD-JWT
+  const sdJwt = await createSDJWTIDToken(fullClaims, privateKey, kid, selectiveClaims);
+
+  return sdJwt.combined;
+}
+
+/**
  * Create Access Token (signed JWT)
  *
  * @param claims - Access token claims

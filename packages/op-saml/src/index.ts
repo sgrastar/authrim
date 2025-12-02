@@ -28,6 +28,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '@authrim/shared';
+import { versionCheckMiddleware } from '@authrim/shared/middleware/version-check';
 
 // Import handlers (to be implemented)
 import { handleIdPMetadata } from './idp/metadata';
@@ -61,6 +62,9 @@ app.use(
     credentials: true,
   })
 );
+
+// Version check middleware - ensures consistent code version across Cloudflare PoPs
+app.use('*', versionCheckMiddleware('op-saml'));
 
 // Health check
 app.get('/saml/health', (c) => {
