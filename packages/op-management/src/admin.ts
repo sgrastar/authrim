@@ -2176,6 +2176,10 @@ export async function adminSigningKeyGetHandler(c: Context<{ Bindings: Env }>) {
  * This allows load testing scripts to generate tokens locally and register
  * them with the token rotation system.
  *
+ * IMPORTANT: The token's jti (JWT ID) is extracted and used as the currentToken
+ * in RefreshTokenRotator, matching how op-token handles tokens. This ensures
+ * that token rotation works correctly when the token is later refreshed.
+ *
  * Request body:
  * {
  *   "token": "eyJ...", // JWT refresh token
@@ -2207,11 +2211,55 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // Extract jti from JWT token
+    // JWT format: header.payload.signature
+    // We need to decode the payload to get the jti
+    let jti: string;
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Invalid JWT format',
+          },
+          400
+        );
+      }
+
+      // Decode base64url payload
+      const payloadBase64 = parts[1];
+      const payloadJson = atob(payloadBase64.replace(/-/g, '+').replace(/_/g, '/'));
+      const payload = JSON.parse(payloadJson) as { jti?: string };
+
+      if (!payload.jti) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'JWT must contain a jti claim',
+          },
+          400
+        );
+      }
+
+      jti = payload.jti;
+    } catch (parseError) {
+      console.error('Failed to parse JWT:', parseError);
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Failed to parse JWT token',
+        },
+        400
+      );
+    }
+
     // Get RefreshTokenRotator DO (uses clientId, matching op-token pattern)
     const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(clientId);
     const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
 
-    // Create token family
+    // Create token family using jti as the currentToken
+    // This matches how op-token registers tokens: it uses jti for lookup
     const response = await rotator.fetch(
       new Request('https://refresh-token-rotator/family', {
         method: 'POST',
@@ -2219,7 +2267,7 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          token,
+          token: jti, // Use jti instead of full JWT
           userId,
           clientId,
           scope,

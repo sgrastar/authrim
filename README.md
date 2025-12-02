@@ -74,7 +74,7 @@ Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 
 ## Current Status
 
-### Phase 6: Enterprise Features (8/10 Complete)
+### Phase 6: Enterprise Features (9/10 Complete)
 
 **Latest Achievements (Nov-Dec 2025):**
 - ✅ **Device Flow (RFC 8628)** - Smart TV, CLI, IoT authentication
@@ -85,10 +85,10 @@ Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 - ✅ **SCIM 2.0 (RFC 7643/7644)** - User/Group provisioning
 - ✅ **JAR (RFC 9101)** - JWT-Secured Authorization Requests
 - ✅ **JARM** - JWT-Secured Authorization Response Mode
+- ✅ **SAML 2.0** - IdP & SP with SSO/SLO, HTTP-POST/Redirect bindings
 - ✅ **Policy Service** - RBAC/ABAC engine (84 tests)
 
 **Remaining:**
-- SAML 2.0 Bridge
 - LDAP/AD Integration
 
 ### Phase Overview

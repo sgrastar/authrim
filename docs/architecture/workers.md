@@ -35,6 +35,14 @@ graph TB
             subgraph Management["op-management/"]
                 M_Desc["Management Endpoints Worker<br/>register, introspect, revoke"]
             end
+
+            subgraph Async["op-async/"]
+                AS_Desc["Async Flows Worker<br/>Device Flow, CIBA"]
+            end
+
+            subgraph SAML["op-saml/"]
+                SAML_Desc["SAML 2.0 Worker<br/>IdP, SP endpoints"]
+            end
         end
 
         Config["pnpm-workspace.yaml<br/>turbo.json<br/>package.json"]
@@ -45,6 +53,8 @@ graph TB
     Shared --> Token
     Shared --> UserInfo
     Shared --> Management
+    Shared --> Async
+    Shared --> SAML
 ```
 
 ## 🎯 Purpose of Worker Partitioning
@@ -75,6 +85,8 @@ Each Worker bundles independently → Eliminates unnecessary dependencies
 | **op-token** | `POST /token` | Issue tokens<br>Code exchange<br>refresh_token<br>Client authentication | ~250-300KB |
 | **op-userinfo** | `GET/POST /userinfo` | Return user claims<br>Access token verification | ~80-100KB |
 | **op-management** | `POST /register`<br>`POST /introspect`<br>`POST /revoke` | Client management<br>Token verification<br>Token revocation | ~180-220KB |
+| **op-async** | `POST /device_authorization`<br>`GET /device`<br>`POST /bc-authorize` | Device Flow (RFC 8628)<br>CIBA Flow | ~150-200KB |
+| **op-saml** | `/saml/idp/*`<br>`/saml/sp/*` | SAML 2.0 IdP/SP<br>SSO, SLO, Metadata | ~200-250KB |
 
 ## 🔧 Build & Development
 

@@ -1,8 +1,8 @@
 # Durable Objects Architecture 🔷
 
-**Last Updated**: 2025-11-13
-**Status**: Phase 5 Implementation
-**Version**: 2.0.0
+**Last Updated**: 2025-12-02
+**Status**: Phase 6 Implementation
+**Version**: 2.1.0
 
 ---
 
@@ -23,6 +23,9 @@ Authrim uses Cloudflare Durable Objects for managing **strong consistency requir
 | **SessionStore** | Active session state management | Phase 5 | ✅ Implemented |
 | **AuthorizationCodeStore** | One-time authorization codes | Phase 5 | ✅ Implemented |
 | **RefreshTokenRotator** | Atomic refresh token rotation | Phase 5 | ✅ Implemented |
+| **DeviceCodeStore** | Device Flow code management | Phase 5 | ✅ Implemented |
+| **CIBARequestStore** | CIBA authentication requests | Phase 5 | ✅ Implemented |
+| **SAMLRequestStore** | SAML 2.0 request state management | Phase 6 | ✅ Implemented |
 
 ### Architecture Diagram
 

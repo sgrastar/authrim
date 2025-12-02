@@ -14,7 +14,7 @@ timeline
     section 2025
         Nov-Dec : ✅ P1-P5 Complete
     section 2026
-        Q1-Q2 : ⏳ P6 Enterprise (8/10 Complete)
+        Q1-Q2 : ⏳ P6 Enterprise (9/10 Complete)
         Q3-Q4 : 🔜 P7 VC/DID & Access Control
     section 2027
         Q1 : 🔜 P8 Login Console & UI
@@ -25,7 +25,7 @@ timeline
 
 **Legend:**
 - ✅ Complete (Phases 1-5)
-- ⏳ In Progress (Phase 6: 8/10 features complete)
+- ⏳ In Progress (Phase 6: 9/10 features complete)
 - 🔜 Planned (Phases 7-12)
 
 ---
@@ -39,7 +39,7 @@ timeline
 | **M3: Conformance** | 2025-11-12 | ✅ Complete | Basic OP 78.95%, Config OP 100%, Form Post 84.21% |
 | **M4: Extensions** | 2025-11-12 | ✅ Complete | PAR, DPoP, Pairwise, Token Management |
 | **M5: UI/UX** | 2025-11-18 | ✅ Complete | SvelteKit Frontend, Admin Dashboard, 15+ pages |
-| **M6: Enterprise** | 2026-Q2 | ⏳ 8/10 | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer |
+| **M6: Enterprise** | 2026-Q2 | ⏳ 9/10 | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer, SAML 2.0 |
 | **M7: VC/DID** | 2026-Q4 | 🔜 Planned | RBAC/ABAC/ReBAC, JWT-SD, OpenID4VP/CI |
 | **M8: Console** | 2027-Q1 | 🔜 Planned | Social Login, Admin Console, UI Customization |
 | **M9: SDK** | 2027-Q2 | 🔜 Planned | WebSDK, API Documentation |
@@ -120,7 +120,7 @@ timeline
 
 ---
 
-## Phase 6: Enterprise Features ⏳ IN PROGRESS (8/10 Complete)
+## Phase 6: Enterprise Features ⏳ IN PROGRESS (9/10 Complete)
 
 **Timeline:** Jun 1 - Oct 31, 2026
 
@@ -138,12 +138,12 @@ timeline
 | SCIM 2.0 | RFC 7643/7644 | ✅ Complete | Nov 25, 2025 |
 | JAR | RFC 9101 | ✅ Complete | Nov 25, 2025 |
 | JARM | OIDC JARM | ✅ Complete | Nov 25, 2025 |
+| SAML 2.0 | SAML 2.0 IdP/SP | ✅ Complete | Dec 02, 2025 |
 
-### Remaining Features (2/10)
+### Remaining Features (1/10)
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| SAML 2.0 Bridge | OIDC ↔ SAML 2.0 conversion | 🔜 Planned |
 | LDAP/AD Integration | Enterprise directory integration | 🔜 Planned |
 
 > **Note:** Social Login has been moved to Phase 8 (Login Console & UI)
@@ -284,7 +284,7 @@ timeline
 
 | Metric | Target | Actual |
 |--------|--------|--------|
-| Enterprise features | 10 | 8/10 (80%) |
+| Enterprise features | 10 | 9/10 (90%) |
 | Device Flow tests | 50+ | 70+ ✅ |
 | CIBA modes | 3 | 3 (poll, ping, push) ✅ |
 | SCIM endpoints | 4 | 4 (Users + Groups CRUD) ✅ |
@@ -328,11 +328,12 @@ By 2027, Authrim will be:
 | 2025-11-25 | Phase 6: 8/11 features complete |
 | 2025-11-29 | Documentation restructure |
 | 2025-12-02 | Major roadmap restructure: Phase 7-12 redefined, SaaS removed, Policy Service added |
+| 2025-12-02 | SAML 2.0 complete (IdP/SP with SSO/SLO, HTTP-POST/Redirect bindings) |
 
 ---
 
 > **Last Update:** 2025-12-02
 >
-> **Current Status:** Phase 6 (8/10 Enterprise Features Complete)
+> **Current Status:** Phase 6 (9/10 Enterprise Features Complete)
 >
 > **Authrim** - Building the future of identity infrastructure, one phase at a time.

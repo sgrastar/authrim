@@ -1,7 +1,7 @@
 # Authrim API Endpoints List
 
-**Last Updated**: 2025-11-30
-**Total Endpoints**: 63
+**Last Updated**: 2025-12-02
+**Total Endpoints**: 75
 
 This document provides a concise list of all available API endpoints in Authrim OIDC Provider.
 
@@ -191,6 +191,40 @@ Internal service for policy evaluation (service-to-service communication).
 
 ---
 
+## SAML 2.0
+
+### IdP Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/saml/idp/metadata` | IdP metadata document |
+| GET, POST | `/saml/idp/sso` | Single Sign-On service |
+| GET, POST | `/saml/idp/slo` | Single Logout service |
+| POST | `/saml/idp/artifact` | Artifact resolution service (SOAP) |
+
+### SP Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/saml/sp/metadata` | SP metadata document |
+| POST | `/saml/sp/acs` | Assertion Consumer Service |
+| GET, POST | `/saml/sp/slo` | Single Logout service |
+| GET | `/saml/sp/init` | SP-initiated SSO start |
+
+### Admin (SAML Providers)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/saml/providers` | List SAML providers |
+| POST | `/api/admin/saml/providers` | Register new provider |
+| GET | `/api/admin/saml/providers/:id` | Get provider details |
+| PUT | `/api/admin/saml/providers/:id` | Update provider |
+| DELETE | `/api/admin/saml/providers/:id` | Delete provider |
+
+**Documentation**: See [SAML 2.0 Guide](../features/saml.md) for comprehensive documentation.
+
+---
+
 ## Health Check
 
 | Method | Endpoint | Description |
@@ -235,3 +269,5 @@ For comprehensive API documentation including request/response examples, error c
 - **RFC 9126**: OAuth 2.0 Pushed Authorization Requests
 - **RFC 8725**: JSON Web Token Best Current Practices
 - **WebAuthn Level 2**: https://www.w3.org/TR/webauthn-2/
+- **SAML 2.0 Core**: https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+- **SAML 2.0 Bindings**: https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf

@@ -15,6 +15,7 @@ interface Env {
   OP_USERINFO: Fetcher;
   OP_MANAGEMENT: Fetcher;
   OP_ASYNC: Fetcher;
+  OP_SAML: Fetcher;
 }
 
 // Create Hono app with Cloudflare Workers types
@@ -271,6 +272,17 @@ app.get('/api/avatars/*', async (c) => {
 app.all('/scim/v2/*', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+/**
+ * SAML 2.0 endpoints - Route to OP_SAML worker
+ * - /saml/idp/* - IdP endpoints (metadata, SSO, SLO, IdP-initiated)
+ * - /saml/sp/* - SP endpoints (metadata, ACS, login, SLO)
+ * - /saml/admin/* - Admin API for SAML provider management
+ */
+app.all('/saml/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_SAML.fetch(request);
 });
 
 // 404 handler

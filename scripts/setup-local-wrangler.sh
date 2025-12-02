@@ -440,6 +440,43 @@ name = "VERSION_MANAGER"
 class_name = "VersionManager"
 script_name = "${DEPLOY_ENV}-authrim-shared"'
 
+# Generate wrangler.toml for op-async (Device Flow / CIBA)
+generate_wrangler_toml "op-async" 8793 '' '[[durable_objects.bindings]]
+name = "DEVICE_CODE_STORE"
+class_name = "DeviceCodeStore"
+script_name = "${DEPLOY_ENV}-authrim-shared"
+
+[[durable_objects.bindings]]
+name = "CIBA_REQUEST_STORE"
+class_name = "CIBARequestStore"
+script_name = "${DEPLOY_ENV}-authrim-shared"
+
+[[durable_objects.bindings]]
+name = "USER_CODE_RATE_LIMITER"
+class_name = "RateLimiterCounter"
+script_name = "${DEPLOY_ENV}-authrim-shared"'
+
+# Generate wrangler.toml for op-saml (SAML 2.0)
+generate_wrangler_toml "op-saml" 8794 '' '[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "${DEPLOY_ENV}-authrim-shared"
+
+[[durable_objects.bindings]]
+name = "SESSION_STORE"
+class_name = "SessionStore"
+script_name = "${DEPLOY_ENV}-authrim-shared"
+
+[[durable_objects.bindings]]
+name = "SAML_REQUEST_STORE"
+class_name = "SAMLRequestStore"
+script_name = "${DEPLOY_ENV}-authrim-shared"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+script_name = "${DEPLOY_ENV}-authrim-shared"'
+
 # Generate wrangler.toml for router (with Service Bindings)
 echo "  ✅ router/wrangler.toml (with Service Bindings)"
 cat > packages/router/wrangler.toml << 'ROUTER_TOML_EOF'
@@ -468,6 +505,14 @@ service = "${DEPLOY_ENV}-authrim-op-userinfo"
 [[services]]
 binding = "OP_MANAGEMENT"
 service = "${DEPLOY_ENV}-authrim-op-management"
+
+[[services]]
+binding = "OP_ASYNC"
+service = "${DEPLOY_ENV}-authrim-op-async"
+
+[[services]]
+binding = "OP_SAML"
+service = "${DEPLOY_ENV}-authrim-op-saml"
 
 # Development configuration
 [dev]

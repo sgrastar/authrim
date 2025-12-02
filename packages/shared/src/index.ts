@@ -5,6 +5,7 @@ export * from './types/oidc';
 export * from './types/admin';
 export * from './types/rbac';
 export * from './types/consent';
+export * from './types/saml';
 
 // Utils
 export * from './utils/audit-log';
@@ -49,3 +50,4 @@ export { ChallengeStore } from './durable-objects/ChallengeStore';
 export { DeviceCodeStore } from './durable-objects/DeviceCodeStore';
 export { CIBARequestStore } from './durable-objects/CIBARequestStore';
 export { VersionManager } from './durable-objects/VersionManager';
+export { SAMLRequestStore } from './durable-objects/SAMLRequestStore';

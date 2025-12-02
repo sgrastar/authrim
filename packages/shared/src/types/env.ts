@@ -34,6 +34,7 @@ export interface Env {
   DEVICE_CODE_STORE: DurableObjectNamespace; // RFC 8628: Device Authorization Grant
   CIBA_REQUEST_STORE: DurableObjectNamespace; // OpenID Connect CIBA Flow
   VERSION_MANAGER: DurableObjectNamespace; // Worker bundle version management
+  SAML_REQUEST_STORE: DurableObjectNamespace; // SAML 2.0 request/artifact store
 
   // Environment Variables
   ISSUER_URL: string;

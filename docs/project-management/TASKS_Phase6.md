@@ -1,7 +1,7 @@
 # Phase 6: Enterprise Features
 
 **Timeline:** Jun 1 - Oct 31, 2026
-**Status:** ⏳ 8/10 Complete (80%)
+**Status:** ⏳ 9/10 Complete (90%)
 
 ---
 
@@ -11,7 +11,7 @@ Phase 6 focuses on enterprise-grade authentication flows and integrations requir
 
 ---
 
-## Completed Features (8/10)
+## Completed Features (9/10)
 
 ### Device Flow (RFC 8628) ✅ Nov 21, 2025
 
@@ -100,22 +100,32 @@ Phase 6 focuses on enterprise-grade authentication flows and integrations requir
 - [x] Response signing
 - [x] Authorization endpoint integration
 
+### SAML 2.0 ✅ Dec 02, 2025
+
+SAML 2.0 IdP and SP implementation:
+
+- [x] IdP Single Sign-On (SSO) endpoint (`/saml/idp/sso`)
+- [x] IdP metadata endpoint (`/saml/idp/metadata`)
+- [x] SP Assertion Consumer Service (`/saml/sp/acs`)
+- [x] SP metadata endpoint (`/saml/sp/metadata`)
+- [x] SP-initiated SSO (`/saml/sp/init`)
+- [x] Single Logout (SLO) for IdP (`/saml/idp/slo`)
+- [x] Single Logout (SLO) for SP (`/saml/sp/slo`)
+- [x] HTTP-POST binding
+- [x] HTTP-Redirect binding (Deflate + Base64)
+- [x] XML Signature (RSA-SHA256) with xml-crypto
+- [x] Signature verification
+- [x] SAML assertion generation
+- [x] NameID formats (email, persistent, transient)
+- [x] Attribute mapping
+- [x] SAMLRequestStore Durable Object for replay protection
+- [x] JIT user provisioning
+- [x] Admin API for provider CRUD
+- [x] Unit tests (22 tests)
+
 ---
 
-## Remaining Features (2/10)
-
-### SAML 2.0 Bridge 🔜
-
-OIDC to SAML 2.0 conversion:
-
-- [ ] SAML assertion generation
-- [ ] SAML metadata endpoint
-- [ ] Signature (RSA-SHA256)
-- [ ] ACS (Assertion Consumer Service) handling
-- [ ] SP metadata import
-- [ ] IdP-initiated SSO
-- [ ] SP-initiated SSO
-- [ ] Single Logout (SLO)
+## Remaining Features (1/10)
 
 ### LDAP/AD Integration 🔜
 
@@ -187,10 +197,11 @@ Additional conformance profiles to run:
 
 | Metric | Target | Current |
 |--------|--------|---------|
-| Features complete | 10/10 | 8/10 |
-| SAML SPs tested | 3+ | 0 |
+| Features complete | 10/10 | 9/10 |
+| SAML SPs tested | 3+ | 1 (internal) |
+| SAML unit tests | 20+ | 22 ✅ |
 | LDAP/AD compatibility | Windows AD, OpenLDAP | - |
 
 ---
 
-> **Last Update**: 2025-12-02
+> **Last Update**: 2025-12-02 (SAML 2.0 completed)

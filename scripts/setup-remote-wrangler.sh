@@ -437,6 +437,12 @@ zone_name = \"$ZONE_NAME\"
 pattern = \"$DOMAIN_ONLY/ciba/*\"
 zone_name = \"$ZONE_NAME\""
             ;;
+        op-saml)
+            routes="
+[[routes]]
+pattern = \"$DOMAIN_ONLY/saml/*\"
+zone_name = \"$ZONE_NAME\""
+            ;;
         policy-service)
             routes="
 [[routes]]
@@ -520,6 +526,10 @@ class_name = "TokenRevocationStore"
 name = "VERSION_MANAGER"
 class_name = "VersionManager"
 
+[[durable_objects.bindings]]
+name = "SAML_REQUEST_STORE"
+class_name = "SAMLRequestStore"
+
 # Durable Objects migrations
 [[migrations]]
 tag = "v1"
@@ -556,6 +566,12 @@ new_sqlite_classes = [
 tag = "v5"
 new_sqlite_classes = [
   "VersionManager"
+]
+
+[[migrations]]
+tag = "v6"
+new_sqlite_classes = [
+  "SAMLRequestStore"
 ]
 
 # Environment variables
@@ -825,6 +841,40 @@ class_name = \"VersionManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 
+# Generate op-saml wrangler file (SAML 2.0)
+if [ ! -f "packages/op-saml/wrangler.${DEPLOY_ENV}.toml" ]; then
+    echo "  • Generating op-saml/wrangler.${DEPLOY_ENV}.toml..."
+    generate_base_wrangler "op-saml" "" "[[d1_databases]]
+binding = \"DB\"
+database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+" "" "[[durable_objects.bindings]]
+name = \"KEY_MANAGER\"
+class_name = \"KeyManager\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"SESSION_STORE\"
+class_name = \"SessionStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"SAML_REQUEST_STORE\"
+class_name = \"SAMLRequestStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"RATE_LIMITER\"
+class_name = \"RateLimiterCounter\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"VERSION_MANAGER\"
+class_name = \"VersionManager\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\""
+fi
+
 # Update all wrangler.${DEPLOY_ENV}.toml files
 for pkg_dir in packages/*/; do
     pkg_name=$(basename "$pkg_dir")
@@ -896,6 +946,14 @@ service = "${DEPLOY_ENV}-authrim-op-userinfo"
 [[services]]
 binding = "OP_MANAGEMENT"
 service = "${DEPLOY_ENV}-authrim-op-management"
+
+[[services]]
+binding = "OP_ASYNC"
+service = "${DEPLOY_ENV}-authrim-op-async"
+
+[[services]]
+binding = "OP_SAML"
+service = "${DEPLOY_ENV}-authrim-op-saml"
 
 [vars]
 KEY_ID = "{{KEY_ID}}"
