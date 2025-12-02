@@ -2108,6 +2108,165 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
 }
 
 /**
+ * Get signing key with private key for local token generation
+ * GET /api/admin/signing-key
+ *
+ * Returns the active signing key including the private key (PEM format).
+ * This is intended for load testing scripts that need to generate tokens locally.
+ *
+ * WARNING: This endpoint exposes the private key. Only use in controlled environments.
+ */
+export async function adminSigningKeyGetHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    // Get the active key from KeyManager DO
+    // Use 'default-v3' to match the existing KeyManager instance used throughout the system
+    const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+    const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
+
+    const response = await keyManager.fetch(
+      new Request('https://key-manager/internal/active-with-private', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${c.env.KEY_MANAGER_SECRET}`,
+        },
+      })
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('Failed to get signing key:', error);
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to get signing key',
+        },
+        500
+      );
+    }
+
+    const keyData = (await response.json()) as {
+      kid: string;
+      privatePEM: string;
+      publicJWK: object;
+    };
+
+    return c.json({
+      kid: keyData.kid,
+      privatePEM: keyData.privatePEM,
+      publicJWK: keyData.publicJWK,
+    });
+  } catch (error) {
+    console.error('Admin signing key get error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to get signing key',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      500
+    );
+  }
+}
+
+/**
+ * Register a refresh token family for load testing
+ * POST /api/admin/tokens/register
+ *
+ * Registers a pre-generated refresh token with the RefreshTokenRotator DO.
+ * This allows load testing scripts to generate tokens locally and register
+ * them with the token rotation system.
+ *
+ * Request body:
+ * {
+ *   "token": "eyJ...", // JWT refresh token
+ *   "userId": "user-123",
+ *   "clientId": "client-456",
+ *   "scope": "openid profile email",
+ *   "ttl": 2592000 // optional, seconds (default: 30 days)
+ * }
+ */
+export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const body = await c.req.json<{
+      token: string;
+      userId: string;
+      clientId: string;
+      scope: string;
+      ttl?: number;
+    }>();
+
+    const { token, userId, clientId, scope, ttl = 30 * 24 * 60 * 60 } = body;
+
+    if (!token || !userId || !clientId || !scope) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'token, userId, clientId, and scope are required',
+        },
+        400
+      );
+    }
+
+    // Get RefreshTokenRotator DO (uses clientId, matching op-token pattern)
+    const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(clientId);
+    const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
+
+    // Create token family
+    const response = await rotator.fetch(
+      new Request('https://refresh-token-rotator/family', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token,
+          userId,
+          clientId,
+          scope,
+          ttl,
+        }),
+      })
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('Failed to register token:', error);
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to register token',
+        },
+        500
+      );
+    }
+
+    const result = (await response.json()) as {
+      familyId: string;
+      expiresAt: number;
+    };
+
+    return c.json(
+      {
+        success: true,
+        familyId: result.familyId,
+        expiresAt: result.expiresAt,
+      },
+      201
+    );
+  } catch (error) {
+    console.error('Admin token register error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to register token',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      500
+    );
+  }
+}
+
+/**
  * Create test session for load testing
  * POST /api/admin/test-sessions
  *

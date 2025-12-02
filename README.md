@@ -10,6 +10,19 @@ A lightweight, serverless **OpenID Connect Provider** that deploys to **Cloudfla
 
 ---
 
+## 🚧 Authrim is not production-ready (yet)
+
+Authrim is in active development and undergoing major changes.
+We’re sharing the repository early so people can follow progress, test things, and participate —
+but it is not safe for production use.
+
+Key caveats:
+- Security hardening and audits not completed
+- Breaking changes happen without notice
+- Many features are experimental
+- No backward compatibility guarantees
+- 🚫 Do not use in production environments
+
 ## Vision
 
 **Authrim** makes identity infrastructure as simple as deploying a website:
@@ -20,6 +33,19 @@ npx create-authrim my-identity-provider
 ```
 
 **Result:** A production-ready OpenID Connect Provider with login screens, admin dashboard, and global edge deployment—all in under 5 minutes.
+
+Authrim focuses on reducing the operational and architectural complexity of digital identity.
+Modern services face a constant increase in authentication methods, authorization models, and emerging standards.
+Authrim provides a consistent, edge-powered foundation that simplifies these requirements, supports new protocols early, and remains lightweight to integrate and maintain.
+
+The project aims to deliver:
+
+- predictable identity flows
+- fast global performance via edge execution
+- low-overhead integration and operation
+- flexibility to evolve with new identity standards
+
+Authrim is designed to be practical, adaptable, and straightforward for both users and developers.
 
 [Read the full vision](./docs/VISION.md)
 
