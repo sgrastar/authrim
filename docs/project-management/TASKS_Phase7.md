@@ -82,6 +82,7 @@ Hybrid feature flag system implemented:
     ENABLE_POLICY_LOGGING: boolean;
     ENABLE_VERIFIED_ATTRIBUTES: boolean;
     ENABLE_CUSTOM_RULES: boolean;
+    ENABLE_SD_JWT: boolean;
   }
   ```
 - [x] Add environment variable support for flags (defaults)
@@ -131,22 +132,30 @@ All required tables for ReBAC/ABAC support:
 
 ## Planned Features
 
-### JWT-SD (Selective Disclosure) 🔜
+### SD-JWT (Selective Disclosure JWT) ✅
 
-Implement SD-JWT for privacy-preserving credentials:
+SD-JWT implementation for privacy-preserving credentials (draft-ietf-oauth-selective-disclosure-jwt):
 
-- [ ] Research SD-JWT specification (draft-ietf-oauth-selective-disclosure-jwt)
-- [ ] Implement SD-JWT issuing
-  - [ ] Hash-based disclosure
-  - [ ] Salt generation
-  - [ ] Disclosure array creation
-- [ ] Implement SD-JWT verification
-  - [ ] Disclosure reconstruction
-  - [ ] Hash verification
-- [ ] Add `sd_jwt` claim support to ID Token
-- [ ] Create presentation endpoint
-- [ ] Add unit tests
-- [ ] Document SD-JWT usage
+- [x] Research SD-JWT specification
+- [x] Implement SD-JWT issuing (`packages/shared/src/utils/sd-jwt.ts`)
+  - [x] Hash-based disclosure (SHA-256)
+  - [x] Cryptographically secure salt generation (16 bytes)
+  - [x] Disclosure array creation with sorted `_sd` hashes
+  - [x] `sd+jwt` type header
+- [x] Implement SD-JWT verification
+  - [x] Disclosure reconstruction from base64url
+  - [x] Hash verification against `_sd` array
+  - [x] Invalid disclosure detection
+- [x] ID Token convenience function (`createSDJWTIDToken`)
+  - [x] Required OIDC claims (iss, sub, aud, exp, iat, nonce) never selective
+  - [x] Default selective claims: email, phone_number, address, birthdate
+- [x] Presentation creation (`createPresentation`)
+  - [x] Holder selects which claims to disclose
+- [x] Holder binding support (cnf claim with JWK)
+- [x] Feature flag: `ENABLE_SD_JWT` (default: false)
+- [x] Unit tests (28 tests in `sd-jwt.test.ts`)
+- [ ] Add `sd_jwt` response type to Token endpoint
+- [ ] Document SD-JWT usage in API docs
 
 ### OpenID4VP (Verifiable Presentations) 🔜
 
@@ -225,9 +234,9 @@ Access tokens can include policy-related claims:
 
 ### Unit Tests
 
-- [x] Feature flag tests (enable/disable behavior) - 23 tests
+- [x] Feature flag tests (enable/disable behavior) - 25 tests
 - [x] ReBAC recursive query tests - integrated in shared
-- [ ] SD-JWT generation/verification tests
+- [x] SD-JWT generation/verification tests - 28 tests
 - [ ] DID resolver tests
 
 ### Integration Tests
@@ -250,11 +259,11 @@ Ensure no regression in OIDC Conformance:
 
 | Metric | Target | Current |
 |--------|--------|---------|
-| Policy Core tests | 50+ | **76** ✅ |
+| Policy Core tests | 50+ | **78** ✅ |
 | Policy Service tests | 30+ | **33** ✅ |
-| Feature Flags tests | 20+ | **23** ✅ |
+| Feature Flags tests | 20+ | **25** ✅ |
 | ReBAC tests | 30+ | Integrated ✅ |
-| SD-JWT tests | 20+ | - |
+| SD-JWT tests | 20+ | **28** ✅ |
 | DID resolver tests | 15+ | - |
 | OpenID4VP tests | 25+ | - |
 
@@ -280,4 +289,4 @@ Ensure no regression in OIDC Conformance:
 
 ---
 
-> **Last Update**: 2025-12-02 (Feature Flags + ReBAC API + DB Migrations Complete)
+> **Last Update**: 2025-12-02 (SD-JWT Implementation Complete)
