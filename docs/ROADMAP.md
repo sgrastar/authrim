@@ -14,8 +14,8 @@ timeline
     section 2025
         Nov-Dec : ✅ P1-P5 Complete
     section 2026
-        Q1-Q2 : ⏳ P6 Enterprise (9/10 Complete)
-        Q3-Q4 : 🔜 P7 VC/DID & Access Control
+        Q1-Q2 : ✅ P6 Enterprise Complete
+        Q3-Q4 : ⏳ P7 VC/DID & Access Control
     section 2027
         Q1 : 🔜 P8 Login Console & UI
         Q2 : 🔜 P9 SDK & API
@@ -24,9 +24,9 @@ timeline
 ```
 
 **Legend:**
-- ✅ Complete (Phases 1-5)
-- ⏳ In Progress (Phase 6: 9/10 features complete)
-- 🔜 Planned (Phases 7-12)
+- ✅ Complete (Phases 1-6)
+- ⏳ In Progress (Phase 7: Policy Service done)
+- 🔜 Planned (Phases 8-12)
 
 ---
 
@@ -39,8 +39,8 @@ timeline
 | **M3: Conformance** | 2025-11-12 | ✅ Complete | Basic OP 78.95%, Config OP 100%, Form Post 84.21% |
 | **M4: Extensions** | 2025-11-12 | ✅ Complete | PAR, DPoP, Pairwise, Token Management |
 | **M5: UI/UX** | 2025-11-18 | ✅ Complete | SvelteKit Frontend, Admin Dashboard, 15+ pages |
-| **M6: Enterprise** | 2026-Q2 | ⏳ 9/10 | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer, SAML 2.0 |
-| **M7: VC/DID** | 2026-Q4 | 🔜 Planned | RBAC/ABAC/ReBAC, JWT-SD, OpenID4VP/CI |
+| **M6: Enterprise** | 2025-12-02 | ✅ Complete | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer, SAML 2.0 |
+| **M7: VC/DID** | 2026-Q4 | ⏳ In Progress | RBAC/ABAC/ReBAC (Policy Service done), JWT-SD, OpenID4VP/CI |
 | **M8: Console** | 2027-Q1 | 🔜 Planned | Social Login, Admin Console, UI Customization |
 | **M9: SDK** | 2027-Q2 | 🔜 Planned | WebSDK, API Documentation |
 | **M10: QA** | 2027-Q3 | 🔜 Planned | Security Audit, Load Testing |
@@ -120,13 +120,13 @@ timeline
 
 ---
 
-## Phase 6: Enterprise Features ⏳ IN PROGRESS (9/10 Complete)
+## Phase 6: Enterprise Features ✅ COMPLETE
 
-**Timeline:** Jun 1 - Oct 31, 2026
+**Timeline:** Jun 1 - Oct 31, 2026 | **Actual:** Dec 02, 2025
 
 **Goal:** Enterprise-grade authentication flows and integrations
 
-### Completed Features (Nov 2025)
+### All Features Complete
 
 | Feature | RFC/Spec | Status | Date |
 |---------|----------|--------|------|
@@ -139,18 +139,14 @@ timeline
 | JAR | RFC 9101 | ✅ Complete | Nov 25, 2025 |
 | JARM | OIDC JARM | ✅ Complete | Nov 25, 2025 |
 | SAML 2.0 | SAML 2.0 IdP/SP | ✅ Complete | Dec 02, 2025 |
-
-### Remaining Features (1/10)
-
-| Feature | Description | Status |
-|---------|-------------|--------|
-| LDAP/AD Integration | Enterprise directory integration | 🔜 Planned |
+| Policy Service | RBAC/ABAC | ✅ Complete | Dec 02, 2025 |
 
 > **Note:** Social Login has been moved to Phase 8 (Login Console & UI)
+> **Note:** LDAP/AD Integration removed - incompatible with Workers architecture (no TCP sockets)
 
 ---
 
-## Phase 7: VC/DID & Access Control 🔜 PLANNED
+## Phase 7: VC/DID & Access Control ⏳ IN PROGRESS
 
 **Timeline:** 2026-Q3 to Q4
 
@@ -280,14 +276,15 @@ timeline
 | UI pages | 10+ | 15+ ✅ |
 | Durable Objects | 10+ | 14 ✅ |
 
-### Phase 6 (In Progress)
+### Phase 6 (Complete)
 
 | Metric | Target | Actual |
 |--------|--------|--------|
-| Enterprise features | 10 | 9/10 (90%) |
+| Enterprise features | 9 | 9/9 (100%) ✅ |
 | Device Flow tests | 50+ | 70+ ✅ |
 | CIBA modes | 3 | 3 (poll, ping, push) ✅ |
 | SCIM endpoints | 4 | 4 (Users + Groups CRUD) ✅ |
+| SAML tests | 20+ | 22 ✅ |
 
 ### Phase 7-12 (Planned)
 
@@ -310,7 +307,7 @@ By 2027, Authrim will be:
 3. **Complete Access Control** - RBAC, ABAC, ReBAC
 4. **Verifiable Credentials** - OpenID4VP/CI support
 5. **Globally distributed** - <50ms latency worldwide
-6. **Enterprise-ready** - SAML, LDAP, SCIM, Social Login
+6. **Enterprise-ready** - SAML, SCIM, Social Login
 7. **Advanced Flows** - Hybrid, Device, CIBA, JWT Bearer
 8. **Maximum Security** - DPoP, PAR, JAR, JARM, JWE, MTLS
 9. **Developer-friendly** - WebSDK, CLI, comprehensive docs
@@ -329,11 +326,12 @@ By 2027, Authrim will be:
 | 2025-11-29 | Documentation restructure |
 | 2025-12-02 | Major roadmap restructure: Phase 7-12 redefined, SaaS removed, Policy Service added |
 | 2025-12-02 | SAML 2.0 complete (IdP/SP with SSO/SLO, HTTP-POST/Redirect bindings) |
+| 2025-12-02 | Phase 6 complete, LDAP/AD removed (Workers architecture limitation) |
 
 ---
 
 > **Last Update:** 2025-12-02
 >
-> **Current Status:** Phase 6 (9/10 Enterprise Features Complete)
+> **Current Status:** Phase 6 Complete ✅ | Phase 7 In Progress (Policy Service done)
 >
 > **Authrim** - Building the future of identity infrastructure, one phase at a time.

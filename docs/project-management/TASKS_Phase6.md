@@ -1,7 +1,7 @@
 # Phase 6: Enterprise Features
 
-**Timeline:** Jun 1 - Oct 31, 2026
-**Status:** ⏳ 9/10 Complete (90%)
+**Timeline:** Jun 1 - Oct 31, 2026 | **Actual:** Dec 02, 2025
+**Status:** ✅ COMPLETE (9/9)
 
 ---
 
@@ -11,7 +11,7 @@ Phase 6 focuses on enterprise-grade authentication flows and integrations requir
 
 ---
 
-## Completed Features (9/10)
+## Completed Features (9/9)
 
 ### Device Flow (RFC 8628) ✅ Nov 21, 2025
 
@@ -125,21 +125,14 @@ SAML 2.0 IdP and SP implementation:
 
 ---
 
-## Remaining Features (1/10)
+## Removed Features
 
-### LDAP/AD Integration 🔜
+### LDAP/AD Integration ❌ Removed
 
-Enterprise directory integration:
-
-- [ ] LDAP client implementation
-- [ ] Bind authentication
-- [ ] User search (sAMAccountName, userPrincipalName)
-- [ ] Group membership lookup
-- [ ] Attribute mapping (LDAP → OIDC claims)
-- [ ] Connection pooling
-- [ ] TLS/STARTTLS support
-- [ ] Active Directory specific features
-- [ ] Admin UI for LDAP configuration
+> **Reason:** Cloudflare Workers does not support TCP sockets, making direct LDAP/LDAPS connections impossible. Enterprise directory integration can be achieved through:
+> - SCIM 2.0 provisioning (already implemented)
+> - Azure AD/Entra ID via Microsoft Graph API (HTTPS)
+> - Social Login with enterprise providers (Phase 8)
 
 ---
 
@@ -189,7 +182,6 @@ Additional conformance profiles to run:
 ### Integration Testing
 
 - [ ] SAML SP integration tests
-- [ ] LDAP/AD authentication tests
 
 ---
 
@@ -197,11 +189,10 @@ Additional conformance profiles to run:
 
 | Metric | Target | Current |
 |--------|--------|---------|
-| Features complete | 10/10 | 9/10 |
+| Features complete | 9/9 | 9/9 ✅ |
 | SAML SPs tested | 3+ | 1 (internal) |
 | SAML unit tests | 20+ | 22 ✅ |
-| LDAP/AD compatibility | Windows AD, OpenLDAP | - |
 
 ---
 
-> **Last Update**: 2025-12-02 (SAML 2.0 completed)
+> **Last Update**: 2025-12-02 (Phase 6 complete, LDAP/AD removed)
