@@ -12,6 +12,7 @@ export interface Env {
   STATE_STORE: KVNamespace;
   NONCE_STORE: KVNamespace;
   CLIENTS_CACHE: KVNamespace; // Client metadata cache (Read-Through from D1, 1 hour TTL)
+  USER_CACHE?: KVNamespace; // User metadata cache (Read-Through from D1, 1 hour TTL, with invalidation hook)
   INITIAL_ACCESS_TOKENS?: KVNamespace; // For Dynamic Client Registration (RFC 7591)
 
   // KV Namespaces for Phase 5

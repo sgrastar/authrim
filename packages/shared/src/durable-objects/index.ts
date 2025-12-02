@@ -38,11 +38,10 @@ export type {
 } from './AuthorizationCodeStore';
 
 export type {
-  TokenFamily,
-  RotateTokenRequest,
-  RotateTokenResponse,
-  CreateFamilyRequest,
-  RevokeFamilyRequest,
+  TokenFamilyV2,
+  RotateTokenRequestV2,
+  RotateTokenResponseV2,
+  CreateFamilyRequestV2,
 } from './RefreshTokenRotator';
 
 export type {

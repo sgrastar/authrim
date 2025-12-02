@@ -1,5 +1,8 @@
 /**
- * RefreshTokenRotator Durable Object Unit Tests
+ * RefreshTokenRotator Durable Object Unit Tests (V2)
+ *
+ * Tests for the version-based Refresh Token Rotation system.
+ * V2 uses rtv (Refresh Token Version) for theft detection instead of token string comparison.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -42,8 +45,15 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
         this._storage.clear();
         return Promise.resolve();
       },
-      list: <T>(): Promise<Map<string, T>> => {
-        return Promise.resolve(new Map(this._storage as Map<string, T>));
+      list: <T>(options?: DurableObjectListOptions): Promise<Map<string, T>> => {
+        const result = new Map<string, T>();
+        const prefix = options?.prefix || '';
+        for (const [key, value] of this._storage) {
+          if (key.startsWith(prefix)) {
+            result.set(key, value as T);
+          }
+        }
+        return Promise.resolve(result);
       },
       transaction: <T>(closure: (txn: DurableObjectStorage) => Promise<T>): Promise<T> => {
         return closure(this.storage);
@@ -83,7 +93,7 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
 // Mock Env
 const createMockEnv = (): Env => ({}) as Env;
 
-describe('RefreshTokenRotator', () => {
+describe('RefreshTokenRotator V2', () => {
   let rotator: RefreshTokenRotator;
   let mockState: MockDurableObjectState;
   let mockEnv: Env;
@@ -100,7 +110,7 @@ describe('RefreshTokenRotator', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_initial_token',
+          jti: 'initial-jti-12345',
           userId: 'user_123',
           clientId: 'client_1',
           scope: 'openid profile',
@@ -112,9 +122,11 @@ describe('RefreshTokenRotator', () => {
       expect(response.status).toBe(201);
 
       const body = (await response.json()) as any;
-      expect(body).toHaveProperty('familyId');
-      expect(body).toHaveProperty('expiresAt');
-      expect(body.familyId).toMatch(/^family_/);
+      expect(body).toHaveProperty('version', 1);
+      expect(body).toHaveProperty('newJti', 'initial-jti-12345');
+      expect(body).toHaveProperty('expiresIn');
+      expect(body).toHaveProperty('allowedScope', 'openid profile');
+      expect(body.expiresIn).toBeGreaterThan(0);
     });
 
     it('should reject family creation without required fields', async () => {
@@ -122,7 +134,7 @@ describe('RefreshTokenRotator', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_token',
+          jti: 'test-jti',
           // Missing userId, clientId, scope
         }),
       });
@@ -134,12 +146,12 @@ describe('RefreshTokenRotator', () => {
       expect(body.error).toBe('invalid_request');
     });
 
-    it('should initialize family with rotation count 0', async () => {
+    it('should initialize family with version 1', async () => {
       const request = new Request('http://localhost/family', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_initial',
+          jti: 'initial-jti',
           userId: 'user_123',
           clientId: 'client_1',
           scope: 'openid',
@@ -147,45 +159,37 @@ describe('RefreshTokenRotator', () => {
         }),
       });
 
-      const createResponse = await rotator.fetch(request);
-      const createBody = (await createResponse.json()) as any;
-      const familyId = createBody.familyId;
+      const response = await rotator.fetch(request);
+      const body = (await response.json()) as any;
 
-      // Get family info
-      const infoRequest = new Request(`http://localhost/family/${familyId}`, {
-        method: 'GET',
-      });
-      const infoResponse = await rotator.fetch(infoRequest);
-      const infoBody = (await infoResponse.json()) as any;
-
-      expect(infoBody.rotationCount).toBe(0);
-      expect(infoBody.tokenCount.current).toBe(1);
-      expect(infoBody.tokenCount.previous).toBe(0);
+      expect(body.version).toBe(1);
     });
   });
 
   describe('Atomic Token Rotation', () => {
-    it('should rotate token successfully', async () => {
+    it('should rotate token successfully with version increment', async () => {
       // Create family
       const createRequest = new Request('http://localhost/family', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_original',
+          jti: 'original-jti',
           userId: 'user_123',
           clientId: 'client_1',
           scope: 'openid profile',
           ttl: 2592000,
         }),
       });
-      await rotator.fetch(createRequest);
+      const createResponse = await rotator.fetch(createRequest);
+      const createBody = (await createResponse.json()) as any;
 
       // Rotate token
       const rotateRequest = new Request('http://localhost/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: 'rt_original',
+          incomingVersion: createBody.version,
+          incomingJti: 'original-jti',
           userId: 'user_123',
           clientId: 'client_1',
         }),
@@ -195,21 +199,20 @@ describe('RefreshTokenRotator', () => {
       expect(response.status).toBe(200);
 
       const body = (await response.json()) as any;
-      expect(body.newToken).toBeDefined();
-      expect(body.newToken).toMatch(/^rt_/);
-      expect(body.newToken).not.toBe('rt_original');
-      expect(body.rotationCount).toBe(1);
-      expect(body.familyId).toBeDefined();
+      expect(body.newVersion).toBe(2);
+      expect(body.newJti).toBeDefined();
+      expect(body.newJti).not.toBe('original-jti');
       expect(body.expiresIn).toBeGreaterThan(0);
+      expect(body.allowedScope).toBe('openid profile');
     });
 
-    it('should increment rotation count on each rotation', async () => {
+    it('should increment version on each rotation', async () => {
       // Create family
       const createRequest = new Request('http://localhost/family', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_token_1',
+          jti: 'jti-v1',
           userId: 'user_123',
           clientId: 'client_1',
           scope: 'openid',
@@ -219,14 +222,17 @@ describe('RefreshTokenRotator', () => {
       const createResponse = await rotator.fetch(createRequest);
       const createBody = (await createResponse.json()) as any;
 
+      let currentVersion = createBody.version;
+      let currentJti = createBody.newJti;
+
       // Rotate 3 times
-      let currentToken = 'rt_token_1';
       for (let i = 1; i <= 3; i++) {
         const rotateRequest = new Request('http://localhost/rotate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            currentToken,
+            incomingVersion: currentVersion,
+            incomingJti: currentJti,
             userId: 'user_123',
             clientId: 'client_1',
           }),
@@ -235,28 +241,23 @@ describe('RefreshTokenRotator', () => {
         const response = await rotator.fetch(rotateRequest);
         const body = (await response.json()) as any;
 
-        expect(body.rotationCount).toBe(i);
-        currentToken = body.newToken;
+        expect(body.newVersion).toBe(i + 1);
+
+        // Update for next iteration
+        currentVersion = body.newVersion;
+        currentJti = body.newJti;
       }
-
-      // Verify final state
-      const infoRequest = new Request(`http://localhost/family/${createBody.familyId}`, {
-        method: 'GET',
-      });
-      const infoResponse = await rotator.fetch(infoRequest);
-      const infoBody = (await infoResponse.json()) as any;
-
-      expect(infoBody.rotationCount).toBe(3);
-      expect(infoBody.tokenCount.previous).toBe(3);
     });
+  });
 
-    it('should track previous tokens in rotation chain', async () => {
+  describe('Theft Detection (Version Mismatch)', () => {
+    it('should detect version mismatch and revoke family', async () => {
       // Create family
       const createRequest = new Request('http://localhost/family', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_token_1',
+          jti: 'theft-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
           scope: 'openid',
@@ -266,76 +267,28 @@ describe('RefreshTokenRotator', () => {
       const createResponse = await rotator.fetch(createRequest);
       const createBody = (await createResponse.json()) as any;
 
-      // Rotate twice
+      // First rotation (legitimate) - version 1 → 2
       const rotate1 = new Request('http://localhost/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: 'rt_token_1',
+          incomingVersion: createBody.version,
+          incomingJti: 'theft-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
         }),
       });
       const response1 = await rotator.fetch(rotate1);
       const body1 = (await response1.json()) as any;
+      expect(body1.newVersion).toBe(2);
 
+      // Second rotation (legitimate) - version 2 → 3
       const rotate2 = new Request('http://localhost/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: body1.newToken,
-          userId: 'user_123',
-          clientId: 'client_1',
-        }),
-      });
-      await rotator.fetch(rotate2);
-
-      // Check family info
-      const infoRequest = new Request(`http://localhost/family/${createBody.familyId}`, {
-        method: 'GET',
-      });
-      const infoResponse = await rotator.fetch(infoRequest);
-      const infoBody = (await infoResponse.json()) as any;
-
-      expect(infoBody.tokenCount.previous).toBe(2);
-    });
-  });
-
-  describe('Theft Detection (Replay Attack)', () => {
-    it('should detect token replay and revoke family', async () => {
-      // Create family
-      const createRequest = new Request('http://localhost/family', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: 'rt_theft_test',
-          userId: 'user_123',
-          clientId: 'client_1',
-          scope: 'openid',
-          ttl: 2592000,
-        }),
-      });
-      await rotator.fetch(createRequest);
-
-      // First rotation (legitimate)
-      const rotate1 = new Request('http://localhost/rotate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          currentToken: 'rt_theft_test',
-          userId: 'user_123',
-          clientId: 'client_1',
-        }),
-      });
-      const response1 = await rotator.fetch(rotate1);
-      const body1 = (await response1.json()) as any;
-
-      // Second rotation (legitimate)
-      const rotate2 = new Request('http://localhost/rotate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          currentToken: body1.newToken,
+          incomingVersion: body1.newVersion,
+          incomingJti: body1.newJti,
           userId: 'user_123',
           clientId: 'client_1',
         }),
@@ -343,12 +296,13 @@ describe('RefreshTokenRotator', () => {
       const response2 = await rotator.fetch(rotate2);
       expect(response2.status).toBe(200);
 
-      // Attempt to reuse old token (THEFT!)
+      // Attempt to reuse old version (THEFT!) - version 1 when current is 3
       const replayAttempt = new Request('http://localhost/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: 'rt_theft_test', // Old token from 2 rotations ago
+          incomingVersion: 1, // Old version!
+          incomingJti: 'theft-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
         }),
@@ -358,17 +312,16 @@ describe('RefreshTokenRotator', () => {
 
       const replayBody = (await replayResponse.json()) as any;
       expect(replayBody.error).toBe('invalid_grant');
-      expect(replayBody.error_description).toContain('theft detected');
-      expect(replayBody.action).toBe('all_tokens_revoked');
+      expect(replayBody.error_description).toContain('theft');
     });
 
-    it('should revoke all tokens after theft detection', async () => {
+    it('should revoke family after theft detection', async () => {
       // Create family
       const createRequest = new Request('http://localhost/family', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_revoke_test',
+          jti: 'revoke-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
           scope: 'openid',
@@ -378,12 +331,13 @@ describe('RefreshTokenRotator', () => {
       const createResponse = await rotator.fetch(createRequest);
       const createBody = (await createResponse.json()) as any;
 
-      // Rotate token
+      // Rotate token - version 1 → 2
       const rotate = new Request('http://localhost/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: 'rt_revoke_test',
+          incomingVersion: createBody.version,
+          incomingJti: 'revoke-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
         }),
@@ -391,12 +345,13 @@ describe('RefreshTokenRotator', () => {
       const rotateResponse = await rotator.fetch(rotate);
       const rotateBody = (await rotateResponse.json()) as any;
 
-      // Trigger theft detection with old token
+      // Trigger theft detection with old version
       const replayAttempt = new Request('http://localhost/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: 'rt_revoke_test',
+          incomingVersion: 1, // Old version
+          incomingJti: 'revoke-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
         }),
@@ -408,7 +363,8 @@ describe('RefreshTokenRotator', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: rotateBody.newToken,
+          incomingVersion: rotateBody.newVersion,
+          incomingJti: rotateBody.newJti,
           userId: 'user_123',
           clientId: 'client_1',
         }),
@@ -417,14 +373,7 @@ describe('RefreshTokenRotator', () => {
       expect(legitResponse.status).toBe(400);
 
       const legitBody = (await legitResponse.json()) as any;
-      expect(legitBody.error_description).toContain('not found or expired');
-
-      // Verify family is completely gone
-      const infoRequest = new Request(`http://localhost/family/${createBody.familyId}`, {
-        method: 'GET',
-      });
-      const infoResponse = await rotator.fetch(infoRequest);
-      expect(infoResponse.status).toBe(404);
+      expect(legitBody.error_description).toContain('not found');
     });
   });
 
@@ -435,22 +384,25 @@ describe('RefreshTokenRotator', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_user_test',
+          jti: 'user-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
           scope: 'openid',
           ttl: 2592000,
         }),
       });
-      await rotator.fetch(createRequest);
+      const createResponse = await rotator.fetch(createRequest);
+      const createBody = (await createResponse.json()) as any;
 
       // Try to rotate with different user
+      // Note: Family lookup is by userId, so wrong userId = family not found
       const rotateRequest = new Request('http://localhost/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: 'rt_user_test',
-          userId: 'user_456', // Wrong user!
+          incomingVersion: createBody.version,
+          incomingJti: 'user-test-jti',
+          userId: 'user_456', // Wrong user! Will result in "not found"
           clientId: 'client_1',
         }),
       });
@@ -459,7 +411,8 @@ describe('RefreshTokenRotator', () => {
       expect(response.status).toBe(400);
 
       const body = (await response.json()) as any;
-      expect(body.error_description).toContain('mismatch');
+      // Family is keyed by userId, so wrong userId means family not found
+      expect(body.error_description).toContain('not found');
     });
 
     it('should reject rotation with wrong clientId', async () => {
@@ -468,21 +421,23 @@ describe('RefreshTokenRotator', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_client_test',
+          jti: 'client-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
           scope: 'openid',
           ttl: 2592000,
         }),
       });
-      await rotator.fetch(createRequest);
+      const createResponse = await rotator.fetch(createRequest);
+      const createBody = (await createResponse.json()) as any;
 
       // Try to rotate with different client
       const rotateRequest = new Request('http://localhost/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: 'rt_client_test',
+          incomingVersion: createBody.version,
+          incomingJti: 'client-test-jti',
           userId: 'user_123',
           clientId: 'client_2', // Wrong client!
         }),
@@ -496,13 +451,89 @@ describe('RefreshTokenRotator', () => {
     });
   });
 
+  describe('Scope Amplification Prevention', () => {
+    it('should reject scope amplification attempt', async () => {
+      // Create family with limited scope
+      const createRequest = new Request('http://localhost/family', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jti: 'scope-test-jti',
+          userId: 'user_123',
+          clientId: 'client_1',
+          scope: 'openid profile', // Limited scope
+          ttl: 2592000,
+        }),
+      });
+      const createResponse = await rotator.fetch(createRequest);
+      const createBody = (await createResponse.json()) as any;
+
+      // Try to rotate with expanded scope
+      const rotateRequest = new Request('http://localhost/rotate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          incomingVersion: createBody.version,
+          incomingJti: 'scope-test-jti',
+          userId: 'user_123',
+          clientId: 'client_1',
+          requestedScope: 'openid profile email admin', // Trying to amplify scope!
+        }),
+      });
+
+      const response = await rotator.fetch(rotateRequest);
+      expect(response.status).toBe(400);
+
+      const body = (await response.json()) as any;
+      expect(body.error_description).toContain('scope');
+    });
+
+    it('should allow subset of original scope', async () => {
+      // Create family with full scope
+      const createRequest = new Request('http://localhost/family', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jti: 'scope-subset-jti',
+          userId: 'user_123',
+          clientId: 'client_1',
+          scope: 'openid profile email',
+          ttl: 2592000,
+        }),
+      });
+      const createResponse = await rotator.fetch(createRequest);
+      const createBody = (await createResponse.json()) as any;
+
+      // Rotate with subset scope
+      const rotateRequest = new Request('http://localhost/rotate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          incomingVersion: createBody.version,
+          incomingJti: 'scope-subset-jti',
+          userId: 'user_123',
+          clientId: 'client_1',
+          requestedScope: 'openid profile', // Subset of allowed scope
+        }),
+      });
+
+      const response = await rotator.fetch(rotateRequest);
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as any;
+      // Returns the requested subset (since it's valid)
+      expect(body.allowedScope).toBe('openid profile');
+    });
+  });
+
   describe('Token Not Found / Expired', () => {
-    it('should reject rotation of non-existent token', async () => {
+    it('should reject rotation of non-existent family', async () => {
       const request = new Request('http://localhost/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: 'rt_nonexistent',
+          incomingVersion: 1,
+          incomingJti: 'nonexistent-jti',
           userId: 'user_123',
           clientId: 'client_1',
         }),
@@ -512,7 +543,7 @@ describe('RefreshTokenRotator', () => {
       expect(response.status).toBe(400);
 
       const body = (await response.json()) as any;
-      expect(body.error_description).toContain('not found or expired');
+      expect(body.error_description).toContain('not found');
     });
   });
 
@@ -523,46 +554,33 @@ describe('RefreshTokenRotator', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_manual_revoke',
+          jti: 'manual-revoke-jti',
           userId: 'user_123',
           clientId: 'client_1',
           scope: 'openid',
           ttl: 2592000,
         }),
       });
-      const createResponse = await rotator.fetch(createRequest);
-      const createBody = (await createResponse.json()) as any;
+      await rotator.fetch(createRequest);
 
       // Revoke family
       const revokeRequest = new Request('http://localhost/revoke-family', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          familyId: createBody.familyId,
-          reason: 'user_logout',
-        }),
+        body: JSON.stringify({ userId: 'user_123' }),
       });
       const revokeResponse = await rotator.fetch(revokeRequest);
       expect(revokeResponse.status).toBe(200);
 
       const revokeBody = (await revokeResponse.json()) as any;
       expect(revokeBody.success).toBe(true);
-
-      // Verify family is gone
-      const infoRequest = new Request(`http://localhost/family/${createBody.familyId}`, {
-        method: 'GET',
-      });
-      const infoResponse = await rotator.fetch(infoRequest);
-      expect(infoResponse.status).toBe(404);
     });
 
     it('should handle revocation of non-existent family gracefully', async () => {
       const request = new Request('http://localhost/revoke-family', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          familyId: 'family_nonexistent',
-        }),
+        body: JSON.stringify({ userId: 'nonexistent_user' }),
       });
 
       const response = await rotator.fetch(request);
@@ -573,58 +591,51 @@ describe('RefreshTokenRotator', () => {
     });
   });
 
-  describe('Family Info Endpoint', () => {
-    it('should return family information without exposing tokens', async () => {
+  describe('Token Validation Endpoint', () => {
+    it('should validate active token', async () => {
       // Create family
       const createRequest = new Request('http://localhost/family', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_info_test',
+          jti: 'validate-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
-          scope: 'openid profile email',
+          scope: 'openid',
           ttl: 2592000,
         }),
       });
       const createResponse = await rotator.fetch(createRequest);
       const createBody = (await createResponse.json()) as any;
 
-      // Get family info
-      const infoRequest = new Request(`http://localhost/family/${createBody.familyId}`, {
-        method: 'GET',
-      });
-      const response = await rotator.fetch(infoRequest);
+      // Validate token
+      const validateRequest = new Request(
+        `http://localhost/validate?userId=user_123&version=${createBody.version}&clientId=client_1`,
+        { method: 'GET' }
+      );
+      const response = await rotator.fetch(validateRequest);
       expect(response.status).toBe(200);
 
       const body = (await response.json()) as any;
-      expect(body).toHaveProperty('id');
-      expect(body).toHaveProperty('userId', 'user_123');
-      expect(body).toHaveProperty('clientId', 'client_1');
-      expect(body).toHaveProperty('scope', 'openid profile email');
-      expect(body).toHaveProperty('rotationCount', 0);
-      expect(body).toHaveProperty('createdAt');
-      expect(body).toHaveProperty('lastRotation');
-      expect(body).toHaveProperty('expiresAt');
-      expect(body).toHaveProperty('tokenCount');
-
-      // Ensure actual tokens are NOT exposed
-      expect(body).not.toHaveProperty('currentToken');
-      expect(body).not.toHaveProperty('previousTokens');
+      expect(body.valid).toBe(true);
     });
 
-    it('should return 404 for non-existent family', async () => {
-      const request = new Request('http://localhost/family/family_nonexistent', {
-        method: 'GET',
-      });
+    it('should return invalid for non-existent user', async () => {
+      const request = new Request(
+        'http://localhost/validate?userId=nonexistent&version=1&clientId=client_1',
+        { method: 'GET' }
+      );
 
       const response = await rotator.fetch(request);
-      expect(response.status).toBe(404);
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as any;
+      expect(body.valid).toBe(false);
     });
   });
 
   describe('Health Check and Status', () => {
-    it('should return status endpoint with stats', async () => {
+    it('should return status endpoint', async () => {
       const request = new Request('http://localhost/status', {
         method: 'GET',
       });
@@ -634,21 +645,20 @@ describe('RefreshTokenRotator', () => {
 
       const body = (await response.json()) as any;
       expect(body).toHaveProperty('status', 'ok');
+      expect(body).toHaveProperty('version', 'v2');
       expect(body).toHaveProperty('families');
-      expect(body).toHaveProperty('tokens');
-      expect(body).toHaveProperty('config');
+      expect(body.families).toHaveProperty('total');
+      expect(body.families).toHaveProperty('active');
       expect(body).toHaveProperty('timestamp');
-      expect(body.config).toHaveProperty('defaultTtl');
-      expect(body.config).toHaveProperty('maxPreviousTokens');
     });
 
-    it('should track active vs expired families', async () => {
+    it('should track family count', async () => {
       // Create a family
       const createRequest = new Request('http://localhost/family', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_status_test',
+          jti: 'status-test-jti',
           userId: 'user_123',
           clientId: 'client_1',
           scope: 'openid',
@@ -665,7 +675,6 @@ describe('RefreshTokenRotator', () => {
 
       expect(body.families.total).toBe(1);
       expect(body.families.active).toBe(1);
-      expect(body.families.expired).toBe(0);
     });
   });
 
@@ -675,8 +684,8 @@ describe('RefreshTokenRotator', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: 'rt_test',
-          // Missing userId and clientId
+          incomingVersion: 1,
+          // Missing incomingJti, userId, clientId
         }),
       });
 
@@ -687,20 +696,6 @@ describe('RefreshTokenRotator', () => {
       expect(body.error).toBe('invalid_request');
     });
 
-    it('should reject family revocation without familyId', async () => {
-      const request = new Request('http://localhost/revoke-family', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          reason: 'test',
-          // Missing familyId
-        }),
-      });
-
-      const response = await rotator.fetch(request);
-      expect(response.status).toBe(400);
-    });
-
     it('should return 404 for unknown endpoints', async () => {
       const request = new Request('http://localhost/unknown', {
         method: 'GET',
@@ -709,16 +704,27 @@ describe('RefreshTokenRotator', () => {
       const response = await rotator.fetch(request);
       expect(response.status).toBe(404);
     });
+
+    it('should handle malformed JSON gracefully', async () => {
+      const request = new Request('http://localhost/family', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: 'not valid json',
+      });
+
+      const response = await rotator.fetch(request);
+      expect(response.status).toBe(400);
+    });
   });
 
-  describe('Previous Tokens Limit', () => {
-    it('should limit previous tokens to MAX_PREVIOUS_TOKENS', async () => {
+  describe('JTI Mismatch Detection', () => {
+    it('should detect JTI mismatch as potential theft', async () => {
       // Create family
       const createRequest = new Request('http://localhost/family', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: 'rt_limit_test',
+          jti: 'jti-mismatch-test',
           userId: 'user_123',
           clientId: 'client_1',
           scope: 'openid',
@@ -728,32 +734,24 @@ describe('RefreshTokenRotator', () => {
       const createResponse = await rotator.fetch(createRequest);
       const createBody = (await createResponse.json()) as any;
 
-      // Rotate 10 times (MAX_PREVIOUS_TOKENS is 5)
-      let currentToken = 'rt_limit_test';
-      for (let i = 0; i < 10; i++) {
-        const rotateRequest = new Request('http://localhost/rotate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            currentToken,
-            userId: 'user_123',
-            clientId: 'client_1',
-          }),
-        });
-        const response = await rotator.fetch(rotateRequest);
-        const body = (await response.json()) as any;
-        currentToken = body.newToken;
-      }
-
-      // Check family info
-      const infoRequest = new Request(`http://localhost/family/${createBody.familyId}`, {
-        method: 'GET',
+      // Try to rotate with correct version but wrong JTI
+      const rotateRequest = new Request('http://localhost/rotate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          incomingVersion: createBody.version,
+          incomingJti: 'wrong-jti', // Wrong JTI!
+          userId: 'user_123',
+          clientId: 'client_1',
+        }),
       });
-      const infoResponse = await rotator.fetch(infoRequest);
-      const infoBody = (await infoResponse.json()) as any;
 
-      // Should only keep last 5 previous tokens
-      expect(infoBody.tokenCount.previous).toBeLessThanOrEqual(5);
+      const response = await rotator.fetch(rotateRequest);
+      expect(response.status).toBe(400);
+
+      const body = (await response.json()) as any;
+      // Either theft or not found - both indicate invalid token
+      expect(body.error).toBe('invalid_grant');
     });
   });
 });

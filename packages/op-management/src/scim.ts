@@ -23,6 +23,7 @@
 
 import { Hono } from 'hono';
 import type { Env } from '@authrim/shared/types/env';
+import { invalidateUserCache } from '@authrim/shared';
 import {
   SCIM_SCHEMAS,
   type ScimUser,
@@ -426,6 +427,9 @@ app.put('/Users/:id', async (c) => {
       )
       .run();
 
+    // Invalidate user cache (cache invalidation hook)
+    await invalidateUserCache(c.env, userId);
+
     // Fetch updated user
     const updatedUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
       .bind(userId)
@@ -526,6 +530,9 @@ app.patch('/Users/:id', async (c) => {
         userId
       )
       .run();
+
+    // Invalidate user cache (cache invalidation hook)
+    await invalidateUserCache(c.env, userId);
 
     // Fetch updated user
     const updatedUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')

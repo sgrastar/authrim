@@ -14,6 +14,7 @@ import {
   getRefreshToken,
   deleteRefreshToken,
   getClient,
+  getCachedUser,
 } from '@authrim/shared';
 import {
   createIDToken,
@@ -1041,36 +1042,21 @@ async function handleAuthorizationCodeGrant(
       client_id: client_id,
     };
 
-    const result = await createRefreshToken(
-      refreshTokenClaims,
-      privateKey,
-      keyId,
-      refreshTokenExpiresIn
-    );
-    refreshToken = result.token;
-    refreshTokenJti = result.jti;
+    // V2: Register with RefreshTokenRotator first to get version
+    let rtv: number = 1; // Default version for new family
 
-    // Store refresh token metadata in KV for validation and revocation
-    await storeRefreshToken(c.env, refreshTokenJti, {
-      jti: refreshTokenJti,
-      client_id: client_id,
-      sub: authCodeData.sub,
-      scope: authCodeData.scope,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + refreshTokenExpiresIn,
-    });
-
-    // Register refresh token with RefreshTokenRotator for rotation tracking
-    // This is required for refresh_token grant to work correctly
     if (c.env.REFRESH_TOKEN_ROTATOR) {
       const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
       const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
+
+      // Generate JTI first (will be used in both DO and JWT)
+      refreshTokenJti = `rt_${crypto.randomUUID()}`;
 
       const familyResponse = await rotator.fetch('http://rotator/family', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token: refreshTokenJti,
+          jti: refreshTokenJti,
           userId: authCodeData.sub,
           clientId: client_id,
           scope: authCodeData.scope,
@@ -1089,7 +1075,33 @@ async function handleAuthorizationCodeGrant(
           500
         );
       }
+
+      const familyResult = (await familyResponse.json()) as { version: number; jti: string };
+      rtv = familyResult.version;
+    } else {
+      refreshTokenJti = `rt_${crypto.randomUUID()}`;
     }
+
+    // Create JWT with rtv (Refresh Token Version) claim
+    const result = await createRefreshToken(
+      refreshTokenClaims,
+      privateKey,
+      keyId,
+      refreshTokenExpiresIn,
+      refreshTokenJti,
+      rtv // V2: Include version for theft detection
+    );
+    refreshToken = result.token;
+
+    // Store refresh token metadata in KV for validation and revocation
+    await storeRefreshToken(c.env, refreshTokenJti, {
+      jti: refreshTokenJti,
+      client_id: client_id,
+      sub: authCodeData.sub,
+      scope: authCodeData.scope,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + refreshTokenExpiresIn,
+    });
   } catch (error) {
     console.error('Failed to create refresh token:', error);
     return c.json(
@@ -1563,8 +1575,7 @@ async function handleRefreshTokenGrant(
   const refreshTokenExpiresIn = parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10);
 
   if (rotationEnabled) {
-    // Implement refresh token rotation using RefreshTokenRotator DO
-    // This provides atomic rotation with theft detection
+    // V2: Implement refresh token rotation with version-based theft detection
     if (!c.env.REFRESH_TOKEN_ROTATOR) {
       c.header('Cache-Control', 'no-store');
       c.header('Pragma', 'no-cache');
@@ -1580,17 +1591,24 @@ async function handleRefreshTokenGrant(
     const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
     const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
 
+    // V2: Get incoming version from JWT (default to 1 for legacy tokens without rtv)
+    const incomingVersion =
+      typeof refreshTokenPayload.rtv === 'number' ? refreshTokenPayload.rtv : 1;
+
     let newRefreshTokenJti: string;
+    let newVersion: number;
 
     try {
-      // Call RefreshTokenRotator DO to atomically rotate the token
+      // V2: Call RefreshTokenRotator DO with version-based rotation
       const rotateResponse = await rotator.fetch('http://rotator/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          currentToken: jti,
+          incomingVersion,
+          incomingJti: jti,
           userId: refreshTokenData.sub,
           clientId: client_id,
+          requestedScope: scope || undefined, // Pass requested scope for validation
         }),
       });
 
@@ -1598,9 +1616,20 @@ async function handleRefreshTokenGrant(
         const error = (await rotateResponse.json()) as {
           error?: string;
           error_description?: string;
+          action?: string;
         };
         c.header('Cache-Control', 'no-store');
         c.header('Pragma', 'no-cache');
+
+        // Log theft detection for security monitoring
+        if (error.action === 'family_revoked') {
+          console.error('SECURITY: Token theft detected and family revoked', {
+            clientId: client_id,
+            userId: refreshTokenData.sub,
+            incomingVersion,
+          });
+        }
+
         return c.json(
           {
             error: error.error || 'invalid_grant',
@@ -1611,11 +1640,15 @@ async function handleRefreshTokenGrant(
       }
 
       const rotateResult = (await rotateResponse.json()) as {
-        newToken: string;
+        newVersion: number;
+        newJti: string;
+        expiresIn: number;
+        allowedScope: string;
       };
-      newRefreshTokenJti = rotateResult.newToken;
+      newRefreshTokenJti = rotateResult.newJti;
+      newVersion = rotateResult.newVersion;
 
-      // Create JWT using the new JTI from RefreshTokenRotator
+      // Create JWT with new version (rtv claim)
       const refreshTokenClaims = {
         iss: c.env.ISSUER_URL,
         sub: refreshTokenData.sub,
@@ -1624,13 +1657,14 @@ async function handleRefreshTokenGrant(
         client_id: client_id,
       };
 
-      // Pass the JTI from RefreshTokenRotator to ensure consistency
+      // V2: Include rtv (Refresh Token Version) for theft detection
       const result = await createRefreshToken(
         refreshTokenClaims,
         privateKey,
         keyId,
         refreshTokenExpiresIn,
-        newRefreshTokenJti // Use the JTI from RefreshTokenRotator DO
+        newRefreshTokenJti,
+        newVersion // V2: Include version in JWT
       );
       newRefreshToken = result.token;
     } catch (error) {
@@ -2337,10 +2371,9 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     }
   }
 
-  // Get user data for token claims
-  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
-    .bind(metadata.user_id)
-    .first();
+  // Get user data for token claims (using cache for performance)
+  // Note: metadata.sub is guaranteed to exist due to the check at line 2340
+  const user = await getCachedUser(c.env, metadata.sub);
 
   if (!user) {
     return c.json(

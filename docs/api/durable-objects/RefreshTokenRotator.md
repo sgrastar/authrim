@@ -1,45 +1,104 @@
-# RefreshTokenRotator Durable Object API
+# RefreshTokenRotator Durable Object API (V2)
 
 ## Overview
 
-The RefreshTokenRotator Durable Object manages atomic refresh token rotation with token family tracking and theft detection. It provides strong security guarantees for long-lived OAuth 2.0 refresh tokens.
+The RefreshTokenRotator Durable Object manages atomic refresh token rotation with **version-based theft detection**. V2 uses a lightweight state model that tracks rotation version numbers rather than storing actual token strings.
+
+**V2 Architecture Benefits:**
+- Minimal storage footprint (single `TokenFamilyV2` per user)
+- O(1) rotation operations via in-memory Maps
+- Version comparison for theft detection (simpler than token string comparison)
+- Consistent response format across create and rotate operations
 
 **Security Features:**
-- Atomic rotation (prevents race conditions)
-- Token family tracking (detect token theft via rotation chain)
-- Theft detection (revoke all tokens if replay detected)
-- Audit logging (all rotations logged to D1)
+- Version-based theft detection (`rtv` claim in JWT)
+- JTI (JWT ID) mismatch detection
+- Scope amplification prevention
+- Tenant boundary enforcement
+- Atomic rotation (DO guarantees single-threaded execution)
+- Critical event synchronous audit logging
 
 **OAuth 2.0 Security Best Current Practice (BCP) Compliance:**
 - Token Rotation: Refresh tokens rotated on every use
-- Theft Detection: Old token reuse triggers family revocation
-- Audit Trail: All token operations logged for security analysis
+- Theft Detection: Old version reuse triggers family revocation
+- Audit Trail: Critical events logged synchronously, routine events batched
 
 **References:**
 - OAuth 2.0 Security BCP: Draft 16, Section 4.13.2
 - RFC 6749: Section 10.4 (Refresh Token Protection)
 
-## Base URL
+---
+
+## V2 Data Model
+
+### TokenFamilyV2
+
+```typescript
+interface TokenFamilyV2 {
+  version: number;        // Rotation version (monotonically increasing, starts at 1)
+  last_jti: string;       // Last issued JWT ID
+  last_used_at: number;   // Timestamp of last use (ms)
+  expires_at: number;     // Absolute expiration (ms)
+  user_id: string;        // For tenant boundary enforcement
+  client_id: string;      // For scope validation
+  allowed_scope: string;  // Prevent scope amplification
+}
+```
+
+### JWT Claims (rtv)
+
+V2 introduces the `rtv` (Refresh Token Version) claim in refresh token JWTs:
+
+```json
+{
+  "iss": "https://auth.example.com",
+  "sub": "user_123",
+  "aud": "client_1",
+  "exp": 1702153200,
+  "iat": 1699561200,
+  "jti": "rt_550e8400-e29b-41d4-a716-446655440000",
+  "scope": "openid profile offline_access",
+  "client_id": "client_1",
+  "rtv": 1
+}
+```
+
+---
+
+## Sharding Strategy
+
+RefreshTokenRotator is **sharded by `client_id`** for horizontal scaling:
 
 ```
-https://token-rotator.{namespace}.workers.dev
+DO Instance: "rotator:client_1"
+├── Family: user_123 → TokenFamilyV2
+├── Family: user_456 → TokenFamilyV2
+└── Family: user_789 → TokenFamilyV2
+
+DO Instance: "rotator:client_2"
+├── Family: user_123 → TokenFamilyV2
+└── Family: user_456 → TokenFamilyV2
 ```
+
+Each user can have one active refresh token family per client.
+
+---
 
 ## Endpoints
 
 ### 1. Create Token Family
 
-Create a new token family for a user's refresh token.
+Create a new token family when issuing the first refresh token.
 
 **Endpoint:** `POST /family`
 
 **Request Body:**
 ```json
 {
-  "token": "rt_initial_abc123xyz",
+  "jti": "rt_550e8400-e29b-41d4-a716-446655440000",
   "userId": "user_123",
   "clientId": "client_1",
-  "scope": "openid profile email offline_access",
+  "scope": "openid profile offline_access",
   "ttl": 2592000
 }
 ```
@@ -47,90 +106,59 @@ Create a new token family for a user's refresh token.
 **Request Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `token` | string | Yes | Initial refresh token value |
-| `userId` | string | Yes | User ID |
+| `jti` | string | Yes | JWT ID for the initial refresh token |
+| `userId` | string | Yes | User ID (becomes family key) |
 | `clientId` | string | Yes | OAuth client ID |
-| `scope` | string | Yes | Token scopes |
+| `scope` | string | Yes | Allowed scopes (prevents amplification) |
 | `ttl` | number | No | Time to live in seconds (default: 30 days) |
 
 **Response (201 Created):**
 ```json
 {
-  "familyId": "family_550e8400-e29b-41d4-a716-446655440000",
-  "expiresAt": 1702153200000
+  "version": 1,
+  "newJti": "rt_550e8400-e29b-41d4-a716-446655440000",
+  "expiresIn": 2592000,
+  "allowedScope": "openid profile offline_access"
 }
-```
-
-**Response (400 Bad Request):**
-```json
-{
-  "error": "invalid_request",
-  "error_description": "Missing required fields"
-}
-```
-
-**Example:**
-```bash
-curl -X POST https://token-rotator.example.workers.dev/family \
-  -H "Content-Type: application/json" \
-  -d '{
-    "token": "rt_abc123xyz",
-    "userId": "user_123",
-    "clientId": "client_1",
-    "scope": "openid profile offline_access",
-    "ttl": 2592000
-  }'
 ```
 
 ---
 
 ### 2. Rotate Refresh Token
 
-Rotate a refresh token (atomic operation with theft detection).
+Rotate a refresh token with version-based validation.
 
-**CRITICAL:** This operation is atomic and single-use. Attempting to rotate an old token will trigger theft detection and revoke the entire token family.
+**CRITICAL:** This operation validates both version AND JTI. Mismatch triggers family revocation.
 
 **Endpoint:** `POST /rotate`
 
 **Request Body:**
 ```json
 {
-  "currentToken": "rt_current_token",
+  "incomingVersion": 1,
+  "incomingJti": "rt_550e8400-e29b-41d4-a716-446655440000",
   "userId": "user_123",
-  "clientId": "client_1"
+  "clientId": "client_1",
+  "requestedScope": "openid profile"
 }
 ```
 
 **Request Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `currentToken` | string | Yes | Current refresh token to rotate |
-| `userId` | string | Yes | User ID (must match family) |
-| `clientId` | string | Yes | Client ID (must match family) |
+| `incomingVersion` | number | Yes | Version from JWT's `rtv` claim |
+| `incomingJti` | string | Yes | JTI from incoming JWT |
+| `userId` | string | Yes | User ID (from JWT's `sub` claim) |
+| `clientId` | string | Yes | Client ID (from JWT's `client_id` claim) |
+| `requestedScope` | string | No | Requested scope (must be subset of allowed) |
 
 **Response (200 OK - Success):**
 ```json
 {
-  "newToken": "rt_new_token_xyz789",
-  "familyId": "family_550e8400-e29b-41d4-a716-446655440000",
+  "newVersion": 2,
+  "newJti": "rt_new_token_xyz789",
   "expiresIn": 2591940,
-  "rotationCount": 1
-}
-```
-
-**Response (400 Bad Request - Token Not Found):**
-```json
-{
-  "error": "invalid_grant",
-  "error_description": "Refresh token not found or expired"
-}
-```
-
-**Response (400 Bad Request - Ownership Mismatch):**
-```json
-{
-  "error": "invalid_grant",
-  "error_description": "Token ownership mismatch"
+  "allowedScope": "openid profile"
 }
 ```
 
@@ -138,112 +166,90 @@ Rotate a refresh token (atomic operation with theft detection).
 ```json
 {
   "error": "invalid_grant",
-  "error_description": "Token theft detected. All tokens in family revoked.",
-  "action": "all_tokens_revoked"
+  "error_description": "Token theft detected. Family revoked.",
+  "action": "family_revoked"
 }
 ```
 
-**Example:**
-```bash
-curl -X POST https://token-rotator.example.workers.dev/rotate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "currentToken": "rt_current",
-    "userId": "user_123",
-    "clientId": "client_1"
-  }'
+**Response (400 Bad Request - Scope Amplification):**
+```json
+{
+  "error": "invalid_grant",
+  "error_description": "invalid_scope: Scope 'admin' not allowed"
+}
 ```
 
 ---
 
 ### 3. Revoke Token Family
 
-Revoke all tokens in a token family (logout, security incident).
+Revoke all tokens in a token family.
 
 **Endpoint:** `POST /revoke-family`
 
 **Request Body:**
 ```json
 {
-  "familyId": "family_550e8400-e29b-41d4-a716-446655440000",
+  "userId": "user_123",
   "reason": "user_logout"
 }
 ```
 
-**Request Parameters:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `familyId` | string | Yes | Token family ID to revoke |
-| `reason` | string | No | Revocation reason (for audit log) |
-
 **Response (200 OK):**
 ```json
 {
-  "success": true,
-  "familyId": "family_550e8400-e29b-41d4-a716-446655440000"
+  "success": true
 }
-```
-
-**Example:**
-```bash
-curl -X POST https://token-rotator.example.workers.dev/revoke-family \
-  -H "Content-Type: application/json" \
-  -d '{
-    "familyId": "family_550e8400-e29b-41d4-a716-446655440000",
-    "reason": "user_logout"
-  }'
 ```
 
 ---
 
-### 4. Get Family Information
+### 4. Validate Token
 
-Get information about a token family (debugging/admin).
+Validate token without rotation (for introspection).
 
-**NOTE:** Actual token values are NOT exposed for security.
+**Endpoint:** `GET /validate?userId={userId}&version={version}&clientId={clientId}`
 
-**Endpoint:** `GET /family/:familyId`
-
-**Path Parameters:**
+**Query Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `familyId` | string | Yes | Token family ID |
+| `userId` | string | Yes | User ID |
+| `version` | number | Yes | Token version |
+| `clientId` | string | Yes | Client ID |
 
 **Response (200 OK):**
 ```json
 {
-  "id": "family_550e8400-e29b-41d4-a716-446655440000",
+  "valid": true,
+  "version": 3,
+  "allowedScope": "openid profile",
+  "expiresAt": 1702153200000
+}
+```
+
+---
+
+### 5. Get Family Information
+
+Get information about a token family (admin/debugging).
+
+**Endpoint:** `GET /family/:userId`
+
+**Response (200 OK):**
+```json
+{
+  "version": 3,
+  "lastUsedAt": 1699564800000,
+  "expiresAt": 1702153200000,
   "userId": "user_123",
   "clientId": "client_1",
-  "scope": "openid profile email offline_access",
-  "rotationCount": 5,
-  "createdAt": 1699561200000,
-  "lastRotation": 1699564800000,
-  "expiresAt": 1702153200000,
-  "tokenCount": {
-    "current": 1,
-    "previous": 5
-  }
+  "allowedScope": "openid profile offline_access"
 }
-```
-
-**Response (404 Not Found):**
-```json
-{
-  "error": "Family not found"
-}
-```
-
-**Example:**
-```bash
-curl https://token-rotator.example.workers.dev/family/family_550e8400-e29b-41d4-a716-446655440000
 ```
 
 ---
 
-### 5. Health Check / Status
-
-Get health status, statistics, and configuration.
+### 6. Health Check / Status
 
 **Endpoint:** `GET /status`
 
@@ -251,90 +257,12 @@ Get health status, statistics, and configuration.
 ```json
 {
   "status": "ok",
+  "version": "v2",
   "families": {
     "total": 1250,
-    "active": 1100,
-    "expired": 150
-  },
-  "tokens": 6500,
-  "config": {
-    "defaultTtl": 2592000,
-    "maxPreviousTokens": 5
+    "active": 1100
   },
   "timestamp": 1699561200000
-}
-```
-
-**Example:**
-```bash
-curl https://token-rotator.example.workers.dev/status
-```
-
----
-
-## Error Responses
-
-All endpoints return standard OAuth 2.0 error responses where applicable:
-
-### 400 Bad Request
-```json
-{
-  "error": "invalid_request",
-  "error_description": "Missing required fields"
-}
-```
-
-```json
-{
-  "error": "invalid_grant",
-  "error_description": "Refresh token expired"
-}
-```
-
-### 404 Not Found
-```json
-{
-  "error": "Family not found"
-}
-```
-
-### 500 Internal Server Error
-```json
-{
-  "error": "server_error",
-  "error_description": "Internal Server Error"
-}
-```
-
----
-
-## Data Types
-
-### TokenFamily Object
-```typescript
-interface TokenFamily {
-  id: string;
-  currentToken: string;
-  previousTokens: string[];
-  userId: string;
-  clientId: string;
-  scope: string;
-  rotationCount: number;
-  createdAt: number;
-  lastRotation: number;
-  expiresAt: number;
-}
-```
-
-### AuditLogEntry Object
-```typescript
-interface AuditLogEntry {
-  action: 'created' | 'rotated' | 'theft_detected' | 'family_revoked' | 'expired';
-  familyId: string;
-  userId?: string;
-  clientId?: string;
-  metadata?: Record<string, unknown>;
-  timestamp: number;
 }
 ```
 
@@ -342,273 +270,169 @@ interface AuditLogEntry {
 
 ## Security Features
 
-### 1. Atomic Rotation
-
-**Token rotation is ATOMIC and prevents race conditions:**
+### 1. Version-Based Theft Detection
 
 ```
-Time    Thread A              Thread B
----     --------              --------
-T1      rotate(token_v1)
-T2        → check current=v1 ✓
-T3        → generate v2
-T4        → update current=v2
-T5        → push v1 to previous[]
-T6        → return v2
-T7                             rotate(token_v1)
-T8                               → check current=v2 ✗
-T9                               → THEFT DETECTED!
-T10                              → REVOKE ALL TOKENS
+Scenario: Token Theft Attack
+─────────────────────────────
+1. User authenticates → receives RT with rtv=1
+2. User refreshes → rtv=1 → rtv=2 (legitimate)
+3. Attacker steals old RT (rtv=1)
+4. User refreshes → rtv=2 → rtv=3 (legitimate)
+5. Attacker tries rtv=1 → THEFT DETECTED!
+   └── incomingVersion (1) < currentVersion (3)
+   └── Family revoked, attacker blocked
+   └── User's rtv=3 also invalidated (must re-auth)
 ```
 
-### 2. Token Family Tracking
+### 2. JTI Mismatch Detection
 
-Each refresh token belongs to a "family" that tracks its rotation history:
+Even if an attacker guesses the correct version, JTI mismatch will trigger revocation:
 
 ```
-Family: family_abc123
-├── Current:  rt_token_v5
-├── Previous: [rt_token_v4, rt_token_v3, rt_token_v2, rt_token_v1]
-└── Original: rt_token_v0 (removed after 5 rotations)
+Scenario: JTI Forgery Attack
+─────────────────────────────
+1. Attacker observes version = 3
+2. Attacker creates fake JWT with rtv=3, random JTI
+3. System checks: incomingJti ≠ family.last_jti
+4. THEFT DETECTED → Family revoked
 ```
 
-**Benefits:**
-- Detect if an old token is reused (theft indicator)
-- Track rotation chain for audit purposes
-- Limit previous token history (memory efficiency)
+### 3. Scope Amplification Prevention
 
-### 3. Theft Detection
-
-**Theft Detection Mechanism:**
-
-1. User rotates token: `v1 → v2`
-2. Attacker steals `v1` from network/storage
-3. User continues: `v2 → v3`
-4. Attacker tries to use `v1` (now in previousTokens[])
-5. System detects: `v1 ≠ currentToken (v3)`
-6. **SECURITY ACTION:** Revoke ALL tokens in family
-7. Audit log records theft attempt
-8. Return error with `action: "all_tokens_revoked"`
-
-**This protects against:**
-- Token replay attacks
-- Token theft from compromised devices
-- Man-in-the-middle attacks
-
-### 4. Audit Logging
-
-All token operations are logged to D1 for security analysis:
-
-```sql
-INSERT INTO audit_log (
-  action,           -- 'refresh_token.rotated'
-  resource_type,    -- 'refresh_token_family'
-  resource_id,      -- 'family_abc123'
-  user_id,          -- 'user_123'
-  metadata_json,    -- '{"rotationCount": 5}'
-  created_at
-)
+```typescript
+// In rotate():
+if (requestedScope) {
+  const allowedScopes = new Set(family.allowed_scope.split(' '));
+  const requestedScopes = requestedScope.split(' ');
+  for (const scope of requestedScopes) {
+    if (!allowedScopes.has(scope)) {
+      throw new Error(`invalid_scope: Scope '${scope}' not allowed`);
+    }
+  }
+}
 ```
 
-**Audit actions:**
-- `refresh_token.created` - New family created
-- `refresh_token.rotated` - Token rotated successfully
-- `refresh_token.theft_detected` - Old token reused
-- `refresh_token.family_revoked` - Family revoked
-- `refresh_token.expired` - Family expired
+### 4. Tenant Boundary Enforcement
+
+Family lookup is keyed by `userId`, ensuring:
+- User A cannot access User B's family
+- Even with a valid version, wrong userId = "not found"
+
+### 5. Audit Logging Strategy
+
+| Event | Logging | Rationale |
+|-------|---------|-----------|
+| `created` | Async (batched) | Routine operation |
+| `rotated` | Async (batched) | Routine operation |
+| `theft_detected` | **Sync** | Security critical |
+| `family_revoked` | **Sync** | Security critical |
+| `expired` | Async (batched) | Routine cleanup |
 
 ---
 
-## Implementation Notes
+## Integration with op-token
 
-### Token Rotation Flow
+### Initial Token Issuance
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Rotator
-    participant D1
+```typescript
+// op-token/token.ts
+const rotatorId = env.REFRESH_TOKEN_ROTATOR.idFromName(`rotator:${clientId}`);
+const rotator = env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
 
-    Client->>Rotator: POST /rotate {currentToken}
-    Rotator->>Rotator: Find family by token
-    Rotator->>Rotator: Validate ownership
-    Rotator->>Rotator: Check if current token
-    alt Token is current
-        Rotator->>Rotator: Generate new token
-        Rotator->>Rotator: Update family (atomic)
-        Rotator->>D1: Log rotation (async)
-        Rotator->>Client: Return {newToken}
-    else Token is old (in previousTokens)
-        Rotator->>Rotator: THEFT DETECTED
-        Rotator->>Rotator: Revoke all tokens
-        Rotator->>D1: Log theft (async)
-        Rotator->>Client: Error 400 (all_tokens_revoked)
-    end
+const createResponse = await rotator.fetch(
+  new Request('https://internal/family', {
+    method: 'POST',
+    body: JSON.stringify({
+      jti,
+      userId: sub,
+      clientId,
+      scope: grantedScope,
+      ttl: refreshTokenExpiresIn,
+    }),
+  })
+);
+
+const { version, newJti, expiresIn, allowedScope } = await createResponse.json();
+
+// Create JWT with rtv claim
+const refreshToken = await createRefreshToken(
+  { iss, sub, aud, scope, client_id },
+  privateKey,
+  kid,
+  expiresIn,
+  newJti,  // JTI from DO
+  version  // rtv claim
+);
 ```
 
-### Cleanup Process
+### Token Rotation
 
-- Automatic cleanup runs every 1 hour
-- Expired families removed from memory
-- Previous tokens limited to last 5 (configurable)
-- Audit logs persist in D1 for compliance
+```typescript
+// Parse incoming refresh token
+const claims = parseToken(refreshToken);
+const rtv = claims.rtv as number;
+const jti = claims.jti as string;
 
-### Concurrency
+const rotateResponse = await rotator.fetch(
+  new Request('https://internal/rotate', {
+    method: 'POST',
+    body: JSON.stringify({
+      incomingVersion: rtv,
+      incomingJti: jti,
+      userId: claims.sub,
+      clientId: claims.client_id,
+      requestedScope: requestedScope,
+    }),
+  })
+);
 
-- Durable Objects guarantee atomic operations
-- Strong consistency for token rotation
-- No race conditions possible
+if (!rotateResponse.ok) {
+  const error = await rotateResponse.json();
+  // Handle theft detection, expired, etc.
+}
+
+const { newVersion, newJti, expiresIn, allowedScope } = await rotateResponse.json();
+```
 
 ---
 
-## Usage Examples
+## Migration from V1
 
-### Complete Token Lifecycle
+V2 is a complete rewrite with different API contracts:
 
-```bash
-# 1. Create token family (during initial login)
-RESPONSE=$(curl -X POST https://token-rotator.example.workers.dev/family \
-  -H "Content-Type: application/json" \
-  -d '{
-    "token": "rt_initial_token",
-    "userId": "user_123",
-    "clientId": "web_app",
-    "scope": "openid profile offline_access",
-    "ttl": 2592000
-  }')
-FAMILY_ID=$(echo $RESPONSE | jq -r '.familyId')
+| V1 | V2 | Change |
+|----|----|----|
+| `token` (string) | `jti` (string) | Token stored externally |
+| `familyId` (generated) | `userId` (family key) | Simpler keying |
+| `currentToken` | `incomingVersion` + `incomingJti` | Version-based validation |
+| `newToken` | `newJti` + `newVersion` | JWT created by caller |
+| `rotationCount` | `version` | Same concept, different name |
+| Token string comparison | Version number comparison | More efficient |
 
-# 2. First rotation (user refreshes access token)
-RT1=$(curl -X POST https://token-rotator.example.workers.dev/rotate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "currentToken": "rt_initial_token",
-    "userId": "user_123",
-    "clientId": "web_app"
-  }' | jq -r '.newToken')
+---
 
-# 3. Second rotation
-RT2=$(curl -X POST https://token-rotator.example.workers.dev/rotate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "currentToken": "'"$RT1"'",
-    "userId": "user_123",
-    "clientId": "web_app"
-  }' | jq -r '.newToken')
+## Performance Characteristics
 
-# 4. Check family info
-curl https://token-rotator.example.workers.dev/family/$FAMILY_ID
+| Operation | Complexity | Latency |
+|-----------|------------|---------|
+| Create Family | O(1) | ~5ms |
+| Rotate Token | O(1) | ~5ms |
+| Revoke Family | O(1) | ~5ms |
+| Validate | O(1) | ~2ms |
 
-# 5. Revoke on logout
-curl -X POST https://token-rotator.example.workers.dev/revoke-family \
-  -H "Content-Type: application/json" \
-  -d '{
-    "familyId": "'"$FAMILY_ID"'",
-    "reason": "user_logout"
-  }'
-```
-
-### Theft Detection Simulation
-
-```bash
-# 1. Create family and get token
-curl -X POST https://token-rotator.example.workers.dev/family \
-  -H "Content-Type: application/json" \
-  -d '{
-    "token": "rt_theft_test",
-    "userId": "user_123",
-    "clientId": "client_1",
-    "scope": "openid",
-    "ttl": 2592000
-  }'
-
-# 2. Legitimate rotation (user)
-RT1=$(curl -X POST https://token-rotator.example.workers.dev/rotate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "currentToken": "rt_theft_test",
-    "userId": "user_123",
-    "clientId": "client_1"
-  }' | jq -r '.newToken')
-
-# 3. Another legitimate rotation (user)
-RT2=$(curl -X POST https://token-rotator.example.workers.dev/rotate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "currentToken": "'"$RT1"'",
-    "userId": "user_123",
-    "clientId": "client_1"
-  }' | jq -r '.newToken')
-
-# 4. Attacker tries to use old token (THEFT!)
-curl -X POST https://token-rotator.example.workers.dev/rotate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "currentToken": "rt_theft_test",
-    "userId": "user_123",
-    "clientId": "client_1"
-  }'
-# Response:
-# {
-#   "error": "invalid_grant",
-#   "error_description": "Token theft detected. All tokens in family revoked.",
-#   "action": "all_tokens_revoked"
-# }
-
-# 5. Even legitimate token is now revoked
-curl -X POST https://token-rotator.example.workers.dev/rotate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "currentToken": "'"$RT2"'",
-    "userId": "user_123",
-    "clientId": "client_1"
-  }'
-# Response:
-# {
-#   "error": "invalid_grant",
-#   "error_description": "Refresh token not found or expired"
-# }
-```
-
-### Monitoring Token Usage
-
-```bash
-# Get overall system status
-curl https://token-rotator.example.workers.dev/status
-
-# Query D1 audit logs for security analysis
-wrangler d1 execute authrim-dev --command \
-  "SELECT action, user_id, created_at, metadata_json
-   FROM audit_log
-   WHERE action LIKE 'refresh_token.%'
-   ORDER BY created_at DESC
-   LIMIT 100"
-```
+**Memory Usage:**
+- ~200 bytes per TokenFamilyV2
+- In-memory Map for O(1) lookups
+- Periodic cleanup of expired families
 
 ---
 
 ## Best Practices
 
-1. **Always rotate on use** - Never reuse the same refresh token
-2. **Monitor theft detection** - Alert on `theft_detected` audit logs
-3. **Revoke on logout** - Always revoke family when user logs out
-4. **Track rotation count** - High counts may indicate suspicious activity
-5. **Use audit logs** - Analyze patterns for security incidents
-6. **Set appropriate TTL** - Balance security (shorter) vs UX (longer)
-7. **Handle revocation** - Gracefully handle `all_tokens_revoked` errors
-
----
-
-## Security Considerations
-
-1. **Theft Detection is Aggressive:** ANY reuse of an old token revokes the entire family. This is intentional and follows OAuth 2.0 Security BCP.
-
-2. **Token Storage:** Never store refresh tokens in localStorage or sessionStorage. Use secure httpOnly cookies or secure device storage.
-
-3. **Token Transmission:** Always use HTTPS. Never log or expose refresh tokens.
-
-4. **Audit Monitoring:** Regularly review audit logs for `theft_detected` events.
-
-5. **User Communication:** When tokens are revoked due to theft, notify the user and suggest password change.
-
-6. **Rotation Limit:** Consider implementing a maximum rotation count per family to detect automated attacks.
+1. **Always include `rtv` in refresh tokens** - Essential for V2 theft detection
+2. **Validate both version AND JTI** - Double verification prevents forgery
+3. **Monitor `theft_detected` events** - Alert on security incidents
+4. **Handle revocation gracefully** - Redirect to login on family revocation
+5. **Use appropriate TTL** - Balance security (shorter) vs UX (longer)
+6. **Audit log analysis** - Regular review of security events

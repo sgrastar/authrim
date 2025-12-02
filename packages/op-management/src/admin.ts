@@ -5,6 +5,7 @@
 
 import { Context } from 'hono';
 import type { Env } from '@authrim/shared';
+import { invalidateUserCache } from '@authrim/shared';
 
 /**
  * Convert timestamp to milliseconds
@@ -464,6 +465,9 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
     await c.env.DB.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`)
       .bind(...bindings)
       .run();
+
+    // Invalidate user cache (cache invalidation hook)
+    await invalidateUserCache(c.env, userId);
 
     // Get updated user
     const updatedUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
@@ -1180,6 +1184,9 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
       .bind(avatarUrl, now, userId)
       .run();
 
+    // Invalidate user cache (cache invalidation hook)
+    await invalidateUserCache(c.env, userId);
+
     return c.json({
       success: true,
       avatarUrl,
@@ -1249,6 +1256,9 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
     await c.env.DB.prepare('UPDATE users SET picture = NULL, updated_at = ? WHERE id = ?')
       .bind(now, userId)
       .run();
+
+    // Invalidate user cache (cache invalidation hook)
+    await invalidateUserCache(c.env, userId);
 
     return c.json({
       success: true,

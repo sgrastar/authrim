@@ -13,6 +13,163 @@ import type { Env } from '../types/env';
 import type { RefreshTokenData } from '../types/oidc';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
 
+// ===== User Cache =====
+// Read-Through Cache for user metadata with invalidation hook support
+// TTL: 1 hour (3600 seconds) - long TTL is safe with invalidation hooks
+
+const USER_CACHE_TTL = 3600; // 1 hour
+
+/**
+ * Cached user data structure
+ * Only includes data needed for token issuance (minimal PII)
+ */
+export interface CachedUser {
+  id: string;
+  email: string;
+  email_verified: boolean;
+  name: string | null;
+  picture: string | null;
+  locale: string | null;
+  phone_number: string | null;
+  phone_number_verified: boolean;
+  address: string | null;
+  birthdate: string | null;
+  gender: string | null;
+  profile: string | null;
+  website: string | null;
+  zoneinfo: string | null;
+  updated_at: number;
+}
+
+/**
+ * Get user from cache or D1 (Read-Through Cache pattern)
+ *
+ * Architecture:
+ * - Primary source: D1 database (users table)
+ * - Cache: USER_CACHE KV (1 hour TTL)
+ * - Invalidation: invalidateUserCache() called on user update
+ *
+ * @param env - Cloudflare environment bindings
+ * @param userId - User ID to retrieve
+ * @returns Promise<CachedUser | null>
+ */
+export async function getCachedUser(env: Env, userId: string): Promise<CachedUser | null> {
+  // If USER_CACHE is not configured, fall back to D1 directly
+  if (!env.USER_CACHE) {
+    return await getUserFromD1(env, userId);
+  }
+
+  const cacheKey = buildKVKey('user', userId);
+
+  // Step 1: Try USER_CACHE (Read-Through Cache)
+  const cached = await env.USER_CACHE.get(cacheKey);
+
+  if (cached) {
+    try {
+      return JSON.parse(cached) as CachedUser;
+    } catch (error) {
+      // Cache is corrupted - delete it and fetch from D1
+      console.error('Failed to parse cached user data:', error);
+      await env.USER_CACHE.delete(cacheKey).catch((e) =>
+        console.warn('Failed to delete corrupted user cache:', e)
+      );
+    }
+  }
+
+  // Step 2: Cache miss - fetch from D1
+  const user = await getUserFromD1(env, userId);
+
+  if (!user) {
+    return null;
+  }
+
+  // Step 3: Populate USER_CACHE (1 hour TTL)
+  try {
+    await env.USER_CACHE.put(cacheKey, JSON.stringify(user), {
+      expirationTtl: USER_CACHE_TTL,
+    });
+  } catch (error) {
+    // Cache write failure should not block the response
+    console.warn(`Failed to cache user data for ${userId}:`, error);
+  }
+
+  return user;
+}
+
+/**
+ * Fetch user directly from D1 database
+ */
+async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | null> {
+  const result = await env.DB.prepare(
+    `SELECT id, email, email_verified, name, picture, locale,
+            phone_number, phone_number_verified, address, birthdate,
+            gender, profile, website, zoneinfo, updated_at
+     FROM users WHERE id = ?`
+  )
+    .bind(userId)
+    .first<{
+      id: string;
+      email: string;
+      email_verified: number;
+      name: string | null;
+      picture: string | null;
+      locale: string | null;
+      phone_number: string | null;
+      phone_number_verified: number;
+      address: string | null;
+      birthdate: string | null;
+      gender: string | null;
+      profile: string | null;
+      website: string | null;
+      zoneinfo: string | null;
+      updated_at: number;
+    }>();
+
+  if (!result) {
+    return null;
+  }
+
+  return {
+    id: result.id,
+    email: result.email,
+    email_verified: result.email_verified === 1,
+    name: result.name,
+    picture: result.picture,
+    locale: result.locale,
+    phone_number: result.phone_number,
+    phone_number_verified: result.phone_number_verified === 1,
+    address: result.address,
+    birthdate: result.birthdate,
+    gender: result.gender,
+    profile: result.profile,
+    website: result.website,
+    zoneinfo: result.zoneinfo,
+    updated_at: result.updated_at,
+  };
+}
+
+/**
+ * Invalidate user cache entry
+ * Call this when user data is updated (PATCH /users/{id}, password reset, etc.)
+ *
+ * @param env - Cloudflare environment bindings
+ * @param userId - User ID to invalidate
+ */
+export async function invalidateUserCache(env: Env, userId: string): Promise<void> {
+  if (!env.USER_CACHE) {
+    return;
+  }
+
+  const cacheKey = buildKVKey('user', userId);
+
+  try {
+    await env.USER_CACHE.delete(cacheKey);
+  } catch (error) {
+    // Log but don't throw - cache invalidation failure is not critical
+    console.warn(`Failed to invalidate user cache for ${userId}:`, error);
+  }
+}
+
 /**
  * Store state parameter in KV
  *

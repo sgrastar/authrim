@@ -262,7 +262,10 @@ export function getTokenFormat(token: string): 'jwe' | 'jwt' | 'unknown' {
 }
 
 /**
- * Refresh Token claims interface
+ * Refresh Token claims interface (V2)
+ *
+ * V2 adds rtv (Refresh Token Version) for version-based theft detection.
+ * Each rotation increments the version, allowing detection of old token reuse.
  */
 export interface RefreshTokenClaims extends JWTPayload {
   iss: string; // Issuer
@@ -273,25 +276,31 @@ export interface RefreshTokenClaims extends JWTPayload {
   jti: string; // JWT ID (unique token identifier)
   scope: string; // Granted scopes
   client_id: string; // Client identifier
+  rtv?: number; // Refresh Token Version (V2) - for theft detection
 }
 
 /**
- * Create Refresh Token (signed JWT)
+ * Create Refresh Token (signed JWT) - V2
  * https://tools.ietf.org/html/rfc6749#section-6
+ *
+ * V2 adds rtv (Refresh Token Version) for version-based theft detection.
  *
  * @param claims - Refresh token claims
  * @param privateKey - Private key for signing
  * @param kid - Key ID
  * @param expiresIn - Token expiration time in seconds (default: 2592000 = 30 days)
- * @returns Promise<{ token: string; jti: string }> - Signed JWT and its unique identifier
+ * @param providedJti - Optional JTI from RefreshTokenRotator DO
+ * @param rtv - Optional Refresh Token Version (V2) for theft detection
+ * @returns Promise<{ token: string; jti: string; rtv?: number }> - Signed JWT with metadata
  */
 export async function createRefreshToken(
-  claims: Omit<RefreshTokenClaims, 'iat' | 'exp' | 'jti'>,
+  claims: Omit<RefreshTokenClaims, 'iat' | 'exp' | 'jti' | 'rtv'>,
   privateKey: CryptoKey,
   kid: string,
   expiresIn: number = 2592000,
-  providedJti?: string
-): Promise<{ token: string; jti: string }> {
+  providedJti?: string,
+  rtv?: number
+): Promise<{ token: string; jti: string; rtv?: number }> {
   const now = Math.floor(Date.now() / 1000);
   // Use provided JTI (from RefreshTokenRotator) or generate a new one
   const jti = providedJti || generateSecureRandomString(96);
@@ -301,9 +310,10 @@ export async function createRefreshToken(
     iat: now,
     exp: now + expiresIn,
     jti,
+    ...(rtv !== undefined && { rtv }), // Include rtv if provided (V2)
   })
     .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
     .sign(privateKey);
 
-  return { token, jti };
+  return { token, jti, rtv };
 }
