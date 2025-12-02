@@ -59,13 +59,10 @@ Phase 6 & Phase 7 features completed ahead of schedule:
 - [x] **SCIM 2.0 (RFC 7643/7644)** - User and Group provisioning
 - [x] **JAR (RFC 9101)** - JWT-Secured Authorization Requests
 - [x] **JARM** - JWT-Secured Authorization Response Mode
-
-### Remaining Features (2/10)
-
-- [ ] **SAML 2.0 Bridge** - OIDC ↔ SAML 2.0 conversion
-- [ ] **LDAP/AD Integration** - Enterprise directory integration
+- [x] **SAML 2.0** - IdP & SP with SSO/SLO, HTTP-POST/Redirect bindings
 
 > **Note:** Social Login has been moved to Phase 8 (Login Console & UI)
+> **Note:** LDAP/AD Integration removed - incompatible with Workers architecture (no TCP sockets)
 
 ---
 

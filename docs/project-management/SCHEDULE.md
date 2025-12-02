@@ -136,11 +136,10 @@ Phase 12: CLI & Release                [2027-Q4]                   🔜 Final
 - ✅ JAR (RFC 9101)
 - ✅ JARM
 
-**Remaining**:
-- 🔜 SAML 2.0 Bridge
-- 🔜 LDAP/AD Integration
+- ✅ SAML 2.0 (Dec 02, 2025)
 
 > **Note**: Social Login has been moved to Phase 8 (Login Console & UI)
+> **Note**: LDAP/AD removed - incompatible with Workers architecture
 
 ---
 
@@ -234,14 +233,14 @@ Phase 12: CLI & Release                [2027-Q4]                   🔜 Final
 
 ## Current Status
 
-### Active Phase: Phase 6 (Enterprise Features)
+### Active Phase: Phase 7 (VC/DID & Access Control)
 
-**Progress**: 8/10 features complete (80%)
+**Phase 6 Status**: ✅ Complete (9/9 features, Dec 02, 2025)
 
 **Next Actions**:
-1. Complete remaining Phase 6 features (SAML, LDAP)
-2. Continue Phase 7 Access Control implementation
-3. Run additional conformance tests
+1. Continue Phase 7 Access Control implementation (ReBAC, JWT-SD)
+2. Run additional conformance tests
+3. Prepare for Phase 8 (Social Login, UI Customization)
 
 ### Completed Phases
 
@@ -252,6 +251,7 @@ Phase 12: CLI & Release                [2027-Q4]                   🔜 Final
 | 3 | Conformance | Nov 12, 2025 |
 | 4 | Extended Features | Nov 12, 2025 |
 | 5 | UI/UX | Nov 18, 2025 |
+| 6 | Enterprise Features | Dec 02, 2025 |
 
 ---
 

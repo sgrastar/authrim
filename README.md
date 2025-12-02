@@ -74,9 +74,9 @@ Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 
 ## Current Status
 
-### Phase 6: Enterprise Features (9/10 Complete)
+### Phase 6: Enterprise Features ✅ COMPLETE
 
-**Latest Achievements (Nov-Dec 2025):**
+**Achievements (Nov-Dec 2025):**
 - ✅ **Device Flow (RFC 8628)** - Smart TV, CLI, IoT authentication
 - ✅ **JWT Bearer Flow (RFC 7523)** - Service-to-service authentication
 - ✅ **JWE (RFC 7516)** - ID Token and UserInfo encryption
@@ -88,16 +88,13 @@ Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 - ✅ **SAML 2.0** - IdP & SP with SSO/SLO, HTTP-POST/Redirect bindings
 - ✅ **Policy Service** - RBAC/ABAC engine (84 tests)
 
-**Remaining:**
-- LDAP/AD Integration
-
 ### Phase Overview
 
 | Phase | Name | Status |
 |-------|------|--------|
 | 1-5 | Foundation, Core API, UI/UX | ✅ Complete |
-| 6 | Enterprise Features | ⏳ 8/10 Complete |
-| 7 | VC/DID & Access Control | 🔜 Policy Core/Service done |
+| 6 | Enterprise Features | ✅ Complete |
+| 7 | VC/DID & Access Control | ⏳ Policy Core/Service done |
 | 8 | Login Console & UI | 🔜 Planned |
 | 9 | SDK & API | 🔜 Planned |
 | 10 | Security & QA | 🔜 Planned |
@@ -198,7 +195,6 @@ Authrim is an **enterprise-grade OpenID Connect Provider** built for:
 ### Planned
 
 - Social Login (7+ providers) - Phase 8
-- SAML 2.0 Bridge / LDAP Integration - Phase 6
 - WebSDK (@authrim/sdk-core, @authrim/sdk-web) - Phase 9
 - CLI (`create-authrim`) - Phase 12
 - Verifiable Credentials (OpenID4VP/CI, JWT-SD) - Phase 7
@@ -344,6 +340,6 @@ See [LICENSE](./LICENSE) for details.
 
 > **Authrim** — *Authentication at the edge of everywhere*
 >
-> **Status:** Phase 6 (8/10 Enterprise Features Complete) + Policy Service Implemented
+> **Status:** Phase 6 Complete ✅ | Phase 7 In Progress (Policy Service done)
 >
 > *From zero to production-ready OpenID Provider in under 5 minutes.* (Goal: 2027)
