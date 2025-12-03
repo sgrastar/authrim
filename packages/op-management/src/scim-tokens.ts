@@ -6,11 +6,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared/types/env';
-import {
-  generateScimToken,
-  revokeScimToken,
-  listScimTokens,
-} from '@authrim/shared/middleware/scim-auth';
+import { generateScimToken, revokeScimToken, listScimTokens } from '@authrim/scim';
 
 /**
  * Validation constraints for SCIM token creation

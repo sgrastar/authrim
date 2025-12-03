@@ -9,15 +9,19 @@ import { Hono } from 'hono';
 import type { Env } from '@authrim/shared/types/env';
 import { adminScimTokenCreateHandler } from '../scim-tokens';
 
-// Mock scim-auth module
-vi.mock('@authrim/shared/middleware/scim-auth', () => ({
-  generateScimToken: vi.fn().mockResolvedValue({
-    token: 'scim_test_token_123',
-    tokenHash: 'hash_abc123',
-  }),
-  revokeScimToken: vi.fn().mockResolvedValue(true),
-  listScimTokens: vi.fn().mockResolvedValue([]),
-}));
+// Mock scim-auth module (now from @authrim/scim package)
+vi.mock('@authrim/scim', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/scim')>();
+  return {
+    ...actual,
+    generateScimToken: vi.fn().mockResolvedValue({
+      token: 'scim_test_token_123',
+      tokenHash: 'hash_abc123',
+    }),
+    revokeScimToken: vi.fn().mockResolvedValue(true),
+    listScimTokens: vi.fn().mockResolvedValue([]),
+  };
+});
 
 describe('SCIM Token Create Handler - Input Validation', () => {
   let app: Hono<{ Bindings: Env }>;

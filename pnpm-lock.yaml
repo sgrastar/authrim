@@ -191,6 +191,9 @@ importers:
 
   packages/op-management:
     dependencies:
+      '@authrim/scim':
+        specifier: workspace:*
+        version: link:../scim
       '@authrim/shared':
         specifier: workspace:*
         version: link:../shared
@@ -363,6 +366,25 @@ importers:
       wrangler:
         specifier: ^4.50.0
         version: 4.50.0(@cloudflare/workers-types@4.20251121.0)
+
+  packages/scim:
+    dependencies:
+      '@authrim/shared':
+        specifier: workspace:*
+        version: link:../shared
+      hono:
+        specifier: ^4.10.6
+        version: 4.10.6
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20251121.0
+        version: 4.20251121.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@20.19.25)(@vitest/ui@4.0.13)(jsdom@27.2.0)
 
   packages/shared:
     dependencies:

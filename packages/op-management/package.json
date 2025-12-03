@@ -13,6 +13,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@authrim/scim": "workspace:*",
     "@authrim/shared": "workspace:*",
     "hono": "^4.10.6",
     "jose": "^6.1.2"

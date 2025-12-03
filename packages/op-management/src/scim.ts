@@ -24,7 +24,10 @@
 import { Hono } from 'hono';
 import type { Env } from '@authrim/shared/types/env';
 import { invalidateUserCache } from '@authrim/shared';
+import { generateId } from '@authrim/shared/utils/id';
+import { hashPassword } from '@authrim/shared/utils/crypto';
 import {
+  // Types
   SCIM_SCHEMAS,
   type ScimUser,
   type ScimGroup,
@@ -32,8 +35,7 @@ import {
   type ScimError,
   type ScimPatchOp,
   type ScimQueryParams,
-} from '@authrim/shared/types/scim';
-import {
+  // Mapper utilities
   userToScim,
   scimToUser,
   groupToScim,
@@ -45,11 +47,12 @@ import {
   validateScimGroup,
   type InternalUser,
   type InternalGroup,
-} from '@authrim/shared/utils/scim-mapper';
-import { parseScimFilter, filterToSql } from '@authrim/shared/utils/scim-filter';
-import { scimAuthMiddleware } from '@authrim/shared/middleware/scim-auth';
-import { generateId } from '@authrim/shared/utils/id';
-import { hashPassword } from '@authrim/shared/utils/crypto';
+  // Filter utilities
+  parseScimFilter,
+  filterToSql,
+  // Auth middleware
+  scimAuthMiddleware,
+} from '@authrim/scim';
 
 const app = new Hono<{ Bindings: Env }>();
 

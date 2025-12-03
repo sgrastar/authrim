@@ -8,6 +8,127 @@ import type { Env } from '@authrim/shared';
 import { invalidateUserCache } from '@authrim/shared';
 
 /**
+ * Policy feature flag names mapped to camelCase property names
+ */
+const POLICY_FLAG_MAPPING: Record<string, string> = {
+  ENABLE_ABAC: 'enableAbac',
+  ENABLE_REBAC: 'enableRebac',
+  ENABLE_POLICY_LOGGING: 'enablePolicyLogging',
+  ENABLE_VERIFIED_ATTRIBUTES: 'enableVerifiedAttributes',
+  ENABLE_CUSTOM_RULES: 'enableCustomRules',
+  ENABLE_SD_JWT: 'enableSdJwt',
+  ENABLE_POLICY_EMBEDDING: 'enablePolicyEmbedding',
+};
+
+/**
+ * KV key prefix for policy feature flags (matches policy-core/feature-flags.ts)
+ */
+const POLICY_FLAGS_PREFIX = 'policy:flags:';
+
+/**
+ * KV keys for policy claims configuration
+ */
+const POLICY_CLAIMS_KEYS = {
+  ACCESS_TOKEN_CLAIMS: 'policy:claims:access_token',
+  ID_TOKEN_CLAIMS: 'policy:claims:id_token',
+};
+
+/**
+ * Read policy feature flags from KV
+ * Returns an object with flag values that have been set in KV
+ */
+async function readPolicyFlagsFromKV(env: Env): Promise<Record<string, boolean>> {
+  const flags: Record<string, boolean> = {};
+
+  if (!env.SETTINGS) {
+    return flags;
+  }
+
+  for (const [kvKey, camelKey] of Object.entries(POLICY_FLAG_MAPPING)) {
+    try {
+      const value = await env.SETTINGS.get(`${POLICY_FLAGS_PREFIX}${kvKey}`);
+      if (value !== null) {
+        flags[camelKey] = value.toLowerCase() === 'true' || value === '1';
+      }
+    } catch {
+      // Skip on error
+    }
+  }
+
+  return flags;
+}
+
+/**
+ * Read policy claims configuration from KV
+ */
+async function readPolicyClaimsFromKV(env: Env): Promise<Record<string, string>> {
+  const claims: Record<string, string> = {};
+
+  if (!env.SETTINGS) {
+    return claims;
+  }
+
+  try {
+    const accessTokenClaims = await env.SETTINGS.get(POLICY_CLAIMS_KEYS.ACCESS_TOKEN_CLAIMS);
+    if (accessTokenClaims) {
+      claims.accessTokenClaims = accessTokenClaims;
+    }
+
+    const idTokenClaims = await env.SETTINGS.get(POLICY_CLAIMS_KEYS.ID_TOKEN_CLAIMS);
+    if (idTokenClaims) {
+      claims.idTokenClaims = idTokenClaims;
+    }
+  } catch {
+    // Skip on error
+  }
+
+  return claims;
+}
+
+/**
+ * Sync policy settings to KV
+ * Writes feature flags and claims to individual KV keys for runtime access
+ */
+async function syncPolicyFlagsToKV(
+  env: Env,
+  policy: {
+    enableAbac?: boolean;
+    enableRebac?: boolean;
+    enablePolicyLogging?: boolean;
+    enableVerifiedAttributes?: boolean;
+    enableCustomRules?: boolean;
+    enableSdJwt?: boolean;
+    enablePolicyEmbedding?: boolean;
+    accessTokenClaims?: string;
+    idTokenClaims?: string;
+  }
+): Promise<void> {
+  if (!env.SETTINGS) {
+    return;
+  }
+
+  const writes: Promise<void>[] = [];
+
+  // Sync feature flags to individual KV keys
+  for (const [kvKey, camelKey] of Object.entries(POLICY_FLAG_MAPPING)) {
+    const value = policy[camelKey as keyof typeof policy];
+    if (typeof value === 'boolean') {
+      writes.push(env.SETTINGS.put(`${POLICY_FLAGS_PREFIX}${kvKey}`, value.toString()));
+    }
+  }
+
+  // Sync claims configuration
+  if (policy.accessTokenClaims !== undefined) {
+    writes.push(env.SETTINGS.put(POLICY_CLAIMS_KEYS.ACCESS_TOKEN_CLAIMS, policy.accessTokenClaims));
+  }
+  if (policy.idTokenClaims !== undefined) {
+    writes.push(env.SETTINGS.put(POLICY_CLAIMS_KEYS.ID_TOKEN_CLAIMS, policy.idTokenClaims));
+  }
+
+  await Promise.all(writes);
+}
+
+/**
  * Convert timestamp to milliseconds
  * Handles both seconds (10 digits) and milliseconds (13 digits) timestamps
  */
@@ -1926,12 +2047,45 @@ export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
         requireDpop: false, // Require DPoP (or MTLS) for sender-constrained tokens
         allowPublicClients: true, // Allow public clients (disable for strict FAPI 2.0)
       },
+      policy: {
+        // Policy system feature flags
+        enableAbac: false, // ABAC (Attribute-Based Access Control)
+        enableRebac: false, // ReBAC (Relationship-Based Access Control)
+        enablePolicyLogging: false, // Detailed policy evaluation logging
+        enableVerifiedAttributes: false, // Verified attributes checking
+        enableCustomRules: true, // Custom policy rules
+        enableSdJwt: false, // SD-JWT (Selective Disclosure JWT)
+        enablePolicyEmbedding: false, // Permission embedding in Access Token
+        // Token claims configuration
+        accessTokenClaims: 'roles,org_id,org_type', // Default claims for Access Token
+        idTokenClaims: 'roles,user_type,org_id,plan,org_type', // Default claims for ID Token
+      },
     };
+
+    // Read policy feature flags from KV (dynamic overrides)
+    const policyFlags = await readPolicyFlagsFromKV(env);
+    const policyClaimsSettings = await readPolicyClaimsFromKV(env);
 
     // Merge with stored settings if they exist
     const settings = settingsJson
       ? { ...defaultSettings, ...JSON.parse(settingsJson) }
       : defaultSettings;
+
+    // Apply policy feature flags from KV (priority: KV > stored settings > defaults)
+    if (Object.keys(policyFlags).length > 0) {
+      settings.policy = {
+        ...settings.policy,
+        ...policyFlags,
+      };
+    }
+
+    // Apply policy claims settings from KV
+    if (Object.keys(policyClaimsSettings).length > 0) {
+      settings.policy = {
+        ...settings.policy,
+        ...policyClaimsSettings,
+      };
+    }
 
     return c.json({ settings });
   } catch (error) {
@@ -1975,6 +2129,7 @@ export async function adminSettingsUpdateHandler(c: Context<{ Bindings: Env }>) 
       'ciba',
       'oidc',
       'fapi',
+      'policy',
     ];
     const settings = body.settings;
 
@@ -1993,6 +2148,11 @@ export async function adminSettingsUpdateHandler(c: Context<{ Bindings: Env }>) 
     // Store settings in KV
     if (env.SETTINGS) {
       await env.SETTINGS.put('system_settings', JSON.stringify(settings));
+
+      // Sync policy feature flags to individual KV keys
+      if (settings.policy) {
+        await syncPolicyFlagsToKV(env, settings.policy);
+      }
     } else {
       return c.json(
         {
