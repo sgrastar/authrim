@@ -306,13 +306,45 @@ describe('Router Worker', () => {
   });
 
   describe('CORS Headers', () => {
-    it('should include CORS headers', async () => {
+    it('should include CORS headers with request origin when no whitelist configured', async () => {
       const req = new Request('https://example.com/api/health', {
         headers: { Origin: 'https://app.example.com' },
       });
       const res = await app.fetch(req, mockEnv);
 
-      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      // When ALLOWED_ORIGINS is not set, returns the request origin (not '*')
+      // This is more secure per CORS spec
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.com');
+      // Credentials should be disabled when no whitelist is configured
+      expect(res.headers.get('Access-Control-Allow-Credentials')).toBeNull();
+    });
+
+    it('should allow whitelisted origin with credentials when ALLOWED_ORIGINS is set', async () => {
+      const envWithOrigins = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://app.example.com,https://admin.example.com',
+      };
+      const req = new Request('https://example.com/api/health', {
+        headers: { Origin: 'https://app.example.com' },
+      });
+      const res = await app.fetch(req, envWithOrigins);
+
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.com');
+      expect(res.headers.get('Access-Control-Allow-Credentials')).toBe('true');
+    });
+
+    it('should reject non-whitelisted origin when ALLOWED_ORIGINS is set', async () => {
+      const envWithOrigins = {
+        ...mockEnv,
+        ALLOWED_ORIGINS: 'https://app.example.com',
+      };
+      const req = new Request('https://example.com/api/health', {
+        headers: { Origin: 'https://evil.example.com' },
+      });
+      const res = await app.fetch(req, envWithOrigins);
+
+      // Non-whitelisted origin should not get CORS headers
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBeNull();
     });
 
     it('should handle OPTIONS preflight requests', async () => {

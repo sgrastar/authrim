@@ -106,13 +106,44 @@ app.use(
   })
 );
 
-// CORS configuration
-app.use(
-  '*',
-  cors({
-    origin: '*',
+/**
+ * CORS configuration with dynamic origin validation
+ *
+ * Security considerations for Management API:
+ * - Per CORS spec, when credentials: true, origin cannot be '*'
+ * - If ALLOWED_ORIGINS is set, validates against whitelist with credentials enabled
+ * - If not set, uses '*' with credentials disabled (safe default)
+ * - Admin endpoints (/api/admin/*) should have ALLOWED_ORIGINS configured in production
+ */
+app.use('*', async (c, next) => {
+  const allowedOriginsEnv = c.env.ALLOWED_ORIGINS;
+
+  // Parse allowed origins from environment (comma-separated)
+  const allowedOrigins = allowedOriginsEnv
+    ? allowedOriginsEnv.split(',').map((o: string) => o.trim())
+    : null;
+
+  // Only allow credentials when specific origins are configured
+  const allowCredentials = !!allowedOrigins;
+
+  // Origin validation function
+  const validateOrigin = (origin: string): string | undefined | null => {
+    if (!allowedOrigins) {
+      // No whitelist configured: allow all origins but without credentials
+      return origin;
+    }
+    // Check against whitelist
+    if (allowedOrigins.includes(origin)) {
+      return origin;
+    }
+    // Origin not in whitelist
+    return null;
+  };
+
+  return cors({
+    origin: validateOrigin,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'If-Match', 'If-None-Match'],
+    allowHeaders: ['Content-Type', 'Authorization', 'DPoP', 'If-Match', 'If-None-Match'],
     exposeHeaders: [
       'X-RateLimit-Limit',
       'X-RateLimit-Remaining',
@@ -121,9 +152,9 @@ app.use(
       'Location',
     ],
     maxAge: 86400,
-    credentials: true,
-  })
-);
+    credentials: allowCredentials,
+  })(c, next);
+});
 
 // Rate limiting and Initial Access Token for registration endpoint
 app.use(
