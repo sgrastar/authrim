@@ -323,6 +323,27 @@ binding = "CLIENTS_CACHE"
 id = "placeholder"
 preview_id = "placeholder"
 
+[[kv_namespaces]]
+binding = "USER_CACHE"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "REBAC_CACHE"
+id = "placeholder"
+preview_id = "placeholder"
+
+[[kv_namespaces]]
+binding = "SETTINGS"
+id = "placeholder"
+preview_id = "placeholder"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "authrim-users-db"
+database_id = "placeholder"
+
 # Durable Objects Bindings' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"

@@ -656,10 +656,27 @@ fi
 if [ ! -f "packages/op-token/wrangler.${DEPLOY_ENV}.toml" ]; then
     echo "  • Generating op-token/wrangler.${DEPLOY_ENV}.toml..."
     generate_base_wrangler "op-token" "[[kv_namespaces]]
-binding = \"CLIENTS\"
+binding = \"CLIENTS_CACHE\"
 id = \"placeholder\"
 
-" "" "" "[[durable_objects.bindings]]
+[[kv_namespaces]]
+binding = \"USER_CACHE\"
+id = \"placeholder\"
+
+[[kv_namespaces]]
+binding = \"REBAC_CACHE\"
+id = \"placeholder\"
+
+[[kv_namespaces]]
+binding = \"SETTINGS\"
+id = \"placeholder\"
+
+" "[[d1_databases]]
+binding = \"DB\"
+database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+" "" "[[durable_objects.bindings]]
 name = \"KEY_MANAGER\"
 class_name = \"KeyManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\"

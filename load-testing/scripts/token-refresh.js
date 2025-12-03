@@ -1,5 +1,5 @@
 /**
- * TEST 2: Refresh Token Storm (Production-like)
+ * /token (refresh_token) 負荷テスト
  *
  * 本番運用に近い設計:
  * - Token Rotation を有効化
@@ -8,7 +8,8 @@
  * - Family depth = 1 で常に rotation
  *
  * 使い方:
- * k6 run --env PRESET=rps100 scripts/test2-refresh-storm.js
+ * k6 run --env PRESET=rps100 scripts/token-refresh.js
+ * k6 run --env PRESET=rps300 scripts/token-refresh.js
  */
 
 import http from 'k6/http';
@@ -17,13 +18,19 @@ import { Counter, Trend, Rate } from 'k6/metrics';
 import { SharedArray } from 'k6/data';
 import encoding from 'k6/encoding';
 
+// テスト識別情報
+const TEST_NAME = '/token (refresh_token)';
+const TEST_ID = 'token-refresh';
+
 // カスタムメトリクス
-const refreshRequestDuration = new Trend('refresh_request_duration');
-const refreshRequestSuccess = new Rate('refresh_request_success');
+const tokenRequestDuration = new Trend('token_request_duration');
+const tokenRequestSuccess = new Rate('token_request_success');
 const tokenRotationSuccess = new Rate('token_rotation_success');
+const authErrors = new Counter('auth_errors');
+const rateLimitErrors = new Counter('rate_limit_errors');
+const serverErrors = new Counter('server_errors');
 const d1WriteErrors = new Counter('d1_write_errors');
 const familyDepthMetric = new Trend('token_family_depth');
-const serverErrors = new Counter('server_errors');
 
 // 環境変数
 const BASE_URL = __ENV.BASE_URL || 'https://conformance.authrim.com';
@@ -37,16 +44,16 @@ const PRESETS = {
   rps100: {
     description: '100 RPS sustained load - Production baseline',
     stages: [
-      { target: 50, duration: '30s' },    // Warm up
-      { target: 100, duration: '30s' },   // Ramp to 100 RPS
-      { target: 100, duration: '120s' },  // Sustain 100 RPS (2 min)
-      { target: 50, duration: '15s' },    // Ramp down
+      { target: 50, duration: '30s' },
+      { target: 100, duration: '30s' },
+      { target: 100, duration: '120s' },
+      { target: 50, duration: '15s' },
     ],
     thresholds: {
       http_req_duration: ['p(95)<200', 'p(99)<300'],
       http_req_failed: ['rate<0.001'],
-      refresh_request_duration: ['p(99)<300'],
-      token_rotation_success: ['rate>0.99'], // 99% rotation success
+      token_request_duration: ['p(99)<300'],
+      token_rotation_success: ['rate>0.99'],
       d1_write_errors: ['count<1'],
     },
     preAllocatedVUs: 100,
@@ -56,15 +63,15 @@ const PRESETS = {
   rps200: {
     description: '200 RPS sustained load - High traffic scenario',
     stages: [
-      { target: 100, duration: '30s' },   // Warm up
-      { target: 200, duration: '30s' },   // Ramp to 200 RPS
-      { target: 200, duration: '120s' },  // Sustain 200 RPS (2 min)
-      { target: 100, duration: '15s' },   // Ramp down
+      { target: 100, duration: '30s' },
+      { target: 200, duration: '30s' },
+      { target: 200, duration: '120s' },
+      { target: 100, duration: '15s' },
     ],
     thresholds: {
       http_req_duration: ['p(95)<250', 'p(99)<400'],
       http_req_failed: ['rate<0.001'],
-      refresh_request_duration: ['p(99)<400'],
+      token_request_duration: ['p(99)<400'],
       token_rotation_success: ['rate>0.99'],
       d1_write_errors: ['count<2'],
     },
@@ -72,23 +79,61 @@ const PRESETS = {
     maxVUs: 240,
     thinkTime: 0,
   },
+  // 標準ベンチマーク: 2分間 300 RPS テスト
   rps300: {
-    description: '300 RPS sustained load - Peak traffic scenario',
+    description: '300 RPS sustained load - Standard benchmark (2 min)',
     stages: [
-      { target: 150, duration: '30s' },   // Warm up
-      { target: 300, duration: '30s' },   // Ramp to 300 RPS
-      { target: 300, duration: '120s' },  // Sustain 300 RPS (2 min)
-      { target: 150, duration: '15s' },   // Ramp down
+      { target: 300, duration: '10s' },
+      { target: 300, duration: '120s' },
+      { target: 0, duration: '10s' },
     ],
     thresholds: {
       http_req_duration: ['p(95)<300', 'p(99)<500'],
-      http_req_failed: ['rate<0.005'],
-      refresh_request_duration: ['p(99)<500'],
-      token_rotation_success: ['rate>0.98'], // Slightly relaxed for high load
-      d1_write_errors: ['count<5'],
+      http_req_failed: ['rate<0.001'],
+      token_request_duration: ['p(99)<500'],
+      token_rotation_success: ['rate>0.999'],
+      d1_write_errors: ['count<1'],
     },
     preAllocatedVUs: 300,
     maxVUs: 360,
+    thinkTime: 0,
+  },
+  // 高VUベンチマーク: 2分間 300 RPS テスト（VU 3倍でキューイング回避）
+  rps300_highvu: {
+    description: '300 RPS with 3x VUs - Reduced queueing latency',
+    stages: [
+      { target: 300, duration: '10s' },
+      { target: 300, duration: '120s' },
+      { target: 0, duration: '10s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<300', 'p(99)<500'],
+      http_req_failed: ['rate<0.001'],
+      token_request_duration: ['p(99)<500'],
+      token_rotation_success: ['rate>0.999'],
+      d1_write_errors: ['count<1'],
+    },
+    preAllocatedVUs: 900,
+    maxVUs: 1080,
+    thinkTime: 0,
+  },
+  // VU500ベンチマーク: 2分間 300 RPS テスト（Ethernet環境向け）
+  rps300_vu500: {
+    description: '300 RPS with 500 VUs - Ethernet optimized',
+    stages: [
+      { target: 300, duration: '10s' },
+      { target: 300, duration: '120s' },
+      { target: 0, duration: '10s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<300', 'p(99)<500'],
+      http_req_failed: ['rate<0.001'],
+      token_request_duration: ['p(99)<500'],
+      token_rotation_success: ['rate>0.999'],
+      d1_write_errors: ['count<1'],
+    },
+    preAllocatedVUs: 500,
+    maxVUs: 600,
     thinkTime: 0,
   },
 };
@@ -122,23 +167,23 @@ const refreshTokens = new SharedArray('refresh_tokens', function () {
     return normalized;
   } catch (err) {
     throw new Error(
-      `Refresh token seed not found or invalid at "${REFRESH_TOKEN_PATH}". Run scripts/generate-seeds.js to create it. (${err.message})`,
+      `Refresh token seed not found or invalid at "${REFRESH_TOKEN_PATH}". Run scripts/generate-seeds.js to create it. (${err.message})`
     );
   }
 });
 if (!refreshTokens.length) {
-  throw new Error('No refresh tokens available for test2. Aborting.');
+  throw new Error(`No refresh tokens available for ${TEST_ID}. Aborting.`);
 }
 if (refreshTokens.length < selectedPreset.maxVUs) {
   throw new Error(
-    `Not enough refresh tokens for preset "${PRESET}". Required at least ${selectedPreset.maxVUs} (max VUs), found ${refreshTokens.length}. Increase REFRESH_COUNT or lower maxVUs.`,
+    `Not enough refresh tokens for preset "${PRESET}". Required at least ${selectedPreset.maxVUs} (max VUs), found ${refreshTokens.length}. Increase REFRESH_COUNT or lower maxVUs.`
   );
 }
 
 // テストオプション
 export const options = {
   scenarios: {
-    refresh_storm: {
+    token_refresh: {
       executor: 'ramping-arrival-rate',
       startRate: selectedPreset.stages[0].target,
       timeUnit: '1s',
@@ -155,15 +200,9 @@ let vuTokenFamily = null;
 let familyDepth = 0;
 let hasLoggedServerError = false;
 
-// Basic 認証ヘッダーの生成
-function getBasicAuthHeader() {
-  const credentials = `${CLIENT_ID}:${CLIENT_SECRET}`;
-  return `Basic ${encoding.b64encode(credentials)}`;
-}
-
 // セットアップ
 export function setup() {
-  console.log(`🚀 TEST 2: Refresh Token Storm (Production-like)`);
+  console.log(`🚀 ${TEST_NAME} 負荷テスト`);
   console.log(`📊 プリセット: ${PRESET}`);
   console.log(`📝 説明: ${selectedPreset.description}`);
   console.log(`🎯 ターゲット: ${BASE_URL}`);
@@ -173,8 +212,9 @@ export function setup() {
   console.log(`   - Token Rotation 有効化`);
   console.log(`   - VU ごとに独立した token family`);
   console.log(`   - すべて正常な rotation path（エラーケースなし）`);
-  console.log(`   - Family depth = 1 で常に rotation`);
-  console.log(`   - Token pool: ${refreshTokens.length} (requires >= ${selectedPreset.maxVUs} for 1 token/VU)`);
+  console.log(
+    `   - Token pool: ${refreshTokens.length} (requires >= ${selectedPreset.maxVUs} for 1 token/VU)`
+  );
 
   return {
     baseUrl: BASE_URL,
@@ -187,12 +227,11 @@ export function setup() {
 export default function (data) {
   // VU 初回実行時: 独立した token family を取得
   if (!vuTokenFamily) {
-    // VU ID をベースにユニークなインデックスを生成
     const vuId = __VU;
     const tokenIndex = vuId - 1;
     if (tokenIndex >= refreshTokens.length) {
       throw new Error(
-        `No refresh token available for VU ${vuId}. Token pool=${refreshTokens.length}, required=${selectedPreset.maxVUs}`,
+        `No refresh token available for VU ${vuId}. Token pool=${refreshTokens.length}, required=${selectedPreset.maxVUs}`
       );
     }
     vuTokenFamily = {
@@ -203,31 +242,33 @@ export default function (data) {
     hasLoggedServerError = false;
   }
 
+  // Basic 認証ヘッダーの生成
+  const credentials = `${vuTokenFamily.client_id}:${vuTokenFamily.client_secret}`;
+  const basicAuth = `Basic ${encoding.b64encode(credentials)}`;
+
   // /token リクエストのパラメータ
   const params = {
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+      Connection: 'keep-alive',
+      Authorization: basicAuth,
     },
     tags: {
-      name: 'RefreshTokenRequest',
+      name: 'TokenRefreshRequest',
       preset: PRESET,
       vuId: vuTokenFamily.vuId,
     },
   };
 
-  const payload = [
-    `grant_type=refresh_token`,
-    `refresh_token=${vuTokenFamily.token}`,
-    `client_id=${vuTokenFamily.client_id}`,
-    `client_secret=${vuTokenFamily.client_secret}`,
-  ].join('&');
+  const payload = `grant_type=refresh_token&refresh_token=${vuTokenFamily.token}`;
 
   // リクエスト送信
   const response = http.post(`${BASE_URL}/token`, payload, params);
   const duration = response.timings.duration;
 
   // メトリクス記録
-  refreshRequestDuration.add(duration);
+  tokenRequestDuration.add(duration);
 
   // レスポンスチェック
   let responseBody = {};
@@ -243,7 +284,6 @@ export default function (data) {
     'has refresh_token': (r) => responseBody.refresh_token !== undefined,
     'token_type is Bearer': (r) => responseBody.token_type === 'Bearer',
     'new refresh_token differs (rotation)': (r) => {
-      // Token Rotation が有効な場合、新しい Refresh Token は古いものと異なるはず
       if (responseBody.refresh_token) {
         return responseBody.refresh_token !== vuTokenFamily.token;
       }
@@ -251,7 +291,7 @@ export default function (data) {
     },
   });
 
-  refreshRequestSuccess.add(success);
+  tokenRequestSuccess.add(success);
 
   // Token Rotation の成功チェック
   if (success && responseBody.refresh_token && responseBody.refresh_token !== vuTokenFamily.token) {
@@ -264,7 +304,7 @@ export default function (data) {
   } else {
     tokenRotationSuccess.add(0);
 
-    // Rotation 失敗時のデバッグ情報（light モードのみ）
+    // Rotation 失敗時のデバッグ情報（rps100 のみ）
     if (!success && PRESET === 'rps100') {
       console.error(`❌ Token rotation failed for VU ${vuTokenFamily.vuId}:`);
       console.error(`   Status: ${response.status}`);
@@ -273,15 +313,26 @@ export default function (data) {
   }
 
   // エラーハンドリング
+  if (response.status === 401 || response.status === 403) {
+    authErrors.add(1);
+  }
+  if (response.status === 429) {
+    rateLimitErrors.add(1);
+  }
   if (response.status >= 500) {
     serverErrors.add(1);
     if (!hasLoggedServerError) {
-      console.error(`❌ 5xx from /token (VU ${vuTokenFamily.vuId}): status=${response.status}, body=${response.body}`);
+      console.error(
+        `❌ 5xx from /token (VU ${vuTokenFamily.vuId}): status=${response.status}, body=${response.body}`
+      );
       hasLoggedServerError = true;
     }
 
     // D1 書き込みエラーの可能性
-    if (response.status === 500 && (response.body.includes('D1') || response.body.includes('database'))) {
+    if (
+      response.status === 500 &&
+      (response.body.includes('D1') || response.body.includes('database'))
+    ) {
       d1WriteErrors.add(1);
     }
   }
@@ -295,7 +346,7 @@ export default function (data) {
 // ティアダウン
 export function teardown(data) {
   console.log(``);
-  console.log(`✅ TEST 2 完了`);
+  console.log(`✅ ${TEST_NAME} テスト完了`);
   console.log(`📊 プリセット: ${data.preset}`);
   console.log(`🎯 ターゲット: ${data.baseUrl}`);
 }
@@ -303,13 +354,20 @@ export function teardown(data) {
 // サマリーハンドラー
 export function handleSummary(data) {
   const preset = PRESET;
-  const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '').replace('T', '_');
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/:/g, '-')
+    .replace(/\..+/, '')
+    .replace('T', '_');
   const resultsDir = __ENV.RESULTS_DIR || '../results';
 
   return {
-    [`${resultsDir}/test2-${preset}_${timestamp}.json`]: JSON.stringify(data, null, 2),
-    [`${resultsDir}/test2-${preset}_${timestamp}.log`]: textSummary(data, { indent: ' ', enableColors: false }),
-    'stdout': textSummary(data, { indent: ' ', enableColors: true }),
+    [`${resultsDir}/${TEST_ID}-${preset}_${timestamp}.json`]: JSON.stringify(data, null, 2),
+    [`${resultsDir}/${TEST_ID}-${preset}_${timestamp}.log`]: textSummary(data, {
+      indent: ' ',
+      enableColors: false,
+    }),
+    stdout: textSummary(data, { indent: ' ', enableColors: true }),
   };
 }
 
@@ -318,7 +376,7 @@ function textSummary(data, options) {
   const indent = options.indent || '';
 
   let summary = '\n';
-  summary += `${indent}📊 TEST 2: Refresh Token Storm - サマリー\n`;
+  summary += `${indent}📊 ${TEST_NAME} - サマリー\n`;
   summary += `${indent}${'='.repeat(70)}\n\n`;
 
   // テスト情報
@@ -362,7 +420,9 @@ function textSummary(data, options) {
 
   // エラー統計
   summary += `${indent}❌ エラー統計:\n`;
-  summary += `${indent}  5xx 応答: ${metrics.server_errors?.values?.count || 0}\n`;
+  summary += `${indent}  認証エラー (401/403): ${metrics.auth_errors?.values?.count || 0}\n`;
+  summary += `${indent}  Rate Limit (429): ${metrics.rate_limit_errors?.values?.count || 0}\n`;
+  summary += `${indent}  サーバーエラー (5xx): ${metrics.server_errors?.values?.count || 0}\n`;
   summary += `${indent}  D1 書き込みエラー: ${metrics.d1_write_errors?.values?.count || 0}\n\n`;
 
   // 判定
@@ -374,49 +434,47 @@ function textSummary(data, options) {
 
   summary += `${indent}✅ 判定:\n`;
 
+  // プリセットごとの閾値で判定
+  let p95Threshold, p99Threshold, errorThreshold, rotationThreshold, d1Threshold;
   if (PRESET === 'rps100') {
-    const p95Pass = p95 < 200;
-    const p99Pass = p99 < 300;
-    const errorPass = errorRate < 0.1;
-    const rotationPass = rotationRate > 99;
-    const d1Pass = d1Errors === 0;
-    const pass = p95Pass && p99Pass && errorPass && rotationPass && d1Pass;
-
-    summary += `${indent}  ${pass ? '✅ PASS' : '❌ FAIL'}\n`;
-    summary += `${indent}  - p95 < 200ms: ${p95Pass ? '✅' : '❌'} (${p95.toFixed(2)}ms)\n`;
-    summary += `${indent}  - p99 < 300ms: ${p99Pass ? '✅' : '❌'} (${p99.toFixed(2)}ms)\n`;
-    summary += `${indent}  - エラーレート < 0.1%: ${errorPass ? '✅' : '❌'} (${errorRate.toFixed(2)}%)\n`;
-    summary += `${indent}  - Rotation 成功率 > 99%: ${rotationPass ? '✅' : '❌'} (${rotationRate.toFixed(2)}%)\n`;
-    summary += `${indent}  - D1 エラー = 0: ${d1Pass ? '✅' : '❌'} (${d1Errors})\n`;
+    p95Threshold = 200;
+    p99Threshold = 300;
+    errorThreshold = 0.1;
+    rotationThreshold = 99;
+    d1Threshold = 0;
   } else if (PRESET === 'rps200') {
-    const p95Pass = p95 < 250;
-    const p99Pass = p99 < 400;
-    const errorPass = errorRate < 0.1;
-    const rotationPass = rotationRate > 99;
-    const d1Pass = d1Errors < 2;
-    const pass = p95Pass && p99Pass && errorPass && rotationPass && d1Pass;
-
-    summary += `${indent}  ${pass ? '✅ PASS' : '❌ FAIL'}\n`;
-    summary += `${indent}  - p95 < 250ms: ${p95Pass ? '✅' : '❌'} (${p95.toFixed(2)}ms)\n`;
-    summary += `${indent}  - p99 < 400ms: ${p99Pass ? '✅' : '❌'} (${p99.toFixed(2)}ms)\n`;
-    summary += `${indent}  - エラーレート < 0.1%: ${errorPass ? '✅' : '❌'} (${errorRate.toFixed(2)}%)\n`;
-    summary += `${indent}  - Rotation 成功率 > 99%: ${rotationPass ? '✅' : '❌'} (${rotationRate.toFixed(2)}%)\n`;
-    summary += `${indent}  - D1 エラー < 2: ${d1Pass ? '✅' : '❌'} (${d1Errors})\n`;
-  } else if (PRESET === 'rps300') {
-    const p95Pass = p95 < 300;
-    const p99Pass = p99 < 500;
-    const errorPass = errorRate < 0.5;
-    const rotationPass = rotationRate > 98;
-    const d1Pass = d1Errors < 5;
-    const pass = p95Pass && p99Pass && errorPass && rotationPass && d1Pass;
-
-    summary += `${indent}  ${pass ? '✅ PASS' : '❌ FAIL'}\n`;
-    summary += `${indent}  - p95 < 300ms: ${p95Pass ? '✅' : '❌'} (${p95.toFixed(2)}ms)\n`;
-    summary += `${indent}  - p99 < 500ms: ${p99Pass ? '✅' : '❌'} (${p99.toFixed(2)}ms)\n`;
-    summary += `${indent}  - エラーレート < 0.5%: ${errorPass ? '✅' : '❌'} (${errorRate.toFixed(2)}%)\n`;
-    summary += `${indent}  - Rotation 成功率 > 98%: ${rotationPass ? '✅' : '❌'} (${rotationRate.toFixed(2)}%)\n`;
-    summary += `${indent}  - D1 エラー < 5: ${d1Pass ? '✅' : '❌'} (${d1Errors})\n`;
+    p95Threshold = 250;
+    p99Threshold = 400;
+    errorThreshold = 0.1;
+    rotationThreshold = 99;
+    d1Threshold = 2;
+  } else if (PRESET === 'rps300' || PRESET === 'rps300_highvu' || PRESET === 'rps300_vu500') {
+    p95Threshold = 300;
+    p99Threshold = 500;
+    errorThreshold = 0.1;
+    rotationThreshold = 99.9;
+    d1Threshold = 1;
+  } else {
+    p95Threshold = 300;
+    p99Threshold = 500;
+    errorThreshold = 0.5;
+    rotationThreshold = 98;
+    d1Threshold = 5;
   }
+
+  const p95Pass = p95 < p95Threshold;
+  const p99Pass = p99 < p99Threshold;
+  const errorPass = errorRate < errorThreshold;
+  const rotationPass = rotationRate > rotationThreshold;
+  const d1Pass = d1Errors <= d1Threshold;
+  const pass = p95Pass && p99Pass && errorPass && rotationPass && d1Pass;
+
+  summary += `${indent}  ${pass ? '✅ PASS' : '❌ FAIL'}\n`;
+  summary += `${indent}  - p95 < ${p95Threshold}ms: ${p95Pass ? '✅' : '❌'} (${p95.toFixed(2)}ms)\n`;
+  summary += `${indent}  - p99 < ${p99Threshold}ms: ${p99Pass ? '✅' : '❌'} (${p99.toFixed(2)}ms)\n`;
+  summary += `${indent}  - エラーレート < ${errorThreshold}%: ${errorPass ? '✅' : '❌'} (${errorRate.toFixed(2)}%)\n`;
+  summary += `${indent}  - Rotation 成功率 > ${rotationThreshold}%: ${rotationPass ? '✅' : '❌'} (${rotationRate.toFixed(2)}%)\n`;
+  summary += `${indent}  - D1 エラー <= ${d1Threshold}: ${d1Pass ? '✅' : '❌'} (${d1Errors})\n`;
 
   summary += `${indent}\n${'='.repeat(70)}\n`;
 

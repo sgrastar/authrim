@@ -840,8 +840,14 @@ async function handleAuthorizationCodeGrant(
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, authCodeData.sub, c.env.RBAC_ACCESS_TOKEN_CLAIMS),
-      getIDTokenRBACClaims(c.env.DB, authCodeData.sub, c.env.RBAC_ID_TOKEN_CLAIMS),
+      getAccessTokenRBACClaims(c.env.DB, authCodeData.sub, {
+        cache: c.env.REBAC_CACHE,
+        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+      }),
+      getIDTokenRBACClaims(c.env.DB, authCodeData.sub, {
+        cache: c.env.REBAC_CACHE,
+        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+      }),
     ]);
   } catch (rbacError) {
     // Log but don't fail - RBAC claims are optional for backward compatibility
@@ -1092,16 +1098,8 @@ async function handleAuthorizationCodeGrant(
       rtv // V2: Include version for theft detection
     );
     refreshToken = result.token;
-
-    // Store refresh token metadata in KV for validation and revocation
-    await storeRefreshToken(c.env, refreshTokenJti, {
-      jti: refreshTokenJti,
-      client_id: client_id,
-      sub: authCodeData.sub,
-      scope: authCodeData.scope,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + refreshTokenExpiresIn,
-    });
+    // V2: Family is already registered via RefreshTokenRotator DO above
+    // No need to call storeRefreshToken() - it was a V1 artifact
   } catch (error) {
     console.error('Failed to create refresh token:', error);
     return c.json(
@@ -1318,8 +1316,24 @@ async function handleRefreshTokenGrant(
     );
   }
 
-  // Retrieve refresh token metadata from RefreshTokenRotator DO
-  const refreshTokenData = await getRefreshToken(c.env, jti, client_id);
+  // V2: Extract userId (sub) and version (rtv) from JWT for validation
+  const userId = refreshTokenPayload.sub as string;
+  const version = typeof refreshTokenPayload.rtv === 'number' ? refreshTokenPayload.rtv : 1;
+
+  if (!userId) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'Refresh token missing subject',
+      },
+      400
+    );
+  }
+
+  // Retrieve refresh token metadata from RefreshTokenRotator DO (V2)
+  const refreshTokenData = await getRefreshToken(c.env, userId, version, client_id, jti);
   if (!refreshTokenData) {
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
@@ -1444,8 +1458,14 @@ async function handleRefreshTokenGrant(
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, refreshTokenData.sub, c.env.RBAC_ACCESS_TOKEN_CLAIMS),
-      getIDTokenRBACClaims(c.env.DB, refreshTokenData.sub, c.env.RBAC_ID_TOKEN_CLAIMS),
+      getAccessTokenRBACClaims(c.env.DB, refreshTokenData.sub, {
+        cache: c.env.REBAC_CACHE,
+        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+      }),
+      getIDTokenRBACClaims(c.env.DB, refreshTokenData.sub, {
+        cache: c.env.REBAC_CACHE,
+        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+      }),
     ]);
   } catch (rbacError) {
     // Log but don't fail - RBAC claims are optional for backward compatibility
@@ -2060,8 +2080,14 @@ async function handleDeviceCodeGrant(
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, metadata.sub!, c.env.RBAC_ACCESS_TOKEN_CLAIMS),
-      getIDTokenRBACClaims(c.env.DB, metadata.sub!, c.env.RBAC_ID_TOKEN_CLAIMS),
+      getAccessTokenRBACClaims(c.env.DB, metadata.sub!, {
+        cache: c.env.REBAC_CACHE,
+        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+      }),
+      getIDTokenRBACClaims(c.env.DB, metadata.sub!, {
+        cache: c.env.REBAC_CACHE,
+        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+      }),
     ]);
   } catch (rbacError) {
     // Log but don't fail - RBAC claims are optional for backward compatibility
@@ -2424,8 +2450,14 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(c.env.DB, metadata.sub!, c.env.RBAC_ACCESS_TOKEN_CLAIMS),
-      getIDTokenRBACClaims(c.env.DB, metadata.sub!, c.env.RBAC_ID_TOKEN_CLAIMS),
+      getAccessTokenRBACClaims(c.env.DB, metadata.sub!, {
+        cache: c.env.REBAC_CACHE,
+        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+      }),
+      getIDTokenRBACClaims(c.env.DB, metadata.sub!, {
+        cache: c.env.REBAC_CACHE,
+        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+      }),
     ]);
   } catch (rbacError) {
     // Log but don't fail - RBAC claims are optional for backward compatibility

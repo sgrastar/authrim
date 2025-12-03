@@ -226,8 +226,8 @@ export class RefreshTokenRotator {
     this.families.set(request.userId, family);
     await this.saveFamily(request.userId, family);
 
-    // Audit log (non-critical, async)
-    await this.logToD1({
+    // Audit log (non-critical, fire-and-forget - no await needed)
+    void this.logToD1({
       action: 'created',
       familyKey: request.userId,
       userId: request.userId,
@@ -374,8 +374,8 @@ export class RefreshTokenRotator {
     this.families.set(request.userId, family);
     await this.saveFamily(request.userId, family);
 
-    // Audit log (non-critical, async)
-    await this.logToD1({
+    // Audit log (non-critical, fire-and-forget - no await needed)
+    void this.logToD1({
       action: 'rotated',
       familyKey: request.userId,
       userId: request.userId,

@@ -96,7 +96,8 @@ echo "We'll create both production and preview namespaces for:"
 echo "  • ${DEPLOY_ENV}-CLIENTS_CACHE - OAuth client metadata cache (Read-Through from D1)"
 echo "  • ${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS - Dynamic Client Registration tokens"
 echo "  • ${DEPLOY_ENV}-SETTINGS - System settings storage"
-echo "  • ${DEPLOY_ENV}-REBAC_CACHE - ReBAC authorization check cache (TTL: 60s)"
+echo "  • ${DEPLOY_ENV}-REBAC_CACHE - ReBAC/RBAC claims cache (TTL: 5 min)"
+echo "  • ${DEPLOY_ENV}-USER_CACHE - User metadata cache (Read-Through from D1, TTL: 1 hour)"
 echo ""
 echo "Note: The following have been migrated to Durable Objects:"
 echo "  • AUTH_CODES → AuthorizationCodeStore DO"
@@ -142,6 +143,7 @@ declare -a BASE_NAMESPACES=(
     "INITIAL_ACCESS_TOKENS"
     "SETTINGS"
     "REBAC_CACHE"
+    "USER_CACHE"
 )
 
 # Add environment prefix to namespace names
@@ -538,6 +540,9 @@ echo "✅ ${DEPLOY_ENV}-SETTINGS: $SETTINGS_ID"
 REBAC_CACHE_ID=$(create_kv_namespace "${DEPLOY_ENV}-REBAC_CACHE")
 echo "✅ ${DEPLOY_ENV}-REBAC_CACHE: $REBAC_CACHE_ID"
 
+USER_CACHE_ID=$(create_kv_namespace "${DEPLOY_ENV}-USER_CACHE")
+echo "✅ ${DEPLOY_ENV}-USER_CACHE: $USER_CACHE_ID"
+
 echo ""
 echo "Creating preview namespaces (for development/testing)..."
 
@@ -553,6 +558,9 @@ echo "✅ ${DEPLOY_ENV}-SETTINGS (preview): $PREVIEW_SETTINGS_ID"
 
 PREVIEW_REBAC_CACHE_ID=$(create_kv_namespace "${DEPLOY_ENV}-REBAC_CACHE" "--preview")
 echo "✅ ${DEPLOY_ENV}-REBAC_CACHE (preview): $PREVIEW_REBAC_CACHE_ID"
+
+PREVIEW_USER_CACHE_ID=$(create_kv_namespace "${DEPLOY_ENV}-USER_CACHE" "--preview")
+echo "✅ ${DEPLOY_ENV}-USER_CACHE (preview): $PREVIEW_USER_CACHE_ID"
 
 echo ""
 echo "📝 Updating wrangler.toml files..."
@@ -652,6 +660,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "📝 Updating packages/op-token/wrangler.${DEPLOY_ENV}.toml..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "CLIENTS_CACHE" "$CLIENTS_CACHE_ID" "$PREVIEW_CLIENTS_CACHE_ID"
+update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "USER_CACHE" "$USER_CACHE_ID" "$PREVIEW_USER_CACHE_ID"
+update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "REBAC_CACHE" "$REBAC_CACHE_ID" "$PREVIEW_REBAC_CACHE_ID"
+update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "SETTINGS" "$SETTINGS_ID" "$PREVIEW_SETTINGS_ID"
 echo "✅ op-token updated"
 
 # Update op-userinfo wrangler.toml
@@ -671,6 +682,7 @@ echo "  • ${DEPLOY_ENV}-CLIENTS_CACHE: $CLIENTS_CACHE_ID / $PREVIEW_CLIENTS_CA
 echo "  • ${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID / $PREVIEW_INITIAL_ACCESS_TOKENS_ID"
 echo "  • ${DEPLOY_ENV}-SETTINGS: $SETTINGS_ID / $PREVIEW_SETTINGS_ID"
 echo "  • ${DEPLOY_ENV}-REBAC_CACHE: $REBAC_CACHE_ID / $PREVIEW_REBAC_CACHE_ID"
+echo "  • ${DEPLOY_ENV}-USER_CACHE: $USER_CACHE_ID / $PREVIEW_USER_CACHE_ID"
 echo ""
 echo "All wrangler.${DEPLOY_ENV}.toml files have been updated with the correct namespace IDs."
 echo ""

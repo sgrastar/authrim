@@ -8,12 +8,12 @@
 
 ### ハードウェア要件
 
-| 項目 | 推奨スペック | 最低スペック |
-|------|------------|------------|
-| CPU | Apple Silicon (M1/M2/M3) | Intel Core i5 以上 |
-| メモリ | 16GB 以上 | 8GB 以上 |
-| ストレージ | SSD 100GB 以上の空き | SSD 50GB 以上の空き |
-| ネットワーク | 上り 100Mbps 以上 | 上り 50Mbps 以上 |
+| 項目         | 推奨スペック             | 最低スペック        |
+| ------------ | ------------------------ | ------------------- |
+| CPU          | Apple Silicon (M1/M2/M3) | Intel Core i5 以上  |
+| メモリ       | 16GB 以上                | 8GB 以上            |
+| ストレージ   | SSD 100GB 以上の空き     | SSD 50GB 以上の空き |
+| ネットワーク | 上り 100Mbps 以上        | 上り 50Mbps 以上    |
 
 ### ソフトウェア要件
 
@@ -22,6 +22,7 @@
 1. **k6 OSS**
    - バージョン: v0.45.0 以上
    - インストール方法:
+
      ```bash
      # macOS
      brew install k6
@@ -403,6 +404,7 @@ https://api.cloudflare.com/client/v4/graphql
 **原因**: Rate Limiting に引っかかっている
 
 **解決策**:
+
 - Workers Unlimited プランに変更
 - Rate Limiting 設定を緩和
 - テストの RPS を下げる
@@ -412,6 +414,7 @@ https://api.cloudflare.com/client/v4/graphql
 **原因**: DO のロック競合、D1 の書き込み競合
 
 **解決策**:
+
 - プリセットを下げる
 - DO の設計を見直す（競合回避）
 - D1 のトランザクションを最適化
@@ -421,9 +424,16 @@ https://api.cloudflare.com/client/v4/graphql
 **原因**: Worker の処理時間超過（CPU Time Limit）
 
 **解決策**:
+
 - 不要な処理を削減
 - キャッシュを活用
 - 処理を非同期化
+
+## 関連ドキュメント
+
+- [endpoint-requirements.md](./endpoint-requirements.md) - エンドポイント別の必須設定・状態管理ルール
+- [test-scenarios.md](./test-scenarios.md) - テストシナリオ詳細
+- [metrics-collection.md](./metrics-collection.md) - メトリクス収集手順
 
 ## 参考資料
 

@@ -26,7 +26,7 @@
  * ```
  */
 
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
 import type {
   RBACTokenClaims,
   UserType,
@@ -40,6 +40,36 @@ import type {
   AccessTokenClaimKey,
 } from '../types/rbac';
 import { DEFAULT_ID_TOKEN_CLAIMS, DEFAULT_ACCESS_TOKEN_CLAIMS } from '../types/rbac';
+
+// =============================================================================
+// RBAC Cache Configuration
+// =============================================================================
+
+const RBAC_CACHE_TTL = 300; // 5 minutes in seconds (aligned with token refresh)
+const RBAC_CACHE_PREFIX = 'rbac:';
+
+/**
+ * Options for RBAC claims functions with caching support
+ */
+export interface RBACClaimsOptions {
+  cache?: KVNamespace; // REBAC_CACHE KV namespace
+  claimsConfig?: string; // Comma-separated list of claims to include
+}
+
+/**
+ * Build cache key for RBAC claims
+ */
+function buildRBACCacheKey(
+  subjectId: string,
+  tokenType: 'id' | 'access',
+  claimsConfig?: string
+): string {
+  // Include claimsConfig hash to differentiate cache entries with different claim sets
+  const configHash = claimsConfig
+    ? Buffer.from(claimsConfig).toString('base64').slice(0, 8)
+    : 'default';
+  return `${RBAC_CACHE_PREFIX}${tokenType}:${subjectId}:${configHash}`;
+}
 
 /**
  * Resolved organization information
@@ -186,7 +216,7 @@ export async function getUserRBACClaims(
 }
 
 /**
- * Get RBAC claims for ID Token
+ * Get RBAC claims for ID Token (with optional caching)
  *
  * ID Token includes all RBAC claims:
  * - authrim_roles
@@ -197,26 +227,61 @@ export async function getUserRBACClaims(
  * When claimsConfig is provided, it controls which claims are included.
  * Available claims: roles,scoped_roles,user_type,org_id,org_name,plan,org_type,orgs,relationships_summary
  *
+ * Caching: When cache (REBAC_CACHE KV) is provided, claims are cached for 5 minutes.
+ *
  * @param db - D1 database
  * @param subjectId - User ID
- * @param claimsConfig - Optional comma-separated list of claims (RBAC_ID_TOKEN_CLAIMS env var)
+ * @param claimsConfigOrOptions - Claims config string OR options object with cache
  * @returns Claims for ID Token
  */
 export async function getIDTokenRBACClaims(
   db: D1Database,
   subjectId: string,
-  claimsConfig?: string
+  claimsConfigOrOptions?: string | RBACClaimsOptions
 ): Promise<Partial<RBACTokenClaims>> {
-  // If claimsConfig is provided, use the configurable version
-  if (claimsConfig !== undefined) {
-    return getIDTokenRBACClaimsConfigurable(db, subjectId, claimsConfig);
+  // Parse options
+  const options: RBACClaimsOptions =
+    typeof claimsConfigOrOptions === 'string'
+      ? { claimsConfig: claimsConfigOrOptions }
+      : claimsConfigOrOptions || {};
+
+  const { cache, claimsConfig } = options;
+
+  // Try cache first
+  if (cache) {
+    const cacheKey = buildRBACCacheKey(subjectId, 'id', claimsConfig);
+    try {
+      const cached = await cache.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached) as Partial<RBACTokenClaims>;
+      }
+    } catch (error) {
+      console.warn('RBAC cache read error (ID token):', error);
+    }
   }
-  // Otherwise, use the legacy behavior for backward compatibility
-  return getUserRBACClaims(db, subjectId);
+
+  // Cache miss - fetch from D1
+  let claims: Partial<RBACTokenClaims>;
+  if (claimsConfig !== undefined) {
+    claims = await getIDTokenRBACClaimsConfigurable(db, subjectId, claimsConfig);
+  } else {
+    // Legacy behavior for backward compatibility
+    claims = await getUserRBACClaims(db, subjectId);
+  }
+
+  // Store in cache (fire-and-forget)
+  if (cache) {
+    const cacheKey = buildRBACCacheKey(subjectId, 'id', claimsConfig);
+    void cache
+      .put(cacheKey, JSON.stringify(claims), { expirationTtl: RBAC_CACHE_TTL })
+      .catch((err) => console.warn('RBAC cache write error (ID token):', err));
+  }
+
+  return claims;
 }
 
 /**
- * Get RBAC claims for Access Token
+ * Get RBAC claims for Access Token (with optional caching)
  *
  * Access Token includes:
  * - authrim_roles
@@ -226,12 +291,57 @@ export async function getIDTokenRBACClaims(
  * Note: user_type and plan are omitted from access token
  * as they are primarily for client-side display purposes.
  *
+ * Caching: When cache (REBAC_CACHE KV) is provided, claims are cached for 5 minutes.
+ *
  * @param db - D1 database
  * @param subjectId - User ID
- * @param claimsConfig - Optional comma-separated list of claims to include (env var)
+ * @param claimsConfigOrOptions - Claims config string OR options object with cache
  * @returns Claims for Access Token
  */
 export async function getAccessTokenRBACClaims(
+  db: D1Database,
+  subjectId: string,
+  claimsConfigOrOptions?: string | RBACClaimsOptions
+): Promise<Partial<RBACTokenClaims>> {
+  // Parse options
+  const options: RBACClaimsOptions =
+    typeof claimsConfigOrOptions === 'string'
+      ? { claimsConfig: claimsConfigOrOptions }
+      : claimsConfigOrOptions || {};
+
+  const { cache, claimsConfig } = options;
+
+  // Try cache first
+  if (cache) {
+    const cacheKey = buildRBACCacheKey(subjectId, 'access', claimsConfig);
+    try {
+      const cached = await cache.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached) as Partial<RBACTokenClaims>;
+      }
+    } catch (error) {
+      console.warn('RBAC cache read error (access token):', error);
+    }
+  }
+
+  // Cache miss - fetch from D1
+  const claims = await getAccessTokenRBACClaimsInternal(db, subjectId, claimsConfig);
+
+  // Store in cache (fire-and-forget)
+  if (cache) {
+    const cacheKey = buildRBACCacheKey(subjectId, 'access', claimsConfig);
+    void cache
+      .put(cacheKey, JSON.stringify(claims), { expirationTtl: RBAC_CACHE_TTL })
+      .catch((err) => console.warn('RBAC cache write error (access token):', err));
+  }
+
+  return claims;
+}
+
+/**
+ * Internal function to fetch access token RBAC claims from D1 (no caching)
+ */
+async function getAccessTokenRBACClaimsInternal(
   db: D1Database,
   subjectId: string,
   claimsConfig?: string

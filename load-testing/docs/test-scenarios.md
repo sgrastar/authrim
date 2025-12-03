@@ -76,16 +76,17 @@ grant_type=authorization_code
 
 **ユースケース**: 実サービスの通常運用時の負荷
 
-| パラメータ | 値 |
-|-----------|-----|
-| RPS（開始） | 5 |
-| RPS（終了） | 20 |
-| Duration | 60秒 |
-| VUs | 20 |
-| Ramp-up | 10秒 |
-| Ramp-down | 10秒 |
+| パラメータ  | 値   |
+| ----------- | ---- |
+| RPS（開始） | 5    |
+| RPS（終了） | 20   |
+| Duration    | 60秒 |
+| VUs         | 20   |
+| Ramp-up     | 10秒 |
+| Ramp-down   | 10秒 |
 
 **期待される結果**:
+
 - p50: < 100ms
 - p90: < 200ms
 - p99: < 250ms
@@ -104,10 +105,10 @@ export const options = {
       preAllocatedVUs: 20,
       maxVUs: 30,
       stages: [
-        { target: 5, duration: '10s' },   // Ramp up to 5 RPS
-        { target: 20, duration: '20s' },  // Ramp up to 20 RPS
-        { target: 20, duration: '20s' },  // Stay at 20 RPS
-        { target: 5, duration: '10s' },   // Ramp down to 5 RPS
+        { target: 5, duration: '10s' }, // Ramp up to 5 RPS
+        { target: 20, duration: '20s' }, // Ramp up to 20 RPS
+        { target: 20, duration: '20s' }, // Stay at 20 RPS
+        { target: 5, duration: '10s' }, // Ramp down to 5 RPS
       ],
     },
   },
@@ -122,16 +123,17 @@ export const options = {
 
 **ユースケース**: MAU 10万〜30万のピーク時想定
 
-| パラメータ | 値 |
-|-----------|-----|
-| RPS（開始） | 30 |
-| RPS（終了） | 100 |
-| Duration | 120秒 |
-| VUs | 100 |
-| Ramp-up | 20秒 |
-| Ramp-down | 20秒 |
+| パラメータ  | 値    |
+| ----------- | ----- |
+| RPS（開始） | 30    |
+| RPS（終了） | 100   |
+| Duration    | 120秒 |
+| VUs         | 100   |
+| Ramp-up     | 20秒  |
+| Ramp-down   | 20秒  |
 
 **期待される結果**:
+
 - p50: < 150ms
 - p90: < 350ms
 - p99: < 500ms
@@ -142,16 +144,17 @@ export const options = {
 
 **ユースケース**: アーキテクチャの天井計測
 
-| パラメータ | 値 |
-|-----------|-----|
-| RPS（開始） | 200 |
-| RPS（終了） | 600 |
-| Duration | 180秒 |
-| VUs | 200〜600 |
-| Ramp-up | 30秒 |
-| Ramp-down | 30秒 |
+| パラメータ  | 値       |
+| ----------- | -------- |
+| RPS（開始） | 200      |
+| RPS（終了） | 600      |
+| Duration    | 180秒    |
+| VUs         | 200〜600 |
+| Ramp-up     | 30秒     |
+| Ramp-down   | 30秒     |
 
 **期待される結果**:
+
 - **エラーレートが急上昇する RPS を特定**
 - 429 (Rate Limit) または 500 (Internal Error) の発生域を確認
 - p99 が 1秒を超える地点を記録
@@ -229,14 +232,15 @@ grant_type=refresh_token
 
 **ユースケース**: 日常的な Refresh トラフィック
 
-| パラメータ | 値 |
-|-----------|-----|
-| RPS | 50 |
-| Duration | 5分 (300秒) |
-| VUs | 50 |
-| Think Time | 100ms |
+| パラメータ | 値          |
+| ---------- | ----------- |
+| RPS        | 50          |
+| Duration   | 5分 (300秒) |
+| VUs        | 50          |
+| Think Time | 100ms       |
 
 **期待される結果**:
+
 - p99: < 300ms
 - Error Rate: < 0.1%
 - D1 書き込み成功率: 100%
@@ -245,14 +249,15 @@ grant_type=refresh_token
 
 **ユースケース**: ピーク時の Refresh トラフィック
 
-| パラメータ | 値 |
-|-----------|-----|
-| RPS（開始） | 200 |
-| RPS（最大） | 500 |
-| Duration | 10分 (600秒) |
-| VUs | 200〜500 |
+| パラメータ  | 値           |
+| ----------- | ------------ |
+| RPS（開始） | 200          |
+| RPS（最大） | 500          |
+| Duration    | 10分 (600秒) |
+| VUs         | 200〜500     |
 
 **期待される結果**:
+
 - p99: < 500ms
 - Error Rate: < 0.1%
 - D1 書き込み成功率: > 99.9%
@@ -261,14 +266,15 @@ grant_type=refresh_token
 
 **ユースケース**: 極限的な Refresh Storm
 
-| パラメータ | 値 |
-|-----------|-----|
-| RPS（開始） | 800 |
-| RPS（最大） | 1200 |
-| Duration | 10分 (600秒) |
-| VUs | 800〜1200 |
+| パラメータ  | 値           |
+| ----------- | ------------ |
+| RPS（開始） | 800          |
+| RPS（最大） | 1200         |
+| Duration    | 10分 (600秒) |
+| VUs         | 800〜1200    |
 
 **期待される結果**:
+
 - **DO ロック競合の観測**
 - D1 書き込みエラーの発生域を確認
 - タイムアウトやリトライの挙動を測定
@@ -353,15 +359,16 @@ grant_type=authorization_code
 
 **ユースケース**: 通常の Web アプリログイン
 
-| パラメータ | 値 |
-|-----------|-----|
-| RPS（開始） | 10 |
-| RPS（終了） | 20 |
-| Duration | 120秒 |
-| VUs | 20 |
-| Think Time | 500ms〜2s |
+| パラメータ  | 値        |
+| ----------- | --------- |
+| RPS（開始） | 10        |
+| RPS（終了） | 20        |
+| Duration    | 120秒     |
+| VUs         | 20        |
+| Think Time  | 500ms〜2s |
 
 **期待される結果**:
+
 - 全フロー完了率: > 99%
 - p99: < 300ms (authorize + token の合計)
 - エラーレート: < 0.5%
@@ -370,15 +377,16 @@ grant_type=authorization_code
 
 **ユースケース**: ピーク時のログイントラフィック
 
-| パラメータ | 値 |
-|-----------|-----|
-| RPS（開始） | 30 |
-| RPS（終了） | 50 |
-| Duration | 180秒 |
-| VUs | 50 |
-| Think Time | 200ms〜1s |
+| パラメータ  | 値        |
+| ----------- | --------- |
+| RPS（開始） | 30        |
+| RPS（終了） | 50        |
+| Duration    | 180秒     |
+| VUs         | 50        |
+| Think Time  | 200ms〜1s |
 
 **期待される結果**:
+
 - 全フロー完了率: > 98%
 - p99: < 500ms
 - エラーレート: < 1%
@@ -387,15 +395,16 @@ grant_type=authorization_code
 
 **ユースケース**: 同時大量ログイン（フラッシュセール等）
 
-| パラメータ | 値 |
-|-----------|-----|
-| RPS（開始） | 80 |
-| RPS（終了） | 100 |
-| Duration | 180秒 |
-| VUs | 100 |
-| Think Time | 100ms〜500ms |
+| パラメータ  | 値           |
+| ----------- | ------------ |
+| RPS（開始） | 80           |
+| RPS（終了） | 100          |
+| Duration    | 180秒        |
+| VUs         | 100          |
+| Think Time  | 100ms〜500ms |
 
 **期待される結果**:
+
 - **80RPS を超えると DO 競合が顕著**
 - レイテンシ跳ね上がり地点を特定
 - Queue 待ち時間の測定
@@ -477,17 +486,17 @@ grant_type=authorization_code
 
 ### 合格基準マトリクス
 
-| テスト | プリセット | p99 | Error Rate | 追加条件 |
-|--------|-----------|-----|-----------|---------|
-| TEST 1 | Light | < 250ms | < 0.1% | - |
-| TEST 1 | Standard | < 500ms | < 1% | - |
-| TEST 1 | Heavy | - | < 5% | 最大 RPS 記録 |
-| TEST 2 | Light | < 300ms | < 0.1% | D1 エラー 0 |
-| TEST 2 | Standard | < 500ms | < 0.1% | D1 エラー < 0.1% |
-| TEST 2 | Heavy | < 700ms | < 2% | DO 競合観測 |
-| TEST 3 | Light | < 300ms | < 0.5% | 完了率 > 99% |
-| TEST 3 | Standard | < 500ms | < 1% | 完了率 > 98% |
-| TEST 3 | Heavy | < 1000ms | < 5% | 80RPS 安定 |
+| テスト | プリセット | p99      | Error Rate | 追加条件         |
+| ------ | ---------- | -------- | ---------- | ---------------- |
+| TEST 1 | Light      | < 250ms  | < 0.1%     | -                |
+| TEST 1 | Standard   | < 500ms  | < 1%       | -                |
+| TEST 1 | Heavy      | -        | < 5%       | 最大 RPS 記録    |
+| TEST 2 | Light      | < 300ms  | < 0.1%     | D1 エラー 0      |
+| TEST 2 | Standard   | < 500ms  | < 0.1%     | D1 エラー < 0.1% |
+| TEST 2 | Heavy      | < 700ms  | < 2%       | DO 競合観測      |
+| TEST 3 | Light      | < 300ms  | < 0.5%     | 完了率 > 99%     |
+| TEST 3 | Standard   | < 500ms  | < 1%       | 完了率 > 98%     |
+| TEST 3 | Heavy      | < 1000ms | < 5%       | 80RPS 安定       |
 
 ### 不合格時のアクション
 
@@ -500,4 +509,6 @@ grant_type=authorization_code
 
 ## 次のステップ
 
-テスト実行後は [metrics-collection.md](./metrics-collection.md) に従って、Cloudflare Analytics からメトリクスを収集してください。
+1. **エンドポイント要件の確認**: [endpoint-requirements.md](./endpoint-requirements.md) を参照して、各エンドポイントの状態管理ルールを確認してください。特に Refresh Token Storm テストでは VU ごとの RT family 分離が必須です。
+
+2. **メトリクス収集**: テスト実行後は [metrics-collection.md](./metrics-collection.md) に従って、Cloudflare Analytics からメトリクスを収集してください。

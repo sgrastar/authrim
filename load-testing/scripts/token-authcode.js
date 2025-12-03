@@ -1,15 +1,14 @@
 /**
- * TEST 1: /token 単体負荷テスト
+ * /token (authorization_code) 負荷テスト
  *
  * 目的:
- * - Authrim の最大RPS上限を測定
+ * - authorization_code grant の最大 RPS を測定
  * - DO ロック競合の発生域を確認
  * - JWT 署名の CPU-ms の実負荷を測る
  *
  * 使い方:
- * k6 run --env PRESET=light scripts/test1-token-load.js
- * k6 run --env PRESET=standard scripts/test1-token-load.js
- * k6 run --env PRESET=heavy scripts/test1-token-load.js
+ * k6 run --env PRESET=rps100 scripts/token-authcode.js
+ * k6 run --env PRESET=rps300 scripts/token-authcode.js
  */
 
 import http from 'k6/http';
@@ -19,138 +18,121 @@ import { SharedArray } from 'k6/data';
 import encoding from 'k6/encoding';
 import exec from 'k6/execution';
 
+// テスト識別情報
+const TEST_NAME = '/token (authorization_code)';
+const TEST_ID = 'token-authcode';
+
 // カスタムメトリクス
 const tokenRequestDuration = new Trend('token_request_duration');
 const tokenRequestSuccess = new Rate('token_request_success');
 const authErrors = new Counter('auth_errors');
 const rateLimitErrors = new Counter('rate_limit_errors');
+const serverErrors = new Counter('server_errors');
 
 // 環境変数
 const BASE_URL = __ENV.BASE_URL || 'https://conformance.authrim.com';
 const CLIENT_ID = __ENV.CLIENT_ID || 'test_client';
 const CLIENT_SECRET = __ENV.CLIENT_SECRET || 'test_secret';
 const REDIRECT_URI = __ENV.REDIRECT_URI || 'https://example.com/callback';
-const PRESET = __ENV.PRESET || 'light';
+const PRESET = __ENV.PRESET || 'rps100';
 const AUTH_CODE_PATH = __ENV.AUTH_CODE_PATH || '../seeds/authorization_codes.json';
 
 // プリセット設定
 const PRESETS = {
   light: {
-    startRate: 5,
+    description: '20 RPS light load - Development testing',
     stages: [
-      { target: 5, duration: '10s' },   // Ramp up to 5 RPS
-      { target: 20, duration: '20s' },  // Ramp up to 20 RPS
-      { target: 20, duration: '20s' },  // Stay at 20 RPS
-      { target: 5, duration: '10s' },   // Ramp down
+      { target: 5, duration: '10s' },
+      { target: 20, duration: '20s' },
+      { target: 20, duration: '20s' },
+      { target: 5, duration: '10s' },
     ],
     thresholds: {
-      http_req_duration: ['p(99)<250'],
+      http_req_duration: ['p(95)<200', 'p(99)<250'],
       http_req_failed: ['rate<0.001'],
       token_request_duration: ['p(99)<250'],
     },
     preAllocatedVUs: 20,
     maxVUs: 30,
   },
-  // 50RPS テスト用プリセット（2分間維持）
   rps50: {
-    startRate: 10,
+    description: '50 RPS sustained load - Light production',
     stages: [
-      { target: 10, duration: '10s' },   // Warm up to 10 RPS
-      { target: 50, duration: '15s' },   // Ramp to 50 RPS
-      { target: 50, duration: '120s' },  // Sustain 50 RPS for 2 minutes
-      { target: 10, duration: '10s' },   // Ramp down
+      { target: 10, duration: '10s' },
+      { target: 50, duration: '15s' },
+      { target: 50, duration: '120s' },
+      { target: 10, duration: '10s' },
     ],
     thresholds: {
-      http_req_duration: ['p(99)<300'],
-      http_req_failed: ['rate<0.01'],
+      http_req_duration: ['p(95)<250', 'p(99)<300'],
+      http_req_failed: ['rate<0.001'],
       token_request_duration: ['p(99)<300'],
     },
     preAllocatedVUs: 60,
     maxVUs: 80,
   },
-  // 100RPS テスト用プリセット（2分間維持）
   rps100: {
-    startRate: 20,
+    description: '100 RPS sustained load - Production baseline',
     stages: [
-      { target: 20, duration: '10s' },   // Warm up to 20 RPS
-      { target: 50, duration: '10s' },   // Ramp to 50 RPS
-      { target: 100, duration: '15s' },  // Ramp to 100 RPS
-      { target: 100, duration: '120s' }, // Sustain 100 RPS for 2 minutes
-      { target: 50, duration: '10s' },   // Ramp down
-      { target: 20, duration: '10s' },   // Cool down
+      { target: 20, duration: '10s' },
+      { target: 50, duration: '10s' },
+      { target: 100, duration: '15s' },
+      { target: 100, duration: '120s' },
+      { target: 50, duration: '10s' },
+      { target: 20, duration: '10s' },
     ],
     thresholds: {
-      http_req_duration: ['p(99)<400'],
-      http_req_failed: ['rate<0.01'],
+      http_req_duration: ['p(95)<250', 'p(99)<400'],
+      http_req_failed: ['rate<0.001'],
       token_request_duration: ['p(99)<400'],
     },
     preAllocatedVUs: 120,
     maxVUs: 150,
   },
-  standard: {
-    startRate: 30,
-    stages: [
-      { target: 30, duration: '20s' },  // Ramp up to 30 RPS
-      { target: 100, duration: '40s' }, // Ramp up to 100 RPS
-      { target: 100, duration: '40s' }, // Stay at 100 RPS
-      { target: 30, duration: '20s' },  // Ramp down
-    ],
-    thresholds: {
-      http_req_duration: ['p(99)<500'],
-      http_req_failed: ['rate<0.01'],
-      token_request_duration: ['p(99)<500'],
-    },
-    preAllocatedVUs: 100,
-    maxVUs: 150,
-  },
-  // 200RPS テスト用プリセット（2分間維持）
   rps200: {
-    startRate: 50,
+    description: '200 RPS sustained load - High traffic scenario',
     stages: [
-      { target: 50, duration: '10s' },   // Warm up to 50 RPS
-      { target: 100, duration: '10s' },  // Ramp to 100 RPS
-      { target: 200, duration: '15s' },  // Ramp to 200 RPS
-      { target: 200, duration: '120s' }, // Sustain 200 RPS for 2 minutes
-      { target: 100, duration: '10s' },  // Ramp down
-      { target: 50, duration: '10s' },   // Cool down
+      { target: 50, duration: '10s' },
+      { target: 100, duration: '10s' },
+      { target: 200, duration: '15s' },
+      { target: 200, duration: '120s' },
+      { target: 100, duration: '10s' },
+      { target: 50, duration: '10s' },
     ],
     thresholds: {
-      http_req_duration: ['p(99)<500'],
-      http_req_failed: ['rate<0.02'],
+      http_req_duration: ['p(95)<300', 'p(99)<500'],
+      http_req_failed: ['rate<0.001'],
       token_request_duration: ['p(99)<500'],
     },
     preAllocatedVUs: 200,
     maxVUs: 300,
   },
-  // 300RPS テスト用プリセット
+  // 標準ベンチマーク: 2分間 300 RPS テスト
   rps300: {
-    startRate: 100,
+    description: '300 RPS sustained load - Standard benchmark (2 min)',
     stages: [
-      { target: 100, duration: '15s' },  // Warm up to 100 RPS
-      { target: 200, duration: '15s' },  // Ramp to 200 RPS
-      { target: 300, duration: '15s' },  // Ramp to 300 RPS
-      { target: 300, duration: '120s' }, // Sustain 300 RPS for 2 minutes
-      { target: 200, duration: '15s' },  // Ramp down
-      { target: 100, duration: '10s' },  // Cool down
+      { target: 300, duration: '10s' },
+      { target: 300, duration: '120s' },
+      { target: 0, duration: '10s' },
     ],
     thresholds: {
-      http_req_duration: ['p(99)<600'],
-      http_req_failed: ['rate<0.02'],
-      token_request_duration: ['p(99)<600'],
+      http_req_duration: ['p(95)<300', 'p(99)<500'],
+      http_req_failed: ['rate<0.001'],
+      token_request_duration: ['p(99)<500'],
     },
     preAllocatedVUs: 300,
     maxVUs: 400,
   },
   heavy: {
-    startRate: 200,
+    description: '600 RPS peak load - Stress testing',
     stages: [
-      { target: 200, duration: '30s' },  // Ramp up to 200 RPS
-      { target: 400, duration: '60s' },  // Ramp up to 400 RPS
-      { target: 600, duration: '60s' },  // Ramp up to 600 RPS
-      { target: 400, duration: '30s' },  // Ramp down
+      { target: 200, duration: '30s' },
+      { target: 400, duration: '60s' },
+      { target: 600, duration: '60s' },
+      { target: 400, duration: '30s' },
     ],
     thresholds: {
-      http_req_duration: ['p(99)<750'],
+      http_req_duration: ['p(95)<500', 'p(99)<750'],
       http_req_failed: ['rate<0.05'],
       token_request_duration: ['p(99)<750'],
     },
@@ -168,9 +150,9 @@ if (!selectedPreset) {
 // テストオプション
 export const options = {
   scenarios: {
-    token_load: {
+    token_authcode: {
       executor: 'ramping-arrival-rate',
-      startRate: selectedPreset.startRate,
+      startRate: selectedPreset.stages[0].target,
       timeUnit: '1s',
       preAllocatedVUs: selectedPreset.preAllocatedVUs,
       maxVUs: selectedPreset.maxVUs,
@@ -203,12 +185,12 @@ const authorizationCodes = new SharedArray('authz_codes', function () {
     return normalized;
   } catch (err) {
     throw new Error(
-      `Authorization code seed not found or invalid at "${AUTH_CODE_PATH}". Run scripts/generate-seeds.js to create it. (${err.message})`,
+      `Authorization code seed not found or invalid at "${AUTH_CODE_PATH}". Run scripts/generate-seeds.js to create it. (${err.message})`
     );
   }
 });
 if (!authorizationCodes.length) {
-  throw new Error('No authorization codes available for test1. Aborting.');
+  throw new Error(`No authorization codes available for ${TEST_ID}. Aborting.`);
 }
 
 // Basic 認証ヘッダーの生成
@@ -219,10 +201,12 @@ function getBasicAuthHeader() {
 
 // セットアップ（テスト開始前に1回だけ実行）
 export function setup() {
-  console.log(`🚀 TEST 1: /token 単体負荷テスト`);
+  console.log(`🚀 ${TEST_NAME} 負荷テスト`);
   console.log(`📊 プリセット: ${PRESET}`);
+  console.log(`📝 説明: ${selectedPreset.description}`);
   console.log(`🎯 ターゲット: ${BASE_URL}`);
-  console.log(`📝 認可コード数: ${authorizationCodes.length}`);
+  console.log(`📦 認可コード数: ${authorizationCodes.length}`);
+  console.log(``);
 
   return {
     baseUrl: BASE_URL,
@@ -232,15 +216,9 @@ export function setup() {
 }
 
 // メインテスト関数
-// 注意: 認可コードは単一使用（RFC 6749）のため、各リクエストで異なるコードを使用する必要がある
-// k6のramping-arrival-rate executorでは execution.scenario.iterationInTest が
-// グローバルな一意のイテレーション番号を提供する
 export default function (data) {
   // グローバルイテレーション番号を使用して一意のコードを選択
-  // iterationInTest: テスト全体を通じて一意の番号（0から始まる）
   const globalIterationId = exec.scenario.iterationInTest;
-
-  // コードが足りない場合は最後から再利用（ただし、invalid_grant エラーになる）
   const codeIndex = globalIterationId % authorizationCodes.length;
   const codeData = authorizationCodes[codeIndex];
 
@@ -248,10 +226,12 @@ export default function (data) {
   const params = {
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': getBasicAuthHeader(),
+      Accept: 'application/json',
+      Connection: 'keep-alive',
+      Authorization: getBasicAuthHeader(),
     },
     tags: {
-      name: 'TokenRequest',
+      name: 'TokenAuthCodeRequest',
       preset: PRESET,
     },
   };
@@ -291,24 +271,27 @@ export default function (data) {
   if (response.status === 401 || response.status === 403) {
     authErrors.add(1);
   }
-
   if (response.status === 429) {
     rateLimitErrors.add(1);
+  }
+  if (response.status >= 500) {
+    serverErrors.add(1);
   }
 
   if (!success && PRESET === 'light') {
     console.error(`❌ Request failed: ${response.status} - ${response.body}`);
   }
 
-  // Heavy プリセットでは Think Time なし
+  // Light プリセットでは Think Time あり
   if (PRESET === 'light') {
-    sleep(0.1); // 100ms
+    sleep(0.1);
   }
 }
 
 // ティアダウン（テスト終了後に1回だけ実行）
 export function teardown(data) {
-  console.log(`✅ TEST 1 完了`);
+  console.log(``);
+  console.log(`✅ ${TEST_NAME} テスト完了`);
   console.log(`📊 プリセット: ${data.preset}`);
   console.log(`🎯 ターゲット: ${data.baseUrl}`);
 }
@@ -316,48 +299,107 @@ export function teardown(data) {
 // サマリーハンドラー
 export function handleSummary(data) {
   const preset = PRESET;
-  const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/:/g, '-')
+    .replace(/\..+/, '')
+    .replace('T', '_');
   const resultsDir = __ENV.RESULTS_DIR || '../results';
 
   return {
-    [`${resultsDir}/test1-${preset}_${timestamp}.json`]: JSON.stringify(data, null, 2),
-    'stdout': textSummary(data, { indent: ' ', enableColors: true }),
+    [`${resultsDir}/${TEST_ID}-${preset}_${timestamp}.json`]: JSON.stringify(data, null, 2),
+    [`${resultsDir}/${TEST_ID}-${preset}_${timestamp}.log`]: textSummary(data, {
+      indent: ' ',
+      enableColors: false,
+    }),
+    stdout: textSummary(data, { indent: ' ', enableColors: true }),
   };
 }
 
 // テキストサマリー生成
 function textSummary(data, options) {
   const indent = options.indent || '';
-  const colors = options.enableColors;
 
   let summary = '\n';
-  summary += `${indent}📊 TEST 1: /token 単体負荷テスト - サマリー\n`;
-  summary += `${indent}${'='.repeat(60)}\n\n`;
+  summary += `${indent}📊 ${TEST_NAME} - サマリー\n`;
+  summary += `${indent}${'='.repeat(70)}\n\n`;
+
+  // テスト情報
+  summary += `${indent}🎯 プリセット: ${PRESET}\n`;
+  summary += `${indent}📝 説明: ${selectedPreset.description}\n\n`;
 
   // 基本統計
   const metrics = data.metrics;
+  const totalRequests = metrics.http_reqs?.values?.count || 0;
+  const failedRequests = metrics.http_req_failed?.values?.passes || 0;
+  const successRequests = totalRequests - failedRequests;
+
   summary += `${indent}📈 リクエスト統計:\n`;
-  summary += `${indent}  総リクエスト数: ${metrics.http_reqs?.values?.count || 0}\n`;
-  summary += `${indent}  成功: ${metrics.http_req_failed ? (metrics.http_reqs.values.count - metrics.http_req_failed.values.passes) : 0}\n`;
-  summary += `${indent}  失敗: ${metrics.http_req_failed?.values?.passes || 0}\n`;
+  summary += `${indent}  総リクエスト数: ${totalRequests}\n`;
+  summary += `${indent}  成功: ${successRequests}\n`;
+  summary += `${indent}  失敗: ${failedRequests}\n`;
   summary += `${indent}  失敗率: ${((metrics.http_req_failed?.values?.rate || 0) * 100).toFixed(2)}%\n\n`;
 
   // レスポンスタイム
   summary += `${indent}⏱️  レスポンスタイム:\n`;
+  summary += `${indent}  平均: ${metrics.http_req_duration?.values?.avg?.toFixed(2) || 0}ms\n`;
   summary += `${indent}  p50: ${metrics.http_req_duration?.values?.['p(50)']?.toFixed(2) || 0}ms\n`;
   summary += `${indent}  p90: ${metrics.http_req_duration?.values?.['p(90)']?.toFixed(2) || 0}ms\n`;
   summary += `${indent}  p95: ${metrics.http_req_duration?.values?.['p(95)']?.toFixed(2) || 0}ms\n`;
   summary += `${indent}  p99: ${metrics.http_req_duration?.values?.['p(99)']?.toFixed(2) || 0}ms\n\n`;
 
-  // カスタムメトリクス
-  if (metrics.auth_errors) {
-    summary += `${indent}❌ 認証エラー: ${metrics.auth_errors.values.count}\n`;
-  }
-  if (metrics.rate_limit_errors) {
-    summary += `${indent}⚠️  Rate Limit エラー: ${metrics.rate_limit_errors.values.count}\n`;
+  // エラー統計
+  summary += `${indent}❌ エラー統計:\n`;
+  summary += `${indent}  認証エラー (401/403): ${metrics.auth_errors?.values?.count || 0}\n`;
+  summary += `${indent}  Rate Limit (429): ${metrics.rate_limit_errors?.values?.count || 0}\n`;
+  summary += `${indent}  サーバーエラー (5xx): ${metrics.server_errors?.values?.count || 0}\n\n`;
+
+  // 判定
+  const p95 = metrics.http_req_duration?.values?.['p(95)'] || 0;
+  const p99 = metrics.http_req_duration?.values?.['p(99)'] || 0;
+  const errorRate = (metrics.http_req_failed?.values?.rate || 0) * 100;
+
+  summary += `${indent}✅ 判定:\n`;
+
+  // プリセットごとの閾値で判定
+  let p95Threshold, p99Threshold, errorThreshold;
+  if (PRESET === 'light') {
+    p95Threshold = 200;
+    p99Threshold = 250;
+    errorThreshold = 0.1;
+  } else if (PRESET === 'rps50') {
+    p95Threshold = 250;
+    p99Threshold = 300;
+    errorThreshold = 0.1;
+  } else if (PRESET === 'rps100') {
+    p95Threshold = 250;
+    p99Threshold = 400;
+    errorThreshold = 0.1;
+  } else if (PRESET === 'rps200') {
+    p95Threshold = 300;
+    p99Threshold = 500;
+    errorThreshold = 0.1;
+  } else if (PRESET === 'rps300') {
+    p95Threshold = 300;
+    p99Threshold = 500;
+    errorThreshold = 0.1;
+  } else {
+    p95Threshold = 500;
+    p99Threshold = 750;
+    errorThreshold = 5;
   }
 
-  summary += `${indent}\n${'='.repeat(60)}\n`;
+  const p95Pass = p95 < p95Threshold;
+  const p99Pass = p99 < p99Threshold;
+  const errorPass = errorRate < errorThreshold;
+  const pass = p95Pass && p99Pass && errorPass;
+
+  summary += `${indent}  ${pass ? '✅ PASS' : '❌ FAIL'}\n`;
+  summary += `${indent}  - p95 < ${p95Threshold}ms: ${p95Pass ? '✅' : '❌'} (${p95.toFixed(2)}ms)\n`;
+  summary += `${indent}  - p99 < ${p99Threshold}ms: ${p99Pass ? '✅' : '❌'} (${p99.toFixed(2)}ms)\n`;
+  summary += `${indent}  - エラーレート < ${errorThreshold}%: ${errorPass ? '✅' : '❌'} (${errorRate.toFixed(2)}%)\n`;
+
+  summary += `${indent}\n${'='.repeat(70)}\n`;
 
   return summary;
 }

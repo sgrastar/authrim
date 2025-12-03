@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * Refresh Token 並列生成スクリプト
+ * Refresh Token 並列生成スクリプト (V2)
  *
+ * V2: rtv (Refresh Token Version) claim 対応
  * ローカル署名 + Admin API 並列登録により高速生成
- * 120 tokens を 10秒以内で生成（理論値）
  *
  * 環境変数:
  *   BASE_URL             対象の Authrim Worker URL (default: https://conformance.authrim.com)
@@ -13,8 +13,11 @@
  *   ADMIN_API_SECRET     Admin API シークレット (required)
  *   COUNT                生成するトークン数 (default: 120)
  *   CONCURRENCY          並列数 (default: 20)
- *   USER_ID              ユーザー ID (default: user-oidc-conformance-test)
+ *   USER_ID_PREFIX       ユーザー ID プレフィックス (default: user-loadtest)
  *   OUTPUT_DIR           出力ディレクトリ (default: ../seeds)
+ *
+ * 注意: V2ではユーザーIDごとに1つのトークンファミリーのみ保持されるため、
+ *       各トークンに異なるユーザーID ({USER_ID_PREFIX}-{index}) を割り当てます。
  *
  * 使い方:
  *   CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz node scripts/generate-refresh-tokens-parallel.js
@@ -33,7 +36,7 @@ const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
 const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
 const COUNT = Number.parseInt(process.env.COUNT || '120', 10);
 const CONCURRENCY = Number.parseInt(process.env.CONCURRENCY || '20', 10);
-const USER_ID = process.env.USER_ID || 'user-oidc-conformance-test';
+const USER_ID_PREFIX = process.env.USER_ID_PREFIX || 'user-loadtest';
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = process.env.OUTPUT_DIR || path.join(SCRIPT_DIR, '..', 'seeds');
 
@@ -78,9 +81,9 @@ async function fetchSigningKey() {
 }
 
 /**
- * Create a signed Refresh Token JWT locally
+ * Create a signed Refresh Token JWT locally (V2 - with rtv claim)
  */
-async function createRefreshToken(privateKey, kid, claims, expiresIn = 2592000) {
+async function createRefreshToken(privateKey, kid, claims, expiresIn = 2592000, rtv = 1) {
   const now = Math.floor(Date.now() / 1000);
   const jti = generateSecureRandomString(96);
 
@@ -89,6 +92,7 @@ async function createRefreshToken(privateKey, kid, claims, expiresIn = 2592000) 
     iat: now,
     exp: now + expiresIn,
     jti,
+    rtv, // V2: Refresh Token Version
   })
     .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
     .sign(privateKey);
@@ -97,7 +101,8 @@ async function createRefreshToken(privateKey, kid, claims, expiresIn = 2592000) 
 }
 
 /**
- * Register token with RefreshTokenRotator via Admin API
+ * Register token with RefreshTokenRotator via Admin API (V2)
+ * Returns { version, jti, expiresIn }
  */
 async function registerToken(token, userId, clientId, scope, ttl = 2592000) {
   const res = await fetch(`${BASE_URL}/api/admin/tokens/register`, {
@@ -124,36 +129,63 @@ async function registerToken(token, userId, clientId, scope, ttl = 2592000) {
 }
 
 /**
- * Generate a single token (sign + register)
+ * Generate a single token (V2: 2-step process)
+ * Step 1: Generate JWT with rtv=1 (initial version)
+ * Step 2: Register with Admin API
+ *
+ * Note: For initial tokens, rtv is always 1, so we can generate JWT first
+ *
+ * @param {CryptoKey} privateKey - Signing key
+ * @param {string} kid - Key ID
+ * @param {string} issuer - Token issuer
+ * @param {string} scope - Token scope
+ * @param {number} index - Token index (for unique user ID generation)
  */
-async function generateSingleToken(privateKey, kid, issuer, scope) {
+async function generateSingleToken(privateKey, kid, issuer, scope, index) {
+  // V2: Each token needs a unique user ID to avoid family conflicts
+  const userId = `${USER_ID_PREFIX}-${index}`;
+
   const claims = {
     iss: issuer,
-    sub: USER_ID,
+    sub: userId,
     aud: CLIENT_ID,
     scope,
     client_id: CLIENT_ID,
   };
 
-  const { token } = await createRefreshToken(privateKey, kid, claims);
-  const result = await registerToken(token, USER_ID, CLIENT_ID, scope);
+  // Generate token with rtv=1 (initial version)
+  const { token, jti } = await createRefreshToken(privateKey, kid, claims, 2592000, 1);
 
+  // Register with Admin API - this stores the jti in the DO
+  const result = await registerToken(token, userId, CLIENT_ID, scope);
+
+  // V2: Result contains version (should be 1 for new tokens)
   return {
     token,
+    jti,
+    rtv: result.version || 1, // V2: Include version for reference
+    user_id: userId, // Include user ID for reference
     client_id: CLIENT_ID,
     client_secret: CLIENT_SECRET,
-    family_id: result.familyId,
   };
 }
 
 /**
  * Generate a batch of tokens in parallel
+ *
+ * @param {CryptoKey} privateKey - Signing key
+ * @param {string} kid - Key ID
+ * @param {string} issuer - Token issuer
+ * @param {string} scope - Token scope
+ * @param {number} batchSize - Number of tokens in this batch
+ * @param {number} startIndex - Starting index for user ID generation
  */
-async function generateBatch(privateKey, kid, issuer, scope, batchSize) {
+async function generateBatch(privateKey, kid, issuer, scope, batchSize, startIndex) {
   const promises = [];
   for (let i = 0; i < batchSize; i++) {
+    const tokenIndex = startIndex + i;
     promises.push(
-      generateSingleToken(privateKey, kid, issuer, scope).catch((err) => ({
+      generateSingleToken(privateKey, kid, issuer, scope, tokenIndex).catch((err) => ({
         error: err.message,
       }))
     );
@@ -162,13 +194,14 @@ async function generateBatch(privateKey, kid, issuer, scope, batchSize) {
 }
 
 async function main() {
-  console.log(`🚀 Parallel Refresh Token Generator`);
-  console.log(`   BASE_URL    : ${BASE_URL}`);
-  console.log(`   CLIENT_ID   : ${CLIENT_ID}`);
-  console.log(`   USER_ID     : ${USER_ID}`);
-  console.log(`   COUNT       : ${COUNT}`);
-  console.log(`   CONCURRENCY : ${CONCURRENCY}`);
-  console.log(`   OUTPUT_DIR  : ${OUTPUT_DIR}`);
+  console.log(`🚀 Parallel Refresh Token Generator (V2)`);
+  console.log(`   BASE_URL       : ${BASE_URL}`);
+  console.log(`   CLIENT_ID      : ${CLIENT_ID}`);
+  console.log(`   USER_ID_PREFIX : ${USER_ID_PREFIX}`);
+  console.log(`   COUNT          : ${COUNT}`);
+  console.log(`   CONCURRENCY    : ${CONCURRENCY}`);
+  console.log(`   OUTPUT_DIR     : ${OUTPUT_DIR}`);
+  console.log(`   User IDs       : ${USER_ID_PREFIX}-0 ~ ${USER_ID_PREFIX}-${COUNT - 1}`);
   console.log('');
 
   // Step 1: Fetch signing key (once)
@@ -176,7 +209,7 @@ async function main() {
   const privateKey = await importPKCS8(signingKey.privatePEM, 'RS256');
 
   console.log('');
-  console.log('📊 Generating refresh tokens in parallel...');
+  console.log('📊 Generating refresh tokens with rtv claim (V2)...');
 
   const refreshTokens = [];
   let errorCount = 0;
@@ -186,12 +219,14 @@ async function main() {
 
   // Generate in batches
   const totalBatches = Math.ceil(COUNT / CONCURRENCY);
+  let currentIndex = 0;
 
   for (let batch = 0; batch < totalBatches; batch++) {
-    const remaining = COUNT - refreshTokens.length;
+    const remaining = COUNT - currentIndex;
     const batchSize = Math.min(CONCURRENCY, remaining);
 
-    const results = await generateBatch(privateKey, signingKey.kid, issuer, scope, batchSize);
+    const results = await generateBatch(privateKey, signingKey.kid, issuer, scope, batchSize, currentIndex);
+    currentIndex += batchSize;
 
     for (const result of results) {
       if (result.error) {
@@ -226,7 +261,7 @@ async function main() {
   fs.writeFileSync(outputPath, JSON.stringify(refreshTokens, null, 2));
 
   console.log('');
-  console.log(`✅ Generated ${refreshTokens.length} refresh tokens in ${totalTime.toFixed(2)}s`);
+  console.log(`✅ Generated ${refreshTokens.length} refresh tokens (V2 with rtv) in ${totalTime.toFixed(2)}s`);
   console.log(`   Rate: ${(refreshTokens.length / totalTime).toFixed(1)} tokens/sec`);
   console.log(`   Errors: ${errorCount}`);
   console.log(`📁 Saved to: ${outputPath}`);

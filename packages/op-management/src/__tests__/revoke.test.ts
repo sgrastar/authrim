@@ -596,9 +596,12 @@ describe('Token Revocation Endpoint', () => {
       });
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      // V2: Must include sub (userId) for getRefreshToken to be called
       vi.mocked(parseToken).mockReturnValue({
         jti: 'token-jti-123',
         client_id: 'client-123',
+        sub: 'user-123',
+        rtv: 1,
       });
       vi.mocked(getRefreshToken).mockResolvedValue({
         familyId: 'family-123',
@@ -636,9 +639,12 @@ describe('Token Revocation Endpoint', () => {
       });
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      // V2: Must include sub (userId) for getRefreshToken to be called
       vi.mocked(parseToken).mockReturnValue({
         jti: 'token-jti-123',
         client_id: 'client-123',
+        sub: 'user-123',
+        rtv: 1,
       });
       vi.mocked(getRefreshToken).mockResolvedValue(null); // Not a refresh token
 
