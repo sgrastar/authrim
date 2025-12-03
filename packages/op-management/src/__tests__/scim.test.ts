@@ -17,55 +17,59 @@ import { Hono } from 'hono';
 import type { Env } from '@authrim/shared/types/env';
 import scimApp from '../scim';
 
-// Mock scim-auth middleware at module level
-vi.mock('@authrim/shared/middleware/scim-auth', () => ({
-  scimAuthMiddleware: vi.fn().mockImplementation(async (c: any, next: () => Promise<void>) => {
-    // Allow all requests by default; specific tests override this
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
-      return c.json(
-        {
-          schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],
-          status: '401',
-          detail: 'No authorization header provided',
-        },
-        401
-      );
-    }
-    if (!authHeader.startsWith('Bearer ')) {
-      return c.json(
-        {
-          schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],
-          status: '401',
-          detail: 'Invalid authorization header format',
-        },
-        401
-      );
-    }
-    const token = authHeader.split(' ')[1];
-    if (token === 'expired-token') {
-      return c.json(
-        {
-          schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],
-          status: '401',
-          detail: 'Invalid or expired SCIM token',
-        },
-        401
-      );
-    }
-    if (token === 'invalid-token') {
-      return c.json(
-        {
-          schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],
-          status: '401',
-          detail: 'Invalid or expired SCIM token',
-        },
-        401
-      );
-    }
-    await next();
-  }),
-}));
+// Mock scim-auth middleware at module level (now from @authrim/scim package)
+vi.mock('@authrim/scim', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/scim')>();
+  return {
+    ...actual,
+    scimAuthMiddleware: vi.fn().mockImplementation(async (c: any, next: () => Promise<void>) => {
+      // Allow all requests by default; specific tests override this
+      const authHeader = c.req.header('Authorization');
+      if (!authHeader) {
+        return c.json(
+          {
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],
+            status: '401',
+            detail: 'No authorization header provided',
+          },
+          401
+        );
+      }
+      if (!authHeader.startsWith('Bearer ')) {
+        return c.json(
+          {
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],
+            status: '401',
+            detail: 'Invalid authorization header format',
+          },
+          401
+        );
+      }
+      const token = authHeader.split(' ')[1];
+      if (token === 'expired-token') {
+        return c.json(
+          {
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],
+            status: '401',
+            detail: 'Invalid or expired SCIM token',
+          },
+          401
+        );
+      }
+      if (token === 'invalid-token') {
+        return c.json(
+          {
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:Error'],
+            status: '401',
+            detail: 'Invalid or expired SCIM token',
+          },
+          401
+        );
+      }
+      await next();
+    }),
+  };
+});
 
 // Mock shared utilities
 vi.mock('@authrim/shared/utils/id', () => ({
