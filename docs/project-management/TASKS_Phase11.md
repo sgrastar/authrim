@@ -1,252 +1,331 @@
-# Phase 11: Certification
+# Phase 11: Security & QA
 
-**Timeline:** 2027-Q3
+**Timeline:** 2027-Q1
 **Status:** 🔜 Planned
 
 ---
 
 ## Overview
 
-Phase 11 focuses on obtaining OpenID Certification, which validates Authrim's compliance with OpenID Connect specifications. This certification provides trust and credibility for production deployments.
+Phase 11 focuses on security hardening, comprehensive testing, and quality assurance to ensure Authrim is production-ready. This phase prepares the platform for OpenID Certification in Phase 12.
 
 ---
 
-## Pre-Certification Preparation
+## 11.1 Security Features
 
-### GitHub Repository Preparation 🔜
+### MTLS (Mutual TLS Client Authentication) - RFC 8705 🔜
 
-Transition from private to public repository:
+Enterprise-grade client authentication using client certificates:
 
-- [ ] Review codebase for sensitive information
-  - [ ] Remove hardcoded secrets
-  - [ ] Remove internal comments
-  - [ ] Clean up test data
-- [ ] Add appropriate license file (Apache 2.0)
-- [ ] Update README.md for public audience
-- [ ] Create CONTRIBUTING.md
-- [ ] Create CODE_OF_CONDUCT.md
-- [ ] Create SECURITY.md (vulnerability reporting)
-- [ ] Set up issue templates
-- [ ] Set up PR templates
-- [ ] Configure branch protection rules
-- [ ] Change repository visibility to public
+- [ ] Research RFC 8705 requirements
+- [ ] Implement MTLS client certificate validation
+- [ ] Add certificate-bound access tokens
+- [ ] Implement `tls_client_auth` authentication method
+- [ ] Implement `self_signed_tls_client_auth` support
+- [ ] Add certificate thumbprint validation
+- [ ] Implement certificate chain validation
+- [ ] Create client certificate management UI
+- [ ] Add MTLS configuration to client metadata
+- [ ] Unit tests for certificate validation
+- [ ] Test with real certificates
+- [ ] Document MTLS setup & configuration
 
-### License Review 🔜
+### Client Credentials Flow - RFC 6749 Section 4.4 🔜
 
-- [ ] Confirm Apache 2.0 license
-- [ ] Add license headers to source files
-- [ ] Review third-party dependency licenses
-- [ ] Create NOTICE file if required
-- [ ] Document license compliance
+Server-to-server authentication:
 
-### Documentation Finalization 🔜
+- [ ] Implement `grant_type=client_credentials` support
+- [ ] Add client authentication methods:
+  - [ ] `client_secret_basic`
+  - [ ] `client_secret_post`
+  - [ ] `private_key_jwt`
+- [ ] Implement machine-to-machine token issuance
+- [ ] Add scope-based access control
+- [ ] Implement token introspection for client credentials
+- [ ] Unit tests
+- [ ] Test with service accounts
+- [ ] Document client credentials flow
 
-- [ ] Review and update all docs
-- [ ] Create user guide
-- [ ] Create administrator guide
-- [ ] Create developer guide
-- [ ] Review API documentation
-- [ ] Create FAQ
-- [ ] Add screenshots and diagrams
-- [ ] Translate key docs (EN/JA)
+### Additional Security Hardening 🔜
+
+- [ ] Review all cryptographic implementations
+- [ ] Audit token generation entropy
+- [ ] Review session management security
+- [ ] Implement additional rate limiting profiles
+- [ ] Review CORS configuration
+- [ ] Add security headers review
 
 ---
 
-## OpenID Conformance Testing
+## 11.2 Security Audit
 
-### Final Conformance Suite Run 🔜
+### External Security Review 🔜
 
-Run all applicable test profiles:
+- [ ] Select security audit firm
+- [ ] Define audit scope:
+  - [ ] Authentication flows
+  - [ ] Token handling
+  - [ ] Cryptographic implementation
+  - [ ] API security
+  - [ ] Admin console security
+  - [ ] Policy engine security
+  - [ ] Identity Hub security
+- [ ] Provide access to codebase and environment
+- [ ] Address findings
+- [ ] Re-test after remediation
+- [ ] Obtain security report
 
-#### Basic OP Tests
+### OWASP Top 10 Review 🔜
 
-- [ ] Re-run Basic OP profile
-- [ ] Verify all tests pass (or document intentional skips)
-- [ ] Target: 90%+ pass rate
+- [ ] A01: Broken Access Control - Review authorization
+- [ ] A02: Cryptographic Failures - Review encryption
+- [ ] A03: Injection - Review input handling
+- [ ] A04: Insecure Design - Architecture review
+- [ ] A05: Security Misconfiguration - Config review
+- [ ] A06: Vulnerable Components - Dependency audit
+- [ ] A07: Authentication Failures - Auth flow review
+- [ ] A08: Integrity Failures - Review signing
+- [ ] A09: Logging Failures - Audit log review
+- [ ] A10: SSRF - Request handling review
 
-#### Config OP Tests
+### Dependency Audit 🔜
 
-- [ ] Re-run Config OP profile
-- [ ] Verify 100% pass rate
+- [ ] Run `npm audit` / `pnpm audit`
+- [ ] Update vulnerable dependencies
+- [ ] Review transitive dependencies
+- [ ] Document accepted risks
+- [ ] Set up automated dependency scanning
 
-#### Hybrid OP Tests
+---
 
-- [ ] Run Hybrid OP profile
+## 11.3 Load Testing
+
+### Performance Benchmarks 🔜
+
+Establish baseline performance metrics:
+
+- [ ] Set up load testing environment (k6, Artillery)
+- [ ] Define test scenarios:
+  - [ ] Discovery endpoint throughput
+  - [ ] Authorization endpoint throughput
+  - [ ] Token endpoint throughput
+  - [ ] UserInfo endpoint throughput
+  - [ ] Policy check API throughput
+  - [ ] Concurrent user capacity
+- [ ] Run baseline tests
+- [ ] Document baseline metrics
+
+### Target Metrics
+
+| Endpoint        | Target RPS | Target p95 Latency |
+| --------------- | ---------- | ------------------ |
+| Discovery       | 50,000+    | <10ms              |
+| `/authorize`    | 1,000+     | <100ms             |
+| `/token`        | 5,000+     | <50ms              |
+| `/userinfo`     | 10,000+    | <20ms              |
+| `/policy/check` | 10,000+    | <20ms              |
+
+### Load Test Scenarios 🔜
+
+- [ ] Steady load test (1 hour sustained)
+- [ ] Spike test (sudden 10x traffic increase)
+- [ ] Stress test (find breaking point)
+- [ ] Soak test (24-hour extended duration)
+- [ ] Geographic distribution test (multi-region)
+
+### Performance Optimization 🔜
+
+Based on load test results:
+
+- [ ] Identify bottlenecks
+- [ ] Optimize D1 queries
+- [ ] Add KV caching where needed
+- [ ] Tune Durable Object usage
+- [ ] Optimize JWT generation/validation
+- [ ] Review rate limiting impact
+
+---
+
+## 11.4 Conformance Testing
+
+### Additional Conformance Profiles 🔜
+
+Run tests for profiles not yet validated:
+
+#### Hybrid OP (All Response Types)
+
+- [ ] Test `response_type=code id_token`
+- [ ] Test `response_type=code token`
+- [ ] Test `response_type=code id_token token`
+- [ ] Run Hybrid OP conformance tests
 - [ ] Address any failures
-- [ ] Document test results
-
-#### Dynamic OP Tests
-
-- [ ] Run Dynamic OP profile
-- [ ] Address any failures
-- [ ] Document test results
-
-#### Form Post Tests
-
-- [ ] Re-run Form Post profile
-- [ ] Verify all tests pass
 - [ ] Document results
 
-### Test Results Documentation 🔜
+#### Dynamic OP
 
-- [ ] Compile all test results
-- [ ] Document each profile's pass rate
-- [ ] Document intentional skips with justification
-- [ ] Create test results summary report
-- [ ] Save conformance test logs
+- [ ] Test Dynamic Client Registration
+- [ ] Run Dynamic OP conformance tests
+- [ ] Address any failures
+- [ ] Document results
 
----
+#### Session Management OP
 
-## OpenID Foundation Submission
+- [ ] Test session endpoints
+- [ ] Run Session Management tests
+- [ ] Address any failures
+- [ ] Document results
 
-### Application Process 🔜
+#### Logout OPs
 
-1. **Create OpenID Foundation Account**
-   - [ ] Register on OpenID Foundation website
-   - [ ] Join as implementer member (if required)
+- [ ] RP-Initiated Logout OP tests
+- [ ] Frontchannel Logout OP tests
+- [ ] Backchannel Logout OP tests
+- [ ] Address any failures
+- [ ] Document results
 
-2. **Prepare Submission Materials**
-   - [ ] Product/Service name: Authrim
-   - [ ] Product URL: https://authrim.com
-   - [ ] Test environment URL: https://conformance.authrim.com
-   - [ ] Version number
-   - [ ] Contact information
-   - [ ] Conformance test results
+#### FAPI 2.0 Security Profile 🔜
 
-3. **Select Certification Profiles**
-   - [ ] OpenID Connect Core OP (Required)
-   - [ ] OpenID Connect Dynamic OP (Optional)
-   - [ ] OpenID Connect Session Management (Optional)
-   - [ ] OpenID Connect Front-Channel Logout (Optional)
-   - [ ] OpenID Connect Back-Channel Logout (Optional)
-   - [ ] FAPI 2.0 (Optional, for financial services)
+- [ ] Review FAPI 2.0 requirements
+- [ ] Implement required features
+- [ ] Run FAPI conformance tests
+- [ ] Document FAPI compliance
 
-### Test Environment 🔜
+### Conformance Environment 🔜
 
-Prepare stable environment for certification testing:
-
-- [ ] Deploy dedicated conformance instance
-- [ ] Configure with certification-ready settings
-- [ ] Ensure stability (no deployments during testing)
-- [ ] Set up monitoring
-- [ ] Provide OpenID Foundation access
-
-### Submission 🔜
-
-- [ ] Submit certification application
-- [ ] Pay certification fee (if applicable)
-- [ ] Provide test environment credentials
-- [ ] Submit conformance test results
-- [ ] Track submission status
+- [ ] Maintain dedicated conformance environment
+- [ ] Automate conformance test runs (CI/CD)
+- [ ] Track test results over time
+- [ ] Document known skips with justification
+- [ ] Set up alerting for regression
 
 ---
 
-## Certification Review
+## 11.5 Code Quality
 
-### Respond to Feedback 🔜
+### Static Analysis 🔜
 
-- [ ] Monitor for OpenID Foundation communication
-- [ ] Address any questions promptly
-- [ ] Fix any issues identified during review
-- [ ] Re-run tests if required
-- [ ] Re-submit updated results
+- [ ] Configure ESLint strict rules
+- [ ] Enable TypeScript strict mode throughout
+- [ ] Run SonarQube or similar analysis
+- [ ] Address critical and major issues
+- [ ] Configure pre-commit hooks
 
-### Re-Testing (If Required) 🔜
+### Code Coverage 🔜
 
-- [ ] Fix identified issues
-- [ ] Re-run affected test profiles
-- [ ] Document fixes
-- [ ] Submit updated results
+Target: 80%+ coverage
 
----
+- [ ] Measure current coverage
+- [ ] Identify uncovered paths
+- [ ] Add tests for critical paths
+- [ ] Configure coverage enforcement in CI
+- [ ] Document coverage exceptions
 
-## Certification Obtained
+### Documentation Review 🔜
 
-### Official Recognition 🔜
-
-Upon successful certification:
-
-- [ ] Receive certification confirmation
-- [ ] Download certification mark
-- [ ] Note certification ID
-- [ ] Record certified profiles
-
-### Marketing Assets 🔜
-
-- [ ] Add certification mark to website
-- [ ] Add certification mark to README
-- [ ] Update documentation with certification status
-- [ ] Create certification announcement blog post
-- [ ] Prepare press release
-
-### Certification Maintenance 🔜
-
-- [ ] Understand renewal requirements
-- [ ] Set up calendar reminders for renewal
-- [ ] Plan annual recertification
-- [ ] Maintain conformance test documentation
+- [ ] Review all code comments
+- [ ] Update JSDoc/TSDoc annotations
+- [ ] Review README files
+- [ ] Update architecture docs
+- [ ] Ensure docs match implementation
 
 ---
 
-## Certification Profiles Summary
+## 11.6 Regression Testing
 
-### Required Profile
+### Automated Test Suite 🔜
 
-| Profile | Requirement | Status |
-|---------|-------------|--------|
-| OpenID Connect Core OP | Must Pass | 🔜 |
+Ensure comprehensive test coverage:
 
-### Optional Profiles
+- [ ] Unit tests for all modules
+- [ ] Integration tests for all flows
+- [ ] E2E tests for critical paths
+- [ ] API contract tests
+- [ ] Performance regression tests
 
-| Profile | Benefit | Status |
-|---------|---------|--------|
-| Dynamic OP | Dynamic Registration support | 🔜 |
-| Session Management | Session management compliance | 🔜 |
-| Front-Channel Logout | Front-channel logout compliance | 🔜 |
-| Back-Channel Logout | Back-channel logout compliance | 🔜 |
-| FAPI 2.0 | Financial-grade API compliance | 🔜 |
+### CI/CD Pipeline 🔜
 
----
-
-## Success Criteria
-
-| Milestone | Target | Status |
-|-----------|--------|--------|
-| GitHub public | Complete | 🔜 |
-| Basic OP conformance | 90%+ | 🔜 |
-| Config OP conformance | 100% | 🔜 |
-| Certification submitted | Complete | 🔜 |
-| Certification obtained | Complete | 🔜 |
+- [ ] All tests run on every PR
+- [ ] Conformance tests on main branch
+- [ ] Deploy preview environments
+- [ ] Automated rollback on failure
+- [ ] Test coverage reporting
 
 ---
 
-## Timeline
+## 11.7 Monitoring & Alerting
 
-```
-Week 1-2: GitHub preparation & license review
-Week 3-4: Documentation finalization
-Week 5-6: Final conformance testing
-Week 7-8: OpenID Foundation submission
-Week 9-12: Review & certification approval
-```
+### Production Monitoring 🔜
+
+- [ ] Set up error tracking (Sentry or similar)
+- [ ] Configure performance monitoring
+- [ ] Add custom metrics:
+  - [ ] Login success/failure rate
+  - [ ] Token issuance rate
+  - [ ] Error rates by endpoint
+  - [ ] Policy check latency
+- [ ] Create dashboards
+
+### Alerting 🔜
+
+- [ ] Define alert thresholds
+- [ ] Configure alert channels (email, Slack)
+- [ ] Create runbooks for common issues
+- [ ] Test alerting system
+
+---
+
+## Testing Requirements
+
+### Unit Tests
+
+- [ ] MTLS tests: 20+ tests
+- [ ] Client credentials: 15+ tests
+- [ ] Security hardening: 30+ tests
+
+### Integration Tests
+
+- [ ] Full MTLS flow
+- [ ] Client credentials flow
+- [ ] All conformance profiles
+
+### Performance Tests
+
+- [ ] All load test scenarios passing
+- [ ] Performance regression detection
+
+---
+
+## Success Metrics
+
+| Metric                     | Target     | Current |
+| -------------------------- | ---------- | ------- |
+| Security audit             | Pass       | -       |
+| Load test (token endpoint) | 5,000 RPS  | -       |
+| Load test (policy check)   | 10,000 RPS | -       |
+| Conformance: Hybrid OP     | 90%+       | -       |
+| Conformance: Dynamic OP    | 90%+       | -       |
+| Code coverage              | 80%+       | -       |
+| Open critical bugs         | 0          | -       |
 
 ---
 
 ## Dependencies
 
-- Phase 10 complete (Security & QA)
-- All conformance tests passing
-- Documentation finalized
-- Stable production environment
+- All previous phases complete (1-10)
+- Conformance test environment available
+- Security audit firm selected
+- Load testing infrastructure ready
 
 ---
 
 ## Related Documents
 
 - [Conformance Results](../conformance/)
-- [OpenID Foundation Certification](https://openid.net/certification/)
-- [ROADMAP](../ROADMAP.md)
+- [Security Guidelines](../security/)
+- [Performance Benchmarks](../benchmarks/)
+- [TASKS_Phase10.md](./TASKS_Phase10.md) - Previous phase (SDK & API)
+- [TASKS_Phase12.md](./TASKS_Phase12.md) - Next phase (Certification & Release)
 
 ---
 
-> **Last Update**: 2025-12-02
+> **Last Update**: 2025-12-03 (Phase 11 definition for Security & QA)

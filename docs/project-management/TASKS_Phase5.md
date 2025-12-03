@@ -3,6 +3,7 @@
 **Status:** 100% Complete (All stages completed)
 
 **Completed Stages:**
+
 - ✅ Stage 1: Infrastructure Foundation (D1, Durable Objects, Storage)
 - ✅ Stage 2: Backend API Implementation (Auth + Admin APIs)
 - ✅ Stage 3: Frontend Foundation (SvelteKit, UnoCSS, Melt UI, Paraglide)
@@ -15,6 +16,7 @@
 ### Stage 1: Infrastructure Foundation (Week 26, Day 1-4: May 1-4) ✅ COMPLETE
 
 #### 26.1 D1 Database Setup
+
 - [x] Create D1 database via Wrangler CLI
   ```bash
   wrangler d1 create authrim-production
@@ -24,6 +26,7 @@
 - [x] Document D1 setup process (setup-d1.sh script created)
 
 #### 26.2 D1 Migration Execution
+
 - [x] Create migration files in `migrations/` directory
   - [x] `001_initial_schema.sql` - Core tables (users, oauth_clients, sessions) - All 11 tables in single file
   - [x] `002_seed_default_data.sql` - Seed data with default roles, scope mappings, test users
@@ -41,6 +44,7 @@
 - [x] Document migration workflow (setup-d1.sh handles full workflow)
 
 #### 26.3 Seed Data Injection
+
 - [x] Create seed data script `migrations/seed_default_data.sql`:
   - [x] Insert default roles (super_admin, admin, viewer, support)
   - [x] Insert default branding settings
@@ -52,6 +56,7 @@
 - [ ] Create script to generate test data (1000+ users for testing) (deferred to later)
 
 #### 26.4 Durable Objects Implementation - SessionStore
+
 - [x] Create `src/durable-objects/SessionStore.ts`
 - [x] Implement SessionStore class:
   - [x] `constructor()` - Initialize in-memory session map
@@ -76,6 +81,7 @@
 - [x] Document SessionStore API (docs/api/durable-objects/SessionStore.md)
 
 #### 26.5 Durable Objects Implementation - AuthorizationCodeStore
+
 - [x] Create `src/durable-objects/AuthorizationCodeStore.ts`
 - [x] Implement AuthorizationCodeStore class:
   - [x] `constructor()` - Initialize in-memory code map
@@ -99,6 +105,7 @@
 - [x] Document AuthorizationCodeStore API (docs/api/durable-objects/AuthorizationCodeStore.md)
 
 #### 26.6 Durable Objects Implementation - RefreshTokenRotator
+
 - [x] Create `src/durable-objects/RefreshTokenRotator.ts`
 - [x] Implement RefreshTokenRotator class:
   - [x] `constructor()` - Initialize token family map
@@ -122,6 +129,7 @@
 - [x] Document RefreshTokenRotator API (docs/api/durable-objects/RefreshTokenRotator.md)
 
 #### 26.6a Durable Objects - Unit Tests
+
 - [x] Create test files for each Durable Object:
   - [x] `packages/shared/src/durable-objects/__tests__/SessionStore.test.ts`
   - [x] `packages/shared/src/durable-objects/__tests__/AuthorizationCodeStore.test.ts`
@@ -157,6 +165,7 @@
 - [x] Ensure test coverage ≥ 80% for Durable Objects
 
 #### 26.6b Durable Objects - Integration Tests ✅
+
 - [x] Create integration test suite:
   - [x] `test/integration/durable-objects.test.ts`
 - [x] Test SessionStore + D1 integration:
@@ -176,6 +185,7 @@
 - [x] Document integration test setup
 
 #### 26.6c Durable Objects - API Documentation
+
 - [x] Update `docs/architecture/durable-objects.md`:
   - [x] Mark SessionStore as ✅ Implemented
   - [x] Mark AuthorizationCodeStore as ✅ Implemented
@@ -198,6 +208,7 @@
 - [x] Update README.md with Durable Objects section
 
 #### 26.7 Storage Abstraction Layer Implementation
+
 - [x] Create `packages/shared/src/storage/interfaces.ts`:
   - [x] Define `IStorageAdapter` interface
   - [x] Define `IUserStore` interface
@@ -218,6 +229,7 @@
 ### Stage 2: Backend API Implementation (Week 26-27: May 5-14) ✅
 
 #### 27.1 WebAuthn/Passkey Implementation ✅
+
 - [x] Install `@simplewebauthn/server` and `@simplewebauthn/browser`
 - [x] Create `src/handlers/auth/passkey.ts`
 - [x] Implement `POST /auth/passkey/register/options` - Generate registration options
@@ -232,6 +244,7 @@
 - [x] Document Passkey API - `docs/api/auth/passkey.md`
 
 #### 27.2 Magic Link Implementation ✅
+
 - [x] Choose email provider (Resend recommended)
 - [x] Create `src/utils/email/` directory:
   - [x] `interfaces.ts` - `IEmailProvider` interface
@@ -260,6 +273,7 @@
 - [x] Document Magic Link API - `docs/api/auth/magic-link.md`
 
 #### 27.3 OAuth Consent Screen API ✅
+
 - [x] Implement `GET /auth/consent` endpoint:
   - [x] Retrieve authorization request from session
   - [x] Load client metadata from D1
@@ -278,6 +292,7 @@
 - [x] Document consent API - `docs/api/auth/consent.md`
 
 #### 27.4 ITP-Compatible Session Management API ✅
+
 - [x] Implement `POST /auth/session/token` - Issue short-lived token (5min TTL, single-use)
   - [x] Generate secure token (UUID)
   - [x] Store in KV with TTL (5 minutes)
@@ -304,6 +319,7 @@
 - [x] Document session management API - `docs/api/auth/session-management.md`
 
 #### 27.5 Logout Functionality API ✅
+
 - [x] Implement `GET /logout` - Front-channel Logout
   - [x] Parse `id_token_hint` parameter
   - [x] Validate ID token
@@ -322,6 +338,7 @@
 - [x] Document logout API - `docs/api/auth/logout.md`
 
 #### 27.6 Admin API - User Management ✅
+
 - [x] Implement `GET /admin/users` - List users with pagination
   - [x] Query parameters: `q` (search), `filter` (status), `sort`, `page`, `limit`
   - [x] Search by email, name
@@ -360,6 +377,7 @@
 - [x] Add avatar upload/delete functionality (R2 storage)
 
 #### 27.6.1 Admin API - Statistics ✅
+
 - [x] Implement `GET /admin/stats` - System statistics and analytics
   - [x] Count active users (logged in within last 30 days)
   - [x] Count total users
@@ -375,6 +393,7 @@
 - [ ] Add advanced analytics (user growth trends, auth method breakdown) - Phase 6
 
 #### 27.7 Admin API - Client Management ✅
+
 - [x] Implement `GET /admin/clients` - List OAuth clients
   - [x] Query parameters: `q` (search), `sort`, `page`, `limit`
   - [x] Search by client_name, client_id
@@ -411,6 +430,7 @@
 - [x] Document admin client API - `docs/api/admin/clients.md`
 
 #### 27.8 Admin API - Session Management ✅
+
 - [x] Implement `GET /admin/sessions` - List sessions
   - [x] Query parameters: `user_id`, `status` (active/expired), `page`, `limit`
   - [x] Load sessions from SessionStore DO + D1
@@ -440,6 +460,7 @@
 ### Stage 3: Frontend Foundation (Week 27-28: May 11-18) ✅
 
 #### 28.1 SvelteKit Environment Setup ✅
+
 - [x] Initialize new SvelteKit project:
   ```bash
   npm create svelte@latest packages/ui
@@ -462,6 +483,7 @@
 - [x] Document SvelteKit setup
 
 #### 28.2 UnoCSS Configuration ✅
+
 - [x] Install UnoCSS:
   ```bash
   npm install -D unocss @unocss/reset
@@ -476,6 +498,7 @@
 - [x] Document UnoCSS configuration
 
 #### 28.3 Melt UI Integration ✅
+
 - [x] Install Melt UI:
   ```bash
   npm install @melt-ui/svelte @melt-ui/pp
@@ -489,6 +512,7 @@
 - [x] Document Melt UI usage
 
 #### 28.4 Paraglide (i18n) Configuration ✅
+
 - [x] Install Paraglide:
   ```bash
   npm install @inlang/paraglide-js @inlang/paraglide-sveltekit
@@ -505,6 +529,7 @@
 - [x] Document Paraglide setup
 
 #### 28.5 Cloudflare Pages Integration ✅
+
 - [x] Create `packages/ui/wrangler.toml` for Pages Functions
 - [x] Configure Pages build settings:
   - [x] Build command: `npm run build`
@@ -518,6 +543,7 @@
 - [x] Document Pages deployment
 
 #### 28.6 Design System Implementation ✅
+
 - [x] Create `packages/ui/src/lib/design-system/` directory
 - [x] Define design tokens:
   - [x] `tokens/colors.ts` - Color palette (primary, secondary, neutral, semantic)
@@ -545,6 +571,7 @@
 ### Stage 4: Authentication UI Implementation (Week 28-29: May 15-25) ✅ COMPLETE
 
 #### 29.1 Login Screen (`/login`)
+
 - [x] Create `packages/ui/src/routes/login/+page.svelte`
 - [x] Design login layout:
   - [x] Authrim logo at top
@@ -566,6 +593,7 @@
 - [x] Document login page (code comments)
 
 #### 29.2 Account Registration Screen (`/register`)
+
 - [x] Create `packages/ui/src/routes/register/+page.svelte`
 - [x] Design registration layout:
   - [x] Email input field
@@ -583,6 +611,7 @@
 - [x] Document registration page (code comments)
 
 #### 29.3 Magic Link Sent Confirmation Screen (`/magic-link-sent`)
+
 - [x] Create `packages/ui/src/routes/magic-link-sent/+page.svelte`
 - [x] Design success message:
   - [x] "Check your email" heading
@@ -595,6 +624,7 @@
 - [x] Document magic link sent page (code comments)
 
 #### 29.4 Magic Link Verification Screen (`/verify-magic-link`)
+
 - [x] Create `packages/ui/src/routes/verify-magic-link/+page.svelte`
 - [x] Show loading spinner immediately
 - [x] Extract token from URL query parameter
@@ -605,6 +635,7 @@
 - [x] Document verification page (code comments)
 
 #### 29.5 OAuth Consent Screen (`/consent`)
+
 - [x] Create `packages/ui/src/routes/consent/+page.svelte`
 - [x] Design consent layout:
   - [x] Client logo and name
@@ -624,6 +655,7 @@
 - [x] Document consent page (code comments)
 
 #### 29.6 Error Page (`/error`)
+
 - [x] Create `packages/ui/src/routes/error/+page.svelte`
 - [x] Design error layout:
   - [x] Error icon
@@ -648,6 +680,7 @@
 ### Stage 5: Admin Dashboard Implementation (Week 29-30: May 22-31) ✅
 
 #### 30.1 Admin Dashboard (`/admin`) ✅
+
 - [x] Create `packages/ui/src/routes/admin/+layout.svelte`:
   - [x] Sidebar navigation
   - [x] Top bar (logo, search, notifications, profile menu)
@@ -667,6 +700,7 @@
 - [x] Document admin dashboard (code comments)
 
 #### 30.2 User Management (`/admin/users`) ✅
+
 - [x] Create `packages/ui/src/routes/admin/users/+page.svelte`:
   - [x] User list table with pagination
   - [x] Search bar (search by email, name)
@@ -682,6 +716,7 @@
 - [x] Document user list page (code comments)
 
 #### 30.3 User Detail/Edit (`/admin/users/:id`) ✅
+
 - [x] Create `packages/ui/src/routes/admin/users/[id]/+page.svelte`:
   - [x] User information form (email, name, phone, etc.)
   - [ ] Custom fields section (deferred to Phase 6)
@@ -700,6 +735,7 @@
 - [x] Document user detail page (code comments)
 
 #### 30.4 Client Management (`/admin/clients`) ✅
+
 - [x] Create `packages/ui/src/routes/admin/clients/+page.svelte`:
   - [x] Client list table (client_id, client_name, created_at, grant_types)
   - [x] Search bar
@@ -712,6 +748,7 @@
 - [x] Document client list page (code comments)
 
 #### 30.5 Client Detail/Edit (`/admin/clients/:id`) ✅
+
 - [x] Create `packages/ui/src/routes/admin/clients/[id]/+page.svelte`:
   - [x] Client information form (client_name, redirect_uris, grant_types, scope)
   - [x] Redirect URIs management (add/remove)
@@ -732,6 +769,7 @@
 - [x] Document client detail page (code comments)
 
 #### 30.6 Settings (`/admin/settings`) ✅
+
 - [x] Create `packages/ui/src/routes/admin/settings/+page.svelte`:
   - [x] Tabs: General, Appearance, Security, Email, Advanced
   - [x] General tab:
@@ -766,6 +804,7 @@
 - [x] Document settings page (code comments)
 
 #### 30.7 Audit Log (`/admin/audit-log`) ✅
+
 - [x] Create `packages/ui/src/routes/admin/audit-log/+page.svelte`:
   - [x] Audit log table (timestamp, user, action, resource, IP, status)
   - [x] Filter by date range (date picker)
@@ -786,6 +825,7 @@
 ### Stage 6: Integration & Testing (Week 30-31: May 26-31) ✅ COMPLETE
 
 #### 31.1 E2E Testing (Playwright) ✅
+
 - [x] Install Playwright:
   ```bash
   pnpm add -D @playwright/test @axe-core/playwright
@@ -814,6 +854,7 @@
 - [x] **Result**: 14/14 tests passing (100% success rate)
 
 #### 31.2 Security Testing
+
 - [ ] Test CSRF protection:
   - [ ] Verify CSRF token on all POST endpoints
   - [ ] Test CSRF token validation
@@ -830,6 +871,7 @@
 - [ ] Document security test results
 
 #### 31.3 Performance Optimization ✅
+
 - [x] Run Lighthouse audit on all pages:
   - [x] Login page: Performance 100, Accessibility 89, Best Practices 100, SEO 91
   - [x] Homepage: LCP 0.11s (Excellent)
@@ -847,6 +889,7 @@
 - [x] **Result**: Excellent performance scores across all pages
 
 #### 31.4 Accessibility Improvement (WCAG 2.1 AA) ✅
+
 - [x] Install axe-core for automated testing
 - [x] Run axe-core on all pages via Playwright
 - [x] Fix accessibility issues found:
@@ -863,6 +906,7 @@
 - [x] **Result**: WCAG 2.1 AA compliant, 0 accessibility violations
 
 #### 31.5 Unit Test Coverage Improvement ✅
+
 - [x] Run coverage analysis:
   ```bash
   pnpm --filter=shared test -- --coverage
@@ -881,6 +925,7 @@
 - [x] **Result**: 81.6% overall coverage, comprehensive test suite
 
 #### 31.6 Environment Setup Flow Improvement ✅
+
 - [x] Add Resend API Key setup to `setup-dev.sh`:
   - [x] Interactive prompt for API key during setup
   - [x] Optional configuration (skip if not available)
@@ -898,6 +943,7 @@
 - [x] **Result**: Streamlined setup process for all environments
 
 #### 31.7 CI/CD Integration ✅
+
 - [x] Extend GitHub Actions workflow:
   - [x] E2E testing job (Playwright + axe-core)
   - [x] Lighthouse CI job (performance monitoring)
@@ -908,6 +954,7 @@
 - [x] **Result**: Automated testing on every push/PR
 
 #### 31.8 Milestone 5 Review ✅
+
 - [x] Verify all Phase 5 features work:
   - [x] Login with Passkey (UI implemented, WebAuthn ready)
   - [x] Login with Magic Link (Email provider integrated)
@@ -936,30 +983,35 @@
 ### Phase 5 Success Metrics 🎯
 
 #### Code Quality ✅
+
 - [x] Test coverage ≥ 80% (UI + API) - **Achieved: 81.6%**
 - [x] Zero TypeScript errors
 - [x] Zero linting errors
 - [x] All tests passing (unit + integration + E2E) - **14/14 E2E tests passing**
 
 #### Performance ✅
+
 - [x] Login page load time < 2 seconds (p95) - **Achieved: LCP 0.11s**
 - [x] Admin dashboard load time < 3 seconds (p95)
 - [x] Lighthouse Performance score > 90 - **Achieved: 100**
 - [x] Lighthouse Best Practices score > 90 - **Achieved: 100**
 
 #### Accessibility ✅
+
 - [x] WCAG 2.1 AA compliance - **Fully compliant**
 - [x] axe DevTools score: 0 violations - **Achieved: 0 violations**
 - [x] Keyboard navigation functional - **All pages tested**
 - [x] Screen reader compatible - **ARIA labels, semantic HTML implemented**
 
 #### User Experience
+
 - [ ] Responsive design (320px - 1920px)
 - [ ] Cross-browser compatibility (Chrome, Firefox, Safari, Edge)
 - [ ] Internationalization (en, ja)
 - [ ] Dark mode support (optional)
 
 #### Security
+
 - [ ] CSRF protection enabled
 - [ ] XSS prevention verified
 - [ ] CSP headers configured

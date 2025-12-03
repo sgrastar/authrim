@@ -1,309 +1,496 @@
-# Phase 10: Security & QA
+# Phase 10: SDK & API
 
-**Timeline:** 2027-Q3
+**Timeline:** 2026-Q4
 **Status:** 🔜 Planned
 
 ---
 
 ## Overview
 
-Phase 10 focuses on security hardening, comprehensive testing, and quality assurance to ensure Authrim is production-ready. This phase prepares the platform for OpenID Certification in Phase 11.
+Phase 10 focuses on developer experience by creating client SDKs and comprehensive API documentation. The goal is to enable easy integration of Authrim into various applications, with support for authentication, authorization, and the new Identity Hub features.
 
 ---
 
-## Security Features
+## Architecture Vision
 
-### MTLS (Mutual TLS Client Authentication) - RFC 8705 🔜
-
-Enterprise-grade client authentication using client certificates:
-
-- [ ] Research RFC 8705 requirements
-- [ ] Implement MTLS client certificate validation
-- [ ] Add certificate-bound access tokens
-- [ ] Implement `tls_client_auth` authentication method
-- [ ] Implement `self_signed_tls_client_auth` support
-- [ ] Add certificate thumbprint validation
-- [ ] Implement certificate chain validation
-- [ ] Create client certificate management UI
-- [ ] Add MTLS configuration to client metadata
-- [ ] Add unit tests for certificate validation
-- [ ] Test with real certificates
-- [ ] Document MTLS setup & configuration
-
-**Why:** Enterprise requirement, highest security level, financial industry standard
-
-### Client Credentials Flow - RFC 6749 Section 4.4 🔜
-
-Server-to-server authentication:
-
-- [ ] Implement `grant_type=client_credentials` support
-- [ ] Add client authentication methods:
-  - [ ] `client_secret_basic`
-  - [ ] `client_secret_post`
-  - [ ] `private_key_jwt`
-- [ ] Implement machine-to-machine token issuance
-- [ ] Add scope-based access control
-- [ ] Implement token introspection for client credentials
-- [ ] Add unit tests
-- [ ] Test with service accounts
-- [ ] Document client credentials flow
-
-**Why:** Essential OAuth flow, required for server-to-server communication
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Developer Applications                          │
+│   React App    Vue App    Angular App    Vanilla JS    Mobile App       │
+└─────────────────────────────────────┬───────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           Authrim SDK Layer                              │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐  │
+│  │  @authrim/      │  │  @authrim/      │  │  authrim-sdk.min.js     │  │
+│  │  sdk-core       │  │  sdk-web        │  │  (CDN Bundle)           │  │
+│  │  (Headless)     │  │  (Web Comps)    │  │                         │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────────────┘  │
+└─────────────────────────────────────┬───────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          Authrim Platform                                │
+│   OIDC    Policy API    UserInfo    Identity Hub    VC/Wallet           │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Security Audit
+## 10.1 @authrim/sdk-core (Headless)
 
-### External Security Review 🔜
+Framework-agnostic core library implementing OIDC/PKCE logic:
 
-- [ ] Select security audit firm
-- [ ] Define audit scope:
-  - [ ] Authentication flows
-  - [ ] Token handling
-  - [ ] Cryptographic implementation
-  - [ ] API security
-  - [ ] Admin console security
-- [ ] Provide access to codebase and environment
-- [ ] Address findings
-- [ ] Re-test after remediation
-- [ ] Obtain security report
+### Core Design 🔜
 
-### OWASP Top 10 Review
+- [ ] Define SDK architecture
+- [ ] Design public API surface
+- [ ] Plan bundle size optimization (<10KB gzipped)
+- [ ] Set up build pipeline (esbuild/rollup)
 
-- [ ] A01: Broken Access Control - Review authorization
-- [ ] A02: Cryptographic Failures - Review encryption
-- [ ] A03: Injection - Review input handling
-- [ ] A04: Insecure Design - Architecture review
-- [ ] A05: Security Misconfiguration - Config review
-- [ ] A06: Vulnerable Components - Dependency audit
-- [ ] A07: Authentication Failures - Auth flow review
-- [ ] A08: Integrity Failures - Review signing
-- [ ] A09: Logging Failures - Audit log review
-- [ ] A10: SSRF - Request handling review
+### Authentication Interface 🔜
 
-### Dependency Audit
+- [ ] Design and implement core interface
 
-- [ ] Run `npm audit`
-- [ ] Update vulnerable dependencies
-- [ ] Review transitive dependencies
-- [ ] Document accepted risks
+  ```typescript
+  interface AuthrimClient {
+    // Configuration
+    init(config: AuthrimConfig): void;
 
----
+    // Authentication
+    login(options?: LoginOptions): Promise<void>;
+    logout(options?: LogoutOptions): Promise<void>;
+    handleCallback(): Promise<AuthResult>;
 
-## Load Testing
+    // Token management
+    getAccessToken(): Promise<string | null>;
+    getIdToken(): Promise<string | null>;
+    refreshToken(): Promise<void>;
+    isTokenExpired(): boolean;
 
-### Performance Benchmarks 🔜
+    // User info
+    getUserInfo(): Promise<UserInfo | null>;
+    isAuthenticated(): boolean;
 
-Establish baseline performance metrics:
+    // Policy integration (Phase 8)
+    checkPermission(permission: string, resource?: string): Promise<boolean>;
+    getPermissions(): Promise<string[]>;
 
-- [ ] Define test scenarios:
-  - [ ] Authorization endpoint throughput
-  - [ ] Token endpoint throughput
-  - [ ] UserInfo endpoint throughput
-  - [ ] Concurrent user capacity
-- [ ] Set up load testing environment (k6, Artillery)
-- [ ] Run baseline tests
-- [ ] Document baseline metrics
+    // Events
+    onAuthStateChange(callback: AuthStateCallback): Unsubscribe;
+    onTokenRefresh(callback: TokenCallback): Unsubscribe;
+  }
 
-### Target Metrics
+  interface AuthrimConfig {
+    issuer: string;
+    clientId: string;
+    redirectUri: string;
+    scopes?: string[];
+    responseType?: 'code';
+    storage?: 'memory' | 'localStorage' | 'sessionStorage';
+    autoRefresh?: boolean;
+    refreshBuffer?: number; // seconds before expiry
+  }
+  ```
 
-| Endpoint | Target RPS | Target p95 Latency |
-|----------|------------|-------------------|
-| `/authorize` | 1000+ | <100ms |
-| `/token` | 5000+ | <50ms |
-| `/userinfo` | 10000+ | <20ms |
-| Discovery | 50000+ | <10ms |
+- [ ] Unit tests for all methods
 
-### Load Test Scenarios
+### PKCE Implementation 🔜
 
-- [ ] Steady load test (1 hour)
-- [ ] Spike test (sudden traffic increase)
-- [ ] Stress test (find breaking point)
-- [ ] Soak test (extended duration)
-- [ ] Geographic distribution test
+- [ ] Implement code_verifier generation (cryptographically random)
+- [ ] Implement code_challenge generation (SHA256, base64url)
+- [ ] Implement state parameter generation
+- [ ] Implement nonce generation
+- [ ] Secure storage of PKCE values during flow
+- [ ] Unit tests
 
-### Performance Optimization
+### Token Management 🔜
 
-Based on load test results:
+- [ ] Implement secure token storage
+  - [ ] Memory storage (most secure, lost on refresh)
+  - [ ] localStorage (persistent, XSS vulnerable)
+  - [ ] sessionStorage (tab-scoped)
+- [ ] Implement automatic token refresh
+- [ ] Implement token expiry detection
+- [ ] Handle refresh token rotation
+- [ ] Unit tests
 
-- [ ] Identify bottlenecks
-- [ ] Optimize D1 queries
-- [ ] Add KV caching where needed
-- [ ] Tune Durable Object usage
-- [ ] Optimize JWT generation
-- [ ] Review rate limiting
+### Silent Authentication 🔜
 
----
+- [ ] Implement iframe-based silent auth
+- [ ] Handle third-party cookie restrictions
+- [ ] Implement fallback to full redirect
+- [ ] Add timeout handling
+- [ ] Unit tests
 
-## Bug Fixes
+### Popup Login 🔜
 
-### Issue Triage 🔜
+- [ ] Implement popup window management
+- [ ] Handle cross-origin communication
+- [ ] Implement popup blocker detection
+- [ ] Fallback to redirect flow
+- [ ] Unit tests
 
-- [ ] Review all open GitHub issues
-- [ ] Prioritize by severity:
-  - [ ] Critical (security, data loss)
-  - [ ] High (broken functionality)
-  - [ ] Medium (incorrect behavior)
-  - [ ] Low (cosmetic, minor)
-- [ ] Assign to milestones
-- [ ] Create fix timeline
+### Error Handling 🔜
 
-### Known Issues to Address
+- [ ] Define error types
 
-- [ ] Review Conformance test failures
-- [ ] Address edge cases in token handling
-- [ ] Fix any race conditions
-- [ ] Resolve UI inconsistencies
+  ```typescript
+  class AuthrimError extends Error {
+    code: string;
+    description?: string;
+  }
 
----
+  // Error codes
+  ('login_required',
+    'consent_required',
+    'interaction_required',
+    'access_denied',
+    'invalid_request',
+    'token_expired',
+    'network_error',
+    'popup_blocked',
+    'timeout');
+  ```
 
-## Conformance Testing
-
-### Additional Conformance Profiles 🔜
-
-Run tests for profiles not yet validated:
-
-#### Hybrid OP (All Response Types)
-
-- [ ] `response_type=code id_token`
-- [ ] `response_type=code token`
-- [ ] `response_type=code id_token token`
-- [ ] Run Hybrid OP conformance tests
-- [ ] Address any failures
-
-#### Dynamic OP
-
-- [ ] Test Dynamic Client Registration
-- [ ] Run Dynamic OP conformance tests
-- [ ] Address any failures
-
-#### Session Management OP
-
-- [ ] Test session endpoints
-- [ ] Run Session Management tests
-- [ ] Address any failures
-
-#### Logout OPs
-
-- [ ] RP-Initiated Logout OP tests
-- [ ] Frontchannel Logout OP tests
-- [ ] Backchannel Logout OP tests
-- [ ] Address any failures
-
-#### FAPI 2.0 Security Profile (Optional)
-
-- [ ] Review FAPI 2.0 requirements
-- [ ] Implement required features
-- [ ] Run FAPI conformance tests
-- [ ] Document FAPI compliance
-
-### Test Environment
-
-- [ ] Maintain dedicated conformance environment
-- [ ] Automate conformance test runs
-- [ ] Track test results over time
-- [ ] Document known skips/failures with justification
+- [ ] Implement retry logic for network failures
+- [ ] Add timeout handling
+- [ ] Unit tests
 
 ---
 
-## Code Quality
+## 10.2 @authrim/sdk-web (Web Components)
 
-### Static Analysis
+UI components for login/logout using Web Components:
 
-- [ ] Configure ESLint strict rules
-- [ ] Enable TypeScript strict mode
-- [ ] Run SonarQube analysis
-- [ ] Address critical issues
+### Technology Setup 🔜
 
-### Code Coverage
+- [ ] Evaluate Lit vs Stencil
+- [ ] Set up component build pipeline
+- [ ] Configure Shadow DOM styling
+- [ ] Plan component bundle size
 
-Target: 80%+ coverage
+### Login Button Component 🔜
 
-- [ ] Measure current coverage
-- [ ] Add tests for uncovered paths
-- [ ] Configure coverage enforcement
-- [ ] Document coverage exceptions
+- [ ] Implement `<authrim-login-button>`
+  ```html
+  <authrim-login-button
+    label="Sign In"
+    variant="primary"
+    size="medium"
+    provider="google"
+  ></authrim-login-button>
+  ```
+- [ ] Style variants (primary, secondary, outline)
+- [ ] Size variants (small, medium, large)
+- [ ] Loading state
+- [ ] Disabled state
+- [ ] Unit tests
 
-### Documentation Review
+### Logout Button Component 🔜
 
-- [ ] Review all code comments
-- [ ] Update JSDoc/TSDoc
-- [ ] Review README files
-- [ ] Update architecture docs
+- [ ] Implement `<authrim-logout-button>`
+- [ ] Confirmation option
+- [ ] Loading state
+- [ ] Unit tests
+
+### User Menu Component 🔜
+
+- [ ] Implement `<authrim-user-menu>`
+  ```html
+  <authrim-user-menu show-avatar="true" show-email="true"></authrim-user-menu>
+  ```
+- [ ] User avatar display
+- [ ] Dropdown menu
+- [ ] Profile link
+- [ ] Logout action
+- [ ] Unit tests
+
+### Login Form Component 🔜
+
+- [ ] Implement `<authrim-login-form>`
+- [ ] Username/password fields
+- [ ] Social login buttons
+- [ ] Error display
+- [ ] Loading states
+- [ ] Accessibility compliance
+- [ ] Unit tests
+
+### Social Buttons Component 🔜
+
+- [ ] Implement `<authrim-social-buttons>`
+- [ ] Auto-fetch enabled providers
+- [ ] Brand-appropriate styling
+- [ ] Unit tests
+
+### Theming 🔜
+
+- [ ] CSS custom properties support
+  ```css
+  authrim-login-button {
+    --authrim-primary-color: #0066cc;
+    --authrim-border-radius: 8px;
+    --authrim-font-family: 'Inter', sans-serif;
+  }
+  ```
+- [ ] Light/dark mode support
+- [ ] Custom brand colors
+- [ ] Unit tests
+
+### Events 🔜
+
+- [ ] Define custom events
+  ```typescript
+  // Events emitted by components
+  'authrim:login-start';
+  'authrim:login-success';
+  'authrim:login-error';
+  'authrim:logout';
+  'authrim:token-refreshed';
+  'authrim:session-expired';
+  ```
+- [ ] Event documentation
+- [ ] Unit tests
 
 ---
 
-## Regression Testing
+## 10.3 CDN Bundle
 
-### Automated Test Suite 🔜
+Single-file distribution for script tag usage:
 
-Ensure comprehensive test coverage:
+### Build Configuration 🔜
 
-- [ ] Unit tests for all modules
-- [ ] Integration tests for all flows
-- [ ] E2E tests for critical paths
-- [ ] API contract tests
-- [ ] Performance regression tests
+- [ ] Configure bundler for CDN build
+- [ ] Include core + web components
+- [ ] Tree-shaking for minimal size
+- [ ] Generate source maps
+- [ ] UMD format support
 
-### CI/CD Pipeline
+### Usage Pattern 🔜
 
-- [ ] All tests run on PR
-- [ ] Conformance tests on main branch
-- [ ] Deploy preview environments
-- [ ] Automated rollback on failure
+```html
+<!-- Include from CDN -->
+<script src="https://cdn.authrim.com/sdk/v1/authrim-sdk.min.js"></script>
+
+<script>
+  // Initialize
+  const authrim = new Authrim({
+    issuer: 'https://auth.example.com',
+    clientId: 'my-client-id',
+    redirectUri: window.location.origin + '/callback'
+  });
+
+  // Check authentication
+  if (await authrim.isAuthenticated()) {
+    const user = await authrim.getUserInfo();
+    console.log('Welcome', user.name);
+  }
+
+  // Check permission
+  if (await authrim.checkPermission('edit', 'document:123')) {
+    // Show edit button
+  }
+</script>
+
+<!-- Use components -->
+<authrim-login-button></authrim-login-button>
+```
+
+### CDN Hosting 🔜
+
+- [ ] Host on Cloudflare CDN
+- [ ] Version URL structure
+  - [ ] `/sdk/v1/authrim-sdk.min.js` (latest v1)
+  - [ ] `/sdk/v1.2.3/authrim-sdk.min.js` (specific version)
+- [ ] Generate SRI hashes
+- [ ] Configure caching headers
+- [ ] Enable gzip/brotli compression
+- [ ] Set up release automation
 
 ---
 
-## Monitoring & Alerting
+## 10.4 API Documentation
 
-### Production Monitoring 🔜
+### OpenAPI Specification 🔜
 
-- [ ] Set up error tracking (Sentry)
-- [ ] Configure performance monitoring
-- [ ] Add custom metrics:
-  - [ ] Login success/failure rate
-  - [ ] Token issuance rate
-  - [ ] Error rates by endpoint
-- [ ] Create dashboards
+Complete the OpenAPI 3.1 specification:
 
-### Alerting
+- [ ] Audit existing `openapi.yaml`
+- [ ] Add missing endpoints:
+  - [ ] Policy endpoints
+  - [ ] SCIM endpoints
+  - [ ] Admin endpoints
+  - [ ] Identity Hub endpoints
+- [ ] Complete request/response schemas
+- [ ] Add authentication schemes
+- [ ] Document error responses
+- [ ] Add examples for all endpoints
+- [ ] Validate against OpenAPI spec
 
-- [ ] Define alert thresholds
-- [ ] Configure alert channels (email, Slack)
-- [ ] Set up on-call rotation
-- [ ] Create runbooks for common issues
+### Documentation Portal 🔜
+
+Create interactive documentation site:
+
+- [ ] Select documentation tool (Redoc, Stoplight, Mintlify)
+- [ ] Deploy documentation site
+- [ ] Generate API reference from OpenAPI
+- [ ] Add "Try it" functionality
+- [ ] Create getting started guide
+- [ ] Add authentication tutorials
+- [ ] Create use case examples
+- [ ] Add FAQ section
+- [ ] Enable search
+
+### SDK Documentation 🔜
+
+- [ ] SDK installation guide
+- [ ] Quick start tutorial
+- [ ] API reference (generated from TypeScript)
+- [ ] Configuration options
+- [ ] Error handling guide
+- [ ] Migration guide (from other providers)
+
+---
+
+## 10.5 Framework Integrations
+
+### React Integration 🔜
+
+- [ ] Create `@authrim/react` package
+- [ ] Implement hooks
+
+  ```typescript
+  // Hooks
+  useAuth()          // { isAuthenticated, user, login, logout }
+  usePermissions()   // { can, permissions }
+  useToken()         // { accessToken, idToken, refresh }
+
+  // Components
+  <AuthrimProvider config={...}>
+  <RequireAuth fallback={<Login />}>
+  <IfPermitted permission="admin">
+  ```
+
+- [ ] Create example app
+- [ ] Add route protection example
+- [ ] Document React integration
+- [ ] Unit tests
+
+### Vue Integration 🔜
+
+- [ ] Create `@authrim/vue` package
+- [ ] Implement composables
+  ```typescript
+  useAuth();
+  usePermissions();
+  ```
+- [ ] Create example app
+- [ ] Add route guard example
+- [ ] Document Vue integration
+- [ ] Unit tests
+
+### Next.js Integration 🔜
+
+- [ ] Create `@authrim/next` package
+- [ ] Support App Router
+- [ ] Support Pages Router
+- [ ] Server-side authentication
+- [ ] Middleware for protected routes
+- [ ] Example app
+- [ ] Documentation
+
+### Vanilla JS Examples 🔜
+
+- [ ] Create plain HTML/JS example
+- [ ] Show CDN usage
+- [ ] Demonstrate Web Components
+- [ ] Show permission checking
+- [ ] Document basic usage
+
+---
+
+## Testing Requirements
+
+### Unit Tests
+
+- [ ] sdk-core: 60+ tests
+- [ ] sdk-web: 40+ tests
+- [ ] React hooks: 20+ tests
+- [ ] Vue composables: 20+ tests
+
+### Integration Tests
+
+- [ ] Full login flow (redirect)
+- [ ] Full login flow (popup)
+- [ ] Token refresh flow
+- [ ] Logout flow
+- [ ] Permission check flow
+
+### Browser Compatibility
+
+Test on:
+
+- [ ] Chrome (latest 2 versions)
+- [ ] Firefox (latest 2 versions)
+- [ ] Safari (latest 2 versions)
+- [ ] Edge (latest 2 versions)
+- [ ] Mobile Safari (iOS)
+- [ ] Chrome for Android
+
+---
+
+## Package Publishing
+
+### NPM Packages 🔜
+
+- [ ] `@authrim/sdk-core` - Headless SDK
+- [ ] `@authrim/sdk-web` - Web Components
+- [ ] `@authrim/react` - React integration
+- [ ] `@authrim/vue` - Vue integration
+- [ ] `@authrim/next` - Next.js integration
+- [ ] `authrim` - Meta package
+
+### Publishing Pipeline 🔜
+
+- [ ] Set up npm publishing workflow
+- [ ] Semantic versioning
+- [ ] Changelog generation
+- [ ] Release notes
+- [ ] CDN deployment on release
 
 ---
 
 ## Success Metrics
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| Security audit | Pass | - |
-| Load test (token endpoint) | 5000 RPS | - |
-| Conformance: Hybrid OP | 90%+ | - |
-| Conformance: Dynamic OP | 90%+ | - |
-| Code coverage | 80%+ | - |
-| Open critical bugs | 0 | - |
+| Metric                 | Target        | Current |
+| ---------------------- | ------------- | ------- |
+| sdk-core size          | <10KB gzipped | -       |
+| sdk-web size           | <15KB gzipped | -       |
+| CDN bundle size        | <25KB gzipped | -       |
+| SDK tests              | 150+          | -       |
+| API doc coverage       | 100%          | -       |
+| Framework integrations | 4             | -       |
 
 ---
 
 ## Dependencies
 
-- All previous phases complete
-- Conformance test environment available
-- Security audit firm selected
-- Load testing infrastructure
+- Phase 6: Core OIDC functionality ✅
+- Phase 7: Identity Hub endpoints
+- Phase 8: Policy API endpoints
+- jose library ✅
+- Cloudflare CDN ✅
 
 ---
 
 ## Related Documents
 
-- [Conformance Results](../conformance/)
-- [Security Guidelines](../security/)
-- [Performance Benchmarks](../benchmarks/)
-- [ROADMAP](../ROADMAP.md)
+- [ROADMAP](../ROADMAP.md) - Overall product direction
+- [API README](../api/README.md) - API overview
+- [TASKS_Phase9.md](./TASKS_Phase9.md) - Previous phase (Advanced Identity)
+- [TASKS_Phase11.md](./TASKS_Phase11.md) - Next phase (Security & QA)
 
 ---
 
-> **Last Update**: 2025-12-02
+> **Last Update**: 2025-12-03 (Phase 10 definition for SDK & API)

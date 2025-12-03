@@ -1,17 +1,17 @@
 # Phase 6: Enterprise Features
 
-**Timeline:** Jun 1 - Oct 31, 2026 | **Actual:** Dec 02, 2025
-**Status:** ✅ COMPLETE (9/9)
+**Timeline:** Jun 1 - Oct 31, 2026 | **Actual:** Dec 03, 2025
+**Status:** ✅ COMPLETE (13/13)
 
 ---
 
 ## Overview
 
-Phase 6 focuses on enterprise-grade authentication flows and integrations required for production deployments in corporate environments.
+Phase 6 focuses on enterprise-grade authentication flows, integrations, and policy engine required for production deployments in corporate environments.
 
 ---
 
-## Completed Features (9/9)
+## Completed Features (13/13)
 
 ### Device Flow (RFC 8628) ✅ Nov 21, 2025
 
@@ -123,6 +123,113 @@ SAML 2.0 IdP and SP implementation:
 - [x] Admin API for provider CRUD
 - [x] Unit tests (22 tests)
 
+### Policy Service (RBAC/ABAC/ReBAC) ✅ Dec 01, 2025
+
+Complete access control system:
+
+#### Policy Core (@authrim/policy-core)
+
+- [x] `PolicyEngine` class with configurable default decision
+- [x] RBAC (Role-Based Access Control) evaluation
+  - [x] `has_role` condition type
+  - [x] `has_any_role` condition type
+  - [x] `has_all_roles` condition type
+  - [x] Role scope support (global, organization, resource)
+  - [x] Role expiration support
+- [x] ABAC (Attribute-Based Access Control) evaluation
+  - [x] `attribute_equals` condition type
+  - [x] `attribute_exists` condition type
+  - [x] `attribute_in` condition type
+  - [x] Verified attributes with expiry checking
+- [x] Ownership conditions
+  - [x] `is_resource_owner` check
+  - [x] `same_organization` check
+- [x] Relationship conditions
+  - [x] `has_relationship` check (guardian, parent, etc.)
+  - [x] `user_type_is` check
+  - [x] `plan_allows` check
+- [x] Default rules (5 built-in rules)
+- [x] Custom rule support via `addRule()` API
+- [x] Unit tests (53 tests)
+
+#### Policy Service (@authrim/policy-service)
+
+- [x] `GET /policy/health` - Health check
+- [x] `POST /policy/evaluate` - Full policy evaluation
+- [x] `POST /policy/check-role` - Quick role check
+- [x] `POST /policy/check-access` - Simplified access check
+- [x] `POST /policy/is-admin` - Admin status check
+- [x] Bearer token authentication
+- [x] Integration tests (31 tests)
+- [x] Cloudflare Workers deployment
+
+### SD-JWT (RFC 9901) ✅ Dec 03, 2025
+
+Selective Disclosure JWT implementation for privacy-preserving credentials:
+
+- [x] Hash-based disclosure (SHA-256)
+- [x] Cryptographically secure salt generation (16 bytes)
+- [x] Disclosure array creation with sorted `_sd` hashes
+- [x] `sd+jwt` type header
+- [x] Disclosure reconstruction from base64url
+- [x] Hash verification against `_sd` array
+- [x] Invalid disclosure detection
+- [x] ID Token convenience function (`createSDJWTIDToken`)
+  - [x] Required OIDC claims (iss, sub, aud, exp, iat, nonce) never selective
+  - [x] Default selective claims: email, phone_number, address, birthdate
+- [x] Presentation creation (`createPresentation`)
+- [x] Holder binding support (cnf claim with JWK)
+- [x] Feature flag: `ENABLE_SD_JWT` (default: false)
+- [x] Unit tests (28 tests)
+
+### Feature Flags System ✅ Dec 03, 2025
+
+Hybrid feature flag system (Environment + KV):
+
+- [x] `PolicyFeatureFlags` type definition
+  ```typescript
+  interface PolicyFeatureFlags {
+    ENABLE_ABAC: boolean;
+    ENABLE_REBAC: boolean;
+    ENABLE_POLICY_LOGGING: boolean;
+    ENABLE_VERIFIED_ATTRIBUTES: boolean;
+    ENABLE_CUSTOM_RULES: boolean;
+    ENABLE_SD_JWT: boolean;
+  }
+  ```
+- [x] Environment variable support (defaults)
+- [x] KV storage support (dynamic overrides)
+- [x] Priority chain: Cache → KV → Environment → Default
+- [x] Flag checking in policy service
+- [x] Flag status in health endpoint (`/policy/health`)
+- [x] Flag management endpoints:
+  - [x] `GET /policy/flags` - Get all flags with sources
+  - [x] `PUT /policy/flags/:name` - Set flag override
+  - [x] `DELETE /policy/flags/:name` - Clear flag override
+- [x] 60-second TTL caching for KV lookups
+- [x] Unit tests (25 tests)
+
+### ReBAC Check API (Zanzibar-style) ✅ Dec 03, 2025
+
+Complete Relationship-Based Access Control implementation:
+
+- [x] Relation tuple schema (`relationships` table)
+- [x] Recursive CTE queries in `ReBACService`
+- [x] KV caching for relation lookups
+- [x] Feature flag gating (`ENABLE_REBAC`)
+- [x] REST API endpoints:
+  - [x] `POST /api/rebac/check` - Single relationship check
+  - [x] `POST /api/rebac/batch-check` - Batch check (max 100)
+  - [x] `POST /api/rebac/list-objects` - List user's accessible objects
+  - [x] `POST /api/rebac/list-users` - List users with access to object
+  - [x] `POST /api/rebac/write` - Create relationship tuple
+  - [x] `DELETE /api/rebac/tuple` - Delete relationship tuple
+  - [x] `POST /api/rebac/invalidate` - Invalidate cache
+  - [x] `GET /api/rebac/health` - Health check
+- [x] Namespace/relation type definitions (`relation_definitions` table)
+- [x] Database migrations (017-019)
+- [x] Integration tests
+
 ---
 
 ## Removed Features
@@ -130,39 +237,20 @@ SAML 2.0 IdP and SP implementation:
 ### LDAP/AD Integration ❌ Removed
 
 > **Reason:** Cloudflare Workers does not support TCP sockets, making direct LDAP/LDAPS connections impossible. Enterprise directory integration can be achieved through:
+>
 > - SCIM 2.0 provisioning (already implemented)
 > - Azure AD/Entra ID via Microsoft Graph API (HTTPS)
-> - Social Login with enterprise providers (Phase 8)
+> - Social Login with enterprise providers (Phase 7)
 
 ---
 
 ## Moved to Other Phases
 
-### Social Login Providers → Phase 8 (Login Console & UI)
+### Social Login Providers → Phase 7 (Identity Hub Foundation)
 
-> **Note**: Social Login has been moved to Phase 8 to be implemented alongside the Login Console and UI customization features. This allows for a more cohesive user experience design.
+> **Note**: Social Login has been moved to Phase 7 to be implemented alongside the RP Module and Identity Linking features. This allows for a cohesive Identity Hub architecture.
 
-See [TASKS_Phase8.md](./TASKS_Phase8.md) for details.
-
----
-
-## Deferred Features
-
-The following features are deferred to future phases or may be implemented as optional extensions:
-
-### Visual Flow Builder
-
-- SimCity-inspired drag & drop UI
-- Visual authentication flow construction
-- Flow preview and testing
-
-### WebSDK → Phase 9
-
-- Web Components architecture
-- High-customization support
-- Custom placeholder system
-
-See [TASKS_Phase9.md](./TASKS_Phase9.md) for WebSDK details.
+See [TASKS_Phase7.md](./TASKS_Phase7.md) for details.
 
 ---
 
@@ -187,12 +275,15 @@ Additional conformance profiles to run:
 
 ## Success Metrics
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| Features complete | 9/9 | 9/9 ✅ |
-| SAML SPs tested | 3+ | 1 (internal) |
-| SAML unit tests | 20+ | 22 ✅ |
+| Metric               | Target | Current  |
+| -------------------- | ------ | -------- |
+| Features complete    | 13/13  | 13/13 ✅ |
+| Policy Core tests    | 50+    | 53 ✅    |
+| Policy Service tests | 30+    | 31 ✅    |
+| SD-JWT tests         | 20+    | 28 ✅    |
+| Feature Flags tests  | 20+    | 25 ✅    |
+| SAML unit tests      | 20+    | 22 ✅    |
 
 ---
 
-> **Last Update**: 2025-12-02 (Phase 6 complete, LDAP/AD removed)
+> **Last Update**: 2025-12-03 (Phase 6 complete with 13 features)

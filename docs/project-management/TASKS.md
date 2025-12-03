@@ -1,8 +1,9 @@
 # Authrim Task Breakdown
 
-Comprehensive task breakdown for the Authrim OpenID Connect Provider project.
+Comprehensive task breakdown for the Authrim Identity & Access Platform.
 
 **Related Documents:**
+
 - [Project Schedule](./SCHEDULE.md) - Timeline and milestones
 - [Roadmap](../ROADMAP.md) - Product roadmap
 - [Technical Specifications](../architecture/technical-specs.md) - System architecture
@@ -11,89 +12,175 @@ Comprehensive task breakdown for the Authrim OpenID Connect Provider project.
 
 ## Recent Completions (Nov-Dec 2025)
 
-Phase 6 & Phase 7 features completed ahead of schedule:
+Phase 6 completed with all enterprise features:
 
-| Feature | Tasks | Tests | Date |
-|---------|-------|-------|------|
-| Device Flow (RFC 8628) | 16 | 70+ | Nov 21, 2025 |
-| JWT Bearer Flow (RFC 7523) | 14 | 13 | Nov 21, 2025 |
-| JWE (RFC 7516) | 18 | 20+ | Nov 21, 2025 |
-| Hybrid Flow (OIDC Core 3.3) | 12 | All 3 response types | Nov 25, 2025 |
-| CIBA | 17 | All 3 modes (poll/ping/push) | Nov 25, 2025 |
-| SCIM 2.0 (RFC 7643/7644) | 18 | Full User/Group endpoints | Nov 25, 2025 |
-| JAR (RFC 9101) | 8 | Request object signing/encryption | Nov 25, 2025 |
-| JARM | 8 | All response mode variants | Nov 25, 2025 |
-| **Policy Core** | - | 53 tests | Dec 1, 2025 |
-| **Policy Service** | - | 31 tests | Dec 1, 2025 |
+| Feature                  | Tasks | Tests  | Date         |
+| ------------------------ | ----- | ------ | ------------ |
+| Device Flow (RFC 8628)   | 16    | 70+    | Nov 21, 2025 |
+| JWT Bearer Flow (RFC 7523) | 14  | 13     | Nov 21, 2025 |
+| JWE (RFC 7516)           | 18    | 20+    | Nov 21, 2025 |
+| Hybrid Flow (OIDC Core)  | 12    | All 3 types | Nov 25, 2025 |
+| CIBA                     | 17    | All 3 modes | Nov 25, 2025 |
+| SCIM 2.0 (RFC 7643/7644) | 18    | Full CRUD | Nov 25, 2025 |
+| JAR (RFC 9101)           | 8     | JWS/JWE | Nov 25, 2025 |
+| JARM                     | 8     | All modes | Nov 25, 2025 |
+| SAML 2.0                 | 24    | 22     | Dec 02, 2025 |
+| **Policy Core**          | -     | 53     | Dec 01, 2025 |
+| **Policy Service**       | -     | 31     | Dec 01, 2025 |
+| **SD-JWT (RFC 9901)**    | -     | 28     | Dec 03, 2025 |
+| **Feature Flags**        | -     | 25     | Dec 03, 2025 |
+| **ReBAC Check API**      | -     | Integrated | Dec 03, 2025 |
 
 ---
 
 ## Phase Overview
 
-| Phase | Name | Status | Link |
-|-------|------|--------|------|
-| 1 | Foundation | ✅ Complete | [TASKS_Phase1.md](./TASKS_Phase1.md) |
-| 2 | Core Implementation | ✅ Complete | [TASKS_Phase2.md](./TASKS_Phase2.md) |
-| 3 | Testing & Validation | ✅ Complete | [TASKS_Phase3.md](./TASKS_Phase3.md) |
-| 4 | Extended Features | ✅ Complete | [TASKS_Phase4.md](./TASKS_Phase4.md) |
-| 5 | UI/UX Implementation | ✅ Complete | [TASKS_Phase5.md](./TASKS_Phase5.md) |
-| 6 | Enterprise Features | ⏳ 8/10 Complete | [TASKS_Phase6.md](./TASKS_Phase6.md) |
-| 7 | VC/DID & Access Control | ⏳ Partial | [TASKS_Phase7.md](./TASKS_Phase7.md) |
-| 8 | Login Console & UI | 🔜 Planned | [TASKS_Phase8.md](./TASKS_Phase8.md) |
-| 9 | SDK & API | 🔜 Planned | [TASKS_Phase9.md](./TASKS_Phase9.md) |
-| 10 | Security & QA | 🔜 Planned | [TASKS_Phase10.md](./TASKS_Phase10.md) |
-| 11 | Certification | 🔜 Planned | [TASKS_Phase11.md](./TASKS_Phase11.md) |
-| 12 | CLI & Release | 🔜 Final | [TASKS_Phase12.md](./TASKS_Phase12.md) |
+| Phase | Name                           | Timeline          | Status      | Link                                       |
+| ----- | ------------------------------ | ----------------- | ----------- | ------------------------------------------ |
+| 1     | Foundation                     | Nov 2025          | ✅ Complete | [TASKS_Phase1.md](./TASKS_Phase1.md)       |
+| 2     | Core Implementation            | Nov 2025          | ✅ Complete | [TASKS_Phase2.md](./TASKS_Phase2.md)       |
+| 3     | Testing & Validation           | Nov 2025          | ✅ Complete | [TASKS_Phase3.md](./TASKS_Phase3.md)       |
+| 4     | Extended Features              | Nov 2025          | ✅ Complete | [TASKS_Phase4.md](./TASKS_Phase4.md)       |
+| 5     | UI/UX Implementation           | Nov 2025          | ✅ Complete | [TASKS_Phase5.md](./TASKS_Phase5.md)       |
+| 6     | Enterprise Features            | Dec 2025          | ✅ Complete | [TASKS_Phase6.md](./TASKS_Phase6.md)       |
+| 7     | **Identity Hub Foundation**    | 2025-12 ~ 2026-Q1 | ⏳ Starting | [TASKS_Phase7.md](./TASKS_Phase7.md)       |
+| 8     | **Unified Policy Integration** | 2026-Q2           | 🔜 Planned  | [TASKS_Phase8.md](./TASKS_Phase8.md)       |
+| 9     | **Advanced Identity (VC/DID)** | 2026-Q3           | 🔜 Planned  | [TASKS_Phase9.md](./TASKS_Phase9.md)       |
+| 10    | SDK & API                      | 2026-Q4           | 🔜 Planned  | [TASKS_Phase10.md](./TASKS_Phase10.md)     |
+| 11    | Security & QA                  | 2027-Q1           | 🔜 Planned  | [TASKS_Phase11.md](./TASKS_Phase11.md)     |
+| 12    | Certification & Release        | 2027-Q2           | 🔜 Final    | [TASKS_Phase12.md](./TASKS_Phase12.md)     |
 
 ---
 
-## Phase 6: Enterprise Features (Current)
+## Phase 6: Enterprise Features ✅ COMPLETE
 
-### Completed Features (8/10)
+All 13 enterprise features completed ahead of schedule:
 
-- [x] **Device Flow (RFC 8628)** - Smart TV, CLI, IoT authentication
-- [x] **JWT Bearer Flow (RFC 7523)** - Service-to-service authentication
-- [x] **JWE (RFC 7516)** - ID Token and UserInfo encryption
-- [x] **Hybrid Flow (OIDC Core 3.3)** - code id_token, code token, code id_token token
-- [x] **CIBA** - Backchannel authentication (poll, ping, push modes)
-- [x] **SCIM 2.0 (RFC 7643/7644)** - User and Group provisioning
-- [x] **JAR (RFC 9101)** - JWT-Secured Authorization Requests
-- [x] **JARM** - JWT-Secured Authorization Response Mode
-- [x] **SAML 2.0** - IdP & SP with SSO/SLO, HTTP-POST/Redirect bindings
+- [x] Device Flow (RFC 8628)
+- [x] JWT Bearer Flow (RFC 7523)
+- [x] JWE (RFC 7516)
+- [x] Hybrid Flow (OIDC Core 3.3)
+- [x] CIBA (poll, ping, push modes)
+- [x] SCIM 2.0 (RFC 7643/7644)
+- [x] JAR (RFC 9101)
+- [x] JARM
+- [x] SAML 2.0 (IdP/SP with SSO/SLO)
+- [x] Policy Service (RBAC/ABAC/ReBAC)
+- [x] SD-JWT (RFC 9901)
+- [x] Feature Flags (Hybrid config)
+- [x] ReBAC Check API
 
-> **Note:** Social Login has been moved to Phase 8 (Login Console & UI)
-> **Note:** LDAP/AD Integration removed - incompatible with Workers architecture (no TCP sockets)
+> **Note:** Social Login moved to Phase 7 (Identity Hub Foundation)
+> **Note:** LDAP/AD removed - incompatible with Workers architecture
 
 ---
 
-## Phase 7: VC/DID & Access Control (Partial)
+## Phase 7: Identity Hub Foundation ⏳ STARTING
 
-### Completed
+Transform Authrim from IdP-only to full Identity Hub:
 
-- [x] **Policy Core (@authrim/policy-core)** - RBAC/ABAC engine (53 tests)
-- [x] **Policy Service (@authrim/policy-service)** - REST API (31 tests)
-- [x] **API Documentation** - `/docs/api/policy/README.md`
+### RP Module Foundation
 
-### Planned
+- [ ] Upstream IdP Registry (D1 schema)
+- [ ] OIDC RP Client implementation
+- [ ] OAuth 2.0 RP Client implementation
+- [ ] Session Linking (upstream ↔ Authrim)
 
-- [ ] Feature Flags (ENABLE_REBAC_CHECK, ENABLE_ABAC_ATTRIBUTES)
-- [ ] ReBAC Check API (Zanzibar-style)
-- [ ] JWT-SD (Selective Disclosure)
-- [ ] OpenID4VP/CI (Verifiable Credentials)
-- [ ] DID Resolver (did:web, did:key)
+### Social Login Providers
+
+- [ ] Google (OIDC) - High Priority
+- [ ] GitHub (OAuth 2.0) - High Priority
+- [ ] Microsoft Entra ID (OIDC) - High Priority
+- [ ] Apple (OIDC) - Medium Priority
+- [ ] Facebook (OAuth 2.0) - Medium Priority
+- [ ] Twitter/X (OAuth 2.0) - Low Priority
+- [ ] LinkedIn (OAuth 2.0) - Low Priority
+
+### Identity Linking & Stitching
+
+- [ ] Account Linking (multiple identities → one user)
+- [ ] Identity Stitching (同一性判断ロジック)
+- [ ] Attribute Mapping (upstream claims → Authrim schema)
+- [ ] Conflict Resolution (email conflicts across providers)
+
+### Admin Console Enhancement
+
+- [ ] Provider Management UI
+- [ ] Attribute Mapping UI
+- [ ] Login Flow Designer
+
+---
+
+## Phase 8: Unified Policy Integration 🔜 PLANNED
+
+Integrate AuthN + AuthZ into unified flow:
+
+### Policy ↔ Identity Integration
+
+- [ ] Attribute Injection (upstream → policy context)
+- [ ] Dynamic Role Assignment (based on upstream attributes)
+- [ ] Just-in-Time Provisioning
+
+### Token Embedding Model
+
+- [ ] Permissions in Token (access token claims)
+- [ ] Roles in Token (ID token claims)
+- [ ] Resource Permissions (per-resource)
+- [ ] Custom Claims Builder UI
+
+### Real-time Check API Model
+
+- [ ] `/api/check` Endpoint (single permission)
+- [ ] Batch Check API (multiple permissions)
+- [ ] WebSocket Push (permission change notifications)
+- [ ] SDK Integration
+
+### Policy Admin Console
+
+- [ ] Role Editor (Visual RBAC)
+- [ ] Policy Editor (ABAC builder)
+- [ ] Relationship Viewer (ReBAC graph)
+- [ ] Audit Log Viewer
+
+---
+
+## Phase 9: Advanced Identity (VC/DID) 🔜 PLANNED
+
+Next-generation identity protocols:
+
+### OpenID4VP (Verifiable Presentations)
+
+- [ ] VP Request Generation
+- [ ] VP Verification (from digital wallets)
+- [ ] Credential Type Registry
+- [ ] Selective Disclosure integration
+
+### OpenID4CI (Credential Issuance)
+
+- [ ] Credential Endpoint
+- [ ] Credential Offer generation
+- [ ] SD-JWT VC Format (building on existing SD-JWT)
+- [ ] Credential Status (revocation/suspension)
+
+### DID Support
+
+- [ ] did:web Resolver
+- [ ] did:key Resolver
+- [ ] DID Document Hosting
 
 ---
 
 ## Deferred Features
 
-The following features are planned for later phases:
+Features planned for later phases:
 
-| Feature | Target Phase |
-|---------|--------------|
-| Social Login (7+ providers) | Phase 8 |
-| WebSDK (sdk-core, sdk-web) | Phase 9 |
-| Visual Flow Builder | TBD |
+| Feature             | Target Phase |
+| ------------------- | ------------ |
+| WebSDK (sdk-core, sdk-web, sdk-react) | Phase 10 |
 | CLI (`create-authrim`) | Phase 12 |
+| Visual Flow Builder | TBD |
+| MTLS (RFC 8705) | Phase 11 |
+| FAPI 2.0 | Phase 11 |
 
 ---
 
@@ -101,32 +188,26 @@ The following features are planned for later phases:
 
 ### Test Coverage
 
-| Category | Files | Tests |
-|----------|-------|-------|
-| Total test files | 60+ | ~25,270 lines |
-| op-auth | 10 | - |
-| op-token | 2 | - |
-| op-userinfo | 1 | - |
-| op-discovery | 2 | - |
-| op-async | 2 | - |
-| op-management | 4 | - |
-| shared | 37 | - |
-| policy-core | 1 | 53 tests |
-| policy-service | 1 | 31 tests |
-| ui | 1 | - |
+| Category       | Files | Tests           |
+| -------------- | ----- | --------------- |
+| Total          | 60+   | ~25,270 lines   |
+| policy-core    | 1     | 53 tests        |
+| policy-service | 1     | 31 tests        |
+| sd-jwt         | 1     | 28 tests        |
+| feature-flags  | 1     | 25 tests        |
 
 ### Implementation
 
-| Category | Count |
-|----------|-------|
-| Durable Objects | 14 |
-| UI Pages | 15+ |
-| API Endpoints | 50+ |
-| Admin Pages | 7 |
-| Policy Tests | 84 |
+| Category        | Count  |
+| --------------- | ------ |
+| Durable Objects | 14     |
+| UI Pages        | 15+    |
+| API Endpoints   | 50+    |
+| Admin Pages     | 7      |
+| Policy Tests    | 137+   |
 
 ---
 
-> **Last Update**: 2025-12-02
+> **Last Update**: 2025-12-03
 >
-> **Current Status**: Phase 6 (8/10) + Phase 7 (Policy Service Complete)
+> **Current Status**: Phase 6 Complete ✅ | Phase 7 Starting (Identity Hub Foundation)

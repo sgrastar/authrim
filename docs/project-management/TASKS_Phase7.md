@@ -1,232 +1,365 @@
-# Phase 7: VC/DID & Access Control
+# Phase 7: Identity Hub Foundation
 
-**Timeline:** 2026-Q3 to Q4
-**Status:** ⏳ Partial (Policy Core/Service Complete)
+**Timeline:** 2025-12 ~ 2026-Q1
+**Status:** ⏳ Starting
 
 ---
 
 ## Overview
 
-Phase 7 focuses on completing the access control system (RBAC/ABAC/ReBAC) and implementing Verifiable Credentials support. This phase builds the foundational authorization layer that other phases will depend on.
+Phase 7 transforms Authrim from an IdP-only solution into a full **Identity Hub** with Relying Party (RP) capabilities. This enables Authrim to accept authentication from external identity sources (Social Login, Enterprise IdPs, Wallets) and unify them into a single identity.
 
 ---
 
-## Completed Features (Dec 2025)
+## Architecture Vision
 
-### Policy Core (@authrim/policy-core) ✅
-
-The core policy evaluation engine has been implemented:
-
-- [x] `PolicyEngine` class with configurable default decision
-- [x] RBAC (Role-Based Access Control) evaluation
-  - [x] `has_role` condition type
-  - [x] `has_any_role` condition type
-  - [x] `has_all_roles` condition type
-  - [x] Role scope support (global, organization, resource)
-  - [x] Role expiration support
-- [x] ABAC (Attribute-Based Access Control) evaluation
-  - [x] `attribute_equals` condition type
-  - [x] `attribute_exists` condition type
-  - [x] `attribute_in` condition type
-  - [x] Verified attributes with expiry checking
-- [x] Ownership conditions
-  - [x] `is_resource_owner` check
-  - [x] `same_organization` check
-- [x] Relationship conditions
-  - [x] `has_relationship` check (guardian, parent, etc.)
-  - [x] `user_type_is` check
-  - [x] `plan_allows` check
-- [x] Default rules (5 built-in rules)
-  - [x] `system_admin_full_access` (priority 1000)
-  - [x] `distributor_admin_access` (priority 900)
-  - [x] `org_admin_same_org` (priority 800)
-  - [x] `owner_full_access` (priority 700)
-  - [x] `guardian_access` (priority 600)
-- [x] Custom rule support via `addRule()` API
-- [x] Unit tests (53 tests passing)
-
-### Policy Service (@authrim/policy-service) ✅
-
-REST API service for policy evaluation:
-
-- [x] `GET /policy/health` - Health check
-- [x] `POST /policy/evaluate` - Full policy evaluation
-- [x] `POST /policy/check-role` - Quick role check (single/multiple)
-- [x] `POST /policy/check-access` - Simplified access check
-- [x] `POST /policy/is-admin` - Admin status check
-- [x] Bearer token authentication
-- [x] Integration tests (31 tests passing)
-- [x] Cloudflare Workers deployment
-- [x] Custom domain routing (`/policy/*`)
-
-### API Documentation ✅
-
-- [x] `/docs/api/policy/README.md` - Comprehensive usage guide
-- [x] cURL examples
-- [x] TypeScript integration examples
-- [x] Error response documentation
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     External Identity Sources                            │
+│   Google    GitHub    Microsoft    Apple    Facebook    Twitter    SAML │
+└─────────────────────────────────────┬───────────────────────────────────┘
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       RP Module (Authrim as RP)                          │
+│   • OIDC Client    • OAuth 2.0 Client    • SAML SP (existing)           │
+└─────────────────────────────────────┬───────────────────────────────────┘
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      Identity Linking & Stitching                        │
+│   • Link multiple accounts to single user                               │
+│   • Same-user detection logic (email, phone, verified attributes)       │
+│   • Conflict resolution for duplicate claims                            │
+└─────────────────────────────────────┬───────────────────────────────────┘
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     Unified Identity (Authrim User)                      │
+│   • Single user record with linked identities                           │
+│   • Aggregated attributes from all sources                              │
+│   • Normalized claims                                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Recently Completed Features (Dec 2025)
+## 7.1 RP Module Foundation
 
-### Feature Flags System ✅
+Build the infrastructure for Authrim to act as a Relying Party:
 
-Hybrid feature flag system implemented:
+### Upstream IdP Registry (D1) 🔜
 
-- [x] Create `PolicyFeatureFlags` type definition
+Database schema and management for external identity providers:
+
+- [ ] Design `upstream_providers` table schema
+  ```sql
+  CREATE TABLE upstream_providers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL, -- 'oidc', 'oauth2', 'saml'
+    enabled BOOLEAN DEFAULT true,
+    priority INTEGER DEFAULT 0,
+    -- OIDC/OAuth2 specific
+    issuer TEXT,
+    client_id TEXT,
+    client_secret_encrypted TEXT,
+    authorization_endpoint TEXT,
+    token_endpoint TEXT,
+    userinfo_endpoint TEXT,
+    jwks_uri TEXT,
+    scopes TEXT, -- comma-separated
+    -- SAML specific
+    metadata_url TEXT,
+    entity_id TEXT,
+    -- Common
+    attribute_mapping TEXT, -- JSON
+    auto_link_email BOOLEAN DEFAULT true,
+    jit_provisioning BOOLEAN DEFAULT true,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  ```
+- [ ] Create `provider_credentials` table for secure credential storage
+- [ ] Implement D1 migration script
+- [ ] Add Admin API endpoints for provider CRUD
+- [ ] Unit tests for provider storage
+
+### OIDC RP Client 🔜
+
+Implement OAuth 2.0 + OIDC client capabilities:
+
+- [ ] Design `OIDCRPClient` class interface
+
   ```typescript
-  interface PolicyFeatureFlags {
-    ENABLE_ABAC: boolean;
-    ENABLE_REBAC: boolean;
-    ENABLE_POLICY_LOGGING: boolean;
-    ENABLE_VERIFIED_ATTRIBUTES: boolean;
-    ENABLE_CUSTOM_RULES: boolean;
-    ENABLE_SD_JWT: boolean;
+  interface OIDCRPClient {
+    // Discovery
+    discover(issuer: string): Promise<ProviderMetadata>;
+
+    // Authorization
+    createAuthorizationUrl(config: AuthConfig): string;
+    handleCallback(code: string, state: string): Promise<TokenResponse>;
+
+    // Token handling
+    validateIdToken(token: string): Promise<Claims>;
+    fetchUserInfo(accessToken: string): Promise<UserInfo>;
+
+    // Token refresh
+    refreshTokens(refreshToken: string): Promise<TokenResponse>;
   }
   ```
-- [x] Add environment variable support for flags (defaults)
-- [x] Add KV storage support for dynamic overrides
-- [x] Priority chain: Cache → KV → Environment → Default
-- [x] Implement flag checking in policy service
-- [x] Add flag status to health endpoint (`/policy/health`)
-- [x] Add flag management endpoints:
-  - `GET /policy/flags` - Get all flags with sources
-  - `PUT /policy/flags/:name` - Set flag override
-  - `DELETE /policy/flags/:name` - Clear flag override
-- [x] Add 23 unit tests for flag behavior
-- [x] 60-second TTL caching for KV lookups
 
-### ReBAC Check API (Zanzibar-style) ✅
+- [ ] Implement OIDC discovery (/.well-known/openid-configuration fetch)
+- [ ] Implement PKCE for authorization flow
+- [ ] Implement token exchange (code → tokens)
+- [ ] Implement ID Token validation (signature, claims)
+- [ ] Implement UserInfo endpoint call
+- [ ] Add automatic token refresh
+- [ ] Handle provider errors gracefully
+- [ ] Unit tests (20+ tests)
 
-Complete Relationship-Based Access Control implementation:
+### OAuth 2.0 RP Client 🔜
 
-- [x] Relation tuple schema (`relationships` table)
-- [x] Recursive CTE queries in `ReBACService`
-- [x] KV caching for relation lookups
-- [x] Feature flag gating (`ENABLE_REBAC`)
-- [x] REST API endpoints:
-  - `POST /api/rebac/check` - Single relationship check
-  - `POST /api/rebac/batch-check` - Batch check (max 100)
-  - `POST /api/rebac/list-objects` - List user's accessible objects
-  - `POST /api/rebac/list-users` - List users with access to object
-  - `POST /api/rebac/write` - Create relationship tuple
-  - `DELETE /api/rebac/tuple` - Delete relationship tuple
-  - `POST /api/rebac/invalidate` - Invalidate cache
-  - `GET /api/rebac/health` - Health check with status
-- [x] Namespace/relation type definitions (`relation_definitions` table)
-- [x] Unit tests integrated in policy-service tests
+Support for OAuth 2.0-only providers (no OIDC):
 
-### Database Migrations ✅
+- [ ] Design `OAuth2RPClient` class
+- [ ] Implement authorization URL generation
+- [ ] Implement token exchange
+- [ ] Implement profile API calls (provider-specific)
+- [ ] Handle provider-specific quirks
+- [ ] Unit tests
 
-All required tables for ReBAC/ABAC support:
+### Session Linking 🔜
 
-- [x] Migration 017: `relationship_closure` table (transitive lookups)
-- [x] Migration 018: `relation_definitions` table (Zanzibar-style DSL)
-- [x] Migration 019: `verified_attributes` + `subject_identifiers` tables
-- [x] Added `evidence_type`, `evidence_ref` columns to `relationships`
-- [x] Seed data for document/folder relation definitions
-- [x] Applied to conformance environment
+Link upstream sessions to Authrim sessions:
 
----
-
-## Planned Features
-
-### SD-JWT (Selective Disclosure JWT) ✅
-
-SD-JWT implementation for privacy-preserving credentials (draft-ietf-oauth-selective-disclosure-jwt):
-
-- [x] Research SD-JWT specification
-- [x] Implement SD-JWT issuing (`packages/shared/src/utils/sd-jwt.ts`)
-  - [x] Hash-based disclosure (SHA-256)
-  - [x] Cryptographically secure salt generation (16 bytes)
-  - [x] Disclosure array creation with sorted `_sd` hashes
-  - [x] `sd+jwt` type header
-- [x] Implement SD-JWT verification
-  - [x] Disclosure reconstruction from base64url
-  - [x] Hash verification against `_sd` array
-  - [x] Invalid disclosure detection
-- [x] ID Token convenience function (`createSDJWTIDToken`)
-  - [x] Required OIDC claims (iss, sub, aud, exp, iat, nonce) never selective
-  - [x] Default selective claims: email, phone_number, address, birthdate
-- [x] Presentation creation (`createPresentation`)
-  - [x] Holder selects which claims to disclose
-- [x] Holder binding support (cnf claim with JWK)
-- [x] Feature flag: `ENABLE_SD_JWT` (default: false)
-- [x] Unit tests (28 tests in `sd-jwt.test.ts`)
-- [ ] Add `sd_jwt` response type to Token endpoint
-- [ ] Document SD-JWT usage in API docs
-
-### OpenID4VP (Verifiable Presentations) 🔜
-
-Implement OpenID for Verifiable Presentations:
-
-- [ ] Research OpenID4VP specification
-- [ ] Implement presentation definition
-- [ ] Create authorization request for VP
-- [ ] Implement VP Token validation
-- [ ] Add presentation submission handling
-- [ ] Support multiple credential formats
-  - [ ] JWT-VC
-  - [ ] SD-JWT
-  - [ ] JSON-LD VC (optional)
-- [ ] Create verifier UI
-- [ ] Add unit tests
-- [ ] Document OpenID4VP flow
-
-### OpenID4CI (Credential Issuance) 🔜
-
-Implement OpenID for Verifiable Credential Issuance:
-
-- [ ] Research OpenID4CI specification
-- [ ] Implement credential offer endpoint
-- [ ] Create credential issuer metadata
-- [ ] Implement pre-authorized code flow
-- [ ] Implement authorization code flow for issuance
-- [ ] Add credential endpoint
-- [ ] Support multiple credential formats
-- [ ] Create issuer UI
-- [ ] Add unit tests
-- [ ] Document credential issuance
-
-### DID Resolver 🔜
-
-Implement Decentralized Identifier resolution:
-
-- [ ] Research DID Core specification (W3C)
-- [ ] Implement `did:web` resolver
-  - [ ] Fetch `.well-known/did.json`
-  - [ ] Parse DID document
-  - [ ] Extract verification methods
-- [ ] Implement `did:key` resolver
-  - [ ] Parse multibase-encoded public key
-  - [ ] Support Ed25519, P-256, secp256k1
-- [ ] Create DID document generation
-- [ ] Add DID authentication support
-- [ ] Integrate with VP/VC verification
-- [ ] Add unit tests
-- [ ] Document DID support
+- [ ] Design `linked_identities` table
+  ```sql
+  CREATE TABLE linked_identities (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    provider_id TEXT NOT NULL REFERENCES upstream_providers(id),
+    provider_user_id TEXT NOT NULL,
+    provider_email TEXT,
+    access_token_encrypted TEXT,
+    refresh_token_encrypted TEXT,
+    token_expires_at TEXT,
+    raw_claims TEXT, -- JSON of original claims
+    linked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_login TEXT,
+    UNIQUE(provider_id, provider_user_id)
+  );
+  ```
+- [ ] Implement session state management
+- [ ] Handle session expiry and refresh
+- [ ] Track last login per provider
+- [ ] Unit tests
 
 ---
 
-## Integration with Other Components
+## 7.2 Social Login Providers
 
-### Consent Screen Integration
+Implement specific provider integrations:
 
-The consent screen (`/auth/consent`) currently calls RBAC functions:
+### Google (OIDC) 🔜 - High Priority
 
-- `getConsentRBACData()` - Fetches organization roles
-- `getRolesInOrganization()` - Gets user's roles in org
+- [ ] Research Google OAuth 2.0 / OIDC endpoints
+- [ ] Implement Google-specific configuration
+- [ ] Handle Google scopes (profile, email, openid)
+- [ ] Fetch Google profile (name, picture, email)
+- [ ] Handle verified email check
+- [ ] Integration tests with mock Google responses
+- [ ] Document Google setup (Cloud Console steps)
 
-These functions gracefully degrade when tables are empty, ensuring no impact on OIDC Conformance tests.
+### GitHub (OAuth 2.0) 🔜 - High Priority
 
-### Token Endpoint Integration
+- [ ] Research GitHub OAuth 2.0 endpoints
+- [ ] Implement GitHub-specific configuration
+- [ ] Handle GitHub scopes (read:user, user:email)
+- [ ] Fetch GitHub profile (login, name, avatar_url)
+- [ ] Handle private email fallback (GitHub API)
+- [ ] Integration tests
+- [ ] Document GitHub setup
 
-Access tokens can include policy-related claims:
+### Microsoft Entra ID (OIDC) 🔜 - High Priority
 
-- `authrim_roles` - User's assigned roles
-- `authrim_permissions` - Derived permissions
-- `authrim_org_id` - Organization context
+- [ ] Research Microsoft Identity Platform endpoints
+- [ ] Implement multi-tenant vs single-tenant support
+- [ ] Handle Microsoft scopes (openid, profile, email)
+- [ ] Fetch Microsoft profile
+- [ ] Support organizations and personal accounts
+- [ ] Integration tests
+- [ ] Document Entra ID setup
+
+### Apple (OIDC) 🔜 - Medium Priority
+
+- [ ] Research Apple Sign In requirements
+- [ ] Implement Apple-specific JWT client secret generation
+- [ ] Handle Apple's private email relay
+- [ ] Fetch Apple profile (note: limited data)
+- [ ] Store refresh tokens (Apple requirement for 6+ months)
+- [ ] Integration tests
+- [ ] Document Apple setup (Developer Portal steps)
+
+### Facebook (OAuth 2.0) 🔜 - Medium Priority
+
+- [ ] Research Facebook Graph API endpoints
+- [ ] Implement Facebook-specific configuration
+- [ ] Handle Facebook permissions
+- [ ] Fetch Facebook profile (id, name, email, picture)
+- [ ] Handle app review requirements
+- [ ] Integration tests
+- [ ] Document Facebook setup
+
+### Twitter/X (OAuth 2.0) 🔜 - Low Priority
+
+- [ ] Research Twitter OAuth 2.0 with PKCE
+- [ ] Implement Twitter-specific configuration
+- [ ] Handle Twitter scopes (tweet.read, users.read)
+- [ ] Fetch Twitter profile (username, name, profile_image_url)
+- [ ] Integration tests
+- [ ] Document Twitter setup
+
+### LinkedIn (OAuth 2.0) 🔜 - Low Priority
+
+- [ ] Research LinkedIn OAuth 2.0 endpoints
+- [ ] Implement LinkedIn-specific configuration
+- [ ] Handle LinkedIn scopes (r_liteprofile, r_emailaddress)
+- [ ] Fetch LinkedIn profile
+- [ ] Handle professional information claims
+- [ ] Integration tests
+- [ ] Document LinkedIn setup
+
+---
+
+## 7.3 Identity Linking & Stitching
+
+Unify identities from multiple sources:
+
+### Account Linking 🔜
+
+Allow users to link multiple provider accounts:
+
+- [ ] Design linking flow
+  ```
+  1. User logs in with Provider A → Authrim account created
+  2. User clicks "Link Provider B"
+  3. User authenticates with Provider B
+  4. Provider B identity linked to existing account
+  ```
+- [ ] Implement "link new provider" endpoint
+- [ ] Handle already-linked provider detection
+- [ ] Add unlink functionality
+- [ ] Track link history in audit log
+- [ ] Unit tests
+
+### Identity Stitching 🔜
+
+Automatic same-user detection:
+
+- [ ] Design stitching rules engine
+
+  ```typescript
+  interface StitchingRule {
+    attribute: 'email' | 'phone' | 'custom';
+    requireVerified: boolean;
+    priority: number;
+  }
+
+  // Example: If verified email matches, auto-link
+  const rules: StitchingRule[] = [
+    { attribute: 'email', requireVerified: true, priority: 1 },
+    { attribute: 'phone', requireVerified: true, priority: 2 },
+  ];
+  ```
+
+- [ ] Implement email-based stitching (verified only)
+- [ ] Implement phone-based stitching (verified only)
+- [ ] Add configurable stitching rules
+- [ ] Handle conflicts (prompt user)
+- [ ] Unit tests (edge cases)
+
+### Attribute Mapping 🔜
+
+Map provider claims to Authrim schema:
+
+- [ ] Design attribute mapping schema
+  ```typescript
+  interface AttributeMapping {
+    provider_claim: string; // e.g., 'preferred_username'
+    authrim_attribute: string; // e.g., 'nickname'
+    transform?: 'lowercase' | 'uppercase' | 'normalize';
+    overwrite: boolean; // Overwrite existing value?
+  }
+  ```
+- [ ] Implement claim transformation pipeline
+- [ ] Handle nested claim paths (e.g., `address.formatted`)
+- [ ] Add default mappings per provider
+- [ ] Admin UI for custom mappings
+- [ ] Unit tests
+
+### Conflict Resolution 🔜
+
+Handle attribute conflicts across providers:
+
+- [ ] Design conflict resolution strategy
+  - [ ] Provider priority (higher priority wins)
+  - [ ] Most recent wins
+  - [ ] User choice
+  - [ ] Merge (for arrays)
+- [ ] Implement conflict detection
+- [ ] Create conflict resolution UI
+- [ ] Log conflicts for admin review
+- [ ] Unit tests
+
+---
+
+## 7.4 Admin Console Enhancement
+
+Extend admin dashboard for Identity Hub management:
+
+### Provider Management UI 🔜
+
+- [ ] List all upstream providers
+- [ ] Add new provider wizard
+  - [ ] OIDC provider setup
+  - [ ] OAuth 2.0 provider setup
+  - [ ] SAML provider setup (existing)
+- [ ] Edit provider configuration
+- [ ] Test provider connection
+- [ ] Enable/disable providers
+- [ ] Delete provider (with linked identity handling)
+- [ ] View provider usage statistics
+
+### Attribute Mapping UI 🔜
+
+- [ ] Visual mapping editor
+- [ ] Preview claim transformation
+- [ ] Default mappings templates
+- [ ] Import/export mappings
+- [ ] Test with sample claims
+
+### Login Flow Designer 🔜
+
+- [ ] Configure provider display order
+- [ ] Show/hide specific providers
+- [ ] Group providers (Social vs Enterprise)
+- [ ] Customize button styling per provider
+- [ ] Preview login page appearance
+
+---
+
+## Database Migrations
+
+### Migration 020: Upstream Providers
+
+- [ ] Create `upstream_providers` table
+- [ ] Create `linked_identities` table
+- [ ] Create indexes for lookup performance
+- [ ] Apply to dev/staging/production
+
+### Migration 021: Stitching Rules
+
+- [ ] Create `stitching_rules` table
+- [ ] Create `attribute_mappings` table
+- [ ] Add default rules seed data
 
 ---
 
@@ -234,59 +367,56 @@ Access tokens can include policy-related claims:
 
 ### Unit Tests
 
-- [x] Feature flag tests (enable/disable behavior) - 25 tests
-- [x] ReBAC recursive query tests - integrated in shared
-- [x] SD-JWT generation/verification tests - 28 tests
-- [ ] DID resolver tests
+- [ ] OIDC RP Client tests (25+ tests)
+- [ ] OAuth 2.0 RP Client tests (20+ tests)
+- [ ] Identity linking tests (15+ tests)
+- [ ] Attribute mapping tests (15+ tests)
+- [ ] Stitching rules tests (20+ tests)
 
 ### Integration Tests
 
-- [ ] End-to-end policy evaluation
-- [ ] VP presentation flow
-- [ ] Credential issuance flow
+- [ ] Full login flow with mock providers
+- [ ] Account linking flow
+- [ ] Conflict resolution flow
+- [ ] Provider management API tests
 
-### Conformance Testing
+### E2E Tests (Playwright)
 
-Ensure no regression in OIDC Conformance:
-
-- [ ] Re-run Basic OP tests after each major change
-- [ ] Verify consent flow still works
-- [ ] Test with feature flags disabled
+- [ ] Login with Social provider (mocked)
+- [ ] Link additional provider
+- [ ] Unlink provider
+- [ ] Admin provider management
 
 ---
 
 ## Success Metrics
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| Policy Core tests | 50+ | **78** ✅ |
-| Policy Service tests | 30+ | **33** ✅ |
-| Feature Flags tests | 20+ | **25** ✅ |
-| ReBAC tests | 30+ | Integrated ✅ |
-| SD-JWT tests | 20+ | **28** ✅ |
-| DID resolver tests | 15+ | - |
-| OpenID4VP tests | 25+ | - |
+| Metric           | Target            | Current |
+| ---------------- | ----------------- | ------- |
+| Social providers | 7                 | 0       |
+| RP Client tests  | 50+               | -       |
+| Linking tests    | 30+               | -       |
+| E2E tests        | 20+               | -       |
+| Provider configs | Template for each | -       |
 
 ---
 
 ## Dependencies
 
-- Policy Core/Service: **Complete** ✅
-- Feature Flags System: **Complete** ✅
-- ReBAC Check API: **Complete** ✅
-- D1 Database migrations: **Complete** ✅ (017-019 applied)
-- KV Storage: Required for caching (available)
-- jose library: Already integrated
+- Phase 6 Complete ✅
+- D1 Database available ✅
+- KV Storage available ✅
+- SAML SP already implemented ✅
 
 ---
 
 ## Related Documents
 
-- [Policy Service API Guide](../api/policy/README.md)
-- [API Inventory](./API_INVENTORY.md)
+- [ROADMAP](../ROADMAP.md) - Overall product direction
+- [TASKS_Phase6.md](./TASKS_Phase6.md) - Previous phase (Enterprise Features)
+- [TASKS_Phase8.md](./TASKS_Phase8.md) - Next phase (Unified Policy Integration)
 - [Database Schema](../architecture/database-schema.md)
-- [ROADMAP](../ROADMAP.md)
 
 ---
 
-> **Last Update**: 2025-12-02 (SD-JWT Implementation Complete)
+> **Last Update**: 2025-12-03 (Phase 7 definition for Identity Hub Foundation)
