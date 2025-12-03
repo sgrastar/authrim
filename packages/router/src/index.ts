@@ -16,6 +16,10 @@ interface Env {
   OP_MANAGEMENT: Fetcher;
   OP_ASYNC: Fetcher;
   OP_SAML: Fetcher;
+  // CORS configuration (optional)
+  // Comma-separated list of allowed origins, e.g., "https://app.example.com,https://admin.example.com"
+  // If not set, defaults to '*' with credentials disabled for security
+  ALLOWED_ORIGINS?: string;
 }
 
 // Create Hono app with Cloudflare Workers types
@@ -57,13 +61,44 @@ app.use('*', async (c, next) => {
   })(c, next);
 });
 
-// CORS configuration
-app.use(
-  '*',
-  cors({
-    origin: '*',
+/**
+ * CORS configuration with dynamic origin validation
+ *
+ * Security considerations:
+ * - Per CORS spec, when credentials: true, origin cannot be '*'
+ * - If ALLOWED_ORIGINS is set, validates against whitelist with credentials enabled
+ * - If not set, uses '*' with credentials disabled (safe default for public APIs)
+ */
+app.use('*', async (c, next) => {
+  const allowedOriginsEnv = c.env.ALLOWED_ORIGINS;
+
+  // Parse allowed origins from environment (comma-separated)
+  const allowedOrigins = allowedOriginsEnv
+    ? allowedOriginsEnv.split(',').map((o) => o.trim())
+    : null;
+
+  // Determine if credentials should be allowed
+  // Only allow credentials when specific origins are configured
+  const allowCredentials = !!allowedOrigins;
+
+  // Origin validation function
+  const validateOrigin = (origin: string): string | undefined | null => {
+    if (!allowedOrigins) {
+      // No whitelist configured: allow all origins but without credentials
+      return origin;
+    }
+    // Check against whitelist
+    if (allowedOrigins.includes(origin)) {
+      return origin;
+    }
+    // Origin not in whitelist
+    return null;
+  };
+
+  return cors({
+    origin: validateOrigin,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'If-Match', 'If-None-Match'],
+    allowHeaders: ['Content-Type', 'Authorization', 'DPoP', 'If-Match', 'If-None-Match'],
     exposeHeaders: [
       'X-RateLimit-Limit',
       'X-RateLimit-Remaining',
@@ -72,9 +107,9 @@ app.use(
       'Location',
     ],
     maxAge: 86400,
-    credentials: true,
-  })
-);
+    credentials: allowCredentials,
+  })(c, next);
+});
 
 // Health check endpoint
 app.get('/api/health', (c) => {

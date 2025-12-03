@@ -4,6 +4,12 @@
  * Implements Bearer token authentication for SCIM endpoints
  * as per RFC 7644 Section 2
  *
+ * Security features:
+ * - Rate limiting for failed authentication attempts (brute force protection)
+ * - Logging of failed attempts for security monitoring
+ * - Timing-safe token comparison (via hash comparison)
+ * - Configurable delay on failed attempts
+ *
  * @see https://datatracker.ietf.org/doc/html/rfc7644#section-2
  */
 
@@ -13,20 +19,233 @@ import { SCIM_SCHEMAS } from '../types/scim';
 import type { ScimError } from '../types/scim';
 
 /**
+ * SCIM authentication rate limit configuration
+ * Limits failed authentication attempts per IP
+ */
+const SCIM_AUTH_RATE_LIMIT = {
+  maxFailedAttempts: 5, // Maximum failed attempts before lockout
+  windowSeconds: 300, // 5 minutes window
+  lockoutSeconds: 900, // 15 minutes lockout after exceeding limit
+  failureDelayMs: 200, // Base delay on failed attempt (ms)
+};
+
+/**
+ * Get client IP address from request (Cloudflare-aware)
+ */
+function getClientIP(c: Context): string {
+  return (
+    c.req.header('CF-Connecting-IP') ||
+    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+    c.req.header('X-Real-IP') ||
+    'unknown'
+  );
+}
+
+/**
+ * Check if IP is rate limited for SCIM auth failures
+ */
+async function checkAuthRateLimit(
+  env: Env,
+  clientIP: string
+): Promise<{ allowed: boolean; remaining: number; retryAfter: number }> {
+  try {
+    // Use RATE_LIMITER DO for atomic rate limiting
+    if (env.RATE_LIMITER) {
+      const id = env.RATE_LIMITER.idFromName(`scim-auth:${clientIP}`);
+      const stub = env.RATE_LIMITER.get(id);
+
+      const response = await stub.fetch('http://internal/increment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientIP,
+          config: {
+            windowSeconds: SCIM_AUTH_RATE_LIMIT.windowSeconds,
+            maxRequests: SCIM_AUTH_RATE_LIMIT.maxFailedAttempts,
+          },
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json<{
+          allowed: boolean;
+          current: number;
+          limit: number;
+          resetAt: number;
+          retryAfter: number;
+        }>();
+
+        return {
+          allowed: result.allowed,
+          remaining: Math.max(0, result.limit - result.current),
+          retryAfter: result.retryAfter,
+        };
+      }
+    }
+
+    // Fallback to KV-based rate limiting
+    return await checkAuthRateLimitKV(env, clientIP);
+  } catch (error) {
+    console.error('[SCIM Auth] Rate limit check error:', error);
+    // Fail open - allow request on rate limit error
+    return { allowed: true, remaining: SCIM_AUTH_RATE_LIMIT.maxFailedAttempts, retryAfter: 0 };
+  }
+}
+
+/**
+ * KV-based fallback for auth rate limiting
+ */
+async function checkAuthRateLimitKV(
+  env: Env,
+  clientIP: string
+): Promise<{ allowed: boolean; remaining: number; retryAfter: number }> {
+  const now = Math.floor(Date.now() / 1000);
+  const key = `scim-auth-fail:${clientIP}`;
+
+  try {
+    const recordJson = await env.STATE_STORE?.get(key);
+
+    if (recordJson) {
+      const record = JSON.parse(recordJson) as { count: number; resetAt: number };
+
+      if (now < record.resetAt) {
+        // Window still active
+        const remaining = Math.max(0, SCIM_AUTH_RATE_LIMIT.maxFailedAttempts - record.count);
+        const retryAfter =
+          record.count >= SCIM_AUTH_RATE_LIMIT.maxFailedAttempts ? record.resetAt - now : 0;
+
+        return {
+          allowed: record.count < SCIM_AUTH_RATE_LIMIT.maxFailedAttempts,
+          remaining,
+          retryAfter,
+        };
+      }
+    }
+
+    // No record or window expired - allowed
+    return { allowed: true, remaining: SCIM_AUTH_RATE_LIMIT.maxFailedAttempts, retryAfter: 0 };
+  } catch (error) {
+    console.error('[SCIM Auth] KV rate limit check error:', error);
+    return { allowed: true, remaining: SCIM_AUTH_RATE_LIMIT.maxFailedAttempts, retryAfter: 0 };
+  }
+}
+
+/**
+ * Record a failed authentication attempt
+ */
+async function recordFailedAttempt(env: Env, clientIP: string): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  const key = `scim-auth-fail:${clientIP}`;
+
+  try {
+    const recordJson = await env.STATE_STORE?.get(key);
+    let record: { count: number; resetAt: number };
+
+    if (recordJson) {
+      record = JSON.parse(recordJson);
+      if (now >= record.resetAt) {
+        // Window expired, reset
+        record = { count: 1, resetAt: now + SCIM_AUTH_RATE_LIMIT.windowSeconds };
+      } else {
+        record.count++;
+      }
+    } else {
+      record = { count: 1, resetAt: now + SCIM_AUTH_RATE_LIMIT.windowSeconds };
+    }
+
+    await env.STATE_STORE?.put(key, JSON.stringify(record), {
+      expirationTtl: SCIM_AUTH_RATE_LIMIT.windowSeconds + 60,
+    });
+  } catch (error) {
+    console.error('[SCIM Auth] Failed to record failed attempt:', error);
+  }
+}
+
+/**
+ * Log authentication attempt for security monitoring
+ */
+function logAuthAttempt(
+  clientIP: string,
+  success: boolean,
+  reason?: string,
+  details?: Record<string, unknown>
+): void {
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    event: 'scim_auth_attempt',
+    clientIP,
+    success,
+    reason,
+    ...details,
+  };
+
+  if (success) {
+    console.log('[SCIM Auth]', JSON.stringify(logEntry));
+  } else {
+    console.warn('[SCIM Auth] Failed:', JSON.stringify(logEntry));
+  }
+}
+
+/**
+ * Add delay to slow down brute force attacks
+ * Uses exponential backoff based on recent failure count
+ */
+async function applyFailureDelay(failureCount: number): Promise<void> {
+  // Base delay with exponential backoff (capped at 2 seconds)
+  const delay = Math.min(
+    SCIM_AUTH_RATE_LIMIT.failureDelayMs * Math.pow(1.5, failureCount - 1),
+    2000
+  );
+
+  if (delay > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+}
+
+/**
  * SCIM Bearer Token Authentication Middleware
  *
  * Validates Bearer tokens against configured SCIM tokens in KV storage
  * or database. Tokens should be generated and stored securely.
+ *
+ * Security features:
+ * - Rate limiting for failed attempts (5 failures per 5 minutes)
+ * - Exponential backoff delay on failures
+ * - Detailed logging for security monitoring
  */
 export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Next) {
+  const clientIP = getClientIP(c);
   const authHeader = c.req.header('Authorization');
 
+  // Check rate limit before processing
+  const rateLimit = await checkAuthRateLimit(c.env, clientIP);
+
+  if (!rateLimit.allowed) {
+    logAuthAttempt(clientIP, false, 'rate_limited', { retryAfter: rateLimit.retryAfter });
+
+    c.header('Retry-After', rateLimit.retryAfter.toString());
+
+    return scimErrorResponse(
+      c,
+      401,
+      `Too many failed authentication attempts. Please try again in ${rateLimit.retryAfter} seconds.`
+    );
+  }
+
   if (!authHeader) {
+    await recordFailedAttempt(c.env, clientIP);
+    logAuthAttempt(clientIP, false, 'missing_auth_header');
+    await applyFailureDelay(SCIM_AUTH_RATE_LIMIT.maxFailedAttempts - rateLimit.remaining + 1);
+
     return scimErrorResponse(c, 401, 'No authorization header provided');
   }
 
   const parts = authHeader.split(' ');
   if (parts.length !== 2 || parts[0] !== 'Bearer') {
+    await recordFailedAttempt(c.env, clientIP);
+    logAuthAttempt(clientIP, false, 'invalid_auth_format');
+    await applyFailureDelay(SCIM_AUTH_RATE_LIMIT.maxFailedAttempts - rateLimit.remaining + 1);
+
     return scimErrorResponse(
       c,
       401,
@@ -41,13 +260,20 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
     const isValid = await validateScimToken(c.env, token);
 
     if (!isValid) {
+      await recordFailedAttempt(c.env, clientIP);
+      logAuthAttempt(clientIP, false, 'invalid_token');
+      await applyFailureDelay(SCIM_AUTH_RATE_LIMIT.maxFailedAttempts - rateLimit.remaining + 1);
+
       return scimErrorResponse(c, 401, 'Invalid or expired SCIM token');
     }
+
+    // Token is valid
+    logAuthAttempt(clientIP, true);
 
     // Token is valid, proceed to next middleware
     await next();
   } catch (error) {
-    console.error('SCIM auth error:', error);
+    console.error('[SCIM Auth] Validation error:', error);
     return scimErrorResponse(c, 500, 'Internal server error during authentication');
   }
 }

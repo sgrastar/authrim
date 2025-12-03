@@ -233,12 +233,28 @@ UI_BASE_URL=${UI_BASE_URL%/}
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🔒 CORS Allowed Origins (Security)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "Enter allowed CORS origins (comma-separated URLs)"
+echo "This restricts which domains can make authenticated cross-origin requests."
+echo ""
+echo "Examples:"
+echo "  • $UI_BASE_URL (default: use UI base URL)"
+echo "  • $UI_BASE_URL,https://admin.example.com"
+echo ""
+read -p "ALLOWED_ORIGINS [$UI_BASE_URL]: " ALLOWED_ORIGINS_INPUT
+ALLOWED_ORIGINS=${ALLOWED_ORIGINS_INPUT:-$UI_BASE_URL}
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✅ Configuration Summary"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "Deployment Mode: $([ "$DEPLOYMENT_MODE" = "test" ] && echo "Test (Router Worker)" || echo "Production (Cloudflare Routes)")"
 echo "ISSUER_URL: $ISSUER_URL"
 echo "UI_BASE_URL: $UI_BASE_URL"
+echo "ALLOWED_ORIGINS: $ALLOWED_ORIGINS"
 echo ""
 
 # For production mode, extract domain and zone info
@@ -291,6 +307,7 @@ $do_bindings
 [vars]
 ISSUER_URL = "$ISSUER_URL"
 UI_BASE_URL = "$UI_BASE_URL"
+ALLOWED_ORIGINS = "$ALLOWED_ORIGINS"
 TOKEN_EXPIRY = "3600"
 CODE_EXPIRY = "120"
 STATE_EXPIRY = "300"
@@ -975,13 +992,17 @@ service = "${DEPLOY_ENV}-authrim-op-saml"
 [vars]
 KEY_ID = "{{KEY_ID}}"
 ALLOW_HTTP_REDIRECT = "false"
+# CORS allowed origins - comma-separated list for authenticated cross-origin requests
+ALLOWED_ORIGINS = "{{ALLOWED_ORIGINS}}"
 EOF
 
-        # Replace placeholder with actual KEY_ID
+        # Replace placeholders with actual values
         if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' "s|{{KEY_ID}}|$KEY_ID|" "packages/router/wrangler.toml"
+            sed -i '' "s|{{KEY_ID}}|$KEY_ID|" "packages/router/wrangler.${DEPLOY_ENV}.toml"
+            sed -i '' "s|{{ALLOWED_ORIGINS}}|$ALLOWED_ORIGINS|" "packages/router/wrangler.${DEPLOY_ENV}.toml"
         else
-            sed -i "s|{{KEY_ID}}|$KEY_ID|" "packages/router/wrangler.toml"
+            sed -i "s|{{KEY_ID}}|$KEY_ID|" "packages/router/wrangler.${DEPLOY_ENV}.toml"
+            sed -i "s|{{ALLOWED_ORIGINS}}|$ALLOWED_ORIGINS|" "packages/router/wrangler.${DEPLOY_ENV}.toml"
         fi
     fi
 else

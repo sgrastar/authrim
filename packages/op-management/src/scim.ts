@@ -82,6 +82,49 @@ function scimError(c: any, status: number, detail: string, scimType?: string): R
 }
 
 /**
+ * Allowed sortBy columns for Users (SCIM attribute -> DB column)
+ * Prevents SQL injection by whitelisting valid column names
+ */
+const ALLOWED_USER_SORT_COLUMNS: Record<string, string> = {
+  userName: 'preferred_username',
+  displayName: 'name',
+  name: 'name',
+  'name.givenName': 'given_name',
+  'name.familyName': 'family_name',
+  'emails.value': 'email',
+  email: 'email',
+  created: 'created_at',
+  lastModified: 'updated_at',
+  // Also allow direct DB column names for backwards compatibility
+  preferred_username: 'preferred_username',
+  given_name: 'given_name',
+  family_name: 'family_name',
+  created_at: 'created_at',
+  updated_at: 'updated_at',
+  id: 'id',
+};
+
+/**
+ * Allowed sortBy columns for Groups (SCIM attribute -> DB column)
+ */
+const ALLOWED_GROUP_SORT_COLUMNS: Record<string, string> = {
+  displayName: 'name',
+  name: 'name',
+  created: 'created_at',
+  // Also allow direct DB column names
+  created_at: 'created_at',
+  id: 'id',
+};
+
+/**
+ * Validate and map sortBy parameter to safe DB column name
+ * @returns DB column name or null if invalid
+ */
+function validateSortColumn(sortBy: string, allowedColumns: Record<string, string>): string | null {
+  return allowedColumns[sortBy] || null;
+}
+
+/**
  * Helper: Parse query parameters
  */
 function parseQueryParams(c: any): ScimQueryParams {
@@ -168,9 +211,17 @@ app.get('/Users', async (c) => {
       .first<{ total: number }>();
     const totalResults = totalResult?.total || 0;
 
-    // Apply sorting
+    // Apply sorting with whitelist validation (prevents SQL injection)
     if (params.sortBy) {
-      const sortColumn = params.sortBy === 'userName' ? 'preferred_username' : params.sortBy;
+      const sortColumn = validateSortColumn(params.sortBy, ALLOWED_USER_SORT_COLUMNS);
+      if (!sortColumn) {
+        return scimError(
+          c,
+          400,
+          `Invalid sortBy attribute: ${params.sortBy}. Allowed values: ${Object.keys(ALLOWED_USER_SORT_COLUMNS).join(', ')}`,
+          'invalidValue'
+        );
+      }
       const sortDirection = params.sortOrder === 'descending' ? 'DESC' : 'ASC';
       sql += ` ORDER BY ${sortColumn} ${sortDirection}`;
     } else {
@@ -638,9 +689,17 @@ app.get('/Groups', async (c) => {
       .first<{ total: number }>();
     const totalResults = totalResult?.total || 0;
 
-    // Apply sorting
+    // Apply sorting with whitelist validation (prevents SQL injection)
     if (params.sortBy) {
-      const sortColumn = params.sortBy === 'displayName' ? 'name' : params.sortBy;
+      const sortColumn = validateSortColumn(params.sortBy, ALLOWED_GROUP_SORT_COLUMNS);
+      if (!sortColumn) {
+        return scimError(
+          c,
+          400,
+          `Invalid sortBy attribute: ${params.sortBy}. Allowed values: ${Object.keys(ALLOWED_GROUP_SORT_COLUMNS).join(', ')}`,
+          'invalidValue'
+        );
+      }
       const sortDirection = params.sortOrder === 'descending' ? 'DESC' : 'ASC';
       sql += ` ORDER BY ${sortColumn} ${sortDirection}`;
     } else {
