@@ -44,6 +44,8 @@ const ja = {
 	login_createAccount: 'アカウントをお持ちでない方はこちら',
 	login_errorEmailRequired: 'メールアドレスは必須です',
 	login_errorEmailInvalid: '有効なメールアドレスを入力してください',
+	login_orContinueWith: '他のアカウントでログイン',
+	login_continueWith: '{provider}でログイン',
 
 	header_signUp: '新規登録',
 	header_login: 'ログイン',

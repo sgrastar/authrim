@@ -177,6 +177,15 @@ type RootTranslation = {
 	 */
 	login_errorEmailInvalid: string;
 	/**
+	 * O​r​ ​c​o​n​t​i​n​u​e​ ​w​i​t​h
+	 */
+	login_orContinueWith: string;
+	/**
+	 * C​o​n​t​i​n​u​e​ ​w​i​t​h​ ​{​p​r​o​v​i​d​e​r​}
+	 * @param {string} provider
+	 */
+	login_continueWith: RequiredParams<'provider'>;
+	/**
 	 * S​i​g​n​ ​U​p
 	 */
 	header_signUp: string;
@@ -899,6 +908,14 @@ export type TranslationFunctions = {
 	 * Please enter a valid email address
 	 */
 	login_errorEmailInvalid: () => LocalizedString;
+	/**
+	 * Or continue with
+	 */
+	login_orContinueWith: () => LocalizedString;
+	/**
+	 * Continue with {provider}
+	 */
+	login_continueWith: (arg: { provider: string }) => LocalizedString;
 	/**
 	 * Sign Up
 	 */

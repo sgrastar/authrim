@@ -154,7 +154,9 @@
 					alert('Failed to delete clients: ' + (error.error_description || 'Unknown error'));
 				} else if (data) {
 					if (data.errors && data.errors.length > 0) {
-						alert(`Deleted ${data.deleted} of ${data.requested} clients.\nErrors:\n${data.errors.join('\n')}`);
+						alert(
+							`Deleted ${data.deleted} of ${data.requested} clients.\nErrors:\n${data.errors.join('\n')}`
+						);
 					}
 					await loadClients();
 				}
@@ -261,9 +263,7 @@
 						>
 							Clear
 						</button>
-						<Button variant="danger" onclick={openBulkDeleteDialog}>
-							Delete Selected
-						</Button>
+						<Button variant="danger" onclick={openBulkDeleteDialog}>Delete Selected</Button>
 					</div>
 				{/if}
 			</div>
@@ -449,9 +449,7 @@
 	{/if}
 
 	<div slot="footer" class="flex justify-end gap-3">
-		<Button variant="secondary" onclick={closeDeleteDialog} disabled={deleting}>
-			キャンセル
-		</Button>
+		<Button variant="secondary" onclick={closeDeleteDialog} disabled={deleting}>キャンセル</Button>
 		<Button variant="danger" onclick={confirmDelete} disabled={deleting}>
 			{#if deleting}
 				削除中...

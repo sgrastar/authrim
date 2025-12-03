@@ -283,6 +283,7 @@ PACKAGES=(
     "op-async:packages/op-async"
     "policy-service:packages/policy-service"
     "op-saml:packages/op-saml"
+    "external-idp:packages/external-idp"
     "router:packages/router"
 )
 

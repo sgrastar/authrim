@@ -161,9 +161,7 @@
 			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
 				{$LL.admin_audit_title()}
 			</h1>
-			<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-				View and export system audit logs
-			</p>
+			<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">View and export system audit logs</p>
 		</div>
 		<div class="flex gap-2">
 			<Button variant="secondary" onclick={handleExportCSV}>
@@ -182,11 +180,14 @@
 		<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
 			<!-- Action filter -->
 			<div>
-				<label for="filter-action" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+				<label
+					for="filter-action"
+					class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+				>
 					Action
 				</label>
 				<select
-				id="filter-action"
+					id="filter-action"
 					bind:value={filterAction}
 					onchange={handleSearch}
 					class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
@@ -200,7 +201,10 @@
 
 			<!-- Resource Type filter -->
 			<div>
-				<label for="filter-action" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+				<label
+					for="filter-action"
+					class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+				>
 					Resource Type
 				</label>
 				<select
@@ -217,7 +221,10 @@
 
 			<!-- Date range -->
 			<div>
-				<label for="filter-action" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+				<label
+					for="filter-action"
+					class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+				>
 					Start Date
 				</label>
 				<input
@@ -228,7 +235,10 @@
 				/>
 			</div>
 			<div>
-				<label for="filter-action" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+				<label
+					for="filter-action"
+					class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+				>
 					End Date
 				</label>
 				<input
@@ -301,7 +311,9 @@
 						</tr>
 					{:else}
 						{#each logs as log (log.id)}
-							<tr class="border-b border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800">
+							<tr
+								class="border-b border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+							>
 								<td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
 									{formatTimestamp(log.createdAt)}
 								</td>
@@ -326,7 +338,9 @@
 
 		<!-- Pagination -->
 		{#if !loading && totalPages > 1}
-			<div class="flex items-center justify-between border-t border-gray-200 px-4 py-3 dark:border-gray-700">
+			<div
+				class="flex items-center justify-between border-t border-gray-200 px-4 py-3 dark:border-gray-700"
+			>
 				<div class="text-sm text-gray-700 dark:text-gray-300">
 					Showing <span class="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span>
 					to

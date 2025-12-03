@@ -13,6 +13,87 @@ import {
 } from '@authrim/shared/middleware/scim-auth';
 
 /**
+ * Validation constraints for SCIM token creation
+ */
+const SCIM_TOKEN_VALIDATION = {
+  // Token expiry: minimum 1 day, maximum 10 years (3650 days)
+  EXPIRES_IN_DAYS_MIN: 1,
+  EXPIRES_IN_DAYS_MAX: 3650,
+  EXPIRES_IN_DAYS_DEFAULT: 365,
+  // Description: maximum 256 characters
+  DESCRIPTION_MAX_LENGTH: 256,
+  DESCRIPTION_DEFAULT: 'SCIM provisioning token',
+};
+
+/**
+ * Validates and sanitizes SCIM token creation input
+ */
+function validateScimTokenInput(body: { description?: unknown; expiresInDays?: unknown }): {
+  valid: boolean;
+  errors: string[];
+  sanitized: { description: string; expiresInDays: number };
+} {
+  const errors: string[] = [];
+
+  // Validate expiresInDays
+  let expiresInDays = SCIM_TOKEN_VALIDATION.EXPIRES_IN_DAYS_DEFAULT;
+
+  if (body.expiresInDays !== undefined && body.expiresInDays !== null) {
+    const expiry = body.expiresInDays;
+
+    // Check if it's a valid number
+    if (typeof expiry !== 'number' || !Number.isFinite(expiry)) {
+      errors.push('expiresInDays must be a valid number');
+    } else if (!Number.isInteger(expiry)) {
+      errors.push('expiresInDays must be an integer');
+    } else if (expiry < SCIM_TOKEN_VALIDATION.EXPIRES_IN_DAYS_MIN) {
+      errors.push(
+        `expiresInDays must be at least ${SCIM_TOKEN_VALIDATION.EXPIRES_IN_DAYS_MIN} day(s)`
+      );
+    } else if (expiry > SCIM_TOKEN_VALIDATION.EXPIRES_IN_DAYS_MAX) {
+      errors.push(
+        `expiresInDays must not exceed ${SCIM_TOKEN_VALIDATION.EXPIRES_IN_DAYS_MAX} days (10 years)`
+      );
+    } else {
+      expiresInDays = expiry;
+    }
+  }
+
+  // Validate description
+  let description = SCIM_TOKEN_VALIDATION.DESCRIPTION_DEFAULT;
+
+  if (body.description !== undefined && body.description !== null) {
+    const desc = body.description;
+
+    // Check if it's a string
+    if (typeof desc !== 'string') {
+      errors.push('description must be a string');
+    } else {
+      // Trim and check length
+      const trimmed = desc.trim();
+
+      if (trimmed.length === 0) {
+        // Use default for empty string
+        description = SCIM_TOKEN_VALIDATION.DESCRIPTION_DEFAULT;
+      } else if (trimmed.length > SCIM_TOKEN_VALIDATION.DESCRIPTION_MAX_LENGTH) {
+        errors.push(
+          `description must not exceed ${SCIM_TOKEN_VALIDATION.DESCRIPTION_MAX_LENGTH} characters`
+        );
+      } else {
+        // Sanitize: remove control characters but allow Unicode
+        description = trimmed.replace(/[\x00-\x1F\x7F]/g, '');
+      }
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    sanitized: { description, expiresInDays },
+  };
+}
+
+/**
  * GET /api/admin/scim-tokens - List all SCIM tokens
  */
 export async function adminScimTokensListHandler(c: Context<{ Bindings: Env }>) {
@@ -40,14 +121,39 @@ export async function adminScimTokensListHandler(c: Context<{ Bindings: Env }>) 
  */
 export async function adminScimTokenCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const body = await c.req.json<{
-      description?: string;
-      expiresInDays?: number;
-    }>();
+    // Parse request body with unknown types for validation
+    let body: { description?: unknown; expiresInDays?: unknown };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json(
+        {
+          error: 'invalid_request',
+          message: 'Invalid JSON in request body',
+        },
+        400
+      );
+    }
+
+    // Validate and sanitize input
+    const validation = validateScimTokenInput(body);
+
+    if (!validation.valid) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          message: 'Validation failed',
+          details: validation.errors,
+        },
+        400
+      );
+    }
+
+    const { description, expiresInDays } = validation.sanitized;
 
     const { token, tokenHash } = await generateScimToken(c.env, {
-      description: body.description || 'SCIM provisioning token',
-      expiresInDays: body.expiresInDays || 365, // Default: 1 year
+      description,
+      expiresInDays,
       enabled: true,
     });
 
@@ -56,8 +162,8 @@ export async function adminScimTokenCreateHandler(c: Context<{ Bindings: Env }>)
       {
         token, // Plain text token (show to user only once)
         tokenHash,
-        description: body.description || 'SCIM provisioning token',
-        expiresInDays: body.expiresInDays || 365,
+        description,
+        expiresInDays,
         message:
           'Token created successfully. Save this token securely - it will not be shown again.',
       },

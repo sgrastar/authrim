@@ -67,7 +67,7 @@
 			} else {
 				successMessage = 'Authentication request approved successfully';
 				// Remove approved request from list
-				pendingRequests = pendingRequests.filter(r => r.auth_req_id !== authReqId);
+				pendingRequests = pendingRequests.filter((r) => r.auth_req_id !== authReqId);
 
 				// Clear success message after 3 seconds
 				setTimeout(() => {
@@ -98,7 +98,7 @@
 			} else {
 				successMessage = 'Authentication request denied successfully';
 				// Remove denied request from list
-				pendingRequests = pendingRequests.filter(r => r.auth_req_id !== authReqId);
+				pendingRequests = pendingRequests.filter((r) => r.auth_req_id !== authReqId);
 
 				// Clear success message after 3 seconds
 				setTimeout(() => {
@@ -128,9 +128,7 @@
 	<div class="space-y-6">
 		<!-- Page header -->
 		<div class="text-center">
-			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
-				Authentication Requests
-			</h1>
+			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">Authentication Requests</h1>
 			<p class="mt-2 text-gray-600 dark:text-gray-400">
 				Review and approve pending authentication requests
 			</p>
@@ -167,7 +165,9 @@
 			<!-- No Pending Requests -->
 			<Card>
 				<div class="py-12 text-center">
-					<div class="i-heroicons-check-badge mx-auto h-16 w-16 text-gray-400 dark:text-gray-600"></div>
+					<div
+						class="i-heroicons-check-badge mx-auto h-16 w-16 text-gray-400 dark:text-gray-600"
+					></div>
 					<h3 class="mt-4 text-lg font-medium text-gray-900 dark:text-white">
 						No Pending Requests
 					</h3>
@@ -190,17 +190,19 @@
 									class="h-12 w-12 rounded-lg object-cover"
 								/>
 							{:else}
-								<div class="flex h-12 w-12 items-center justify-center rounded-lg bg-primary-100 dark:bg-primary-900">
-									<div class="i-heroicons-device-phone-mobile h-6 w-6 text-primary-600 dark:text-primary-400"></div>
+								<div
+									class="flex h-12 w-12 items-center justify-center rounded-lg bg-primary-100 dark:bg-primary-900"
+								>
+									<div
+										class="i-heroicons-device-phone-mobile h-6 w-6 text-primary-600 dark:text-primary-400"
+									></div>
 								</div>
 							{/if}
 							<div class="flex-1">
 								<h3 class="text-lg font-semibold text-gray-900 dark:text-white">
 									{request.client_name}
 								</h3>
-								<p class="text-sm text-gray-600 dark:text-gray-400">
-									Authentication Request
-								</p>
+								<p class="text-sm text-gray-600 dark:text-gray-400">Authentication Request</p>
 							</div>
 							<div class="text-right">
 								<p class="text-xs text-gray-500 dark:text-gray-400">Expires in</p>
@@ -214,7 +216,9 @@
 						{#if request.binding_message}
 							<div class="rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20">
 								<div class="flex gap-3">
-									<div class="i-heroicons-information-circle h-5 w-5 text-blue-600 dark:text-blue-400"></div>
+									<div
+										class="i-heroicons-information-circle h-5 w-5 text-blue-600 dark:text-blue-400"
+									></div>
 									<div>
 										<p class="text-sm font-medium text-blue-900 dark:text-blue-200">
 											Binding Message
@@ -241,12 +245,12 @@
 
 						<!-- Requested Scopes -->
 						<div>
-							<p class="text-sm font-medium text-gray-700 dark:text-gray-300">
-								Requested Access
-							</p>
+							<p class="text-sm font-medium text-gray-700 dark:text-gray-300">Requested Access</p>
 							<div class="mt-2 flex flex-wrap gap-2">
 								{#each request.scope.split(' ') as scope (scope)}
-									<span class="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+									<span
+										class="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-800 dark:bg-gray-700 dark:text-gray-200"
+									>
 										{scope}
 									</span>
 								{/each}

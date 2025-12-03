@@ -44,6 +44,8 @@ const en = {
 	login_createAccount: "Don't have an account? Create one",
 	login_errorEmailRequired: 'Email address is required',
 	login_errorEmailInvalid: 'Please enter a valid email address',
+	login_orContinueWith: 'Or continue with',
+	login_continueWith: 'Continue with {provider:string}',
 
 	header_signUp: 'Sign Up',
 	header_login: 'Login',

@@ -163,7 +163,9 @@
 	<title>{$LL.emailCode_title()} - {$LL.app_title()}</title>
 </svelte:head>
 
-<div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
+<div
+	class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12"
+>
 	<!-- Language Switcher (Top Right) -->
 	<div class="absolute top-4 right-4">
 		<LanguageSwitcher />
@@ -186,7 +188,9 @@
 			<!-- Icon -->
 			<div class="flex justify-center mb-6">
 				<div class="rounded-full bg-primary-100 dark:bg-primary-900/30 p-4">
-					<div class="i-heroicons-envelope-solid h-12 w-12 text-primary-600 dark:text-primary-400"></div>
+					<div
+						class="i-heroicons-envelope-solid h-12 w-12 text-primary-600 dark:text-primary-400"
+					></div>
 				</div>
 			</div>
 
@@ -206,7 +210,9 @@
 			</div>
 
 			<!-- Instructions -->
-			<div class="bg-info-50 dark:bg-info-900/20 border border-info-200 dark:border-info-800 rounded-lg p-4 mb-6">
+			<div
+				class="bg-info-50 dark:bg-info-900/20 border border-info-200 dark:border-info-800 rounded-lg p-4 mb-6"
+			>
 				<p class="text-sm text-info-800 dark:text-info-200">
 					{$LL.emailCode_instructions()}
 				</p>
@@ -214,14 +220,14 @@
 
 			<!-- Success Message -->
 			{#if success}
-				<Alert variant="success" dismissible={true} onDismiss={() => success = ''} class="mb-4">
+				<Alert variant="success" dismissible={true} onDismiss={() => (success = '')} class="mb-4">
 					{success}
 				</Alert>
 			{/if}
 
 			<!-- Error Message -->
 			{#if error}
-				<Alert variant="error" dismissible={true} onDismiss={() => error = ''} class="mb-4">
+				<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
 					{error}
 				</Alert>
 			{/if}
@@ -257,7 +263,7 @@
 				variant="primary"
 				class="w-full mb-4"
 				disabled={$value.join('').length !== 6 || loading || !!success}
-				loading={loading}
+				{loading}
 				onclick={() => handleVerify()}
 			>
 				{$LL.emailCode_verifyButton()}

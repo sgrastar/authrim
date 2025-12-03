@@ -106,4 +106,25 @@ export interface Env {
   // SD-JWT Feature Flag (RFC 9901)
   // When "true", clients with id_token_signed_response_type="sd-jwt" will receive SD-JWT ID tokens
   ENABLE_SD_JWT?: string;
+
+  // HTTPS Request URI Feature Flag (OIDC Core 6.2)
+  // SECURITY: Disabled by default to prevent SSRF attacks
+  // When "true", allows fetching Request Objects from external HTTPS URLs
+  // PAR (RFC 9126) URN format is always allowed and recommended
+  ENABLE_HTTPS_REQUEST_URI?: string; // "true" to enable external HTTPS request_uri
+
+  // HTTPS Request URI Security Controls (only relevant when ENABLE_HTTPS_REQUEST_URI="true")
+  // Comma-separated list of allowed domains for HTTPS request_uri (empty = allow all)
+  HTTPS_REQUEST_URI_ALLOWED_DOMAINS?: string;
+  // Fetch timeout in milliseconds (default: 5000)
+  HTTPS_REQUEST_URI_TIMEOUT_MS?: string;
+  // Maximum response body size in bytes (default: 102400 = 100KB)
+  HTTPS_REQUEST_URI_MAX_SIZE_BYTES?: string;
+
+  // External IdP Configuration (Phase 7)
+  // Identity stitching: automatically link external identities to existing users by verified email
+  IDENTITY_STITCHING_ENABLED?: string; // "true" to enable automatic identity stitching
+  IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL?: string; // "false" to allow unverified emails (not recommended)
+  // Encryption key for storing external IdP tokens (32-byte hex string)
+  RP_TOKEN_ENCRYPTION_KEY?: string;
 }

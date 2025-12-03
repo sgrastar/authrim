@@ -48,7 +48,9 @@
 	<meta name="description" content="An error occurred. Please try again or contact support." />
 </svelte:head>
 
-<div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
+<div
+	class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12"
+>
 	<!-- Language Switcher (Top Right) -->
 	<div class="absolute top-4 right-4">
 		<LanguageSwitcher />
@@ -71,7 +73,9 @@
 			<!-- Error Icon -->
 			<div class="flex justify-center mb-6">
 				<div class="rounded-full bg-error-100 dark:bg-error-900/30 p-4">
-					<div class="i-heroicons-exclamation-circle h-12 w-12 text-error-600 dark:text-error-400"></div>
+					<div
+						class="i-heroicons-exclamation-circle h-12 w-12 text-error-600 dark:text-error-400"
+					></div>
 				</div>
 			</div>
 
@@ -105,20 +109,12 @@
 
 			<!-- Action Buttons -->
 			<div class="space-y-3">
-				<Button
-					variant="primary"
-					class="w-full"
-					onclick={handleBackToLogin}
-				>
+				<Button variant="primary" class="w-full" onclick={handleBackToLogin}>
 					<div class="i-heroicons-arrow-left h-5 w-5"></div>
 					{$LL.common_backToLogin()}
 				</Button>
 
-				<Button
-					variant="ghost"
-					class="w-full"
-					onclick={handleContactSupport}
-				>
+				<Button variant="ghost" class="w-full" onclick={handleContactSupport}>
 					<div class="i-heroicons-question-mark-circle h-5 w-5"></div>
 					Contact Support
 				</Button>

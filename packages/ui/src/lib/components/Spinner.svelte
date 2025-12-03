@@ -6,12 +6,7 @@
 		color?: 'primary' | 'secondary' | 'white' | 'gray';
 	}
 
-	let {
-		size = 'md',
-		color = 'primary',
-		class: className = '',
-		...restProps
-	}: Props = $props();
+	let { size = 'md', color = 'primary', class: className = '', ...restProps }: Props = $props();
 
 	const sizeClasses = {
 		sm: 'h-4 w-4',
@@ -35,13 +30,7 @@
 		fill="none"
 		viewBox="0 0 24 24"
 	>
-		<circle
-			class="opacity-25"
-			cx="12"
-			cy="12"
-			r="10"
-			stroke="currentColor"
-			stroke-width="4"
+		<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"
 		></circle>
 		<path
 			class="opacity-75"

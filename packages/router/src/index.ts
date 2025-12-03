@@ -16,6 +16,7 @@ interface Env {
   OP_MANAGEMENT: Fetcher;
   OP_ASYNC: Fetcher;
   OP_SAML: Fetcher;
+  EXTERNAL_IDP: Fetcher; // External IdP (social login, enterprise IdP)
   // CORS configuration (optional)
   // Comma-separated list of allowed origins, e.g., "https://app.example.com,https://admin.example.com"
   // If not set, defaults to '*' with credentials disabled for security
@@ -318,6 +319,24 @@ app.all('/scim/v2/*', async (c) => {
 app.all('/saml/*', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_SAML.fetch(request);
+});
+
+/**
+ * External IdP endpoints - Route to EXTERNAL_IDP worker
+ * - /auth/external/providers - List available external IdP providers
+ * - /auth/external/:provider/start - Start external IdP login
+ * - /auth/external/:provider/callback - Handle OAuth callback
+ * - /auth/external/link - Link/unlink external identities
+ * - /external-idp/admin/* - Admin API for external IdP management
+ */
+app.all('/auth/external/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.EXTERNAL_IDP.fetch(request);
+});
+
+app.all('/external-idp/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.EXTERNAL_IDP.fetch(request);
 });
 
 // 404 handler

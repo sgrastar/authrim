@@ -223,9 +223,7 @@
 			<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
 				{$LL.admin_settings_title()}
 			</h1>
-			<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-				Configure your Authrim instance
-			</p>
+			<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Configure your Authrim instance</p>
 		</div>
 		<Button variant="primary" onclick={handleSave} disabled={saving || loading}>
 			{#if saving}
@@ -351,19 +349,33 @@
 			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">General Settings</h2>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div>
-					<label for="siteName" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="siteName"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Site Name
 					</label>
 					<Input id="siteName" type="text" bind:value={siteName} />
 				</div>
 				<div>
-					<label for="logoUrl" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="logoUrl"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Logo URL
 					</label>
-					<Input id="logoUrl" type="url" bind:value={logoUrl} placeholder="https://example.com/logo.png" />
+					<Input
+						id="logoUrl"
+						type="url"
+						bind:value={logoUrl}
+						placeholder="https://example.com/logo.png"
+					/>
 				</div>
 				<div>
-					<label for="language" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="language"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Default Language
 					</label>
 					<select
@@ -376,7 +388,10 @@
 					</select>
 				</div>
 				<div>
-					<label for="timezone" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="timezone"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Timezone
 					</label>
 					<select
@@ -397,7 +412,10 @@
 			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Appearance Settings</h2>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div>
-					<label for="primaryColor" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="primaryColor"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Primary Color
 					</label>
 					<div class="flex gap-2">
@@ -411,7 +429,10 @@
 					</div>
 				</div>
 				<div>
-					<label for="secondaryColor" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="secondaryColor"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Secondary Color
 					</label>
 					<div class="flex gap-2">
@@ -425,7 +446,10 @@
 					</div>
 				</div>
 				<div>
-					<label for="fontFamily" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="fontFamily"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Font Family
 					</label>
 					<select
@@ -446,7 +470,10 @@
 			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Security Settings</h2>
 			<div class="space-y-4">
 				<div>
-					<label for="sessionTimeout" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="sessionTimeout"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Session Timeout (seconds)
 					</label>
 					<Input id="sessionTimeout" type="number" bind:value={sessionTimeout} />
@@ -465,10 +492,19 @@
 					</label>
 				</div>
 				<div>
-					<label for="passwordMinLength" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="passwordMinLength"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Password Minimum Length
 					</label>
-					<Input id="passwordMinLength" type="number" bind:value={passwordMinLength} min="6" max="128" />
+					<Input
+						id="passwordMinLength"
+						type="number"
+						bind:value={passwordMinLength}
+						min="6"
+						max="128"
+					/>
 				</div>
 				<div>
 					<label class="flex items-center gap-2">
@@ -477,7 +513,9 @@
 							bind:checked={passwordRequireSpecialChar}
 							class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
 						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">Require special characters in password</span>
+						<span class="text-sm text-gray-700 dark:text-gray-300"
+							>Require special characters in password</span
+						>
 					</label>
 				</div>
 			</div>
@@ -524,25 +562,42 @@
 				{#if emailProvider === 'smtp'}
 					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
-							<label for="smtpHost" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+							<label
+								for="smtpHost"
+								class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+							>
 								SMTP Host
 							</label>
-							<Input id="smtpHost" type="text" bind:value={smtpHost} placeholder="smtp.example.com" />
+							<Input
+								id="smtpHost"
+								type="text"
+								bind:value={smtpHost}
+								placeholder="smtp.example.com"
+							/>
 						</div>
 						<div>
-							<label for="smtpPort" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+							<label
+								for="smtpPort"
+								class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+							>
 								SMTP Port
 							</label>
 							<Input id="smtpPort" type="number" bind:value={smtpPort} />
 						</div>
 						<div>
-							<label for="smtpUsername" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+							<label
+								for="smtpUsername"
+								class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+							>
 								SMTP Username
 							</label>
 							<Input id="smtpUsername" type="text" bind:value={smtpUsername} />
 						</div>
 						<div>
-							<label for="smtpPassword" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+							<label
+								for="smtpPassword"
+								class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+							>
 								SMTP Password
 							</label>
 							<Input id="smtpPassword" type="password" bind:value={smtpPassword} />
@@ -561,7 +616,10 @@
 			<div class="space-y-4">
 				<div class="grid gap-4 sm:grid-cols-3">
 					<div>
-						<label for="accessTokenTtl" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+						<label
+							for="accessTokenTtl"
+							class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+						>
 							Access Token TTL (seconds)
 						</label>
 						<Input id="accessTokenTtl" type="number" bind:value={accessTokenTtl} />
@@ -570,7 +628,10 @@
 						</p>
 					</div>
 					<div>
-						<label for="idTokenTtl" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+						<label
+							for="idTokenTtl"
+							class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+						>
 							ID Token TTL (seconds)
 						</label>
 						<Input id="idTokenTtl" type="number" bind:value={idTokenTtl} />
@@ -579,7 +640,10 @@
 						</p>
 					</div>
 					<div>
-						<label for="refreshTokenTtl" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+						<label
+							for="refreshTokenTtl"
+							class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+						>
 							Refresh Token TTL (seconds)
 						</label>
 						<Input id="refreshTokenTtl" type="number" bind:value={refreshTokenTtl} />
@@ -600,7 +664,9 @@
 								bind:checked={passkeyEnabled}
 								class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
 							/>
-							<span class="text-sm text-gray-700 dark:text-gray-300">Enable Passkey Authentication</span>
+							<span class="text-sm text-gray-700 dark:text-gray-300"
+								>Enable Passkey Authentication</span
+							>
 						</label>
 						<label class="flex items-center gap-2">
 							<input
@@ -608,7 +674,9 @@
 								bind:checked={magicLinkEnabled}
 								class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
 							/>
-							<span class="text-sm text-gray-700 dark:text-gray-300">Enable Magic Link Authentication</span>
+							<span class="text-sm text-gray-700 dark:text-gray-300"
+								>Enable Magic Link Authentication</span
+							>
 						</label>
 					</div>
 				</div>
@@ -616,7 +684,9 @@
 		</Card>
 	{:else if activeTab === 'ciba'}
 		<Card>
-			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">CIBA (Client Initiated Backchannel Authentication) Settings</h2>
+			<h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
+				CIBA (Client Initiated Backchannel Authentication) Settings
+			</h2>
 			<div class="space-y-6">
 				<!-- Enable CIBA -->
 				<div>
@@ -626,7 +696,9 @@
 							bind:checked={cibaEnabled}
 							class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
 						/>
-						<span class="text-sm font-medium text-gray-700 dark:text-gray-300">Enable CIBA Flow</span>
+						<span class="text-sm font-medium text-gray-700 dark:text-gray-300"
+							>Enable CIBA Flow</span
+						>
 					</label>
 					<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
 						Allow clients to initiate backchannel authentication requests
@@ -636,19 +708,33 @@
 				{#if cibaEnabled}
 					<!-- Expiration Settings -->
 					<div>
-						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Expiration Settings</h3>
+						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
+							Expiration Settings
+						</h3>
 						<div class="grid gap-4 sm:grid-cols-3">
 							<div>
-								<label for="cibaDefaultExpiresIn" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+								<label
+									for="cibaDefaultExpiresIn"
+									class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+								>
 									Default Expires In (seconds)
 								</label>
-								<Input id="cibaDefaultExpiresIn" type="number" bind:value={cibaDefaultExpiresIn} min={cibaMinExpiresIn} max={cibaMaxExpiresIn} />
+								<Input
+									id="cibaDefaultExpiresIn"
+									type="number"
+									bind:value={cibaDefaultExpiresIn}
+									min={cibaMinExpiresIn}
+									max={cibaMaxExpiresIn}
+								/>
 								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
 									{Math.floor(cibaDefaultExpiresIn / 60)} minutes
 								</p>
 							</div>
 							<div>
-								<label for="cibaMinExpiresIn" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+								<label
+									for="cibaMinExpiresIn"
+									class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+								>
 									Min Expires In (seconds)
 								</label>
 								<Input id="cibaMinExpiresIn" type="number" bind:value={cibaMinExpiresIn} min="30" />
@@ -657,10 +743,18 @@
 								</p>
 							</div>
 							<div>
-								<label for="cibaMaxExpiresIn" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+								<label
+									for="cibaMaxExpiresIn"
+									class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+								>
 									Max Expires In (seconds)
 								</label>
-								<Input id="cibaMaxExpiresIn" type="number" bind:value={cibaMaxExpiresIn} min={cibaMinExpiresIn} />
+								<Input
+									id="cibaMaxExpiresIn"
+									type="number"
+									bind:value={cibaMaxExpiresIn}
+									min={cibaMinExpiresIn}
+								/>
 								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
 									{Math.floor(cibaMaxExpiresIn / 60)} minutes
 								</p>
@@ -670,32 +764,56 @@
 
 					<!-- Polling Interval Settings -->
 					<div>
-						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Polling Interval Settings</h3>
+						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
+							Polling Interval Settings
+						</h3>
 						<div class="grid gap-4 sm:grid-cols-3">
 							<div>
-								<label for="cibaDefaultInterval" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+								<label
+									for="cibaDefaultInterval"
+									class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+								>
 									Default Interval (seconds)
 								</label>
-								<Input id="cibaDefaultInterval" type="number" bind:value={cibaDefaultInterval} min={cibaMinInterval} max={cibaMaxInterval} />
+								<Input
+									id="cibaDefaultInterval"
+									type="number"
+									bind:value={cibaDefaultInterval}
+									min={cibaMinInterval}
+									max={cibaMaxInterval}
+								/>
 							</div>
 							<div>
-								<label for="cibaMinInterval" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+								<label
+									for="cibaMinInterval"
+									class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+								>
 									Min Interval (seconds)
 								</label>
 								<Input id="cibaMinInterval" type="number" bind:value={cibaMinInterval} min="1" />
 							</div>
 							<div>
-								<label for="cibaMaxInterval" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+								<label
+									for="cibaMaxInterval"
+									class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+								>
 									Max Interval (seconds)
 								</label>
-								<Input id="cibaMaxInterval" type="number" bind:value={cibaMaxInterval} min={cibaMinInterval} />
+								<Input
+									id="cibaMaxInterval"
+									type="number"
+									bind:value={cibaMaxInterval}
+									min={cibaMinInterval}
+								/>
 							</div>
 						</div>
 					</div>
 
 					<!-- Delivery Modes -->
 					<div>
-						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Supported Delivery Modes</h3>
+						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
+							Supported Delivery Modes
+						</h3>
 						<div class="space-y-2">
 							<label class="flex items-center gap-2">
 								<input
@@ -705,12 +823,16 @@
 										if (e.currentTarget.checked) {
 											cibaSupportedDeliveryModes = [...cibaSupportedDeliveryModes, 'poll'];
 										} else {
-											cibaSupportedDeliveryModes = cibaSupportedDeliveryModes.filter(m => m !== 'poll');
+											cibaSupportedDeliveryModes = cibaSupportedDeliveryModes.filter(
+												(m) => m !== 'poll'
+											);
 										}
 									}}
 									class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
 								/>
-								<span class="text-sm text-gray-700 dark:text-gray-300">Poll Mode (Client polls for result)</span>
+								<span class="text-sm text-gray-700 dark:text-gray-300"
+									>Poll Mode (Client polls for result)</span
+								>
 							</label>
 							<label class="flex items-center gap-2">
 								<input
@@ -720,12 +842,16 @@
 										if (e.currentTarget.checked) {
 											cibaSupportedDeliveryModes = [...cibaSupportedDeliveryModes, 'ping'];
 										} else {
-											cibaSupportedDeliveryModes = cibaSupportedDeliveryModes.filter(m => m !== 'ping');
+											cibaSupportedDeliveryModes = cibaSupportedDeliveryModes.filter(
+												(m) => m !== 'ping'
+											);
 										}
 									}}
 									class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
 								/>
-								<span class="text-sm text-gray-700 dark:text-gray-300">Ping Mode (Server notifies client)</span>
+								<span class="text-sm text-gray-700 dark:text-gray-300"
+									>Ping Mode (Server notifies client)</span
+								>
 							</label>
 							<label class="flex items-center gap-2">
 								<input
@@ -735,19 +861,25 @@
 										if (e.currentTarget.checked) {
 											cibaSupportedDeliveryModes = [...cibaSupportedDeliveryModes, 'push'];
 										} else {
-											cibaSupportedDeliveryModes = cibaSupportedDeliveryModes.filter(m => m !== 'push');
+											cibaSupportedDeliveryModes = cibaSupportedDeliveryModes.filter(
+												(m) => m !== 'push'
+											);
 										}
 									}}
 									class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
 								/>
-								<span class="text-sm text-gray-700 dark:text-gray-300">Push Mode (Server pushes tokens directly)</span>
+								<span class="text-sm text-gray-700 dark:text-gray-300"
+									>Push Mode (Server pushes tokens directly)</span
+								>
 							</label>
 						</div>
 					</div>
 
 					<!-- Additional Features -->
 					<div>
-						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Additional Features</h3>
+						<h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
+							Additional Features
+						</h3>
 						<div class="space-y-3">
 							<label class="flex items-center gap-2">
 								<input
@@ -755,13 +887,24 @@
 									bind:checked={cibaUserCodeEnabled}
 									class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
 								/>
-								<span class="text-sm text-gray-700 dark:text-gray-300">Enable User Code Generation</span>
+								<span class="text-sm text-gray-700 dark:text-gray-300"
+									>Enable User Code Generation</span
+								>
 							</label>
 							<div>
-								<label for="cibaBindingMessageMaxLength" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+								<label
+									for="cibaBindingMessageMaxLength"
+									class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+								>
 									Binding Message Max Length
 								</label>
-								<Input id="cibaBindingMessageMaxLength" type="number" bind:value={cibaBindingMessageMaxLength} min="0" max="500" />
+								<Input
+									id="cibaBindingMessageMaxLength"
+									type="number"
+									bind:value={cibaBindingMessageMaxLength}
+									min="0"
+									max="500"
+								/>
 								<p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
 									Maximum characters for binding messages (recommended: 140)
 								</p>
@@ -779,7 +922,9 @@
 									bind:checked={cibaNotificationsEnabled}
 									class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
 								/>
-								<span class="text-sm font-medium text-gray-700 dark:text-gray-300">Enable Notifications</span>
+								<span class="text-sm font-medium text-gray-700 dark:text-gray-300"
+									>Enable Notifications</span
+								>
 							</label>
 
 							{#if cibaNotificationsEnabled}
@@ -790,7 +935,8 @@
 											bind:checked={cibaNotificationEmail}
 											class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
 										/>
-										<span class="text-sm text-gray-700 dark:text-gray-300">Email Notifications</span>
+										<span class="text-sm text-gray-700 dark:text-gray-300">Email Notifications</span
+										>
 									</label>
 									<label class="flex items-center gap-2">
 										<input

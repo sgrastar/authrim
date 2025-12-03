@@ -59,7 +59,9 @@
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900">
 	<!-- Sidebar -->
 	<aside
-		class="fixed left-0 top-0 z-40 h-screen w-64 border-r border-gray-200 bg-white transition-transform dark:border-gray-700 dark:bg-gray-800 {!sidebarOpen ? '-translate-x-full' : ''}"
+		class="fixed left-0 top-0 z-40 h-screen w-64 border-r border-gray-200 bg-white transition-transform dark:border-gray-700 dark:bg-gray-800 {!sidebarOpen
+			? '-translate-x-full'
+			: ''}"
 	>
 		<!-- Logo -->
 		<div class="flex h-16 items-center border-b border-gray-200 px-6 dark:border-gray-700">
@@ -107,10 +109,13 @@
 	<!-- Main content -->
 	<div class="lg:pl-64">
 		<!-- Top bar -->
-		<header class="sticky top-0 z-30 border-b border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+		<header
+			class="sticky top-0 z-30 border-b border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800"
+		>
 			<div class="flex h-16 items-center justify-between px-6">
 				<!-- Mobile menu button -->
-				<button aria-label="Toggle sidebar menu"
+				<button
+					aria-label="Toggle sidebar menu"
 					class="lg:hidden inline-flex items-center justify-center rounded-lg p-2 text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
 					onclick={toggleSidebar}
 				>
@@ -127,7 +132,8 @@
 					</div>
 
 					<!-- Notifications -->
-					<button aria-label="Notifications"
+					<button
+						aria-label="Notifications"
 						class="relative rounded-lg p-2 text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
 					>
 						<div class="i-heroicons-bell h-5 w-5"></div>
