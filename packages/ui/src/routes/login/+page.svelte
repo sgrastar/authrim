@@ -2,15 +2,77 @@
 	import { Button, Input, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { passkeyAPI, emailCodeAPI } from '$lib/api/client';
+	import { passkeyAPI, emailCodeAPI, externalIdpAPI } from '$lib/api/client';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
+	import { onMount } from 'svelte';
 
 	let email = $state('');
 	let error = $state('');
 	let passkeyLoading = $state(false);
 	let emailCodeLoading = $state(false);
+	let externalIdpLoading = $state<string | null>(null);
 	let debugInfo = $state<Array<{ step: string; data: unknown; timestamp: string }>>([]);
+
+	// External IdP providers
+	interface ExternalProvider {
+		id: string;
+		name: string;
+		providerType: 'oidc' | 'oauth2';
+		enabled: boolean;
+		iconUrl?: string;
+		buttonColor?: string;
+		buttonText?: string;
+	}
+	let externalProviders = $state<ExternalProvider[]>([]);
+	let externalProvidersLoading = $state(true);
+
+	// Fetch external IdP providers on mount
+	onMount(async () => {
+		try {
+			const { data, error: apiError } = await externalIdpAPI.getProviders();
+			if (data && data.providers) {
+				externalProviders = data.providers.filter((p) => p.enabled);
+			}
+			if (apiError) {
+				console.warn('Failed to load external IdP providers:', apiError);
+			}
+		} catch (err) {
+			console.warn('Error loading external IdP providers:', err);
+		} finally {
+			externalProvidersLoading = false;
+		}
+	});
+
+	// Handle external IdP login
+	async function handleExternalLogin(providerId: string) {
+		externalIdpLoading = providerId;
+		try {
+			const { url } = await externalIdpAPI.startLogin(providerId);
+			window.location.href = url;
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to start external login';
+			externalIdpLoading = null;
+		}
+	}
+
+	// Get provider icon (use default icons for known providers)
+	function getProviderIcon(provider: ExternalProvider): string {
+		if (provider.iconUrl) return provider.iconUrl;
+		const name = provider.name.toLowerCase();
+		if (name.includes('google')) return 'i-logos-google-icon';
+		if (name.includes('github')) return 'i-logos-github-icon';
+		if (name.includes('microsoft') || name.includes('azure')) return 'i-logos-microsoft-icon';
+		if (name.includes('apple')) return 'i-logos-apple';
+		if (name.includes('facebook')) return 'i-logos-facebook';
+		return 'i-heroicons-arrow-right-end-on-rectangle';
+	}
+
+	// Get provider button text
+	function getProviderButtonText(provider: ExternalProvider): string {
+		if (provider.buttonText) return provider.buttonText;
+		return $LL.login_continueWith({ provider: provider.name });
+	}
 
 	// Email validation
 	function validateEmail(email: string): boolean {
@@ -21,8 +83,8 @@
 	// Check if WebAuthn is supported
 	const isPasskeySupported = $derived(
 		typeof window !== 'undefined' &&
-		window.PublicKeyCredential !== undefined &&
-		typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
+			window.PublicKeyCredential !== undefined &&
+			typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
 	);
 
 	async function handlePasskeyLogin() {
@@ -52,7 +114,7 @@
 			let credential;
 			try {
 				credential = await startAuthentication({
-			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+					/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
 					optionsJSON: optionsData!.options as any
 				});
 				debugInfo.push({
@@ -70,7 +132,9 @@
 					},
 					timestamp: new Date().toISOString()
 				});
-				throw new Error(`WebAuthn failed: ${webauthnError instanceof Error ? webauthnError.message : 'Unknown error'}`);
+				throw new Error(
+					`WebAuthn failed: ${webauthnError instanceof Error ? webauthnError.message : 'Unknown error'}`
+				);
 			}
 
 			// 3. Send credential to server for verification
@@ -85,7 +149,8 @@
 				timestamp: new Date().toISOString()
 			});
 
-			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyLogin(verificationPayload);
+			const { data: verifyData, error: verifyError } =
+				await passkeyAPI.verifyLogin(verificationPayload);
 
 			debugInfo.push({
 				step: '4. Verification Response',
@@ -117,9 +182,9 @@
 			setTimeout(() => {
 				window.location.href = '/';
 			}, 1000);
-
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred during passkey authentication';
+			error =
+				err instanceof Error ? err.message : 'An error occurred during passkey authentication';
 			debugInfo.push({
 				step: 'ERROR',
 				data: {
@@ -164,7 +229,8 @@
 			// Redirect to email code verification page
 			window.location.href = `/verify-email-code?email=${encodeURIComponent(email)}`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred while sending verification code';
+			error =
+				err instanceof Error ? err.message : 'An error occurred while sending verification code';
 			console.error('Email code send error:', err);
 		} finally {
 			emailCodeLoading = false;
@@ -181,10 +247,15 @@
 
 <svelte:head>
 	<title>{$LL.login_title()} - {$LL.app_title()}</title>
-	<meta name="description" content="Sign in to your account using passkey or email code authentication." />
+	<meta
+		name="description"
+		content="Sign in to your account using passkey or email code authentication."
+	/>
 </svelte:head>
 
-<div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
+<div
+	class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12"
+>
 	<!-- Language Switcher (Top Right) -->
 	<div class="absolute top-4 right-4">
 		<LanguageSwitcher />
@@ -215,7 +286,7 @@
 
 			<!-- Error Alert -->
 			{#if error}
-				<Alert variant="error" dismissible={true} onDismiss={() => error = ''} class="mb-4">
+				<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
 					{error}
 				</Alert>
 			{/if}
@@ -263,12 +334,45 @@
 				variant="secondary"
 				class="w-full"
 				loading={emailCodeLoading}
-				disabled={passkeyLoading}
+				disabled={passkeyLoading || externalIdpLoading !== null}
 				onclick={handleEmailCodeSend}
 			>
 				<div class="i-heroicons-envelope h-5 w-5"></div>
 				{$LL.login_sendCode()}
 			</Button>
+
+			<!-- External IdP Section -->
+			{#if !externalProvidersLoading && externalProviders.length > 0}
+				<!-- Divider -->
+				<div class="flex items-center my-6">
+					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
+					<span class="px-4 text-sm text-gray-600 dark:text-gray-400"
+						>{$LL.login_orContinueWith()}</span
+					>
+					<div class="flex-1 border-t border-gray-300 dark:border-gray-600"></div>
+				</div>
+
+				<!-- External IdP Buttons -->
+				<div class="space-y-3">
+					{#each externalProviders as provider (provider.id)}
+						<Button
+							variant="secondary"
+							class="w-full justify-center"
+							loading={externalIdpLoading === provider.id}
+							disabled={passkeyLoading ||
+								emailCodeLoading ||
+								(externalIdpLoading !== null && externalIdpLoading !== provider.id)}
+							onclick={() => handleExternalLogin(provider.id)}
+							style={provider.buttonColor
+								? `border-color: ${provider.buttonColor}; color: ${provider.buttonColor};`
+								: ''}
+						>
+							<div class="{getProviderIcon(provider)} h-5 w-5"></div>
+							{getProviderButtonText(provider)}
+						</Button>
+					{/each}
+				</div>
+			{/if}
 		</Card>
 
 		<!-- Debug Information -->
@@ -276,7 +380,9 @@
 			<Card class="mt-6 bg-gray-900 text-white">
 				<div class="mb-4">
 					<h3 class="text-lg font-semibold text-yellow-400">Debug Information</h3>
-					<p class="text-xs text-gray-400 mt-1">This section shows technical details for debugging</p>
+					<p class="text-xs text-gray-400 mt-1">
+						This section shows technical details for debugging
+					</p>
 				</div>
 
 				<div class="space-y-4 max-h-96 overflow-y-auto">
@@ -284,9 +390,13 @@
 						<div class="border border-gray-700 rounded-lg p-3">
 							<div class="flex items-center justify-between mb-2">
 								<h4 class="font-mono text-sm font-semibold text-green-400">{info.step}</h4>
-								<span class="text-xs text-gray-500">{new Date(info.timestamp).toLocaleTimeString()}</span>
+								<span class="text-xs text-gray-500"
+									>{new Date(info.timestamp).toLocaleTimeString()}</span
+								>
 							</div>
-							<pre class="bg-black rounded p-2 text-xs overflow-x-auto"><code>{JSON.stringify(info.data, null, 2)}</code></pre>
+							<pre class="bg-black rounded p-2 text-xs overflow-x-auto"><code
+									>{JSON.stringify(info.data, null, 2)}</code
+								></pre>
 						</div>
 					{/each}
 				</div>

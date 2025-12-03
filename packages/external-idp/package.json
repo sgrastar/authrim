@@ -1,0 +1,28 @@
+{
+  "name": "@authrim/external-idp",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.dev.toml 2>/dev/null || wrangler dev",
+    "deploy": "[ -n \"$DEPLOY_ENV\" ] && wrangler deploy --config wrangler.$DEPLOY_ENV.toml || wrangler deploy",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'external-idp: lint skipped'",
+    "test": "npx vitest run",
+    "test:unit": "npx vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@authrim/shared": "workspace:*",
+    "hono": "^4.10.6",
+    "jose": "^6.1.2",
+    "tslib": "^2.8.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251121.0",
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.8",
+    "wrangler": "^4.50.0"
+  }
+}

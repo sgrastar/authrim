@@ -28,19 +28,8 @@
 	{...restProps}
 >
 	{#if loading}
-		<svg
-			class="spinner"
-			xmlns="http://www.w3.org/2000/svg"
-			fill="none"
-			viewBox="0 0 24 24"
-		>
-			<circle
-				class="spinner-track"
-				cx="12"
-				cy="12"
-				r="10"
-				stroke="currentColor"
-				stroke-width="4"
+		<svg class="spinner" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+			<circle class="spinner-track" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"
 			></circle>
 			<path
 				class="spinner-head"
@@ -70,12 +59,16 @@
 	}
 
 	.btn:hover:not(:disabled) {
-		box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+		box-shadow:
+			0 4px 6px -1px rgb(0 0 0 / 0.1),
+			0 2px 4px -2px rgb(0 0 0 / 0.1);
 	}
 
 	.btn:focus {
 		outline: none;
-		box-shadow: 0 0 0 2px #fff, 0 0 0 4px #3b82f6;
+		box-shadow:
+			0 0 0 2px #fff,
+			0 0 0 4px #3b82f6;
 	}
 
 	.btn:disabled {
@@ -149,7 +142,9 @@
 	/* Dark mode */
 	@media (prefers-color-scheme: dark) {
 		.btn:focus {
-			box-shadow: 0 0 0 2px #1f2937, 0 0 0 4px #60a5fa;
+			box-shadow:
+				0 0 0 2px #1f2937,
+				0 0 0 4px #60a5fa;
 		}
 		.btn-primary {
 			background-color: #3b82f6;

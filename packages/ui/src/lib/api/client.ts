@@ -786,6 +786,52 @@ export const adminScimTokensAPI = {
 };
 
 // =============================================================================
+// External IdP API (Social Login)
+// =============================================================================
+
+/**
+ * External IdP Provider type
+ */
+interface ExternalIdPProvider {
+	id: string;
+	name: string;
+	providerType: 'oidc' | 'oauth2';
+	enabled: boolean;
+	iconUrl?: string;
+	buttonColor?: string;
+	buttonText?: string;
+}
+
+/**
+ * External IdP API
+ * Handles social login and external identity provider integration
+ */
+export const externalIdpAPI = {
+	/**
+	 * Get list of available external IdP providers
+	 */
+	async getProviders() {
+		return apiFetch<{ providers: ExternalIdPProvider[] }>('/auth/external/providers');
+	},
+
+	/**
+	 * Start external IdP login flow
+	 * Returns authorization URL to redirect user to
+	 */
+	async startLogin(providerId: string, redirectUri?: string) {
+		const params = new URLSearchParams();
+		if (redirectUri) {
+			params.set('redirect_uri', redirectUri);
+		}
+		const query = params.toString();
+
+		// This returns a redirect, so we need to handle it differently
+		const url = `${API_BASE_URL}/auth/external/${providerId}/start${query ? '?' + query : ''}`;
+		return { url };
+	}
+};
+
+// =============================================================================
 // Consent Screen API (Phase 2-B RBAC)
 // =============================================================================
 

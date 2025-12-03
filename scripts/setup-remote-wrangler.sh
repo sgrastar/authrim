@@ -460,6 +460,16 @@ zone_name = \"$ZONE_NAME\""
 pattern = \"$DOMAIN_ONLY/saml/*\"
 zone_name = \"$ZONE_NAME\""
             ;;
+        external-idp)
+            routes="
+[[routes]]
+pattern = \"$DOMAIN_ONLY/auth/external/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/external-idp/*\"
+zone_name = \"$ZONE_NAME\""
+            ;;
         policy-service)
             routes="
 [[routes]]
@@ -909,6 +919,46 @@ class_name = \"VersionManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\""
 fi
 
+# Generate external-idp wrangler file (External IdP / Social Login)
+if [ ! -f "packages/external-idp/wrangler.${DEPLOY_ENV}.toml" ]; then
+    echo "  • Generating external-idp/wrangler.${DEPLOY_ENV}.toml..."
+    generate_base_wrangler "external-idp" "[[kv_namespaces]]
+binding = \"SETTINGS\"
+id = \"placeholder\"
+
+[[kv_namespaces]]
+binding = \"STATE_STORE\"
+id = \"placeholder\"
+
+" "[[d1_databases]]
+binding = \"DB\"
+database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+" "" "[[durable_objects.bindings]]
+name = \"SESSION_STORE\"
+class_name = \"SessionStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"RATE_LIMITER\"
+class_name = \"RateLimiterCounter\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
+name = \"VERSION_MANAGER\"
+class_name = \"VersionManager\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\""
+
+    # Add external-idp specific vars
+    cat >> "packages/external-idp/wrangler.${DEPLOY_ENV}.toml" << EXTERNAL_IDP_VARS
+# Identity Stitching
+IDENTITY_STITCHING_ENABLED = "false"
+IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL = "true"
+# RP_TOKEN_ENCRYPTION_KEY = "set-via-wrangler-secret"
+EXTERNAL_IDP_VARS
+fi
+
 # Update all wrangler.${DEPLOY_ENV}.toml files
 for pkg_dir in packages/*/; do
     pkg_name=$(basename "$pkg_dir")
@@ -988,6 +1038,14 @@ service = "${DEPLOY_ENV}-authrim-op-async"
 [[services]]
 binding = "OP_SAML"
 service = "${DEPLOY_ENV}-authrim-op-saml"
+
+[[services]]
+binding = "EXTERNAL_IDP"
+service = "${DEPLOY_ENV}-authrim-external-idp"
+
+[[services]]
+binding = "POLICY_SERVICE"
+service = "${DEPLOY_ENV}-authrim-policy-service"
 
 [vars]
 KEY_ID = "{{KEY_ID}}"

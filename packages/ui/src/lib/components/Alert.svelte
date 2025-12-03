@@ -24,7 +24,8 @@
 
 	const variantConfig = {
 		success: {
-			containerClass: 'bg-success-50 border-success-200 dark:bg-success-900/20 dark:border-success-800',
+			containerClass:
+				'bg-success-50 border-success-200 dark:bg-success-900/20 dark:border-success-800',
 			iconClass: 'text-success-600 dark:text-success-400',
 			titleClass: 'text-success-800 dark:text-success-300',
 			textClass: 'text-success-700 dark:text-success-400',
@@ -38,7 +39,8 @@
 			iconName: 'i-heroicons-exclamation-circle'
 		},
 		warning: {
-			containerClass: 'bg-warning-50 border-warning-200 dark:bg-warning-900/20 dark:border-warning-800',
+			containerClass:
+				'bg-warning-50 border-warning-200 dark:bg-warning-900/20 dark:border-warning-800',
 			iconClass: 'text-warning-600 dark:text-warning-400',
 			titleClass: 'text-warning-800 dark:text-warning-300',
 			textClass: 'text-warning-700 dark:text-warning-400',

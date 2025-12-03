@@ -55,6 +55,15 @@ echo -e "${GREEN}✅ Private key generated${NC}"
 echo "📝 Saved to: $PRIVATE_KEY_PATH"
 echo ""
 
+# Generate RP Token Encryption Key (32 bytes = 256 bits, hex encoded)
+RP_ENCRYPTION_KEY_PATH="$KEYS_DIR/rp_token_encryption_key.txt"
+RP_TOKEN_ENCRYPTION_KEY=$(head -c 32 /dev/urandom | xxd -p -c 64)
+echo -n "$RP_TOKEN_ENCRYPTION_KEY" > "$RP_ENCRYPTION_KEY_PATH"
+
+echo -e "${GREEN}✅ RP Token Encryption Key generated${NC}"
+echo "📝 Saved to: $RP_ENCRYPTION_KEY_PATH"
+echo ""
+
 # Extract public key from private key
 TEMP_PUBLIC_KEY=$(mktemp)
 openssl rsa -in "$PRIVATE_KEY_PATH" -pubout -out "$TEMP_PUBLIC_KEY" 2>/dev/null
@@ -128,7 +137,8 @@ cat > "$METADATA_PATH" << EOF
   "createdAt": "$CREATED_AT",
   "files": {
     "privateKey": "$PRIVATE_KEY_PATH",
-    "publicKey": "$PUBLIC_JWK_PATH"
+    "publicKey": "$PUBLIC_JWK_PATH",
+    "rpTokenEncryptionKey": "$RP_ENCRYPTION_KEY_PATH"
   }
 }
 EOF
@@ -149,11 +159,13 @@ echo "1. For Local development, add to .dev.vars:"
 echo ""
 echo "   PRIVATE_KEY_PEM=\"\$(cat $PRIVATE_KEY_PATH)\""
 echo "   KEY_ID=\"$KID\""
+echo "   RP_TOKEN_ENCRYPTION_KEY=\"\$(cat $RP_ENCRYPTION_KEY_PATH)\""
 echo ""
-echo "2. For Remote environment, upload private key as secret:"
+echo "2. For Remote environment, upload keys as secrets:"
 echo ""
 echo "   cat $PRIVATE_KEY_PATH | wrangler secret put PRIVATE_KEY_PEM"
 echo "   wrangler vars set KEY_ID \"$KID\""
+echo "   cat $RP_ENCRYPTION_KEY_PATH | wrangler secret put RP_TOKEN_ENCRYPTION_KEY"
 echo ""
 echo "3. Or use setup-resend.sh to configure Resend:"
 echo ""

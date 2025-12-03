@@ -23,8 +23,8 @@
 	// Check if WebAuthn is supported
 	const isPasskeySupported = $derived(
 		typeof window !== 'undefined' &&
-		window.PublicKeyCredential !== undefined &&
-		typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
+			window.PublicKeyCredential !== undefined &&
+			typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
 	);
 
 	async function handlePasskeyRegister() {
@@ -78,7 +78,7 @@
 			// This handles all the base64url to Uint8Array conversions automatically
 			let credential;
 			try {
-			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+				/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
 				credential = await startRegistration({ optionsJSON: optionsData.options as any });
 				debugInfo.push({
 					step: '2. WebAuthn Credential Created',
@@ -95,7 +95,9 @@
 					},
 					timestamp: new Date().toISOString()
 				});
-				throw new Error(`WebAuthn failed: ${webauthnError instanceof Error ? webauthnError.message : 'Unknown error'}`);
+				throw new Error(
+					`WebAuthn failed: ${webauthnError instanceof Error ? webauthnError.message : 'Unknown error'}`
+				);
 			}
 
 			// 3. Send credential to server for verification
@@ -111,7 +113,8 @@
 				timestamp: new Date().toISOString()
 			});
 
-			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyRegistration(verificationPayload);
+			const { data: verifyData, error: verifyError } =
+				await passkeyAPI.verifyRegistration(verificationPayload);
 
 			debugInfo.push({
 				step: '4. Verification Response',
@@ -135,7 +138,6 @@
 			setTimeout(() => {
 				window.location.href = '/login';
 			}, 3000);
-
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred during passkey registration';
 			debugInfo.push({
@@ -190,7 +192,8 @@
 			// Redirect to email code verification page
 			window.location.href = `/verify-email-code?email=${encodeURIComponent(email)}`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred while sending verification code';
+			error =
+				err instanceof Error ? err.message : 'An error occurred while sending verification code';
 			console.error('Email code send error:', err);
 		} finally {
 			emailCodeLoading = false;
@@ -207,10 +210,15 @@
 
 <svelte:head>
 	<title>{$LL.register_title()} - {$LL.app_title()}</title>
-	<meta name="description" content="Create a new account using passkey or email code authentication." />
+	<meta
+		name="description"
+		content="Create a new account using passkey or email code authentication."
+	/>
 </svelte:head>
 
-<div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
+<div
+	class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12"
+>
 	<!-- Language Switcher (Top Right) -->
 	<div class="absolute top-4 right-4">
 		<LanguageSwitcher />
@@ -241,7 +249,7 @@
 
 			<!-- Error Alert -->
 			{#if error}
-				<Alert variant="error" dismissible={true} onDismiss={() => error = ''} class="mb-4">
+				<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
 					{error}
 				</Alert>
 			{/if}
@@ -325,7 +333,9 @@
 			<Card class="mt-6 bg-gray-900 text-white">
 				<div class="mb-4">
 					<h3 class="text-lg font-semibold text-yellow-400">🐛 Debug Information</h3>
-					<p class="text-xs text-gray-400 mt-1">This section shows technical details for debugging</p>
+					<p class="text-xs text-gray-400 mt-1">
+						This section shows technical details for debugging
+					</p>
 				</div>
 
 				<div class="space-y-4 max-h-96 overflow-y-auto">
@@ -333,9 +343,13 @@
 						<div class="border border-gray-700 rounded-lg p-3">
 							<div class="flex items-center justify-between mb-2">
 								<h4 class="font-mono text-sm font-semibold text-green-400">{info.step}</h4>
-								<span class="text-xs text-gray-500">{new Date(info.timestamp).toLocaleTimeString()}</span>
+								<span class="text-xs text-gray-500"
+									>{new Date(info.timestamp).toLocaleTimeString()}</span
+								>
 							</div>
-							<pre class="bg-black rounded p-2 text-xs overflow-x-auto"><code>{JSON.stringify(info.data, null, 2)}</code></pre>
+							<pre class="bg-black rounded p-2 text-xs overflow-x-auto"><code
+									>{JSON.stringify(info.data, null, 2)}</code
+								></pre>
 						</div>
 					{/each}
 				</div>

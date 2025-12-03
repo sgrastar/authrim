@@ -214,7 +214,12 @@
 				{$LL.device_codeLabel()}
 			</div>
 
-			<div use:melt={$root} role="group" aria-label={$LL.device_codeLabel()} class="flex gap-2 items-center justify-center">
+			<div
+				use:melt={$root}
+				role="group"
+				aria-label={$LL.device_codeLabel()}
+				class="flex gap-2 items-center justify-center"
+			>
 				{#each Array.from({ length: 8 }, (_, i) => i) as i (i)}
 					<!-- Add hyphen separator after 4th digit -->
 					{#if i === 4}

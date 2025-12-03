@@ -228,10 +228,14 @@
 </script>
 
 <svelte:head>
-	<title>{$LL.consent_title({ clientName: consentData?.client.client_name || '' })} - {$LL.app_title()}</title>
+	<title
+		>{$LL.consent_title({ clientName: consentData?.client.client_name || '' })} - {$LL.app_title()}</title
+	>
 </svelte:head>
 
-<div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12">
+<div
+	class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center px-4 py-12"
+>
 	<!-- Language Switcher (Top Right) -->
 	<div class="absolute top-4 right-4">
 		<LanguageSwitcher />
@@ -257,8 +261,12 @@
 							class="h-16 w-16 mx-auto mb-4 rounded-lg"
 						/>
 					{:else}
-						<div class="h-16 w-16 mx-auto mb-4 rounded-lg bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-							<div class="i-heroicons-building-office h-8 w-8 text-primary-600 dark:text-primary-400"></div>
+						<div
+							class="h-16 w-16 mx-auto mb-4 rounded-lg bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center"
+						>
+							<div
+								class="i-heroicons-building-office h-8 w-8 text-primary-600 dark:text-primary-400"
+							></div>
 						</div>
 					{/if}
 
@@ -271,7 +279,9 @@
 					</p>
 
 					{#if consentData.client.is_trusted}
-						<div class="inline-flex items-center gap-1 mt-2 px-2 py-1 bg-success-100 dark:bg-success-900/30 text-success-700 dark:text-success-300 rounded-full text-xs">
+						<div
+							class="inline-flex items-center gap-1 mt-2 px-2 py-1 bg-success-100 dark:bg-success-900/30 text-success-700 dark:text-success-300 rounded-full text-xs"
+						>
 							<div class="i-heroicons-shield-check h-3 w-3"></div>
 							{$LL.consent_trustedClient()}
 						</div>
@@ -292,18 +302,26 @@
 
 				<!-- Acting-As Warning Banner -->
 				{#if consentData.acting_as && consentData.features.acting_as_enabled}
-					<div class="mb-6 p-4 bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-800 rounded-lg">
+					<div
+						class="mb-6 p-4 bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-800 rounded-lg"
+					>
 						<div class="flex items-start gap-3">
-							<div class="i-heroicons-exclamation-triangle h-5 w-5 text-warning-600 dark:text-warning-400 flex-shrink-0 mt-0.5"></div>
+							<div
+								class="i-heroicons-exclamation-triangle h-5 w-5 text-warning-600 dark:text-warning-400 flex-shrink-0 mt-0.5"
+							></div>
 							<div>
 								<h3 class="text-sm font-medium text-warning-800 dark:text-warning-200">
 									{$LL.consent_delegatedAccess()}
 								</h3>
 								<p class="text-sm text-warning-700 dark:text-warning-300 mt-1">
-									{$LL.consent_actingOnBehalfOf({ name: getActingAsDisplayName(consentData.acting_as) })}
+									{$LL.consent_actingOnBehalfOf({
+										name: getActingAsDisplayName(consentData.acting_as)
+									})}
 								</p>
 								<p class="text-xs text-warning-600 dark:text-warning-400 mt-2">
-									{$LL.consent_delegatedAccessWarning({ name: getActingAsDisplayName(consentData.acting_as) })}
+									{$LL.consent_delegatedAccessWarning({
+										name: getActingAsDisplayName(consentData.acting_as)
+									})}
 								</p>
 							</div>
 						</div>
@@ -314,7 +332,10 @@
 					<!-- Organization Selector (if multiple orgs and feature enabled) -->
 					{#if consentData.features.org_selector_enabled && consentData.organizations.length > 1}
 						<div class="mb-6">
-							<label for="org-select" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+							<label
+								for="org-select"
+								class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+							>
 								{$LL.consent_organizationSelect()}
 							</label>
 							<select
@@ -360,7 +381,9 @@
 							</p>
 							<div class="flex flex-wrap gap-2">
 								{#each consentData.roles as role (role)}
-									<span class="px-2 py-1 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded-full text-xs">
+									<span
+										class="px-2 py-1 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded-full text-xs"
+									>
 										{role}
 									</span>
 								{/each}
@@ -376,7 +399,9 @@
 					<ul class="space-y-3 mb-6">
 						{#each consentData.scopes as scope (scope.name)}
 							<li class="flex items-start gap-3">
-								<div class="i-heroicons-check-circle h-5 w-5 text-success-600 dark:text-success-400 flex-shrink-0 mt-0.5"></div>
+								<div
+									class="i-heroicons-check-circle h-5 w-5 text-success-600 dark:text-success-400 flex-shrink-0 mt-0.5"
+								></div>
 								<span class="text-gray-700 dark:text-gray-300 text-sm">
 									{getScopeLabel(scope.name)}
 								</span>
@@ -398,8 +423,12 @@
 									class="h-10 w-10 rounded-full"
 								/>
 							{:else}
-								<div class="h-10 w-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-									<div class="i-heroicons-user h-5 w-5 text-primary-600 dark:text-primary-400"></div>
+								<div
+									class="h-10 w-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center"
+								>
+									<div
+										class="i-heroicons-user h-5 w-5 text-primary-600 dark:text-primary-400"
+									></div>
 								</div>
 							{/if}
 
@@ -450,7 +479,9 @@
 
 				<!-- Privacy Policy and ToS Links -->
 				{#if consentData.client.policy_uri || consentData.client.tos_uri}
-					<div class="flex items-center justify-center gap-4 mt-4 text-xs text-gray-500 dark:text-gray-400">
+					<div
+						class="flex items-center justify-center gap-4 mt-4 text-xs text-gray-500 dark:text-gray-400"
+					>
 						{#if consentData.client.policy_uri}
 							<a
 								href={consentData.client.policy_uri}

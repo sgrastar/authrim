@@ -202,7 +202,9 @@
 									<div class="h-4 w-48 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
 								</td>
 								<td class="px-4 py-3">
-									<div class="h-6 w-20 animate-pulse rounded-full bg-gray-300 dark:bg-gray-700"></div>
+									<div
+										class="h-6 w-20 animate-pulse rounded-full bg-gray-300 dark:bg-gray-700"
+									></div>
 								</td>
 								<td class="px-4 py-3">
 									<div class="h-4 w-32 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
@@ -306,12 +308,12 @@
 
 		<!-- Pagination -->
 		{#if totalPages > 1}
-			<div class="mt-4 flex items-center justify-between border-t border-gray-200 px-4 py-3 dark:border-gray-700">
+			<div
+				class="mt-4 flex items-center justify-between border-t border-gray-200 px-4 py-3 dark:border-gray-700"
+			>
 				<div class="text-sm text-gray-700 dark:text-gray-300">
 					Showing <span class="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span> to
-					<span class="font-medium"
-						>{Math.min(currentPage * itemsPerPage, totalCount)}</span
-					>
+					<span class="font-medium">{Math.min(currentPage * itemsPerPage, totalCount)}</span>
 					of
 					<span class="font-medium">{totalCount}</span> results
 				</div>

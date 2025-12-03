@@ -114,9 +114,7 @@
 		<h1 class="text-3xl font-bold text-gray-900 dark:text-white">
 			{$LL.admin_dashboard_title()}
 		</h1>
-		<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-			Overview of your Authrim instance
-		</p>
+		<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Overview of your Authrim instance</p>
 	</div>
 
 	<!-- Statistics cards -->
@@ -130,7 +128,8 @@
 					</p>
 					<p class="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
 						{#if loading}
-							<span class="inline-block h-8 w-16 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></span>
+							<span class="inline-block h-8 w-16 animate-pulse rounded bg-gray-300 dark:bg-gray-700"
+							></span>
 						{:else}
 							{stats.activeUsers.toLocaleString()}
 						{/if}
@@ -151,14 +150,17 @@
 					</p>
 					<p class="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
 						{#if loading}
-							<span class="inline-block h-8 w-16 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></span>
+							<span class="inline-block h-8 w-16 animate-pulse rounded bg-gray-300 dark:bg-gray-700"
+							></span>
 						{:else}
 							{stats.totalUsers.toLocaleString()}
 						{/if}
 					</p>
 				</div>
 				<div class="rounded-lg bg-secondary-100 p-3 dark:bg-secondary-900">
-					<div class="i-heroicons-user-group h-6 w-6 text-secondary-600 dark:text-secondary-400"></div>
+					<div
+						class="i-heroicons-user-group h-6 w-6 text-secondary-600 dark:text-secondary-400"
+					></div>
 				</div>
 			</div>
 		</Card>
@@ -172,7 +174,8 @@
 					</p>
 					<p class="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
 						{#if loading}
-							<span class="inline-block h-8 w-16 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></span>
+							<span class="inline-block h-8 w-16 animate-pulse rounded bg-gray-300 dark:bg-gray-700"
+							></span>
 						{:else}
 							{stats.clients}
 						{/if}
@@ -193,14 +196,17 @@
 					</p>
 					<p class="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
 						{#if loading}
-							<span class="inline-block h-8 w-16 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></span>
+							<span class="inline-block h-8 w-16 animate-pulse rounded bg-gray-300 dark:bg-gray-700"
+							></span>
 						{:else}
 							{stats.todayLogins}
 						{/if}
 					</p>
 				</div>
 				<div class="rounded-lg bg-orange-100 p-3 dark:bg-orange-900">
-					<div class="i-heroicons-arrow-right-on-rectangle h-6 w-6 text-orange-600 dark:text-orange-400"></div>
+					<div
+						class="i-heroicons-arrow-right-on-rectangle h-6 w-6 text-orange-600 dark:text-orange-400"
+					></div>
 				</div>
 			</div>
 		</Card>
@@ -236,7 +242,9 @@
 						<div
 							class="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800"
 						>
-							<div class={`${getActivityIcon(activity.type)} h-5 w-5 text-gray-600 dark:text-gray-400`}></div>
+							<div
+								class={`${getActivityIcon(activity.type)} h-5 w-5 text-gray-600 dark:text-gray-400`}
+							></div>
 						</div>
 						<div class="flex-1 min-w-0">
 							<p class="text-sm text-gray-900 dark:text-white">

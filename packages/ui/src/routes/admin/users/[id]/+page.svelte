@@ -245,7 +245,10 @@
 			</h2>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div>
-					<label for="email" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="email"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Email
 					</label>
 					<Input id="email" type="email" bind:value={user.email} disabled />
@@ -257,19 +260,28 @@
 					<Input id="name" type="text" bind:value={user.name} />
 				</div>
 				<div>
-					<label for="given_name" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="given_name"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Given Name
 					</label>
 					<Input id="given_name" type="text" bind:value={user.given_name} />
 				</div>
 				<div>
-					<label for="family_name" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="family_name"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Family Name
 					</label>
 					<Input id="family_name" type="text" bind:value={user.family_name} />
 				</div>
 				<div>
-					<label for="phone_number" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="phone_number"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Phone Number
 					</label>
 					<Input id="phone_number" type="tel" bind:value={user.phone_number} />
@@ -303,7 +315,9 @@
 			{:else}
 				<div class="space-y-3">
 					{#each passkeys as passkey (passkey.id)}
-						<div class="flex items-center justify-between rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+						<div
+							class="flex items-center justify-between rounded-lg border border-gray-200 p-3 dark:border-gray-700"
+						>
 							<div class="flex items-center gap-3">
 								<div class="rounded-lg bg-primary-100 p-2 dark:bg-primary-900">
 									<div class="i-heroicons-key h-5 w-5 text-primary-600 dark:text-primary-400"></div>
@@ -342,7 +356,9 @@
 			{:else}
 				<div class="space-y-3">
 					{#each sessions as session (session.id)}
-						<div class="flex items-center justify-between rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+						<div
+							class="flex items-center justify-between rounded-lg border border-gray-200 p-3 dark:border-gray-700"
+						>
 							<div>
 								<p class="text-sm font-medium text-gray-900 dark:text-white">
 									Session ID: {session.id}

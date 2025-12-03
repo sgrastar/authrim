@@ -8,13 +8,7 @@
 		footer?: Snippet;
 	}
 
-	let {
-		children,
-		header,
-		footer,
-		class: className = '',
-		...restProps
-	}: Props = $props();
+	let { children, header, footer, class: className = '', ...restProps }: Props = $props();
 </script>
 
 <div class={`card ${className}`} {...restProps}>

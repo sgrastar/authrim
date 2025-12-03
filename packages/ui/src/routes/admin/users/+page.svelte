@@ -35,7 +35,8 @@
 				page: currentPage,
 				limit: itemsPerPage,
 				search: searchQuery || undefined,
-				verified: filterStatus === 'all' ? undefined : (filterStatus === 'verified' ? 'true' : 'false')
+				verified:
+					filterStatus === 'all' ? undefined : filterStatus === 'verified' ? 'true' : 'false'
 			});
 
 			if (error) {
@@ -44,7 +45,7 @@
 				totalCount = 0;
 				totalPages = 0;
 			} else if (data) {
-				users = data.users.map(u => ({
+				users = data.users.map((u) => ({
 					...u,
 					email_verified: Boolean(u.email_verified)
 				}));
@@ -230,7 +231,9 @@
 									<div class="h-4 w-32 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
 								</td>
 								<td class="px-4 py-3">
-									<div class="h-6 w-20 animate-pulse rounded-full bg-gray-300 dark:bg-gray-700"></div>
+									<div
+										class="h-6 w-20 animate-pulse rounded-full bg-gray-300 dark:bg-gray-700"
+									></div>
 								</td>
 								<td class="px-4 py-3">
 									<div class="h-4 w-24 animate-pulse rounded bg-gray-300 dark:bg-gray-700"></div>
@@ -254,7 +257,9 @@
 						</tr>
 					{:else}
 						{#each users as user (user.id)}
-							<tr class="border-b border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800">
+							<tr
+								class="border-b border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+							>
 								<td class="px-4 py-3 text-sm text-gray-900 dark:text-white">
 									{user.email}
 								</td>
@@ -307,7 +312,9 @@
 
 		<!-- Pagination -->
 		{#if !loading && totalPages > 1}
-			<div class="flex items-center justify-between border-t border-gray-200 px-4 py-3 dark:border-gray-700">
+			<div
+				class="flex items-center justify-between border-t border-gray-200 px-4 py-3 dark:border-gray-700"
+			>
 				<div class="text-sm text-gray-700 dark:text-gray-300">
 					Showing <span class="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span>
 					to

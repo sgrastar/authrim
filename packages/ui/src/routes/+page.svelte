@@ -20,17 +20,24 @@
 
 <svelte:head>
 	<title>Authrim - OpenID Connect Provider</title>
-	<meta name="description" content="Authrim - A modern OpenID Connect Provider built with Cloudflare Workers." />
+	<meta
+		name="description"
+		content="Authrim - A modern OpenID Connect Provider built with Cloudflare Workers."
+	/>
 </svelte:head>
 
 <div class="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col">
 	<!-- Header -->
-	<header class="sticky top-0 z-50 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+	<header
+		class="sticky top-0 z-50 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700"
+	>
 		<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 			<div class="flex items-center justify-between h-16">
 				<!-- Logo -->
 				<a href="/" class="flex items-center gap-2">
-					<span class="text-xl font-bold text-primary-600 dark:text-primary-400">{$LL.app_title()}</span>
+					<span class="text-xl font-bold text-primary-600 dark:text-primary-400"
+						>{$LL.app_title()}</span
+					>
 				</a>
 
 				<!-- Right side: Auth buttons or User menu -->
@@ -80,7 +87,9 @@
 
 				<!-- Test Card -->
 				<div class="card">
-					<h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-4">{$LL.test_title()}</h2>
+					<h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-4">
+						{$LL.test_title()}
+					</h2>
 
 					<!-- Buttons -->
 					<div class="space-y-3 mb-6">
@@ -91,10 +100,18 @@
 
 					<!-- Input -->
 					<div class="mb-6">
-						<label for="email" class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
+						<label
+							for="email"
+							class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1"
+						>
 							{$LL.form_email()}
 						</label>
-						<input id="email" type="email" class="input-base" placeholder={$LL.form_emailPlaceholder()} />
+						<input
+							id="email"
+							type="email"
+							class="input-base"
+							placeholder={$LL.form_emailPlaceholder()}
+						/>
 					</div>
 
 					<!-- Badges -->

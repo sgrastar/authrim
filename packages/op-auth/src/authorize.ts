@@ -165,15 +165,129 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Handle HTTPS request_uri (Request Object by Reference)
+    // SECURITY: This feature is disabled by default to prevent SSRF attacks
+    // Enable via ENABLE_HTTPS_REQUEST_URI environment variable
     if (isHTTPS) {
+      // Check if HTTPS request_uri is enabled (default: disabled for security)
+      const httpsRequestUriEnabled = c.env.ENABLE_HTTPS_REQUEST_URI === 'true';
+
+      if (!httpsRequestUriEnabled) {
+        return c.json(
+          {
+            error: 'request_uri_not_supported',
+            error_description:
+              'HTTPS request_uri is disabled. Use PAR (RFC 9126) with urn:ietf:params:oauth:request_uri: format instead.',
+          },
+          400
+        );
+      }
+
+      // Security controls for HTTPS request_uri
+      const allowedDomainsStr = c.env.HTTPS_REQUEST_URI_ALLOWED_DOMAINS || '';
+      const allowedDomains = allowedDomainsStr
+        ? allowedDomainsStr.split(',').map((d) => d.trim().toLowerCase())
+        : [];
+      const timeoutMs = parseInt(c.env.HTTPS_REQUEST_URI_TIMEOUT_MS || '5000', 10);
+      const maxSizeBytes = parseInt(c.env.HTTPS_REQUEST_URI_MAX_SIZE_BYTES || '102400', 10);
+
+      // Validate URL and extract domain
+      let requestUrl: URL;
       try {
-        // Fetch the Request Object from the URL
+        requestUrl = new URL(request_uri);
+      } catch {
+        return c.json(
+          {
+            error: 'invalid_request_uri',
+            error_description: 'Invalid URL format for request_uri',
+          },
+          400
+        );
+      }
+
+      // Validate domain against allowlist (if configured)
+      if (allowedDomains.length > 0) {
+        const requestDomain = requestUrl.hostname.toLowerCase();
+        const isDomainAllowed = allowedDomains.some(
+          (allowed) => requestDomain === allowed || requestDomain.endsWith('.' + allowed)
+        );
+
+        if (!isDomainAllowed) {
+          console.warn(
+            `SSRF prevention: Rejected request_uri domain ${requestDomain}. Allowed: ${allowedDomains.join(', ')}`
+          );
+          return c.json(
+            {
+              error: 'invalid_request_uri',
+              error_description: 'request_uri domain is not in the allowed list',
+            },
+            400
+          );
+        }
+      }
+
+      // Prevent SSRF to localhost/internal IPs
+      const hostname = requestUrl.hostname.toLowerCase();
+      const blockedPatterns = [
+        'localhost',
+        '127.',
+        '10.',
+        '172.16.',
+        '172.17.',
+        '172.18.',
+        '172.19.',
+        '172.20.',
+        '172.21.',
+        '172.22.',
+        '172.23.',
+        '172.24.',
+        '172.25.',
+        '172.26.',
+        '172.27.',
+        '172.28.',
+        '172.29.',
+        '172.30.',
+        '172.31.',
+        '192.168.',
+        '169.254.',
+        '0.',
+        '::1',
+        'fe80::',
+        'fc00::',
+        'fd00::',
+      ];
+
+      const isBlocked =
+        blockedPatterns.some((pattern) => hostname === pattern || hostname.startsWith(pattern)) ||
+        hostname.endsWith('.local') ||
+        hostname.endsWith('.internal');
+
+      if (isBlocked) {
+        console.warn(`SSRF prevention: Blocked request_uri to internal address ${hostname}`);
+        return c.json(
+          {
+            error: 'invalid_request_uri',
+            error_description: 'request_uri cannot point to internal addresses',
+          },
+          400
+        );
+      }
+
+      try {
+        // Create AbortController for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+        // Fetch the Request Object from the URL with security controls
         const requestObjectResponse = await fetch(request_uri, {
           method: 'GET',
           headers: {
             Accept: 'application/oauth-authz-req+jwt, application/jwt',
           },
+          signal: controller.signal,
+          redirect: 'error', // Prevent redirect-based SSRF
         });
+
+        clearTimeout(timeoutId);
 
         if (!requestObjectResponse.ok) {
           return c.json(
@@ -185,18 +299,74 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           );
         }
 
-        const requestObject = await requestObjectResponse.text();
+        // Check Content-Length header first
+        const contentLength = requestObjectResponse.headers.get('content-length');
+        if (contentLength && parseInt(contentLength, 10) > maxSizeBytes) {
+          return c.json(
+            {
+              error: 'invalid_request_uri',
+              error_description: `Response too large: ${contentLength} bytes exceeds limit of ${maxSizeBytes} bytes`,
+            },
+            400
+          );
+        }
+
+        // Read response with size limit
+        const reader = requestObjectResponse.body?.getReader();
+        if (!reader) {
+          return c.json(
+            {
+              error: 'invalid_request_uri',
+              error_description: 'Failed to read response body',
+            },
+            400
+          );
+        }
+
+        const chunks: Uint8Array[] = [];
+        let totalSize = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          totalSize += value.length;
+          if (totalSize > maxSizeBytes) {
+            reader.cancel();
+            return c.json(
+              {
+                error: 'invalid_request_uri',
+                error_description: `Response too large: exceeds limit of ${maxSizeBytes} bytes`,
+              },
+              400
+            );
+          }
+          chunks.push(value);
+        }
+
+        // Combine chunks into a single buffer and decode
+        const combined = new Uint8Array(totalSize);
+        let offset = 0;
+        for (const chunk of chunks) {
+          combined.set(chunk, offset);
+          offset += chunk.length;
+        }
+        const requestObject = new TextDecoder().decode(combined);
 
         // Use the fetched Request Object as if it was the 'request' parameter
         request = requestObject;
         // Continue to request parameter processing below
         request_uri = undefined; // Clear request_uri to avoid PAR processing
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const isTimeout = errorMessage.includes('abort') || errorMessage.includes('timeout');
         console.error('Failed to fetch request_uri:', error);
         return c.json(
           {
             error: 'invalid_request_uri',
-            error_description: 'Failed to fetch request object from request_uri',
+            error_description: isTimeout
+              ? `Request timed out after ${timeoutMs}ms`
+              : 'Failed to fetch request object from request_uri',
           },
           400
         );

@@ -128,7 +128,12 @@
 	}
 
 	async function handleRegenerateSecret() {
-		if (!confirm('Are you sure you want to regenerate the client secret? The old secret will be invalidated.')) return;
+		if (
+			!confirm(
+				'Are you sure you want to regenerate the client secret? The old secret will be invalidated.'
+			)
+		)
+			return;
 
 		// TODO: Implement client secret regeneration API
 		alert('Client secret regeneration is not yet implemented');
@@ -239,37 +244,55 @@
 			</h2>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div>
-					<label for="client_id" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="client_id"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Client ID
 					</label>
 					<Input id="client_id" type="text" bind:value={client.client_id} disabled />
 				</div>
 				<div>
-					<label for="client_name" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="client_name"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Client Name
 					</label>
 					<Input id="client_name" type="text" bind:value={client.client_name} />
 				</div>
 				<div>
-					<label for="logo_uri" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="logo_uri"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Logo URI
 					</label>
 					<Input id="logo_uri" type="url" bind:value={client.logo_uri} />
 				</div>
 				<div>
-					<label for="client_uri" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="client_uri"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Client URI
 					</label>
 					<Input id="client_uri" type="url" bind:value={client.client_uri} />
 				</div>
 				<div>
-					<label for="policy_uri" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="policy_uri"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Privacy Policy URI
 					</label>
 					<Input id="policy_uri" type="url" bind:value={client.policy_uri} />
 				</div>
 				<div>
-					<label for="tos_uri" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+					<label
+						for="tos_uri"
+						class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+					>
 						Terms of Service URI
 					</label>
 					<Input id="tos_uri" type="url" bind:value={client.tos_uri} />
@@ -302,7 +325,9 @@
 
 			<div class="space-y-2">
 				{#each client.redirect_uris as uri (uri)}
-					<div class="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 dark:border-gray-700">
+					<div
+						class="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 dark:border-gray-700"
+					>
 						<code class="text-sm text-gray-900 dark:text-white">{uri}</code>
 						<button
 							class="rounded bg-red-500 px-2 py-1 text-xs font-medium text-white hover:bg-red-600 transition-colors"
@@ -376,8 +401,10 @@
 							Allow claims without scope
 						</span>
 						<span class="block text-xs text-gray-500 dark:text-gray-400 mt-1">
-							When enabled, the client can request user claims via the <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">claims</code> parameter even without the corresponding scope.
-							This is required for OIDC conformance tests but should be disabled for production clients for privacy protection.
+							When enabled, the client can request user claims via the <code
+								class="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded">claims</code
+							> parameter even without the corresponding scope. This is required for OIDC conformance
+							tests but should be disabled for production clients for privacy protection.
 						</span>
 					</div>
 				</label>

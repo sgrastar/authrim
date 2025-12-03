@@ -9,7 +9,10 @@
 	let { children, data } = $props<{ children: Snippet; data: LayoutData }>();
 
 	// Set language from server-provided data (from cookie)
-	if (data.preferredLanguage && (data.preferredLanguage === 'en' || data.preferredLanguage === 'ja')) {
+	if (
+		data.preferredLanguage &&
+		(data.preferredLanguage === 'en' || data.preferredLanguage === 'ja')
+	) {
 		setLocale(data.preferredLanguage);
 	}
 </script>
