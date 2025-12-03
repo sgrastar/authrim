@@ -21,7 +21,7 @@ Load testing presets for Authrim, targeting home and semi-commercial use cases.
 ### MAU Capacity
 
 | Target MAU | Peak RPS | Clients | p95 Latency | p99 Latency | Success Rate | Token Rotation |
-|------------|----------|---------|-------------|-------------|--------------|----------------|
+| ---------- | -------- | ------- | ----------- | ----------- | ------------ | -------------- |
 | 100K       | 20 RPS   | 10      | TBD         | TBD         | TBD          | TBD            |
 | 500K       | 100 RPS  | 20      | TBD         | TBD         | TBD          | TBD            |
 | 1M         | 200 RPS  | 30      | TBD         | TBD         | TBD          | TBD            |
@@ -45,15 +45,15 @@ RPS_peak = (MAU × DAU_Ratio × Requests_Per_DAU) / (Active_Hours × 3600) × Pe
 
 **Default Parameters:**
 
-| Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| DAU/MAU Ratio | 20% | B2B SaaS industry standard |
-| Logins/Day | 1.5 | Business application typical |
-| Refreshes/Day | 8 | 1-hour access token assumption |
-| Requests/Login | 3.1 | authorize + token + userinfo |
-| Requests/Refresh | 1.2 | token + occasional userinfo |
-| Peak Factor | 2.0x | Industry benchmark |
-| Active Hours | 8 | Business hours |
+| Parameter        | Value | Rationale                      |
+| ---------------- | ----- | ------------------------------ |
+| DAU/MAU Ratio    | 20%   | B2B SaaS industry standard     |
+| Logins/Day       | 1.5   | Business application typical   |
+| Refreshes/Day    | 8     | 1-hour access token assumption |
+| Requests/Login   | 3.1   | authorize + token + userinfo   |
+| Requests/Refresh | 1.2   | token + occasional userinfo    |
+| Peak Factor      | 2.0x  | Industry benchmark             |
+| Active Hours     | 8     | Business hours                 |
 
 ---
 
@@ -116,31 +116,31 @@ For details, see [docs/architecture.md](./docs/architecture.md).
 
 Measures peak tolerance of authentication flow.
 
-| Preset | RPS | Duration | VUs | Expected |
-|--------|-----|----------|-----|----------|
-| **Light** | 5 → 20 | 60s | 20 | p99 < 250ms |
-| **Standard** | 30 → 100 | 120s | 100 | p99 < 500ms |
-| **Heavy** | 200 → 600 | 180s | 200-600 | Measure 429/500 error rate |
+| Preset       | RPS       | Duration | VUs     | Expected                   |
+| ------------ | --------- | -------- | ------- | -------------------------- |
+| **Light**    | 5 → 20    | 60s      | 20      | p99 < 250ms                |
+| **Standard** | 30 → 100  | 120s     | 100     | p99 < 500ms                |
+| **Heavy**    | 200 → 600 | 180s     | 200-600 | Measure 429/500 error rate |
 
 ### TEST 2: Refresh Token Storm
 
 Measures real-world maximum traffic handling.
 
-| Preset | RPS | Duration | Expected |
-|--------|-----|----------|----------|
-| **Light** | 50 | 5min | p99 < 300ms |
-| **Standard** | 200-500 | 10min | error rate < 0.1% |
-| **Heavy** | 800-1200 | 10min | Measure DO lock contention |
+| Preset       | RPS      | Duration | Expected                   |
+| ------------ | -------- | -------- | -------------------------- |
+| **Light**    | 50       | 5min     | p99 < 300ms                |
+| **Standard** | 200-500  | 10min    | error rate < 0.1%          |
+| **Heavy**    | 800-1200 | 10min    | Measure DO lock contention |
 
 ### TEST 3: Full OIDC Authentication Flow
 
 Workload closest to real service usage.
 
-| Preset | RPS | Duration | Expected |
-|--------|-----|----------|----------|
-| **Light** | 10-20 | 120s | p99 < 300ms |
-| **Standard** | 30-50 | 180s | p99 < 500ms |
-| **Heavy** | 80-100 | 180s | Measure latency spike threshold |
+| Preset       | RPS    | Duration | Expected                        |
+| ------------ | ------ | -------- | ------------------------------- |
+| **Light**    | 10-20  | 120s     | p99 < 300ms                     |
+| **Standard** | 30-50  | 180s     | p99 < 500ms                     |
+| **Heavy**    | 80-100 | 180s     | Measure latency spike threshold |
 
 For details, see [docs/test-scenarios.md](./docs/test-scenarios.md).
 
@@ -219,11 +219,11 @@ TEST 4 simulates realistic multi-tenant production environments by distributing 
 
 ### Client Distribution
 
-| Load Level | Share | Example (100 RPS) | Description |
-|------------|-------|-------------------|-------------|
-| High | 45% | 3 clients × 15 RPS | Large enterprise tenants |
-| Medium | 35% | 7 clients × 5 RPS | Mid-size business tenants |
-| Low | 20% | 10 clients × 2 RPS | Small/individual tenants |
+| Load Level | Share | Example (100 RPS)  | Description               |
+| ---------- | ----- | ------------------ | ------------------------- |
+| High       | 45%   | 3 clients × 15 RPS | Large enterprise tenants  |
+| Medium     | 35%   | 7 clients × 5 RPS  | Mid-size business tenants |
+| Low        | 20%   | 10 clients × 2 RPS | Small/individual tenants  |
 
 ### Quick Start for TEST 4
 
@@ -248,12 +248,12 @@ ADMIN_API_SECRET=xxx node scripts/cleanup-test-clients.js
 
 ### Available MAU Presets
 
-| Preset | MAU | Target RPS | Clients | Duration |
-|--------|-----|------------|---------|----------|
-| `mau-100k` | 100K | 20 RPS | 10 | 5 min |
-| `mau-500k` | 500K | 100 RPS | 20 | 10 min |
-| `mau-1m` | 1M | 200 RPS | 30 | 10 min |
-| `mau-2m` | 2M | 400 RPS | 40 | 10 min |
+| Preset     | MAU  | Target RPS | Clients | Duration |
+| ---------- | ---- | ---------- | ------- | -------- |
+| `mau-100k` | 100K | 20 RPS     | 10      | 5 min    |
+| `mau-500k` | 500K | 100 RPS    | 20      | 10 min   |
+| `mau-1m`   | 1M   | 200 RPS    | 30      | 10 min   |
+| `mau-2m`   | 2M   | 400 RPS    | 40      | 10 min   |
 
 ### Generated Reports
 
@@ -278,6 +278,7 @@ load-testing/
 ├── docs/                              # Detailed documentation
 │   ├── architecture.md                # Test environment architecture
 │   ├── test-scenarios.md              # Test scenario details
+│   ├── endpoint-requirements.md       # Endpoint-specific requirements (VU state, rotation)
 │   └── metrics-collection.md          # Metrics collection procedures
 ├── scripts/                           # Test scripts
 │   ├── test1-token-load.js            # TEST 1: /token endpoint
@@ -320,16 +321,16 @@ CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz node generate-seeds.js
 
 ### Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `BASE_URL` | No | `https://conformance.authrim.com` | Target Authrim Worker URL |
-| `CLIENT_ID` | **Yes** | - | OAuth client ID |
-| `CLIENT_SECRET` | **Yes** | - | OAuth client secret |
-| `REDIRECT_URI` | No | `https://localhost:3000/callback` | Redirect URI |
-| `ADMIN_API_SECRET` | No | - | Admin API Bearer token |
-| `AUTH_CODE_COUNT` | No | `200` | Number of authorization codes to generate |
-| `REFRESH_COUNT` | No | `200` | Number of refresh tokens to generate |
-| `OUTPUT_DIR` | No | `../seeds` | Output directory |
+| Variable           | Required | Default                           | Description                               |
+| ------------------ | -------- | --------------------------------- | ----------------------------------------- |
+| `BASE_URL`         | No       | `https://conformance.authrim.com` | Target Authrim Worker URL                 |
+| `CLIENT_ID`        | **Yes**  | -                                 | OAuth client ID                           |
+| `CLIENT_SECRET`    | **Yes**  | -                                 | OAuth client secret                       |
+| `REDIRECT_URI`     | No       | `https://localhost:3000/callback` | Redirect URI                              |
+| `ADMIN_API_SECRET` | No       | -                                 | Admin API Bearer token                    |
+| `AUTH_CODE_COUNT`  | No       | `200`                             | Number of authorization codes to generate |
+| `REFRESH_COUNT`    | No       | `200`                             | Number of refresh tokens to generate      |
+| `OUTPUT_DIR`       | No       | `../seeds`                        | Output directory                          |
 
 ### Output Files
 
@@ -396,6 +397,7 @@ For details, see [Admin Client API Documentation](../docs/api/admin/clients.md).
 
 - [Test Environment Architecture](./docs/architecture.md) - Detailed test environment configuration
 - [Test Scenario Details](./docs/test-scenarios.md) - Detailed specifications for each test
+- [**Endpoint Requirements (NEW)**](./docs/endpoint-requirements.md) - **Critical requirements for each endpoint (state management, VU isolation, token rotation)**
 - [Metrics Collection Procedures](./docs/metrics-collection.md) - How to retrieve results from Cloudflare Analytics
 
 ## Collected Metrics
@@ -404,52 +406,52 @@ After test completion, the following metrics are automatically collected from th
 
 ### Worker Metrics
 
-| Metric | Description | Unit |
-|--------|-------------|------|
-| `duration` (p50/p90/p99) | Worker execution time percentiles | ms |
-| `cpu_time` (p50/p90/p99) | CPU execution time percentiles | ms |
-| `memory_max` / `memory_avg` | Memory usage (max/average) | MB |
-| `cpu_throttling_count` | CPU throttling occurrences | count |
-| `worker_errors` (5xx) | 5xx error count | count |
-| `requests_by_status` | Requests by status code | count |
+| Metric                      | Description                       | Unit  |
+| --------------------------- | --------------------------------- | ----- |
+| `duration` (p50/p90/p99)    | Worker execution time percentiles | ms    |
+| `cpu_time` (p50/p90/p99)    | CPU execution time percentiles    | ms    |
+| `memory_max` / `memory_avg` | Memory usage (max/average)        | MB    |
+| `cpu_throttling_count`      | CPU throttling occurrences        | count |
+| `worker_errors` (5xx)       | 5xx error count                   | count |
+| `requests_by_status`        | Requests by status code           | count |
 
 ### Durable Objects Metrics
 
-| Metric | Description | Unit |
-|--------|-------------|------|
-| `do_duration` (p50/p90/p99) | DO Wall Time (execution time) percentiles | ms |
-| `do_waitTime` (p50/p95/p99) | DO wait time percentiles | ms |
-| `do_requests_total` | Total DO requests | count |
-| `do_concurrency` | Concurrent executions | - |
-| `do_errors` | DO errors (including CPU/memory exceeded) | count |
-| `storage_read_units` / `storage_write_units` | Storage read/write units | units |
+| Metric                                       | Description                               | Unit  |
+| -------------------------------------------- | ----------------------------------------- | ----- |
+| `do_duration` (p50/p90/p99)                  | DO Wall Time (execution time) percentiles | ms    |
+| `do_waitTime` (p50/p95/p99)                  | DO wait time percentiles                  | ms    |
+| `do_requests_total`                          | Total DO requests                         | count |
+| `do_concurrency`                             | Concurrent executions                     | -     |
+| `do_errors`                                  | DO errors (including CPU/memory exceeded) | count |
+| `storage_read_units` / `storage_write_units` | Storage read/write units                  | units |
 
 ### D1 Database Metrics
 
-| Metric | Description | Unit |
-|--------|-------------|------|
-| `d1_read_count` / `d1_write_count` | Read/write query count | count |
-| `d1_duration` (p50/p95/p99) | Query execution time percentiles | ms |
-| `d1_rate_limited_count` | Rate limit occurrences | count |
-| `rows_read` / `rows_written` | Rows read/written | rows |
+| Metric                             | Description                      | Unit  |
+| ---------------------------------- | -------------------------------- | ----- |
+| `d1_read_count` / `d1_write_count` | Read/write query count           | count |
+| `d1_duration` (p50/p95/p99)        | Query execution time percentiles | ms    |
+| `d1_rate_limited_count`            | Rate limit occurrences           | count |
+| `rows_read` / `rows_written`       | Rows read/written                | rows  |
 
 ### KV Metrics
 
-| Metric | Description | Unit |
-|--------|-------------|------|
-| `kv_reads_total` | KV read operations | count |
-| `kv_writes_total` | KV write operations | count |
-| `kv_cache_hits` | Edge cache hits | count |
-| `kv_cache_misses` | Edge cache misses | count |
-| `kv_read_duration` | KV read latency | ms |
+| Metric             | Description         | Unit  |
+| ------------------ | ------------------- | ----- |
+| `kv_reads_total`   | KV read operations  | count |
+| `kv_writes_total`  | KV write operations | count |
+| `kv_cache_hits`    | Edge cache hits     | count |
+| `kv_cache_misses`  | Edge cache misses   | count |
+| `kv_read_duration` | KV read latency     | ms    |
 
 ### Overall Metrics
 
-| Metric | Description | Unit |
-|--------|-------------|------|
-| `requests_by_pop` | Request distribution by edge location (PoP) | count |
-| `retries` | Cloudflare-side retry count | count |
-| `inflight_requests_peak` | Peak concurrent in-flight requests | count |
+| Metric                   | Description                                 | Unit  |
+| ------------------------ | ------------------------------------------- | ----- |
+| `requests_by_pop`        | Request distribution by edge location (PoP) | count |
+| `retries`                | Cloudflare-side retry count                 | count |
+| `inflight_requests_peak` | Peak concurrent in-flight requests          | count |
 
 ### Metrics Collection Usage
 
@@ -475,17 +477,20 @@ export CF_API_TOKEN="your_cloudflare_api_token"
 ## Test Criteria (Pass/Fail Thresholds)
 
 ### 1. /token Endpoint
+
 - p99 < 500ms
 - error rate < 1%
 - Stable 200-300 RPS indicates sufficient production capacity
 
 ### 2. Refresh Storm
+
 - p99 < 700ms
 - error rate < 2%
 - Stable 300-800 RPS is ideal
 - D1 write errors must be 0
 
 ### 3. Full OIDC
+
 - p99 < 500ms
 - error rate < 1%
 - Stable 50 RPS → Sufficient headroom for 100K MAU real service

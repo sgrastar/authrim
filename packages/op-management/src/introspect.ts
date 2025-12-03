@@ -145,6 +145,8 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   const exp = tokenPayload.exp as number;
   const iat = tokenPayload.iat as number;
   const tokenClientId = tokenPayload.client_id as string;
+  // V2: Extract version for refresh token validation
+  const rtv = typeof tokenPayload.rtv === 'number' ? tokenPayload.rtv : 1;
 
   // Load public key for verification
   const publicJwkJson = c.env.PUBLIC_JWK_JSON;
@@ -207,9 +209,9 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
-  // Check if refresh token exists in KV (for refresh tokens)
-  if (jti && token_type_hint === 'refresh_token') {
-    const refreshTokenData = await getRefreshToken(c.env, jti, tokenClientId);
+  // Check if refresh token exists in DO (for refresh tokens - V2 API)
+  if (jti && token_type_hint === 'refresh_token' && sub) {
+    const refreshTokenData = await getRefreshToken(c.env, sub, rtv, tokenClientId, jti);
     if (!refreshTokenData) {
       return c.json<IntrospectionResponse>({
         active: false,

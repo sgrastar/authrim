@@ -2179,24 +2179,31 @@ export async function adminSigningKeyGetHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * Register a refresh token family for load testing
+ * Register a refresh token family for load testing (V2)
  * POST /api/admin/tokens/register
  *
  * Registers a pre-generated refresh token with the RefreshTokenRotator DO.
  * This allows load testing scripts to generate tokens locally and register
  * them with the token rotation system.
  *
- * IMPORTANT: The token's jti (JWT ID) is extracted and used as the currentToken
- * in RefreshTokenRotator, matching how op-token handles tokens. This ensures
- * that token rotation works correctly when the token is later refreshed.
+ * V2: Uses version-based theft detection. The token's jti is stored,
+ * and the initial version is returned for inclusion in the rtv claim.
  *
  * Request body:
  * {
- *   "token": "eyJ...", // JWT refresh token
+ *   "token": "eyJ...", // JWT refresh token (must contain jti claim)
  *   "userId": "user-123",
  *   "clientId": "client-456",
  *   "scope": "openid profile email",
  *   "ttl": 2592000 // optional, seconds (default: 30 days)
+ * }
+ *
+ * Response:
+ * {
+ *   "success": true,
+ *   "version": 1,        // Initial version for rtv claim
+ *   "jti": "...",        // JTI stored in DO
+ *   "expiresIn": 2592000
  * }
  */
 export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
@@ -2268,8 +2275,8 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
     const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(clientId);
     const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
 
-    // Create token family using jti as the currentToken
-    // This matches how op-token registers tokens: it uses jti for lookup
+    // Create token family using V2 API
+    // V2 uses jti field instead of token field
     const response = await rotator.fetch(
       new Request('https://refresh-token-rotator/family', {
         method: 'POST',
@@ -2277,7 +2284,7 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          token: jti, // Use jti instead of full JWT
+          jti, // V2: Use jti field
           userId,
           clientId,
           scope,
@@ -2298,16 +2305,20 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // V2 response format
     const result = (await response.json()) as {
-      familyId: string;
-      expiresAt: number;
+      version: number;
+      newJti: string;
+      expiresIn: number;
+      allowedScope: string;
     };
 
     return c.json(
       {
         success: true,
-        familyId: result.familyId,
-        expiresAt: result.expiresAt,
+        version: result.version, // V2: Return version for rtv claim
+        jti: result.newJti,
+        expiresIn: result.expiresIn,
       },
       201
     );

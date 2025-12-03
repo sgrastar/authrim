@@ -9,7 +9,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'router: lint skipped'",
-    "test": "echo 'router: tests skipped'",
+    "test": "vitest run",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -19,6 +19,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",
     "typescript": "^5.9.3",
+    "vitest": "^3.2.0",
     "wrangler": "^4.50.0"
   }
 }

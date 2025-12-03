@@ -138,6 +138,9 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
   const jti = tokenPayload.jti as string;
   const tokenClientId = tokenPayload.client_id as string;
+  // V2: Extract userId and version for refresh token operations
+  const userId = tokenPayload.sub as string;
+  const version = typeof tokenPayload.rtv === 'number' ? tokenPayload.rtv : 1;
 
   if (!jti) {
     // No JTI, cannot revoke - return success to prevent information disclosure
@@ -162,8 +165,10 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
     await revokeToken(c.env, jti, expiresIn);
   } else {
     // No hint provided, try both types
-    // First, check if it's a refresh token
-    const refreshTokenData = await getRefreshToken(c.env, jti, tokenClientId);
+    // First, check if it's a refresh token (V2 API)
+    const refreshTokenData = userId
+      ? await getRefreshToken(c.env, userId, version, tokenClientId, jti)
+      : null;
     if (refreshTokenData) {
       // It's a refresh token
       await deleteRefreshToken(c.env, jti, tokenClientId);

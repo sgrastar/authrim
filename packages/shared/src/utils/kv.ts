@@ -465,7 +465,7 @@ export async function storeRefreshToken(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      token: jti,
+      jti: jti,
       userId: data.sub,
       clientId: data.client_id,
       scope: data.scope || '',
@@ -480,28 +480,41 @@ export async function storeRefreshToken(
 }
 
 /**
- * Retrieve refresh token metadata using RefreshTokenRotator DO
+ * Retrieve refresh token metadata using RefreshTokenRotator DO (V2)
  * Note: This validates the token and returns metadata if valid
  *
+ * V2 API uses version-based validation. The token's userId and version (rtv claim)
+ * are used to look up the token family in the DO.
+ *
  * @param env - Cloudflare environment bindings
- * @param jti - Refresh token JTI (the actual token value)
- * @param client_id - Client ID (required to locate the correct DO instance)
+ * @param userId - User ID from the refresh token's sub claim
+ * @param version - Token version from the refresh token's rtv claim
+ * @param clientId - Client ID (required to locate the correct DO instance)
+ * @param jti - JWT ID for verification against stored last_jti
  * @returns Promise<RefreshTokenData | null>
  */
 export async function getRefreshToken(
   env: Env,
-  jti: string,
-  client_id: string
+  userId: string,
+  version: number,
+  clientId: string,
+  jti: string
 ): Promise<RefreshTokenData | null> {
   if (!env.REFRESH_TOKEN_ROTATOR) {
     throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
   }
 
-  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
+  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(clientId);
   const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
 
   try {
-    const response = await stub.fetch(`http://internal/validate?token=${encodeURIComponent(jti)}`, {
+    // V2: Use version-based validation endpoint
+    const params = new URLSearchParams({
+      userId,
+      version: String(version),
+      clientId,
+    });
+    const response = await stub.fetch(`http://internal/validate?${params}`, {
       method: 'GET',
     });
 
@@ -511,11 +524,8 @@ export async function getRefreshToken(
 
     const data = (await response.json()) as {
       valid: boolean;
-      familyId?: string;
-      userId?: string;
-      clientId?: string;
-      scope?: string;
-      createdAt?: number;
+      version?: number;
+      allowedScope?: string;
       expiresAt?: number;
     };
     if (!data || !data.valid) {
@@ -525,11 +535,11 @@ export async function getRefreshToken(
     // Convert DO response to RefreshTokenData format
     return {
       jti,
-      client_id: data.clientId!,
-      sub: data.userId!,
-      scope: data.scope!,
-      iat: Math.floor(data.createdAt! / 1000),
-      exp: Math.floor(data.expiresAt! / 1000),
+      client_id: clientId,
+      sub: userId,
+      scope: data.allowedScope || '',
+      iat: Math.floor(Date.now() / 1000), // V2 doesn't return createdAt
+      exp: Math.floor((data.expiresAt || Date.now()) / 1000),
     };
   } catch (error) {
     console.error('Failed to get refresh token:', error);

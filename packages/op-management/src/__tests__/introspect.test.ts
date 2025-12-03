@@ -86,6 +86,7 @@ const sampleTokenPayload = {
   exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
   iat: Math.floor(Date.now() / 1000),
   client_id: 'client-123',
+  rtv: 1, // V2: Refresh token version
 };
 
 describe('Token Introspection Endpoint', () => {
@@ -611,7 +612,14 @@ describe('Token Introspection Endpoint', () => {
 
       await introspectHandler(c);
 
-      expect(getRefreshToken).toHaveBeenCalledWith(c.env, 'token-jti-123', 'client-123');
+      // V2 API: getRefreshToken(env, userId, version, clientId, jti)
+      expect(getRefreshToken).toHaveBeenCalledWith(
+        c.env,
+        'user-123',
+        1,
+        'client-123',
+        'token-jti-123'
+      );
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           active: true,

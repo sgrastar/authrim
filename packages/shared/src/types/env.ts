@@ -20,6 +20,7 @@ export interface Env {
   MAGIC_LINKS?: KVNamespace; // Magic Link tokens (TTL: 15 min)
   KV?: KVNamespace; // General purpose KV for session tokens and other data
   SETTINGS?: KVNamespace; // System settings storage
+  REBAC_CACHE?: KVNamespace; // RBAC claims cache (Read-Through from D1, 5 min TTL)
 
   // Durable Objects
   KEY_MANAGER: DurableObjectNamespace;
