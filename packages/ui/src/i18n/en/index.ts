@@ -205,7 +205,47 @@ const en = {
 	admin_audit_resource: 'Resource',
 	admin_audit_ip: 'IP Address',
 	admin_audit_status: 'Status',
-	admin_audit_export: 'Export'
+	admin_audit_export: 'Export',
+
+	// Policy Settings
+	admin_sidebar_policy: 'Policy',
+	admin_policy_title: 'Policy Settings',
+	admin_policy_subtitle: 'Configure policy system features and token claims',
+	admin_policy_save: 'Save Changes',
+	admin_policy_save_success: 'Policy settings saved successfully',
+	admin_policy_warning_title: 'OIDC Conformance Notice',
+	admin_policy_warning_desc:
+		'Enabling policy features may affect OIDC conformance testing. Custom claims use the "authrim_" prefix to avoid conflicts with standard claims.',
+	admin_policy_feature_flags: 'Feature Flags',
+	admin_policy_enable_abac: 'Enable ABAC (Attribute-Based Access Control)',
+	admin_policy_enable_abac_desc:
+		'Evaluate access based on user attributes (department, clearance level, etc.)',
+	admin_policy_enable_rebac: 'Enable ReBAC (Relationship-Based Access Control)',
+	admin_policy_enable_rebac_desc:
+		'Evaluate access based on relationships between entities (Google Zanzibar style)',
+	admin_policy_enable_logging: 'Enable Policy Logging',
+	admin_policy_enable_logging_desc: 'Log detailed policy evaluation results for debugging',
+	admin_policy_enable_verified_attrs: 'Enable Verified Attributes',
+	admin_policy_enable_verified_attrs_desc: 'Require cryptographic proof of attribute claims',
+	admin_policy_enable_custom_rules: 'Enable Custom Rules',
+	admin_policy_enable_custom_rules_desc: 'Allow custom policy rules beyond default RBAC',
+	admin_policy_enable_sd_jwt: 'Enable SD-JWT (Selective Disclosure)',
+	admin_policy_enable_sd_jwt_desc:
+		'Issue ID Tokens in SD-JWT format for selective disclosure (RFC 9901)',
+	admin_policy_enable_embedding: 'Enable Policy Embedding in Access Token',
+	admin_policy_enable_embedding_desc:
+		'Evaluate requested scopes against policy and embed permitted actions as authrim_permissions claim',
+	admin_policy_token_claims: 'Token Claims Configuration',
+	admin_policy_access_token_claims: 'Access Token Claims',
+	admin_policy_access_token_claims_desc:
+		'Comma-separated list of claims to include in Access Token (prefixed with authrim_)',
+	admin_policy_id_token_claims: 'ID Token Claims',
+	admin_policy_id_token_claims_desc:
+		'Comma-separated list of claims to include in ID Token (prefixed with authrim_)',
+	admin_policy_available_claims: 'Available Claims',
+	admin_policy_embedding_info: 'Policy Embedding Information',
+	admin_policy_embedding_info_desc:
+		"When enabled, the authorization server evaluates requested scopes against the user's permissions and embeds only permitted actions in the Access Token."
 } satisfies BaseTranslation;
 
 export default en;

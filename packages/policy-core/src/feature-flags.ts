@@ -29,6 +29,9 @@ export interface PolicyFeatureFlags {
 
   /** Enable SD-JWT (Selective Disclosure JWT) for ID Token issuance */
   ENABLE_SD_JWT: boolean;
+
+  /** Enable permission embedding in Access Token based on policy evaluation */
+  ENABLE_POLICY_EMBEDDING: boolean;
 }
 
 /**
@@ -42,6 +45,7 @@ export const DEFAULT_FLAGS: PolicyFeatureFlags = {
   ENABLE_VERIFIED_ATTRIBUTES: false,
   ENABLE_CUSTOM_RULES: true,
   ENABLE_SD_JWT: false,
+  ENABLE_POLICY_EMBEDDING: false,
 };
 
 /**
@@ -59,6 +63,7 @@ export const FLAG_NAMES = [
   'ENABLE_VERIFIED_ATTRIBUTES',
   'ENABLE_CUSTOM_RULES',
   'ENABLE_SD_JWT',
+  'ENABLE_POLICY_EMBEDDING',
 ] as const;
 
 export type FlagName = (typeof FLAG_NAMES)[number];
@@ -91,6 +96,10 @@ export function getFlagsFromEnv(env: Record<string, string | undefined>): Policy
     ),
     ENABLE_CUSTOM_RULES: parseBool(env.ENABLE_CUSTOM_RULES, DEFAULT_FLAGS.ENABLE_CUSTOM_RULES),
     ENABLE_SD_JWT: parseBool(env.ENABLE_SD_JWT, DEFAULT_FLAGS.ENABLE_SD_JWT),
+    ENABLE_POLICY_EMBEDDING: parseBool(
+      env.ENABLE_POLICY_EMBEDDING,
+      DEFAULT_FLAGS.ENABLE_POLICY_EMBEDDING
+    ),
   };
 }
 
@@ -287,6 +296,13 @@ export class FeatureFlagsManager {
    */
   async isSdJwtEnabled(): Promise<boolean> {
     return this.getFlag('ENABLE_SD_JWT');
+  }
+
+  /**
+   * Check if policy embedding is enabled
+   */
+  async isPolicyEmbeddingEnabled(): Promise<boolean> {
+    return this.getFlag('ENABLE_POLICY_EMBEDDING');
   }
 
   /**

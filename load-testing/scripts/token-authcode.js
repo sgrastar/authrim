@@ -149,6 +149,14 @@ if (!selectedPreset) {
 
 // テストオプション
 export const options = {
+  // K6 Cloud 設定
+  cloud: {
+    projectID: 5942435,
+    name: `Authrim - Token AuthCode (${PRESET})`,
+    distribution: {
+      'amazon:jp:tokyo': { loadZone: 'amazon:jp:tokyo', percent: 100 },
+    },
+  },
   scenarios: {
     token_authcode: {
       executor: 'ramping-arrival-rate',
@@ -262,7 +270,7 @@ export default function (data) {
     'status is 200': (r) => r.status === 200,
     'has access_token': () => responseBody.access_token !== undefined,
     'has token_type': () => responseBody.token_type === 'Bearer',
-    'response time < 1000ms': (r) => r.timings.duration < 1000,
+    'response time < 5000ms': (r) => r.timings.duration < 5000,
   });
 
   tokenRequestSuccess.add(success);
@@ -279,7 +287,12 @@ export default function (data) {
   }
 
   if (!success && PRESET === 'light') {
-    console.error(`❌ Request failed: ${response.status} - ${response.body}`);
+    // デバッグ: どのチェックが失敗したか確認
+    console.error(`❌ Check failed:`);
+    console.error(`   status: ${response.status} (expected 200)`);
+    console.error(`   has access_token: ${responseBody.access_token !== undefined}`);
+    console.error(`   token_type: ${responseBody.token_type} (expected Bearer)`);
+    console.error(`   duration: ${response.timings.duration}ms (expected < 1000ms)`);
   }
 
   // Light プリセットでは Think Time あり

@@ -35,6 +35,11 @@
 			icon: 'i-heroicons-document-text'
 		},
 		{
+			path: '/admin/policy',
+			label: () => $LL.admin_sidebar_policy?.() || 'Policy',
+			icon: 'i-heroicons-shield-check'
+		},
+		{
 			path: '/admin/settings',
 			label: () => $LL.admin_sidebar_settings(),
 			icon: 'i-heroicons-cog-6-tooth'

@@ -648,6 +648,17 @@ export const adminSettingsAPI = {
 						push?: boolean;
 					};
 				};
+				policy?: {
+					enableAbac: boolean;
+					enableRebac: boolean;
+					enablePolicyLogging: boolean;
+					enableVerifiedAttributes: boolean;
+					enableCustomRules: boolean;
+					enableSdJwt: boolean;
+					enablePolicyEmbedding: boolean;
+					accessTokenClaims: string;
+					idTokenClaims: string;
+				};
 			};
 		}>('/api/admin/settings');
 	},
@@ -704,6 +715,17 @@ export const adminSettingsAPI = {
 				sms?: boolean;
 				push?: boolean;
 			};
+		};
+		policy?: {
+			enableAbac?: boolean;
+			enableRebac?: boolean;
+			enablePolicyLogging?: boolean;
+			enableVerifiedAttributes?: boolean;
+			enableCustomRules?: boolean;
+			enableSdJwt?: boolean;
+			enablePolicyEmbedding?: boolean;
+			accessTokenClaims?: string;
+			idTokenClaims?: string;
 		};
 	}) {
 		return apiFetch<{

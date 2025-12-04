@@ -205,7 +205,45 @@ const ja = {
 	admin_audit_resource: 'リソース',
 	admin_audit_ip: 'IPアドレス',
 	admin_audit_status: 'ステータス',
-	admin_audit_export: 'エクスポート'
+	admin_audit_export: 'エクスポート',
+
+	// Policy Settings
+	admin_sidebar_policy: 'ポリシー',
+	admin_policy_title: 'ポリシー設定',
+	admin_policy_subtitle: 'ポリシーシステムの機能とトークンクレームを設定',
+	admin_policy_save: '変更を保存',
+	admin_policy_save_success: 'ポリシー設定を保存しました',
+	admin_policy_warning_title: 'OIDC適合性に関する注意',
+	admin_policy_warning_desc:
+		'ポリシー機能を有効にすると、OIDC適合テストに影響する場合があります。カスタムクレームは標準クレームとの競合を避けるため「authrim_」プレフィックスを使用します。',
+	admin_policy_feature_flags: '機能フラグ',
+	admin_policy_enable_abac: 'ABAC（属性ベースアクセス制御）を有効化',
+	admin_policy_enable_abac_desc: 'ユーザー属性（部署、権限レベル等）に基づいてアクセスを評価',
+	admin_policy_enable_rebac: 'ReBAC（関係性ベースアクセス制御）を有効化',
+	admin_policy_enable_rebac_desc:
+		'エンティティ間の関係性に基づいてアクセスを評価（Google Zanzibar方式）',
+	admin_policy_enable_logging: 'ポリシーログを有効化',
+	admin_policy_enable_logging_desc: 'デバッグ用にポリシー評価結果の詳細をログ出力',
+	admin_policy_enable_verified_attrs: '検証済み属性を有効化',
+	admin_policy_enable_verified_attrs_desc: '属性クレームに暗号証明を要求',
+	admin_policy_enable_custom_rules: 'カスタムルールを有効化',
+	admin_policy_enable_custom_rules_desc: 'デフォルトRBAC以外のカスタムポリシールールを許可',
+	admin_policy_enable_sd_jwt: 'SD-JWT（選択的開示）を有効化',
+	admin_policy_enable_sd_jwt_desc: '選択的開示のためID TokenをSD-JWT形式で発行（RFC 9901）',
+	admin_policy_enable_embedding: 'Access Tokenへのポリシー埋め込みを有効化',
+	admin_policy_enable_embedding_desc:
+		'リクエストされたスコープをポリシーに対して評価し、許可されたアクションをauthrim_permissionsクレームとして埋め込み',
+	admin_policy_token_claims: 'トークンクレーム設定',
+	admin_policy_access_token_claims: 'Access Tokenクレーム',
+	admin_policy_access_token_claims_desc:
+		'Access Tokenに含めるクレームのカンマ区切りリスト（authrim_プレフィックス付き）',
+	admin_policy_id_token_claims: 'ID Tokenクレーム',
+	admin_policy_id_token_claims_desc:
+		'ID Tokenに含めるクレームのカンマ区切りリスト（authrim_プレフィックス付き）',
+	admin_policy_available_claims: '使用可能なクレーム',
+	admin_policy_embedding_info: 'ポリシー埋め込み情報',
+	admin_policy_embedding_info_desc:
+		'有効にすると、認可サーバーはリクエストされたスコープをユーザーの権限に対して評価し、許可されたアクションのみをAccess Tokenに埋め込みます。'
 } satisfies Translation;
 
 export default ja;

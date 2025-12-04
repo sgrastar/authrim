@@ -119,7 +119,7 @@ register_versions() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     # Workers that support version registration via /api/internal/version endpoint
-    local workers=("op-auth" "op-token" "op-management" "op-userinfo" "op-async" "op-discovery" "policy-service" "op-saml")
+    local workers=("op-auth" "op-token" "op-management" "op-userinfo" "op-async" "op-discovery" "policy-service" "op-saml" "external-idp")
     local success_count=0
     local fail_count=0
     local skip_count=0
@@ -208,8 +208,8 @@ for pkg_dir in packages/*/; do
             continue
         fi
 
-        # Skip policy-core (it's a library, not a deployable worker)
-        if [ "$package_name" = "policy-core" ]; then
+        # Skip library packages (not deployable workers)
+        if [ "$package_name" = "policy-core" ] || [ "$package_name" = "scim" ]; then
             continue
         fi
 

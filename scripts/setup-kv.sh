@@ -144,6 +144,7 @@ declare -a BASE_NAMESPACES=(
     "SETTINGS"
     "REBAC_CACHE"
     "USER_CACHE"
+    "AUTHRIM_CONFIG"
 )
 
 # Add environment prefix to namespace names
@@ -543,6 +544,9 @@ echo "✅ ${DEPLOY_ENV}-REBAC_CACHE: $REBAC_CACHE_ID"
 USER_CACHE_ID=$(create_kv_namespace "${DEPLOY_ENV}-USER_CACHE")
 echo "✅ ${DEPLOY_ENV}-USER_CACHE: $USER_CACHE_ID"
 
+AUTHRIM_CONFIG_ID=$(create_kv_namespace "${DEPLOY_ENV}-AUTHRIM_CONFIG")
+echo "✅ ${DEPLOY_ENV}-AUTHRIM_CONFIG: $AUTHRIM_CONFIG_ID"
+
 echo ""
 echo "Creating preview namespaces (for development/testing)..."
 
@@ -561,6 +565,9 @@ echo "✅ ${DEPLOY_ENV}-REBAC_CACHE (preview): $PREVIEW_REBAC_CACHE_ID"
 
 PREVIEW_USER_CACHE_ID=$(create_kv_namespace "${DEPLOY_ENV}-USER_CACHE" "--preview")
 echo "✅ ${DEPLOY_ENV}-USER_CACHE (preview): $PREVIEW_USER_CACHE_ID"
+
+PREVIEW_AUTHRIM_CONFIG_ID=$(create_kv_namespace "${DEPLOY_ENV}-AUTHRIM_CONFIG" "--preview")
+echo "✅ ${DEPLOY_ENV}-AUTHRIM_CONFIG (preview): $PREVIEW_AUTHRIM_CONFIG_ID"
 
 echo ""
 echo "📝 Updating wrangler.toml files..."
@@ -663,6 +670,7 @@ update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "CLIENTS_CA
 update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "USER_CACHE" "$USER_CACHE_ID" "$PREVIEW_USER_CACHE_ID"
 update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "REBAC_CACHE" "$REBAC_CACHE_ID" "$PREVIEW_REBAC_CACHE_ID"
 update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "SETTINGS" "$SETTINGS_ID" "$PREVIEW_SETTINGS_ID"
+update_wrangler_toml "packages/op-token/wrangler.${DEPLOY_ENV}.toml" "AUTHRIM_CONFIG" "$AUTHRIM_CONFIG_ID" "$PREVIEW_AUTHRIM_CONFIG_ID"
 echo "✅ op-token updated"
 
 # Update op-userinfo wrangler.toml
@@ -683,6 +691,7 @@ echo "  • ${DEPLOY_ENV}-INITIAL_ACCESS_TOKENS: $INITIAL_ACCESS_TOKENS_ID / $PR
 echo "  • ${DEPLOY_ENV}-SETTINGS: $SETTINGS_ID / $PREVIEW_SETTINGS_ID"
 echo "  • ${DEPLOY_ENV}-REBAC_CACHE: $REBAC_CACHE_ID / $PREVIEW_REBAC_CACHE_ID"
 echo "  • ${DEPLOY_ENV}-USER_CACHE: $USER_CACHE_ID / $PREVIEW_USER_CACHE_ID"
+echo "  • ${DEPLOY_ENV}-AUTHRIM_CONFIG: $AUTHRIM_CONFIG_ID / $PREVIEW_AUTHRIM_CONFIG_ID"
 echo ""
 echo "All wrangler.${DEPLOY_ENV}.toml files have been updated with the correct namespace IDs."
 echo ""

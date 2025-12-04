@@ -14,6 +14,7 @@ export interface Env {
   CLIENTS_CACHE: KVNamespace; // Client metadata cache (Read-Through from D1, 1 hour TTL)
   USER_CACHE?: KVNamespace; // User metadata cache (Read-Through from D1, 1 hour TTL, with invalidation hook)
   INITIAL_ACCESS_TOKENS?: KVNamespace; // For Dynamic Client Registration (RFC 7591)
+  AUTHRIM_CONFIG?: KVNamespace; // Dynamic configuration (shard count, feature flags, etc.)
 
   // KV Namespaces for Phase 5
   JWKS_CACHE?: KVNamespace; // JWKs cache (from KeyManager DO)
@@ -106,6 +107,11 @@ export interface Env {
   // SD-JWT Feature Flag (RFC 9901)
   // When "true", clients with id_token_signed_response_type="sd-jwt" will receive SD-JWT ID tokens
   ENABLE_SD_JWT?: string;
+
+  // Policy Embedding Feature Flag
+  // When "true", evaluates requested scopes against PolicyEngine and embeds
+  // permitted actions as authrim_permissions in Access Token
+  ENABLE_POLICY_EMBEDDING?: string;
 
   // HTTPS Request URI Feature Flag (OIDC Core 6.2)
   // SECURITY: Disabled by default to prevent SSRF attacks

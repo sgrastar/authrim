@@ -31,6 +31,7 @@ export * from './utils/tenant-context';
 export * from './utils/token-introspection';
 export * from './utils/validation';
 export * from './utils/rbac-claims';
+export * from './utils/policy-embedding';
 export * from './utils/consent-rbac';
 
 // Middleware

@@ -182,6 +182,14 @@ if (refreshTokens.length < selectedPreset.maxVUs) {
 
 // テストオプション
 export const options = {
+  // K6 Cloud 設定
+  cloud: {
+    projectID: 5942435,
+    name: `Authrim - Token Refresh (${PRESET})`,
+    distribution: {
+      'amazon:jp:tokyo': { loadZone: 'amazon:jp:tokyo', percent: 100 },
+    },
+  },
   scenarios: {
     token_refresh: {
       executor: 'ramping-arrival-rate',

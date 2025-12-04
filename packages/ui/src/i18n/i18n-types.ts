@@ -745,6 +745,126 @@ type RootTranslation = {
 	 * E​x​p​o​r​t
 	 */
 	admin_audit_export: string;
+	/**
+	 * P​o​l​i​c​y
+	 */
+	admin_sidebar_policy: string;
+	/**
+	 * P​o​l​i​c​y​ ​S​e​t​t​i​n​g​s
+	 */
+	admin_policy_title: string;
+	/**
+	 * C​o​n​f​i​g​u​r​e​ ​p​o​l​i​c​y​ ​s​y​s​t​e​m​ ​f​e​a​t​u​r​e​s​ ​a​n​d​ ​t​o​k​e​n​ ​c​l​a​i​m​s
+	 */
+	admin_policy_subtitle: string;
+	/**
+	 * S​a​v​e​ ​C​h​a​n​g​e​s
+	 */
+	admin_policy_save: string;
+	/**
+	 * P​o​l​i​c​y​ ​s​e​t​t​i​n​g​s​ ​s​a​v​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y
+	 */
+	admin_policy_save_success: string;
+	/**
+	 * O​I​D​C​ ​C​o​n​f​o​r​m​a​n​c​e​ ​N​o​t​i​c​e
+	 */
+	admin_policy_warning_title: string;
+	/**
+	 * E​n​a​b​l​i​n​g​ ​p​o​l​i​c​y​ ​f​e​a​t​u​r​e​s​ ​m​a​y​ ​a​f​f​e​c​t​ ​O​I​D​C​ ​c​o​n​f​o​r​m​a​n​c​e​ ​t​e​s​t​i​n​g​.​ ​C​u​s​t​o​m​ ​c​l​a​i​m​s​ ​u​s​e​ ​t​h​e​ ​"​a​u​t​h​r​i​m​_​"​ ​p​r​e​f​i​x​ ​t​o​ ​a​v​o​i​d​ ​c​o​n​f​l​i​c​t​s​ ​w​i​t​h​ ​s​t​a​n​d​a​r​d​ ​c​l​a​i​m​s​.
+	 */
+	admin_policy_warning_desc: string;
+	/**
+	 * F​e​a​t​u​r​e​ ​F​l​a​g​s
+	 */
+	admin_policy_feature_flags: string;
+	/**
+	 * E​n​a​b​l​e​ ​A​B​A​C​ ​(​A​t​t​r​i​b​u​t​e​-​B​a​s​e​d​ ​A​c​c​e​s​s​ ​C​o​n​t​r​o​l​)
+	 */
+	admin_policy_enable_abac: string;
+	/**
+	 * E​v​a​l​u​a​t​e​ ​a​c​c​e​s​s​ ​b​a​s​e​d​ ​o​n​ ​u​s​e​r​ ​a​t​t​r​i​b​u​t​e​s​ ​(​d​e​p​a​r​t​m​e​n​t​,​ ​c​l​e​a​r​a​n​c​e​ ​l​e​v​e​l​,​ ​e​t​c​.​)
+	 */
+	admin_policy_enable_abac_desc: string;
+	/**
+	 * E​n​a​b​l​e​ ​R​e​B​A​C​ ​(​R​e​l​a​t​i​o​n​s​h​i​p​-​B​a​s​e​d​ ​A​c​c​e​s​s​ ​C​o​n​t​r​o​l​)
+	 */
+	admin_policy_enable_rebac: string;
+	/**
+	 * E​v​a​l​u​a​t​e​ ​a​c​c​e​s​s​ ​b​a​s​e​d​ ​o​n​ ​r​e​l​a​t​i​o​n​s​h​i​p​s​ ​b​e​t​w​e​e​n​ ​e​n​t​i​t​i​e​s​ ​(​G​o​o​g​l​e​ ​Z​a​n​z​i​b​a​r​ ​s​t​y​l​e​)
+	 */
+	admin_policy_enable_rebac_desc: string;
+	/**
+	 * E​n​a​b​l​e​ ​P​o​l​i​c​y​ ​L​o​g​g​i​n​g
+	 */
+	admin_policy_enable_logging: string;
+	/**
+	 * L​o​g​ ​d​e​t​a​i​l​e​d​ ​p​o​l​i​c​y​ ​e​v​a​l​u​a​t​i​o​n​ ​r​e​s​u​l​t​s​ ​f​o​r​ ​d​e​b​u​g​g​i​n​g
+	 */
+	admin_policy_enable_logging_desc: string;
+	/**
+	 * E​n​a​b​l​e​ ​V​e​r​i​f​i​e​d​ ​A​t​t​r​i​b​u​t​e​s
+	 */
+	admin_policy_enable_verified_attrs: string;
+	/**
+	 * R​e​q​u​i​r​e​ ​c​r​y​p​t​o​g​r​a​p​h​i​c​ ​p​r​o​o​f​ ​o​f​ ​a​t​t​r​i​b​u​t​e​ ​c​l​a​i​m​s
+	 */
+	admin_policy_enable_verified_attrs_desc: string;
+	/**
+	 * E​n​a​b​l​e​ ​C​u​s​t​o​m​ ​R​u​l​e​s
+	 */
+	admin_policy_enable_custom_rules: string;
+	/**
+	 * A​l​l​o​w​ ​c​u​s​t​o​m​ ​p​o​l​i​c​y​ ​r​u​l​e​s​ ​b​e​y​o​n​d​ ​d​e​f​a​u​l​t​ ​R​B​A​C
+	 */
+	admin_policy_enable_custom_rules_desc: string;
+	/**
+	 * E​n​a​b​l​e​ ​S​D​-​J​W​T​ ​(​S​e​l​e​c​t​i​v​e​ ​D​i​s​c​l​o​s​u​r​e​)
+	 */
+	admin_policy_enable_sd_jwt: string;
+	/**
+	 * I​s​s​u​e​ ​I​D​ ​T​o​k​e​n​s​ ​i​n​ ​S​D​-​J​W​T​ ​f​o​r​m​a​t​ ​f​o​r​ ​s​e​l​e​c​t​i​v​e​ ​d​i​s​c​l​o​s​u​r​e​ ​(​R​F​C​ ​9​9​0​1​)
+	 */
+	admin_policy_enable_sd_jwt_desc: string;
+	/**
+	 * E​n​a​b​l​e​ ​P​o​l​i​c​y​ ​E​m​b​e​d​d​i​n​g​ ​i​n​ ​A​c​c​e​s​s​ ​T​o​k​e​n
+	 */
+	admin_policy_enable_embedding: string;
+	/**
+	 * E​v​a​l​u​a​t​e​ ​r​e​q​u​e​s​t​e​d​ ​s​c​o​p​e​s​ ​a​g​a​i​n​s​t​ ​p​o​l​i​c​y​ ​a​n​d​ ​e​m​b​e​d​ ​p​e​r​m​i​t​t​e​d​ ​a​c​t​i​o​n​s​ ​a​s​ ​a​u​t​h​r​i​m​_​p​e​r​m​i​s​s​i​o​n​s​ ​c​l​a​i​m
+	 */
+	admin_policy_enable_embedding_desc: string;
+	/**
+	 * T​o​k​e​n​ ​C​l​a​i​m​s​ ​C​o​n​f​i​g​u​r​a​t​i​o​n
+	 */
+	admin_policy_token_claims: string;
+	/**
+	 * A​c​c​e​s​s​ ​T​o​k​e​n​ ​C​l​a​i​m​s
+	 */
+	admin_policy_access_token_claims: string;
+	/**
+	 * C​o​m​m​a​-​s​e​p​a​r​a​t​e​d​ ​l​i​s​t​ ​o​f​ ​c​l​a​i​m​s​ ​t​o​ ​i​n​c​l​u​d​e​ ​i​n​ ​A​c​c​e​s​s​ ​T​o​k​e​n​ ​(​p​r​e​f​i​x​e​d​ ​w​i​t​h​ ​a​u​t​h​r​i​m​_​)
+	 */
+	admin_policy_access_token_claims_desc: string;
+	/**
+	 * I​D​ ​T​o​k​e​n​ ​C​l​a​i​m​s
+	 */
+	admin_policy_id_token_claims: string;
+	/**
+	 * C​o​m​m​a​-​s​e​p​a​r​a​t​e​d​ ​l​i​s​t​ ​o​f​ ​c​l​a​i​m​s​ ​t​o​ ​i​n​c​l​u​d​e​ ​i​n​ ​I​D​ ​T​o​k​e​n​ ​(​p​r​e​f​i​x​e​d​ ​w​i​t​h​ ​a​u​t​h​r​i​m​_​)
+	 */
+	admin_policy_id_token_claims_desc: string;
+	/**
+	 * A​v​a​i​l​a​b​l​e​ ​C​l​a​i​m​s
+	 */
+	admin_policy_available_claims: string;
+	/**
+	 * P​o​l​i​c​y​ ​E​m​b​e​d​d​i​n​g​ ​I​n​f​o​r​m​a​t​i​o​n
+	 */
+	admin_policy_embedding_info: string;
+	/**
+	 * W​h​e​n​ ​e​n​a​b​l​e​d​,​ ​t​h​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​s​e​r​v​e​r​ ​e​v​a​l​u​a​t​e​s​ ​r​e​q​u​e​s​t​e​d​ ​s​c​o​p​e​s​ ​a​g​a​i​n​s​t​ ​t​h​e​ ​u​s​e​r​'​s​ ​p​e​r​m​i​s​s​i​o​n​s​ ​a​n​d​ ​e​m​b​e​d​s​ ​o​n​l​y​ ​p​e​r​m​i​t​t​e​d​ ​a​c​t​i​o​n​s​ ​i​n​ ​t​h​e​ ​A​c​c​e​s​s​ ​T​o​k​e​n​.
+	 */
+	admin_policy_embedding_info_desc: string;
 };
 
 export type TranslationFunctions = {
@@ -1472,6 +1592,126 @@ export type TranslationFunctions = {
 	 * Export
 	 */
 	admin_audit_export: () => LocalizedString;
+	/**
+	 * Policy
+	 */
+	admin_sidebar_policy: () => LocalizedString;
+	/**
+	 * Policy Settings
+	 */
+	admin_policy_title: () => LocalizedString;
+	/**
+	 * Configure policy system features and token claims
+	 */
+	admin_policy_subtitle: () => LocalizedString;
+	/**
+	 * Save Changes
+	 */
+	admin_policy_save: () => LocalizedString;
+	/**
+	 * Policy settings saved successfully
+	 */
+	admin_policy_save_success: () => LocalizedString;
+	/**
+	 * OIDC Conformance Notice
+	 */
+	admin_policy_warning_title: () => LocalizedString;
+	/**
+	 * Enabling policy features may affect OIDC conformance testing. Custom claims use the "authrim_" prefix to avoid conflicts with standard claims.
+	 */
+	admin_policy_warning_desc: () => LocalizedString;
+	/**
+	 * Feature Flags
+	 */
+	admin_policy_feature_flags: () => LocalizedString;
+	/**
+	 * Enable ABAC (Attribute-Based Access Control)
+	 */
+	admin_policy_enable_abac: () => LocalizedString;
+	/**
+	 * Evaluate access based on user attributes (department, clearance level, etc.)
+	 */
+	admin_policy_enable_abac_desc: () => LocalizedString;
+	/**
+	 * Enable ReBAC (Relationship-Based Access Control)
+	 */
+	admin_policy_enable_rebac: () => LocalizedString;
+	/**
+	 * Evaluate access based on relationships between entities (Google Zanzibar style)
+	 */
+	admin_policy_enable_rebac_desc: () => LocalizedString;
+	/**
+	 * Enable Policy Logging
+	 */
+	admin_policy_enable_logging: () => LocalizedString;
+	/**
+	 * Log detailed policy evaluation results for debugging
+	 */
+	admin_policy_enable_logging_desc: () => LocalizedString;
+	/**
+	 * Enable Verified Attributes
+	 */
+	admin_policy_enable_verified_attrs: () => LocalizedString;
+	/**
+	 * Require cryptographic proof of attribute claims
+	 */
+	admin_policy_enable_verified_attrs_desc: () => LocalizedString;
+	/**
+	 * Enable Custom Rules
+	 */
+	admin_policy_enable_custom_rules: () => LocalizedString;
+	/**
+	 * Allow custom policy rules beyond default RBAC
+	 */
+	admin_policy_enable_custom_rules_desc: () => LocalizedString;
+	/**
+	 * Enable SD-JWT (Selective Disclosure)
+	 */
+	admin_policy_enable_sd_jwt: () => LocalizedString;
+	/**
+	 * Issue ID Tokens in SD-JWT format for selective disclosure (RFC 9901)
+	 */
+	admin_policy_enable_sd_jwt_desc: () => LocalizedString;
+	/**
+	 * Enable Policy Embedding in Access Token
+	 */
+	admin_policy_enable_embedding: () => LocalizedString;
+	/**
+	 * Evaluate requested scopes against policy and embed permitted actions as authrim_permissions claim
+	 */
+	admin_policy_enable_embedding_desc: () => LocalizedString;
+	/**
+	 * Token Claims Configuration
+	 */
+	admin_policy_token_claims: () => LocalizedString;
+	/**
+	 * Access Token Claims
+	 */
+	admin_policy_access_token_claims: () => LocalizedString;
+	/**
+	 * Comma-separated list of claims to include in Access Token (prefixed with authrim_)
+	 */
+	admin_policy_access_token_claims_desc: () => LocalizedString;
+	/**
+	 * ID Token Claims
+	 */
+	admin_policy_id_token_claims: () => LocalizedString;
+	/**
+	 * Comma-separated list of claims to include in ID Token (prefixed with authrim_)
+	 */
+	admin_policy_id_token_claims_desc: () => LocalizedString;
+	/**
+	 * Available Claims
+	 */
+	admin_policy_available_claims: () => LocalizedString;
+	/**
+	 * Policy Embedding Information
+	 */
+	admin_policy_embedding_info: () => LocalizedString;
+	/**
+	 * When enabled, the authorization server evaluates requested scopes against the user's permissions and embeds only permitted actions in the Access Token.
+	 */
+	admin_policy_embedding_info_desc: () => LocalizedString;
 };
 
 export type Formatters = {};

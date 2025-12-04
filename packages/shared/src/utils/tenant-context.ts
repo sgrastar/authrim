@@ -8,6 +8,8 @@
  * while keeping the system single-tenant for now.
  */
 
+import type { Env } from '../types/env';
+
 /**
  * Default tenant ID used in single-tenant mode.
  * All data is associated with this tenant by default.
@@ -165,4 +167,95 @@ export function parseShardedAuthCode(
  */
 export function buildAuthCodeShardInstanceName(shardIndex: number): string {
   return `tenant:${DEFAULT_TENANT_ID}:auth-code:shard-${shardIndex}`;
+}
+
+/**
+ * Remap shard index for scale-down compatibility.
+ *
+ * When shard count is reduced (e.g., 64→32), codes from out-of-range shards
+ * are remapped using modulo operation to ensure all existing codes remain valid.
+ *
+ * Example: 64→32 scale-down
+ *   - Shard 0-31: No change (0-31 % 32 = 0-31)
+ *   - Shard 32-63: Remapped (32 % 32 = 0, 33 % 32 = 1, ...)
+ *
+ * @param parsedShardIndex - Original shard index from authorization code
+ * @param currentShardCount - Current configured shard count
+ * @returns Actual shard index to use (0 to currentShardCount - 1)
+ * @throws Error if currentShardCount is invalid (<= 0)
+ */
+export function remapShardIndex(parsedShardIndex: number, currentShardCount: number): number {
+  if (currentShardCount <= 0) {
+    throw new Error('Invalid shard count: must be greater than 0');
+  }
+  return parsedShardIndex % currentShardCount;
+}
+
+/**
+ * Get current shard count from KV or environment variable.
+ *
+ * Priority:
+ * 1. KV (AUTHRIM_CONFIG namespace, key: "code_shards")
+ * 2. Environment variable (AUTHRIM_CODE_SHARDS)
+ * 3. Default (DEFAULT_CODE_SHARD_COUNT = 64)
+ *
+ * @param env - Environment object with KV and variables
+ * @returns Current shard count
+ */
+async function getCurrentShardCount(env: Env): Promise<number> {
+  // KV が存在すれば優先（動的変更可能）
+  if (env.AUTHRIM_CONFIG) {
+    const kvValue = await env.AUTHRIM_CONFIG.get('code_shards');
+    if (kvValue) {
+      const parsed = parseInt(kvValue, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+  }
+
+  // フォールバックとして env を使う
+  if (env.AUTHRIM_CODE_SHARDS) {
+    const parsed = parseInt(env.AUTHRIM_CODE_SHARDS, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  // デフォルト値
+  return DEFAULT_CODE_SHARD_COUNT;
+}
+
+/**
+ * Cached shard count to avoid repeated KV lookups.
+ * Cache duration: 10 seconds
+ */
+let cachedShardCount: number | null = null;
+let cachedAt = 0;
+const CACHE_TTL_MS = 10000; // 10 seconds
+
+/**
+ * Get shard count with caching.
+ *
+ * Caches the result for 10 seconds to minimize KV overhead.
+ *
+ * @param env - Environment object
+ * @returns Current shard count
+ */
+export async function getShardCount(env: Env): Promise<number> {
+  const now = Date.now();
+
+  // Return cached value if within TTL
+  if (cachedShardCount !== null && now - cachedAt < CACHE_TTL_MS) {
+    return cachedShardCount;
+  }
+
+  // Fetch fresh value
+  const count = await getCurrentShardCount(env);
+
+  // Update cache
+  cachedShardCount = count;
+  cachedAt = now;
+
+  return count;
 }

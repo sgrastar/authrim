@@ -53,12 +53,14 @@ pnpm install
 ### Environment Configuration
 
 1. **Copy the environment template:**
+
    ```bash
    cd packages/ui
    cp .env.example .env
    ```
 
 2. **Configure API endpoint** in `.env`:
+
    ```env
    # For local development (default)
    PUBLIC_API_BASE_URL=http://localhost:8786
@@ -68,6 +70,7 @@ pnpm install
    ```
 
 The UI needs to connect to the backend router. You can choose:
+
 - **Local**: Connect to local router running on `http://localhost:8786`
 - **Remote**: Connect to deployed router on Cloudflare Workers
 
@@ -84,6 +87,7 @@ pnpm --filter=ui dev
 The development server will start at `http://localhost:5173`.
 
 **Important:** If using local API, make sure to start the backend router:
+
 ```bash
 # In another terminal
 cd packages/router
@@ -92,17 +96,17 @@ pnpm dev
 
 ### Available Scripts
 
-| Script              | Description                          |
-| ------------------- | ------------------------------------ |
-| `dev`               | Start development server             |
-| `build`             | Build for production                 |
-| `preview`           | Preview production build             |
-| `check`             | Run type checking                    |
-| `lint`              | Run ESLint                           |
-| `format`            | Format code with Prettier            |
-| `typecheck`         | Type check without building          |
-| `deploy:preview`    | Deploy preview to Cloudflare Pages   |
-| `deploy:production` | Deploy production to Cloudflare Pages|
+| Script              | Description                           |
+| ------------------- | ------------------------------------- |
+| `dev`               | Start development server              |
+| `build`             | Build for production                  |
+| `preview`           | Preview production build              |
+| `check`             | Run type checking                     |
+| `lint`              | Run ESLint                            |
+| `format`            | Format code with Prettier             |
+| `typecheck`         | Type check without building           |
+| `deploy:preview`    | Deploy preview to Cloudflare Pages    |
+| `deploy:production` | Deploy production to Cloudflare Pages |
 
 ## Building
 
@@ -150,8 +154,8 @@ pnpm deploy:production
 
 ### Environment Variables
 
-| Variable | Description | Local Default | Production Example |
-|----------|-------------|---------------|-------------------|
+| Variable              | Description          | Local Default           | Production Example            |
+| --------------------- | -------------------- | ----------------------- | ----------------------------- |
 | `PUBLIC_API_BASE_URL` | Backend API endpoint | `http://localhost:8786` | `https://authrim.workers.dev` |
 
 **Note:** Environment variables prefixed with `PUBLIC_` are exposed to the browser. Never put secrets here.

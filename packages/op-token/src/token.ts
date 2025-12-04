@@ -7,6 +7,8 @@ import {
   validateRedirectUri,
   parseShardedAuthCode,
   buildAuthCodeShardInstanceName,
+  remapShardIndex,
+  getShardCount,
 } from '@authrim/shared';
 import {
   revokeToken,
@@ -35,6 +37,8 @@ import {
   parseTrustedIssuers,
   getIDTokenRBACClaims,
   getAccessTokenRBACClaims,
+  evaluatePermissionsForScope,
+  isPolicyEmbeddingEnabled,
   type JWEAlgorithm,
   type JWEEncryption,
   type IDTokenClaims,
@@ -609,9 +613,23 @@ async function handleAuthorizationCodeGrant(
   // Parse shard index from code to route to the correct DO instance
   const shardInfo = parseShardedAuthCode(validCode);
   let authCodeStoreId: DurableObjectId;
+
   if (shardInfo) {
-    // Sharded code format: {shardIndex}_{opaqueCode}
-    const instanceName = buildAuthCodeShardInstanceName(shardInfo.shardIndex);
+    // Get current shard count (KV優先、キャッシュあり)
+    const currentShardCount = await getShardCount(c.env);
+
+    // Remap shard index for scale-down compatibility
+    const actualShardIndex = remapShardIndex(shardInfo.shardIndex, currentShardCount);
+
+    // Log remapping for monitoring (only when remapped)
+    if (actualShardIndex !== shardInfo.shardIndex) {
+      console.log(
+        `[AuthCode] Remapped shard ${shardInfo.shardIndex} → ${actualShardIndex} ` +
+          `(current shards: ${currentShardCount})`
+      );
+    }
+
+    const instanceName = buildAuthCodeShardInstanceName(actualShardIndex);
     authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
   } else {
     // Legacy format (no shard prefix) - use 'global' instance
@@ -854,6 +872,23 @@ async function handleAuthorizationCodeGrant(
     console.warn('Failed to fetch RBAC claims:', rbacError);
   }
 
+  // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
+  let policyEmbeddingPermissions: string[] = [];
+  try {
+    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
+    if (policyEmbeddingEnabled && authCodeData.scope) {
+      policyEmbeddingPermissions = await evaluatePermissionsForScope(
+        c.env.DB,
+        authCodeData.sub,
+        authCodeData.scope,
+        { cache: c.env.REBAC_CACHE }
+      );
+    }
+  } catch (policyError) {
+    // Log but don't fail - policy embedding is optional
+    console.warn('Failed to evaluate policy permissions:', policyError);
+  }
+
   // Generate Access Token FIRST (needed for at_hash in ID token)
   const accessTokenClaims: {
     iss: string;
@@ -867,6 +902,8 @@ async function handleAuthorizationCodeGrant(
     authrim_roles?: string[];
     authrim_org_id?: string;
     authrim_org_type?: string;
+    // Phase 2 Policy Embedding
+    authrim_permissions?: string[];
   } = {
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
@@ -876,6 +913,11 @@ async function handleAuthorizationCodeGrant(
     // Phase 1 RBAC: Add RBAC claims to access token
     ...accessTokenRBACClaims,
   };
+
+  // Phase 2 Policy Embedding: Add evaluated permissions
+  if (policyEmbeddingPermissions.length > 0) {
+    accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
+  }
 
   // Add claims parameter if it was requested during authorization
   if (authCodeData.claims) {
@@ -1472,6 +1514,23 @@ async function handleRefreshTokenGrant(
     console.warn('Failed to fetch RBAC claims for refresh token:', rbacError);
   }
 
+  // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
+  let policyEmbeddingPermissions: string[] = [];
+  try {
+    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
+    if (policyEmbeddingEnabled && grantedScope) {
+      policyEmbeddingPermissions = await evaluatePermissionsForScope(
+        c.env.DB,
+        refreshTokenData.sub,
+        grantedScope,
+        { cache: c.env.REBAC_CACHE }
+      );
+    }
+  } catch (policyError) {
+    // Log but don't fail - policy embedding is optional
+    console.warn('Failed to evaluate policy permissions for refresh token:', policyError);
+  }
+
   // DPoP support (RFC 9449)
   // Extract and validate DPoP proof if present
   const dpopProof = extractDPoPProof(c.req.raw.headers);
@@ -1509,7 +1568,16 @@ async function handleRefreshTokenGrant(
   // Generate new Access Token
   let accessToken: string;
   try {
-    const accessTokenClaims = {
+    const accessTokenClaims: {
+      iss: string;
+      sub: string;
+      aud: string;
+      scope: string;
+      client_id: string;
+      cnf?: { jkt: string };
+      authrim_permissions?: string[];
+      [key: string]: unknown;
+    } = {
       iss: c.env.ISSUER_URL,
       sub: refreshTokenData.sub,
       aud: c.env.ISSUER_URL,
@@ -1519,9 +1587,14 @@ async function handleRefreshTokenGrant(
       ...accessTokenRBACClaims,
     };
 
+    // Phase 2 Policy Embedding: Add evaluated permissions
+    if (policyEmbeddingPermissions.length > 0) {
+      accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
+    }
+
     // Add DPoP confirmation (cnf) claim if DPoP is used
     if (dpopJkt) {
-      (accessTokenClaims as { cnf?: { jkt: string } }).cnf = { jkt: dpopJkt };
+      accessTokenClaims.cnf = { jkt: dpopJkt };
     }
 
     const result = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
@@ -2094,6 +2167,23 @@ async function handleDeviceCodeGrant(
     console.warn('Failed to fetch RBAC claims for device flow:', rbacError);
   }
 
+  // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
+  let policyEmbeddingPermissions: string[] = [];
+  try {
+    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
+    if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
+      policyEmbeddingPermissions = await evaluatePermissionsForScope(
+        c.env.DB,
+        metadata.sub,
+        metadata.scope,
+        { cache: c.env.REBAC_CACHE }
+      );
+    }
+  } catch (policyError) {
+    // Log but don't fail - policy embedding is optional
+    console.warn('Failed to evaluate policy permissions for device flow:', policyError);
+  }
+
   // Generate ID Token
   const idTokenClaims = {
     iss: c.env.ISSUER_URL,
@@ -2125,7 +2215,15 @@ async function handleDeviceCodeGrant(
   }
 
   // Generate Access Token
-  const accessTokenClaims = {
+  const accessTokenClaims: {
+    iss: string;
+    sub: string | undefined;
+    aud: string;
+    scope: string | undefined;
+    client_id: string;
+    authrim_permissions?: string[];
+    [key: string]: unknown;
+  } = {
     iss: c.env.ISSUER_URL,
     sub: metadata.sub,
     aud: c.env.ISSUER_URL,
@@ -2134,6 +2232,11 @@ async function handleDeviceCodeGrant(
     // Phase 2 RBAC: Add RBAC claims to access token
     ...accessTokenRBACClaims,
   };
+
+  // Phase 2 Policy Embedding: Add evaluated permissions
+  if (policyEmbeddingPermissions.length > 0) {
+    accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
+  }
 
   let accessToken: string;
   try {
@@ -2464,8 +2567,34 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     console.warn('Failed to fetch RBAC claims for CIBA flow:', rbacError);
   }
 
+  // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
+  let policyEmbeddingPermissions: string[] = [];
+  try {
+    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
+    if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
+      policyEmbeddingPermissions = await evaluatePermissionsForScope(
+        c.env.DB,
+        metadata.sub,
+        metadata.scope,
+        { cache: c.env.REBAC_CACHE }
+      );
+    }
+  } catch (policyError) {
+    // Log but don't fail - policy embedding is optional
+    console.warn('Failed to evaluate policy permissions for CIBA flow:', policyError);
+  }
+
   // Create Access Token FIRST (needed for at_hash in ID token)
-  const accessTokenClaims = {
+  const accessTokenClaims: {
+    iss: string;
+    sub: string;
+    aud: string;
+    scope: string | undefined;
+    client_id: string;
+    cnf?: { jkt: string };
+    authrim_permissions?: string[];
+    [key: string]: unknown;
+  } = {
     iss: c.env.ISSUER_URL,
     sub: metadata.sub!,
     aud: c.env.ISSUER_URL,
@@ -2475,6 +2604,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     // Phase 2 RBAC: Add RBAC claims to access token
     ...accessTokenRBACClaims,
   };
+
+  // Phase 2 Policy Embedding: Add evaluated permissions
+  if (policyEmbeddingPermissions.length > 0) {
+    accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
+  }
 
   const { token: accessToken, jti: tokenJti } = await createAccessToken(
     accessTokenClaims,

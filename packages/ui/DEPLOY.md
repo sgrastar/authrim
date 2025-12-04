@@ -7,9 +7,10 @@ This document describes how to deploy the Authrim UI to Cloudflare Pages.
 Authrim uses a **hybrid deployment architecture** (Option C from PHASE5_PLANNING.md):
 
 - **UI**: Cloudflare Pages (this package) - Static assets + SSR
-- **API**: Cloudflare Workers (packages/op-*) - Backend services
+- **API**: Cloudflare Workers (packages/op-\*) - Backend services
 
 This separation provides:
+
 - Independent deployment cycles
 - Optimal infrastructure for each layer
 - Better scalability and performance
@@ -72,22 +73,26 @@ pnpm run deploy:all
 #### Step-by-step Manual Deployment
 
 **1. Install Dependencies**
+
 ```bash
 pnpm install
 ```
 
 **2. Build the UI Package**
+
 ```bash
 pnpm run build --filter=ui
 ```
 
 **3. Preview Locally**
+
 ```bash
 cd packages/ui
 pnpm run preview
 ```
 
 **4. Deploy to Cloudflare Pages**
+
 ```bash
 # From monorepo root
 wrangler pages deploy packages/ui/.svelte-kit/cloudflare --project-name=authrim-ui

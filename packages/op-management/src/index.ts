@@ -75,6 +75,7 @@ import {
   adminUserRelationshipCreateHandler,
   adminUserRelationshipDeleteHandler,
 } from './admin-rbac';
+import { getCodeShards, updateCodeShards } from './routes/settings/code-shards';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -249,6 +250,10 @@ app.put('/api/admin/settings', adminSettingsUpdateHandler);
 // Admin Certification Profile endpoints (OpenID Certification)
 app.get('/api/admin/settings/profiles', adminListCertificationProfilesHandler);
 app.put('/api/admin/settings/profile/:profileName', adminApplyCertificationProfileHandler);
+
+// Admin Code Shards Configuration endpoints
+app.get('/api/admin/settings/code-shards', getCodeShards);
+app.put('/api/admin/settings/code-shards', updateCodeShards);
 
 // Admin Signing Keys Management endpoints
 app.get('/api/admin/signing-keys/status', adminSigningKeysStatusHandler);
