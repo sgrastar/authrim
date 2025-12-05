@@ -341,9 +341,11 @@ export async function getRefreshTokenShardConfig(
   // Try client-specific config
   let config: RefreshTokenShardConfig | null = null;
 
-  if (env.KV) {
+  // Use AUTHRIM_CONFIG KV namespace (bound as env.AUTHRIM_CONFIG)
+  const kv = env.AUTHRIM_CONFIG ?? env.KV;
+  if (kv) {
     // Client-specific
-    const clientConfig = await env.KV.get<RefreshTokenShardConfig>(
+    const clientConfig = await kv.get<RefreshTokenShardConfig>(
       buildShardConfigKvKey(clientId),
       'json'
     );
@@ -351,7 +353,7 @@ export async function getRefreshTokenShardConfig(
       config = clientConfig;
     } else {
       // Global fallback
-      const globalConfig = await env.KV.get<RefreshTokenShardConfig>(
+      const globalConfig = await kv.get<RefreshTokenShardConfig>(
         buildShardConfigKvKey(null),
         'json'
       );
@@ -392,11 +394,13 @@ export async function saveRefreshTokenShardConfig(
   clientId: string | null,
   config: RefreshTokenShardConfig
 ): Promise<void> {
-  if (!env.KV) {
-    throw new Error('KV binding not available');
+  // Use AUTHRIM_CONFIG KV namespace (bound as env.AUTHRIM_CONFIG)
+  const kv = env.AUTHRIM_CONFIG ?? env.KV;
+  if (!kv) {
+    throw new Error('KV binding not available (AUTHRIM_CONFIG or KV)');
   }
 
-  await env.KV.put(buildShardConfigKvKey(clientId), JSON.stringify(config));
+  await kv.put(buildShardConfigKvKey(clientId), JSON.stringify(config));
 
   // Invalidate cache
   const cacheKey = `shard-config:${clientId ?? GLOBAL_CONFIG_KEY}`;
