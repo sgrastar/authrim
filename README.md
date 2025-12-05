@@ -135,13 +135,13 @@ Authrim is an **enterprise-grade Identity & Access Platform** built for:
 
 ### Frontend (UI)
 
-| Layer          | Technology       | Purpose                        |
-| -------------- | ---------------- | ------------------------------ |
-| **Framework**  | SvelteKit v5     | Modern reactive framework      |
-| **Deployment** | Cloudflare Pages | Global CDN                     |
-| **CSS**        | UnoCSS           | Lightweight utility-first      |
-| **Components** | Melt UI          | Headless, accessible           |
-| **i18n**       | Paraglide        | Type-safe internationalization |
+| Layer          | Technology      | Purpose                        |
+| -------------- | --------------- | ------------------------------ |
+| **Framework**  | SvelteKit 2.x   | Modern reactive framework      |
+| **Deployment** | Cloudflare Pages| Global CDN                     |
+| **CSS**        | UnoCSS          | Lightweight utility-first      |
+| **Components** | Melt UI         | Headless, accessible           |
+| **i18n**       | typesafe-i18n   | Type-safe internationalization |
 
 ### Durable Objects (14 total)
 
@@ -157,6 +157,7 @@ Authrim is an **enterprise-grade Identity & Access Platform** built for:
 | DPoPJTIStore           | DPoP replay prevention           |
 | TokenRevocationStore   | Token revocation tracking        |
 | ChallengeStore         | WebAuthn challenge storage       |
+| SAMLRequestStore       | SAML request management          |
 | RateLimiterCounter     | Rate limiting                    |
 | UserCodeRateLimiter    | User code rate limiting          |
 | VersionManager         | Version management               |
