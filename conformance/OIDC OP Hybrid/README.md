@@ -2,18 +2,18 @@
 
 ## Vision & Objectives
 
-**OIDC Hybrid OP プロファイル**は、OpenID Connect Hybrid Flow仕様に準拠した認可フローを検証する認証プロファイルです。Hybrid Flowは、Authorization Code FlowとImplicit Flowの利点を組み合わせた高度な認可フローです。
+**OIDC Hybrid OP Profile** is a certification profile that verifies authorization flows compliant with the OpenID Connect Hybrid Flow specification. Hybrid Flow is an advanced authorization flow that combines the advantages of Authorization Code Flow and Implicit Flow.
 
-### 目的
-- 🔧 Hybrid Flow（`code id_token`, `code token`, `code id_token token`）のサポート
-- ⚡ フロントエンドで即座にID Tokenを取得しつつ、バックエンドで安全にAccess Tokenを取得
-- 🔒 セキュアな認証とトークン取得の両立
-- ✅ エンタープライズアプリケーションとの互換性
+### Objectives
+- 🔧 Support Hybrid Flow (`code id_token`, `code token`, `code id_token token`)
+- ⚡ Obtain ID Token immediately on frontend while securely obtaining Access Token on backend
+- 🔒 Balance secure authentication and token acquisition
+- ✅ Compatibility with enterprise applications
 
 ### Use Cases
-- **エンタープライズSPA**: フロントエンドでユーザー情報を即座に表示しつつ、バックエンドでAPIアクセス
-- **モバイルアプリ**: 初期認証時にID Tokenを取得し、バックエンドでAccess Tokenを安全に取得
-- **段階的な権限取得**: 初期ログイン時に基本情報、その後追加の権限を取得
+- **Enterprise SPA**: Display user information immediately on frontend while accessing API on backend
+- **Mobile Apps**: Obtain ID Token during initial authentication, securely obtain Access Token on backend
+- **Gradual Permission Acquisition**: Obtain basic information during initial login, acquire additional permissions later
 
 ---
 
@@ -21,50 +21,50 @@
 
 ### 1. Hybrid Flow Response Types (OIDC Core 3.3)
 
-| Response Type | 説明 | Token Endpoint | 仕様参照 |
+| Response Type | Description | Token Endpoint | Specification Reference |
 |:--|:--|:--|:--|
-| **code id_token** | 認可コード + ID Token | Access Token取得 | OIDC Core 3.3.2.1 |
-| **code token** | 認可コード + Access Token | ID Token取得 | OIDC Core 3.3.2.2 |
-| **code id_token token** | 認可コード + ID Token + Access Token | Refresh Token取得 | OIDC Core 3.3.2.3 |
+| **code id_token** | Authorization code + ID Token | Obtain Access Token | OIDC Core 3.3.2.1 |
+| **code token** | Authorization code + Access Token | Obtain ID Token | OIDC Core 3.3.2.2 |
+| **code id_token token** | Authorization code + ID Token + Access Token | Obtain Refresh Token | OIDC Core 3.3.2.3 |
 
 ### 2. Response Mode Support
 
-| Response Mode | 説明 | 仕様参照 |
+| Response Mode | Description | Specification Reference |
 |:--|:--|:--|
-| **fragment** | URLフラグメントでレスポンス（デフォルト） | OIDC Core 3.3.2.5 |
-| **form_post** | HTML Form POSTでレスポンス | Form Post Response Mode |
-| **query** | クエリパラメータでレスポンス（code onlyの場合） | OAuth 2.0 Multiple Response Types |
+| **fragment** | Response in URL fragment (default) | OIDC Core 3.3.2.5 |
+| **form_post** | Response via HTML Form POST | Form Post Response Mode |
+| **query** | Response in query parameters (code only case) | OAuth 2.0 Multiple Response Types |
 
 ### 3. Authorization Response Parameters
 
 **Common Parameters:**
-- `code` - 認可コード（すべてのHybrid Flowで必須）
-- `state` - CSRF保護用のstate（必須）
-- `iss` - Issuer Identifier（OIDC Core 3.1.2.5）
+- `code` - Authorization code (required for all Hybrid Flows)
+- `state` - State for CSRF protection (required)
+- `iss` - Issuer Identifier (OIDC Core 3.1.2.5)
 
 **response_type=code id_token:**
-- `id_token` - ID Token（フロントエンドで即座に検証可能）
+- `id_token` - ID Token (immediately verifiable on frontend)
 
 **response_type=code token:**
-- `access_token` - Access Token（API呼び出し用）
-- `token_type` - トークンタイプ（通常 "Bearer"）
-- `expires_in` - Access Token有効期限
+- `access_token` - Access Token (for API calls)
+- `token_type` - Token type (usually "Bearer")
+- `expires_in` - Access Token expiration
 
 **response_type=code id_token token:**
 - `id_token` - ID Token
 - `access_token` - Access Token
-- `token_type` - トークンタイプ
-- `expires_in` - Access Token有効期限
+- `token_type` - Token type
+- `expires_in` - Access Token expiration
 
 ### 4. ID Token Validation (OIDC Core 3.3.2.10)
 
-Hybrid FlowのID Tokenには以下の追加検証が必要:
+ID Tokens in Hybrid Flow require the following additional validation:
 
-| 要件 | 説明 | 仕様参照 |
+| Requirement | Description | Specification Reference |
 |:--|:--|:--|
-| **c_hash claim** | 認可コードのハッシュ値（`code id_token`, `code id_token token`） | OIDC Core 3.3.2.11 |
-| **at_hash claim** | Access Tokenのハッシュ値（`code id_token token`） | OIDC Core 3.3.2.11 |
-| **nonce validation** | nonce値の検証（Replay攻撃防止） | OIDC Core 3.3.2.10 |
+| **c_hash claim** | Hash value of authorization code (`code id_token`, `code id_token token`) | OIDC Core 3.3.2.11 |
+| **at_hash claim** | Hash value of Access Token (`code id_token token`) | OIDC Core 3.3.2.11 |
+| **nonce validation** | Validation of nonce value (Replay attack prevention) | OIDC Core 3.3.2.10 |
 
 **c_hash calculation:**
 ```
@@ -86,13 +86,13 @@ at_hash = base64url(left_half(hash(access_token, alg)))
 
 ### 6. Security Considerations
 
-| 要件 | 説明 | 仕様参照 |
+| Requirement | Description | Specification Reference |
 |:--|:--|:--|
-| **PKCE Support** | Hybrid FlowでもPKCEを推奨 | RFC 7636 |
-| **nonce Required** | Replay攻撃防止のためnonce必須 | OIDC Core 3.3.2.10 |
-| **c_hash/at_hash** | トークンバインディングの検証 | OIDC Core 3.3.2.11 |
-| **HTTPS Enforcement** | redirect_uriはHTTPS必須 | OAuth 2.0 Security BCP |
-| **State Validation** | CSRF攻撃防止 | RFC 6749 Section 10.12 |
+| **PKCE Support** | PKCE recommended for Hybrid Flow | RFC 7636 |
+| **nonce Required** | nonce required for replay attack prevention | OIDC Core 3.3.2.10 |
+| **c_hash/at_hash** | Validation of token binding | OIDC Core 3.3.2.11 |
+| **HTTPS Enforcement** | redirect_uri must use HTTPS | OAuth 2.0 Security BCP |
+| **State Validation** | CSRF attack prevention | RFC 6749 Section 10.12 |
 
 ---
 
@@ -100,7 +100,7 @@ at_hash = base64url(left_half(hash(access_token, alg)))
 
 ### ❌ Hybrid Flow (Planned for Phase 6)
 
-| 機能 | Status | Phase | Notes |
+| Feature | Status | Phase | Notes |
 |:--|:--|:--|:--|
 | **Response Type Support** | ❌ | Phase 6 | - |
 | `code id_token` | ❌ | Phase 6 | Code + ID Token in authorization response |
@@ -117,7 +117,7 @@ at_hash = base64url(left_half(hash(access_token, alg)))
 
 ### ✅ Related Features (Already Implemented)
 
-| 機能 | Status | Phase | Notes |
+| Feature | Status | Phase | Notes |
 |:--|:--|:--|:--|
 | Authorization Code Flow | ✅ | Phase 3 | Base for Hybrid Flow |
 | Implicit Flow | ✅ | Phase 4 | Base for Hybrid Flow |

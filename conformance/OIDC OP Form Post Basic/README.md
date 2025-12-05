@@ -2,18 +2,18 @@
 
 ## Vision & Objectives
 
-**OIDC Form Post OP プロファイル**は、OAuth 2.0 Form Post Response Mode仕様に準拠した認可レスポンスの配信方法を検証する認証プロファイルです。
+**OIDC Form Post OP Profile** is a certification profile that verifies authorization response delivery methods compliant with the OAuth 2.0 Form Post Response Mode specification.
 
-### 目的
-- ✅ `response_mode=form_post` のサポート
-- 🔒 URLフラグメントやクエリパラメータを使わないセキュアなレスポンス配信
-- ✅ ブラウザ経由での安全なトークン受け渡し
-- ✅ SPAおよびWebアプリケーションとの互換性
+### Objectives
+- ✅ Support `response_mode=form_post`
+- 🔒 Secure response delivery without using URL fragments or query parameters
+- ✅ Safe token passing via browser
+- ✅ Compatibility with SPAs and web applications
 
 ### Use Cases
-- **SPA（Single Page Application）**: フラグメントでトークンを露出させたくない場合
-- **企業向けアプリ**: セキュリティポリシーでURL経由のトークン配信が禁止されている場合
-- **ログ管理**: URLにトークンが記録されるのを防ぐ
+- **SPA (Single Page Application)**: When you don't want to expose tokens in fragments
+- **Enterprise Apps**: When security policies prohibit token delivery via URL
+- **Log Management**: Prevent tokens from being logged in URLs
 
 ---
 
@@ -21,38 +21,38 @@
 
 ### 1. Form Post Response Mode (OAuth 2.0 Form Post Response Mode)
 
-| 要件 | 説明 | 仕様参照 |
+| Requirement | Description | Specification Reference |
 |:--|:--|:--|
-| **response_mode Parameter** | `response_mode=form_post` パラメータのサポート | Form Post Section 3 |
-| **HTML Form Response** | 認可レスポンスをHTML formとして返す | Form Post Section 4 |
-| **Auto-submit Form** | JavaScriptでformを自動送信 | Form Post Section 4.1 |
-| **POST to redirect_uri** | `redirect_uri` に POST リクエスト | Form Post Section 4.2 |
-| **Parameter Encoding** | パラメータを hidden input として埋め込み | Form Post Section 4.1 |
-| **Content-Type** | `text/html` でレスポンス | Form Post Section 4 |
+| **response_mode Parameter** | Support `response_mode=form_post` parameter | Form Post Section 3 |
+| **HTML Form Response** | Return authorization response as HTML form | Form Post Section 4 |
+| **Auto-submit Form** | Auto-submit form with JavaScript | Form Post Section 4.1 |
+| **POST to redirect_uri** | POST request to `redirect_uri` | Form Post Section 4.2 |
+| **Parameter Encoding** | Embed parameters as hidden inputs | Form Post Section 4.1 |
+| **Content-Type** | Response with `text/html` | Form Post Section 4 |
 
 ### 2. Response Parameters
 
 **Authorization Code Flow with Form Post:**
-- `code` - 認可コード
-- `state` - CSRF保護用のstate
-- `iss` - Issuer Identifier（OIDC Core 3.1.2.5）
+- `code` - Authorization code
+- `state` - State for CSRF protection
+- `iss` - Issuer Identifier (OIDC Core 3.1.2.5)
 
 **Implicit Flow with Form Post (if supported):**
-- `access_token` - アクセストークン
-- `token_type` - トークンタイプ
-- `expires_in` - 有効期限
+- `access_token` - Access token
+- `token_type` - Token type
+- `expires_in` - Expiration time
 - `id_token` - ID Token
-- `state` - CSRF保護用のstate
+- `state` - State for CSRF protection
 
 **Error Response:**
-- `error` - エラーコード
-- `error_description` - エラー説明
-- `error_uri` - エラー詳細URI（オプション）
-- `state` - CSRF保護用のstate
+- `error` - Error code
+- `error_description` - Error description
+- `error_uri` - Error details URI (optional)
+- `state` - State for CSRF protection
 
 ### 3. HTML Form Structure
 
-Form Post Response Modeでは、以下の構造のHTMLを返す必要があります:
+Form Post Response Mode must return HTML with the following structure:
 
 ```html
 <!DOCTYPE html>
@@ -72,12 +72,12 @@ Form Post Response Modeでは、以下の構造のHTMLを返す必要があり�
 
 ### 4. Security Considerations
 
-| 要件 | 説明 | 仕様参照 |
+| Requirement | Description | Specification Reference |
 |:--|:--|:--|
-| **CSRF Protection** | `state` パラメータの検証 | RFC 6749 Section 10.12 |
-| **Issuer Validation** | `iss` パラメータで発行元を検証 | OIDC Core 3.1.2.5 |
-| **HTTPS Enforcement** | `redirect_uri` は HTTPS 必須 | OAuth 2.0 Security BCP |
-| **No URL Leakage** | トークンがURLに露出しない | Form Post Section 1 |
+| **CSRF Protection** | Validate `state` parameter | RFC 6749 Section 10.12 |
+| **Issuer Validation** | Verify issuer with `iss` parameter | OIDC Core 3.1.2.5 |
+| **HTTPS Enforcement** | `redirect_uri` must use HTTPS | OAuth 2.0 Security BCP |
+| **No URL Leakage** | Tokens are not exposed in URL | Form Post Section 1 |
 
 ---
 
@@ -85,7 +85,7 @@ Form Post Response Modeでは、以下の構造のHTMLを返す必要があり�
 
 ### Form Post Response Mode
 
-| 機能 | Status | Implementation |
+| Feature | Status | Implementation |
 |:--|:--|:--|
 | `response_mode=form_post` | ✅ | `op-auth` Worker |
 | HTML form generation | ✅ | Auto-submit form template |
@@ -119,7 +119,7 @@ Form Post Response Modeでは、以下の構造のHTMLを返す必要があり�
 
 ### Security Features
 
-| 機能 | Status | Implementation |
+| Feature | Status | Implementation |
 |:--|:--|:--|
 | CSRF protection (state) | ✅ | state validation |
 | Issuer validation (iss) | ✅ | iss parameter included |

@@ -180,7 +180,7 @@ Phase 12: Certification & Release      [2027-Q2]                   🔜 Final
 **7.3 Identity Linking**:
 
 - 🔜 Account Linking
-- 🔜 Identity Stitching (Federated/Local/Wallet同一性判断)
+- 🔜 Identity Stitching (determine identity across Federated/Local/Wallet)
 - 🔜 Attribute Mapping
 - 🔜 Conflict Resolution
 

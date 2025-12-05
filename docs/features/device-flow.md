@@ -391,14 +391,14 @@ device_errorInvalidCode: 'Invalid or expired verification code',
 
 **Japanese** (`packages/ui/src/i18n/ja/index.ts`):
 ```typescript
-device_title: 'デバイス認証',
-device_qrCodeLabel: 'QRコードをスキャン',
-device_orManual: 'または手動入力',
-device_codeLabel: '認証コード',
-device_approveButton: '承認',
-device_denyButton: '拒否',
-device_success: 'デバイスの認証に成功しました！',
-device_errorInvalidCode: '無効または期限切れの認証コードです',
+device_title: 'Device Authentication',
+device_qrCodeLabel: 'Scan this QR code',
+device_orManual: 'or enter manually',
+device_codeLabel: 'Authentication Code',
+device_approveButton: 'Approve',
+device_denyButton: 'Deny',
+device_success: 'Device authenticated successfully!',
+device_errorInvalidCode: 'Invalid or expired authentication code',
 ```
 
 ---

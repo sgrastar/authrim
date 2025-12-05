@@ -99,7 +99,7 @@ Transform Authrim from IdP-only to full Identity Hub:
 ### Identity Linking & Stitching
 
 - [ ] Account Linking (multiple identities → one user)
-- [ ] Identity Stitching (同一性判断ロジック)
+- [ ] Identity Stitching (identity matching logic)
 - [ ] Attribute Mapping (upstream claims → Authrim schema)
 - [ ] Conflict Resolution (email conflicts across providers)
 

@@ -1,11 +1,11 @@
-# テスト仕様書（Test Specification）フォーマット仕様
+# Test Specification Format Specification
 
-## 概要
+## Overview
 
-テスト仕様書は、OIDC適合性テストの実行時に参照されるJSON形式のファイルです。
-各テストに対してスクリーンショット取得の要否やタイミングを指定します。
+The test specification is a JSON format file referenced during OIDC conformance test execution.
+It specifies whether and when screenshots should be taken for each test.
 
-## 生成方法
+## Generation Method
 
 ```bash
 CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
@@ -13,9 +13,9 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
   --output ./test-spec.json
 ```
 
-### 利用可能なプラン名
+### Available Plan Names
 
-| キー | 説明 |
+| Key | Description |
 |------|------|
 | `basic-op` | OIDC Basic OP (Authorization Code Flow) |
 | `implicit-op` | OIDC Implicit OP |
@@ -30,7 +30,7 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
 | `3rdparty-login-op` | 3rd Party Initiated Login |
 | `fapi-2` | FAPI 2.0 Security Profile |
 
-## ファイル構造
+## File Structure
 
 ```json
 {
@@ -48,7 +48,7 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
       "requiresScreenshot": true,
       "screenshotTiming": "on_error_page",
       "expectedError": "unsupported_response_type|invalid_request",
-      "notes": "エラーページのスクリーンショットが必要"
+      "notes": "Screenshot of error page required"
     }
   ]
 }
@@ -56,108 +56,108 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
 
 ---
 
-## トップレベルパラメータ
+## Top-Level Parameters
 
-| パラメータ | 型 | 説明 |
+| Parameter | Type | Description |
 |-----------|-----|------|
-| `planName` | string | OpenID Conformance Suite のテストプラン名。例: `oidcc-basic-certification-test-plan` |
-| `generatedAt` | string | 仕様書が生成された日時（ISO 8601形式） |
-| `configFile` | string | 使用する設定ファイル名。`config/` ディレクトリ内のファイル |
-| `tests` | array | テストエントリの配列 |
+| `planName` | string | OpenID Conformance Suite test plan name. Example: `oidcc-basic-certification-test-plan` |
+| `generatedAt` | string | Date and time when the specification was generated (ISO 8601 format) |
+| `configFile` | string | Configuration file name to use. File in the `config/` directory |
+| `tests` | array | Array of test entries |
 
 ---
 
-## テストエントリ（tests配列の各要素）
+## Test Entries (elements in the tests array)
 
 ### testModule
-- **型**: `string`
-- **必須**: Yes
-- **説明**: テストモジュールの識別子。Conformance Suiteで定義されているテスト名
-- **例**: `"oidcc-server"`, `"oidcc-response-type-missing"`, `"oidcc-prompt-login"`
+- **Type**: `string`
+- **Required**: Yes
+- **Description**: Test module identifier. Test name defined in the Conformance Suite
+- **Example**: `"oidcc-server"`, `"oidcc-response-type-missing"`, `"oidcc-prompt-login"`
 
 ### testSummary
-- **型**: `string`
-- **必須**: Yes
-- **説明**: テストの概要説明。Conformance Suite Plan APIから取得される。テストの目的と期待される動作を記述
-- **例**: `"This test sends an authorization request that is missing the response_type parameter..."`
+- **Type**: `string`
+- **Required**: Yes
+- **Description**: Test overview description. Retrieved from the Conformance Suite Plan API. Describes the test purpose and expected behavior
+- **Example**: `"This test sends an authorization request that is missing the response_type parameter..."`
 
 ### variant
-- **型**: `object`
-- **必須**: No
-- **説明**: テストのバリエーション設定。認証方式やレスポンスタイプを指定
+- **Type**: `object`
+- **Required**: No
+- **Description**: Test variation settings. Specifies authentication method and response type
 
-| サブパラメータ | 値の例 | 説明 |
+| Sub-parameter | Example Value | Description |
 |---------------|--------|------|
-| `client_auth_type` | `"client_secret_basic"`, `"client_secret_post"`, `"private_key_jwt"` | クライアント認証方式 |
-| `response_type` | `"code"`, `"id_token"`, `"code id_token"` | OAuth 2.0 レスポンスタイプ |
-| `response_mode` | `"default"`, `"form_post"` | レスポンスモード |
+| `client_auth_type` | `"client_secret_basic"`, `"client_secret_post"`, `"private_key_jwt"` | Client authentication method |
+| `response_type` | `"code"`, `"id_token"`, `"code id_token"` | OAuth 2.0 response type |
+| `response_mode` | `"default"`, `"form_post"` | Response mode |
 
 ### requiresScreenshot
-- **型**: `boolean`
-- **必須**: Yes
-- **説明**: このテストでスクリーンショットのアップロードが必要かどうか
-- **自動判定ロジック**: `testSummary` に以下のキーワードが含まれる場合 `true`:
+- **Type**: `boolean`
+- **Required**: Yes
+- **Description**: Whether screenshot upload is required for this test
+- **Auto-detection logic**: Set to `true` if `testSummary` contains the following keywords:
   - `"screenshot"`
   - `"uploaded"`
   - `"image should be"`
 
-| 値 | 説明 |
+| Value | Description |
 |----|------|
-| `true` | スクリーンショットのアップロードが必要 |
-| `false` | スクリーンショット不要 |
+| `true` | Screenshot upload required |
+| `false` | Screenshot not required |
 
 ### screenshotTiming
-- **型**: `string | null`
-- **必須**: No（`requiresScreenshot: false` の場合は `null`）
-- **説明**: スクリーンショットを取得するタイミング
+- **Type**: `string | null`
+- **Required**: No (null when `requiresScreenshot: false`)
+- **Description**: Timing to capture the screenshot
 
-#### エラー系
-| 値 | 説明 | 使用ケース |
+#### Error-related
+| Value | Description | Use Case |
 |----|------|-----------|
-| `"on_error_page"` | エラーページが表示されたとき | 不正なリクエストに対するエラー表示の確認（invalid_request等） |
-| `"on_error_redirect"` | エラーでリダイレクトされたとき | エラーレスポンスがコールバックURLに返される場合 |
+| `"on_error_page"` | When error page is displayed | Verify error display for invalid requests (invalid_request, etc.) |
+| `"on_error_redirect"` | When redirected with error | When error response is returned to callback URL |
 
-#### ログイン系
-| 値 | 説明 | 使用ケース |
+#### Login-related
+| Value | Description | Use Case |
 |----|------|-----------|
-| `"on_login"` | 初回ログイン画面 | ログイン画面の表示確認 |
-| `"on_login_2nd"` | 2回目のログイン画面 | `prompt=login` による再認証 |
-| `"on_login_3rd"` | 3回目のログイン画面 | 複数回の認証が必要なテスト |
-| `"on_reauth"` | 再認証画面 | `max_age` による強制再認証 |
+| `"on_login"` | Initial login screen | Verify login screen display |
+| `"on_login_2nd"` | Second login screen | Re-authentication with `prompt=login` |
+| `"on_login_3rd"` | Third login screen | Tests requiring multiple authentications |
+| `"on_reauth"` | Re-authentication screen | Forced re-authentication with `max_age` |
 
-#### 同意系
-| 値 | 説明 | 使用ケース |
+#### Consent-related
+| Value | Description | Use Case |
 |----|------|-----------|
-| `"on_consent"` | 初回同意画面 | 同意画面の表示確認 |
-| `"on_consent_2nd"` | 2回目の同意画面 | `prompt=consent` による再同意 |
+| `"on_consent"` | Initial consent screen | Verify consent screen display |
+| `"on_consent_2nd"` | Second consent screen | Re-consent with `prompt=consent` |
 
-#### セッション管理系
-| 値 | 説明 | 使用ケース |
+#### Session Management-related
+| Value | Description | Use Case |
 |----|------|-----------|
-| `"on_logout"` | ログアウト画面 | ログアウト確認画面の表示 |
-| `"on_logout_confirm"` | ログアウト確認ダイアログ | フロントチャネルログアウトの確認 |
-| `"on_session_check"` | セッションチェック画面 | セッション管理のiframe確認 |
+| `"on_logout"` | Logout screen | Display logout confirmation screen |
+| `"on_logout_confirm"` | Logout confirmation dialog | Front-channel logout confirmation |
+| `"on_session_check"` | Session check screen | Session management iframe confirmation |
 
-#### 特殊ケース
-| 値 | 説明 | 使用ケース |
+#### Special Cases
+| Value | Description | Use Case |
 |----|------|-----------|
-| `"on_interaction"` | ユーザー操作が必要な画面 | `interaction_required` エラー時の画面 |
-| `"on_account_selection"` | アカウント選択画面 | `prompt=select_account` による選択画面 |
-| `"on_mfa"` | MFA/2要素認証画面 | 追加認証が必要な場合 |
-| `"manual"` | 手動でスクリーンショットを取得 | 自動取得が困難なケース |
-| `null` | スクリーンショット不要 | `requiresScreenshot: false` の場合 |
+| `"on_interaction"` | Screen requiring user interaction | Screen when `interaction_required` error occurs |
+| `"on_account_selection"` | Account selection screen | Selection screen with `prompt=select_account` |
+| `"on_mfa"` | MFA/2-factor auth screen | When additional authentication is required |
+| `"manual"` | Manually capture screenshot | Cases where automatic capture is difficult |
+| `null` | Screenshot not required | When `requiresScreenshot: false` |
 
-#### 複数タイミング指定
-複数のタイミングでスクリーンショットが必要な場合は、カンマ区切りで指定可能：
+#### Multiple Timing Specification
+When screenshots are needed at multiple timings, specify with comma separation:
 ```json
 "screenshotTiming": "on_login_2nd,on_error_page"
 ```
 
-#### 自動判定ロジック
+#### Auto-detection Logic
 
-`generate-test-spec.ts` は以下のルールでタイミングを自動判定します：
+`generate-test-spec.ts` automatically determines timing based on the following rules:
 
-| testModuleパターン | 判定されるタイミング |
+| testModule pattern | Detected timing |
 |-------------------|-------------------|
 | `prompt-login` | `on_login_2nd` |
 | `max-age` | `on_reauth` |
@@ -171,38 +171,38 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
 | `prompt-none-not-logged-in` | `on_error_page` |
 
 ### expectedError
-- **型**: `string | null`
-- **必須**: No
-- **説明**: テストで期待されるOAuth 2.0エラーコード。複数の場合はパイプ（`|`）区切り
-- **自動判定ロジック**: `testSummary` から以下のエラーコードを抽出:
+- **Type**: `string | null`
+- **Required**: No
+- **Description**: OAuth 2.0 error code expected in the test. Multiple codes separated by pipe (`|`)
+- **Auto-detection logic**: Extracts the following error codes from `testSummary`:
 
-| エラーコード | 説明 |
+| Error Code | Description |
 |-------------|------|
-| `unsupported_response_type` | サポートされていないレスポンスタイプ |
-| `invalid_request` | 不正なリクエスト |
-| `access_denied` | アクセス拒否 |
-| `login_required` | ログインが必要 |
-| `interaction_required` | ユーザー操作が必要 |
-| `consent_required` | 同意が必要 |
-| `invalid_scope` | 不正なスコープ |
-| `invalid_grant` | 不正なグラント |
-| `unauthorized_client` | 認可されていないクライアント |
-| `invalid_client` | 不正なクライアント |
+| `unsupported_response_type` | Unsupported response type |
+| `invalid_request` | Invalid request |
+| `access_denied` | Access denied |
+| `login_required` | Login required |
+| `interaction_required` | User interaction required |
+| `consent_required` | Consent required |
+| `invalid_scope` | Invalid scope |
+| `invalid_grant` | Invalid grant |
+| `unauthorized_client` | Unauthorized client |
+| `invalid_client` | Invalid client |
 
-- **例**: `"unsupported_response_type|invalid_request"`（どちらかのエラーが期待される）
+- **Example**: `"unsupported_response_type|invalid_request"` (either error is expected)
 
 ### notes
-- **型**: `string`
-- **必須**: No
-- **説明**: ユーザーが追記できるメモ欄。テスト実行時の注意事項や補足情報
-- **自動生成**: `screenshotTiming` に基づいて日本語の説明が設定される
-- **例**: `"エラーページのスクリーンショットが必要"`, `"2回目のログイン画面のスクリーンショットが必要"`
+- **Type**: `string`
+- **Required**: No
+- **Description**: User-editable notes field. Notes or supplementary information for test execution
+- **Auto-generation**: Japanese descriptions are set based on `screenshotTiming`
+- **Example**: `"Screenshot of error page required"`, `"Screenshot of second login screen required"`
 
 ---
 
-## 使用例
+## Usage Examples
 
-### 基本的なテスト（スクリーンショット不要）
+### Basic Test (No Screenshot Required)
 
 ```json
 {
@@ -219,7 +219,7 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
 }
 ```
 
-### エラーページのスクリーンショットが必要なテスト
+### Test Requiring Error Page Screenshot
 
 ```json
 {
@@ -232,11 +232,11 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
   "requiresScreenshot": true,
   "screenshotTiming": "on_error_page",
   "expectedError": "unsupported_response_type|invalid_request",
-  "notes": "エラーページのスクリーンショットが必要"
+  "notes": "Screenshot of error page required"
 }
 ```
 
-### 再認証画面のスクリーンショットが必要なテスト
+### Test Requiring Re-authentication Screen Screenshot
 
 ```json
 {
@@ -249,11 +249,11 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
   "requiresScreenshot": true,
   "screenshotTiming": "on_login_2nd",
   "expectedError": null,
-  "notes": "2回目のログイン画面のスクリーンショットが必要"
+  "notes": "Screenshot of second login screen required"
 }
 ```
 
-### max_age による再認証テスト
+### max_age Re-authentication Test
 
 ```json
 {
@@ -266,11 +266,11 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
   "requiresScreenshot": true,
   "screenshotTiming": "on_reauth",
   "expectedError": null,
-  "notes": "再認証画面のスクリーンショットが必要"
+  "notes": "Screenshot of re-authentication screen required"
 }
 ```
 
-### 手動スクリーンショットが必要なテスト
+### Test Requiring Manual Screenshot
 
 ```json
 {
@@ -283,33 +283,33 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
   "requiresScreenshot": true,
   "screenshotTiming": "manual",
   "expectedError": null,
-  "notes": "手動でスクリーンショットを取得する必要あり"
+  "notes": "Manual screenshot capture required"
 }
 ```
 
 ---
 
-## ユーザー編集ガイドライン
+## User Editing Guidelines
 
-### 編集可能なフィールド
+### Editable Fields
 
-以下のフィールドはユーザーが編集することを想定しています：
+The following fields are intended for user editing:
 
-1. **`requiresScreenshot`** - 自動判定が誤っている場合に修正
-2. **`screenshotTiming`** - 適切なタイミングに変更
-3. **`notes`** - 補足情報やメモを追記
+1. **`requiresScreenshot`** - Correct if auto-detection is wrong
+2. **`screenshotTiming`** - Change to appropriate timing
+3. **`notes`** - Add supplementary information or notes
 
-### 編集すべきでないフィールド
+### Fields That Should Not Be Edited
 
-以下のフィールドは変更しないでください：
+Do not change the following fields:
 
-- `testModule` - テスト識別子
-- `testSummary` - APIから取得した説明文
-- `variant` - テストのバリエーション設定
+- `testModule` - Test identifier
+- `testSummary` - Description obtained from API
+- `variant` - Test variation settings
 
-### 編集例
+### Editing Example
 
-自動判定で `requiresScreenshot: false` となったが、実際にはスクリーンショットが必要な場合：
+When auto-detection sets `requiresScreenshot: false` but a screenshot is actually required:
 
 ```json
 // Before
@@ -320,35 +320,35 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
   "notes": ""
 }
 
-// After（ユーザー編集後）
+// After (User edited)
 {
   "testModule": "oidcc-custom-test",
   "requiresScreenshot": true,
   "screenshotTiming": "on_error_page",
-  "notes": "エラー表示の確認が必要"
+  "notes": "Error display confirmation required"
 }
 ```
 
 ---
 
-## 関連コマンド
+## Related Commands
 
 ```bash
-# 仕様書生成
+# Generate specification
 CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/generate-test-spec.ts \
   --plan-name basic-op \
   --output ./test-spec.json
 
-# 仕様書を使ってテスト実行
+# Run test using specification
 CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/run-conformance.ts \
   --plan basic-op \
   --spec ./test-spec.json
 
-# プレースホルダーを確認
+# Check placeholders
 CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/check-image-placeholders.ts \
   --plan <planId>
 
-# 手動で画像をアップロード
+# Manually upload image
 CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/check-image-placeholders.ts \
   --module <moduleId> \
   --upload ./screenshot.png
@@ -358,37 +358,37 @@ CONFORMANCE_TOKEN=xxx npx tsx conformance/scripts/check-image-placeholders.ts \
 
 ## Conformance Suite API
 
-### 画像アップロードエンドポイント
+### Image Upload Endpoint
 
-#### 制限事項
-- **ファイル形式**: PNG または JPEG のみ
-- **最大サイズ**: 500KB
-- **フォーマット**: Data URI形式 (`data:image/png;base64,<base64data>`)
+#### Limitations
+- **File format**: PNG or JPEG only
+- **Maximum size**: 500KB
+- **Format**: Data URI format (`data:image/png;base64,<base64data>`)
 
-#### 新規画像アップロード
+#### New Image Upload
 ```
 POST /api/log/{moduleId}/images
 Content-Type: text/plain;charset=UTF-8
 Authorization: Bearer {token}
 
-Body: data:image/png;base64,iVBORw0KGgo...  (Data URI形式、生文字列)
+Body: data:image/png;base64,iVBORw0KGgo...  (Data URI format, raw string)
 
 Query Parameters:
-- description: 画像の説明（オプション）
+- description: Image description (optional)
 ```
 
-#### プレースホルダーへのアップロード
+#### Upload to Placeholder
 ```
 POST /api/log/{moduleId}/images/{placeholder}
 Content-Type: text/plain;charset=UTF-8
 Authorization: Bearer {token}
 
-Body: data:image/png;base64,iVBORw0KGgo...  (Data URI形式、生文字列)
+Body: data:image/png;base64,iVBORw0KGgo...  (Data URI format, raw string)
 ```
 
-### 画像プレースホルダーの検出
+### Detecting Image Placeholders
 
-テストログ内の `upload.placeholder` フィールドを確認：
+Check the `upload.placeholder` field in the test log:
 
 ```json
 {

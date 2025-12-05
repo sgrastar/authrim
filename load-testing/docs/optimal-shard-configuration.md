@@ -1,134 +1,134 @@
-# 最適シャード数設定ガイド
+# Optimal Shard Count Configuration Guide
 
-## 概要
+## Overview
 
-AuthrimのAuthorizationCodeStoreは、認可コードをDurable Object (DO)の複数のシャードに分散して保存します。シャード数が多すぎると低負荷時にCold Startのオーバーヘッドが大きくなり、少なすぎると高負荷時に並列処理の恩恵を受けられません。
+Authrim's AuthorizationCodeStore distributes authorization codes across multiple shards of Durable Objects (DO). Too many shards increase Cold Start overhead during low load, while too few shards prevent benefiting from parallel processing during high load.
 
-このドキュメントでは、負荷レベル（RPS）に応じた最適なシャード数の推奨値を示します。
+This document provides recommended shard counts based on load level (RPS).
 
-## 最適シャード数の考え方
+## Optimal Shard Count Approach
 
-### 基本原則
+### Basic Principles
 
-1. **各シャードが十分なリクエストを処理** - Cold Startのコストを償却
-2. **並列処理の最大化** - 高負荷時のスループット向上
-3. **リソース効率** - 不要なDOインスタンスの起動を避ける
+1. **Each shard processes sufficient requests** - Amortize Cold Start costs
+2. **Maximize parallel processing** - Improve throughput during high load
+3. **Resource efficiency** - Avoid unnecessary DO instance launches
 
-### 計算式
+### Calculation Formula
 
 ```
-最適シャード数 = RPS × テスト時間(秒) / 目標リクエスト数/シャード
+Optimal shard count = RPS × Test time (seconds) / Target requests per shard
 
-目標: 各シャード 50-200 リクエスト
+Target: 50-200 requests per shard
 ```
 
-## RPS別推奨シャード数
+## Recommended Shard Count by RPS
 
-| RPS範囲 | 総リクエスト数<br>(2分テスト) | 推奨シャード数 | リクエスト数/シャード | 用途 |
+| RPS Range | Total Requests<br>(2-min test) | Recommended Shards | Requests/Shard | Use Case |
 |---------|------------------------|--------------|---------------------|------|
-| **1-5 RPS** | 120-600 | **1-2** | 60-600 | 開発・デバッグ |
-| **5-10 RPS** | 600-1,200 | **2-4** | 150-600 | 軽量負荷テスト |
-| **10-30 RPS** | 1,200-3,600 | **4-8** | 150-900 | Light プリセット |
-| **30-50 RPS** | 3,600-6,000 | **8-12** | 300-750 | 低負荷本番想定 |
-| **50-100 RPS** | 6,000-12,000 | **12-24** | 250-1,000 | 中負荷本番想定 |
-| **100-200 RPS** | 12,000-24,000 | **24-48** | 250-1,000 | 標準負荷本番 |
-| **200-300 RPS** | 24,000-36,000 | **48-64** | 375-750 | 高負荷本番 |
-| **300-500 RPS** | 36,000-60,000 | **64-96** | 375-937 | ピーク負荷 |
-| **500-1000 RPS** | 60,000-120,000 | **96-128** | 468-1,250 | 極限負荷 |
-| **1000+ RPS** | 120,000+ | **128+** | 937+ | スパイク対策 |
+| **1-5 RPS** | 120-600 | **1-2** | 60-600 | Development/Debug |
+| **5-10 RPS** | 600-1,200 | **2-4** | 150-600 | Light load testing |
+| **10-30 RPS** | 1,200-3,600 | **4-8** | 150-900 | Light preset |
+| **30-50 RPS** | 3,600-6,000 | **8-12** | 300-750 | Low production load |
+| **50-100 RPS** | 6,000-12,000 | **12-24** | 250-1,000 | Medium production load |
+| **100-200 RPS** | 12,000-24,000 | **24-48** | 250-1,000 | Standard production load |
+| **200-300 RPS** | 24,000-36,000 | **48-64** | 375-750 | High production load |
+| **300-500 RPS** | 36,000-60,000 | **64-96** | 375-937 | Peak load |
+| **500-1000 RPS** | 60,000-120,000 | **96-128** | 468-1,250 | Extreme load |
+| **1000+ RPS** | 120,000+ | **128+** | 937+ | Spike protection |
 
-## 実装方法
+## Implementation
 
-### 1. 環境変数での設定
+### 1. Environment Variable Configuration
 
-`wrangler.toml` または環境変数で `AUTHRIM_CODE_SHARDS` を設定：
+Set `AUTHRIM_CODE_SHARDS` in `wrangler.toml` or as an environment variable:
 
 ```toml
 [vars]
-# 開発環境: 軽量負荷テスト用
+# Development environment: Light load testing
 AUTHRIM_CODE_SHARDS = "4"
 
-# 本番環境: 300 RPS想定
+# Production environment: 300 RPS target
 AUTHRIM_CODE_SHARDS = "64"
 
-# ピーク対策: 1000 RPS対応
+# Peak protection: 1000 RPS support
 AUTHRIM_CODE_SHARDS = "128"
 ```
 
-### 2. コード内での参照
+### 2. Reference in Code
 
 ```typescript
 import { getAuthCodeShardIndex } from '@authrim/shared';
 
-// 環境変数から取得（デフォルト: 64）
+// Get from environment variable (default: 64)
 const shardCount = Number(env.AUTHRIM_CODE_SHARDS) || 64;
 const shardIndex = getAuthCodeShardIndex(shardCount);
 ```
 
-## パフォーマンス影響
+## Performance Impact
 
-### Cold Start オーバーヘッド
+### Cold Start Overhead
 
-| シャード数 | 20 RPS時の<br>アクティブシャード | Cold Start<br>頻度 | P95レスポンス |
+| Shard Count | Active Shards at<br>20 RPS | Cold Start<br>Frequency | P95 Response |
 |-----------|---------------------------|------------------|-------------|
-| 1 | 1 (100%) | 低 | ~50ms |
-| 4 | 3-4 (75-100%) | 低 | ~60ms |
-| 8 | 5-6 (62-75%) | 中 | ~80ms |
-| 16 | 8-10 (50-62%) | 中 | ~120ms |
-| 32 | 12-15 (37-46%) | 高 | ~200ms |
-| 64 | 15-20 (23-31%) | 高 | ~350ms |
-| **128** | **18-25 (14-19%)** | **極高** | **~600ms** ⚠️ |
+| 1 | 1 (100%) | Low | ~50ms |
+| 4 | 3-4 (75-100%) | Low | ~60ms |
+| 8 | 5-6 (62-75%) | Medium | ~80ms |
+| 16 | 8-10 (50-62%) | Medium | ~120ms |
+| 32 | 12-15 (37-46%) | High | ~200ms |
+| 64 | 15-20 (23-31%) | High | ~350ms |
+| **128** | **18-25 (14-19%)** | **Very High** | **~600ms** ⚠️ |
 
-### 高負荷時の並列処理
+### High Load Parallel Processing
 
-| シャード数 | 300 RPS時の<br>並列度 | スループット<br>制限 | P95レスポンス |
+| Shard Count | Parallelism at<br>300 RPS | Throughput<br>Limitation | P95 Response |
 |-----------|------------------|------------------|-------------|
-| 16 | 16 | ボトルネック発生 | ~800ms |
-| 32 | 32 | やや制限あり | ~400ms |
-| **64** | **64** | **最適** | **~200ms** ✅ |
-| 128 | 128 | オーバースペック | ~180ms |
+| 16 | 16 | Bottleneck occurs | ~800ms |
+| 32 | 32 | Some limitation | ~400ms |
+| **64** | **64** | **Optimal** | **~200ms** ✅ |
+| 128 | 128 | Over-spec | ~180ms |
 
-## 推奨プリセット
+## Recommended Presets
 
-### 開発・テスト環境
+### Development/Test Environment
 ```toml
 AUTHRIM_CODE_SHARDS = "4"
 ```
-- 想定負荷: 1-30 RPS
-- Cold Start最小化
-- デバッグしやすい
+- Expected load: 1-30 RPS
+- Minimize Cold Start
+- Easy to debug
 
-### ステージング環境
+### Staging Environment
 ```toml
 AUTHRIM_CODE_SHARDS = "16"
 ```
-- 想定負荷: 30-100 RPS
-- 本番に近い挙動
-- コスト効率良好
+- Expected load: 30-100 RPS
+- Behavior close to production
+- Good cost efficiency
 
-### 本番環境（標準）
+### Production Environment (Standard)
 ```toml
 AUTHRIM_CODE_SHARDS = "64"
 ```
-- 想定負荷: 100-500 RPS
-- バランス良好
-- ピーク対応可能
+- Expected load: 100-500 RPS
+- Well balanced
+- Can handle peaks
 
-### 本番環境（高負荷）
+### Production Environment (High Load)
 ```toml
 AUTHRIM_CODE_SHARDS = "128"
 ```
-- 想定負荷: 500-1000+ RPS
-- スパイク対策
-- 最大並列度
+- Expected load: 500-1000+ RPS
+- Spike protection
+- Maximum parallelism
 
-## 動的シャーディング（将来の改善案）
+## Dynamic Sharding (Future Improvement)
 
-現在の実装は静的シャーディングですが、以下のような動的調整が望ましい：
+Current implementation uses static sharding, but dynamic adjustment is desirable:
 
 ```typescript
 /**
- * 負荷に応じて動的にシャード数を調整（案）
+ * Dynamically adjust shard count based on load (proposal)
  */
 function getOptimalShardCount(currentRps: number): number {
   if (currentRps < 10) return 4;
@@ -139,32 +139,32 @@ function getOptimalShardCount(currentRps: number): number {
 }
 ```
 
-## トラブルシューティング
+## Troubleshooting
 
-### 症状: P95レスポンスタイムが500ms以上
+### Symptom: P95 Response Time Exceeds 500ms
 
-**原因:** シャード数が多すぎてCold Startが頻発
+**Cause:** Too many shards causing frequent Cold Starts
 
-**対策:**
-1. 現在のRPSを確認
-2. 上記表から推奨シャード数を選択
-3. `AUTHRIM_CODE_SHARDS` を削減
-4. 再デプロイして検証
+**Solution:**
+1. Check current RPS
+2. Select recommended shard count from table above
+3. Reduce `AUTHRIM_CODE_SHARDS`
+4. Redeploy and validate
 
-### 症状: 高負荷時にタイムアウト
+### Symptom: Timeouts During High Load
 
-**原因:** シャード数が少なすぎて並列処理が不足
+**Cause:** Too few shards resulting in insufficient parallel processing
 
-**対策:**
-1. ピークRPSを確認
-2. シャード数を2倍に増加
-3. 段階的に調整
+**Solution:**
+1. Check peak RPS
+2. Double the shard count
+3. Adjust gradually
 
-## まとめ
+## Summary
 
-- **低負荷 (< 30 RPS):** シャード数 4-8
-- **中負荷 (30-100 RPS):** シャード数 8-24
-- **高負荷 (100-300 RPS):** シャード数 24-64
-- **極限負荷 (> 300 RPS):** シャード数 64-128
+- **Low Load (< 30 RPS):** Shard count 4-8
+- **Medium Load (30-100 RPS):** Shard count 8-24
+- **High Load (100-300 RPS):** Shard count 24-64
+- **Extreme Load (> 300 RPS):** Shard count 64-128
 
-**現在の設定値（128シャード）は500+ RPS向けです。300 RPS以下のテストでは64シャードに削減することを推奨します。**
+**The current setting (128 shards) is intended for 500+ RPS. For tests under 300 RPS, reducing to 64 shards is recommended.**

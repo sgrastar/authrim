@@ -1,66 +1,66 @@
-# エンドポイント別 負荷テスト要件仕様書
+# Endpoint Load Testing Requirements Specification
 
-## 概要
+## Overview
 
-このドキュメントは、Authrim の負荷テストにおける**各エンドポイントの必須設定・状態管理ルール**を定義します。
+This document defines the **required configuration and state management rules for each endpoint** in Authrim's load testing.
 
-> **重要**: この仕様に沿えば、Auth0 / Okta / Azure AD B2C が内部で実施している負荷テストと同等の精度を実現できます。
+> **Important**: Following this specification will achieve the same level of accuracy as the load tests conducted internally by Auth0 / Okta / Azure AD B2C.
 
 ---
 
-## 目次
+## Table of Contents
 
-- [標準ベンチマークテスト](#標準ベンチマークテスト)
-- [共通原則](#共通原則)
-- [エンドポイント別要件](#エンドポイント別要件)
-  - [/authorize](#1-authorize認証開始)
+- [Standard Benchmark Tests](#standard-benchmark-tests)
+- [Common Principles](#common-principles)
+- [Endpoint Requirements](#endpoint-requirements)
+  - [/authorize](#1-authorize-authentication-initiation)
   - [/token (authorization_code)](#2-token-grant_typeauthorization_code)
   - [/token (refresh_token)](#3-token-grant_typerefresh_token)
   - [/token (token_exchange)](#4-token-grant_typetoken_exchange)
   - [/userinfo](#5-userinfo)
   - [/.well-known/openid-configuration](#6-well-knownopenid-configuration)
-- [状態変化一覧表](#状態変化一覧表)
-- [実運用プリセット](#実運用プリセット)
+- [State Transition Summary Table](#state-transition-summary-table)
+- [Production Presets](#production-presets)
 
 ---
 
-## 標準ベンチマークテスト
+## Standard Benchmark Tests
 
-### 統一条件: 2 分間 300 RPS テスト
+### Unified Conditions: 2-Minute 300 RPS Test
 
-すべてのエンドポイントに対して、以下の統一条件でベンチマークテストを実施します。
+We conduct benchmark tests for all endpoints under the following unified conditions.
 
-| 項目      | 値                   |
-| --------- | -------------------- |
-| RPS       | **300 RPS（固定）**  |
-| Duration  | **2 分間（120 秒）** |
-| Ramp-up   | 10 秒                |
-| Ramp-down | 10 秒                |
+| Item      | Value                     |
+| --------- | ------------------------- |
+| RPS       | **300 RPS (Fixed)**       |
+| Duration  | **2 minutes (120 seconds)** |
+| Ramp-up   | 10 seconds                |
+| Ramp-down | 10 seconds                |
 
-### 目的
+### Purpose
 
-- **横断比較**: 全エンドポイントを同一条件で測定し、ボトルネックを特定
-- **ベースライン確立**: 改善前後の比較基準として使用
-- **限界値の把握**: 300 RPS は MAU 150 万相当のピーク負荷
+- **Cross-Comparison**: Measure all endpoints under the same conditions to identify bottlenecks
+- **Establish Baseline**: Use as a comparison standard before and after improvements
+- **Understand Limits**: 300 RPS is equivalent to peak load for 1.5M MAU
 
-### 実施対象テスト
+### Tests to Conduct
 
-| テスト | エンドポイント                | 事前準備                           |
-| ------ | ----------------------------- | ---------------------------------- |
-| TEST 1 | `/token` (authorization_code) | 36,000 個以上の authorization code |
-| TEST 2 | `/token` (refresh_token)      | 300 個以上の独立した RT family     |
-| TEST 3 | Full OIDC Flow                | 36,000 個以上の code + session     |
+| Test | Endpoint                      | Preparation                            |
+| ------ | ----------------------------- | -------------------------------------- |
+| TEST 1 | `/token` (authorization_code) | 36,000+ authorization codes            |
+| TEST 2 | `/token` (refresh_token)      | 300+ independent RT families           |
+| TEST 3 | Full OIDC Flow                | 36,000+ codes + sessions               |
 
-### 成功基準
+### Success Criteria
 
-| 指標         | 目標値  |
+| Metric       | Target  |
 | ------------ | ------- |
 | p95 Latency  | < 300ms |
 | p99 Latency  | < 500ms |
 | Error Rate   | < 0.1%  |
 | Success Rate | > 99.9% |
 
-### 実行コマンド例
+### Example Execution Commands
 
 ```bash
 # TEST 1: Token endpoint (300 RPS × 2 min)
@@ -73,61 +73,61 @@ k6 run --env RPS=300 --env DURATION=120s scripts/test2-refresh-storm.js
 k6 run --env RPS=300 --env DURATION=120s scripts/test3-full-oidc.js
 ```
 
-### 事前データ生成
+### Pre-Data Generation
 
 ```bash
-# 300 RPS × 120 秒 = 36,000 リクエスト分のシードを生成
+# Generate seeds for 300 RPS × 120 seconds = 36,000 requests
 cd load-testing/scripts
 
-# TEST 1 用: authorization code
+# For TEST 1: authorization codes
 AUTH_CODE_COUNT=40000 REFRESH_COUNT=0 node generate-seeds.js
 
-# TEST 2 用: 独立した RT family（VU 数分）
+# For TEST 2: independent RT families (number of VUs)
 AUTH_CODE_COUNT=0 REFRESH_COUNT=300 node generate-refresh-tokens-parallel.js
 ```
 
 ---
 
-## 共通原則
+## Common Principles
 
-### 原則1: VU = 実利用ユーザーとして振る舞う
+### Principle 1: VU = Behaves as a Real User
 
-**VU（Virtual User）は実際のユーザーとして振る舞うこと。**
+**VU (Virtual User) must behave as an actual user.**
 
-VU ごとに**認証状態・セッション・Refresh Token ファミリー**を保持しないと「意味のない負荷テスト」になります。
+Without maintaining **authentication state, sessions, and Refresh Token families** per VU, you'll end up with a "meaningless load test".
 
 ```
-VU 1 → user1 の refresh_token family
-VU 2 → user2 の refresh_token family
+VU 1 → user1's refresh_token family
+VU 2 → user2's refresh_token family
 ...
-VU N → userN の refresh_token family
+VU N → userN's refresh_token family
 ```
 
-> **禁止事項**: 全 VU で共通の Refresh Token を使うことは**絶対にNG**（実際の動作と異なる）
+> **Prohibited**: Using a common Refresh Token across all VUs is **absolutely forbidden** (differs from actual behavior)
 
-### 原則2: DO 衝突を避けるための分散戦略
+### Principle 2: Distribution Strategy to Avoid DO Collisions
 
-RefreshTokenRotator DO は `user_id` と `client_id` でシャーディングされています。
+RefreshTokenRotator DO is sharded by `user_id` and `client_id`.
 
-| 項目        | 分散戦略                          |
-| ----------- | --------------------------------- |
-| `user_id`   | VU ごとに異なる値を使用（必須）   |
-| `client_id` | 全 VU で共通で OK（実運用に近い） |
+| Item        | Distribution Strategy              |
+| ----------- | ---------------------------------- |
+| `user_id`   | Use different values per VU (mandatory) |
+| `client_id` | Common across all VUs is OK (closer to production) |
 
-### 原則3: トークンは事前生成しておく
+### Principle 3: Pre-Generate Tokens
 
-負荷テスト中に認証フロー全体を含める必要は**ありません**。
+There's **no need** to include the entire authentication flow during load testing.
 
-`generate-seeds.js` などを使って、事前に以下を準備：
+Use `generate-seeds.js` etc. to prepare in advance:
 
-- VU ごとの `access_token`
-- VU ごとの `refresh_token`（**必須**）
-- VU ごとの session（D1 に保存済み状態）
-- 必要数の `authorization_code`（TEST 1 用）
+- `access_token` per VU
+- `refresh_token` per VU (**mandatory**)
+- Sessions per VU (pre-saved in D1)
+- Required number of `authorization_code` (for TEST 1)
 
-### 原則4: 正しいヘッダを使用する
+### Principle 4: Use Correct Headers
 
-Workers は header mismatch で遅くなることがあるため、以下のヘッダを必ず設定：
+Workers can slow down due to header mismatches, so always set these headers:
 
 ```http
 Content-Type: application/x-www-form-urlencoded
@@ -137,20 +137,20 @@ Connection: keep-alive
 
 ---
 
-## エンドポイント別要件
+## Endpoint Requirements
 
-### 1. /authorize（認証開始）
+### 1. /authorize (Authentication Initiation)
 
-#### 必須設定
+#### Required Configuration
 
-| 項目           | 要件                                            | 理由                              |
-| -------------- | ----------------------------------------------- | --------------------------------- |
-| `state`        | **毎リクエストでランダム生成**                  | 実運用でも毎回異なる（CSRF 保護） |
-| `nonce`        | **毎リクエストでランダム生成**                  | リプレイアタック防止              |
-| `redirect_uri` | 固定で OK                                       | VU ごとに変える必要なし           |
-| Cookie         | **Set-Cookie を受け取り、次のリクエストで返す** | セッション管理                    |
+| Item           | Requirement                              | Reason                            |
+| -------------- | ---------------------------------------- | --------------------------------- |
+| `state`        | **Generate randomly per request**        | Varies each time in production (CSRF protection) |
+| `nonce`        | **Generate randomly per request**        | Replay attack prevention          |
+| `redirect_uri` | Fixed is OK                              | No need to vary per VU            |
+| Cookie         | **Receive Set-Cookie and return in next request** | Session management                |
 
-#### リクエスト例
+#### Request Example
 
 ```http
 GET /authorize?
@@ -167,7 +167,7 @@ Host: conformance.authrim.com
 Accept: application/json
 ```
 
-#### k6 実装例
+#### k6 Implementation Example
 
 ```javascript
 import { randomString } from 'https://jslib.k6.io/k6-utils/1.2.0/index.js';
@@ -193,42 +193,42 @@ export default function () {
     headers: { Accept: 'application/json' },
   });
 
-  // Cookie を保存（次のリクエストで使用）
+  // Save cookies (use in next request)
   const cookies = res.cookies;
-  // code を抽出（次の /token リクエストで使用）
+  // Extract code (use in next /token request)
 }
 ```
 
-#### 禁止事項
+#### Prohibited Actions
 
-- `state` を固定値にする
-- Cookie を無視する
-- `/authorize` → `/token` の `code` を無視して POST する
+- Using a fixed value for `state`
+- Ignoring cookies
+- Ignoring the `code` from `/authorize` → `/token` and POST
 
 ---
 
 ### 2. /token (grant_type=authorization_code)
 
-#### 必須設定
+#### Required Configuration
 
-| 項目                          | 要件                                    | 理由           |
-| ----------------------------- | --------------------------------------- | -------------- |
-| `code`                        | **/authorize で受け取った code を使用** | One-Time Use   |
-| `redirect_uri`                | **/authorize と完全一致**               | OAuth 2.0 仕様 |
-| `client_id` / `client_secret` | 固定で OK                               | 認証情報       |
-| `code_verifier`               | **/authorize で使った verifier**        | PKCE 検証      |
+| Item                          | Requirement                           | Reason         |
+| ----------------------------- | ------------------------------------- | -------------- |
+| `code`                        | **Use code received from /authorize** | One-Time Use   |
+| `redirect_uri`                | **Exact match with /authorize**       | OAuth 2.0 spec |
+| `client_id` / `client_secret` | Fixed is OK                           | Credentials    |
+| `code_verifier`               | **Verifier used in /authorize**       | PKCE validation|
 
-#### 重要な状態処理
+#### Important State Handling
 
 ```
-code は「1回限りの使い捨て」
+code is "one-time use"
 ↓
-/token 成功後、refresh_token を VU ローカルに保存
+After /token success, save refresh_token locally in VU
 ↓
-次の refresh テストでその RT を使用
+Use that RT in next refresh test
 ```
 
-#### リクエスト例
+#### Request Example
 
 ```http
 POST /token HTTP/1.1
@@ -242,7 +242,7 @@ grant_type=authorization_code
 &code_verifier={pkce_verifier}
 ```
 
-#### k6 実装例
+#### k6 Implementation Example
 
 ```javascript
 export default function () {
@@ -267,44 +267,44 @@ export default function () {
 
   if (res.status === 200) {
     const data = res.json();
-    // refresh_token を VU ローカルに保存（次の refresh テストで使用）
+    // Save refresh_token locally in VU (use in next refresh test)
     vuState.refreshToken = data.refresh_token;
   }
 }
 ```
 
-#### 禁止事項
+#### Prohibited Actions
 
-- 同じ `code` を複数回使用する
-- `redirect_uri` を `/authorize` と異なる値にする
+- Using the same `code` multiple times
+- Setting `redirect_uri` to a different value from `/authorize`
 
 ---
 
 ### 3. /token (grant_type=refresh_token)
 
-> **最重要**: エンドポイント負荷テストの最難関。この設定を間違えると意味のないテストになります。
+> **Most Important**: The most challenging endpoint load test. Incorrect configuration renders the test meaningless.
 
-#### 必須設定（超重要）
+#### Required Configuration (Critical)
 
-| 項目           | 要件                               | 理由               |
-| -------------- | ---------------------------------- | ------------------ |
-| Token Rotation | **必ず有効化**                     | 実運用ではほぼ必須 |
-| RT family      | **VU ごとに独立**                  | DO 衝突防止        |
-| RT 更新        | **毎リクエストで前回の RT を使用** | Rotation の本質    |
+| Item           | Requirement                            | Reason                   |
+| -------------- | -------------------------------------- | ------------------------ |
+| Token Rotation | **Must be enabled**                    | Almost mandatory in production |
+| RT family      | **Independent per VU**                 | Prevent DO collisions    |
+| RT update      | **Use previous RT for each request**   | Essence of Rotation      |
 
-#### Refresh Token Rotation のフロー
+#### Refresh Token Rotation Flow
 
 ```
-初期状態: rt = seeds[VU].initialRT
+Initial state: rt = seeds[VU].initialRT
 
 for each request:
    res = POST /token (refresh_token=rt)
-   rt = res.refresh_token  ← 新しい RT で更新
+   rt = res.refresh_token  ← Update with new RT
 ```
 
-**これが一番重要。毎回新しい RT を使わないと Token Rotation のテストにならない。**
+**This is the most important. Without using a new RT each time, it won't test Token Rotation.**
 
-#### リクエスト例
+#### Request Example
 
 ```http
 POST /token HTTP/1.1
@@ -316,14 +316,14 @@ grant_type=refresh_token
 &refresh_token={current_refresh_token}
 ```
 
-#### k6 実装例（Stateful）
+#### k6 Implementation Example (Stateful)
 
 ```javascript
-// VU ごとの状態管理
+// State management per VU
 const vuState = {};
 
 export function setup() {
-  // seeds から VU ごとの初期 RT を読み込み
+  // Load initial RT per VU from seeds
   const seeds = JSON.parse(open('./seeds/refresh_tokens.json'));
   return { seeds };
 }
@@ -331,7 +331,7 @@ export function setup() {
 export default function (data) {
   const vuId = __VU;
 
-  // 初回は seeds から RT を取得
+  // First time: get RT from seeds
   if (!vuState.refreshToken) {
     vuState.refreshToken = data.seeds[vuId % data.seeds.length].refresh_token;
     vuState.userId = data.seeds[vuId % data.seeds.length].user_id;
@@ -353,7 +353,7 @@ export default function (data) {
 
   if (res.status === 200) {
     const data = res.json();
-    // ★ 新しい RT で更新（最重要）
+    // ★ Update with new RT (most important)
     vuState.refreshToken = data.refresh_token;
   }
 
@@ -364,32 +364,32 @@ export default function (data) {
 }
 ```
 
-#### 禁止事項（絶対にやってはいけない）
+#### Prohibited Actions (Absolutely Forbidden)
 
-| NG パターン                             | 結果                            |
-| --------------------------------------- | ------------------------------- |
-| 全 VU が同じ RT を使い回す              | DO が 1 個に集中して死ぬ        |
-| 毎回同じ RT を使う                      | Rotation にならず実運用と異なる |
-| RT の更新結果を VU ローカルに保存しない | テスト無意味                    |
+| NG Pattern                              | Result                             |
+| --------------------------------------- | ---------------------------------- |
+| All VUs reuse the same RT               | DO concentrates on one instance and dies |
+| Using the same RT every time            | Not Rotation, differs from production |
+| Not saving RT update result locally in VU | Test is meaningless                |
 
-#### 盗難検知テストについて
+#### About Theft Detection Testing
 
-旧 RT の使用（Theft Detection）パスは**別テストで行う**こと。
-まずは正常パスの負荷テストを完了させてから。
+Testing the old RT usage (Theft Detection) path should be done in a **separate test**.
+First complete the normal path load test.
 
 ---
 
 ### 4. /token (grant_type=token_exchange)
 
-#### 必須設定
+#### Required Configuration
 
-| 項目                      | 要件          | 理由         |
-| ------------------------- | ------------- | ------------ |
-| `subject_token`           | VU ごとに保持 | ユーザー識別 |
-| `actor_token`             | VU ごとに保持 | 代理認証     |
-| exchange 先の `client_id` | 固定で OK     | 対象サービス |
+| Item                      | Requirement       | Reason           |
+| ------------------------- | ----------------- | ---------------- |
+| `subject_token`           | Hold per VU       | User identification |
+| `actor_token`             | Hold per VU       | Delegated authentication |
+| Target `client_id` for exchange | Fixed is OK       | Target service   |
 
-#### リクエスト例
+#### Request Example
 
 ```http
 POST /token HTTP/1.1
@@ -402,30 +402,30 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 &requested_token_type=urn:ietf:params:oauth:token-type:access_token
 ```
 
-#### RT との違い
+#### Difference from RT
 
 ```
 Token Exchange:
-  - 毎回同じ session_token を送る ＝ OK
-  - RT のように毎回更新する必要は「ない」
+  - Sending the same session_token every time = OK
+  - No need to update every time like RT
 ```
 
 ---
 
 ### 5. /userinfo
 
-#### 必須設定
+#### Required Configuration
 
-| 項目           | 要件                       | 理由                         |
-| -------------- | -------------------------- | ---------------------------- |
-| `access_token` | VU ごとに固定で OK         | 実運用でも AT 変更頻度は低い |
-| AT 有効期限    | **有効期限内のものを使用** | 認証エラー防止               |
+| Item           | Requirement                     | Reason                               |
+| -------------- | ------------------------------- | ------------------------------------ |
+| `access_token` | Fixed per VU is OK              | AT change frequency is low in production |
+| AT expiration  | **Use tokens within validity**  | Prevent authentication errors        |
 
-#### 推奨設定
+#### Recommended Configuration
 
-負荷テスト用に `exp=30m` 程度の AT を事前生成するのがベスト。
+Best to pre-generate ATs with `exp=30m` for load testing.
 
-#### リクエスト例
+#### Request Example
 
 ```http
 GET /userinfo HTTP/1.1
@@ -438,11 +438,11 @@ Accept: application/json
 
 ### 6. /.well-known/openid-configuration
 
-#### 必須設定
+#### Required Configuration
 
-**特になし。** 単純な GET リクエスト。
+**None.** Simple GET request.
 
-#### 推奨ヘッダ
+#### Recommended Headers
 
 ```http
 GET /.well-known/openid-configuration HTTP/1.1
@@ -451,90 +451,90 @@ Accept: application/json
 Connection: keep-alive
 ```
 
-#### 用途
+#### Use Case
 
-主にキャッシュ負荷のテストに使用。
-
----
-
-## 状態変化一覧表
-
-各エンドポイントで「何を変える必要があるか」の一覧：
-
-| エンドポイント      | 毎回変える?        | VU ごと? | 必須状態管理      | 備考                |
-| ------------------- | ------------------ | -------- | ----------------- | ------------------- |
-| `/authorize`        | YES（state/nonce） | NO       | state, cookie     | code は使い捨て     |
-| `/token` (code)     | YES（code）        | YES      | code, session     | RT 受け取ったら保存 |
-| `/token` (refresh)  | **YES（RT 更新）** | **YES**  | **refresh_token** | RT family を保持    |
-| `/token` (exchange) | NO                 | YES      | session_token     | 再利用 OK           |
-| `/userinfo`         | NO                 | YES      | AT のみ           | AT は固定利用可     |
-| `/.well-known`      | NO                 | NO       | なし              | キャッシュ負荷      |
+Mainly used for cache load testing.
 
 ---
 
-## 実運用プリセット
+## State Transition Summary Table
 
-### プリセット A: 普通の Web サービス（ログイン 1 回/日）
+Summary of "what needs to change" for each endpoint:
 
-**想定サービス**: 業務系 SaaS、EC サイト、社内ポータル
-
-| エンドポイント     | 要件                        | 頻度       |
-| ------------------ | --------------------------- | ---------- |
-| `/authorize`       | Cookie を正しく扱う         | 1 回/日    |
-| `/token` (code)    | code は使い捨て             | 1 回/日    |
-| `/token` (refresh) | RT は初回しか使わない       | 1-2 回/日  |
-| `/userinfo`        | AT 固定のまま複数回呼ばれる | 5-10 回/日 |
-
-### プリセット B: スマホアプリ
-
-#### B-1: 低頻度（起動時だけ）
-
-**想定サービス**: 天気アプリ、ニュースアプリ
-
-- RT → AT: 1-2 回/日
-- `/authorize` は初回のみ
-
-#### B-2: 中頻度（チャット / ソシャゲ）
-
-**想定サービス**: メッセンジャー、モバイルゲーム
-
-- `/token` (refresh): 1-4 回/時
-- `/userinfo` はほぼ呼ばない
-
-#### B-3: 高頻度（動画配信 / API 連打系）
-
-**想定サービス**: 動画ストリーミング、リアルタイムアプリ
-
-- AT が頻繁に expire しないので refresh 中心
-- `/userinfo` は最小限
-
-### プリセット C: IoT（POS / 家電）
-
-**想定サービス**: POS 端末、スマート家電、センサー
-
-| エンドポイント     | 要件                   | 頻度              |
-| ------------------ | ---------------------- | ----------------- |
-| `/authorize`       | 初回のみ               | 1 回/セットアップ |
-| `/token` (refresh) | 定期メンテナンス系     | 30 分間隔         |
-| `/userinfo`        | ほぼ一定間隔で呼ばれる | 10 分間隔         |
+| Endpoint            | Change Every Time?       | Per VU? | Required State Management | Notes                    |
+| ------------------- | ------------------------ | ------- | ------------------------- | ------------------------ |
+| `/authorize`        | YES (state/nonce)        | NO      | state, cookie             | code is one-time use     |
+| `/token` (code)     | YES (code)               | YES     | code, session             | Save RT when received    |
+| `/token` (refresh)  | **YES (RT update)**      | **YES** | **refresh_token**         | Maintain RT family       |
+| `/token` (exchange) | NO                       | YES     | session_token             | Reuse OK                 |
+| `/userinfo`         | NO                       | YES     | AT only                   | AT can be used fixed     |
+| `/.well-known`      | NO                       | NO      | None                      | Cache load               |
 
 ---
 
-## テストデータ生成要件
+## Production Presets
 
-### Refresh Token Storm 用シード生成
+### Preset A: Regular Web Service (Login 1x/day)
+
+**Target Services**: Business SaaS, E-commerce, Internal portals
+
+| Endpoint           | Requirement                          | Frequency   |
+| ------------------ | ------------------------------------ | ----------- |
+| `/authorize`       | Handle cookies correctly             | 1x/day      |
+| `/token` (code)    | code is one-time use                 | 1x/day      |
+| `/token` (refresh) | RT used only on first time           | 1-2x/day    |
+| `/userinfo`        | AT fixed, called multiple times      | 5-10x/day   |
+
+### Preset B: Mobile App
+
+#### B-1: Low Frequency (On Launch Only)
+
+**Target Services**: Weather apps, News apps
+
+- RT → AT: 1-2x/day
+- `/authorize` only on first time
+
+#### B-2: Medium Frequency (Chat / Mobile Games)
+
+**Target Services**: Messengers, Mobile games
+
+- `/token` (refresh): 1-4x/hour
+- `/userinfo` rarely called
+
+#### B-3: High Frequency (Video Streaming / API-Heavy)
+
+**Target Services**: Video streaming, Real-time apps
+
+- AT rarely expires, so refresh-centric
+- `/userinfo` minimal
+
+### Preset C: IoT (POS / Home Appliances)
+
+**Target Services**: POS terminals, Smart home devices, Sensors
+
+| Endpoint           | Requirement                | Frequency           |
+| ------------------ | -------------------------- | ------------------- |
+| `/authorize`       | Only on first time         | 1x/setup            |
+| `/token` (refresh) | Regular maintenance-type   | 30-minute intervals |
+| `/userinfo`        | Called at regular intervals| 10-minute intervals |
+
+---
+
+## Test Data Generation Requirements
+
+### Seed Generation for Refresh Token Storm
 
 ```bash
-# VU 数に応じた独立した RT family を生成
+# Generate independent RT families according to number of VUs
 cd load-testing/scripts
 
-# 例: 100 VU 用に 100 個の独立した RT を生成
+# Example: Generate 100 independent RTs for 100 VUs
 AUTH_CODE_COUNT=0 \
 REFRESH_COUNT=100 \
 node generate-refresh-tokens-parallel.js
 ```
 
-### 生成されるデータ構造
+### Generated Data Structure
 
 ```json
 [
@@ -551,25 +551,25 @@ node generate-refresh-tokens-parallel.js
 ]
 ```
 
-### 重要なポイント
+### Important Points
 
-- `user_id` は VU ごとに異なる
-- `client_id` は全 VU で共通で OK
-- 各 RT は独立した token family に属する
-
----
-
-## 関連ドキュメント
-
-- [テストシナリオ詳細](./test-scenarios.md) - TEST 1/2/3 の詳細仕様
-- [アーキテクチャ](./architecture.md) - テスト環境構成
-- [メトリクス収集](./metrics-collection.md) - Cloudflare Analytics からのデータ取得
-- [負荷テスト結果](./LOAD_TEST_RESULTS.md) - 過去のテスト結果
+- `user_id` differs per VU
+- `client_id` is common across all VUs (OK)
+- Each RT belongs to an independent token family
 
 ---
 
-## 変更履歴
+## Related Documentation
 
-| 日付       | 変更内容 |
-| ---------- | -------- |
-| 2025-12-03 | 初版作成 |
+- [Test Scenario Details](./test-scenarios.md) - Detailed specifications for TEST 1/2/3
+- [Architecture](./architecture.md) - Test environment configuration
+- [Metrics Collection](./metrics-collection.md) - Data retrieval from Cloudflare Analytics
+- [Load Test Results](./LOAD_TEST_RESULTS.md) - Past test results
+
+---
+
+## Change History
+
+| Date       | Changes        |
+| ---------- | -------------- |
+| 2025-12-03 | Initial version |

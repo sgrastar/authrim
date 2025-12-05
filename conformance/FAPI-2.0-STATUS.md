@@ -5,69 +5,69 @@
 
 ---
 
-## 📋 実装済み機能
+## 📋 Implemented Features
 
-AuthrimはFAPI 2.0 Security Profile（Financial-grade API）の全要件を実装しました。
+Authrim has implemented all requirements of the FAPI 2.0 Security Profile (Financial-grade API).
 
 ### Core Requirements ✅
 
 #### 1. PAR (Pushed Authorization Requests) - RFC 9126
-- `/as/par` エンドポイント実装済み
-- 動的に有効化/無効化可能
-- request_uri の生成と検証
-- **テストカバレッジ**: 100% (2/2 tests)
+- `/as/par` endpoint implemented
+- Dynamically enable/disable
+- request_uri generation and validation
+- **Test Coverage**: 100% (2/2 tests)
 
 #### 2. Confidential Clients Only
-- Public clientsの自動拒否
-- `fapi.allowPublicClients` 設定で制御
-- **テストカバレッジ**: 100% (1/1 test)
+- Automatic rejection of public clients
+- Controlled by `fapi.allowPublicClients` setting
+- **Test Coverage**: 100% (1/1 test)
 
 #### 3. PKCE S256 Mandatory - RFC 7636
-- S256メソッドの強制
-- plainメソッドの自動拒否
-- Code verifier/challenge の検証
-- **テストカバレッジ**: 100% (2/2 tests)
+- S256 method enforcement
+- Automatic rejection of plain method
+- Code verifier/challenge validation
+- **Test Coverage**: 100% (2/2 tests)
 
 #### 4. iss Parameter - RFC 9207
-- Authorization responseに `iss` パラメータを自動追加
-- Mix-up攻撃の防止
-- **テストカバレッジ**: 100% (1/1 test)
+- Automatically add `iss` parameter to authorization response
+- Mix-up attack prevention
+- **Test Coverage**: 100% (1/1 test)
 
 #### 5. private_key_jwt Authentication - RFC 7523
 - JWT-based client authentication
-- JWKS / JWKS_URI サポート
-- 複数の署名アルゴリズムサポート:
+- JWKS / JWKS_URI support
+- Multiple signature algorithm support:
   - RS256, RS384, RS512 (RSA)
   - ES256, ES384, ES512 (ECDSA)
-- Client assertion の完全検証（iss, sub, aud, exp, nbf）
-- **実装ファイル**: `packages/shared/src/utils/client-authentication.ts`
+- Complete client assertion validation (iss, sub, aud, exp, nbf)
+- **Implementation File**: `packages/shared/src/utils/client-authentication.ts`
 
 #### 6. DPoP Support - RFC 9449
 - Demonstrating Proof of Possession (DPoP)
-- 送信者制約トークン
-- DPoP proof の検証
+- Sender-constrained tokens
+- DPoP proof validation
 - JTI replay protection
-- **テストカバレッジ**: 100% (3/3 tests)
+- **Test Coverage**: 100% (3/3 tests)
 
 #### 7. DPoP Authorization Code Binding - RFC 9449 Section 10
-- Authorization codeをDPoP鍵にバインド
-- コード盗難攻撃の防止
-- Authorization requestとToken requestで同一DPoP鍵を強制
-- **実装ファイル**:
-  - `packages/op-auth/src/authorize.ts` (jkt保存)
-  - `packages/op-token/src/token.ts` (jkt検証)
-  - `packages/shared/src/durable-objects/AuthorizationCodeStore.ts` (dpopJktフィールド)
+- Bind authorization code to DPoP key
+- Prevent code theft attacks
+- Enforce same DPoP key for authorization request and token request
+- **Implementation Files**:
+  - `packages/op-auth/src/authorize.ts` (jkt storage)
+  - `packages/op-token/src/token.ts` (jkt validation)
+  - `packages/shared/src/durable-objects/AuthorizationCodeStore.ts` (dpopJkt field)
 
 #### 8. 'none' Algorithm Rejection (Production)
-- JWT署名なし (`alg=none`) を本番環境で拒否
-- KV設定で動的に制御可能 (`allowNoneAlgorithm`)
-- CVE-2015-9235対策（JWT署名バイパス攻撃）
-- 適用範囲:
+- Reject unsigned JWT (`alg=none`) in production environment
+- Dynamically controllable via KV settings (`allowNoneAlgorithm`)
+- CVE-2015-9235 mitigation (JWT signature bypass attack)
+- Application scope:
   - Request Objects
   - Client Assertions (private_key_jwt)
   - JWT Bearer Assertions
-  - DPoP Proofs（既に拒否済み）
-- **実装ファイル**:
+  - DPoP Proofs (already rejected)
+- **Implementation Files**:
   - `packages/op-auth/src/authorize.ts`
   - `packages/shared/src/utils/client-authentication.ts`
   - `packages/shared/src/utils/jwt-bearer.ts`
@@ -75,9 +75,9 @@ AuthrimはFAPI 2.0 Security Profile（Financial-grade API）の全要件を実�
 
 ---
 
-## 🧪 テスト実行状況
+## 🧪 Test Execution Status
 
-### ユニットテスト ✅
+### Unit Tests ✅
 
 ```bash
 $ pnpm vitest run test/fapi-2-0.test.ts
@@ -109,15 +109,15 @@ Tests  12 passed (12) ✅
 Duration: 1.38s
 ```
 
-**テスト成功率**: 100% (12/12)
+**Test Success Rate**: 100% (12/12)
 
 ---
 
 ## 🔄 Discovery Dynamic Configuration
 
-FAPI 2.0設定は、SETTINGS KVからの動的読み込みに対応しています：
+FAPI 2.0 settings support dynamic loading from SETTINGS KV:
 
-### 設定の反映
+### Configuration Reflection
 
 ```json
 // SETTINGS KV: system_settings
@@ -140,7 +140,7 @@ FAPI 2.0設定は、SETTINGS KVからの動的読み込みに対応していま�
 
 ### Discovery Metadata
 
-`GET /.well-known/openid-configuration` で以下が自動的に反映されます：
+`GET /.well-known/openid-configuration` automatically reflects the following:
 
 ```json
 {
@@ -157,13 +157,13 @@ FAPI 2.0設定は、SETTINGS KVからの動的読み込みに対応していま�
 }
 ```
 
-**キャッシュ**: 5分間（300秒）
+**Cache**: 5 minutes (300 seconds)
 
 ---
 
-## 🎛️ Admin API - Certification Profile管理
+## 🎛️ Admin API - Certification Profile Management
 
-### 利用可能なプロファイル
+### Available Profiles
 
 1. **basic-op** - Basic OpenID Connect
 2. **implicit-op** - Implicit Flow
@@ -175,15 +175,15 @@ FAPI 2.0設定は、SETTINGS KVからの動的読み込みに対応していま�
 
 ### API Endpoints
 
-**⚠️ 認証について**: 現在Admin APIは認証なしでアクセスできます。将来的にABACベースの認証機構が実装される予定です。
+**⚠️ Authentication Notice**: Admin API currently accessible without authentication. ABAC-based authentication mechanism will be implemented in the future.
 
-#### プロファイル一覧の取得
+#### Retrieve Profile List
 
 ```bash
 GET /api/admin/settings/profiles
 ```
 
-**レスポンス例**:
+**Response Example**:
 ```json
 {
   "profiles": [
@@ -199,20 +199,20 @@ GET /api/admin/settings/profiles
 }
 ```
 
-#### プロファイルの適用
+#### Apply Profile
 
 ```bash
 PUT /api/admin/settings/profile/:profileName
 ```
 
-**使用例**:
+**Usage Example**:
 ```bash
-# FAPI 2.0モードに切り替え（認証なし）
+# Switch to FAPI 2.0 mode (no authentication required)
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2 \
   -H "Content-Type: application/json"
 ```
 
-**レスポンス例**:
+**Response Example**:
 ```json
 {
   "success": true,
@@ -238,9 +238,9 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2 \
 
 ---
 
-## 📚 実装済みRFCs
+## 📚 Implemented RFCs
 
-| RFC | タイトル | ステータス | 実装ファイル |
+| RFC | Title | Status | Implementation File |
 |-----|---------|----------|------------|
 | [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749.html) | OAuth 2.0 Authorization Framework | ✅ | Core |
 | [RFC 7636](https://www.rfc-editor.org/rfc/rfc7636.html) | PKCE | ✅ | `packages/op-auth/src/authorize.ts` |
@@ -248,27 +248,27 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2 \
 | [RFC 9126](https://www.rfc-editor.org/rfc/rfc9126.html) | PAR | ✅ | `packages/op-auth/src/par.ts` |
 | [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207.html) | Issuer Identification | ✅ | `packages/op-auth/src/authorize.ts:1491` |
 | [RFC 9449](https://www.rfc-editor.org/rfc/rfc9449.html) | DPoP | ✅ | `packages/op-token/src/token.ts` |
-| [FAPI 2.0](https://openid.net/specs/fapi-security-profile-2_0-final.html) | FAPI 2.0 Security Profile | ✅ | 全体 |
+| [FAPI 2.0](https://openid.net/specs/fapi-security-profile-2_0-final.html) | FAPI 2.0 Security Profile | ✅ | Overall |
 
 ---
 
-## 🎯 OpenID Certification 準備手順
+## 🎯 OpenID Certification Preparation Steps
 
-**⚠️ 重要**: Admin APIは現在認証なしでアクセス可能です。テスト環境では自由にプロファイルを切り替えることができます。
+**⚠️ Important**: Admin API is currently accessible without authentication. You can freely switch profiles in test environments.
 
-### Step 1: プロファイルの切り替え
+### Step 1: Switch Profile
 
 ```bash
-# 方法1: Admin API経由（認証なし）
+# Method 1: Via Admin API (no authentication)
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2 \
   -H "Content-Type: application/json"
 
-# 方法2: ローカル環境での切り替え
+# Method 2: Switch in local environment
 curl -X PUT http://localhost:8786/api/admin/settings/profile/fapi-2 \
   -H "Content-Type: application/json"
 ```
 
-### Step 2: Discovery設定の確認
+### Step 2: Verify Discovery Configuration
 
 ```bash
 curl https://your-authrim.com/.well-known/openid-configuration | jq '{
@@ -280,7 +280,7 @@ curl https://your-authrim.com/.well-known/openid-configuration | jq '{
 }'
 ```
 
-**期待される出力**:
+**Expected Output**:
 ```json
 {
   "issuer": "https://your-authrim.com",
@@ -291,110 +291,110 @@ curl https://your-authrim.com/.well-known/openid-configuration | jq '{
 }
 ```
 
-### Step 3: Certification Toolでのテスト
+### Step 3: Test with Certification Tool
 
-1. https://www.certification.openid.net/ にアクセス
-2. **"FAPI 2.0 Security Profile"** を選択
+1. Access https://www.certification.openid.net/
+2. Select **"FAPI 2.0 Security Profile"**
 3. Discovery URL: `https://your-authrim.com/.well-known/openid-configuration`
-4. テスト実行
+4. Execute tests
 
-### Step 4: 事前確認チェックリスト
+### Step 4: Pre-verification Checklist
 
-- [ ] PAR endpoint (`/as/par`) が応答する
-- [ ] private_key_jwt用のJWKSが設定済み
-- [ ] PKCE S256が有効（plainは拒否）
-- [ ] Confidential clientのみ許可
-- [ ] iss パラメータがauthorization responseに含まれる
-- [ ] Discovery metadataが正しく設定されている
+- [ ] PAR endpoint (`/as/par`) responds
+- [ ] JWKS for private_key_jwt configured
+- [ ] PKCE S256 enabled (plain rejected)
+- [ ] Only confidential clients allowed
+- [ ] iss parameter included in authorization response
+- [ ] Discovery metadata correctly configured
 
 ---
 
-## 🔧 トラブルシューティング
+## 🔧 Troubleshooting
 
-### Q1: 設定が反映されない
+### Q1: Settings not applied
 
-**A**: Discovery endpointは5分間キャッシュされます。
+**A**: Discovery endpoint is cached for 5 minutes.
 
 ```bash
-# 即座に反映させる場合はワーカーを再デプロイ
+# Redeploy worker to apply immediately
 wrangler deploy
 ```
 
-### Q2: PAR Required エラー
+### Q2: PAR Required Error
 
-**A**: プロファイルが正しく適用されているか確認：
+**A**: Verify profile is correctly applied:
 
 ```bash
 curl https://your-authrim.com/.well-known/openid-configuration | \
   jq '.require_pushed_authorization_requests'
-# 期待: true
+# Expected: true
 ```
 
-### Q3: DPoP Required エラー
+### Q3: DPoP Required Error
 
-**A**: FAPI設定を確認：
+**A**: Verify FAPI settings:
 
 ```bash
 curl -X GET https://your-authrim.com/api/admin/settings | \
   jq '.settings.fapi.requireDpop'
-# 期待: true (fapi-2-dpopプロファイルの場合)
+# Expected: true (for fapi-2-dpop profile)
 ```
 
-### Q4: Public Client Rejected エラー
+### Q4: Public Client Rejected Error
 
-**A**: FAPI 2.0ではPublic Clientsは許可されません：
+**A**: Public Clients are not allowed in FAPI 2.0:
 
 ```bash
 curl -X GET https://your-authrim.com/api/admin/settings | \
   jq '.settings.fapi.allowPublicClients'
-# 期待: false
+# Expected: false
 ```
 
 ---
 
-## 📖 参考ドキュメント
+## 📖 Reference Documentation
 
-- **設定ガイド**: [`docs/OPENID-CERTIFICATION.md`](../OPENID-CERTIFICATION.md)
-- **テストコード**: [`test/fapi-2-0.test.ts`](../../test/fapi-2-0.test.ts)
-- **Admin API実装**: [`packages/op-management/src/admin.ts`](../../packages/op-management/src/admin.ts)
+- **Configuration Guide**: [`docs/OPENID-CERTIFICATION.md`](../OPENID-CERTIFICATION.md)
+- **Test Code**: [`test/fapi-2-0.test.ts`](../../test/fapi-2-0.test.ts)
+- **Admin API Implementation**: [`packages/op-management/src/admin.ts`](../../packages/op-management/src/admin.ts)
 - **Certification Profiles**: [`packages/op-management/src/certification-profiles.ts`](../../packages/op-management/src/certification-profiles.ts)
 - **Client Authentication**: [`packages/shared/src/utils/client-authentication.ts`](../../packages/shared/src/utils/client-authentication.ts)
-- **切り替えスクリプト**: [`scripts/switch-certification-profile.sh`](../../scripts/switch-certification-profile.sh)
+- **Profile Switcher Script**: [`scripts/switch-certification-profile.sh`](../../scripts/switch-certification-profile.sh)
 
 ---
 
-## 📊 次のステップ
+## 📊 Next Steps
 
-1. ✅ **FAPI 2.0実装** - 完了（2025-11-25）
-2. ✅ **ユニットテスト** - 完了（12/12 tests passed）
-3. ✅ **Admin API & Profiles** - 完了
-4. ✅ **ドキュメント** - 完了
-5. 🔄 **OpenID Certification実行** - 準備完了、実行待ち
-6. ⏳ **Certificationロゴ取得** - 認証待ち
-7. ⏳ **本番環境デプロイ** - 待機中
+1. ✅ **FAPI 2.0 Implementation** - Completed (2025-11-25)
+2. ✅ **Unit Tests** - Completed (12/12 tests passed)
+3. ✅ **Admin API & Profiles** - Completed
+4. ✅ **Documentation** - Completed
+5. 🔄 **OpenID Certification Execution** - Ready, awaiting execution
+6. ⏳ **Certification Logo Acquisition** - Awaiting certification
+7. ⏳ **Production Environment Deployment** - Pending
 
 ---
 
-## 📝 変更履歴
+## 📝 Change History
 
 ### 2025-11-25 (Phase 2)
-- ✅ **DPoP Authorization Code Binding実装** (RFC 9449 Section 10)
-  - Authorization codeとDPoP鍵のバインディング
-  - コード盗難攻撃対策の強化
-- ✅ **'none'アルゴリズム拒否実装**
-  - JWT署名バイパス攻撃（CVE-2015-9235）対策
-  - KV設定による動的制御
-  - Request Objects, Client Assertions, JWT Bearerで適用
+- ✅ **DPoP Authorization Code Binding Implementation** (RFC 9449 Section 10)
+  - Authorization code and DPoP key binding
+  - Enhanced code theft attack protection
+- ✅ **'none' Algorithm Rejection Implementation**
+  - JWT signature bypass attack mitigation (CVE-2015-9235)
+  - Dynamic control via KV settings
+  - Applied to Request Objects, Client Assertions, JWT Bearer
 
 ### 2025-11-25 (Phase 1)
-- ✅ FAPI 2.0 Core Requirements実装完了
-- ✅ PAR, PKCE S256, iss parameter, private_key_jwt, DPoP実装
-- ✅ Discovery動的設定実装
-- ✅ Admin API & Certification Profiles実装
-- ✅ 包括的なテストスイート（12テスト）実装
-- ✅ ドキュメント作成
-- ✅ 切り替えスクリプト作成
+- ✅ FAPI 2.0 Core Requirements implementation completed
+- ✅ PAR, PKCE S256, iss parameter, private_key_jwt, DPoP implementation
+- ✅ Discovery dynamic configuration implementation
+- ✅ Admin API & Certification Profiles implementation
+- ✅ Comprehensive test suite (12 tests) implementation
+- ✅ Documentation creation
+- ✅ Profile switcher script creation
 
 ---
 
-**Status**: ✅ **OpenID Certification準備完了**
+**Status**: ✅ **Ready for OpenID Certification**
