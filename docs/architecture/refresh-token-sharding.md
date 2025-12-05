@@ -1,8 +1,8 @@
 # RefreshTokenRotator Sharding Specification 🔄
 
-**Last Updated**: 2025-12-04
+**Last Updated**: 2025-12-05
 **Status**: Phase 6 Implementation
-**Version**: 1.0.0
+**Version**: 1.1.0
 
 ---
 
@@ -197,7 +197,102 @@ remapShardIndex() is only used in these cases:
 
 ---
 
-## 4. KV Configuration Management
+## 3.1 DO内部のJTI生成（V3実装）
+
+### DO側のgeneration/shardIndex管理
+
+RefreshTokenRotator DOは、初回の`createFamily()`呼び出し時にgeneration/shardIndexを永続化します。
+これにより、`rotate()`時に正しいフォーマットのJTIを生成できます。
+
+```typescript
+// DO内部状態
+class RefreshTokenRotator {
+  private generation: number | null = null;    // 世代番号
+  private shardIndex: number | null = null;    // シャードインデックス
+
+  // 初期化時にDurable Storageから復元
+  private async doInitialize(): Promise<void> {
+    const storedGen = await this.state.storage.get<number>('m:generation');
+    const storedShard = await this.state.storage.get<number>('m:shardIndex');
+    if (storedGen !== undefined) this.generation = storedGen;
+    if (storedShard !== undefined) this.shardIndex = storedShard;
+  }
+
+  // V3リクエストでgeneration/shardIndexを保存
+  async createFamily(request: CreateFamilyRequestV3) {
+    if (request.generation !== undefined && request.shardIndex !== undefined) {
+      if (this.generation === null) {
+        this.generation = request.generation;
+        this.shardIndex = request.shardIndex;
+        await this.state.storage.put('m:generation', this.generation);
+        await this.state.storage.put('m:shardIndex', this.shardIndex);
+      }
+    }
+    // ... 以降のファミリー作成処理
+  }
+}
+```
+
+### JTI生成フロー
+
+```mermaid
+sequenceDiagram
+    participant Seed as Seed生成
+    participant Admin as admin.ts
+    participant DO as RefreshTokenRotator DO
+    participant Client as クライアント
+
+    Note over Seed: 1. シード作成
+    Seed->>Admin: POST /api/admin/tokens/register<br/>jti=v2_16_rt_abc, gen=2, shard=16
+    Admin->>DO: POST /family<br/>{jti, userId, clientId, generation, shardIndex}
+    DO->>DO: generation=2, shardIndex=16 を永続化
+    DO-->>Admin: { version: 1, newJti: "v2_16_rt_abc" }
+
+    Note over Client: 2. 初回リフレッシュ
+    Client->>DO: POST /rotate<br/>incomingJti=v2_16_rt_abc
+    DO->>DO: 比較OK: v2_16_rt_abc === v2_16_rt_abc
+    DO->>DO: newJti = v2_16_rt_newUUID (generation/shard使用)
+    DO-->>Client: { newJti: "v2_16_rt_newUUID" }
+
+    Note over Client: 3. 2回目リフレッシュ
+    Client->>DO: POST /rotate<br/>incomingJti=v2_16_rt_newUUID
+    DO->>DO: 比較OK: v2_16_rt_newUUID === v2_16_rt_newUUID ✅
+```
+
+### generateJti()の実装
+
+```typescript
+private generateJti(): string {
+  const randomPart = `rt_${crypto.randomUUID()}`;
+
+  // generation/shardIndex が設定されている場合は完全なJTI形式で生成
+  if (this.generation !== null && this.shardIndex !== null) {
+    return `v${this.generation}_${this.shardIndex}_${randomPart}`;
+  }
+
+  // レガシー形式（後方互換性のため）
+  return randomPart;
+}
+```
+
+### 重要ポイント
+
+```
+✅ V3実装のポイント:
+├─ DO側でgeneration/shardIndexを永続化
+├─ rotate()で生成されるJTIは完全形式（v{gen}_{shard}_{random}）
+├─ op-tokenはDOから返されたJTIをそのまま使用（ラップ不要）
+└─ JTI比較は完全形式同士で行われる
+
+⚠️ シード作成時の注意:
+├─ createFamily()にgeneration/shardIndexを渡す必要あり
+├─ admin.tsのトークン登録APIはJTIからgeneration/shardIndexを抽出して渡す
+└─ DOが一度generation/shardIndexを保存すると、以降は変更されない
+```
+
+---
+
+## 4. KV設定管理
 
 ### Configuration Keys
 
@@ -689,4 +784,5 @@ Result:
 ---
 
 **Change History**:
-- 2025-12-04: Initial version created (generation management sharding specification)
+- 2025-12-05: V1.1.0 - セクション3.1追加（DO内部のJTI生成/V3実装詳細）
+- 2025-12-04: V1.0.0 - 初版作成（世代管理方式シャーディング仕様）

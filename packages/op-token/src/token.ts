@@ -1741,12 +1741,13 @@ async function handleRefreshTokenGrant(
 
     try {
       // V2: Call RefreshTokenRotator DO with version-based rotation
+      // V3: Send full JTI (DO now stores and returns full JTIs with generation/shard prefix)
       const rotateResponse = await rotator.fetch('http://rotator/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           incomingVersion,
-          incomingJti: jti,
+          incomingJti: jti, // V3: Send full JTI (DO stores and compares full JTIs)
           userId: refreshTokenData.sub,
           clientId: client_id,
           requestedScope: scope || undefined, // Pass requested scope for validation
@@ -1787,19 +1788,9 @@ async function handleRefreshTokenGrant(
         allowedScope: string;
       };
 
-      // V3: Wrap the new JTI with generation/shard info from the original token
-      // Rotation keeps the token on the same shard (same user+client = same shard)
-      if (!parsedJti.isLegacy) {
-        // New format: wrap with generation/shard prefix
-        newRefreshTokenJti = createRefreshTokenJti(
-          parsedJti.generation,
-          parsedJti.shardIndex!,
-          rotateResult.newJti
-        );
-      } else {
-        // Legacy format: keep as-is for backward compatibility
-        newRefreshTokenJti = rotateResult.newJti;
-      }
+      // V3: DO now returns full JTIs with generation/shard prefix
+      // No wrapping needed - use the JTI directly from DO
+      newRefreshTokenJti = rotateResult.newJti;
       newVersion = rotateResult.newVersion;
 
       // Create JWT with new version (rtv claim)
@@ -2314,11 +2305,25 @@ async function handleDeviceCodeGrant(
     );
   }
 
-  // Generate Refresh Token
+  // Generate Refresh Token with V3 sharding support
   const refreshTokenExpiry = parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10);
   let refreshToken: string;
   let refreshJti: string;
   try {
+    // V3: Generate sharded JTI for proper DO routing
+    const shardConfig = await getRefreshTokenShardConfig(c.env, client_id);
+    const shardIndex = await getRefreshTokenShardIndex(
+      metadata.sub!,
+      client_id,
+      shardConfig.currentShardCount
+    );
+    const randomPart = generateRefreshTokenRandomPart();
+    refreshJti = createRefreshTokenJti(
+      shardConfig.currentGeneration,
+      shardIndex,
+      randomPart
+    );
+
     const refreshTokenClaims = {
       sub: metadata.sub!,
       scope: metadata.scope,
@@ -2328,10 +2333,10 @@ async function handleDeviceCodeGrant(
       refreshTokenClaims,
       privateKey,
       keyId,
-      refreshTokenExpiry
+      refreshTokenExpiry,
+      refreshJti // V3: Pass pre-generated sharded JTI
     );
     refreshToken = result.token;
-    refreshJti = result.jti;
 
     await storeRefreshToken(c.env, refreshJti, {
       jti: refreshJti,
@@ -2724,7 +2729,21 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     idToken = await encryptJWT(idToken, clientPublicKey, { alg, enc });
   }
 
-  // Create Refresh Token
+  // Create Refresh Token with V3 sharding support
+  // V3: Generate sharded JTI for proper DO routing
+  const shardConfig = await getRefreshTokenShardConfig(c.env, metadata.client_id);
+  const shardIndex = await getRefreshTokenShardIndex(
+    metadata.sub!,
+    metadata.client_id,
+    shardConfig.currentShardCount
+  );
+  const randomPart = generateRefreshTokenRandomPart();
+  const refreshTokenJti = createRefreshTokenJti(
+    shardConfig.currentGeneration,
+    shardIndex,
+    randomPart
+  );
+
   const refreshTokenClaims = {
     iss: c.env.ISSUER_URL,
     sub: metadata.sub!,
@@ -2733,11 +2752,12 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     scope: metadata.scope,
   };
 
-  const { token: refreshToken, jti: refreshTokenJti } = await createRefreshToken(
+  const { token: refreshToken } = await createRefreshToken(
     refreshTokenClaims,
     privateKey,
     kid,
-    refreshExpiresIn
+    refreshExpiresIn,
+    refreshTokenJti // V3: Pass pre-generated sharded JTI
   );
 
   // Store refresh token in KV
