@@ -76,6 +76,19 @@ import {
   adminUserRelationshipDeleteHandler,
 } from './admin-rbac';
 import { getCodeShards, updateCodeShards } from './routes/settings/code-shards';
+import {
+  getRefreshTokenShardingConfig,
+  updateRefreshTokenShardingConfig,
+  getRefreshTokenShardingStats,
+  cleanupRefreshTokenGeneration,
+  revokeAllUserRefreshTokens,
+} from './routes/settings/refresh-token-sharding';
+import {
+  getOAuthConfig,
+  updateOAuthConfig,
+  clearOAuthConfig,
+  clearAllOAuthConfig,
+} from './routes/settings/oauth-config';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -254,6 +267,21 @@ app.put('/api/admin/settings/profile/:profileName', adminApplyCertificationProfi
 // Admin Code Shards Configuration endpoints
 app.get('/api/admin/settings/code-shards', getCodeShards);
 app.put('/api/admin/settings/code-shards', updateCodeShards);
+
+// Admin OAuth/OIDC Configuration endpoints
+app.get('/api/admin/settings/oauth-config', getOAuthConfig);
+app.put('/api/admin/settings/oauth-config/:name', updateOAuthConfig);
+app.delete('/api/admin/settings/oauth-config/:name', clearOAuthConfig);
+app.delete('/api/admin/settings/oauth-config', clearAllOAuthConfig);
+
+// Admin Refresh Token Sharding Configuration endpoints
+app.get('/api/admin/settings/refresh-token-sharding', getRefreshTokenShardingConfig);
+app.put('/api/admin/settings/refresh-token-sharding', updateRefreshTokenShardingConfig);
+app.get('/api/admin/settings/refresh-token-sharding/stats', getRefreshTokenShardingStats);
+app.delete('/api/admin/settings/refresh-token-sharding/cleanup', cleanupRefreshTokenGeneration);
+
+// User Refresh Token Revocation (all tokens for a user)
+app.delete('/api/admin/users/:userId/refresh-tokens', revokeAllUserRefreshTokens);
 
 // Admin Signing Keys Management endpoints
 app.get('/api/admin/signing-keys/status', adminSigningKeysStatusHandler);

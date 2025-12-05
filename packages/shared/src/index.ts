@@ -33,6 +33,8 @@ export * from './utils/validation';
 export * from './utils/rbac-claims';
 export * from './utils/policy-embedding';
 export * from './utils/consent-rbac';
+export * from './utils/refresh-token-sharding';
+export * from './utils/oauth-config';
 
 // Middleware
 export * from './middleware/admin-auth';

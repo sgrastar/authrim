@@ -54,6 +54,15 @@ export interface CreateFamilyRequestV2 {
 }
 
 /**
+ * Create family request (V3) - Sharding support
+ * Extends V2 with generation and shard information for distributed routing.
+ */
+export interface CreateFamilyRequestV3 extends CreateFamilyRequestV2 {
+  generation: number; // Shard generation (1+)
+  shardIndex: number; // Shard index (0 to shardCount-1)
+}
+
+/**
  * Rotate token request (V2)
  */
 export interface RotateTokenRequestV2 {
@@ -427,6 +436,89 @@ export class RefreshTokenRotator {
   }
 
   /**
+   * Revoke a single token by JTI
+   * Used for RFC 7009 Token Revocation
+   */
+  async revokeByJti(jti: string, reason?: string): Promise<boolean> {
+    await this.initializeState();
+
+    // Find family with matching last_jti
+    for (const [userId, family] of this.families.entries()) {
+      if (family.last_jti === jti) {
+        // Revoke the entire family (as per OAuth best practice)
+        this.families.delete(userId);
+        await this.deleteFamily(userId);
+
+        await this.logCritical({
+          action: 'family_revoked',
+          familyKey: userId,
+          userId,
+          clientId: family.client_id,
+          metadata: { reason: reason || 'token_revocation', jti },
+          timestamp: Date.now(),
+        });
+
+        return true;
+      }
+    }
+
+    return false; // JTI not found (may already be revoked or expired)
+  }
+
+  /**
+   * Batch revoke multiple token families
+   * Used for user-wide token revocation
+   *
+   * @param jtis - List of JTIs to revoke
+   * @param reason - Revocation reason
+   * @returns Number of families revoked
+   */
+  async batchRevoke(
+    jtis: string[],
+    reason?: string
+  ): Promise<{ revoked: number; notFound: number }> {
+    await this.initializeState();
+
+    const now = Date.now();
+    let revoked = 0;
+    let notFound = 0;
+
+    // Build JTI to userId mapping for efficient lookup
+    const jtiToUserMap = new Map<string, string>();
+    for (const [userId, family] of this.families.entries()) {
+      jtiToUserMap.set(family.last_jti, userId);
+    }
+
+    // Revoke each JTI
+    for (const jti of jtis) {
+      const userId = jtiToUserMap.get(jti);
+      if (userId) {
+        const family = this.families.get(userId);
+        if (family) {
+          this.families.delete(userId);
+          await this.deleteFamily(userId);
+
+          // Audit log (non-blocking for batch operations)
+          void this.logToD1({
+            action: 'family_revoked',
+            familyKey: userId,
+            userId,
+            clientId: family.client_id,
+            metadata: { reason: reason || 'batch_revocation', jti },
+            timestamp: now,
+          });
+
+          revoked++;
+        }
+      } else {
+        notFound++;
+      }
+    }
+
+    return { revoked, notFound };
+  }
+
+  /**
    * Validate token without rotation (for introspection)
    */
   async validate(
@@ -660,6 +752,45 @@ export class RefreshTokenRotator {
         await this.revokeFamily(body.userId, body.reason);
 
         return new Response(JSON.stringify({ success: true }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // POST /revoke - Revoke single token by JTI (RFC 7009)
+      if (path === '/revoke' && request.method === 'POST') {
+        const body = (await request.json()) as { jti: string; reason?: string };
+
+        if (!body.jti) {
+          return new Response(
+            JSON.stringify({ error: 'invalid_request', error_description: 'Missing jti' }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const revoked = await this.revokeByJti(body.jti, body.reason);
+
+        return new Response(JSON.stringify({ success: true, revoked }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // POST /batch-revoke - Batch revoke multiple tokens
+      if (path === '/batch-revoke' && request.method === 'POST') {
+        const body = (await request.json()) as { jtis: string[]; reason?: string };
+
+        if (!body.jtis || !Array.isArray(body.jtis)) {
+          return new Response(
+            JSON.stringify({
+              error: 'invalid_request',
+              error_description: 'Missing or invalid jtis array',
+            }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const result = await this.batchRevoke(body.jtis, body.reason);
+
+        return new Response(JSON.stringify({ success: true, ...result }), {
           headers: { 'Content-Type': 'application/json' },
         });
       }

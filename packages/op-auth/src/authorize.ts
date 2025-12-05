@@ -1735,10 +1735,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       ? parseInt(c.env.AUTHRIM_CODE_SHARDS, 10)
       : DEFAULT_CODE_SHARD_COUNT;
 
-    // Calculate shard index randomly and create sharded code
+    // Calculate shard index using FNV-1a hash for sticky routing
+    // Same user+client always routes to same shard (colocated with RefreshToken)
     let authCodeStoreId: DurableObjectId;
     if (shardCount > 0) {
-      const shardIndex = getAuthCodeShardIndex(shardCount);
+      const shardIndex = getAuthCodeShardIndex(sub, validClientId, shardCount);
       code = createShardedAuthCode(shardIndex, randomCode);
       const instanceName = buildAuthCodeShardInstanceName(shardIndex);
       authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);

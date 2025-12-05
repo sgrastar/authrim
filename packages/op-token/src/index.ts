@@ -12,6 +12,7 @@ import {
 
 // Import handlers
 import { tokenHandler } from './token';
+import { handleWarmup } from './warmup';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -77,6 +78,10 @@ app.get('/api/health', (c) => {
 
 // Token endpoint
 app.post('/token', tokenHandler);
+
+// Internal API: Warmup endpoint for load testing
+// Protected by Admin API authentication, placed under /internal/* to prevent bot hits
+app.get('/internal/warmup', handleWarmup);
 
 // 404 handler
 app.notFound((c) => {

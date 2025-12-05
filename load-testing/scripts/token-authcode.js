@@ -123,6 +123,36 @@ const PRESETS = {
     preAllocatedVUs: 300,
     maxVUs: 400,
   },
+  rps500: {
+    description: '500 RPS sustained load - High capacity benchmark (2 min)',
+    stages: [
+      { target: 500, duration: '10s' },
+      { target: 500, duration: '120s' },
+      { target: 0, duration: '10s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<400', 'p(99)<600'],
+      http_req_failed: ['rate<0.01'],
+      token_request_duration: ['p(99)<600'],
+    },
+    preAllocatedVUs: 500,
+    maxVUs: 600,
+  },
+  rps1000: {
+    description: '1000 RPS sustained load - Extreme capacity benchmark (2 min)',
+    stages: [
+      { target: 1000, duration: '15s' },
+      { target: 1000, duration: '120s' },
+      { target: 0, duration: '15s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<500', 'p(99)<800'],
+      http_req_failed: ['rate<0.02'],
+      token_request_duration: ['p(99)<800'],
+    },
+    preAllocatedVUs: 800,
+    maxVUs: 1000,
+  },
   heavy: {
     description: '600 RPS peak load - Stress testing',
     stages: [
@@ -396,6 +426,10 @@ function textSummary(data, options) {
     p95Threshold = 300;
     p99Threshold = 500;
     errorThreshold = 0.1;
+  } else if (PRESET === 'rps500') {
+    p95Threshold = 400;
+    p99Threshold = 600;
+    errorThreshold = 1;
   } else {
     p95Threshold = 500;
     p99Threshold = 750;

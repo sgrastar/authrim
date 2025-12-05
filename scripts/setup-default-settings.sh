@@ -169,7 +169,7 @@ main() {
     if [ "$FORCE" = false ]; then
         print_info "Checking for existing settings..."
 
-        EXISTING_SETTINGS=$(wrangler kv:key get --namespace-id="$SETTINGS_ID" "system_settings" 2>/dev/null || echo "")
+        EXISTING_SETTINGS=$(wrangler kv key get "system_settings" --namespace-id="$SETTINGS_ID" --remote 2>/dev/null || echo "")
 
         if [ -n "$EXISTING_SETTINGS" ] && [ "$EXISTING_SETTINGS" != "null" ]; then
             print_warning "Settings already exist in KV"
@@ -282,17 +282,24 @@ EOF
     # Write to KV
     print_info "Writing settings to KV..."
 
-    if echo "$DEFAULT_SETTINGS" | wrangler kv:key put \
+    # Write to temp file for wrangler
+    TEMP_SETTINGS_FILE=$(mktemp)
+    echo "$DEFAULT_SETTINGS" > "$TEMP_SETTINGS_FILE"
+
+    if wrangler kv key put "system_settings" \
         --namespace-id="$SETTINGS_ID" \
-        "system_settings" \
-        --path=/dev/stdin 2>&1; then
+        --path="$TEMP_SETTINGS_FILE" \
+        --remote 2>&1; then
 
         print_success "Settings initialized successfully!"
         echo ""
 
+        # Cleanup temp file
+        rm -f "$TEMP_SETTINGS_FILE"
+
         # Verify write
         print_info "Verifying settings..."
-        STORED_SETTINGS=$(wrangler kv:key get --namespace-id="$SETTINGS_ID" "system_settings")
+        STORED_SETTINGS=$(wrangler kv key get "system_settings" --namespace-id="$SETTINGS_ID" --remote)
 
         if [ -n "$STORED_SETTINGS" ]; then
             print_success "Settings verified in KV"
@@ -317,12 +324,119 @@ EOF
     fi
 
     echo ""
-    print_success "Initialization complete!"
+    print_success "System settings initialization complete!"
+    echo ""
+
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Initialize Sharding Configuration (Auth Code + Refresh Token)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔧 Initializing Sharding Configuration"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # Get AUTHRIM_CONFIG KV namespace ID
+    AUTHRIM_CONFIG_ID=""
+    if [ -f "$PROJECT_ROOT/wrangler.toml" ]; then
+        AUTHRIM_CONFIG_ID=$(grep -A 5 "binding = \"AUTHRIM_CONFIG\"" "$PROJECT_ROOT/wrangler.toml" | grep "id = " | head -1 | sed 's/.*id = "\(.*\)".*/\1/')
+    fi
+
+    if [ -z "$AUTHRIM_CONFIG_ID" ]; then
+        print_warning "Could not find AUTHRIM_CONFIG KV namespace ID"
+        print_info "Skipping sharding config initialization"
+    else
+        print_success "Found AUTHRIM_CONFIG namespace ID: ${AUTHRIM_CONFIG_ID}"
+
+        # Determine shard counts based on environment
+        case $DEPLOY_ENV in
+            prod)
+                AUTH_CODE_SHARD_COUNT=64
+                REFRESH_TOKEN_SHARD_COUNT=8
+                ;;
+            staging)
+                AUTH_CODE_SHARD_COUNT=64
+                REFRESH_TOKEN_SHARD_COUNT=16
+                ;;
+            dev)
+                AUTH_CODE_SHARD_COUNT=128
+                REFRESH_TOKEN_SHARD_COUNT=32
+                ;;
+            *)
+                AUTH_CODE_SHARD_COUNT=64
+                REFRESH_TOKEN_SHARD_COUNT=8
+                ;;
+        esac
+
+        echo ""
+        print_info "Environment: $DEPLOY_ENV"
+        print_info "  Auth Code shards:     $AUTH_CODE_SHARD_COUNT"
+        print_info "  Refresh Token shards: $REFRESH_TOKEN_SHARD_COUNT"
+        echo ""
+
+        # ─────────────────────────────────────────────────────────────────
+        # 1. Auth Code Sharding (simple number)
+        # ─────────────────────────────────────────────────────────────────
+        print_info "Setting up Auth Code sharding..."
+
+        EXISTING_CODE_SHARDS=$(wrangler kv key get "code_shards" --namespace-id="$AUTHRIM_CONFIG_ID" --remote 2>/dev/null || echo "")
+
+        if [ -n "$EXISTING_CODE_SHARDS" ] && [ "$EXISTING_CODE_SHARDS" != "null" ] && [ "$FORCE" = false ]; then
+            print_warning "Auth Code shard config already exists: $EXISTING_CODE_SHARDS"
+            print_info "Use --force to overwrite"
+        else
+            if wrangler kv key put "code_shards" "$AUTH_CODE_SHARD_COUNT" \
+                --namespace-id="$AUTHRIM_CONFIG_ID" \
+                --remote 2>&1; then
+                print_success "Auth Code shards: $AUTH_CODE_SHARD_COUNT"
+            else
+                print_error "Failed to write Auth Code shard config"
+            fi
+        fi
+
+        # ─────────────────────────────────────────────────────────────────
+        # 2. Refresh Token Sharding (JSON with generation management)
+        # ─────────────────────────────────────────────────────────────────
+        echo ""
+        print_info "Setting up Refresh Token sharding..."
+
+        CURRENT_TIMESTAMP=$(date +%s)000
+        SHARD_CONFIG="{\"currentGeneration\":1,\"currentShardCount\":$REFRESH_TOKEN_SHARD_COUNT,\"previousGenerations\":[],\"updatedAt\":$CURRENT_TIMESTAMP}"
+
+        EXISTING_SHARD_CONFIG=$(wrangler kv key get "refresh-token-shard-config:__global__" --namespace-id="$AUTHRIM_CONFIG_ID" --remote 2>/dev/null || echo "")
+
+        if [ -n "$EXISTING_SHARD_CONFIG" ] && [ "$EXISTING_SHARD_CONFIG" != "null" ] && [ "$FORCE" = false ]; then
+            print_warning "Refresh Token shard config already exists"
+            echo "Existing config:"
+            echo "$EXISTING_SHARD_CONFIG" | jq '.' 2>/dev/null || echo "$EXISTING_SHARD_CONFIG"
+            print_info "Use --force to overwrite"
+        else
+            # Write to temp file for wrangler
+            TEMP_SHARD_FILE=$(mktemp)
+            echo "$SHARD_CONFIG" > "$TEMP_SHARD_FILE"
+
+            if wrangler kv key put "refresh-token-shard-config:__global__" \
+                --namespace-id="$AUTHRIM_CONFIG_ID" \
+                --path="$TEMP_SHARD_FILE" \
+                --remote 2>&1; then
+                print_success "Refresh Token shards: $REFRESH_TOKEN_SHARD_COUNT (generation: 1)"
+            else
+                print_error "Failed to write Refresh Token shard config"
+            fi
+
+            rm -f "$TEMP_SHARD_FILE"
+        fi
+    fi
+
+    echo ""
+    print_success "All initialization complete!"
     echo ""
     print_info "Next steps:"
     echo "  1. Deploy your workers: wrangler deploy"
     echo "  2. Test discovery endpoint: curl https://your-domain/.well-known/openid-configuration"
     echo "  3. (Optional) Switch profile: ./scripts/switch-certification-profile.sh fapi-2"
+    echo "  4. (Optional) Change shard count via Admin API:"
+    echo "     PUT /api/admin/settings/refresh-token-sharding"
     echo ""
 }
 

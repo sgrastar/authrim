@@ -103,18 +103,40 @@ export function buildKVKeyForTenant(tenantId: string, prefix: string, key: strin
 export const DEFAULT_CODE_SHARD_COUNT = 64;
 
 /**
+ * FNV-1a 32-bit hash function.
+ * Fast, synchronous hash with good distribution.
+ * Used for sticky routing without blocking the event loop.
+ *
+ * @param str - String to hash
+ * @returns 32-bit unsigned integer hash
+ */
+function fnv1a32(str: string): number {
+  let hash = 2166136261; // FNV offset basis
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619); // FNV prime
+  }
+  return hash >>> 0; // Convert to unsigned 32-bit
+}
+
+/**
  * Calculate shard index for authorization codes.
- * Uses random selection to distribute load across all shards.
+ * Uses FNV-1a hash of userId:clientId for sticky routing.
+ * Same user+client always routes to same shard (colocated with RefreshToken).
  *
- * Note: Previously used user ID hash, but this caused all codes from a single user
- * to be on the same shard, defeating the purpose of sharding for load testing.
- *
+ * @param userId - User identifier (sub claim)
+ * @param clientId - OAuth client identifier
  * @param shardCount - Number of shards (default: 64)
  * @returns Shard index (0 to shardCount - 1)
  */
-export function getAuthCodeShardIndex(shardCount: number = DEFAULT_CODE_SHARD_COUNT): number {
-  // Random shard selection for even distribution across all shards
-  return Math.floor(Math.random() * shardCount);
+export function getAuthCodeShardIndex(
+  userId: string,
+  clientId: string,
+  shardCount: number = DEFAULT_CODE_SHARD_COUNT
+): number {
+  const key = `${userId}:${clientId}`;
+  const hash = fnv1a32(key);
+  return hash % shardCount;
 }
 
 /**

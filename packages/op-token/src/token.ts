@@ -9,6 +9,13 @@ import {
   buildAuthCodeShardInstanceName,
   remapShardIndex,
   getShardCount,
+  // Refresh Token Sharding
+  getRefreshTokenShardConfig,
+  getRefreshTokenShardIndex,
+  createRefreshTokenJti,
+  parseRefreshTokenJti,
+  buildRefreshTokenRotatorInstanceName,
+  generateRefreshTokenRandomPart,
 } from '@authrim/shared';
 import {
   revokeToken,
@@ -1090,15 +1097,35 @@ async function handleAuthorizationCodeGrant(
       client_id: client_id,
     };
 
-    // V2: Register with RefreshTokenRotator first to get version
+    // V2/V3: Register with RefreshTokenRotator first to get version
+    // V3: Uses sharded DO instances for horizontal scaling
     let rtv: number = 1; // Default version for new family
 
     if (c.env.REFRESH_TOKEN_ROTATOR) {
-      const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
-      const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
+      // V3: Get shard configuration and calculate shard index
+      const shardConfig = await getRefreshTokenShardConfig(c.env, client_id);
+      const shardIndex = await getRefreshTokenShardIndex(
+        authCodeData.sub,
+        client_id,
+        shardConfig.currentShardCount
+      );
 
-      // Generate JTI first (will be used in both DO and JWT)
-      refreshTokenJti = `rt_${crypto.randomUUID()}`;
+      // V3: Generate sharded JTI with generation and shard info
+      const randomPart = generateRefreshTokenRandomPart();
+      refreshTokenJti = createRefreshTokenJti(
+        shardConfig.currentGeneration,
+        shardIndex,
+        randomPart
+      );
+
+      // V3: Route to sharded DO instance
+      const instanceName = buildRefreshTokenRotatorInstanceName(
+        client_id,
+        shardConfig.currentGeneration,
+        shardIndex
+      );
+      const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
+      const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
 
       const familyResponse = await rotator.fetch('http://rotator/family', {
         method: 'POST',
@@ -1109,6 +1136,9 @@ async function handleAuthorizationCodeGrant(
           clientId: client_id,
           scope: authCodeData.scope,
           ttl: refreshTokenExpiresIn,
+          // V3: Include shard metadata (for debugging/audit)
+          generation: shardConfig.currentGeneration,
+          shardIndex: shardIndex,
         }),
       });
 
@@ -1126,6 +1156,17 @@ async function handleAuthorizationCodeGrant(
 
       const familyResult = (await familyResponse.json()) as { version: number; jti: string };
       rtv = familyResult.version;
+
+      // V3: Record in D1 for user-wide revocation support
+      // (non-blocking, fire-and-forget for performance)
+      void recordTokenFamilyInD1(
+        c.env,
+        refreshTokenJti,
+        authCodeData.sub,
+        client_id,
+        shardConfig.currentGeneration,
+        refreshTokenExpiresIn
+      );
     } else {
       refreshTokenJti = `rt_${crypto.randomUUID()}`;
     }
@@ -1681,7 +1722,14 @@ async function handleRefreshTokenGrant(
       );
     }
 
-    const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
+    // V3: Parse JTI to extract generation and shard info for routing
+    const parsedJti = parseRefreshTokenJti(jti);
+    const instanceName = buildRefreshTokenRotatorInstanceName(
+      client_id,
+      parsedJti.generation,
+      parsedJti.shardIndex
+    );
+    const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
     const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
 
     // V2: Get incoming version from JWT (default to 1 for legacy tokens without rtv)
@@ -1738,7 +1786,20 @@ async function handleRefreshTokenGrant(
         expiresIn: number;
         allowedScope: string;
       };
-      newRefreshTokenJti = rotateResult.newJti;
+
+      // V3: Wrap the new JTI with generation/shard info from the original token
+      // Rotation keeps the token on the same shard (same user+client = same shard)
+      if (!parsedJti.isLegacy) {
+        // New format: wrap with generation/shard prefix
+        newRefreshTokenJti = createRefreshTokenJti(
+          parsedJti.generation,
+          parsedJti.shardIndex!,
+          rotateResult.newJti
+        );
+      } else {
+        // Legacy format: keep as-is for backward compatibility
+        newRefreshTokenJti = rotateResult.newJti;
+      }
       newVersion = rotateResult.newVersion;
 
       // Create JWT with new version (rtv claim)
@@ -2710,4 +2771,43 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     refresh_token: refreshToken,
     scope: metadata.scope,
   });
+}
+
+/**
+ * Record token family in D1 for user-wide revocation support (V3 Sharding)
+ *
+ * This is a non-blocking operation that records the token family in D1's
+ * user_token_families table. This enables efficient user-wide token revocation
+ * by allowing the admin API to query all token families for a user.
+ *
+ * Note: This is fire-and-forget for performance. Failure does not affect
+ * token issuance, but may impact user-wide revocation functionality.
+ */
+async function recordTokenFamilyInD1(
+  env: Env,
+  jti: string,
+  userId: string,
+  clientId: string,
+  generation: number,
+  ttlSeconds: number
+): Promise<void> {
+  if (!env.DB) {
+    return;
+  }
+
+  try {
+    const now = Date.now();
+    const expiresAt = now + ttlSeconds * 1000;
+
+    await env.DB.prepare(
+      `INSERT INTO user_token_families (jti, tenant_id, user_id, client_id, generation, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (jti) DO NOTHING`
+    )
+      .bind(jti, 'default', userId, clientId, generation, expiresAt)
+      .run();
+  } catch (error) {
+    // Log but don't fail - this is a non-critical operation
+    console.error('Failed to record token family in D1:', error);
+  }
 }
