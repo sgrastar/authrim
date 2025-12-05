@@ -65,16 +65,24 @@ Authrim is an **enterprise-grade Identity & Access Platform** built for:
 
 ### Why Authrim?
 
-| Feature                   | Authrim       | Auth0        | Keycloak     | Ory Stack     |
-| ------------------------- | ------------- | ------------ | ------------ | ------------- |
-| **Setup Time**            | 5 min (goal)  | 30 min       | 2+ hours     | 1+ hour       |
-| **AuthN + AuthZ Unified** | ✅            | ⚠️ Basic     | ⚠️ Basic     | ❌ Separate   |
-| **RBAC/ABAC/ReBAC**       | ✅ All three  | ✅ RBAC only | ✅ RBAC/ABAC | ✅ ReBAC only |
-| **Global Edge**           | ✅            | ✅           | ❌           | ❌            |
-| **Self-Hosted**           | ✅            | ❌           | ✅           | ✅            |
-| **Open Source**           | ✅ Apache 2.0 | ❌           | ✅ Apache    | ✅ Apache     |
-| **Social Login**          | 🔜 P7         | ✅           | ✅           | ✅            |
-| **OpenID4VP/CI**          | 🔜 P9         | ❌           | ❌           | ❌            |
+| Feature                   | Authrim       | Auth0        | Authlete      | Keycloak     | Ory Stack     |
+| ------------------------- | ------------- | ------------ | ------------- | ------------ | ------------- |
+| **Setup Time**            | 5 min (goal)  | 30 min       | 1+ hour       | 2+ hours     | 1+ hour       |
+| **AuthN + AuthZ Unified** | ✅            | ⚠️ Basic     | ❌ Separate   | ⚠️ Basic     | ❌ Separate   |
+| **RBAC/ABAC/ReBAC**       | ✅ All three  | ✅ RBAC only | ❌ External   | ✅ RBAC/ABAC | ✅ ReBAC only |
+| **Global Edge**           | ✅ <50ms      | ✅           | ✅ Multi-region | ❌         | ❌            |
+| **Self-Hosted**           | ✅            | ❌           | ✅            | ✅           | ✅            |
+| **Open Source**           | ✅ Apache 2.0 | ❌           | ❌ Proprietary | ✅ Apache   | ✅ Apache     |
+| **Data Ownership**        | ✅ Full       | ❌ Vendor    | ✅ Full       | ✅ Full      | ✅ Full       |
+| **Data Residency**        | ✅ Your choice| ❌ US/EU only| ✅ Your choice| ✅ Your choice| ✅ Your choice|
+| **Compliance (SOC2/ISO 27001)** | ⚠️ Self-managed| ✅ Certified| ✅ Certified  | ⚠️ Self-managed| ⚠️ Self-managed|
+| **Social Login**          | 🔜 P7         | ✅           | ✅            | ✅           | ✅            |
+| **Customizability**       | ✅ Full code  | ⚠️ Limited   | ✅ Full       | ✅ Full      | ✅ Full       |
+| **Admin UI**              | ✅ Built-in   | ✅           | ⚠️ Basic      | ✅           | ⚠️ Separate  |
+| **Production Ready**      | ❌ Dev stage  | ✅           | ✅            | ✅           | ✅            |
+| **Enterprise Support**    | ❌ Not yet    | ✅ Paid      | ✅ Paid       | ✅ Available | ✅ Paid       |
+| **Community Size**        | ❌ Small      | ✅ Large     | ⚠️ Medium     | ✅ Large     | ⚠️ Medium     |
+| **Pricing**               | Free (edge)   | $$$          | $$$           | Free         | $$ - $$$      |
 
 ---
 
