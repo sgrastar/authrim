@@ -1,27 +1,27 @@
-# テスト環境アーキテクチャ
+# Test Environment Architecture
 
-## 概要
+## Overview
 
-このドキュメントでは、Authrim の負荷テストにおける標準アーキテクチャを定義します。
+This document defines the standard architecture for Authrim's load testing.
 
-## テスト実行環境（ローカル）
+## Test Execution Environment (Local)
 
-### ハードウェア要件
+### Hardware Requirements
 
-| 項目         | 推奨スペック             | 最低スペック        |
+| Item         | Recommended Specs        | Minimum Specs       |
 | ------------ | ------------------------ | ------------------- |
-| CPU          | Apple Silicon (M1/M2/M3) | Intel Core i5 以上  |
-| メモリ       | 16GB 以上                | 8GB 以上            |
-| ストレージ   | SSD 100GB 以上の空き     | SSD 50GB 以上の空き |
-| ネットワーク | 上り 100Mbps 以上        | 上り 50Mbps 以上    |
+| CPU          | Apple Silicon (M1/M2/M3) | Intel Core i5 or higher  |
+| Memory       | 16GB or higher           | 8GB or higher       |
+| Storage      | SSD 100GB+ available     | SSD 50GB+ available |
+| Network      | Upload 100Mbps or higher | Upload 50Mbps or higher |
 
-### ソフトウェア要件
+### Software Requirements
 
-#### 必須ツール
+#### Required Tools
 
 1. **k6 OSS**
-   - バージョン: v0.45.0 以上
-   - インストール方法:
+   - Version: v0.45.0 or higher
+   - Installation:
 
      ```bash
      # macOS
@@ -39,41 +39,41 @@
      ```
 
 2. **wrangler**
-   - バージョン: v3.0.0 以上
-   - インストール方法:
+   - Version: v3.0.0 or higher
+   - Installation:
      ```bash
      npm install -g wrangler
      wrangler login
      ```
 
 3. **Node.js**
-   - バージョン: v18.0.0 以上
-   - 用途: wrangler の実行、結果処理スクリプト
+   - Version: v18.0.0 or higher
+   - Purpose: Running wrangler, result processing scripts
 
-#### 任意ツール
+#### Optional Tools
 
 1. **jq**
-   - 用途: JSON 結果の整形・フィルタリング
-   - インストール:
+   - Purpose: JSON result formatting and filtering
+   - Installation:
      ```bash
      brew install jq
      ```
 
 2. **curl**
-   - 用途: API の手動テスト、デバッグ
-   - 通常は OS にプリインストール済み
+   - Purpose: Manual API testing, debugging
+   - Usually pre-installed with OS
 
-## Authrim 側構成
+## Authrim Infrastructure
 
-### アーキテクチャ図
+### Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      ローカルテスト環境                        │
+│                  Local Test Environment                       │
 │                                                               │
 │  ┌──────────┐     ┌──────────┐     ┌──────────┐             │
 │  │   k6     │     │ wrangler │     │   jq     │             │
-│  │  (負荷)   │     │(メトリクス)│     │ (整形)    │             │
+│  │  (load)  │     │(metrics) │     │ (format) │             │
 │  └────┬─────┘     └──────────┘     └──────────┘             │
 │       │                                                       │
 └───────┼───────────────────────────────────────────────────────┘
@@ -96,9 +96,9 @@
 │                                                               │
 │  ┌──────────────────────────────────────────────────────┐    │
 │  │  Authrim Worker                                      │    │
-│  │  ├─ /authorize (認可エンドポイント)                    │    │
-│  │  ├─ /token (トークン発行)                             │    │
-│  │  ├─ /userinfo (ユーザー情報)                          │    │
+│  │  ├─ /authorize (authorization endpoint)              │    │
+│  │  ├─ /token (token issuance)                          │    │
+│  │  ├─ /userinfo (user information)                     │    │
 │  │  └─ /.well-known/openid-configuration                │    │
 │  └────┬────────────────────────────────────────┬─────────┘    │
 │       │                                        │              │
@@ -123,106 +123,106 @@
 │  ┌──────────┐      ┌──────────┐      ┌──────────┐           │
 │  │    KV    │      │    D1    │      │    R2    │           │
 │  │          │      │          │      │          │           │
-│  │ ・JWK    │      │・Refresh │      │ ・Logs   │           │
-│  │ ・Config │      │・Session │      │ (Optional)│           │
+│  │ • JWK    │      │• Refresh │      │ • Logs   │           │
+│  │ • Config │      │• Session │      │ (Optional)│           │
 │  └──────────┘      └──────────┘      └──────────┘           │
 │                                                               │
 └───────────────────────────────────────────────────────────────┘
 ```
 
-### 各コンポーネントの役割
+### Component Roles
 
 #### 1. Cloudflare Edge Network
 
-- **役割**:
-  - リクエストの最前線受付
-  - DDoS 保護
+- **Role**:
+  - Frontline request reception
+  - DDoS protection
   - Rate Limiting
-  - Edge キャッシュ（静的コンテンツ）
+  - Edge cache (static content)
 
-- **負荷テストへの影響**:
-  - Rate Limiting 設定により、テストが制限される可能性
-  - Workers Unlimited プランを推奨
+- **Impact on Load Testing**:
+  - Tests may be limited by Rate Limiting settings
+  - Workers Unlimited plan recommended
 
 #### 2. Authrim Worker
 
-- **役割**:
-  - OIDC プロトコルの実装
-  - リクエストルーティング
-  - DO / KV / D1 への振り分け
+- **Role**:
+  - OIDC protocol implementation
+  - Request routing
+  - Distribution to DO / KV / D1
 
-- **負荷テストで測定する項目**:
-  - CPU 時間 (ms)
-  - リクエスト数
-  - エラーレート
-  - レスポンスタイム (p50/p90/p99)
+- **Metrics to Measure in Load Testing**:
+  - CPU time (ms)
+  - Request count
+  - Error rate
+  - Response time (p50/p90/p99)
 
 #### 3. Durable Objects (DO)
 
 ##### KeyManager DO
 
-- **役割**:
-  - JWK のキャッシュ
-  - JWT の署名・検証
-  - 鍵のローテーション
+- **Role**:
+  - JWK caching
+  - JWT signing and verification
+  - Key rotation
 
-- **負荷テストで測定する項目**:
-  - DO 実行回数
-  - 署名処理時間
-  - キャッシュヒット率
+- **Metrics to Measure in Load Testing**:
+  - DO execution count
+  - Signature processing time
+  - Cache hit rate
 
 ##### AuthorizationCodeStore DO
 
-- **役割**:
-  - 認可コードの一時保存
-  - PKCE 検証データの保持
+- **Role**:
+  - Temporary authorization code storage
+  - PKCE verification data retention
 
-- **負荷テストで測定する項目**:
-  - 書き込み/読み取り競合
-  - コード発行レート
+- **Metrics to Measure in Load Testing**:
+  - Write/read contention
+  - Code issuance rate
 
 ##### TokenStore DO
 
-- **役割**:
-  - アクセストークンの管理
-  - Refresh Token のローテーション
+- **Role**:
+  - Access token management
+  - Refresh Token rotation
 
-- **負荷テストで測定する項目**:
-  - Refresh 時の競合
-  - ローテーション処理時間
+- **Metrics to Measure in Load Testing**:
+  - Refresh contention
+  - Rotation processing time
 
 #### 4. Cloudflare Storage
 
 ##### KV (Key-Value Store)
 
-- **役割**:
-  - JWK の公開鍵保存
-  - 設定情報のキャッシュ
+- **Role**:
+  - JWK public key storage
+  - Configuration information cache
 
-- **特性**:
+- **Characteristics**:
   - Eventually Consistent
-  - 読み取り高速、書き込み遅延あり
+  - Fast reads, write latency
 
 ##### D1 (SQLite Database)
 
-- **役割**:
-  - Refresh Token の永続化
-  - Session データの保存
+- **Role**:
+  - Refresh Token persistence
+  - Session data storage
 
-- **負荷テストで測定する項目**:
-  - 書き込み速度
-  - 読み取り速度
-  - トランザクション競合
+- **Metrics to Measure in Load Testing**:
+  - Write speed
+  - Read speed
+  - Transaction contention
 
 ##### R2 (Object Storage)
 
-- **役割** (任意):
-  - 監査ログの保存
-  - テスト結果の長期保存
+- **Role** (Optional):
+  - Audit log storage
+  - Long-term test result storage
 
-## テストトラフィックフロー
+## Test Traffic Flow
 
-### TEST 1: /token 単体
+### TEST 1: /token Endpoint Only
 
 ```
 k6
@@ -231,9 +231,9 @@ k6
  ↓
 Authrim Worker
  ↓
-KeyManager DO (JWT 署名)
+KeyManager DO (JWT signing)
  ↓
-KV (JWK 読取)
+KV (JWK read)
  ↓
 Response (JWT)
 ```
@@ -247,16 +247,16 @@ k6
  ↓
 Authrim Worker
  ↓
-TokenStore DO (ローテーション)
+TokenStore DO (rotation)
  ↓
-D1 (Refresh Token 更新)
+D1 (Refresh Token update)
  ↓
-KeyManager DO (JWT 署名)
+KeyManager DO (JWT signing)
  ↓
-Response (新しい Access Token + Refresh Token)
+Response (new Access Token + Refresh Token)
 ```
 
-### TEST 3: フル OIDC フロー
+### TEST 3: Full OIDC Flow
 
 ```
 k6
@@ -265,177 +265,177 @@ k6
  ↓
 Authrim Worker
  ↓
-AuthorizationCodeStore DO (コード発行)
+AuthorizationCodeStore DO (code issuance)
  ↓
 Response (code)
  ↓
-k6 (code 受取)
+k6 (receive code)
  ↓
  POST /token
  ↓
 Authrim Worker
  ↓
-AuthorizationCodeStore DO (コード検証・削除)
+AuthorizationCodeStore DO (code validation/deletion)
  ↓
-TokenStore DO (トークン発行)
+TokenStore DO (token issuance)
  ↓
-D1 (Session 保存)
+D1 (Session storage)
  ↓
-KeyManager DO (JWT 署名)
+KeyManager DO (JWT signing)
  ↓
 Response (Access Token + Refresh Token)
 ```
 
-## ネットワーク要件
+## Network Requirements
 
-### 帯域幅計算
+### Bandwidth Calculation
 
-#### 最小帯域幅（Light プリセット）
+#### Minimum Bandwidth (Light Preset)
 
 - RPS: 20
-- リクエストサイズ: 約 2KB
-- レスポンスサイズ: 約 5KB
-- **必要帯域幅**: 20 × (2 + 5) KB = 140 KB/s ≈ **1.1 Mbps**
+- Request size: approx 2KB
+- Response size: approx 5KB
+- **Required bandwidth**: 20 × (2 + 5) KB = 140 KB/s ≈ **1.1 Mbps**
 
-#### 推奨帯域幅（Standard プリセット）
+#### Recommended Bandwidth (Standard Preset)
 
 - RPS: 100
-- **必要帯域幅**: 100 × 7 KB = 700 KB/s ≈ **5.6 Mbps**
+- **Required bandwidth**: 100 × 7 KB = 700 KB/s ≈ **5.6 Mbps**
 
-#### Heavy プリセット
+#### Heavy Preset
 
 - RPS: 600
-- **必要帯域幅**: 600 × 7 KB = 4,200 KB/s ≈ **33.6 Mbps**
+- **Required bandwidth**: 600 × 7 KB = 4,200 KB/s ≈ **33.6 Mbps**
 
-### レイテンシ要件
+### Latency Requirements
 
-- **RTT (Round Trip Time)**: 通常 50-100ms（日本から Cloudflare Edge まで）
-- **Worker 処理時間**: 通常 10-50ms
-- **DO 処理時間**: 通常 5-20ms
-- **D1 書き込み**: 通常 10-30ms
+- **RTT (Round Trip Time)**: Typically 50-100ms (from Japan to Cloudflare Edge)
+- **Worker processing time**: Typically 10-50ms
+- **DO processing time**: Typically 5-20ms
+- **D1 writes**: Typically 10-30ms
 
-**合計予想レスポンスタイム**: 75-200ms（正常時）
+**Total expected response time**: 75-200ms (normal conditions)
 
-## Cloudflare Analytics 設定
+## Cloudflare Analytics Configuration
 
-### 必要な権限
+### Required Permissions
 
-Cloudflare API Token に以下の権限が必要：
+Cloudflare API Token needs the following permissions:
 
 - **Workers Scripts: Read**
 - **Analytics: Read**
 - **Logs: Read**
 
-### Analytics Engine の有効化
+### Enable Analytics Engine
 
-`wrangler.toml` に以下を追加：
+Add the following to `wrangler.toml`:
 
 ```toml
 [observability]
 enabled = true
-head_sampling_rate = 1.0  # テスト時は 100% サンプリング
+head_sampling_rate = 1.0  # 100% sampling during testing
 
 [analytics_engine_datasets]
-# 必要に応じてカスタムデータセットを定義
+# Define custom datasets as needed
 ```
 
-### Graph API エンドポイント
+### Graph API Endpoint
 
 ```
 https://api.cloudflare.com/client/v4/graphql
 ```
 
-## セキュリティ考慮事項
+## Security Considerations
 
-### テスト環境の分離
+### Test Environment Isolation
 
-- 本番環境とテスト環境を完全に分離
-- テスト用の専用 Worker、DO、D1 を使用
-- テスト用のダミーデータのみを使用
+- Complete separation of production and test environments
+- Use dedicated Worker, DO, D1 for testing
+- Use only dummy data for testing
 
 ### Rate Limiting
 
-- テスト中は Rate Limiting を緩和または無効化
-- テスト後は必ず元に戻す
+- Relax or disable Rate Limiting during testing
+- Always restore after testing
 
-### 認証情報の管理
+### Credential Management
 
-- `.env` ファイルは `.gitignore` に追加
-- API トークンは最小権限の原則に従う
-- テスト終了後、不要なトークンは削除
+- Add `.env` files to `.gitignore`
+- Follow principle of least privilege for API tokens
+- Delete unnecessary tokens after testing
 
-## モニタリング
+## Monitoring
 
-### リアルタイムモニタリング
+### Real-time Monitoring
 
-テスト実行中は以下をモニタリング：
+Monitor the following during test execution:
 
 1. **Cloudflare Dashboard**
    - Workers Analytics
-   - リアルタイムリクエスト数
-   - エラーレート
+   - Real-time request count
+   - Error rate
 
-2. **k6 出力**
-   - リアルタイム RPS
-   - レスポンスタイム
-   - VU 状態
+2. **k6 Output**
+   - Real-time RPS
+   - Response time
+   - VU status
 
-### 事後分析
+### Post-Test Analysis
 
-テスト終了後は以下を収集：
+Collect the following after test completion:
 
 1. **Cloudflare Graph API**
-   - CPU 使用量
-   - メモリ使用量
-   - DO 実行回数
-   - D1 クエリ数
+   - CPU usage
+   - Memory usage
+   - DO execution count
+   - D1 query count
 
-2. **k6 結果**
-   - サマリーレポート
-   - タイムライングラフ
-   - エラーログ
+2. **k6 Results**
+   - Summary report
+   - Timeline graph
+   - Error logs
 
-## トラブルシューティング
+## Troubleshooting
 
-### よくある問題
+### Common Issues
 
 #### 1. 429 Too Many Requests
 
-**原因**: Rate Limiting に引っかかっている
+**Cause**: Hitting Rate Limiting
 
-**解決策**:
+**Solution**:
 
-- Workers Unlimited プランに変更
-- Rate Limiting 設定を緩和
-- テストの RPS を下げる
+- Switch to Workers Unlimited plan
+- Relax Rate Limiting settings
+- Lower test RPS
 
-#### 2. 500 Internal Server Error の急増
+#### 2. Sudden Increase in 500 Internal Server Error
 
-**原因**: DO のロック競合、D1 の書き込み競合
+**Cause**: DO lock contention, D1 write contention
 
-**解決策**:
+**Solution**:
 
-- プリセットを下げる
-- DO の設計を見直す（競合回避）
-- D1 のトランザクションを最適化
+- Lower preset
+- Review DO design (avoid contention)
+- Optimize D1 transactions
 
-#### 3. タイムアウトエラー
+#### 3. Timeout Errors
 
-**原因**: Worker の処理時間超過（CPU Time Limit）
+**Cause**: Worker processing time exceeding CPU Time Limit
 
-**解決策**:
+**Solution**:
 
-- 不要な処理を削減
-- キャッシュを活用
-- 処理を非同期化
+- Reduce unnecessary processing
+- Utilize caching
+- Make processing asynchronous
 
-## 関連ドキュメント
+## Related Documentation
 
-- [endpoint-requirements.md](./endpoint-requirements.md) - エンドポイント別の必須設定・状態管理ルール
-- [test-scenarios.md](./test-scenarios.md) - テストシナリオ詳細
-- [metrics-collection.md](./metrics-collection.md) - メトリクス収集手順
+- [endpoint-requirements.md](./endpoint-requirements.md) - Required configuration and state management rules per endpoint
+- [test-scenarios.md](./test-scenarios.md) - Detailed test scenarios
+- [metrics-collection.md](./metrics-collection.md) - Metrics collection procedures
 
-## 参考資料
+## References
 
 - [Cloudflare Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)
 - [Durable Objects Best Practices](https://developers.cloudflare.com/durable-objects/best-practices/)

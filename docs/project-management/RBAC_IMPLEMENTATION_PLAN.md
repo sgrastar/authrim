@@ -12,14 +12,14 @@ This document outlines the comprehensive implementation plan for Role-Based Acce
 
 ### Design Philosophy
 
-Authrimの責務を明確に分離する：
+Clearly separate Authrim's responsibilities:
 
-1. **OPとしての責務**: トークンに何を入れるか（Claims発行）
-2. **EIAM/CIAMとしての責務**: 誰が誰に対して何をできるか（アクセス制御）
+1. **As OP**: What to include in tokens (Claims issuance)
+2. **As EIAM/CIAM**: Who can do what to whom (Access control)
 
-> **土台は RBAC（ロール）＋ Relationship（関係性）でモデリングし、**
-> **ABAC は「ロール＋関係＋属性」を食わせるポリシーエンジンとして外出し**
-> **VC/DID はそのポリシーで使う「高信頼属性のソース」として扱う**
+> **Foundation is modeled with RBAC (roles) + Relationship (relationships),**
+> **ABAC is externalized as a policy engine fed with "roles + relationships + attributes"**
+> **VC/DID is treated as a "high-trust attribute source" for that policy**
 
 ### Goals
 
@@ -39,8 +39,8 @@ Authrimの責務を明確に分離する：
 ```mermaid
 flowchart TB
     subgraph L5["Layer 5: Token & API"]
-        IDToken["ID Token<br/>(UI/ログイン用)"]
-        AccessToken["Access Token<br/>(API/Backend用)"]
+        IDToken["ID Token<br/>(for UI/Login)"]
+        AccessToken["Access Token<br/>(for API/Backend)"]
         AuthzAPI["/authz/evaluate API<br/>(PDP REST API)"]
     end
 
@@ -59,12 +59,12 @@ flowchart TB
     end
 
     subgraph L2["Layer 2: Relationship Layer"]
-        RelTable["relationships<br/>- parent_child: 親子アカウント<br/>- guardian: 後見人関係<br/>- delegate: 委任アクセス<br/>- manager: 上司・部下関係<br/>- reseller_of: 販社↔顧客企業"]
+        RelTable["relationships<br/>- parent_child: Family accounts<br/>- guardian: Guardianship<br/>- delegate: Delegated access<br/>- manager: Manager-subordinate<br/>- reseller_of: Distributor↔Customer"]
         OrgMember["subject_org_membership<br/>- subject → organization<br/>- member/admin/owner"]
     end
 
     subgraph L1["Layer 1: Identity Layer"]
-        Subjects["subjects (users)<br/>- 通常アカウント（email/passkey）<br/>- 子アカウント（メールなしでも可）"]
+        Subjects["subjects (users)<br/>- Regular accounts (email/passkey)<br/>- Child accounts (no email required)"]
         SubjectID["subject_identifiers (Future: Phase 3)<br/>- type: email, did, device_id<br/>- value: 'did:key:...', 'user@example.com'"]
     end
 
@@ -112,23 +112,23 @@ flowchart TB
 
 ## Use Cases
 
-> **詳細ドキュメント**: [RBAC_USE_CASES.md](./RBAC_USE_CASES.md)
+> **Detailed Documentation**: [RBAC_USE_CASES.md](./RBAC_USE_CASES.md)
 >
-> ユースケースの詳細（12種類のRBACユースケース + DID/VC連携ユースケース）は、上記ドキュメントに移行しました。
+> Detailed use cases (12 RBAC use cases + DID/VC integration use cases) have been moved to the above document.
 
-### サマリー
+### Summary
 
 | Category | Use Cases | Status |
 |----------|-----------|--------|
-| Phase 1実装済み | B2B2C (Distributor), Parent-Child (Family) | ✅ |
-| 一般的RBAC | Enterprise SSO, Multi-tenant SaaS, Healthcare, Education, E-commerce, IoT, Government, Fintech, Media, AI Agent/MCP | 📋 |
-| 将来拡張（VC/DID） | Zero-Trust, Medical License VC, Age Verification, KYC VC, Membership VC | 🔮 |
+| Phase 1 Implemented | B2B2C (Distributor), Parent-Child (Family) | ✅ |
+| General RBAC | Enterprise SSO, Multi-tenant SaaS, Healthcare, Education, E-commerce, IoT, Government, Fintech, Media, AI Agent/MCP | 📋 |
+| Future Extensions (VC/DID) | Zero-Trust, Medical License VC, Age Verification, KYC VC, Membership VC | 🔮 |
 
 ---
 
 ## Token Design
 
-### ID Token (UI/ログイン後画面向け)
+### ID Token (for UI/Post-Login Screens)
 
 ```json
 {
@@ -155,7 +155,7 @@ flowchart TB
 }
 ```
 
-### Access Token (API/Backend向け)
+### Access Token (for API/Backend)
 
 ```json
 {
@@ -174,7 +174,7 @@ flowchart TB
 }
 ```
 
-### Delegation Token (代理アクセス)
+### Delegation Token (Delegated Access)
 
 ```json
 {
@@ -197,7 +197,7 @@ flowchart TB
 
 ## Authorization API (PDP)
 
-RPがトークン内のclaimsだけでは判断できない細かいABACを必要とする場合：
+When RP needs fine-grained ABAC that cannot be determined from claims in the token alone:
 
 ### POST /authz/evaluate
 

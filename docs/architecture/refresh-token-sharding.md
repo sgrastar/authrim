@@ -1,4 +1,4 @@
-# RefreshTokenRotator シャーディング仕様 🔄
+# RefreshTokenRotator Sharding Specification 🔄
 
 **Last Updated**: 2025-12-05
 **Status**: Phase 6 Implementation
@@ -8,32 +8,32 @@
 
 ## Overview
 
-RefreshTokenRotatorのシャーディング戦略を定義します。単一client_idでの高負荷問題（DO Wall Time p99: 2,349ms @ 500 RPS）を解決するため、**世代管理方式**によるシャーディングを導入します。
+This document defines the sharding strategy for RefreshTokenRotator. To solve the high load problem with a single client_id (DO Wall Time p99: 2,349ms @ 500 RPS), we introduce sharding using a **generation management approach**.
 
-### 設計目標
+### Design Goals
 
-| 目標 | 説明 |
-|------|------|
-| **動的シャード数変更** | デプロイ不要でシャード数を変更可能 |
-| **既存トークン完全互換** | 数年有効なIoTトークンも継続動作 |
-| **RFC 7009準拠** | Token Revocation仕様に完全準拠 |
-| **ユーザー全失効の効率化** | 1ユーザーの全トークンを効率的に失効 |
-| **高RPS対応** | 500+ RPSでもDO Wall Time < 500ms |
+| Goal | Description |
+|------|-------------|
+| **Dynamic shard count changes** | Change shard count without deployment |
+| **Full backward compatibility** | Continue operation for IoT tokens valid for years |
+| **RFC 7009 compliance** | Full compliance with Token Revocation specification |
+| **Efficient user-wide revocation** | Efficiently revoke all tokens for one user |
+| **High RPS support** | DO Wall Time < 500ms even at 500+ RPS |
 
-### アーキテクチャ図
+### Architecture Diagram
 
 ```mermaid
 flowchart TB
-    subgraph Client["クライアントリクエスト"]
+    subgraph Client["Client Request"]
         REQ["POST /token<br/>grant_type=refresh_token"]
     end
 
     subgraph Router["op-token Worker"]
-        Parse["JTI解析<br/>v1_7_rt_xxx → gen=1, shard=7"]
-        Route["DOルーティング"]
+        Parse["JTI Parse<br/>v1_7_rt_xxx → gen=1, shard=7"]
+        Route["DO Routing"]
     end
 
-    subgraph Shards["RefreshTokenRotator DO シャード"]
+    subgraph Shards["RefreshTokenRotator DO Shards"]
         direction TB
         G1S0["v1:shard-0"]
         G1S1["v1:shard-1"]
@@ -43,58 +43,58 @@ flowchart TB
         G2Sm["v2:shard-m"]
     end
 
-    subgraph Storage["永続化"]
-        KV["KV: シャード設定<br/>refresh-token-shards:{clientId}"]
-        D1["D1: user_token_families<br/>（ユーザー全失効用インデックス）"]
+    subgraph Storage["Persistence"]
+        KV["KV: Shard config<br/>refresh-token-shards:{clientId}"]
+        D1["D1: user_token_families<br/>(Index for user-wide revocation)"]
     end
 
     REQ --> Parse
     Parse --> Route
     Route --> G1S7
     G1S7 --> D1
-    Route -.->|設定取得| KV
+    Route -.->|Get config| KV
 ```
 
 ---
 
-## 1. JTIフォーマット仕様
+## 1. JTI Format Specification
 
-### 新形式 JTI
+### New Format JTI
 
 ```
 v{generation}_{shardIndex}_{randomPart}
 ```
 
-| フィールド | 説明 | 例 |
-|-----------|------|-----|
-| `v{generation}` | 世代番号（1から開始） | `v1`, `v2`, `v3` |
-| `{shardIndex}` | シャードインデックス（0から開始） | `0`, `7`, `31` |
-| `{randomPart}` | ランダム部分（既存形式） | `rt_uuid` |
+| Field | Description | Example |
+|-------|-------------|---------|
+| `v{generation}` | Generation number (starts from 1) | `v1`, `v2`, `v3` |
+| `{shardIndex}` | Shard index (starts from 0) | `0`, `7`, `31` |
+| `{randomPart}` | Random part (existing format) | `rt_uuid` |
 
-**例**:
-- `v1_7_rt_550e8400-e29b-41d4-a716-446655440000` （世代1、シャード7）
-- `v2_15_rt_6ba7b810-9dad-11d1-80b4-00c04fd430c8` （世代2、シャード15）
+**Examples**:
+- `v1_7_rt_550e8400-e29b-41d4-a716-446655440000` (generation 1, shard 7)
+- `v2_15_rt_6ba7b810-9dad-11d1-80b4-00c04fd430c8` (generation 2, shard 15)
 
-### レガシー形式 JTI（generation=0）
+### Legacy Format JTI (generation=0)
 
 ```
 rt_{uuid}
 ```
 
-レガシートークンは`generation=0`として扱い、既存のDO（client_id直接）にルーティングします。
+Legacy tokens are treated as `generation=0` and routed to the existing DO (using client_id directly).
 
-### パース関数
+### Parse Function
 
 ```typescript
 interface ParsedJti {
-  generation: number;      // 世代番号（レガシー=0）
-  shardIndex: number | null; // シャードインデックス（レガシー=null）
-  randomPart: string;      // ランダム部分
-  isLegacy: boolean;       // レガシー形式かどうか
+  generation: number;      // Generation number (legacy=0)
+  shardIndex: number | null; // Shard index (legacy=null)
+  randomPart: string;      // Random part
+  isLegacy: boolean;       // Whether it's legacy format
 }
 
 function parseRefreshTokenJti(jti: string): ParsedJti {
-  // 新形式: v{gen}_{shard}_{random}
+  // New format: v{gen}_{shard}_{random}
   const newFormatMatch = jti.match(/^v(\d+)_(\d+)_(.+)$/);
   if (newFormatMatch) {
     return {
@@ -105,7 +105,7 @@ function parseRefreshTokenJti(jti: string): ParsedJti {
     };
   }
 
-  // レガシー形式: rt_{uuid}
+  // Legacy format: rt_{uuid}
   return {
     generation: 0,
     shardIndex: null,
@@ -117,20 +117,20 @@ function parseRefreshTokenJti(jti: string): ParsedJti {
 
 ---
 
-## 2. DO命名規則
+## 2. DO Naming Convention
 
-### インスタンス名パターン
+### Instance Name Pattern
 
 ```
 tenant:{tenantId}:refresh-rotator:{clientId}:v{generation}:shard-{index}
 ```
 
-| パターン | 世代 | 例 |
+| Pattern | Generation | Example |
 |---------|------|-----|
-| レガシー（互換） | 0 | `tenant:default:refresh-rotator:{clientId}` |
-| 新形式 | 1+ | `tenant:default:refresh-rotator:{clientId}:v1:shard-7` |
+| Legacy (compatible) | 0 | `tenant:default:refresh-rotator:{clientId}` |
+| New format | 1+ | `tenant:default:refresh-rotator:{clientId}:v1:shard-7` |
 
-### ビルド関数
+### Build Function
 
 ```typescript
 function buildRefreshTokenRotatorInstanceName(
@@ -139,21 +139,21 @@ function buildRefreshTokenRotatorInstanceName(
   shardIndex: number | null,
   tenantId: string = DEFAULT_TENANT_ID
 ): string {
-  // レガシー（generation=0）
+  // Legacy (generation=0)
   if (generation === 0 || shardIndex === null) {
     return `tenant:${tenantId}:refresh-rotator:${clientId}`;
   }
 
-  // 新形式
+  // New format
   return `tenant:${tenantId}:refresh-rotator:${clientId}:v${generation}:shard-${shardIndex}`;
 }
 ```
 
 ---
 
-## 3. シャード決定ロジック
+## 3. Shard Determination Logic
 
-### ハッシュベースシャーディング
+### Hash-Based Sharding
 
 ```typescript
 async function getRefreshTokenShardIndex(
@@ -165,11 +165,11 @@ async function getRefreshTokenShardIndex(
   const encoder = new TextEncoder();
   const data = encoder.encode(key);
 
-  // SHA-256ハッシュ
+  // SHA-256 hash
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = new Uint8Array(hashBuffer);
 
-  // 最初の4バイトを32ビット整数として使用
+  // Use first 4 bytes as 32-bit integer
   const hashInt = (hashArray[0] << 24) | (hashArray[1] << 16) |
                   (hashArray[2] << 8) | hashArray[3];
 
@@ -177,22 +177,22 @@ async function getRefreshTokenShardIndex(
 }
 ```
 
-### 世代管理方式のポイント
+### Key Points of Generation Management Approach
 
 ```
-世代管理方式では remap は基本的に使わない：
-├─ 各世代はシャード数を固定
-├─ 新世代で新しいシャード数を使用
-└─ 古いトークンは古い世代のDOにそのままルーティング
+Generation management approach does not use remap by default:
+├─ Each generation has a fixed shard count
+├─ New generation uses a new shard count
+└─ Old tokens are routed directly to their generation's DO
 
-正常フロー:
-1. トークン発行時: 現行世代のシャード数でハッシュ計算
-2. トークン使用時: JTIから世代・シャード情報を抽出してそのままルーティング
-3. 世代変更後: 古いトークンは古い世代のDOにルーティング（変換不要）
+Normal flow:
+1. Token issuance: Calculate hash with current generation's shard count
+2. Token usage: Extract generation and shard info from JTI and route directly
+3. After generation change: Old tokens route to old generation's DO (no conversion needed)
 
-remapShardIndex() は以下のケースでのみ使用:
-├─ 不正なシャードインデックス（shardIndex >= currentShardCount）
-└─ フォールバック用（通常は発生しない）
+remapShardIndex() is only used in these cases:
+├─ Invalid shard index (shardIndex >= currentShardCount)
+└─ Fallback (normally doesn't occur)
 ```
 
 ---
@@ -294,30 +294,30 @@ private generateJti(): string {
 
 ## 4. KV設定管理
 
-### 設定キー
+### Configuration Keys
 
 ```
 refresh-token-shards:{clientId}
-refresh-token-shards:__global__  // グローバルデフォルト
+refresh-token-shards:__global__  // Global default
 ```
 
-### 設定スキーマ
+### Configuration Schema
 
 ```typescript
 interface RefreshTokenShardConfig {
-  currentGeneration: number;          // 現行世代番号
-  currentShardCount: number;          // 現行世代のシャード数
-  previousGenerations: {              // 過去世代情報（最大5つ保持）
+  currentGeneration: number;          // Current generation number
+  currentShardCount: number;          // Current generation's shard count
+  previousGenerations: {              // Previous generation info (max 5 retained)
     generation: number;
     shardCount: number;
-    deprecatedAt: number;             // 非推奨化タイムスタンプ
+    deprecatedAt: number;             // Deprecation timestamp
   }[];
-  updatedAt: number;                  // 最終更新タイムスタンプ
-  updatedBy?: string;                 // 更新者（監査用）
+  updatedAt: number;                  // Last update timestamp
+  updatedBy?: string;                 // Updater (for audit)
 }
 ```
 
-### KV設定例
+### KV Configuration Example
 
 ```json
 {
@@ -331,11 +331,11 @@ interface RefreshTokenShardConfig {
 }
 ```
 
-### 設定取得（キャッシュ付き）
+### Configuration Retrieval (with Cache)
 
 ```typescript
 const CONFIG_CACHE = new Map<string, { config: RefreshTokenShardConfig; expiresAt: number }>();
-const CACHE_TTL_MS = 10000; // 10秒
+const CACHE_TTL_MS = 10000; // 10 seconds
 
 async function getRefreshTokenShardConfig(
   env: Env,
@@ -344,13 +344,13 @@ async function getRefreshTokenShardConfig(
   const cacheKey = `shard-config:${clientId}`;
   const now = Date.now();
 
-  // キャッシュチェック
+  // Check cache
   const cached = CONFIG_CACHE.get(cacheKey);
   if (cached && cached.expiresAt > now) {
     return cached.config;
   }
 
-  // KV取得（クライアント固有 → グローバル → デフォルト）
+  // Get from KV (client-specific → global → default)
   let config = await env.KV.get(`refresh-token-shards:${clientId}`, 'json');
   if (!config) {
     config = await env.KV.get('refresh-token-shards:__global__', 'json');
@@ -364,7 +364,7 @@ async function getRefreshTokenShardConfig(
     };
   }
 
-  // キャッシュ保存
+  // Save to cache
   CONFIG_CACHE.set(cacheKey, { config, expiresAt: now + CACHE_TTL_MS });
 
   return config;
@@ -373,49 +373,49 @@ async function getRefreshTokenShardConfig(
 
 ---
 
-## 5. Token Revocationフロー
+## 5. Token Revocation Flow
 
-### RFC 7009準拠
+### RFC 7009 Compliance
 
-Token Revocationは以下の3パターンに対応：
+Token Revocation supports the following 3 patterns:
 
 ```mermaid
 flowchart TB
-    subgraph Pattern1["パターン1: 単一トークン失効"]
+    subgraph Pattern1["Pattern 1: Single Token Revocation"]
         R1["POST /revoke<br/>token=refresh_token"]
-        P1["JTIパース"]
-        DO1["適切なDOに<br/>revoke要求"]
+        P1["Parse JTI"]
+        DO1["Send revoke request<br/>to appropriate DO"]
         R1 --> P1 --> DO1
     end
 
-    subgraph Pattern2["パターン2: トークンファミリー失効"]
-        R2["リフレッシュで<br/>盗難検出"]
-        DO2["ファミリー内<br/>全トークン失効"]
+    subgraph Pattern2["Pattern 2: Token Family Revocation"]
+        R2["Theft detected<br/>during refresh"]
+        DO2["Revoke all tokens<br/>in family"]
         D12["D1: is_revoked=1"]
         R2 --> DO2 --> D12
     end
 
-    subgraph Pattern3["パターン3: ユーザー全トークン失効"]
-        R3["管理者による<br/>全デバイスログアウト"]
-        DB3["D1: SELECT<br/>全ファミリー取得"]
-        PARA["並列DOリクエスト"]
+    subgraph Pattern3["Pattern 3: User-wide Token Revocation"]
+        R3["Admin initiated<br/>all device logout"]
+        DB3["D1: SELECT<br/>get all families"]
+        PARA["Parallel DO requests"]
         R3 --> DB3 --> PARA
     end
 ```
 
-### パターン1: 単一トークン失効
+### Pattern 1: Single Token Revocation
 
 ```typescript
 // POST /revoke (RFC 7009)
 async function revokeRefreshToken(token: string, env: Env) {
-  // 1. トークンをデコードしてJTI取得
+  // 1. Decode token and get JTI
   const payload = decodeToken(token);
   const jti = payload.jti;
 
-  // 2. JTIをパース
+  // 2. Parse JTI
   const parsed = parseRefreshTokenJti(jti);
 
-  // 3. 適切なDOにルーティング
+  // 3. Route to appropriate DO
   const instanceName = buildRefreshTokenRotatorInstanceName(
     payload.client_id,
     parsed.generation,
@@ -424,36 +424,36 @@ async function revokeRefreshToken(token: string, env: Env) {
   const rotatorId = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
   const rotator = env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
 
-  // 4. 失効リクエスト
+  // 4. Revocation request
   await rotator.fetch(new Request('http://internal/revoke', {
     method: 'POST',
     body: JSON.stringify({ jti }),
   }));
 
-  // 5. D1インデックス更新
+  // 5. Update D1 index
   await env.DB.prepare(
     'UPDATE user_token_families SET is_revoked = 1 WHERE jti = ?'
   ).bind(jti).run();
 }
 ```
 
-### パターン2: トークンファミリー失効（盗難検出時）
+### Pattern 2: Token Family Revocation (Theft Detection)
 
-RefreshTokenRotator DO内で処理。詳細は`RefreshTokenRotator.ts`参照。
+Handled within RefreshTokenRotator DO. See `RefreshTokenRotator.ts` for details.
 
-### パターン3: ユーザー全トークン失効
+### Pattern 3: User-wide Token Revocation
 
 ```typescript
 // Admin API: DELETE /api/admin/users/:userId/refresh-tokens
 async function revokeAllUserRefreshTokens(userId: string, clientId: string, env: Env) {
-  // 1. D1から全ファミリー情報取得
+  // 1. Get all family info from D1
   const families = await env.DB.prepare(`
     SELECT jti, generation
     FROM user_token_families
     WHERE user_id = ? AND client_id = ? AND is_revoked = 0
   `).bind(userId, clientId).all();
 
-  // 2. 世代・シャードごとにグループ化
+  // 2. Group by generation and shard
   const shardGroups = new Map<string, string[]>();
   for (const family of families.results) {
     const parsed = parseRefreshTokenJti(family.jti);
@@ -464,7 +464,7 @@ async function revokeAllUserRefreshTokens(userId: string, clientId: string, env:
     shardGroups.get(key)!.push(family.jti);
   }
 
-  // 3. 各シャードに並列でbatch-revokeリクエスト
+  // 3. Send batch-revoke requests to each shard in parallel
   const promises = Array.from(shardGroups.entries()).map(async ([key, jtis]) => {
     const [gen, shard] = key.split(':');
     const instanceName = buildRefreshTokenRotatorInstanceName(
@@ -483,7 +483,7 @@ async function revokeAllUserRefreshTokens(userId: string, clientId: string, env:
 
   await Promise.all(promises);
 
-  // 4. D1一括更新
+  // 4. Batch update D1
   await env.DB.prepare(`
     UPDATE user_token_families
     SET is_revoked = 1
@@ -494,13 +494,13 @@ async function revokeAllUserRefreshTokens(userId: string, clientId: string, env:
 
 ---
 
-## 6. 世代変更時の動作
+## 6. Generation Change Behavior
 
-### 世代変更フロー
+### Generation Change Flow
 
 ```mermaid
 sequenceDiagram
-    participant Admin as 管理者
+    participant Admin as Administrator
     participant API as Admin API
     participant KV as KV Store
     participant DO as RefreshTokenRotator
@@ -508,53 +508,53 @@ sequenceDiagram
     Admin->>API: PUT /api/admin/refresh-token-sharding/config
     Note right of API: { shardCount: 16 }
 
-    API->>KV: 現在の設定取得
+    API->>KV: Get current config
     KV-->>API: { gen: 1, shards: 8 }
 
-    API->>API: 新世代番号計算 (gen: 2)
+    API->>API: Calculate new generation number (gen: 2)
 
-    API->>KV: 設定更新
+    API->>KV: Update config
     Note right of KV: {<br/>  currentGeneration: 2,<br/>  currentShardCount: 16,<br/>  previousGenerations: [{ gen: 1, shards: 8 }]<br/>}
 
     API-->>Admin: { success: true, generation: 2 }
 
-    Note over DO: 既存トークン（gen=1）は<br/>引き続きgen=1のDOにルーティング
-    Note over DO: 新規トークンはgen=2のDOに発行
+    Note over DO: Existing tokens (gen=1)<br/>continue routing to gen=1 DO
+    Note over DO: New tokens issued to gen=2 DO
 ```
 
-### 世代変更後のトークン動作
+### Token Behavior After Generation Change
 
-| トークンの世代 | 新規発行 | ローテーション | 失効 |
+| Token Generation | New Issuance | Rotation | Revocation |
 |--------------|---------|--------------|------|
-| generation=1 | ❌ | ✅ gen=1 DOで処理 | ✅ gen=1 DOで処理 |
-| generation=2 | ✅ | ✅ gen=2 DOで処理 | ✅ gen=2 DOで処理 |
+| generation=1 | ❌ | ✅ Processed by gen=1 DO | ✅ Processed by gen=1 DO |
+| generation=2 | ✅ | ✅ Processed by gen=2 DO | ✅ Processed by gen=2 DO |
 
-### 重要な注意点
+### Important Notes
 
 ```
-⚠️ 世代変更時の注意:
-├─ 既存トークンは自動マイグレーションされない
-├─ 各世代のDOは独立して動作を継続
-├─ previousGenerationsは監査・ルーティング目的で保持
-└─ 古い世代のDOストレージはCloudflareが自動GC
+⚠️ Generation change considerations:
+├─ Existing tokens are not automatically migrated
+├─ Each generation's DO continues to operate independently
+├─ previousGenerations retained for audit and routing purposes
+└─ Old generation DO storage is automatically GC'd by Cloudflare
 
-✅ 推奨される世代変更タイミング:
-├─ 負荷増加に伴うシャード数増加
-├─ トラフィックパターンの大幅な変更
-└─ メンテナンスウィンドウでの計画的変更
+✅ Recommended generation change timing:
+├─ Increasing shard count due to load growth
+├─ Significant changes in traffic patterns
+└─ Planned changes during maintenance windows
 ```
 
 ---
 
 ## 7. Dead Shard Cleanup
 
-### クリーンアップAPI
+### Cleanup API
 
 ```typescript
 // DELETE /api/admin/refresh-token-sharding/cleanup?generation=1&clientId=xxx
 
 async function cleanupGeneration(generation: number, clientId: string, env: Env) {
-  // 1. 安全チェック: 有効なトークンが残っていないか確認
+  // 1. Safety check: Verify no active tokens remain
   const result = await env.DB.prepare(`
     SELECT COUNT(*) as count FROM user_token_families
     WHERE generation = ? AND is_revoked = 0 AND expires_at > ?
@@ -564,12 +564,12 @@ async function cleanupGeneration(generation: number, clientId: string, env: Env)
     throw new Error(`Active tokens exist: ${result.count}`);
   }
 
-  // 2. D1からレコード削除
+  // 2. Delete records from D1
   await env.DB.prepare(
     'DELETE FROM user_token_families WHERE generation = ?'
   ).bind(generation).run();
 
-  // 3. シャード設定から過去世代を削除
+  // 3. Remove previous generation from shard config
   const config = await getRefreshTokenShardConfig(env, clientId);
   config.previousGenerations = config.previousGenerations
     .filter(g => g.generation !== generation);
@@ -578,47 +578,47 @@ async function cleanupGeneration(generation: number, clientId: string, env: Env)
     JSON.stringify(config)
   );
 
-  // ※DOストレージはCloudflareが自動GC（明示的クリーンアップ不要）
+  // Note: DO storage is automatically GC'd by Cloudflare (no explicit cleanup needed)
   return { success: true, deletedGeneration: generation };
 }
 ```
 
 ---
 
-## 8. D1スキーマ
+## 8. D1 Schema
 
-### user_token_families テーブル
+### user_token_families Table
 
-高RPS向けに最適化されたスリム版スキーマ:
+Optimized slim schema for high RPS:
 
 ```sql
--- ローテーション時のD1アクセスゼロを実現
+-- Achieve zero D1 access during rotation
 CREATE TABLE user_token_families (
-  jti TEXT PRIMARY KEY,               -- JTIそのものを主キーに
+  jti TEXT PRIMARY KEY,               -- JTI itself as primary key
   user_id TEXT NOT NULL,
   client_id TEXT NOT NULL,
   generation INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
-  is_revoked INTEGER DEFAULT 0,       -- 失効時のみUPDATE
+  is_revoked INTEGER DEFAULT 0,       -- UPDATE only on revocation
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- インデックス
+-- Indexes
 CREATE INDEX idx_utf_user_id ON user_token_families(user_id);
 CREATE INDEX idx_utf_client_id ON user_token_families(client_id);
 CREATE INDEX idx_utf_expires ON user_token_families(expires_at);
 ```
 
-### D1アクセスパターン
+### D1 Access Patterns
 
-| 操作 | D1アクセス | 説明 |
+| Operation | D1 Access | Description |
 |------|-----------|------|
-| トークン発行 | INSERT | 新規ファミリー登録 |
-| トークンローテーション | **なし** | DOストレージのみ使用 ✅ |
-| トークン失効 | UPDATE | `is_revoked = 1` |
-| ユーザー全失効 | SELECT + UPDATE | ファミリー一覧取得 + 一括失効 |
+| Token issuance | INSERT | Register new family |
+| Token rotation | **None** | Use DO storage only ✅ |
+| Token revocation | UPDATE | `is_revoked = 1` |
+| User-wide revocation | SELECT + UPDATE | Get family list + batch revoke |
 
-### refresh_token_shard_configs テーブル（監査用）
+### refresh_token_shard_configs Table (for audit)
 
 ```sql
 CREATE TABLE refresh_token_shard_configs (
@@ -635,37 +635,37 @@ CREATE TABLE refresh_token_shard_configs (
 
 ---
 
-## 9. 設定値
+## 9. Configuration Values
 
-| 設定 | デフォルト値 | 説明 |
+| Configuration | Default Value | Description |
 |-----|------------|------|
-| 初期世代番号 | 1 | generation=0はレガシー用 |
-| **本番初期シャード数** | **8** | 一般的なユースケース向け |
-| **テスト用シャード数** | **32** | 500 RPS負荷テスト用 |
-| キャッシュTTL | 10秒 | シャード設定のキャッシュ期間 |
-| 過去世代保持数 | 5 | previousGenerationsの最大数 |
+| Initial generation number | 1 | generation=0 is for legacy |
+| **Production initial shard count** | **8** | For typical use cases |
+| **Test shard count** | **32** | For 500 RPS load testing |
+| Cache TTL | 10 seconds | Shard config cache duration |
+| Previous generation retention | 5 | Max number of previousGenerations |
 
-### 環境変数
+### Environment Variables
 
-| 変数 | 説明 | デフォルト |
+| Variable | Description | Default |
 |-----|------|---------|
-| `REFRESH_TOKEN_DEFAULT_SHARD_COUNT` | デフォルトシャード数 | 8 |
-| `REFRESH_TOKEN_SHARD_CACHE_TTL` | キャッシュTTL (ms) | 10000 |
+| `REFRESH_TOKEN_DEFAULT_SHARD_COUNT` | Default shard count | 8 |
+| `REFRESH_TOKEN_SHARD_CACHE_TTL` | Cache TTL (ms) | 10000 |
 
 ---
 
 ## 10. Admin API
 
-### エンドポイント一覧
+### Endpoint List
 
-| メソッド | パス | 説明 |
+| Method | Path | Description |
 |---------|-----|------|
-| GET | `/api/admin/refresh-token-sharding/config` | 設定取得 |
-| PUT | `/api/admin/refresh-token-sharding/config` | 設定変更 |
-| GET | `/api/admin/refresh-token-sharding/stats` | シャード分布統計 |
-| DELETE | `/api/admin/refresh-token-sharding/cleanup` | 世代クリーンアップ |
+| GET | `/api/admin/refresh-token-sharding/config` | Get configuration |
+| PUT | `/api/admin/refresh-token-sharding/config` | Change configuration |
+| GET | `/api/admin/refresh-token-sharding/stats` | Shard distribution statistics |
+| DELETE | `/api/admin/refresh-token-sharding/cleanup` | Generation cleanup |
 
-### 設定変更リクエスト例
+### Configuration Change Request Example
 
 ```bash
 curl -X PUT https://api.example.com/api/admin/refresh-token-sharding/config \
@@ -678,7 +678,7 @@ curl -X PUT https://api.example.com/api/admin/refresh-token-sharding/config \
   }'
 ```
 
-### レスポンス例
+### Response Example
 
 ```json
 {
@@ -696,22 +696,22 @@ curl -X PUT https://api.example.com/api/admin/refresh-token-sharding/config \
 
 ---
 
-## 11. 後方互換性
+## 11. Backward Compatibility
 
-### レガシートークン対応
+### Legacy Token Support
 
 ```typescript
-// JTIがレガシー形式の場合のルーティング
+// Routing when JTI is in legacy format
 function routeRefreshToken(jti: string, clientId: string, env: Env) {
   const parsed = parseRefreshTokenJti(jti);
 
   if (parsed.isLegacy) {
-    // レガシー: 既存DO（client_id直接）にルーティング
+    // Legacy: Route to existing DO (using client_id directly)
     const instanceName = `tenant:${DEFAULT_TENANT_ID}:refresh-rotator:${clientId}`;
     return env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
   }
 
-  // 新形式: 世代・シャード指定でルーティング
+  // New format: Route with generation and shard specification
   const instanceName = buildRefreshTokenRotatorInstanceName(
     clientId,
     parsed.generation,
@@ -721,62 +721,62 @@ function routeRefreshToken(jti: string, clientId: string, env: Env) {
 }
 ```
 
-### マイグレーション戦略
+### Migration Strategy
 
 ```
-フェーズ1: 新形式導入
-├─ 新規発行トークンは新形式（v1_X_rt_...）
-├─ レガシートークンは引き続き動作
-└─ 両形式が共存
+Phase 1: New format introduction
+├─ Newly issued tokens use new format (v1_X_rt_...)
+├─ Legacy tokens continue to work
+└─ Both formats coexist
 
-フェーズ2: 移行期間
-├─ レガシートークンの有効期限切れを待つ
-├─ 最長で90日〜数年（IoT端末考慮）
-└─ 監視: レガシーDOへのリクエスト数
+Phase 2: Migration period
+├─ Wait for legacy tokens to expire
+├─ Up to 90 days ~ several years (considering IoT devices)
+└─ Monitor: Request count to legacy DO
 
-フェーズ3: レガシー廃止（オプション）
-├─ レガシーDOへのリクエストがゼロになった後
-├─ レガシーコードパスの削除検討
-└─ 必須ではない（互換性維持のため残しても可）
+Phase 3: Legacy deprecation (optional)
+├─ After requests to legacy DO reach zero
+├─ Consider removing legacy code paths
+└─ Not mandatory (can keep for compatibility)
 ```
 
 ---
 
-## 12. パフォーマンス期待値
+## 12. Performance Expectations
 
-### 500 RPS テスト（32シャード）
+### 500 RPS Test (32 shards)
 
-| メトリクス | 改善前 (1シャード) | 改善後 (32シャード) |
+| Metric | Before (1 shard) | After (32 shards) |
 |-----------|-------------------|---------------------|
 | DO Wall Time p99 | 2,349ms | < 500ms |
-| リクエスト/シャード | 500 req/s | ~16 req/s |
-| ロック競合 | 高 | 低 |
+| Requests/shard | 500 req/s | ~16 req/s |
+| Lock contention | High | Low |
 
-### 負荷分散計算
+### Load Distribution Calculation
 
 ```
-設定:
-├─ 目標RPS: 500
-├─ シャード数: 32
-└─ ユーザー分布: 均等（SHA-256ハッシュ）
+Configuration:
+├─ Target RPS: 500
+├─ Shard count: 32
+└─ User distribution: Even (SHA-256 hash)
 
-結果:
-├─ 1シャードあたり: 500 / 32 ≈ 16 req/s
-├─ DO処理時間: ~10ms/request
-├─ 同時処理数: ~0.16 (ほぼ競合なし)
-└─ 期待DO Wall Time p99: < 100ms
+Result:
+├─ Per shard: 500 / 32 ≈ 16 req/s
+├─ DO processing time: ~10ms/request
+├─ Concurrent processing: ~0.16 (almost no contention)
+└─ Expected DO Wall Time p99: < 100ms
 ```
 
 ---
 
 ## References
 
-### 関連ドキュメント
-- [durable-objects.md](./durable-objects.md) - DOアーキテクチャ概要
-- [storage-strategy.md](./storage-strategy.md) - ストレージ戦略
-- [database-schema.md](./database-schema.md) - D1スキーマ
+### Related Documentation
+- [durable-objects.md](./durable-objects.md) - DO Architecture Overview
+- [storage-strategy.md](./storage-strategy.md) - Storage Strategy
+- [database-schema.md](./database-schema.md) - D1 Schema
 
-### 外部リソース
+### External Resources
 - [RFC 7009 - OAuth 2.0 Token Revocation](https://datatracker.ietf.org/doc/html/rfc7009)
 - [Cloudflare Durable Objects Documentation](https://developers.cloudflare.com/durable-objects/)
 - [OAuth 2.0 Security Best Current Practice](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-security-topics)

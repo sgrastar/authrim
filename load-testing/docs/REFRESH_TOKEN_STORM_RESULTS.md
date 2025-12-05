@@ -1,27 +1,27 @@
-# Authrim Refresh Token Storm 負荷テスト結果
+# Authrim Refresh Token Storm Load Test Results
 
-## 概要
+## Overview
 
-Authrim OAuth2/OIDC サーバーの Refresh Token エンドポイントに対する負荷テスト（TEST2: Refresh Token Storm）の結果レポートです。
+This is the results report for the load test (TEST2: Refresh Token Storm) on Authrim's OAuth2/OIDC server Refresh Token endpoint.
 
-本テストでは、**Token Rotation** を有効化した本番運用に近い条件で、リフレッシュトークンの発行・ローテーション処理の性能を検証しました。
+This test validated the performance of refresh token issuance and rotation processing under production-like conditions with **Token Rotation** enabled.
 
 ---
 
-## テスト環境
+## Test Environment
 
-### インフラ構成
+### Infrastructure Configuration
 
-| コンポーネント | 技術スタック | 説明 |
+| Component | Technology Stack | Description |
 |---------------|-------------|------|
-| **Worker** | Cloudflare Workers | OAuth2/OIDC エンドポイント処理 |
-| **Durable Objects** | Cloudflare DO | RefreshTokenRotator（トークンローテーション管理） |
-| **Database** | Cloudflare D1 | ユーザー情報、セッション、監査ログ |
-| **Cache** | Cloudflare KV | JWK キャッシュ、RBAC クレームキャッシュ、ユーザーキャッシュ |
+| **Worker** | Cloudflare Workers | OAuth2/OIDC endpoint processing |
+| **Durable Objects** | Cloudflare DO | RefreshTokenRotator (token rotation management) |
+| **Database** | Cloudflare D1 | User information, sessions, audit logs |
+| **Cache** | Cloudflare KV | JWK cache, RBAC claim cache, user cache |
 
 ```mermaid
 flowchart TB
-    subgraph Local["テスト実行環境"]
+    subgraph Local["Test Execution Environment"]
         k6["k6 OSS (macOS)"]
     end
 
@@ -29,10 +29,10 @@ flowchart TB
         Edge["Cloudflare Edge"]
 
         subgraph Worker["op-token Worker"]
-            W["Token処理 + JWT署名"]
+            W["Token Processing + JWT Signing"]
         end
 
-        subgraph Cache["キャッシュ層"]
+        subgraph Cache["Cache Layer"]
             KV["KV: JWK / RBAC / User Cache"]
         end
 
@@ -40,7 +40,7 @@ flowchart TB
             RTR["RefreshTokenRotator"]
         end
 
-        subgraph DB["データベース"]
+        subgraph DB["Database"]
             D1["D1: sessions / audit_logs"]
         end
     end
@@ -53,123 +53,123 @@ flowchart TB
     RTR --> D1
 ```
 
-### テスト実行環境
+### Test Execution Environment
 
-| 項目 | 値 |
+| Item | Value |
 |------|-----|
-| **実行マシン** | MacBook Pro (Apple Silicon) |
-| **ネットワーク** | 一般家庭回線（光ファイバー） |
-| **テストツール** | [k6](https://k6.io/) OSS |
-| **メトリクス収集** | Cloudflare GraphQL Analytics API |
-| **ターゲット URL** | `https://conformance.authrim.com` |
+| **Execution Machine** | MacBook Pro (Apple Silicon) |
+| **Network** | Residential fiber optic connection |
+| **Testing Tool** | [k6](https://k6.io/) OSS |
+| **Metrics Collection** | Cloudflare GraphQL Analytics API |
+| **Target URL** | `https://conformance.authrim.com` |
 
-### テスト対象エンドポイント
+### Test Target Endpoint
 
-| エンドポイント | 処理内容 |
+| Endpoint | Processing |
 |---------------|---------|
-| `POST /token` | Refresh Token Grant（`grant_type=refresh_token`） |
+| `POST /token` | Refresh Token Grant (`grant_type=refresh_token`) |
 
 ---
 
-## テスト条件
+## Test Conditions
 
 ### TEST2: Refresh Token Storm
 
-本番運用を想定した Refresh Token のローテーション処理を検証するシナリオです。
+Scenario to validate Refresh Token rotation processing expected in production operation.
 
-| 項目 | 設定値 |
+| Item | Setting |
 |------|--------|
-| **Token Rotation** | 有効（新しいリフレッシュトークンを毎回発行） |
-| **VU（仮想ユーザー）設計** | VU ごとに独立した token family |
-| **テストパターン** | 正常なローテーションパスのみ（エラーケースなし） |
-| **Think Time** | 0ms（連続リクエスト） |
+| **Token Rotation** | Enabled (issue new refresh token each time) |
+| **VU (Virtual User) Design** | Independent token family per VU |
+| **Test Pattern** | Normal rotation path only (no error cases) |
+| **Think Time** | 0ms (continuous requests) |
 
-### プリセット設定
+### Preset Configuration
 
-| プリセット | 目標 RPS | 継続時間 | 最大 VU | ユースケース |
+| Preset | Target RPS | Duration | Max VU | Use Case |
 |-----------|---------|---------|--------|-------------|
-| **rps100** | 100 RPS | 2分 | 120 | 本番ベースライン |
-| **rps200** | 200 RPS | 2分 | 240 | 高トラフィック想定 |
-| **rps300** | 300 RPS | 2分 | 360 | ピーク負荷検証 |
+| **rps100** | 100 RPS | 2 min | 120 | Production baseline |
+| **rps200** | 200 RPS | 2 min | 240 | High traffic scenario |
+| **rps300** | 300 RPS | 2 min | 360 | Peak load validation |
 
-### テスト設定の詳細
+### Detailed Test Settings
 
-| 設定項目 | 値 | 本番推奨値 | 備考 |
+| Setting Item | Value | Production Recommended | Notes |
 |---------|-----|-----------|------|
-| `REFRESH_TOKEN_ROTATION_ENABLED` | `true` | `true` | 本番同様のローテーション動作 |
-| `REFRESH_TOKEN_EXPIRY` | 30日 | 30日 | リフレッシュトークン有効期限 |
-| `ACCESS_TOKEN_EXPIRY` | 1時間 | 1時間 | アクセストークン有効期限 |
-| `RBAC_CACHE_TTL` | 5分 | 5分 | RBACクレームキャッシュTTL |
-| `USER_CACHE_TTL` | 1時間 | 1時間 | ユーザーデータキャッシュTTL |
+| `REFRESH_TOKEN_ROTATION_ENABLED` | `true` | `true` | Same rotation behavior as production |
+| `REFRESH_TOKEN_EXPIRY` | 30 days | 30 days | Refresh token validity period |
+| `ACCESS_TOKEN_EXPIRY` | 1 hour | 1 hour | Access token validity period |
+| `RBAC_CACHE_TTL` | 5 min | 5 min | RBAC claim cache TTL |
+| `USER_CACHE_TTL` | 1 hour | 1 hour | User data cache TTL |
 
 ---
 
-## テスト結果
+## Test Results
 
-### 200 RPS テスト（2分間）
+### 200 RPS Test (2 minutes)
 
-**実施日時:** 2025-12-03 09:33 JST
+**Execution Date/Time:** 2025-12-03 09:33 JST
 
-#### k6 メトリクス
+#### k6 Metrics
 
-| メトリクス | 値 |
+| Metric | Value |
 |-----------|-----|
-| **総リクエスト** | 29,186 |
-| **成功率** | **100%** |
-| **Token Rotation 成功率** | 100% |
-| **エラー** | 0 |
+| **Total Requests** | 29,186 |
+| **Success Rate** | **100%** |
+| **Token Rotation Success Rate** | 100% |
+| **Errors** | 0 |
 
 #### Cloudflare Analytics
 
-| メトリクス | 値 | 備考 |
+| Metric | Value | Notes |
 |-----------|-----|------|
-| **Worker Duration p50** | 9.35 ms | 中央値 |
+| **Worker Duration p50** | 9.35 ms | Median |
 | **Worker Duration p75** | 10.44 ms | |
 | **Worker Duration p90** | 39.30 ms | |
-| **Worker Duration p99** | 816.24 ms | テール遅延 |
+| **Worker Duration p99** | 816.24 ms | Tail latency |
 | **CPU Time p50** | 4.80 ms | |
 | **CPU Time p99** | 14.40 ms | |
-| **DO Wall Time p50** | 9.16 ms | Durable Objects 処理時間 |
+| **DO Wall Time p50** | 9.16 ms | Durable Objects processing time |
 | **DO Wall Time p99** | 18.43 ms | |
 | **D1 Reads** | 10,510 | **0.36/request** |
 | **D1 Writes** | 23,518 | 0.81/request |
 
-#### DO・D1 効率
+#### DO and D1 Efficiency
 
-| メトリクス | 計算値 | 説明 |
+| Metric | Calculated Value | Description |
 |-----------|--------|------|
-| **DO Requests/Worker Request** | 3.09 | サブリクエスト効率 |
-| **D1 Reads/Request** | **0.36** | RBACキャッシュヒット率 > 95% |
-| **D1 Writes/Request** | 0.81 | 監査ログ・セッション更新 |
+| **DO Requests/Worker Request** | 3.09 | Subrequest efficiency |
+| **D1 Reads/Request** | **0.36** | RBAC cache hit rate > 95% |
+| **D1 Writes/Request** | 0.81 | Audit log and session updates |
 
 ---
 
-### パフォーマンス推移（最適化履歴）
+### Performance Timeline (Optimization History)
 
-#### D1 読み取りクエリの削減
+#### D1 Read Query Reduction
 
-| 最適化段階 | D1 Reads/Request | 改善率 |
+| Optimization Stage | D1 Reads/Request | Improvement |
 |-----------|------------------|--------|
-| V1（キャッシュなし） | 約14.6 | ベースライン |
-| V2（RBACキャッシュ追加前） | 9.7 | -34% |
-| V2（RBACキャッシュ追加後） | **0.36** | **-96%** |
+| V1 (no cache) | approx 14.6 | Baseline |
+| V2 (before RBAC cache) | 9.7 | -34% |
+| V2 (after RBAC cache) | **0.36** | **-96%** |
 
-#### 実施した最適化
+#### Optimizations Performed
 
-| 日時 | 最適化内容 | 効果 |
+| Date | Optimization | Effect |
 |------|-----------|------|
-| 2025-12-01 | TokenFamilyV2 導入（バージョンベース盗難検知） | DO ストレージI/O削減 |
-| 2025-12-01 | UserCache 導入（KV Read-Through） | D1 ユーザークエリ削減 |
-| 2025-12-03 | 監査ログ非同期化（Fire-and-Forget） | レスポンス遅延削減 |
-| 2025-12-03 | RBAC クレームキャッシュ導入（5分 TTL） | D1 RBAC クエリ96%削減 |
+| 2025-12-01 | TokenFamilyV2 introduction (version-based theft detection) | Reduced DO storage I/O |
+| 2025-12-01 | UserCache introduction (KV Read-Through) | Reduced D1 user queries |
+| 2025-12-03 | Async audit logging (Fire-and-Forget) | Reduced response latency |
+| 2025-12-03 | RBAC claim cache introduction (5-min TTL) | 96% reduction in D1 RBAC queries |
 
 ---
 
-## アーキテクチャの特徴
+## Architecture Features
 
-### TokenFamilyV2 設計
+### TokenFamilyV2 Design
 
-Refresh Token のローテーションにバージョンベースの盗難検知を採用しています。
+Refresh Token rotation uses version-based theft detection.
 
 ```
 JWT Payload:
@@ -182,84 +182,84 @@ JWT Payload:
 }
 ```
 
-- **rtv (Refresh Token Version)**: トークンファミリー内のバージョン番号
-- 旧バージョンのトークンが使用された場合 → トークン盗難として全トークン無効化
-- Durable Objects で状態管理、D1 で監査ログ永続化
+- **rtv (Refresh Token Version)**: Version number within token family
+- When an old version token is used → Invalidate all tokens as token theft
+- State management in Durable Objects, audit log persistence in D1
 
-### キャッシュ戦略
+### Cache Strategy
 
-| キャッシュ | TTL | 用途 |
+| Cache | TTL | Purpose |
 |-----------|-----|------|
-| **USER_CACHE** | 1時間 | ユーザー情報（Read-Through） |
-| **REBAC_CACHE** | 5分 | RBACクレーム（roles, permissions, groups） |
-| **CLIENTS_CACHE** | 1時間 | クライアント情報 |
-| **KeyManager** | 5分 | JWK署名キー（Worker メモリ内） |
+| **USER_CACHE** | 1 hour | User information (Read-Through) |
+| **REBAC_CACHE** | 5 min | RBAC claims (roles, permissions, groups) |
+| **CLIENTS_CACHE** | 1 hour | Client information |
+| **KeyManager** | 5 min | JWK signing keys (Worker memory) |
 
 ---
 
-## MAU 換算
+## MAU Conversion
 
-| RPS | トークン発行/時 | トークン発行/日 | 想定 MAU |
+| RPS | Token Issuance/Hour | Token Issuance/Day | Estimated MAU |
 |-----|----------------|----------------|----------|
-| 100 | 360,000 | 8.6M | 20万〜40万 |
-| **200** | **720,000** | **17.3M** | **50万〜100万** |
-| 300 | 1,080,000 | 25.9M | 100万〜200万 |
+| 100 | 360,000 | 8.6M | 200K-400K |
+| **200** | **720,000** | **17.3M** | **500K-1M** |
+| 300 | 1,080,000 | 25.9M | 1M-2M |
 
-**換算式:**
+**Conversion Formula:**
 ```
-RPS = (MAU × DAU率 × リクエスト/DAU) / (稼働時間 × 3600) × ピーク係数
+RPS = (MAU × DAU rate × Requests/DAU) / (Operating hours × 3600) × Peak coefficient
     ≈ MAU / 5,000
 ```
 
 ---
 
-## 結論
+## Conclusion
 
-### 達成した性能
+### Achieved Performance
 
-| 指標 | 目標 | 結果 | 判定 |
+| Metric | Target | Result | Status |
 |------|------|------|------|
-| **成功率** | > 99.9% | **100%** | ✅ |
+| **Success Rate** | > 99.9% | **100%** | ✅ |
 | **Token Rotation** | > 99% | **100%** | ✅ |
 | **Worker Duration p99** | < 1000ms | 816ms | ✅ |
 | **DO Wall Time p99** | < 100ms | 18.43ms | ✅ |
 | **D1 Reads/Request** | < 5 | **0.36** | ✅ |
 
-### 推奨スケール
+### Recommended Scale
 
-- **保守的推定:** 200 RPS（p99 < 500ms 維持）
-- **楽観的推定:** 300-400 RPS（現アーキテクチャ上限）
-- **想定 MAU:** 50万〜100万ユーザー
+- **Conservative Estimate:** 200 RPS (maintaining p99 < 500ms)
+- **Optimistic Estimate:** 300-400 RPS (current architecture limit)
+- **Target MAU:** 500K-1M users
 
-### 今後の改善案
+### Future Improvements
 
-1. **DO シャーディング拡張**: RefreshTokenRotator を client_id + user_id でシャーディング
-2. **D1 読み取りレプリカ**: グローバル展開時の読み取り最適化
-3. **Cloudflare Queues**: 監査ログの非同期バッチ処理
+1. **DO Sharding Extension**: Shard RefreshTokenRotator by client_id + user_id
+2. **D1 Read Replicas**: Read optimization for global deployment
+3. **Cloudflare Queues**: Async batch processing for audit logs
 
 ---
 
-## 関連ファイル
+## Related Files
 
-| ファイル | 説明 |
+| File | Description |
 |---------|------|
-| `scripts/test2-refresh-storm.js` | k6 テストスクリプト |
-| `scripts/generate-seeds.js` | テスト用シード生成 |
-| `scripts/fetch-cf-analytics.js` | CF メトリクス収集 |
-| `results/cf-analytics_*.json` | 収集された Analytics データ |
+| `scripts/test2-refresh-storm.js` | k6 test script |
+| `scripts/generate-seeds.js` | Test seed generation |
+| `scripts/fetch-cf-analytics.js` | CF metrics collection |
+| `results/cf-analytics_*.json` | Collected Analytics data |
 
 ---
 
-## 実行方法
+## Execution Method
 
 ```bash
-# 1. シード生成（リフレッシュトークン）
+# 1. Seed generation (refresh tokens)
 CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz \
   REFRESH_COUNT=240 node scripts/generate-seeds.js
 
-# 2. テスト実行
+# 2. Test execution
 k6 run --env PRESET=rps200 scripts/test2-refresh-storm.js
 
-# 3. メトリクス収集
+# 3. Metrics collection
 CF_API_TOKEN=xxx node scripts/fetch-cf-analytics.js --minutes 5
 ```

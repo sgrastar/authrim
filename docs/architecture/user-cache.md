@@ -2,17 +2,17 @@
 
 ## Overview
 
-UserCacheは、ユーザーメタデータのRead-Throughキャッシュ実装です。D1からの読み取りを最小化し、Token Endpointなどのホットパスにおけるレイテンシを削減します。
+UserCache is a Read-Through cache implementation for user metadata. It minimizes D1 reads and reduces latency in hot paths such as the Token Endpoint.
 
-**設計原則:**
-- Read-Through パターン（Cache miss時にD1から自動取得）
-- 1時間TTL + Invalidation Hook
-- KV Namespace を使用（`USER_CACHE`）
-- Policy Cache とは分離（別のTTL要件）
+**Design Principles:**
+- Read-Through pattern (automatically fetch from D1 on cache miss)
+- 1 hour TTL + Invalidation Hook
+- Uses KV Namespace (`USER_CACHE`)
+- Separated from Policy Cache (different TTL requirements)
 
 ---
 
-## アーキテクチャ
+## Architecture
 
 ```
 ┌─────────────┐     Cache Hit      ┌─────────────┐
@@ -30,7 +30,7 @@ UserCacheは、ユーザーメタデータのRead-Throughキャッシュ実装�
 
 ---
 
-## データ構造
+## Data Structure
 
 ### CachedUser Interface
 
@@ -62,22 +62,22 @@ interface CachedUser {
 user:{userId}
 ```
 
-例: `user:550e8400-e29b-41d4-a716-446655440000`
+Example: `user:550e8400-e29b-41d4-a716-446655440000`
 
 ---
 
-## TTL 設計
+## TTL Design
 
-| キャッシュ | TTL | 理由 |
+| Cache | TTL | Reason |
 |-----------|-----|------|
-| UserCache | 1時間 | Invalidation Hookがあるため長めでも安全 |
-| PolicyCache | 5分 | 頻繁に変更される可能性、invalidation hookなし |
-| SigningKeyCache | 10分 | 鍵ローテーション対応 |
+| UserCache | 1 hour | Safe to use longer TTL with Invalidation Hook |
+| PolicyCache | 5 minutes | May change frequently, no invalidation hook |
+| SigningKeyCache | 10 minutes | Support key rotation |
 
-**1時間TTLの根拠:**
-- ユーザー情報の更新頻度は低い（プロフィール編集は稀）
-- Invalidation Hookにより更新時は即座にキャッシュクリア
-- Token Endpoint の p95 レイテンシ削減効果が大きい
+**Rationale for 1-hour TTL:**
+- User information updates are infrequent (profile edits are rare)
+- Invalidation Hook clears cache immediately on update
+- Significant p95 latency reduction for Token Endpoint
 
 ---
 
@@ -92,13 +92,13 @@ async function getCachedUser(
 ): Promise<CachedUser | null>
 ```
 
-**動作:**
-1. `USER_CACHE.get(`user:${userId}`)` を試行
-2. Cache hit → パース して返却
-3. Cache miss → D1 から取得 → KV に保存（1時間TTL） → 返却
-4. D1 にも存在しない → `null` 返却
+**Behavior:**
+1. Try `USER_CACHE.get(`user:${userId}`)`
+2. Cache hit → parse and return
+3. Cache miss → fetch from D1 → save to KV (1 hour TTL) → return
+4. Not found in D1 either → return `null`
 
-**使用例:**
+**Usage Example:**
 ```typescript
 // op-token/token.ts
 const user = await getCachedUser(c.env, userId);
@@ -106,7 +106,7 @@ if (!user) {
   return c.json({ error: 'invalid_grant', error_description: 'User not found' }, 400);
 }
 
-// ID Token claims に使用
+// Use in ID Token claims
 const idTokenClaims = {
   sub: user.id,
   email: user.email,
@@ -125,40 +125,40 @@ async function invalidateUserCache(
 ): Promise<void>
 ```
 
-**動作:**
-1. `USER_CACHE.delete(`user:${userId}`)` を実行
-2. 存在しなくても成功（冪等性）
+**Behavior:**
+1. Execute `USER_CACHE.delete(`user:${userId}`)`
+2. Succeeds even if not exists (idempotent)
 
-**使用例:**
+**Usage Example:**
 ```typescript
-// op-management/admin.ts - ユーザー更新後
+// op-management/admin.ts - after user update
 await invalidateUserCache(env, userId);
 ```
 
 ---
 
-## Invalidation Hook 設置箇所
+## Invalidation Hook Locations
 
 ### op-management/admin.ts
 
-| エンドポイント | タイミング |
+| Endpoint | Timing |
 |---------------|-----------|
-| `PATCH /api/admin/users/:id` | ユーザー情報更新後 |
-| `PUT /api/admin/users/:id/avatar` | アバターアップロード後 |
-| `DELETE /api/admin/users/:id/avatar` | アバター削除後 |
+| `PATCH /api/admin/users/:id` | After user information update |
+| `PUT /api/admin/users/:id/avatar` | After avatar upload |
+| `DELETE /api/admin/users/:id/avatar` | After avatar deletion |
 
 ### op-management/scim.ts
 
-| エンドポイント | タイミング |
+| Endpoint | Timing |
 |---------------|-----------|
-| `PUT /scim/v2/Users/:id` | SCIM Replace 後 |
-| `PATCH /scim/v2/Users/:id` | SCIM Modify 後 |
+| `PUT /scim/v2/Users/:id` | After SCIM Replace |
+| `PATCH /scim/v2/Users/:id` | After SCIM Modify |
 
-**実装パターン:**
+**Implementation Pattern:**
 ```typescript
 // admin.ts
 app.patch('/api/admin/users/:id', async (c) => {
-  // ... ユーザー更新処理 ...
+  // ... user update processing ...
 
   // Invalidation Hook
   await invalidateUserCache(c.env, userId);
@@ -169,7 +169,7 @@ app.patch('/api/admin/users/:id', async (c) => {
 
 ---
 
-## 実装コード
+## Implementation Code
 
 ### kv.ts
 
@@ -183,7 +183,7 @@ export interface CachedUser {
   email: string;
   email_verified: boolean;
   name: string | null;
-  // ... (全フィールド)
+  // ... (all fields)
 }
 
 export async function getCachedUser(
@@ -238,7 +238,7 @@ export async function invalidateUserCache(
 
 ---
 
-## 環境変数設定
+## Environment Variable Configuration
 
 ### wrangler.toml
 
@@ -266,14 +266,14 @@ export interface Env {
 
 ---
 
-## パフォーマンス効果
+## Performance Impact
 
-### Before (D1 直接アクセス)
+### Before (Direct D1 Access)
 
 ```
 Token Endpoint Latency:
 ├── DO Wall Time: ~15ms
-├── D1 Read (user): ~150ms ← ボトルネック
+├── D1 Read (user): ~150ms ← bottleneck
 ├── JWT Sign: ~5ms
 └── Total: ~170ms
 ```
@@ -283,79 +283,79 @@ Token Endpoint Latency:
 ```
 Token Endpoint Latency:
 ├── DO Wall Time: ~15ms
-├── KV Read (cache hit): ~5ms ← 大幅改善
+├── KV Read (cache hit): ~5ms ← significant improvement
 ├── JWT Sign: ~5ms
 └── Total: ~25ms
 ```
 
-**キャッシュヒット率の期待値:**
-- 同一ユーザーの連続リクエスト: 99%+
-- 1時間以内のリクエスト: 95%+
-- 全体: 80-90%
+**Expected Cache Hit Rate:**
+- Consecutive requests from same user: 99%+
+- Requests within 1 hour: 95%+
+- Overall: 80-90%
 
 ---
 
-## 注意事項
+## Precautions
 
-### 1. キャッシュの一貫性
+### 1. Cache Consistency
 
-Invalidation Hookを必ず設置すること。設置漏れがあると、古いユーザー情報がID Tokenに含まれる可能性があります。
+Always implement Invalidation Hooks. Missing hooks may result in stale user information being included in ID Tokens.
 
-**チェックリスト:**
+**Checklist:**
 - [ ] `PATCH /api/admin/users/:id`
 - [ ] `PUT /api/admin/users/:id/avatar`
 - [ ] `DELETE /api/admin/users/:id/avatar`
 - [ ] `PUT /scim/v2/Users/:id`
 - [ ] `PATCH /scim/v2/Users/:id`
 
-### 2. 新規エンドポイント追加時
+### 2. When Adding New Endpoints
 
-ユーザー情報を更新する新しいエンドポイントを追加する場合は、必ず `invalidateUserCache()` を呼び出すこと。
+When adding new endpoints that update user information, always call `invalidateUserCache()`.
 
-### 3. TTL と Invalidation の併用
+### 3. Combined TTL and Invalidation
 
-- TTL: 最悪ケースの古さを制限（1時間）
-- Invalidation: 通常ケースでの即時反映
+- TTL: Limits worst-case staleness (1 hour)
+- Invalidation: Immediate reflection in normal cases
 
-両方を組み合わせることで、安全性とパフォーマンスを両立。
+Combining both achieves both safety and performance.
 
-### 4. Policy Cache との分離
+### 4. Separation from Policy Cache
 
-UserCache と PolicyCache は別々のKV Namespaceを使用：
-- `USER_CACHE`: ユーザーメタデータ（1時間TTL）
-- `POLICY_CACHE`: ポリシー設定（5分TTL）
+UserCache and PolicyCache use separate KV Namespaces:
+- `USER_CACHE`: User metadata (1 hour TTL)
+- `POLICY_CACHE`: Policy configuration (5 minute TTL)
 
-分離理由:
-- 異なる更新頻度
-- 異なるinvalidation要件
-- 障害分離
+Separation reasons:
+- Different update frequencies
+- Different invalidation requirements
+- Fault isolation
 
 ---
 
-## 監視とデバッグ
+## Monitoring and Debugging
 
-### KV メトリクス
+### KV Metrics
 
-Cloudflare Dashboard で確認:
+Check in Cloudflare Dashboard:
 - Cache hit rate
 - Read/Write operations
 - Storage usage
 
-### ログ
+### Logging
 
 ```typescript
-// デバッグログ（本番では無効化推奨）
+// Debug log (recommended to disable in production)
 console.log(`UserCache: ${cached ? 'HIT' : 'MISS'} for ${userId}`);
 ```
 
-### トラブルシューティング
+### Troubleshooting
 
-**症状: 古いユーザー情報が返される**
-1. Invalidation Hookの設置を確認
-2. KV の `user:{userId}` エントリを手動削除
-3. TTL 経過を待つ（最大1時間）
+**Symptom: Stale user information returned**
+1. Verify Invalidation Hook is implemented
+2. Manually delete KV `user:{userId}` entry
+3. Wait for TTL to expire (max 1 hour)
 
-**症状: キャッシュミスが多い**
-1. KV Namespace のバインディングを確認
-2. `USER_CACHE` が undefined でないことを確認
-3. D1 クエリが正常に動作することを確認
+**Symptom: High cache miss rate**
+1. Verify KV Namespace binding
+2. Confirm `USER_CACHE` is not undefined
+3. Verify D1 query is working correctly

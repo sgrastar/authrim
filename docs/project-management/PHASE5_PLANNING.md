@@ -185,99 +185,99 @@ The following items will be reviewed and decided in order:
     - `users.identity_provider_id` column (link to external authentication)
     - SAML/LDAP implementation planned for Phase 7
 
-- [ ] **トークン交換系API（検討中・2025-11-12追加）**
-  - **現在の実装状況**:
-    - `POST /token` (grant_type=authorization_code) ✅ 実装済み
-    - `POST /token` (grant_type=refresh_token) ✅ 実装済み
-  - **将来検討すべきトークン交換メカニズム**:
-    - **RFC 8693 Token Exchange** - 標準的なトークン交換プロトコル（最も柔軟）
-      - セッショントークン → アクセストークン（ITP対応SSO用）
-      - アクセストークン → アクセストークン（スコープ変更）
-      - IDトークン → アクセストークン（トークン変換）
-      - Delegation、Impersonation対応
-    - **専用セッション交換API** - ITP対応SSO特化のシンプルなAPI
-      - `POST /auth/session/exchange` - セッショントークンをアクセストークンに交換
-    - **Hybrid アプローチ** - RFC 8693（汎用）+ 専用API（使いやすさ）の両方をサポート
-  - **決定**: Phase 5実装時に要件を整理して最終決定
-  - **メモ**: 上記の `/auth/session/token` と `/auth/session/verify` は Token Exchange の一形態として実装可能
+- [ ] **Token Exchange APIs (Under Consideration - Added 2025-11-12)**
+  - **Current Implementation Status**:
+    - `POST /token` (grant_type=authorization_code) ✅ Implemented
+    - `POST /token` (grant_type=refresh_token) ✅ Implemented
+  - **Future Token Exchange Mechanisms to Consider**:
+    - **RFC 8693 Token Exchange** - Standard token exchange protocol (most flexible)
+      - Session token → Access token (for ITP-compliant SSO)
+      - Access token → Access token (scope change)
+      - ID token → Access token (token conversion)
+      - Delegation, Impersonation support
+    - **Dedicated Session Exchange API** - Simple API specialized for ITP-compliant SSO
+      - `POST /auth/session/exchange` - Exchange session token for access token
+    - **Hybrid Approach** - Support both RFC 8693 (general purpose) + dedicated API (ease of use)
+  - **Decision**: Finalize requirements during Phase 5 implementation
+  - **Note**: The above `/auth/session/token` and `/auth/session/verify` can be implemented as a form of Token Exchange
 
-#### 2.3 セッション管理
-- [ ] **実装方式の選定**
+#### 2.3 Session Management
+- [ ] **Implementation Method Selection**
   - **Option A: Cookie-based Sessions**
-    - KV/D1/DOにセッションデータ保存
+    - Store session data in KV/D1/DO
     - HttpOnly, Secure, SameSite=Lax Cookie
 
   - **Option B: JWT Sessions**
-    - ステートレス
-    - クライアント側に保存
+    - Stateless
+    - Store on client side
 
   - **Option C: Hybrid**
-    - セッションID（Cookie） + データ（KV/DO）
+    - Session ID (Cookie) + Data (KV/DO)
 
-- [ ] **推奨**: Option C (Hybrid)
-  - 理由: セキュリティとパフォーマンスのバランス
+- [ ] **Recommended**: Option C (Hybrid)
+  - Reason: Balance of security and performance
 
-- コメント：異なるドメインでのSSOに対応できる形がいい。要検討
-  - **決定**: **サーバー側セッション + トークン交換方式**
-    - 同一ドメイン: HttpOnly Cookie でセッション管理
-    - クロスドメインSSO: トークン交換方式
-      1. IdP側でセッション保持（KV/DO）
-      2. クライアントアプリは`/auth/session/token`にリダイレクト
-      3. IdPが短命トークン（5分TTL）を発行してクライアントへリダイレクト
-      4. クライアントがトークンを検証してセッションCookie発行
-    - **メリット**: ITP完全対応（サードパーティCookie不使用）、即座にセッション無効化可能、セキュリティ高
-    - セッションデータ: KV（短期）+ DO（強い一貫性が必要な場合）
+- Comment: Want to support SSO across different domains. Needs consideration.
+  - **Decision**: **Server-side session + Token exchange approach**
+    - Same domain: Session management with HttpOnly Cookie
+    - Cross-domain SSO: Token exchange approach
+      1. IdP maintains session (KV/DO)
+      2. Client app redirects to `/auth/session/token`
+      3. IdP issues short-lived token (5min TTL) and redirects to client
+      4. Client verifies token and issues session Cookie
+    - **Benefits**: Full ITP compliance (no third-party cookies), immediate session invalidation, high security
+    - Session data: KV (short-term) + DO (when strong consistency required)
 
-### 3️⃣ データストレージ設計
+### 3️⃣ Data Storage Design
 
-#### 3.1 ストレージ選定 - ハイブリッド構成
-- [x] **各ストレージの用途決定** - ✅ 決定完了（2025-11-13）
+#### 3.1 Storage Selection - Hybrid Configuration
+- [x] **Usage determination for each storage** - ✅ Completed (2025-11-13)
 
-詳細設計: [storage-strategy.md](../architecture/storage-strategy.md)
+Detailed design: [storage-strategy.md](../architecture/storage-strategy.md)
 
-  **🔷 Durable Objects（強い一貫性・リアルタイム状態管理）**
-  - 用途: ワンタイム保証、排他制御、リアルタイムデータ
-  - データ例:
-    - **Authorization Code Store**（TTL: 60秒、リプレイ攻撃防止）
-    - **Refresh Token Rotator**（原子的トークンローテーション、競合制御）
-    - **Session Store**（アクティブセッション、in-memory + persistent fallback）
-    - **KeyManager**（既存実装、RSA鍵管理・ローテーション）
-  - コスト: $0.02/1M CPU-ms（認可コード処理: 300K req/月 = $0.03）
+  **🔷 Durable Objects (Strong Consistency・Real-time State Management)**
+  - Use: One-time guarantees, mutual exclusion, real-time data
+  - Data examples:
+    - **Authorization Code Store** (TTL: 60s, replay attack prevention)
+    - **Refresh Token Rotator** (atomic token rotation, conflict control)
+    - **Session Store** (active sessions, in-memory + persistent fallback)
+    - **KeyManager** (existing implementation, RSA key management/rotation)
+  - Cost: $0.02/1M CPU-ms (authz code processing: 300K req/month = $0.03)
 
-  **🔶 Cloudflare D1 (SQLite)（永続データ・リレーショナル）**
-  - 用途: 永続データ、複雑なクエリ、Audit Log
-  - データ例:
-    - **users**（マスターレコード）
-    - **oauth_clients**（登録済みクライアント）
-    - **sessions**（セッション履歴ログ、DOのfallback）
-    - **passkeys**（WebAuthn認証情報）
-    - **audit_log**（全操作の監査ログ）
-    - **refresh_token_log**（Audit用永続ログ）
-    - **roles** / **user_roles**（RBAC）
-    - **scope_mappings**（カスタムスコープ定義）
-    - **branding_settings**（UI設定）
-    - **identity_providers**（SAML/LDAP設定、Phase 7用）
-  - コスト: 無料枠内（5M rows read/day、100K rows write/day）
+  **🔶 Cloudflare D1 (SQLite) (Persistent Data・Relational)**
+  - Use: Persistent data, complex queries, Audit Log
+  - Data examples:
+    - **users** (master records)
+    - **oauth_clients** (registered clients)
+    - **sessions** (session history log, DO fallback)
+    - **passkeys** (WebAuthn credentials)
+    - **audit_log** (audit log for all operations)
+    - **refresh_token_log** (persistent log for audit)
+    - **roles** / **user_roles** (RBAC)
+    - **scope_mappings** (custom scope definitions)
+    - **branding_settings** (UI settings)
+    - **identity_providers** (SAML/LDAP settings, for Phase 7)
+  - Cost: Within free tier (5M rows read/day, 100K rows write/day)
 
-  **🔵 Cloudflare KV（グローバルエッジキャッシュ・静的メタデータ）**
-  - 用途: 読み取り専用キャッシュ、グローバルCDN、短命トークン
-  - データ例:
-    - **JWKs**（公開鍵、DO KeyManagerからキャッシュ、TTL: 1h）
-    - **Discovery情報**（/.well-known/openid-configuration、TTL: 1h）
-    - **Client metadata cache**（D1からのread-through cache、TTL: 5min）
-    - **Magic Link tokens**（TTL: 15分）
-    - **CSRF Token**（TTL: 1時間）
-    - **Rate Limiting**（既存実装、IPベースカウンター）
-  - コスト: $0.50/1M reads（キャッシュヒット主体）
+  **🔵 Cloudflare KV (Global Edge Cache・Static Metadata)**
+  - Use: Read-only cache, global CDN, short-lived tokens
+  - Data examples:
+    - **JWKs** (public keys, cached from DO KeyManager, TTL: 1h)
+    - **Discovery info** (/.well-known/openid-configuration, TTL: 1h)
+    - **Client metadata cache** (read-through cache from D1, TTL: 5min)
+    - **Magic Link tokens** (TTL: 15min)
+    - **CSRF Token** (TTL: 1 hour)
+    - **Rate Limiting** (existing implementation, IP-based counter)
+  - Cost: $0.50/1M reads (mainly cache hits)
 
-#### ハイブリッド構成の利点
-1. **コスト最適化**: 短命トランザクションデータはDO（KVより15x安い）
-2. **強い一貫性**: 認可コード・トークンローテーションで必須
-3. **グローバルパフォーマンス**: 静的データはKVでエッジキャッシュ
-4. **マルチクラウド対応**: ストレージ抽象化層で実装済み
+#### Hybrid Configuration Benefits
+1. **Cost Optimization**: Short-lived transaction data uses DO (15x cheaper than KV)
+2. **Strong Consistency**: Essential for authorization codes and token rotation
+3. **Global Performance**: Static data uses KV for edge caching
+4. **Multi-cloud Support**: Storage abstraction layer already implemented
 
-- コメント：まだ全然考えてないけど、AzureやAWSにも入れられるように抽象化はしてほしい。
-  - **回答**: アダプターパターンで実装済み（[storage/interfaces.ts](../../packages/shared/src/storage/interfaces.ts)）
+- Comment: Haven't thought about it much yet, but want abstraction so it can be deployed to Azure or AWS.
+  - **Answer**: Already implemented with adapter pattern ([storage/interfaces.ts](../../packages/shared/src/storage/interfaces.ts))
     ```typescript
     interface IStorageAdapter {
       // KV-like operations
@@ -290,20 +290,20 @@ The following items will be reviewed and decided in order:
       execute(sql: string, params: any[]): Promise<void>
     }
 
-    // 実装例
+    // Implementation examples
     class CloudflareAdapter implements IStorageAdapter { ... }
     class AzureCosmosAdapter implements IStorageAdapter { ... }
     class AWSRDSAdapter implements IStorageAdapter { ... }
     class PostgreSQLAdapter implements IStorageAdapter { ... }
     ```
 
-- [ ] **データモデル設計**
-  - ER図作成
-  - テーブル定義
-  - インデックス設計
-  - マイグレーション戦略
+- [ ] **Data Model Design**
+  - Create ER diagram
+  - Define tables
+  - Design indexes
+  - Migration strategy
 
-#### 3.2 D1データベーススキーマ
+#### 3.2 D1 Database Schema
 
 ```sql
 -- Users Table
@@ -335,18 +335,18 @@ CREATE TABLE users (
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_created_at ON users(created_at);
 
-- コメント：管理者が好きなカラムを設置できるように。例えばバーコード番号など。あとアカウント間で親子関係が作れるようにしてほしい。
-  - **決定**: **Hybrid方式**（専用テーブル + JSONカラム）
+- Comment: Want admins to be able to add custom columns. For example, barcode numbers. Also want to support parent-child relationships between accounts.
+  - **Decision**: **Hybrid approach** (dedicated table + JSON column)
     ```sql
-    -- 親子関係
+    -- Parent-child relationships
     ALTER TABLE users ADD COLUMN parent_user_id TEXT REFERENCES users(id);
     CREATE INDEX idx_users_parent_user_id ON users(parent_user_id);
 
-    -- カスタムフィールド（検索不要なデータ用）
+    -- Custom fields (for non-searchable data)
     ALTER TABLE users ADD COLUMN custom_attributes_json TEXT;
-    -- 例: '{"social_provider_data": {...}, "preferences": {...}}'
+    -- Example: '{"social_provider_data": {...}, "preferences": {...}}'
 
-    -- カスタムフィールド（検索可能にしたいデータ用）
+    -- Custom fields (for searchable data)
     CREATE TABLE user_custom_fields (
       user_id TEXT NOT NULL,
       field_name TEXT NOT NULL,
@@ -359,10 +359,10 @@ CREATE INDEX idx_users_created_at ON users(created_at);
 
     CREATE INDEX idx_user_custom_fields_search ON user_custom_fields(field_name, field_value);
     ```
-  - **使い分け**:
-    - JSON: ソーシャルプロバイダーの生データ、検索不要なメタデータ
-    - 専用テーブル: 検索可能にしたいフィールド（barcode、employee_idなど）
-  - **コスト**: ほぼ同じ（D1は行数ベース課金、必要な部分だけ専用テーブル使用で最適化）
+  - **Usage**:
+    - JSON: Raw data from social providers, metadata that doesn't need searching
+    - Dedicated table: Fields that need to be searchable (barcode, employee_id, etc.)
+  - **Cost**: Roughly the same (D1 charges by row count, optimize by using dedicated table only for necessary parts)
 
 -- Passkeys/WebAuthn Credentials Table
 CREATE TABLE passkeys (
@@ -434,78 +434,78 @@ CREATE INDEX idx_audit_log_created_at ON audit_log(created_at);
 CREATE INDEX idx_audit_log_action ON audit_log(action);
 ```
 
-- コメント：この辺のスキーマーは後から変更できるの？追加、削除、変更の制約を教えて。
-  - **回答**: D1 (SQLite) のスキーマ変更制約
-    - ✅ **追加**: 新しいカラム追加は可能 (`ALTER TABLE ADD COLUMN`)
-    - ✅ **削除**: カラム削除は制限あり (SQLite 3.35.0+ で `DROP COLUMN` 対応、D1も対応予定)
-    - ⚠️ **変更**: カラム型変更は直接不可（新カラム作成→データコピー→旧カラム削除）
-    - ✅ **インデックス**: 追加・削除は自由（`CREATE INDEX`, `DROP INDEX`）
-  - **マイグレーション戦略**:
-    - バージョン管理されたSQLマイグレーションファイル（`migrations/001_initial.sql`等）
-    - Rollback用のダウンマイグレーション
-    - テスト環境での事前検証
-    - ゼロダウンタイムマイグレーション（Blue-Green Deployment）
+- Comment: Can these schemas be changed later? What are the constraints for adding, deleting, and modifying?
+  - **Answer**: D1 (SQLite) schema change constraints
+    - ✅ **Add**: Adding new columns is possible (`ALTER TABLE ADD COLUMN`)
+    - ✅ **Delete**: Column deletion has restrictions (SQLite 3.35.0+ supports `DROP COLUMN`, D1 support planned)
+    - ⚠️ **Modify**: Direct column type change not possible (create new column→copy data→delete old column)
+    - ✅ **Indexes**: Add/delete freely (`CREATE INDEX`, `DROP INDEX`)
+  - **Migration Strategy**:
+    - Version-controlled SQL migration files (`migrations/001_initial.sql`, etc.)
+    - Down migrations for rollback
+    - Pre-validation in test environment
+    - Zero-downtime migration (Blue-Green Deployment)
 
-- [ ] **スキーマレビュー**
-- [ ] **マイグレーションスクリプト作成**
-- [ ] **シードデータ作成**
+- [ ] **Schema Review**
+- [ ] **Create Migration Scripts**
+- [ ] **Create Seed Data**
 
-#### 3.3 ストレージ抽象化層
-- [ ] **インターフェース設計**（Phase 4で基礎完了）
-  - `IUserStore` - ユーザーCRUD
-  - `IClientStore` - クライアントCRUD（既存DCRを拡張）
-  - `ISessionStore` - セッション管理
-  - `IPasskeyStore` - Passkey管理
+#### 3.3 Storage Abstraction Layer
+- [ ] **Interface Design** (basics completed in Phase 4)
+  - `IUserStore` - User CRUD
+  - `IClientStore` - Client CRUD (extends existing DCR)
+  - `ISessionStore` - Session management
+  - `IPasskeyStore` - Passkey management
 
-- [ ] **アダプター実装**
-  - `D1Adapter` - D1実装
-  - `KVAdapter` - KV実装（既存を拡張）
-  - `DOAdapter` - Durable Objects実装
+- [ ] **Adapter Implementation**
+  - `D1Adapter` - D1 implementation
+  - `KVAdapter` - KV implementation (extend existing)
+  - `DOAdapter` - Durable Objects implementation
 
-### 4️⃣ 認証フロー設計
+### 4️⃣ Authentication Flow Design
 
-#### 4.1 WebAuthn/Passkey実装
-- [ ] **実装要件**
-  - WebAuthn API利用（navigator.credentials）
-  - Relying Party (RP) 設定
-  - Attestation検証
-  - Assertion検証
-  - Counter管理（リプレイ攻撃対策）
+#### 4.1 WebAuthn/Passkey Implementation
+- [ ] **Implementation Requirements**
+  - Use WebAuthn API (navigator.credentials)
+  - Relying Party (RP) configuration
+  - Attestation verification
+  - Assertion verification
+  - Counter management (replay attack prevention)
 
-- [ ] **必要なライブラリ選定**
-  - **@simplewebauthn/server** - サーバー側検証
-  - **@simplewebauthn/browser** - クライアント側API
+- [ ] **Required Library Selection**
+  - **@simplewebauthn/server** - Server-side verification
+  - **@simplewebauthn/browser** - Client-side API
 
-- [ ] **フロー**
-  1. Registration (登録)
-     - ユーザーがメールアドレス入力
-     - サーバーがチャレンジ生成
-     - ブラウザでPasskey作成
-     - サーバーで検証・保存
+- [ ] **Flow**
+  1. Registration
+     - User enters email address
+     - Server generates challenge
+     - Browser creates Passkey
+     - Server verifies and stores
 
-  2. Authentication (認証)
-     - ユーザーがメールアドレス入力（またはPasskey選択）
-     - サーバーがチャレンジ生成
-     - ブラウザでPasskey使用
-     - サーバーで検証・セッション作成
+  2. Authentication
+     - User enters email address (or selects Passkey)
+     - Server generates challenge
+     - Browser uses Passkey
+     - Server verifies and creates session
 
-#### 4.2 Magic Link実装
-- [ ] **実装要件**
-  - トークン生成（cryptographically secure）
-  - メール送信（Cloudflare Email Routing or API）
-  - トークン検証（ワンタイム、TTL: 15分）
-  - セッション作成
+#### 4.2 Magic Link Implementation
+- [ ] **Implementation Requirements**
+  - Token generation (cryptographically secure)
+  - Email sending (Cloudflare Email Routing or API)
+  - Token verification (one-time, TTL: 15 minutes)
+  - Session creation
 
-- [ ] **メール送信方式選定**
+- [ ] **Email Sending Method Selection**
   - **Option A: Cloudflare Email Workers**
-  - **Option B: 外部API (SendGrid, Postmark, Resend)**
+  - **Option B: External API (SendGrid, Postmark, Resend)**
   - **Option C: SMTP (Nodemailer)**
 
-- [ ] **推奨**: Option B (Resend or Postmark)
-  - 理由: シンプル、信頼性、配信率高
+- [ ] **Recommended**: Option B (Resend or Postmark)
+  - Reason: Simple, reliable, high delivery rate
 
-- コメント：基本Bでいいのですが、Option Aも使えるようにしてほしい。
-  - **決定**: アダプターパターンで実装
+- Comment: Basically B is fine, but want to be able to use Option A as well.
+  - **Decision**: Implement with adapter pattern
     ```typescript
     interface IEmailProvider {
       send(to: string, subject: string, html: string, from?: string): Promise<void>
@@ -516,54 +516,54 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
     class CloudflareEmailProvider implements IEmailProvider { ... }
     class SMTPProvider implements IEmailProvider { ... }
     ```
-  - 環境変数で切り替え: `EMAIL_PROVIDER=resend|cloudflare|smtp`
-  - Phase 5では Resend をデフォルト実装、他プロバイダーは管理画面から設定可能に
+  - Switch via environment variable: `EMAIL_PROVIDER=resend|cloudflare|smtp`
+  - Phase 5 implements Resend as default, other providers configurable from admin panel
 
-#### 4.3 OAuth同意画面フロー
-- [ ] **表示情報**
-  - クライアント名・ロゴ
-  - 要求されるスコープ（人間が読める形式）
-  - ユーザー情報（現在ログイン中のユーザー）
-  - プライバシーポリシー・利用規約リンク
+#### 4.3 OAuth Consent Screen Flow
+- [ ] **Display Information**
+  - Client name and logo
+  - Requested scopes (human-readable format)
+  - User information (currently logged-in user)
+  - Privacy policy and terms of service links
 
-- [ ] **ボタン**
-  - 「許可」- 同意してリダイレクト
-  - 「キャンセル」- エラーでリダイレクト
-  - 「ログアウト」- 別ユーザーでログイン
+- [ ] **Buttons**
+  - "Allow" - Consent and redirect
+  - "Cancel" - Error redirect
+  - "Logout" - Login with different user
 
-- [ ] **データ永続化**
-  - 同意履歴の保存（次回は自動承認するか？）
-  - Audit Log記録
+- [ ] **Data Persistence**
+  - Save consent history (auto-approve next time?)
+  - Record in Audit Log
 
-### 5️⃣ UIページ設計
+### 5️⃣ UI Page Design
 
-#### 5.1 エンドユーザー向けページ
+#### 5.1 End-User Pages
 
-##### Page 1: ログイン画面 (`/login`)
-- [ ] **デザイン要件**
-  - クリーンでモダンなデザイン
-  - Authrimロゴ表示
-  - メールアドレス入力フィールド
-  - 「Continue with Passkey」ボタン（メイン）
-  - 「Send Magic Link」ボタン（セカンダリ）
-  - 「Create Account」リンク
-  - 多言語切り替え（将来）
+##### Page 1: Login Screen (`/login`)
+- [ ] **Design Requirements**
+  - Clean and modern design
+  - Display Authrim logo
+  - Email address input field
+  - "Continue with Passkey" button (primary)
+  - "Send Magic Link" button (secondary)
+  - "Create Account" link
+  - Language switcher (future)
 
-- [ ] **機能要件**
-  - メールアドレスバリデーション
-  - Passkey対応ブラウザの検出
-  - エラーメッセージ表示
-  - ローディング状態
-  - アクセシビリティ（キーボード操作、スクリーンリーダー）
+- [ ] **Functional Requirements**
+  - Email address validation
+  - Passkey-capable browser detection
+  - Error message display
+  - Loading state
+  - Accessibility (keyboard navigation, screen reader)
 
-- [ ] **レスポンシブ対応**
-  - モバイル（320px～）
-  - タブレット（768px～）
-  - デスクトップ（1024px～）
+- [ ] **Responsive Support**
+  - Mobile (320px~)
+  - Tablet (768px~)
+  - Desktop (1024px~)
 
-- コメント：多言語対応か最初から実施。テンプレート的なものもいいけど、Auth0とかだと背景とかデザインとかの自由度が低いという話も聞く。自由にリンクや画像、動画、CSS,Javascriptなどが書ける環境にしたい。これは他の画面でも同様。モダンかつ自由度があるものは何か？要検討。reCapchaはCloudflareのやつを使いましょう。
-  - **決定**:
-    - **Phase 5実装**: テーマシステム（基本カスタマイズ）
+- Comment: Want multi-language support from the start. Templates are fine but I hear Auth0 has limited freedom with backgrounds and design. Want an environment where links, images, videos, CSS, Javascript can be freely written. Same for other screens. What offers modern yet flexible options? Needs consideration. Use Cloudflare's reCaptcha.
+  - **Decision**:
+    - **Phase 5 Implementation**: Theme system (basic customization)
       ```sql
       CREATE TABLE branding_settings (
         id TEXT PRIMARY KEY DEFAULT 'default',
@@ -578,181 +578,181 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
         updated_at INTEGER NOT NULL
       );
       ```
-    - **Phase 7実装**: WebSDK（高度なカスタマイズ）
-      - Web Components として提供
-      - カスタマイズ可能なプレースホルダー（`<$$$LoginEmailInput$$$>`等）
-      - 完全にスタイリング可能
-      - イベントハンドラー対応
-    - **Captcha**: Cloudflare Turnstile を使用（reCAPTCHA互換、プライバシー重視）
-    - **多言語**: Phase 5から実装（英語・日本語）、Paraglide使用（型安全、軽量）
+    - **Phase 7 Implementation**: WebSDK (advanced customization)
+      - Provided as Web Components
+      - Customizable placeholders (`<$$$LoginEmailInput$$$>`, etc.)
+      - Fully stylable
+      - Event handler support
+    - **Captcha**: Use Cloudflare Turnstile (reCAPTCHA compatible, privacy-focused)
+    - **Multi-language**: Implement from Phase 5 (English/Japanese), use Paraglide (type-safe, lightweight)
 
-##### Page 2: アカウント登録画面 (`/register`)
-- [ ] **デザイン要件**
-  - メールアドレス入力
-  - 名前入力（任意）
-  - 「Create Account with Passkey」ボタン
-  - 「Sign up with Magic Link」ボタン
-  - 「Already have an account?」リンク
+##### Page 2: Account Registration Screen (`/register`)
+- [ ] **Design Requirements**
+  - Email address input
+  - Name input (optional)
+  - "Create Account with Passkey" button
+  - "Sign up with Magic Link" button
+  - "Already have an account?" link
 
-- [ ] **機能要件**
-  - フォームバリデーション
-  - 重複メール検出
-  - Passkey登録フロー
-  - 利用規約・プライバシーポリシーへの同意チェックボックス
+- [ ] **Functional Requirements**
+  - Form validation
+  - Duplicate email detection
+  - Passkey registration flow
+  - Terms of service and privacy policy consent checkbox
 
-##### Page 3: Magic Link送信完了画面 (`/magic-link-sent`)
-- [ ] **デザイン要件**
-  - 成功メッセージ
-  - 「Check your email」
-  - メールアドレス表示
-  - 「Resend email」ボタン
-  - 「Back to login」リンク
+##### Page 3: Magic Link Sent Screen (`/magic-link-sent`)
+- [ ] **Design Requirements**
+  - Success message
+  - "Check your email"
+  - Display email address
+  - "Resend email" button
+  - "Back to login" link
 
-- [ ] **機能要件**
-  - タイマー（再送信制限）
-  - メール再送機能
+- [ ] **Functional Requirements**
+  - Timer (resend restriction)
+  - Email resend functionality
 
-##### Page 4: Magic Link検証画面 (`/verify-magic-link`)
-- [ ] **デザイン要件**
-  - ローディングスピナー
-  - 「Verifying...」メッセージ
-  - エラー時: エラーメッセージ + 「Request new link」ボタン
+##### Page 4: Magic Link Verification Screen (`/verify-magic-link`)
+- [ ] **Design Requirements**
+  - Loading spinner
+  - "Verifying..." message
+  - On error: Error message + "Request new link" button
 
-- [ ] **機能要件**
-  - URLパラメータからトークン取得
-  - トークン検証
-  - セッション作成
-  - 元のページへリダイレクト
+- [ ] **Functional Requirements**
+  - Get token from URL parameters
+  - Token verification
+  - Session creation
+  - Redirect to original page
 
-##### Page 5: OAuth同意画面 (`/consent`)
-- [ ] **デザイン要件**
-  - クライアントロゴ・名前
-  - 「{Client Name} wants to access your Authrim account」
-  - スコープリスト（アイコン付き）
-  - ユーザー情報表示（email, name）
-  - 「Allow」ボタン（プライマリ）
-  - 「Deny」ボタン（セカンダリ）
-  - 「Not you? Switch account」リンク
+##### Page 5: OAuth Consent Screen (`/consent`)
+- [ ] **Design Requirements**
+  - Client logo and name
+  - "{Client Name} wants to access your Authrim account"
+  - Scope list (with icons)
+  - Display user information (email, name)
+  - "Allow" button (primary)
+  - "Deny" button (secondary)
+  - "Not you? Switch account" link
 
-- [ ] **機能要件**
-  - スコープの人間が読める変換
-  - クライアント情報取得
-  - 同意/拒否処理
-  - リダイレクト処理
+- [ ] **Functional Requirements**
+  - Human-readable scope conversion
+  - Get client information
+  - Consent/denial processing
+  - Redirect processing
 
-- コメント：利用規約やプライバシーポリシーの掲載ができるように。
-  - **回答**: `oauth_clients`テーブルに既に以下が定義済み:
-    - `policy_uri` - プライバシーポリシーURL
-    - `tos_uri` - 利用規約URL
-  - これらを同意画面に表示し、ユーザーがクリックできるようにリンク表示
+- Comment: Want to be able to display terms of service and privacy policy.
+  - **Answer**: Already defined in `oauth_clients` table:
+    - `policy_uri` - Privacy policy URL
+    - `tos_uri` - Terms of service URL
+  - Display these on consent screen as clickable links
 
-##### Page 6: エラーページ (`/error`)
-- [ ] **デザイン要件**
-  - エラーメッセージ
-  - エラーコード
-  - 「Back to login」ボタン
-  - サポートへの連絡先
+##### Page 6: Error Page (`/error`)
+- [ ] **Design Requirements**
+  - Error message
+  - Error code
+  - "Back to login" button
+  - Support contact information
 
-- [ ] **機能要件**
-  - 多様なエラータイプ対応
-  - ユーザーフレンドリーなメッセージ
+- [ ] **Functional Requirements**
+  - Support for various error types
+  - User-friendly messages
 
-#### 5.2 管理者向けページ
+#### 5.2 Admin Pages
 
-##### Page 7: 管理者ダッシュボード (`/admin`)
-- [ ] **デザイン要件**
-  - サイドバーナビゲーション
-  - トップバー（ロゴ、検索、通知、プロファイル）
-  - 統計カード（ユーザー数、アクティブセッション数、今日のログイン数、クライアント数）
-  - アクティビティフィード（最新のログイン、登録、エラー）
-  - チャート（ログイン推移、ユーザー登録推移）
+##### Page 7: Admin Dashboard (`/admin`)
+- [ ] **Design Requirements**
+  - Sidebar navigation
+  - Top bar (logo, search, notifications, profile)
+  - Statistics cards (user count, active sessions, today's logins, client count)
+  - Activity feed (latest logins, registrations, errors)
+  - Charts (login trends, user registration trends)
 
-- コメント：Just Ideaだけど、シムシティみたいなUIはどうかな？入り口と出口があり、どのようなパーツ（認証方式）を選ぶか、建物を設置する。RPやSAMLなど外部認証は港や空港で示す。どこを経由して、またはどこに任意で何かしらのアクションをするのか、建物をクリックすると詳細画面に。シムシティ2000みたいなUI.
-  - **回答**: 素晴らしいアイデア！Phase 5では標準的なダッシュボードUIを実装し、Phase 7で視覚的な実験を実施。
-  - **Phase 7実装予定**:
-    - ビジュアル認証フロービルダー（SimCity風UI）
-    - ドラッグ&ドロップで認証フローを構築
-    - 各コンポーネント（Passkey、Magic Link、Social Login等）を「建物」として配置
-    - フロー全体を視覚化（入口→認証→出口）
-  - **ロードマップに記載**: Phase 7の高度な管理機能として追加
+- Comment: Just an idea, but how about a SimCity-like UI? Have entry and exit points, choose which components (authentication methods) as buildings. Show external auth like RP/SAML as ports or airports. Which path to take, optional actions, click buildings for details. Like SimCity 2000 UI.
+  - **Answer**: Excellent idea! Phase 5 implements standard dashboard UI, Phase 7 experiments with visual approach.
+  - **Phase 7 Planned Implementation**:
+    - Visual authentication flow builder (SimCity-style UI)
+    - Drag & drop to build authentication flows
+    - Place each component (Passkey, Magic Link, Social Login, etc.) as "buildings"
+    - Visualize entire flow (entry→authentication→exit)
+  - **Added to Roadmap**: As advanced admin feature in Phase 7
 
-- [ ] **機能要件**
-  - リアルタイム統計（または定期更新）
-  - アクティビティフィルタリング
-  - レスポンシブ対応
+- [ ] **Functional Requirements**
+  - Real-time statistics (or periodic updates)
+  - Activity filtering
+  - Responsive design
 
-##### Page 8: ユーザー管理 (`/admin/users`)
-- [ ] **デザイン要件**
-  - ユーザーリストテーブル（email, name, created_at, last_login_at, status）
-  - 検索バー
-  - フィルター（verified/unverified, active/inactive）
-  - ソート機能
-  - ページネーション
-  - 「Add User」ボタン
-  - アクション（Edit, Delete, View）
+##### Page 8: User Management (`/admin/users`)
+- [ ] **Design Requirements**
+  - User list table (email, name, created_at, last_login_at, status)
+  - Search bar
+  - Filters (verified/unverified, active/inactive)
+  - Sort functionality
+  - Pagination
+  - "Add User" button
+  - Actions (Edit, Delete, View)
 
-- [ ] **機能要件**
-  - ユーザー検索（email, name）
-  - ユーザー作成フォーム
-  - ユーザー編集フォーム
-  - ユーザー削除（確認ダイアログ）
-  - 詳細表示（モーダル or 別ページ）
+- [ ] **Functional Requirements**
+  - User search (email, name)
+  - User creation form
+  - User edit form
+  - User deletion (confirmation dialog)
+  - Detail display (modal or separate page)
 
-- コメント：外部からのデータインポート、ETL機能をつけたい。後でもいいけど。
-  - **回答**: Phase 6または7で実装予定
-    - CSV/JSONインポート/エクスポート
-    - SCIM 2.0 プロトコル対応（Phase 7）
-    - Webhook連携
-    - バルクユーザー操作API
-  - **ロードマップに記載**: Phase 7のエンタープライズ機能として追加
+- Comment: Want data import from external sources, ETL functionality. Can be later though.
+  - **Answer**: Planned for Phase 6 or 7
+    - CSV/JSON import/export
+    - SCIM 2.0 protocol support (Phase 7)
+    - Webhook integration
+    - Bulk user operations API
+  - **Added to Roadmap**: As enterprise feature in Phase 7
 
-##### Page 9: ユーザー詳細/編集 (`/admin/users/:id`)
-- [ ] **デザイン要件**
-  - ユーザー情報フォーム（全OIDC標準クレーム）
-  - Passkey一覧（登録済みデバイス）
-  - セッション一覧
+##### Page 9: User Detail/Edit (`/admin/users/:id`)
+- [ ] **Design Requirements**
+  - User information form (all OIDC standard claims)
+  - Passkey list (registered devices)
+  - Session list
   - Audit Log
-  - 「Save Changes」ボタン
-  - 「Delete User」ボタン（危険領域）
+  - "Save Changes" button
+  - "Delete User" button (danger zone)
 
-- [ ] **機能要件**
-  - フォームバリデーション
-  - 更新処理
-  - Passkey削除
-  - セッション無効化
+- [ ] **Functional Requirements**
+  - Form validation
+  - Update processing
+  - Passkey deletion
+  - Session invalidation
 
-##### Page 10: クライアント管理 (`/admin/clients`)
-- [ ] **デザイン要件**
-  - クライアントリストテーブル（client_id, client_name, created_at, grant_types）
-  - 検索バー
-  - 「Register Client」ボタン
-  - アクション（Edit, Delete, View Secret）
+##### Page 10: Client Management (`/admin/clients`)
+- [ ] **Design Requirements**
+  - Client list table (client_id, client_name, created_at, grant_types)
+  - Search bar
+  - "Register Client" button
+  - Actions (Edit, Delete, View Secret)
 
-- [ ] **機能要件**
-  - クライアント検索
-  - クライアント登録フォーム（DCR API使用）
-  - クライアント編集
-  - クライアント削除
-  - Client Secret表示（マスク/表示トグル）
+- [ ] **Functional Requirements**
+  - Client search
+  - Client registration form (using DCR API)
+  - Client editing
+  - Client deletion
+  - Client Secret display (mask/show toggle)
 
-##### Page 11: クライアント詳細/編集 (`/admin/clients/:id`)
-- [ ] **デザイン要件**
-  - クライアント情報フォーム（RFC 7591準拠）
-  - Redirect URIs管理
-  - Grant Types選択
-  - Scope設定
-  - 「Save Changes」ボタン
-  - 「Regenerate Secret」ボタン
-  - 「Delete Client」ボタン
+##### Page 11: Client Detail/Edit (`/admin/clients/:id`)
+- [ ] **Design Requirements**
+  - Client information form (RFC 7591 compliant)
+  - Redirect URIs management
+  - Grant Types selection
+  - Scope configuration
+  - "Save Changes" button
+  - "Regenerate Secret" button
+  - "Delete Client" button
 
-- [ ] **機能要件**
-  - フォームバリデーション
-  - 更新処理
-  - Secret再生成
-  - 削除処理
+- [ ] **Functional Requirements**
+  - Form validation
+  - Update processing
+  - Secret regeneration
+  - Deletion processing
 
-- コメント：スコープはDB上の好きなスキーマを取得してclaimを作れるようにする。
-  - **決定**:
+- Comment: Want scopes to be able to fetch any schema from DB and create claims.
+  - **Decision**:
     ```sql
     CREATE TABLE scope_mappings (
       scope TEXT PRIMARY KEY,
@@ -760,60 +760,60 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
       source_table TEXT NOT NULL, -- 'users', 'user_custom_fields'
       source_column TEXT NOT NULL, -- 'email', 'custom_attributes_json.employee_id'
       transformation TEXT, -- 'uppercase', 'lowercase', 'hash', 'mask'
-      condition TEXT, -- SQL WHERE条件（オプション）
+      condition TEXT, -- SQL WHERE condition (optional)
       created_at INTEGER NOT NULL
     );
     ```
-  - **例**:
+  - **Examples**:
     - `scope=employee_id` → `claim: { employee_id: users.custom_attributes_json.employee_id }`
     - `scope=department` → `claim: { department: user_custom_fields[department] }`
-  - 管理画面でスコープとクレームのマッピングを設定可能に
+  - Admin panel can configure scope-to-claim mappings
 
-##### Page 12: 設定 (`/admin/settings`)
-- [ ] **デザイン要件**
-  - タブ（General, Appearance, Security, Email, Advanced）
-  - General: サイト名、ロゴ、言語、タイムゾーン
-  - Appearance: テーマ、カラー、ログインページカスタマイズ
-  - Security: パスワードポリシー、セッションタイムアウト、MFA設定
-  - Email: SMTP設定、メールテンプレート
-  - Advanced: トークンTTL、Rate Limiting設定
+##### Page 12: Settings (`/admin/settings`)
+- [ ] **Design Requirements**
+  - Tabs (General, Appearance, Security, Email, Advanced)
+  - General: Site name, logo, language, timezone
+  - Appearance: Theme, colors, login page customization
+  - Security: Password policy, session timeout, MFA settings
+  - Email: SMTP settings, email templates
+  - Advanced: Token TTL, Rate Limiting settings
 
-- [ ] **機能要件**
-  - 設定保存（環境変数 or D1）
-  - プレビュー機能（ログインページカスタマイズ）
-  - テストメール送信
+- [ ] **Functional Requirements**
+  - Save settings (environment variables or D1)
+  - Preview functionality (login page customization)
+  - Test email sending
 
-- コメント：データはExportできるように。
-  - **回答**: 管理画面に以下を追加
-    - CSV/JSONエクスポート（全テーブル）
-    - GDPR対応（個人データエクスポート、消去権）
-    - バックアップ/リストア機能
-    - 自動バックアップ設定
-  - **Phase 5実装**: 基本的なエクスポート機能
-  - **Phase 7拡張**: GDPRオートメーション、コンプライアンスツール
-  - **ロードマップに記載**: Phase 7のコンプライアンス機能として追加
+- Comment: Want data to be exportable.
+  - **Answer**: Add to admin panel:
+    - CSV/JSON export (all tables)
+    - GDPR compliance (personal data export, right to erasure)
+    - Backup/restore functionality
+    - Automatic backup configuration
+  - **Phase 5 Implementation**: Basic export functionality
+  - **Phase 7 Extension**: GDPR automation, compliance tools
+  - **Added to Roadmap**: As compliance feature in Phase 7
 
 ##### Page 13: Audit Log (`/admin/audit-log`)
-- [ ] **デザイン要件**
-  - ログテーブル（timestamp, user, action, resource, IP, status）
-  - フィルター（日付範囲、アクション、ユーザー）
-  - 検索
-  - エクスポート（CSV, JSON）
+- [ ] **Design Requirements**
+  - Log table (timestamp, user, action, resource, IP, status)
+  - Filters (date range, action, user)
+  - Search
+  - Export (CSV, JSON)
 
-- [ ] **機能要件**
-  - ログ表示・検索
-  - フィルタリング
-  - エクスポート機能
+- [ ] **Functional Requirements**
+  - Log display and search
+  - Filtering
+  - Export functionality
 
-### 6️⃣ 管理者認証・権限管理
+### 6️⃣ Admin Authentication & Permission Management
 
-#### 6.1 管理者アカウント管理
-- [ ] **管理者の定義**
-  - D1に`user_roles`テーブル追加？
-  - または`users.is_admin`フラグ？
-  - または専用の`admins`テーブル？
+#### 6.1 Admin Account Management
+- [ ] **Admin Definition**
+  - Add `user_roles` table to D1?
+  - Or `users.is_admin` flag?
+  - Or dedicated `admins` table?
 
-- [ ] **推奨**: `user_roles`テーブル（拡張性）
+- [ ] **Recommended**: `user_roles` table (extensibility)
   ```sql
   CREATE TABLE user_roles (
     user_id TEXT NOT NULL,
@@ -824,8 +824,8 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
   );
   ```
 
-- コメント：管理者のロールを設定できるようにして下さい。
-  - **決定**: RBAC (Role-Based Access Control) 実装
+- Comment: Want to be able to configure admin roles.
+  - **Decision**: RBAC (Role-Based Access Control) implementation
     ```sql
     CREATE TABLE roles (
       id TEXT PRIMARY KEY,
@@ -844,264 +844,264 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
       FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
     );
     ```
-  - **デフォルトロール**:
-    - **Super Admin**: 全権限
-    - **Admin**: ユーザー・クライアント管理のみ
-    - **Viewer**: 読み取り専用
-    - **Support**: ユーザーサポート（パスワードリセット等）
-  - Phase 5では簡易RBAC実装、Phase 7でABAC（Attribute-Based Access Control）に拡張
+  - **Default Roles**:
+    - **Super Admin**: All permissions
+    - **Admin**: User and client management only
+    - **Viewer**: Read-only
+    - **Support**: User support (password reset, etc.)
+  - Phase 5 implements simple RBAC, Phase 7 extends to ABAC (Attribute-Based Access Control)
 
-#### 6.2 管理者認証フロー
-- [ ] **認証方式**
-  - 通常ログインフロー + ロールチェック
-  - 管理者ダッシュボードへのアクセス時に権限確認
-  - ミドルウェアで`requireAdmin()`実装
+#### 6.2 Admin Authentication Flow
+- [ ] **Authentication Method**
+  - Normal login flow + role check
+  - Permission verification when accessing admin dashboard
+  - Implement `requireAdmin()` middleware
 
-#### 6.3 権限レベル
-- [ ] **ロール定義**
-  - **Super Admin**: 全権限（ユーザー、クライアント、設定）
-  - **Admin**: ユーザー・クライアント管理のみ
-  - **Viewer**: 読み取り専用
+#### 6.3 Permission Levels
+- [ ] **Role Definitions**
+  - **Super Admin**: All permissions (users, clients, settings)
+  - **Admin**: User and client management only
+  - **Viewer**: Read-only
 
-  （Phase 5では簡易的にAdmin/Userのみ実装、Phase 7でRBACを本格実装）
+  (Phase 5 implements simple Admin/User only, Phase 7 implements full RBAC)
 
-### 7️⃣ セキュリティ要件
+### 7️⃣ Security Requirements
 
-#### 7.1 CSRF対策
-- [ ] **実装方式**
+#### 7.1 CSRF Protection
+- [ ] **Implementation Method**
   - Double Submit Cookie
-  - または同期トークン（セッション保存）
-  - 全POSTリクエストで検証
+  - Or synchronizer token (session storage)
+  - Verify on all POST requests
 
-#### 7.2 XSS対策
-- [ ] **実装方式**
-  - CSP Header（既存実装を拡張）
-  - HTMLエスケープ（フレームワークのデフォルト機能）
-  - 入力サニタイゼーション
+#### 7.2 XSS Protection
+- [ ] **Implementation Method**
+  - CSP Header (extend existing implementation)
+  - HTML escaping (framework default feature)
+  - Input sanitization
 
-#### 7.3 セッションセキュリティ
-- [ ] **要件**
+#### 7.3 Session Security
+- [ ] **Requirements**
   - HttpOnly Cookie
-  - Secure Cookie（HTTPS）
+  - Secure Cookie (HTTPS)
   - SameSite=Lax
-  - セッションタイムアウト（デフォルト: 24時間）
-  - 絶対タイムアウト（デフォルト: 7日）
+  - Session timeout (default: 24 hours)
+  - Absolute timeout (default: 7 days)
 
-#### 7.4 Rate Limiting（既存実装を活用）
-- [ ] **対象エンドポイント**
+#### 7.4 Rate Limiting (leverage existing implementation)
+- [ ] **Target Endpoints**
   - `/login` - 5 req/min per IP
   - `/register` - 3 req/min per IP
   - `/auth/magic-link/send` - 3 req/15min per email
   - `/admin/*` - 100 req/min per session
 
-- コメント：これって誰の何を守るためのRate limitかな？
-  - **回答**: 各エンドポイントの保護目的
-    - `/login`, `/register`: **ブルートフォース攻撃**から保護（アカウント乗っ取り防止）
-    - `/auth/magic-link/send`: **メール爆撃（スパム）**から保護（メール送信コスト削減、サービス悪用防止）
-    - `/admin/*`: **DDoS攻撃**とリソース消費から保護（サービス可用性維持）
-    - `/token`, `/userinfo`: **APIアビューズ**から保護（過剰なトークン発行・情報取得防止）
-  - **管理画面実装**: Phase 5でRate Limitの統計・ログを管理画面で可視化
-    - ブロックされたIPアドレス一覧
-    - エンドポイントごとのリクエスト数グラフ
-    - 異常検知アラート
+- Comment: What and whom is this rate limiting protecting?
+  - **Answer**: Protection purpose for each endpoint
+    - `/login`, `/register`: Protect from **brute force attacks** (prevent account takeover)
+    - `/auth/magic-link/send`: Protect from **email bombing (spam)** (reduce email sending costs, prevent service abuse)
+    - `/admin/*`: Protect from **DDoS attacks** and resource consumption (maintain service availability)
+    - `/token`, `/userinfo`: Protect from **API abuse** (prevent excessive token issuance and information retrieval)
+  - **Admin Panel Implementation**: Visualize Rate Limit statistics and logs in admin panel in Phase 5
+    - List of blocked IP addresses
+    - Request count graphs per endpoint
+    - Anomaly detection alerts
 
-### 8️⃣ 国際化（i18n）対応
+### 8️⃣ Internationalization (i18n) Support
 
-#### 8.1 対応言語（Phase 5）
-- [ ] **初期対応**
-  - 英語（en）- デフォルト
-  - 日本語（ja）
+#### 8.1 Supported Languages (Phase 5)
+- [ ] **Initial Support**
+  - English (en) - Default
+  - Japanese (ja)
 
-- [ ] **将来追加予定**（Phase 6以降）
-  - 中国語（zh）
-  - スペイン語（es）
-  - フランス語（fr）
-  - ドイツ語（de）
+- [ ] **Future Additions** (Phase 6 onwards)
+  - Chinese (zh)
+  - Spanish (es)
+  - French (fr)
+  - German (de)
 
-#### 8.2 実装方式
-- [ ] **ライブラリ選定**
-  - **i18next** - 標準的、豊富な機能
-  - **Paraglide** - 型安全、軽量
-  - **フレームワーク標準** - SvelteKit/SolidStartの組み込み機能
+#### 8.2 Implementation Method
+- [ ] **Library Selection**
+  - **i18next** - Standard, feature-rich
+  - **Paraglide** - Type-safe, lightweight
+  - **Framework Standard** - SvelteKit/SolidStart built-in features
 
-- [ ] **翻訳ファイル管理**
-  - JSON形式
+- [ ] **Translation File Management**
+  - JSON format
   - `locales/en.json`, `locales/ja.json`
-  - ネストした構造
+  - Nested structure
 
-#### 8.3 言語切り替え
-- [ ] **検出方法**
-  - `ui_locales`パラメータ（OIDC標準）
+#### 8.3 Language Switching
+- [ ] **Detection Method**
+  - `ui_locales` parameter (OIDC standard)
   - Cookie
   - Accept-Language Header
-  - UIでの手動切り替え
+  - Manual switching in UI
 
-### 9️⃣ パフォーマンス要件
+### 9️⃣ Performance Requirements
 
-#### 9.1 目標指標
-- [ ] **ページロード時間**
-  - ログインページ: < 1秒（First Contentful Paint）
-  - 管理ダッシュボード: < 2秒
-  - ユーザー一覧: < 1.5秒（100件表示）
+#### 9.1 Target Metrics
+- [ ] **Page Load Time**
+  - Login page: < 1 second (First Contentful Paint)
+  - Admin dashboard: < 2 seconds
+  - User list: < 1.5 seconds (displaying 100 items)
 
-- [ ] **バンドルサイズ**
-  - 初期JS: < 100KB（gzip）
-  - 初期CSS: < 20KB（gzip）
+- [ ] **Bundle Size**
+  - Initial JS: < 100KB (gzip)
+  - Initial CSS: < 20KB (gzip)
 
-- [ ] **Lighthouse スコア**
+- [ ] **Lighthouse Scores**
   - Performance: > 90
   - Accessibility: > 95
   - Best Practices: > 90
   - SEO: > 90
 
-#### 9.2 最適化戦略
-- [ ] **フロントエンド**
-  - コード分割（Route-based）
-  - 遅延読み込み（画像、コンポーネント）
+#### 9.2 Optimization Strategy
+- [ ] **Frontend**
+  - Code splitting (route-based)
+  - Lazy loading (images, components)
   - Tree Shaking
-  - CDN配信（Cloudflare Pages）
-  - Service Worker（将来）
+  - CDN delivery (Cloudflare Pages)
+  - Service Worker (future)
 
-- [ ] **バックエンド**
-  - KVキャッシング
-  - データベースクエリ最適化
-  - バッチ処理（統計データ）
+- [ ] **Backend**
+  - KV caching
+  - Database query optimization
+  - Batch processing (statistics data)
 
-### 🔟 アクセシビリティ要件
+### 🔟 Accessibility Requirements
 
-#### 10.1 WCAG 2.1 AA準拠
-- [ ] **必須項目**
-  - キーボード操作対応（Tab, Enter, Esc）
-  - スクリーンリーダー対応（ARIA属性）
-  - カラーコントラスト比 4.5:1以上
-  - フォーカスインジケーター
-  - エラーメッセージの明確化
-  - フォームラベルの適切な関連付け
+#### 10.1 WCAG 2.1 AA Compliance
+- [ ] **Required Items**
+  - Keyboard navigation support (Tab, Enter, Esc)
+  - Screen reader support (ARIA attributes)
+  - Color contrast ratio 4.5:1 or higher
+  - Focus indicators
+  - Clear error messages
+  - Proper form label associations
 
-#### 10.2 テスト方法
-- [ ] **ツール**
+#### 10.2 Testing Methods
+- [ ] **Tools**
   - axe DevTools
   - Lighthouse Accessibility Audit
-  - NVDA/JAWSスクリーンリーダーテスト
-  - キーボードのみでの操作テスト
+  - NVDA/JAWS screen reader testing
+  - Keyboard-only navigation testing
 
 ---
 
-## タイムライン（4週間）
+## Timeline (4 weeks)
 
-### Week 1 (May 1-7): 基盤構築
-- **Day 1-2**: 技術スタック最終決定
-  - フレームワーク選定会議
-  - プロトタイプ作成
-- **Day 3-4**: プロジェクトセットアップ
-  - フロントエンド環境構築
-  - D1データベース作成・マイグレーション
-  - ストレージ抽象化層実装
-- **Day 5-7**: WebAuthn基礎実装
-  - サーバー側実装
-  - クライアント側実装
-  - 基本的な登録・認証フロー
+### Week 1 (May 1-7): Foundation
+- **Day 1-2**: Finalize technology stack
+  - Framework selection meeting
+  - Create prototype
+- **Day 3-4**: Project setup
+  - Frontend environment setup
+  - D1 database creation and migration
+  - Storage abstraction layer implementation
+- **Day 5-7**: WebAuthn basic implementation
+  - Server-side implementation
+  - Client-side implementation
+  - Basic registration and authentication flow
 
-### Week 2 (May 8-14): 認証UI実装
-- **Day 8-10**: ログイン・登録ページ
-  - デザイン実装
-  - Passkey統合
-  - Magic Link統合
-- **Day 11-12**: OAuth同意画面
-  - デザイン実装
-  - 同意フロー統合
-- **Day 13-14**: エラーハンドリング、テスト
+### Week 2 (May 8-14): Authentication UI Implementation
+- **Day 8-10**: Login and registration pages
+  - Design implementation
+  - Passkey integration
+  - Magic Link integration
+- **Day 11-12**: OAuth consent screen
+  - Design implementation
+  - Consent flow integration
+- **Day 13-14**: Error handling, testing
 
-### Week 3 (May 15-21): 管理者ダッシュボード
-- **Day 15-17**: ダッシュボードレイアウト
-  - サイドバー、トップバー
-  - 統計カード
-  - アクティビティフィード
-- **Day 18-19**: ユーザー管理
-  - 一覧、検索、CRUD
-- **Day 20-21**: クライアント管理
-  - 一覧、検索、CRUD
+### Week 3 (May 15-21): Admin Dashboard
+- **Day 15-17**: Dashboard layout
+  - Sidebar, top bar
+  - Statistics cards
+  - Activity feed
+- **Day 18-19**: User management
+  - List, search, CRUD
+- **Day 20-21**: Client management
+  - List, search, CRUD
 
-### Week 4 (May 22-28): 仕上げ・テスト
-- **Day 22-23**: 設定ページ、Audit Log
-- **Day 24-25**: アクセシビリティ改善
-- **Day 26-27**: パフォーマンス最適化
-- **Day 28**: 総合テスト、ドキュメント更新
+### Week 4 (May 22-28): Finishing & Testing
+- **Day 22-23**: Settings page, Audit Log
+- **Day 24-25**: Accessibility improvements
+- **Day 26-27**: Performance optimization
+- **Day 28**: Comprehensive testing, documentation updates
 
-### バッファ (May 29-31): 予備日
-
----
-
-## チェックリスト
-
-### 決定事項
-- [ ] フロントエンドフレームワーク決定
-- [ ] CSSフレームワーク決定
-- [ ] UIコンポーネントライブラリ決定
-- [ ] UIホスティング方式決定
-- [ ] セッション管理方式決定
-- [ ] メール送信サービス決定
-- [ ] D1スキーマ承認
-- [ ] 管理者権限モデル決定
-- [ ] i18nライブラリ決定
-- [ ] パフォーマンス目標合意
-
-### 設計完了
-- [ ] D1スキーマ最終化
-- [ ] API エンドポイント仕様書
-- [ ] 認証フロー図
-- [ ] UI/UXワイヤーフレーム（全13ページ）
-- [ ] デザインシステム（カラー、タイポグラフィ、スペーシング）
-- [ ] エラーハンドリング戦略
-- [ ] セキュリティチェックリスト
-
-### 実装準備
-- [ ] 必要なライブラリのインストール
-- [ ] D1データベース作成
-- [ ] マイグレーションスクリプト作成
-- [ ] シードデータ作成
-- [ ] 開発環境構築ガイド更新
-- [ ] CI/CDパイプライン更新（UIビルド追加）
+### Buffer (May 29-31): Reserve days
 
 ---
 
-## 次のステップ
+## Checklist
 
-1. **このドキュメントをレビュー**
-   - 各セクションを順番に確認
-   - 決定事項にチェックを入れる
-   - 疑問点や追加事項をコメント
+### Decisions
+- [ ] Frontend framework decision
+- [ ] CSS framework decision
+- [ ] UI component library decision
+- [ ] UI hosting method decision
+- [ ] Session management method decision
+- [ ] Email sending service decision
+- [ ] D1 schema approval
+- [ ] Admin permission model decision
+- [ ] i18n library decision
+- [ ] Performance targets agreement
 
-2. **技術選定会議**
-   - フロントエンドスタックの最終決定
-   - プロトタイプ作成（2-3日）
+### Design Completion
+- [ ] Finalize D1 schema
+- [ ] API endpoint specifications
+- [ ] Authentication flow diagrams
+- [ ] UI/UX wireframes (all 13 pages)
+- [ ] Design system (colors, typography, spacing)
+- [ ] Error handling strategy
+- [ ] Security checklist
 
-3. **詳細設計**
-   - ✅ ER図作成 → [database-schema.md](../architecture/database-schema.md)
-   - ✅ API仕様書作成 → [OpenAPI 3.1](../api/openapi.yaml) | [APIガイド](../api/README.md)
-   - ✅ デザインシステム策定 → [design-system.md](../design/design-system.md)
-   - ✅ ワイヤーフレーム作成 → [wireframes.md](../design/wireframes.md)
-
-4. **実装開始**
-   - Week 1からタイムラインに沿って進行
+### Implementation Preparation
+- [ ] Install required libraries
+- [ ] Create D1 database
+- [ ] Create migration scripts
+- [ ] Create seed data
+- [ ] Update development environment setup guide
+- [ ] Update CI/CD pipeline (add UI build)
 
 ---
 
-## 参考資料
+## Next Steps
 
-### Authrimドキュメント
-- **設計資料** (✅ 完成)
-  - [database-schema.md](../architecture/database-schema.md) - データベーススキーマ・ER図
-  - [openapi.yaml](../api/openapi.yaml) - OpenAPI 3.1仕様書
-  - [API README](../api/README.md) - APIガイド・クイックスタート
-  - [API_INVENTORY.md](./API_INVENTORY.md) - APIインベントリ
-  - [design-system.md](../design/design-system.md) - デザインシステム
-  - [wireframes.md](../design/wireframes.md) - UI ワイヤーフレーム（全13ページ）
-- **プロジェクト情報**
-  - [ROADMAP.md](../ROADMAP.md) - 全体ロードマップ
-  - [VISION.md](../VISION.md) - プロジェクトビジョン
+1. **Review this Document**
+   - Review each section in order
+   - Check off decisions
+   - Comment on questions or additions
 
-### 競合分析
+2. **Technology Selection Meeting**
+   - Finalize frontend stack
+   - Create prototype (2-3 days)
+
+3. **Detailed Design**
+   - ✅ Create ER diagram → [database-schema.md](../architecture/database-schema.md)
+   - ✅ Create API specifications → [OpenAPI 3.1](../api/openapi.yaml) | [API Guide](../api/README.md)
+   - ✅ Establish design system → [design-system.md](../design/design-system.md)
+   - ✅ Create wireframes → [wireframes.md](../design/wireframes.md)
+
+4. **Begin Implementation**
+   - Proceed according to timeline from Week 1
+
+---
+
+## Reference Materials
+
+### Authrim Documentation
+- **Design Documents** (✅ Completed)
+  - [database-schema.md](../architecture/database-schema.md) - Database schema and ER diagram
+  - [openapi.yaml](../api/openapi.yaml) - OpenAPI 3.1 specification
+  - [API README](../api/README.md) - API guide and quick start
+  - [API_INVENTORY.md](./API_INVENTORY.md) - API inventory
+  - [design-system.md](../design/design-system.md) - Design system
+  - [wireframes.md](../design/wireframes.md) - UI wireframes (all 13 pages)
+- **Project Information**
+  - [ROADMAP.md](../ROADMAP.md) - Overall roadmap
+  - [VISION.md](../VISION.md) - Project vision
+
+### Competitive Analysis
 - [Auth0 Login Experience](https://auth0.com/)
 - [Clerk UI Components](https://clerk.com/)
 - [Supabase Auth UI](https://supabase.com/docs/guides/auth/auth-ui)
@@ -1111,7 +1111,7 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 - [WebAuthn Guide (web.dev)](https://web.dev/passkey-registration/)
 - [FIDO2 Specifications](https://fidoalliance.org/fido2/)
 
-### デザインインスピレーション
+### Design Inspiration
 - [Tailwind UI](https://tailwindui.com/)
 - [shadcn/ui](https://ui.shadcn.com/)
 - [Refactoring UI](https://www.refactoringui.com/)
@@ -1124,9 +1124,9 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 
 ---
 
-## 📝 決定事項サマリー
+## 📝 Decision Summary
 
-### 技術スタック
+### Technology Stack
 - ✅ **Frontend**: Svelte + SvelteKit v5
 - ✅ **CSS**: UnoCSS
 - ✅ **Components**: Melt UI
@@ -1135,32 +1135,32 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 - ✅ **i18n**: Paraglide
 - ✅ **Email**: Resend (default), adapter pattern for others
 
-### アーキテクチャ
-- ✅ **セッション管理**: サーバー側セッション + トークン交換（ITP完全対応）
-- ✅ **ストレージ抽象化**: IStorageAdapter interface（マルチクラウド対応）
-- ✅ **カスタムフィールド**: Hybrid（専用テーブル + JSON）
-- ✅ **RBAC**: roles + user_roles テーブル
-- ✅ **スコープマッピング**: scope_mappings テーブル
+### Architecture
+- ✅ **Session Management**: Server-side session + token exchange (full ITP compliance)
+- ✅ **Storage Abstraction**: IStorageAdapter interface (multi-cloud support)
+- ✅ **Custom Fields**: Hybrid (dedicated table + JSON)
+- ✅ **RBAC**: roles + user_roles tables
+- ✅ **Scope Mapping**: scope_mappings table
 
-### API追加（2025-11-12）
-- 📝 **ITP対応SSO API**（4個）
-  - `POST /auth/session/token` - 短命トークン発行
-  - `POST /auth/session/verify` - 短命トークン検証
-  - `GET /session/status` - セッション有効性確認
-  - `POST /session/refresh` - セッション延命
-- 📝 **Logout API**（2個）
+### API Additions (2025-11-12)
+- 📝 **ITP-Compliant SSO APIs** (4)
+  - `POST /auth/session/token` - Issue short-lived token
+  - `POST /auth/session/verify` - Verify short-lived token
+  - `GET /session/status` - Check session validity
+  - `POST /session/refresh` - Extend session
+- 📝 **Logout APIs** (2)
   - `GET /logout` - Front-channel Logout
   - `POST /logout/backchannel` - Back-channel Logout
-- 📝 **管理者セッション管理 API**（2個）
-  - `GET /admin/sessions` - セッション一覧
-  - `POST /admin/sessions/:id/revoke` - セッション無効化
-- 🔄 **トークン交換系 API**（検討中）
-  - RFC 8693 Token Exchange（標準、最も柔軟）
-  - 専用セッション交換API（シンプル、ITP対応SSO特化）
-  - Hybrid アプローチ（両方サポート）
-  - 決定: Phase 5実装時に要件整理
+- 📝 **Admin Session Management APIs** (2)
+  - `GET /admin/sessions` - List sessions
+  - `POST /admin/sessions/:id/revoke` - Invalidate session
+- 🔄 **Token Exchange APIs** (Under Consideration)
+  - RFC 8693 Token Exchange (standard, most flexible)
+  - Dedicated session exchange API (simple, ITP SSO focused)
+  - Hybrid approach (support both)
+  - Decision: Finalize requirements during Phase 5 implementation
 
-### データベーススキーマ
+### Database Schema
 - ✅ Users (with custom_attributes_json, parent_user_id)
 - ✅ user_custom_fields (searchable)
 - ✅ Passkeys
@@ -1170,9 +1170,9 @@ CREATE INDEX idx_audit_log_action ON audit_log(action);
 - ✅ branding_settings
 - ✅ identity_providers (future SAML/LDAP)
 
-### 将来の拡張（Phase 7）
-- 📝 WebSDK（高度なカスタマイズ）
-- 📝 Visual Flow Builder（SimCity風UI）
+### Future Extensions (Phase 7)
+- 📝 WebSDK (advanced customization)
+- 📝 Visual Flow Builder (SimCity-style UI)
 - 📝 GDPR automation
 - 📝 CSV/JSON import/export
 - 📝 SCIM 2.0

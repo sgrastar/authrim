@@ -274,9 +274,9 @@ cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
 
 **Important:** Secrets are stored encrypted and only accessible in the Workers runtime.
 
-### 3.3 wrangler.toml の設定確認
+### 3.3 Verify wrangler.toml Configuration
 
-`wrangler.toml` を開き、以下を確認します：
+Open `wrangler.toml` and verify the following:
 
 ```toml
 name = "authrim"
@@ -285,45 +285,45 @@ compatibility_date = "2024-01-01"
 
 [vars]
 ISSUER = "https://authrim.YOUR_SUBDOMAIN.workers.dev"
-KEY_ID = "edge-key-1"  # .keys/metadata.json の kid と一致させる
+KEY_ID = "edge-key-1"  # Match the kid from .keys/metadata.json
 TOKEN_TTL = "3600"
 CODE_TTL = "120"
-ALLOW_HTTP_REDIRECT = "false"  # 本番環境では false
+ALLOW_HTTP_REDIRECT = "false"  # false for production environment
 
-# KV Namespace (初回デプロイ時に自動作成)
+# KV Namespace (automatically created on first deployment)
 [[kv_namespaces]]
 binding = "KV"
 id = ""
 ```
 
-**KEY_ID の確認:**
+**Verify KEY_ID:**
 
 ```bash
-# .keys/metadata.json から kid を取得
+# Get kid from .keys/metadata.json
 jq -r '.kid' .keys/metadata.json
 ```
 
-この値を `wrangler.toml` の `KEY_ID` に設定します。
+Set this value to `KEY_ID` in `wrangler.toml`.
 
-### 3.4 TypeScriptのビルド
+### 3.4 Build TypeScript
 
-デプロイ前にTypeScriptをビルドします：
+Build TypeScript before deployment:
 
 ```bash
 pnpm run build
 ```
 
-エラーがないことを確認してください。
+Verify there are no errors.
 
-### 3.5 デプロイ
+### 3.5 Deploy
 
-Cloudflare Workersにデプロイします：
+Deploy to Cloudflare Workers:
 
 ```bash
 pnpm run deploy
 ```
 
-**期待される出力:**
+**Expected output:**
 
 ```
 Total Upload: XX.XX KiB / gzip: XX.XX KiB
@@ -333,11 +333,11 @@ Published authrim (X.XX sec)
 Current Deployment ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
-デプロイされたURLをメモしておきます。
+Note the deployed URL.
 
-### 3.6 デプロイの動作確認
+### 3.6 Verify Deployment
 
-デプロイされたエンドポイントをテストします：
+Test the deployed endpoints:
 
 ```bash
 AUTHRIM_URL="https://authrim.YOUR_SUBDOMAIN.workers.dev"
@@ -349,31 +349,31 @@ curl $AUTHRIM_URL/.well-known/openid-configuration | jq
 curl $AUTHRIM_URL/.well-known/jwks.json | jq
 ```
 
-**確認ポイント:**
-- Discovery endpointのissuerフィールドがデプロイURLと一致していること
-- JWKS endpointが空でない公開鍵を返すこと
-- すべてのエンドポイントURLがHTTPSであること
+**Verification points:**
+- The issuer field in the Discovery endpoint matches the deployment URL
+- The JWKS endpoint returns a non-empty public key
+- All endpoint URLs use HTTPS
 
 ---
 
-## 4. OpenID Conformance Suiteの利用
+## 4. Using OpenID Conformance Suite
 
-### 4.1 アカウント登録
+### 4.1 Account Registration
 
-1. OpenID Conformance Suiteにアクセス:
+1. Access OpenID Conformance Suite:
    https://www.certification.openid.net/
 
-2. 「Sign up」をクリックして新規アカウントを作成します
+2. Click "Sign up" to create a new account
 
-3. メールアドレスを確認し、ログインします
+3. Verify your email address and log in
 
-### 4.2 テストプランの作成
+### 4.2 Create Test Plan
 
-1. ログイン後、「Create a new test plan」をクリック
+1. After logging in, click "Create a new test plan"
 
-2. 以下の設定を選択:
+2. Select the following settings:
 
-   | 項目 | 設定値 |
+   | Item | Value |
    |------|--------|
    | **Test Type** | OpenID Connect Provider |
    | **Profile** | Basic OP (Authorization Code Flow) |
@@ -381,26 +381,26 @@ curl $AUTHRIM_URL/.well-known/jwks.json | jq
    | **Response Type** | code |
    | **Response Mode** | default (query) |
 
-3. 「Continue」をクリック
+3. Click "Continue"
 
-### 4.3 OP（OpenID Provider）情報の入力
+### 4.3 Enter OP (OpenID Provider) Information
 
-テストプランの設定画面で、Authrimの情報を入力します：
+On the test plan configuration screen, enter your Authrim information:
 
-| フィールド | 値 | 例 |
+| Field | Value | Example |
 |-----------|-----|-----|
-| **Issuer** | デプロイしたWorkerのURL | `https://authrim.YOUR_SUBDOMAIN.workers.dev` |
+| **Issuer** | Your deployed Worker URL | `https://authrim.YOUR_SUBDOMAIN.workers.dev` |
 | **Discovery URL** | `{ISSUER}/.well-known/openid-configuration` | `https://authrim.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration` |
 
-「Discover」ボタンをクリックすると、自動的にAuthrimのメタデータが読み込まれます。
+Click the "Discover" button to automatically load Authrim's metadata.
 
-### 4.4 クライアント登録
+### 4.4 Client Registration
 
-OpenID Conformance Suiteが使用するテストクライアント情報を記録します。
+Record the test client information used by the OpenID Conformance Suite.
 
-**✅ 実装済み:** AuthrimはDynamic Client Registration (DCR) を完全にサポートしています。
+**✅ Implemented:** Authrim fully supports Dynamic Client Registration (DCR).
 
-テストスイートは以下の手順でクライアントを自動登録できます：
+The test suite can automatically register clients using the following procedure:
 
 ```bash
 curl -X POST $AUTHRIM_URL/register \
@@ -419,7 +419,7 @@ curl -X POST $AUTHRIM_URL/register \
   }'
 ```
 
-レスポンス例：
+Response example:
 ```json
 {
   "client_id": "client_xxxxxxxxxxxxx",
@@ -435,38 +435,38 @@ curl -X POST $AUTHRIM_URL/register \
 }
 ```
 
-### 4.5 サポートされている高度な機能
+### 4.5 Supported Advanced Features
 
-Authrimは以下のOIDC拡張機能をサポートしています：
+Authrim supports the following OIDC extension features:
 
 **RFC 9101: JWT Secured Authorization Request (JAR)**
-- `request` パラメータによる認可リクエストのJWT化
-- 署名付き (RS256) および未署名 (alg=none) リクエストオブジェクトの両方をサポート
-- リクエストパラメータの上書き（request object parameters take precedence）
+- JWT-based authorization requests via the `request` parameter
+- Support for both signed (RS256) and unsigned (alg=none) request objects
+- Request parameter override (request object parameters take precedence)
 
-**OIDC Core 3.1.2.1: 認証パラメータ**
+**OIDC Core 3.1.2.1: Authentication Parameters**
 - `prompt`: none, login, consent, select_account
-- `max_age`: 再認証時間制約
-- `id_token_hint`: セッションヒント用IDトークン
-- `acr_values`: 認証コンテキストクラスリファレンス
+- `max_age`: Re-authentication time constraint
+- `id_token_hint`: ID Token for session hint
+- `acr_values`: Authentication Context Class Reference
 
 **RFC 6749: Refresh Token**
-- Refresh Token発行とローテーション
-- スコープのダウングレードをサポート
+- Refresh Token issuance and rotation
+- Support for scope downgrading
 
 **OIDC Core 8: Subject Types**
 - Public subject identifiers
-- Pairwise subject identifiers (sector_identifier_uri対応)
+- Pairwise subject identifiers (with sector_identifier_uri support)
 
 ---
 
-## 5. テストの実行
+## 5. Test Execution
 
-### 5.1 Basic OP Profile テストの選択
+### 5.1 Select Basic OP Profile Tests
 
-OpenID Conformance Suiteで以下のテストモジュールを選択します：
+Select the following test modules in the OpenID Conformance Suite:
 
-#### 必須テスト (Core Tests)
+#### Required Tests (Core Tests)
 
 1. **oidcc-basic-certification-test-plan**
    - Discovery endpoint test
@@ -485,117 +485,117 @@ OpenID Conformance Suiteで以下のテストモジュールを選択します�
    - Endpoint URL validation
    - Supported features validation
 
-### 5.2 テストの開始
+### 5.2 Start Tests
 
-1. テストモジュールを選択後、「Start Test」をクリック
+1. After selecting test modules, click "Start Test"
 
-2. ブラウザで表示される指示に従います：
-   - Authorization URLが表示されたら、クリックしてAuthrimの認可エンドポイントにアクセス
-   - リダイレクト後、テストスイートが自動的に続行します
+2. Follow the instructions displayed in the browser:
+   - When the Authorization URL is displayed, click to access Authrim's authorization endpoint
+   - After redirect, the test suite will automatically continue
 
-3. 各テストの実行中に表示されるログを確認します
+3. Check the logs displayed during each test execution
 
-### 5.3 テストケースの詳細
+### 5.3 Test Case Details
 
 **Discovery Tests:**
-- `.well-known/openid-configuration` の形式確認
-- 必須フィールドの存在確認
-- Issuer URLの一貫性確認
+- `.well-known/openid-configuration` format validation
+- Required field existence check
+- Issuer URL consistency check
 
 **Authorization Tests:**
-- 認可コードの生成
-- State パラメータの検証
-- Nonce パラメータの検証
-- PKCEサポートの確認
+- Authorization code generation
+- State parameter validation
+- Nonce parameter validation
+- PKCE support verification
 
 **Token Tests:**
-- 認可コードの交換
-- ID Tokenの形式確認
-- Access Tokenの発行
-- Token有効期限の確認
+- Authorization code exchange
+- ID Token format verification
+- Access Token issuance
+- Token expiration verification
 
 **UserInfo Tests:**
-- Bearer Token認証
-- Claims返却の確認
-- `sub` claimの一貫性確認
+- Bearer Token authentication
+- Claims return verification
+- `sub` claim consistency check
 
 **JWKS Tests:**
-- JWK Set形式の確認
-- RS256公開鍵の検証
-- 署名検証
+- JWK Set format verification
+- RS256 public key validation
+- Signature verification
 
 **Request Object (JAR) Tests:**
-- `request` パラメータの処理
-- 未署名 (alg=none) リクエストオブジェクトの検証
-- 署名付き (RS256) リクエストオブジェクトの検証
-- パラメータオーバーライドの確認
+- `request` parameter processing
+- Unsigned (alg=none) request object validation
+- Signed (RS256) request object validation
+- Parameter override verification
 
 **Authentication Parameter Tests:**
-- `prompt=none` の既存セッション要件の確認
-- `prompt=login` の強制再認証
-- `max_age` の時間制約の適用
-- `id_token_hint` からのセッション抽出
-- `acr_values` の選択と ID Token への含有
+- `prompt=none` existing session requirement verification
+- `prompt=login` forced re-authentication
+- `max_age` time constraint application
+- Session extraction from `id_token_hint`
+- `acr_values` selection and inclusion in ID Token
 
 **Refresh Token Tests:**
-- Refresh Token の発行
-- Refresh Token による新規 Access Token の取得
-- スコープのダウングレード
-- Refresh Token のローテーション
+- Refresh Token issuance
+- New Access Token acquisition via Refresh Token
+- Scope downgrading
+- Refresh Token rotation
 
 **Dynamic Client Registration Tests:**
-- POST /register エンドポイント
-- メタデータの検証
-- client_id と client_secret の発行
-- Pairwise subject type のサポート
+- POST /register endpoint
+- Metadata validation
+- client_id and client_secret issuance
+- Pairwise subject type support
 
 ---
 
-## 6. 結果の確認と記録
+## 6. Verify and Record Results
 
-### 6.1 テスト結果の確認
+### 6.1 Check Test Results
 
-テスト完了後、以下の情報を確認します：
+After test completion, verify the following information:
 
-- **Passed Tests:** 合格したテスト数
-- **Failed Tests:** 失敗したテスト数
-- **Warnings:** 警告の数（合格だが改善推奨）
-- **Skipped Tests:** スキップされたテスト数
+- **Passed Tests:** Number of passed tests
+- **Failed Tests:** Number of failed tests
+- **Warnings:** Number of warnings (passed but improvement recommended)
+- **Skipped Tests:** Number of skipped tests
 
-### 6.2 合格基準
+### 6.2 Passing Criteria
 
-**Basic OP Profile 認証の要件:**
+**Basic OP Profile certification requirements:**
 - Core tests: 100% pass
 - Discovery tests: 100% pass
 - JWKS tests: 100% pass
-- Optional tests: 推奨される
+- Optional tests: Recommended
 
-**Authrimの目標:**
-- 100% overall conformance score (すべての必須機能実装済み)
+**Authrim goals:**
+- 100% overall conformance score (all required features implemented)
 - 0 critical failures
-- すべてのOIDC OP Basic Profileテストに合格
+- Pass all OIDC OP Basic Profile tests
 
-### 6.3 結果のエクスポート
+### 6.3 Export Results
 
-1. テスト結果画面で「Export」をクリック
-2. JSON形式でダウンロード
-3. `docs/conformance/test-results/` に保存
+1. Click "Export" on the test results screen
+2. Download in JSON format
+3. Save to `docs/conformance/test-results/`
 
 ```bash
-# test-results ディレクトリを作成
+# Create test-results directory
 mkdir -p docs/conformance/test-results
 
-# ダウンロードしたファイルを移動
+# Move downloaded file
 mv ~/Downloads/conformance-test-result-*.json docs/conformance/test-results/
 
-# 結果ファイルをリネーム（日付付き）
+# Rename result file (with date)
 cd docs/conformance/test-results
 mv conformance-test-result-*.json result-$(date +%Y%m%d).json
 ```
 
-### 6.4 テストレポートの作成
+### 6.4 Create Test Report
 
-テスト結果を以下のテンプレートでレポートにまとめます：
+Compile test results into a report using the following template:
 
 ```markdown
 # Authrim - OpenID Conformance Test Report
@@ -640,192 +640,192 @@ mv conformance-test-result-*.json result-$(date +%Y%m%d).json
 
 ---
 
-## 7. トラブルシューティング
+## 7. Troubleshooting
 
-### 7.1 よくある問題
+### 7.1 Common Issues
 
-#### 問題: Discovery endpointが見つからない (404)
+#### Issue: Discovery endpoint not found (404)
 
-**原因:**
-- デプロイが完了していない
-- ルーティング設定が間違っている
+**Cause:**
+- Deployment not completed
+- Routing configuration incorrect
 
-**解決方法:**
+**Solution:**
 ```bash
-# デプロイステータスを確認
+# Check deployment status
 wrangler deployments list
 
-# 最新のデプロイメントが active であることを確認
-# 必要に応じて再デプロイ
+# Verify latest deployment is active
+# Redeploy if necessary
 pnpm run deploy
 ```
 
-#### 問題: JWKS endpointが空のkeys配列を返す
+#### Issue: JWKS endpoint returns empty keys array
 
-**原因:**
-- `PUBLIC_JWK_JSON` シークレットが設定されていない
-- 環境変数の形式が間違っている
+**Cause:**
+- `PUBLIC_JWK_JSON` secret not set
+- Environment variable format incorrect
 
-**解決方法:**
+**Solution:**
 ```bash
-# PUBLIC_JWK_JSON を再設定
+# Reconfigure PUBLIC_JWK_JSON
 cat .keys/public.jwk.json | jq -c . | wrangler secret put PUBLIC_JWK_JSON
 
-# 設定を確認
+# Verify configuration
 wrangler secret list
 ```
 
-#### 問題: Token endpointでサーバーエラー (500)
+#### Issue: Server error at Token endpoint (500)
 
-**原因:**
-- `PRIVATE_KEY_PEM` シークレットが設定されていない
-- 鍵の形式が間違っている
+**Cause:**
+- `PRIVATE_KEY_PEM` secret not set
+- Key format incorrect
 
-**解決方法:**
+**Solution:**
 ```bash
-# PRIVATE_KEY_PEM を再設定
+# Reconfigure PRIVATE_KEY_PEM
 cat .keys/private.pem | wrangler secret put PRIVATE_KEY_PEM
 
-# 再デプロイ
+# Redeploy
 pnpm run deploy
 ```
 
-#### 問題: Issuer URLの不一致
+#### Issue: Issuer URL mismatch
 
-**原因:**
-- `wrangler.toml` の `ISSUER` 環境変数がデプロイURLと一致していない
+**Cause:**
+- `ISSUER` environment variable in `wrangler.toml` doesn't match deployment URL
 
-**解決方法:**
+**Solution:**
 ```toml
-# wrangler.toml を編集
+# Edit wrangler.toml
 [vars]
 ISSUER = "https://authrim.YOUR_SUBDOMAIN.workers.dev"
 ```
 
 ```bash
-# 再デプロイ
+# Redeploy
 pnpm run deploy
 ```
 
-#### 問題: Conformance Suiteが"Unable to connect"エラーを表示
+#### Issue: Conformance Suite displays "Unable to connect" error
 
-**原因:**
-- AuthrimがHTTPSでアクセスできない
-- CORS設定が間違っている
-- ファイアウォールがアクセスをブロックしている
+**Cause:**
+- Authrim not accessible via HTTPS
+- CORS configuration incorrect
+- Firewall blocking access
 
-**解決方法:**
+**Solution:**
 ```bash
-# HTTPSアクセスを確認
+# Verify HTTPS access
 curl -I https://authrim.YOUR_SUBDOMAIN.workers.dev/.well-known/openid-configuration
 
-# CORS設定を確認（src/index.ts）
-# 必要に応じてCORSミドルウェアを追加
+# Check CORS configuration (src/index.ts)
+# Add CORS middleware if necessary
 ```
 
-### 7.2 デバッグ方法
+### 7.2 Debugging Methods
 
-#### Cloudflare Workers のログ確認
+#### Check Cloudflare Workers Logs
 
 ```bash
-# リアルタイムでログを確認
+# Check logs in real-time
 wrangler tail
 
-# ログをファイルに保存
+# Save logs to file
 wrangler tail > logs.txt
 ```
 
-#### ローカルでの再現テスト
+#### Local Reproduction Testing
 
 ```bash
-# 開発サーバーを起動
+# Start development server
 pnpm run dev
 
-# 別のターミナルで同じリクエストを送信
+# Send same request in another terminal
 curl -v http://localhost:8787/.well-known/openid-configuration
 ```
 
-#### テストスクリプトの使用
+#### Using Test Scripts
 
 ```bash
-# 統合テストを実行
+# Run integration tests
 pnpm test
 
-# 特定のエンドポイントをテスト
+# Test specific endpoints
 pnpm test -- --grep "discovery"
 pnpm test -- --grep "token"
 ```
 
-### 7.3 サポートとリソース
+### 7.3 Support and Resources
 
-**ドキュメント:**
+**Documentation:**
 - [OpenID Connect Core Specification](https://openid.net/specs/openid-connect-core-1_0.html)
 - [OpenID Conformance Testing](https://openid.net/certification/testing/)
 - [Cloudflare Workers Documentation](https://developers.cloudflare.com/workers/)
 
-**コミュニティ:**
+**Community:**
 - Authrim GitHub Issues: https://github.com/sgrastar/authrim/issues
 - OpenID Foundation: https://openid.net/
 
-**参考資料:**
-- [Manual Conformance Checklist](./manual-checklist.md) - 手動テストチェックリスト
-- [Test Plan](./test-plan.md) - テスト計画の詳細
+**Reference Materials:**
+- [Manual Conformance Checklist](./manual-checklist.md) - Manual test checklist
+- [Test Plan](./test-plan.md) - Detailed test plan
 
 ---
 
-## 8. 次のステップ
+## 8. Next Steps
 
-### 8.1 すぐに実施すること
+### 8.1 Immediate Actions
 
-1. **デプロイの実行**
+1. **Execute Deployment**
    ```bash
    pnpm run deploy
    ```
 
-2. **OpenID Conformance Suiteでアカウント作成**
+2. **Create Account on OpenID Conformance Suite**
    - https://www.certification.openid.net/
 
-3. **初回テストの実行**
-   - Basic OP Profileテストを選択
-   - 結果を記録
+3. **Run Initial Tests**
+   - Select Basic OP Profile tests
+   - Record results
 
-### 8.2 テスト後の対応
+### 8.2 Post-Test Actions
 
-1. **失敗したテストの分析**
-   - エラーメッセージを確認
-   - ログを調査
-   - 原因を特定
+1. **Analyze Failed Tests**
+   - Check error messages
+   - Investigate logs
+   - Identify causes
 
-2. **コードの修正**
-   - 該当するハンドラーを修正
-   - ユニットテストを追加
-   - 統合テストで確認
+2. **Fix Code**
+   - Fix relevant handlers
+   - Add unit tests
+   - Verify with integration tests
 
-3. **再テストの実行**
-   - 修正をデプロイ
-   - Conformance Suiteで再テスト
-   - 合格率を確認
+3. **Re-run Tests**
+   - Deploy fixes
+   - Re-test in Conformance Suite
+   - Verify pass rate
 
-### 8.3 実装完了機能の確認
+### 8.3 Verify Implemented Features
 
-以下の機能がすべて実装済みです：
+The following features are all implemented:
 
-1. ✅ `/register` エンドポイント (Dynamic Client Registration)
-2. ✅ クライアントメタデータの検証
-3. ✅ クライアントストレージ（KV）
-4. ✅ Refresh Token サポート
-5. ✅ Request Object (JAR) サポート
-6. ✅ 認証パラメータ (prompt, max_age, id_token_hint, acr_values)
-7. ✅ Subject Type (public, pairwise) サポート
+1. ✅ `/register` endpoint (Dynamic Client Registration)
+2. ✅ Client metadata validation
+3. ✅ Client storage (KV)
+4. ✅ Refresh Token support
+5. ✅ Request Object (JAR) support
+6. ✅ Authentication parameters (prompt, max_age, id_token_hint, acr_values)
+7. ✅ Subject Type (public, pairwise) support
 
-**次のステップ:** Conformance Suiteで全テストを実行し、100%合格を確認
+**Next Step:** Run all tests in Conformance Suite and verify 100% pass
 
 ---
 
 > ⚡️ **Authrim** - Complete OpenID Conformance Testing Guide
 >
-> **更新日:** 2025-11-18
-> **ステータス:** Phase 5 完了 - すべての必須機能実装済み
-> **目標:** 100% conformance score (達成見込み)
+> **Last Updated:** 2025-11-18
+> **Status:** Phase 5 Complete - All Required Features Implemented
+> **Goal:** 100% conformance score (expected to achieve)
 >
-> このガイドを使用して、ローカル開発からConformance Testingまで完全にサポートします。
+> Use this guide for complete support from local development to Conformance Testing.

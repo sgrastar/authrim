@@ -2,13 +2,13 @@
 
 ## Vision & Objectives
 
-**OIDC Config OP プロファイル**は、OpenID Connect Provider Discovery 1.0 仕様に準拠した設定エンドポイントの完全性を検証する認証プロファイルです。
+**OIDC Config OP Profile** is a certification profile that verifies the completeness of configuration endpoints compliant with the OpenID Connect Provider Discovery 1.0 specification.
 
-### 目的
-- ✅ `.well-known/openid-configuration` エンドポイントの完全準拠
-- ✅ 必須メタデータフィールドの提供
-- ✅ `issuer` の一貫性保証
-- ✅ サポートする機能の正確な公開
+### Objectives
+- ✅ Full compliance with `.well-known/openid-configuration` endpoint
+- ✅ Provision of required metadata fields
+- ✅ Guarantee of `issuer` consistency
+- ✅ Accurate disclosure of supported features
 
 ---
 
@@ -16,41 +16,41 @@
 
 ### 1. Discovery Endpoint (RFC 8414 / OIDC Discovery 1.0)
 
-| 要件 | 説明 | 仕様参照 |
+| Requirement | Description | Specification Reference |
 |:--|:--|:--|
-| **Metadata Endpoint** | `/.well-known/openid-configuration` が有効なJSONを返す | OIDC Discovery 3 |
-| **Issuer Consistency** | `issuer` フィールドがトークンの `iss` クレームと一致 | OIDC Discovery 3 |
-| **Required Fields** | 必須フィールドをすべて含む | OIDC Discovery 3 |
-| **Optional Fields** | サポートする機能を正確に公開 | OIDC Discovery 3 |
-| **HTTPS Enforcement** | HTTPS URLのみを公開 | RFC 8414 Section 2 |
+| **Metadata Endpoint** | `/.well-known/openid-configuration` returns valid JSON | OIDC Discovery 3 |
+| **Issuer Consistency** | `issuer` field matches token `iss` claim | OIDC Discovery 3 |
+| **Required Fields** | Includes all required fields | OIDC Discovery 3 |
+| **Optional Fields** | Accurately publishes supported features | OIDC Discovery 3 |
+| **HTTPS Enforcement** | Only publish HTTPS URLs | RFC 8414 Section 2 |
 
 ### 2. Required Metadata Fields
 
 **MUST include:**
-- `issuer` - OP の Issuer Identifier
-- `authorization_endpoint` - 認可エンドポイントURL
-- `token_endpoint` - トークンエンドポイントURL
-- `jwks_uri` - JWK Set エンドポイントURL
-- `response_types_supported` - サポートする `response_type` 値
-- `subject_types_supported` - サポートする Subject Type (`public`, `pairwise`)
-- `id_token_signing_alg_values_supported` - サポートする署名アルゴリズム
+- `issuer` - OP's Issuer Identifier
+- `authorization_endpoint` - Authorization endpoint URL
+- `token_endpoint` - Token endpoint URL
+- `jwks_uri` - JWK Set endpoint URL
+- `response_types_supported` - Supported `response_type` values
+- `subject_types_supported` - Supported Subject Types (`public`, `pairwise`)
+- `id_token_signing_alg_values_supported` - Supported signing algorithms
 
 **SHOULD include:**
-- `userinfo_endpoint` - UserInfo エンドポイントURL
-- `registration_endpoint` - Dynamic Client Registration エンドポイントURL
-- `scopes_supported` - サポートするスコープ
-- `claims_supported` - サポートするクレーム
-- `grant_types_supported` - サポートするグラントタイプ
-- `token_endpoint_auth_methods_supported` - サポートする認証方式
+- `userinfo_endpoint` - UserInfo endpoint URL
+- `registration_endpoint` - Dynamic Client Registration endpoint URL
+- `scopes_supported` - Supported scopes
+- `claims_supported` - Supported claims
+- `grant_types_supported` - Supported grant types
+- `token_endpoint_auth_methods_supported` - Supported authentication methods
 
 ### 3. JWKS Endpoint
 
-| 要件 | 説明 | 仕様参照 |
+| Requirement | Description | Specification Reference |
 |:--|:--|:--|
-| **JWK Set Exposure** | `/.well-known/jwks.json` が有効な JWK Set を返す | RFC 7517 |
-| **Key Format** | 正しい `kid`, `kty`, `alg`, `use` フィールド | RFC 7517 Section 4 |
-| **RS256 Support** | RS256 署名用の公開鍵を公開 | OIDC Core 10.1 |
-| **Base64url Encoding** | `n`, `e` が正しく base64url エンコード | RFC 7517 Section 6.3 |
+| **JWK Set Exposure** | `/.well-known/jwks.json` returns valid JWK Set | RFC 7517 |
+| **Key Format** | Correct `kid`, `kty`, `alg`, `use` fields | RFC 7517 Section 4 |
+| **RS256 Support** | Publish public key for RS256 signing | OIDC Core 10.1 |
+| **Base64url Encoding** | `n`, `e` correctly base64url encoded | RFC 7517 Section 6.3 |
 
 ---
 
@@ -78,7 +78,7 @@
 
 ### JWKS Endpoint (/.well-known/jwks.json)
 
-| 要件 | Status | Implementation |
+| Requirement | Status | Implementation |
 |:--|:--|:--|
 | JWK Set exposure | ✅ | `op-discovery` Worker |
 | RS256 public key | ✅ | `kid: edge-key-1` |

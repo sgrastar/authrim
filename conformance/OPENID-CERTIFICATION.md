@@ -1,41 +1,41 @@
-# OpenID Certification テストガイド
+# OpenID Certification Testing Guide
 
-このガイドでは、[OpenID Certification](https://www.certification.openid.net/)でAuthrimをテストする方法を説明します。
+This guide explains how to test Authrim with [OpenID Certification](https://www.certification.openid.net/).
 
-**⚠️ 重要**: 現在Admin APIは認証なしでアクセス可能です。将来的にABACベースの認証機構が実装される予定です。
+**⚠️ Important**: Admin API is currently accessible without authentication. ABAC-based authentication mechanism will be implemented in the future.
 
-## 📋 目次
+## 📋 Table of Contents
 
-1. [概要](#概要)
-2. [モード切り替え方法](#モード切り替え方法)
-3. [プロファイル一覧](#プロファイル一覧)
-4. [API使用例](#api使用例)
-5. [Certification用の推奨設定](#certification用の推奨設定)
+1. [Overview](#overview)
+2. [Profile Switching Methods](#profile-switching-methods)
+3. [Profile List](#profile-list)
+4. [API Usage Examples](#api-usage-examples)
+5. [Recommended Settings for Certification](#recommended-settings-for-certification)
 
-## 概要
+## Overview
 
-Authrimは、設定を変更することで以下のOpenID Connectプロファイルをサポートできます：
+Authrim can support the following OpenID Connect profiles by changing settings:
 
-- **Basic OP**: 標準的なAuthorization Code Flow
-- **Implicit OP**: Implicit Flow（SPA向け）
+- **Basic OP**: Standard Authorization Code Flow
+- **Implicit OP**: Implicit Flow (for SPAs)
 - **Hybrid OP**: Hybrid Flow
-- **FAPI 1.0 Advanced**: 金融機関向けセキュリティプロファイル（MTLS）
-- **FAPI 2.0**: 次世代金融機関向けセキュリティプロファイル（PAR + private_key_jwt）
-- **FAPI 2.0 + DPoP**: FAPI 2.0 + 送信者制約トークン
+- **FAPI 1.0 Advanced**: Security profile for financial institutions (MTLS)
+- **FAPI 2.0**: Next-generation security profile for financial institutions (PAR + private_key_jwt)
+- **FAPI 2.0 + DPoP**: FAPI 2.0 + sender-constrained tokens
 
-## モード切り替え方法
+## Profile Switching Methods
 
-### 方法1: Admin API経由（推奨）
+### Method 1: Via Admin API (Recommended)
 
-**注意**: Admin APIは現在認証不要です。以下のコマンドはそのまま実行できます。
+**Note**: Admin API currently requires no authentication. The following commands can be executed as-is.
 
-#### プロファイル一覧の取得
+#### Retrieve Profile List
 
 ```bash
 curl -X GET https://your-authrim.com/api/admin/settings/profiles
 ```
 
-**レスポンス例:**
+**Response Example:**
 ```json
 {
   "profiles": [
@@ -52,23 +52,23 @@ curl -X GET https://your-authrim.com/api/admin/settings/profiles
 }
 ```
 
-#### プロファイルの適用
+#### Apply Profile
 
 ```bash
-# Basic OP モードに切り替え
+# Switch to Basic OP mode
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/basic-op \
   -H "Content-Type: application/json"
 
-# FAPI 2.0 モードに切り替え
+# Switch to FAPI 2.0 mode
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2 \
   -H "Content-Type: application/json"
 
-# FAPI 2.0 + DPoP モードに切り替え
+# Switch to FAPI 2.0 + DPoP mode
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2-dpop \
   -H "Content-Type: application/json"
 ```
 
-**レスポンス例:**
+**Response Example:**
 ```json
 {
   "success": true,
@@ -92,9 +92,9 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2-dpop \
 }
 ```
 
-### 方法2: 手動設定
+### Method 2: Manual Configuration
 
-より細かい制御が必要な場合は、設定を直接更新できます：
+If you need finer control, you can update settings directly:
 
 ```bash
 curl -X PUT https://your-authrim.com/api/admin/settings \
@@ -114,13 +114,13 @@ curl -X PUT https://your-authrim.com/api/admin/settings \
   }'
 ```
 
-## プロファイル一覧
+## Profile List
 
 ### basic-op (Basic OP)
 
-**説明**: 標準的なOpenID Connect Provider（Authorization Code Flow）
+**Description**: Standard OpenID Connect Provider (Authorization Code Flow)
 
-**設定**:
+**Settings**:
 ```json
 {
   "fapi": {
@@ -142,7 +142,7 @@ curl -X PUT https://your-authrim.com/api/admin/settings \
 }
 ```
 
-**適用方法**:
+**How to Apply**:
 ```bash
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/basic-op \
   -H "Content-Type: application/json"
@@ -152,9 +152,9 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/basic-op \
 
 ### implicit-op (Implicit OP)
 
-**説明**: Implicit Flowをサポート（SPA向け）
+**Description**: Supports Implicit Flow (for SPAs)
 
-**設定**:
+**Settings**:
 ```json
 {
   "fapi": {
@@ -174,7 +174,7 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/basic-op \
 }
 ```
 
-**適用方法**:
+**How to Apply**:
 ```bash
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/implicit-op \
   -H "Content-Type: application/json"
@@ -184,9 +184,9 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/implicit-op \
 
 ### hybrid-op (Hybrid OP)
 
-**説明**: Hybrid Flowをサポート
+**Description**: Supports Hybrid Flow
 
-**設定**:
+**Settings**:
 ```json
 {
   "fapi": {
@@ -213,7 +213,7 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/implicit-op \
 }
 ```
 
-**適用方法**:
+**How to Apply**:
 ```bash
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/hybrid-op \
   -H "Content-Type: application/json"
@@ -223,9 +223,9 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/hybrid-op \
 
 ### fapi-1-advanced (FAPI 1.0 Advanced)
 
-**説明**: Financial-grade API Security Profile 1.0 - Advanced（MTLS使用）
+**Description**: Financial-grade API Security Profile 1.0 - Advanced (uses MTLS)
 
-**設定**:
+**Settings**:
 ```json
 {
   "fapi": {
@@ -244,21 +244,21 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/hybrid-op \
 }
 ```
 
-**適用方法**:
+**How to Apply**:
 ```bash
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-1-advanced \
   -H "Content-Type: application/json"
 ```
 
-**注意**: FAPI 1.0ではMTLS（Mutual TLS）が必要です。Cloudflare Workersでのサポート状況を確認してください。
+**Note**: FAPI 1.0 requires MTLS (Mutual TLS). Please verify support status in Cloudflare Workers.
 
 ---
 
 ### fapi-2 (FAPI 2.0)
 
-**説明**: Financial-grade API Security Profile 2.0（最新版）
+**Description**: Financial-grade API Security Profile 2.0 (latest version)
 
-**設定**:
+**Settings**:
 ```json
 {
   "fapi": {
@@ -277,26 +277,26 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-1-advanced 
 }
 ```
 
-**適用方法**:
+**How to Apply**:
 ```bash
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2 \
   -H "Content-Type: application/json"
 ```
 
-**必須要件**:
-- ✅ PAR (Pushed Authorization Requests) 必須
-- ✅ Confidential Clients のみ
-- ✅ PKCE S256 必須
-- ✅ `iss` パラメータ（RFC 9207）
-- ✅ private_key_jwt または client_secret_jwt
+**Required Features**:
+- ✅ PAR (Pushed Authorization Requests) required
+- ✅ Confidential Clients only
+- ✅ PKCE S256 required
+- ✅ `iss` parameter (RFC 9207)
+- ✅ private_key_jwt or client_secret_jwt
 
 ---
 
 ### fapi-2-dpop (FAPI 2.0 + DPoP)
 
-**説明**: FAPI 2.0 + DPoP（送信者制約トークン）
+**Description**: FAPI 2.0 + DPoP (sender-constrained tokens)
 
-**設定**:
+**Settings**:
 ```json
 {
   "fapi": {
@@ -312,23 +312,23 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2 \
 }
 ```
 
-**適用方法**:
+**How to Apply**:
 ```bash
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2-dpop \
   -H "Content-Type: application/json"
 ```
 
-**追加要件**:
-- ✅ DPoP proof 必須（RFC 9449）
-- ✅ すべてのトークンリクエストでDPoPヘッダーが必要
+**Additional Requirements**:
+- ✅ DPoP proof required (RFC 9449)
+- ✅ DPoP header required for all token requests
 
 ---
 
-### development (開発用)
+### development (Development Mode)
 
-**説明**: ローカル開発向けの緩和された設定
+**Description**: Relaxed settings for local development
 
-**設定**:
+**Settings**:
 ```json
 {
   "fapi": {
@@ -348,27 +348,27 @@ curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2-dpop \
 }
 ```
 
-**適用方法**:
+**How to Apply**:
 ```bash
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/development \
   -H "Content-Type: application/json"
 ```
 
-## API使用例
+## API Usage Examples
 
-**注意**: 以下の例では認証ヘッダーは不要です（現在Admin APIは認証なしでアクセス可能）。
+**Note**: Authentication headers are not required in the examples below (Admin API is currently accessible without authentication).
 
 ### TypeScript/JavaScript
 
 ```typescript
-// プロファイル一覧の取得
+// Get profile list
 async function listProfiles() {
   const response = await fetch('https://your-authrim.com/api/admin/settings/profiles');
   const data = await response.json();
   console.log('Available profiles:', data.profiles);
 }
 
-// プロファイルの適用
+// Apply profile
 async function applyProfile(profileName: string) {
   const response = await fetch(
     `https://your-authrim.com/api/admin/settings/profile/${profileName}`,
@@ -383,8 +383,8 @@ async function applyProfile(profileName: string) {
   console.log('Applied profile:', data);
 }
 
-// 使用例
-await applyProfile('fapi-2');  // FAPI 2.0モードに切り替え
+// Usage example
+await applyProfile('fapi-2');  // Switch to FAPI 2.0 mode
 ```
 
 ### Python
@@ -394,12 +394,12 @@ import requests
 
 BASE_URL = "https://your-authrim.com"
 
-# プロファイル一覧の取得
+# Get profile list
 def list_profiles():
     response = requests.get(f"{BASE_URL}/api/admin/settings/profiles")
     return response.json()
 
-# プロファイルの適用
+# Apply profile
 def apply_profile(profile_name):
     response = requests.put(
         f"{BASE_URL}/api/admin/settings/profile/{profile_name}",
@@ -407,7 +407,7 @@ def apply_profile(profile_name):
     )
     return response.json()
 
-# 使用例
+# Usage example
 profiles = list_profiles()
 print(f"Available profiles: {profiles}")
 
@@ -415,34 +415,34 @@ result = apply_profile("fapi-2")
 print(f"Applied profile: {result}")
 ```
 
-## Certification用の推奨設定
+## Recommended Settings for Certification
 
 ### 1. Basic OP Certification
 
 ```bash
-# Step 1: Basic OPプロファイルを適用
+# Step 1: Apply Basic OP profile
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/basic-op \
   -H "Content-Type: application/json"
 
-# Step 2: Discovery URLを確認
+# Step 2: Verify Discovery URL
 # https://your-authrim.com/.well-known/openid-configuration
 
-# Step 3: OpenID CertificationツールでURLを登録
+# Step 3: Register URL in OpenID Certification tool
 # https://www.certification.openid.net/
 ```
 
 ### 2. FAPI 2.0 Certification
 
 ```bash
-# Step 1: FAPI 2.0プロファイルを適用
+# Step 1: Apply FAPI 2.0 profile
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2 \
   -H "Content-Type: application/json"
 
-# Step 2: クライアント登録
-# - private_key_jwt認証用の公開鍵（JWKS）を準備
-# - クライアント登録時にjwks_uriまたはjwksを提供
+# Step 2: Client registration
+# - Prepare public key (JWKS) for private_key_jwt authentication
+# - Provide jwks_uri or jwks during client registration
 
-# Step 3: 設定確認
+# Step 3: Verify configuration
 curl https://your-authrim.com/.well-known/openid-configuration | jq '{
   require_pushed_authorization_requests,
   token_endpoint_auth_methods_supported,
@@ -450,7 +450,7 @@ curl https://your-authrim.com/.well-known/openid-configuration | jq '{
   dpop_signing_alg_values_supported
 }'
 
-# 期待される出力:
+# Expected output:
 # {
 #   "require_pushed_authorization_requests": true,
 #   "token_endpoint_auth_methods_supported": ["private_key_jwt", "client_secret_jwt"],
@@ -458,82 +458,82 @@ curl https://your-authrim.com/.well-known/openid-configuration | jq '{
 #   "dpop_signing_alg_values_supported": ["RS256", "ES256"]
 # }
 
-# Step 4: OpenID CertificationツールでFAPI 2.0テストを実行
+# Step 4: Run FAPI 2.0 tests in OpenID Certification tool
 ```
 
 ### 3. FAPI 2.0 + DPoP Certification
 
 ```bash
-# Step 1: FAPI 2.0 + DPoPプロファイルを適用
+# Step 1: Apply FAPI 2.0 + DPoP profile
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2-dpop \
   -H "Content-Type: application/json"
 
-# Step 2: DPoP検証
-# - DPoP proof生成ライブラリを使用
-# - すべてのトークンリクエストにDPoPヘッダーを含める
+# Step 2: Verify DPoP
+# - Use DPoP proof generation library
+# - Include DPoP header in all token requests
 
-# Step 3: テスト実行前の確認
+# Step 3: Verification before test execution
 curl https://your-authrim.com/.well-known/openid-configuration | jq '.dpop_signing_alg_values_supported'
 
-# Step 4: OpenID CertificationツールでFAPI 2.0 + DPoPテストを実行
+# Step 4: Run FAPI 2.0 + DPoP tests in OpenID Certification tool
 ```
 
-## トラブルシューティング
+## Troubleshooting
 
-### 設定が反映されない場合
+### If settings are not applied
 
-1. **キャッシュのクリア**: Discovery endpointは5分間キャッシュされます
+1. **Clear cache**: Discovery endpoint is cached for 5 minutes
    ```bash
-   # 5分待つか、ワーカーを再デプロイ
+   # Wait 5 minutes or redeploy worker
    wrangler deploy
    ```
 
-2. **設定の確認**:
+2. **Verify settings**:
    ```bash
    curl -X GET https://your-authrim.com/api/admin/settings
    ```
 
-3. **Discovery metadataの確認**:
+3. **Verify Discovery metadata**:
    ```bash
    curl https://your-authrim.com/.well-known/openid-configuration | jq .
    ```
 
-### Certificationテストが失敗する場合
+### If Certification tests fail
 
-#### PAR Required エラー
+#### PAR Required Error
 
 ```bash
-# 設定確認
+# Verify configuration
 curl https://your-authrim.com/.well-known/openid-configuration | \
   jq '.require_pushed_authorization_requests'
 
-# true になっていることを確認
-# false の場合はプロファイルを再適用
+# Verify it is true
+# If false, reapply profile
 curl -X PUT https://your-authrim.com/api/admin/settings/profile/fapi-2 \
   -H "Content-Type: application/json"
 ```
 
-#### DPoP Required エラー
+#### DPoP Required Error
 
 ```bash
-# FAPI設定を確認
+# Verify FAPI configuration
 curl -X GET https://your-authrim.com/api/admin/settings | \
   jq '.settings.fapi'
 
-# requireDpop が true になっていることを確認
+# Verify requireDpop is true
 ```
 
-#### Public Client Rejected エラー
+#### Public Client Rejected Error
 
 ```bash
-# FAPI設定を確認
+# Verify FAPI configuration
 curl -X GET https://your-authrim.com/api/admin/settings | \
   jq '.settings.fapi.allowPublicClients'
 
-# false になっていることを確認（FAPI 2.0では必須）
+# Verify it is false (required for FAPI 2.0)
 ```
 
-## 参考リンク
+## Reference Links
 
 - [OpenID Certification](https://www.certification.openid.net/)
 - [FAPI 2.0 Specification](https://openid.net/specs/fapi-security-profile-2_0-final.html)
@@ -542,13 +542,13 @@ curl -X GET https://your-authrim.com/api/admin/settings | \
 - [RFC 9207: OAuth 2.0 Authorization Server Issuer Identification](https://www.rfc-editor.org/rfc/rfc9207.html)
 - [RFC 7636: Proof Key for Code Exchange (PKCE)](https://www.rfc-editor.org/rfc/rfc7636.html)
 
-## まとめ
+## Summary
 
-Authrimは、Admin API経由で簡単にOpenID Connectプロファイルを切り替えることができます：
+Authrim allows you to easily switch OpenID Connect profiles via the Admin API:
 
-1. **プロファイル一覧を取得**: `GET /api/admin/settings/profiles`
-2. **プロファイルを適用**: `PUT /api/admin/settings/profile/:profileName`
-3. **設定を確認**: `GET /.well-known/openid-configuration`
-4. **Certificationテストを実行**: https://www.certification.openid.net/
+1. **Get profile list**: `GET /api/admin/settings/profiles`
+2. **Apply profile**: `PUT /api/admin/settings/profile/:profileName`
+3. **Verify settings**: `GET /.well-known/openid-configuration`
+4. **Run Certification tests**: https://www.certification.openid.net/
 
-各プロファイルは、対応するOpenID Connect仕様に準拠するように事前設定されており、手動での設定調整は不要です。
+Each profile is pre-configured to comply with the corresponding OpenID Connect specification, so manual configuration adjustment is not required.

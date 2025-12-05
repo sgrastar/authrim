@@ -60,10 +60,10 @@ timeline
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                      Unified Identity Layer                             │
 │                                                                         │
-│   • Identity Linking (複数アカウントの紐付け)                            │
-│   • Identity Stitching (Federated/Local/Wallet の同一性判断)            │
-│   • Attribute Aggregation (複数ソースからの属性集約)                     │
-│   • Claims Transformation (クレーム変換・正規化)                         │
+│   • Identity Linking (link multiple accounts to one user)              │
+│   • Identity Stitching (determine identity across Federated/Local/Wallet)│
+│   • Attribute Aggregation (aggregate attributes from multiple sources) │
+│   • Claims Transformation (transform and normalize claims)             │
 └─────────────────────────────────┬───────────────────────────────────────┘
                                   │
                                   ▼
@@ -82,15 +82,15 @@ timeline
 │                                                                         │
 │   • Token Issuance (ID Token / Access Token / Refresh Token)           │
 │   • Claims Embedding (roles, permissions, flags, relationships)        │
-│   • Inline Policy Evaluation (トークン発行時の同期評価)                  │
-│   • Real-time Policy Check API (/policy/check - 後段サービス用)         │
+│   • Inline Policy Evaluation (sync evaluation at token issuance)       │
+│   • Real-time Policy Check API (/policy/check - for downstream services)│
 └─────────────────────────────────┬───────────────────────────────────────┘
                                   │
                                   ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                        Customer Applications                            │
 │                                                                         │
-│   • Tokens: ID Token + Access Token (認証・認可情報)                    │
+│   • Tokens: ID Token + Access Token (authentication & authorization)   │
 │   • Embedded: Permissions / Roles / Feature Flags                      │
 │   • Real-time: /policy/check API for dynamic decisions                 │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -102,10 +102,10 @@ timeline
 
 | Feature                      | Description                                                          |
 | ---------------------------- | -------------------------------------------------------------------- |
-| **OP内蔵Policy Engine**      | Token発行時にRBAC/ABAC/ReBACを同期評価。アプリは追加APIコール不要    |
-| **Dual Authorization Model** | Token埋め込み（高速）+ リアルタイムAPI（動的）の併用が可能           |
-| **Identity Stitching**       | 同一email自動紐付け、VC subject条件付き紐付け、変更時再認証          |
-| **Edge-native**              | Cloudflare Workers上で全レイヤーがエッジ実行。グローバル低レイテンシ |
+| **OP-embedded Policy Engine**| Sync evaluation of RBAC/ABAC/ReBAC at token issuance. No extra API calls needed |
+| **Dual Authorization Model** | Token embedding (fast) + Real-time API (dynamic) combined            |
+| **Identity Stitching**       | Auto-link same email, conditional VC subject linking, re-auth on change |
+| **Edge-native**              | All layers run at edge on Cloudflare Workers. Global low latency     |
 
 ---
 

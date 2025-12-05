@@ -1,26 +1,26 @@
-# メトリクス収集手順
+# Metrics Collection Procedures
 
-## 概要
+## Overview
 
-負荷テスト実行後、Cloudflare Graph API（GraphQL Analytics）と wrangler を使用してメトリクスを収集します。
+After load test execution, collect metrics using Cloudflare Graph API (GraphQL Analytics) and wrangler.
 
-## 前提条件
+## Prerequisites
 
-### 1. Cloudflare API Token の準備
+### 1. Prepare Cloudflare API Token
 
-Cloudflare Dashboard から API Token を作成：
+Create an API Token from Cloudflare Dashboard:
 
-1. https://dash.cloudflare.com/profile/api-tokens にアクセス
-2. "Create Token" をクリック
-3. 以下の権限を付与：
+1. Access https://dash.cloudflare.com/profile/api-tokens
+2. Click "Create Token"
+3. Grant the following permissions:
    - **Account** → **Workers Scripts** → **Read**
    - **Account** → **Analytics** → **Read**
    - **Account** → **Logs** → **Read**
-4. トークンをコピーして保存
+4. Copy and save the token
 
-### 2. 環境変数の設定
+### 2. Configure Environment Variables
 
-`.env` ファイルに追加：
+Add to `.env` file:
 
 ```bash
 CLOUDFLARE_ACCOUNT_ID=your_account_id
@@ -28,64 +28,64 @@ CLOUDFLARE_API_TOKEN=your_api_token_here
 WORKER_NAME=authrim-worker
 ```
 
-または、環境変数として直接エクスポート：
+Or export directly as environment variables:
 
 ```bash
 export CLOUDFLARE_ACCOUNT_ID=your_account_id
 export CLOUDFLARE_API_TOKEN=your_api_token_here
 ```
 
-### 3. wrangler の認証
+### 3. Authenticate wrangler
 
 ```bash
-# API トークンを使用する場合
+# Using API token
 export CLOUDFLARE_API_TOKEN=your_api_token_here
 
-# または、対話的ログイン
+# Or interactive login
 wrangler login
 ```
 
-## 収集するメトリクス
+## Metrics to Collect
 
-### 1. Workers メトリクス
+### 1. Workers Metrics
 
-| メトリクス | 説明 | 重要度 |
+| Metric | Description | Importance |
 |-----------|------|--------|
-| **requests** | 総リクエスト数 | ★★★ |
-| **errors** | エラー数（4xx/5xx） | ★★★ |
-| **cpuTime** | CPU 使用時間（ms） | ★★★ |
-| **duration** | 処理時間（p50/p90/p99） | ★★★ |
-| **subrequests** | サブリクエスト数（DO/KV/D1） | ★★☆ |
+| **requests** | Total request count | ★★★ |
+| **errors** | Error count (4xx/5xx) | ★★★ |
+| **cpuTime** | CPU usage time (ms) | ★★★ |
+| **duration** | Processing time (p50/p90/p99) | ★★★ |
+| **subrequests** | Subrequest count (DO/KV/D1) | ★★☆ |
 
-### 2. Durable Objects メトリクス
+### 2. Durable Objects Metrics
 
-| メトリクス | 説明 | 重要度 |
+| Metric | Description | Importance |
 |-----------|------|--------|
-| **invocations** | DO 実行回数 | ★★★ |
-| **activeTime** | アクティブ時間 | ★★☆ |
-| **cpuTime** | CPU 時間 | ★★★ |
+| **invocations** | DO execution count | ★★★ |
+| **activeTime** | Active time | ★★☆ |
+| **cpuTime** | CPU time | ★★★ |
 
-### 3. D1 メトリクス
+### 3. D1 Metrics
 
-| メトリクス | 説明 | 重要度 |
+| Metric | Description | Importance |
 |-----------|------|--------|
-| **readQueries** | 読み取りクエリ数 | ★★☆ |
-| **writeQueries** | 書き込みクエリ数 | ★★★ |
-| **rowsRead** | 読み取り行数 | ★☆☆ |
-| **rowsWritten** | 書き込み行数 | ★★☆ |
+| **readQueries** | Read query count | ★★☆ |
+| **writeQueries** | Write query count | ★★★ |
+| **rowsRead** | Rows read count | ★☆☆ |
+| **rowsWritten** | Rows written count | ★★☆ |
 
-### 4. KV メトリクス
+### 4. KV Metrics
 
-| メトリクス | 説明 | 重要度 |
+| Metric | Description | Importance |
 |-----------|------|--------|
-| **reads** | 読み取り回数 | ★★☆ |
-| **writes** | 書き込み回数 | ★☆☆ |
+| **reads** | Read count | ★★☆ |
+| **writes** | Write count | ★☆☆ |
 
-## GraphQL クエリの実行
+## Execute GraphQL Queries
 
-### 方法 1: wrangler を使った手動クエリ（推奨）
+### Method 1: Manual Query with wrangler (Recommended)
 
-#### Workers 統計の取得
+#### Get Workers Statistics
 
 ```bash
 wrangler graphql --account-id $CLOUDFLARE_ACCOUNT_ID <<'EOF'
@@ -120,7 +120,7 @@ query {
 EOF
 ```
 
-#### Durable Objects 統計の取得
+#### Get Durable Objects Statistics
 
 ```bash
 wrangler graphql --account-id $CLOUDFLARE_ACCOUNT_ID <<'EOF'
@@ -151,7 +151,7 @@ query {
 EOF
 ```
 
-### 方法 2: curl を使った直接 API 呼び出し
+### Method 2: Direct API Call with curl
 
 ```bash
 curl -X POST https://api.cloudflare.com/client/v4/graphql \
@@ -160,36 +160,36 @@ curl -X POST https://api.cloudflare.com/client/v4/graphql \
   --data @queries/worker_stats.graphql
 ```
 
-### 方法 3: 自動化スクリプト（後述）
+### Method 3: Automation Script (described below)
 
 ```bash
 ./scripts/collect-metrics.sh
 ```
 
-## wrangler tail によるリアルタイムログ
+## Real-time Logs with wrangler tail
 
-テスト実行中にリアルタイムでログを確認：
+View logs in real-time during test execution:
 
 ```bash
 wrangler tail authrim-worker --format pretty
 ```
 
-### フィルタリング例
+### Filtering Examples
 
 ```bash
-# エラーのみ表示
+# Display errors only
 wrangler tail authrim-worker --status error
 
-# 特定のメソッドのみ
+# Specific method only
 wrangler tail authrim-worker --method POST
 
-# サンプリング（10%）
+# Sampling (10%)
 wrangler tail authrim-worker --sampling-rate 0.1
 ```
 
-## 結果の保存と整形
+## Save and Format Results
 
-### JSON 形式で保存
+### Save in JSON Format
 
 ```bash
 wrangler graphql --account-id $CLOUDFLARE_ACCOUNT_ID \
@@ -197,84 +197,84 @@ wrangler graphql --account-id $CLOUDFLARE_ACCOUNT_ID \
   > results/metrics_$(date +%Y%m%d_%H%M%S).json
 ```
 
-### jq を使った整形
+### Format with jq
 
 ```bash
-# p99 レスポンスタイムを抽出
+# Extract p99 response time
 cat results/metrics_latest.json | jq '.data.viewer.accounts[0].workersInvocationsAdaptive.quantiles.durationP99'
 
-# エラーレートを計算
+# Calculate error rate
 cat results/metrics_latest.json | jq '
   .data.viewer.accounts[0].workersInvocationsAdaptive.sum |
   (.errors / .requests * 100)
 '
 
-# DO 別の実行回数を表示
+# Display execution count by DO
 cat results/metrics_latest.json | jq '
   .data.viewer.accounts[0].durableObjectsInvocationsAdaptive[] |
   {className: .dimensions.className, requests: .sum.requests}
 '
 ```
 
-## 自動収集スクリプトの使用
+## Use Automated Collection Script
 
-### 基本的な使い方
+### Basic Usage
 
 ```bash
-# 最新のテスト結果を収集
+# Collect latest test results
 ./scripts/collect-metrics.sh
 
-# 特定の時間範囲を指定
+# Specify time range
 ./scripts/collect-metrics.sh --start "2025-11-30T10:00:00Z" --end "2025-11-30T11:00:00Z"
 
-# テスト名を指定して保存
+# Specify test name and save
 ./scripts/collect-metrics.sh --test-name "test1-standard" --output results/
 ```
 
-### 出力例
+### Output Example
 
 ```
-📊 メトリクス収集を開始します...
+Metrics collection started...
 
-テスト情報:
+Test information:
 - Worker: authrim-worker
-- 期間: 2025-11-30T10:00:00Z 〜 2025-11-30T11:00:00Z
+- Period: 2025-11-30T10:00:00Z ~ 2025-11-30T11:00:00Z
 
-📈 Workers メトリクス取得中...
-✅ 完了
+Workers metrics retrieval in progress...
+Completed
 
-📈 Durable Objects メトリクス取得中...
-✅ 完了
+Durable Objects metrics retrieval in progress...
+Completed
 
-📈 D1 メトリクス取得中...
-✅ 完了
+D1 metrics retrieval in progress...
+Completed
 
-📊 結果サマリー:
+Results summary:
 ┌────────────────────┬──────────┐
-│ メトリクス         │ 値       │
+│ Metric             │ Value    │
 ├────────────────────┼──────────┤
-│ 総リクエスト数     │ 120,000  │
-│ エラー数           │ 120      │
-│ エラーレート       │ 0.10%    │
-│ p50 レスポンス     │ 45ms     │
-│ p90 レスポンス     │ 120ms    │
-│ p99 レスポンス     │ 350ms    │
-│ 平均 CPU 時間      │ 25ms     │
-│ DO 実行回数        │ 240,000  │
-│ D1 書き込み        │ 80,000   │
+│ Total Requests     │ 120,000  │
+│ Errors             │ 120      │
+│ Error Rate         │ 0.10%    │
+│ p50 Response       │ 45ms     │
+│ p90 Response       │ 120ms    │
+│ p99 Response       │ 350ms    │
+│ Average CPU Time   │ 25ms     │
+│ DO Executions      │ 240,000  │
+│ D1 Writes          │ 80,000   │
 └────────────────────┴──────────┘
 
-💾 結果保存先: results/test1-standard_20251130_103045.json
+Saved to: results/test1-standard_20251130_103045.json
 ```
 
-## メトリクスの分析
+## Metrics Analysis
 
-### 1. パフォーマンス分析
+### 1. Performance Analysis
 
-#### CPU Time の分析
+#### CPU Time Analysis
 
 ```bash
-# CPU Time が高いリクエストを特定
+# Identify requests with high CPU Time
 cat results/metrics_latest.json | jq '.data.viewer.accounts[0].workersInvocationsAdaptive.quantiles | {
   p50: .cpuTimeP50,
   p90: .cpuTimeP90,
@@ -282,15 +282,15 @@ cat results/metrics_latest.json | jq '.data.viewer.accounts[0].workersInvocation
 }'
 ```
 
-**評価基準**:
-- p99 < 50ms: 優秀
-- p99 < 100ms: 良好
-- p99 > 150ms: 最適化が必要
+**Evaluation Criteria**:
+- p99 < 50ms: Excellent
+- p99 < 100ms: Good
+- p99 > 150ms: Needs optimization
 
-#### レスポンスタイムの分析
+#### Response Time Analysis
 
 ```bash
-# Duration の分布を確認
+# Check Duration distribution
 cat results/metrics_latest.json | jq '.data.viewer.accounts[0].workersInvocationsAdaptive.quantiles | {
   p50: .durationP50,
   p90: .durationP90,
@@ -298,15 +298,15 @@ cat results/metrics_latest.json | jq '.data.viewer.accounts[0].workersInvocation
 }'
 ```
 
-**評価基準**:
-- p99 < 300ms: 優秀
-- p99 < 500ms: 良好
-- p99 > 1000ms: 改善が必要
+**Evaluation Criteria**:
+- p99 < 300ms: Excellent
+- p99 < 500ms: Good
+- p99 > 1000ms: Needs improvement
 
-### 2. エラー分析
+### 2. Error Analysis
 
 ```bash
-# エラーレートの計算
+# Calculate error rate
 cat results/metrics_latest.json | jq '
   .data.viewer.accounts[0].workersInvocationsAdaptive.sum |
   {
@@ -317,16 +317,16 @@ cat results/metrics_latest.json | jq '
 '
 ```
 
-**評価基準**:
-- < 0.1%: 優秀
-- < 1%: 良好
-- < 5%: 許容範囲
-- > 5%: 要改善
+**Evaluation Criteria**:
+- < 0.1%: Excellent
+- < 1%: Good
+- < 5%: Acceptable
+- > 5%: Needs improvement
 
-### 3. DO パフォーマンス分析
+### 3. DO Performance Analysis
 
 ```bash
-# DO クラス別の統計
+# Statistics by DO class
 cat results/metrics_latest.json | jq '
   .data.viewer.accounts[0].durableObjectsInvocationsAdaptive |
   map({
@@ -337,10 +337,10 @@ cat results/metrics_latest.json | jq '
 '
 ```
 
-### 4. D1 パフォーマンス分析
+### 4. D1 Performance Analysis
 
 ```bash
-# 書き込み/読み取り比率
+# Write/read ratio
 cat results/metrics_latest.json | jq '
   .data.viewer.accounts[0].d1Queries.sum |
   {
@@ -351,80 +351,80 @@ cat results/metrics_latest.json | jq '
 '
 ```
 
-## レポート生成
+## Report Generation
 
-### HTML レポートの生成
+### Generate HTML Report
 
 ```bash
 ./scripts/generate-report.sh results/metrics_latest.json
 ```
 
-生成されるレポート例:
+Generated report example:
 
 ```html
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Authrim 負荷テスト結果</title>
+  <title>Authrim Load Test Results</title>
 </head>
 <body>
-  <h1>TEST 1 - Standard プリセット</h1>
-  <h2>サマリー</h2>
+  <h1>TEST 1 - Standard Preset</h1>
+  <h2>Summary</h2>
   <table>
-    <tr><td>総リクエスト数</td><td>120,000</td></tr>
-    <tr><td>エラーレート</td><td>0.10%</td></tr>
-    <tr><td>p99 レスポンス</td><td>350ms</td></tr>
+    <tr><td>Total Requests</td><td>120,000</td></tr>
+    <tr><td>Error Rate</td><td>0.10%</td></tr>
+    <tr><td>p99 Response</td><td>350ms</td></tr>
   </table>
-  <!-- グラフやチャート -->
+  <!-- Graphs and charts -->
 </body>
 </html>
 ```
 
-### CSV エクスポート
+### CSV Export
 
 ```bash
 ./scripts/export-csv.sh results/metrics_latest.json > results/metrics.csv
 ```
 
-Excel や Google Sheets で開いて分析可能。
+Can be opened and analyzed in Excel or Google Sheets.
 
-## トラブルシューティング
+## Troubleshooting
 
-### 1. API Token エラー
+### 1. API Token Error
 
 ```
 Error: Authentication error
 ```
 
-**解決策**:
+**Solution**:
 ```bash
-# トークンの確認
+# Verify token
 echo $CLOUDFLARE_API_TOKEN
 
-# トークンの再設定
+# Reset token
 export CLOUDFLARE_API_TOKEN=new_token_here
 
-# または wrangler 再ログイン
+# Or re-login with wrangler
 wrangler logout
 wrangler login
 ```
 
-### 2. Account ID が見つからない
+### 2. Account ID Not Found
 
 ```
 Error: Account not found
 ```
 
-**解決策**:
+**Solution**:
 ```bash
-# Account ID の確認
+# Verify Account ID
 wrangler whoami
 
-# または Cloudflare Dashboard から確認
-# https://dash.cloudflare.com/ → 右上のアカウント名 → Account ID
+# Or check from Cloudflare Dashboard
+# https://dash.cloudflare.com/ → Account name (top right) → Account ID
 ```
 
-### 3. データが空
+### 3. Empty Data
 
 ```json
 {
@@ -436,59 +436,59 @@ wrangler whoami
 }
 ```
 
-**原因**: 時間範囲が間違っている、またはデータがまだ集計されていない
+**Cause**: Time range is incorrect or data not yet aggregated
 
-**解決策**:
-- 時間範囲を確認（UTC で指定）
-- テスト終了後、5〜10分待ってから実行
-- `datetime_geq` と `datetime_lt` を正しく設定
+**Solution**:
+- Verify time range (specify in UTC)
+- Wait 5-10 minutes after test completion before execution
+- Correctly set `datetime_geq` and `datetime_lt`
 
-### 4. GraphQL クエリエラー
+### 4. GraphQL Query Error
 
 ```
 Error: GraphQL query error
 ```
 
-**解決策**:
-- クエリ構文を確認
-- スキーマが最新か確認（Cloudflare の API 変更の可能性）
-- `queries/worker_stats.graphql` のバージョンを確認
+**Solution**:
+- Verify query syntax
+- Check if schema is up-to-date (possibility of Cloudflare API changes)
+- Verify version of `queries/worker_stats.graphql`
 
-## ベストプラクティス
+## Best Practices
 
-### 1. 定期的な収集
+### 1. Regular Collection
 
-テスト実行直後ではなく、5〜10分後に収集：
+Collect 5-10 minutes after test execution, not immediately:
 
 ```bash
-# テスト実行
+# Test execution
 ./scripts/run-test.sh test1 standard
 
-# 10分待機
+# Wait 10 minutes
 sleep 600
 
-# メトリクス収集
+# Metrics collection
 ./scripts/collect-metrics.sh --test-name "test1-standard"
 ```
 
-### 2. バージョン管理
+### 2. Version Control
 
 ```bash
-# Git タグでテスト結果を管理
+# Manage test results with Git tags
 git tag load-test-20251130-test1-standard
 git push origin --tags
 ```
 
-### 3. 結果の比較
+### 3. Result Comparison
 
 ```bash
-# 過去の結果と比較
+# Compare with past results
 ./scripts/compare-results.sh results/metrics_20251130.json results/metrics_20251129.json
 ```
 
-### 4. 自動化
+### 4. Automation
 
-CI/CD パイプラインに組み込む：
+Integrate into CI/CD pipeline:
 
 ```yaml
 # .github/workflows/load-test.yml
@@ -504,7 +504,7 @@ CI/CD パイプラインに組み込む：
   run: ./scripts/validate-results.sh results/ci-test1-standard.json
 ```
 
-## 参考資料
+## References
 
 - [Cloudflare GraphQL Analytics API](https://developers.cloudflare.com/analytics/graphql-api/)
 - [Workers Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/)

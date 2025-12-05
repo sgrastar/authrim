@@ -2,15 +2,15 @@
 
 ## Vision & Objectives
 
-**FAPI 2.0 Security Profile**は、金融業界向けの高度なセキュリティ要件を満たすOpenID Connect実装を検証する認証プロファイルです。Financial-grade API（FAPI）は、銀行、決済サービス、金融機関などで求められる最高水準のセキュリティを提供します。
+**FAPI 2.0 Security Profile** is a certification profile that verifies OpenID Connect implementations meeting advanced security requirements for the financial industry. Financial-grade API (FAPI) provides the highest level of security required by banks, payment services, and financial institutions.
 
-### 目的
-- 🔒 金融グレードのセキュリティ要件を満たす
-- ✅ PAR (Pushed Authorization Request) のサポート
-- ✅ DPoP (Demonstrating Proof-of-Possession) のサポート
-- 🔐 MTLS (Mutual TLS) のサポート（計画中）
-- 🔐 JARM (JWT Secured Authorization Response Mode) のサポート（計画中）
-- 🔐 高度な認証・認可フローの実装
+### Objectives
+- 🔒 Meet financial-grade security requirements
+- ✅ Support PAR (Pushed Authorization Request)
+- ✅ Support DPoP (Demonstrating Proof-of-Possession)
+- 🔐 Support MTLS (Mutual TLS) (planned)
+- 🔐 Support JARM (JWT Secured Authorization Response Mode) (planned)
+- 🔐 Implement advanced authentication and authorization flows
 
 ---
 
@@ -18,55 +18,55 @@
 
 ### 1. PAR - Pushed Authorization Request (RFC 9126)
 
-| 要件 | 説明 | 仕様参照 |
+| Requirement | Description | Specification Reference |
 |:--|:--|:--|
-| **PAR Endpoint** | `POST /as/par` で認可リクエストを事前登録 | RFC 9126 Section 2 |
-| **request_uri Issuance** | 一時的な `request_uri` を生成 | RFC 9126 Section 2.2 |
-| **Request Validation** | 認可パラメータの事前検証 | RFC 9126 Section 2.1 |
-| **Short Lifetime** | `request_uri` は短命（60秒推奨） | RFC 9126 Section 2.2 |
-| **One-time Use** | `request_uri` は1回のみ使用可能 | RFC 9126 Section 2.3 |
-| **Client Authentication** | PAR endpoint での client 認証 | RFC 9126 Section 2.1 |
+| **PAR Endpoint** | Pre-register authorization request with `POST /as/par` | RFC 9126 Section 2 |
+| **request_uri Issuance** | Generate temporary `request_uri` | RFC 9126 Section 2.2 |
+| **Request Validation** | Pre-validate authorization parameters | RFC 9126 Section 2.1 |
+| **Short Lifetime** | `request_uri` is short-lived (60s recommended) | RFC 9126 Section 2.2 |
+| **One-time Use** | `request_uri` can only be used once | RFC 9126 Section 2.3 |
+| **Client Authentication** | Client authentication at PAR endpoint | RFC 9126 Section 2.1 |
 
 ### 2. DPoP - Demonstrating Proof-of-Possession (RFC 9449)
 
-| 要件 | 説明 | 仕様参照 |
+| Requirement | Description | Specification Reference |
 |:--|:--|:--|
-| **DPoP Header** | `DPoP` HTTP ヘッダーの検証 | RFC 9449 Section 4 |
-| **DPoP Proof JWT** | DPoP Proof JWT の署名検証 | RFC 9449 Section 4.2 |
-| **Token Binding** | アクセストークンとDPoP鍵のバインディング | RFC 9449 Section 5 |
-| **Replay Prevention** | `jti` と `iat` による replay 攻撃防止 | RFC 9449 Section 4.3 |
-| **HTTP Method Binding** | `htm` クレームで HTTP メソッド検証 | RFC 9449 Section 4.2 |
-| **URI Binding** | `htu` クレームで URI 検証 | RFC 9449 Section 4.2 |
-| **DPoP Token Type** | Token type に `DPoP` を使用 | RFC 9449 Section 5 |
+| **DPoP Header** | Validate `DPoP` HTTP header | RFC 9449 Section 4 |
+| **DPoP Proof JWT** | Verify DPoP Proof JWT signature | RFC 9449 Section 4.2 |
+| **Token Binding** | Bind access token to DPoP key | RFC 9449 Section 5 |
+| **Replay Prevention** | Prevent replay attacks using `jti` and `iat` | RFC 9449 Section 4.3 |
+| **HTTP Method Binding** | Verify HTTP method with `htm` claim | RFC 9449 Section 4.2 |
+| **URI Binding** | Verify URI with `htu` claim | RFC 9449 Section 4.2 |
+| **DPoP Token Type** | Use `DPoP` as token type | RFC 9449 Section 5 |
 
 ### 3. MTLS - Mutual TLS (RFC 8705) - Planned
 
-| 要件 | 説明 | 仕様参照 |
+| Requirement | Description | Specification Reference |
 |:--|:--|:--|
-| **Client Certificate** | クライアント証明書による認証 | RFC 8705 Section 2 |
-| **Certificate Validation** | 証明書チェーンの検証 | RFC 8705 Section 3 |
-| **Token Binding** | トークンと証明書のバインディング | RFC 8705 Section 3 |
+| **Client Certificate** | Client certificate authentication | RFC 8705 Section 2 |
+| **Certificate Validation** | Validate certificate chain | RFC 8705 Section 3 |
+| **Token Binding** | Bind token to certificate | RFC 8705 Section 3 |
 | **Sender Constraint** | Sender-constrained access tokens | RFC 8705 Section 3.1 |
 
 ### 4. JARM - JWT Secured Authorization Response Mode (JARM) - Planned
 
-| 要件 | 説明 | 仕様参照 |
+| Requirement | Description | Specification Reference |
 |:--|:--|:--|
-| **JWT Response** | 認可レスポンスをJWTで署名 | JARM Section 2 |
+| **JWT Response** | Sign authorization response with JWT | JARM Section 2 |
 | **Response Mode** | `response_mode=jwt`, `query.jwt`, `fragment.jwt`, `form_post.jwt` | JARM Section 2.1 |
-| **Response Signing** | OP秘密鍵でレスポンスに署名 | JARM Section 2.3 |
-| **Response Encryption** | クライアント公開鍵でレスポンスを暗号化（オプション） | JARM Section 2.4 |
+| **Response Signing** | Sign response with OP private key | JARM Section 2.3 |
+| **Response Encryption** | Encrypt response with client public key (optional) | JARM Section 2.4 |
 
 ### 5. FAPI 2.0 Core Requirements
 
-| 要件 | 説明 | 仕様参照 |
+| Requirement | Description | Specification Reference |
 |:--|:--|:--|
-| **Authorization Code Flow** | PKCE必須 | FAPI 2.0 Section 5.2.2 |
-| **PAR Required** | すべての認可リクエストでPAR使用 | FAPI 2.0 Section 5.2.2.1 |
-| **Short-lived Codes** | 認可コードは短命（10分以内） | FAPI 2.0 Section 5.2.2.2 |
-| **Token Binding** | DPoP または MTLS でトークンバインディング | FAPI 2.0 Section 5.2.2.4 |
+| **Authorization Code Flow** | PKCE required | FAPI 2.0 Section 5.2.2 |
+| **PAR Required** | Use PAR for all authorization requests | FAPI 2.0 Section 5.2.2.1 |
+| **Short-lived Codes** | Authorization codes are short-lived (within 10 minutes) | FAPI 2.0 Section 5.2.2.2 |
+| **Token Binding** | Token binding with DPoP or MTLS | FAPI 2.0 Section 5.2.2.4 |
 | **Client Authentication** | `client_secret_post`, `client_secret_basic`, `private_key_jwt`, MTLS | FAPI 2.0 Section 5.2.2.5 |
-| **ID Token Validation** | 厳格な ID Token 検証 | FAPI 2.0 Section 5.2.3 |
+| **ID Token Validation** | Strict ID Token validation | FAPI 2.0 Section 5.2.3 |
 
 ---
 
@@ -76,7 +76,7 @@
 
 #### PAR - Pushed Authorization Request
 
-| 機能 | Status | Implementation |
+| Feature | Status | Implementation |
 |:--|:--|:--|
 | POST /as/par endpoint | ✅ | `op-auth` Worker |
 | request_uri generation | ✅ | Secure random generation |
@@ -92,7 +92,7 @@
 
 #### DPoP - Demonstrating Proof-of-Possession
 
-| 機能 | Status | Implementation |
+| Feature | Status | Implementation |
 |:--|:--|:--|
 | DPoP header parsing | ✅ | Token & UserInfo endpoints |
 | DPoP JWT verification | ✅ | Signature validation |
@@ -109,7 +109,7 @@
 
 #### PKCE - Proof Key for Code Exchange
 
-| 機能 | Status | Implementation |
+| Feature | Status | Implementation |
 |:--|:--|:--|
 | code_challenge support | ✅ | S256 method |
 | code_verifier validation | ✅ | Token endpoint |
@@ -122,7 +122,7 @@
 
 #### MTLS - Mutual TLS
 
-| 機能 | Status | Phase |
+| Feature | Status | Phase |
 |:--|:--|:--|
 | Client certificate authentication | ❌ | Phase 7 |
 | Certificate validation | ❌ | Phase 7 |
@@ -134,7 +134,7 @@
 
 #### JARM - JWT Secured Authorization Response Mode
 
-| 機能 | Status | Phase |
+| Feature | Status | Phase |
 |:--|:--|:--|
 | JWT response signing | ❌ | Phase 6 |
 | response_mode=jwt | ❌ | Phase 6 |
@@ -142,7 +142,7 @@
 
 #### Advanced Client Authentication
 
-| 機能 | Status | Phase |
+| Feature | Status | Phase |
 |:--|:--|:--|
 | `private_key_jwt` | ❌ | Phase 6 |
 | `client_secret_jwt` | ❌ | Phase 6 |
