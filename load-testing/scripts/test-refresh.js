@@ -7,9 +7,28 @@
  * - すべて正常な rotation path のみ（エラーケースなし）
  * - Family depth = 1 で常に rotation
  *
+ * ===================================================================
+ * シード生成（テスト前に必須）:
+ * ===================================================================
+ * V3シャーディング対応のRefresh Tokenを生成:
+ *
+ *   BASE_URL="https://conformance.authrim.com" \
+ *   CLIENT_ID="<your-client-id>" \
+ *   CLIENT_SECRET="<your-client-secret>" \
+ *   ADMIN_API_SECRET="<your-admin-secret>" \
+ *   COUNT=100 \
+ *   CONCURRENCY=10 \
+ *   node scripts/generate-refresh-tokens-parallel.js
+ *
+ * COUNTはテストのmaxVUs以上に設定すること（1 VU = 1 token family）
+ * 出力: seeds/refresh_tokens.json
+ *
+ * ===================================================================
  * 使い方:
- * k6 run --env PRESET=rps100 scripts/token-refresh.js
- * k6 run --env PRESET=rps300 scripts/token-refresh.js
+ * ===================================================================
+ * k6 run --env PRESET=rps10 scripts/token-refresh.js   # デバッグ用 (10 RPS, 40s)
+ * k6 run --env PRESET=rps100 scripts/token-refresh.js  # 本番基準 (100 RPS)
+ * k6 run --env PRESET=rps300 scripts/token-refresh.js  # ベンチマーク (300 RPS)
  */
 
 import http from 'k6/http';
@@ -41,6 +60,25 @@ const REFRESH_TOKEN_PATH = __ENV.REFRESH_TOKEN_PATH || '../seeds/refresh_tokens.
 
 // プリセット設定
 const PRESETS = {
+  // デバッグ用: 10 RPS 軽量テスト
+  rps10: {
+    description: '10 RPS light load - Debug/validation test (30s)',
+    stages: [
+      { target: 10, duration: '5s' },
+      { target: 10, duration: '30s' },
+      { target: 0, duration: '5s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<500', 'p(99)<1000'],
+      http_req_failed: ['rate<0.05'],
+      token_request_duration: ['p(99)<1000'],
+      token_rotation_success: ['rate>0.95'],
+      d1_write_errors: ['count<5'],
+    },
+    preAllocatedVUs: 10,
+    maxVUs: 15,
+    thinkTime: 0,
+  },
   rps100: {
     description: '100 RPS sustained load - Production baseline',
     stages: [
@@ -156,6 +194,66 @@ const PRESETS = {
     maxVUs: 2000,
     thinkTime: 0,
   },
+  // 2000 RPSベンチマーク: 2分間 2000 RPS テスト
+  rps2000: {
+    description: '2000 RPS sustained load - Extreme throughput benchmark (2 min)',
+    stages: [
+      { target: 1000, duration: '10s' },
+      { target: 2000, duration: '10s' },
+      { target: 2000, duration: '120s' },
+      { target: 0, duration: '10s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<600', 'p(99)<1200'],
+      http_req_failed: ['rate<0.02'],
+      token_request_duration: ['p(99)<1200'],
+      token_rotation_success: ['rate>0.98'],
+      d1_write_errors: ['count<20'],
+    },
+    preAllocatedVUs: 3000,
+    maxVUs: 4000,
+    thinkTime: 0,
+  },
+  // 3000 RPSベンチマーク: 2分間 3000 RPS テスト（48シャードテスト）
+  rps3000: {
+    description: '3000 RPS sustained load - 48 shards test (2 min)',
+    stages: [
+      { target: 1500, duration: '10s' },
+      { target: 3000, duration: '10s' },
+      { target: 3000, duration: '120s' },
+      { target: 0, duration: '10s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<800', 'p(99)<1500'],
+      http_req_failed: ['rate<0.03'],
+      token_request_duration: ['p(99)<1500'],
+      token_rotation_success: ['rate>0.97'],
+      d1_write_errors: ['count<30'],
+    },
+    preAllocatedVUs: 3000,
+    maxVUs: 4000,
+    thinkTime: 0,
+  },
+  // 4000 RPSベンチマーク: 2分間 4000 RPS テスト（48シャード限界テスト）
+  rps4000: {
+    description: '4000 RPS sustained load - 48 shards limit test (2 min)',
+    stages: [
+      { target: 2000, duration: '10s' },
+      { target: 4000, duration: '10s' },
+      { target: 4000, duration: '120s' },
+      { target: 0, duration: '10s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<1000', 'p(99)<2000'],
+      http_req_failed: ['rate<0.05'],
+      token_request_duration: ['p(99)<2000'],
+      token_rotation_success: ['rate>0.95'],
+      d1_write_errors: ['count<50'],
+    },
+    preAllocatedVUs: 3000,
+    maxVUs: 3500,  // Time series limit対策: 40,000制限のため5000→3500に削減
+    thinkTime: 0,
+  },
 };
 
 // 選択されたプリセット
@@ -228,6 +326,42 @@ let vuTokenFamily = null;
 let familyDepth = 0;
 let hasLoggedServerError = false;
 
+/**
+ * K6 Cloud対応：グローバルVUインデックス計算
+ *
+ * K6 Cloudでは複数インスタンス（load generator）で分散実行されるが、
+ * __VU は各インスタンス内でローカルに番号付けされる（1, 2, 3...）。
+ * そのため、インスタンスIDを使ってオフセットを計算し、
+ * グローバルに一意なトークンインデックスを割り当てる。
+ *
+ * @param localVuId - ローカルVU ID (__VU)
+ * @param tokenPoolSize - トークンプールの総数
+ * @returns グローバルに一意なトークンインデックス
+ */
+function getGlobalTokenIndex(localVuId, tokenPoolSize) {
+  // K6 Cloud: インスタンスIDを環境変数から取得
+  const instanceId = __ENV.K6_CLOUDRUN_INSTANCE_ID;
+
+  if (instanceId !== undefined && instanceId !== '') {
+    // K6 Cloudモード：インスタンスIDでオフセット計算
+    const id = parseInt(instanceId, 10);
+    // 各インスタンスにトークンプールを均等分割（最大10インスタンス想定）
+    const maxInstances = 10;
+    const tokensPerInstance = Math.floor(tokenPoolSize / maxInstances);
+    const offset = id * tokensPerInstance;
+
+    // 初回のみデバッグログ出力
+    if (localVuId === 1) {
+      console.log(`[K6 Cloud] instance=${id}, tokensPerInstance=${tokensPerInstance}, offset=${offset}`);
+    }
+
+    return offset + localVuId - 1;
+  }
+
+  // ローカルモード：オフセットなし
+  return localVuId - 1;
+}
+
 // セットアップ
 export function setup() {
   console.log(`🚀 ${TEST_NAME} 負荷テスト`);
@@ -256,18 +390,25 @@ export default function (data) {
   // VU 初回実行時: 独立した token family を取得
   if (!vuTokenFamily) {
     const vuId = __VU;
-    const tokenIndex = vuId - 1;
-    if (tokenIndex >= refreshTokens.length) {
+    // K6 Cloud対応：グローバルに一意なトークンインデックスを計算
+    const tokenIndex = getGlobalTokenIndex(vuId, refreshTokens.length);
+
+    if (tokenIndex >= refreshTokens.length || tokenIndex < 0) {
       throw new Error(
-        `No refresh token available for VU ${vuId}. Token pool=${refreshTokens.length}, required=${selectedPreset.maxVUs}`
+        `No refresh token available. tokenIndex=${tokenIndex}, VU=${vuId}, pool=${refreshTokens.length}, instance=${__ENV.K6_CLOUDRUN_INSTANCE_ID || 'local'}`
       );
     }
+
     vuTokenFamily = {
       ...refreshTokens[tokenIndex],
       vuId: vuId,
+      globalIndex: tokenIndex, // デバッグ用：グローバルインデックスを記録
     };
     familyDepth = 0;
     hasLoggedServerError = false;
+
+    // 初回割り当てのデバッグログ
+    console.log(`[VU ${vuId}] Assigned token index: ${tokenIndex}`);
   }
 
   // Basic 認証ヘッダーの生成
@@ -488,6 +629,12 @@ function textSummary(data, options) {
     errorThreshold = 1.0;
     rotationThreshold = 99;
     d1Threshold = 10;
+  } else if (PRESET === 'rps10') {
+    p95Threshold = 500;
+    p99Threshold = 1000;
+    errorThreshold = 5.0;
+    rotationThreshold = 95;
+    d1Threshold = 5;
   } else {
     p95Threshold = 300;
     p99Threshold = 500;
