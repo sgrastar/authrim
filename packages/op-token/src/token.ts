@@ -2305,11 +2305,25 @@ async function handleDeviceCodeGrant(
     );
   }
 
-  // Generate Refresh Token
+  // Generate Refresh Token with V3 sharding support
   const refreshTokenExpiry = parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10);
   let refreshToken: string;
   let refreshJti: string;
   try {
+    // V3: Generate sharded JTI for proper DO routing
+    const shardConfig = await getRefreshTokenShardConfig(c.env, client_id);
+    const shardIndex = await getRefreshTokenShardIndex(
+      metadata.sub!,
+      client_id,
+      shardConfig.currentShardCount
+    );
+    const randomPart = generateRefreshTokenRandomPart();
+    refreshJti = createRefreshTokenJti(
+      shardConfig.currentGeneration,
+      shardIndex,
+      randomPart
+    );
+
     const refreshTokenClaims = {
       sub: metadata.sub!,
       scope: metadata.scope,
@@ -2319,10 +2333,10 @@ async function handleDeviceCodeGrant(
       refreshTokenClaims,
       privateKey,
       keyId,
-      refreshTokenExpiry
+      refreshTokenExpiry,
+      refreshJti // V3: Pass pre-generated sharded JTI
     );
     refreshToken = result.token;
-    refreshJti = result.jti;
 
     await storeRefreshToken(c.env, refreshJti, {
       jti: refreshJti,
@@ -2715,7 +2729,21 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     idToken = await encryptJWT(idToken, clientPublicKey, { alg, enc });
   }
 
-  // Create Refresh Token
+  // Create Refresh Token with V3 sharding support
+  // V3: Generate sharded JTI for proper DO routing
+  const shardConfig = await getRefreshTokenShardConfig(c.env, metadata.client_id);
+  const shardIndex = await getRefreshTokenShardIndex(
+    metadata.sub!,
+    metadata.client_id,
+    shardConfig.currentShardCount
+  );
+  const randomPart = generateRefreshTokenRandomPart();
+  const refreshTokenJti = createRefreshTokenJti(
+    shardConfig.currentGeneration,
+    shardIndex,
+    randomPart
+  );
+
   const refreshTokenClaims = {
     iss: c.env.ISSUER_URL,
     sub: metadata.sub!,
@@ -2724,11 +2752,12 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     scope: metadata.scope,
   };
 
-  const { token: refreshToken, jti: refreshTokenJti } = await createRefreshToken(
+  const { token: refreshToken } = await createRefreshToken(
     refreshTokenClaims,
     privateKey,
     kid,
-    refreshExpiresIn
+    refreshExpiresIn,
+    refreshTokenJti // V3: Pass pre-generated sharded JTI
   );
 
   // Store refresh token in KV

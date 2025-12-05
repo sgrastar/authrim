@@ -458,7 +458,18 @@ export async function storeRefreshToken(
     throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
   }
 
-  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(data.client_id);
+  // V3: Parse JTI to extract generation/shard info for proper routing
+  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } = await import(
+    './refresh-token-sharding'
+  );
+  const parsedJti = parseRefreshTokenJti(jti);
+  const instanceName = buildRefreshTokenRotatorInstanceName(
+    data.client_id,
+    parsedJti.generation,
+    parsedJti.shardIndex
+  );
+
+  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
   const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
 
   const response = await stub.fetch('http://internal/family', {
@@ -470,6 +481,12 @@ export async function storeRefreshToken(
       clientId: data.client_id,
       scope: data.scope || '',
       ttl: parseInt(env.REFRESH_TOKEN_EXPIRY, 10),
+      // V3: Include generation and shard for DO to store
+      ...(parsedJti.generation > 0 &&
+        parsedJti.shardIndex !== null && {
+          generation: parsedJti.generation,
+          shardIndex: parsedJti.shardIndex,
+        }),
     }),
   });
 
@@ -504,7 +521,18 @@ export async function getRefreshToken(
     throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
   }
 
-  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(clientId);
+  // V3: Parse JTI to extract generation/shard info for proper routing
+  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } = await import(
+    './refresh-token-sharding'
+  );
+  const parsedJti = parseRefreshTokenJti(jti);
+  const instanceName = buildRefreshTokenRotatorInstanceName(
+    clientId,
+    parsedJti.generation,
+    parsedJti.shardIndex
+  );
+
+  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
   const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
 
   try {
@@ -561,7 +589,18 @@ export async function deleteRefreshToken(env: Env, jti: string, client_id: strin
     throw new Error('REFRESH_TOKEN_ROTATOR Durable Object not available');
   }
 
-  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(client_id);
+  // V3: Parse JTI to extract generation/shard info for proper routing
+  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } = await import(
+    './refresh-token-sharding'
+  );
+  const parsedJti = parseRefreshTokenJti(jti);
+  const instanceName = buildRefreshTokenRotatorInstanceName(
+    client_id,
+    parsedJti.generation,
+    parsedJti.shardIndex
+  );
+
+  const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
   const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
 
   // First get the family ID for this token

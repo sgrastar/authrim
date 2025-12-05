@@ -136,6 +136,26 @@ const PRESETS = {
     maxVUs: 600,
     thinkTime: 0,
   },
+  // 1000 RPSベンチマーク: 2分間 1000 RPS テスト
+  rps1000: {
+    description: '1000 RPS sustained load - High throughput benchmark (2 min)',
+    stages: [
+      { target: 500, duration: '10s' },
+      { target: 1000, duration: '10s' },
+      { target: 1000, duration: '120s' },
+      { target: 0, duration: '10s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<500', 'p(99)<1000'],
+      http_req_failed: ['rate<0.01'],
+      token_request_duration: ['p(99)<1000'],
+      token_rotation_success: ['rate>0.99'],
+      d1_write_errors: ['count<10'],
+    },
+    preAllocatedVUs: 1500,
+    maxVUs: 2000,
+    thinkTime: 0,
+  },
 };
 
 // 選択されたプリセット
@@ -462,6 +482,12 @@ function textSummary(data, options) {
     errorThreshold = 0.1;
     rotationThreshold = 99.9;
     d1Threshold = 1;
+  } else if (PRESET === 'rps1000') {
+    p95Threshold = 500;
+    p99Threshold = 1000;
+    errorThreshold = 1.0;
+    rotationThreshold = 99;
+    d1Threshold = 10;
   } else {
     p95Threshold = 300;
     p99Threshold = 500;
