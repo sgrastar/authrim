@@ -65,24 +65,49 @@ Authrim is an **enterprise-grade Identity & Access Platform** built for:
 
 ### Why Authrim?
 
-| Feature                   | Authrim       | Auth0        | Authlete      | Keycloak     | Ory Stack     |
+#### vs. Enterprise IAM Products
+
+| Feature                   | Authrim       | Auth0        | Ping Identity | Keycloak     | Ory Stack     |
 | ------------------------- | ------------- | ------------ | ------------- | ------------ | ------------- |
-| **Setup Time**            | 5 min (goal)  | 30 min       | 1+ hour       | 2+ hours     | 1+ hour       |
-| **AuthN + AuthZ Unified** | ✅            | ⚠️ Basic     | ❌ Separate   | ⚠️ Basic     | ❌ Separate   |
-| **RBAC/ABAC/ReBAC**       | ✅ All three  | ✅ RBAC only | ❌ External   | ✅ RBAC/ABAC | ✅ ReBAC only |
+| **Setup Time**            | 5 min (goal)  | 30 min       | 2+ hours      | 2+ hours     | 1+ hour       |
+| **AuthN + AuthZ Unified** | ✅            | ⚠️ Basic     | ⚠️ Basic      | ⚠️ Basic     | ❌ Separate   |
+| **RBAC/ABAC/ReBAC**       | ✅ All three  | ✅ RBAC only | ✅ RBAC/ABAC  | ✅ RBAC/ABAC | ✅ ReBAC only |
 | **Global Edge**           | ✅ <50ms      | ✅           | ✅ Multi-region | ❌         | ❌            |
-| **Self-Hosted**           | ✅            | ❌           | ✅            | ✅           | ✅            |
-| **Open Source**           | ✅ Apache 2.0 | ❌           | ❌ Proprietary | ✅ Apache   | ✅ Apache     |
-| **Data Ownership**        | ✅ Full       | ❌ Vendor    | ✅ Full       | ✅ Full      | ✅ Full       |
-| **Data Residency**        | ✅ Your choice| ❌ US/EU only| ✅ Your choice| ✅ Your choice| ✅ Your choice|
+| **Self-Hosted**           | ✅            | ❌           | ⚠️ Optional   | ✅           | ✅            |
+| **Open Source**           | ✅ Apache 2.0 | ❌           | ❌            | ✅ Apache    | ✅ Apache     |
+| **Data Ownership**        | ✅ Full       | ❌ Vendor    | ❌ Vendor     | ✅ Full      | ✅ Full       |
+| **Data Residency**        | ✅ Any region | ❌ Limited   | ❌ Limited    | ✅ Any       | ✅ Any        |
 | **Compliance (SOC2/ISO 27001)** | ⚠️ Self-managed| ✅ Certified| ✅ Certified  | ⚠️ Self-managed| ⚠️ Self-managed|
-| **Social Login**          | 🔜 P7         | ✅           | ✅            | ✅           | ✅            |
-| **Customizability**       | ✅ Full code  | ⚠️ Limited   | ✅ Full       | ✅ Full      | ✅ Full       |
-| **Admin UI**              | ✅ Built-in   | ✅           | ⚠️ Basic      | ✅           | ⚠️ Separate  |
+| **Social Login**          | 🔜 Phase 7    | ✅           | ✅            | ✅           | ✅            |
+| **Customizability**       | ✅ Full code  | ⚠️ Limited   | ⚠️ Limited    | ✅ Full      | ✅ Full       |
+| **Admin Dashboard**       | ✅ Built-in   | ✅ Advanced  | ✅ Advanced   | ✅           | ⚠️ Separate  |
 | **Production Ready**      | ❌ Dev stage  | ✅           | ✅            | ✅           | ✅            |
-| **Enterprise Support**    | ❌ Not yet    | ✅ Paid      | ✅ Paid       | ✅ Available | ✅ Paid       |
-| **Community Size**        | ❌ Small      | ✅ Large     | ⚠️ Medium     | ✅ Large     | ⚠️ Medium     |
-| **Pricing**               | Free (edge)   | $$$          | $$$           | Free         | $$ - $$$      |
+| **Enterprise Support**    | ❌ Not yet    | ✅ Premium   | ✅ Enterprise | ✅ Available | ✅ Paid       |
+| **Community**             | ❌ Small      | ✅ Large     | ⚠️ Medium     | ✅ Very Large| ⚠️ Medium     |
+| **Documentation**         | ⚠️ In progress| ✅ Excellent | ✅ Excellent  | ✅ Good      | ✅ Good       |
+| **Track Record**          | ❌ New (2025) | ✅ 10+ years | ✅ 20+ years  | ✅ 10+ years | ⚠️ 5+ years  |
+| **Pricing**               | Free (edge)   | $$$$         | $$$$$         | Free         | $$ - $$$      |
+
+#### vs. Application Auth Solutions
+
+| Feature                   | Authrim       | AWS Cognito  | Firebase Auth | Supabase Auth | Clerk         |
+| ------------------------- | ------------- | ------------ | ------------- | ------------- | ------------- |
+| **Setup Time**            | 5 min (goal)  | 1+ hour      | 15 min        | 10 min        | 10 min        |
+| **AuthN + AuthZ Unified** | ✅            | ❌ Separate  | ❌ Basic only | ⚠️ Basic      | ❌ Limited    |
+| **RBAC/ABAC/ReBAC**       | ✅ All three  | ❌ External  | ❌ External   | ⚠️ Basic RBAC | ⚠️ Basic RBAC |
+| **Global Edge**           | ✅ <50ms      | ⚠️ Regional  | ✅            | ✅            | ✅            |
+| **Self-Hosted**           | ✅            | ❌           | ❌            | ✅            | ❌            |
+| **Open Source**           | ✅ Apache 2.0 | ❌           | ❌            | ✅ Apache     | ❌            |
+| **Vendor Lock-in**        | ❌ None       | ⚠️ AWS only  | ⚠️ Google     | ❌ Portable   | ⚠️ High       |
+| **Data Ownership**        | ✅ Full       | ❌ AWS       | ❌ Google     | ✅ Full       | ❌ Vendor     |
+| **Social Login**          | 🔜 Phase 7    | ✅           | ✅            | ✅            | ✅            |
+| **Developer Experience**  | ⚠️ Advanced   | ⚠️ Complex   | ✅ Simple     | ✅ Excellent  | ✅ Excellent  |
+| **Admin Dashboard**       | ✅ Built-in   | ✅ Basic     | ✅ Basic      | ✅ Good       | ✅ Excellent  |
+| **Production Ready**      | ❌ Dev stage  | ✅           | ✅            | ✅            | ✅            |
+| **Community**             | ❌ Small      | ✅ Large     | ✅ Very Large | ✅ Growing    | ⚠️ Medium     |
+| **Documentation**         | ⚠️ In progress| ✅ Good      | ✅ Excellent  | ✅ Excellent  | ✅ Excellent  |
+| **Track Record**          | ❌ New (2025) | ✅ 8+ years  | ✅ 8+ years   | ⚠️ 3+ years  | ⚠️ 3+ years  |
+| **Pricing**               | Free (edge)   | $ - $$       | Free - $$     | Free - $$     | $$ - $$$      |
 
 ---
 
