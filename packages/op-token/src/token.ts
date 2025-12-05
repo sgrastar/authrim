@@ -1741,12 +1741,13 @@ async function handleRefreshTokenGrant(
 
     try {
       // V2: Call RefreshTokenRotator DO with version-based rotation
+      // V3: Send full JTI (DO now stores and returns full JTIs with generation/shard prefix)
       const rotateResponse = await rotator.fetch('http://rotator/rotate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           incomingVersion,
-          incomingJti: jti,
+          incomingJti: jti, // V3: Send full JTI (DO stores and compares full JTIs)
           userId: refreshTokenData.sub,
           clientId: client_id,
           requestedScope: scope || undefined, // Pass requested scope for validation
@@ -1787,19 +1788,9 @@ async function handleRefreshTokenGrant(
         allowedScope: string;
       };
 
-      // V3: Wrap the new JTI with generation/shard info from the original token
-      // Rotation keeps the token on the same shard (same user+client = same shard)
-      if (!parsedJti.isLegacy) {
-        // New format: wrap with generation/shard prefix
-        newRefreshTokenJti = createRefreshTokenJti(
-          parsedJti.generation,
-          parsedJti.shardIndex!,
-          rotateResult.newJti
-        );
-      } else {
-        // Legacy format: keep as-is for backward compatibility
-        newRefreshTokenJti = rotateResult.newJti;
-      }
+      // V3: DO now returns full JTIs with generation/shard prefix
+      // No wrapping needed - use the JTI directly from DO
+      newRefreshTokenJti = rotateResult.newJti;
       newVersion = rotateResult.newVersion;
 
       // Create JWT with new version (rtv claim)

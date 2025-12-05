@@ -5,7 +5,11 @@
 
 import { Context } from 'hono';
 import type { Env } from '@authrim/shared';
-import { invalidateUserCache } from '@authrim/shared';
+import {
+  invalidateUserCache,
+  parseRefreshTokenJti,
+  buildRefreshTokenRotatorInstanceName,
+} from '@authrim/shared';
 
 /**
  * Policy feature flag names mapped to camelCase property names
@@ -2431,12 +2435,20 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Get RefreshTokenRotator DO (uses clientId, matching op-token pattern)
-    const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(clientId);
+    // V3: Parse JTI to extract generation and shard info for proper routing
+    const parsedJti = parseRefreshTokenJti(jti);
+    const instanceName = buildRefreshTokenRotatorInstanceName(
+      clientId,
+      parsedJti.generation,
+      parsedJti.shardIndex
+    );
+
+    // Get RefreshTokenRotator DO with proper sharding
+    const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
     const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
 
-    // Create token family using V2 API
-    // V2 uses jti field instead of token field
+    // Create token family using V3 API (with generation and shard info)
+    // V3 stores generation/shardIndex for proper JTI generation during rotation
     const response = await rotator.fetch(
       new Request('https://refresh-token-rotator/family', {
         method: 'POST',
@@ -2444,11 +2456,17 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          jti, // V2: Use jti field
+          jti, // Full JTI with v{gen}_{shard}_ prefix
           userId,
           clientId,
           scope,
           ttl,
+          // V3: Include generation and shard for DO to store
+          ...(parsedJti.generation > 0 &&
+            parsedJti.shardIndex !== null && {
+              generation: parsedJti.generation,
+              shardIndex: parsedJti.shardIndex,
+            }),
         }),
       })
     );

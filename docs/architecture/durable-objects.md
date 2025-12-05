@@ -1,8 +1,8 @@
 # Durable Objects Architecture 🔷
 
-**Last Updated**: 2025-12-02
+**Last Updated**: 2025-12-05
 **Status**: Phase 6 Implementation
-**Version**: 2.1.0
+**Version**: 2.2.0
 
 ---
 
@@ -600,6 +600,9 @@ The `RefreshTokenRotator` Durable Object manages **atomic refresh token rotation
 - **Atomic rotation**: Prevents race conditions (multiple refresh attempts)
 - **Audit logging**: All rotations logged to D1
 - **Theft detection**: Revoke all tokens if replay detected
+- **V3 Sharding**: Generation-based sharding for high RPS workloads
+
+> 📖 **Sharding Details**: See [refresh-token-sharding.md](./refresh-token-sharding.md) for full specification
 
 ### Architecture
 
@@ -915,6 +918,7 @@ export async function healthCheckDOs(env: Env) {
 ### Related Documents
 - [storage-strategy.md](./storage-strategy.md) - Hybrid storage architecture
 - [database-schema.md](./database-schema.md) - D1 schema and integration
+- [refresh-token-sharding.md](./refresh-token-sharding.md) - RefreshTokenRotator sharding specification
 - [PHASE5_PLANNING.md](../project-management/PHASE5_PLANNING.md) - Phase 5 implementation plan
 
 ### External Resources
@@ -926,5 +930,6 @@ export async function healthCheckDOs(env: Env) {
 ---
 
 **Change History**:
-- 2025-11-13: Added SessionStore, AuthorizationCodeStore, RefreshTokenRotator (Phase 5 design)
-- Phase 3: Initial KeyManager implementation
+- 2025-12-05: V2.2.0 - Added RefreshTokenRotator V3 sharding support documentation
+- 2025-11-13: V2.1.0 - Added SessionStore, AuthorizationCodeStore, RefreshTokenRotator (Phase 5 design)
+- Phase 3: V1.0.0 - Initial KeyManager implementation

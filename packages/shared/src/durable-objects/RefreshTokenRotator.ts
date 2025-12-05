@@ -100,7 +100,7 @@ interface AuditLogEntry {
  */
 const STORAGE_PREFIX = {
   FAMILY: 'f:', // f:{userId} → TokenFamilyV2
-  META: 'm:', // m:migrated → boolean
+  META: 'm:', // m:migrated → boolean, m:generation → number, m:shardIndex → number
 } as const;
 
 /**
@@ -115,6 +115,10 @@ export class RefreshTokenRotator {
   private families: Map<string, TokenFamilyV2> = new Map(); // userId → family
   private initialized: boolean = false;
   private initializePromise: Promise<void> | null = null;
+
+  // Sharding metadata (set on first createFamily call with V3 request)
+  private generation: number | null = null;
+  private shardIndex: number | null = null;
 
   // Async audit log buffering (non-critical events)
   private pendingAuditLogs: AuditLogEntry[] = [];
@@ -167,7 +171,23 @@ export class RefreshTokenRotator {
         this.families.set(userId, family);
       }
 
-      console.log(`RefreshTokenRotator: Loaded ${this.families.size} families`);
+      // Load sharding metadata
+      const storedGeneration = await this.state.storage.get<number>(
+        `${STORAGE_PREFIX.META}generation`
+      );
+      const storedShardIndex = await this.state.storage.get<number>(
+        `${STORAGE_PREFIX.META}shardIndex`
+      );
+      if (storedGeneration !== undefined) {
+        this.generation = storedGeneration;
+      }
+      if (storedShardIndex !== undefined) {
+        this.shardIndex = storedShardIndex;
+      }
+
+      console.log(
+        `RefreshTokenRotator: Loaded ${this.families.size} families, gen=${this.generation}, shard=${this.shardIndex}`
+      );
     } catch (error) {
       console.error('RefreshTokenRotator: Failed to initialize:', error);
     }
@@ -200,24 +220,52 @@ export class RefreshTokenRotator {
 
   /**
    * Generate unique JWT ID
+   *
+   * If generation and shardIndex are set, generates full JTI format:
+   * v{generation}_{shardIndex}_{randomPart}
+   *
+   * Otherwise, generates legacy format: rt_{uuid}
    */
   private generateJti(): string {
-    return `rt_${crypto.randomUUID()}`;
+    const randomPart = `rt_${crypto.randomUUID()}`;
+
+    // Use full JTI format if sharding metadata is available
+    if (this.generation !== null && this.shardIndex !== null) {
+      return `v${this.generation}_${this.shardIndex}_${randomPart}`;
+    }
+
+    // Legacy format for backward compatibility
+    return randomPart;
   }
 
   /**
-   * Create new token family (V2)
+   * Create new token family (V2/V3)
    *
    * Called when issuing the first refresh token for a user-client pair.
    * Returns response consistent with rotate for easier client implementation.
+   *
+   * V3 extension: If generation and shardIndex are provided, stores them
+   * for use in generateJti() to create properly formatted JTIs.
    */
-  async createFamily(request: CreateFamilyRequestV2): Promise<{
+  async createFamily(request: CreateFamilyRequestV2 | CreateFamilyRequestV3): Promise<{
     version: number;
     newJti: string;
     expiresIn: number;
     allowedScope: string;
   }> {
     await this.initializeState();
+
+    // V3: Store sharding metadata if provided (first call sets it)
+    const v3Request = request as CreateFamilyRequestV3;
+    if (v3Request.generation !== undefined && v3Request.shardIndex !== undefined) {
+      if (this.generation === null && this.shardIndex === null) {
+        this.generation = v3Request.generation;
+        this.shardIndex = v3Request.shardIndex;
+        // Persist sharding metadata
+        await this.state.storage.put(`${STORAGE_PREFIX.META}generation`, this.generation);
+        await this.state.storage.put(`${STORAGE_PREFIX.META}shardIndex`, this.shardIndex);
+      }
+    }
 
     const now = Date.now();
     const expiresAt = now + request.ttl * 1000;
@@ -241,7 +289,7 @@ export class RefreshTokenRotator {
       familyKey: request.userId,
       userId: request.userId,
       clientId: request.clientId,
-      metadata: { scope: request.scope },
+      metadata: { scope: request.scope, generation: this.generation, shardIndex: this.shardIndex },
       timestamp: now,
     });
 
@@ -652,11 +700,11 @@ export class RefreshTokenRotator {
     const path = url.pathname;
 
     try {
-      // POST /family - Create new token family (V2)
+      // POST /family - Create new token family (V2/V3)
       if (path === '/family' && request.method === 'POST') {
-        let body: Partial<CreateFamilyRequestV2>;
+        let body: Partial<CreateFamilyRequestV3>;
         try {
-          body = (await request.json()) as Partial<CreateFamilyRequestV2>;
+          body = (await request.json()) as Partial<CreateFamilyRequestV3>;
         } catch {
           return new Response(
             JSON.stringify({
@@ -677,13 +725,21 @@ export class RefreshTokenRotator {
           );
         }
 
-        const result = await this.createFamily({
+        // Build request (V3 fields are optional)
+        const createRequest: CreateFamilyRequestV2 | CreateFamilyRequestV3 = {
           jti: body.jti,
           userId: body.userId,
           clientId: body.clientId,
           scope: body.scope,
           ttl: body.ttl || this.DEFAULT_TTL,
-        });
+          ...(body.generation !== undefined &&
+            body.shardIndex !== undefined && {
+              generation: body.generation,
+              shardIndex: body.shardIndex,
+            }),
+        };
+
+        const result = await this.createFamily(createRequest);
 
         return new Response(JSON.stringify(result), {
           status: 201,
