@@ -359,7 +359,7 @@ Authrim implements security best practices:
 - ✅ DPoP token binding
 - ✅ Security headers (CSP, HSTS, XSS protection)
 
-**Responsible Disclosure:** security@authrim.org
+**Reporting vulnerabilities:** See [SECURITY.md](./SECURITY.md)
 
 ---
 
