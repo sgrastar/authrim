@@ -359,8 +359,16 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
 
   /**
    * Get from RefreshTokenRotator Durable Object
+   *
+   * @deprecated This method uses legacy (non-sharded) routing.
+   * For V3 sharding support, use getRefreshToken() from @authrim/shared/utils/kv instead.
+   * Key format: refreshtoken:{familyId} - lacks JTI/clientId for sharding.
    */
   private async getFromRefreshTokenRotator(key: string): Promise<string | null> {
+    console.warn(
+      '[DEPRECATED] getFromRefreshTokenRotator uses legacy routing. ' +
+        'Use getRefreshToken() from @authrim/shared/utils/kv for V3 sharding support.'
+    );
     const familyId = key.substring(13); // Remove 'refreshtoken:' prefix
     const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
@@ -383,10 +391,39 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
 
   /**
    * Set to RefreshTokenRotator Durable Object
+   *
+   * V3: Supports sharding if familyData contains jti and clientId.
+   * Falls back to legacy routing if sharding info is not available.
    */
   private async setToRefreshTokenRotator(key: string, value: string, ttl?: number): Promise<void> {
     const familyData = JSON.parse(value);
-    const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
+
+    // V3: Try to extract sharding info from familyData
+    let doId: DurableObjectId;
+    const jti = familyData.jti;
+    const clientId = familyData.clientId || familyData.client_id;
+
+    if (jti && clientId) {
+      // V3: Parse JTI and route to sharded DO
+      const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } = await import(
+        '../../utils/refresh-token-sharding'
+      );
+      const parsedJti = parseRefreshTokenJti(jti);
+      const instanceName = buildRefreshTokenRotatorInstanceName(
+        clientId,
+        parsedJti.generation,
+        parsedJti.shardIndex
+      );
+      doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
+    } else {
+      // Legacy: Use non-sharded routing
+      console.warn(
+        '[DEPRECATED] setToRefreshTokenRotator using legacy routing. ' +
+          'Include jti and clientId in familyData for V3 sharding support.'
+      );
+      doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
+    }
+
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
 
     const response = await doStub.fetch(
@@ -407,8 +444,16 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
 
   /**
    * Delete from RefreshTokenRotator Durable Object
+   *
+   * @deprecated This method uses legacy (non-sharded) routing.
+   * For V3 sharding support, use deleteRefreshToken() from @authrim/shared/utils/kv instead.
+   * Key format: refreshtoken:{familyId} - lacks JTI/clientId for sharding.
    */
   private async deleteFromRefreshTokenRotator(key: string): Promise<void> {
+    console.warn(
+      '[DEPRECATED] deleteFromRefreshTokenRotator uses legacy routing. ' +
+        'Use deleteRefreshToken() from @authrim/shared/utils/kv for V3 sharding support.'
+    );
     const familyId = key.substring(13); // Remove 'refreshtoken:' prefix
     const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
