@@ -30,13 +30,21 @@ vi.mock('@authrim/shared', async () => {
   return {
     ...actual,
     timingSafeEqual: vi.fn((a: string, b: string) => a === b),
+    validateIdTokenHint: vi.fn(),
+    validatePostLogoutRedirectUri: vi.fn(),
+    validateLogoutParameters: vi.fn(),
   };
 });
 
 import { frontChannelLogoutHandler, backChannelLogoutHandler } from '../logout';
 import { getCookie, setCookie } from 'hono/cookie';
 import { jwtVerify, importJWK } from 'jose';
-import { timingSafeEqual } from '@authrim/shared';
+import {
+  timingSafeEqual,
+  validateIdTokenHint,
+  validatePostLogoutRedirectUri,
+  validateLogoutParameters,
+} from '@authrim/shared';
 
 // Helper to create mock context
 function createMockContext(options: {
@@ -111,6 +119,11 @@ function createMockContext(options: {
 describe('Front-channel Logout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+
+    // Default mock values for validation functions
+    vi.mocked(validateLogoutParameters).mockReturnValue({ valid: true });
+    vi.mocked(validateIdTokenHint).mockResolvedValue({ valid: true });
+    vi.mocked(validatePostLogoutRedirectUri).mockReturnValue({ valid: true });
   });
 
   afterEach(() => {
@@ -184,29 +197,26 @@ describe('Front-channel Logout', () => {
 
   describe('ID Token Hint Validation', () => {
     it('should validate id_token_hint and extract user info', async () => {
-      const { c, mockKeyManager } = createMockContext({
+      const { c } = createMockContext({
         query: {
           id_token_hint: 'valid.id.token',
         },
       });
 
       vi.mocked(getCookie).mockReturnValue('session-123');
-      vi.mocked(importJWK).mockResolvedValue({} as any);
-      vi.mocked(jwtVerify).mockResolvedValue({
-        payload: {
-          sub: 'user-123',
-          aud: 'client-123',
-        },
-        protectedHeader: { alg: 'RS256' },
-      } as any);
+      vi.mocked(validateIdTokenHint).mockResolvedValue({
+        valid: true,
+        userId: 'user-123',
+        clientId: 'client-123',
+      });
 
       await frontChannelLogoutHandler(c);
 
-      expect(jwtVerify).toHaveBeenCalled();
+      expect(validateIdTokenHint).toHaveBeenCalled();
       expect(c.redirect).toHaveBeenCalled();
     });
 
-    it('should continue logout even if id_token_hint validation fails', async () => {
+    it('should return error when id_token_hint validation fails', async () => {
       const { c } = createMockContext({
         query: {
           id_token_hint: 'invalid.id.token',
@@ -214,30 +224,46 @@ describe('Front-channel Logout', () => {
       });
 
       vi.mocked(getCookie).mockReturnValue('session-123');
-      vi.mocked(importJWK).mockResolvedValue({} as any);
-      vi.mocked(jwtVerify).mockRejectedValue(new Error('Token validation failed'));
+      vi.mocked(validateIdTokenHint).mockResolvedValue({
+        valid: false,
+        error: 'id_token_hint validation failed',
+        errorCode: 'invalid_token',
+      });
 
       await frontChannelLogoutHandler(c);
 
-      // Should still redirect (logout should continue)
-      expect(c.redirect).toHaveBeenCalled();
+      // Should return error for invalid id_token_hint per OIDC spec
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_token',
+          error_description: expect.stringContaining('validation failed'),
+        }),
+        400
+      );
     });
 
-    it('should handle missing JWKS', async () => {
-      const { c, mockKeyManager } = createMockContext({
+    it('should return error when id_token_hint format is invalid', async () => {
+      const { c } = createMockContext({
         query: {
-          id_token_hint: 'valid.id.token',
+          id_token_hint: 'not-a-valid-jwt',
         },
       });
 
-      mockKeyManager.fetch.mockResolvedValue(new Response('Not Found', { status: 404 }));
-
       vi.mocked(getCookie).mockReturnValue('session-123');
+      vi.mocked(validateIdTokenHint).mockResolvedValue({
+        valid: false,
+        error: 'id_token_hint is not a valid JWT format',
+        errorCode: 'invalid_token',
+      });
 
       await frontChannelLogoutHandler(c);
 
-      // Should still redirect (logout should continue)
-      expect(c.redirect).toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_token',
+        }),
+        400
+      );
     });
   });
 
@@ -251,14 +277,11 @@ describe('Front-channel Logout', () => {
       });
 
       vi.mocked(getCookie).mockReturnValue('session-123');
-      vi.mocked(importJWK).mockResolvedValue({} as any);
-      vi.mocked(jwtVerify).mockResolvedValue({
-        payload: {
-          sub: 'user-123',
-          aud: 'client-123',
-        },
-        protectedHeader: { alg: 'RS256' },
-      } as any);
+      vi.mocked(validateIdTokenHint).mockResolvedValue({
+        valid: true,
+        userId: 'user-123',
+        clientId: 'client-123',
+      });
 
       // Mock DB to return client with registered redirect URIs
       c.env.DB.prepare = vi.fn().mockReturnValue({
@@ -286,14 +309,15 @@ describe('Front-channel Logout', () => {
       });
 
       vi.mocked(getCookie).mockReturnValue('session-123');
-      vi.mocked(importJWK).mockResolvedValue({} as any);
-      vi.mocked(jwtVerify).mockResolvedValue({
-        payload: {
-          sub: 'user-123',
-          aud: 'client-123',
-        },
-        protectedHeader: { alg: 'RS256' },
-      } as any);
+      vi.mocked(validateIdTokenHint).mockResolvedValue({
+        valid: true,
+        userId: 'user-123',
+        clientId: 'client-123',
+      });
+      vi.mocked(validatePostLogoutRedirectUri).mockReturnValue({
+        valid: false,
+        error: 'post_logout_redirect_uri is not registered for this client',
+      });
 
       // Mock DB to return client with registered redirect URIs
       c.env.DB.prepare = vi.fn().mockReturnValue({
@@ -318,18 +342,62 @@ describe('Front-channel Logout', () => {
     it('should include state parameter in redirect', async () => {
       const { c } = createMockContext({
         query: {
+          id_token_hint: 'valid.id.token',
           post_logout_redirect_uri: 'https://app.example.com/logout-callback',
           state: 'state-value-123',
         },
       });
 
       vi.mocked(getCookie).mockReturnValue('session-123');
+      vi.mocked(validateIdTokenHint).mockResolvedValue({
+        valid: true,
+        userId: 'user-123',
+        clientId: 'client-123',
+      });
+
+      // Mock DB to return client with registered redirect URIs
+      c.env.DB.prepare = vi.fn().mockReturnValue({
+        bind: vi.fn().mockReturnValue({
+          first: vi.fn().mockResolvedValue({
+            redirect_uris: JSON.stringify([
+              'https://app.example.com/callback',
+              'https://app.example.com/logout-callback',
+            ]),
+          }),
+        }),
+      });
 
       await frontChannelLogoutHandler(c);
 
       expect(c.redirect).toHaveBeenCalledWith(
         'https://app.example.com/logout-callback?state=state-value-123',
         302
+      );
+    });
+
+    it('should require id_token_hint when post_logout_redirect_uri is provided', async () => {
+      const { c } = createMockContext({
+        query: {
+          post_logout_redirect_uri: 'https://app.example.com/logout-callback',
+          state: 'state-value-123',
+        },
+      });
+
+      vi.mocked(getCookie).mockReturnValue('session-123');
+      vi.mocked(validateLogoutParameters).mockReturnValue({
+        valid: false,
+        error: 'id_token_hint is required when post_logout_redirect_uri is provided',
+      });
+
+      await frontChannelLogoutHandler(c);
+
+      // Should return error when id_token_hint is missing
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('id_token_hint is required'),
+        }),
+        400
       );
     });
 

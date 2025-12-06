@@ -166,12 +166,58 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     // Handle HTTPS request_uri (Request Object by Reference)
     // SECURITY: This feature is disabled by default to prevent SSRF attacks
-    // Enable via ENABLE_HTTPS_REQUEST_URI environment variable
+    // Enable via SETTINGS KV (oidc.httpsRequestUri.enabled) or ENABLE_HTTPS_REQUEST_URI env var
     if (isHTTPS) {
-      // Check if HTTPS request_uri is enabled (default: disabled for security)
-      const httpsRequestUriEnabled = c.env.ENABLE_HTTPS_REQUEST_URI === 'true';
+      // Load HTTPS request_uri configuration from SETTINGS KV
+      // Priority: SETTINGS KV > Environment variable > Default (disabled)
+      let httpsRequestUriConfig: {
+        enabled: boolean;
+        allowedDomains: string[];
+        timeoutMs: number;
+        maxSizeBytes: number;
+      } = {
+        enabled: false,
+        allowedDomains: [],
+        timeoutMs: 5000,
+        maxSizeBytes: 102400,
+      };
 
-      if (!httpsRequestUriEnabled) {
+      try {
+        const settingsJson = await c.env.SETTINGS?.get('system_settings');
+        if (settingsJson) {
+          const settings = JSON.parse(settingsJson);
+          const kvConfig = settings.oidc?.httpsRequestUri;
+          if (kvConfig) {
+            httpsRequestUriConfig = {
+              enabled: kvConfig.enabled ?? false,
+              allowedDomains: kvConfig.allowedDomains ?? [],
+              timeoutMs: kvConfig.timeoutMs ?? 5000,
+              maxSizeBytes: kvConfig.maxSizeBytes ?? 102400,
+            };
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load HTTPS request_uri settings from KV:', error);
+      }
+
+      // Fall back to environment variables if not configured in KV
+      if (!httpsRequestUriConfig.enabled) {
+        httpsRequestUriConfig.enabled = c.env.ENABLE_HTTPS_REQUEST_URI === 'true';
+      }
+      if (httpsRequestUriConfig.allowedDomains.length === 0) {
+        const allowedDomainsStr = c.env.HTTPS_REQUEST_URI_ALLOWED_DOMAINS || '';
+        httpsRequestUriConfig.allowedDomains = allowedDomainsStr
+          ? allowedDomainsStr.split(',').map((d) => d.trim().toLowerCase())
+          : [];
+      }
+      if (c.env.HTTPS_REQUEST_URI_TIMEOUT_MS) {
+        httpsRequestUriConfig.timeoutMs = parseInt(c.env.HTTPS_REQUEST_URI_TIMEOUT_MS, 10);
+      }
+      if (c.env.HTTPS_REQUEST_URI_MAX_SIZE_BYTES) {
+        httpsRequestUriConfig.maxSizeBytes = parseInt(c.env.HTTPS_REQUEST_URI_MAX_SIZE_BYTES, 10);
+      }
+
+      if (!httpsRequestUriConfig.enabled) {
         return c.json(
           {
             error: 'request_uri_not_supported',
@@ -183,12 +229,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Security controls for HTTPS request_uri
-      const allowedDomainsStr = c.env.HTTPS_REQUEST_URI_ALLOWED_DOMAINS || '';
-      const allowedDomains = allowedDomainsStr
-        ? allowedDomainsStr.split(',').map((d) => d.trim().toLowerCase())
-        : [];
-      const timeoutMs = parseInt(c.env.HTTPS_REQUEST_URI_TIMEOUT_MS || '5000', 10);
-      const maxSizeBytes = parseInt(c.env.HTTPS_REQUEST_URI_MAX_SIZE_BYTES || '102400', 10);
+      const allowedDomains = httpsRequestUriConfig.allowedDomains;
+      const timeoutMs = httpsRequestUriConfig.timeoutMs;
+      const maxSizeBytes = httpsRequestUriConfig.maxSizeBytes;
 
       // Validate URL and extract domain
       let requestUrl: URL;
@@ -703,11 +746,35 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Override parameters with those from request object
       // Per OIDC Core 6.1: request object parameters take precedence
       if (requestObjectClaims) {
+        // OIDC Core 6.1: redirect_uri is REQUIRED in the request object
+        if (!requestObjectClaims.redirect_uri) {
+          return c.json(
+            {
+              error: 'invalid_request_object',
+              error_description: 'redirect_uri is required in request object',
+            },
+            400
+          );
+        }
+
+        // If redirect_uri was also provided as a query parameter, it must match
+        const queryRedirectUri = redirect_uri;
+        const requestObjectRedirectUri = requestObjectClaims.redirect_uri as string;
+
+        if (queryRedirectUri && queryRedirectUri !== requestObjectRedirectUri) {
+          return c.json(
+            {
+              error: 'invalid_request',
+              error_description: 'redirect_uri mismatch between query parameter and request object',
+            },
+            400
+          );
+        }
+
         if (requestObjectClaims.response_type)
           response_type = requestObjectClaims.response_type as string;
         if (requestObjectClaims.client_id) client_id = requestObjectClaims.client_id as string;
-        if (requestObjectClaims.redirect_uri)
-          redirect_uri = requestObjectClaims.redirect_uri as string;
+        redirect_uri = requestObjectRedirectUri;
         if (requestObjectClaims.scope) scope = requestObjectClaims.scope as string;
         if (requestObjectClaims.state) state = requestObjectClaims.state as string;
         if (requestObjectClaims.nonce) nonce = requestObjectClaims.nonce as string;
@@ -1208,6 +1275,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           userId: string;
           createdAt: number;
           expiresAt: number;
+          data?: {
+            authTime?: number;
+            [key: string]: unknown;
+          };
         };
 
         // Check if session is not expired
@@ -1216,8 +1287,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           // Don't set authTime from session if this is a confirmed re-authentication
           // (it will be set later based on prompt parameter)
           if (_confirmed !== 'true') {
-            authTime = Math.floor(session.createdAt / 1000);
-            console.log('[AUTH] Setting authTime from session:', authTime);
+            // OIDC Conformance: Use authTime from session data if available
+            // This ensures consistency between initial login and prompt=none requests
+            // Fallback to createdAt for backward compatibility with existing sessions
+            if (session.data?.authTime && typeof session.data.authTime === 'number') {
+              authTime = session.data.authTime;
+              console.log('[AUTH] Setting authTime from session data:', authTime);
+            } else {
+              authTime = Math.floor(session.createdAt / 1000);
+              console.log('[AUTH] Setting authTime from session createdAt (legacy):', authTime);
+            }
           } else {
             console.log('[AUTH] Skipping session authTime (_confirmed=true)');
           }
@@ -2795,6 +2874,10 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
   const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
 
+  // Calculate auth_time BEFORE creating session to ensure consistency
+  // This value will be used for both the session and the redirect parameter
+  const loginAuthTime = Math.floor(Date.now() / 1000);
+
   const sessionResponse = await sessionStore.fetch(
     new Request('https://session-store/session', {
       method: 'POST',
@@ -2804,6 +2887,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
         ttl: 3600, // 1 hour session
         data: {
           clientId: metadata.client_id,
+          authTime: loginAuthTime, // Store auth_time for OIDC conformance (prompt=none consistency)
         },
       }),
     })
@@ -2837,6 +2921,13 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
 
   // Add a flag to indicate login is complete
   params.set('_confirmed', 'true');
+
+  // Pass auth_time to ensure consistency between initial login and prompt=none requests
+  // This is critical for OIDC conformance: auth_time in ID tokens must be identical
+  // when the user is authenticated once and then prompt=none is used
+  // Use the same loginAuthTime that was stored in the session
+  params.set('_auth_time', loginAuthTime.toString());
+  console.log('[LOGIN] Setting auth_time for authorization redirect:', loginAuthTime);
 
   // Redirect to /authorize with original parameters
   const redirectUrl = `/authorize?${params.toString()}`;

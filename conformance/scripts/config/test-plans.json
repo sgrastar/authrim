@@ -55,7 +55,7 @@
       "name": "oidcc-dynamic-certification-test-plan",
       "displayName": "OIDC Dynamic OP Certification",
       "outputDir": "OIDC OP Dynamic",
-      "profile": "basic-op",
+      "profile": "dynamic-op",
       "configFile": "dynamic-op.json",
       "requiresBrowser": true,
       "variants": {
@@ -159,7 +159,7 @@
       "name": "oidcc-dynamic-certification-test-plan",
       "displayName": "OIDC Dynamic OP (code)",
       "outputDir": "OIDC OP Dynamic code",
-      "profile": "basic-op",
+      "profile": "dynamic-op",
       "configFile": "dynamic-op-code.json",
       "requiresBrowser": true,
       "variants": {
@@ -171,7 +171,7 @@
       "name": "oidcc-dynamic-certification-test-plan",
       "displayName": "OIDC Dynamic OP (id_token)",
       "outputDir": "OIDC OP Dynamic id_token",
-      "profile": "implicit-op",
+      "profile": "dynamic-op",
       "configFile": "dynamic-op-id_token.json",
       "requiresBrowser": true,
       "variants": {
@@ -183,7 +183,7 @@
       "name": "oidcc-dynamic-certification-test-plan",
       "displayName": "OIDC Dynamic OP (id_token token)",
       "outputDir": "OIDC OP Dynamic id_token token",
-      "profile": "implicit-op",
+      "profile": "dynamic-op",
       "configFile": "dynamic-op-id_token-token.json",
       "requiresBrowser": true,
       "variants": {
@@ -195,7 +195,7 @@
       "name": "oidcc-dynamic-certification-test-plan",
       "displayName": "OIDC Dynamic OP (code id_token)",
       "outputDir": "OIDC OP Dynamic code id_token",
-      "profile": "hybrid-op",
+      "profile": "dynamic-op",
       "configFile": "dynamic-op-code-id_token.json",
       "requiresBrowser": true,
       "variants": {
@@ -207,7 +207,7 @@
       "name": "oidcc-dynamic-certification-test-plan",
       "displayName": "OIDC Dynamic OP (code token)",
       "outputDir": "OIDC OP Dynamic code token",
-      "profile": "hybrid-op",
+      "profile": "dynamic-op",
       "configFile": "dynamic-op-code-token.json",
       "requiresBrowser": true,
       "variants": {
@@ -219,7 +219,7 @@
       "name": "oidcc-dynamic-certification-test-plan",
       "displayName": "OIDC Dynamic OP (code id_token token)",
       "outputDir": "OIDC OP Dynamic code id_token token",
-      "profile": "hybrid-op",
+      "profile": "dynamic-op",
       "configFile": "dynamic-op-code-id_token-token.json",
       "requiresBrowser": true,
       "variants": {

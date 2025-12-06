@@ -259,7 +259,13 @@ main() {
       "private_key_jwt",
       "none"
     ],
-    "allowNoneAlgorithm": true
+    "allowNoneAlgorithm": true,
+    "httpsRequestUri": {
+      "enabled": false,
+      "allowedDomains": [],
+      "timeoutMs": 5000,
+      "maxSizeBytes": 102400
+    }
   },
   "fapi": {
     "enabled": false,

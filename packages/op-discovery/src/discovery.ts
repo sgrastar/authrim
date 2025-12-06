@@ -34,6 +34,13 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // Continue with default values
   }
 
+  // HTTPS request_uri support status
+  // Check SETTINGS KV first, then fall back to environment variable
+  const httpsRequestUriEnabled =
+    oidcConfig.httpsRequestUri?.enabled ?? c.env.ENABLE_HTTPS_REQUEST_URI === 'true';
+  // request_uri is always supported (PAR), but HTTPS variant depends on config
+  const requestUriSupported = true; // PAR always supported
+
   // Check if cached metadata is still valid
   const currentHash = `${issuer}:${currentSettingsJson}`;
   if (cachedMetadata && cachedSettingsHash === currentHash) {

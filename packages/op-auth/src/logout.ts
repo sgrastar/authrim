@@ -7,13 +7,21 @@
  *
  * Front-channel: Browser-initiated logout with redirect
  * Back-channel: Server-to-server logout notification
+ *
+ * @see https://openid.net/specs/openid-connect-rpinitiated-1_0.html
  */
 
 import { Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import type { Env } from '@authrim/shared';
-import { timingSafeEqual } from '@authrim/shared';
-import * as jose from 'jose';
+import {
+  timingSafeEqual,
+  validateIdTokenHint,
+  validatePostLogoutRedirectUri,
+  validateLogoutParameters,
+} from '@authrim/shared';
+import { importJWK, jwtVerify } from 'jose';
+import type { JSONWebKeySet, CryptoKey } from 'jose';
 
 /**
  * Front-channel Logout
@@ -36,55 +44,121 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     let userId: string | undefined;
     let clientId: string | undefined;
+    let sid: string | undefined;
 
-    // Validate and parse ID token if provided
+    // Helper function to get public key from KeyManager
+    const getPublicKey = async (): Promise<CryptoKey> => {
+      const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
+      const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
+
+      const jwksResponse = await keyManager.fetch(
+        new Request('https://key-manager/jwks', {
+          method: 'GET',
+        })
+      );
+
+      if (!jwksResponse.ok) {
+        throw new Error('Failed to fetch JWKS');
+      }
+
+      const jwks = (await jwksResponse.json()) as JSONWebKeySet;
+      const key = jwks.keys[0];
+      if (!key) {
+        throw new Error('No keys in JWKS');
+      }
+      return (await importJWK(key)) as CryptoKey;
+    };
+
+    // Step 1: Validate parameter combination
+    // If post_logout_redirect_uri is provided, id_token_hint is required
+    const paramValidation = validateLogoutParameters(postLogoutRedirectUri, idTokenHint, true);
+    if (!paramValidation.valid) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: paramValidation.error,
+        },
+        400
+      );
+    }
+
+    // Step 2: Validate and parse ID token hint if provided
     if (idTokenHint) {
-      try {
-        // Get signing key from KeyManager
-        const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
-        const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
+      const idTokenResult = await validateIdTokenHint(idTokenHint, getPublicKey, c.env.ISSUER_URL, {
+        required: false,
+        allowExpired: true,
+      });
 
-        const jwksResponse = await keyManager.fetch(
-          new Request('https://key-manager/jwks', {
-            method: 'GET',
-          })
+      if (!idTokenResult.valid) {
+        // Return error for invalid id_token_hint
+        return c.json(
+          {
+            error: idTokenResult.errorCode || 'invalid_request',
+            error_description: idTokenResult.error,
+          },
+          400
         );
+      }
 
-        if (!jwksResponse.ok) {
-          throw new Error('Failed to fetch JWKS');
-        }
+      userId = idTokenResult.userId;
+      clientId = idTokenResult.clientId;
+      sid = idTokenResult.sid;
+    }
 
-        const jwks = (await jwksResponse.json()) as jose.JSONWebKeySet;
+    // Step 3: Validate post_logout_redirect_uri if provided
+    if (postLogoutRedirectUri) {
+      if (!clientId) {
+        // This shouldn't happen if step 1 validation passed, but double-check
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Cannot validate post_logout_redirect_uri without id_token_hint',
+          },
+          400
+        );
+      }
 
-        // Create a local JWKS resolver
-        const getKey = async () => {
-          // Return the first key from JWKS (in production, match by kid)
-          const key = jwks.keys[0];
-          if (!key) {
-            throw new Error('No keys in JWKS');
-          }
-          return await jose.importJWK(key);
-        };
+      // Get client configuration
+      const client = await c.env.DB.prepare(
+        'SELECT redirect_uris, post_logout_redirect_uris FROM oauth_clients WHERE client_id = ?'
+      )
+        .bind(clientId)
+        .first();
 
-        // Verify ID token
-        const { payload } = await jose.jwtVerify(idTokenHint, await getKey(), {
-          issuer: c.env.ISSUER_URL,
-          algorithms: ['RS256'],
-        });
+      if (!client) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Client not found',
+          },
+          400
+        );
+      }
 
-        userId = payload.sub;
-        clientId = payload.aud as string;
-      } catch (error) {
-        console.error('ID token validation error:', error);
-        // Continue with logout even if token validation fails
+      // Use post_logout_redirect_uris if available, otherwise fall back to redirect_uris
+      let registeredUris: string[];
+      if (client.post_logout_redirect_uris) {
+        registeredUris = JSON.parse(client.post_logout_redirect_uris as string) as string[];
+      } else {
+        registeredUris = JSON.parse(client.redirect_uris as string) as string[];
+      }
+
+      const uriValidation = validatePostLogoutRedirectUri(postLogoutRedirectUri, registeredUris);
+      if (!uriValidation.valid) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: uriValidation.error,
+          },
+          400
+        );
       }
     }
 
-    // Get session from cookie
+    // Step 4: Invalidate session
     const sessionId = getCookie(c, 'authrim_session');
 
     if (sessionId) {
-      // Invalidate session in SessionStore
       const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
       const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
 
@@ -98,40 +172,14 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         console.warn('Failed to delete session:', sessionId);
       }
 
-      // If we have userId from token or session, we could do additional cleanup
       if (userId) {
-        // Optional: Trigger back-channel logout to all RPs
-        // This would notify other RPs that this user has logged out
-        console.log(`User ${userId} logged out from client ${clientId}`);
+        console.log(
+          `User ${userId} logged out from client ${clientId || 'unknown'}${sid ? ` (sid: ${sid})` : ''}`
+        );
       }
     }
 
-    // Validate post_logout_redirect_uri if provided
-    if (postLogoutRedirectUri && clientId) {
-      // Get client configuration
-      const client = await c.env.DB.prepare(
-        'SELECT redirect_uris FROM oauth_clients WHERE client_id = ?'
-      )
-        .bind(clientId)
-        .first();
-
-      if (client) {
-        const redirectUris = JSON.parse(client.redirect_uris as string) as string[];
-
-        // Check if post_logout_redirect_uri is registered
-        if (!redirectUris.includes(postLogoutRedirectUri)) {
-          return c.json(
-            {
-              error: 'invalid_request',
-              error_description: 'post_logout_redirect_uri is not registered for this client',
-            },
-            400
-          );
-        }
-      }
-    }
-
-    // Build redirect URL
+    // Step 5: Build redirect URL
     let redirectUrl = postLogoutRedirectUri || `${c.env.ISSUER_URL}/logged-out`;
 
     if (state && postLogoutRedirectUri) {
@@ -140,7 +188,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       redirectUrl = url.toString();
     }
 
-    // Clear session cookie
+    // Step 6: Clear session cookie
     setCookie(c, 'authrim_session', '', {
       path: '/',
       httpOnly: true,
@@ -149,7 +197,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       maxAge: 0,
     });
 
-    // Redirect to post-logout URI
+    // Step 7: Redirect to post-logout URI
     return c.redirect(redirectUrl, 302);
   } catch (error) {
     console.error('Front-channel logout error:', error);
@@ -253,7 +301,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         throw new Error('Failed to fetch JWKS');
       }
 
-      const jwks = (await jwksResponse.json()) as jose.JSONWebKeySet;
+      const jwks = (await jwksResponse.json()) as JSONWebKeySet;
 
       // Create a local JWKS resolver
       const getKey = async () => {
@@ -262,11 +310,11 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         if (!key) {
           throw new Error('No keys in JWKS');
         }
-        return await jose.importJWK(key);
+        return await importJWK(key);
       };
 
       // Verify JWT
-      const { payload } = await jose.jwtVerify(logoutToken, await getKey(), {
+      const { payload } = await jwtVerify(logoutToken, await getKey(), {
         issuer: c.env.ISSUER_URL,
         algorithms: ['RS256'],
       });

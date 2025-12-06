@@ -51,6 +51,7 @@ export interface Env {
   ALLOW_HTTP_REDIRECT?: string; // Allow http:// redirect URIs for development
   MAX_CODES_PER_USER?: string; // Max authorization codes per user (default: 100, increase for load testing)
   AUTH_CODE_TTL?: string; // Authorization code TTL in seconds (default: 60, increase for load testing)
+  AUTH_CODE_CLEANUP_INTERVAL?: string; // Auth code cleanup interval in seconds (default: 30, increase for load testing)
   AUTHRIM_CODE_SHARDS?: string; // Number of auth code DO shards (default: 64, set to 0 to disable sharding)
 
   // Dynamic Client Registration settings
