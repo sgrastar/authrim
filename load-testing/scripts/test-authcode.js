@@ -253,11 +253,50 @@ export function setup() {
   };
 }
 
+/**
+ * K6 Cloud対応：グローバルに一意なコードインデックスを計算
+ * 複数インスタンスが同時に動く場合、各インスタンスにコードプールを分割
+ *
+ * @param iterationId - シナリオ内のイテレーション番号
+ * @param codePoolSize - コードプールの総数
+ * @returns グローバルに一意なコードインデックス
+ */
+function getGlobalCodeIndex(iterationId, codePoolSize) {
+  // K6 Cloud: インスタンスIDを環境変数から取得
+  const instanceId = __ENV.K6_CLOUDRUN_INSTANCE_ID;
+
+  if (instanceId !== undefined && instanceId !== '') {
+    // K6 Cloudモード：インスタンスIDでオフセット計算
+    const id = parseInt(instanceId, 10);
+    // 各インスタンスにコードプールを均等分割（最大10インスタンス想定）
+    const maxInstances = 10;
+    const codesPerInstance = Math.floor(codePoolSize / maxInstances);
+    const offset = id * codesPerInstance;
+
+    // 初回のみデバッグログ出力
+    if (iterationId === 0) {
+      console.log(`[K6 Cloud] instance=${id}, codesPerInstance=${codesPerInstance}, offset=${offset}`);
+    }
+
+    return offset + iterationId;
+  }
+
+  // ローカルモード：オフセットなし
+  return iterationId;
+}
+
 // メインテスト関数
 export default function (data) {
   // グローバルイテレーション番号を使用して一意のコードを選択
   const globalIterationId = exec.scenario.iterationInTest;
-  const codeIndex = globalIterationId % authorizationCodes.length;
+  const codeIndex = getGlobalCodeIndex(globalIterationId, authorizationCodes.length);
+
+  // AuthCodeは1回限り使用可能。シード数を超えたらスキップ
+  if (codeIndex >= authorizationCodes.length) {
+    // シード不足時は早期リターン（エラーカウントを増やさない）
+    return;
+  }
+
   const codeData = authorizationCodes[codeIndex];
 
   // /token リクエストのパラメータ

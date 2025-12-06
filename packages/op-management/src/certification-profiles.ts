@@ -19,6 +19,13 @@ export interface CertificationProfile {
       responseTypesSupported?: string[];
       tokenEndpointAuthMethodsSupported: string[];
       allowNoneAlgorithm?: boolean; // Allow 'none' algorithm for JWT signatures (default: false)
+      httpsRequestUri?: {
+        // OIDC Core 6.2: Request Object by Reference (HTTPS request_uri)
+        enabled: boolean;
+        allowedDomains: string[];
+        timeoutMs?: number;
+        maxSizeBytes?: number;
+      };
     };
   };
 }
@@ -86,6 +93,45 @@ export const certificationProfiles: Record<string, CertificationProfile> = {
           'none',
         ],
         allowNoneAlgorithm: true, // Allow for testing
+      },
+    },
+  },
+
+  'dynamic-op': {
+    name: 'Dynamic OP',
+    description: 'Full Dynamic OP certification profile (all flows, HTTPS request_uri, form_post)',
+    settings: {
+      fapi: {
+        enabled: false,
+        requireDpop: false,
+        allowPublicClients: true,
+      },
+      oidc: {
+        requirePar: false,
+        // All OIDC response types for Dynamic OP certification
+        responseTypesSupported: [
+          'code',
+          'id_token',
+          'id_token token',
+          'code id_token',
+          'code token',
+          'code id_token token',
+        ],
+        tokenEndpointAuthMethodsSupported: [
+          'client_secret_basic',
+          'client_secret_post',
+          'client_secret_jwt',
+          'private_key_jwt',
+          'none',
+        ],
+        allowNoneAlgorithm: true, // Required for some conformance tests
+        // OIDC Core 6.2: Enable HTTPS request_uri for Dynamic OP tests
+        httpsRequestUri: {
+          enabled: true,
+          allowedDomains: ['certification.openid.net', 'www.certification.openid.net'],
+          timeoutMs: 10000, // 10 seconds for conformance tests
+          maxSizeBytes: 102400, // 100KB max
+        },
       },
     },
   },

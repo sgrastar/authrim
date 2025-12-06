@@ -2318,11 +2318,7 @@ async function handleDeviceCodeGrant(
       shardConfig.currentShardCount
     );
     const randomPart = generateRefreshTokenRandomPart();
-    refreshJti = createRefreshTokenJti(
-      shardConfig.currentGeneration,
-      shardIndex,
-      randomPart
-    );
+    refreshJti = createRefreshTokenJti(shardConfig.currentGeneration, shardIndex, randomPart);
 
     const refreshTokenClaims = {
       sub: metadata.sub!,

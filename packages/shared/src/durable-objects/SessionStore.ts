@@ -70,6 +70,7 @@ export interface SessionResponse {
   userId: string;
   expiresAt: number;
   createdAt: number;
+  data?: SessionData; // Include session data for OIDC conformance (authTime etc.)
 }
 
 /**
@@ -545,6 +546,7 @@ export class SessionStore {
 
   /**
    * Sanitize session data for HTTP response (remove sensitive data)
+   * Note: data field is included for OIDC conformance (authTime consistency)
    */
   private sanitizeSession(session: Session): SessionResponse {
     return {
@@ -552,6 +554,7 @@ export class SessionStore {
       userId: session.userId,
       expiresAt: session.expiresAt,
       createdAt: session.createdAt,
+      data: session.data, // Include data for OIDC conformance (prompt=none authTime consistency)
     };
   }
 

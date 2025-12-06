@@ -120,7 +120,7 @@ export class AuthorizationCodeStore {
 
   // Configuration
   private readonly CODE_TTL: number; // Default: 60 seconds per OAuth 2.0 Security BCP (configurable via env)
-  private readonly CLEANUP_INTERVAL = 30 * 1000; // 30 seconds
+  private readonly CLEANUP_INTERVAL_MS: number; // Default: 30 seconds (configurable via env)
   private readonly MAX_CODES_PER_USER: number; // DDoS protection (configurable via env)
 
   constructor(state: DurableObjectState, env: Env) {
@@ -131,6 +131,14 @@ export class AuthorizationCodeStore {
     // Default: 60 seconds per OAuth 2.0 Security BCP, but can be increased for load testing
     const codeTtlEnv = env.AUTH_CODE_TTL;
     this.CODE_TTL = codeTtlEnv && !isNaN(Number(codeTtlEnv)) ? Number(codeTtlEnv) : 60;
+
+    // Configure CLEANUP_INTERVAL_MS from environment variable (in seconds, converted to ms)
+    // Default: 30 seconds, but can be increased for load testing with many seeds
+    const cleanupIntervalEnv = env.AUTH_CODE_CLEANUP_INTERVAL;
+    this.CLEANUP_INTERVAL_MS =
+      cleanupIntervalEnv && !isNaN(Number(cleanupIntervalEnv))
+        ? Number(cleanupIntervalEnv) * 1000
+        : 30 * 1000;
 
     // Configure MAX_CODES_PER_USER from environment variable
     // Default: 100, but can be increased for load testing
@@ -197,7 +205,7 @@ export class AuthorizationCodeStore {
     if (this.cleanupInterval === null) {
       this.cleanupInterval = setInterval(() => {
         this.cleanupExpiredCodes();
-      }, this.CLEANUP_INTERVAL) as unknown as number;
+      }, this.CLEANUP_INTERVAL_MS) as unknown as number;
     }
   }
 

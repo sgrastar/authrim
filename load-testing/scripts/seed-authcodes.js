@@ -101,7 +101,7 @@ async function createTestSession(userId) {
     },
     body: JSON.stringify({
       user_id: userId,
-      ttl_seconds: 7200,
+      ttl_seconds: 28800, // 8 hours for load testing
     }),
   });
 
