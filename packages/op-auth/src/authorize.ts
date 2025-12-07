@@ -11,7 +11,7 @@ import {
   getAuthCodeShardIndex,
   createShardedAuthCode,
   buildAuthCodeShardInstanceName,
-  DEFAULT_CODE_SHARD_COUNT,
+  getShardCount,
 } from '@authrim/shared';
 import {
   generateSecureRandomString,
@@ -1142,10 +1142,19 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     return sendError('invalid_request', nonceValidation.error);
   }
 
-  // Per OIDC Core 3.2.2.1 and 3.3.2.11: nonce is REQUIRED for Implicit and Hybrid Flows
-  const requiresNonce = response_type !== 'code';
+  // Per OIDC Core 3.2.2.1 and 3.3.2.11: nonce is REQUIRED when id_token is returned directly
+  // from the authorization endpoint (Implicit and Hybrid flows with id_token)
+  // - code: nonce optional (id_token returned from token endpoint)
+  // - code token: nonce optional (id_token returned from token endpoint)
+  // - id_token: nonce REQUIRED (id_token returned directly)
+  // - id_token token: nonce REQUIRED (id_token returned directly)
+  // - code id_token: nonce REQUIRED (id_token returned directly)
+  // - code id_token token: nonce REQUIRED (id_token returned directly)
+  const nonceCheckResponseTypes = response_type!.split(/\s+/);
+  const nonceCheckIncludesIdToken = nonceCheckResponseTypes.includes('id_token');
+  const requiresNonce = nonceCheckIncludesIdToken;
   if (requiresNonce && !nonce) {
-    return sendError('invalid_request', 'nonce is required for implicit and hybrid flows');
+    return sendError('invalid_request', 'nonce is required when response_type contains id_token');
   }
 
   // Validate response_mode (optional)
@@ -1809,10 +1818,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (includesCode) {
     const randomCode = generateSecureRandomString(96); // ~128 base64url chars
 
-    // Determine shard count from environment (default: 64, set to 0 to disable sharding)
-    const shardCount = c.env.AUTHRIM_CODE_SHARDS
-      ? parseInt(c.env.AUTHRIM_CODE_SHARDS, 10)
-      : DEFAULT_CODE_SHARD_COUNT;
+    // Determine shard count from KV (dynamic) > environment > default
+    // This ensures both op-auth and op-token use the same shard count
+    const shardCount = await getShardCount(c.env);
 
     // Calculate shard index using FNV-1a hash for sticky routing
     // Same user+client always routes to same shard (colocated with RefreshToken)
