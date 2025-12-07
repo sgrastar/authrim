@@ -363,6 +363,69 @@ function validateRegistrationRequest(
     }
   }
 
+  // Validate post_logout_redirect_uris (OIDC RP-Initiated Logout 1.0)
+  if (data.post_logout_redirect_uris !== undefined) {
+    if (!Array.isArray(data.post_logout_redirect_uris)) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: 'post_logout_redirect_uris must be an array',
+        },
+      };
+    }
+
+    for (const uri of data.post_logout_redirect_uris) {
+      if (typeof uri !== 'string') {
+        return {
+          valid: false,
+          error: {
+            error: 'invalid_client_metadata',
+            error_description: 'All post_logout_redirect_uris must be strings',
+          },
+        };
+      }
+
+      try {
+        const parsed = new URL(uri);
+
+        // HTTPS required (allow http://localhost for development)
+        if (
+          parsed.protocol !== 'https:' &&
+          !(parsed.protocol === 'http:' && parsed.hostname === 'localhost')
+        ) {
+          return {
+            valid: false,
+            error: {
+              error: 'invalid_client_metadata',
+              error_description:
+                'post_logout_redirect_uris must use HTTPS (except http://localhost for development)',
+            },
+          };
+        }
+
+        // Fragment identifier not allowed
+        if (parsed.hash) {
+          return {
+            valid: false,
+            error: {
+              error: 'invalid_client_metadata',
+              error_description: 'post_logout_redirect_uris must not contain fragment identifiers',
+            },
+          };
+        }
+      } catch {
+        return {
+          valid: false,
+          error: {
+            error: 'invalid_client_metadata',
+            error_description: `Invalid post_logout_redirect_uri: ${uri}`,
+          },
+        };
+      }
+    }
+  }
+
   return {
     valid: true,
     data: data as ClientRegistrationRequest,
@@ -410,8 +473,9 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       allow_claims_without_scope,
       jwks, jwks_uri,
       userinfo_signed_response_alg,
+      post_logout_redirect_uris,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `
   )
     .bind(
@@ -436,6 +500,9 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       metadata.jwks ? JSON.stringify(metadata.jwks) : null,
       metadata.jwks_uri || null,
       metadata.userinfo_signed_response_alg || null,
+      metadata.post_logout_redirect_uris
+        ? JSON.stringify(metadata.post_logout_redirect_uris)
+        : null,
       metadata.created_at || now,
       metadata.updated_at || now
     )
@@ -546,6 +613,9 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // OIDC Core 5.3.3: UserInfo signing algorithm
     if (request.userinfo_signed_response_alg)
       response.userinfo_signed_response_alg = request.userinfo_signed_response_alg;
+    // OIDC RP-Initiated Logout 1.0: post_logout_redirect_uris
+    if (request.post_logout_redirect_uris)
+      response.post_logout_redirect_uris = request.post_logout_redirect_uris;
 
     // OIDC Conformance Test: Detect certification.openid.net
     const isCertificationTest = request.redirect_uris.some((uri) =>

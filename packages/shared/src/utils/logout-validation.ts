@@ -210,8 +210,21 @@ export function validatePostLogoutRedirectUri(
   }
 
   // Check if URI is registered (exact match required per spec)
-  // This includes query parameters - they must match exactly
-  if (!registeredUris.includes(uri)) {
+  // Normalize URL encoding before comparison to handle encoding differences
+  // (e.g., %2F vs /, %20 vs space) while maintaining strict matching
+  const normalizedUri = parsedUri.href; // URL.href returns normalized form
+
+  const isMatch = registeredUris.some((registeredUri) => {
+    try {
+      const normalizedRegistered = new URL(registeredUri).href;
+      return normalizedUri === normalizedRegistered;
+    } catch {
+      // If registered URI is invalid, fall back to exact string comparison
+      return uri === registeredUri;
+    }
+  });
+
+  if (!isMatch) {
     return {
       valid: false,
       error: 'post_logout_redirect_uri is not registered for this client',

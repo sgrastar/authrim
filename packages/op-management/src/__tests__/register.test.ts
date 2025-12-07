@@ -942,4 +942,212 @@ describe('Dynamic Client Registration Handler', () => {
       expect((json.client_secret as string).length).toBeGreaterThanOrEqual(40);
     });
   });
+
+  describe('Validation - post_logout_redirect_uris (OIDC RP-Initiated Logout 1.0)', () => {
+    it('should accept valid post_logout_redirect_uris', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        post_logout_redirect_uris: ['https://example.com/logout', 'https://example.com/signout'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.post_logout_redirect_uris).toEqual([
+        'https://example.com/logout',
+        'https://example.com/signout',
+      ]);
+    });
+
+    it('should accept http://localhost for post_logout_redirect_uris', async () => {
+      const requestBody = {
+        redirect_uris: ['http://localhost:3000/callback'],
+        post_logout_redirect_uris: ['http://localhost:3000/logout'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.post_logout_redirect_uris).toEqual(['http://localhost:3000/logout']);
+    });
+
+    it('should reject non-array post_logout_redirect_uris', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        post_logout_redirect_uris: 'https://example.com/logout',
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('post_logout_redirect_uris must be an array');
+    });
+
+    it('should reject post_logout_redirect_uris with non-string values', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        post_logout_redirect_uris: ['https://example.com/logout', 123],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('All post_logout_redirect_uris must be strings');
+    });
+
+    it('should reject HTTP post_logout_redirect_uri (except localhost)', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        post_logout_redirect_uris: ['http://example.com/logout'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('HTTPS');
+    });
+
+    it('should reject post_logout_redirect_uri with fragment identifier', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        post_logout_redirect_uris: ['https://example.com/logout#fragment'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('fragment');
+    });
+
+    it('should reject invalid post_logout_redirect_uri format', async () => {
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        post_logout_redirect_uris: ['not-a-valid-uri'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('Invalid post_logout_redirect_uri');
+    });
+
+    it('should store post_logout_redirect_uris in database', async () => {
+      const mockDB = createMockDB();
+      const localMockEnv = createMockEnv({ db: mockDB });
+      localMockEnv.CLIENTS_CACHE = createMockKV();
+
+      const requestBody = {
+        redirect_uris: ['https://example.com/callback'],
+        post_logout_redirect_uris: ['https://example.com/logout'],
+      };
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestBody),
+        },
+        localMockEnv
+      );
+
+      expect(res.status).toBe(201);
+
+      // Verify the INSERT statement includes post_logout_redirect_uris column
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('post_logout_redirect_uris')
+      );
+    });
+  });
 });

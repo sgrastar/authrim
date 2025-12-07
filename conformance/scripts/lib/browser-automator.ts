@@ -150,6 +150,29 @@ export class BrowserAutomator {
 
         // Check if we've been redirected back to the conformance suite
         if (this.isConformanceCallback(currentUrl)) {
+          // For fragment-based responses (implicit/hybrid flows), wait for the page to process
+          // The conformance suite's callback page needs time to parse the fragment via JavaScript
+          // and send the data to the server before we can consider the flow complete
+          try {
+            const urlObj = new URL(currentUrl);
+            // Check if there's a fragment with OAuth/OIDC response parameters
+            // This includes both error responses and successful responses (code, access_token, id_token)
+            const hasFragmentResponse = urlObj.hash && (
+              urlObj.hash.includes('error=') ||
+              urlObj.hash.includes('code=') ||
+              urlObj.hash.includes('access_token=') ||
+              urlObj.hash.includes('id_token=')
+            );
+            if (hasFragmentResponse) {
+              console.log('[Browser] Fragment response detected, waiting for page to process...');
+              // Wait for the page to process the fragment (conformance suite's JavaScript)
+              await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+              // Also wait for the page to update (title/content change)
+              await page.waitForTimeout(1000);
+            }
+          } catch {
+            // Ignore URL parsing errors
+          }
           console.log('[Browser] Redirected back to conformance suite');
           return currentUrl;
         }
@@ -231,6 +254,17 @@ export class BrowserAutomator {
       if (urlObj.searchParams.has('error')) {
         console.log(`[Browser] Detected OAuth error in URL params: ${urlObj.searchParams.get('error')}`);
         return 'error';
+      }
+
+      // Check URL fragment for OAuth errors (e.g., #error=invalid_request)
+      // This is required for implicit and hybrid flows per OIDC Core 3.2.2.6 and 3.3.2.6
+      // Errors are returned in the fragment (hash) for these flows
+      if (urlObj.hash) {
+        const hashParams = new URLSearchParams(urlObj.hash.substring(1)); // Remove leading #
+        if (hashParams.has('error')) {
+          console.log(`[Browser] Detected OAuth error in URL fragment: ${hashParams.get('error')}`);
+          return 'error';
+        }
       }
     } catch {
       // Invalid URL, continue with other checks

@@ -12,6 +12,7 @@
 import type { Env } from '../types/env';
 import type { RefreshTokenData } from '../types/oidc';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
+import { createOAuthConfigManager } from './oauth-config';
 
 // ===== User Cache =====
 // Read-Through Cache for user metadata with invalidation hook support
@@ -179,7 +180,9 @@ export async function invalidateUserCache(env: Env, userId: string): Promise<voi
  * @returns Promise<void>
  */
 export async function storeState(env: Env, state: string, clientId: string): Promise<void> {
-  const ttl = parseInt(env.STATE_EXPIRY, 10);
+  // KV > env > default priority
+  const configManager = createOAuthConfigManager(env);
+  const ttl = await configManager.getStateExpiry();
   const key = buildKVKey('state', state);
 
   await env.STATE_STORE.put(key, clientId, {
@@ -220,7 +223,9 @@ export async function deleteState(env: Env, state: string): Promise<void> {
  * @returns Promise<void>
  */
 export async function storeNonce(env: Env, nonce: string, clientId: string): Promise<void> {
-  const ttl = parseInt(env.NONCE_EXPIRY, 10);
+  // KV > env > default priority
+  const configManager = createOAuthConfigManager(env);
+  const ttl = await configManager.getNonceExpiry();
   const key = buildKVKey('nonce', nonce);
 
   await env.NONCE_STORE.put(key, clientId, {
@@ -472,6 +477,10 @@ export async function storeRefreshToken(
   const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
   const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
 
+  // KV > env > default priority for refresh token TTL
+  const configManager = createOAuthConfigManager(env);
+  const refreshTokenTTL = await configManager.getRefreshTokenExpiry();
+
   const response = await stub.fetch('http://internal/family', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -480,7 +489,7 @@ export async function storeRefreshToken(
       userId: data.sub,
       clientId: data.client_id,
       scope: data.scope || '',
-      ttl: parseInt(env.REFRESH_TOKEN_EXPIRY, 10),
+      ttl: refreshTokenTTL,
       // V3: Include generation and shard for DO to store
       ...(parsedJti.generation > 0 &&
         parsedJti.shardIndex !== null && {

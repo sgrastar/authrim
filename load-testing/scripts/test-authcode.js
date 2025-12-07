@@ -39,6 +39,21 @@ const AUTH_CODE_PATH = __ENV.AUTH_CODE_PATH || '../seeds/authorization_codes.jso
 
 // プリセット設定
 const PRESETS = {
+  rps10: {
+    description: '10 RPS sustained load - Quick smoke test (30s)',
+    stages: [
+      { target: 10, duration: '5s' },
+      { target: 10, duration: '30s' },
+      { target: 0, duration: '5s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<300', 'p(99)<500'],
+      http_req_failed: ['rate<0.01'],
+      token_request_duration: ['p(99)<500'],
+    },
+    preAllocatedVUs: 15,
+    maxVUs: 20,
+  },
   light: {
     description: '20 RPS light load - Development testing',
     stages: [
@@ -153,6 +168,21 @@ const PRESETS = {
     preAllocatedVUs: 800,
     maxVUs: 1000,
   },
+  rps2000: {
+    description: '2000 RPS sustained load - Maximum capacity test (30s)',
+    stages: [
+      { target: 2000, duration: '10s' },
+      { target: 2000, duration: '30s' },
+      { target: 0, duration: '10s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<800', 'p(99)<1500'],
+      http_req_failed: ['rate<0.05'],
+      token_request_duration: ['p(99)<1500'],
+    },
+    preAllocatedVUs: 1600,
+    maxVUs: 2500,
+  },
   heavy: {
     description: '600 RPS peak load - Stress testing',
     stages: [
@@ -254,42 +284,51 @@ export function setup() {
 }
 
 /**
- * K6 Cloud対応：グローバルに一意なコードインデックスを計算
- * 複数インスタンスが同時に動く場合、各インスタンスにコードプールを分割
+ * シャード分割方式でコードインデックスを計算
  *
- * @param iterationId - シナリオ内のイテレーション番号
+ * K6 Cloud対応版（マルチインスタンス対応）：
+ * - 各インスタンスがコードプールの異なる領域を使用
+ * - インスタンス間で同じコードを使用することを防止
+ *
+ * 計算式:
+ *   globalIndex = instanceId + (localIteration × maxInstances)
+ *
+ * 例（3インスタンス、コードプール100個）:
+ *   Instance 0: codes[0, 3, 6, 9, ...]
+ *   Instance 1: codes[1, 4, 7, 10, ...]
+ *   Instance 2: codes[2, 5, 8, 11, ...]
+ *
  * @param codePoolSize - コードプールの総数
  * @returns グローバルに一意なコードインデックス
  */
-function getGlobalCodeIndex(iterationId, codePoolSize) {
-  // K6 Cloud: インスタンスIDを環境変数から取得
-  const instanceId = __ENV.K6_CLOUDRUN_INSTANCE_ID;
+function getGlobalCodeIndex(codePoolSize) {
+  // K6 Cloud環境変数からインスタンス情報を取得
+  // ローカル実行時は0/1がデフォルト
+  const instanceId = parseInt(__ENV.K6_CLOUDRUN_INSTANCE_ID || '0', 10);
+  const maxInstances = parseInt(__ENV.MAX_INSTANCES || '10', 10); // 安全のため10をデフォルト
 
-  if (instanceId !== undefined && instanceId !== '') {
-    // K6 Cloudモード：インスタンスIDでオフセット計算
-    const id = parseInt(instanceId, 10);
-    // 各インスタンスにコードプールを均等分割（最大10インスタンス想定）
-    const maxInstances = 10;
-    const codesPerInstance = Math.floor(codePoolSize / maxInstances);
-    const offset = id * codesPerInstance;
+  // インスタンス内のイテレーション番号（各インスタンスで0から始まる）
+  const localIteration = exec.scenario.iterationInInstance;
 
-    // 初回のみデバッグログ出力
-    if (iterationId === 0) {
-      console.log(`[K6 Cloud] instance=${id}, codesPerInstance=${codesPerInstance}, offset=${offset}`);
-    }
+  // シャード分割: 各インスタンスが異なるコードを使用
+  // instanceId + (localIteration * maxInstances) でインターリーブ
+  const globalIndex = instanceId + localIteration * maxInstances;
 
-    return offset + iterationId;
+  // 初回のみデバッグログ出力
+  if (localIteration < 3) {
+    console.log(
+      `[shard-split] instanceId=${instanceId}, maxInstances=${maxInstances}, ` +
+        `localIter=${localIteration}, globalIndex=${globalIndex}, poolSize=${codePoolSize}`
+    );
   }
 
-  // ローカルモード：オフセットなし
-  return iterationId;
+  return globalIndex;
 }
 
 // メインテスト関数
 export default function (data) {
-  // グローバルイテレーション番号を使用して一意のコードを選択
-  const globalIterationId = exec.scenario.iterationInTest;
-  const codeIndex = getGlobalCodeIndex(globalIterationId, authorizationCodes.length);
+  // イテレーション番号ベースで一意のコードを選択（K6 Cloudでもグローバルにユニーク）
+  const codeIndex = getGlobalCodeIndex(authorizationCodes.length);
 
   // AuthCodeは1回限り使用可能。シード数を超えたらスキップ
   if (codeIndex >= authorizationCodes.length) {

@@ -71,27 +71,55 @@ describe('Hybrid Flow Security', () => {
   });
 
   describe('Nonce Validation', () => {
-    it('should enforce nonce for hybrid flows', () => {
-      // Hybrid flow response types that require nonce
-      const hybridFlowTypes = [
-        'code id_token',
-        'code token',
-        'code id_token token',
+    // Per OIDC Core 3.2.2.1 and 3.3.2.11: nonce is REQUIRED when id_token is returned directly
+    // from the authorization endpoint. This applies to Implicit and Hybrid flows WITH id_token.
+
+    it('should require nonce when response_type contains id_token', () => {
+      // Response types that require nonce (id_token returned directly)
+      const requiresNonceTypes = [
         'id_token',
         'id_token token',
-        'token',
+        'code id_token',
+        'code id_token token',
       ];
 
-      for (const responseType of hybridFlowTypes) {
-        const requiresNonce = responseType !== 'code';
-        expect(requiresNonce).toBe(true);
+      for (const responseType of requiresNonceTypes) {
+        const responseTypes = responseType.split(/\s+/);
+        const includesIdToken = responseTypes.includes('id_token');
+        expect(includesIdToken).toBe(true);
       }
     });
 
-    it('should not require nonce for pure authorization code flow', () => {
-      const responseType = 'code';
-      const requiresNonce = responseType !== 'code';
-      expect(requiresNonce).toBe(false);
+    it('should not require nonce when response_type does not contain id_token', () => {
+      // Response types where nonce is optional (id_token from token endpoint only)
+      const optionalNonceTypes = ['code', 'code token', 'token'];
+
+      for (const responseType of optionalNonceTypes) {
+        const responseTypes = responseType.split(/\s+/);
+        const includesIdToken = responseTypes.includes('id_token');
+        expect(includesIdToken).toBe(false);
+      }
+    });
+
+    it('should correctly detect id_token in various response_type formats', () => {
+      // Test edge cases
+      const testCases = [
+        { responseType: 'code', expected: false },
+        { responseType: 'code token', expected: false },
+        { responseType: 'token', expected: false },
+        { responseType: 'id_token', expected: true },
+        { responseType: 'id_token token', expected: true },
+        { responseType: 'code id_token', expected: true },
+        { responseType: 'code id_token token', expected: true },
+        { responseType: 'token id_token', expected: true }, // order variation
+        { responseType: 'id_token code', expected: true }, // order variation
+      ];
+
+      for (const { responseType, expected } of testCases) {
+        const responseTypes = responseType.split(/\s+/);
+        const includesIdToken = responseTypes.includes('id_token');
+        expect(includesIdToken).toBe(expected);
+      }
     });
   });
 

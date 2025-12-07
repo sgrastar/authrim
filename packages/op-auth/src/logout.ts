@@ -135,12 +135,23 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      // Use post_logout_redirect_uris if available, otherwise fall back to redirect_uris
-      let registeredUris: string[];
+      // Per OIDC RP-Initiated Logout 1.0, only post_logout_redirect_uris should be used
+      // Do NOT fall back to redirect_uris - this is a security measure to ensure
+      // only explicitly registered logout URIs are allowed
+      let registeredUris: string[] = [];
       if (client.post_logout_redirect_uris) {
         registeredUris = JSON.parse(client.post_logout_redirect_uris as string) as string[];
-      } else {
-        registeredUris = JSON.parse(client.redirect_uris as string) as string[];
+      }
+
+      // If no post_logout_redirect_uris are registered, reject the request
+      if (registeredUris.length === 0) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'No post_logout_redirect_uris registered for this client',
+          },
+          400
+        );
       }
 
       const uriValidation = validatePostLogoutRedirectUri(postLogoutRedirectUri, registeredUris);

@@ -283,11 +283,12 @@ describe('Front-channel Logout', () => {
         clientId: 'client-123',
       });
 
-      // Mock DB to return client with registered redirect URIs
+      // Mock DB to return client with registered post_logout_redirect_uris
+      // Per OIDC RP-Initiated Logout 1.0, only post_logout_redirect_uris are used
       c.env.DB.prepare = vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnValue({
           first: vi.fn().mockResolvedValue({
-            redirect_uris: JSON.stringify([
+            post_logout_redirect_uris: JSON.stringify([
               'https://app.example.com/callback',
               'https://app.example.com/logout-callback',
             ]),
@@ -319,11 +320,11 @@ describe('Front-channel Logout', () => {
         error: 'post_logout_redirect_uri is not registered for this client',
       });
 
-      // Mock DB to return client with registered redirect URIs
+      // Mock DB to return client with registered post_logout_redirect_uris
       c.env.DB.prepare = vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnValue({
           first: vi.fn().mockResolvedValue({
-            redirect_uris: JSON.stringify(['https://app.example.com/callback']),
+            post_logout_redirect_uris: JSON.stringify(['https://app.example.com/callback']),
           }),
         }),
       });
@@ -334,6 +335,43 @@ describe('Front-channel Logout', () => {
         expect.objectContaining({
           error: 'invalid_request',
           error_description: expect.stringContaining('not registered'),
+        }),
+        400
+      );
+    });
+
+    it('should reject when no post_logout_redirect_uris are registered', async () => {
+      const { c } = createMockContext({
+        query: {
+          id_token_hint: 'valid.id.token',
+          post_logout_redirect_uri: 'https://app.example.com/logout-callback',
+        },
+      });
+
+      vi.mocked(getCookie).mockReturnValue('session-123');
+      vi.mocked(validateIdTokenHint).mockResolvedValue({
+        valid: true,
+        userId: 'user-123',
+        clientId: 'client-123',
+      });
+
+      // Mock DB to return client WITHOUT post_logout_redirect_uris
+      // Only redirect_uris are set, which should NOT be used per OIDC spec
+      c.env.DB.prepare = vi.fn().mockReturnValue({
+        bind: vi.fn().mockReturnValue({
+          first: vi.fn().mockResolvedValue({
+            redirect_uris: JSON.stringify(['https://app.example.com/callback']),
+            post_logout_redirect_uris: null,
+          }),
+        }),
+      });
+
+      await frontChannelLogoutHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('No post_logout_redirect_uris registered'),
         }),
         400
       );
@@ -355,11 +393,11 @@ describe('Front-channel Logout', () => {
         clientId: 'client-123',
       });
 
-      // Mock DB to return client with registered redirect URIs
+      // Mock DB to return client with registered post_logout_redirect_uris
       c.env.DB.prepare = vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnValue({
           first: vi.fn().mockResolvedValue({
-            redirect_uris: JSON.stringify([
+            post_logout_redirect_uris: JSON.stringify([
               'https://app.example.com/callback',
               'https://app.example.com/logout-callback',
             ]),

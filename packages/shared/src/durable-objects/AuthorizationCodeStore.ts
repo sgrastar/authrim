@@ -15,9 +15,13 @@
  * - RFC 6749: Authorization Code Grant
  * - RFC 7636: Proof Key for Code Exchange (PKCE)
  * - OAuth 2.0 Security BCP: Draft 16
+ *
+ * Configuration Priority:
+ * - KV (AUTHRIM_CONFIG namespace) > Environment variable > Default value
  */
 
 import type { Env } from '../types/env';
+import { createOAuthConfigManager, type OAuthConfigManager } from '../utils/oauth-config';
 
 /**
  * Authorization code metadata
@@ -117,17 +121,21 @@ export class AuthorizationCodeStore {
   private codes: Map<string, AuthorizationCode> = new Map();
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
+  private configManager: OAuthConfigManager;
 
-  // Configuration
-  private readonly CODE_TTL: number; // Default: 60 seconds per OAuth 2.0 Security BCP (configurable via env)
-  private readonly CLEANUP_INTERVAL_MS: number; // Default: 30 seconds (configurable via env)
-  private readonly MAX_CODES_PER_USER: number; // DDoS protection (configurable via env)
+  // Configuration (loaded from KV > env > default in initializeState)
+  private CODE_TTL: number; // Default: 60 seconds per OAuth 2.0 Security BCP
+  private CLEANUP_INTERVAL_MS: number; // Default: 30 seconds
+  private MAX_CODES_PER_USER: number; // DDoS protection
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
 
-    // Configure CODE_TTL from environment variable
+    // Create config manager for KV > env > default priority
+    this.configManager = createOAuthConfigManager(env);
+
+    // Set initial values from environment (will be updated in initializeState with KV values)
     // Default: 60 seconds per OAuth 2.0 Security BCP, but can be increased for load testing
     const codeTtlEnv = env.AUTH_CODE_TTL;
     this.CODE_TTL = codeTtlEnv && !isNaN(Number(codeTtlEnv)) ? Number(codeTtlEnv) : 60;
@@ -146,16 +154,33 @@ export class AuthorizationCodeStore {
     this.MAX_CODES_PER_USER =
       maxCodesEnv && !isNaN(Number(maxCodesEnv)) ? Number(maxCodesEnv) : 100;
 
-    // State will be initialized on first request
+    // State and config will be fully initialized on first request (async)
   }
 
   /**
-   * Initialize state from Durable Storage
+   * Initialize state from Durable Storage and load configuration from KV
    * Must be called before any code operations
+   *
+   * Configuration Priority: KV > Environment variable > Default value
    */
   private async initializeState(): Promise<void> {
     if (this.initialized) {
       return;
+    }
+
+    // Load configuration from KV (with env/default fallback)
+    try {
+      this.CODE_TTL = await this.configManager.getAuthCodeTTL();
+      this.MAX_CODES_PER_USER = await this.configManager.getMaxCodesPerUser();
+      console.log(
+        `AuthCodeStore: Loaded config from KV - CODE_TTL: ${this.CODE_TTL}s, MAX_CODES_PER_USER: ${this.MAX_CODES_PER_USER}`
+      );
+    } catch (error) {
+      console.warn(
+        'AuthCodeStore: Failed to load config from KV, using env/default values:',
+        error
+      );
+      // Keep constructor-initialized values (from env)
     }
 
     try {

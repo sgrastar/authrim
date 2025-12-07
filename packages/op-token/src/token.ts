@@ -16,6 +16,8 @@ import {
   parseRefreshTokenJti,
   buildRefreshTokenRotatorInstanceName,
   generateRefreshTokenRandomPart,
+  // Configuration Manager (KV > env > default)
+  createOAuthConfigManager,
 } from '@authrim/shared';
 import {
   revokeToken,
@@ -847,8 +849,9 @@ async function handleAuthorizationCodeGrant(
     );
   }
 
-  // Token expiration
-  const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
+  // Token expiration (KV > env > default priority)
+  const configManager = createOAuthConfigManager(c.env);
+  const expiresIn = await configManager.getTokenExpiry();
 
   // DPoP support (RFC 9449)
   // dpopJkt was already validated earlier for authorization code binding verification
@@ -1086,7 +1089,7 @@ async function handleAuthorizationCodeGrant(
   // https://tools.ietf.org/html/rfc6749#section-6
   let refreshToken: string;
   let refreshTokenJti: string;
-  const refreshTokenExpiresIn = parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10);
+  const refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
 
   try {
     const refreshTokenClaims = {
@@ -1532,8 +1535,9 @@ async function handleRefreshTokenGrant(
     );
   }
 
-  // Token expiration
-  const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
+  // Token expiration (KV > env > default priority)
+  const configManager = createOAuthConfigManager(c.env);
+  const expiresIn = await configManager.getTokenExpiry();
 
   // Phase 2 RBAC: Fetch fresh RBAC claims for token refresh
   // User's roles/organization may have changed since the original token was issued
@@ -1706,7 +1710,7 @@ async function handleRefreshTokenGrant(
   const rotationEnabled = c.env.REFRESH_TOKEN_ROTATION_ENABLED !== 'false';
 
   let newRefreshToken: string;
-  const refreshTokenExpiresIn = parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10);
+  const refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
 
   if (rotationEnabled) {
     // V2: Implement refresh token rotation with version-based theft detection
@@ -1969,8 +1973,9 @@ async function handleJWTBearerGrant(
     );
   }
 
-  // Token expiration
-  const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
+  // Token expiration (KV > env > default priority)
+  const configManager = createOAuthConfigManager(c.env);
+  const expiresIn = await configManager.getTokenExpiry();
 
   // Generate Access Token
   // For JWT Bearer flow, the subject (sub) comes from the assertion
@@ -2198,7 +2203,9 @@ async function handleDeviceCodeGrant(
     );
   }
 
-  const expiresIn = parseInt(c.env.TOKEN_EXPIRY, 10);
+  // Token expiration (KV > env > default priority)
+  const configManager = createOAuthConfigManager(c.env);
+  const expiresIn = await configManager.getTokenExpiry();
 
   // Phase 2 RBAC: Fetch RBAC claims for device flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
@@ -2306,7 +2313,7 @@ async function handleDeviceCodeGrant(
   }
 
   // Generate Refresh Token with V3 sharding support
-  const refreshTokenExpiry = parseInt(c.env.REFRESH_TOKEN_EXPIRY, 10);
+  const refreshTokenExpiry = await configManager.getRefreshTokenExpiry();
   let refreshToken: string;
   let refreshJti: string;
   try {
@@ -2606,9 +2613,10 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     }
   }
 
-  // Token expiration times
-  const expiresIn = parseInt(c.env.TOKEN_EXPIRY || '3600', 10);
-  const refreshExpiresIn = parseInt(c.env.REFRESH_TOKEN_EXPIRY || '2592000', 10);
+  // Token expiration times (KV > env > default priority)
+  const configManager = createOAuthConfigManager(c.env);
+  const expiresIn = await configManager.getTokenExpiry();
+  const refreshExpiresIn = await configManager.getRefreshTokenExpiry();
 
   // Phase 2 RBAC: Fetch RBAC claims for CIBA flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};

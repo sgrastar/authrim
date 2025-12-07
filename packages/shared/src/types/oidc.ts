@@ -247,6 +247,9 @@ export interface ClientRegistrationRequest {
   id_token_signed_response_type?: 'jwt' | 'sd-jwt';
   // Claims to be selectively disclosable in SD-JWT (default: email, phone_number, address, birthdate)
   sd_jwt_selective_claims?: string[];
+  // OIDC RP-Initiated Logout 1.0 - post_logout_redirect_uris
+  // https://openid.net/specs/openid-connect-rpinitiated-1_0.html
+  post_logout_redirect_uris?: string[];
 }
 
 /**
@@ -294,6 +297,8 @@ export interface ClientRegistrationResponse {
   // SD-JWT (Selective Disclosure JWT) - RFC 9901
   id_token_signed_response_type?: 'jwt' | 'sd-jwt';
   sd_jwt_selective_claims?: string[];
+  // OIDC RP-Initiated Logout 1.0 - post_logout_redirect_uris
+  post_logout_redirect_uris?: string[];
 }
 
 /**

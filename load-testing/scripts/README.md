@@ -6,8 +6,9 @@
 
 | カテゴリ | スクリプト | 説明 |
 |---------|-----------|------|
+| **ユーザー作成** | `seed-users.js` | ユーザー事前作成（再利用可能） |
+| **シード生成** | `seed-authcodes.js` | Authorization Code生成（事前作成ユーザー使用） |
 | **シード生成** | `seed-refresh-tokens.js` | V3シャーディング対応Refresh Token生成（推奨） |
-| **シード生成** | `seed-authcodes.js` | Authorization Code生成（並列） |
 | **シード生成** | `seed-authcodes-multiuser.js` | マルチユーザー + Authorization Code生成 |
 | **負荷テスト** | `test-refresh.js` | Refresh Token負荷テスト（k6） |
 | **負荷テスト** | `test-authcode.js` | Authorization Code負荷テスト（k6） |
@@ -21,6 +22,41 @@
 ---
 
 ## シード生成スクリプト
+
+### 0. seed-users.js（ユーザー事前作成）
+
+**負荷テスト用ユーザーを事前に大量作成**
+
+ユーザーはDBを初期化しない限り再利用可能。シード生成前に1回だけ実行すればOK。
+
+```bash
+BASE_URL="https://conformance.authrim.com" \
+ADMIN_API_SECRET="<your-admin-secret>" \
+CLIENT_ID="<your-client-id>" \
+USER_COUNT=500000 \
+CONCURRENCY=50 \
+node scripts/seed-users.js
+```
+
+| 環境変数 | 必須 | デフォルト | 説明 |
+|---------|------|-----------|------|
+| `ADMIN_API_SECRET` | Yes | - | Admin API Bearer Token |
+| `BASE_URL` | No | `https://conformance.authrim.com` | 対象URL |
+| `USER_COUNT` | No | `10000` | 作成するユーザー数 |
+| `CONCURRENCY` | No | `50` | 並列数 |
+| `CLIENT_ID` | No | - | シャード計算用（指定するとシャード分布を表示） |
+| `SAVE_INTERVAL` | No | `1000` | 自動保存間隔 |
+
+**出力:**
+- `seeds/test_users.json` - ユーザー詳細（JSON形式、シャード情報付き）
+- `seeds/test_users.txt` - ユーザーID一覧（1行1ID、シンプル形式）
+
+**特徴:**
+- 中断時に自動保存、再開時に既存ユーザーをスキップ
+- インクリメンタル作成対応（`USER_COUNT=600000`で追加作成）
+- シャード分布の確認が可能
+
+---
 
 ### 1. seed-refresh-tokens.js（推奨）
 
@@ -55,21 +91,42 @@ node scripts/seed-refresh-tokens.js
 
 ### 2. seed-authcodes.js
 
-**Authorization Code（認可コード）を並列生成**
+**Authorization Code（認可コード）を並列生成（事前作成ユーザー使用）**
 
-テストユーザー1人に対して複数の認可コードを生成。`test-authcode.js`用。
+`seed-users.js`で作成したユーザーを使用して認可コードを生成。`test-authcode.js`用。
+
+**前提:** `seed-users.js`でユーザーを事前作成済みであること
 
 ```bash
+# Step 1: ユーザー作成（初回のみ）
+USER_COUNT=500000 node scripts/seed-users.js
+
+# Step 2: 認可コード生成（何度でも実行可能）
 BASE_URL="https://conformance.authrim.com" \
 CLIENT_ID="<your-client-id>" \
 CLIENT_SECRET="<your-client-secret>" \
 ADMIN_API_SECRET="<your-admin-secret>" \
-AUTH_CODE_COUNT=100 \
-CONCURRENCY=10 \
+AUTH_CODE_COUNT=50000 \
+CONCURRENCY=50 \
 node scripts/seed-authcodes.js
 ```
 
+| 環境変数 | 必須 | デフォルト | 説明 |
+|---------|------|-----------|------|
+| `CLIENT_ID` | Yes | - | OAuth Client ID |
+| `CLIENT_SECRET` | Yes | - | OAuth Client Secret |
+| `ADMIN_API_SECRET` | Yes | - | Admin API Bearer Token |
+| `BASE_URL` | No | `https://conformance.authrim.com` | 対象URL |
+| `AUTH_CODE_COUNT` | No | `1000` | 生成する認可コード数 |
+| `USER_COUNT` | No | `0`（全ユーザー使用） | 使用するユーザー数 |
+| `CONCURRENCY` | No | `10` | 並列数 |
+
 **出力:** `seeds/authorization_codes.json`
+
+**特徴:**
+- 事前作成ユーザーを使用（ユーザー作成とシード生成を分離）
+- ユーザーはDB初期化まで何度でも再利用可能
+- シャード分散が保証される（FNV-1aハッシュ）
 
 ---
 
@@ -221,6 +278,32 @@ COUNT=150 CONCURRENCY=20 node scripts/seed-refresh-tokens.js
 # 3. テスト実行
 k6 run --env PRESET=rps100 scripts/test-refresh.js
 ```
+
+### Authorization Code負荷テスト（推奨ワークフロー）
+
+```bash
+cd load-testing
+
+# 1. 環境変数設定
+export BASE_URL="https://conformance.authrim.com"
+export CLIENT_ID="<your-client-id>"
+export CLIENT_SECRET="<your-client-secret>"
+export ADMIN_API_SECRET="<your-admin-secret>"
+
+# 2. ユーザー事前作成（初回のみ、DB初期化まで再利用可能）
+USER_COUNT=500000 CONCURRENCY=50 node scripts/seed-users.js
+
+# 3. 認可コード生成（テストごとに実行）
+AUTH_CODE_COUNT=50000 CONCURRENCY=50 node scripts/seed-authcodes.js
+
+# 4. テスト実行
+k6 run --env PRESET=rps300 scripts/test-authcode.js
+```
+
+**ポイント:**
+- Step 2 のユーザー作成は初回のみ実行（DBを初期化しない限り再利用可能）
+- Step 3 の認可コード生成はテストごとに実行（1回限り使用のため）
+- ユーザーとシード生成を分離することで、繰り返しテストが高速化
 
 ---
 
