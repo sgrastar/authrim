@@ -17,65 +17,30 @@ import {
   passkeyLoginVerifyHandler,
 } from '../passkey';
 
-// Mock @simplewebauthn/server
-vi.mock('@simplewebauthn/server', () => ({
-  generateRegistrationOptions: vi.fn().mockResolvedValue({
-    challenge: 'mock-challenge-base64',
-    rp: { name: 'Test RP', id: 'example.com' },
-    user: {
-      id: 'user-id-base64',
-      name: 'test@example.com',
-      displayName: 'Test User',
-    },
-    pubKeyCredParams: [{ alg: -7, type: 'public-key' }],
-    timeout: 60000,
-    attestation: 'none',
-    authenticatorSelection: {
-      residentKey: 'required',
-      userVerification: 'required',
-    },
-  }),
-  generateAuthenticationOptions: vi.fn().mockResolvedValue({
-    challenge: 'mock-auth-challenge-base64',
-    timeout: 60000,
-    rpId: 'example.com',
-    allowCredentials: [],
-    userVerification: 'required',
-  }),
-  verifyRegistrationResponse: vi.fn().mockResolvedValue({
-    verified: true,
-    registrationInfo: {
-      credentialID: 'mock-credential-id',
-      credentialPublicKey: new Uint8Array([1, 2, 3, 4]),
-      counter: 0,
-      credentialDeviceType: 'singleDevice',
-      credentialBackedUp: false,
-      aaguid: '00000000-0000-0000-0000-000000000000',
-      attestationObject: new Uint8Array([5, 6, 7, 8]),
-    },
-  }),
-  verifyAuthenticationResponse: vi.fn().mockResolvedValue({
-    verified: true,
-    authenticationInfo: {
-      credentialID: 'mock-credential-id',
-      newCounter: 1,
-      credentialDeviceType: 'singleDevice',
-      credentialBackedUp: false,
-    },
-  }),
+// Define mock functions using vi.hoisted for proper ESM module mocking
+const mockWebAuthnFunctions = vi.hoisted(() => ({
+  generateRegistrationOptions: vi.fn(),
+  generateAuthenticationOptions: vi.fn(),
+  verifyRegistrationResponse: vi.fn(),
+  verifyAuthenticationResponse: vi.fn(),
 }));
+
+const mockIsoBase64URL = vi.hoisted(() => ({
+  isBase64URL: vi.fn(),
+  isBase64: vi.fn(),
+  trimPadding: vi.fn(),
+  fromBuffer: vi.fn(),
+  toBuffer: vi.fn(),
+  toBase64: vi.fn(),
+  fromUTF8String: vi.fn(),
+}));
+
+// Mock @simplewebauthn/server
+vi.mock('@simplewebauthn/server', () => mockWebAuthnFunctions);
 
 // Mock @simplewebauthn/server/helpers
 vi.mock('@simplewebauthn/server/helpers', () => ({
-  isoBase64URL: {
-    isBase64URL: vi.fn().mockReturnValue(true),
-    isBase64: vi.fn().mockReturnValue(false),
-    trimPadding: vi.fn().mockImplementation((input: string) => input),
-    fromBuffer: vi.fn().mockImplementation(() => 'mock-base64url-string'),
-    toBuffer: vi.fn().mockImplementation(() => new Uint8Array([1, 2, 3, 4])),
-    toBase64: vi.fn().mockImplementation((input: string) => input),
-    fromUTF8String: vi.fn().mockImplementation((input: string) => input),
-  },
+  isoBase64URL: mockIsoBase64URL,
 }));
 
 // Helper to create mock D1Database
@@ -219,6 +184,64 @@ function createMockContext(options: {
 describe('Passkey Handlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+
+    // Setup WebAuthn mock implementations
+    mockWebAuthnFunctions.generateRegistrationOptions.mockResolvedValue({
+      challenge: 'mock-challenge-base64',
+      rp: { name: 'Test RP', id: 'example.com' },
+      user: {
+        id: 'user-id-base64',
+        name: 'test@example.com',
+        displayName: 'Test User',
+      },
+      pubKeyCredParams: [{ alg: -7, type: 'public-key' }],
+      timeout: 60000,
+      attestation: 'none',
+      authenticatorSelection: {
+        residentKey: 'required',
+        userVerification: 'required',
+      },
+    });
+
+    mockWebAuthnFunctions.generateAuthenticationOptions.mockResolvedValue({
+      challenge: 'mock-auth-challenge-base64',
+      timeout: 60000,
+      rpId: 'example.com',
+      allowCredentials: [],
+      userVerification: 'required',
+    });
+
+    mockWebAuthnFunctions.verifyRegistrationResponse.mockResolvedValue({
+      verified: true,
+      registrationInfo: {
+        credentialID: 'mock-credential-id',
+        credentialPublicKey: new Uint8Array([1, 2, 3, 4]),
+        counter: 0,
+        credentialDeviceType: 'singleDevice',
+        credentialBackedUp: false,
+        aaguid: '00000000-0000-0000-0000-000000000000',
+        attestationObject: new Uint8Array([5, 6, 7, 8]),
+      },
+    });
+
+    mockWebAuthnFunctions.verifyAuthenticationResponse.mockResolvedValue({
+      verified: true,
+      authenticationInfo: {
+        credentialID: 'mock-credential-id',
+        newCounter: 1,
+        credentialDeviceType: 'singleDevice',
+        credentialBackedUp: false,
+      },
+    });
+
+    // Setup isoBase64URL mock implementations
+    mockIsoBase64URL.isBase64URL.mockReturnValue(true);
+    mockIsoBase64URL.isBase64.mockReturnValue(false);
+    mockIsoBase64URL.trimPadding.mockImplementation((input: string) => input);
+    mockIsoBase64URL.fromBuffer.mockImplementation(() => 'mock-base64url-string');
+    mockIsoBase64URL.toBuffer.mockImplementation(() => new Uint8Array([1, 2, 3, 4]));
+    mockIsoBase64URL.toBase64.mockImplementation((input: string) => input);
+    mockIsoBase64URL.fromUTF8String.mockImplementation((input: string) => input);
   });
 
   afterEach(() => {
