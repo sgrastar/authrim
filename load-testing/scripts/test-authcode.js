@@ -302,22 +302,22 @@ export function setup() {
  * @returns グローバルに一意なコードインデックス
  */
 function getGlobalCodeIndex(codePoolSize) {
-  // K6 Cloud環境変数からインスタンス情報を取得
-  // ローカル実行時は0/1がデフォルト
-  const instanceId = parseInt(__ENV.K6_CLOUDRUN_INSTANCE_ID || '0', 10);
-  const maxInstances = parseInt(__ENV.MAX_INSTANCES || '10', 10); // 安全のため10をデフォルト
+  // K6 Cloud: exec.instance からインスタンス情報を取得
+  // ローカル実行時は 0/1 がデフォルト
+  const instanceId = exec.instance.currentInstance || 0;
+  const instancesCount = exec.instance.instancesCount || 1;
 
   // インスタンス内のイテレーション番号（各インスタンスで0から始まる）
   const localIteration = exec.scenario.iterationInInstance;
 
   // シャード分割: 各インスタンスが異なるコードを使用
-  // instanceId + (localIteration * maxInstances) でインターリーブ
-  const globalIndex = instanceId + localIteration * maxInstances;
+  // instanceId + (localIteration * instancesCount) でインターリーブ
+  const globalIndex = instanceId + localIteration * instancesCount;
 
   // 初回のみデバッグログ出力
   if (localIteration < 3) {
     console.log(
-      `[shard-split] instanceId=${instanceId}, maxInstances=${maxInstances}, ` +
+      `[shard-split] instanceId=${instanceId}, instancesCount=${instancesCount}, ` +
         `localIter=${localIteration}, globalIndex=${globalIndex}, poolSize=${codePoolSize}`
     );
   }

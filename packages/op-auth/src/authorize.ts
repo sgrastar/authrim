@@ -1858,6 +1858,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             authTime: currentAuthTime,
             acr: selectedAcr,
             dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
+            sid: sessionId, // OIDC Session Management: Session ID for RP-Initiated Logout
           }),
         })
       );
@@ -1933,6 +1934,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
       // Create ID token with appropriate claims
       // Build base claims for ID token
+      // Note: sid (session ID) is required for RP-Initiated Logout per OIDC Session Management 1.0
       const idTokenClaims: Record<string, unknown> = {
         iss: issuer,
         sub,
@@ -1941,6 +1943,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         nonce, // Include nonce (required for implicit/hybrid flows)
         c_hash: cHash,
         at_hash: atHash,
+        ...(sessionId && { sid: sessionId }), // OIDC Session Management: Session ID for RP-Initiated Logout
       };
 
       // Add acr claim if acr_values was requested (OIDC Core 2: SHOULD return acr)

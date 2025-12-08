@@ -30,6 +30,11 @@ import type { JSONWebKeySet, CryptoKey } from 'jose';
  * Handles browser-initiated logout requests.
  * Invalidates the user's session and redirects to the post-logout URI.
  *
+ * Per OIDC RP-Initiated Logout 1.0:
+ * - Session is ALWAYS invalidated when user visits logout endpoint (if session exists)
+ * - Redirect to post_logout_redirect_uri only if validation passes
+ * - Otherwise redirect to default /logged-out page
+ *
  * Query Parameters:
  * - id_token_hint: ID token issued to the RP
  * - post_logout_redirect_uri: Where to redirect after logout
@@ -47,6 +52,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     let sid: string | undefined;
 
     // Helper function to get public key from KeyManager
+    // Matches the key by 'kid' from the JWT header
     const getPublicKey = async (): Promise<CryptoKey> => {
       const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
       const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
@@ -62,144 +68,105 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
 
       const jwks = (await jwksResponse.json()) as JSONWebKeySet;
-      const key = jwks.keys[0];
-      if (!key) {
-        throw new Error('No keys in JWKS');
+
+      // Extract kid from id_token_hint header if available
+      let targetKid: string | undefined;
+      if (idTokenHint) {
+        try {
+          const headerPart = idTokenHint.split('.')[0];
+          const header = JSON.parse(atob(headerPart.replace(/-/g, '+').replace(/_/g, '/')));
+          targetKid = header.kid;
+        } catch {
+          // If we can't parse the header, fall back to first key
+        }
       }
+
+      // Find the matching key by kid, or use the first key as fallback
+      let key;
+      if (targetKid) {
+        key = jwks.keys.find((k) => k.kid === targetKid);
+        if (!key) {
+          // Key not found by kid - this could mean the key was rotated out
+          throw new Error(`Key with kid '${targetKid}' not found in JWKS`);
+        }
+      } else {
+        key = jwks.keys[0];
+        if (!key) {
+          throw new Error('No keys in JWKS');
+        }
+      }
+
       return (await importJWK(key)) as CryptoKey;
     };
 
-    // Step 1: Validate parameter combination
-    // If post_logout_redirect_uri is provided, id_token_hint is required
-    const paramValidation = validateLogoutParameters(postLogoutRedirectUri, idTokenHint, true);
-    if (!paramValidation.valid) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: paramValidation.error,
-        },
-        400
-      );
-    }
-
-    // Step 2: Validate and parse ID token hint if provided
+    // ========================================
+    // Step 1: Validate id_token_hint for session identification
+    // ========================================
+    // We validate the signature BEFORE using sid for session deletion
+    // to prevent attackers from crafting fake tokens to log out other users
+    let idTokenValid = false;
     if (idTokenHint) {
       const idTokenResult = await validateIdTokenHint(idTokenHint, getPublicKey, c.env.ISSUER_URL, {
         required: false,
-        allowExpired: true,
+        allowExpired: true, // Allow expired tokens for logout
       });
 
-      if (!idTokenResult.valid) {
-        // Return error for invalid id_token_hint
-        return c.json(
-          {
-            error: idTokenResult.errorCode || 'invalid_request',
-            error_description: idTokenResult.error,
-          },
-          400
-        );
-      }
-
-      userId = idTokenResult.userId;
-      clientId = idTokenResult.clientId;
-      sid = idTokenResult.sid;
-    }
-
-    // Step 3: Validate post_logout_redirect_uri if provided
-    if (postLogoutRedirectUri) {
-      if (!clientId) {
-        // This shouldn't happen if step 1 validation passed, but double-check
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'Cannot validate post_logout_redirect_uri without id_token_hint',
-          },
-          400
-        );
-      }
-
-      // Get client configuration
-      const client = await c.env.DB.prepare(
-        'SELECT redirect_uris, post_logout_redirect_uris FROM oauth_clients WHERE client_id = ?'
-      )
-        .bind(clientId)
-        .first();
-
-      if (!client) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'Client not found',
-          },
-          400
-        );
-      }
-
-      // Per OIDC RP-Initiated Logout 1.0, only post_logout_redirect_uris should be used
-      // Do NOT fall back to redirect_uris - this is a security measure to ensure
-      // only explicitly registered logout URIs are allowed
-      let registeredUris: string[] = [];
-      if (client.post_logout_redirect_uris) {
-        registeredUris = JSON.parse(client.post_logout_redirect_uris as string) as string[];
-      }
-
-      // If no post_logout_redirect_uris are registered, reject the request
-      if (registeredUris.length === 0) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'No post_logout_redirect_uris registered for this client',
-          },
-          400
-        );
-      }
-
-      const uriValidation = validatePostLogoutRedirectUri(postLogoutRedirectUri, registeredUris);
-      if (!uriValidation.valid) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: uriValidation.error,
-          },
-          400
-        );
+      if (idTokenResult.valid) {
+        userId = idTokenResult.userId;
+        clientId = idTokenResult.clientId;
+        sid = idTokenResult.sid;
+        idTokenValid = true;
+      } else {
+        console.warn('id_token_hint validation failed:', idTokenResult.error);
       }
     }
 
-    // Step 4: Invalidate session
+    // ========================================
+    // Step 2: Invalidate sessions
+    // ========================================
+    // Per OIDC spec, when user visits logout endpoint, they intend to log out.
+    // We delete sessions from:
+    // 1. Cookie (always - this is the browser's session)
+    // 2. sid from validated id_token_hint (if valid - for server-to-server logout)
     const sessionId = getCookie(c, 'authrim_session');
+    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
+    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+    const deletedSessions: string[] = [];
 
+    // Delete session from cookie if present
     if (sessionId) {
-      const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-      const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
-
       const deleteResponse = await sessionStore.fetch(
         new Request(`https://session-store/session/${sessionId}`, {
           method: 'DELETE',
         })
       );
 
-      if (!deleteResponse.ok) {
-        console.warn('Failed to delete session:', sessionId);
-      }
-
-      if (userId) {
-        console.log(
-          `User ${userId} logged out from client ${clientId || 'unknown'}${sid ? ` (sid: ${sid})` : ''}`
-        );
+      if (deleteResponse.ok) {
+        deletedSessions.push(sessionId);
+      } else {
+        console.warn('Failed to delete cookie session:', sessionId);
       }
     }
 
-    // Step 5: Build redirect URL
-    let redirectUrl = postLogoutRedirectUri || `${c.env.ISSUER_URL}/logged-out`;
+    // Also delete session by sid from id_token_hint (only if signature was verified)
+    // This ensures logout works even when called without browser cookies
+    // Security: We only trust sid from verified tokens to prevent DoS attacks
+    if (idTokenValid && sid && sid !== sessionId && !deletedSessions.includes(sid)) {
+      const deleteResponse = await sessionStore.fetch(
+        new Request(`https://session-store/session/${sid}`, {
+          method: 'DELETE',
+        })
+      );
 
-    if (state && postLogoutRedirectUri) {
-      const url = new URL(redirectUrl);
-      url.searchParams.set('state', state);
-      redirectUrl = url.toString();
+      if (deleteResponse.ok) {
+        deletedSessions.push(sid);
+      } else {
+        // Session might not exist or already deleted - this is OK
+        console.debug('Session from id_token_hint not found or already deleted:', sid);
+      }
     }
 
-    // Step 6: Clear session cookie
+    // Step 3: Clear session cookie immediately
     setCookie(c, 'authrim_session', '', {
       path: '/',
       httpOnly: true,
@@ -208,10 +175,121 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       maxAge: 0,
     });
 
-    // Step 7: Redirect to post-logout URI
+    // ========================================
+    // Step 4: Validate parameters for redirect
+    // ========================================
+    // Even if validation fails, user is already logged out.
+    // Validation only determines WHERE to redirect.
+
+    // Track validation state and error reason
+    let canRedirectToRequestedUri = true;
+    let validationError: string | undefined;
+
+    // Step 4a: Validate parameter combination
+    // If post_logout_redirect_uri is provided, id_token_hint is required
+    const paramValidation = validateLogoutParameters(postLogoutRedirectUri, idTokenHint, true);
+    if (!paramValidation.valid) {
+      console.warn('Logout parameter validation failed:', paramValidation.error);
+      canRedirectToRequestedUri = false;
+      validationError = 'id_token_hint_required';
+    }
+
+    // Step 4b: Check if id_token_hint was valid (already validated in Step 1)
+    // Only treat invalid id_token_hint as an error when post_logout_redirect_uri is provided,
+    // since we need to validate the redirect URI against the client's registered URIs.
+    // Without post_logout_redirect_uri, invalid id_token_hint just means we can't use sid from it.
+    if (canRedirectToRequestedUri && postLogoutRedirectUri && idTokenHint && !idTokenValid) {
+      canRedirectToRequestedUri = false;
+      validationError = 'invalid_id_token_hint';
+    }
+
+    // Step 4c: Validate post_logout_redirect_uri if provided
+    if (canRedirectToRequestedUri && postLogoutRedirectUri) {
+      if (!clientId) {
+        console.warn('Cannot validate post_logout_redirect_uri without valid id_token_hint');
+        canRedirectToRequestedUri = false;
+        validationError = 'invalid_id_token_hint';
+      } else {
+        // Get client configuration
+        const client = await c.env.DB.prepare(
+          'SELECT redirect_uris, post_logout_redirect_uris FROM oauth_clients WHERE client_id = ?'
+        )
+          .bind(clientId)
+          .first();
+
+        if (!client) {
+          console.warn('Client not found for logout:', clientId);
+          canRedirectToRequestedUri = false;
+          validationError = 'invalid_client';
+        } else {
+          // Per OIDC RP-Initiated Logout 1.0, only post_logout_redirect_uris should be used
+          let registeredUris: string[] = [];
+          if (client.post_logout_redirect_uris) {
+            registeredUris = JSON.parse(client.post_logout_redirect_uris as string) as string[];
+          }
+
+          if (registeredUris.length === 0) {
+            console.warn('No post_logout_redirect_uris registered for client:', clientId);
+            canRedirectToRequestedUri = false;
+            validationError = 'unregistered_post_logout_redirect_uri';
+          } else {
+            const uriValidation = validatePostLogoutRedirectUri(
+              postLogoutRedirectUri,
+              registeredUris
+            );
+            if (!uriValidation.valid) {
+              console.warn('post_logout_redirect_uri validation failed:', uriValidation.error);
+              canRedirectToRequestedUri = false;
+              validationError = 'unregistered_post_logout_redirect_uri';
+            }
+          }
+        }
+      }
+    }
+
+    // Log the logout event
+    if (deletedSessions.length > 0) {
+      console.log(
+        `User ${userId || 'unknown'} logged out from client ${clientId || 'unknown'}, deleted sessions: [${deletedSessions.join(', ')}]`
+      );
+    }
+
+    // ========================================
+    // Step 5: Build redirect URL
+    // ========================================
+    let redirectUrl: string;
+
+    if (canRedirectToRequestedUri && postLogoutRedirectUri) {
+      // Validation passed - redirect to requested URI
+      redirectUrl = postLogoutRedirectUri;
+      if (state) {
+        const url = new URL(redirectUrl);
+        url.searchParams.set('state', state);
+        redirectUrl = url.toString();
+      }
+    } else if (validationError) {
+      // Validation failed - redirect to error page
+      // Per OIDC spec, OP SHOULD display an error page when validation fails
+      const errorUrl = new URL(`${c.env.ISSUER_URL}/logout-error`);
+      errorUrl.searchParams.set('error', validationError);
+      redirectUrl = errorUrl.toString();
+    } else {
+      // No URI requested and no error - redirect to default logout success page
+      redirectUrl = `${c.env.ISSUER_URL}/logged-out`;
+    }
+
+    // Step 6: Redirect to post-logout URI
     return c.redirect(redirectUrl, 302);
   } catch (error) {
     console.error('Front-channel logout error:', error);
+    // Even on error, try to clear session cookie
+    setCookie(c, 'authrim_session', '', {
+      path: '/',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'None',
+      maxAge: 0,
+    });
     return c.json(
       {
         error: 'server_error',
@@ -314,18 +392,34 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
       const jwks = (await jwksResponse.json()) as JSONWebKeySet;
 
-      // Create a local JWKS resolver
-      const getKey = async () => {
-        // Return the first key from JWKS (in production, match by kid)
-        const key = jwks.keys[0];
-        if (!key) {
-          throw new Error('No keys in JWKS');
+      // Extract kid from logout token header and find matching key
+      let key;
+      try {
+        const headerPart = logoutToken.split('.')[0];
+        const header = JSON.parse(atob(headerPart.replace(/-/g, '+').replace(/_/g, '/')));
+        const targetKid = header.kid;
+
+        if (targetKid) {
+          key = jwks.keys.find((k) => k.kid === targetKid);
+          if (!key) {
+            throw new Error(`Key with kid '${targetKid}' not found in JWKS`);
+          }
+        } else {
+          key = jwks.keys[0];
         }
-        return await importJWK(key);
-      };
+      } catch {
+        // If we can't parse the header, fall back to first key
+        key = jwks.keys[0];
+      }
+
+      if (!key) {
+        throw new Error('No keys in JWKS');
+      }
+
+      const publicKey = await importJWK(key);
 
       // Verify JWT
-      const { payload } = await jwtVerify(logoutToken, await getKey(), {
+      const { payload } = await jwtVerify(logoutToken, publicKey, {
         issuer: c.env.ISSUER_URL,
         algorithms: ['RS256'],
       });

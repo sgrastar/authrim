@@ -188,6 +188,186 @@ app.get('/session/check', checkSessionIframeHandler); // Check session iframe fo
 app.get('/logout', frontChannelLogoutHandler);
 app.post('/logout/backchannel', backChannelLogoutHandler);
 
+// Logged out page - displayed after successful logout when no valid post_logout_redirect_uri
+// If UI_URL is configured, redirect to UI's logged-out page
+// Otherwise, show built-in HTML (for conformance testing)
+app.get('/logged-out', (c) => {
+  // Check if UI_URL is configured - if so, redirect to UI
+  const uiUrl = c.env.UI_URL;
+  if (uiUrl) {
+    return c.redirect(`${uiUrl}/logged-out`, 302);
+  }
+
+  // Fallback: show built-in HTML (for conformance testing without UI)
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Logged Out - Authrim</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .container {
+      background: white;
+      padding: 2rem 3rem;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+      text-align: center;
+      max-width: 400px;
+    }
+    .icon {
+      font-size: 4rem;
+      margin-bottom: 1rem;
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 0.5rem;
+      font-size: 1.5rem;
+    }
+    p {
+      color: #666;
+      margin-bottom: 1.5rem;
+    }
+    .footer {
+      margin-top: 2rem;
+      color: #999;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">✓</div>
+    <h1>You have been logged out</h1>
+    <p>Your session has been successfully terminated.</p>
+    <p>You may close this window or navigate to your application.</p>
+    <div class="footer">Powered by Authrim</div>
+  </div>
+</body>
+</html>`;
+  return c.html(html);
+});
+
+// Logout error page - displayed when logout validation fails
+// Per OIDC RP-Initiated Logout spec, OP SHOULD display an error page when:
+// - post_logout_redirect_uri is not registered
+// - id_token_hint is invalid or missing (when required)
+app.get('/logout-error', (c) => {
+  const error = c.req.query('error') || 'unknown_error';
+
+  // Error messages for different validation failures
+  const errorMessages: Record<string, { title: string; description: string }> = {
+    unregistered_post_logout_redirect_uri: {
+      title: 'Invalid Redirect URI',
+      description:
+        'The post_logout_redirect_uri provided is not registered for this client. The logout request cannot be completed with the specified redirect URI.',
+    },
+    invalid_id_token_hint: {
+      title: 'Invalid ID Token',
+      description:
+        'The id_token_hint provided is invalid or has been tampered with. Please ensure you are using a valid ID token issued by this authorization server.',
+    },
+    id_token_hint_required: {
+      title: 'ID Token Required',
+      description:
+        'An id_token_hint is required when specifying a post_logout_redirect_uri. Please include a valid ID token in your logout request.',
+    },
+    invalid_client: {
+      title: 'Invalid Client',
+      description:
+        'The client specified in the ID token could not be found. The logout request cannot be processed.',
+    },
+    unknown_error: {
+      title: 'Logout Error',
+      description:
+        'An error occurred while processing your logout request. Your session may have been terminated, but we could not redirect you to the requested location.',
+    },
+  };
+
+  const errorInfo = errorMessages[error] || errorMessages['unknown_error'];
+
+  // Check if UI_URL is configured - if so, redirect to UI
+  const uiUrl = c.env.UI_URL;
+  if (uiUrl) {
+    return c.redirect(`${uiUrl}/logout-error?error=${encodeURIComponent(error)}`, 302);
+  }
+
+  // Fallback: show built-in HTML (for conformance testing without UI)
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Logout Error - Authrim</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+    }
+    .container {
+      background: white;
+      padding: 2rem 3rem;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+      text-align: center;
+      max-width: 500px;
+    }
+    .icon {
+      font-size: 4rem;
+      margin-bottom: 1rem;
+    }
+    h1 {
+      color: #c0392b;
+      margin-bottom: 0.5rem;
+      font-size: 1.5rem;
+    }
+    p {
+      color: #666;
+      margin-bottom: 1rem;
+      line-height: 1.6;
+    }
+    .error-code {
+      background: #f8f9fa;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      font-family: monospace;
+      color: #666;
+      font-size: 0.9rem;
+      margin-top: 1rem;
+    }
+    .footer {
+      margin-top: 2rem;
+      color: #999;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">⚠</div>
+    <h1>${errorInfo.title}</h1>
+    <p>${errorInfo.description}</p>
+    <div class="error-code">Error: ${error}</div>
+    <div class="footer">Powered by Authrim</div>
+  </div>
+</body>
+</html>`;
+  return c.html(html);
+});
+
 // 404 handler
 app.notFound((c) => {
   return c.json({ error: 'not_found', message: 'The requested resource was not found' }, 404);

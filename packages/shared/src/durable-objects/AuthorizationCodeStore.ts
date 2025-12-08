@@ -41,6 +41,7 @@ export interface AuthorizationCode {
   acr?: string; // OIDC acr (Authentication Context Class Reference)
   cHash?: string; // OIDC c_hash for hybrid flows (RFC 3.3.2.11)
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449) - binds code to DPoP key
+  sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
   used: boolean;
   expiresAt: number;
   createdAt: number;
@@ -67,6 +68,7 @@ export interface StoreCodeRequest {
   acr?: string;
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
+  sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
 }
 
 /**
@@ -95,6 +97,7 @@ export interface ConsumeCodeResponse {
   acr?: string;
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
+  sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
   // Present when replay attack is detected - contains JTIs to revoke
   replayAttack?: {
     accessTokenJti?: string;
@@ -330,6 +333,7 @@ export class AuthorizationCodeStore {
       acr: request.acr,
       cHash: request.cHash,
       dpopJkt: request.dpopJkt,
+      sid: request.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
       used: false,
       expiresAt: now + this.CODE_TTL * 1000,
       createdAt: now,
@@ -438,6 +442,7 @@ export class AuthorizationCodeStore {
       acr: stored.acr,
       cHash: stored.cHash,
       dpopJkt: stored.dpopJkt,
+      sid: stored.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
     };
   }
 

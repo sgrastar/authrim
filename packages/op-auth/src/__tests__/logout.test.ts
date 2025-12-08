@@ -216,7 +216,7 @@ describe('Front-channel Logout', () => {
       expect(c.redirect).toHaveBeenCalled();
     });
 
-    it('should return error when id_token_hint validation fails', async () => {
+    it('should redirect to default page when id_token_hint validation fails (without post_logout_redirect_uri)', async () => {
       const { c } = createMockContext({
         query: {
           id_token_hint: 'invalid.id.token',
@@ -232,17 +232,37 @@ describe('Front-channel Logout', () => {
 
       await frontChannelLogoutHandler(c);
 
-      // Should return error for invalid id_token_hint per OIDC spec
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'invalid_token',
-          error_description: expect.stringContaining('validation failed'),
-        }),
-        400
+      // Session should still be invalidated even with invalid id_token_hint
+      // Without post_logout_redirect_uri, no validation error - just go to logged-out page
+      expect(c.redirect).toHaveBeenCalledWith('https://op.example.com/logged-out', 302);
+    });
+
+    it('should redirect to error page when id_token_hint validation fails (with post_logout_redirect_uri)', async () => {
+      const { c } = createMockContext({
+        query: {
+          id_token_hint: 'invalid.id.token',
+          post_logout_redirect_uri: 'https://app.example.com/logout-callback',
+        },
+      });
+
+      vi.mocked(getCookie).mockReturnValue('session-123');
+      vi.mocked(validateIdTokenHint).mockResolvedValue({
+        valid: false,
+        error: 'id_token_hint validation failed',
+        errorCode: 'invalid_token',
+      });
+
+      await frontChannelLogoutHandler(c);
+
+      // Session should still be invalidated even with invalid id_token_hint
+      // With post_logout_redirect_uri, invalid id_token_hint is an error
+      expect(c.redirect).toHaveBeenCalledWith(
+        'https://op.example.com/logout-error?error=invalid_id_token_hint',
+        302
       );
     });
 
-    it('should return error when id_token_hint format is invalid', async () => {
+    it('should redirect to default page when id_token_hint format is invalid', async () => {
       const { c } = createMockContext({
         query: {
           id_token_hint: 'not-a-valid-jwt',
@@ -258,12 +278,9 @@ describe('Front-channel Logout', () => {
 
       await frontChannelLogoutHandler(c);
 
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'invalid_token',
-        }),
-        400
-      );
+      // Session should still be invalidated even with invalid format
+      // Redirect to default logout page instead of returning error
+      expect(c.redirect).toHaveBeenCalledWith('https://op.example.com/logged-out', 302);
     });
   });
 
@@ -301,7 +318,7 @@ describe('Front-channel Logout', () => {
       expect(c.redirect).toHaveBeenCalledWith('https://app.example.com/logout-callback', 302);
     });
 
-    it('should reject unregistered post_logout_redirect_uri', async () => {
+    it('should redirect to error page for unregistered post_logout_redirect_uri', async () => {
       const { c } = createMockContext({
         query: {
           id_token_hint: 'valid.id.token',
@@ -331,16 +348,15 @@ describe('Front-channel Logout', () => {
 
       await frontChannelLogoutHandler(c);
 
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'invalid_request',
-          error_description: expect.stringContaining('not registered'),
-        }),
-        400
+      // Session should still be invalidated, but redirect to error page
+      // instead of malicious URI - per OIDC conformance requirements
+      expect(c.redirect).toHaveBeenCalledWith(
+        'https://op.example.com/logout-error?error=unregistered_post_logout_redirect_uri',
+        302
       );
     });
 
-    it('should reject when no post_logout_redirect_uris are registered', async () => {
+    it('should redirect to error page when no post_logout_redirect_uris are registered', async () => {
       const { c } = createMockContext({
         query: {
           id_token_hint: 'valid.id.token',
@@ -368,12 +384,11 @@ describe('Front-channel Logout', () => {
 
       await frontChannelLogoutHandler(c);
 
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'invalid_request',
-          error_description: expect.stringContaining('No post_logout_redirect_uris registered'),
-        }),
-        400
+      // Session should still be invalidated, redirect to error page
+      // since no post_logout_redirect_uris are registered - this is a validation error
+      expect(c.redirect).toHaveBeenCalledWith(
+        'https://op.example.com/logout-error?error=unregistered_post_logout_redirect_uri',
+        302
       );
     });
 
@@ -413,7 +428,7 @@ describe('Front-channel Logout', () => {
       );
     });
 
-    it('should require id_token_hint when post_logout_redirect_uri is provided', async () => {
+    it('should redirect to error page when id_token_hint is missing but post_logout_redirect_uri provided', async () => {
       const { c } = createMockContext({
         query: {
           post_logout_redirect_uri: 'https://app.example.com/logout-callback',
@@ -429,13 +444,12 @@ describe('Front-channel Logout', () => {
 
       await frontChannelLogoutHandler(c);
 
-      // Should return error when id_token_hint is missing
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'invalid_request',
-          error_description: expect.stringContaining('id_token_hint is required'),
-        }),
-        400
+      // Session should still be invalidated, but redirect to error page
+      // since we can't validate post_logout_redirect_uri without id_token_hint
+      // Per OIDC RP-Initiated Logout spec, this is a validation error
+      expect(c.redirect).toHaveBeenCalledWith(
+        'https://op.example.com/logout-error?error=id_token_hint_required',
+        302
       );
     });
 

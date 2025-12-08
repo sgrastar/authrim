@@ -126,6 +126,10 @@ export interface IDTokenClaims {
   acr?: string;
   amr?: string[];
   azp?: string;
+  // OIDC Session Management claim
+  // https://openid.net/specs/openid-connect-session-1_0.html
+  // https://openid.net/specs/openid-connect-rpinitiated-1_0.html
+  sid?: string; // Session ID - used for RP-Initiated Logout
   // Standard profile claims
   name?: string;
   given_name?: string;

@@ -218,6 +218,8 @@ app.get('/session/check', async (c) => {
  * Logout endpoints - Route to OP_AUTH worker
  * - /logout - Front-channel logout
  * - /logout/backchannel - Back-channel logout (RFC 8725)
+ * - /logged-out - Post-logout landing page (success)
+ * - /logout-error - Post-logout landing page (validation error)
  */
 app.get('/logout', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
@@ -225,6 +227,16 @@ app.get('/logout', async (c) => {
 });
 
 app.post('/logout/backchannel', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.get('/logged-out', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.get('/logout-error', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });

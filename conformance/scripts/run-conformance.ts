@@ -27,6 +27,7 @@ import type {
   TestUser,
   ExpectedFailure,
   ModuleInfo,
+  TestStatus,
 } from './lib/types.js';
 
 // Test specification types
@@ -53,7 +54,7 @@ interface TestSpecEntry {
   testSummary: string;
   variant: Record<string, string>;
   requiresScreenshot: boolean;
-  screenshotTiming: ScreenshotTiming | string;  // string allows comma-separated values
+  screenshotTiming: ScreenshotTiming | string; // string allows comma-separated values
   expectedError: string | null;
   notes: string;
 }
@@ -132,7 +133,8 @@ async function main() {
   const ENVIRONMENTS = config.environments;
 
   // Validate environment variables
-  const conformanceServer = process.env.CONFORMANCE_SERVER || 'https://www.certification.openid.net';
+  const conformanceServer =
+    process.env.CONFORMANCE_SERVER || 'https://www.certification.openid.net';
   const conformanceToken = process.env.CONFORMANCE_TOKEN;
   const adminApiSecret = process.env.ADMIN_API_SECRET;
 
@@ -219,9 +221,7 @@ async function main() {
   }
 
   // Determine which plans to run
-  const plansToRun: string[] = planArg === 'all'
-    ? Object.keys(TEST_PLANS)
-    : [planArg];
+  const plansToRun: string[] = planArg === 'all' ? Object.keys(TEST_PLANS) : [planArg];
 
   // Validate plans
   for (const planKey of plansToRun) {
@@ -279,27 +279,23 @@ async function main() {
       }
 
       try {
-        const result = await runTestPlan(
-          planKey,
-          TEST_PLANS[planKey],
-          {
-            conformanceClient,
-            profileManager,
-            browserAutomator,
-            resultProcessor,
-            logger,
-            outputContext,
-            envConfig,
-            testUser,
-            testSpec,
-            args: {
-              skipProfileSwitch: args['skip-profile-switch'] as boolean,
-              reportOnly: args['report-only'] as boolean,
-              verbose: args.verbose as boolean,
-              exportDir: args['export-dir'] as string,
-            },
-          }
-        );
+        const result = await runTestPlan(planKey, TEST_PLANS[planKey], {
+          conformanceClient,
+          profileManager,
+          browserAutomator,
+          resultProcessor,
+          logger,
+          outputContext,
+          envConfig,
+          testUser,
+          testSpec,
+          args: {
+            skipProfileSwitch: args['skip-profile-switch'] as boolean,
+            reportOnly: args['report-only'] as boolean,
+            verbose: args.verbose as boolean,
+            exportDir: args['export-dir'] as string,
+          },
+        });
         allResults.push({ planKey, result, success: true });
       } catch (error) {
         logger.error(`Error running ${planKey}:`, error);
@@ -374,11 +370,7 @@ interface RunContext {
   };
 }
 
-async function runTestPlan(
-  planKey: string,
-  planDef: TestPlanDefinition,
-  context: RunContext
-) {
+async function runTestPlan(planKey: string, planDef: TestPlanDefinition, context: RunContext) {
   const {
     conformanceClient,
     profileManager,
@@ -424,11 +416,7 @@ async function runTestPlan(
 
   // Step 3: Create test plan
   logger.log(`[3/5] Creating test plan: ${planDef.name}`);
-  const testPlan = await conformanceClient.createTestPlan(
-    planDef.name,
-    config,
-    planDef.variants
-  );
+  const testPlan = await conformanceClient.createTestPlan(planDef.name, config, planDef.variants);
   logger.log(`   Plan ID: ${testPlan.id}`);
   logger.log(`   Plan URL: ${conformanceClient.getPlanUrl(testPlan.id)}`);
 
@@ -453,7 +441,9 @@ async function runTestPlan(
     // Always pass the module's variant when creating tests
     // Each module in the plan has its own variant (client_auth_type, response_type, response_mode)
     // that must be passed to the /api/runner endpoint
-    const moduleVariant = (moduleDef as unknown as Record<string, unknown>).variant as Record<string, string> | undefined;
+    const moduleVariant = (moduleDef as unknown as Record<string, unknown>).variant as
+      | Record<string, string>
+      | undefined;
 
     if (!testModuleName) {
       logger.log(`   ⚠️ Skipping module with no testModule name`);
@@ -497,7 +487,9 @@ async function runTestPlan(
         });
         if (rotateResponse.ok) {
           const rotateResult = await rotateResponse.json();
-          logger.log(`      ✅ Key rotation triggered successfully: ${JSON.stringify(rotateResult)}`);
+          logger.log(
+            `      ✅ Key rotation triggered successfully: ${JSON.stringify(rotateResult)}`
+          );
           // Wait a moment for JWKS cache to be invalidated
           await new Promise((resolve) => setTimeout(resolve, 1000));
         } else {
@@ -519,7 +511,8 @@ async function runTestPlan(
 
       logger.debug(`Created module response:`, JSON.stringify(createdModule, null, 2));
 
-      const moduleId = createdModule.id || (createdModule as unknown as Record<string, unknown>)._id as string;
+      const moduleId =
+        createdModule.id || ((createdModule as unknown as Record<string, unknown>)._id as string);
       logger.debug(`Module ID: ${moduleId}`);
 
       if (!moduleId) {
@@ -529,23 +522,33 @@ async function runTestPlan(
           testName: testModuleName,
           status: 'INTERRUPTED',
           result: 'FAILED',
-          logs: [],  // Empty logs for failed module creation
+          logs: [], // Empty logs for failed module creation
         });
         continue;
       }
 
       // Wait for test to be ready
-      let status = await conformanceClient.waitForState(moduleId, ['CONFIGURED', 'WAITING', 'FINISHED'], {
-        onPoll: (s) => logger.debug(`Status: ${s}`),
-      });
+      let status = await conformanceClient.waitForState(
+        moduleId,
+        ['CONFIGURED', 'WAITING', 'FINISHED'],
+        {
+          onPoll: (s) => logger.debug(`Status: ${s}`),
+        }
+      );
 
       // Handle browser interactions (may require multiple rounds for tests like prompt=login)
       // Some tests require multiple authorization requests (e.g., prompt=login, max_age, id_token_hint)
       let browserInteractionCount = 0;
       const maxBrowserInteractions = 5; // Safety limit
       let processedLogIds = new Set<string>(); // Track already processed auth URLs
+      let hasBrowserError = false; // Track if browser automation failed
 
-      while (status === 'WAITING' && planDef.requiresBrowser && browserAutomator && browserInteractionCount < maxBrowserInteractions) {
+      while (
+        status === 'WAITING' &&
+        planDef.requiresBrowser &&
+        browserAutomator &&
+        browserInteractionCount < maxBrowserInteractions
+      ) {
         browserInteractionCount++;
 
         // Get test logs to find the authorization URL
@@ -564,9 +567,15 @@ async function runTestPlan(
             continue;
           }
 
-          // Check for BuildPlainRedirectToAuthorizationEndpoint - this contains the auth URL
-          if (log.src?.includes('BuildPlainRedirectToAuthorizationEndpoint') ||
-              log.src?.includes('RedirectToAuthorizationEndpoint')) {
+          // Check for redirect log entries - includes both authorization and end_session endpoints
+          // BuildPlainRedirectToAuthorizationEndpoint - standard auth URL
+          // BuildRedirectToEndSessionEndpoint - logout URL (for RP-Initiated Logout tests)
+          if (
+            log.src?.includes('BuildPlainRedirectToAuthorizationEndpoint') ||
+            log.src?.includes('RedirectToAuthorizationEndpoint') ||
+            log.src?.includes('BuildRedirectToEndSessionEndpoint') ||
+            log.src?.includes('RedirectToEndSessionEndpoint')
+          ) {
             logger.debug(`Found redirect log entry: src=${log.src}, msg=${log.msg}`);
             logger.debug(`Full log:`, JSON.stringify(logAny, null, 2));
 
@@ -585,6 +594,13 @@ async function runTestPlan(
               logger.log(`      Found auth URL in redirect_to_authorization_endpoint field`);
               break;
             }
+            // Check for end_session_endpoint redirect (for logout tests)
+            if (logAny.redirect_to_end_session_endpoint) {
+              authUrl = logAny.redirect_to_end_session_endpoint as string;
+              authLogId = logId;
+              logger.log(`      Found logout URL in redirect_to_end_session_endpoint field`);
+              break;
+            }
             if (logAny.redirect_to) {
               authUrl = logAny.redirect_to as string;
               authLogId = logId;
@@ -593,32 +609,132 @@ async function runTestPlan(
             }
           }
 
-          // Also check for logs that contain the actual URL
-          if (log.msg?.includes('conformance.authrim.com/authorize') ||
-              log.msg?.includes('conformance.authrim.com/oauth/authorize')) {
+          // Also check for logs that contain the actual URL (authorize or logout)
+          if (
+            log.msg?.includes('conformance.authrim.com/authorize') ||
+            log.msg?.includes('conformance.authrim.com/oauth/authorize') ||
+            log.msg?.includes('conformance.authrim.com/logout')
+          ) {
             const urlMatch = log.msg?.match(/https?:\/\/conformance\.authrim\.com[^\s"'<>\]]+/);
             if (urlMatch) {
               authUrl = urlMatch[0];
               authLogId = logId;
-              logger.log(`      Found auth URL in message`);
+              const urlType = urlMatch[0].includes('/logout') ? 'logout' : 'auth';
+              logger.log(`      Found ${urlType} URL in message`);
               break;
             }
           }
         }
 
-        // If still no URL, dump all logs for debugging
+        // If no URL found yet, wait for the conformance suite to generate it
+        // This can happen when the suite is processing the authorization callback
+        // and hasn't yet generated the next redirect (e.g., logout URL)
         if (!authUrl) {
-          logger.debug(`⚠️ No auth URL found. Dumping relevant log entries...`);
-          for (const log of logs) {
-            const logAny = log as unknown as Record<string, unknown>;
-            // Show full log structure for logs related to authorization
-            if (log.src?.toLowerCase().includes('redirect') ||
-                log.src?.toLowerCase().includes('authorization') ||
-                log.msg?.toLowerCase().includes('redirect')) {
-              logger.debug(`Log entry:`, JSON.stringify(logAny, null, 2));
+          // Check if this is the first attempt in this iteration
+          // If we just started looking, wait and retry before giving up
+          const maxRetries = 5;
+          let urlRetryCount = 0;
+
+          while (!authUrl && urlRetryCount < maxRetries) {
+            urlRetryCount++;
+            logger.debug(
+              `⚠️ No auth URL found (attempt ${urlRetryCount}/${maxRetries}). Waiting for conformance suite...`
+            );
+
+            // Wait for the conformance suite to process and generate new logs
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // Re-check the test status - if FINISHED, break out
+            const currentStatus = await conformanceClient.getModuleInfo(moduleId);
+            if (currentStatus.status === 'FINISHED') {
+              logger.debug(`Test finished while waiting for URL`);
+              break;
+            }
+
+            // Refresh logs and look for new URLs
+            const refreshedLogs = await conformanceClient.getTestLog(moduleId);
+            for (const log of refreshedLogs) {
+              const logAny = log as unknown as Record<string, unknown>;
+              const logId = logAny._id as string;
+
+              if (logId && processedLogIds.has(logId)) {
+                continue;
+              }
+
+              if (
+                log.src?.includes('BuildPlainRedirectToAuthorizationEndpoint') ||
+                log.src?.includes('RedirectToAuthorizationEndpoint') ||
+                log.src?.includes('BuildRedirectToEndSessionEndpoint') ||
+                log.src?.includes('RedirectToEndSessionEndpoint')
+              ) {
+                if (logAny.redirect_to_authorization_endpoint) {
+                  authUrl = logAny.redirect_to_authorization_endpoint as string;
+                  authLogId = logId;
+                  logger.log(
+                    `      Found auth URL in redirect_to_authorization_endpoint field (retry)`
+                  );
+                  break;
+                }
+                if (logAny.redirect_to_end_session_endpoint) {
+                  authUrl = logAny.redirect_to_end_session_endpoint as string;
+                  authLogId = logId;
+                  logger.log(
+                    `      Found logout URL in redirect_to_end_session_endpoint field (retry)`
+                  );
+                  break;
+                }
+                if (logAny.redirect_to) {
+                  authUrl = logAny.redirect_to as string;
+                  authLogId = logId;
+                  logger.log(`      Found auth URL in redirect_to field (retry)`);
+                  break;
+                }
+                const urlMatch = log.msg?.match(/https?:\/\/[^\s"'<>\]]+/);
+                if (urlMatch) {
+                  authUrl = urlMatch[0];
+                  authLogId = logId;
+                  logger.log(`      Found auth URL in log message (retry)`);
+                  break;
+                }
+              }
+
+              // Also check for URLs in message content
+              if (
+                log.msg?.includes('conformance.authrim.com/authorize') ||
+                log.msg?.includes('conformance.authrim.com/oauth/authorize') ||
+                log.msg?.includes('conformance.authrim.com/logout')
+              ) {
+                const urlMatch = log.msg?.match(/https?:\/\/conformance\.authrim\.com[^\s"'<>\]]+/);
+                if (urlMatch && !processedLogIds.has(logId)) {
+                  authUrl = urlMatch[0];
+                  authLogId = logId;
+                  const urlType = urlMatch[0].includes('/logout') ? 'logout' : 'auth';
+                  logger.log(`      Found ${urlType} URL in message (retry)`);
+                  break;
+                }
+              }
             }
           }
-          break; // No more auth URLs to process
+
+          // If still no URL after retries, dump logs for debugging and break
+          if (!authUrl) {
+            logger.debug(
+              `⚠️ No auth URL found after ${maxRetries} retries. Dumping relevant log entries...`
+            );
+            const finalLogs = await conformanceClient.getTestLog(moduleId);
+            for (const log of finalLogs) {
+              const logAny = log as unknown as Record<string, unknown>;
+              if (
+                log.src?.toLowerCase().includes('redirect') ||
+                log.src?.toLowerCase().includes('authorization') ||
+                log.src?.toLowerCase().includes('session') ||
+                log.msg?.toLowerCase().includes('redirect')
+              ) {
+                logger.debug(`Log entry:`, JSON.stringify(logAny, null, 2));
+              }
+            }
+            break; // No more auth URLs to process
+          }
         }
 
         // Mark this log as processed
@@ -630,28 +746,29 @@ async function runTestPlan(
 
         // Check if this test requires screenshot capture
         const specEntry = getTestSpecEntry(testModuleName);
-        const timings = specEntry?.screenshotTiming ? String(specEntry.screenshotTiming).split(',') : [];
+        const timings = specEntry?.screenshotTiming
+          ? String(specEntry.screenshotTiming).split(',')
+          : [];
 
         // Determine if we should capture on error page
-        const captureOnError = specEntry?.requiresScreenshot && (
-          timings.includes('on_error_page') ||
-          timings.includes('on_error_redirect') ||
-          timings.includes('on_interaction')
-        );
+        const captureOnError =
+          specEntry?.requiresScreenshot &&
+          (timings.includes('on_error_page') ||
+            timings.includes('on_error_redirect') ||
+            timings.includes('on_interaction'));
 
         // Determine if we should capture on login/reauth (2nd, 3rd login)
-        const captureOnLogin = specEntry?.requiresScreenshot && (
-          timings.includes('on_login') ||
-          timings.includes('on_login_2nd') ||
-          timings.includes('on_login_3rd') ||
-          timings.includes('on_reauth')
-        );
+        const captureOnLogin =
+          specEntry?.requiresScreenshot &&
+          (timings.includes('on_login') ||
+            timings.includes('on_login_2nd') ||
+            timings.includes('on_login_3rd') ||
+            timings.includes('on_reauth'));
 
         // Determine if we should capture on consent
-        const captureOnConsent = specEntry?.requiresScreenshot && (
-          timings.includes('on_consent') ||
-          timings.includes('on_consent_2nd')
-        );
+        const captureOnConsent =
+          specEntry?.requiresScreenshot &&
+          (timings.includes('on_consent') || timings.includes('on_consent_2nd'));
 
         // Helper function to upload screenshot
         const uploadScreenshot = async (screenshotPath: string) => {
@@ -696,10 +813,14 @@ async function runTestPlan(
         try {
           if (captureOnError) {
             // Use evidence capture method for error-related screenshots
-            const result = await browserAutomator.handleUserInteractionWithEvidence(authUrl, testUser, {
-              testName: testModuleName,
-              captureOnError: true,
-            });
+            const result = await browserAutomator.handleUserInteractionWithEvidence(
+              authUrl,
+              testUser,
+              {
+                testName: testModuleName,
+                captureOnError: true,
+              }
+            );
 
             if (result.screenshotPath) {
               await uploadScreenshot(result.screenshotPath);
@@ -711,7 +832,10 @@ async function runTestPlan(
                 const page = await browserAutomator.getNewPage();
                 try {
                   await page.goto(authUrl, { waitUntil: 'networkidle', timeout: 15000 });
-                  const forcedScreenshotPath = await browserAutomator.takeScreenshot(page, 'evidence');
+                  const forcedScreenshotPath = await browserAutomator.takeScreenshot(
+                    page,
+                    'evidence'
+                  );
                   await uploadScreenshot(forcedScreenshotPath);
                   logger.log(`      ✅ Forced screenshot captured and uploaded`);
                 } finally {
@@ -725,43 +849,101 @@ async function runTestPlan(
             // For login/consent captures, we need to take screenshot during specific interactions
             // Currently using standard method but capturing specific screens
             // Note: For 2nd login (on_login_2nd), this is round 2 or later
-            const shouldCapture = (captureOnLogin && browserInteractionCount >= 2) ||
-                                  (captureOnConsent && browserInteractionCount >= 1);
+            const shouldCapture =
+              (captureOnLogin && browserInteractionCount >= 2) ||
+              (captureOnConsent && browserInteractionCount >= 1);
 
             if (shouldCapture) {
-              const result = await browserAutomator.handleUserInteractionWithEvidence(authUrl, testUser, {
-                testName: testModuleName,
-                captureOnError: true,  // Also capture if error occurs
-                captureOnInteraction: true, // Capture login/consent screen as evidence
-              });
+              const result = await browserAutomator.handleUserInteractionWithEvidence(
+                authUrl,
+                testUser,
+                {
+                  testName: testModuleName,
+                  captureOnError: true, // Also capture if error occurs
+                  captureOnInteraction: true, // Capture login/consent screen as evidence
+                }
+              );
 
               if (result.screenshotPath) {
                 await uploadScreenshot(result.screenshotPath);
               }
             } else {
-              await browserAutomator.handleUserInteraction(authUrl, testUser, { testName: testModuleName });
+              await browserAutomator.handleUserInteraction(authUrl, testUser, {
+                testName: testModuleName,
+              });
             }
           } else {
             // Use standard method for tests that don't need screenshots
-            await browserAutomator.handleUserInteraction(authUrl, testUser, { testName: testModuleName });
+            await browserAutomator.handleUserInteraction(authUrl, testUser, {
+              testName: testModuleName,
+            });
           }
         } catch (browserError) {
           logger.log(`      Browser error: ${browserError}`);
+          // Track that a browser error occurred - this will mark the test as failed
+          hasBrowserError = true;
+        }
+
+        // Give the conformance suite time to process the callback and generate the next redirect
+        // This is important for multi-step flows like logout tests
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        // Check if there's a new URL in the logs BEFORE waiting for state change
+        // This prevents missing logout URLs when the test finishes quickly
+        const postBrowserLogs = await conformanceClient.getTestLog(moduleId);
+        let foundNewUrl = false;
+        for (const log of postBrowserLogs) {
+          const logAny = log as unknown as Record<string, unknown>;
+          const logId = logAny._id as string;
+
+          if (logId && processedLogIds.has(logId)) {
+            continue;
+          }
+
+          if (
+            log.src?.includes('BuildRedirectToEndSessionEndpoint') ||
+            log.src?.includes('RedirectToEndSessionEndpoint')
+          ) {
+            if (logAny.redirect_to_end_session_endpoint) {
+              logger.log(
+                `      Found logout URL in logs after browser action: ${logAny.redirect_to_end_session_endpoint}`
+              );
+              foundNewUrl = true;
+              // Don't break - continue to waitForState to properly sync with test state
+            }
+          }
         }
 
         // Wait for test to reach next state (WAITING for more interaction, or FINISHED)
         status = await conformanceClient.waitForState(moduleId, ['WAITING', 'FINISHED'], {
           timeoutMs: 60000,
         });
+
+        // If test finished but we found a logout URL that wasn't processed, continue the loop
+        // to process it (the URL check at the start of the loop will find it)
+        if (status === 'FINISHED' && foundNewUrl) {
+          logger.debug(`Test finished but logout URL was found - checking if it was processed`);
+          // Force one more iteration to check if we missed processing the logout URL
+          status = 'WAITING' as TestStatus;
+        }
       }
 
       // Get final module info
       const info = await conformanceClient.getModuleInfo(moduleId);
       const finalLogs = await conformanceClient.getTestLog(moduleId);
-      moduleInfos.push({ ...info, logs: finalLogs });
 
-      const resultEmoji = info.result === 'PASSED' ? '✅' : info.result === 'FAILED' ? '❌' : '⚠️';
-      logger.log(`   ${resultEmoji} ${testModuleName}: ${info.result || 'UNKNOWN'}`);
+      // If browser error occurred and test didn't complete properly, mark as FAILED
+      // This handles cases where the browser automation failed but the test status is still WAITING
+      let finalResult = info.result;
+      if (hasBrowserError && (!finalResult || finalResult === 'REVIEW')) {
+        finalResult = 'FAILED';
+        logger.log(`      ⚠️ Test marked as FAILED due to browser automation error`);
+      }
+
+      moduleInfos.push({ ...info, result: finalResult, logs: finalLogs });
+
+      const resultEmoji = finalResult === 'PASSED' ? '✅' : finalResult === 'FAILED' ? '❌' : '⚠️';
+      logger.log(`   ${resultEmoji} ${testModuleName}: ${finalResult || 'UNKNOWN'}`);
     } catch (error) {
       logger.log(`   ❌ ${testModuleName}: ERROR - ${error}`);
       moduleInfos.push({
@@ -769,7 +951,7 @@ async function runTestPlan(
         testName: testModuleName,
         status: 'INTERRUPTED',
         result: 'FAILED',
-        logs: [],  // Empty logs for error during test execution
+        logs: [], // Empty logs for error during test execution
       });
     }
 

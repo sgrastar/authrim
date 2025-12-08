@@ -247,6 +247,7 @@ interface AuthCodeStoreResponse {
   acr?: string;
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
+  sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
   // Present when replay attack is detected (RFC 6749 Section 4.1.2)
   replayAttack?: {
     accessTokenJti?: string;
@@ -734,6 +735,7 @@ async function handleAuthorizationCodeGrant(
       acr: consumedData.acr, // OIDC Core: Authentication Context Class Reference
       claims: consumedData.claims,
       dpopJkt: consumedData.dpopJkt, // DPoP JWK thumbprint for binding verification
+      sid: consumedData.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
     };
   } catch (error) {
     console.error('AuthCodeStore DO error:', error);
@@ -974,6 +976,7 @@ async function handleAuthorizationCodeGrant(
 
   // Generate ID Token with at_hash and auth_time
   // Phase 1 RBAC: Include RBAC claims in ID Token
+  // Note: sid is required for RP-Initiated Logout per OIDC Session Management 1.0
   const idTokenClaims = {
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
@@ -982,6 +985,7 @@ async function handleAuthorizationCodeGrant(
     at_hash: atHash, // OIDC spec requirement for code flow
     auth_time: authCodeData.auth_time, // OIDC Core Section 2: Time when End-User authentication occurred
     ...(authCodeData.acr && { acr: authCodeData.acr }),
+    ...(authCodeData.sid && { sid: authCodeData.sid }), // OIDC Session Management: Session ID for RP-Initiated Logout
     // Phase 1 RBAC: Add RBAC claims to ID token
     ...idTokenRBACClaims,
   };
