@@ -1274,7 +1274,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Legacy sessions without shard prefix are treated as invalid (user must re-login)
   if (sessionId && c.env.SESSION_STORE && isShardedSessionId(sessionId)) {
     try {
-      const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
+      const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
 
       const sessionResponse = await sessionStore.fetch(
         new Request(`https://session-store/session/${encodeURIComponent(sessionId)}`, {
