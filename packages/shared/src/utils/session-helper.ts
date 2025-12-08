@@ -18,6 +18,7 @@ import {
   fnv1a32,
   getSessionShardCount,
   buildSessionShardInstanceName,
+  remapShardIndex,
   DEFAULT_SESSION_SHARD_COUNT,
 } from './tenant-context';
 
@@ -87,24 +88,31 @@ export function parseShardedSessionId(
  * Get SessionStore Durable Object stub for an existing session ID.
  *
  * Parses the session ID to extract the shard index, then routes to
- * the correct DO instance.
+ * the correct DO instance. Supports scale-down via remapShardIndex().
  *
  * @param env - Environment object with DO bindings
  * @param sessionId - Sharded session ID
- * @returns DurableObjectStub for the session's shard
+ * @returns Promise<DurableObjectStub> for the session's shard
  * @throws Error if sessionId format is invalid
  *
  * @example
- * const store = getSessionStoreBySessionId(env, "7_session_abc123");
+ * const store = await getSessionStoreBySessionId(env, "7_session_abc123");
  * const response = await store.fetch(new Request(...));
  */
-export function getSessionStoreBySessionId(env: Env, sessionId: string): DurableObjectStub {
+export async function getSessionStoreBySessionId(
+  env: Env,
+  sessionId: string
+): Promise<DurableObjectStub> {
   const parsed = parseShardedSessionId(sessionId);
   if (!parsed) {
     throw new Error(`Invalid session ID format: ${sessionId}`);
   }
 
-  const instanceName = buildSessionShardInstanceName(parsed.shardIndex);
+  // Get current shard count (cached for 10 seconds) and remap for scale-down support
+  const currentShardCount = await getSessionShardCount(env);
+  const actualShardIndex = remapShardIndex(parsed.shardIndex, currentShardCount);
+
+  const instanceName = buildSessionShardInstanceName(actualShardIndex);
   const id = env.SESSION_STORE.idFromName(instanceName);
   return env.SESSION_STORE.get(id);
 }

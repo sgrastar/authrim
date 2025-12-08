@@ -1518,7 +1518,7 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
 
     if (isShardedSessionId(sessionId)) {
       try {
-        const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
+        const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
         const sessionStoreResponse = await sessionStore.fetch(
           new Request(`https://session-store/session/${sessionId}`, {
             method: 'GET',
@@ -1610,7 +1610,7 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
     // Invalidate session in SessionStore DO (sharded)
     if (isShardedSessionId(sessionId)) {
       try {
-        const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
+        const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
         const deleteResponse = await sessionStore.fetch(
           new Request(`https://session-store/session/${sessionId}`, {
             method: 'DELETE',

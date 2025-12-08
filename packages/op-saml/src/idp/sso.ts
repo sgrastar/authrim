@@ -270,7 +270,7 @@ async function checkUserAuthentication(
   }
 
   try {
-    const sessionStore = getSessionStoreBySessionId(env, sessionId);
+    const sessionStore = await getSessionStoreBySessionId(env, sessionId);
     const response = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionId}`, {
         method: 'GET',

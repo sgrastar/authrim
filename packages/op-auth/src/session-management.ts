@@ -53,7 +53,7 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
+    const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
     const sessionResponse = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionId}`, {
         method: 'GET',
@@ -206,7 +206,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
+    const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
     const sessionResponse = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionId}`, {
         method: 'GET',
@@ -310,7 +310,7 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
+    const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
     const sessionResponse = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionId}`, {
         method: 'GET',
@@ -426,7 +426,7 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
+    const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
     const extendResponse = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionId}/extend`, {
         method: 'POST',

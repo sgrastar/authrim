@@ -145,7 +145,7 @@ async function verifySession(c: Context<{ Bindings: Env }>): Promise<SessionInfo
   }
 
   try {
-    const sessionStore = getSessionStoreBySessionId(c.env, sessionToken);
+    const sessionStore = await getSessionStoreBySessionId(c.env, sessionToken);
     const response = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionToken}`, {
         method: 'GET',
