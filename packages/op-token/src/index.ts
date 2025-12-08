@@ -81,7 +81,9 @@ app.post('/token', tokenHandler);
 
 // Internal API: Warmup endpoint for load testing
 // Protected by Admin API authentication, placed under /internal/* to prevent bot hits
+// GET: Warm up DOs, POST: Reload config (with action=reload-config query param)
 app.get('/internal/warmup', handleWarmup);
+app.post('/internal/warmup', handleWarmup);
 
 // 404 handler
 app.notFound((c) => {

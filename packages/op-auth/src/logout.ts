@@ -248,11 +248,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Log the logout event
-    if (deletedSessions.length > 0) {
-      console.log(
-        `User ${userId || 'unknown'} logged out from client ${clientId || 'unknown'}, deleted sessions: [${deletedSessions.join(', ')}]`
-      );
-    }
+    console.log(
+      `[LOGOUT] User ${userId || 'unknown'} logged out from client ${clientId || 'unknown'}, ` +
+        `cookieSessionId=${sessionId || 'none'}, sidFromToken=${sid || 'none'}, ` +
+        `deletedSessions=[${deletedSessions.join(', ') || 'none'}], ` +
+        `idTokenValid=${idTokenValid}, validationError=${validationError || 'none'}`
+    );
 
     // ========================================
     // Step 5: Build redirect URL
@@ -279,7 +280,22 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Step 6: Redirect to post-logout URI
-    return c.redirect(redirectUrl, 302);
+    // IMPORTANT: Hono's c.redirect() creates a new Response that doesn't include
+    // headers set via setCookie(). We need to manually add the Set-Cookie header
+    // to ensure the session cookie is properly cleared in the browser.
+    const response = c.redirect(redirectUrl, 302);
+
+    // Clone the response and add the Set-Cookie header
+    const headers = new Headers(response.headers);
+    headers.set(
+      'Set-Cookie',
+      'authrim_session=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0'
+    );
+
+    return new Response(response.body, {
+      status: response.status,
+      headers,
+    });
   } catch (error) {
     console.error('Front-channel logout error:', error);
     // Even on error, try to clear session cookie

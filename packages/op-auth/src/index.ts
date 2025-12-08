@@ -120,12 +120,14 @@ app.use(
   })
 );
 
-// Health check endpoint
-app.get('/api/health', (c) => {
+// Health check endpoint (accessible via /api/auth/health due to route pattern)
+app.get('/api/auth/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'op-auth',
     version: '0.1.0',
+    codeVersion: c.env.CODE_VERSION_UUID?.substring(0, 8) || 'not-set',
+    deployTime: c.env.DEPLOY_TIME_UTC || 'not-set',
     timestamp: new Date().toISOString(),
   });
 });

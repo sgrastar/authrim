@@ -38,8 +38,7 @@ WORKERS=(
     "op-management"
     "op-token"
     "op-userinfo"
-    "policy-core"
-    "policy-service"
+    "external-idp"
     "shared"
     "router"
 )
@@ -236,7 +235,7 @@ main() {
         esac
 
         # Small delay before next iteration
-        sleep 1
+        sleep 10
     done
 }
 
