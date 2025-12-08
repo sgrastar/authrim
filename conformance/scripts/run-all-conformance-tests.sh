@@ -59,9 +59,10 @@ fi
 cd "$SCRIPT_DIR"
 
 # ============================================================
-# スペックファイルの列挙（FAPI/CIBA/3rdparty除外、アルファベット順）
+# スペックファイルの列挙（FAPI/CIBA/3rdparty/rp-logout-op除外、アルファベット順）
+# rp-logout-opテストは手動アップロードが多いため手動テスト推奨
 # ============================================================
-SPEC_FILES=$(ls "$SPECS_DIR"/*.json 2>/dev/null | grep -v -E '(fapi|ciba|3rdparty)' | sort)
+SPEC_FILES=$(ls "$SPECS_DIR"/*.json 2>/dev/null | grep -v -E '(fapi|ciba|3rdparty|rp-logout-op)' | sort)
 SPEC_COUNT=$(echo "$SPEC_FILES" | wc -l | tr -d ' ')
 
 if [ "$SPEC_COUNT" -eq 0 ]; then
@@ -80,7 +81,7 @@ echo "実行対象テスト数: $SPEC_COUNT"
 echo "テスト間待機時間: ${WAIT_SECONDS}秒 (約$(($WAIT_SECONDS / 60))分)"
 echo "推定実行時間: 約$(($SPEC_COUNT * ($WAIT_SECONDS + 900) / 3600))時間"
 echo ""
-echo "除外テスト: FAPI/CIBA/3rdparty (fapi-*.json, *ciba*.json, *3rdparty*.json)"
+echo "除外テスト: FAPI/CIBA/3rdparty/rp-logout-op (手動テスト推奨)"
 echo ""
 echo "記録ファイル: $OUTPUT_FILE"
 echo "詳細ログ: $LOG_FILE"
@@ -121,7 +122,7 @@ cat > "$OUTPUT_FILE" << EOF
 
 **実行対象:**
 - 総テスト数: $SPEC_COUNT
-- 除外: FAPI/CIBA/3rdparty テスト
+- 除外: FAPI/CIBA/3rdparty/rp-logout-op テスト (手動テスト推奨)
 
 ---
 
