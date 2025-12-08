@@ -19,6 +19,17 @@ trap 'echo ""; echo "⚠️  Deployment cancelled by user"; exit 130' INT TERM
 INTER_DEPLOY_DELAY=10    # Delay between deployments to avoid rate limits
 DEPLOY_ENV=""
 API_ONLY=false
+VERSIONED_WORKERS=(
+    "op-auth"
+    "op-token"
+    "op-management"
+    "op-userinfo"
+    "op-async"
+    "op-discovery"
+    "policy-service"
+    "op-saml"
+    "external-idp"
+)
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -110,7 +121,7 @@ deploy_package() {
 register_versions() {
     local issuer_url=$1
     local admin_secret=$2
-    local max_retries=3
+    local max_retries=8
     local retry_delay=5
 
     echo ""
@@ -118,13 +129,11 @@ register_versions() {
     echo "📝 Registering versions in VersionManager DO"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # Workers that support version registration via /api/internal/version endpoint
-    local workers=("op-auth" "op-token" "op-management" "op-userinfo" "op-async" "op-discovery" "policy-service" "op-saml" "external-idp")
     local success_count=0
     local fail_count=0
     local skip_count=0
 
-    for worker in "${workers[@]}"; do
+    for worker in "${VERSIONED_WORKERS[@]}"; do
         echo -n "  • Registering $worker... "
 
         local attempt=1
@@ -172,7 +181,7 @@ register_versions() {
 
     echo ""
     if [ $success_count -gt 0 ]; then
-        echo "   ✅ Registered: $success_count/${#workers[@]} workers"
+        echo "   ✅ Registered: $success_count/${#VERSIONED_WORKERS[@]} workers"
     fi
     if [ $skip_count -gt 0 ]; then
         echo "   ⏭️  Skipped: $skip_count (first deploy or service not ready)"
@@ -181,7 +190,79 @@ register_versions() {
         echo "   ⚠️  Failed: $fail_count (non-critical - workers will continue)"
     fi
     echo ""
-    echo "   💡 Note: Version registration is optional. Workers function normally without it."
+    echo "   💡 Note: Version registration is required for PoP cache forcing. This script fails if any worker is not registered."
+
+    # Bubble up a failure when not all workers were registered so deployers notice immediately
+    if [ $success_count -lt ${#VERSIONED_WORKERS[@]} ]; then
+        return 1
+    fi
+
+    return 0
+}
+
+verify_versions_registered() {
+    local issuer_url=$1
+    local admin_secret=$2
+    local expected_uuid=$3
+    local max_retries=5
+    local retry_delay=5
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🔎 Verifying VersionManager entries"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    local attempt=1
+    while [ $attempt -le $max_retries ]; do
+        local response=$(
+            curl -s -w "\n%{http_code}" -X GET "${issuer_url}/api/internal/version-manager/status" \
+                -H "Authorization: Bearer ${admin_secret}" \
+                --connect-timeout 10 \
+                --max-time 30 2>/dev/null
+        )
+
+        local http_code=$(echo "$response" | tail -n1)
+        local body=$(echo "$response" | sed '$d')
+
+        if [ "$http_code" = "200" ]; then
+            local missing=()
+            local mismatched=()
+
+            for worker in "${VERSIONED_WORKERS[@]}"; do
+                local worker_uuid
+                worker_uuid=$(echo "$body" | jq -r --arg w "$worker" '.versions[$w].uuid // empty')
+
+                if [ -z "$worker_uuid" ]; then
+                    missing+=("$worker")
+                elif [ "$worker_uuid" != "$expected_uuid" ]; then
+                    mismatched+=("$worker ($worker_uuid)")
+                fi
+            done
+
+            if [ ${#missing[@]} -eq 0 ] && [ ${#mismatched[@]} -eq 0 ]; then
+                echo "✅ VersionManager reports expected UUID for all workers"
+                return 0
+            fi
+
+            if [ ${#missing[@]} -gt 0 ]; then
+                echo "⚠️  Missing entries: ${missing[*]}"
+            fi
+            if [ ${#mismatched[@]} -gt 0 ]; then
+                echo "⚠️  Mismatched UUIDs: ${mismatched[*]}"
+            fi
+        else
+            echo "⚠️  Version status check failed (HTTP ${http_code})"
+        fi
+
+        if [ $attempt -lt $max_retries ]; then
+            echo "   Retrying in ${retry_delay}s..."
+            sleep $retry_delay
+        fi
+
+        ((attempt++))
+    done
+
+    echo "❌ VersionManager verification failed after retries"
+    return 1
 }
 
 # Main deployment sequence
@@ -344,9 +425,10 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     # Register versions in VersionManager DO
     if [ -n "$ISSUER_URL" ] && [ -n "$ADMIN_API_SECRET" ]; then
         # Wait a moment for workers to be fully available
-        echo "⏳ Waiting 5 seconds for workers to be available..."
-        sleep 5
+        echo "⏳ Waiting 15 seconds for workers to be available..."
+        sleep 15
         register_versions "$ISSUER_URL" "$ADMIN_API_SECRET"
+        verify_versions_registered "$ISSUER_URL" "$ADMIN_API_SECRET" "$VERSION_UUID"
     else
         echo "⚠️  Skipping version registration: ISSUER_URL or ADMIN_API_SECRET not found"
     fi

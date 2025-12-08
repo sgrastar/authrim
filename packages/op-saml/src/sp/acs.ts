@@ -8,6 +8,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
 import type { SAMLIdPConfig, SAMLAssertion } from '@authrim/shared';
+import { getSessionStoreForNewSession } from '@authrim/shared';
 import {
   parseXml,
   findElement,
@@ -422,25 +423,30 @@ async function findOrCreateUser(
 }
 
 /**
- * Create session for user
+ * Create session for user (sharded)
  */
 async function createSession(env: Env, userId: string): Promise<string> {
-  const sessionStoreId = env.SESSION_STORE.idFromName('default');
-  const sessionStore = env.SESSION_STORE.get(sessionStoreId);
+  const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env);
 
-  const sessionId = crypto.randomUUID();
-
-  await sessionStore.fetch(
+  const response = await sessionStore.fetch(
     new Request('https://session-store/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sessionId,
         userId,
-        expiresIn: 3600, // 1 hour
+        ttl: 3600, // 1 hour
+        data: {
+          amr: ['saml'],
+          acr: 'urn:mace:incommon:iap:bronze',
+        },
       }),
     })
   );
+
+  if (!response.ok) {
+    throw new Error('Session creation failed');
+  }
 
   return sessionId;
 }

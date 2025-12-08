@@ -5,6 +5,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
+import { getSessionStoreBySessionId, isShardedSessionId } from '@authrim/shared';
 import { getProviderByName, getProvider } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
 import { generatePKCE, generateState, generateNonce } from '../utils/pkce';
@@ -138,13 +139,15 @@ async function verifySession(c: Context<{ Bindings: Env }>): Promise<SessionInfo
     return null;
   }
 
-  // Verify session token using SESSION_STORE Durable Object
-  try {
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+  // Verify session token using SESSION_STORE Durable Object (sharded)
+  if (!isShardedSessionId(sessionToken)) {
+    return null;
+  }
 
+  try {
+    const sessionStore = getSessionStoreBySessionId(c.env, sessionToken);
     const response = await sessionStore.fetch(
-      new Request(`http://internal/session/${sessionToken}`, {
+      new Request(`https://session-store/session/${sessionToken}`, {
         method: 'GET',
       })
     );

@@ -19,6 +19,8 @@ import {
   validateIdTokenHint,
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
+  getSessionStoreBySessionId,
+  isShardedSessionId,
 } from '@authrim/shared';
 import { importJWK, jwtVerify } from 'jose';
 import type { JSONWebKeySet, CryptoKey } from 'jose';
@@ -129,40 +131,54 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // 1. Cookie (always - this is the browser's session)
     // 2. sid from validated id_token_hint (if valid - for server-to-server logout)
     const sessionId = getCookie(c, 'authrim_session');
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
     const deletedSessions: string[] = [];
 
-    // Delete session from cookie if present
-    if (sessionId) {
-      const deleteResponse = await sessionStore.fetch(
-        new Request(`https://session-store/session/${sessionId}`, {
-          method: 'DELETE',
-        })
-      );
+    // Delete session from cookie if present (only sharded format)
+    if (sessionId && isShardedSessionId(sessionId)) {
+      try {
+        const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
+        const deleteResponse = await sessionStore.fetch(
+          new Request(`https://session-store/session/${sessionId}`, {
+            method: 'DELETE',
+          })
+        );
 
-      if (deleteResponse.ok) {
-        deletedSessions.push(sessionId);
-      } else {
-        console.warn('Failed to delete cookie session:', sessionId);
+        if (deleteResponse.ok) {
+          deletedSessions.push(sessionId);
+        } else {
+          console.warn('Failed to delete cookie session:', sessionId);
+        }
+      } catch (error) {
+        console.warn('Failed to route to session store for:', sessionId, error);
       }
     }
 
     // Also delete session by sid from id_token_hint (only if signature was verified)
     // This ensures logout works even when called without browser cookies
     // Security: We only trust sid from verified tokens to prevent DoS attacks
-    if (idTokenValid && sid && sid !== sessionId && !deletedSessions.includes(sid)) {
-      const deleteResponse = await sessionStore.fetch(
-        new Request(`https://session-store/session/${sid}`, {
-          method: 'DELETE',
-        })
-      );
+    if (
+      idTokenValid &&
+      sid &&
+      sid !== sessionId &&
+      !deletedSessions.includes(sid) &&
+      isShardedSessionId(sid)
+    ) {
+      try {
+        const sessionStore = getSessionStoreBySessionId(c.env, sid);
+        const deleteResponse = await sessionStore.fetch(
+          new Request(`https://session-store/session/${sid}`, {
+            method: 'DELETE',
+          })
+        );
 
-      if (deleteResponse.ok) {
-        deletedSessions.push(sid);
-      } else {
-        // Session might not exist or already deleted - this is OK
-        console.debug('Session from id_token_hint not found or already deleted:', sid);
+        if (deleteResponse.ok) {
+          deletedSessions.push(sid);
+        } else {
+          // Session might not exist or already deleted - this is OK
+          console.debug('Session from id_token_hint not found or already deleted:', sid);
+        }
+      } catch (error) {
+        console.warn('Failed to route to session store for sid:', sid, error);
       }
     }
 
@@ -490,46 +506,33 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     const sessionId = logoutClaims.sid as string | undefined;
 
     // Invalidate sessions
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
-
-    if (sessionId) {
-      // Invalidate specific session
-      const deleteResponse = await sessionStore.fetch(
-        new Request(`https://session-store/session/${sessionId}`, {
-          method: 'DELETE',
-        })
-      );
-
-      if (!deleteResponse.ok) {
-        console.warn(`Failed to delete session ${sessionId}`);
-      }
-    } else {
-      // Invalidate all sessions for user
-      const sessionsResponse = await sessionStore.fetch(
-        new Request(`https://session-store/sessions/user/${userId}`, {
-          method: 'GET',
-        })
-      );
-
-      if (sessionsResponse.ok) {
-        const data = (await sessionsResponse.json()) as {
-          sessions: Array<{ id: string }>;
-        };
-
-        // Delete all sessions
-        await Promise.all(
-          data.sessions.map(async (session) => {
-            await sessionStore.fetch(
-              new Request(`https://session-store/session/${session.id}`, {
-                method: 'DELETE',
-              })
-            );
+    // With sharded SessionStore, we can only delete sessions by specific sessionId
+    if (sessionId && isShardedSessionId(sessionId)) {
+      // Invalidate specific session using sharded routing
+      try {
+        const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
+        const deleteResponse = await sessionStore.fetch(
+          new Request(`https://session-store/session/${sessionId}`, {
+            method: 'DELETE',
           })
         );
 
-        console.log(`Invalidated ${data.sessions.length} sessions for user ${userId}`);
+        if (!deleteResponse.ok) {
+          console.warn(`Failed to delete session ${sessionId}`);
+        }
+      } catch (error) {
+        console.warn(`Failed to route to session store for back-channel logout:`, sessionId, error);
       }
+    } else if (sessionId) {
+      // Legacy non-sharded session ID - cannot route
+      console.warn(`Back-channel logout: Cannot delete legacy session format: ${sessionId}`);
+    } else {
+      // No sessionId provided - "delete all user sessions" is not supported with sharding
+      // This would require maintaining a userId -> sessionIds index across all shards
+      console.warn(
+        `Back-channel logout: Cannot invalidate all sessions for user ${userId} - ` +
+          `sessionId (sid claim) is required with sharded SessionStore`
+      );
     }
 
     // Log the logout event

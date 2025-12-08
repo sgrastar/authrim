@@ -15,6 +15,7 @@
 import { Context } from 'hono';
 import { setCookie, getCookie } from 'hono/cookie';
 import type { Env } from '@authrim/shared';
+import { getSessionStoreForNewSession } from '@authrim/shared';
 import { ResendEmailProvider } from './utils/email/resend-provider';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import {
@@ -438,25 +439,35 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
 
     const now = Date.now();
 
-    // Create session using SessionStore Durable Object
-    const sessionId = crypto.randomUUID();
-    const sessionStoreId = c.env.SESSION_STORE.idFromName(sessionId);
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
-
+    // Create session using SessionStore Durable Object (sharded)
+    let sessionId: string;
     try {
-      await sessionStore.fetch(
-        new Request(`https://session-store/create`, {
+      const { stub: sessionStore, sessionId: newSessionId } = await getSessionStoreForNewSession(
+        c.env
+      );
+      sessionId = newSessionId;
+
+      const sessionResponse = await sessionStore.fetch(
+        new Request('https://session-store/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            sessionId,
+            sessionId: newSessionId,
             userId: user.id,
-            email: user.email,
-            name: user.name,
-            expiresAt: now + 24 * 60 * 60 * 1000, // 24 hours
+            ttl: 24 * 60 * 60, // 24 hours in seconds
+            data: {
+              email: user.email,
+              name: user.name,
+              amr: ['otp'],
+              acr: 'urn:mace:incommon:iap:bronze',
+            },
           }),
         })
       );
+
+      if (!sessionResponse.ok) {
+        throw new Error('Session creation failed');
+      }
     } catch (error) {
       console.error('Failed to create session:', error);
       return c.json(

@@ -9,6 +9,9 @@ import {
   invalidateUserCache,
   parseRefreshTokenJti,
   buildRefreshTokenRotatorInstanceName,
+  getSessionStoreBySessionId,
+  getSessionStoreForNewSession,
+  isShardedSessionId,
 } from '@authrim/shared';
 
 /**
@@ -1508,27 +1511,33 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const sessionId = c.req.param('id');
 
-    // Try to get from SessionStore first (hot data)
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
-
-    const sessionStoreResponse = await sessionStore.fetch(
-      new Request(`https://session-store/session/${sessionId}`, {
-        method: 'GET',
-      })
-    );
-
+    // Try to get from SessionStore first (hot data) - sharded
     let sessionData;
     let isActive = false;
+    let sessionStoreOk = false;
 
-    if (sessionStoreResponse.ok) {
-      sessionData = (await sessionStoreResponse.json()) as {
-        id: string;
-        userId: string;
-        expiresAt: number;
-        createdAt: number;
-      };
-      isActive = sessionData.expiresAt > Date.now();
+    if (isShardedSessionId(sessionId)) {
+      try {
+        const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
+        const sessionStoreResponse = await sessionStore.fetch(
+          new Request(`https://session-store/session/${sessionId}`, {
+            method: 'GET',
+          })
+        );
+
+        if (sessionStoreResponse.ok) {
+          sessionData = (await sessionStoreResponse.json()) as {
+            id: string;
+            userId: string;
+            expiresAt: number;
+            createdAt: number;
+          };
+          isActive = sessionData.expiresAt > Date.now();
+          sessionStoreOk = true;
+        }
+      } catch (error) {
+        console.warn('Failed to get session from SessionStore:', error);
+      }
     }
 
     // Get from D1 for additional metadata
@@ -1557,7 +1566,7 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
       expiresAt: sessionData?.expiresAt || (session?.expires_at as number) * 1000,
       createdAt: sessionData?.createdAt || (session?.created_at as number) * 1000,
       isActive: isActive || (session?.expires_at as number) > Math.floor(Date.now() / 1000),
-      source: sessionStoreResponse.ok ? 'memory' : 'database',
+      source: sessionStoreOk ? 'memory' : 'database',
     };
 
     return c.json({
@@ -1598,18 +1607,24 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Invalidate session in SessionStore DO
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+    // Invalidate session in SessionStore DO (sharded)
+    if (isShardedSessionId(sessionId)) {
+      try {
+        const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
+        const deleteResponse = await sessionStore.fetch(
+          new Request(`https://session-store/session/${sessionId}`, {
+            method: 'DELETE',
+          })
+        );
 
-    const deleteResponse = await sessionStore.fetch(
-      new Request(`https://session-store/session/${sessionId}`, {
-        method: 'DELETE',
-      })
-    );
-
-    if (!deleteResponse.ok) {
-      console.warn(`Failed to delete session ${sessionId} from SessionStore`);
+        if (!deleteResponse.ok) {
+          console.warn(`Failed to delete session ${sessionId} from SessionStore`);
+        }
+      } catch (error) {
+        console.warn(`Failed to route to session store for session ${sessionId}:`, error);
+      }
+    } else {
+      console.warn(`Session ${sessionId} is not in sharded format, skipping DO deletion`);
     }
 
     // Delete from D1
@@ -1638,6 +1653,10 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
 /**
  * Revoke all sessions for a user
  * POST /admin/users/:id/revoke-all-sessions
+ *
+ * Note: With sharded SessionStore, we can only delete sessions from D1.
+ * Sessions in SessionStore will expire naturally. For immediate invalidation,
+ * consider implementing a userId -> sessionIds index in a future phase.
  */
 export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: Env }>) {
   try {
@@ -1656,41 +1675,14 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
       );
     }
 
-    // Get all sessions for user from SessionStore DO
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
-
-    const sessionsResponse = await sessionStore.fetch(
-      new Request(`https://session-store/sessions/user/${userId}`, {
-        method: 'GET',
-      })
+    // With sharded SessionStore, we cannot efficiently query sessions by userId
+    // Sessions are sharded by sessionId, not userId
+    // We can only delete from D1 and let DO sessions expire naturally
+    console.warn(
+      `[ADMIN] Revoking all sessions for user ${userId}: ` +
+        'Cannot delete from sharded SessionStore (sessions will expire naturally). ' +
+        'Deleting from D1 only.'
     );
-
-    let revokedCount = 0;
-
-    if (sessionsResponse.ok) {
-      const data = (await sessionsResponse.json()) as {
-        sessions: Array<{ id: string }>;
-      };
-
-      // Invalidate all sessions in SessionStore using batch API
-      // This avoids N+1 DO calls and improves performance
-      if (data.sessions.length > 0) {
-        const sessionIds = data.sessions.map((s) => s.id);
-        const batchDeleteResponse = await sessionStore.fetch(
-          new Request('https://session-store/sessions/batch-delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionIds }),
-          })
-        );
-
-        if (batchDeleteResponse.ok) {
-          const result = (await batchDeleteResponse.json()) as { deleted: number };
-          revokedCount = result.deleted;
-        }
-      }
-    }
 
     // Delete all sessions from D1
     const deleteResult = await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?')
@@ -1701,14 +1693,16 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
 
     // TODO: Create Audit Log entry (Phase 6)
     console.log(
-      `Admin revoked all sessions for user: ${userId} (${Math.max(revokedCount, dbRevokedCount)} sessions)`
+      `Admin revoked all sessions for user: ${userId} (${dbRevokedCount} sessions from D1)`
     );
 
     return c.json({
       success: true,
-      message: 'All user sessions revoked successfully',
+      message:
+        'All user sessions revoked from D1. Active sessions in memory will expire naturally.',
       userId: userId,
-      revokedCount: Math.max(revokedCount, dbRevokedCount),
+      revokedCount: dbRevokedCount,
+      note: 'Sessions in sharded SessionStore cannot be bulk-deleted by userId',
     });
   } catch (error) {
     console.error('Admin revoke all sessions error:', error);
@@ -2554,21 +2548,20 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    // Create session in SessionStore DO
-    const sessionId = crypto.randomUUID();
+    // Create session in SessionStore DO (sharded)
     const now = Date.now();
     const expiresAt = now + ttl_seconds * 1000;
 
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
 
     const sessionResponse = await sessionStore.fetch(
       new Request('https://session-store/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          sessionId,
           userId: user_id,
-          ttl: ttl_seconds * 1000,
+          ttl: ttl_seconds,
           data: {
             amr: ['admin_api'],
             email: user.email,
@@ -2590,23 +2583,21 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    const session = (await sessionResponse.json()) as { id: string; expiresAt: number };
-
     // Also insert into D1 sessions table for consistency
     await c.env.DB.prepare(
       'INSERT OR REPLACE INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)'
     )
-      .bind(session.id, user_id, Math.floor(expiresAt / 1000), Math.floor(now / 1000))
+      .bind(sessionId, user_id, Math.floor(expiresAt / 1000), Math.floor(now / 1000))
       .run();
 
-    console.log(`[ADMIN] Created test session for user: ${user_id}, session: ${session.id}`);
+    console.log(`[ADMIN] Created test session for user: ${user_id}, session: ${sessionId}`);
 
     return c.json(
       {
-        session_id: session.id,
+        session_id: sessionId,
         user_id: user_id,
         expires_at: expiresAt,
-        cookie_value: `authrim_session=${session.id}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${ttl_seconds}`,
+        cookie_value: `authrim_session=${sessionId}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=${ttl_seconds}`,
       },
       201
     );

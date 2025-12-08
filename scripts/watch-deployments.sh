@@ -235,7 +235,7 @@ main() {
         esac
 
         # Small delay before next iteration
-        sleep 10
+        sleep 1
     done
 }
 

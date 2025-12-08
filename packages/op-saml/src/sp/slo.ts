@@ -13,6 +13,7 @@
 
 import type { Context } from 'hono';
 import type { Env, SAMLIdPConfig } from '@authrim/shared';
+import { getSessionStoreBySessionId, isShardedSessionId } from '@authrim/shared';
 import {
   parseLogoutRequestPost,
   parseLogoutRequestRedirect,
@@ -220,7 +221,11 @@ function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, env: Env): vo
 }
 
 /**
- * Terminate session by NameID
+ * Terminate session by NameID (sharded)
+ *
+ * Note: With sharded SessionStore, we can only delete sessions if sessionIndex
+ * (which should be the Authrim sessionId) is provided. User-based session deletion
+ * would require a userId -> sessionIds index which is not implemented.
  */
 async function terminateSessionByNameId(
   env: Env,
@@ -228,35 +233,43 @@ async function terminateSessionByNameId(
   sessionIndex?: string
 ): Promise<void> {
   try {
-    // Find user by email (assuming NameID is email)
-    const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(nameId).first();
-
-    if (!user) {
-      console.warn('No user found for NameID:', nameId);
-      return;
-    }
-
-    const userId = user.id as string;
-
-    // Get SessionStore
-    const sessionStoreId = env.SESSION_STORE.idFromName('default');
-    const sessionStore = env.SESSION_STORE.get(sessionStoreId);
-
-    // If sessionIndex is provided, try to delete specific session
-    if (sessionIndex) {
-      await sessionStore.fetch(
-        new Request(`https://session-store/session/${sessionIndex}`, {
-          method: 'DELETE',
-        })
+    // If sessionIndex is provided and is a valid sharded session ID, delete that specific session
+    if (sessionIndex && isShardedSessionId(sessionIndex)) {
+      try {
+        const sessionStore = getSessionStoreBySessionId(env, sessionIndex);
+        const response = await sessionStore.fetch(
+          new Request(`https://session-store/session/${sessionIndex}`, {
+            method: 'DELETE',
+          })
+        );
+        if (response.ok) {
+          console.log('SAML SP SLO: Terminated session:', sessionIndex);
+          return;
+        } else {
+          console.debug('SAML SP SLO: Session not found or already deleted:', sessionIndex);
+        }
+      } catch (error) {
+        console.warn('SAML SP SLO: Failed to delete session:', sessionIndex, error);
+      }
+    } else if (sessionIndex) {
+      console.warn(
+        'SAML SP SLO: sessionIndex is not in sharded format, cannot delete:',
+        sessionIndex
       );
     }
 
-    // Delete all sessions for the user
-    await sessionStore.fetch(
-      new Request(`https://session-store/sessions/user/${userId}`, {
-        method: 'DELETE',
-      })
-    );
+    // Without a valid sessionIndex, we cannot delete by userId in sharded SessionStore
+    // Log warning for debugging
+    const user = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(nameId).first();
+    if (user) {
+      console.warn(
+        `SAML SP SLO: Cannot delete all sessions for user ${user.id as string} (NameID: ${nameId}) - ` +
+          'sharded SessionStore requires sessionId (sessionIndex). ' +
+          'Ensure the IdP includes sessionIndex in LogoutRequest.'
+      );
+    } else {
+      console.warn('SAML SP SLO: No user found for NameID:', nameId);
+    }
   } catch (error) {
     console.error('Error terminating session:', error);
   }

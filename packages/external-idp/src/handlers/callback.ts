@@ -5,6 +5,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
+import { getSessionStoreForNewSession } from '@authrim/shared';
 import { getProvider } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
 import { consumeAuthState } from '../utils/state';
@@ -145,32 +146,37 @@ function redirectWithError(
 }
 
 /**
- * Create Authrim session
+ * Create Authrim session (sharded)
  */
 async function createSession(env: Env, userId: string): Promise<string> {
-  const sessionId = crypto.randomUUID();
-
   try {
-    const sessionStoreId = env.SESSION_STORE.idFromName('global');
-    const sessionStore = env.SESSION_STORE.get(sessionStoreId);
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env);
 
-    await sessionStore.fetch(
-      new Request('http://internal/session', {
+    const response = await sessionStore.fetch(
+      new Request('https://session-store/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId,
           userId,
-          expiresAt: Date.now() + 3600 * 1000, // 1 hour
+          ttl: 3600, // 1 hour in seconds
+          data: {
+            amr: ['external_idp'],
+            acr: 'urn:mace:incommon:iap:bronze',
+          },
         }),
       })
     );
+
+    if (!response.ok) {
+      throw new Error('Session creation failed');
+    }
+
+    return sessionId;
   } catch (error) {
     console.error('Failed to create session:', error);
     throw new Error('session_creation_failed');
   }
-
-  return sessionId;
 }
 
 /**

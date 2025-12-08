@@ -12,6 +12,9 @@ import {
   createShardedAuthCode,
   buildAuthCodeShardInstanceName,
   getShardCount,
+  getSessionStoreBySessionId,
+  getSessionStoreForNewSession,
+  isShardedSessionId,
 } from '@authrim/shared';
 import {
   generateSecureRandomString,
@@ -1267,10 +1270,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Check for existing session (cookie)
   // This is required for prompt=none to work correctly
   const sessionId = c.req.header('Cookie')?.match(/authrim_session=([^;]+)/)?.[1];
-  if (sessionId && c.env.SESSION_STORE) {
+  // Only process sharded session IDs (new format: {shardIndex}_session_{uuid})
+  // Legacy sessions without shard prefix are treated as invalid (user must re-login)
+  if (sessionId && c.env.SESSION_STORE && isShardedSessionId(sessionId)) {
     try {
-      const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-      const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+      const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
 
       const sessionResponse = await sessionStore.fetch(
         new Request(`https://session-store/session/${encodeURIComponent(sessionId)}`, {
@@ -2881,9 +2885,8 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
       });
   }
 
-  // Create session
-  const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-  const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+  // Create session using sharded SessionStore
+  const { stub: sessionStore, sessionId: newSessionId } = await getSessionStoreForNewSession(c.env);
 
   // Calculate auth_time BEFORE creating session to ensure consistency
   // This value will be used for both the session and the redirect parameter
@@ -2894,6 +2897,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        sessionId: newSessionId, // Required: Sharded session ID
         userId,
         ttl: 3600, // 1 hour session
         data: {
@@ -2905,11 +2909,10 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   );
 
   if (sessionResponse.ok) {
-    const { id } = (await sessionResponse.json()) as { id: string };
-    // Set session cookie
+    // Set session cookie with the pre-generated sharded session ID
     c.header(
       'Set-Cookie',
-      `authrim_session=${id}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=3600`
+      `authrim_session=${newSessionId}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=3600`
     );
   }
 

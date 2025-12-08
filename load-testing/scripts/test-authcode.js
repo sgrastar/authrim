@@ -36,6 +36,8 @@ const CLIENT_SECRET = __ENV.CLIENT_SECRET || 'test_secret';
 const REDIRECT_URI = __ENV.REDIRECT_URI || 'https://example.com/callback';
 const PRESET = __ENV.PRESET || 'rps100';
 const AUTH_CODE_PATH = __ENV.AUTH_CODE_PATH || '../seeds/authorization_codes.json';
+// K6 Cloud用: R2からシードをフェッチするURL（設定時はローカルファイルより優先）
+const AUTH_CODE_URL = __ENV.AUTH_CODE_URL || '';
 
 // プリセット設定
 const PRESETS = {
@@ -231,34 +233,46 @@ export const options = {
 };
 
 // テストデータ: 事前生成された認可コード
-const authorizationCodes = new SharedArray('authz_codes', function () {
-  try {
-    const raw = open(AUTH_CODE_PATH);
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      throw new Error('authorization_codes is empty');
-    }
-    const normalized = parsed
-      .map((item, idx) => ({
-        code: item.code,
-        verifier: item.code_verifier || item.verifier,
-        redirectUri: item.redirect_uri || REDIRECT_URI,
-        index: idx,
-      }))
-      .filter((item) => item.code && item.verifier);
+// ローカル実行時: SharedArrayでファイルから読み込み
+// K6 Cloud実行時: setup()でR2 URLからフェッチ
+let authorizationCodes = null;
+let useRemoteData = false;
 
-    if (normalized.length === 0) {
-      throw new Error('authorization_codes has no usable entries');
+if (AUTH_CODE_URL) {
+  // K6 Cloud: R2 URLが指定されている場合はsetup()でフェッチ
+  useRemoteData = true;
+  console.log(`🌐 Remote data mode: Will fetch from ${AUTH_CODE_URL}`);
+} else {
+  // ローカル: SharedArrayでファイルから読み込み
+  authorizationCodes = new SharedArray('authz_codes', function () {
+    try {
+      const raw = open(AUTH_CODE_PATH);
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error('authorization_codes is empty');
+      }
+      const normalized = parsed
+        .map((item, idx) => ({
+          code: item.code,
+          verifier: item.code_verifier || item.verifier,
+          redirectUri: item.redirect_uri || REDIRECT_URI,
+          index: idx,
+        }))
+        .filter((item) => item.code && item.verifier);
+
+      if (normalized.length === 0) {
+        throw new Error('authorization_codes has no usable entries');
+      }
+      return normalized;
+    } catch (err) {
+      throw new Error(
+        `Authorization code seed not found or invalid at "${AUTH_CODE_PATH}". Run scripts/generate-seeds.js to create it. (${err.message})`
+      );
     }
-    return normalized;
-  } catch (err) {
-    throw new Error(
-      `Authorization code seed not found or invalid at "${AUTH_CODE_PATH}". Run scripts/generate-seeds.js to create it. (${err.message})`
-    );
+  });
+  if (!authorizationCodes.length) {
+    throw new Error(`No authorization codes available for ${TEST_ID}. Aborting.`);
   }
-});
-if (!authorizationCodes.length) {
-  throw new Error(`No authorization codes available for ${TEST_ID}. Aborting.`);
 }
 
 // Basic 認証ヘッダーの生成
@@ -273,13 +287,50 @@ export function setup() {
   console.log(`📊 プリセット: ${PRESET}`);
   console.log(`📝 説明: ${selectedPreset.description}`);
   console.log(`🎯 ターゲット: ${BASE_URL}`);
-  console.log(`📦 認可コード数: ${authorizationCodes.length}`);
+
+  let codes = null;
+  let codeCount = 0;
+
+  if (useRemoteData) {
+    // K6 Cloud: R2 URLからシードをフェッチ
+    console.log(`🌐 Fetching seeds from R2: ${AUTH_CODE_URL}`);
+    const response = http.get(AUTH_CODE_URL, {
+      timeout: '120s',
+      tags: { name: 'FetchSeeds' },
+    });
+
+    if (response.status !== 200) {
+      throw new Error(`Failed to fetch seeds from R2: HTTP ${response.status}`);
+    }
+
+    const parsed = JSON.parse(response.body);
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error('Remote authorization_codes is empty');
+    }
+
+    codes = parsed.map((item, idx) => ({
+      code: item.code,
+      verifier: item.code_verifier || item.verifier,
+      redirectUri: item.redirect_uri || REDIRECT_URI,
+      index: idx,
+    })).filter((item) => item.code && item.verifier);
+
+    codeCount = codes.length;
+    console.log(`✅ Fetched ${codeCount} authorization codes from R2`);
+  } else {
+    // ローカル: SharedArrayを使用
+    codeCount = authorizationCodes.length;
+  }
+
+  console.log(`📦 認可コード数: ${codeCount}`);
   console.log(``);
 
   return {
     baseUrl: BASE_URL,
     clientId: CLIENT_ID,
     preset: PRESET,
+    codes: codes, // R2モードの場合のみ設定
+    codeCount: codeCount,
   };
 }
 
@@ -327,16 +378,20 @@ function getGlobalCodeIndex(codePoolSize) {
 
 // メインテスト関数
 export default function (data) {
+  // データソースの選択（R2モード or ローカルモード）
+  const codes = useRemoteData ? data.codes : authorizationCodes;
+  const codePoolSize = data.codeCount;
+
   // イテレーション番号ベースで一意のコードを選択（K6 Cloudでもグローバルにユニーク）
-  const codeIndex = getGlobalCodeIndex(authorizationCodes.length);
+  const codeIndex = getGlobalCodeIndex(codePoolSize);
 
   // AuthCodeは1回限り使用可能。シード数を超えたらスキップ
-  if (codeIndex >= authorizationCodes.length) {
+  if (codeIndex >= codePoolSize) {
     // シード不足時は早期リターン（エラーカウントを増やさない）
     return;
   }
 
-  const codeData = authorizationCodes[codeIndex];
+  const codeData = codes[codeIndex];
 
   // /token リクエストのパラメータ
   const params = {

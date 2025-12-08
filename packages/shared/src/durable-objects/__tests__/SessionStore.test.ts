@@ -107,10 +107,12 @@ describe('SessionStore', () => {
 
   describe('Session Creation', () => {
     it('should create a new session with valid data', async () => {
+      const sessionId = '0_session_test_123';
       const request = new Request('http://localhost/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          sessionId,
           userId: 'user_123',
           ttl: 3600,
           data: { amr: ['pwd'] },
@@ -121,7 +123,7 @@ describe('SessionStore', () => {
       expect(response.status).toBe(201);
 
       const body = (await response.json()) as any;
-      expect(body).toHaveProperty('id');
+      expect(body).toHaveProperty('id', sessionId);
       expect(body).toHaveProperty('userId', 'user_123');
       expect(body).toHaveProperty('expiresAt');
       expect(body).toHaveProperty('createdAt');
@@ -132,6 +134,7 @@ describe('SessionStore', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          sessionId: '0_session_missing_ttl',
           userId: 'user_123',
           // Missing ttl
         }),
@@ -144,20 +147,22 @@ describe('SessionStore', () => {
       expect(body).toHaveProperty('error');
     });
 
-    it('should generate unique session IDs', async () => {
-      const createSession = async () => {
+    it('should use provided sessionId (sharding support)', async () => {
+      const createSession = async (sessionId: string) => {
         const request = new Request('http://localhost/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
+          body: JSON.stringify({ sessionId, userId: 'user_123', ttl: 3600 }),
         });
         const response = await sessionStore.fetch(request);
         const body = (await response.json()) as any;
         return body.id;
       };
 
-      const id1 = await createSession();
-      const id2 = await createSession();
+      const id1 = await createSession('0_session_first');
+      const id2 = await createSession('1_session_second');
+      expect(id1).toBe('0_session_first');
+      expect(id2).toBe('1_session_second');
       expect(id1).not.toBe(id2);
     });
   });
@@ -165,23 +170,24 @@ describe('SessionStore', () => {
   describe('Session Retrieval', () => {
     it('should retrieve an existing session', async () => {
       // Create session
+      const sessionId = '0_session_retrieval_test';
       const createRequest = new Request('http://localhost/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
+        body: JSON.stringify({ sessionId, userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = (await createResponse.json()) as any;
+      expect(createResponse.status).toBe(201);
 
       // Retrieve session
-      const getRequest = new Request(`http://localhost/session/${id}`, {
+      const getRequest = new Request(`http://localhost/session/${sessionId}`, {
         method: 'GET',
       });
       const getResponse = await sessionStore.fetch(getRequest);
       expect(getResponse.status).toBe(200);
 
       const body = (await getResponse.json()) as any;
-      expect(body.id).toBe(id);
+      expect(body.id).toBe(sessionId);
       expect(body.userId).toBe('user_123');
     });
 
@@ -199,16 +205,17 @@ describe('SessionStore', () => {
 
     it('should not return expired sessions', async () => {
       // Create session with very short TTL
+      const sessionId = '0_session_expired_test';
       const createRequest = new Request('http://localhost/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: 'user_123', ttl: -1 }), // Already expired
+        body: JSON.stringify({ sessionId, userId: 'user_123', ttl: -1 }), // Already expired
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = (await createResponse.json()) as any;
+      expect(createResponse.status).toBe(201);
 
       // Try to retrieve expired session
-      const getRequest = new Request(`http://localhost/session/${id}`, {
+      const getRequest = new Request(`http://localhost/session/${sessionId}`, {
         method: 'GET',
       });
       const getResponse = await sessionStore.fetch(getRequest);
@@ -219,16 +226,17 @@ describe('SessionStore', () => {
   describe('Session Invalidation', () => {
     it('should invalidate an existing session', async () => {
       // Create session
+      const sessionId = '0_session_invalidate_test';
       const createRequest = new Request('http://localhost/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
+        body: JSON.stringify({ sessionId, userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
-      const { id } = (await createResponse.json()) as any;
+      expect(createResponse.status).toBe(201);
 
       // Invalidate session
-      const deleteRequest = new Request(`http://localhost/session/${id}`, {
+      const deleteRequest = new Request(`http://localhost/session/${sessionId}`, {
         method: 'DELETE',
       });
       const deleteResponse = await sessionStore.fetch(deleteRequest);
@@ -236,10 +244,10 @@ describe('SessionStore', () => {
 
       const body = (await deleteResponse.json()) as any;
       expect(body.success).toBe(true);
-      expect(body.deleted).toBe(id);
+      expect(body.deleted).toBe(sessionId);
 
       // Verify session is gone
-      const getRequest = new Request(`http://localhost/session/${id}`, {
+      const getRequest = new Request(`http://localhost/session/${sessionId}`, {
         method: 'GET',
       });
       const getResponse = await sessionStore.fetch(getRequest);
@@ -256,7 +264,7 @@ describe('SessionStore', () => {
 
       const body = (await response.json()) as any;
       expect(body.success).toBe(true);
-      expect(body.deleted).toBe(null);
+      expect(body.deleted).toBeNull();
     });
   });
 
@@ -266,10 +274,11 @@ describe('SessionStore', () => {
 
       // Create multiple sessions
       for (let i = 0; i < 3; i++) {
+        const sessionId = `${i}_session_multi_${i}`;
         const request = new Request('http://localhost/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, ttl: 3600 }),
+          body: JSON.stringify({ sessionId, userId, ttl: 3600 }),
         });
         await sessionStore.fetch(request);
       }
@@ -305,7 +314,7 @@ describe('SessionStore', () => {
       const activeRequest = new Request('http://localhost/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, ttl: 3600 }),
+        body: JSON.stringify({ sessionId: '0_session_active_expired', userId, ttl: 3600 }),
       });
       await sessionStore.fetch(activeRequest);
 
@@ -313,7 +322,7 @@ describe('SessionStore', () => {
       const expiredRequest = new Request('http://localhost/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, ttl: -1 }),
+        body: JSON.stringify({ sessionId: '1_session_expired_expired', userId, ttl: -1 }),
       });
       await sessionStore.fetch(expiredRequest);
 
@@ -332,10 +341,11 @@ describe('SessionStore', () => {
   describe('Session Extension (Active TTL)', () => {
     it('should extend session expiration', async () => {
       // Create session
+      const sessionId = '0_session_extend_test';
       const createRequest = new Request('http://localhost/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: 'user_123', ttl: 3600 }),
+        body: JSON.stringify({ sessionId, userId: 'user_123', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
       const { id, expiresAt: originalExpiry } = (await createResponse.json()) as any;
@@ -357,7 +367,7 @@ describe('SessionStore', () => {
     });
 
     it('should reject extension with invalid seconds', async () => {
-      const request = new Request('http://localhost/session/session_123/extend', {
+      const request = new Request('http://localhost/session/0_session_invalid_extend/extend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seconds: -100 }),
@@ -368,7 +378,7 @@ describe('SessionStore', () => {
     });
 
     it('should return 404 for extending non-existent session', async () => {
-      const request = new Request('http://localhost/session/session_nonexistent/extend', {
+      const request = new Request('http://localhost/session/0_session_nonexistent_ext/extend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seconds: 3600 }),
@@ -422,10 +432,11 @@ describe('SessionStore', () => {
       // Create multiple sessions
       const sessionIds: string[] = [];
       for (let i = 0; i < 3; i++) {
+        const sessionId = `${i}_session_batch_${i}`;
         const request = new Request('http://localhost/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: `user_batch_${i}`, ttl: 3600 }),
+          body: JSON.stringify({ sessionId, userId: `user_batch_${i}`, ttl: 3600 }),
         });
         const response = await sessionStore.fetch(request);
         const { id } = (await response.json()) as any;
@@ -459,20 +470,21 @@ describe('SessionStore', () => {
 
     it('should report failed deletions for non-existent sessions', async () => {
       // Create one session
+      const sessionId = '0_session_batch_fail_test';
       const createRequest = new Request('http://localhost/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: 'user_batch_fail', ttl: 3600 }),
+        body: JSON.stringify({ sessionId, userId: 'user_batch_fail', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
       const { id: existingId } = (await createResponse.json()) as any;
 
       // Try to delete existing + non-existent sessions
-      const sessionIds = [existingId, 'session_nonexistent_1', 'session_nonexistent_2'];
+      const sessionIdsToDelete = [existingId, '0_session_nonexistent_1', '0_session_nonexistent_2'];
       const batchRequest = new Request('http://localhost/sessions/batch-delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionIds }),
+        body: JSON.stringify({ sessionIds: sessionIdsToDelete }),
       });
       const batchResponse = await sessionStore.fetch(batchRequest);
       expect(batchResponse.status).toBe(200);
@@ -481,8 +493,8 @@ describe('SessionStore', () => {
       expect(body.success).toBe(true);
       expect(body.deleted).toBe(1);
       expect(body.failed).toBe(2);
-      expect(body.failedIds).toContain('session_nonexistent_1');
-      expect(body.failedIds).toContain('session_nonexistent_2');
+      expect(body.failedIds).toContain('0_session_nonexistent_1');
+      expect(body.failedIds).toContain('0_session_nonexistent_2');
     });
 
     it('should reject batch delete with missing sessionIds', async () => {
@@ -551,26 +563,28 @@ describe('SessionStore', () => {
       );
 
       // Session creation should succeed even if D1 fails
+      const sessionId = '0_session_d1_error';
       const request = new Request('http://localhost/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: 'user_d1_error', ttl: 3600 }),
+        body: JSON.stringify({ sessionId, userId: 'user_d1_error', ttl: 3600 }),
       });
 
       const response = await errorSessionStore.fetch(request);
       expect(response.status).toBe(201);
 
       const body = (await response.json()) as any;
-      expect(body).toHaveProperty('id');
+      expect(body).toHaveProperty('id', sessionId);
       expect(body.userId).toBe('user_d1_error');
     });
 
     it('should handle D1 errors during session extension', async () => {
       // Create session first
+      const sessionId = '0_session_extend_d1_error';
       const createRequest = new Request('http://localhost/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: 'user_extend_error', ttl: 3600 }),
+        body: JSON.stringify({ sessionId, userId: 'user_extend_error', ttl: 3600 }),
       });
       const createResponse = await sessionStore.fetch(createRequest);
       const { id } = (await createResponse.json()) as any;

@@ -4,6 +4,11 @@
  * Manages active user sessions with in-memory hot data and D1 database fallback.
  * Provides instant session invalidation and ITP-compatible session management.
  *
+ * Storage Architecture (v2):
+ * - Individual key storage: `session:${sessionId}` for each session
+ * - O(1) reads/writes per session operation
+ * - Sharding support: Multiple DO instances distribute load
+ *
  * Hot/Cold Pattern:
  * 1. Active sessions stored in-memory for sub-millisecond access (hot)
  * 2. Cold sessions loaded from D1 database on demand
@@ -44,19 +49,10 @@ export interface SessionData {
 }
 
 /**
- * Persistent state stored in Durable Storage
- * Issue #14: Schema version management for Durable Objects
- */
-interface SessionStoreState {
-  version: number; // Data structure version (for migrations)
-  sessions: Record<string, Session>; // Serializable format (Map cannot be serialized directly)
-  lastCleanup: number;
-}
-
-/**
  * Session creation request
  */
 export interface CreateSessionRequest {
+  sessionId: string; // Required: Sharded session ID from session-helper
   userId: string;
   ttl: number; // Time to live in seconds
   data?: SessionData;
@@ -74,118 +70,35 @@ export interface SessionResponse {
 }
 
 /**
+ * Storage key prefix for sessions
+ */
+const SESSION_KEY_PREFIX = 'session:';
+
+/**
  * SessionStore Durable Object
  *
  * Provides distributed session storage with strong consistency guarantees.
+ * Uses individual key storage for O(1) operations.
  */
 export class SessionStore {
   private state: DurableObjectState;
   private env: Env;
-  private sessions: Map<string, Session> = new Map();
+  private sessionCache: Map<string, Session> = new Map();
   private cleanupInterval: number | null = null;
-  private initialized: boolean = false;
-
-  // Current data structure version (Issue #14)
-  private readonly CURRENT_VERSION = 1;
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
 
-    // State will be initialized on first request
-    // This avoids blocking the constructor
-  }
-
-  /**
-   * Initialize state from Durable Storage
-   * Must be called before any session operations
-   * Issue #14: Includes version checking and automatic migration
-   */
-  private async initializeState(): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
-
-    try {
-      const stored = await this.state.storage.get<SessionStoreState>('state');
-
-      if (stored) {
-        // Version check and migration (Issue #14)
-        if (stored.version && stored.version < this.CURRENT_VERSION) {
-          console.log(
-            `SessionStore: Migrating data from v${stored.version} to v${this.CURRENT_VERSION}`
-          );
-          const migrated = await this.migrateData(stored);
-          this.sessions = new Map(Object.entries(migrated.sessions));
-          await this.saveState(); // Save migrated state
-        } else {
-          // Restore sessions from Durable Storage
-          this.sessions = new Map(Object.entries(stored.sessions));
-        }
-
-        console.log(`SessionStore: Restored ${this.sessions.size} sessions from Durable Storage`);
-      }
-    } catch (error) {
-      console.error('SessionStore: Failed to initialize from Durable Storage:', error);
-      // Continue with empty state
-    }
-
-    this.initialized = true;
-
-    // Start periodic cleanup after initialization
+    // Start periodic cleanup
     this.startCleanup();
   }
 
   /**
-   * Save current state to Durable Storage
-   * Converts Map to serializable object
-   * Issue #14: Includes version number
+   * Build storage key for a session
    */
-  private async saveState(): Promise<void> {
-    try {
-      const stateToSave: SessionStoreState = {
-        version: this.CURRENT_VERSION,
-        sessions: Object.fromEntries(this.sessions),
-        lastCleanup: Date.now(),
-      };
-
-      await this.state.storage.put('state', stateToSave);
-    } catch (error) {
-      console.error('SessionStore: Failed to save to Durable Storage:', error);
-      // Don't throw - we don't want to break the session operation
-      // But this should be monitored/alerted in production
-    }
-  }
-
-  /**
-   * Migrate data from older versions
-   * Issue #14: Data structure migration for Durable Objects
-   *
-   * @param oldState - State from older version
-   * @returns Migrated state with current version
-   */
-  private async migrateData(oldState: SessionStoreState): Promise<SessionStoreState> {
-    let state = oldState;
-
-    // Example migration: v0 → v1
-    // If there were breaking changes in the Session interface, handle them here
-    // For now, SessionStore v1 is the initial version with version tracking
-
-    // Future migrations would be added here:
-    // if (state.version === 1) {
-    //   // Migrate v1 → v2
-    //   // Example: Add new field to sessions
-    //   for (const [id, session] of Object.entries(state.sessions)) {
-    //     state.sessions[id] = {
-    //       ...session,
-    //       newField: 'default_value',
-    //     };
-    //   }
-    //   state.version = 2;
-    // }
-
-    state.version = this.CURRENT_VERSION;
-    return state;
+  private buildSessionKey(sessionId: string): string {
+    return `${SESSION_KEY_PREFIX}${sessionId}`;
   }
 
   /**
@@ -210,17 +123,30 @@ export class SessionStore {
     const now = Date.now();
     let cleaned = 0;
 
-    for (const [sessionId, session] of this.sessions.entries()) {
+    // Clean memory cache
+    for (const [sessionId, session] of this.sessionCache.entries()) {
       if (session.expiresAt <= now) {
-        this.sessions.delete(sessionId);
+        this.sessionCache.delete(sessionId);
+        // Delete from Durable Storage
+        await this.state.storage.delete(this.buildSessionKey(sessionId));
+        cleaned++;
+      }
+    }
+
+    // Also scan storage for expired sessions not in cache
+    const storedSessions = await this.state.storage.list<Session>({
+      prefix: SESSION_KEY_PREFIX,
+    });
+
+    for (const [key, session] of storedSessions) {
+      if (session.expiresAt <= now) {
+        await this.state.storage.delete(key);
         cleaned++;
       }
     }
 
     if (cleaned > 0) {
       console.log(`SessionStore: Cleaned up ${cleaned} expired sessions`);
-      // Persist cleanup to Durable Storage
-      await this.saveState();
     }
   }
 
@@ -229,13 +155,6 @@ export class SessionStore {
    */
   private isExpired(session: Session): boolean {
     return session.expiresAt <= Date.now();
-  }
-
-  /**
-   * Generate unique session ID
-   */
-  private generateSessionId(): string {
-    return `session_${crypto.randomUUID()}`;
   }
 
   /**
@@ -315,23 +234,35 @@ export class SessionStore {
   }
 
   /**
-   * Get session by ID (memory → D1 fallback)
+   * Get session by ID (cache → storage → D1 fallback)
    */
   async getSession(sessionId: string): Promise<Session | null> {
-    await this.initializeState();
-
-    // 1. Check in-memory (hot)
-    let session = this.sessions.get(sessionId);
+    // 1. Check in-memory cache (hot)
+    let session = this.sessionCache.get(sessionId);
     if (session) {
       if (!this.isExpired(session)) {
         return session;
       }
       // Cleanup expired session
-      this.sessions.delete(sessionId);
+      this.sessionCache.delete(sessionId);
+      await this.state.storage.delete(this.buildSessionKey(sessionId));
       return null;
     }
 
-    // 2. Check D1 (cold) with timeout
+    // 2. Check Durable Storage
+    const storedSession = await this.state.storage.get<Session>(this.buildSessionKey(sessionId));
+    if (storedSession) {
+      if (!this.isExpired(storedSession)) {
+        // Promote to cache
+        this.sessionCache.set(sessionId, storedSession);
+        return storedSession;
+      }
+      // Cleanup expired session
+      await this.state.storage.delete(this.buildSessionKey(sessionId));
+      return null;
+    }
+
+    // 3. Check D1 (cold) with timeout
     try {
       const d1Session = await Promise.race([
         this.loadFromD1(sessionId),
@@ -339,8 +270,9 @@ export class SessionStore {
       ]);
 
       if (d1Session && !this.isExpired(d1Session)) {
-        // Promote to hot storage
-        this.sessions.set(sessionId, d1Session);
+        // Promote to cache and storage
+        this.sessionCache.set(sessionId, d1Session);
+        await this.state.storage.put(this.buildSessionKey(sessionId), d1Session);
         return d1Session;
       }
     } catch (error) {
@@ -352,23 +284,27 @@ export class SessionStore {
 
   /**
    * Create new session
+   * Session ID must be provided by the caller (generated via session-helper)
    */
-  async createSession(userId: string, ttl: number, data?: SessionData): Promise<Session> {
-    await this.initializeState();
-
+  async createSession(
+    sessionId: string,
+    userId: string,
+    ttl: number,
+    data?: SessionData
+  ): Promise<Session> {
     const session: Session = {
-      id: this.generateSessionId(),
+      id: sessionId,
       userId,
       expiresAt: Date.now() + ttl * 1000,
       createdAt: Date.now(),
       data,
     };
 
-    // 1. Store in memory (hot)
-    this.sessions.set(session.id, session);
+    // 1. Store in memory cache (hot)
+    this.sessionCache.set(sessionId, session);
 
-    // 2. Persist to Durable Storage (for DO restart resilience)
-    await this.saveState();
+    // 2. Persist to Durable Storage (individual key - O(1))
+    await this.state.storage.put(this.buildSessionKey(sessionId), session);
 
     // 3. Persist to D1 (backup & audit) - async, don't wait
     this.saveToD1(session).catch((error) => {
@@ -382,16 +318,15 @@ export class SessionStore {
    * Invalidate session immediately
    */
   async invalidateSession(sessionId: string): Promise<boolean> {
-    await this.initializeState();
+    // 1. Remove from memory cache
+    const hadSession = this.sessionCache.has(sessionId);
+    this.sessionCache.delete(sessionId);
 
-    // 1. Remove from memory
-    const hadSession = this.sessions.has(sessionId);
-    this.sessions.delete(sessionId);
-
-    // 2. Persist to Durable Storage
-    if (hadSession) {
-      await this.saveState();
-    }
+    // 2. Delete from Durable Storage (individual key - O(1))
+    const storageKey = this.buildSessionKey(sessionId);
+    const storedSession = await this.state.storage.get<Session>(storageKey);
+    const hadStoredSession = storedSession !== undefined;
+    await this.state.storage.delete(storageKey);
 
     // 3. Delete from D1 - MUST await to prevent race condition
     // Without await, getSession could still find the session in D1
@@ -404,7 +339,7 @@ export class SessionStore {
       // Continue even if D1 deletion fails - memory and Durable Storage are authoritative
     }
 
-    return hadSession;
+    return hadSession || hadStoredSession;
   }
 
   /**
@@ -414,24 +349,28 @@ export class SessionStore {
   async invalidateSessionsBatch(
     sessionIds: string[]
   ): Promise<{ deleted: number; failed: string[] }> {
-    await this.initializeState();
-
     const deleted: string[] = [];
     const failed: string[] = [];
 
-    // 1. Remove from memory
+    // Process each session
     for (const sessionId of sessionIds) {
-      if (this.sessions.has(sessionId)) {
-        this.sessions.delete(sessionId);
+      // Check if session exists
+      const hadSession = this.sessionCache.has(sessionId);
+      const storageKey = this.buildSessionKey(sessionId);
+      const storedSession = await this.state.storage.get<Session>(storageKey);
+      const hadStoredSession = storedSession !== undefined;
+
+      if (hadSession || hadStoredSession) {
+        // 1. Remove from memory cache
+        this.sessionCache.delete(sessionId);
+
+        // 2. Delete from Durable Storage
+        await this.state.storage.delete(storageKey);
+
         deleted.push(sessionId);
       } else {
         failed.push(sessionId);
       }
-    }
-
-    // 2. Persist to Durable Storage (single write for all deletions)
-    if (deleted.length > 0) {
-      await this.saveState();
     }
 
     // 3. Delete from D1 in batch - MUST await to prevent race condition
@@ -476,15 +415,18 @@ export class SessionStore {
 
   /**
    * List all active sessions for a user
+   * Note: In sharded mode, this only returns sessions in this shard
    */
   async listUserSessions(userId: string): Promise<SessionResponse[]> {
-    await this.initializeState();
-
     const sessions: SessionResponse[] = [];
     const now = Date.now();
 
-    // 1. Get from in-memory (hot)
-    for (const session of this.sessions.values()) {
+    // 1. Get from Durable Storage (individual keys)
+    const storedSessions = await this.state.storage.list<Session>({
+      prefix: SESSION_KEY_PREFIX,
+    });
+
+    for (const [, session] of storedSessions) {
       if (session.userId === userId && session.expiresAt > now) {
         sessions.push({
           id: session.id,
@@ -505,9 +447,10 @@ export class SessionStore {
           .all();
 
         if (result.results) {
+          const existingIds = new Set(sessions.map((s) => s.id));
           for (const row of result.results) {
-            // Only add if not already in memory
-            if (!this.sessions.has(row.id as string)) {
+            // Only add if not already in storage
+            if (!existingIds.has(row.id as string)) {
               sessions.push({
                 id: row.id as string,
                 userId: row.user_id as string,
@@ -529,8 +472,6 @@ export class SessionStore {
    * Extend session expiration (Active TTL)
    */
   async extendSession(sessionId: string, additionalSeconds: number): Promise<Session | null> {
-    await this.initializeState();
-
     const session = await this.getSession(sessionId);
     if (!session) {
       return null;
@@ -539,11 +480,11 @@ export class SessionStore {
     // Extend expiration
     session.expiresAt += additionalSeconds * 1000;
 
-    // Update in memory
-    this.sessions.set(sessionId, session);
+    // Update in memory cache
+    this.sessionCache.set(sessionId, session);
 
     // Persist to Durable Storage
-    await this.saveState();
+    await this.state.storage.put(this.buildSessionKey(sessionId), session);
 
     // Update in D1 - async
     this.saveToD1(session).catch((error) => {
@@ -596,14 +537,17 @@ export class SessionStore {
       if (path === '/session' && request.method === 'POST') {
         const body = (await request.json()) as Partial<CreateSessionRequest>;
 
-        if (!body.userId || !body.ttl) {
-          return new Response(JSON.stringify({ error: 'Missing required fields: userId, ttl' }), {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' },
-          });
+        if (!body.sessionId || !body.userId || !body.ttl) {
+          return new Response(
+            JSON.stringify({ error: 'Missing required fields: sessionId, userId, ttl' }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
         }
 
-        const session = await this.createSession(body.userId, body.ttl, body.data);
+        const session = await this.createSession(body.sessionId, body.userId, body.ttl, body.data);
 
         return new Response(JSON.stringify(this.sanitizeSession(session)), {
           status: 201,
@@ -694,10 +638,16 @@ export class SessionStore {
 
       // GET /status - Health check and stats
       if (path === '/status' && request.method === 'GET') {
+        // Count sessions in storage
+        const storedSessions = await this.state.storage.list<Session>({
+          prefix: SESSION_KEY_PREFIX,
+        });
+
         return new Response(
           JSON.stringify({
             status: 'ok',
-            sessions: this.sessions.size,
+            sessions: storedSessions.size,
+            cached: this.sessionCache.size,
             timestamp: Date.now(),
           }),
           {

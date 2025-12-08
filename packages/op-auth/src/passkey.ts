@@ -5,7 +5,11 @@
 
 import { Context } from 'hono';
 import type { Env } from '@authrim/shared';
-import { isAllowedOrigin, parseAllowedOrigins } from '@authrim/shared';
+import {
+  isAllowedOrigin,
+  parseAllowedOrigins,
+  getSessionStoreForNewSession,
+} from '@authrim/shared';
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -361,17 +365,16 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     const passkeyId = crypto.randomUUID();
     const now = Date.now();
 
-    // Step 1: Create session using SessionStore Durable Object (FIRST)
+    // Step 1: Create session using SessionStore Durable Object (FIRST, sharded)
     // This ensures that if session creation fails, we don't store the passkey
-    const sessionId = crypto.randomUUID();
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
 
     const sessionResponse = await sessionStore.fetch(
       new Request('https://session-store/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          sessionId,
           userId: userId,
           ttl: 30 * 24 * 60 * 60, // 30 days in seconds
           data: {
@@ -739,16 +742,16 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
     const now = Date.now();
 
-    // Step 1: Create session using SessionStore Durable Object (FIRST)
+    // Step 1: Create session using SessionStore Durable Object (FIRST, sharded)
     // This ensures that if session creation fails, we don't update the database
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
 
     const sessionResponse = await sessionStore.fetch(
       new Request('https://session-store/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          sessionId,
           userId: passkey.user_id,
           ttl: 30 * 24 * 60 * 60, // 30 days in seconds
           data: {

@@ -24,6 +24,13 @@ vi.mock('hono/cookie', () => ({
   setCookie: vi.fn(),
 }));
 
+// Mock session store for sharded session support
+const mockShardedSessionStore = {
+  fetch: vi
+    .fn()
+    .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
+};
+
 // Mock shared module
 vi.mock('@authrim/shared', async () => {
   const actual = await vi.importActual('@authrim/shared');
@@ -33,6 +40,8 @@ vi.mock('@authrim/shared', async () => {
     validateIdTokenHint: vi.fn(),
     validatePostLogoutRedirectUri: vi.fn(),
     validateLogoutParameters: vi.fn(),
+    isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
+    getSessionStoreBySessionId: vi.fn(() => mockShardedSessionStore),
   };
 });
 
@@ -166,16 +175,24 @@ describe('Front-channel Logout', () => {
       );
     });
 
-    it('should invalidate session in SessionStore', async () => {
-      const { c, mockSessionStore } = createMockContext({
+    it('should invalidate session in SessionStore (sharded format)', async () => {
+      const { c } = createMockContext({
         query: {},
       });
 
-      vi.mocked(getCookie).mockReturnValue('session-123');
+      // Reset mock for sharded session store
+      mockShardedSessionStore.fetch.mockReset();
+      mockShardedSessionStore.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ success: true }), { status: 200 })
+      );
+
+      // Use sharded session ID format
+      vi.mocked(getCookie).mockReturnValue('0_session_123');
 
       await frontChannelLogoutHandler(c);
 
-      expect(mockSessionStore.fetch).toHaveBeenCalledWith(
+      // Should call sharded session store with DELETE
+      expect(mockShardedSessionStore.fetch).toHaveBeenCalledWith(
         expect.objectContaining({
           method: 'DELETE',
         })
@@ -820,8 +837,16 @@ describe('Back-channel Logout', () => {
   });
 
   describe('Session Invalidation', () => {
-    it('should invalidate specific session when sid is provided', async () => {
-      const { c, mockSessionStore } = createMockContext({
+    beforeEach(() => {
+      // Reset mock for sharded session store
+      mockShardedSessionStore.fetch.mockReset();
+      mockShardedSessionStore.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ success: true }), { status: 200 })
+      );
+    });
+
+    it('should invalidate specific session when sid is provided (sharded format)', async () => {
+      const { c } = createMockContext({
         method: 'POST',
         body: {
           logout_token: 'valid.logout.token',
@@ -832,7 +857,7 @@ describe('Back-channel Logout', () => {
       vi.mocked(jwtVerify).mockResolvedValue({
         payload: {
           sub: 'user-123',
-          sid: 'session-456',
+          sid: '0_session_456', // Sharded session ID format
           events: {
             'http://schemas.openid.net/event/backchannel-logout': {},
           },
@@ -842,39 +867,30 @@ describe('Back-channel Logout', () => {
 
       await backChannelLogoutHandler(c);
 
-      expect(mockSessionStore.fetch).toHaveBeenCalledWith(
+      // Should call the sharded session store's fetch with DELETE method
+      expect(mockShardedSessionStore.fetch).toHaveBeenCalledWith(
         expect.objectContaining({
           method: 'DELETE',
-          url: expect.stringContaining('session-456'),
+          url: expect.stringContaining('0_session_456'),
         })
       );
     });
 
-    it('should invalidate all sessions for user when sid is not provided', async () => {
-      const { c, mockSessionStore } = createMockContext({
+    it('should log warning when sid is not a sharded session ID', async () => {
+      const { c } = createMockContext({
         method: 'POST',
         body: {
           logout_token: 'valid.logout.token',
         },
       });
 
-      // Mock session store to return user sessions
-      mockSessionStore.fetch
-        .mockResolvedValueOnce(
-          new Response(
-            JSON.stringify({
-              sessions: [{ id: 'session-1' }, { id: 'session-2' }, { id: 'session-3' }],
-            }),
-            { status: 200 }
-          )
-        )
-        .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       vi.mocked(importJWK).mockResolvedValue({} as any);
       vi.mocked(jwtVerify).mockResolvedValue({
         payload: {
           sub: 'user-123',
-          // No 'sid' - should invalidate all sessions
+          sid: 'legacy-session-format', // Non-sharded format
           events: {
             'http://schemas.openid.net/event/backchannel-logout': {},
           },
@@ -884,13 +900,44 @@ describe('Back-channel Logout', () => {
 
       await backChannelLogoutHandler(c);
 
-      // Should first fetch user sessions, then delete each
-      expect(mockSessionStore.fetch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          method: 'GET',
-          url: expect.stringContaining('user/user-123'),
-        })
-      );
+      // Should NOT call the sharded session store (non-sharded sid is ignored)
+      expect(mockShardedSessionStore.fetch).not.toHaveBeenCalled();
+      // Should log a warning about the limitation
+      expect(consoleWarnSpy).toHaveBeenCalled();
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should log warning when sid is not provided (sharded store limitation)', async () => {
+      const { c } = createMockContext({
+        method: 'POST',
+        body: {
+          logout_token: 'valid.logout.token',
+        },
+      });
+
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      vi.mocked(importJWK).mockResolvedValue({} as any);
+      vi.mocked(jwtVerify).mockResolvedValue({
+        payload: {
+          sub: 'user-123',
+          // No 'sid' - cannot bulk delete in sharded store
+          events: {
+            'http://schemas.openid.net/event/backchannel-logout': {},
+          },
+        },
+        protectedHeader: { alg: 'RS256' },
+      } as any);
+
+      await backChannelLogoutHandler(c);
+
+      // Should NOT call the sharded session store (no sid means cannot locate shard)
+      expect(mockShardedSessionStore.fetch).not.toHaveBeenCalled();
+      // Should log a warning about the sharded store limitation
+      expect(consoleWarnSpy).toHaveBeenCalled();
+
+      consoleWarnSpy.mockRestore();
     });
   });
 

@@ -14,7 +14,11 @@
 import { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Env } from '@authrim/shared';
-import { generateCheckSessionIframeHtml } from '@authrim/shared';
+import {
+  generateCheckSessionIframeHtml,
+  getSessionStoreBySessionId,
+  isShardedSessionId,
+} from '@authrim/shared';
 
 /**
  * Issue a short-lived session token (5 minute TTL, single-use)
@@ -38,10 +42,18 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Verify session exists in SessionStore
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+    // Verify session exists in SessionStore (sharded)
+    if (!isShardedSessionId(sessionId)) {
+      return c.json(
+        {
+          error: 'session_not_found',
+          error_description: 'Session has expired or is invalid',
+        },
+        401
+      );
+    }
 
+    const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
     const sessionResponse = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionId}`, {
         method: 'GET',
@@ -183,10 +195,18 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Verify the original session still exists
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+    // Verify the original session still exists (sharded)
+    if (!isShardedSessionId(sessionId)) {
+      return c.json(
+        {
+          error: 'session_expired',
+          error_description: 'Original session has expired',
+        },
+        401
+      );
+    }
 
+    const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
     const sessionResponse = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionId}`, {
         method: 'GET',
@@ -279,10 +299,18 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Check session in SessionStore
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+    // Check session in SessionStore (sharded)
+    if (!isShardedSessionId(sessionId)) {
+      return c.json(
+        {
+          active: false,
+          error: 'session_expired',
+        },
+        200
+      );
+    }
 
+    const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
     const sessionResponse = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionId}`, {
         method: 'GET',
@@ -387,10 +415,18 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Extend session in SessionStore
-    const sessionStoreId = c.env.SESSION_STORE.idFromName('global');
-    const sessionStore = c.env.SESSION_STORE.get(sessionStoreId);
+    // Extend session in SessionStore (sharded)
+    if (!isShardedSessionId(sessionId)) {
+      return c.json(
+        {
+          error: 'session_not_found',
+          error_description: 'Session has expired or is invalid',
+        },
+        401
+      );
+    }
 
+    const sessionStore = getSessionStoreBySessionId(c.env, sessionId);
     const extendResponse = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionId}/extend`, {
         method: 'POST',

@@ -8,6 +8,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
 import type { SAMLSPConfig } from '@authrim/shared';
+import { getSessionStoreBySessionId, isShardedSessionId } from '@authrim/shared';
 import { generateSAMLId, nowAsDateTime, offsetDateTime } from '../common/xml-utils';
 import { NAMEID_FORMATS, AUTHN_CONTEXT, DEFAULTS, STATUS_CODES } from '../common/constants';
 import { getSigningKey, getSigningCertificate } from '../common/key-utils';
@@ -74,7 +75,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
 }
 
 /**
- * Check if user is authenticated
+ * Check if user is authenticated (sharded)
  */
 async function checkUserAuthentication(
   c: Context<{ Bindings: Env }>,
@@ -86,21 +87,28 @@ async function checkUserAuthentication(
     return null;
   }
 
-  const sessionStoreId = env.SESSION_STORE.idFromName('default');
-  const sessionStore = env.SESSION_STORE.get(sessionStoreId);
-
-  const response = await sessionStore.fetch(
-    new Request(`https://session-store/session/${sessionId}`, {
-      method: 'GET',
-    })
-  );
-
-  if (!response.ok) {
+  // Verify session with SessionStore (sharded)
+  if (!isShardedSessionId(sessionId)) {
     return null;
   }
 
-  const session = (await response.json()) as { userId?: string };
-  return session.userId || null;
+  try {
+    const sessionStore = getSessionStoreBySessionId(env, sessionId);
+    const response = await sessionStore.fetch(
+      new Request(`https://session-store/session/${sessionId}`, {
+        method: 'GET',
+      })
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const session = (await response.json()) as { userId?: string };
+    return session.userId || null;
+  } catch {
+    return null;
+  }
 }
 
 /**

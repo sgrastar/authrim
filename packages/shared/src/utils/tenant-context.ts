@@ -110,7 +110,7 @@ export const DEFAULT_CODE_SHARD_COUNT = 64;
  * @param str - String to hash
  * @returns 32-bit unsigned integer hash
  */
-function fnv1a32(str: string): number {
+export function fnv1a32(str: string): number {
   let hash = 2166136261; // FNV offset basis
   for (let i = 0; i < str.length; i++) {
     hash ^= str.charCodeAt(i);
@@ -280,4 +280,91 @@ export async function getShardCount(env: Env): Promise<number> {
   cachedAt = now;
 
   return count;
+}
+
+// ============================================================
+// Session Store Sharding (sessionId-based)
+// ============================================================
+
+/**
+ * Default shard count for session store sharding.
+ * Can be overridden via AUTHRIM_SESSION_SHARDS environment variable.
+ */
+export const DEFAULT_SESSION_SHARD_COUNT = 32;
+
+/**
+ * Cached session shard count to avoid repeated KV lookups.
+ */
+let cachedSessionShardCount: number | null = null;
+let cachedSessionShardAt = 0;
+
+/**
+ * Get current session shard count from KV or environment variable.
+ *
+ * Priority:
+ * 1. KV (AUTHRIM_CONFIG namespace, key: "session_shards")
+ * 2. Environment variable (AUTHRIM_SESSION_SHARDS)
+ * 3. Default (DEFAULT_SESSION_SHARD_COUNT = 32)
+ *
+ * @param env - Environment object with KV and variables
+ * @returns Current session shard count
+ */
+async function getCurrentSessionShardCount(env: Env): Promise<number> {
+  // KV が存在すれば優先（動的変更可能）
+  if (env.AUTHRIM_CONFIG) {
+    const kvValue = await env.AUTHRIM_CONFIG.get('session_shards');
+    if (kvValue) {
+      const parsed = parseInt(kvValue, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+  }
+
+  // フォールバックとして env を使う
+  if (env.AUTHRIM_SESSION_SHARDS) {
+    const parsed = parseInt(env.AUTHRIM_SESSION_SHARDS, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  // デフォルト値
+  return DEFAULT_SESSION_SHARD_COUNT;
+}
+
+/**
+ * Get session shard count with caching.
+ *
+ * Caches the result for 10 seconds to minimize KV overhead.
+ *
+ * @param env - Environment object
+ * @returns Current session shard count
+ */
+export async function getSessionShardCount(env: Env): Promise<number> {
+  const now = Date.now();
+
+  // Return cached value if within TTL
+  if (cachedSessionShardCount !== null && now - cachedSessionShardAt < CACHE_TTL_MS) {
+    return cachedSessionShardCount;
+  }
+
+  // Fetch fresh value
+  const count = await getCurrentSessionShardCount(env);
+
+  // Update cache
+  cachedSessionShardCount = count;
+  cachedSessionShardAt = now;
+
+  return count;
+}
+
+/**
+ * Build a sharded Durable Object instance name for sessions.
+ *
+ * @param shardIndex - Shard index
+ * @returns DO instance name for the shard
+ */
+export function buildSessionShardInstanceName(shardIndex: number): string {
+  return `tenant:${DEFAULT_TENANT_ID}:session:shard-${shardIndex}`;
 }
