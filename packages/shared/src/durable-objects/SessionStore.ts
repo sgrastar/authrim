@@ -393,10 +393,16 @@ export class SessionStore {
       await this.saveState();
     }
 
-    // 3. Mark as deleted in D1 - async, don't wait
-    this.deleteFromD1(sessionId).catch((error) => {
+    // 3. Delete from D1 - MUST await to prevent race condition
+    // Without await, getSession could still find the session in D1
+    // before the deletion completes, causing prompt=none to succeed
+    // when it should fail with login_required (OIDC RP-Initiated Logout)
+    try {
+      await this.deleteFromD1(sessionId);
+    } catch (error) {
       console.error('SessionStore: Failed to delete from D1:', error);
-    });
+      // Continue even if D1 deletion fails - memory and Durable Storage are authoritative
+    }
 
     return hadSession;
   }
@@ -428,11 +434,14 @@ export class SessionStore {
       await this.saveState();
     }
 
-    // 3. Delete from D1 in batch - async, don't wait
+    // 3. Delete from D1 in batch - MUST await to prevent race condition
     if (deleted.length > 0 && this.env.DB) {
-      this.batchDeleteFromD1(deleted).catch((error) => {
+      try {
+        await this.batchDeleteFromD1(deleted);
+      } catch (error) {
         console.error('SessionStore: Failed to batch delete from D1:', error);
-      });
+        // Continue even if D1 deletion fails - memory and Durable Storage are authoritative
+      }
     }
 
     return {

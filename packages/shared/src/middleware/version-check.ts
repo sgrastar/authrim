@@ -28,8 +28,11 @@ interface VersionCache {
   timestamp: number;
 }
 
-// Cache TTL in milliseconds (5 seconds)
-const CACHE_TTL_MS = 5000;
+// Cache TTL in milliseconds
+// Set to 0 for immediate version enforcement (recommended for consistency)
+// Trade-off: Every request will query VersionManager DO (~1-2ms latency)
+// For high-traffic production, consider increasing to 1000-2000ms
+const CACHE_TTL_MS = 0;
 
 // Per-worker version cache (worker name -> cache entry)
 const versionCaches = new Map<string, VersionCache>();

@@ -323,6 +323,19 @@ app.all('/scim/v2/*', async (c) => {
 });
 
 /**
+ * Internal API endpoints - Route to OP_MANAGEMENT worker
+ * - /api/internal/version/:workerName - Register deployed code version
+ * - /api/internal/version-manager/status - Get all registered versions
+ *
+ * Used by deploy scripts to register new code versions for PoP version forcing.
+ * This ensures all Cloudflare PoPs serve the latest deployed Worker bundle.
+ */
+app.all('/api/internal/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+/**
  * SAML 2.0 endpoints - Route to OP_SAML worker
  * - /saml/idp/* - IdP endpoints (metadata, SSO, SLO, IdP-initiated)
  * - /saml/sp/* - SP endpoints (metadata, ACS, login, SLO)

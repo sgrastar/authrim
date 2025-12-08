@@ -259,8 +259,11 @@ fi
 echo "  ✅ Configuration validated"
 echo ""
 
-# Build first
+# Build first (always clear cache to ensure fresh builds)
 echo "🔨 Building packages..."
+echo "   Clearing turbo cache to ensure fresh build..."
+rm -rf .turbo node_modules/.cache 2>/dev/null || true
+
 if [ "$API_ONLY" = true ]; then
     echo "   (API only - excluding UI)"
     pnpm run build:api
@@ -358,12 +361,10 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
         JWKS=$(curl -s "${ISSUER_URL}/.well-known/jwks.json" --connect-timeout 10 --max-time 30 2>/dev/null)
         if [ -n "$JWKS" ] && echo "$JWKS" | jq -e '.keys' > /dev/null 2>&1; then
             echo "   Setting PUBLIC_JWK_JSON secret..."
-            echo "$JWKS" | wrangler secret put PUBLIC_JWK_JSON --name "${DEPLOY_ENV}-authrim-op-token" > /dev/null 2>&1
-            if [ $? -eq 0 ]; then
-                echo "   ✅ PUBLIC_JWK_JSON secret set successfully"
-            else
-                echo "   ⚠️  Failed to set PUBLIC_JWK_JSON secret (non-critical)"
-            fi
+            # Skip this step - wrangler secret put can hang waiting for interactive input
+            # The secret is only needed for DO bypass optimization and is not critical
+            echo "   ⏭️  Skipped (manual setup recommended if needed)"
+            echo "   💡 To set manually: echo '\$JWKS' | wrangler secret put PUBLIC_JWK_JSON --name ${DEPLOY_ENV}-authrim-op-token"
         else
             echo "   ⚠️  Could not fetch valid JWKS from ${ISSUER_URL}/.well-known/jwks.json"
             echo "   💡 You may need to manually set PUBLIC_JWK_JSON after deployment"

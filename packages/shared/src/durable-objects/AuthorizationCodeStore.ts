@@ -666,6 +666,53 @@ export class AuthorizationCodeStore {
         );
       }
 
+      // POST /reload-config - Force reload configuration from KV
+      // Used for updating TTL and other settings without restarting the DO
+      if (path === '/reload-config' && request.method === 'POST') {
+        const previousTTL = this.CODE_TTL;
+        const previousMaxCodes = this.MAX_CODES_PER_USER;
+
+        try {
+          // Clear configManager cache to force fresh KV read
+          this.configManager.clearCache();
+
+          // Reload configuration from KV
+          this.CODE_TTL = await this.configManager.getAuthCodeTTL();
+          this.MAX_CODES_PER_USER = await this.configManager.getMaxCodesPerUser();
+
+          console.log(
+            `AuthCodeStore: Config reloaded - CODE_TTL: ${previousTTL}s → ${this.CODE_TTL}s, ` +
+              `MAX_CODES_PER_USER: ${previousMaxCodes} → ${this.MAX_CODES_PER_USER}`
+          );
+
+          return new Response(
+            JSON.stringify({
+              status: 'ok',
+              message: 'Configuration reloaded',
+              config: {
+                previous: { ttl: previousTTL, maxCodesPerUser: previousMaxCodes },
+                current: { ttl: this.CODE_TTL, maxCodesPerUser: this.MAX_CODES_PER_USER },
+              },
+            }),
+            {
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        } catch (error) {
+          console.error('AuthCodeStore: Failed to reload config:', error);
+          return new Response(
+            JSON.stringify({
+              status: 'error',
+              message: error instanceof Error ? error.message : 'Failed to reload config',
+            }),
+            {
+              status: 500,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+      }
+
       return new Response('Not Found', { status: 404 });
     } catch (error) {
       console.error('AuthCodeStore error:', error);
