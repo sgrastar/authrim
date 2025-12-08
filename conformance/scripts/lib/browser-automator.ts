@@ -152,6 +152,19 @@ export class BrowserAutomator {
 
         // Check if we've been redirected back to the conformance suite
         if (this.isConformanceCallback(currentUrl)) {
+          // RP-Initiated Logout: Clear cookies when we land on logout-related pages
+          // This ensures the session cookie is properly cleared even if the browser
+          // didn't properly process the Set-Cookie header from the 302 redirect.
+          // Playwright sometimes doesn't apply Set-Cookie headers on redirects correctly.
+          const isLogoutPage =
+            currentUrl.includes('/logout-error') ||
+            currentUrl.includes('/logged-out') ||
+            currentUrl.includes('/post_logout_redirect');
+          if (isLogoutPage) {
+            console.log('[Browser] Logout page detected, clearing OP domain cookies...');
+            await this.clearCookies(['authrim.com']);
+          }
+
           // For fragment-based responses (implicit/hybrid flows), wait for the page to process
           // The conformance suite's callback page needs time to parse the fragment via JavaScript
           // and send the data to the server before we can consider the flow complete
@@ -728,6 +741,15 @@ export class BrowserAutomator {
         console.log(`[Browser] Current URL: ${currentUrl}`);
 
         if (this.isConformanceCallback(currentUrl)) {
+          // RP-Initiated Logout: Clear cookies when we land on logout-related pages
+          const isLogoutPage =
+            currentUrl.includes('/logout-error') ||
+            currentUrl.includes('/logged-out') ||
+            currentUrl.includes('/post_logout_redirect');
+          if (isLogoutPage) {
+            console.log('[Browser] Logout page detected, clearing OP domain cookies...');
+            await this.clearCookies(['authrim.com']);
+          }
           console.log('[Browser] Redirected back to conformance suite');
           return { finalUrl: currentUrl, screenshotPath };
         }
