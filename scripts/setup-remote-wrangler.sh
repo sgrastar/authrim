@@ -408,6 +408,10 @@ zone_name = \"$ZONE_NAME\"
 
 [[routes]]
 pattern = \"$DOMAIN_ONLY/auth/consent*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/_internal/*\"
 zone_name = \"$ZONE_NAME\""
             ;;
         op-token)

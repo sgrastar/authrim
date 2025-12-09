@@ -1,0 +1,26 @@
+{
+  "planName": "Quick Validation Tests - Dynamic",
+  "generatedAt": "2025-12-09T12:00:00Z",
+  "planKey": "dynamic-op",
+  "configFile": "dynamic-op.json",
+  "tests": [
+    {
+      "testModule": "oidcc-registration-logo-uri",
+      "testSummary": "Tests logo_uri client metadata display",
+      "variant": {"response_type": "code"},
+      "requiresScreenshot": true,
+      "screenshotTiming": "on_login",
+      "expectedError": null,
+      "notes": "Tests client metadata on login page"
+    },
+    {
+      "testModule": "oidcc-refresh-token-rp-key-rotation",
+      "testSummary": "Tests JWKS key rotation handling",
+      "variant": {"response_type": "code"},
+      "requiresScreenshot": false,
+      "screenshotTiming": null,
+      "expectedError": null,
+      "notes": "Tests jwks_uri priority over embedded jwks"
+    }
+  ]
+}

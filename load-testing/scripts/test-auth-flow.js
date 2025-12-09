@@ -111,6 +111,36 @@ const PRESETS = {
     preAllocatedVUs: 150,
     maxVUs: 200,
   },
+  rps150: {
+    description: '150 RPS - Medium-high load (90s)',
+    stages: [
+      { target: 75, duration: '15s' },
+      { target: 150, duration: '90s' },
+      { target: 0, duration: '15s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<800', 'p(99)<1500'],
+      http_req_failed: ['rate<0.03'],
+      auth_flow_duration: ['p(99)<2500'],
+    },
+    preAllocatedVUs: 225,
+    maxVUs: 300,
+  },
+  rps200: {
+    description: '200 RPS - High load (90s)',
+    stages: [
+      { target: 100, duration: '15s' },
+      { target: 200, duration: '90s' },
+      { target: 0, duration: '15s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<700', 'p(99)<1300'],
+      http_req_failed: ['rate<0.03'],
+      auth_flow_duration: ['p(99)<2200'],
+    },
+    preAllocatedVUs: 300,
+    maxVUs: 400,
+  },
   rps300: {
     description: '300 RPS - High load (120s)',
     stages: [

@@ -364,6 +364,15 @@ app.all('/external-idp/*', async (c) => {
   return c.env.EXTERNAL_IDP.fetch(request);
 });
 
+/**
+ * Internal endpoints - Route to OP_AUTH worker
+ * - /_internal/warmup - Pre-heat Durable Objects (admin only)
+ */
+app.all('/_internal/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
 // 404 handler
 app.notFound((c) => {
   return c.json(
