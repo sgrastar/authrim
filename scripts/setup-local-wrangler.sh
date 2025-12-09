@@ -79,6 +79,10 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = true
 
+# Smart Placement - automatically run Worker close to backend (D1/DO)
+[placement]
+mode = "smart"
+
 # KV Namespaces
 $kv_namespaces
 

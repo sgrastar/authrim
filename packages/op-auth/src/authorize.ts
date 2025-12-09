@@ -810,19 +810,39 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Validate response_type
+  // RFC 6749 Section 4.1.2.1:
+  // - invalid_request: missing required parameter (response_type is absent)
+  // - unsupported_response_type: response_type value is not supported
+  if (!response_type) {
+    // response_type is missing - use invalid_request per RFC 6749
+    const uiUrl = c.env.UI_URL;
+    if (uiUrl) {
+      const errorParams = new URLSearchParams({
+        error: 'invalid_request',
+        error_description: 'response_type is required',
+      });
+      return c.redirect(`${uiUrl}/error?${errorParams.toString()}`, 302);
+    }
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'response_type is required',
+      },
+      400
+    );
+  }
+
   const responseTypeValidation = validateResponseType(response_type);
   if (!responseTypeValidation.valid) {
-    // OAuth 2.0 spec: use 'unsupported_response_type' for invalid response_type
-    // Redirect to error page for better user experience and conformance testing
+    // response_type is present but unsupported - use unsupported_response_type
     const uiUrl = c.env.UI_URL;
     if (uiUrl) {
       const errorParams = new URLSearchParams({
         error: 'unsupported_response_type',
-        error_description: responseTypeValidation.error || 'response_type is required',
+        error_description: responseTypeValidation.error || 'Unsupported response_type',
       });
       return c.redirect(`${uiUrl}/error?${errorParams.toString()}`, 302);
     }
-    // Fallback to JSON response if UI_URL is not configured
     return c.json(
       {
         error: 'unsupported_response_type',
@@ -916,6 +936,82 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
+  // OAuth 2.0 Section 3.1.2.3: Handle redirect_uri based on registration
+  // Must be done BEFORE format validation to support default redirect_uri
+  const registeredRedirectUrisForDefault = clientMetadata.redirect_uris as string[] | undefined;
+  if (
+    !redirect_uri &&
+    registeredRedirectUrisForDefault &&
+    Array.isArray(registeredRedirectUrisForDefault)
+  ) {
+    if (registeredRedirectUrisForDefault.length === 1) {
+      // Only one registered - use as default (redirect_uri parameter is optional)
+      redirect_uri = registeredRedirectUrisForDefault[0];
+      console.log(`[Auth] Using default redirect_uri: ${redirect_uri}`);
+    } else if (registeredRedirectUrisForDefault.length > 1) {
+      // Multiple registered - redirect_uri is required
+      return c.html(
+        `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Missing Redirect URI</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .container {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      max-width: 500px;
+      width: 100%;
+    }
+    h1 {
+      margin: 0 0 1rem 0;
+      font-size: 1.5rem;
+      color: #d32f2f;
+    }
+    p {
+      margin: 0 0 1rem 0;
+      color: #666;
+      line-height: 1.5;
+    }
+    .error-code {
+      background: #f5f5f5;
+      padding: 0.5rem;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Missing Redirect URI</h1>
+    <p>The redirect_uri parameter is required when the client has multiple registered redirect URIs.</p>
+    <div class="error-code">
+      <strong>Error:</strong> invalid_request<br>
+      <strong>Description:</strong> redirect_uri is required when multiple redirect URIs are registered
+    </div>
+    <p>Please include the redirect_uri parameter in your authorization request.</p>
+  </div>
+</body>
+</html>`,
+        400
+      );
+    }
+  }
+
   // Validate redirect_uri format (allow http for development)
   const allowHttp = c.env.ALLOW_HTTP_REDIRECT === 'true';
   const redirectUriValidation = validateRedirectUri(redirect_uri, allowHttp);
@@ -985,7 +1081,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Check if redirect_uri is registered for this client
   // Per OAuth 2.0 Section 3.1.2.3: redirect_uri MUST match one of the registered redirect URIs
   const registeredRedirectUris = clientMetadata.redirect_uris as string[] | undefined;
-  if (!registeredRedirectUris || !Array.isArray(registeredRedirectUris)) {
+  if (
+    !registeredRedirectUris ||
+    !Array.isArray(registeredRedirectUris) ||
+    registeredRedirectUris.length === 0
+  ) {
     return c.html(
       `<!DOCTYPE html>
 <html lang="en">
@@ -1048,6 +1148,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Check if the provided redirect_uri matches one of the registered URIs
+  // Note: redirect_uri default handling is done earlier (before format validation)
   const redirectUriMatches = registeredRedirectUris.includes(redirect_uri as string);
   if (!redirectUriMatches) {
     return c.html(
@@ -1586,6 +1687,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             display,
             ui_locales,
             login_hint,
+            // Client metadata for login page display (OIDC Dynamic OP requirement)
+            client_name: clientMetadata?.client_name || client_id,
+            logo_uri: clientMetadata?.logo_uri,
+            policy_uri: clientMetadata?.policy_uri,
+            tos_uri: clientMetadata?.tos_uri,
+            client_uri: clientMetadata?.client_uri,
           },
         }),
       })

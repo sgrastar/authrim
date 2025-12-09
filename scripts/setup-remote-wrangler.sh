@@ -294,6 +294,10 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false
 
+# Smart Placement - automatically run Worker close to backend (D1/DO)
+[placement]
+mode = "smart"
+
 # KV Namespaces
 $kv_namespaces
 # D1 Databases
@@ -396,6 +400,14 @@ zone_name = \"$ZONE_NAME\"
 
 [[routes]]
 pattern = \"$DOMAIN_ONLY/logout*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/logged-out\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/auth/consent*\"
 zone_name = \"$ZONE_NAME\""
             ;;
         op-token)
@@ -426,6 +438,10 @@ zone_name = \"$ZONE_NAME\"
 
 [[routes]]
 pattern = \"$DOMAIN_ONLY/api/admin/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/api/internal/*\"
 zone_name = \"$ZONE_NAME\""
             ;;
         op-async)
@@ -503,6 +519,10 @@ name = "${DEPLOY_ENV}-authrim-shared"
 main = "src/durable-objects/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+
+# Smart Placement - automatically run Worker close to backend (D1/DO)
+[placement]
+mode = "smart"
 
 # Durable Objects definitions
 [[durable_objects.bindings]]
@@ -601,6 +621,18 @@ new_sqlite_classes = [
   "SAMLRequestStore"
 ]
 
+# KV Namespaces (for dynamic configuration)
+[[kv_namespaces]]
+binding = "AUTHRIM_CONFIG"
+id = "placeholder"
+preview_id = "placeholder"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "${DEPLOY_ENV}-authrim-users-db"
+database_id = "placeholder"
+
 # Environment variables
 [vars]
 KEY_MANAGER_SECRET = "$KEY_MANAGER_SECRET"
@@ -611,7 +643,17 @@ fi
 # Generate op-discovery wrangler file
 if [ ! -f "packages/op-discovery/wrangler.${DEPLOY_ENV}.toml" ]; then
     echo "  • Generating op-discovery/wrangler.${DEPLOY_ENV}.toml..."
-    generate_base_wrangler "op-discovery" "" "" "" "[[durable_objects.bindings]]
+    generate_base_wrangler "op-discovery" "[[kv_namespaces]]
+binding = \"SETTINGS\"
+id = \"placeholder\"
+preview_id = \"placeholder\"
+
+" "[[d1_databases]]
+binding = \"DB\"
+database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+" "" "[[durable_objects.bindings]]
 name = \"KEY_MANAGER\"
 class_name = \"KeyManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\"
@@ -631,8 +673,19 @@ fi
 if [ ! -f "packages/op-auth/wrangler.${DEPLOY_ENV}.toml" ]; then
     echo "  • Generating op-auth/wrangler.${DEPLOY_ENV}.toml..."
     generate_base_wrangler "op-auth" "[[kv_namespaces]]
-binding = \"CLIENTS\"
+binding = \"CLIENTS_CACHE\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
+
+[[kv_namespaces]]
+binding = \"SETTINGS\"
+id = \"placeholder\"
+preview_id = \"placeholder\"
+
+[[kv_namespaces]]
+binding = \"AUTHRIM_CONFIG\"
+id = \"placeholder\"
+preview_id = \"placeholder\"
 
 " "[[d1_databases]]
 binding = \"DB\"
@@ -685,18 +738,27 @@ if [ ! -f "packages/op-token/wrangler.${DEPLOY_ENV}.toml" ]; then
     generate_base_wrangler "op-token" "[[kv_namespaces]]
 binding = \"CLIENTS_CACHE\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
 
 [[kv_namespaces]]
 binding = \"USER_CACHE\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
 
 [[kv_namespaces]]
 binding = \"REBAC_CACHE\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
 
 [[kv_namespaces]]
 binding = \"SETTINGS\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
+
+[[kv_namespaces]]
+binding = \"AUTHRIM_CONFIG\"
+id = \"placeholder\"
+preview_id = \"placeholder\"
 
 " "[[d1_databases]]
 binding = \"DB\"
@@ -748,8 +810,9 @@ fi
 if [ ! -f "packages/op-userinfo/wrangler.${DEPLOY_ENV}.toml" ]; then
     echo "  • Generating op-userinfo/wrangler.${DEPLOY_ENV}.toml..."
     generate_base_wrangler "op-userinfo" "[[kv_namespaces]]
-binding = \"CLIENTS\"
+binding = \"CLIENTS_CACHE\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
 
 " "[[d1_databases]]
 binding = \"DB\"
@@ -820,16 +883,24 @@ fi
 if [ ! -f "packages/op-management/wrangler.${DEPLOY_ENV}.toml" ]; then
     echo "  • Generating op-management/wrangler.${DEPLOY_ENV}.toml..."
     generate_base_wrangler "op-management" "[[kv_namespaces]]
-binding = \"CLIENTS\"
+binding = \"CLIENTS_CACHE\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
 
 [[kv_namespaces]]
 binding = \"INITIAL_ACCESS_TOKENS\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
 
 [[kv_namespaces]]
 binding = \"SETTINGS\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
+
+[[kv_namespaces]]
+binding = \"AUTHRIM_CONFIG\"
+id = \"placeholder\"
+preview_id = \"placeholder\"
 
 " "[[d1_databases]]
 binding = \"DB\"
@@ -873,6 +944,7 @@ if [ ! -f "packages/policy-service/wrangler.${DEPLOY_ENV}.toml" ]; then
     generate_base_wrangler "policy-service" "[[kv_namespaces]]
 binding = \"REBAC_CACHE\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
 
 " "[[d1_databases]]
 binding = \"DB\"
@@ -894,6 +966,11 @@ database_name = \"${DEPLOY_ENV}-authrim-users-db\"
 database_id = \"placeholder\"
 
 " "" "[[durable_objects.bindings]]
+name = \"SAML_REQUEST_STORE\"
+class_name = \"SAMLRequestStore\"
+script_name = \"${DEPLOY_ENV}-authrim-shared\"
+
+[[durable_objects.bindings]]
 name = \"KEY_MANAGER\"
 class_name = \"KeyManager\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\"
@@ -901,16 +978,6 @@ script_name = \"${DEPLOY_ENV}-authrim-shared\"
 [[durable_objects.bindings]]
 name = \"SESSION_STORE\"
 class_name = \"SessionStore\"
-script_name = \"${DEPLOY_ENV}-authrim-shared\"
-
-[[durable_objects.bindings]]
-name = \"SAML_REQUEST_STORE\"
-class_name = \"SAMLRequestStore\"
-script_name = \"${DEPLOY_ENV}-authrim-shared\"
-
-[[durable_objects.bindings]]
-name = \"RATE_LIMITER\"
-class_name = \"RateLimiterCounter\"
 script_name = \"${DEPLOY_ENV}-authrim-shared\"
 
 [[durable_objects.bindings]]
@@ -925,10 +992,12 @@ if [ ! -f "packages/external-idp/wrangler.${DEPLOY_ENV}.toml" ]; then
     generate_base_wrangler "external-idp" "[[kv_namespaces]]
 binding = \"SETTINGS\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
 
 [[kv_namespaces]]
 binding = \"STATE_STORE\"
 id = \"placeholder\"
+preview_id = \"placeholder\"
 
 " "[[d1_databases]]
 binding = \"DB\"

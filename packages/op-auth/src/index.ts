@@ -23,6 +23,7 @@ import {
 } from './passkey';
 import { emailCodeSendHandler, emailCodeVerifyHandler } from './email-code';
 import { consentGetHandler, consentPostHandler } from './consent';
+import { loginChallengeGetHandler } from './login-challenge';
 import {
   issueSessionTokenHandler,
   verifySessionTokenHandler,
@@ -176,6 +177,10 @@ app.post('/api/auth/consent', consentPostHandler);
 // /auth/consent - Fallback path (used when UI_URL is not configured)
 app.get('/auth/consent', consentGetHandler);
 app.post('/auth/consent', consentPostHandler);
+
+// Login Challenge endpoints (for OIDC Dynamic OP conformance - logo_uri, policy_uri, tos_uri display)
+app.get('/api/auth/login-challenge', loginChallengeGetHandler);
+app.get('/auth/login-challenge', loginChallengeGetHandler);
 
 // Session Management endpoints (RESTful naming)
 app.post('/api/sessions/issue', issueSessionTokenHandler); // Issue new session token

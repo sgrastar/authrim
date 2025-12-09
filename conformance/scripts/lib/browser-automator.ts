@@ -6,7 +6,7 @@
  */
 
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
-import type { TestUser, BrowserAction } from './types.js';
+import type { TestUser } from './types.js';
 
 // Re-export Page type for external use
 export type { Page };
@@ -17,6 +17,10 @@ export interface BrowserAutomatorOptions {
   timeout?: number;
   screenshotOnError?: boolean;
   screenshotDir?: string;
+  /** Navigation timeout for unknown pages (default: 10000ms) */
+  navigationTimeout?: number;
+  /** Maximum retry delay in ms for exponential backoff (default: 5000ms) */
+  maxRetryDelay?: number;
 }
 
 export class BrowserAutomator {
@@ -32,7 +36,42 @@ export class BrowserAutomator {
       timeout: options.timeout ?? 30000,
       screenshotOnError: options.screenshotOnError ?? true,
       screenshotDir: options.screenshotDir ?? './screenshots',
+      navigationTimeout: options.navigationTimeout ?? 10000,
+      maxRetryDelay: options.maxRetryDelay ?? 5000,
     };
+  }
+
+  /**
+   * Calculate exponential backoff delay with jitter
+   * @param attempt - Current attempt number (0-based)
+   * @param baseDelay - Base delay in ms (default: 500)
+   * @returns Delay in ms
+   */
+  private calculateBackoffDelay(attempt: number, baseDelay: number = 500): number {
+    // Exponential backoff: baseDelay * 2^attempt + random jitter
+    const exponentialDelay = baseDelay * Math.pow(2, attempt);
+    const jitter = Math.random() * baseDelay;
+    return Math.min(exponentialDelay + jitter, this.options.maxRetryDelay);
+  }
+
+  /**
+   * Wait for page load with fallback strategy
+   * First tries networkidle, falls back to domcontentloaded if it times out
+   */
+  private async waitForPageLoad(page: Page, timeout?: number): Promise<void> {
+    const effectiveTimeout = timeout ?? this.options.timeout;
+    try {
+      // Try networkidle first (strictest, waits for all network activity to cease)
+      await page.waitForLoadState('networkidle', { timeout: effectiveTimeout });
+    } catch {
+      // If networkidle times out (e.g., long-polling connections), fall back to domcontentloaded
+      console.log('[Browser] networkidle timeout, falling back to domcontentloaded');
+      try {
+        await page.waitForLoadState('domcontentloaded', { timeout: 5000 });
+      } catch {
+        // Already loaded, continue
+      }
+    }
   }
 
   /**
@@ -141,14 +180,17 @@ export class BrowserAutomator {
 
     try {
       console.log(`[Browser] Navigating to: ${authUrl}`);
-      await page.goto(authUrl, { waitUntil: 'networkidle' });
+      // Use fallback strategy for initial navigation
+      await page.goto(authUrl, { waitUntil: 'domcontentloaded' });
+      await this.waitForPageLoad(page, 15000); // Allow more time for initial load
 
       // Detect the current page type and handle accordingly
       let attempts = 0;
+      let consecutiveUnknownPages = 0;
       while (attempts < maxAttempts) {
         attempts++;
         const currentUrl = page.url();
-        console.log(`[Browser] Current URL: ${currentUrl}`);
+        console.log(`[Browser] Current URL (attempt ${attempts}/${maxAttempts}): ${currentUrl}`);
 
         // Check if we've been redirected back to the conformance suite
         if (this.isConformanceCallback(currentUrl)) {
@@ -218,6 +260,7 @@ export class BrowserAutomator {
             // Return the current URL - the test will evaluate if the error was expected
             return currentUrl;
           case 'unknown':
+            consecutiveUnknownPages++;
             // Log page content for debugging unknown page types
             const pageTitle = await page.title().catch(() => 'Unknown');
             const bodyPreview = await page
@@ -226,13 +269,28 @@ export class BrowserAutomator {
               .catch(() => '');
             console.log(`[Browser] Unknown page type. Title: "${pageTitle}"`);
             console.log(`[Browser] Body preview: ${bodyPreview?.substring(0, 200) || 'Empty'}`);
+
+            // Apply exponential backoff for consecutive unknown pages
+            if (consecutiveUnknownPages > 1) {
+              const backoffDelay = this.calculateBackoffDelay(consecutiveUnknownPages - 1);
+              console.log(`[Browser] Applying backoff delay: ${Math.round(backoffDelay)}ms`);
+              await page.waitForTimeout(backoffDelay);
+            }
+
             console.log('[Browser] Waiting for navigation...');
-            await page.waitForNavigation({ timeout: 5000 }).catch(() => {});
+            await page
+              .waitForNavigation({ timeout: this.options.navigationTimeout })
+              .catch(() => {});
             break;
         }
 
-        // Wait for navigation after action
-        await page.waitForLoadState('networkidle').catch(() => {});
+        // Reset consecutive unknown counter when we successfully handle a known page type
+        if (pageType !== 'unknown') {
+          consecutiveUnknownPages = 0;
+        }
+
+        // Wait for page to stabilize after action (using fallback strategy)
+        await this.waitForPageLoad(page, 10000);
       }
 
       throw new Error(`Max attempts (${maxAttempts}) reached without completing authorization`);
@@ -301,6 +359,20 @@ export class BrowserAutomator {
       return 'error';
     }
 
+    // Check for HTML error pages by title
+    // This catches custom error pages like "Unregistered Redirect URI", "Invalid Request", etc.
+    const pageTitle = await page.title().catch(() => '');
+    if (
+      pageTitle &&
+      (pageTitle.toLowerCase().includes('error') ||
+        pageTitle.toLowerCase().includes('unregistered') ||
+        pageTitle.toLowerCase().includes('invalid') ||
+        pageTitle.toLowerCase().includes('unauthorized'))
+    ) {
+      console.log(`[Browser] Detected error page by title: "${pageTitle}"`);
+      return 'error';
+    }
+
     // Check if page body displays OAuth error response
     // Some servers display error as plain text or JSON without proper Content-Type
     const bodyText = await page
@@ -316,6 +388,20 @@ export class BrowserAutomator {
         bodyText.includes('invalid_scope'))
     ) {
       console.log(`[Browser] Detected OAuth error in page body`);
+      return 'error';
+    }
+
+    // Check for HTML content containing error information (case-insensitive)
+    // This catches error pages that display error information in HTML format
+    const pageContentLower = pageContent.toLowerCase();
+    if (
+      pageContentLower.includes('redirect uri') &&
+      (pageContentLower.includes('not registered') ||
+        pageContentLower.includes('unregistered') ||
+        pageContentLower.includes('invalid') ||
+        pageContentLower.includes('mismatch'))
+    ) {
+      console.log(`[Browser] Detected redirect_uri error page in HTML content`);
       return 'error';
     }
 
@@ -467,8 +553,8 @@ export class BrowserAutomator {
       }
     }
 
-    // Wait for page to load after login
-    await page.waitForLoadState('networkidle');
+    // Wait for page to load after login (using fallback strategy)
+    await this.waitForPageLoad(page, 10000);
   }
 
   /**
@@ -507,8 +593,8 @@ export class BrowserAutomator {
       }
     }
 
-    // Wait for redirect
-    await page.waitForLoadState('networkidle');
+    // Wait for redirect (using fallback strategy)
+    await this.waitForPageLoad(page, 10000);
   }
 
   /**
@@ -532,8 +618,8 @@ export class BrowserAutomator {
       throw new Error('Continue button not found on reauth page');
     }
 
-    // Wait for redirect
-    await page.waitForLoadState('networkidle');
+    // Wait for redirect (using fallback strategy)
+    await this.waitForPageLoad(page, 10000);
   }
 
   /**
@@ -592,11 +678,21 @@ export class BrowserAutomator {
     // Also handle post_logout_redirect for logout tests
     // Also handle OP's logged-out page (for logout tests with invalid params)
 
-    // Check query string parameters
-    const hasQueryResponse =
-      url.includes('code=') ||
-      url.includes('error=') ||
-      url.includes('/callback?');
+    // Check query string parameters using proper URL parsing
+    // IMPORTANT: We must check for actual 'code' and 'error' parameters,
+    // not just substring matches (e.g., 'response_type=code' contains 'code=' but is not a callback)
+    let hasQueryResponse = false;
+    try {
+      const urlObj = new URL(url);
+      // Check for actual 'code' or 'error' query parameters (OAuth response parameters)
+      hasQueryResponse =
+        urlObj.searchParams.has('code') ||
+        urlObj.searchParams.has('error') ||
+        url.includes('/callback?');
+    } catch {
+      // Invalid URL, fall back to simple string matching for /callback? only
+      hasQueryResponse = url.includes('/callback?');
+    }
 
     // Check URL fragment for Implicit/Hybrid flow responses
     // These flows return tokens in the fragment (e.g., #access_token=...&id_token=...)
@@ -604,12 +700,14 @@ export class BrowserAutomator {
     try {
       const urlObj = new URL(url);
       if (urlObj.hash) {
-        const hash = urlObj.hash;
+        // Parse fragment as URLSearchParams (remove leading #)
+        const hashParams = new URLSearchParams(urlObj.hash.substring(1));
+        // Check for actual OAuth response parameters in fragment
         hasFragmentResponse =
-          hash.includes('access_token=') ||
-          hash.includes('id_token=') ||
-          hash.includes('code=') ||
-          hash.includes('error=');
+          hashParams.has('access_token') ||
+          hashParams.has('id_token') ||
+          hashParams.has('code') ||
+          hashParams.has('error');
       }
     } catch {
       // Invalid URL, ignore
@@ -732,13 +830,16 @@ export class BrowserAutomator {
 
     try {
       console.log(`[Browser] Navigating to: ${authUrl}`);
-      await page.goto(authUrl, { waitUntil: 'networkidle' });
+      // Use fallback strategy for initial navigation
+      await page.goto(authUrl, { waitUntil: 'domcontentloaded' });
+      await this.waitForPageLoad(page, 15000); // Allow more time for initial load
 
       let attempts = 0;
+      let consecutiveUnknownPages = 0;
       while (attempts < maxAttempts) {
         attempts++;
         const currentUrl = page.url();
-        console.log(`[Browser] Current URL: ${currentUrl}`);
+        console.log(`[Browser] Current URL (attempt ${attempts}/${maxAttempts}): ${currentUrl}`);
 
         if (this.isConformanceCallback(currentUrl)) {
           // RP-Initiated Logout: Clear cookies when we land on logout-related pages
@@ -749,6 +850,30 @@ export class BrowserAutomator {
           if (isLogoutPage) {
             console.log('[Browser] Logout page detected, clearing OP domain cookies...');
             await this.clearCookies(['authrim.com']);
+          }
+
+          // For fragment-based responses (implicit/hybrid flows), wait for the page to process
+          // The conformance suite's callback page needs time to parse the fragment via JavaScript
+          // and send the data to the server before we can consider the flow complete
+          try {
+            const urlObj = new URL(currentUrl);
+            // Check if there's a fragment with OAuth/OIDC response parameters
+            // This includes both error responses and successful responses (code, access_token, id_token)
+            const hasFragmentResponse =
+              urlObj.hash &&
+              (urlObj.hash.includes('error=') ||
+                urlObj.hash.includes('code=') ||
+                urlObj.hash.includes('access_token=') ||
+                urlObj.hash.includes('id_token='));
+            if (hasFragmentResponse) {
+              console.log('[Browser] Fragment response detected, waiting for page to process...');
+              // Wait for the page to process the fragment (conformance suite's JavaScript)
+              await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+              // Also wait for the page to update (title/content change)
+              await page.waitForTimeout(1000);
+            }
+          } catch {
+            // Ignore URL parsing errors
           }
           console.log('[Browser] Redirected back to conformance suite');
           return { finalUrl: currentUrl, screenshotPath };
@@ -784,6 +909,7 @@ export class BrowserAutomator {
             console.log(`[Browser] OAuth error detected: ${errorMsg}`);
             return { finalUrl: currentUrl, screenshotPath };
           case 'unknown':
+            consecutiveUnknownPages++;
             // Log page content for debugging unknown page types
             const evidencePageTitle = await page.title().catch(() => 'Unknown');
             const evidenceBodyPreview = await page
@@ -794,12 +920,28 @@ export class BrowserAutomator {
             console.log(
               `[Browser] Body preview: ${evidenceBodyPreview?.substring(0, 200) || 'Empty'}`
             );
+
+            // Apply exponential backoff for consecutive unknown pages
+            if (consecutiveUnknownPages > 1) {
+              const backoffDelay = this.calculateBackoffDelay(consecutiveUnknownPages - 1);
+              console.log(`[Browser] Applying backoff delay: ${Math.round(backoffDelay)}ms`);
+              await page.waitForTimeout(backoffDelay);
+            }
+
             console.log('[Browser] Waiting for navigation...');
-            await page.waitForNavigation({ timeout: 5000 }).catch(() => {});
+            await page
+              .waitForNavigation({ timeout: this.options.navigationTimeout })
+              .catch(() => {});
             break;
         }
 
-        await page.waitForLoadState('networkidle').catch(() => {});
+        // Reset consecutive unknown counter when we successfully handle a known page type
+        if (pageType !== 'unknown') {
+          consecutiveUnknownPages = 0;
+        }
+
+        // Wait for page to stabilize after action (using fallback strategy)
+        await this.waitForPageLoad(page, 10000);
       }
 
       throw new Error(`Max attempts (${maxAttempts}) reached without completing authorization`);
@@ -848,7 +990,8 @@ export class BrowserAutomator {
       throw new Error('Verification code input not found');
     }
 
-    await page.waitForLoadState('networkidle');
+    // Wait for page to load (using fallback strategy)
+    await this.waitForPageLoad(page, 10000);
   }
 }
 
@@ -862,5 +1005,7 @@ export function createBrowserAutomatorFromEnv(): BrowserAutomator {
     timeout: parseInt(process.env.BROWSER_TIMEOUT || '30000', 10),
     screenshotOnError: process.env.SCREENSHOT_ON_ERROR !== 'false',
     screenshotDir: process.env.SCREENSHOT_DIR || './screenshots',
+    navigationTimeout: parseInt(process.env.NAVIGATION_TIMEOUT || '10000', 10),
+    maxRetryDelay: parseInt(process.env.MAX_RETRY_DELAY || '5000', 10),
   });
 }

@@ -70,6 +70,13 @@ export interface OIDCProviderMetadata {
   // OIDC Back-Channel Logout 1.0
   backchannel_logout_supported?: boolean;
   backchannel_logout_session_supported?: boolean;
+  // OIDC Discovery: Recommended metadata
+  service_documentation?: string;
+  ui_locales_supported?: string[];
+  claims_locales_supported?: string[];
+  display_values_supported?: string[];
+  op_policy_uri?: string;
+  op_tos_uri?: string;
 }
 
 /**

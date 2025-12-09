@@ -178,6 +178,11 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     claims_parameter_supported: true,
     // ACR (Authentication Context Class Reference) support
     acr_values_supported: ['urn:mace:incommon:iap:silver', 'urn:mace:incommon:iap:bronze'],
+    // OIDC Discovery: Recommended metadata fields
+    service_documentation: `${issuer}/docs`,
+    ui_locales_supported: ['en', 'ja'],
+    claims_locales_supported: ['en', 'ja'],
+    display_values_supported: ['page', 'popup'],
     // OIDC Session Management 1.0
     check_session_iframe: `${issuer}/session/check`,
     // OIDC RP-Initiated Logout 1.0

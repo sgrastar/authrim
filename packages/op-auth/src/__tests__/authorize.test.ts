@@ -275,7 +275,8 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(400);
       const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('unsupported_response_type');
+      // RFC 6749: missing required parameter should return invalid_request
+      expect(body.error).toBe('invalid_request');
       expect(body.error_description).toContain('response_type');
     });
 
@@ -465,6 +466,46 @@ describe('Authorization Handler', () => {
 
       // Redirect URI mismatch returns error page (security)
       expect(response.status).toBe(400);
+    });
+
+    it('should return error when redirect_uri is missing and client has multiple redirect_uris', async () => {
+      // Default mock client has multiple redirect_uris
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&scope=openid&state=test-state',
+        { method: 'GET' },
+        env
+      );
+
+      // Should return error page when redirect_uri is required but missing
+      expect(response.status).toBe(400);
+      const body = await response.text();
+      expect(body).toContain('Missing Redirect URI');
+      expect(body).toContain('redirect_uri is required when multiple redirect URIs are registered');
+    });
+
+    it('should use default redirect_uri when client has only one registered', async () => {
+      // Mock client with single redirect_uri
+      mockGetClient.mockResolvedValue({
+        client_id: 'single-uri-client',
+        client_secret: 'test-secret',
+        redirect_uris: ['https://single.example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email',
+        token_endpoint_auth_method: 'client_secret_basic',
+      });
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=single-uri-client&scope=openid&state=test-state',
+        { method: 'GET' },
+        env
+      );
+
+      // Should redirect to login (using default redirect_uri)
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toBeTruthy();
+      expect(location).toContain('/authorize/login');
     });
   });
 });

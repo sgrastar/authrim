@@ -2,10 +2,11 @@
 	import { Button, Input, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { passkeyAPI, emailCodeAPI, externalIdpAPI } from '$lib/api/client';
+	import { passkeyAPI, emailCodeAPI, externalIdpAPI, loginChallengeAPI } from '$lib/api/client';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { auth } from '$lib/stores/auth';
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 
 	let email = $state('');
 	let error = $state('');
@@ -13,6 +14,18 @@
 	let emailCodeLoading = $state(false);
 	let externalIdpLoading = $state<string | null>(null);
 	let debugInfo = $state<Array<{ step: string; data: unknown; timestamp: string }>>([]);
+
+	// OAuth login challenge client info (for OIDC Dynamic OP conformance)
+	interface ClientInfo {
+		client_id: string;
+		client_name: string;
+		logo_uri?: string;
+		client_uri?: string;
+		policy_uri?: string;
+		tos_uri?: string;
+	}
+	let clientInfo = $state<ClientInfo | null>(null);
+	let clientInfoLoading = $state(false);
 
 	// External IdP providers
 	interface ExternalProvider {
@@ -27,8 +40,32 @@
 	let externalProviders = $state<ExternalProvider[]>([]);
 	let externalProvidersLoading = $state(true);
 
-	// Fetch external IdP providers on mount
+	// Fetch external IdP providers and login challenge data on mount
 	onMount(async () => {
+		// Check for challenge_id in URL (OAuth authorization flow)
+		const urlChallengeId = $page.url.searchParams.get('challenge_id');
+		if (urlChallengeId) {
+			clientInfoLoading = true;
+			try {
+				const { data, error: apiError } = await loginChallengeAPI.getData(urlChallengeId);
+				if (data) {
+					clientInfo = data.client;
+					// Pre-fill login_hint if provided
+					if (data.login_hint) {
+						email = data.login_hint;
+					}
+				}
+				if (apiError) {
+					console.warn('Failed to load login challenge data:', apiError);
+				}
+			} catch (err) {
+				console.warn('Error loading login challenge data:', err);
+			} finally {
+				clientInfoLoading = false;
+			}
+		}
+
+		// Fetch external IdP providers
 		try {
 			const { data, error: apiError } = await externalIdpAPI.getProviders();
 			if (data && data.providers) {
@@ -272,6 +309,79 @@
 				{$LL.app_subtitle()}
 			</p>
 		</div>
+
+		<!-- Client Info Section (OIDC Dynamic OP - logo_uri, policy_uri, tos_uri) -->
+		{#if clientInfoLoading}
+			<!-- Loading skeleton -->
+			<Card class="mb-4 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 animate-pulse">
+				<div class="flex items-center gap-4">
+					<div class="flex-shrink-0 h-12 w-12 bg-gray-300 dark:bg-gray-600 rounded-lg"></div>
+					<div class="flex-1">
+						<div class="h-3 bg-gray-300 dark:bg-gray-600 rounded w-20 mb-2"></div>
+						<div class="h-4 bg-gray-300 dark:bg-gray-600 rounded w-32"></div>
+					</div>
+				</div>
+			</Card>
+		{:else if clientInfo}
+			<Card class="mb-4 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
+				<div class="flex items-center gap-4">
+					<!-- Client Logo -->
+					{#if clientInfo.logo_uri}
+						<div class="flex-shrink-0">
+							<img
+								src={clientInfo.logo_uri}
+								alt="{clientInfo.client_name} logo"
+								class="h-12 w-12 object-contain rounded-lg"
+								onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
+							/>
+						</div>
+					{/if}
+					<!-- Client Name & Links -->
+					<div class="flex-1 min-w-0">
+						<p class="text-sm text-gray-600 dark:text-gray-400">Signing in to</p>
+						{#if clientInfo.client_uri}
+							<a
+								href={clientInfo.client_uri}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="font-semibold text-gray-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 truncate block"
+							>
+								{clientInfo.client_name}
+							</a>
+						{:else}
+							<p class="font-semibold text-gray-900 dark:text-white truncate">
+								{clientInfo.client_name}
+							</p>
+						{/if}
+						<!-- Policy and ToS Links -->
+						{#if clientInfo.policy_uri || clientInfo.tos_uri}
+							<div class="flex gap-3 mt-1 text-xs">
+								{#if clientInfo.policy_uri}
+									<a
+										href={clientInfo.policy_uri}
+										target="_blank"
+										rel="noopener noreferrer"
+										class="text-blue-600 dark:text-blue-400 hover:underline"
+									>
+										Privacy Policy
+									</a>
+								{/if}
+								{#if clientInfo.tos_uri}
+									<a
+										href={clientInfo.tos_uri}
+										target="_blank"
+										rel="noopener noreferrer"
+										class="text-blue-600 dark:text-blue-400 hover:underline"
+									>
+										Terms of Service
+									</a>
+								{/if}
+							</div>
+						{/if}
+					</div>
+				</div>
+			</Card>
+		{/if}
 
 		<!-- Login Card -->
 		<Card class="mb-6">

@@ -178,27 +178,45 @@ export async function validateClientAssertion(
     let publicKey: JWK | null = null;
     let jwksKeys: JWK[] = [];
 
-    if (client.jwks?.keys && client.jwks.keys.length > 0) {
-      // Use embedded JWKS
-      jwksKeys = client.jwks.keys as JWK[];
-    } else if (client.jwks_uri) {
-      // Fetch JWKS from URI
+    // OIDC Dynamic Client Registration 1.0 Section 2:
+    // "If a Client can use jwks_uri, it MUST NOT use jwks."
+    // jwks_uri enables key rotation (Section 10 of OIDC Core), so we prioritize it
+    // even if embedded jwks exists (for backward compatibility with misconfigured clients)
+    if (client.jwks_uri) {
+      // Fetch JWKS from URI - enables key rotation
       try {
-        const response = await fetch(client.jwks_uri);
+        console.log(`[private_key_jwt] Fetching JWKS from: ${client.jwks_uri}`);
+        const response = await fetch(client.jwks_uri, {
+          headers: {
+            Accept: 'application/json',
+          },
+        });
         if (!response.ok) {
           throw new Error(`Failed to fetch JWKS: ${response.status}`);
         }
         const jwks = (await response.json()) as { keys: JWK[] };
         if (jwks.keys && jwks.keys.length > 0) {
           jwksKeys = jwks.keys;
+          console.log(`[private_key_jwt] Fetched ${jwksKeys.length} keys from jwks_uri`);
         }
       } catch (fetchError) {
-        return {
-          valid: false,
-          error: 'invalid_client',
-          error_description: 'Failed to fetch client JWKS',
-        };
+        console.error('[private_key_jwt] Failed to fetch JWKS from URI:', fetchError);
+        // If jwks_uri fetch fails but we have embedded jwks, fall back to it
+        if (client.jwks?.keys && client.jwks.keys.length > 0) {
+          console.warn('[private_key_jwt] Falling back to embedded JWKS');
+          jwksKeys = client.jwks.keys as JWK[];
+        } else {
+          return {
+            valid: false,
+            error: 'invalid_client',
+            error_description: 'Failed to fetch client JWKS from jwks_uri',
+          };
+        }
       }
+    } else if (client.jwks?.keys && client.jwks.keys.length > 0) {
+      // Use embedded JWKS only if jwks_uri is not provided
+      console.log('[private_key_jwt] Using embedded JWKS (no jwks_uri configured)');
+      jwksKeys = client.jwks.keys as JWK[];
     }
 
     // Find key by kid (or use first key if no kid specified)

@@ -537,7 +537,9 @@ describe('Client Authentication', () => {
       const result = await validateClientAssertion(assertion, tokenEndpoint, client);
 
       expect(result.valid).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith(client.jwks_uri);
+      expect(mockFetch).toHaveBeenCalledWith(client.jwks_uri, {
+        headers: { Accept: 'application/json' },
+      });
     });
 
     it('should fail when jwks_uri fetch fails', async () => {
@@ -593,6 +595,78 @@ describe('Client Authentication', () => {
 
       expect(result.valid).toBe(false);
       expect(result.error_description).toContain('No public key available');
+    });
+
+    it('should prioritize jwks_uri over embedded jwks (for key rotation support)', async () => {
+      // This tests the RP key rotation scenario:
+      // - Client is registered with both jwks and jwks_uri
+      // - RP rotates keys (updates jwks_uri)
+      // - OP should fetch from jwks_uri to get updated keys, not use stale embedded jwks
+
+      // Create two different key pairs
+      const oldKeyPair = await generateKeyPair('RS256');
+      const oldPublicJwk = await exportJWK(oldKeyPair.publicKey);
+      oldPublicJwk.alg = 'RS256';
+      oldPublicJwk.kid = 'old-key';
+
+      const newKeyPair = await generateKeyPair('RS256');
+      const newPublicJwk = await exportJWK(newKeyPair.publicKey);
+      newPublicJwk.alg = 'RS256';
+      newPublicJwk.kid = 'new-key';
+
+      // Client has OLD key in embedded jwks, but jwks_uri returns NEW key
+      const client: ClientMetadata = {
+        client_id: clientId,
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks: { keys: [oldPublicJwk] }, // Stale embedded JWKS
+        jwks_uri: 'https://client.example.com/.well-known/jwks.json', // Has updated keys
+      } as ClientMetadata;
+
+      // Mock jwks_uri to return the NEW key
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ keys: [newPublicJwk] }),
+      });
+
+      // Create assertion signed with NEW key (simulating RP key rotation)
+      const now = Math.floor(Date.now() / 1000);
+      const assertion = await new SignJWT({
+        iss: clientId,
+        sub: clientId,
+        aud: tokenEndpoint,
+        exp: now + 300,
+        iat: now,
+        jti: `jti-${Math.random()}`,
+      })
+        .setProtectedHeader({ alg: 'RS256', kid: 'new-key' })
+        .sign(newKeyPair.privateKey);
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client);
+
+      // Should succeed because jwks_uri is prioritized and has the new key
+      expect(result.valid).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith(client.jwks_uri, {
+        headers: { Accept: 'application/json' },
+      });
+    });
+
+    it('should fall back to embedded jwks when jwks_uri fetch fails', async () => {
+      // Client has BOTH jwks and jwks_uri, but jwks_uri is unreachable
+      const client = createClientWithJWKS(clientId);
+      client.jwks_uri = 'https://client.example.com/.well-known/jwks.json';
+
+      // Mock jwks_uri to fail
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+
+      const assertion = await createClientAssertion(clientId, tokenEndpoint);
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client);
+
+      // Should succeed because it falls back to embedded jwks
+      expect(result.valid).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith(client.jwks_uri, {
+        headers: { Accept: 'application/json' },
+      });
     });
   });
 
@@ -855,7 +929,9 @@ describe('Client Authentication', () => {
       const result = await validateClientAssertion(assertion, tokenEndpoint, client);
 
       expect(result.valid).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith(client.jwks_uri);
+      expect(mockFetch).toHaveBeenCalledWith(client.jwks_uri, {
+        headers: { Accept: 'application/json' },
+      });
     });
 
     it('should use first key when no kid is specified in assertion', async () => {

@@ -540,6 +540,78 @@ export const emailCodeAPI = {
 	}
 };
 
+// =============================================================================
+// Login Challenge API (OIDC Dynamic OP - logo_uri, policy_uri, tos_uri)
+// =============================================================================
+
+/**
+ * Login challenge client info
+ */
+interface LoginChallengeClientInfo {
+	client_id: string;
+	client_name: string;
+	logo_uri?: string;
+	client_uri?: string;
+	policy_uri?: string;
+	tos_uri?: string;
+}
+
+/**
+ * Login challenge response data
+ */
+interface LoginChallengeData {
+	challenge_id: string;
+	client: LoginChallengeClientInfo;
+	scope?: string;
+	login_hint?: string;
+}
+
+/**
+ * Login Challenge API
+ * Fetches client metadata for login page display during OAuth authorization flow
+ */
+export const loginChallengeAPI = {
+	/**
+	 * Get login challenge data including client metadata
+	 * Used to display client logo, policy link, and ToS link on login page
+	 */
+	async getData(challengeId: string) {
+		const apiBaseUrl = import.meta.env.VITE_OP_API_URL || API_BASE_URL;
+		try {
+			const response = await fetch(
+				`${apiBaseUrl}/auth/login-challenge?challenge_id=${challengeId}`,
+				{
+					method: 'GET',
+					headers: {
+						Accept: 'application/json'
+					},
+					credentials: 'include'
+				}
+			);
+
+			if (!response.ok) {
+				const errorData = await response.json().catch(() => ({}));
+				return {
+					error: {
+						error: errorData.error || 'login_challenge_error',
+						error_description: errorData.error_description || 'Failed to load login challenge data'
+					}
+				};
+			}
+
+			const data: LoginChallengeData = await response.json();
+			return { data };
+		} catch (error) {
+			return {
+				error: {
+					error: 'network_error',
+					error_description: error instanceof Error ? error.message : 'Network error occurred'
+				}
+			};
+		}
+	}
+};
+
 /**
  * Admin API - Audit Log
  */
