@@ -82,3 +82,4 @@ packages/*/wrangler.toml.backup
 conformance/*/results/
 conformance/scripts/screenshots/
 conformance/OIDC All Tests/
+load-testing/.env.k6cloud
