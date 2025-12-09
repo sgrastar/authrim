@@ -4,7 +4,7 @@
  */
 
 import { Context } from 'hono';
-import type { Env } from '@authrim/shared';
+import type { Env, Session } from '@authrim/shared';
 import {
   isAllowedOrigin,
   parseAllowedOrigins,
@@ -365,27 +365,24 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     const passkeyId = crypto.randomUUID();
     const now = Date.now();
 
-    // Step 1: Create session using SessionStore Durable Object (FIRST, sharded)
+    // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
     // This ensures that if session creation fails, we don't store the passkey
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
 
-    const sessionResponse = await sessionStore.fetch(
-      new Request('https://session-store/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          userId: userId,
-          ttl: 30 * 24 * 60 * 60, // 30 days in seconds
-          data: {
-            amr: ['passkey'],
-            acr: 'urn:mace:incommon:iap:bronze',
-          },
-        }),
-      })
-    );
-
-    if (!sessionResponse.ok) {
+    let sessionData: { id: string };
+    try {
+      const createdSession = (await sessionStore.createSessionRpc(
+        sessionId,
+        userId,
+        30 * 24 * 60 * 60, // 30 days in seconds
+        {
+          amr: ['passkey'],
+          acr: 'urn:mace:incommon:iap:bronze',
+        }
+      )) as Session;
+      sessionData = { id: createdSession.id };
+    } catch (error) {
+      console.error('Failed to create session:', error);
       return c.json(
         {
           error: 'server_error',
@@ -394,8 +391,6 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         500
       );
     }
-
-    const sessionData = (await sessionResponse.json()) as { id: string };
 
     // Step 2: Store passkey in D1
     await c.env.DB.prepare(
@@ -742,27 +737,24 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
     const now = Date.now();
 
-    // Step 1: Create session using SessionStore Durable Object (FIRST, sharded)
+    // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
     // This ensures that if session creation fails, we don't update the database
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
 
-    const sessionResponse = await sessionStore.fetch(
-      new Request('https://session-store/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          userId: passkey.user_id,
-          ttl: 30 * 24 * 60 * 60, // 30 days in seconds
-          data: {
-            amr: ['passkey'],
-            acr: 'urn:mace:incommon:iap:bronze',
-          },
-        }),
-      })
-    );
-
-    if (!sessionResponse.ok) {
+    let sessionData: { id: string };
+    try {
+      const createdSession = (await sessionStore.createSessionRpc(
+        sessionId,
+        passkey.user_id as string,
+        30 * 24 * 60 * 60, // 30 days in seconds
+        {
+          amr: ['passkey'],
+          acr: 'urn:mace:incommon:iap:bronze',
+        }
+      )) as Session;
+      sessionData = { id: createdSession.id };
+    } catch (error) {
+      console.error('Failed to create session:', error);
       return c.json(
         {
           error: 'server_error',
@@ -771,8 +763,6 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         500
       );
     }
-
-    const sessionData = (await sessionResponse.json()) as { id: string };
 
     // Step 2: Update counter and last_used_at in database
     await c.env.DB.prepare('UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?')

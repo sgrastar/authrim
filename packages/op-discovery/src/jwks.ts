@@ -21,21 +21,11 @@ export async function jwksHandler(c: Context<{ Bindings: Env }>) {
     const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
-    // Fetch JWKS from KeyManager DO (public endpoint, no auth required)
-    const response = await keyManager.fetch('http://internal/jwks', {
-      method: 'GET',
-    });
-
-    if (!response.ok) {
-      console.error('Failed to fetch JWKS from KeyManager:', await response.text());
-      // Fallback to environment variable if KeyManager fails
-      return fallbackToEnvKey(c);
-    }
-
-    const data = await response.json<{ keys: unknown[] }>();
+    // Fetch JWKS from KeyManager DO via RPC
+    const keys = await keyManager.getAllPublicKeysRpc();
 
     // If KeyManager returns empty keys, fall back to environment variable
-    if (!data.keys || data.keys.length === 0) {
+    if (!keys || keys.length === 0) {
       console.warn('KeyManager returned empty keys, falling back to environment variable');
       return fallbackToEnvKey(c);
     }
@@ -45,7 +35,7 @@ export async function jwksHandler(c: Context<{ Bindings: Env }>) {
     c.header('Cache-Control', 'public, max-age=300');
     c.header('Vary', 'Accept-Encoding');
 
-    return c.json(data);
+    return c.json({ keys });
   } catch (error) {
     console.error('Error fetching JWKS from KeyManager:', error);
     // Fallback to environment variable if KeyManager is unavailable

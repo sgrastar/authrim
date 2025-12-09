@@ -84,43 +84,32 @@ export async function handleWarmup(c: Context<{ Bindings: Env }>): Promise<Respo
     for (let i = 0; i < shardCount; i += batchSize) {
       const batchStart = Date.now();
       const batchEnd = Math.min(i + batchSize, shardCount);
-      const promises: Promise<Response>[] = [];
+      const promises: Promise<void>[] = [];
 
       for (let j = i; j < batchEnd; j++) {
         const instanceName = buildAuthCodeShardInstanceName(j);
         const doId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
         const doStub = c.env.AUTH_CODE_STORE.get(doId);
-        // Call /reload-config endpoint to force config reload
+        // Use RPC to reload config
         promises.push(
-          doStub.fetch('http://store/reload-config', {
-            method: 'POST',
-          })
+          doStub
+            .reloadConfigRpc()
+            .then((result) => {
+              if (!sampleConfig && result.config?.previous && result.config?.current) {
+                sampleConfig = {
+                  previous: result.config.previous,
+                  current: result.config.current,
+                };
+              }
+              shardsUpdated++;
+            })
+            .catch((error) => {
+              console.error(`Failed to reload config for shard ${j}:`, error);
+            })
         );
       }
 
-      const responses = await Promise.all(promises);
-
-      // Capture sample response from first successful reload
-      for (const response of responses) {
-        if (response.ok && !sampleConfig) {
-          try {
-            const data = (await response.json()) as {
-              config?: {
-                previous: { ttl: number; maxCodesPerUser: number };
-                current: { ttl: number; maxCodesPerUser: number };
-              };
-            };
-            if (data.config) {
-              sampleConfig = data.config;
-            }
-          } catch {
-            // Ignore parse errors
-          }
-        }
-        if (response.ok) {
-          shardsUpdated++;
-        }
-      }
+      await Promise.all(promises);
 
       const batchDuration = Date.now() - batchStart;
       result.batch_details.push({
@@ -155,14 +144,14 @@ export async function handleWarmup(c: Context<{ Bindings: Env }>): Promise<Respo
       for (let i = 0; i < shardCount; i += batchSize) {
         const batchStart = Date.now();
         const batchEnd = Math.min(i + batchSize, shardCount);
-        const promises: Promise<Response>[] = [];
+        const promises: Promise<void>[] = [];
 
         for (let j = i; j < batchEnd; j++) {
           const instanceName = buildAuthCodeShardInstanceName(j);
           const doId = c.env.AUTH_CODE_STORE.idFromName(instanceName);
           const doStub = c.env.AUTH_CODE_STORE.get(doId);
-          // Call /status endpoint to trigger DO initialization
-          promises.push(doStub.fetch('http://store/status'));
+          // Use RPC status call to trigger DO initialization
+          promises.push(doStub.getStatusRpc().then(() => {}));
         }
 
         // Wait for all DOs in this batch to respond

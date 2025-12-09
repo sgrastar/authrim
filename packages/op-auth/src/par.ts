@@ -208,7 +208,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       response_mode: params.response_mode,
       prompt: params.prompt,
       display: params.display,
-      max_age: params.max_age,
+      max_age: params.max_age ? parseInt(params.max_age, 10) : undefined,
       ui_locales: params.ui_locales,
       id_token_hint: params.id_token_hint,
       login_hint: params.login_hint,
@@ -231,17 +231,14 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     const id = c.env.PAR_REQUEST_STORE.idFromName(params.client_id);
     const stub = c.env.PAR_REQUEST_STORE.get(id);
 
-    const response = await stub.fetch('http://internal/request', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    try {
+      await stub.storeRequestRpc({
         requestUri,
         data: requestData,
         ttl: REQUEST_URI_EXPIRY,
-      }),
-    });
-
-    if (!response.ok) {
+      });
+    } catch (error) {
+      console.error('PAR store error:', error);
       return c.json(
         {
           error: 'server_error',

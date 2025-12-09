@@ -21,6 +21,7 @@
  * - ✅ Immediate consistency (no eventual consistency issues)
  */
 
+import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 
 /**
@@ -76,10 +77,13 @@ interface PARRequestStoreState {
  * PARRequestStore Durable Object
  *
  * Provides atomic single-use PAR request_uri management.
+ *
+ * RPC Support:
+ * - Extends DurableObject base class for RPC method exposure
+ * - RPC methods have 'Rpc' suffix (e.g., storeRequestRpc, consumeRequestRpc)
+ * - fetch() handler is maintained for backward compatibility and debugging
  */
-export class PARRequestStore {
-  private state: DurableObjectState;
-  private env: Env;
+export class PARRequestStore extends DurableObject<Env> {
   private requests: Map<string, PARRequestData> = new Map();
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
@@ -88,10 +92,75 @@ export class PARRequestStore {
   private readonly CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
   private readonly MAX_ENTRIES = 10000; // Cleanup trigger threshold
 
-  constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    this.env = env;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
   }
+
+  // ==========================================
+  // RPC Methods (public, with 'Rpc' suffix)
+  // ==========================================
+
+  /**
+   * RPC: Store a new PAR request
+   */
+  async storeRequestRpc(request: StorePARRequest): Promise<void> {
+    return this.storeRequest(request);
+  }
+
+  /**
+   * RPC: Consume a PAR request (atomic check + delete)
+   * SECURITY CRITICAL: Single-use guarantee (RFC 9126)
+   */
+  async consumeRequestRpc(request: ConsumePARRequest): Promise<PARRequestData> {
+    return this.consumeRequest(request);
+  }
+
+  /**
+   * RPC: Delete a PAR request
+   */
+  async deleteRequestRpc(requestUri: string): Promise<boolean> {
+    return this.deleteRequest(requestUri);
+  }
+
+  /**
+   * RPC: Get PAR request info (without consuming)
+   */
+  async getRequestRpc(requestUri: string): Promise<PARRequestData | null> {
+    return this.getRequest(requestUri);
+  }
+
+  /**
+   * RPC: Get health check status
+   */
+  async getHealthRpc(): Promise<{
+    status: string;
+    requests: { total: number; active: number; consumed: number };
+    timestamp: number;
+  }> {
+    await this.initializeState();
+    const now = Date.now();
+    let activeCount = 0;
+
+    for (const data of this.requests.values()) {
+      if (!data.consumed && data.expiresAt && data.expiresAt > now) {
+        activeCount++;
+      }
+    }
+
+    return {
+      status: 'ok',
+      requests: {
+        total: this.requests.size,
+        active: activeCount,
+        consumed: this.requests.size - activeCount,
+      },
+      timestamp: now,
+    };
+  }
+
+  // ==========================================
+  // Internal Methods
+  // ==========================================
 
   /**
    * Initialize state from Durable Storage
@@ -102,7 +171,7 @@ export class PARRequestStore {
     }
 
     try {
-      const stored = await this.state.storage.get<PARRequestStoreState>('state');
+      const stored = await this.ctx.storage.get<PARRequestStoreState>('state');
 
       if (stored) {
         this.requests = new Map(Object.entries(stored.requests));
@@ -128,7 +197,7 @@ export class PARRequestStore {
         lastCleanup: Date.now(),
       };
 
-      await this.state.storage.put('state', stateToSave);
+      await this.ctx.storage.put('state', stateToSave);
     } catch (error) {
       console.error('PARRequestStore: Failed to save to Durable Storage:', error);
     }

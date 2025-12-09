@@ -16,6 +16,7 @@
  * - ✅ Immediate consistency (no eventual consistency issues)
  */
 
+import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 
 /**
@@ -67,10 +68,13 @@ interface RateLimiterState {
  *
  * Manages rate limiting counters with atomic operations.
  * Each DO instance handles a shard of IP addresses.
+ *
+ * RPC Support:
+ * - Extends DurableObject base class for RPC method exposure
+ * - RPC methods have 'Rpc' suffix (e.g., incrementRpc, getStatusRpc)
+ * - fetch() handler is maintained for backward compatibility and debugging
  */
-export class RateLimiterCounter {
-  private state: DurableObjectState;
-  private env: Env;
+export class RateLimiterCounter extends DurableObject<Env> {
   private counts: Map<string, RateLimitRecord> = new Map();
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
@@ -80,10 +84,67 @@ export class RateLimiterCounter {
   private readonly MAX_ENTRIES = 10000; // Cleanup trigger threshold
   private readonly RETENTION_PERIOD = 3600; // 1 hour grace period for expired entries
 
-  constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    this.env = env;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
   }
+
+  // ==========================================
+  // RPC Methods (public, with 'Rpc' suffix)
+  // ==========================================
+
+  /**
+   * RPC: Atomically increment rate limit counter
+   */
+  async incrementRpc(clientIP: string, config: RateLimitConfig): Promise<RateLimitResult> {
+    return this.increment(clientIP, config);
+  }
+
+  /**
+   * RPC: Get current rate limit status without incrementing
+   */
+  async getStatusRpc(clientIP: string): Promise<RateLimitRecord | null> {
+    return this.getStatus(clientIP);
+  }
+
+  /**
+   * RPC: Reset rate limit for a specific client IP
+   */
+  async resetRpc(clientIP: string): Promise<boolean> {
+    return this.reset(clientIP);
+  }
+
+  /**
+   * RPC: Get health check status
+   */
+  async getHealthRpc(): Promise<{
+    status: string;
+    records: { total: number; active: number; expired: number };
+    timestamp: number;
+  }> {
+    await this.initializeState();
+    const now = Math.floor(Date.now() / 1000);
+    let activeCount = 0;
+
+    for (const record of this.counts.values()) {
+      if (now < record.resetAt) {
+        activeCount++;
+      }
+    }
+
+    return {
+      status: 'ok',
+      records: {
+        total: this.counts.size,
+        active: activeCount,
+        expired: this.counts.size - activeCount,
+      },
+      timestamp: now,
+    };
+  }
+
+  // ==========================================
+  // Internal Methods
+  // ==========================================
 
   /**
    * Initialize state from Durable Storage
@@ -94,7 +155,7 @@ export class RateLimiterCounter {
     }
 
     try {
-      const stored = await this.state.storage.get<RateLimiterState>('state');
+      const stored = await this.ctx.storage.get<RateLimiterState>('state');
 
       if (stored) {
         this.counts = new Map(Object.entries(stored.records));
@@ -120,7 +181,7 @@ export class RateLimiterCounter {
         lastCleanup: Date.now(),
       };
 
-      await this.state.storage.put('state', stateToSave);
+      await this.ctx.storage.put('state', stateToSave);
     } catch (error) {
       console.error('RateLimiterCounter: Failed to save to Durable Storage:', error);
     }

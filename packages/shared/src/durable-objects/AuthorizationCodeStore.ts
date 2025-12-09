@@ -20,6 +20,7 @@
  * - KV (AUTHRIM_CONFIG namespace) > Environment variable > Default value
  */
 
+import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 import { createOAuthConfigManager, type OAuthConfigManager } from '../utils/oauth-config';
 
@@ -117,10 +118,21 @@ interface AuthorizationCodeStoreState {
  * AuthorizationCodeStore Durable Object
  *
  * Provides distributed authorization code storage with one-time use guarantee.
+ *
+ * RPC Support:
+ * - Extends DurableObject base class for RPC method exposure
+ * - RPC methods have 'Rpc' suffix (e.g., storeCodeRpc, consumeCodeRpc)
+ * - fetch() handler is maintained for backward compatibility and debugging
+ *
+ * SECURITY NOTE:
+ * This DO handles security-critical operations including:
+ * - Replay attack detection
+ * - One-time code consumption (consume-once guarantee)
+ * - PKCE validation
+ * - Nonce binding
+ * Worker callers should implement fetch fallback for RPC failures.
  */
-export class AuthorizationCodeStore {
-  private state: DurableObjectState;
-  private env: Env;
+export class AuthorizationCodeStore extends DurableObject<Env> {
   private codes: Map<string, AuthorizationCode> = new Map();
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
@@ -131,9 +143,8 @@ export class AuthorizationCodeStore {
   private CLEANUP_INTERVAL_MS: number; // Default: 30 seconds
   private MAX_CODES_PER_USER: number; // DDoS protection
 
-  constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    this.env = env;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
 
     // Create config manager for KV > env > default priority
     this.configManager = createOAuthConfigManager(env);
@@ -159,6 +170,124 @@ export class AuthorizationCodeStore {
 
     // State and config will be fully initialized on first request (async)
   }
+
+  // ==========================================
+  // RPC Methods (public, with 'Rpc' suffix)
+  // ==========================================
+
+  /**
+   * RPC: Store authorization code
+   */
+  async storeCodeRpc(request: StoreCodeRequest): Promise<{ success: boolean; expiresAt: number }> {
+    return this.storeCode(request);
+  }
+
+  /**
+   * RPC: Consume authorization code (one-time use, atomic operation)
+   * SECURITY CRITICAL: This method handles replay attack detection and PKCE validation
+   */
+  async consumeCodeRpc(request: ConsumeCodeRequest): Promise<ConsumeCodeResponse> {
+    return this.consumeCode(request);
+  }
+
+  /**
+   * RPC: Check if code exists
+   */
+  async hasCodeRpc(code: string): Promise<boolean> {
+    return this.hasCode(code);
+  }
+
+  /**
+   * RPC: Delete code manually
+   */
+  async deleteCodeRpc(code: string): Promise<boolean> {
+    return this.deleteCode(code);
+  }
+
+  /**
+   * RPC: Register issued token JTIs for replay attack revocation
+   */
+  async registerIssuedTokensRpc(
+    code: string,
+    accessTokenJti: string,
+    refreshTokenJti?: string
+  ): Promise<boolean> {
+    return this.registerIssuedTokens(code, accessTokenJti, refreshTokenJti);
+  }
+
+  /**
+   * RPC: Get status/health check
+   */
+  async getStatusRpc(): Promise<{
+    status: string;
+    codes: { total: number; active: number; expired: number };
+    config: { ttl: number; maxCodesPerUser: number };
+    timestamp: number;
+  }> {
+    await this.initializeState();
+    const now = Date.now();
+    let activeCodes = 0;
+
+    for (const authCode of this.codes.values()) {
+      if (authCode.expiresAt > now) {
+        activeCodes++;
+      }
+    }
+
+    return {
+      status: 'ok',
+      codes: {
+        total: this.codes.size,
+        active: activeCodes,
+        expired: this.codes.size - activeCodes,
+      },
+      config: {
+        ttl: this.CODE_TTL,
+        maxCodesPerUser: this.MAX_CODES_PER_USER,
+      },
+      timestamp: now,
+    };
+  }
+
+  /**
+   * RPC: Force reload configuration from KV
+   */
+  async reloadConfigRpc(): Promise<{
+    status: string;
+    message?: string;
+    config?: {
+      previous: { ttl: number; maxCodesPerUser: number };
+      current: { ttl: number; maxCodesPerUser: number };
+    };
+  }> {
+    const previousTTL = this.CODE_TTL;
+    const previousMaxCodes = this.MAX_CODES_PER_USER;
+
+    // Clear configManager cache to force fresh KV read
+    this.configManager.clearCache();
+
+    // Reload configuration from KV
+    this.CODE_TTL = await this.configManager.getAuthCodeTTL();
+    this.MAX_CODES_PER_USER = await this.configManager.getMaxCodesPerUser();
+
+    console.log(
+      `AuthCodeStore: Config reloaded - CODE_TTL: ${previousTTL}s → ${this.CODE_TTL}s, ` +
+        `MAX_CODES_PER_USER: ${previousMaxCodes} → ${this.MAX_CODES_PER_USER}`
+    );
+
+    return {
+      status: 'ok',
+      message: 'Configuration reloaded',
+      config: {
+        previous: { ttl: previousTTL, maxCodesPerUser: previousMaxCodes },
+        current: { ttl: this.CODE_TTL, maxCodesPerUser: this.MAX_CODES_PER_USER },
+      },
+    };
+  }
+
+  // ==========================================
+  // Internal Methods
+  // ==========================================
 
   /**
    * Initialize state from Durable Storage and load configuration from KV
@@ -187,7 +316,7 @@ export class AuthorizationCodeStore {
     }
 
     try {
-      const stored = await this.state.storage.get<AuthorizationCodeStoreState>('state');
+      const stored = await this.ctx.storage.get<AuthorizationCodeStoreState>('state');
 
       if (stored) {
         // Restore authorization codes from Durable Storage
@@ -218,7 +347,7 @@ export class AuthorizationCodeStore {
         lastCleanup: Date.now(),
       };
 
-      await this.state.storage.put('state', stateToSave);
+      await this.ctx.storage.put('state', stateToSave);
     } catch (error) {
       console.error('AuthCodeStore: Failed to save to Durable Storage:', error);
       // Don't throw - we don't want to break the code operation

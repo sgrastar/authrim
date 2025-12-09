@@ -33,29 +33,13 @@ async function getSigningKeyFromKeyManager(
     return cachedSigningKey;
   }
 
-  // Cache miss: fetch from KeyManager
+  // Cache miss: fetch from KeyManager via RPC
   const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
-  const authHeaders = {
-    Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
-  };
 
-  const keyResponse = await keyManager.fetch('http://key-manager/internal/active-with-private', {
-    method: 'GET',
-    headers: authHeaders,
-  });
+  const keyData = await keyManager.getActiveKeyWithPrivateRpc();
 
-  if (!keyResponse.ok) {
-    console.error('Failed to fetch signing key from KeyManager:', keyResponse.status);
-    throw new Error('Failed to fetch signing key from KeyManager');
-  }
-
-  const keyData = await keyResponse.json<{
-    kid: string;
-    privatePEM: string;
-  }>();
-
-  if (!keyData.privatePEM) {
+  if (!keyData || !keyData.privatePEM) {
     console.error('Private key not available from KeyManager');
     throw new Error('Private key not available from KeyManager');
   }

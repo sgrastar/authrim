@@ -185,20 +185,14 @@ async function getVerificationKeyFromJWKS(env: Env, kid?: string): Promise<Crypt
 
   const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
-  const jwksResponse = await keyManager.fetch('http://key-manager/jwks', { method: 'GET' });
 
-  if (!jwksResponse.ok) {
-    throw new Error(`Failed to fetch JWKS from KeyManager: ${jwksResponse.status}`);
-  }
-
-  const jwks = (await jwksResponse.json()) as {
-    keys: Array<{ kid?: string; [key: string]: unknown }>;
-  };
+  // Use RPC to get all public keys
+  const keys = await keyManager.getAllPublicKeysRpc();
 
   // Import all keys and build cache
   const newKeys = new Map<string, CryptoKey>();
-  for (const jwk of jwks.keys) {
-    const keyKid = jwk.kid || 'default';
+  for (const jwk of keys) {
+    const keyKid = (jwk as { kid?: string }).kid || 'default';
     try {
       const importedKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
       newKeys.set(keyKid, importedKey);
@@ -312,39 +306,13 @@ async function getSigningKeyFromKeyManager(
   const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
-  // Authentication header for KeyManager
-  const authHeaders = {
-    Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
-  };
+  // Try to get active key via RPC
+  let keyData = await keyManager.getActiveKeyWithPrivateRpc();
 
-  // Try to get active key (using internal endpoint that returns privatePEM)
-  const activeResponse = await keyManager.fetch('http://dummy/internal/active-with-private', {
-    method: 'GET',
-    headers: authHeaders,
-  });
-
-  let keyData: { kid: string; privatePEM: string };
-
-  if (activeResponse.ok) {
-    keyData = (await activeResponse.json()) as { kid: string; privatePEM: string };
-  } else {
+  if (!keyData) {
     // No active key, generate and activate one
     console.log('[KeyManager] No active signing key found, generating new key');
-    const rotateResponse = await keyManager.fetch('http://dummy/internal/rotate', {
-      method: 'POST',
-      headers: authHeaders,
-    });
-
-    if (!rotateResponse.ok) {
-      console.error('[KeyManager] Failed to rotate key:', rotateResponse.status);
-      throw new Error('Failed to generate signing key');
-    }
-
-    const rotateData = (await rotateResponse.json()) as {
-      success: boolean;
-      key: { kid: string; privatePEM: string };
-    };
-    keyData = rotateData.key;
+    keyData = await keyManager.rotateKeysWithPrivateRpc();
     console.log('[KeyManager] Generated new signing key:', { kid: keyData.kid });
   }
 
@@ -649,36 +617,12 @@ async function handleAuthorizationCodeGrant(
 
   let authCodeData;
   try {
-    const consumeResponse = await authCodeStore.fetch(
-      new Request('https://auth-code-store/code/consume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: validCode,
-          clientId: client_id,
-          codeVerifier: code_verifier,
-        }),
-      })
-    );
-
-    if (!consumeResponse.ok) {
-      const errorData = (await consumeResponse.json()) as {
-        error: string;
-        error_description: string;
-      };
-
-      return c.json(
-        {
-          error: errorData.error || 'invalid_grant',
-          error_description:
-            errorData.error_description || 'Authorization code is invalid or expired',
-        },
-        400
-      );
-    }
-
-    // AuthCodeStore DO returns: { userId, scope, redirectUri, nonce?, state?, replayAttack? }
-    const consumedData = (await consumeResponse.json()) as AuthCodeStoreResponse;
+    // Use RPC for auth code consumption (atomic single-use guarantee)
+    const consumedData = (await authCodeStore.consumeCodeRpc({
+      code: validCode,
+      clientId: client_id,
+      codeVerifier: code_verifier,
+    })) as AuthCodeStoreResponse;
 
     // RFC 6749 Section 4.1.2: Handle replay attack detection
     // If authorization code was already used, revoke previously issued tokens
@@ -738,13 +682,27 @@ async function handleAuthorizationCodeGrant(
       sid: consumedData.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
     };
   } catch (error) {
-    console.error('AuthCodeStore DO error:', error);
+    // RPC throws error for invalid codes (not found, already consumed, PKCE mismatch, client mismatch)
+    console.error('AuthCodeStore consume error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    // Determine appropriate error type based on error message
+    if (errorMessage.includes('already consumed') || errorMessage.includes('replay')) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Authorization code already used',
+        },
+        400
+      );
+    }
+
     return c.json(
       {
-        error: 'server_error',
-        error_description: 'Failed to validate authorization code',
+        error: 'invalid_grant',
+        error_description: 'Authorization code is invalid or expired',
       },
-      500
+      400
     );
   }
 
@@ -1134,10 +1092,15 @@ async function handleAuthorizationCodeGrant(
       const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
       const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
 
-      const familyResponse = await rotator.fetch('http://rotator/family', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      // Use RPC for family creation
+      let familyResult: {
+        version: number;
+        newJti: string;
+        expiresIn: number;
+        allowedScope: string;
+      };
+      try {
+        familyResult = await rotator.createFamilyRpc({
           jti: refreshTokenJti,
           userId: authCodeData.sub,
           clientId: client_id,
@@ -1146,12 +1109,9 @@ async function handleAuthorizationCodeGrant(
           // V3: Include shard metadata (for debugging/audit)
           generation: shardConfig.currentGeneration,
           shardIndex: shardIndex,
-        }),
-      });
-
-      if (!familyResponse.ok) {
-        const errorText = await familyResponse.text();
-        console.error('Failed to register refresh token family:', errorText);
+        });
+      } catch (error) {
+        console.error('Failed to register refresh token family:', error);
         return c.json(
           {
             error: 'server_error',
@@ -1160,8 +1120,6 @@ async function handleAuthorizationCodeGrant(
           500
         );
       }
-
-      const familyResult = (await familyResponse.json()) as { version: number; jti: string };
       rtv = familyResult.version;
 
       // V3: Record in D1 for user-wide revocation support
@@ -1748,53 +1706,14 @@ async function handleRefreshTokenGrant(
     let newVersion: number;
 
     try {
-      // V2: Call RefreshTokenRotator DO with version-based rotation
-      // V3: Send full JTI (DO now stores and returns full JTIs with generation/shard prefix)
-      const rotateResponse = await rotator.fetch('http://rotator/rotate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          incomingVersion,
-          incomingJti: jti, // V3: Send full JTI (DO stores and compares full JTIs)
-          userId: refreshTokenData.sub,
-          clientId: client_id,
-          requestedScope: scope || undefined, // Pass requested scope for validation
-        }),
+      // Use RPC for token rotation (V2/V3)
+      const rotateResult = await rotator.rotateRpc({
+        incomingVersion,
+        incomingJti: jti, // V3: Send full JTI (DO stores and compares full JTIs)
+        userId: refreshTokenData.sub,
+        clientId: client_id,
+        requestedScope: scope || undefined, // Pass requested scope for validation
       });
-
-      if (!rotateResponse.ok) {
-        const error = (await rotateResponse.json()) as {
-          error?: string;
-          error_description?: string;
-          action?: string;
-        };
-        c.header('Cache-Control', 'no-store');
-        c.header('Pragma', 'no-cache');
-
-        // Log theft detection for security monitoring
-        if (error.action === 'family_revoked') {
-          console.error('SECURITY: Token theft detected and family revoked', {
-            clientId: client_id,
-            userId: refreshTokenData.sub,
-            incomingVersion,
-          });
-        }
-
-        return c.json(
-          {
-            error: error.error || 'invalid_grant',
-            error_description: error.error_description || 'Token rotation failed',
-          },
-          400
-        );
-      }
-
-      const rotateResult = (await rotateResponse.json()) as {
-        newVersion: number;
-        newJti: string;
-        expiresIn: number;
-        allowedScope: string;
-      };
 
       // V3: DO now returns full JTIs with generation/shard prefix
       // No wrapping needed - use the JTI directly from DO
@@ -1824,12 +1743,35 @@ async function handleRefreshTokenGrant(
       console.error('Failed to rotate refresh token:', error);
       c.header('Cache-Control', 'no-store');
       c.header('Pragma', 'no-cache');
+
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+      // Check for theft detection or version mismatch
+      if (
+        errorMessage.includes('theft') ||
+        errorMessage.includes('revoked') ||
+        errorMessage.includes('version mismatch')
+      ) {
+        console.error('SECURITY: Token theft detected and family revoked', {
+          clientId: client_id,
+          userId: refreshTokenData.sub,
+          incomingVersion,
+        });
+        return c.json(
+          {
+            error: 'invalid_grant',
+            error_description: 'Refresh token has been revoked',
+          },
+          400
+        );
+      }
+
       return c.json(
         {
-          error: 'server_error',
-          error_description: 'Failed to rotate refresh token',
+          error: 'invalid_grant',
+          error_description: 'Token rotation failed',
         },
-        500
+        400
       );
     }
   } else {

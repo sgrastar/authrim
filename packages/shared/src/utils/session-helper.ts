@@ -99,10 +99,7 @@ export function parseShardedSessionId(
  * const store = await getSessionStoreBySessionId(env, "7_session_abc123");
  * const response = await store.fetch(new Request(...));
  */
-export async function getSessionStoreBySessionId(
-  env: Env,
-  sessionId: string
-): Promise<DurableObjectStub> {
+export async function getSessionStoreBySessionId(env: Env, sessionId: string) {
   const parsed = parseShardedSessionId(sessionId);
   if (!parsed) {
     throw new Error(`Invalid session ID format: ${sessionId}`);
@@ -134,9 +131,7 @@ export async function getSessionStoreBySessionId(
  *   body: JSON.stringify({ sessionId, ... })
  * }));
  */
-export async function getSessionStoreForNewSession(
-  env: Env
-): Promise<{ stub: DurableObjectStub; sessionId: string }> {
+export async function getSessionStoreForNewSession(env: Env) {
   const shardCount = await getSessionShardCount(env);
   const { sessionId, shardIndex } = generateShardedSessionId(shardCount);
 

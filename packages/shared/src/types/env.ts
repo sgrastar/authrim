@@ -1,5 +1,16 @@
+// Import DO classes for type-safe RPC bindings
+import type { KeyManager } from '../durable-objects/KeyManager';
+import type { SessionStore } from '../durable-objects/SessionStore';
+import type { AuthorizationCodeStore } from '../durable-objects/AuthorizationCodeStore';
+import type { RefreshTokenRotator } from '../durable-objects/RefreshTokenRotator';
+import type { RateLimiterCounter } from '../durable-objects/RateLimiterCounter';
+import type { PARRequestStore } from '../durable-objects/PARRequestStore';
+
 /**
  * Cloudflare Workers Environment Bindings
+ *
+ * Durable Object bindings use generic type parameters for RPC type safety.
+ * Example: DurableObjectNamespace<SessionStore> enables stub.getSessionRpc()
  */
 export interface Env {
   // D1 Database
@@ -23,15 +34,15 @@ export interface Env {
   SETTINGS?: KVNamespace; // System settings storage
   REBAC_CACHE?: KVNamespace; // RBAC claims cache (Read-Through from D1, 5 min TTL)
 
-  // Durable Objects
-  KEY_MANAGER: DurableObjectNamespace;
-  SESSION_STORE: DurableObjectNamespace;
-  AUTH_CODE_STORE: DurableObjectNamespace;
-  REFRESH_TOKEN_ROTATOR: DurableObjectNamespace;
+  // Durable Objects with RPC type support
+  KEY_MANAGER: DurableObjectNamespace<KeyManager>;
+  SESSION_STORE: DurableObjectNamespace<SessionStore>;
+  AUTH_CODE_STORE: DurableObjectNamespace<AuthorizationCodeStore>;
+  REFRESH_TOKEN_ROTATOR: DurableObjectNamespace<RefreshTokenRotator>;
   CHALLENGE_STORE: DurableObjectNamespace;
-  RATE_LIMITER: DurableObjectNamespace; // #6: Atomic rate limiting
+  RATE_LIMITER: DurableObjectNamespace<RateLimiterCounter>; // #6: Atomic rate limiting
   USER_CODE_RATE_LIMITER: DurableObjectNamespace; // Device flow user code rate limiting
-  PAR_REQUEST_STORE: DurableObjectNamespace; // #11: PAR request_uri single-use
+  PAR_REQUEST_STORE: DurableObjectNamespace<PARRequestStore>; // #11: PAR request_uri single-use
   DPOP_JTI_STORE: DurableObjectNamespace; // #12: DPoP JTI replay protection
   TOKEN_REVOCATION_STORE: DurableObjectNamespace; // Token revocation list
   DEVICE_CODE_STORE: DurableObjectNamespace; // RFC 8628: Device Authorization Grant

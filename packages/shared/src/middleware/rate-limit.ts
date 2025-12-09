@@ -75,37 +75,17 @@ async function checkRateLimit(
       const id = env.RATE_LIMITER.idFromName(clientIP);
       const stub = env.RATE_LIMITER.get(id);
 
-      // Call DO to increment counter atomically
-      const response = await stub.fetch('http://internal/increment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientIP,
-          config: {
-            windowSeconds: config.windowSeconds,
-            maxRequests: config.maxRequests,
-          },
-        }),
+      // RPC call to increment counter atomically
+      const result = await stub.incrementRpc(clientIP, {
+        windowSeconds: config.windowSeconds,
+        maxRequests: config.maxRequests,
       });
 
-      if (response.ok) {
-        const result = await response.json<{
-          allowed: boolean;
-          current: number;
-          limit: number;
-          resetAt: number;
-          retryAfter: number;
-        }>();
-
-        return {
-          allowed: result.allowed,
-          remaining: Math.max(0, result.limit - result.current),
-          resetAt: result.resetAt,
-        };
-      }
-
-      // DO failed, fall through to KV fallback
-      console.warn('RateLimiterCounter DO failed, falling back to KV');
+      return {
+        allowed: result.allowed,
+        remaining: Math.max(0, result.limit - result.current),
+        resetAt: result.resetAt,
+      };
     }
   } catch (error) {
     console.error('Rate limiting DO error, falling back to KV:', error);

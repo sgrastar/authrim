@@ -49,38 +49,22 @@ async function checkAuthRateLimit(
   clientIP: string
 ): Promise<{ allowed: boolean; remaining: number; retryAfter: number }> {
   try {
-    // Use RATE_LIMITER DO for atomic rate limiting
+    // Use RATE_LIMITER DO for atomic rate limiting (RPC)
     if (env.RATE_LIMITER) {
       const id = env.RATE_LIMITER.idFromName(`scim-auth:${clientIP}`);
       const stub = env.RATE_LIMITER.get(id);
 
-      const response = await stub.fetch('http://internal/increment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientIP,
-          config: {
-            windowSeconds: SCIM_AUTH_RATE_LIMIT.windowSeconds,
-            maxRequests: SCIM_AUTH_RATE_LIMIT.maxFailedAttempts,
-          },
-        }),
+      // RPC call to increment counter atomically
+      const result = await stub.incrementRpc(clientIP, {
+        windowSeconds: SCIM_AUTH_RATE_LIMIT.windowSeconds,
+        maxRequests: SCIM_AUTH_RATE_LIMIT.maxFailedAttempts,
       });
 
-      if (response.ok) {
-        const result = await response.json<{
-          allowed: boolean;
-          current: number;
-          limit: number;
-          resetAt: number;
-          retryAfter: number;
-        }>();
-
-        return {
-          allowed: result.allowed,
-          remaining: Math.max(0, result.limit - result.current),
-          retryAfter: result.retryAfter,
-        };
-      }
+      return {
+        allowed: result.allowed,
+        remaining: Math.max(0, result.limit - result.current),
+        retryAfter: result.retryAfter,
+      };
     }
 
     // Fallback to KV-based rate limiting

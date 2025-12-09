@@ -13,7 +13,7 @@
 
 import { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
-import type { Env } from '@authrim/shared';
+import type { Env, Session } from '@authrim/shared';
 import {
   generateCheckSessionIframeHtml,
   getSessionStoreBySessionId,
@@ -54,13 +54,9 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
-    const sessionResponse = await sessionStore.fetch(
-      new Request(`https://session-store/session/${sessionId}`, {
-        method: 'GET',
-      })
-    );
+    const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
-    if (!sessionResponse.ok) {
+    if (!session) {
       return c.json(
         {
           error: 'session_not_found',
@@ -69,13 +65,6 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
         401
       );
     }
-
-    const session = (await sessionResponse.json()) as {
-      id: string;
-      userId: string;
-      expiresAt: number;
-      createdAt: number;
-    };
 
     // Generate short-lived token
     const token = crypto.randomUUID();
@@ -207,13 +196,9 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
-    const sessionResponse = await sessionStore.fetch(
-      new Request(`https://session-store/session/${sessionId}`, {
-        method: 'GET',
-      })
-    );
+    const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
-    if (!sessionResponse.ok) {
+    if (!session) {
       return c.json(
         {
           error: 'session_expired',
@@ -223,39 +208,26 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const session = (await sessionResponse.json()) as {
-      id: string;
-      userId: string;
-      expiresAt: number;
-      createdAt: number;
-    };
-
     // Create a new session for the RP domain (if rp_origin provided)
     // This allows the RP to have its own session cookie
     let rpSessionId = session.id;
 
     if (rp_origin) {
-      // Create new session linked to the same user
-      const createResponse = await sessionStore.fetch(
-        new Request('https://session-store/session', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            userId: session.userId,
-            ttl: 86400, // 24 hours
-            data: {
-              rpOrigin: rp_origin,
-              parentSessionId: session.id,
-            },
-          }),
-        })
-      );
-
-      if (createResponse.ok) {
-        const newSession = (await createResponse.json()) as { id: string };
+      // Create new session linked to the same user via RPC
+      try {
+        const newSession = (await sessionStore.createSessionRpc(
+          crypto.randomUUID(), // Generate new session ID
+          session.userId,
+          86400, // 24 hours TTL
+          {
+            rpOrigin: rp_origin,
+            parentSessionId: session.id,
+          }
+        )) as Session;
         rpSessionId = newSession.id;
+      } catch (error) {
+        console.warn('Failed to create RP session:', error);
+        // Fall back to original session ID
       }
     }
 
@@ -311,13 +283,9 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
-    const sessionResponse = await sessionStore.fetch(
-      new Request(`https://session-store/session/${sessionId}`, {
-        method: 'GET',
-      })
-    );
+    const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
-    if (!sessionResponse.ok) {
+    if (!session) {
       return c.json(
         {
           active: false,
@@ -326,13 +294,6 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
         200
       );
     }
-
-    const session = (await sessionResponse.json()) as {
-      id: string;
-      userId: string;
-      expiresAt: number;
-      createdAt: number;
-    };
 
     // Check if session is expired
     if (session.expiresAt <= Date.now()) {
@@ -427,44 +388,20 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
-    const extendResponse = await sessionStore.fetch(
-      new Request(`https://session-store/session/${sessionId}/extend`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          seconds: extendSeconds,
-        }),
-      })
-    );
+    const session = (await sessionStore.extendSessionRpc(
+      sessionId,
+      extendSeconds
+    )) as Session | null;
 
-    if (!extendResponse.ok) {
-      if (extendResponse.status === 404) {
-        return c.json(
-          {
-            error: 'session_not_found',
-            error_description: 'Session not found or has expired',
-          },
-          404
-        );
-      }
-
+    if (!session) {
       return c.json(
         {
-          error: 'server_error',
-          error_description: 'Failed to extend session',
+          error: 'session_not_found',
+          error_description: 'Session not found or has expired',
         },
-        500
+        404
       );
     }
-
-    const session = (await extendResponse.json()) as {
-      id: string;
-      userId: string;
-      expiresAt: number;
-      createdAt: number;
-    };
 
     return c.json({
       session_id: session.id,

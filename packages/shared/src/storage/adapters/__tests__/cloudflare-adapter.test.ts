@@ -15,6 +15,53 @@ import {
 } from '../cloudflare-adapter';
 import type { Env } from '../../../types/env';
 
+// Helper to create mock DO stubs with RPC methods
+function createMockSessionStoreDO() {
+  return {
+    getSessionRpc: vi.fn().mockResolvedValue({ id: 'session_123' }),
+    createSessionRpc: vi
+      .fn()
+      .mockResolvedValue({ id: 'session_123', expiresAt: Date.now() + 86400000 }),
+    invalidateSessionRpc: vi.fn().mockResolvedValue(true),
+    listSessionsRpc: vi.fn().mockResolvedValue({ sessions: [] }),
+    extendSessionRpc: vi.fn().mockResolvedValue({ id: 'session_123' }),
+    fetch: vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ id: 'session_123' }), { status: 200 })),
+  };
+}
+
+function createMockAuthCodeStoreDO() {
+  return {
+    hasCodeRpc: vi.fn().mockResolvedValue(true),
+    storeCodeRpc: vi.fn().mockResolvedValue({ success: true, expiresAt: Date.now() + 60000 }),
+    consumeCodeRpc: vi.fn().mockResolvedValue({ valid: true }),
+    fetch: vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ exists: true }), { status: 200 })),
+  };
+}
+
+function createMockRefreshTokenRotatorDO() {
+  return {
+    getFamilyRpc: vi.fn().mockResolvedValue({ id: 'family_123' }),
+    createFamilyRpc: vi.fn().mockResolvedValue({ familyId: 'family_123' }),
+    rotateRpc: vi.fn().mockResolvedValue({ newRefreshToken: 'new_token' }),
+    revokeFamilyRpc: vi.fn().mockResolvedValue(undefined),
+    fetch: vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ id: 'family_123' }), { status: 200 })),
+  };
+}
+
+function createMockGenericDO() {
+  return {
+    fetch: vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
+  };
+}
+
 // Mock environment
 function createMockEnv(): Env {
   return {
@@ -38,40 +85,25 @@ function createMockEnv(): Env {
     } as unknown as KVNamespace,
     SESSION_STORE: {
       idFromName: vi.fn().mockReturnValue('session-do-id'),
-      get: vi.fn().mockReturnValue({
-        fetch: vi
-          .fn()
-          .mockResolvedValue(new Response(JSON.stringify({ id: 'session_123' }), { status: 200 })),
-      }),
+      get: vi.fn().mockReturnValue(createMockSessionStoreDO()),
     } as unknown as DurableObjectNamespace,
     AUTH_CODE_STORE: {
       idFromName: vi.fn().mockReturnValue('authcode-do-id'),
-      get: vi.fn().mockReturnValue({
-        fetch: vi
-          .fn()
-          .mockResolvedValue(new Response(JSON.stringify({ exists: true }), { status: 200 })),
-      }),
+      get: vi.fn().mockReturnValue(createMockAuthCodeStoreDO()),
     } as unknown as DurableObjectNamespace,
     REFRESH_TOKEN_ROTATOR: {
       idFromName: vi.fn().mockReturnValue('refreshtoken-do-id'),
-      get: vi.fn().mockReturnValue({
-        fetch: vi
-          .fn()
-          .mockResolvedValue(new Response(JSON.stringify({ id: 'family_123' }), { status: 200 })),
-      }),
+      get: vi.fn().mockReturnValue(createMockRefreshTokenRotatorDO()),
     } as unknown as DurableObjectNamespace,
     CHALLENGE_STORE: {
       idFromName: vi.fn().mockReturnValue('challenge-do-id'),
-      get: vi.fn().mockReturnValue({
-        fetch: vi
-          .fn()
-          .mockResolvedValue(new Response(JSON.stringify({ challenge: 'test' }), { status: 200 })),
-      }),
+      get: vi.fn().mockReturnValue(createMockGenericDO()),
     } as unknown as DurableObjectNamespace,
-    KEY_MANAGER: {} as DurableObjectNamespace,
+    KEY_MANAGER: {} as unknown as DurableObjectNamespace,
     RATE_LIMITER: {
       idFromName: vi.fn().mockReturnValue('rate-limiter-do-id'),
       get: vi.fn().mockReturnValue({
+        incrementRpc: vi.fn().mockResolvedValue({ allowed: true, current: 1, limit: 100 }),
         fetch: vi
           .fn()
           .mockResolvedValue(
@@ -81,17 +113,13 @@ function createMockEnv(): Env {
     } as unknown as DurableObjectNamespace,
     USER_CODE_RATE_LIMITER: {
       idFromName: vi.fn().mockReturnValue('user-code-rate-limiter-do-id'),
-      get: vi.fn().mockReturnValue({
-        fetch: vi
-          .fn()
-          .mockResolvedValue(
-            new Response(JSON.stringify({ allowed: true, current: 1, limit: 10 }), { status: 200 })
-          ),
-      }),
+      get: vi.fn().mockReturnValue(createMockGenericDO()),
     } as unknown as DurableObjectNamespace,
     PAR_REQUEST_STORE: {
       idFromName: vi.fn().mockReturnValue('par-request-do-id'),
       get: vi.fn().mockReturnValue({
+        storeRequestRpc: vi.fn().mockResolvedValue(undefined),
+        consumeRequestRpc: vi.fn().mockResolvedValue({ client_id: 'test' }),
         fetch: vi
           .fn()
           .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 })),
@@ -99,35 +127,19 @@ function createMockEnv(): Env {
     } as unknown as DurableObjectNamespace,
     DPOP_JTI_STORE: {
       idFromName: vi.fn().mockReturnValue('dpop-jti-do-id'),
-      get: vi.fn().mockReturnValue({
-        fetch: vi
-          .fn()
-          .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 })),
-      }),
+      get: vi.fn().mockReturnValue(createMockGenericDO()),
     } as unknown as DurableObjectNamespace,
     DEVICE_CODE_STORE: {
       idFromName: vi.fn().mockReturnValue('device-code-do-id'),
-      get: vi.fn().mockReturnValue({
-        fetch: vi
-          .fn()
-          .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
-      }),
+      get: vi.fn().mockReturnValue(createMockGenericDO()),
     } as unknown as DurableObjectNamespace,
     TOKEN_REVOCATION_STORE: {
       idFromName: vi.fn().mockReturnValue('token-revocation-do-id'),
-      get: vi.fn().mockReturnValue({
-        fetch: vi
-          .fn()
-          .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 })),
-      }),
+      get: vi.fn().mockReturnValue(createMockGenericDO()),
     } as unknown as DurableObjectNamespace,
     CIBA_REQUEST_STORE: {
       idFromName: vi.fn().mockReturnValue('ciba-request-do-id'),
-      get: vi.fn().mockReturnValue({
-        fetch: vi
-          .fn()
-          .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
-      }),
+      get: vi.fn().mockReturnValue(createMockGenericDO()),
     } as unknown as DurableObjectNamespace,
     STATE_STORE: {} as KVNamespace,
     NONCE_STORE: {} as KVNamespace,
@@ -464,67 +476,75 @@ describe('SessionStore', () => {
       created_at: 1234567890,
       expires_at: 1234567890 + 86400,
     };
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValue(new Response(JSON.stringify(mockSession), { status: 200 }));
-    (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
+    const mockGetSessionRpc = vi.fn().mockResolvedValue(mockSession);
+    (env.SESSION_STORE.get as any).mockReturnValue({ getSessionRpc: mockGetSessionRpc });
 
     const session = await sessionStore.get('session_123');
     expect(session).toEqual(mockSession);
+    expect(mockGetSessionRpc).toHaveBeenCalledWith('session_123');
   });
 
   it('should return null for non-existent session', async () => {
-    const mockFetch = vi.fn().mockResolvedValue(new Response('', { status: 404 }));
-    (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
+    const mockGetSessionRpc = vi.fn().mockResolvedValue(null);
+    (env.SESSION_STORE.get as any).mockReturnValue({ getSessionRpc: mockGetSessionRpc });
 
     const session = await sessionStore.get('non_existent');
     expect(session).toBeNull();
   });
 
   it('should create new session', async () => {
-    const mockFetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: 'session_new', expiresAt: Date.now() + 86400000 }), {
-        status: 201,
-      })
-    );
-    (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
+    const mockCreateSessionRpc = vi.fn().mockResolvedValue({
+      id: 'session_new',
+      expiresAt: Date.now() + 86400000,
+    });
+    (env.SESSION_STORE.get as any).mockReturnValue({ createSessionRpc: mockCreateSessionRpc });
 
     const session = await sessionStore.create({ user_id: 'user_123', data: { amr: ['pwd'] } });
     expect(session.id).toBeDefined();
+    expect(mockCreateSessionRpc).toHaveBeenCalledWith(
+      expect.any(String), // sessionId
+      'user_123',
+      expect.any(Number), // ttl
+      { amr: ['pwd'] }
+    );
   });
 
   it('should delete session', async () => {
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
-    (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
+    const mockInvalidateSessionRpc = vi.fn().mockResolvedValue(true);
+    (env.SESSION_STORE.get as any).mockReturnValue({
+      invalidateSessionRpc: mockInvalidateSessionRpc,
+    });
 
     await sessionStore.delete('session_123');
-    expect(mockFetch).toHaveBeenCalledWith(expect.objectContaining({ method: 'DELETE' }));
+    expect(mockInvalidateSessionRpc).toHaveBeenCalledWith('session_123');
   });
 
   it('should list sessions by user', async () => {
-    const mockSessions = [
+    // SessionStore DO returns SessionResponse[] format (id, userId, expiresAt, createdAt, data)
+    const mockSessionResponses = [
       {
         id: 'session_1',
-        user_id: 'user_123',
-        created_at: 1234567890,
-        expires_at: 1234567890 + 86400,
+        userId: 'user_123',
+        expiresAt: 1234567890 + 86400,
+        createdAt: 1234567890,
+        data: {},
       },
       {
         id: 'session_2',
-        user_id: 'user_123',
-        created_at: 1234567891,
-        expires_at: 1234567891 + 86400,
+        userId: 'user_123',
+        expiresAt: 1234567891 + 86400,
+        createdAt: 1234567891,
+        data: {},
       },
     ];
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ sessions: mockSessions }), { status: 200 }));
-    (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
+    const mockListUserSessionsRpc = vi.fn().mockResolvedValue(mockSessionResponses);
+    (env.SESSION_STORE.get as any).mockReturnValue({
+      listUserSessionsRpc: mockListUserSessionsRpc,
+    });
 
     const sessions = await sessionStore.listByUser('user_123');
     expect(sessions).toHaveLength(2);
+    expect(mockListUserSessionsRpc).toHaveBeenCalledWith('user_123');
   });
 
   it('should extend session expiration', async () => {
@@ -534,14 +554,12 @@ describe('SessionStore', () => {
       created_at: 1234567890,
       expires_at: 1234567890 + 86400 + 3600,
     };
-    const mockFetch = vi
-      .fn()
-      .mockResolvedValue(new Response(JSON.stringify(mockSession), { status: 200 }));
-    (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
+    const mockExtendSessionRpc = vi.fn().mockResolvedValue(mockSession);
+    (env.SESSION_STORE.get as any).mockReturnValue({ extendSessionRpc: mockExtendSessionRpc });
 
     const extended = await sessionStore.extend('session_123', 3600);
     expect(extended).toBeDefined();
-    expect(mockFetch).toHaveBeenCalledWith(expect.objectContaining({ method: 'POST' }));
+    expect(mockExtendSessionRpc).toHaveBeenCalledWith('session_123', 3600);
   });
 });
 

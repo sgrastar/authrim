@@ -17,6 +17,7 @@ import {
   isShardedSessionId,
   parseShardedSessionId,
 } from '@authrim/shared';
+import type { Session, PARRequestData } from '@authrim/shared';
 import {
   generateSecureRandomString,
   parseToken,
@@ -451,17 +452,28 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const id = c.env.PAR_REQUEST_STORE.idFromName(client_id);
       const stub = c.env.PAR_REQUEST_STORE.get(id);
 
-      const response = await stub.fetch('http://internal/request/consume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requestUri: request_uri,
+      try {
+        // request_uri is guaranteed to exist in isPAR branch
+        const consumed = (await stub.consumeRequestRpc({
+          requestUri: request_uri!,
           client_id: client_id,
-        }),
-      });
-
-      if (response.ok) {
-        parsedData = (await response.json()) as typeof parsedData;
+        })) as PARRequestData;
+        // Map PARRequestData to the expected format
+        parsedData = {
+          client_id: consumed.client_id,
+          response_type: consumed.response_type || 'code',
+          redirect_uri: consumed.redirect_uri,
+          scope: consumed.scope,
+          state: consumed.state,
+          nonce: consumed.nonce,
+          code_challenge: consumed.code_challenge,
+          code_challenge_method: consumed.code_challenge_method,
+          claims: consumed.claims,
+          response_mode: undefined,
+        };
+      } catch {
+        // RPC error (invalid/expired request_uri)
+        parsedData = null;
       }
 
       if (!parsedData) {
@@ -1378,24 +1390,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     try {
       const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
 
-      const sessionResponse = await sessionStore.fetch(
-        new Request(`https://session-store/session/${encodeURIComponent(sessionId)}`, {
-          method: 'GET',
-        })
-      );
+      const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
-      if (sessionResponse.ok) {
-        const session = (await sessionResponse.json()) as {
-          id: string;
-          userId: string;
-          createdAt: number;
-          expiresAt: number;
-          data?: {
-            authTime?: number;
-            [key: string]: unknown;
-          };
-        };
-
+      if (session) {
         // Check if session is not expired
         if (session.expiresAt > Date.now()) {
           sessionUserId = session.userId;
@@ -1473,17 +1470,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         try {
           const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
           const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-          const jwksResponse = await keyManager.fetch('http://internal/jwks', { method: 'GET' });
+          const keys = await keyManager.getAllPublicKeysRpc();
 
-          if (jwksResponse.ok) {
-            const jwks = (await jwksResponse.json()) as {
-              keys: Array<{ kid?: string; [key: string]: unknown }>;
-            };
-            // Find key by kid
-            const jwk = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
-            if (jwk) {
-              publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
-            }
+          // Find key by kid
+          const jwk = kid ? keys.find((k: { kid?: string }) => k.kid === kid) : keys[0];
+          if (jwk) {
+            publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
           }
         } catch (kmError) {
           console.warn(
@@ -1953,38 +1945,26 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName('global');
     }
 
-    // Store authorization code using AuthorizationCodeStore Durable Object
+    // Store authorization code using AuthorizationCodeStore Durable Object (RPC)
     try {
       const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
 
-      const storeResponse = await authCodeStore.fetch(
-        new Request('https://auth-code-store/code', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            code,
-            clientId: validClientId,
-            redirectUri: validRedirectUri,
-            userId: sub,
-            scope: validScope,
-            codeChallenge: code_challenge,
-            codeChallengeMethod: code_challenge_method,
-            nonce,
-            state,
-            claims,
-            authTime: currentAuthTime,
-            acr: selectedAcr,
-            dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
-            sid: sessionId, // OIDC Session Management: Session ID for RP-Initiated Logout
-          }),
-        })
-      );
-
-      if (!storeResponse.ok) {
-        const errorData = await storeResponse.json();
-        console.error('Failed to store authorization code:', errorData);
-        return sendError('server_error', 'Failed to process authorization request');
-      }
+      await authCodeStore.storeCodeRpc({
+        code,
+        clientId: validClientId,
+        redirectUri: validRedirectUri,
+        userId: sub,
+        scope: validScope,
+        codeChallenge: code_challenge,
+        codeChallengeMethod: code_challenge_method as 'S256' | 'plain' | undefined,
+        nonce,
+        state,
+        claims,
+        authTime: currentAuthTime,
+        acr: selectedAcr,
+        dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
+        sid: sessionId, // OIDC Session Management: Session ID for RP-Initiated Logout
+      });
     } catch (error) {
       console.error('AuthCodeStore DO error:', error);
       return sendError('server_error', 'Failed to process authorization request');
@@ -2299,51 +2279,26 @@ async function getSigningKeyFromKeyManager(
 
   const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
-  const authHeaders = {
-    Authorization: `Bearer ${env.KEY_MANAGER_SECRET}`,
-  };
 
-  const activeResponse = await keyManager.fetch('http://key-manager/internal/active-with-private', {
-    method: 'GET',
-    headers: authHeaders,
-  });
+  // Try to get active key via RPC
+  let keyData = await keyManager.getActiveKeyWithPrivateRpc();
 
-  let keyData: { kid: string; privatePEM: string };
-
-  if (activeResponse.ok) {
-    const responseData = (await activeResponse.json()) as { kid: string; privatePEM: string };
+  if (keyData) {
     console.log('[getSigningKeyFromKeyManager] Active key response:', {
-      hasKid: !!responseData.kid,
-      hasPrivatePEM: !!responseData.privatePEM,
-      pemLength: responseData.privatePEM?.length,
-      pemStart: responseData.privatePEM?.substring(0, 50),
-      keys: Object.keys(responseData),
+      hasKid: !!keyData.kid,
+      hasPrivatePEM: !!keyData.privatePEM,
+      pemLength: keyData.privatePEM?.length,
+      pemStart: keyData.privatePEM?.substring(0, 50),
     });
-    keyData = responseData;
   } else {
     console.log('[getSigningKeyFromKeyManager] No active key, rotating...');
-    const rotateResponse = await keyManager.fetch('http://key-manager/internal/rotate', {
-      method: 'POST',
-      headers: authHeaders,
-    });
-
-    if (!rotateResponse.ok) {
-      const errorText = await rotateResponse.text();
-      throw new Error(`Failed to rotate signing key: ${rotateResponse.status} ${errorText}`);
-    }
-
-    const rotateData = (await rotateResponse.json()) as {
-      success: boolean;
-      key: { kid: string; privatePEM: string };
-    };
+    keyData = await keyManager.rotateKeysWithPrivateRpc();
     console.log('[getSigningKeyFromKeyManager] Rotated key:', {
-      hasKid: !!rotateData.key?.kid,
-      hasPrivatePEM: !!rotateData.key?.privatePEM,
-      pemLength: rotateData.key?.privatePEM?.length,
-      pemStart: rotateData.key?.privatePEM?.substring(0, 50),
-      keys: Object.keys(rotateData.key || {}),
+      hasKid: !!keyData.kid,
+      hasPrivatePEM: !!keyData.privatePEM,
+      pemLength: keyData.privatePEM?.length,
+      pemStart: keyData.privatePEM?.substring(0, 50),
     });
-    keyData = rotateData.key;
   }
 
   // Validate keyData before using it
@@ -3005,28 +2960,25 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   // This value will be used for both the session and the redirect parameter
   const loginAuthTime = Math.floor(Date.now() / 1000);
 
-  const sessionResponse = await sessionStore.fetch(
-    new Request('https://session-store/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId: newSessionId, // Required: Sharded session ID
-        userId,
-        ttl: 3600, // 1 hour session
-        data: {
-          clientId: metadata.client_id,
-          authTime: loginAuthTime, // Store auth_time for OIDC conformance (prompt=none consistency)
-        },
-      }),
-    })
-  );
+  try {
+    await sessionStore.createSessionRpc(
+      newSessionId, // Required: Sharded session ID
+      userId,
+      3600, // 1 hour session
+      {
+        clientId: metadata.client_id as string,
+        authTime: loginAuthTime, // Store auth_time for OIDC conformance (prompt=none consistency)
+      }
+    );
 
-  if (sessionResponse.ok) {
     // Set session cookie with the pre-generated sharded session ID
     c.header(
       'Set-Cookie',
       `authrim_session=${newSessionId}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=3600`
     );
+  } catch (error) {
+    console.error('Failed to create session:', error);
+    // Continue even if session creation fails - user can re-login
   }
 
   // Build query string for internal redirect to /authorize

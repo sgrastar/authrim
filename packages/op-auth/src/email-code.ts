@@ -14,7 +14,7 @@
 
 import { Context } from 'hono';
 import { setCookie, getCookie } from 'hono/cookie';
-import type { Env } from '@authrim/shared';
+import type { Env, Session } from '@authrim/shared';
 import { getSessionStoreForNewSession } from '@authrim/shared';
 import { ResendEmailProvider } from './utils/email/resend-provider';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
@@ -63,29 +63,14 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Rate limiting check: 3 requests per 15 minutes per email
+    // Rate limiting check: 3 requests per 15 minutes per email via RPC
     const rateLimiterId = c.env.RATE_LIMITER.idFromName('email-code');
     const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
-    const rateLimitResponse = await rateLimiter.fetch('http://internal/increment', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clientIP: `email_code:${email.toLowerCase()}`,
-        config: {
-          windowSeconds: 15 * 60, // 15 minutes
-          maxRequests: 3,
-        },
-      }),
+    const rateLimitResult = await rateLimiter.incrementRpc(`email_code:${email.toLowerCase()}`, {
+      windowSeconds: 15 * 60, // 15 minutes
+      maxRequests: 3,
     });
-
-    const rateLimitResult = (await rateLimitResponse.json()) as {
-      allowed: boolean;
-      current: number;
-      limit: number;
-      resetAt: number;
-      retryAfter: number;
-    };
 
     if (!rateLimitResult.allowed) {
       return c.json(
@@ -439,7 +424,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
 
     const now = Date.now();
 
-    // Create session using SessionStore Durable Object (sharded)
+    // Create session using SessionStore Durable Object (sharded) via RPC
     let sessionId: string;
     try {
       const { stub: sessionStore, sessionId: newSessionId } = await getSessionStoreForNewSession(
@@ -447,27 +432,17 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       );
       sessionId = newSessionId;
 
-      const sessionResponse = await sessionStore.fetch(
-        new Request('https://session-store/session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionId: newSessionId,
-            userId: user.id,
-            ttl: 24 * 60 * 60, // 24 hours in seconds
-            data: {
-              email: user.email,
-              name: user.name,
-              amr: ['otp'],
-              acr: 'urn:mace:incommon:iap:bronze',
-            },
-          }),
-        })
+      await sessionStore.createSessionRpc(
+        newSessionId,
+        user.id as string,
+        24 * 60 * 60, // 24 hours in seconds
+        {
+          email: user.email,
+          name: user.name,
+          amr: ['otp'],
+          acr: 'urn:mace:incommon:iap:bronze',
+        }
       );
-
-      if (!sessionResponse.ok) {
-        throw new Error('Session creation failed');
-      }
     } catch (error) {
       console.error('Failed to create session:', error);
       return c.json(

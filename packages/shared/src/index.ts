@@ -57,6 +57,13 @@ export { DeviceCodeStore } from './durable-objects/DeviceCodeStore';
 export { CIBARequestStore } from './durable-objects/CIBARequestStore';
 export { VersionManager } from './durable-objects/VersionManager';
 export { SAMLRequestStore } from './durable-objects/SAMLRequestStore';
+export { SessionStore } from './durable-objects/SessionStore';
+export type { Session, SessionData, SessionResponse } from './durable-objects/SessionStore';
+export { AuthorizationCodeStore } from './durable-objects/AuthorizationCodeStore';
+export { RefreshTokenRotator } from './durable-objects/RefreshTokenRotator';
+export { RateLimiterCounter } from './durable-objects/RateLimiterCounter';
+export { PARRequestStore } from './durable-objects/PARRequestStore';
+export type { PARRequestData } from './durable-objects/PARRequestStore';
 
 // ReBAC (Relationship-Based Access Control)
 export {

@@ -37,6 +37,7 @@ import {
 import type { Env } from '../../types/env';
 import type { D1Result } from '../../utils/d1-retry';
 import { buildDOInstanceName } from '../../utils/tenant-context';
+import type { SessionResponse } from '../../durable-objects/SessionStore';
 
 /**
  * CloudflareStorageAdapter
@@ -132,63 +133,47 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   // ========== Private helper methods ==========
 
   /**
-   * Get from SessionStore Durable Object
+   * Get from SessionStore Durable Object (RPC)
    */
   private async getFromSessionStore(key: string): Promise<string | null> {
     const sessionId = key.substring(8); // Remove 'session:' prefix
     const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
-    const response = await doStub.fetch(
-      new Request(`http://internal/session/${sessionId}`, { method: 'GET' })
-    );
-
-    if (response.status === 404) {
+    const session = await doStub.getSessionRpc(sessionId);
+    if (!session) {
       return null;
     }
 
-    if (!response.ok) {
-      throw new Error(`SessionStore error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return JSON.stringify(data);
+    return JSON.stringify(session);
   }
 
   /**
-   * Set to SessionStore Durable Object
+   * Set to SessionStore Durable Object (RPC)
    */
   private async setToSessionStore(key: string, value: string, ttl?: number): Promise<void> {
     const sessionData = JSON.parse(value);
+    const sessionId = key.substring(8); // Remove 'session:' prefix
     const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
-    const response = await doStub.fetch(
-      new Request('http://internal/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: sessionData.user_id,
-          ttl: ttl || 86400, // Default: 24 hours
-          data: sessionData.data,
-        }),
-      })
+    await doStub.createSessionRpc(
+      sessionId,
+      sessionData.user_id,
+      ttl || 86400, // Default: 24 hours
+      sessionData.data
     );
-
-    if (!response.ok) {
-      throw new Error(`SessionStore error: ${response.status}`);
-    }
   }
 
   /**
-   * Delete from SessionStore Durable Object
+   * Delete from SessionStore Durable Object (RPC)
    */
   private async deleteFromSessionStore(key: string): Promise<void> {
     const sessionId = key.substring(8); // Remove 'session:' prefix
     const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
-    await doStub.fetch(new Request(`http://internal/session/${sessionId}`, { method: 'DELETE' }));
+    await doStub.invalidateSessionRpc(sessionId);
   }
 
   /**
@@ -306,59 +291,41 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   }
 
   /**
-   * Get from AuthCodeStore Durable Object
+   * Get from AuthCodeStore Durable Object (RPC)
    */
   private async getFromAuthCodeStore(key: string): Promise<string | null> {
     const code = key.substring(9); // Remove 'authcode:' prefix
     const doId = this.env.AUTH_CODE_STORE.idFromName(buildDOInstanceName('auth-code'));
     const doStub = this.env.AUTH_CODE_STORE.get(doId);
 
-    const response = await doStub.fetch(
-      new Request(`http://internal/code/${code}/exists`, { method: 'GET' })
-    );
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const data = (await response.json()) as { exists: boolean };
-    return data.exists ? JSON.stringify({ exists: true }) : null;
+    const exists = await doStub.hasCodeRpc(code);
+    return exists ? JSON.stringify({ exists: true }) : null;
   }
 
   /**
-   * Set to AuthCodeStore Durable Object
+   * Set to AuthCodeStore Durable Object (RPC)
    */
   private async setToAuthCodeStore(key: string, value: string, _ttl?: number): Promise<void> {
     const codeData = JSON.parse(value);
     const doId = this.env.AUTH_CODE_STORE.idFromName(buildDOInstanceName('auth-code'));
     const doStub = this.env.AUTH_CODE_STORE.get(doId);
 
-    const response = await doStub.fetch(
-      new Request('http://internal/code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(codeData),
-      })
-    );
-
-    if (!response.ok) {
-      throw new Error(`AuthCodeStore error: ${response.status}`);
-    }
+    await doStub.storeCodeRpc(codeData);
   }
 
   /**
-   * Delete from AuthCodeStore Durable Object
+   * Delete from AuthCodeStore Durable Object (RPC)
    */
   private async deleteFromAuthCodeStore(key: string): Promise<void> {
     const code = key.substring(9); // Remove 'authcode:' prefix
     const doId = this.env.AUTH_CODE_STORE.idFromName(buildDOInstanceName('auth-code'));
     const doStub = this.env.AUTH_CODE_STORE.get(doId);
 
-    await doStub.fetch(new Request(`http://internal/code/${code}`, { method: 'DELETE' }));
+    await doStub.deleteCodeRpc(code);
   }
 
   /**
-   * Get from RefreshTokenRotator Durable Object
+   * Get from RefreshTokenRotator Durable Object (RPC)
    *
    * @deprecated This method uses legacy (non-sharded) routing.
    * For V3 sharding support, use getRefreshToken() from @authrim/shared/utils/kv instead.
@@ -369,28 +336,20 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
       '[DEPRECATED] getFromRefreshTokenRotator uses legacy routing. ' +
         'Use getRefreshToken() from @authrim/shared/utils/kv for V3 sharding support.'
     );
-    const familyId = key.substring(13); // Remove 'refreshtoken:' prefix
+    const familyId = key.substring(13); // Remove 'refreshtoken:' prefix (familyId = userId in legacy)
     const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
 
-    const response = await doStub.fetch(
-      new Request(`http://internal/family/${familyId}`, { method: 'GET' })
-    );
-
-    if (response.status === 404) {
+    const family = await doStub.getFamilyRpc(familyId);
+    if (!family) {
       return null;
     }
 
-    if (!response.ok) {
-      throw new Error(`RefreshTokenRotator error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return JSON.stringify(data);
+    return JSON.stringify(family);
   }
 
   /**
-   * Set to RefreshTokenRotator Durable Object
+   * Set to RefreshTokenRotator Durable Object (RPC)
    *
    * V3: Supports sharding if familyData contains jti and clientId.
    * Falls back to legacy routing if sharding info is not available.
@@ -426,24 +385,14 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
 
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
 
-    const response = await doStub.fetch(
-      new Request('http://internal/family', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...familyData,
-          ttl: ttl || 30 * 24 * 60 * 60, // Default: 30 days
-        }),
-      })
-    );
-
-    if (!response.ok) {
-      throw new Error(`RefreshTokenRotator error: ${response.status}`);
-    }
+    await doStub.createFamilyRpc({
+      ...familyData,
+      ttl: ttl || 30 * 24 * 60 * 60, // Default: 30 days
+    });
   }
 
   /**
-   * Delete from RefreshTokenRotator Durable Object
+   * Delete from RefreshTokenRotator Durable Object (RPC)
    *
    * @deprecated This method uses legacy (non-sharded) routing.
    * For V3 sharding support, use deleteRefreshToken() from @authrim/shared/utils/kv instead.
@@ -454,17 +403,11 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
       '[DEPRECATED] deleteFromRefreshTokenRotator uses legacy routing. ' +
         'Use deleteRefreshToken() from @authrim/shared/utils/kv for V3 sharding support.'
     );
-    const familyId = key.substring(13); // Remove 'refreshtoken:' prefix
+    const familyId = key.substring(13); // Remove 'refreshtoken:' prefix (familyId = userId in legacy)
     const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
 
-    await doStub.fetch(
-      new Request('http://internal/revoke-family', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ familyId }),
-      })
-    );
+    await doStub.revokeFamilyRpc(familyId, 'deleteFromRefreshTokenRotator');
   }
 
   /**
@@ -760,20 +703,9 @@ export class SessionStore implements ISessionStore {
     const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
-    const response = await doStub.fetch(
-      new Request(`http://internal/session/${sessionId}`, { method: 'GET' })
-    );
-
-    if (response.status === 404) {
-      return null;
-    }
-
-    if (!response.ok) {
-      throw new Error(`SessionStore error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data as Session;
+    // RPC call
+    const session = await doStub.getSessionRpc(sessionId);
+    return session;
   }
 
   async create(session: Partial<Session>): Promise<Session> {
@@ -784,71 +716,42 @@ export class SessionStore implements ISessionStore {
     const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
-    const response = await doStub.fetch(
-      new Request('http://internal/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: session.user_id,
-          ttl,
-          data: session.data,
-        }),
-      })
-    );
-
-    if (!response.ok) {
-      throw new Error(`SessionStore error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data as Session;
+    // RPC call
+    const result = await doStub.createSessionRpc(id, session.user_id!, ttl, session.data);
+    return result as Session;
   }
 
   async delete(sessionId: string): Promise<void> {
     const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
-    await doStub.fetch(new Request(`http://internal/session/${sessionId}`, { method: 'DELETE' }));
+    // RPC call
+    await doStub.invalidateSessionRpc(sessionId);
   }
 
   async listByUser(userId: string): Promise<Session[]> {
     const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
-    const response = await doStub.fetch(
-      new Request(`http://internal/sessions/user/${userId}`, { method: 'GET' })
-    );
-
-    if (!response.ok) {
-      throw new Error(`SessionStore error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return (data as { sessions: Session[] }).sessions;
+    // RPC call - returns SessionResponse[]
+    const sessions: SessionResponse[] = await doStub.listUserSessionsRpc(userId);
+    // Convert SessionResponse[] to Session[] (interface adapts field names)
+    return sessions.map((s: SessionResponse) => ({
+      id: s.id,
+      user_id: s.userId,
+      expires_at: s.expiresAt,
+      created_at: s.createdAt,
+      data: s.data,
+    })) as Session[];
   }
 
   async extend(sessionId: string, additionalSeconds: number): Promise<Session | null> {
     const doId = this.env.SESSION_STORE.idFromName(buildDOInstanceName('session'));
     const doStub = this.env.SESSION_STORE.get(doId);
 
-    const response = await doStub.fetch(
-      new Request(`http://internal/session/${sessionId}/extend`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seconds: additionalSeconds }),
-      })
-    );
-
-    if (response.status === 404) {
-      return null;
-    }
-
-    if (!response.ok) {
-      throw new Error(`SessionStore error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data as Session;
+    // RPC call
+    const result = await doStub.extendSessionRpc(sessionId, additionalSeconds);
+    return result;
   }
 }
 

@@ -247,19 +247,16 @@ export async function introspectToken(
 
   let publicKey: CryptoKey | null = null;
 
-  // Try to fetch JWKS from KeyManager DO
+  // Try to fetch JWKS from KeyManager DO via RPC
   if (request.env.KEY_MANAGER) {
     try {
       const keyManagerId = request.env.KEY_MANAGER.idFromName('default-v3');
       const keyManager = request.env.KEY_MANAGER.get(keyManagerId);
-      const jwksResponse = await keyManager.fetch('http://internal/jwks', { method: 'GET' });
+      const keys = await keyManager.getAllPublicKeysRpc();
 
-      if (jwksResponse.ok) {
-        const jwks = (await jwksResponse.json()) as {
-          keys: Array<{ kid?: string; [key: string]: unknown }>;
-        };
+      if (keys && keys.length > 0) {
         // Find key by kid
-        const jwk = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
+        const jwk = kid ? keys.find((k: { kid?: string }) => k.kid === kid) : keys[0];
         if (jwk) {
           publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
         }

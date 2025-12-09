@@ -26,6 +26,7 @@
  * - RFC 6749: Section 10.4 (Refresh Token Protection)
  */
 
+import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 import { retryD1Operation } from '../utils/d1-retry';
 
@@ -108,10 +109,13 @@ const STORAGE_PREFIX = {
  *
  * Sharded by client_id for horizontal scaling.
  * Each DO instance manages all token families for a single client.
+ *
+ * RPC Support:
+ * - Extends DurableObject base class for RPC method exposure
+ * - RPC methods have 'Rpc' suffix (e.g., createFamilyRpc, rotateRpc)
+ * - fetch() handler is maintained for backward compatibility and debugging
  */
-export class RefreshTokenRotator {
-  private state: DurableObjectState;
-  private env: Env;
+export class RefreshTokenRotator extends DurableObject<Env> {
   private families: Map<string, TokenFamilyV2> = new Map(); // userId → family
   private initialized: boolean = false;
   private initializePromise: Promise<void> | null = null;
@@ -128,10 +132,109 @@ export class RefreshTokenRotator {
   // Configuration
   private readonly DEFAULT_TTL = 30 * 24 * 60 * 60; // 30 days in seconds
 
-  constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    this.env = env;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
   }
+
+  // ==========================================
+  // RPC Methods (public, with 'Rpc' suffix)
+  // ==========================================
+
+  /**
+   * RPC: Create new token family
+   */
+  async createFamilyRpc(request: CreateFamilyRequestV2 | CreateFamilyRequestV3): Promise<{
+    version: number;
+    newJti: string;
+    expiresIn: number;
+    allowedScope: string;
+  }> {
+    return this.createFamily(request);
+  }
+
+  /**
+   * RPC: Rotate refresh token
+   * SECURITY CRITICAL: Handles token theft detection
+   */
+  async rotateRpc(request: RotateTokenRequestV2): Promise<RotateTokenResponseV2> {
+    return this.rotate(request);
+  }
+
+  /**
+   * RPC: Revoke token family
+   */
+  async revokeFamilyRpc(userId: string, reason?: string): Promise<void> {
+    return this.revokeFamily(userId, reason);
+  }
+
+  /**
+   * RPC: Get family info
+   */
+  async getFamilyRpc(userId: string): Promise<TokenFamilyV2 | null> {
+    return this.getFamily(userId);
+  }
+
+  /**
+   * RPC: Revoke by JTI (RFC 7009)
+   */
+  async revokeByJtiRpc(jti: string, reason?: string): Promise<boolean> {
+    return this.revokeByJti(jti, reason);
+  }
+
+  /**
+   * RPC: Batch revoke multiple tokens
+   */
+  async batchRevokeRpc(
+    jtis: string[],
+    reason?: string
+  ): Promise<{ revoked: number; notFound: number }> {
+    return this.batchRevoke(jtis, reason);
+  }
+
+  /**
+   * RPC: Validate token without rotation
+   */
+  async validateRpc(
+    userId: string,
+    version: number,
+    clientId: string
+  ): Promise<{ valid: boolean; family?: TokenFamilyV2 }> {
+    return this.validate(userId, version, clientId);
+  }
+
+  /**
+   * RPC: Get status/health check
+   */
+  async getStatusRpc(): Promise<{
+    status: string;
+    version: string;
+    families: { total: number; active: number };
+    timestamp: number;
+  }> {
+    await this.initializeState();
+    const now = Date.now();
+    let activeFamilies = 0;
+
+    for (const family of this.families.values()) {
+      if (family.expires_at > now) {
+        activeFamilies++;
+      }
+    }
+
+    return {
+      status: 'ok',
+      version: 'v2',
+      families: {
+        total: this.families.size,
+        active: activeFamilies,
+      },
+      timestamp: now,
+    };
+  }
+
+  // ==========================================
+  // Internal Methods
+  // ==========================================
 
   /**
    * Initialize state from Durable Storage
@@ -162,7 +265,7 @@ export class RefreshTokenRotator {
   private async doInitialize(): Promise<void> {
     try {
       // Load all families from granular storage
-      const familyEntries = await this.state.storage.list<TokenFamilyV2>({
+      const familyEntries = await this.ctx.storage.list<TokenFamilyV2>({
         prefix: STORAGE_PREFIX.FAMILY,
       });
 
@@ -172,10 +275,10 @@ export class RefreshTokenRotator {
       }
 
       // Load sharding metadata
-      const storedGeneration = await this.state.storage.get<number>(
+      const storedGeneration = await this.ctx.storage.get<number>(
         `${STORAGE_PREFIX.META}generation`
       );
-      const storedShardIndex = await this.state.storage.get<number>(
+      const storedShardIndex = await this.ctx.storage.get<number>(
         `${STORAGE_PREFIX.META}shardIndex`
       );
       if (storedGeneration !== undefined) {
@@ -207,7 +310,7 @@ export class RefreshTokenRotator {
    */
   private async saveFamily(userId: string, family: TokenFamilyV2): Promise<void> {
     const key = this.buildFamilyKey(userId);
-    await this.state.storage.put(key, family);
+    await this.ctx.storage.put(key, family);
   }
 
   /**
@@ -215,7 +318,7 @@ export class RefreshTokenRotator {
    */
   private async deleteFamily(userId: string): Promise<void> {
     const key = this.buildFamilyKey(userId);
-    await this.state.storage.delete(key);
+    await this.ctx.storage.delete(key);
   }
 
   /**
@@ -262,8 +365,8 @@ export class RefreshTokenRotator {
         this.generation = v3Request.generation;
         this.shardIndex = v3Request.shardIndex;
         // Persist sharding metadata
-        await this.state.storage.put(`${STORAGE_PREFIX.META}generation`, this.generation);
-        await this.state.storage.put(`${STORAGE_PREFIX.META}shardIndex`, this.shardIndex);
+        await this.ctx.storage.put(`${STORAGE_PREFIX.META}generation`, this.generation);
+        await this.ctx.storage.put(`${STORAGE_PREFIX.META}shardIndex`, this.shardIndex);
       }
     }
 

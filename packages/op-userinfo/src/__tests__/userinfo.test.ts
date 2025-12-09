@@ -54,13 +54,19 @@ function createMockContext(options: {
     KEY_MANAGER: {
       idFromName: vi.fn().mockReturnValue('key-manager-id'),
       get: vi.fn().mockReturnValue({
+        // RPC methods for KeyManager
+        getActiveKeyRpc: vi.fn().mockResolvedValue({ kid: 'key-1', publicJWK: {} }),
+        getActiveKeyWithPrivateRpc: vi
+          .fn()
+          .mockResolvedValue({ kid: 'key-1', privatePEM: 'mock-pem' }),
+        // fetch fallback for backward compatibility
         fetch: vi.fn().mockResolvedValue(
           new Response(JSON.stringify({ kid: 'key-1', privatePEM: 'mock-pem' }), {
             status: 200,
           })
         ),
       }),
-    } as unknown as DurableObjectNamespace,
+    } as unknown as Env['KEY_MANAGER'],
     KEY_MANAGER_SECRET: 'test-secret',
     ...options.env,
   };
@@ -664,13 +670,18 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       c.env.KEY_MANAGER = {
         idFromName: vi.fn().mockReturnValue('key-manager-id'),
         get: vi.fn().mockReturnValue({
+          // RPC methods for KeyManager
+          getActiveKeyWithPrivateRpc: vi
+            .fn()
+            .mockResolvedValue({ kid: 'key-1', privatePEM: mockPrivateKeyPEM }),
+          // fetch fallback for backward compatibility
           fetch: vi.fn().mockResolvedValue(
             new Response(JSON.stringify({ kid: 'key-1', privatePEM: mockPrivateKeyPEM }), {
               status: 200,
             })
           ),
         }),
-      } as unknown as DurableObjectNamespace;
+      } as unknown as Env['KEY_MANAGER'];
 
       // Since the private key mock won't actually work with jose.importPKCS8,
       // we'll verify that the error handling works correctly

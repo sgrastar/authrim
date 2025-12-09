@@ -107,7 +107,7 @@ type ErrorResponse = Record<string, unknown>;
 /**
  * Create a mock environment for testing (partial - only what's needed)
  */
-function createMockEnv() {
+function createMockEnv(): Env {
   return {
     ISSUER_URL: 'https://test.example.com',
     TOKEN_EXPIRY: '3600',
@@ -121,19 +121,19 @@ function createMockEnv() {
     CLIENTS_CACHE: new MockKVNamespace() as unknown as KVNamespace,
     DB: createMockDB(),
     AVATARS: {} as R2Bucket,
-    KEY_MANAGER: createMockDO() as unknown as DurableObjectNamespace,
-    SESSION_STORE: createMockDO() as unknown as DurableObjectNamespace,
-    AUTH_CODE_STORE: createMockAuthCodeStore() as unknown as DurableObjectNamespace,
-    REFRESH_TOKEN_ROTATOR: createMockDO() as unknown as DurableObjectNamespace,
+    KEY_MANAGER: createMockDO() as unknown as Env['KEY_MANAGER'],
+    SESSION_STORE: createMockDO() as unknown as Env['SESSION_STORE'],
+    AUTH_CODE_STORE: createMockAuthCodeStore() as unknown as Env['AUTH_CODE_STORE'],
+    REFRESH_TOKEN_ROTATOR: createMockDO() as unknown as Env['REFRESH_TOKEN_ROTATOR'],
     CHALLENGE_STORE: createMockDO() as unknown as DurableObjectNamespace,
-    RATE_LIMITER: createMockDO() as unknown as DurableObjectNamespace,
+    RATE_LIMITER: createMockDO() as unknown as Env['RATE_LIMITER'],
     USER_CODE_RATE_LIMITER: createMockDO() as unknown as DurableObjectNamespace,
-    PAR_REQUEST_STORE: createMockDO() as unknown as DurableObjectNamespace,
+    PAR_REQUEST_STORE: createMockDO() as unknown as Env['PAR_REQUEST_STORE'],
     DPOP_JTI_STORE: createMockDO() as unknown as DurableObjectNamespace,
     TOKEN_REVOCATION_STORE: createMockDO() as unknown as DurableObjectNamespace,
     DEVICE_CODE_STORE: createMockDO() as unknown as DurableObjectNamespace,
     CIBA_REQUEST_STORE: createMockDO() as unknown as DurableObjectNamespace,
-  } as Env;
+  } as unknown as Env;
 }
 
 describe('Authorization Handler', () => {

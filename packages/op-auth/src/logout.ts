@@ -53,23 +53,19 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     let clientId: string | undefined;
     let sid: string | undefined;
 
-    // Helper function to get public key from KeyManager
+    // Helper function to get public key from KeyManager via RPC
     // Matches the key by 'kid' from the JWT header
     const getPublicKey = async (): Promise<CryptoKey> => {
       const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
       const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
-      const jwksResponse = await keyManager.fetch(
-        new Request('https://key-manager/jwks', {
-          method: 'GET',
-        })
-      );
+      const keys = await keyManager.getAllPublicKeysRpc();
 
-      if (!jwksResponse.ok) {
-        throw new Error('Failed to fetch JWKS');
+      if (!keys || keys.length === 0) {
+        throw new Error('No keys in JWKS');
       }
 
-      const jwks = (await jwksResponse.json()) as JSONWebKeySet;
+      const jwks = { keys } as JSONWebKeySet;
 
       // Extract kid from id_token_hint header if available
       let targetKid: string | undefined;
@@ -137,13 +133,9 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (sessionId && isShardedSessionId(sessionId)) {
       try {
         const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
-        const deleteResponse = await sessionStore.fetch(
-          new Request(`https://session-store/session/${sessionId}`, {
-            method: 'DELETE',
-          })
-        );
+        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
-        if (deleteResponse.ok) {
+        if (deleted) {
           deletedSessions.push(sessionId);
         } else {
           console.warn('Failed to delete cookie session:', sessionId);
@@ -165,13 +157,9 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     ) {
       try {
         const sessionStore = await getSessionStoreBySessionId(c.env, sid);
-        const deleteResponse = await sessionStore.fetch(
-          new Request(`https://session-store/session/${sid}`, {
-            method: 'DELETE',
-          })
-        );
+        const deleted = await sessionStore.invalidateSessionRpc(sid);
 
-        if (deleteResponse.ok) {
+        if (deleted) {
           deletedSessions.push(sid);
         } else {
           // Session might not exist or already deleted - this is OK
@@ -412,17 +400,13 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
       const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
-      const jwksResponse = await keyManager.fetch(
-        new Request('https://key-manager/jwks', {
-          method: 'GET',
-        })
-      );
+      const keys = await keyManager.getAllPublicKeysRpc();
 
-      if (!jwksResponse.ok) {
-        throw new Error('Failed to fetch JWKS');
+      if (!keys || keys.length === 0) {
+        throw new Error('No keys in JWKS');
       }
 
-      const jwks = (await jwksResponse.json()) as JSONWebKeySet;
+      const jwks = { keys } as JSONWebKeySet;
 
       // Extract kid from logout token header and find matching key
       let key;
@@ -508,16 +492,12 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Invalidate sessions
     // With sharded SessionStore, we can only delete sessions by specific sessionId
     if (sessionId && isShardedSessionId(sessionId)) {
-      // Invalidate specific session using sharded routing
+      // Invalidate specific session using sharded routing via RPC
       try {
         const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
-        const deleteResponse = await sessionStore.fetch(
-          new Request(`https://session-store/session/${sessionId}`, {
-            method: 'DELETE',
-          })
-        );
+        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
-        if (!deleteResponse.ok) {
+        if (!deleted) {
           console.warn(`Failed to delete session ${sessionId}`);
         }
       } catch (error) {

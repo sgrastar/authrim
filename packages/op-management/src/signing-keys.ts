@@ -24,29 +24,11 @@ import type {
  */
 export async function adminSigningKeysStatusHandler(c: Context<{ Bindings: Env }>) {
   try {
-    // Get key status from KeyManager
+    // Get key status from KeyManager via RPC
     const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
-    const response = await keyManager.fetch('http://key-manager/status', {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${c.env.KEY_MANAGER_SECRET}`,
-      },
-    });
-
-    if (!response.ok) {
-      console.error('Failed to fetch key status from KeyManager:', response.status);
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Failed to fetch key status',
-        },
-        500
-      );
-    }
-
-    const data = (await response.json()) as SigningKeysStatusResponse;
+    const data = (await keyManager.getStatusRpc()) as SigningKeysStatusResponse;
 
     // Record audit log (info severity for read operations)
     await createAuditLogFromContext(
@@ -80,19 +62,14 @@ export async function adminSigningKeysStatusHandler(c: Context<{ Bindings: Env }
  */
 export async function adminSigningKeysRotateHandler(c: Context<{ Bindings: Env }>) {
   try {
-    // Perform normal rotation via KeyManager
+    // Perform normal rotation via KeyManager RPC
     const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
-    const response = await keyManager.fetch('http://key-manager/rotate', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${c.env.KEY_MANAGER_SECRET}`,
-      },
-    });
+    const rotationResult = await keyManager.rotateKeysRpc();
 
-    if (!response.ok) {
-      console.error('Failed to perform key rotation:', response.status);
+    if (!rotationResult || !rotationResult.kid) {
+      console.error('Failed to perform key rotation: no key returned');
       return c.json(
         {
           error: 'server_error',
@@ -102,7 +79,7 @@ export async function adminSigningKeysRotateHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    const data = (await response.json()) as { success: boolean; key: { kid: string } };
+    const data = { success: true, key: { kid: rotationResult.kid } };
 
     // Get old active key for audit log
     const oldKeyId = 'previous-key'; // We don't have this info from the response, but it's in overlap now
@@ -175,33 +152,24 @@ export async function adminSigningKeysEmergencyRotateHandler(c: Context<{ Bindin
       );
     }
 
-    // Execute emergency rotation via KeyManager
+    // Execute emergency rotation via KeyManager RPC
     const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
-    const response = await keyManager.fetch('http://key-manager/emergency-rotate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${c.env.KEY_MANAGER_SECRET}`,
-      },
-      body: JSON.stringify({ reason: body.reason }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error('Failed to perform emergency rotation:', errorData);
+    let result: { oldKid: string; newKid: string };
+    try {
+      result = await keyManager.emergencyRotateKeysRpc(body.reason);
+    } catch (error) {
+      console.error('Failed to perform emergency rotation:', error);
       return c.json(
         {
           error: 'server_error',
           error_description: 'Failed to perform emergency rotation',
-          details: errorData,
+          details: error instanceof Error ? error.message : String(error),
         },
         500
       );
     }
-
-    const result = (await response.json()) as { oldKid: string; newKid: string };
 
     // Invalidate JWKS cache immediately to remove revoked key
     try {

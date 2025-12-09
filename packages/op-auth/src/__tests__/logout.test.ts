@@ -99,11 +99,11 @@ function createMockContext(options: {
     SESSION_STORE: {
       idFromName: vi.fn().mockReturnValue('session-store-id'),
       get: vi.fn().mockReturnValue(mockSessionStore),
-    } as unknown as DurableObjectNamespace,
+    } as unknown as Env['SESSION_STORE'],
     KEY_MANAGER: {
       idFromName: vi.fn().mockReturnValue('key-manager-id'),
       get: vi.fn().mockReturnValue(mockKeyManager),
-    } as unknown as DurableObjectNamespace,
+    } as unknown as Env['KEY_MANAGER'],
     ...options.env,
   };
 

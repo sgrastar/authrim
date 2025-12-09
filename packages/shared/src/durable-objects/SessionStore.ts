@@ -22,6 +22,7 @@
  * - Audit trail via D1 storage
  */
 
+import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 import { retryD1Operation } from '../utils/d1-retry';
 
@@ -79,20 +80,100 @@ const SESSION_KEY_PREFIX = 'session:';
  *
  * Provides distributed session storage with strong consistency guarantees.
  * Uses individual key storage for O(1) operations.
+ *
+ * RPC Support:
+ * - Extends DurableObject base class for RPC method exposure
+ * - RPC methods have 'Rpc' suffix (e.g., getSessionRpc)
+ * - fetch() handler is maintained for backward compatibility and debugging
  */
-export class SessionStore {
-  private state: DurableObjectState;
-  private env: Env;
+export class SessionStore extends DurableObject<Env> {
   private sessionCache: Map<string, Session> = new Map();
   private cleanupInterval: number | null = null;
 
-  constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    this.env = env;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
 
     // Start periodic cleanup
     this.startCleanup();
   }
+
+  // ==========================================
+  // RPC Methods (public, with 'Rpc' suffix)
+  // ==========================================
+
+  /**
+   * RPC: Get session by ID
+   */
+  async getSessionRpc(sessionId: string): Promise<Session | null> {
+    return this.getSession(sessionId);
+  }
+
+  /**
+   * RPC: Create new session
+   */
+  async createSessionRpc(
+    sessionId: string,
+    userId: string,
+    ttl: number,
+    data?: SessionData
+  ): Promise<Session> {
+    return this.createSession(sessionId, userId, ttl, data);
+  }
+
+  /**
+   * RPC: Invalidate session immediately
+   */
+  async invalidateSessionRpc(sessionId: string): Promise<boolean> {
+    return this.invalidateSession(sessionId);
+  }
+
+  /**
+   * RPC: Batch invalidate multiple sessions
+   */
+  async invalidateSessionsBatchRpc(
+    sessionIds: string[]
+  ): Promise<{ deleted: number; failed: string[] }> {
+    return this.invalidateSessionsBatch(sessionIds);
+  }
+
+  /**
+   * RPC: List all active sessions for a user
+   */
+  async listUserSessionsRpc(userId: string): Promise<SessionResponse[]> {
+    return this.listUserSessions(userId);
+  }
+
+  /**
+   * RPC: Extend session expiration
+   */
+  async extendSessionRpc(sessionId: string, additionalSeconds: number): Promise<Session | null> {
+    return this.extendSession(sessionId, additionalSeconds);
+  }
+
+  /**
+   * RPC: Get status/health check
+   */
+  async getStatusRpc(): Promise<{
+    status: string;
+    sessions: number;
+    cached: number;
+    timestamp: number;
+  }> {
+    const storedSessions = await this.ctx.storage.list<Session>({
+      prefix: SESSION_KEY_PREFIX,
+    });
+
+    return {
+      status: 'ok',
+      sessions: storedSessions.size,
+      cached: this.sessionCache.size,
+      timestamp: Date.now(),
+    };
+  }
+
+  // ==========================================
+  // Internal Methods (private)
+  // ==========================================
 
   /**
    * Build storage key for a session
@@ -128,19 +209,19 @@ export class SessionStore {
       if (session.expiresAt <= now) {
         this.sessionCache.delete(sessionId);
         // Delete from Durable Storage
-        await this.state.storage.delete(this.buildSessionKey(sessionId));
+        await this.ctx.storage.delete(this.buildSessionKey(sessionId));
         cleaned++;
       }
     }
 
     // Also scan storage for expired sessions not in cache
-    const storedSessions = await this.state.storage.list<Session>({
+    const storedSessions = await this.ctx.storage.list<Session>({
       prefix: SESSION_KEY_PREFIX,
     });
 
     for (const [key, session] of storedSessions) {
       if (session.expiresAt <= now) {
-        await this.state.storage.delete(key);
+        await this.ctx.storage.delete(key);
         cleaned++;
       }
     }
@@ -245,12 +326,12 @@ export class SessionStore {
       }
       // Cleanup expired session
       this.sessionCache.delete(sessionId);
-      await this.state.storage.delete(this.buildSessionKey(sessionId));
+      await this.ctx.storage.delete(this.buildSessionKey(sessionId));
       return null;
     }
 
     // 2. Check Durable Storage
-    const storedSession = await this.state.storage.get<Session>(this.buildSessionKey(sessionId));
+    const storedSession = await this.ctx.storage.get<Session>(this.buildSessionKey(sessionId));
     if (storedSession) {
       if (!this.isExpired(storedSession)) {
         // Promote to cache
@@ -258,7 +339,7 @@ export class SessionStore {
         return storedSession;
       }
       // Cleanup expired session
-      await this.state.storage.delete(this.buildSessionKey(sessionId));
+      await this.ctx.storage.delete(this.buildSessionKey(sessionId));
       return null;
     }
 
@@ -272,7 +353,7 @@ export class SessionStore {
       if (d1Session && !this.isExpired(d1Session)) {
         // Promote to cache and storage
         this.sessionCache.set(sessionId, d1Session);
-        await this.state.storage.put(this.buildSessionKey(sessionId), d1Session);
+        await this.ctx.storage.put(this.buildSessionKey(sessionId), d1Session);
         return d1Session;
       }
     } catch (error) {
@@ -304,7 +385,7 @@ export class SessionStore {
     this.sessionCache.set(sessionId, session);
 
     // 2. Persist to Durable Storage (individual key - O(1))
-    await this.state.storage.put(this.buildSessionKey(sessionId), session);
+    await this.ctx.storage.put(this.buildSessionKey(sessionId), session);
 
     // 3. Persist to D1 (backup & audit) - async, don't wait
     this.saveToD1(session).catch((error) => {
@@ -324,9 +405,9 @@ export class SessionStore {
 
     // 2. Delete from Durable Storage (individual key - O(1))
     const storageKey = this.buildSessionKey(sessionId);
-    const storedSession = await this.state.storage.get<Session>(storageKey);
+    const storedSession = await this.ctx.storage.get<Session>(storageKey);
     const hadStoredSession = storedSession !== undefined;
-    await this.state.storage.delete(storageKey);
+    await this.ctx.storage.delete(storageKey);
 
     // 3. Delete from D1 - MUST await to prevent race condition
     // Without await, getSession could still find the session in D1
@@ -357,7 +438,7 @@ export class SessionStore {
       // Check if session exists
       const hadSession = this.sessionCache.has(sessionId);
       const storageKey = this.buildSessionKey(sessionId);
-      const storedSession = await this.state.storage.get<Session>(storageKey);
+      const storedSession = await this.ctx.storage.get<Session>(storageKey);
       const hadStoredSession = storedSession !== undefined;
 
       if (hadSession || hadStoredSession) {
@@ -365,7 +446,7 @@ export class SessionStore {
         this.sessionCache.delete(sessionId);
 
         // 2. Delete from Durable Storage
-        await this.state.storage.delete(storageKey);
+        await this.ctx.storage.delete(storageKey);
 
         deleted.push(sessionId);
       } else {
@@ -422,7 +503,7 @@ export class SessionStore {
     const now = Date.now();
 
     // 1. Get from Durable Storage (individual keys)
-    const storedSessions = await this.state.storage.list<Session>({
+    const storedSessions = await this.ctx.storage.list<Session>({
       prefix: SESSION_KEY_PREFIX,
     });
 
@@ -484,7 +565,7 @@ export class SessionStore {
     this.sessionCache.set(sessionId, session);
 
     // Persist to Durable Storage
-    await this.state.storage.put(this.buildSessionKey(sessionId), session);
+    await this.ctx.storage.put(this.buildSessionKey(sessionId), session);
 
     // Update in D1 - async
     this.saveToD1(session).catch((error) => {
@@ -639,7 +720,7 @@ export class SessionStore {
       // GET /status - Health check and stats
       if (path === '/status' && request.method === 'GET') {
         // Count sessions in storage
-        const storedSessions = await this.state.storage.list<Session>({
+        const storedSessions = await this.ctx.storage.list<Session>({
           prefix: SESSION_KEY_PREFIX,
         });
 

@@ -28,7 +28,7 @@ function createMockDB() {
 type RegistrationResponse = Record<string, unknown>;
 
 // Mock environment factory (partial - only what's needed for these tests)
-function createMockEnv(options?: { db?: D1Database }) {
+function createMockEnv(options?: { db?: D1Database }): Env {
   return {
     ISSUER_URL: 'https://id.example.com',
     TOKEN_EXPIRY: '3600',
@@ -45,19 +45,19 @@ function createMockEnv(options?: { db?: D1Database }) {
     CLIENTS_CACHE: {} as KVNamespace,
     DB: options?.db ?? createMockDB(),
     AVATARS: {} as R2Bucket,
-    KEY_MANAGER: {} as DurableObjectNamespace,
-    SESSION_STORE: {} as DurableObjectNamespace,
-    AUTH_CODE_STORE: {} as DurableObjectNamespace,
-    REFRESH_TOKEN_ROTATOR: {} as DurableObjectNamespace,
+    KEY_MANAGER: {} as unknown as Env['KEY_MANAGER'],
+    SESSION_STORE: {} as unknown as Env['SESSION_STORE'],
+    AUTH_CODE_STORE: {} as unknown as Env['AUTH_CODE_STORE'],
+    REFRESH_TOKEN_ROTATOR: {} as unknown as Env['REFRESH_TOKEN_ROTATOR'],
     CHALLENGE_STORE: {} as DurableObjectNamespace,
-    RATE_LIMITER: {} as DurableObjectNamespace,
+    RATE_LIMITER: {} as unknown as Env['RATE_LIMITER'],
     USER_CODE_RATE_LIMITER: {} as DurableObjectNamespace,
-    PAR_REQUEST_STORE: {} as DurableObjectNamespace,
+    PAR_REQUEST_STORE: {} as unknown as Env['PAR_REQUEST_STORE'],
     DPOP_JTI_STORE: {} as DurableObjectNamespace,
     TOKEN_REVOCATION_STORE: {} as DurableObjectNamespace,
     DEVICE_CODE_STORE: {} as DurableObjectNamespace,
     CIBA_REQUEST_STORE: {} as DurableObjectNamespace,
-  } as Env;
+  } as unknown as Env;
 }
 
 // Default mock environment (re-created in beforeEach)

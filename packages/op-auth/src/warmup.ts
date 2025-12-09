@@ -60,13 +60,9 @@ export async function warmupHandler(c: Context<{ Bindings: Env }>) {
         (async () => {
           try {
             const stub = c.env.SESSION_STORE.get(c.env.SESSION_STORE.idFromName(instanceName));
-            // Use /status endpoint - lightweight health check that warms the DO
-            const response = await stub.fetch('https://session-store/status');
-            if (response.ok) {
-              results.sessionStores.warmed++;
-            } else {
-              results.sessionStores.failed++;
-            }
+            // Use RPC status call - lightweight health check that warms the DO
+            await stub.getStatusRpc();
+            results.sessionStores.warmed++;
           } catch {
             results.sessionStores.failed++;
           }
@@ -81,13 +77,9 @@ export async function warmupHandler(c: Context<{ Bindings: Env }>) {
         (async () => {
           try {
             const stub = c.env.AUTH_CODE_STORE.get(c.env.AUTH_CODE_STORE.idFromName(instanceName));
-            // Use /status endpoint - lightweight health check that warms the DO
-            const response = await stub.fetch('https://auth-code-store/status');
-            if (response.ok) {
-              results.authCodeStores.warmed++;
-            } else {
-              results.authCodeStores.failed++;
-            }
+            // Use RPC status call - lightweight health check that warms the DO
+            await stub.getStatusRpc();
+            results.authCodeStores.warmed++;
           } catch {
             results.authCodeStores.failed++;
           }
@@ -100,12 +92,9 @@ export async function warmupHandler(c: Context<{ Bindings: Env }>) {
       (async () => {
         try {
           const stub = c.env.KEY_MANAGER.get(c.env.KEY_MANAGER.idFromName('default-v3'));
-          // Use /jwks endpoint - returns public keys, warms the DO
-          const response = await stub.fetch('https://key-manager/jwks');
-          results.keyManager.warmed = response.ok;
-          if (!response.ok) {
-            results.keyManager.error = `Status: ${response.status}`;
-          }
+          // Use RPC status call - lightweight health check that warms the DO
+          await stub.getStatusRpc();
+          results.keyManager.warmed = true;
         } catch (e) {
           results.keyManager.warmed = false;
           results.keyManager.error = e instanceof Error ? e.message : 'Unknown error';

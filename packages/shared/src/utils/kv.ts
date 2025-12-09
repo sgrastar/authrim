@@ -481,28 +481,20 @@ export async function storeRefreshToken(
   const configManager = createOAuthConfigManager(env);
   const refreshTokenTTL = await configManager.getRefreshTokenExpiry();
 
-  const response = await stub.fetch('http://internal/family', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jti: jti,
-      userId: data.sub,
-      clientId: data.client_id,
-      scope: data.scope || '',
-      ttl: refreshTokenTTL,
-      // V3: Include generation and shard for DO to store
-      ...(parsedJti.generation > 0 &&
-        parsedJti.shardIndex !== null && {
-          generation: parsedJti.generation,
-          shardIndex: parsedJti.shardIndex,
-        }),
-    }),
+  // Use RPC for family creation
+  await stub.createFamilyRpc({
+    jti: jti,
+    userId: data.sub,
+    clientId: data.client_id,
+    scope: data.scope || '',
+    ttl: refreshTokenTTL,
+    // V3: Include generation and shard for DO to store
+    ...(parsedJti.generation > 0 &&
+      parsedJti.shardIndex !== null && {
+        generation: parsedJti.generation,
+        shardIndex: parsedJti.shardIndex,
+      }),
   });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to store refresh token: ${error}`);
-  }
 }
 
 /**
@@ -545,27 +537,10 @@ export async function getRefreshToken(
   const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
 
   try {
-    // V2: Use version-based validation endpoint
-    const params = new URLSearchParams({
-      userId,
-      version: String(version),
-      clientId,
-    });
-    const response = await stub.fetch(`http://internal/validate?${params}`, {
-      method: 'GET',
-    });
+    // V2: Use RPC for version-based validation
+    const result = await stub.validateRpc(userId, version, clientId);
 
-    if (!response.ok) {
-      return null;
-    }
-
-    const data = (await response.json()) as {
-      valid: boolean;
-      version?: number;
-      allowedScope?: string;
-      expiresAt?: number;
-    };
-    if (!data || !data.valid) {
+    if (!result.valid || !result.family) {
       return null;
     }
 
@@ -574,9 +549,9 @@ export async function getRefreshToken(
       jti,
       client_id: clientId,
       sub: userId,
-      scope: data.allowedScope || '',
+      scope: result.family.allowed_scope || '',
       iat: Math.floor(Date.now() / 1000), // V2 doesn't return createdAt
-      exp: Math.floor((data.expiresAt || Date.now()) / 1000),
+      exp: Math.floor((result.family.expires_at || Date.now()) / 1000),
     };
   } catch (error) {
     console.error('Failed to get refresh token:', error);
@@ -612,42 +587,11 @@ export async function deleteRefreshToken(env: Env, jti: string, client_id: strin
   const id = env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
   const stub = env.REFRESH_TOKEN_ROTATOR.get(id);
 
-  // First get the family ID for this token
-  const validateResponse = await stub.fetch(
-    `http://internal/validate?token=${encodeURIComponent(jti)}`,
-    {
-      method: 'GET',
-    }
-  );
-
-  if (!validateResponse.ok) {
-    // Token doesn't exist or already revoked, that's OK
-    return;
-  }
-
-  const data = (await validateResponse.json()) as {
-    valid?: boolean;
-    familyId?: string;
-  };
-  const familyId = data.familyId;
-
-  if (!familyId) {
-    // No family found, nothing to revoke
-    return;
-  }
-
-  // Revoke the entire family
-  const response = await stub.fetch('http://internal/revoke-family', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      familyId,
-      reason: 'Token revocation requested',
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to delete refresh token: ${error}`);
+  // Use RPC to revoke by JTI (internally finds family and revokes)
+  try {
+    await stub.revokeByJtiRpc(jti, 'Token revocation requested');
+  } catch (error) {
+    // Token doesn't exist or already revoked - that's OK for delete operations
+    console.log('Token revocation completed (may already be revoked):', error);
   }
 }

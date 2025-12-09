@@ -16,6 +16,7 @@
  * during the transition period.
  */
 
+import { DurableObject } from 'cloudflare:workers';
 import type { JWK } from 'jose';
 import { generateKeySet } from '../utils/keys';
 import type { Env } from '../types/env';
@@ -57,16 +58,126 @@ interface KeyManagerState {
  * KeyManager Durable Object
  *
  * Manages cryptographic keys for JWT signing with automatic rotation support.
+ *
+ * RPC Support:
+ * - Extends DurableObject base class for RPC method exposure
+ * - RPC methods have 'Rpc' suffix (e.g., getActiveKeyRpc, rotateKeysRpc)
+ * - fetch() handler is maintained for backward compatibility and debugging
  */
-export class KeyManager {
-  private state: DurableObjectState;
-  private env: Env;
+export class KeyManager extends DurableObject<Env> {
   private keyManagerState: KeyManagerState | null = null;
 
-  constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    this.env = env;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
   }
+
+  // ==========================================
+  // RPC Methods (public, with 'Rpc' suffix)
+  // ==========================================
+
+  /**
+   * RPC: Get the active signing key (without private key)
+   */
+  async getActiveKeyRpc(): Promise<Omit<StoredKey, 'privatePEM'> | null> {
+    const activeKey = await this.getActiveKey();
+    if (!activeKey) return null;
+    return this.sanitizeKey(activeKey);
+  }
+
+  /**
+   * RPC: Get the active signing key with private key (for internal use)
+   */
+  async getActiveKeyWithPrivateRpc(): Promise<StoredKey | null> {
+    return this.getActiveKey();
+  }
+
+  /**
+   * RPC: Get all public keys (for JWKS endpoint)
+   */
+  async getAllPublicKeysRpc(): Promise<JWK[]> {
+    return this.getAllPublicKeys();
+  }
+
+  /**
+   * RPC: Rotate keys
+   */
+  async rotateKeysRpc(): Promise<Omit<StoredKey, 'privatePEM'>> {
+    const newKey = await this.rotateKeys();
+    return this.sanitizeKey(newKey);
+  }
+
+  /**
+   * RPC: Rotate keys (with private key for internal use)
+   */
+  async rotateKeysWithPrivateRpc(): Promise<StoredKey> {
+    return this.rotateKeys();
+  }
+
+  /**
+   * RPC: Emergency key rotation
+   */
+  async emergencyRotateKeysRpc(reason: string): Promise<{ oldKid: string; newKid: string }> {
+    return this.emergencyRotateKeys(reason);
+  }
+
+  /**
+   * RPC: Check if rotation is needed
+   */
+  async shouldRotateKeysRpc(): Promise<boolean> {
+    return this.shouldRotateKeys();
+  }
+
+  /**
+   * RPC: Get configuration
+   */
+  async getConfigRpc(): Promise<KeyRotationConfig> {
+    return this.getConfig();
+  }
+
+  /**
+   * RPC: Update configuration
+   */
+  async updateConfigRpc(config: Partial<KeyRotationConfig>): Promise<void> {
+    return this.updateConfig(config);
+  }
+
+  /**
+   * RPC: Get status of all keys
+   */
+  async getStatusRpc(): Promise<{
+    keys: Array<{
+      kid: string;
+      status: KeyStatus;
+      createdAt: number;
+      expiresAt?: number;
+      revokedAt?: number;
+      revokedReason?: string;
+    }>;
+    activeKeyId: string | null;
+    lastRotation: number | null;
+  }> {
+    await this.initializeState();
+    const state = this.getState();
+
+    const keys = state.keys.map((k) => ({
+      kid: k.kid,
+      status: k.status,
+      createdAt: k.createdAt,
+      expiresAt: k.expiresAt,
+      revokedAt: k.revokedAt,
+      revokedReason: k.revokedReason,
+    }));
+
+    return {
+      keys,
+      activeKeyId: state.activeKeyId,
+      lastRotation: state.lastRotation,
+    };
+  }
+
+  // ==========================================
+  // Internal Methods
+  // ==========================================
 
   /**
    * Initialize the KeyManager state
@@ -76,7 +187,7 @@ export class KeyManager {
       return;
     }
 
-    const stored = await this.state.storage.get<KeyManagerState>('state');
+    const stored = await this.ctx.storage.get<KeyManagerState>('state');
 
     if (stored) {
       this.keyManagerState = stored;
@@ -137,7 +248,7 @@ export class KeyManager {
    */
   private async saveState(): Promise<void> {
     if (this.keyManagerState) {
-      await this.state.storage.put('state', this.keyManagerState);
+      await this.ctx.storage.put('state', this.keyManagerState);
     }
   }
 

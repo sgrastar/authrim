@@ -141,6 +141,21 @@ const PRESETS = {
     preAllocatedVUs: 300,
     maxVUs: 400,
   },
+  rps250: {
+    description: '250 RPS - High load (90s)',
+    stages: [
+      { target: 125, duration: '15s' },
+      { target: 250, duration: '90s' },
+      { target: 0, duration: '15s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<800', 'p(99)<1500'],
+      http_req_failed: ['rate<0.03'],
+      auth_flow_duration: ['p(99)<2500'],
+    },
+    preAllocatedVUs: 375,
+    maxVUs: 500,
+  },
   rps300: {
     description: '300 RPS - High load (120s)',
     stages: [
@@ -155,6 +170,21 @@ const PRESETS = {
     },
     preAllocatedVUs: 450,
     maxVUs: 600,
+  },
+  rps350: {
+    description: '350 RPS - Very high load (120s)',
+    stages: [
+      { target: 150, duration: '20s' },
+      { target: 350, duration: '120s' },
+      { target: 0, duration: '20s' },
+    ],
+    thresholds: {
+      http_req_duration: ['p(95)<600', 'p(99)<1000'],
+      http_req_failed: ['rate<0.02'],
+      auth_flow_duration: ['p(99)<1800'],
+    },
+    preAllocatedVUs: 525,
+    maxVUs: 700,
   },
   rps500: {
     description: '500 RPS - Very high load (120s)',
@@ -207,6 +237,8 @@ export const options = {
     test_id: TEST_ID,
     preset: PRESET,
   },
+  // p50, p99, p999を収集するためにsummaryTrendStatsを設定
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(50)', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)'],
 };
 
 // Basic Auth ヘッダー
@@ -541,9 +573,11 @@ export function handleSummary(data) {
     const flowMetrics = data.metrics.auth_flow_duration;
     console.log('\n🔄 認証フロー全体:');
     console.log(`  平均: ${flowMetrics.values.avg?.toFixed(2) || 'N/A'}ms`);
-    console.log(`  中央値: ${flowMetrics.values.med?.toFixed(2) || 'N/A'}ms`);
+    console.log(`  p50: ${flowMetrics.values['p(50)']?.toFixed(2) || flowMetrics.values.med?.toFixed(2) || 'N/A'}ms`);
     console.log(`  p95: ${flowMetrics.values['p(95)']?.toFixed(2) || 'N/A'}ms`);
     console.log(`  p99: ${flowMetrics.values['p(99)']?.toFixed(2) || 'N/A'}ms`);
+    console.log(`  p999: ${flowMetrics.values['p(99.9)']?.toFixed(2) || 'N/A'}ms`);
+    console.log(`  max: ${flowMetrics.values.max?.toFixed(2) || 'N/A'}ms`);
   }
 
   // 各ステップのメトリクス
@@ -558,7 +592,10 @@ export function handleSummary(data) {
       const m = data.metrics[step.key];
       console.log(`\n📍 ${step.name}:`);
       console.log(`  平均: ${m.values.avg?.toFixed(2) || 'N/A'}ms`);
+      console.log(`  p50: ${m.values['p(50)']?.toFixed(2) || m.values.med?.toFixed(2) || 'N/A'}ms`);
       console.log(`  p95: ${m.values['p(95)']?.toFixed(2) || 'N/A'}ms`);
+      console.log(`  p99: ${m.values['p(99)']?.toFixed(2) || 'N/A'}ms`);
+      console.log(`  p999: ${m.values['p(99.9)']?.toFixed(2) || 'N/A'}ms`);
     }
   }
 

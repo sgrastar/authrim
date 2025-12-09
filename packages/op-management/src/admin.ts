@@ -4,7 +4,7 @@
  */
 
 import { Context } from 'hono';
-import type { Env } from '@authrim/shared';
+import type { Env, Session } from '@authrim/shared';
 import {
   invalidateUserCache,
   parseRefreshTokenJti,
@@ -1512,26 +1512,16 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
     const sessionId = c.req.param('id');
 
     // Try to get from SessionStore first (hot data) - sharded
-    let sessionData;
+    let sessionData: Session | null = null;
     let isActive = false;
     let sessionStoreOk = false;
 
     if (isShardedSessionId(sessionId)) {
       try {
         const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
-        const sessionStoreResponse = await sessionStore.fetch(
-          new Request(`https://session-store/session/${sessionId}`, {
-            method: 'GET',
-          })
-        );
+        sessionData = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
-        if (sessionStoreResponse.ok) {
-          sessionData = (await sessionStoreResponse.json()) as {
-            id: string;
-            userId: string;
-            expiresAt: number;
-            createdAt: number;
-          };
+        if (sessionData) {
           isActive = sessionData.expiresAt > Date.now();
           sessionStoreOk = true;
         }
@@ -1607,17 +1597,13 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Invalidate session in SessionStore DO (sharded)
+    // Invalidate session in SessionStore DO (sharded) via RPC
     if (isShardedSessionId(sessionId)) {
       try {
         const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
-        const deleteResponse = await sessionStore.fetch(
-          new Request(`https://session-store/session/${sessionId}`, {
-            method: 'DELETE',
-          })
-        );
+        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
-        if (!deleteResponse.ok) {
+        if (!deleted) {
           console.warn(`Failed to delete session ${sessionId} from SessionStore`);
         }
       } catch (error) {
@@ -2286,23 +2272,15 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
  */
 export async function adminSigningKeyGetHandler(c: Context<{ Bindings: Env }>) {
   try {
-    // Get the active key from KeyManager DO
+    // Get the active key from KeyManager DO via RPC
     // Use 'default-v3' to match the existing KeyManager instance used throughout the system
     const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
     const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
 
-    const response = await keyManager.fetch(
-      new Request('https://key-manager/internal/active-with-private', {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${c.env.KEY_MANAGER_SECRET}`,
-        },
-      })
-    );
+    const keyData = await keyManager.getActiveKeyWithPrivateRpc();
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error('Failed to get signing key:', error);
+    if (!keyData || !keyData.privatePEM) {
+      console.error('Failed to get signing key: no key data');
       return c.json(
         {
           error: 'server_error',
@@ -2311,12 +2289,6 @@ export async function adminSigningKeyGetHandler(c: Context<{ Bindings: Env }>) {
         500
       );
     }
-
-    const keyData = (await response.json()) as {
-      kid: string;
-      privatePEM: string;
-      publicJWK: object;
-    };
 
     return c.json({
       kid: keyData.kid,
@@ -2548,32 +2520,20 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    // Create session in SessionStore DO (sharded)
+    // Create session in SessionStore DO (sharded) via RPC
     const now = Date.now();
     const expiresAt = now + ttl_seconds * 1000;
 
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env);
 
-    const sessionResponse = await sessionStore.fetch(
-      new Request('https://session-store/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          userId: user_id,
-          ttl: ttl_seconds,
-          data: {
-            amr: ['admin_api'],
-            email: user.email,
-            name: user.name,
-          },
-        }),
-      })
-    );
-
-    if (!sessionResponse.ok) {
-      const errorText = await sessionResponse.text();
-      console.error('Failed to create session:', errorText);
+    try {
+      await sessionStore.createSessionRpc(sessionId, user_id, ttl_seconds, {
+        amr: ['admin_api'],
+        email: user.email,
+        name: user.name,
+      });
+    } catch (error) {
+      console.error('Failed to create session:', error);
       return c.json(
         {
           error: 'server_error',

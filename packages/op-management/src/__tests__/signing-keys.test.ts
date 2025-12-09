@@ -133,7 +133,7 @@ function createMockEnv(keyManagerOptions: Parameters<typeof createMockKeyManager
     KEY_MANAGER: {
       idFromName: vi.fn().mockReturnValue({ id: 'mock-id' }),
       get: vi.fn().mockReturnValue(mockKeyManager),
-    } as unknown as DurableObjectNamespace,
+    } as unknown as Env['KEY_MANAGER'],
     KEY_MANAGER_SECRET: 'test-secret',
     JWKS_CACHE: {
       delete: vi.fn().mockResolvedValue(undefined),
@@ -145,7 +145,7 @@ function createMockEnv(keyManagerOptions: Parameters<typeof createMockKeyManager
       }),
     } as unknown as D1Database,
     ISSUER_URL: 'https://test.example.com',
-  } as Env;
+  } as unknown as Env;
 }
 
 /**
