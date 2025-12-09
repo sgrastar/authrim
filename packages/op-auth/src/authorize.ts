@@ -15,6 +15,7 @@ import {
   getSessionStoreBySessionId,
   getSessionStoreForNewSession,
   isShardedSessionId,
+  parseShardedSessionId,
 } from '@authrim/shared';
 import {
   generateSecureRandomString,
@@ -1933,11 +1934,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // This ensures both op-auth and op-token use the same shard count
     const shardCount = await getShardCount(c.env);
 
-    // Calculate shard index using FNV-1a hash for sticky routing
-    // Same user+client always routes to same shard (colocated with RefreshToken)
+    // Session→AuthCode Sticky Routing: Use session's shard index for AuthCode
+    // This collocates Session and AuthCode on the same DO shard for locality,
+    // reducing cross-POD latency by ~700-1500ms per request
     let authCodeStoreId: DurableObjectId;
     if (shardCount > 0) {
-      const shardIndex = getAuthCodeShardIndex(sub, validClientId, shardCount);
+      // Prefer session-based shard routing for locality
+      const parsedSession = sessionId ? parseShardedSessionId(sessionId) : null;
+      const shardIndex = parsedSession
+        ? parsedSession.shardIndex % shardCount // Session Sticky: same shard as session
+        : getAuthCodeShardIndex(sub, validClientId, shardCount); // Fallback: hash-based
       code = createShardedAuthCode(shardIndex, randomCode);
       const instanceName = buildAuthCodeShardInstanceName(shardIndex);
       authCodeStoreId = c.env.AUTH_CODE_STORE.idFromName(instanceName);

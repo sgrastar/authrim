@@ -61,11 +61,11 @@ import { extractDPoPProof, validateDPoPProof } from '@authrim/shared';
 // - Private key remains in Worker memory (same security boundary as DO)
 // - TTL limits exposure window if key is rotated
 // - kid is cached to detect rotation (new kid = cache invalidation)
-// Note: 10 minutes is still very conservative compared to industry standards
+// Note: 30 minutes is safe with 24h key rotation overlap period (KeyManager.ts:198-200)
 // (Auth0/Okta cache in-memory until process restart, which can be hours)
 let cachedSigningKey: { privateKey: CryptoKey; kid: string } | null = null;
 let cachedKeyTimestamp = 0;
-const KEY_CACHE_TTL = 10 * 60 * 1000; // 10 minutes - industry standard safe TTL
+const KEY_CACHE_TTL = 30 * 60 * 1000; // 30 minutes - safe with 24h rotation overlap
 
 // ===== JWKS (Public Key) Caching for Refresh Token Verification =====
 // Cache JWKS to avoid KeyManager DO hop and expensive RSA key import on every refresh token request
