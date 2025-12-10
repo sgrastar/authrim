@@ -5,7 +5,7 @@ import { logger } from 'hono/logger';
 import type { Env } from '@authrim/shared';
 import {
   rateLimitMiddleware,
-  RateLimitProfiles,
+  getRateLimitProfile,
   isAllowedOrigin,
   parseAllowedOrigins,
   versionCheckMiddleware,
@@ -106,22 +106,22 @@ app.use('*', async (c, next) => {
   return corsMiddleware(c, next);
 });
 
-// Rate limiting for sensitive endpoints
-app.use(
-  '/authorize',
-  rateLimitMiddleware({
-    ...RateLimitProfiles.moderate,
+// Rate limiting for sensitive endpoints (overridable via RATE_LIMIT_PROFILE env var)
+app.use('/authorize', async (c, next) => {
+  const profile = getRateLimitProfile(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
     endpoints: ['/authorize'],
-  })
-);
+  })(c, next);
+});
 
-app.use(
-  '/as/par',
-  rateLimitMiddleware({
-    ...RateLimitProfiles.strict,
+app.use('/as/par', async (c, next) => {
+  const profile = getRateLimitProfile(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
     endpoints: ['/as/par'],
-  })
-);
+  })(c, next);
+});
 
 // Health check endpoint (accessible via /api/auth/health due to route pattern)
 app.get('/api/auth/health', (c) => {

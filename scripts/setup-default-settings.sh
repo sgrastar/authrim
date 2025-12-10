@@ -432,6 +432,29 @@ EOF
 
             rm -f "$TEMP_SHARD_FILE"
         fi
+
+        # ─────────────────────────────────────────────────────────────────
+        # 3. RBAC Cache Version (for cache invalidation without deployment)
+        # ─────────────────────────────────────────────────────────────────
+        echo ""
+        print_info "Setting up RBAC Cache Version..."
+
+        RBAC_CACHE_VERSION=1
+
+        EXISTING_RBAC_VERSION=$(wrangler kv key get "rbac_cache_version" --namespace-id="$AUTHRIM_CONFIG_ID" --remote 2>/dev/null || echo "")
+
+        if [ -n "$EXISTING_RBAC_VERSION" ] && [ "$EXISTING_RBAC_VERSION" != "null" ] && [ "$FORCE" = false ]; then
+            print_warning "RBAC cache version already exists: $EXISTING_RBAC_VERSION"
+            print_info "Use --force to overwrite"
+        else
+            if wrangler kv key put "rbac_cache_version" "$RBAC_CACHE_VERSION" \
+                --namespace-id="$AUTHRIM_CONFIG_ID" \
+                --remote 2>&1; then
+                print_success "RBAC cache version: $RBAC_CACHE_VERSION"
+            else
+                print_error "Failed to write RBAC cache version"
+            fi
+        fi
     fi
 
     echo ""

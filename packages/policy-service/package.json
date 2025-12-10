@@ -13,14 +13,14 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@authrim/shared": "workspace:*",
     "@authrim/policy-core": "workspace:*",
+    "@authrim/shared": "workspace:*",
     "hono": "^4.10.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.13",
-    "wrangler": "^4.50.0"
+    "wrangler": "^4.53.0"
   }
 }

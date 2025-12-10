@@ -99,8 +99,8 @@ deploy_package() {
     echo "📦 Deploying: $package_name"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    # Build the wrangler deploy command with version vars
-    local deploy_cmd="wrangler deploy --config wrangler.${DEPLOY_ENV}.toml"
+    # Build the pnpm exec wrangler deploy command with version vars
+    local deploy_cmd="pnpm exec wrangler deploy --config wrangler.${DEPLOY_ENV}.toml"
 
     # Add version vars for non-shared packages (workers that use version check)
     if [ "$package_name" != "shared" ] && [ "$package_name" != "router" ]; then

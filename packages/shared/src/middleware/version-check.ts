@@ -10,6 +10,7 @@
  * - In-memory caching (5s TTL) to reduce DO access overhead
  * - Graceful handling for development (skips when version not set)
  * - Returns 503 + Retry-After for stale bundles
+ * - Feature Flag: Set VERSION_CHECK_ENABLED="false" to disable (zero overhead)
  *
  * Security:
  * - Version UUIDs are never exposed in responses
@@ -29,10 +30,9 @@ interface VersionCache {
 }
 
 // Cache TTL in milliseconds
-// Set to 0 for immediate version enforcement (recommended for consistency)
-// Trade-off: Every request will query VersionManager DO (~1-2ms latency)
-// For high-traffic production, consider increasing to 1000-2000ms
-const CACHE_TTL_MS = 0;
+// Trade-off: Higher value = less DO queries but slower version propagation
+// 5000ms (5 seconds) provides good balance between performance and consistency
+const CACHE_TTL_MS = 5000;
 
 // Per-worker version cache (worker name -> cache entry)
 const versionCaches = new Map<string, VersionCache>();
@@ -99,6 +99,12 @@ async function getLatestVersion(env: Env, workerName: string): Promise<string | 
  */
 export function versionCheckMiddleware(workerName: string): MiddlewareHandler<{ Bindings: Env }> {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    // Feature Flag: Skip all version check logic when disabled
+    // Set VERSION_CHECK_ENABLED="false" to completely bypass (zero overhead)
+    if (c.env.VERSION_CHECK_ENABLED === 'false') {
+      return next();
+    }
+
     // Skip version check for internal version management endpoints
     // This prevents chicken-and-egg problems during deployment:
     // - New Workers are deployed with new UUID
