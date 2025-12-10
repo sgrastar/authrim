@@ -83,8 +83,8 @@ get_deployment_info() {
     local worker_name=$1
     local full_name="${DEPLOY_ENV}-authrim-${worker_name}"
 
-    # Run wrangler deployments list and capture full output
-    local output=$(wrangler deployments list --name "$full_name" 2>/dev/null | head -20 || echo "")
+    # Run pnpm exec wrangler deployments status to get current active deployment (not list which can be stale)
+    local output=$(pnpm exec wrangler deployments status --name "$full_name" 2>/dev/null | head -20 || echo "")
 
     if [ -z "$output" ]; then
         echo "N/A|N/A|$full_name"

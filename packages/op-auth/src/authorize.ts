@@ -16,7 +16,11 @@ import {
   getSessionStoreForNewSession,
   isShardedSessionId,
   parseShardedSessionId,
+  getCachedUser,
+  getCachedConsent,
+  invalidateConsentCache,
 } from '@authrim/shared';
+import type { CachedUser, CachedConsent } from '@authrim/shared';
 import type { Session, PARRequestData } from '@authrim/shared';
 import {
   generateSecureRandomString,
@@ -1723,12 +1727,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     // Trusted clients skip consent (unless prompt=consent is explicitly specified)
     if (isTrustedClient && !prompt?.includes('consent')) {
-      // Check if consent already exists
-      const existingConsent = await c.env.DB.prepare(
-        'SELECT id FROM oauth_client_consents WHERE user_id = ? AND client_id = ?'
-      )
-        .bind(sub, validClientId)
-        .first();
+      // Check if consent already exists (using cache)
+      const existingConsent = await getCachedConsent(c.env, sub, validClientId);
 
       if (!existingConsent) {
         // Auto-grant consent for trusted client
@@ -1745,6 +1745,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           .bind(consentId, sub, validClientId, scope, now, null)
           .run();
 
+        // Invalidate consent cache after insert so next read picks up new consent
+        await invalidateConsentCache(c.env, sub, validClientId);
+
         console.log(
           `[CONSENT] Auto-granted for trusted client: client_id=${validClientId}, user_id=${sub}`
         );
@@ -1756,23 +1759,20 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Third-Party Client or prompt=consent: Check consent requirements
       let consentRequired = false;
       try {
-        const existingConsent = await c.env.DB.prepare(
-          'SELECT scope, granted_at, expires_at FROM oauth_client_consents WHERE user_id = ? AND client_id = ?'
-        )
-          .bind(sub, validClientId)
-          .first();
+        // Use cached consent check (Read-Through Cache)
+        const existingConsent = await getCachedConsent(c.env, sub, validClientId);
 
         if (!existingConsent) {
           // No consent record exists
           consentRequired = true;
         } else {
           // Check if consent has expired
-          const expiresAt = existingConsent.expires_at as number | null;
+          const expiresAt = existingConsent.expires_at;
           if (expiresAt && expiresAt < Date.now()) {
             consentRequired = true;
           } else {
             // Check if requested scopes are covered by existing consent
-            const grantedScopes = (existingConsent.scope as string).split(' ');
+            const grantedScopes = existingConsent.scope.split(' ');
             const requestedScopes = (scope as string).split(' ');
             const hasAllScopes = requestedScopes.every((s) => grantedScopes.includes(s));
 
@@ -2076,15 +2076,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       );
 
       if (isIdTokenOnly || hasEssentialClaims) {
-        // Fetch user data from database
-        const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(sub).first();
+        // Fetch user data from cache (Read-Through Cache) or D1
+        const user = await getCachedUser(c.env, sub);
 
         if (user) {
-          // Parse address JSON if present
+          // Parse address JSON if present (CachedUser.address is already JSON string)
           let address = null;
-          if (user.address_json) {
+          if (user.address) {
             try {
-              address = JSON.parse(user.address_json as string);
+              address = JSON.parse(user.address);
             } catch {
               // Ignore address parsing errors
             }
@@ -2106,14 +2106,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             zoneinfo: user.zoneinfo || undefined,
             locale: user.locale || undefined,
             updated_at: user.updated_at
-              ? (user.updated_at as number) >= 1e12
-                ? Math.floor((user.updated_at as number) / 1000)
-                : (user.updated_at as number)
+              ? user.updated_at >= 1e12
+                ? Math.floor(user.updated_at / 1000)
+                : user.updated_at
               : Math.floor(Date.now() / 1000),
             email: user.email || undefined,
-            email_verified: user.email_verified === 1,
+            email_verified: user.email_verified,
             phone_number: user.phone_number || undefined,
-            phone_number_verified: user.phone_number_verified === 1,
+            phone_number_verified: user.phone_number_verified,
             address: address || undefined,
           };
 

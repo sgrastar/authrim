@@ -22,18 +22,23 @@ const USER_CACHE_TTL = 3600; // 1 hour
 
 /**
  * Cached user data structure
- * Only includes data needed for token issuance (minimal PII)
+ * Includes all OIDC standard claims for profile, email, phone, and address scopes
  */
 export interface CachedUser {
   id: string;
   email: string;
   email_verified: boolean;
   name: string | null;
+  family_name: string | null;
+  given_name: string | null;
+  middle_name: string | null;
+  nickname: string | null;
+  preferred_username: string | null;
   picture: string | null;
   locale: string | null;
   phone_number: string | null;
   phone_number_verified: boolean;
-  address: string | null;
+  address: string | null; // JSON string of address object
   birthdate: string | null;
   gender: string | null;
   profile: string | null;
@@ -102,8 +107,9 @@ export async function getCachedUser(env: Env, userId: string): Promise<CachedUse
  */
 async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | null> {
   const result = await env.DB.prepare(
-    `SELECT id, email, email_verified, name, picture, locale,
-            phone_number, phone_number_verified, address, birthdate,
+    `SELECT id, email, email_verified, name, family_name, given_name,
+            middle_name, nickname, preferred_username, picture, locale,
+            phone_number, phone_number_verified, address_json, birthdate,
             gender, profile, website, zoneinfo, updated_at
      FROM users WHERE id = ?`
   )
@@ -113,11 +119,16 @@ async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | nul
       email: string;
       email_verified: number;
       name: string | null;
+      family_name: string | null;
+      given_name: string | null;
+      middle_name: string | null;
+      nickname: string | null;
+      preferred_username: string | null;
       picture: string | null;
       locale: string | null;
       phone_number: string | null;
       phone_number_verified: number;
-      address: string | null;
+      address_json: string | null;
       birthdate: string | null;
       gender: string | null;
       profile: string | null;
@@ -135,11 +146,16 @@ async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | nul
     email: result.email,
     email_verified: result.email_verified === 1,
     name: result.name,
+    family_name: result.family_name,
+    given_name: result.given_name,
+    middle_name: result.middle_name,
+    nickname: result.nickname,
+    preferred_username: result.preferred_username,
     picture: result.picture,
     locale: result.locale,
     phone_number: result.phone_number,
     phone_number_verified: result.phone_number_verified === 1,
-    address: result.address,
+    address: result.address_json, // Renamed from address_json for consistency
     birthdate: result.birthdate,
     gender: result.gender,
     profile: result.profile,
@@ -168,6 +184,145 @@ export async function invalidateUserCache(env: Env, userId: string): Promise<voi
   } catch (error) {
     // Log but don't throw - cache invalidation failure is not critical
     console.warn(`Failed to invalidate user cache for ${userId}:`, error);
+  }
+}
+
+// ===== Consent Cache =====
+// Read-Through Cache for consent status with invalidation hook support
+// TTL: 24 hours - consent status changes infrequently
+
+const CONSENT_CACHE_TTL = 24 * 60 * 60; // 24 hours
+
+/**
+ * Cached consent data structure
+ */
+export interface CachedConsent {
+  scope: string;
+  granted_at: number;
+  expires_at: number | null;
+}
+
+/**
+ * Get consent status from cache or D1 (Read-Through Cache pattern)
+ *
+ * Architecture:
+ * - Primary source: D1 database (oauth_client_consents table)
+ * - Cache: CONSENT_CACHE KV (24 hour TTL)
+ * - Invalidation: invalidateConsentCache() called on consent revocation
+ *
+ * @param env - Cloudflare environment bindings
+ * @param userId - User ID
+ * @param clientId - Client ID
+ * @returns Promise<CachedConsent | null>
+ */
+export async function getCachedConsent(
+  env: Env,
+  userId: string,
+  clientId: string
+): Promise<CachedConsent | null> {
+  // If CONSENT_CACHE is not configured, fall back to D1 directly
+  if (!env.CONSENT_CACHE) {
+    return await getConsentFromD1(env, userId, clientId);
+  }
+
+  const cacheKey = buildKVKey('consent', `${userId}:${clientId}`);
+
+  // Step 1: Try CONSENT_CACHE (Read-Through Cache)
+  const cached = await env.CONSENT_CACHE.get(cacheKey);
+
+  if (cached) {
+    try {
+      return JSON.parse(cached) as CachedConsent;
+    } catch (error) {
+      // Cache is corrupted - delete it and fetch from D1
+      console.error('Failed to parse cached consent data:', error);
+      await env.CONSENT_CACHE.delete(cacheKey).catch((e) =>
+        console.warn('Failed to delete corrupted consent cache:', e)
+      );
+    }
+  }
+
+  // Step 2: Cache miss - fetch from D1
+  const consent = await getConsentFromD1(env, userId, clientId);
+
+  if (!consent) {
+    return null;
+  }
+
+  // Step 3: Populate CONSENT_CACHE (24 hour TTL)
+  try {
+    await env.CONSENT_CACHE.put(cacheKey, JSON.stringify(consent), {
+      expirationTtl: CONSENT_CACHE_TTL,
+    });
+  } catch (error) {
+    // Cache write failure should not block the response
+    console.warn(`Failed to cache consent data for ${userId}:${clientId}:`, error);
+  }
+
+  return consent;
+}
+
+/**
+ * Fetch consent directly from D1 database
+ */
+async function getConsentFromD1(
+  env: Env,
+  userId: string,
+  clientId: string
+): Promise<CachedConsent | null> {
+  const result = await env.DB.prepare(
+    'SELECT scope, granted_at, expires_at FROM oauth_client_consents WHERE user_id = ? AND client_id = ?'
+  )
+    .bind(userId, clientId)
+    .first<{
+      scope: string;
+      granted_at: number;
+      expires_at: number | null;
+    }>();
+
+  if (!result) {
+    return null;
+  }
+
+  return {
+    scope: result.scope,
+    granted_at: result.granted_at,
+    expires_at: result.expires_at,
+  };
+}
+
+/**
+ * Invalidate consent cache entry
+ * Call this when consent is revoked or updated
+ *
+ * @param env - Cloudflare environment bindings
+ * @param userId - User ID
+ * @param clientId - Optional client ID. If not provided, all consents for the user are invalidated
+ */
+export async function invalidateConsentCache(
+  env: Env,
+  userId: string,
+  clientId?: string
+): Promise<void> {
+  if (!env.CONSENT_CACHE) {
+    return;
+  }
+
+  if (clientId) {
+    // Invalidate specific consent
+    const cacheKey = buildKVKey('consent', `${userId}:${clientId}`);
+    try {
+      await env.CONSENT_CACHE.delete(cacheKey);
+    } catch (error) {
+      console.warn(`Failed to invalidate consent cache for ${userId}:${clientId}:`, error);
+    }
+  } else {
+    // Note: KV doesn't support prefix deletion efficiently
+    // For user-wide consent invalidation, we rely on TTL expiration
+    // This is acceptable because consent revocation at user level is rare
+    console.warn(
+      `Cannot bulk invalidate consent cache for user ${userId}. Individual caches will expire naturally.`
+    );
   }
 }
 

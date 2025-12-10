@@ -28,6 +28,7 @@ import {
   getActingAsUserInfo,
   parseConsentFeatureFlags,
   getRolesInOrganization,
+  invalidateConsentCache,
 } from '@authrim/shared';
 
 // Scope descriptions (human-readable)
@@ -548,6 +549,9 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     )
       .bind(consentId, userId, client_id, scope, now, expiresAt)
       .run();
+
+    // Invalidate consent cache so next check reflects updated consent
+    await invalidateConsentCache(c.env, userId, client_id);
 
     console.log(`Consent granted: user=${userId}, client=${client_id}, scope=${scope}`);
 

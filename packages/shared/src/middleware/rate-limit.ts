@@ -231,4 +231,32 @@ export const RateLimitProfiles = {
     maxRequests: 300,
     windowSeconds: 60,
   },
+
+  /**
+   * Load testing profile - very high limits
+   * 10000 requests per minute (effectively disabled)
+   */
+  loadTest: {
+    maxRequests: 10000,
+    windowSeconds: 60,
+  },
 } as const;
+
+/**
+ * Get rate limit profile with environment variable override
+ *
+ * @param env - Environment bindings
+ * @param profileName - Profile name (strict, moderate, lenient, loadTest)
+ * @returns Rate limit config (may be overridden by RATE_LIMIT_PROFILE env var)
+ */
+export function getRateLimitProfile(
+  env: { RATE_LIMIT_PROFILE?: string },
+  profileName: keyof typeof RateLimitProfiles
+): RateLimitConfig {
+  // Check if load testing mode is enabled via environment variable
+  if (env.RATE_LIMIT_PROFILE === 'loadTest') {
+    return RateLimitProfiles.loadTest;
+  }
+
+  return RateLimitProfiles[profileName];
+}

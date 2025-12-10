@@ -40,13 +40,117 @@ import type {
   AccessTokenClaimKey,
 } from '../types/rbac';
 import { DEFAULT_ID_TOKEN_CLAIMS, DEFAULT_ACCESS_TOKEN_CLAIMS } from '../types/rbac';
+import type { Env } from '../types/env';
 
 // =============================================================================
 // RBAC Cache Configuration
 // =============================================================================
 
-const RBAC_CACHE_TTL = 300; // 5 minutes in seconds (aligned with token refresh)
+const DEFAULT_RBAC_CACHE_TTL = 600; // 10 minutes in seconds (default)
 const RBAC_CACHE_PREFIX = 'rbac:';
+const DEFAULT_RBAC_CACHE_VERSION = 1; // Increment when CompositeRBACCache structure changes
+
+// In-memory cache for TTL value (avoid repeated KV reads)
+let cachedRBACCacheTTL: number | null = null;
+let cachedRBACCacheTTLAt = 0;
+const TTL_CACHE_DURATION_MS = 60000; // 1 minute
+
+// In-memory cache for version value (avoid repeated KV reads)
+let cachedRBACCacheVersion: number | null = null;
+let cachedRBACCacheVersionAt = 0;
+
+/**
+ * Get RBAC cache TTL with dynamic configuration
+ *
+ * Priority: KV (rbac_cache_ttl) > Environment variable (RBAC_CACHE_TTL) > Default (600s)
+ *
+ * @param env - Environment bindings
+ * @returns TTL in seconds
+ */
+export async function getRBACCacheTTL(env: Env): Promise<number> {
+  const now = Date.now();
+
+  // Return cached value if within TTL
+  if (cachedRBACCacheTTL !== null && now - cachedRBACCacheTTLAt < TTL_CACHE_DURATION_MS) {
+    return cachedRBACCacheTTL;
+  }
+
+  // KV が存在すれば優先（動的変更可能）
+  if (env.AUTHRIM_CONFIG) {
+    const kvValue = await env.AUTHRIM_CONFIG.get('rbac_cache_ttl');
+    if (kvValue) {
+      const parsed = parseInt(kvValue, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        cachedRBACCacheTTL = parsed;
+        cachedRBACCacheTTLAt = now;
+        return parsed;
+      }
+    }
+  }
+
+  // 環境変数にフォールバック
+  if (env.RBAC_CACHE_TTL) {
+    const parsed = parseInt(env.RBAC_CACHE_TTL, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      cachedRBACCacheTTL = parsed;
+      cachedRBACCacheTTLAt = now;
+      return parsed;
+    }
+  }
+
+  // デフォルト値
+  cachedRBACCacheTTL = DEFAULT_RBAC_CACHE_TTL;
+  cachedRBACCacheTTLAt = now;
+  return DEFAULT_RBAC_CACHE_TTL;
+}
+
+/**
+ * Get RBAC cache version with dynamic configuration
+ *
+ * Priority: KV (rbac_cache_version) > ENV (RBAC_CACHE_VERSION) > Default (1)
+ *
+ * Use case: When RBAC internal logic changes and cache needs invalidation,
+ * increment the version in KV to force cache miss without deployment.
+ *
+ * @param env - Environment bindings
+ * @returns Cache version number
+ */
+export async function getRBACCacheVersion(env: Env): Promise<number> {
+  const now = Date.now();
+
+  // Return cached value if within TTL
+  if (cachedRBACCacheVersion !== null && now - cachedRBACCacheVersionAt < TTL_CACHE_DURATION_MS) {
+    return cachedRBACCacheVersion;
+  }
+
+  // KV が存在すれば優先（動的変更可能）
+  if (env.AUTHRIM_CONFIG) {
+    const kvValue = await env.AUTHRIM_CONFIG.get('rbac_cache_version');
+    if (kvValue) {
+      const parsed = parseInt(kvValue, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        cachedRBACCacheVersion = parsed;
+        cachedRBACCacheVersionAt = now;
+        return parsed;
+      }
+    }
+  }
+
+  // 環境変数にフォールバック
+  if (env.RBAC_CACHE_VERSION) {
+    const parsed = parseInt(env.RBAC_CACHE_VERSION, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      cachedRBACCacheVersion = parsed;
+      cachedRBACCacheVersionAt = now;
+      return parsed;
+    }
+  }
+
+  // デフォルト値
+  cachedRBACCacheVersion = DEFAULT_RBAC_CACHE_VERSION;
+  cachedRBACCacheVersionAt = now;
+  return DEFAULT_RBAC_CACHE_VERSION;
+}
 
 /**
  * Options for RBAC claims functions with caching support
@@ -54,21 +158,257 @@ const RBAC_CACHE_PREFIX = 'rbac:';
 export interface RBACClaimsOptions {
   cache?: KVNamespace; // REBAC_CACHE KV namespace
   claimsConfig?: string; // Comma-separated list of claims to include
+  env?: Env; // Environment bindings for dynamic TTL
+  tenantId?: string; // Tenant ID for multi-tenant isolation (default: '__global__')
 }
 
 /**
- * Build cache key for RBAC claims
+ * Composite RBAC cache entry containing all RBAC data for a user
+ * This allows fetching all RBAC information with a single KV read
+ */
+export interface CompositeRBACCache {
+  version: number; // Cache structure version (from KV/ENV)
+  roles: string[];
+  scoped_roles: TokenScopedRole[];
+  permissions: string[];
+  organizations: TokenOrgInfo[];
+  user_type: UserType;
+  plan: PlanType | null;
+  org_id: string | null;
+  org_name: string | null;
+  org_type: OrganizationType | null;
+  relationships_summary: RelationshipsSummary;
+  cached_at: number; // Unix timestamp
+}
+
+/**
+ * Build cache key for RBAC claims (with multi-tenant support)
  */
 function buildRBACCacheKey(
   subjectId: string,
   tokenType: 'id' | 'access',
-  claimsConfig?: string
+  claimsConfig?: string,
+  tenantId?: string
 ): string {
   // Include claimsConfig hash to differentiate cache entries with different claim sets
   const configHash = claimsConfig
     ? Buffer.from(claimsConfig).toString('base64').slice(0, 8)
     : 'default';
-  return `${RBAC_CACHE_PREFIX}${tokenType}:${subjectId}:${configHash}`;
+  const tenant = tenantId || '__global__';
+  return `${RBAC_CACHE_PREFIX}${tenant}:${tokenType}:${subjectId}:${configHash}`;
+}
+
+/**
+ * Build cache key for Composite RBAC cache (all data in one entry)
+ */
+function buildCompositeRBACCacheKey(subjectId: string, tenantId?: string): string {
+  const tenant = tenantId || '__global__';
+  return `${RBAC_CACHE_PREFIX}composite:${tenant}:${subjectId}`;
+}
+
+/**
+ * Get or create composite RBAC cache for a user
+ *
+ * This function consolidates all RBAC data into a single KV entry,
+ * reducing D1 queries from 7 to 1 on cache miss.
+ *
+ * Benefits:
+ * - Single KV read for all RBAC data (cache hit)
+ * - Single parallel D1 query batch on cache miss
+ * - Multi-tenant isolation via tenantId in cache key
+ *
+ * @param db - D1 database
+ * @param subjectId - User ID
+ * @param options - Options including cache KV, env for TTL, and tenantId
+ * @returns Composite RBAC cache object
+ */
+export async function getCompositeRBACCache(
+  db: D1Database,
+  subjectId: string,
+  options: RBACClaimsOptions = {}
+): Promise<CompositeRBACCache> {
+  const { cache, env, tenantId } = options;
+
+  // Try cache first
+  if (cache) {
+    const cacheKey = buildCompositeRBACCacheKey(subjectId, tenantId);
+    try {
+      const cached = await cache.get(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached) as CompositeRBACCache;
+        // Get current version from KV/ENV
+        const currentVersion = env ? await getRBACCacheVersion(env) : DEFAULT_RBAC_CACHE_VERSION;
+        // Validate cache structure and version
+        if (
+          parsed.version === currentVersion &&
+          parsed.cached_at &&
+          typeof parsed.roles !== 'undefined'
+        ) {
+          return parsed;
+        }
+        // Version mismatch → treat as cache miss (will be refreshed)
+      }
+    } catch (error) {
+      console.warn('Composite RBAC cache read error:', error);
+    }
+  }
+
+  // Cache miss - fetch all RBAC data in parallel (7 queries → 1 batch)
+  const [roles, scopedRoles, userType, orgInfo, orgName, orgs, relationships, permissions] =
+    await Promise.all([
+      resolveEffectiveRoles(db, subjectId),
+      resolveScopedRoles(db, subjectId),
+      resolveUserType(db, subjectId),
+      resolveOrganizationInfo(db, subjectId),
+      resolveOrganizationName(db, subjectId),
+      resolveAllOrganizations(db, subjectId),
+      resolveRelationshipsSummary(db, subjectId),
+      resolvePermissions(db, subjectId),
+    ]);
+
+  // Get current version for cache storage
+  const cacheVersion = env ? await getRBACCacheVersion(env) : DEFAULT_RBAC_CACHE_VERSION;
+
+  const compositeCache: CompositeRBACCache = {
+    version: cacheVersion,
+    roles,
+    scoped_roles: scopedRoles,
+    permissions,
+    organizations: orgs,
+    user_type: userType,
+    plan: orgInfo?.plan ?? null,
+    org_id: orgInfo?.org_id ?? null,
+    org_name: orgName,
+    org_type: orgInfo?.org_type ?? null,
+    relationships_summary: relationships,
+    cached_at: Math.floor(Date.now() / 1000),
+  };
+
+  // Store in cache (fire-and-forget with dynamic TTL)
+  if (cache) {
+    const cacheKey = buildCompositeRBACCacheKey(subjectId, tenantId);
+    const storeCacheAsync = async () => {
+      try {
+        const ttl = env ? await getRBACCacheTTL(env) : DEFAULT_RBAC_CACHE_TTL;
+        await cache.put(cacheKey, JSON.stringify(compositeCache), { expirationTtl: ttl });
+      } catch (err) {
+        console.warn('Composite RBAC cache write error:', err);
+      }
+    };
+    void storeCacheAsync();
+  }
+
+  return compositeCache;
+}
+
+/**
+ * Extract ID Token claims from Composite RBAC Cache
+ *
+ * @param compositeCache - Pre-fetched composite RBAC cache
+ * @param claimsConfig - Optional comma-separated list of claims to include
+ * @returns Claims for ID Token
+ */
+export function extractIDTokenClaimsFromCache(
+  compositeCache: CompositeRBACCache,
+  claimsConfig?: string
+): Partial<RBACTokenClaims> {
+  const enabledClaims = parseClaimsConfig<IDTokenClaimKey>(claimsConfig, DEFAULT_ID_TOKEN_CLAIMS);
+
+  // "none" returns empty claims immediately
+  if (enabledClaims.length === 0) {
+    return {};
+  }
+
+  const claims: Partial<RBACTokenClaims> = {};
+
+  if (enabledClaims.includes('roles') && compositeCache.roles.length > 0) {
+    claims.authrim_roles = compositeCache.roles;
+  }
+
+  if (enabledClaims.includes('scoped_roles') && compositeCache.scoped_roles.length > 0) {
+    claims.authrim_scoped_roles = compositeCache.scoped_roles;
+  }
+
+  if (enabledClaims.includes('user_type')) {
+    claims.authrim_user_type = compositeCache.user_type;
+  }
+
+  if (enabledClaims.includes('org_id') && compositeCache.org_id) {
+    claims.authrim_org_id = compositeCache.org_id;
+  }
+
+  if (enabledClaims.includes('org_name') && compositeCache.org_name) {
+    claims.authrim_org_name = compositeCache.org_name;
+  }
+
+  if (enabledClaims.includes('plan') && compositeCache.plan) {
+    claims.authrim_plan = compositeCache.plan;
+  }
+
+  if (enabledClaims.includes('org_type') && compositeCache.org_type) {
+    claims.authrim_org_type = compositeCache.org_type;
+  }
+
+  if (enabledClaims.includes('orgs') && compositeCache.organizations.length > 0) {
+    claims.authrim_orgs = compositeCache.organizations;
+  }
+
+  if (enabledClaims.includes('relationships_summary')) {
+    const rs = compositeCache.relationships_summary;
+    if (rs.children_ids.length > 0 || rs.parent_ids.length > 0) {
+      claims.authrim_relationships_summary = rs;
+    }
+  }
+
+  return claims;
+}
+
+/**
+ * Extract Access Token claims from Composite RBAC Cache
+ *
+ * @param compositeCache - Pre-fetched composite RBAC cache
+ * @param claimsConfig - Optional comma-separated list of claims to include
+ * @returns Claims for Access Token
+ */
+export function extractAccessTokenClaimsFromCache(
+  compositeCache: CompositeRBACCache,
+  claimsConfig?: string
+): Partial<RBACTokenClaims> {
+  const enabledClaims = parseClaimsConfig<AccessTokenClaimKey>(
+    claimsConfig,
+    DEFAULT_ACCESS_TOKEN_CLAIMS
+  );
+
+  // "none" returns empty claims immediately
+  if (enabledClaims.length === 0) {
+    return {};
+  }
+
+  const claims: Partial<RBACTokenClaims> = {};
+
+  if (enabledClaims.includes('roles') && compositeCache.roles.length > 0) {
+    claims.authrim_roles = compositeCache.roles;
+  }
+
+  if (enabledClaims.includes('scoped_roles') && compositeCache.scoped_roles.length > 0) {
+    claims.authrim_scoped_roles = compositeCache.scoped_roles;
+  }
+
+  if (enabledClaims.includes('org_id') && compositeCache.org_id) {
+    claims.authrim_org_id = compositeCache.org_id;
+  }
+
+  if (enabledClaims.includes('org_type') && compositeCache.org_type) {
+    claims.authrim_org_type = compositeCache.org_type;
+  }
+
+  if (enabledClaims.includes('permissions') && compositeCache.permissions.length > 0) {
+    claims.authrim_permissions = compositeCache.permissions;
+  }
+
+  // org_context is not populated here - it requires request context (acting_as parameter)
+
+  return claims;
 }
 
 /**
@@ -245,11 +585,11 @@ export async function getIDTokenRBACClaims(
       ? { claimsConfig: claimsConfigOrOptions }
       : claimsConfigOrOptions || {};
 
-  const { cache, claimsConfig } = options;
+  const { cache, claimsConfig, tenantId } = options;
 
   // Try cache first
   if (cache) {
-    const cacheKey = buildRBACCacheKey(subjectId, 'id', claimsConfig);
+    const cacheKey = buildRBACCacheKey(subjectId, 'id', claimsConfig, tenantId);
     try {
       const cached = await cache.get(cacheKey);
       if (cached) {
@@ -269,12 +609,18 @@ export async function getIDTokenRBACClaims(
     claims = await getUserRBACClaims(db, subjectId);
   }
 
-  // Store in cache (fire-and-forget)
+  // Store in cache (fire-and-forget with dynamic TTL)
   if (cache) {
-    const cacheKey = buildRBACCacheKey(subjectId, 'id', claimsConfig);
-    void cache
-      .put(cacheKey, JSON.stringify(claims), { expirationTtl: RBAC_CACHE_TTL })
-      .catch((err) => console.warn('RBAC cache write error (ID token):', err));
+    const cacheKey = buildRBACCacheKey(subjectId, 'id', claimsConfig, tenantId);
+    const storeCacheAsync = async () => {
+      try {
+        const ttl = options.env ? await getRBACCacheTTL(options.env) : DEFAULT_RBAC_CACHE_TTL;
+        await cache.put(cacheKey, JSON.stringify(claims), { expirationTtl: ttl });
+      } catch (err) {
+        console.warn('RBAC cache write error (ID token):', err);
+      }
+    };
+    void storeCacheAsync();
   }
 
   return claims;
@@ -309,11 +655,11 @@ export async function getAccessTokenRBACClaims(
       ? { claimsConfig: claimsConfigOrOptions }
       : claimsConfigOrOptions || {};
 
-  const { cache, claimsConfig } = options;
+  const { cache, claimsConfig, tenantId } = options;
 
   // Try cache first
   if (cache) {
-    const cacheKey = buildRBACCacheKey(subjectId, 'access', claimsConfig);
+    const cacheKey = buildRBACCacheKey(subjectId, 'access', claimsConfig, tenantId);
     try {
       const cached = await cache.get(cacheKey);
       if (cached) {
@@ -327,12 +673,18 @@ export async function getAccessTokenRBACClaims(
   // Cache miss - fetch from D1
   const claims = await getAccessTokenRBACClaimsInternal(db, subjectId, claimsConfig);
 
-  // Store in cache (fire-and-forget)
+  // Store in cache (fire-and-forget with dynamic TTL)
   if (cache) {
-    const cacheKey = buildRBACCacheKey(subjectId, 'access', claimsConfig);
-    void cache
-      .put(cacheKey, JSON.stringify(claims), { expirationTtl: RBAC_CACHE_TTL })
-      .catch((err) => console.warn('RBAC cache write error (access token):', err));
+    const cacheKey = buildRBACCacheKey(subjectId, 'access', claimsConfig, tenantId);
+    const storeCacheAsync = async () => {
+      try {
+        const ttl = options.env ? await getRBACCacheTTL(options.env) : DEFAULT_RBAC_CACHE_TTL;
+        await cache.put(cacheKey, JSON.stringify(claims), { expirationTtl: ttl });
+      } catch (err) {
+        console.warn('RBAC cache write error (access token):', err);
+      }
+    };
+    void storeCacheAsync();
   }
 
   return claims;
@@ -575,11 +927,20 @@ export async function resolveOrganizationName(
 /**
  * Parse comma-separated claims configuration string
  *
+ * Special value "none" returns empty array to skip all RBAC queries.
+ * This is useful for load testing where RBAC claims are not needed.
+ *
  * @param config - Comma-separated claims string from environment variable
+ *                 Use "none" to skip all RBAC claims
  * @param defaults - Default claims if config is not provided
- * @returns Array of enabled claim keys
+ * @returns Array of enabled claim keys (empty array if config is "none")
  */
 function parseClaimsConfig<T extends string>(config: string | undefined, defaults: T[]): T[] {
+  // "none" で完全スキップ（負荷テスト用）
+  if (config === 'none') {
+    return [];
+  }
+
   if (!config || config.trim() === '') {
     return defaults;
   }

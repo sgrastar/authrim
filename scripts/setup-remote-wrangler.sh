@@ -326,6 +326,8 @@ ADMIN_API_SECRET = "$KEY_MANAGER_SECRET"
 # Version management (set by deploy script via --var)
 CODE_VERSION_UUID = ""
 DEPLOY_TIME_UTC = ""
+# Version check disabled by default (Wrangler 4.52.1+ handles PoP propagation correctly)
+VERSION_CHECK_ENABLED = "false"
 TOML_EOF
 }
 

@@ -24,6 +24,7 @@ export interface Env {
   NONCE_STORE: KVNamespace;
   CLIENTS_CACHE: KVNamespace; // Client metadata cache (Read-Through from D1, 1 hour TTL)
   USER_CACHE?: KVNamespace; // User metadata cache (Read-Through from D1, 1 hour TTL, with invalidation hook)
+  CONSENT_CACHE?: KVNamespace; // Consent status cache (Read-Through from D1, 24 hour TTL)
   INITIAL_ACCESS_TOKENS?: KVNamespace; // For Dynamic Client Registration (RFC 7591)
   AUTHRIM_CONFIG?: KVNamespace; // Dynamic configuration (shard count, feature flags, etc.)
 
@@ -103,13 +104,20 @@ export interface Env {
   // Version Management (set by deploy script via --var)
   CODE_VERSION_UUID?: string; // UUID v4 identifying this deployed bundle
   DEPLOY_TIME_UTC?: string; // ISO 8601 timestamp of deployment
+  VERSION_CHECK_ENABLED?: string; // "false" to disable version check middleware (default: enabled)
+
+  // Rate Limiting Override (for load testing)
+  // Set to "loadTest" to use 10000 req/min instead of default limits
+  RATE_LIMIT_PROFILE?: string;
 
   // RBAC Claims Configuration (Phase 2)
   // Comma-separated list of claims to include in tokens
   // ID Token: roles,scoped_roles,user_type,org_id,org_name,plan,org_type,orgs,relationships_summary
   // Access Token: roles,scoped_roles,org_id,org_type,permissions,org_context
-  RBAC_ID_TOKEN_CLAIMS?: string; // Default: "roles,user_type,org_id,plan,org_type"
-  RBAC_ACCESS_TOKEN_CLAIMS?: string; // Default: "roles,org_id,org_type"
+  RBAC_ID_TOKEN_CLAIMS?: string; // Default: "roles,user_type,org_id,plan,org_type", "none" to skip
+  RBAC_ACCESS_TOKEN_CLAIMS?: string; // Default: "roles,org_id,org_type", "none" to skip
+  RBAC_CACHE_TTL?: string; // Cache TTL in seconds (KV overrides this, default: 600)
+  RBAC_CACHE_VERSION?: string; // Cache version for invalidation (KV overrides this, default: 1)
 
   // RBAC Consent Screen Configuration (Phase 2-B)
   // Feature flags to control consent screen RBAC features
