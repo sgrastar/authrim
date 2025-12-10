@@ -43,6 +43,30 @@ vi.mock('@simplewebauthn/server/helpers', () => ({
   isoBase64URL: mockIsoBase64URL,
 }));
 
+// Mock session store stub for RPC pattern
+const mockSessionStoreStub = {
+  createSessionRpc: vi.fn().mockResolvedValue({
+    id: 'mock-session-id',
+    userId: 'user-123',
+    authTime: Date.now(),
+    amr: ['passkey'],
+  }),
+};
+
+// Mock @authrim/shared module
+vi.mock('@authrim/shared', async () => {
+  const actual = await vi.importActual('@authrim/shared');
+  return {
+    ...actual,
+    getSessionStoreForNewSession: vi.fn(() =>
+      Promise.resolve({
+        stub: mockSessionStoreStub,
+        sessionId: 'mock-session-id',
+      })
+    ),
+  };
+});
+
 // Helper to create mock D1Database
 function createMockDB(options: {
   firstResult?: any;
@@ -232,6 +256,15 @@ describe('Passkey Handlers', () => {
         credentialDeviceType: 'singleDevice',
         credentialBackedUp: false,
       },
+    });
+
+    // Reset session store mock
+    mockSessionStoreStub.createSessionRpc.mockReset();
+    mockSessionStoreStub.createSessionRpc.mockResolvedValue({
+      id: 'mock-session-id',
+      userId: 'user-123',
+      authTime: Date.now(),
+      amr: ['passkey'],
     });
 
     // Setup isoBase64URL mock implementations

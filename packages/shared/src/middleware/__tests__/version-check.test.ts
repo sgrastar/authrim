@@ -186,9 +186,10 @@ describe('Version Check Middleware', () => {
   });
 
   describe('Caching Behavior', () => {
-    // Note: CACHE_TTL_MS is set to 0 for immediate version enforcement,
-    // so caching is effectively disabled. Each request queries the DO.
-    it('should query DO for each request when CACHE_TTL_MS is 0', async () => {
+    // Note: CACHE_TTL_MS is 5000ms (5 seconds) for a balance between
+    // performance and version propagation speed. First request hits DO,
+    // subsequent requests within TTL use cached value.
+    it('should cache version check result within TTL', async () => {
       const mockVM = createMockVersionManager(CURRENT_VERSION);
       const mockEnv = createMockEnv({
         codeVersionUuid: CURRENT_VERSION,
@@ -201,14 +202,15 @@ describe('Version Check Middleware', () => {
       // First request - hits DO
       await app.request('/test', { method: 'GET' }, mockEnv);
 
-      // Second request - also hits DO (no caching with TTL=0)
+      // Second request - uses cache (within 5s TTL)
       await app.request('/test', { method: 'GET' }, mockEnv);
 
-      // Third request - also hits DO (no caching with TTL=0)
+      // Third request - uses cache (within 5s TTL)
       await app.request('/test', { method: 'GET' }, mockEnv);
 
-      // With CACHE_TTL_MS = 0, VERSION_MANAGER is called for every request
-      expect(mockVM.get).toHaveBeenCalledTimes(3);
+      // With CACHE_TTL_MS = 5000, only the first request hits VERSION_MANAGER
+      // Subsequent requests within TTL use cached value
+      expect(mockVM.get).toHaveBeenCalledTimes(1);
     });
 
     it('should clear cache when clearVersionCache is called', async () => {

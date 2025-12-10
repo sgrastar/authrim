@@ -107,12 +107,11 @@ export interface ConsumeCodeResponse {
 }
 
 /**
- * Persistent state stored in Durable Storage
+ * Storage key prefix for individual authorization codes
+ * Each code is stored as: `code:${code}` -> AuthorizationCode
+ * This enables O(1) read/write operations instead of O(n) full state serialization
  */
-interface AuthorizationCodeStoreState {
-  codes: Record<string, AuthorizationCode>; // Serializable format (Map cannot be serialized directly)
-  lastCleanup: number;
-}
+const CODE_KEY_PREFIX = 'code:';
 
 /**
  * AuthorizationCodeStore Durable Object
@@ -294,8 +293,14 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
    * Must be called before any code operations
    *
    * Configuration Priority: KV > Environment variable > Default value
+   *
+   * Storage Architecture (v2):
+   * - Individual key storage: `code:${code}` for each authorization code
+   * - O(1) reads/writes per code operation
+   * - list() only called once at DO startup, not on every request
    */
   private async initializeState(): Promise<void> {
+    // CRITICAL: Guard to prevent repeated list() calls
     if (this.initialized) {
       return;
     }
@@ -316,11 +321,18 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     }
 
     try {
-      const stored = await this.ctx.storage.get<AuthorizationCodeStoreState>('state');
+      // Load all codes from individual key storage (code:*)
+      const storedCodes = await this.ctx.storage.list<AuthorizationCode>({
+        prefix: CODE_KEY_PREFIX,
+      });
 
-      if (stored) {
-        // Restore authorization codes from Durable Storage
-        this.codes = new Map(Object.entries(stored.codes));
+      for (const [key, authCode] of storedCodes) {
+        // Extract code from key (remove prefix)
+        const code = key.substring(CODE_KEY_PREFIX.length);
+        this.codes.set(code, authCode);
+      }
+
+      if (this.codes.size > 0) {
         console.log(
           `AuthCodeStore: Restored ${this.codes.size} authorization codes from Durable Storage`
         );
@@ -337,22 +349,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   }
 
   /**
-   * Save current state to Durable Storage
-   * Converts Map to serializable object
+   * Build storage key for a code
    */
-  private async saveState(): Promise<void> {
-    try {
-      const stateToSave: AuthorizationCodeStoreState = {
-        codes: Object.fromEntries(this.codes),
-        lastCleanup: Date.now(),
-      };
-
-      await this.ctx.storage.put('state', stateToSave);
-    } catch (error) {
-      console.error('AuthCodeStore: Failed to save to Durable Storage:', error);
-      // Don't throw - we don't want to break the code operation
-      // But this should be monitored/alerted in production
-    }
+  private buildCodeKey(code: string): string {
+    return `${CODE_KEY_PREFIX}${code}`;
   }
 
   /**
@@ -368,22 +368,24 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
   /**
    * Cleanup expired codes from memory and Durable Storage
+   * Uses batch delete for efficiency
    */
   private async cleanupExpiredCodes(): Promise<void> {
     const now = Date.now();
-    let cleaned = 0;
+    const expiredCodes: string[] = [];
 
     for (const [code, authCode] of this.codes.entries()) {
       if (authCode.expiresAt <= now) {
         this.codes.delete(code);
-        cleaned++;
+        expiredCodes.push(code);
       }
     }
 
-    if (cleaned > 0) {
-      console.log(`AuthCodeStore: Cleaned up ${cleaned} expired codes`);
-      // Persist cleanup to Durable Storage
-      await this.saveState();
+    // Batch delete from Durable Storage - O(k) where k = expired codes
+    if (expiredCodes.length > 0) {
+      const deleteKeys = expiredCodes.map((c) => this.buildCodeKey(c));
+      await this.ctx.storage.delete(deleteKeys);
+      console.log(`AuthCodeStore: Cleaned up ${expiredCodes.length} expired codes`);
     }
   }
 
@@ -436,6 +438,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
   /**
    * Store authorization code
+   * O(1) operation - stores individual key
    */
   async storeCode(request: StoreCodeRequest): Promise<{ success: boolean; expiresAt: number }> {
     await this.initializeState();
@@ -468,10 +471,11 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       createdAt: now,
     };
 
+    // Store in memory
     this.codes.set(request.code, authCode);
 
-    // Persist to Durable Storage
-    await this.saveState();
+    // Persist to Durable Storage - O(1) individual key
+    await this.ctx.storage.put(this.buildCodeKey(request.code), authCode);
 
     return {
       success: true,
@@ -481,11 +485,32 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
   /**
    * Consume authorization code (one-time use, atomic operation)
+   *
+   * Security: MUST read code to check `used` flag for replay attack detection.
+   * Durable Objects' single-threaded execution model provides atomic guarantees.
+   *
+   * Optimization: Lazy-load + fallback get pattern
+   * - First check memory cache (this.codes)
+   * - If not found, try storage.get() as fallback
    */
   async consumeCode(request: ConsumeCodeRequest): Promise<ConsumeCodeResponse> {
     await this.initializeState();
 
-    const stored = this.codes.get(request.code);
+    // Lazy-load + fallback get: Check memory first, then storage
+    let stored = this.codes.get(request.code);
+
+    if (!stored) {
+      // Fallback: Try to load from storage (handles edge case where code was stored
+      // but DO restarted before initializeState saw it)
+      const fromStorage = await this.ctx.storage.get<AuthorizationCode>(
+        this.buildCodeKey(request.code)
+      );
+      if (fromStorage) {
+        stored = fromStorage;
+        // Promote to memory cache
+        this.codes.set(request.code, stored);
+      }
+    }
 
     if (!stored) {
       throw new Error('invalid_grant: Authorization code not found or expired');
@@ -494,7 +519,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     // Check expiration
     if (this.isExpired(stored)) {
       this.codes.delete(request.code);
-      await this.saveState();
+      await this.ctx.storage.delete(this.buildCodeKey(request.code));
       throw new Error('invalid_grant: Authorization code expired');
     }
 
@@ -556,8 +581,8 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
     this.codes.set(request.code, stored);
 
-    // Persist to Durable Storage (CRITICAL for DO restart resilience)
-    await this.saveState();
+    // Persist to Durable Storage - O(1) individual key
+    await this.ctx.storage.put(this.buildCodeKey(request.code), stored);
 
     // Return authorization data
     return {
@@ -586,12 +611,14 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
   /**
    * Delete code manually (cleanup)
+   * O(1) operation - deletes individual key
    */
   async deleteCode(code: string): Promise<boolean> {
     await this.initializeState();
     const deleted = this.codes.delete(code);
     if (deleted) {
-      await this.saveState();
+      // Delete from Durable Storage - O(1) individual key
+      await this.ctx.storage.delete(this.buildCodeKey(code));
     }
     return deleted;
   }
@@ -599,6 +626,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   /**
    * Register issued token JTIs for replay attack revocation
    * Called after tokens are issued for an authorization code
+   * O(1) operation - updates individual key
    */
   async registerIssuedTokens(
     code: string,
@@ -617,7 +645,9 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       stored.issuedRefreshTokenJti = refreshTokenJti;
     }
     this.codes.set(code, stored);
-    await this.saveState();
+
+    // Persist to Durable Storage - O(1) individual key
+    await this.ctx.storage.put(this.buildCodeKey(code), stored);
 
     console.log(`AuthCodeStore: Registered token JTIs for code ${code.substring(0, 8)}...`);
     return true;
@@ -766,6 +796,8 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
       // GET /status - Health check and stats
       if (path === '/status' && request.method === 'GET') {
+        await this.initializeState();
+
         const now = Date.now();
         let activeCodes = 0;
 

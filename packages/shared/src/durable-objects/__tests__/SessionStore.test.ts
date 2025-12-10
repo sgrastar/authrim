@@ -491,10 +491,11 @@ describe('SessionStore', () => {
 
       const body = (await batchResponse.json()) as any;
       expect(body.success).toBe(true);
-      expect(body.deleted).toBe(1);
-      expect(body.failed).toBe(2);
-      expect(body.failedIds).toContain('0_session_nonexistent_1');
-      expect(body.failedIds).toContain('0_session_nonexistent_2');
+      // With optimized idempotent delete, all sessions are reported as deleted
+      // (no read-before-delete pattern)
+      expect(body.deleted).toBe(3);
+      expect(body.failed).toBe(0);
+      expect(body.failedIds).toEqual([]);
     });
 
     it('should reject batch delete with missing sessionIds', async () => {

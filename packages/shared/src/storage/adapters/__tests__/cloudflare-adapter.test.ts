@@ -210,13 +210,15 @@ describe('CloudflareStorageAdapter', () => {
 
   describe('Set Operations', () => {
     it('should set value with session: prefix to SessionStore DO', async () => {
-      const mockFetch = vi
-        .fn()
-        .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 201 }));
-      (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
+      const mockCreateSessionRpc = vi.fn().mockResolvedValue({
+        id: '123',
+        userId: 'user_123',
+        expiresAt: Date.now() + 86400000,
+      });
+      (env.SESSION_STORE.get as any).mockReturnValue({ createSessionRpc: mockCreateSessionRpc });
 
       await adapter.set('session:123', JSON.stringify({ user_id: 'user_123', data: {} }));
-      expect(mockFetch).toHaveBeenCalled();
+      expect(mockCreateSessionRpc).toHaveBeenCalled();
     });
 
     it('should set value with client: prefix to D1 and invalidate KV cache', async () => {
@@ -234,13 +236,13 @@ describe('CloudflareStorageAdapter', () => {
 
   describe('Delete Operations', () => {
     it('should delete session from SessionStore DO', async () => {
-      const mockFetch = vi
-        .fn()
-        .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
-      (env.SESSION_STORE.get as any).mockReturnValue({ fetch: mockFetch });
+      const mockInvalidateSessionRpc = vi.fn().mockResolvedValue(true);
+      (env.SESSION_STORE.get as any).mockReturnValue({
+        invalidateSessionRpc: mockInvalidateSessionRpc,
+      });
 
       await adapter.delete('session:123');
-      expect(mockFetch).toHaveBeenCalledWith(expect.objectContaining({ method: 'DELETE' }));
+      expect(mockInvalidateSessionRpc).toHaveBeenCalledWith('123');
     });
 
     it('should delete client from D1 and invalidate KV cache', async () => {

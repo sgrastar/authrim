@@ -71,13 +71,33 @@ function createMockKeyManager(
       activeKeyId: 'key-123',
       lastRotation: Date.now(),
     },
-    rotateResponse = { success: true, key: { kid: 'key-new-456' } },
+    rotateResponse = { kid: 'key-new-456' },
     emergencyRotateResponse = { oldKid: 'key-123', newKid: 'key-emergency-789' },
     shouldFail = false,
     failMessage = 'KeyManager error',
   } = options;
 
   return {
+    // RPC methods used by the actual implementation
+    getStatusRpc: vi.fn().mockImplementation(() => {
+      if (shouldFail) {
+        return Promise.reject(new Error(failMessage));
+      }
+      return Promise.resolve(statusResponse);
+    }),
+    rotateKeysRpc: vi.fn().mockImplementation(() => {
+      if (shouldFail) {
+        return Promise.reject(new Error(failMessage));
+      }
+      return Promise.resolve(rotateResponse);
+    }),
+    emergencyRotateKeysRpc: vi.fn().mockImplementation((reason: string) => {
+      if (shouldFail) {
+        return Promise.reject(new Error(failMessage));
+      }
+      return Promise.resolve(emergencyRotateResponse);
+    }),
+    // Legacy fetch method (kept for backwards compatibility tests if needed)
     fetch: vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       const urlObj = new URL(url);
       const path = urlObj.pathname;
@@ -496,17 +516,11 @@ describe('Signing Keys Admin API', () => {
       });
       await app.fetch(request, env);
 
-      // Verify KeyManager was called with the reason
-      expect(keyManager.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('emergency-rotate'),
-        expect.objectContaining({
-          method: 'POST',
-          body: expect.stringContaining(reason),
-        })
-      );
+      // Verify KeyManager RPC was called with the reason
+      expect(keyManager.emergencyRotateKeysRpc).toHaveBeenCalledWith(reason);
     });
 
-    it('should use KEY_MANAGER_SECRET for authentication', async () => {
+    it('should call getStatusRpc for status endpoint', async () => {
       const app = createTestApp();
       const env = createMockEnv();
       const keyManager = env.KEY_MANAGER.get({} as DurableObjectId);
@@ -514,15 +528,8 @@ describe('Signing Keys Admin API', () => {
       const request = new Request('http://localhost/api/admin/signing-keys/status');
       await app.fetch(request, env);
 
-      // Verify authorization header was sent to KeyManager
-      expect(keyManager.fetch).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: 'Bearer test-secret',
-          }),
-        })
-      );
+      // Verify KeyManager RPC was called for status
+      expect(keyManager.getStatusRpc).toHaveBeenCalled();
     });
   });
 });

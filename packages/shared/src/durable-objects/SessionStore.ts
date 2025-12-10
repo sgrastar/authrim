@@ -397,6 +397,9 @@ export class SessionStore extends DurableObject<Env> {
 
   /**
    * Invalidate session immediately
+   *
+   * Optimized: No read-before-delete pattern.
+   * storage.delete() is idempotent and works safely on non-existent keys.
    */
   async invalidateSession(sessionId: string): Promise<boolean> {
     // 1. Remove from memory cache
@@ -404,9 +407,8 @@ export class SessionStore extends DurableObject<Env> {
     this.sessionCache.delete(sessionId);
 
     // 2. Delete from Durable Storage (individual key - O(1))
+    // No need to check existence first - delete() is idempotent
     const storageKey = this.buildSessionKey(sessionId);
-    const storedSession = await this.ctx.storage.get<Session>(storageKey);
-    const hadStoredSession = storedSession !== undefined;
     await this.ctx.storage.delete(storageKey);
 
     // 3. Delete from D1 - MUST await to prevent race condition
@@ -420,53 +422,48 @@ export class SessionStore extends DurableObject<Env> {
       // Continue even if D1 deletion fails - memory and Durable Storage are authoritative
     }
 
-    return hadSession || hadStoredSession;
+    // Return based on cache only - sufficient for logging/debugging purposes
+    return hadSession;
   }
 
   /**
    * Batch invalidate multiple sessions
    * Optimized for admin operations (e.g., delete all user sessions)
+   *
+   * Optimized: No read-before-delete pattern. Uses batch delete for efficiency.
    */
   async invalidateSessionsBatch(
     sessionIds: string[]
   ): Promise<{ deleted: number; failed: string[] }> {
-    const deleted: string[] = [];
-    const failed: string[] = [];
+    const storageKeysToDelete: string[] = [];
 
-    // Process each session
+    // Process each session - remove from cache and collect storage keys
     for (const sessionId of sessionIds) {
-      // Check if session exists
-      const hadSession = this.sessionCache.has(sessionId);
-      const storageKey = this.buildSessionKey(sessionId);
-      const storedSession = await this.ctx.storage.get<Session>(storageKey);
-      const hadStoredSession = storedSession !== undefined;
-
-      if (hadSession || hadStoredSession) {
-        // 1. Remove from memory cache
-        this.sessionCache.delete(sessionId);
-
-        // 2. Delete from Durable Storage
-        await this.ctx.storage.delete(storageKey);
-
-        deleted.push(sessionId);
-      } else {
-        failed.push(sessionId);
-      }
+      // Remove from memory cache
+      this.sessionCache.delete(sessionId);
+      // Collect storage keys for batch delete
+      storageKeysToDelete.push(this.buildSessionKey(sessionId));
     }
 
-    // 3. Delete from D1 in batch - MUST await to prevent race condition
-    if (deleted.length > 0 && this.env.DB) {
+    // Batch delete from Durable Storage - delete() is idempotent
+    if (storageKeysToDelete.length > 0) {
+      await this.ctx.storage.delete(storageKeysToDelete);
+    }
+
+    // Delete from D1 in batch - MUST await to prevent race condition
+    if (sessionIds.length > 0 && this.env.DB) {
       try {
-        await this.batchDeleteFromD1(deleted);
+        await this.batchDeleteFromD1(sessionIds);
       } catch (error) {
         console.error('SessionStore: Failed to batch delete from D1:', error);
         // Continue even if D1 deletion fails - memory and Durable Storage are authoritative
       }
     }
 
+    // All sessions are treated as deleted (delete is idempotent)
     return {
-      deleted: deleted.length,
-      failed,
+      deleted: sessionIds.length,
+      failed: [],
     };
   }
 

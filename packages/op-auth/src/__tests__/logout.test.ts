@@ -24,11 +24,9 @@ vi.mock('hono/cookie', () => ({
   setCookie: vi.fn(),
 }));
 
-// Mock session store for sharded session support
+// Mock session store for sharded session support (RPC pattern)
 const mockShardedSessionStore = {
-  fetch: vi
-    .fn()
-    .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
+  invalidateSessionRpc: vi.fn().mockResolvedValue(true),
 };
 
 // Mock shared module
@@ -70,21 +68,14 @@ function createMockContext(options: {
   };
 
   const mockKeyManager = {
-    fetch: vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          keys: [
-            {
-              kty: 'RSA',
-              kid: 'key-1',
-              n: 'mock-n',
-              e: 'AQAB',
-            },
-          ],
-        }),
-        { status: 200 }
-      )
-    ),
+    getAllPublicKeysRpc: vi.fn().mockResolvedValue([
+      {
+        kty: 'RSA',
+        kid: 'key-1',
+        n: 'mock-n',
+        e: 'AQAB',
+      },
+    ]),
   };
 
   const mockEnv: Partial<Env> = {
@@ -181,22 +172,16 @@ describe('Front-channel Logout', () => {
       });
 
       // Reset mock for sharded session store
-      mockShardedSessionStore.fetch.mockReset();
-      mockShardedSessionStore.fetch.mockResolvedValue(
-        new Response(JSON.stringify({ success: true }), { status: 200 })
-      );
+      mockShardedSessionStore.invalidateSessionRpc.mockReset();
+      mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(true);
 
       // Use sharded session ID format
       vi.mocked(getCookie).mockReturnValue('0_session_123');
 
       await frontChannelLogoutHandler(c);
 
-      // Should call sharded session store with DELETE
-      expect(mockShardedSessionStore.fetch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          method: 'DELETE',
-        })
-      );
+      // Should call sharded session store's invalidateSessionRpc
+      expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
     });
 
     it('should handle logout when no session exists', async () => {
@@ -838,11 +823,9 @@ describe('Back-channel Logout', () => {
 
   describe('Session Invalidation', () => {
     beforeEach(() => {
-      // Reset mock for sharded session store
-      mockShardedSessionStore.fetch.mockReset();
-      mockShardedSessionStore.fetch.mockResolvedValue(
-        new Response(JSON.stringify({ success: true }), { status: 200 })
-      );
+      // Reset mock for sharded session store (RPC pattern)
+      mockShardedSessionStore.invalidateSessionRpc.mockReset();
+      mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(true);
     });
 
     it('should invalidate specific session when sid is provided (sharded format)', async () => {
@@ -867,13 +850,8 @@ describe('Back-channel Logout', () => {
 
       await backChannelLogoutHandler(c);
 
-      // Should call the sharded session store's fetch with DELETE method
-      expect(mockShardedSessionStore.fetch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          method: 'DELETE',
-          url: expect.stringContaining('0_session_456'),
-        })
-      );
+      // Should call the sharded session store's invalidateSessionRpc
+      expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_456');
     });
 
     it('should log warning when sid is not a sharded session ID', async () => {
@@ -901,7 +879,7 @@ describe('Back-channel Logout', () => {
       await backChannelLogoutHandler(c);
 
       // Should NOT call the sharded session store (non-sharded sid is ignored)
-      expect(mockShardedSessionStore.fetch).not.toHaveBeenCalled();
+      expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
       // Should log a warning about the limitation
       expect(consoleWarnSpy).toHaveBeenCalled();
 
@@ -933,7 +911,7 @@ describe('Back-channel Logout', () => {
       await backChannelLogoutHandler(c);
 
       // Should NOT call the sharded session store (no sid means cannot locate shard)
-      expect(mockShardedSessionStore.fetch).not.toHaveBeenCalled();
+      expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
       // Should log a warning about the sharded store limitation
       expect(consoleWarnSpy).toHaveBeenCalled();
 
@@ -971,9 +949,8 @@ describe('Back-channel Logout', () => {
         },
       });
 
-      mockKeyManager.fetch.mockResolvedValue(
-        new Response('Internal Server Error', { status: 500 })
-      );
+      // Mock RPC call to reject (simulating JWKS fetch failure)
+      mockKeyManager.getAllPublicKeysRpc.mockRejectedValue(new Error('Failed to fetch JWKS'));
 
       await backChannelLogoutHandler(c);
 
