@@ -66,6 +66,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
 
   try {
     const body = await c.req.json<{
+      slug?: string;
       name: string;
       provider_type: 'oidc' | 'oauth2';
       client_id: string;
@@ -109,6 +110,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
 
     const provider = await createProvider(c.env, {
       tenantId: body.tenant_id || 'default',
+      slug: body.slug,
       name: body.name,
       providerType: body.provider_type || 'oidc',
       enabled: body.enabled !== false,
@@ -190,6 +192,7 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
 
   try {
     const body = await c.req.json<{
+      slug?: string;
       name?: string;
       provider_type?: 'oidc' | 'oauth2';
       client_id?: string;
@@ -214,6 +217,7 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
     // Build updates object
     const updates: Record<string, unknown> = {};
 
+    if (body.slug !== undefined) updates.slug = body.slug;
     if (body.name !== undefined) updates.name = body.name;
     if (body.provider_type !== undefined) updates.providerType = body.provider_type;
     if (body.client_id !== undefined) updates.clientId = body.client_id;

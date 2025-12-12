@@ -73,17 +73,13 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Retrieve login challenge from ChallengeStore
+    // Retrieve login challenge from ChallengeStore (RPC)
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    const challengeResponse = await challengeStore.fetch(
-      new Request(`https://challenge-store/challenge/${challenge_id}`, {
-        method: 'GET',
-      })
-    );
+    const challengeData = await challengeStore.getChallengeRpc(challenge_id);
 
-    if (!challengeResponse.ok) {
+    if (!challengeData) {
       return c.json(
         {
           error: 'invalid_request',
@@ -93,7 +89,7 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const challengeData = (await challengeResponse.json()) as {
+    const typedChallengeData = challengeData as {
       id: string;
       type: string;
       userId: string;
@@ -101,7 +97,7 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
     };
 
     // Only allow 'login' type challenges
-    if (challengeData.type !== 'login') {
+    if (typedChallengeData.type !== 'login') {
       return c.json(
         {
           error: 'invalid_request',
@@ -111,7 +107,7 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const metadata: LoginChallengeMetadata = challengeData.metadata || {};
+    const metadata: LoginChallengeMetadata = typedChallengeData.metadata || {};
 
     // Type guard: ensure client_id exists
     if (!metadata.client_id) {

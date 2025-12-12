@@ -69,27 +69,21 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
     // Generate short-lived token
     const token = crypto.randomUUID();
 
-    // Store token in ChallengeStore DO with 5 minute TTL
+    // Store token in ChallengeStore DO with 5 minute TTL (RPC)
     // This provides atomic single-use guarantee (prevents race conditions)
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    await challengeStore.fetch(
-      new Request('https://challenge-store/challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: `session_token:${token}`,
-          type: 'session_token',
-          userId: session.userId,
-          challenge: token,
-          ttl: 5 * 60, // 5 minutes
-          metadata: {
-            sessionId: session.id,
-          },
-        }),
-      })
-    );
+    await challengeStore.storeChallengeRpc({
+      id: `session_token:${token}`,
+      type: 'session_token',
+      userId: session.userId,
+      challenge: token,
+      ttl: 5 * 60, // 5 minutes
+      metadata: {
+        sessionId: session.id,
+      },
+    });
 
     return c.json({
       token,
@@ -133,7 +127,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Consume token from ChallengeStore DO (atomic operation)
+    // Consume token from ChallengeStore DO (atomic operation, RPC)
     // This prevents race conditions and ensures single-use
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
@@ -141,31 +135,11 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
     let sessionId: string;
     let userId: string;
     try {
-      const consumeResponse = await challengeStore.fetch(
-        new Request('https://challenge-store/challenge/consume', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: `session_token:${token}`,
-            type: 'session_token',
-            challenge: token,
-          }),
-        })
-      );
-
-      if (!consumeResponse.ok) {
-        const error = (await consumeResponse.json()) as { error_description?: string };
-        return c.json(
-          {
-            error: 'invalid_token',
-            error_description:
-              error.error_description || 'Token not found, expired, or already used',
-          },
-          401
-        );
-      }
-
-      const challengeData = (await consumeResponse.json()) as {
+      const challengeData = (await challengeStore.consumeChallengeRpc({
+        id: `session_token:${token}`,
+        type: 'session_token',
+        challenge: token,
+      })) as {
         challenge: string;
         userId: string;
         metadata?: {
@@ -174,13 +148,13 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       };
       userId = challengeData.userId;
       sessionId = challengeData.metadata?.sessionId || '';
-    } catch (error) {
+    } catch {
       return c.json(
         {
-          error: 'server_error',
-          error_description: 'Failed to verify session token',
+          error: 'invalid_token',
+          error_description: 'Token not found, expired, or already used',
         },
-        500
+        401
       );
     }
 

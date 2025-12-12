@@ -103,17 +103,13 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Retrieve consent challenge from ChallengeStore
+    // Retrieve consent challenge from ChallengeStore (RPC)
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    const challengeResponse = await challengeStore.fetch(
-      new Request(`https://challenge-store/challenge/${challenge_id}`, {
-        method: 'GET',
-      })
-    );
+    const challengeData = await challengeStore.getChallengeRpc(challenge_id);
 
-    if (!challengeResponse.ok) {
+    if (!challengeData) {
       return c.json(
         {
           error: 'invalid_request',
@@ -123,14 +119,14 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const challengeData = (await challengeResponse.json()) as {
+    const typedChallengeData = challengeData as {
       id: string;
       type: string;
       userId: string;
       metadata?: ConsentChallengeMetadata;
     };
 
-    if (challengeData.type !== 'consent') {
+    if (typedChallengeData.type !== 'consent') {
       return c.json(
         {
           error: 'invalid_request',
@@ -140,10 +136,10 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const metadata = challengeData.metadata || {};
+    const metadata = typedChallengeData.metadata || {};
     const client_id = metadata.client_id as string;
     const scope = metadata.scope as string;
-    const userId = challengeData.userId;
+    const userId = typedChallengeData.userId;
 
     // Load client metadata from D1
     const clientRow = await c.env.DB.prepare(
@@ -481,23 +477,22 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Consume consent challenge from ChallengeStore
+    // Consume consent challenge from ChallengeStore (RPC)
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    const consumeResponse = await challengeStore.fetch(
-      new Request('https://challenge-store/challenge/consume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: challenge_id,
-          type: 'consent',
-          challenge: challenge_id,
-        }),
-      })
-    );
+    let consumedChallengeData: {
+      userId: string;
+      metadata?: ConsentChallengeMetadata;
+    };
 
-    if (!consumeResponse.ok) {
+    try {
+      consumedChallengeData = (await challengeStore.consumeChallengeRpc({
+        id: challenge_id,
+        type: 'consent',
+        challenge: challenge_id,
+      })) as { userId: string; metadata?: ConsentChallengeMetadata };
+    } catch {
       return c.json(
         {
           error: 'invalid_request',
@@ -507,13 +502,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const challengeData = (await consumeResponse.json()) as {
-      userId: string;
-      metadata?: ConsentChallengeMetadata;
-    };
-
-    const metadata = challengeData.metadata || {};
-    const userId = challengeData.userId;
+    const metadata = consumedChallengeData.metadata || {};
+    const userId = consumedChallengeData.userId;
 
     // If denied, redirect with error
     if (!approved) {

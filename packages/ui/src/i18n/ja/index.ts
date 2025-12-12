@@ -139,6 +139,7 @@ const ja = {
 	admin_sidebar_audit_log: '監査ログ',
 	admin_sidebar_settings: '設定',
 	admin_sidebar_scim_tokens: 'SCIMトークン',
+	admin_sidebar_identity_providers: '外部IDプロバイダー',
 
 	admin_dashboard_title: 'ダッシュボード',
 	admin_dashboard_activeUsers: 'アクティブユーザー',

@@ -1,0 +1,295 @@
+# Authrim API Endpoints List
+
+**Last Updated**: 2025-12-02
+**Total Endpoints**: 75
+
+This document provides a concise list of all available API endpoints in Authrim OIDC Provider.
+
+---
+
+## OIDC Discovery
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/.well-known/openid-configuration` | OpenID Connect discovery document |
+| GET | `/.well-known/jwks.json` | JSON Web Key Set for token verification |
+
+---
+
+## OIDC Core
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET, POST | `/authorize` | OAuth 2.0/OIDC authorization endpoint |
+| POST | `/token` | Token endpoint for exchanging authorization codes and refresh tokens |
+| GET, POST | `/userinfo` | User information endpoint (requires access token) |
+
+---
+
+## OIDC Extensions
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/as/par` | Pushed Authorization Request (RFC 9126) |
+| POST | `/register` | Dynamic Client Registration (RFC 7591) |
+| POST | `/introspect` | Token introspection (RFC 7662) |
+| POST | `/revoke` | Token revocation (RFC 7009) |
+
+---
+
+## Device Flow (RFC 8628)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/device_authorization` | Initiate device authorization flow, returns device code and user code |
+| GET | `/device` | Device verification page (minimal HTML for conformance, redirects to UI in production) |
+| POST | `/api/device/verify` | Verify and approve/deny device code (headless JSON API) |
+| POST | `/token` | Token endpoint with `grant_type=urn:ietf:params:oauth:grant-type:device_code` |
+
+**Documentation**: See [Device Flow Guide](./features/device-flow.md) for comprehensive documentation.
+
+---
+
+## Authentication
+
+### Passkey (WebAuthn/FIDO2)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/auth/passkey/register/options` | Generate passkey registration options |
+| POST | `/api/auth/passkey/register/verify` | Verify and complete passkey registration |
+| POST | `/api/auth/passkey/login/options` | Generate passkey authentication options |
+| POST | `/api/auth/passkey/login/verify` | Verify passkey authentication response |
+
+### Magic Link
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/auth/magic-link/send` | Send magic link email for passwordless login |
+| GET | `/api/auth/magic-link/verify` | Verify magic link token and authenticate user |
+
+### Consent
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/auth/consent` | Retrieve consent screen data for authorization |
+| POST | `/api/auth/consent` | Submit user consent decision (allow/deny) |
+
+---
+
+## Session Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/sessions/issue` | Issue session token for cross-domain SSO |
+| POST | `/api/sessions/verify` | Verify session token validity |
+| GET | `/api/sessions/status` | Check current session status |
+| POST | `/api/sessions/refresh` | Refresh and extend session expiration |
+
+---
+
+## Logout
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/logout` | Front-channel logout endpoint |
+| POST | `/logout/backchannel` | Back-channel logout (RFC 8725) |
+
+---
+
+## Admin API
+
+### Users
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/users` | List all users with pagination and search |
+| GET | `/api/admin/users/:id` | Get specific user details by ID |
+| POST | `/api/admin/users` | Create new user account |
+| PUT | `/api/admin/users/:id` | Update existing user information |
+| DELETE | `/api/admin/users/:id` | Delete user account |
+| POST | `/api/admin/users/:id/avatar` | Upload user avatar image |
+| DELETE | `/api/admin/users/:id/avatar` | Delete user avatar image |
+| DELETE | `/api/admin/users/:id/sessions` | Revoke all sessions for specific user |
+
+### Clients
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/clients` | List all registered OAuth clients |
+| GET | `/api/admin/clients/:id` | Get specific client details by ID |
+
+### Sessions
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/sessions` | List all active sessions with filtering |
+| GET | `/api/admin/sessions/:id` | Get specific session details by ID |
+| DELETE | `/api/admin/sessions/:id` | Revoke specific session |
+
+### Statistics
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/stats` | Get system statistics and recent activity |
+
+### Avatars
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/avatars/:filename` | Serve user avatar images |
+
+### RBAC - Organizations
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/organizations` | List all organizations with pagination |
+| POST | `/api/admin/organizations` | Create new organization |
+| GET | `/api/admin/organizations/:id` | Get specific organization details |
+| PUT | `/api/admin/organizations/:id` | Update organization information |
+| DELETE | `/api/admin/organizations/:id` | Delete organization |
+| GET | `/api/admin/organizations/:id/members` | List organization members |
+| POST | `/api/admin/organizations/:id/members` | Add member to organization |
+| DELETE | `/api/admin/organizations/:id/members/:subjectId` | Remove member from organization |
+
+### RBAC - Roles
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/roles` | List all available roles |
+| GET | `/api/admin/roles/:id` | Get specific role details |
+
+### RBAC - User Roles
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/users/:id/roles` | List user's role assignments |
+| POST | `/api/admin/users/:id/roles` | Assign role to user |
+| DELETE | `/api/admin/users/:id/roles/:assignmentId` | Remove role assignment from user |
+
+### RBAC - Relationships
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/users/:id/relationships` | List user's relationships (parent/guardian) |
+| POST | `/api/admin/users/:id/relationships` | Create relationship between users |
+| DELETE | `/api/admin/users/:id/relationships/:relationshipId` | Delete relationship |
+
+### Settings - Dynamic Configuration
+
+System configuration that can be changed at runtime without redeployment.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/settings` | Get all system settings |
+| PUT | `/api/admin/settings` | Update system settings |
+| GET | `/api/admin/settings/code-shards` | Get authorization code shard configuration |
+| PUT | `/api/admin/settings/code-shards` | Update authorization code shard count |
+| GET | `/api/admin/settings/oauth-config` | Get OAuth/OIDC configuration |
+| PUT | `/api/admin/settings/oauth-config/:name` | Update specific OAuth config value |
+| DELETE | `/api/admin/settings/oauth-config/:name` | Reset OAuth config to default |
+| GET | `/api/admin/settings/rate-limit` | Get all rate limit profiles configuration |
+| GET | `/api/admin/settings/rate-limit/:profile` | Get specific rate limit profile (strict, moderate, lenient, loadTest) |
+| PUT | `/api/admin/settings/rate-limit/:profile` | Update rate limit profile settings |
+| DELETE | `/api/admin/settings/rate-limit/:profile` | Reset rate limit profile to default |
+| GET | `/api/admin/settings/refresh-token-sharding` | Get refresh token sharding configuration |
+| PUT | `/api/admin/settings/refresh-token-sharding` | Update refresh token sharding settings |
+| GET | `/api/admin/settings/refresh-token-sharding/stats` | Get refresh token shard distribution statistics |
+| DELETE | `/api/admin/settings/refresh-token-sharding/cleanup` | Cleanup old generation shards |
+
+---
+
+## Policy Service
+
+Internal service for policy evaluation (service-to-service communication).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/evaluate` | Evaluate policy for a given context |
+| POST | `/check-role` | Quick role check for subject |
+| POST | `/check-access` | Check access for resource/action combination |
+| POST | `/is-admin` | Check if subject has admin privileges |
+| GET | `/health` | Policy service health check |
+
+---
+
+## SAML 2.0
+
+### IdP Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/saml/idp/metadata` | IdP metadata document |
+| GET, POST | `/saml/idp/sso` | Single Sign-On service |
+| GET, POST | `/saml/idp/slo` | Single Logout service |
+| POST | `/saml/idp/artifact` | Artifact resolution service (SOAP) |
+
+### SP Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/saml/sp/metadata` | SP metadata document |
+| POST | `/saml/sp/acs` | Assertion Consumer Service |
+| GET, POST | `/saml/sp/slo` | Single Logout service |
+| GET | `/saml/sp/init` | SP-initiated SSO start |
+
+### Admin (SAML Providers)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/admin/saml/providers` | List SAML providers |
+| POST | `/api/admin/saml/providers` | Register new provider |
+| GET | `/api/admin/saml/providers/:id` | Get provider details |
+| PUT | `/api/admin/saml/providers/:id` | Update provider |
+| DELETE | `/api/admin/saml/providers/:id` | Delete provider |
+
+**Documentation**: See [SAML 2.0 Guide](../features/saml.md) for comprehensive documentation.
+
+---
+
+## Health Check
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Health check endpoint (available on all workers) |
+
+---
+
+## Notes
+
+### Authentication Requirements
+
+- **Public Endpoints**: Discovery, Authorization, Token, Health Check
+- **User Authentication**: UserInfo, Consent, Session Management, Logout
+- **Admin Authentication**: All `/api/admin/*` endpoints require admin privileges
+- **RBAC Admin**: Organization, Role, and Relationship management endpoints require system_admin or distributor_admin role
+- **Client Authentication**: Token, Introspect, Revoke endpoints
+- **Service-to-Service**: Policy Service endpoints require POLICY_API_SECRET bearer token
+
+### Rate Limiting
+
+All endpoints are protected by rate limiting. See [API Documentation](./api/README.md#rate-limiting) for details.
+
+### Detailed Documentation
+
+For comprehensive API documentation including request/response examples, error codes, and authentication details, refer to:
+
+- [Complete API Documentation](./api/README.md)
+- [OpenAPI Specification](./api/openapi.yaml)
+- [Admin API Documentation](./api/admin/)
+- [Auth API Documentation](./api/auth/)
+
+---
+
+## References
+
+- **OpenID Connect Core 1.0**: https://openid.net/specs/openid-connect-core-1_0.html
+- **OAuth 2.0 (RFC 6749)**: https://tools.ietf.org/html/rfc6749
+- **RFC 7591**: Dynamic Client Registration Protocol
+- **RFC 7662**: OAuth 2.0 Token Introspection
+- **RFC 7009**: OAuth 2.0 Token Revocation
+- **RFC 9126**: OAuth 2.0 Pushed Authorization Requests
+- **RFC 8725**: JSON Web Token Best Current Practices
+- **WebAuthn Level 2**: https://www.w3.org/TR/webauthn-2/
+- **SAML 2.0 Core**: https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
+- **SAML 2.0 Bindings**: https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf

@@ -22,6 +22,8 @@ const API_TOKEN = process.env.CF_API_TOKEN;
 const WORKER_SCRIPTS = [
   'conformance-authrim-op-token',
   'conformance-authrim-op-auth',
+  'conformance-authrim-op-userinfo',
+  'conformance-authrim-op-management',
   'conformance-authrim-shared',
   'conformance-authrim-router',
 ];

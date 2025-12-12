@@ -20,6 +20,11 @@
 			icon: 'i-heroicons-cube'
 		},
 		{
+			path: '/admin/identity-providers',
+			label: () => $LL.admin_sidebar_identity_providers(),
+			icon: 'i-heroicons-identification'
+		},
+		{
 			path: '/admin/sessions',
 			label: () => $LL.admin_sidebar_sessions(),
 			icon: 'i-heroicons-clock'

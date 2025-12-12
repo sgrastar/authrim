@@ -18,8 +18,14 @@
  * - reauth: Re-authentication confirmation challenge (prompt=login, max_age)
  * - login: Login flow challenge (session-less authentication)
  * - consent: OAuth consent flow challenge
+ *
+ * RPC Support:
+ * - Extends DurableObject base class for RPC method exposure
+ * - RPC methods have 'Rpc' suffix (e.g., storeChallengeRpc, consumeChallengeRpc)
+ * - fetch() handler is maintained for backward compatibility
  */
 
+import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 
 /**
@@ -96,10 +102,13 @@ interface ChallengeStoreState {
  * ChallengeStore Durable Object
  *
  * Provides atomic one-time challenge management for authentication flows.
+ *
+ * RPC Support:
+ * - Extends DurableObject base class for RPC method exposure
+ * - RPC methods have 'Rpc' suffix (e.g., storeChallengeRpc, consumeChallengeRpc)
+ * - fetch() handler is maintained for backward compatibility
  */
-export class ChallengeStore {
-  private state: DurableObjectState;
-  private env: Env;
+export class ChallengeStore extends DurableObject<Env> {
   private challenges: Map<string, Challenge> = new Map();
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
@@ -107,10 +116,77 @@ export class ChallengeStore {
   // Configuration
   private readonly CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
-  constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    this.env = env;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
   }
+
+  // ==========================================
+  // RPC Methods (public, with 'Rpc' suffix)
+  // ==========================================
+
+  /**
+   * RPC: Store a new challenge
+   */
+  async storeChallengeRpc(request: StoreChallengeRequest): Promise<{ success: boolean }> {
+    await this.storeChallenge(request);
+    return { success: true };
+  }
+
+  /**
+   * RPC: Consume a challenge (atomic check + delete)
+   * SECURITY CRITICAL: Prevents replay attacks through atomic operation
+   */
+  async consumeChallengeRpc(request: ConsumeChallengeRequest): Promise<ConsumeChallengeResponse> {
+    return this.consumeChallenge(request);
+  }
+
+  /**
+   * RPC: Delete a challenge
+   */
+  async deleteChallengeRpc(id: string): Promise<{ deleted: boolean }> {
+    const deleted = await this.deleteChallenge(id);
+    return { deleted };
+  }
+
+  /**
+   * RPC: Get challenge info (without consuming)
+   */
+  async getChallengeRpc(id: string): Promise<Challenge | null> {
+    return this.getChallenge(id);
+  }
+
+  /**
+   * RPC: Get status/health check
+   */
+  async getStatusRpc(): Promise<{
+    status: string;
+    challenges: { total: number; active: number; consumed: number };
+    timestamp: number;
+  }> {
+    await this.initializeState();
+    const now = Date.now();
+    let activeCount = 0;
+
+    for (const challenge of this.challenges.values()) {
+      if (!challenge.consumed && challenge.expiresAt > now) {
+        activeCount++;
+      }
+    }
+
+    return {
+      status: 'ok',
+      challenges: {
+        total: this.challenges.size,
+        active: activeCount,
+        consumed: this.challenges.size - activeCount,
+      },
+      timestamp: now,
+    };
+  }
+
+  // ==========================================
+  // Internal Methods
+  // ==========================================
 
   /**
    * Initialize state from Durable Storage
@@ -121,7 +197,7 @@ export class ChallengeStore {
     }
 
     try {
-      const stored = await this.state.storage.get<ChallengeStoreState>('state');
+      const stored = await this.ctx.storage.get<ChallengeStoreState>('state');
 
       if (stored) {
         this.challenges = new Map(Object.entries(stored.challenges));
@@ -147,7 +223,7 @@ export class ChallengeStore {
         lastCleanup: Date.now(),
       };
 
-      await this.state.storage.put('state', stateToSave);
+      await this.ctx.storage.put('state', stateToSave);
     } catch (error) {
       console.error('ChallengeStore: Failed to save to Durable Storage:', error);
     }

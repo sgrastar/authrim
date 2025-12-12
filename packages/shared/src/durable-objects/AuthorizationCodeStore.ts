@@ -137,6 +137,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   private initialized: boolean = false;
   private configManager: OAuthConfigManager;
 
+  // User code counter for O(1) DDoS protection check (instead of O(n) scan)
+  // Maps userId to count of active (non-expired) codes
+  private userCodeCounts: Map<string, number> = new Map();
+
   // Configuration (loaded from KV > env > default in initializeState)
   private CODE_TTL: number; // Default: 60 seconds per OAuth 2.0 Security BCP
   private CLEANUP_INTERVAL_MS: number; // Default: 30 seconds
@@ -326,10 +330,16 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
         prefix: CODE_KEY_PREFIX,
       });
 
+      const now = Date.now();
       for (const [key, authCode] of storedCodes) {
         // Extract code from key (remove prefix)
         const code = key.substring(CODE_KEY_PREFIX.length);
         this.codes.set(code, authCode);
+
+        // Rebuild userCodeCounts from restored codes (only count non-expired codes)
+        if (authCode.expiresAt > now) {
+          this.incrementUserCodeCount(authCode.userId);
+        }
       }
 
       if (this.codes.size > 0) {
@@ -378,6 +388,8 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       if (authCode.expiresAt <= now) {
         this.codes.delete(code);
         expiredCodes.push(code);
+        // Decrement user code counter for O(1) DDoS protection
+        this.decrementUserCodeCount(authCode.userId);
       }
     }
 
@@ -421,19 +433,32 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   }
 
   /**
-   * Count codes for a user (DDoS protection)
+   * Count codes for a user (DDoS protection) - O(1) operation
+   * Uses userCodeCounts Map for constant-time lookup instead of O(n) scan
    */
   private countUserCodes(userId: string): number {
-    let count = 0;
-    const now = Date.now();
+    return this.userCodeCounts.get(userId) || 0;
+  }
 
-    for (const authCode of this.codes.values()) {
-      if (authCode.userId === userId && authCode.expiresAt > now) {
-        count++;
-      }
+  /**
+   * Increment user code count when storing a new code
+   */
+  private incrementUserCodeCount(userId: string): void {
+    const current = this.userCodeCounts.get(userId) || 0;
+    this.userCodeCounts.set(userId, current + 1);
+  }
+
+  /**
+   * Decrement user code count when a code is deleted or expired
+   */
+  private decrementUserCodeCount(userId: string): void {
+    const current = this.userCodeCounts.get(userId) || 0;
+    if (current > 1) {
+      this.userCodeCounts.set(userId, current - 1);
+    } else {
+      // Remove entry when count reaches 0 to prevent memory leak
+      this.userCodeCounts.delete(userId);
     }
-
-    return count;
   }
 
   /**
@@ -473,6 +498,9 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
     // Store in memory
     this.codes.set(request.code, authCode);
+
+    // Increment user code counter for O(1) DDoS protection
+    this.incrementUserCodeCount(request.userId);
 
     // Persist to Durable Storage - O(1) individual key
     await this.ctx.storage.put(this.buildCodeKey(request.code), authCode);
@@ -615,12 +643,16 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
    */
   async deleteCode(code: string): Promise<boolean> {
     await this.initializeState();
-    const deleted = this.codes.delete(code);
-    if (deleted) {
-      // Delete from Durable Storage - O(1) individual key
-      await this.ctx.storage.delete(this.buildCodeKey(code));
+    const authCode = this.codes.get(code);
+    if (!authCode) {
+      return false;
     }
-    return deleted;
+    this.codes.delete(code);
+    // Decrement user code counter for O(1) DDoS protection
+    this.decrementUserCodeCount(authCode.userId);
+    // Delete from Durable Storage - O(1) individual key
+    await this.ctx.storage.delete(this.buildCodeKey(code));
+    return true;
   }
 
   /**

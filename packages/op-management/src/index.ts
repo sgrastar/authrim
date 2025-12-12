@@ -50,6 +50,7 @@ import {
   adminTestSessionCreateHandler,
   adminSigningKeyGetHandler,
   adminTokenRegisterHandler,
+  adminTestEmailCodeHandler,
 } from './admin';
 import scimApp from './scim';
 import {
@@ -89,6 +90,12 @@ import {
   clearOAuthConfig,
   clearAllOAuthConfig,
 } from './routes/settings/oauth-config';
+import {
+  getRateLimitSettings,
+  getRateLimitProfile,
+  updateRateLimitProfile,
+  resetRateLimitProfile,
+} from './routes/settings/rate-limit';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -246,11 +253,6 @@ app.get('/api/admin/sessions', adminSessionsListHandler);
 app.get('/api/admin/sessions/:id', adminSessionGetHandler);
 app.delete('/api/admin/sessions/:id', adminSessionRevokeHandler); // RESTful: DELETE instead of POST
 app.delete('/api/admin/users/:id/sessions', adminUserRevokeAllSessionsHandler); // RESTful: /sessions instead of /revoke-all-sessions
-app.post('/api/admin/test-sessions', adminTestSessionCreateHandler); // For load testing: create session without login
-
-// Admin Token/Key endpoints for load testing
-app.get('/api/admin/signing-key', adminSigningKeyGetHandler); // For load testing: get signing key with private key
-app.post('/api/admin/tokens/register', adminTokenRegisterHandler); // For load testing: register pre-generated tokens
 
 // Admin Audit Log endpoints
 app.get('/api/admin/audit-log', adminAuditLogListHandler);
@@ -273,6 +275,12 @@ app.get('/api/admin/settings/oauth-config', getOAuthConfig);
 app.put('/api/admin/settings/oauth-config/:name', updateOAuthConfig);
 app.delete('/api/admin/settings/oauth-config/:name', clearOAuthConfig);
 app.delete('/api/admin/settings/oauth-config', clearAllOAuthConfig);
+
+// Admin Rate Limit Configuration endpoints
+app.get('/api/admin/settings/rate-limit', getRateLimitSettings);
+app.get('/api/admin/settings/rate-limit/:profile', getRateLimitProfile);
+app.put('/api/admin/settings/rate-limit/:profile', updateRateLimitProfile);
+app.delete('/api/admin/settings/rate-limit/:profile', resetRateLimitProfile);
 
 // Admin Refresh Token Sharding Configuration endpoints
 app.get('/api/admin/settings/refresh-token-sharding', getRefreshTokenShardingConfig);
@@ -326,6 +334,35 @@ app.delete(
 
 // SCIM 2.0 endpoints - RFC 7643, 7644
 app.route('/scim/v2', scimApp);
+
+// =====================================================
+// Test Endpoints - Load Testing / Conformance Testing Only
+// Controlled by ENABLE_TEST_ENDPOINTS environment variable
+// =====================================================
+
+/**
+ * Test endpoint guard middleware
+ * Returns 404 when ENABLE_TEST_ENDPOINTS is not set to 'true'
+ * This allows disabling all test endpoints in production with a single env var
+ */
+app.use('/api/admin/test/*', async (c, next) => {
+  if (c.env.ENABLE_TEST_ENDPOINTS !== 'true') {
+    return c.json(
+      {
+        error: 'not_found',
+        error_description: 'Test endpoints are disabled. Set ENABLE_TEST_ENDPOINTS=true to enable.',
+      },
+      404
+    );
+  }
+  return next();
+});
+
+// Test endpoints (all protected by adminAuthMiddleware from /api/admin/* and test guard above)
+app.post('/api/admin/test/sessions', adminTestSessionCreateHandler); // Create session without login
+app.post('/api/admin/test/email-codes', adminTestEmailCodeHandler); // Generate OTP code without email
+app.get('/api/admin/test/signing-key', adminSigningKeyGetHandler); // Get signing key with private key
+app.post('/api/admin/test/tokens', adminTokenRegisterHandler); // Register pre-generated tokens
 
 // =====================================================
 // Internal API - Version Management

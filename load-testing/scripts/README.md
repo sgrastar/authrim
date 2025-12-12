@@ -14,6 +14,11 @@
 | **負荷テスト** | `test-authcode.js` | Authorization Code負荷テスト（k6） |
 | **負荷テスト** | `test3-full-oidc.js` | フルOIDCフロー負荷テスト（k6） |
 | **負荷テスト** | `test4-distributed-load.js` | 分散マルチクライアント負荷テスト（k6） |
+| **ベンチマーク** | `test-authorize-silent-benchmark.js` | Authorization Endpoint (prompt=none) ベンチマーク |
+| **ベンチマーク** | `test-authorize-silent-benchmark-cloud.js` | Authorization (prompt=none) K6 Cloud版 |
+| **ベンチマーク** | `test-userinfo-benchmark.js` | UserInfo Endpoint スループットベンチマーク |
+| **ベンチマーク** | `test-introspect-benchmark.js` | Token Introspection API ベンチマーク |
+| **シード生成** | `seed-access-tokens.js` | Access Token事前生成（UserInfo/Introspect用） |
 | **シード生成** | `seed-distributed.js` | 分散テスト用シード生成（test4用） |
 | **レポート** | `report-cf-analytics.js` | Cloudflare Analytics取得 |
 | **レポート** | `report-generate.js` | テストレポート生成 |
@@ -338,6 +343,194 @@ k6 cloud --env PRESET=rps1000 scripts/test-refresh.js
 - **K6 Cloud実行**: `tokenIndex = (instanceId * tokensPerInstance) + VU - 1`
   - `K6_CLOUDRUN_INSTANCE_ID`環境変数でインスタンスを識別
   - 各インスタンスにトークンプールを均等分割
+
+---
+
+## ベンチマークテスト（外部公開仕様準拠）
+
+外部公開向け性能テスト仕様書に基づいたベンチマークテストスクリプト群。
+各エンドポイントの最大スループットを測定し、Auth0/Keycloak/Oryとの比較指標を提供。
+
+### seed-access-tokens.js（Access Token事前生成）
+
+**UserInfo/Introspectionベンチマーク用のアクセストークンを事前生成**
+
+```bash
+BASE_URL="https://conformance.authrim.com" \
+CLIENT_ID="<your-client-id>" \
+CLIENT_SECRET="<your-client-secret>" \
+ADMIN_API_SECRET="<your-admin-secret>" \
+TOKEN_COUNT=1000 \
+CONCURRENCY=20 \
+node scripts/seed-access-tokens.js
+```
+
+| 環境変数 | 必須 | デフォルト | 説明 |
+|---------|------|-----------|------|
+| `CLIENT_ID` | Yes | - | OAuth Client ID |
+| `CLIENT_SECRET` | Yes | - | OAuth Client Secret |
+| `ADMIN_API_SECRET` | Yes | - | Admin API Bearer Token |
+| `BASE_URL` | No | `https://conformance.authrim.com` | 対象URL |
+| `TOKEN_COUNT` | No | `1000` | 生成するトークン総数 |
+| `CONCURRENCY` | No | `20` | 並列数 |
+| `USER_ID_PREFIX` | No | `user-bench` | ユーザーIDプレフィックス |
+| `OUTPUT_DIR` | No | `./seeds` | 出力ディレクトリ |
+
+**トークン種別（混合比率）:**
+- **Valid**: 70% - 正常なトークン（exp=30日後）
+- **Expired**: 10% - 期限切れトークン（exp=過去）
+- **Invalid**: 10% - 不正なJWT（ランダム文字列）
+- **Revoked**: 10% - 正常に発行後、POST /revokeで無効化
+
+**出力:** `seeds/access_tokens.json`
+
+---
+
+### test-userinfo-benchmark.js（UserInfo Endpointベンチマーク）
+
+**UserInfo API の最大スループットを測定**
+
+```bash
+# シード生成（事前に必須）
+TOKEN_COUNT=1000 ... node scripts/seed-access-tokens.js
+
+# テスト実行
+k6 run --env PRESET=rps500 scripts/test-userinfo-benchmark.js
+```
+
+| プリセット | RPS | Duration | p95目標 | p99目標 | maxVUs |
+|-----------|-----|----------|---------|---------|--------|
+| `rps100` | 100 | 30s | <300ms | <500ms | 150 |
+| `rps500` | 500 | 2min | <200ms | <300ms | 800 |
+| `rps1000` | 1000 | 2min | <200ms | <300ms | 1500 |
+| `rps1500` | 1500 | 2min | <200ms | <300ms | 2200 |
+| `rps2000` | 2000 | 2min | <200ms | <300ms | 3000 |
+
+**成功基準（仕様書準拠）:**
+- 成功率: > 99.9%
+- p95: < 200ms
+- p99: < 300ms
+
+---
+
+### test-introspect-benchmark.js（Token Introspectionベンチマーク）
+
+**Token Introspection API のパフォーマンスを測定**
+
+重み付けトークン選択で現実的なワークロードをシミュレート。
+
+```bash
+# シード生成（事前に必須）
+TOKEN_COUNT=1000 ... node scripts/seed-access-tokens.js
+
+# テスト実行
+k6 run --env PRESET=rps300 scripts/test-introspect-benchmark.js
+```
+
+| プリセット | RPS | Duration | p95目標 | p99目標 | maxVUs |
+|-----------|-----|----------|---------|---------|--------|
+| `rps100` | 100 | 30s | <400ms | <600ms | 150 |
+| `rps300` | 300 | 2min | <300ms | <400ms | 450 |
+| `rps600` | 600 | 2min | <300ms | <400ms | 900 |
+| `rps800` | 800 | 2min | <300ms | <400ms | 1200 |
+| `rps1000` | 1000 | 2min | <300ms | <400ms | 1500 |
+
+**検証項目:**
+- `active: true` → Validトークン (70%)
+- `active: false` → Expired/Invalid/Revoked (30%)
+- False Positive/False Negativeの追跡
+
+---
+
+### test-authorize-silent-benchmark.js（Authorization Endpointベンチマーク - サイレント認証）
+
+**prompt=none での認可レスポンスを測定（ローカル実行用）**
+
+Admin APIでテストセッションを作成し、prompt=noneで即時認可コード発行。
+既存セッションでの認可リクエスト（サイレント認証）をシミュレート。
+
+```bash
+# テスト実行（セッションはsetup()で自動作成）
+k6 run --env PRESET=rps200 scripts/test-authorize-silent-benchmark.js
+```
+
+| プリセット | RPS | Duration | p95目標 | p99目標 | セッション数 |
+|-----------|-----|----------|---------|---------|-------------|
+| `rps50` | 50 | 30s | <2000ms | <3000ms | 100 |
+| `rps200` | 200 | 3min | <1500ms | <2000ms | 500 |
+| `rps400` | 400 | 3min | <1500ms | <2000ms | 500 |
+| `rps600` | 600 | 3min | <1500ms | <2000ms | 500 |
+| `rps800` | 800 | 3min | <1500ms | <2000ms | 500 |
+| `rps1000` | 1000 | 3min | <1500ms | <2000ms | 500 |
+| `rps1200` | 1200 | 3min | <1500ms | <2000ms | 500 |
+
+| 環境変数 | 必須 | デフォルト | 説明 |
+|---------|------|-----------|------|
+| `CLIENT_ID` | Yes | - | OAuth Client ID |
+| `ADMIN_API_SECRET` | Yes | - | Admin API Bearer Token |
+| `BASE_URL` | No | `https://conformance.authrim.com` | 対象URL |
+| `REDIRECT_URI` | No | `https://localhost:3000/callback` | リダイレクトURI |
+
+**成功基準（仕様書準拠）:**
+- 成功率: > 99%
+- p95: < 1500ms
+- p99: < 2000ms
+
+---
+
+### test-authorize-silent-benchmark-cloud.js（K6 Cloud版）
+
+**K6 Cloud経由での分散負荷テスト用**
+
+ローカル版より高いRPSが可能（クライアント側TCP制限なし）。
+
+```bash
+# K6 Cloud実行
+export K6_CLOUD_TOKEN="your-k6-cloud-token"
+k6 cloud --env PRESET=rps1000 scripts/test-authorize-silent-benchmark-cloud.js
+```
+
+| プリセット | RPS | Duration | p95目標 | p99目標 | maxVUs |
+|-----------|-----|----------|---------|---------|--------|
+| `rps100` | 100 | 1min | <1500ms | <2000ms | 200 |
+| `rps200` | 200 | 3min | <1500ms | <2000ms | 400 |
+| `rps500` | 500 | 3min | <1500ms | <2000ms | 900 |
+| `rps1000` | 1000 | 3min | <1500ms | <2000ms | 1600 |
+| `rps1500` | 1500 | 3min | <1500ms | <2000ms | 2400 |
+| `rps2000` | 2000 | 3min | <1500ms | <2000ms | 3500 |
+| `rps3000` | 3000 | 3min | <2000ms | <3000ms | 5000 |
+
+**K6 Cloud固有の環境変数:**
+| 環境変数 | 必須 | デフォルト | 説明 |
+|---------|------|-----------|------|
+| `K6_CLOUD_PROJECT_ID` | No | - | K6 CloudプロジェクトID |
+| `USER_LIST_URL` | No | - | R2等からユーザーリストをフェッチするURL |
+
+---
+
+### ベンチマーククイックスタート
+
+```bash
+cd load-testing
+
+# 1. 環境変数設定
+export BASE_URL="https://conformance.authrim.com"
+export CLIENT_ID="<your-client-id>"
+export CLIENT_SECRET="<your-client-secret>"
+export ADMIN_API_SECRET="<your-admin-secret>"
+
+# 2. Access Token生成（UserInfo/Introspect用）
+TOKEN_COUNT=1000 CONCURRENCY=20 node scripts/seed-access-tokens.js
+
+# 3. 各ベンチマーク実行
+k6 run --env PRESET=rps500 scripts/test-userinfo-benchmark.js
+k6 run --env PRESET=rps300 scripts/test-introspect-benchmark.js
+k6 run --env PRESET=rps200 scripts/test-authorize-silent-benchmark.js
+
+# K6 Cloud実行（高負荷テスト用）
+export K6_CLOUD_TOKEN="your-k6-cloud-token"
+k6 cloud --env PRESET=rps1000 scripts/test-authorize-silent-benchmark-cloud.js
+```
 
 ---
 

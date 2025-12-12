@@ -2543,12 +2543,8 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    // Also insert into D1 sessions table for consistency
-    await c.env.DB.prepare(
-      'INSERT OR REPLACE INTO sessions (id, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)'
-    )
-      .bind(sessionId, user_id, Math.floor(expiresAt / 1000), Math.floor(now / 1000))
-      .run();
+    // D1 insert is handled by SessionStore.saveToD1() asynchronously
+    // (removed duplicate blocking D1 INSERT for performance optimization)
 
     console.log(`[ADMIN] Created test session for user: ${user_id}, session: ${sessionId}`);
 
@@ -2567,6 +2563,209 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       {
         error: 'server_error',
         error_description: 'Failed to create test session',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      500
+    );
+  }
+}
+
+// =============================================================================
+// Test Email Code Handler - For Load Testing
+// =============================================================================
+
+const EMAIL_CODE_TTL = 5 * 60; // 5 minutes in seconds
+
+/**
+ * Generate a cryptographically secure 6-digit OTP code
+ */
+function generateEmailCode(): string {
+  const array = new Uint32Array(1);
+  crypto.getRandomValues(array);
+  return (array[0] % 1000000).toString().padStart(6, '0');
+}
+
+/**
+ * Hash an email code using HMAC-SHA256
+ */
+async function hashEmailCode(
+  code: string,
+  email: string,
+  sessionId: string,
+  issuedAt: number,
+  secret: string
+): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(`${code}:${email.toLowerCase()}:${sessionId}:${issuedAt}`);
+  const keyData = encoder.encode(secret);
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const signature = await crypto.subtle.sign('HMAC', key, data);
+  const hashArray = Array.from(new Uint8Array(signature));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Hash an email address using SHA-256
+ */
+async function hashEmail(email: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(email.toLowerCase());
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Generate test email code for load testing
+ * POST /api/admin/test/email-codes
+ *
+ * Creates an OTP challenge without sending an email.
+ * Returns the plaintext code for use in load testing.
+ *
+ * Request body:
+ * {
+ *   "email": "user@example.com"
+ * }
+ *
+ * Response:
+ * {
+ *   "success": true,
+ *   "code": "123456",
+ *   "otpSessionId": "uuid-v4",
+ *   "expiresAt": 1702345678
+ * }
+ */
+export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const body = await c.req.json<{
+      email: string;
+      create_user?: boolean;
+    }>();
+
+    const { email } = body;
+
+    if (!email) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'email is required',
+        },
+        400
+      );
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Invalid email format',
+        },
+        400
+      );
+    }
+
+    // Check if user exists
+    let user = await c.env.DB.prepare('SELECT id, email, name FROM users WHERE email = ?')
+      .bind(email.toLowerCase())
+      .first();
+
+    // create_user option: if false, don't create new user (for benchmarks with pre-seeded users)
+    const createUser = body.create_user !== false;
+
+    if (!user) {
+      if (!createUser) {
+        return c.json(
+          {
+            error: 'user_not_found',
+            error_description: 'User does not exist and create_user is false',
+          },
+          404
+        );
+      }
+
+      const userId = crypto.randomUUID();
+      const now = Math.floor(Date.now() / 1000);
+      const preferredUsername = email.split('@')[0];
+
+      await c.env.DB.prepare(
+        `INSERT INTO users (
+          id, email, name, preferred_username, email_verified, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 0, ?, ?)`
+      )
+        .bind(userId, email.toLowerCase(), null, preferredUsername, now, now)
+        .run();
+
+      user = { id: userId, email: email.toLowerCase(), name: email.split('@')[0] };
+    }
+
+    // Generate OTP session ID for session binding
+    const otpSessionId = crypto.randomUUID();
+    const issuedAt = Date.now();
+    const expiresAt = issuedAt + EMAIL_CODE_TTL * 1000;
+
+    // Generate 6-digit OTP code
+    const code = generateEmailCode();
+
+    // Get HMAC secret from environment
+    const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
+
+    // Hash the code for storage
+    const codeHash = await hashEmailCode(
+      code,
+      email.toLowerCase(),
+      otpSessionId,
+      issuedAt,
+      hmacSecret
+    );
+    const emailHash = await hashEmail(email.toLowerCase());
+
+    // Store in ChallengeStore DO with TTL (5 minutes) (RPC)
+    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
+    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+
+    await challengeStore.storeChallengeRpc({
+      id: `email_code:${otpSessionId}`,
+      type: 'email_code',
+      userId: user.id as string,
+      challenge: codeHash,
+      ttl: EMAIL_CODE_TTL,
+      email: email.toLowerCase(),
+      metadata: {
+        email_hash: emailHash,
+        otp_session_id: otpSessionId,
+        issued_at: issuedAt,
+        purpose: 'login',
+      },
+    });
+
+    console.log(`[ADMIN] Created test email code for user: ${user.id}, session: ${otpSessionId}`);
+
+    return c.json(
+      {
+        success: true,
+        code,
+        otpSessionId,
+        expiresAt: Math.floor(expiresAt / 1000),
+        userId: user.id,
+      },
+      201
+    );
+  } catch (error) {
+    console.error('Admin test email code error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to create test email code',
         details: error instanceof Error ? error.message : String(error),
       },
       500

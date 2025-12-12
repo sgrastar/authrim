@@ -77,6 +77,43 @@ function createMockDONamespace() {
   } as unknown as DurableObjectNamespace;
 }
 
+/**
+ * Mock ChallengeStore Durable Object with RPC methods
+ */
+function createMockChallengeStore() {
+  const challenges = new Map<string, any>();
+
+  return {
+    idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-challenge-store-id' }),
+    get: vi.fn().mockReturnValue({
+      // RPC methods
+      storeChallengeRpc: vi.fn().mockImplementation(async (request: { id: string }) => {
+        challenges.set(request.id, request);
+        return { success: true };
+      }),
+      consumeChallengeRpc: vi.fn().mockImplementation(async (request: { id: string }) => {
+        const data = challenges.get(request.id);
+        if (data) {
+          challenges.delete(request.id);
+          return data;
+        }
+        throw new Error('Challenge not found');
+      }),
+      getChallengeRpc: vi.fn().mockImplementation(async (id: string) => {
+        return challenges.get(id) || null;
+      }),
+      deleteChallengeRpc: vi.fn().mockImplementation(async (id: string) => {
+        const existed = challenges.has(id);
+        challenges.delete(id);
+        return { deleted: existed };
+      }),
+      // Legacy fetch method (kept for backwards compatibility)
+      fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }))),
+    }),
+    _challenges: challenges,
+  };
+}
+
 describe('HTTPS Request URI Security', () => {
   let app: Hono<{ Bindings: Env }>;
   let mockEnv: Env;
@@ -103,7 +140,7 @@ describe('HTTPS Request URI Security', () => {
       SESSION_STORE: createMockDONamespace(),
       AUTH_CODE_STORE: createMockDONamespace(),
       REFRESH_TOKEN_ROTATOR: createMockDONamespace(),
-      CHALLENGE_STORE: createMockDONamespace(),
+      CHALLENGE_STORE: createMockChallengeStore() as unknown as Env['CHALLENGE_STORE'],
       RATE_LIMITER: createMockDONamespace(),
       USER_CODE_RATE_LIMITER: createMockDONamespace(),
       PAR_REQUEST_STORE: createMockDONamespace(),

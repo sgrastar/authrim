@@ -189,7 +189,7 @@ function setupSignalHandlers() {
  * 単一ユーザーのテストセッションを作成
  */
 async function createTestSession(userId) {
-  const res = await fetch(`${BASE_URL}/api/admin/test-sessions`, {
+  const res = await fetch(`${BASE_URL}/api/admin/test/sessions`, {
     method: 'POST',
     headers: {
       ...adminAuthHeader,

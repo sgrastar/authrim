@@ -94,6 +94,28 @@ function createMockChallengeStore() {
   return {
     idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-id' }),
     get: vi.fn().mockReturnValue({
+      // RPC methods
+      storeChallengeRpc: vi.fn().mockImplementation(async (request: { id: string }) => {
+        challenges.set(request.id, request);
+        return { success: true };
+      }),
+      consumeChallengeRpc: vi.fn().mockImplementation(async (request: { id: string }) => {
+        const data = challenges.get(request.id);
+        if (data) {
+          challenges.delete(request.id);
+          return data;
+        }
+        throw new Error('Challenge not found');
+      }),
+      getChallengeRpc: vi.fn().mockImplementation(async (id: string) => {
+        return challenges.get(id) || null;
+      }),
+      deleteChallengeRpc: vi.fn().mockImplementation(async (id: string) => {
+        const had = challenges.has(id);
+        challenges.delete(id);
+        return { deleted: had };
+      }),
+      // Legacy fetch method (for backward compatibility in tests)
       fetch: vi.fn().mockImplementation(async (request: Request) => {
         const url = new URL(request.url);
         const path = url.pathname;
@@ -404,8 +426,8 @@ describe('Passkey Handlers', () => {
 
       await passkeyRegisterOptionsHandler(c);
 
-      // Verify challenge was stored
-      expect(challengeStore.get().fetch).toHaveBeenCalled();
+      // Verify challenge was stored via RPC
+      expect(challengeStore.get().storeChallengeRpc).toHaveBeenCalled();
     });
 
     it('should include existing passkeys as excludeCredentials', async () => {
@@ -520,7 +542,8 @@ describe('Passkey Handlers', () => {
 
       await passkeyLoginOptionsHandler(c);
 
-      expect(challengeStore.get().fetch).toHaveBeenCalled();
+      // Verify challenge was stored via RPC
+      expect(challengeStore.get().storeChallengeRpc).toHaveBeenCalled();
     });
   });
 

@@ -188,24 +188,18 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       attestationType: 'none',
     });
 
-    // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes)
+    // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes) (RPC)
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    await challengeStore.fetch(
-      new Request('https://challenge-store/challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: `passkey_reg:${user.id}`,
-          type: 'passkey_registration',
-          userId: user.id as string,
-          challenge: options.challenge,
-          ttl: 300, // 5 minutes
-          email,
-        }),
-      })
-    );
+    await challengeStore.storeChallengeRpc({
+      id: `passkey_reg:${user.id}`,
+      type: 'passkey_registration',
+      userId: user.id as string,
+      challenge: options.challenge,
+      ttl: 300, // 5 minutes
+      email,
+    });
 
     return c.json({
       options,
@@ -247,45 +241,26 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       );
     }
 
-    // Consume challenge from ChallengeStore DO (atomic operation)
+    // Consume challenge from ChallengeStore DO (atomic operation, RPC)
     // This prevents parallel replay attacks
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
     let challenge: string;
     try {
-      const consumeResponse = await challengeStore.fetch(
-        new Request('https://challenge-store/challenge/consume', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: `passkey_reg:${userId}`,
-            type: 'passkey_registration',
-            // No challenge value needed - DO will return it
-          }),
-        })
-      );
-
-      if (!consumeResponse.ok) {
-        const error = (await consumeResponse.json()) as { error_description?: string };
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: error.error_description || 'Challenge not found or expired',
-          },
-          400
-        );
-      }
-
-      const challengeData = (await consumeResponse.json()) as { challenge: string };
+      const challengeData = (await challengeStore.consumeChallengeRpc({
+        id: `passkey_reg:${userId}`,
+        type: 'passkey_registration',
+        // No challenge value needed - DO will return it
+      })) as { challenge: string };
       challenge = challengeData.challenge;
-    } catch (error) {
+    } catch {
       return c.json(
         {
-          error: 'server_error',
-          error_description: 'Failed to consume challenge',
+          error: 'invalid_request',
+          error_description: 'Challenge not found or expired',
         },
-        500
+        400
       );
     }
 
@@ -527,25 +502,19 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
       allowCredentials: allowCredentials.length > 0 ? (allowCredentials as any) : [],
     } as any);
 
-    // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes)
+    // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes) (RPC)
     const challengeId = crypto.randomUUID();
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    await challengeStore.fetch(
-      new Request('https://challenge-store/challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: `passkey_auth:${challengeId}`,
-          type: 'passkey_authentication',
-          userId: 'unknown', // Will be determined during verification
-          challenge: options.challenge,
-          ttl: 300, // 5 minutes
-          metadata: { email: email || null },
-        }),
-      })
-    );
+    await challengeStore.storeChallengeRpc({
+      id: `passkey_auth:${challengeId}`,
+      type: 'passkey_authentication',
+      userId: 'unknown', // Will be determined during verification
+      challenge: options.challenge,
+      ttl: 300, // 5 minutes
+      metadata: { email: email || null },
+    });
 
     return c.json({
       options,
@@ -586,43 +555,24 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Consume challenge from ChallengeStore DO (atomic operation)
+    // Consume challenge from ChallengeStore DO (atomic operation, RPC)
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
     let challenge: string;
     try {
-      const consumeResponse = await challengeStore.fetch(
-        new Request('https://challenge-store/challenge/consume', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: `passkey_auth:${challengeId}`,
-            type: 'passkey_authentication',
-          }),
-        })
-      );
-
-      if (!consumeResponse.ok) {
-        const error = (await consumeResponse.json()) as { error_description?: string };
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: error.error_description || 'Challenge not found or expired',
-          },
-          400
-        );
-      }
-
-      const challengeData = (await consumeResponse.json()) as { challenge: string };
+      const challengeData = (await challengeStore.consumeChallengeRpc({
+        id: `passkey_auth:${challengeId}`,
+        type: 'passkey_authentication',
+      })) as { challenge: string };
       challenge = challengeData.challenge;
-    } catch (error) {
+    } catch {
       return c.json(
         {
-          error: 'server_error',
-          error_description: 'Failed to consume challenge',
+          error: 'invalid_request',
+          error_description: 'Challenge not found or expired',
         },
-        500
+        400
       );
     }
 

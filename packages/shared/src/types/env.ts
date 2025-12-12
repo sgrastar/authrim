@@ -5,6 +5,7 @@ import type { AuthorizationCodeStore } from '../durable-objects/AuthorizationCod
 import type { RefreshTokenRotator } from '../durable-objects/RefreshTokenRotator';
 import type { RateLimiterCounter } from '../durable-objects/RateLimiterCounter';
 import type { PARRequestStore } from '../durable-objects/PARRequestStore';
+import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 
 /**
  * Cloudflare Workers Environment Bindings
@@ -40,7 +41,7 @@ export interface Env {
   SESSION_STORE: DurableObjectNamespace<SessionStore>;
   AUTH_CODE_STORE: DurableObjectNamespace<AuthorizationCodeStore>;
   REFRESH_TOKEN_ROTATOR: DurableObjectNamespace<RefreshTokenRotator>;
-  CHALLENGE_STORE: DurableObjectNamespace;
+  CHALLENGE_STORE: DurableObjectNamespace<ChallengeStore>;
   RATE_LIMITER: DurableObjectNamespace<RateLimiterCounter>; // #6: Atomic rate limiting
   USER_CODE_RATE_LIMITER: DurableObjectNamespace; // Device flow user code rate limiting
   PAR_REQUEST_STORE: DurableObjectNamespace<PARRequestStore>; // #11: PAR request_uri single-use
@@ -109,6 +110,13 @@ export interface Env {
   // Rate Limiting Override (for load testing)
   // Set to "loadTest" to use 10000 req/min instead of default limits
   RATE_LIMIT_PROFILE?: string;
+  // Set to "true" to completely disable rate limiting (benchmark mode)
+  RATE_LIMIT_DISABLED?: string;
+
+  // Test Endpoints Control (for load testing / conformance testing)
+  // Set to "true" to enable /api/admin/test/* endpoints
+  // Default: disabled (returns 404) for security in production
+  ENABLE_TEST_ENDPOINTS?: string;
 
   // RBAC Claims Configuration (Phase 2)
   // Comma-separated list of claims to include in tokens

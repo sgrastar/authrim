@@ -3,6 +3,12 @@
  *
  * Provides per-IP rate limiting to protect against abuse and DDoS attacks.
  * Uses Cloudflare KV for distributed rate limit tracking.
+ *
+ * Configuration Priority:
+ * 1. In-memory cache (10s TTL)
+ * 2. KV (AUTHRIM_CONFIG namespace) - Dynamic override without deployment
+ * 3. Environment variables (RATE_LIMIT_PROFILE)
+ * 4. Default profiles (RateLimitProfiles)
  */
 
 import type { Context, Next } from 'hono';
@@ -202,7 +208,7 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
 }
 
 /**
- * Pre-configured rate limit profiles
+ * Pre-configured rate limit profiles (defaults)
  */
 export const RateLimitProfiles = {
   /**
@@ -234,7 +240,8 @@ export const RateLimitProfiles = {
 
   /**
    * Load testing profile - very high limits
-   * 10000 requests per minute (effectively disabled)
+   * Default: 10000 requests per minute
+   * Can be overridden via KV: rate_limit_loadtest_max_requests, rate_limit_loadtest_window_seconds
    */
   loadTest: {
     maxRequests: 10000,
@@ -242,12 +249,124 @@ export const RateLimitProfiles = {
   },
 } as const;
 
+// ============================================================
+// KV-based Dynamic Rate Limit Configuration
+// ============================================================
+
 /**
- * Get rate limit profile with environment variable override
+ * Cached rate limit config to avoid repeated KV lookups.
+ * Cache duration: 10 seconds (same as shard count cache)
+ */
+interface CachedRateLimitConfig {
+  config: RateLimitConfig;
+  cachedAt: number;
+}
+const rateLimitConfigCache = new Map<string, CachedRateLimitConfig>();
+const RATE_LIMIT_CACHE_TTL_MS = 10000; // 10 seconds
+
+/**
+ * KV keys for rate limit configuration
+ *
+ * KV Key Format:
+ * - rate_limit_{profile}_max_requests - Max requests for profile
+ * - rate_limit_{profile}_window_seconds - Time window for profile
+ *
+ * Example:
+ * npx wrangler kv key put "rate_limit_loadtest_max_requests" "20000" --namespace-id=... --remote
+ * npx wrangler kv key put "rate_limit_loadtest_window_seconds" "60" --namespace-id=... --remote
+ */
+function getRateLimitKVKeys(profileName: string): {
+  maxRequestsKey: string;
+  windowSecondsKey: string;
+} {
+  const normalizedName = profileName
+    .toLowerCase()
+    .replace(/([A-Z])/g, '_$1')
+    .toLowerCase();
+  return {
+    maxRequestsKey: `rate_limit_${normalizedName}_max_requests`,
+    windowSecondsKey: `rate_limit_${normalizedName}_window_seconds`,
+  };
+}
+
+/**
+ * Get rate limit config from KV with fallback to defaults.
+ *
+ * Priority:
+ * 1. Cache (if within TTL)
+ * 2. KV (AUTHRIM_CONFIG namespace)
+ * 3. Environment variable (RATE_LIMIT_PROFILE for profile selection)
+ * 4. Default profile
+ *
+ * @param env - Environment object with KV bindings
+ * @param profileName - Profile name
+ * @returns Rate limit configuration
+ */
+async function getRateLimitConfigFromKV(
+  env: Env,
+  profileName: keyof typeof RateLimitProfiles
+): Promise<RateLimitConfig> {
+  const cacheKey = profileName;
+  const now = Date.now();
+
+  // Check cache first
+  const cached = rateLimitConfigCache.get(cacheKey);
+  if (cached && now - cached.cachedAt < RATE_LIMIT_CACHE_TTL_MS) {
+    return cached.config;
+  }
+
+  // Get default values from profile (widen type from const literals to number)
+  const defaultConfig = RateLimitProfiles[profileName];
+  let maxRequests: number = defaultConfig.maxRequests;
+  let windowSeconds: number = defaultConfig.windowSeconds;
+
+  // Try to get from KV
+  if (env.AUTHRIM_CONFIG) {
+    const { maxRequestsKey, windowSecondsKey } = getRateLimitKVKeys(profileName);
+
+    try {
+      const [maxRequestsValue, windowSecondsValue] = await Promise.all([
+        env.AUTHRIM_CONFIG.get(maxRequestsKey),
+        env.AUTHRIM_CONFIG.get(windowSecondsKey),
+      ]);
+
+      if (maxRequestsValue) {
+        const parsed = parseInt(maxRequestsValue, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          maxRequests = parsed;
+        }
+      }
+
+      if (windowSecondsValue) {
+        const parsed = parseInt(windowSecondsValue, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          windowSeconds = parsed;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to read rate limit config from KV:', error);
+      // Fall through to use defaults
+    }
+  }
+
+  const config: RateLimitConfig = {
+    maxRequests,
+    windowSeconds,
+  };
+
+  // Update cache
+  rateLimitConfigCache.set(cacheKey, { config, cachedAt: now });
+
+  return config;
+}
+
+/**
+ * Get rate limit profile with environment variable override (synchronous version)
  *
  * @param env - Environment bindings
  * @param profileName - Profile name (strict, moderate, lenient, loadTest)
  * @returns Rate limit config (may be overridden by RATE_LIMIT_PROFILE env var)
+ * @deprecated Use getRateLimitProfileAsync for KV-based dynamic configuration
  */
 export function getRateLimitProfile(
   env: { RATE_LIMIT_PROFILE?: string },
@@ -259,4 +378,45 @@ export function getRateLimitProfile(
   }
 
   return RateLimitProfiles[profileName];
+}
+
+/**
+ * Get rate limit profile with KV override support (async version)
+ *
+ * Priority:
+ * 1. Cache (10s TTL)
+ * 2. KV (AUTHRIM_CONFIG namespace) - rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds
+ * 3. Environment variable (RATE_LIMIT_PROFILE for profile selection)
+ * 4. Default profile values
+ *
+ * @param env - Environment bindings with AUTHRIM_CONFIG KV
+ * @param profileName - Profile name (strict, moderate, lenient, loadTest)
+ * @returns Rate limit config with KV overrides applied
+ *
+ * @example
+ * // Set via KV (no deployment required):
+ * // npx wrangler kv key put "rate_limit_loadtest_max_requests" "20000" --namespace-id=... --remote
+ *
+ * const config = await getRateLimitProfileAsync(env, 'loadTest');
+ * // config.maxRequests = 20000 (from KV) instead of default 10000
+ */
+export async function getRateLimitProfileAsync(
+  env: Env,
+  profileName: keyof typeof RateLimitProfiles
+): Promise<RateLimitConfig> {
+  // Check if a different profile is selected via environment variable
+  const effectiveProfile =
+    env.RATE_LIMIT_PROFILE && env.RATE_LIMIT_PROFILE in RateLimitProfiles
+      ? (env.RATE_LIMIT_PROFILE as keyof typeof RateLimitProfiles)
+      : profileName;
+
+  return await getRateLimitConfigFromKV(env, effectiveProfile);
+}
+
+/**
+ * Clear rate limit config cache.
+ * Useful for testing or when immediate KV changes are needed.
+ */
+export function clearRateLimitConfigCache(): void {
+  rateLimitConfigCache.clear();
 }

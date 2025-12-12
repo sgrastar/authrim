@@ -40,8 +40,70 @@
 	let externalProviders = $state<ExternalProvider[]>([]);
 	let externalProvidersLoading = $state(true);
 
+	// External IdP error code to user-friendly message mapping
+	const externalIdpErrorMessages: Record<string, { title: string; message: string; action?: string }> =
+		{
+			account_exists_link_required: {
+				title: 'Account Already Exists',
+				message:
+					'An account with this email already exists. Please log in with your existing credentials first.',
+				action: 'After logging in, you can link your external account from the settings page.'
+			},
+			email_not_verified: {
+				title: 'Email Not Verified',
+				message:
+					'The email from your external account is not verified. Please verify your email with the provider first.'
+			},
+			local_email_not_verified: {
+				title: 'Verify Your Email',
+				message:
+					'Your existing account email is not verified. Please verify your email first before linking external accounts.'
+			},
+			jit_provisioning_disabled: {
+				title: 'Registration Not Available',
+				message:
+					'New account registration via external providers is not available. Please register with email first or contact your administrator.'
+			},
+			no_account_found: {
+				title: 'No Account Found',
+				message: 'No account was found. Please register first.'
+			},
+			provider_error: {
+				title: 'Provider Error',
+				message: 'The external provider returned an error. Please try again later.'
+			},
+			callback_failed: {
+				title: 'Authentication Failed',
+				message: 'An error occurred during authentication. Please try again.'
+			}
+		};
+
+	// External IdP error info
+	let externalIdpError = $state<{ title: string; message: string; action?: string } | null>(null);
+
 	// Fetch external IdP providers and login challenge data on mount
 	onMount(async () => {
+		// Check for external IdP error in URL
+		const urlError = $page.url.searchParams.get('error');
+		if (urlError) {
+			const errorInfo = externalIdpErrorMessages[urlError];
+			if (errorInfo) {
+				externalIdpError = errorInfo;
+			} else {
+				// Fallback for unknown error codes
+				const errorDescription = $page.url.searchParams.get('error_description');
+				externalIdpError = {
+					title: 'Authentication Error',
+					message: errorDescription || 'An error occurred during external authentication.'
+				};
+			}
+			// Clear error params from URL without reloading
+			const newUrl = new URL(window.location.href);
+			newUrl.searchParams.delete('error');
+			newUrl.searchParams.delete('error_description');
+			window.history.replaceState({}, '', newUrl.toString());
+		}
+
 		// Check for challenge_id in URL (OAuth authorization flow)
 		const urlChallengeId = $page.url.searchParams.get('challenge_id');
 		if (urlChallengeId) {
@@ -313,7 +375,9 @@
 		<!-- Client Info Section (OIDC Dynamic OP - logo_uri, policy_uri, tos_uri) -->
 		{#if clientInfoLoading}
 			<!-- Loading skeleton -->
-			<Card class="mb-4 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 animate-pulse">
+			<Card
+				class="mb-4 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 animate-pulse"
+			>
 				<div class="flex items-center gap-4">
 					<div class="flex-shrink-0 h-12 w-12 bg-gray-300 dark:bg-gray-600 rounded-lg"></div>
 					<div class="flex-1">
@@ -393,6 +457,26 @@
 					{$LL.login_subtitle()}
 				</p>
 			</div>
+
+			<!-- External IdP Error Alert -->
+			{#if externalIdpError}
+				<Alert
+					variant="warning"
+					dismissible={true}
+					onDismiss={() => (externalIdpError = null)}
+					class="mb-4"
+				>
+					<div class="space-y-1">
+						<p class="font-semibold">{externalIdpError.title}</p>
+						<p class="text-sm">{externalIdpError.message}</p>
+						{#if externalIdpError.action}
+							<p class="text-sm text-gray-600 dark:text-gray-400 mt-2">
+								{externalIdpError.action}
+							</p>
+						{/if}
+					</div>
+				</Alert>
+			{/if}
 
 			<!-- Error Alert -->
 			{#if error}

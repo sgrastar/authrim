@@ -888,6 +888,7 @@ export const adminScimTokensAPI = {
  */
 interface ExternalIdPProvider {
 	id: string;
+	slug?: string; // User-friendly identifier (e.g., "google")
 	name: string;
 	providerType: 'oidc' | 'oauth2';
 	enabled: boolean;
@@ -922,6 +923,147 @@ export const externalIdpAPI = {
 		// This returns a redirect, so we need to handle it differently
 		const url = `${API_BASE_URL}/auth/external/${providerId}/start${query ? '?' + query : ''}`;
 		return { url };
+	}
+};
+
+// =============================================================================
+// External IdP Admin API (Provider Management)
+// =============================================================================
+
+/**
+ * External IdP Provider (Admin view with full details)
+ */
+interface ExternalIdPProviderAdmin {
+	id: string;
+	slug?: string; // User-friendly identifier (e.g., "google")
+	tenantId: string;
+	name: string;
+	providerType: 'oidc' | 'oauth2';
+	enabled: boolean;
+	priority: number;
+	issuer?: string;
+	clientId: string;
+	hasSecret: boolean;
+	authorizationEndpoint?: string;
+	tokenEndpoint?: string;
+	userinfoEndpoint?: string;
+	jwksUri?: string;
+	scopes: string;
+	attributeMapping: Record<string, string>;
+	autoLinkEmail: boolean;
+	jitProvisioning: boolean;
+	requireEmailVerified: boolean;
+	iconUrl?: string;
+	buttonColor?: string;
+	buttonText?: string;
+	createdAt: number;
+	updatedAt: number;
+}
+
+/**
+ * Create Provider Request
+ */
+interface CreateProviderRequest {
+	slug?: string; // User-friendly identifier (e.g., "google")
+	name: string;
+	provider_type?: 'oidc' | 'oauth2';
+	client_id: string;
+	client_secret: string;
+	issuer?: string;
+	scopes?: string;
+	enabled?: boolean;
+	priority?: number;
+	auto_link_email?: boolean;
+	jit_provisioning?: boolean;
+	require_email_verified?: boolean;
+	icon_url?: string;
+	button_color?: string;
+	button_text?: string;
+	authorization_endpoint?: string;
+	token_endpoint?: string;
+	userinfo_endpoint?: string;
+	jwks_uri?: string;
+	attribute_mapping?: Record<string, string>;
+	template?: 'google' | 'github' | 'microsoft';
+}
+
+/**
+ * Update Provider Request
+ */
+interface UpdateProviderRequest {
+	slug?: string; // User-friendly identifier (e.g., "google")
+	name?: string;
+	provider_type?: 'oidc' | 'oauth2';
+	client_id?: string;
+	client_secret?: string;
+	issuer?: string;
+	scopes?: string;
+	enabled?: boolean;
+	priority?: number;
+	auto_link_email?: boolean;
+	jit_provisioning?: boolean;
+	require_email_verified?: boolean;
+	icon_url?: string;
+	button_color?: string;
+	button_text?: string;
+	authorization_endpoint?: string;
+	token_endpoint?: string;
+	userinfo_endpoint?: string;
+	jwks_uri?: string;
+	attribute_mapping?: Record<string, string>;
+}
+
+/**
+ * External IdP Admin API
+ * Manages upstream identity providers (Google, GitHub, etc.)
+ */
+export const externalIdpAdminAPI = {
+	/**
+	 * List all providers
+	 */
+	async list(params: { tenant_id?: string } = {}) {
+		const queryParams = new URLSearchParams();
+		if (params.tenant_id) queryParams.set('tenant_id', params.tenant_id);
+		const query = queryParams.toString();
+		return apiFetch<{ providers: ExternalIdPProviderAdmin[] }>(
+			`/external-idp/admin/providers${query ? '?' + query : ''}`
+		);
+	},
+
+	/**
+	 * Get provider details
+	 */
+	async get(providerId: string) {
+		return apiFetch<ExternalIdPProviderAdmin>(`/external-idp/admin/providers/${providerId}`);
+	},
+
+	/**
+	 * Create new provider
+	 */
+	async create(data: CreateProviderRequest) {
+		return apiFetch<ExternalIdPProviderAdmin>('/external-idp/admin/providers', {
+			method: 'POST',
+			body: JSON.stringify(data)
+		});
+	},
+
+	/**
+	 * Update provider
+	 */
+	async update(providerId: string, data: UpdateProviderRequest) {
+		return apiFetch<ExternalIdPProviderAdmin>(`/external-idp/admin/providers/${providerId}`, {
+			method: 'PUT',
+			body: JSON.stringify(data)
+		});
+	},
+
+	/**
+	 * Delete provider
+	 */
+	async delete(providerId: string) {
+		return apiFetch<{ success: boolean }>(`/external-idp/admin/providers/${providerId}`, {
+			method: 'DELETE'
+		});
 	}
 };
 

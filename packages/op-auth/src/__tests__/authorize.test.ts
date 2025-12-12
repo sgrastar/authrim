@@ -101,6 +101,43 @@ function createMockDO() {
   };
 }
 
+/**
+ * Mock ChallengeStore Durable Object with RPC methods
+ */
+function createMockChallengeStore() {
+  const challenges = new Map<string, any>();
+
+  return {
+    idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-challenge-store-id' }),
+    get: vi.fn().mockReturnValue({
+      // RPC methods
+      storeChallengeRpc: vi.fn().mockImplementation(async (request: { id: string }) => {
+        challenges.set(request.id, request);
+        return { success: true };
+      }),
+      consumeChallengeRpc: vi.fn().mockImplementation(async (request: { id: string }) => {
+        const data = challenges.get(request.id);
+        if (data) {
+          challenges.delete(request.id);
+          return data;
+        }
+        throw new Error('Challenge not found');
+      }),
+      getChallengeRpc: vi.fn().mockImplementation(async (id: string) => {
+        return challenges.get(id) || null;
+      }),
+      deleteChallengeRpc: vi.fn().mockImplementation(async (id: string) => {
+        const existed = challenges.has(id);
+        challenges.delete(id);
+        return { deleted: existed };
+      }),
+      // Legacy fetch method (kept for backwards compatibility)
+      fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }))),
+    }),
+    _challenges: challenges,
+  };
+}
+
 // Type for error response
 type ErrorResponse = Record<string, unknown>;
 
@@ -125,7 +162,7 @@ function createMockEnv(): Env {
     SESSION_STORE: createMockDO() as unknown as Env['SESSION_STORE'],
     AUTH_CODE_STORE: createMockAuthCodeStore() as unknown as Env['AUTH_CODE_STORE'],
     REFRESH_TOKEN_ROTATOR: createMockDO() as unknown as Env['REFRESH_TOKEN_ROTATOR'],
-    CHALLENGE_STORE: createMockDO() as unknown as DurableObjectNamespace,
+    CHALLENGE_STORE: createMockChallengeStore() as unknown as Env['CHALLENGE_STORE'],
     RATE_LIMITER: createMockDO() as unknown as Env['RATE_LIMITER'],
     USER_CODE_RATE_LIMITER: createMockDO() as unknown as DurableObjectNamespace,
     PAR_REQUEST_STORE: createMockDO() as unknown as Env['PAR_REQUEST_STORE'],

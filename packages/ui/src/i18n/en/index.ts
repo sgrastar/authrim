@@ -139,6 +139,7 @@ const en = {
 	admin_sidebar_audit_log: 'Audit Log',
 	admin_sidebar_settings: 'Settings',
 	admin_sidebar_scim_tokens: 'SCIM Tokens',
+	admin_sidebar_identity_providers: 'Identity Providers',
 
 	admin_dashboard_title: 'Dashboard',
 	admin_dashboard_activeUsers: 'Active Users',

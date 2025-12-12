@@ -96,7 +96,7 @@ async function createOrGetUser(index) {
 }
 
 async function createSession(userId) {
-  const res = await fetch(`${BASE_URL}/api/admin/test-sessions`, {
+  const res = await fetch(`${BASE_URL}/api/admin/test/sessions`, {
     method: 'POST',
     headers: {
       ...adminAuthHeader,

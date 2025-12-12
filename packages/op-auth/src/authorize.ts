@@ -1598,45 +1598,39 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     (requiresReauthentication || (prompt?.includes('login') && sessionUserId)) &&
     _confirmed !== 'true'
   ) {
-    // Store authorization request parameters in ChallengeStore
+    // Store authorization request parameters in ChallengeStore (RPC)
     const challengeId = crypto.randomUUID();
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    await challengeStore.fetch(
-      new Request('https://challenge-store/challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: challengeId,
-          type: 'reauth',
-          userId: sessionUserId || 'anonymous',
-          challenge: challengeId,
-          ttl: 600, // 10 minutes
-          metadata: {
-            response_type,
-            client_id,
-            redirect_uri,
-            scope,
-            state,
-            nonce,
-            code_challenge,
-            code_challenge_method,
-            claims,
-            response_mode,
-            max_age,
-            prompt,
-            id_token_hint,
-            acr_values,
-            display,
-            ui_locales,
-            login_hint,
-            sessionUserId,
-            authTime, // Preserve original auth_time
-          },
-        }),
-      })
-    );
+    await challengeStore.storeChallengeRpc({
+      id: challengeId,
+      type: 'reauth',
+      userId: sessionUserId || 'anonymous',
+      challenge: challengeId,
+      ttl: 600, // 10 minutes
+      metadata: {
+        response_type,
+        client_id,
+        redirect_uri,
+        scope,
+        state,
+        nonce,
+        code_challenge,
+        code_challenge_method,
+        claims,
+        response_mode,
+        max_age,
+        prompt,
+        id_token_hint,
+        acr_values,
+        display,
+        ui_locales,
+        login_hint,
+        sessionUserId,
+        authTime, // Preserve original auth_time
+      },
+    });
 
     // Redirect to UI re-authentication screen (if UI_URL is configured)
     // Otherwise, redirect to local /authorize/confirm GET endpoint which will show the UI
@@ -1651,49 +1645,43 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // If no session exists and prompt is not 'none', redirect to login screen
   if (!sessionUserId && !prompt?.includes('none')) {
-    // Store authorization request parameters in ChallengeStore
+    // Store authorization request parameters in ChallengeStore (RPC)
     const challengeId = crypto.randomUUID();
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    await challengeStore.fetch(
-      new Request('https://challenge-store/challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: challengeId,
-          type: 'login',
-          userId: 'anonymous',
-          challenge: challengeId,
-          ttl: 600, // 10 minutes
-          metadata: {
-            response_type,
-            client_id,
-            redirect_uri,
-            scope,
-            state,
-            nonce,
-            code_challenge,
-            code_challenge_method,
-            claims,
-            response_mode,
-            max_age,
-            prompt,
-            id_token_hint,
-            acr_values,
-            display,
-            ui_locales,
-            login_hint,
-            // Client metadata for login page display (OIDC Dynamic OP requirement)
-            client_name: clientMetadata?.client_name || client_id,
-            logo_uri: clientMetadata?.logo_uri,
-            policy_uri: clientMetadata?.policy_uri,
-            tos_uri: clientMetadata?.tos_uri,
-            client_uri: clientMetadata?.client_uri,
-          },
-        }),
-      })
-    );
+    await challengeStore.storeChallengeRpc({
+      id: challengeId,
+      type: 'login',
+      userId: 'anonymous',
+      challenge: challengeId,
+      ttl: 600, // 10 minutes
+      metadata: {
+        response_type,
+        client_id,
+        redirect_uri,
+        scope,
+        state,
+        nonce,
+        code_challenge,
+        code_challenge_method,
+        claims,
+        response_mode,
+        max_age,
+        prompt,
+        id_token_hint,
+        acr_values,
+        display,
+        ui_locales,
+        login_hint,
+        // Client metadata for login page display (OIDC Dynamic OP requirement)
+        client_name: clientMetadata?.client_name || client_id,
+        logo_uri: clientMetadata?.logo_uri,
+        policy_uri: clientMetadata?.policy_uri,
+        tos_uri: clientMetadata?.tos_uri,
+        client_uri: clientMetadata?.client_uri,
+      },
+    });
 
     // Redirect to UI login screen (if UI_URL is configured)
     // Otherwise, redirect to local /authorize/login GET endpoint which will show the UI
@@ -1799,48 +1787,42 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           return sendError('consent_required', 'User consent is required');
         }
 
-        // Store authorization request parameters in ChallengeStore for consent flow
+        // Store authorization request parameters in ChallengeStore for consent flow (RPC)
         const challengeId = crypto.randomUUID();
         const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
         const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-        await challengeStore.fetch(
-          new Request('https://challenge-store/challenge', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: challengeId,
-              type: 'consent',
-              userId: sub,
-              challenge: challengeId,
-              ttl: 600, // 10 minutes
-              metadata: {
-                response_type,
-                client_id,
-                redirect_uri,
-                scope,
-                state,
-                nonce,
-                code_challenge,
-                code_challenge_method,
-                claims,
-                response_mode,
-                max_age,
-                prompt,
-                id_token_hint,
-                acr_values,
-                display,
-                ui_locales,
-                login_hint,
-                sessionUserId: sub,
-                authTime, // Preserve auth_time
-                // Phase 2-B RBAC extensions
-                org_id,
-                acting_as,
-              },
-            }),
-          })
-        );
+        await challengeStore.storeChallengeRpc({
+          id: challengeId,
+          type: 'consent',
+          userId: sub,
+          challenge: challengeId,
+          ttl: 600, // 10 minutes
+          metadata: {
+            response_type,
+            client_id,
+            redirect_uri,
+            scope,
+            state,
+            nonce,
+            code_challenge,
+            code_challenge_method,
+            claims,
+            response_mode,
+            max_age,
+            prompt,
+            id_token_hint,
+            acr_values,
+            display,
+            ui_locales,
+            login_hint,
+            sessionUserId: sub,
+            authTime, // Preserve auth_time
+            // Phase 2-B RBAC extensions
+            org_id,
+            acting_as,
+          },
+        });
 
         // Redirect to UI consent screen (if UI_URL is configured)
         const uiUrl = c.env.UI_URL;
@@ -2809,33 +2791,11 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
 </html>`);
   }
 
-  // POST request: Process login (stub - accepts any credentials)
+  // POST request: Process login (stub - accepts any credentials) (RPC)
   const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
   const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-  const consumeResponse = await challengeStore.fetch(
-    new Request('https://challenge-store/challenge/consume', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: challenge_id,
-        type: 'login',
-        challenge: challenge_id,
-      }),
-    })
-  );
-
-  if (!consumeResponse.ok) {
-    return c.json(
-      {
-        error: 'invalid_request',
-        error_description: 'Invalid or expired challenge',
-      },
-      400
-    );
-  }
-
-  const challengeData = (await consumeResponse.json()) as {
+  let challengeData: {
     userId: string;
     metadata?: {
       response_type?: string;
@@ -2851,6 +2811,22 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
       [key: string]: unknown;
     };
   };
+
+  try {
+    challengeData = await challengeStore.consumeChallengeRpc({
+      id: challenge_id,
+      type: 'login',
+      challenge: challenge_id,
+    });
+  } catch {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Invalid or expired challenge',
+      },
+      400
+    );
+  }
 
   const metadata = challengeData.metadata || {};
 
@@ -3126,33 +3102,11 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
 </html>`);
   }
 
-  // POST request: Process confirmation and redirect to /authorize
+  // POST request: Process confirmation and redirect to /authorize (RPC)
   const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
   const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-  const consumeResponse = await challengeStore.fetch(
-    new Request('https://challenge-store/challenge/consume', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: challenge_id,
-        type: 'reauth',
-        challenge: challenge_id,
-      }),
-    })
-  );
-
-  if (!consumeResponse.ok) {
-    return c.json(
-      {
-        error: 'invalid_request',
-        error_description: 'Invalid or expired challenge',
-      },
-      400
-    );
-  }
-
-  const challengeData = (await consumeResponse.json()) as {
+  let challengeData: {
     userId: string;
     metadata?: {
       response_type?: string;
@@ -3169,6 +3123,22 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
       [key: string]: unknown;
     };
   };
+
+  try {
+    challengeData = await challengeStore.consumeChallengeRpc({
+      id: challenge_id,
+      type: 'reauth',
+      challenge: challenge_id,
+    });
+  } catch {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Invalid or expired challenge',
+      },
+      400
+    );
+  }
 
   const metadata = challengeData.metadata || {};
 

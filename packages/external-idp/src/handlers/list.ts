@@ -20,11 +20,13 @@ export async function handleListProviders(c: Context<{ Bindings: Env }>): Promis
     const response: ProviderListResponse = {
       providers: providers.map((p) => ({
         id: p.id,
+        slug: p.slug, // For user-friendly callback URLs
         name: p.name,
         providerType: p.providerType,
         iconUrl: p.iconUrl,
         buttonColor: p.buttonColor,
         buttonText: p.buttonText,
+        enabled: true, // All providers from listEnabledProviders are enabled
       })),
     };
 

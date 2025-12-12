@@ -3,6 +3,7 @@ import type { Env } from '@authrim/shared';
 import {
   introspectTokenFromContext,
   getClient,
+  getCachedUser,
   encryptJWT,
   isUserInfoEncryptionRequired,
   getClientPublicKey,
@@ -132,8 +133,9 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     sub,
   };
 
-  // Fetch user data from D1 database
-  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(sub).first();
+  // Fetch user data from KV cache (falls back to D1 on cache miss)
+  // This dramatically reduces D1 calls under high load
+  const user = await getCachedUser(c.env, sub);
 
   if (!user) {
     return c.json(
@@ -145,17 +147,17 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  // Parse address JSON if present
+  // Parse address JSON if present (CachedUser stores address as JSON string)
   let address = null;
-  if (user.address_json) {
+  if (user.address) {
     try {
-      address = JSON.parse(user.address_json as string);
+      address = JSON.parse(user.address);
     } catch (error) {
       console.error('Failed to parse address JSON:', error);
     }
   }
 
-  // Map D1 user record to OIDC userinfo claims
+  // Map cached user record to OIDC userinfo claims
   const userData = {
     name: user.name || undefined,
     family_name: user.family_name || undefined,
@@ -172,14 +174,14 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     locale: user.locale || undefined,
     // OIDC spec requires updated_at in seconds; convert from milliseconds if needed
     updated_at: user.updated_at
-      ? (user.updated_at as number) >= 1e12
-        ? Math.floor((user.updated_at as number) / 1000)
-        : (user.updated_at as number)
+      ? user.updated_at >= 1e12
+        ? Math.floor(user.updated_at / 1000)
+        : user.updated_at
       : Math.floor(Date.now() / 1000),
     email: user.email || undefined,
-    email_verified: user.email_verified === 1,
+    email_verified: user.email_verified,
     phone_number: user.phone_number || undefined,
-    phone_number_verified: user.phone_number_verified === 1,
+    phone_number_verified: user.phone_number_verified,
     address: address || undefined,
   };
 

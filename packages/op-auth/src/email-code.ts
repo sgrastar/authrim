@@ -127,30 +127,24 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
     );
     const emailHash = await hashEmail(email.toLowerCase());
 
-    // Store in ChallengeStore DO with TTL (5 minutes)
+    // Store in ChallengeStore DO with TTL (5 minutes) (RPC)
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
-    await challengeStore.fetch(
-      new Request('https://challenge-store/challenge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: `email_code:${otpSessionId}`,
-          type: 'email_code',
-          userId: user.id as string,
-          challenge: codeHash, // Store hash, not plaintext
-          ttl: EMAIL_CODE_TTL, // 5 minutes
-          email: email.toLowerCase(),
-          metadata: {
-            email_hash: emailHash,
-            otp_session_id: otpSessionId,
-            issued_at: issuedAt,
-            purpose: 'login',
-          },
-        }),
-      })
-    );
+    await challengeStore.storeChallengeRpc({
+      id: `email_code:${otpSessionId}`,
+      type: 'email_code',
+      userId: user.id as string,
+      challenge: codeHash, // Store hash, not plaintext
+      ttl: EMAIL_CODE_TTL, // 5 minutes
+      email: email.toLowerCase(),
+      metadata: {
+        email_hash: emailHash,
+        otp_session_id: otpSessionId,
+        issued_at: issuedAt,
+        purpose: 'login',
+      },
+    });
 
     // Set OTP session cookie
     setCookie(c, OTP_SESSION_COOKIE, otpSessionId, {
@@ -279,7 +273,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Get challenge from ChallengeStore
+    // Get challenge from ChallengeStore (RPC)
     const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
     const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
 
@@ -296,14 +290,10 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
     };
 
     try {
-      // Get challenge info first (without consuming)
-      const getResponse = await challengeStore.fetch(
-        new Request(`https://challenge-store/challenge/email_code:${otpSessionId}`, {
-          method: 'GET',
-        })
-      );
+      // Get challenge info first (without consuming) (RPC)
+      const challengeInfo = await challengeStore.getChallengeRpc(`email_code:${otpSessionId}`);
 
-      if (!getResponse.ok) {
+      if (!challengeInfo) {
         return c.json(
           {
             error: 'invalid_code',
@@ -313,13 +303,9 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      const challengeInfo = (await getResponse.json()) as {
-        userId: string;
-        consumed: boolean;
-        expiresAt: number;
-      };
-
-      if (challengeInfo.consumed) {
+      // Type assertion for challengeInfo (Challenge type from ChallengeStore)
+      const typedChallengeInfo = challengeInfo as { consumed: boolean };
+      if (typedChallengeInfo.consumed) {
         return c.json(
           {
             error: 'invalid_code',
@@ -329,30 +315,11 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      // Now consume the challenge atomically
-      const consumeResponse = await challengeStore.fetch(
-        new Request('https://challenge-store/challenge/consume', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: `email_code:${otpSessionId}`,
-            type: 'email_code',
-          }),
-        })
-      );
-
-      if (!consumeResponse.ok) {
-        const error = (await consumeResponse.json()) as { error_description?: string };
-        return c.json(
-          {
-            error: 'invalid_code',
-            error_description: error.error_description || 'Invalid or expired code',
-          },
-          400
-        );
-      }
-
-      challengeData = (await consumeResponse.json()) as typeof challengeData;
+      // Now consume the challenge atomically (RPC)
+      challengeData = (await challengeStore.consumeChallengeRpc({
+        id: `email_code:${otpSessionId}`,
+        type: 'email_code',
+      })) as typeof challengeData;
     } catch (error) {
       console.error('Challenge store error:', error);
       return c.json(
@@ -468,6 +435,15 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       secure: true,
       sameSite: 'Lax',
       maxAge: 0,
+    });
+
+    // Set authentication session cookie
+    setCookie(c, 'authrim_session', sessionId, {
+      path: '/',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax',
+      maxAge: 24 * 60 * 60, // 24 hours (matches session TTL)
     });
 
     return c.json({

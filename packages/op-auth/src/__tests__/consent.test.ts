@@ -41,6 +41,28 @@ function createMockChallengeStore(challengeData?: any) {
   return {
     idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-id' }),
     get: vi.fn().mockReturnValue({
+      // RPC methods (new interface)
+      storeChallengeRpc: vi.fn().mockImplementation(async (request: { id: string }) => {
+        challenges.set(request.id, request);
+        return { success: true };
+      }),
+      consumeChallengeRpc: vi.fn().mockImplementation(async (request: { id: string }) => {
+        const data = challenges.get(request.id);
+        if (data) {
+          challenges.delete(request.id);
+          return data;
+        }
+        throw new Error('Challenge not found');
+      }),
+      getChallengeRpc: vi.fn().mockImplementation(async (id: string) => {
+        return challenges.get(id) || null;
+      }),
+      deleteChallengeRpc: vi.fn().mockImplementation(async (id: string) => {
+        const existed = challenges.has(id);
+        challenges.delete(id);
+        return { deleted: existed };
+      }),
+      // Legacy fetch method (kept for backwards compatibility)
       fetch: vi.fn().mockImplementation(async (request: Request) => {
         const url = new URL(request.url);
         const path = url.pathname;

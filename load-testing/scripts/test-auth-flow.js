@@ -2,7 +2,7 @@
  * 認証フロー全体の負荷テスト（事前データ不要版）
  *
  * テストフロー:
- * 1. テストセッション作成 (POST /api/admin/test-sessions)
+ * 1. テストセッション作成 (POST /api/admin/test/sessions)
  * 2. 認可コード取得 (GET /authorize)
  * 3. トークン交換 (POST /token)
  *
@@ -388,7 +388,7 @@ export default function (data) {
   });
 
   const sessionRes = http.post(
-    `${BASE_URL}/api/admin/test-sessions`,
+    `${BASE_URL}/api/admin/test/sessions`,
     sessionPayload,
     {
       headers: {

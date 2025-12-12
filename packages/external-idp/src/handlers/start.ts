@@ -6,7 +6,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
 import { getSessionStoreBySessionId, isShardedSessionId } from '@authrim/shared';
-import { getProviderByName, getProvider } from '../services/provider-store';
+import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
 import { generatePKCE, generateState, generateNonce } from '../utils/pkce';
 import { storeAuthState, getStateExpiresAt } from '../utils/state';
@@ -30,11 +30,8 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     const loginHint = c.req.query('login_hint');
     const tenantId = c.req.query('tenant_id') || 'default';
 
-    // 1. Get provider configuration (by ID or name)
-    let provider = await getProvider(c.env, providerIdOrName);
-    if (!provider) {
-      provider = await getProviderByName(c.env, providerIdOrName, tenantId);
-    }
+    // 1. Get provider configuration (by slug or ID)
+    const provider = await getProviderByIdOrSlug(c.env, providerIdOrName, tenantId);
 
     if (!provider || !provider.enabled) {
       return c.json(
@@ -74,8 +71,9 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // 4. Decrypt client secret
     const clientSecret = await decryptClientSecret(c.env, provider.clientSecretEncrypted);
 
-    // 5. Build callback URL
-    const callbackUri = `${c.env.ISSUER_URL}/auth/external/${provider.id}/callback`;
+    // 5. Build callback URL (use slug if available for cleaner URLs)
+    const providerIdentifier = provider.slug || provider.id;
+    const callbackUri = `${c.env.ISSUER_URL}/auth/external/${providerIdentifier}/callback`;
 
     // 6. Store state in D1
     await storeAuthState(c.env, {

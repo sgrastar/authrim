@@ -12,6 +12,7 @@ export type ProviderType = 'oidc' | 'oauth2';
 export interface UpstreamProvider {
   id: string;
   tenantId: string;
+  slug?: string; // User-friendly identifier for callback URLs (e.g., "google")
   name: string;
   providerType: ProviderType;
   enabled: boolean;
@@ -163,11 +164,13 @@ export interface HandleIdentityResult {
 export interface ProviderListResponse {
   providers: Array<{
     id: string;
+    slug?: string; // User-friendly identifier for URLs
     name: string;
     providerType: ProviderType;
     iconUrl?: string;
     buttonColor?: string;
     buttonText?: string;
+    enabled: boolean;
   }>;
 }
 
@@ -180,4 +183,75 @@ export interface LinkedIdentityListResponse {
     linkedAt: number;
     lastLoginAt?: number;
   }>;
+}
+
+// =============================================================================
+// External IdP Error Codes
+// =============================================================================
+
+/**
+ * Error codes for external IdP authentication flows
+ * These codes are returned to the UI for user-friendly error messages
+ */
+export const ExternalIdPErrorCode = {
+  /**
+   * An account with this email already exists.
+   * User should log in with existing credentials first, then link the external account.
+   * Safe to show: User has already authenticated with the external provider.
+   */
+  ACCOUNT_EXISTS_LINK_REQUIRED: 'account_exists_link_required',
+
+  /**
+   * The external provider returned an unverified email.
+   * We require verified emails for security.
+   * Safe to show: Generic security message, no email enumeration risk.
+   */
+  EMAIL_NOT_VERIFIED: 'email_not_verified',
+
+  /**
+   * JIT (Just-In-Time) provisioning is disabled.
+   * New account creation is not allowed via external providers.
+   * Safe to show: Policy information, no sensitive data.
+   */
+  JIT_PROVISIONING_DISABLED: 'jit_provisioning_disabled',
+
+  /**
+   * No account found and automatic linking/provisioning not available.
+   * User needs to register first or contact admin.
+   * Safe to show: Generic "no account" message.
+   */
+  NO_ACCOUNT_FOUND: 'no_account_found',
+
+  /**
+   * The external provider returned an error.
+   * Could be access_denied, invalid_scope, etc.
+   */
+  PROVIDER_ERROR: 'provider_error',
+
+  /**
+   * Internal error during callback processing.
+   */
+  CALLBACK_FAILED: 'callback_failed',
+
+  /**
+   * Identity stitching would auto-link, but email is not verified on Authrim side.
+   * User should verify their email first.
+   */
+  LOCAL_EMAIL_NOT_VERIFIED: 'local_email_not_verified',
+} as const;
+
+export type ExternalIdPErrorCode = (typeof ExternalIdPErrorCode)[keyof typeof ExternalIdPErrorCode];
+
+/**
+ * Custom error class for external IdP operations
+ */
+export class ExternalIdPError extends Error {
+  constructor(
+    public readonly code: ExternalIdPErrorCode,
+    message: string,
+    public readonly details?: Record<string, unknown>
+  ) {
+    super(message);
+    this.name = 'ExternalIdPError';
+  }
 }

@@ -5,7 +5,7 @@ import { logger } from 'hono/logger';
 import type { Env } from '@authrim/shared';
 import {
   rateLimitMiddleware,
-  getRateLimitProfile,
+  getRateLimitProfileAsync,
   versionCheckMiddleware,
   requestContextMiddleware,
 } from '@authrim/shared';
@@ -57,9 +57,11 @@ app.use(
   })
 );
 
-// Rate limiting for token endpoint (strict, overridable via RATE_LIMIT_PROFILE env var)
+// Rate limiting for token endpoint
+// Configurable via KV (rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds)
+// or RATE_LIMIT_PROFILE env var for profile selection
 app.use('/token', async (c, next) => {
-  const profile = getRateLimitProfile(c.env, 'strict');
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/token'],

@@ -6,11 +6,12 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
 import { getSessionStoreForNewSession } from '@authrim/shared';
-import { getProvider } from '../services/provider-store';
+import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
 import { consumeAuthState } from '../utils/state';
 import { handleIdentity } from '../services/identity-stitching';
 import { decrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
+import { ExternalIdPError, ExternalIdPErrorCode } from '../types';
 
 /**
  * Handle OAuth callback from external IdP
@@ -22,11 +23,12 @@ import { decrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
  * - error_description: Error description
  */
 export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const providerId = c.req.param('provider');
+  const providerIdOrSlug = c.req.param('provider');
   const code = c.req.query('code');
   const state = c.req.query('state');
   const error = c.req.query('error');
   const errorDescription = c.req.query('error_description');
+  const tenantId = c.req.query('tenant_id') || 'default';
 
   // Handle provider errors
   if (error) {
@@ -39,27 +41,29 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
   }
 
   try {
-    // 1. Validate state and get stored data
+    // 1. Get provider configuration first (by slug or ID)
+    const provider = await getProviderByIdOrSlug(c.env, providerIdOrSlug, tenantId);
+    if (!provider) {
+      return redirectWithError(c, 'unknown_provider', 'Provider not found');
+    }
+
+    // 2. Validate state and get stored data
     const authState = await consumeAuthState(c.env, state);
     if (!authState) {
       return redirectWithError(c, 'invalid_state', 'State validation failed or expired');
     }
 
-    if (authState.providerId !== providerId) {
+    // Verify the provider ID matches (authState always stores the actual ID)
+    if (authState.providerId !== provider.id) {
       return redirectWithError(c, 'invalid_state', 'Provider mismatch');
-    }
-
-    // 2. Get provider configuration
-    const provider = await getProvider(c.env, providerId);
-    if (!provider) {
-      return redirectWithError(c, 'unknown_provider', 'Provider not found');
     }
 
     // 3. Decrypt client secret
     const clientSecret = await decryptClientSecret(c.env, provider.clientSecretEncrypted);
 
-    // 4. Build callback URL (same as in start)
-    const callbackUri = `${c.env.ISSUER_URL}/auth/external/${provider.id}/callback`;
+    // 4. Build callback URL (use slug if available, same as in start)
+    const providerIdentifier = provider.slug || provider.id;
+    const callbackUri = `${c.env.ISSUER_URL}/auth/external/${providerIdentifier}/callback`;
 
     // 5. Exchange code for tokens
     const client = OIDCRPClient.fromProvider(provider, callbackUri, clientSecret);
@@ -108,18 +112,27 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
   } catch (error) {
     console.error('Callback error:', error);
 
-    if (error instanceof Error) {
-      if (error.message === 'no_account_found') {
-        return redirectWithError(
-          c,
-          'account_required',
-          'No account found. Please register first or enable JIT provisioning.'
-        );
-      }
-      return redirectWithError(c, 'callback_failed', error.message);
+    // Handle specific ExternalIdPError with appropriate error codes
+    if (error instanceof ExternalIdPError) {
+      return redirectWithError(c, error.code, error.message);
     }
 
-    return redirectWithError(c, 'internal_error', 'Callback processing failed');
+    // Handle generic errors
+    if (error instanceof Error) {
+      // Log for debugging but return a generic message
+      console.error('Unexpected error in callback:', error.stack);
+      return redirectWithError(
+        c,
+        ExternalIdPErrorCode.CALLBACK_FAILED,
+        'An error occurred during authentication. Please try again.'
+      );
+    }
+
+    return redirectWithError(
+      c,
+      ExternalIdPErrorCode.CALLBACK_FAILED,
+      'Authentication failed. Please try again.'
+    );
   }
 }
 

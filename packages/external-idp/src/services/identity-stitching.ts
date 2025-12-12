@@ -4,13 +4,15 @@
  */
 
 import type { Env } from '@authrim/shared';
-import type {
-  HandleIdentityParams,
-  HandleIdentityResult,
-  StitchingConfig,
-  UpstreamProvider,
-  UserInfo,
-  TokenResponse,
+import {
+  ExternalIdPError,
+  ExternalIdPErrorCode,
+  type HandleIdentityParams,
+  type HandleIdentityResult,
+  type StitchingConfig,
+  type UpstreamProvider,
+  type UserInfo,
+  type TokenResponse,
 } from '../types';
 import {
   findLinkedIdentity,
@@ -109,15 +111,27 @@ export async function handleIdentity(
   // 3. Try identity stitching by email
   const stitchingConfig = await getStitchingConfig(env);
 
-  if (
-    stitchingConfig.enabled &&
-    provider.autoLinkEmail &&
-    userInfo.email &&
-    (!stitchingConfig.requireVerifiedEmail || userInfo.email_verified)
-  ) {
-    const existingUser = await findUserByEmail(env, userInfo.email, tenantId);
+  // Check if user with this email already exists
+  const existingUser = userInfo.email ? await findUserByEmail(env, userInfo.email, tenantId) : null;
 
-    if (existingUser && existingUser.email_verified) {
+  if (existingUser) {
+    // User with this email exists - check if we can auto-link
+    if (
+      stitchingConfig.enabled &&
+      provider.autoLinkEmail &&
+      userInfo.email &&
+      userInfo.email_verified
+    ) {
+      // Check if local email is verified
+      if (!existingUser.email_verified) {
+        // Local account email not verified - cannot safely auto-link
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.LOCAL_EMAIL_NOT_VERIFIED,
+          'Your existing account email is not verified. Please verify your email first.',
+          { email: userInfo.email }
+        );
+      }
+
       // Auto-link to existing user
       const linkedIdentityId = await createLinkedIdentity(env, {
         userId: existingUser.id,
@@ -150,10 +164,26 @@ export async function handleIdentity(
         stitchedFromExisting: true,
       };
     }
+
+    // Stitching disabled or conditions not met - user must link manually
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.ACCOUNT_EXISTS_LINK_REQUIRED,
+      'An account with this email already exists. Please log in with your existing credentials first, then link your account.',
+      { email: userInfo.email, providerName: provider.name }
+    );
   }
 
-  // 4. JIT Provisioning - Create new user
+  // 4. No existing user - try JIT Provisioning
   if (provider.jitProvisioning) {
+    // Check if provider email is verified (if we require it)
+    if (stitchingConfig.requireVerifiedEmail && userInfo.email && !userInfo.email_verified) {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.EMAIL_NOT_VERIFIED,
+        'The email from your external account is not verified. Please verify your email with the provider first.',
+        { providerName: provider.name }
+      );
+    }
+
     const newUser = await createUserFromExternalIdentity(env, {
       email: userInfo.email,
       emailVerified: userInfo.email_verified || false,
@@ -197,8 +227,12 @@ export async function handleIdentity(
     };
   }
 
-  // 5. No account found and JIT disabled
-  throw new Error('no_account_found');
+  // 5. JIT disabled and no existing account
+  throw new ExternalIdPError(
+    ExternalIdPErrorCode.JIT_PROVISIONING_DISABLED,
+    'New account registration via external providers is not available. Please register first or contact your administrator.',
+    { providerName: provider.name }
+  );
 }
 
 // =============================================================================

@@ -19,6 +19,33 @@ export async function getProvider(env: Env, id: string): Promise<UpstreamProvide
 }
 
 /**
+ * Get provider by ID or slug (for routing)
+ * Tries to find by slug first, then by ID
+ */
+export async function getProviderByIdOrSlug(
+  env: Env,
+  idOrSlug: string,
+  tenantId = 'default'
+): Promise<UpstreamProvider | null> {
+  // First try by slug (case-insensitive)
+  let result = await env.DB.prepare(
+    `SELECT * FROM upstream_providers WHERE LOWER(slug) = LOWER(?) AND tenant_id = ?`
+  )
+    .bind(idOrSlug, tenantId)
+    .first<DbUpstreamProvider>();
+
+  // If not found by slug, try by ID
+  if (!result) {
+    result = await env.DB.prepare(`SELECT * FROM upstream_providers WHERE id = ?`)
+      .bind(idOrSlug)
+      .first<DbUpstreamProvider>();
+  }
+
+  if (!result) return null;
+  return mapDbToProvider(result);
+}
+
+/**
  * Get provider by name (for routing)
  */
 export async function getProviderByName(
@@ -80,17 +107,18 @@ export async function createProvider(
 
   await env.DB.prepare(
     `INSERT INTO upstream_providers (
-      id, tenant_id, name, provider_type, enabled, priority,
+      id, tenant_id, slug, name, provider_type, enabled, priority,
       issuer, client_id, client_secret_encrypted,
       authorization_endpoint, token_endpoint, userinfo_endpoint, jwks_uri,
       scopes, attribute_mapping, auto_link_email, jit_provisioning, require_email_verified,
       provider_quirks, icon_url, button_color, button_text,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id,
       provider.tenantId || 'default',
+      provider.slug || null,
       provider.name,
       provider.providerType,
       provider.enabled ? 1 : 0,
@@ -141,7 +169,7 @@ export async function updateProvider(
 
   await env.DB.prepare(
     `UPDATE upstream_providers SET
-      name = ?, provider_type = ?, enabled = ?, priority = ?,
+      slug = ?, name = ?, provider_type = ?, enabled = ?, priority = ?,
       issuer = ?, client_id = ?, client_secret_encrypted = ?,
       authorization_endpoint = ?, token_endpoint = ?, userinfo_endpoint = ?, jwks_uri = ?,
       scopes = ?, attribute_mapping = ?, auto_link_email = ?, jit_provisioning = ?, require_email_verified = ?,
@@ -150,6 +178,7 @@ export async function updateProvider(
     WHERE id = ?`
   )
     .bind(
+      updated.slug || null,
       updated.name,
       updated.providerType,
       updated.enabled ? 1 : 0,
@@ -193,6 +222,7 @@ export async function deleteProvider(env: Env, id: string): Promise<boolean> {
 interface DbUpstreamProvider {
   id: string;
   tenant_id: string;
+  slug: string | null;
   name: string;
   provider_type: string;
   enabled: number;
@@ -221,6 +251,7 @@ function mapDbToProvider(db: DbUpstreamProvider): UpstreamProvider {
   return {
     id: db.id,
     tenantId: db.tenant_id,
+    slug: db.slug || undefined,
     name: db.name,
     providerType: db.provider_type as 'oidc' | 'oauth2',
     enabled: db.enabled === 1,

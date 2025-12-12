@@ -57,7 +57,7 @@ function generateSecureRandomString(length = 96) {
 async function fetchSigningKey() {
   console.log('🔑 Fetching signing key from Admin API...');
 
-  const res = await fetch(`${BASE_URL}/api/admin/signing-key`, {
+  const res = await fetch(`${BASE_URL}/api/admin/test/signing-key`, {
     method: 'GET',
     headers: adminAuthHeader,
   });
@@ -95,7 +95,7 @@ async function createRefreshToken(privateKey, kid, claims, expiresIn = 2592000) 
  * Register token with RefreshTokenRotator via Admin API
  */
 async function registerToken(token, userId, clientId, scope, ttl = 2592000) {
-  const res = await fetch(`${BASE_URL}/api/admin/tokens/register`, {
+  const res = await fetch(`${BASE_URL}/api/admin/test/tokens`, {
     method: 'POST',
     headers: {
       ...adminAuthHeader,

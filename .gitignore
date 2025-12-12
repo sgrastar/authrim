@@ -28,6 +28,7 @@ dist/
 *.sw?
 .DS_Store
 /packages/ui/project.inlang/project_id
+private/
 
 # Test coverage
 coverage/
@@ -83,3 +84,6 @@ conformance/*/results/
 conformance/scripts/screenshots/
 conformance/OIDC All Tests/
 load-testing/.env.k6cloud
+
+# Load testing seed data (large files, in use locally)
+load-testing/seeds/

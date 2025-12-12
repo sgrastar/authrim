@@ -5,7 +5,7 @@ import { logger } from 'hono/logger';
 import type { Env } from '@authrim/shared';
 import {
   rateLimitMiddleware,
-  getRateLimitProfile,
+  getRateLimitProfileAsync,
   isAllowedOrigin,
   parseAllowedOrigins,
   versionCheckMiddleware,
@@ -106,9 +106,11 @@ app.use('*', async (c, next) => {
   return corsMiddleware(c, next);
 });
 
-// Rate limiting for sensitive endpoints (overridable via RATE_LIMIT_PROFILE env var)
+// Rate limiting for sensitive endpoints
+// Configurable via KV (rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds)
+// or RATE_LIMIT_PROFILE env var for profile selection
 app.use('/authorize', async (c, next) => {
-  const profile = getRateLimitProfile(c.env, 'moderate');
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/authorize'],
@@ -116,7 +118,7 @@ app.use('/authorize', async (c, next) => {
 });
 
 app.use('/as/par', async (c, next) => {
-  const profile = getRateLimitProfile(c.env, 'strict');
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/as/par'],

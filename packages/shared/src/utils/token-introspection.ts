@@ -58,15 +58,27 @@ export interface TokenValidationRequest {
   body?: URLSearchParams;
 }
 
+// ===== Key Caching for Performance Optimization =====
+// Cache public keys to avoid expensive KeyManager DO calls on every request.
+// Public keys are safe to cache (public information) and dramatically reduce
+// DO access under high load. TTL of 30 minutes is safe with 24h key rotation.
+
+/** Cache TTL for public keys from KeyManager DO (30 minutes) */
+const KEY_MANAGER_CACHE_TTL = 30 * 60 * 1000;
+
+/** Cached public keys from KeyManager DO */
+let cachedKeyManagerKeys: Array<JWK & { kid?: string }> | null = null;
+let cachedKeyManagerTimestamp = 0;
+
 /**
- * Cached public key for token verification
+ * Cached public key for token verification (from PUBLIC_JWK_JSON fallback)
  * Module-level cache for performance optimization
  */
 let cachedPublicKey: CryptoKey | null = null;
 let cachedKeyId: string | null = null;
 
 /**
- * Get or create cached public key for token verification
+ * Get or create cached public key for token verification (from PUBLIC_JWK_JSON)
  */
 async function getPublicKey(publicJWKJson: string, keyId: string): Promise<CryptoKey> {
   if (cachedPublicKey && cachedKeyId === keyId) {
@@ -84,6 +96,48 @@ async function getPublicKey(publicJWKJson: string, keyId: string): Promise<Crypt
   cachedKeyId = keyId;
 
   return importedKey;
+}
+
+/**
+ * Get public keys from KeyManager DO with caching
+ *
+ * Performance optimization: Caches all public keys from KeyManager DO to avoid
+ * expensive DO calls on every request. Cache TTL is 30 minutes, which is safe
+ * with 24-hour key rotation (keys have 48h overlap period).
+ *
+ * @param env - Environment bindings with KEY_MANAGER DO
+ * @returns Array of JWK public keys, or null if unavailable
+ */
+async function getKeysFromKeyManager(env: Env): Promise<Array<JWK & { kid?: string }> | null> {
+  const now = Date.now();
+
+  // Check cache first
+  if (cachedKeyManagerKeys && now - cachedKeyManagerTimestamp < KEY_MANAGER_CACHE_TTL) {
+    return cachedKeyManagerKeys;
+  }
+
+  // Cache miss: fetch from KeyManager DO
+  if (!env.KEY_MANAGER) {
+    return null;
+  }
+
+  try {
+    const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+    const keyManager = env.KEY_MANAGER.get(keyManagerId);
+    const keys = await keyManager.getAllPublicKeysRpc();
+
+    if (keys && keys.length > 0) {
+      // Update cache
+      cachedKeyManagerKeys = keys as Array<JWK & { kid?: string }>;
+      cachedKeyManagerTimestamp = now;
+      return cachedKeyManagerKeys;
+    }
+
+    return null;
+  } catch (error) {
+    console.warn('Failed to fetch keys from KeyManager DO:', error);
+    return null;
+  }
 }
 
 /**
@@ -247,25 +301,18 @@ export async function introspectToken(
 
   let publicKey: CryptoKey | null = null;
 
-  // Try to fetch JWKS from KeyManager DO via RPC
-  if (request.env.KEY_MANAGER) {
-    try {
-      const keyManagerId = request.env.KEY_MANAGER.idFromName('default-v3');
-      const keyManager = request.env.KEY_MANAGER.get(keyManagerId);
-      const keys = await keyManager.getAllPublicKeysRpc();
-
-      if (keys && keys.length > 0) {
-        // Find key by kid
-        const jwk = kid ? keys.find((k: { kid?: string }) => k.kid === kid) : keys[0];
-        if (jwk) {
-          publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
-        }
+  // Try to fetch JWKS from KeyManager DO with caching (30-minute TTL)
+  // This dramatically reduces DO calls under high load while maintaining security
+  const keys = await getKeysFromKeyManager(request.env);
+  if (keys && keys.length > 0) {
+    // Find key by kid (key ID from JWT header)
+    const jwk = kid ? keys.find((k) => k.kid === kid) : keys[0];
+    if (jwk) {
+      try {
+        publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
+      } catch (importError) {
+        console.warn('Failed to import JWK from KeyManager:', importError);
       }
-    } catch (kmError) {
-      console.warn(
-        'Failed to fetch key from KeyManager, falling back to PUBLIC_JWK_JSON:',
-        kmError
-      );
     }
   }
 

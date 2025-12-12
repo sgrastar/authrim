@@ -506,6 +506,10 @@ type RootTranslation = {
 	 */
 	admin_sidebar_scim_tokens: string;
 	/**
+	 * I​d​e​n​t​i​t​y​ ​P​r​o​v​i​d​e​r​s
+	 */
+	admin_sidebar_identity_providers: string;
+	/**
 	 * D​a​s​h​b​o​a​r​d
 	 */
 	admin_dashboard_title: string;
@@ -1352,6 +1356,10 @@ export type TranslationFunctions = {
 	 * SCIM Tokens
 	 */
 	admin_sidebar_scim_tokens: () => LocalizedString;
+	/**
+	 * Identity Providers
+	 */
+	admin_sidebar_identity_providers: () => LocalizedString;
 	/**
 	 * Dashboard
 	 */
