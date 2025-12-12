@@ -19,6 +19,7 @@ import {
   getCachedUser,
   getCachedConsent,
   invalidateConsentCache,
+  getChallengeStoreByChallengeId,
 } from '@authrim/shared';
 import type { CachedUser, CachedConsent } from '@authrim/shared';
 import type { Session, PARRequestData } from '@authrim/shared';
@@ -1599,9 +1600,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     _confirmed !== 'true'
   ) {
     // Store authorization request parameters in ChallengeStore (RPC)
+    // Use challengeId-based sharding for better scalability
     const challengeId = crypto.randomUUID();
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
 
     await challengeStore.storeChallengeRpc({
       id: challengeId,
@@ -1646,9 +1647,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // If no session exists and prompt is not 'none', redirect to login screen
   if (!sessionUserId && !prompt?.includes('none')) {
     // Store authorization request parameters in ChallengeStore (RPC)
+    // Use challengeId-based sharding for better scalability
     const challengeId = crypto.randomUUID();
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
 
     await challengeStore.storeChallengeRpc({
       id: challengeId,
@@ -1788,9 +1789,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         }
 
         // Store authorization request parameters in ChallengeStore for consent flow (RPC)
+        // Use challengeId-based sharding for better scalability
         const challengeId = crypto.randomUUID();
-        const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-        const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+        const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
 
         await challengeStore.storeChallengeRpc({
           id: challengeId,
@@ -2792,8 +2793,8 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // POST request: Process login (stub - accepts any credentials) (RPC)
-  const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-  const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+  // Use challengeId-based sharding - must match the shard used during challenge creation
+  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
 
   let challengeData: {
     userId: string;
@@ -3103,8 +3104,8 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // POST request: Process confirmation and redirect to /authorize (RPC)
-  const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-  const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+  // Use challengeId-based sharding - must match the shard used during challenge creation
+  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
 
   let challengeData: {
     userId: string;

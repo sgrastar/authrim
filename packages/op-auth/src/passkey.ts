@@ -9,6 +9,8 @@ import {
   isAllowedOrigin,
   parseAllowedOrigins,
   getSessionStoreForNewSession,
+  getChallengeStoreByEmail,
+  getChallengeStoreByChallengeId,
 } from '@authrim/shared';
 import {
   generateRegistrationOptions,
@@ -189,8 +191,8 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     });
 
     // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes) (RPC)
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    // Use email-based sharding for better scalability
+    const challengeStore = await getChallengeStoreByEmail(c.env, email);
 
     await challengeStore.storeChallengeRpc({
       id: `passkey_reg:${user.id}`,
@@ -241,10 +243,25 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       );
     }
 
+    // Get user email for shard routing
+    const userForShard = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
+      .bind(userId)
+      .first();
+
+    if (!userForShard) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'User not found',
+        },
+        400
+      );
+    }
+
     // Consume challenge from ChallengeStore DO (atomic operation, RPC)
     // This prevents parallel replay attacks
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    // Use email-based sharding - must match the shard used during options generation
+    const challengeStore = await getChallengeStoreByEmail(c.env, userForShard.email as string);
 
     let challenge: string;
     try {
@@ -503,9 +520,9 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
     } as any);
 
     // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes) (RPC)
+    // Use challengeId-based sharding for discoverable credentials (email may not be provided)
     const challengeId = crypto.randomUUID();
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
 
     await challengeStore.storeChallengeRpc({
       id: `passkey_auth:${challengeId}`,
@@ -556,8 +573,8 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Consume challenge from ChallengeStore DO (atomic operation, RPC)
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    // Use challengeId-based sharding - must match the shard used during options generation
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId);
 
     let challenge: string;
     try {

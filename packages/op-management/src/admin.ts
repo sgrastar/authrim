@@ -12,6 +12,7 @@ import {
   getSessionStoreBySessionId,
   getSessionStoreForNewSession,
   isShardedSessionId,
+  getChallengeStoreByEmail,
 } from '@authrim/shared';
 
 /**
@@ -2730,8 +2731,8 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     const emailHash = await hashEmail(email.toLowerCase());
 
     // Store in ChallengeStore DO with TTL (5 minutes) (RPC)
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    // Use email-based sharding for consistent routing with email-code.ts
+    const challengeStore = await getChallengeStoreByEmail(c.env, email.toLowerCase());
 
     await challengeStore.storeChallengeRpc({
       id: `email_code:${otpSessionId}`,

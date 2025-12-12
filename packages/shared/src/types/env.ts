@@ -67,6 +67,7 @@ export interface Env {
   AUTH_CODE_CLEANUP_INTERVAL?: string; // Auth code cleanup interval in seconds (default: 30, increase for load testing)
   AUTHRIM_CODE_SHARDS?: string; // Number of auth code DO shards (default: 64, set to 0 to disable sharding)
   AUTHRIM_SESSION_SHARDS?: string; // Number of session DO shards (default: 32)
+  AUTHRIM_CHALLENGE_SHARDS?: string; // Number of challenge DO shards (default: 16)
 
   // Dynamic Client Registration settings
   OPEN_REGISTRATION?: string; // "true" to allow registration without Initial Access Token

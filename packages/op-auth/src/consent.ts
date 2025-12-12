@@ -29,6 +29,7 @@ import {
   parseConsentFeatureFlags,
   getRolesInOrganization,
   invalidateConsentCache,
+  getChallengeStoreByChallengeId,
 } from '@authrim/shared';
 
 // Scope descriptions (human-readable)
@@ -104,8 +105,8 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Retrieve consent challenge from ChallengeStore (RPC)
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    // Use challengeId-based sharding
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
 
     const challengeData = await challengeStore.getChallengeRpc(challenge_id);
 
@@ -478,8 +479,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Consume consent challenge from ChallengeStore (RPC)
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    // Use challengeId-based sharding - must match the shard used during challenge creation
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
 
     let consumedChallengeData: {
       userId: string;

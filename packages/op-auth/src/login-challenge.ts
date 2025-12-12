@@ -16,6 +16,7 @@
 
 import { Context } from 'hono';
 import type { Env } from '@authrim/shared';
+import { getChallengeStoreByChallengeId } from '@authrim/shared';
 
 /**
  * Login challenge metadata stored in ChallengeStore
@@ -74,8 +75,8 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Retrieve login challenge from ChallengeStore (RPC)
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    // Use challengeId-based sharding
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id);
 
     const challengeData = await challengeStore.getChallengeRpc(challenge_id);
 

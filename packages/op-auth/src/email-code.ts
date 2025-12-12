@@ -15,7 +15,7 @@
 import { Context } from 'hono';
 import { setCookie, getCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/shared';
-import { getSessionStoreForNewSession } from '@authrim/shared';
+import { getSessionStoreForNewSession, getChallengeStoreByEmail } from '@authrim/shared';
 import { ResendEmailProvider } from './utils/email/resend-provider';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import {
@@ -128,8 +128,8 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
     const emailHash = await hashEmail(email.toLowerCase());
 
     // Store in ChallengeStore DO with TTL (5 minutes) (RPC)
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    // Use email-based sharding for better scalability
+    const challengeStore = await getChallengeStoreByEmail(c.env, email);
 
     await challengeStore.storeChallengeRpc({
       id: `email_code:${otpSessionId}`,
@@ -274,8 +274,8 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get challenge from ChallengeStore (RPC)
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    // Use email-based sharding - same email always routes to same shard
+    const challengeStore = await getChallengeStoreByEmail(c.env, email);
 
     let challengeData: {
       challenge: string;

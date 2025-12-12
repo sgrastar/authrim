@@ -37,6 +37,7 @@ export * from './utils/policy-embedding';
 export * from './utils/consent-rbac';
 export * from './utils/refresh-token-sharding';
 export * from './utils/oauth-config';
+export * from './utils/challenge-sharding';
 
 // Middleware
 export * from './middleware/admin-auth';

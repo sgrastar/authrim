@@ -268,58 +268,56 @@ ChallengeStore supports the following challenge types (see `packages/shared/src/
 
 ### Storing a Challenge
 
-```typescript
-const challengeId = crypto.randomUUID();
-const challengeStoreId = env.CHALLENGE_STORE.idFromName('global');
-const challengeStore = env.CHALLENGE_STORE.get(challengeStoreId);
+ChallengeStore uses sharded Durable Objects for scalability. Use the appropriate helper based on available context:
 
-await challengeStore.fetch(
-  new Request('https://challenge-store/challenge', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id: challengeId,
-      type: 'login', // or 'consent', 'reauth'
-      userId: 'anonymous', // or actual userId for consent/reauth
-      challenge: challengeId,
-      ttl: 600, // 10 minutes
-      metadata: {
-        // Store original /authorize parameters
-        response_type,
-        client_id,
-        redirect_uri,
-        scope,
-        state,
-        nonce,
-        // ... etc
-      },
-    }),
-  })
-);
+```typescript
+import { getChallengeStoreByEmail, getChallengeStoreByChallengeId } from '@authrim/shared';
+
+const challengeId = crypto.randomUUID();
+
+// For email-based flows (OTP, passkey registration):
+const challengeStore = await getChallengeStoreByEmail(env, email);
+
+// For challengeId-based flows (consent, login-challenge consumption):
+const challengeStore = await getChallengeStoreByChallengeId(env, challengeId);
+
+// Store using RPC pattern
+await challengeStore.storeChallengeRpc({
+  id: challengeId,
+  type: 'login', // or 'consent', 'reauth'
+  userId: 'anonymous', // or actual userId for consent/reauth
+  challenge: challengeId,
+  ttl: 600, // 10 minutes
+  metadata: {
+    // Store original /authorize parameters
+    response_type,
+    client_id,
+    redirect_uri,
+    scope,
+    state,
+    nonce,
+    // ... etc
+  },
+});
 ```
 
 ### Consuming a Challenge
 
 ```typescript
-const consumeResponse = await challengeStore.fetch(
-  new Request('https://challenge-store/challenge/consume', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id: challengeId,
-      type: 'login', // Must match stored type
-      challenge: challengeId,
-    }),
-  })
-);
+// Get the same shard used when storing (use same sharding key)
+const challengeStore = await getChallengeStoreByChallengeId(env, challengeId);
 
-if (!consumeResponse.ok) {
+try {
+  const challengeData = await challengeStore.consumeChallengeRpc({
+    id: challengeId,
+    type: 'login', // Must match stored type
+    challenge: challengeId,
+  });
+  const metadata = challengeData.metadata; // Original /authorize params
+} catch (error) {
   // Challenge not found, expired, or already consumed
   return error('invalid_request', 'Invalid or expired challenge');
 }
-
-const challengeData = await consumeResponse.json();
-const metadata = challengeData.metadata; // Original /authorize params
 ```
 
 ---

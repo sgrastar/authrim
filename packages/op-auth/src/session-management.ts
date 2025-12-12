@@ -18,6 +18,7 @@ import {
   generateCheckSessionIframeHtml,
   getSessionStoreBySessionId,
   isShardedSessionId,
+  getChallengeStoreByChallengeId,
 } from '@authrim/shared';
 
 /**
@@ -71,8 +72,8 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
 
     // Store token in ChallengeStore DO with 5 minute TTL (RPC)
     // This provides atomic single-use guarantee (prevents race conditions)
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    // Use token-based sharding for consistent shard routing between issue and verify
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, token);
 
     await challengeStore.storeChallengeRpc({
       id: `session_token:${token}`,
@@ -129,8 +130,8 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
 
     // Consume token from ChallengeStore DO (atomic operation, RPC)
     // This prevents race conditions and ensures single-use
-    const challengeStoreId = c.env.CHALLENGE_STORE.idFromName('global');
-    const challengeStore = c.env.CHALLENGE_STORE.get(challengeStoreId);
+    // Use token-based sharding - must match the shard used during token issuance
+    const challengeStore = await getChallengeStoreByChallengeId(c.env, token);
 
     let sessionId: string;
     let userId: string;
