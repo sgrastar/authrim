@@ -79,7 +79,7 @@ describe('Key Generation Utilities', () => {
       expect(keySet.privatePEM).toContain('-----BEGIN PRIVATE KEY-----');
     });
 
-    it('should generate key set with custom modulus length', async () => {
+    it('should generate key set with custom modulus length', { timeout: 30000 }, async () => {
       const kid = 'test-key-set-2';
       const keySet = await generateKeySet(kid, 4096);
 

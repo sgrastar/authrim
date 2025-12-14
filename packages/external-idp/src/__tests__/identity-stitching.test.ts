@@ -265,32 +265,28 @@ describe('Identity Stitching Service', () => {
       it('should not stitch if email is not verified and requireVerifiedEmail is true', async () => {
         const env = createMockEnv();
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
-        vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('new-linked-id');
 
         const unverifiedUserInfo: UserInfo = {
           ...mockUserInfo,
           email_verified: false,
         };
 
-        // Mock user creation
-        env.DB.prepare()
-          .bind()
-          .run.mockResolvedValue({ meta: { changes: 1 } });
+        // Mock findUserByEmail - no user found (so it will try JIT provisioning)
+        env.DB.prepare().bind().first.mockResolvedValueOnce(null);
 
-        const result = await handleIdentity(env as never, {
-          provider: mockProvider,
-          userInfo: unverifiedUserInfo,
-          tokens: mockTokens,
-        });
-
-        // Should JIT provision instead of stitching
-        expect(result.isNewUser).toBe(true);
+        // Should throw error because email is not verified
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: unverifiedUserInfo,
+            tokens: mockTokens,
+          })
+        ).rejects.toThrow('email from your external account is not verified');
       });
 
       it('should not stitch if existing user email is not verified', async () => {
         const env = createMockEnv();
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
-        vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('new-linked-id');
 
         // Mock findUserByEmail - user exists but email not verified
         env.DB.prepare().bind().first.mockResolvedValueOnce({
@@ -299,19 +295,14 @@ describe('Identity Stitching Service', () => {
           email_verified: 0, // Not verified
         });
 
-        // Mock user creation
-        env.DB.prepare()
-          .bind()
-          .run.mockResolvedValue({ meta: { changes: 1 } });
-
-        const result = await handleIdentity(env as never, {
-          provider: mockProvider,
-          userInfo: mockUserInfo,
-          tokens: mockTokens,
-        });
-
-        // Should JIT provision instead of stitching
-        expect(result.isNewUser).toBe(true);
+        // Should throw error because local email is not verified
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+          })
+        ).rejects.toThrow('existing account email is not verified');
       });
     });
 
@@ -355,7 +346,7 @@ describe('Identity Stitching Service', () => {
             userInfo: mockUserInfo,
             tokens: mockTokens,
           })
-        ).rejects.toThrow('no_account_found');
+        ).rejects.toThrow('New account registration via external providers is not available');
       });
 
       it('should use placeholder email if not provided', async () => {

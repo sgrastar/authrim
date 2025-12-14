@@ -82,9 +82,14 @@ vi.mock('@authrim/shared/utils/crypto', () => ({
   hashPassword: vi.fn().mockResolvedValue('hashed_password_123'),
 }));
 
-vi.mock('@authrim/shared', () => ({
-  invalidateUserCache: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('@authrim/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/shared')>();
+  return {
+    ...actual,
+    invalidateUserCache: vi.fn().mockResolvedValue(undefined),
+    getTenantIdFromContext: vi.fn().mockReturnValue('default'),
+  };
+});
 
 describe('SCIM 2.0 Endpoints', () => {
   let app: Hono;
@@ -153,9 +158,11 @@ describe('SCIM 2.0 Endpoints', () => {
                   }
                   return null;
                 }
-                if (sql.includes('SELECT id FROM users WHERE email = ?')) {
+                if (sql.includes('SELECT id FROM users WHERE') && sql.includes('email')) {
+                  // Handle both "WHERE email = ?" and "WHERE tenant_id = ? AND email = ?"
+                  const emailArg = sql.includes('tenant_id') ? args[1] : args[0];
                   for (const user of mockUsers.values()) {
-                    if (user.email === args[0]) return { id: user.id };
+                    if (user.email === emailArg) return { id: user.id };
                   }
                   return null;
                 }
@@ -191,19 +198,24 @@ describe('SCIM 2.0 Endpoints', () => {
               run: vi.fn().mockImplementation(async () => {
                 // Handle INSERT/UPDATE/DELETE
                 if (sql.includes('INSERT INTO users')) {
+                  // bind() order: userId, tenantId, email, email_verified, name, given_name, family_name,
+                  // middle_name, nickname, preferred_username, profile, picture, website, gender,
+                  // birthdate, zoneinfo, locale, phone_number, phone_number_verified, address_json,
+                  // password_hash, external_id, active, custom_attributes_json, created_at, updated_at
                   const userId = args[0];
                   mockUsers.set(userId, {
                     id: userId,
-                    email: args[1],
-                    email_verified: args[2],
-                    name: args[3],
-                    given_name: args[4],
-                    family_name: args[5],
-                    preferred_username: args[8],
-                    active: args[21],
-                    external_id: args[20],
-                    created_at: args[23],
-                    updated_at: args[24],
+                    tenant_id: args[1],
+                    email: args[2],
+                    email_verified: args[3],
+                    name: args[4],
+                    given_name: args[5],
+                    family_name: args[6],
+                    preferred_username: args[9],
+                    active: args[22],
+                    external_id: args[21],
+                    created_at: args[24],
+                    updated_at: args[25],
                   });
                   return { success: true };
                 }

@@ -71,6 +71,9 @@ function createMockContext(options: {
       allResults: [],
     });
 
+  // Store context values (simulating Hono's context store)
+  const contextStore = new Map<string, unknown>([['tenantId', 'default']]);
+
   const c = {
     req: {
       method: options.method || 'GET',
@@ -85,6 +88,8 @@ function createMockContext(options: {
       CLIENTS_CACHE: createMockKVNamespace(),
     } as unknown as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
+    get: vi.fn((key: string) => contextStore.get(key)),
+    set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
     _mockDB: mockDB,
   } as any;
 

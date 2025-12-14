@@ -132,7 +132,8 @@
 		font-size: 0.75rem;
 	}
 	.btn-md {
-		/* Default size, no override needed */
+		/* Default size - explicit padding for consistency */
+		padding: 0.5rem 1rem;
 	}
 	.btn-lg {
 		padding: 0.75rem 1.5rem;

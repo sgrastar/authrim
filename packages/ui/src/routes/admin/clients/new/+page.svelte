@@ -374,9 +374,9 @@
 		{#if createdClient}
 			<div class="space-y-3">
 				<div>
-					<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+					<span class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
 						Client ID
-					</label>
+					</span>
 					<div class="flex items-center gap-2">
 						<code class="flex-1 rounded bg-gray-100 px-3 py-2 text-sm dark:bg-gray-800 break-all">
 							{createdClient.client_id}
@@ -391,9 +391,9 @@
 				</div>
 
 				<div>
-					<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+					<span class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
 						Client Secret
-					</label>
+					</span>
 					<div class="flex items-center gap-2">
 						<code
 							class="flex-1 rounded bg-yellow-100 px-3 py-2 text-sm dark:bg-yellow-900/30 break-all text-yellow-800 dark:text-yellow-200"

@@ -35,6 +35,18 @@ const mockIsoBase64URL = vi.hoisted(() => ({
   fromUTF8String: vi.fn(),
 }));
 
+// Use vi.hoisted for mocks that are referenced in vi.mock()
+const mockSessionStoreStub = vi.hoisted(() => ({
+  createSessionRpc: vi.fn(),
+}));
+
+const mockChallengeStoreStub = vi.hoisted(() => ({
+  storeChallengeRpc: vi.fn(),
+  consumeChallengeRpc: vi.fn(),
+  getChallengeRpc: vi.fn(),
+  deleteChallengeRpc: vi.fn(),
+}));
+
 // Mock @simplewebauthn/server
 vi.mock('@simplewebauthn/server', () => mockWebAuthnFunctions);
 
@@ -42,16 +54,6 @@ vi.mock('@simplewebauthn/server', () => mockWebAuthnFunctions);
 vi.mock('@simplewebauthn/server/helpers', () => ({
   isoBase64URL: mockIsoBase64URL,
 }));
-
-// Mock session store stub for RPC pattern
-const mockSessionStoreStub = {
-  createSessionRpc: vi.fn().mockResolvedValue({
-    id: 'mock-session-id',
-    userId: 'user-123',
-    authTime: Date.now(),
-    amr: ['passkey'],
-  }),
-};
 
 // Mock @authrim/shared module
 vi.mock('@authrim/shared', async () => {
@@ -64,6 +66,8 @@ vi.mock('@authrim/shared', async () => {
         sessionId: 'mock-session-id',
       })
     ),
+    getChallengeStoreByUserId: vi.fn(() => Promise.resolve(mockChallengeStoreStub)),
+    getChallengeStoreByChallengeId: vi.fn(() => Promise.resolve(mockChallengeStoreStub)),
   };
 });
 
@@ -203,6 +207,9 @@ function createMockContext(options: {
   const challengeStore = options.challengeStore ?? createMockChallengeStore();
   const sessionStore = options.sessionStore ?? createMockSessionStore();
 
+  // Store context values (simulating Hono's context store)
+  const contextStore = new Map<string, unknown>([['tenantId', 'default']]);
+
   const c = {
     req: {
       method: options.method || 'POST',
@@ -219,6 +226,8 @@ function createMockContext(options: {
       SESSION_STORE: sessionStore,
     } as unknown as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
+    get: vi.fn((key: string) => contextStore.get(key)),
+    set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
     _mockDB: mockDB,
     _challengeStore: challengeStore,
     _sessionStore: sessionStore,
@@ -287,6 +296,24 @@ describe('Passkey Handlers', () => {
       userId: 'user-123',
       authTime: Date.now(),
       amr: ['passkey'],
+    });
+
+    // Reset challenge store mock
+    mockChallengeStoreStub.storeChallengeRpc.mockReset();
+    mockChallengeStoreStub.storeChallengeRpc.mockResolvedValue({ success: true });
+    mockChallengeStoreStub.consumeChallengeRpc.mockReset();
+    mockChallengeStoreStub.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'mock-challenge',
+      userId: 'user-123',
+      metadata: {},
+    });
+    mockChallengeStoreStub.getChallengeRpc.mockReset();
+    mockChallengeStoreStub.getChallengeRpc.mockResolvedValue({
+      id: 'test-id',
+      type: 'passkey_registration',
+      challenge: 'mock-challenge',
+      userId: 'user-123',
+      metadata: {},
     });
 
     // Setup isoBase64URL mock implementations
@@ -411,7 +438,6 @@ describe('Passkey Handlers', () => {
     });
 
     it('should store challenge in ChallengeStore', async () => {
-      const challengeStore = createMockChallengeStore();
       const mockDB = createMockDB({
         firstResult: { id: 'user-123', email: 'test@example.com', name: 'Test' },
         allResults: [],
@@ -421,13 +447,12 @@ describe('Passkey Handlers', () => {
         body: { email: 'test@example.com' },
         headers: { origin: 'https://example.com' },
         db: mockDB,
-        challengeStore,
       });
 
       await passkeyRegisterOptionsHandler(c);
 
-      // Verify challenge was stored via RPC
-      expect(challengeStore.get().storeChallengeRpc).toHaveBeenCalled();
+      // Verify challenge was stored via RPC (using global mock)
+      expect(mockChallengeStoreStub.storeChallengeRpc).toHaveBeenCalled();
     });
 
     it('should include existing passkeys as excludeCredentials', async () => {
@@ -506,9 +531,9 @@ describe('Passkey Handlers', () => {
 
       await passkeyLoginOptionsHandler(c);
 
-      // Should query for user and their passkeys
+      // Should query for user and their passkeys (using tenant_id for multi-tenant support)
       expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT id FROM users WHERE email')
+        expect.stringContaining('SELECT id FROM users WHERE tenant_id')
       );
       expect(mockDB.prepare).toHaveBeenCalledWith(
         expect.stringContaining('SELECT credential_id, transports FROM passkeys')
@@ -532,18 +557,15 @@ describe('Passkey Handlers', () => {
     });
 
     it('should store challenge for later verification', async () => {
-      const challengeStore = createMockChallengeStore();
-
       const c = createMockContext({
         body: {},
         headers: { origin: 'https://example.com' },
-        challengeStore,
       });
 
       await passkeyLoginOptionsHandler(c);
 
-      // Verify challenge was stored via RPC
-      expect(challengeStore.get().storeChallengeRpc).toHaveBeenCalled();
+      // Verify challenge was stored via RPC (using global mock)
+      expect(mockChallengeStoreStub.storeChallengeRpc).toHaveBeenCalled();
     });
   });
 
