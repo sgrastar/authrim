@@ -5,6 +5,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
+import { timingSafeEqual } from '@authrim/shared';
 import {
   listAllProviders,
   getProvider,
@@ -30,7 +31,8 @@ function verifyAdmin(c: Context<{ Bindings: Env }>): boolean {
   }
 
   const token = authHeader.slice(7);
-  return token === c.env.ADMIN_API_SECRET;
+  // Use timing-safe comparison to prevent timing attacks
+  return !!c.env.ADMIN_API_SECRET && timingSafeEqual(token, c.env.ADMIN_API_SECRET);
 }
 
 /**

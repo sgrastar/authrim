@@ -7,6 +7,8 @@ import {
   validateScope,
   validateState,
   validateNonce,
+  isRedirectUriRegistered,
+  createOAuthConfigManager,
   getClient,
   getAuthCodeShardIndex,
   createShardedAuthCode,
@@ -1169,7 +1171,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Check if the provided redirect_uri matches one of the registered URIs
   // Note: redirect_uri default handling is done earlier (before format validation)
-  const redirectUriMatches = registeredRedirectUris.includes(redirect_uri as string);
+  // RFC 6749 Section 3.1.2.3: Use URL normalization for secure comparison
+  // to prevent Open Redirect attacks via URL manipulation
+  const redirectUriMatches = isRedirectUriRegistered(
+    redirect_uri as string,
+    registeredRedirectUris
+  );
   if (!redirectUriMatches) {
     return c.html(
       `<!DOCTYPE html>
@@ -1254,7 +1261,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     return sendError('invalid_scope', scopeValidation.error);
   }
 
-  // Validate state (optional)
+  // Check if state parameter is required (configurable via KV)
+  const configManager = createOAuthConfigManager(c.env);
+  const stateRequired = await configManager.isStateRequired();
+
+  // Validate state (conditionally required based on configuration)
+  if (stateRequired && (!state || state.trim().length === 0)) {
+    return sendError('invalid_request', 'state parameter is required (CSRF protection)');
+  }
   const stateValidation = validateState(state);
   if (!stateValidation.valid) {
     return sendError('invalid_request', stateValidation.error);

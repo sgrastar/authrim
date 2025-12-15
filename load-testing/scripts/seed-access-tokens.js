@@ -42,6 +42,7 @@
  *   CONCURRENCY          並列数 (default: 20)
  *   USER_ID_PREFIX       ユーザー ID プレフィックス (default: user-bench)
  *   OUTPUT_DIR           出力ディレクトリ (default: ../seeds)
+ *   VERIFY_SAMPLE_SIZE   検証時の各カテゴリのサンプル数 (default: 5)
  *
  * 使い方:
  *   CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz node scripts/seed-access-tokens.js
@@ -62,6 +63,7 @@ const TOKEN_COUNT = Number.parseInt(process.env.TOKEN_COUNT || '1000', 10);
 const CONCURRENCY = Number.parseInt(process.env.CONCURRENCY || '20', 10);
 const REVOKE_CONCURRENCY = Number.parseInt(process.env.REVOKE_CONCURRENCY || '2', 10);
 const REVOKE_DELAY_MS = Number.parseInt(process.env.REVOKE_DELAY_MS || '500', 10);
+const VERIFY_SAMPLE_SIZE = Number.parseInt(process.env.VERIFY_SAMPLE_SIZE || '5', 10);
 const USER_ID_PREFIX = process.env.USER_ID_PREFIX || 'user-bench';
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = process.env.OUTPUT_DIR || path.join(SCRIPT_DIR, '..', 'seeds');
@@ -283,7 +285,11 @@ function createInvalidToken() {
 }
 
 /**
- * Revoke a token via /revoke endpoint
+ * Revoke a token via /revoke endpoint (RFC 7009)
+ *
+ * Note: RFC 7009 specifies that the revoke endpoint always returns 200 OK,
+ * even if the token was not found or already revoked. We verify the actual
+ * revocation status via the introspect endpoint.
  */
 async function revokeAccessToken(token) {
   const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
@@ -301,6 +307,31 @@ async function revokeAccessToken(token) {
   if (!res.ok) {
     throw new Error(`Failed to revoke token: ${res.status}`);
   }
+}
+
+/**
+ * Introspect a token to verify its status (RFC 7662)
+ *
+ * @param {string} token - The token to introspect
+ * @returns {Promise<{active: boolean}>} - The introspection response
+ */
+async function introspectToken(token) {
+  const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
+
+  const res = await fetch(`${BASE_URL}/introspect`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: `Basic ${credentials}`,
+    },
+    body: `token=${encodeURIComponent(token)}`,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Introspect failed: ${res.status}`);
+  }
+
+  return res.json();
 }
 
 /**
@@ -502,6 +533,62 @@ function sleep(ms) {
 }
 
 /**
+ * Verify token statuses via introspection
+ *
+ * This function samples tokens from each category and verifies that the
+ * introspection endpoint returns the expected active status.
+ *
+ * @param {Array} tokens - Array of generated tokens
+ * @param {number} sampleSize - Number of tokens to sample from each category
+ * @returns {Promise<object>} - Verification results
+ */
+async function verifyTokenStatuses(tokens, sampleSize = 5) {
+  console.log(`\n🔍 Verifying token statuses (${sampleSize} samples per category)...`);
+
+  const results = {
+    valid: { expected: true, correct: 0, incorrect: 0, errors: 0 },
+    valid_exchanged: { expected: true, correct: 0, incorrect: 0, errors: 0 },
+    expired: { expected: false, correct: 0, incorrect: 0, errors: 0 },
+    revoked: { expected: false, correct: 0, incorrect: 0, errors: 0 },
+    wrong_audience: { expected: false, correct: 0, incorrect: 0, errors: 0 },
+    wrong_client: { expected: false, correct: 0, incorrect: 0, errors: 0 },
+  };
+
+  for (const [type, config] of Object.entries(results)) {
+    const typeTokens = tokens.filter((t) => t.type === type);
+    const sampled = typeTokens.slice(0, Math.min(sampleSize, typeTokens.length));
+
+    for (const tokenData of sampled) {
+      try {
+        const introspection = await introspectToken(tokenData.access_token);
+        const isCorrect = introspection.active === config.expected;
+
+        if (isCorrect) {
+          config.correct++;
+        } else {
+          config.incorrect++;
+          console.warn(
+            `   ⚠️  ${type}: expected active=${config.expected}, got active=${introspection.active}`
+          );
+        }
+      } catch (err) {
+        config.errors++;
+        console.error(`   ❌ ${type}: verification failed - ${err.message}`);
+      }
+
+      // Small delay to avoid rate limiting
+      await sleep(100);
+    }
+
+    const total = config.correct + config.incorrect + config.errors;
+    const status = config.incorrect === 0 && config.errors === 0 ? '✅' : '❌';
+    console.log(`   ${status} ${type}: ${config.correct}/${total} correct`);
+  }
+
+  return results;
+}
+
+/**
  * Revoke tokens that should be revoked (with rate limit handling)
  */
 async function revokeTokensBatch(tokens) {
@@ -561,12 +648,24 @@ async function main() {
   console.log(`   OUTPUT_DIR     : ${OUTPUT_DIR}`);
   console.log('');
   console.log(`📊 Token Distribution (RFC 7662 + Keycloak/Auth0 benchmark):`);
-  console.log(`   Valid (標準):     ${Math.floor(TOKEN_COUNT * TOKEN_MIX.valid)} (${TOKEN_MIX.valid * 100}%)`);
-  console.log(`   Valid (TE/act):   ${Math.floor(TOKEN_COUNT * TOKEN_MIX.valid_exchanged)} (${TOKEN_MIX.valid_exchanged * 100}%)`);
-  console.log(`   Expired:          ${Math.floor(TOKEN_COUNT * TOKEN_MIX.expired)} (${TOKEN_MIX.expired * 100}%)`);
-  console.log(`   Revoked:          ${Math.floor(TOKEN_COUNT * TOKEN_MIX.revoked)} (${TOKEN_MIX.revoked * 100}%)`);
-  console.log(`   Wrong audience:   ${Math.floor(TOKEN_COUNT * TOKEN_MIX.wrong_audience)} (${TOKEN_MIX.wrong_audience * 100}%)`);
-  console.log(`   Wrong client:     ${Math.floor(TOKEN_COUNT * TOKEN_MIX.wrong_client)} (${TOKEN_MIX.wrong_client * 100}%)`);
+  console.log(
+    `   Valid (標準):     ${Math.floor(TOKEN_COUNT * TOKEN_MIX.valid)} (${TOKEN_MIX.valid * 100}%)`
+  );
+  console.log(
+    `   Valid (TE/act):   ${Math.floor(TOKEN_COUNT * TOKEN_MIX.valid_exchanged)} (${TOKEN_MIX.valid_exchanged * 100}%)`
+  );
+  console.log(
+    `   Expired:          ${Math.floor(TOKEN_COUNT * TOKEN_MIX.expired)} (${TOKEN_MIX.expired * 100}%)`
+  );
+  console.log(
+    `   Revoked:          ${Math.floor(TOKEN_COUNT * TOKEN_MIX.revoked)} (${TOKEN_MIX.revoked * 100}%)`
+  );
+  console.log(
+    `   Wrong audience:   ${Math.floor(TOKEN_COUNT * TOKEN_MIX.wrong_audience)} (${TOKEN_MIX.wrong_audience * 100}%)`
+  );
+  console.log(
+    `   Wrong client:     ${Math.floor(TOKEN_COUNT * TOKEN_MIX.wrong_client)} (${TOKEN_MIX.wrong_client * 100}%)`
+  );
   console.log('');
 
   // Step 1: Fetch signing key
@@ -624,6 +723,26 @@ async function main() {
   // Step 2: Revoke tokens marked as 'revoked'
   const revokedCount = await revokeTokensBatch(tokens);
 
+  // Step 3: Wait for revocation to propagate (Durable Objects may have slight delay)
+  console.log('\n⏳ Waiting for revocation to propagate (2s)...');
+  await sleep(2000);
+
+  // Step 4: Verify token statuses via introspection
+  const verificationResults = await verifyTokenStatuses(tokens, VERIFY_SAMPLE_SIZE);
+
+  // Calculate verification summary
+  const allCorrect = Object.values(verificationResults).every(
+    (r) => r.incorrect === 0 && r.errors === 0
+  );
+  const totalVerified = Object.values(verificationResults).reduce(
+    (sum, r) => sum + r.correct + r.incorrect + r.errors,
+    0
+  );
+  const totalIncorrect = Object.values(verificationResults).reduce(
+    (sum, r) => sum + r.incorrect,
+    0
+  );
+
   const totalTime = (Date.now() - startTime) / 1000;
 
   if (tokens.length === 0) {
@@ -644,7 +763,7 @@ async function main() {
   const output = {
     tokens,
     metadata: {
-      version: 2,
+      version: 3,
       test_name: 'Token Introspection Control Plane Test',
       generated_at: new Date().toISOString(),
       base_url: BASE_URL,
@@ -653,6 +772,12 @@ async function main() {
       counts: typeCounts,
       total: tokens.length,
       token_mix: TOKEN_MIX,
+      verification: {
+        verified: totalVerified,
+        incorrect: totalIncorrect,
+        all_correct: allCorrect,
+        results: verificationResults,
+      },
       note: 'Run test with strictValidation=true for wrong_audience/wrong_client checks',
     },
   };
@@ -667,11 +792,28 @@ async function main() {
   console.log(`   Valid (標準):     ${typeCounts.valid}`);
   console.log(`   Valid (TE/act):   ${typeCounts.valid_exchanged}`);
   console.log(`   Expired:          ${typeCounts.expired}`);
-  console.log(`   Revoked:          ${typeCounts.revoked} (${revokedCount} actually revoked via API)`);
+  console.log(
+    `   Revoked:          ${typeCounts.revoked} (${revokedCount} actually revoked via API)`
+  );
   console.log(`   Wrong audience:   ${typeCounts.wrong_audience}`);
   console.log(`   Wrong client:     ${typeCounts.wrong_client}`);
   console.log(`   Rate:             ${(tokens.length / totalTime).toFixed(1)} tokens/sec`);
   console.log(`   Errors:           ${errorCount}`);
+  console.log('');
+  console.log(`🔍 Verification Summary:`);
+  console.log(`   Total verified:   ${totalVerified} samples`);
+  console.log(`   Incorrect:        ${totalIncorrect}`);
+  console.log(`   Status:           ${allCorrect ? '✅ All correct' : '❌ Some incorrect'}`);
+
+  if (!allCorrect) {
+    console.log('');
+    console.log('⚠️  Some tokens did not verify correctly. This may indicate:');
+    console.log('   - strictValidation is not enabled (for wrong_audience/wrong_client)');
+    console.log('   - Revocation propagation delay');
+    console.log('   - Server configuration issue');
+  }
+
+  console.log('');
   console.log(`📁 Saved to: ${outputPath}`);
   console.log('');
   console.log('⚠️  Remember to enable strictValidation before running the benchmark:');

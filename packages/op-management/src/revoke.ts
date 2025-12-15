@@ -2,7 +2,40 @@ import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
 import { validateClientId, timingSafeEqual } from '@authrim/shared';
 import { deleteRefreshToken, getRefreshToken, revokeToken } from '@authrim/shared';
-import { parseToken } from '@authrim/shared';
+import { parseToken, verifyToken } from '@authrim/shared';
+import { importJWK, decodeProtectedHeader, type CryptoKey, type JWK } from 'jose';
+
+// In-memory JWKS cache with 5-minute TTL (shared pattern with introspect.ts)
+let jwksCache: { keys: JWK[]; expiry: number } | null = null;
+const JWKS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Get JWKS from KeyManager DO with in-memory caching
+ */
+async function getJwksFromKeyManager(env: Env): Promise<JWK[]> {
+  const now = Date.now();
+
+  // Return cached JWKS if still valid
+  if (jwksCache && jwksCache.expiry > now) {
+    return jwksCache.keys;
+  }
+
+  // Fetch from KeyManager DO
+  try {
+    const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+    const keyManager = env.KEY_MANAGER.get(keyManagerId);
+    const keys = await keyManager.getAllPublicKeysRpc();
+    jwksCache = {
+      keys,
+      expiry: now + JWKS_CACHE_TTL_MS,
+    };
+    return keys;
+  } catch (error) {
+    console.error('Failed to get JWKS from KeyManager:', error);
+    // Return empty array on error, will fall back to PUBLIC_JWK_JSON
+    return [];
+  }
+}
 
 /**
  * Token Revocation Endpoint Handler
@@ -48,12 +81,27 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   let client_secret = formData.client_secret;
 
   // Check for HTTP Basic authentication (client_secret_basic)
+  // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
   if (authHeader && authHeader.startsWith('Basic ')) {
     try {
       const base64Credentials = authHeader.substring(6);
       const credentials = atob(base64Credentials);
-      const [basicClientId, basicClientSecret] = credentials.split(':', 2);
+      const colonIndex = credentials.indexOf(':');
+
+      if (colonIndex === -1) {
+        return c.json(
+          {
+            error: 'invalid_client',
+            error_description: 'Invalid Authorization header format: missing colon separator',
+          },
+          401
+        );
+      }
+
+      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
+      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
+      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
 
       if (!client_id && basicClientId) {
         client_id = basicClientId;
@@ -124,7 +172,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  // Parse token to extract JTI
+  // Parse token to extract claims (without verification yet)
   let tokenPayload;
   try {
     tokenPayload = parseToken(token);
@@ -141,11 +189,79 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   // V2: Extract userId and version for refresh token operations
   const userId = tokenPayload.sub as string;
   const version = typeof tokenPayload.rtv === 'number' ? tokenPayload.rtv : 1;
+  // Extract audience for signature verification
+  const aud = tokenPayload.aud as string;
 
   if (!jti) {
     // No JTI, cannot revoke - return success to prevent information disclosure
     return c.body(null, 200);
   }
+
+  // ========== Signature Verification (Security Enhancement) ==========
+  // Verify token signature to prevent forged token attacks
+  // Without this, an attacker with valid client credentials could forge tokens
+  // with arbitrary JTIs and revoke other clients' tokens
+
+  // Load public key for verification
+  let publicKey: CryptoKey | undefined;
+  let tokenKid: string | undefined;
+
+  // Extract kid from token header
+  try {
+    const header = decodeProtectedHeader(token);
+    tokenKid = header.kid;
+  } catch {
+    // If we can't decode the header, token is invalid
+    console.warn('Failed to decode token header for revocation');
+    return c.body(null, 200);
+  }
+
+  // Try to find matching key from KeyManager DO (with in-memory caching)
+  if (tokenKid) {
+    try {
+      const jwksKeys = await getJwksFromKeyManager(c.env);
+      const matchingKey = jwksKeys.find((k) => k.kid === tokenKid);
+      if (matchingKey) {
+        publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;
+      }
+    } catch {
+      // KeyManager access failed, fall back to PUBLIC_JWK_JSON
+    }
+  }
+
+  // Fall back to PUBLIC_JWK_JSON if no matching key found
+  if (!publicKey) {
+    const publicJwkJson = c.env.PUBLIC_JWK_JSON;
+    if (!publicJwkJson) {
+      console.error('PUBLIC_JWK_JSON not configured for revocation');
+      // Return 200 to prevent information disclosure
+      return c.body(null, 200);
+    }
+
+    try {
+      const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
+      publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
+    } catch (err) {
+      console.error('Failed to import public key for revocation:', err);
+      return c.body(null, 200);
+    }
+  }
+
+  // Verify token signature
+  try {
+    const expectedIssuer = c.env.ISSUER_URL;
+    if (!expectedIssuer) {
+      console.error('ISSUER_URL not configured for revocation');
+      return c.body(null, 200);
+    }
+    // Use aud from token for audience verification
+    await verifyToken(token, publicKey, expectedIssuer, { audience: aud });
+  } catch (error) {
+    // Token signature verification failed - could be forged token
+    console.warn('Token signature verification failed for revocation:', error);
+    return c.body(null, 200);
+  }
+  // ========== Signature Verification END ==========
 
   // Verify that the token belongs to the requesting client
   // This prevents clients from revoking each other's tokens

@@ -63,6 +63,7 @@ export interface Env {
   REFRESH_TOKEN_ROTATION_ENABLED?: string; // "false" to disable token rotation (for load testing only!)
   ALLOW_HTTP_REDIRECT?: string; // Allow http:// redirect URIs for development
   MAX_CODES_PER_USER?: string; // Max authorization codes per user (default: 100, increase for load testing)
+  STATE_REQUIRED?: string; // "true" to require state parameter (CSRF protection, default: false for backwards compatibility)
   AUTH_CODE_TTL?: string; // Authorization code TTL in seconds (default: 60, increase for load testing)
   AUTH_CODE_CLEANUP_INTERVAL?: string; // Auth code cleanup interval in seconds (default: 30, increase for load testing)
   AUTHRIM_CODE_SHARDS?: string; // Number of auth code DO shards (default: 4)

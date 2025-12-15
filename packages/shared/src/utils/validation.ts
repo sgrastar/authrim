@@ -452,3 +452,87 @@ export function validateToken(token: string | undefined): ValidationResult {
 
   return { valid: true };
 }
+
+/**
+ * Normalize a URL for secure comparison
+ *
+ * RFC 6749 Section 3.1.2.3: Comparing redirect URIs
+ * - Case-sensitive comparison for scheme and host (after normalization)
+ * - Path comparison is case-sensitive
+ * - Default ports should be normalized (80 for http, 443 for https)
+ * - Trailing slashes and query strings need careful handling
+ *
+ * Security considerations:
+ * - Prevents Open Redirect attacks via URL manipulation
+ * - Handles edge cases like trailing slashes, default ports, empty paths
+ *
+ * @param uri - URL to normalize
+ * @returns Normalized URL string or null if invalid
+ */
+export function normalizeRedirectUri(uri: string): string | null {
+  try {
+    const url = new URL(uri);
+
+    // Only allow http and https schemes
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return null;
+    }
+
+    // Normalize hostname to lowercase
+    const hostname = url.hostname.toLowerCase();
+
+    // Remove default ports (80 for http, 443 for https)
+    let port = url.port;
+    if (
+      (url.protocol === 'http:' && port === '80') ||
+      (url.protocol === 'https:' && port === '443')
+    ) {
+      port = '';
+    }
+
+    // Normalize path: ensure at least "/" and remove trailing slash for consistency
+    // Exception: root path "/" should remain as "/"
+    let path = url.pathname || '/';
+    if (path.length > 1 && path.endsWith('/')) {
+      path = path.slice(0, -1);
+    }
+
+    // Reconstruct normalized URL
+    // Note: We intentionally exclude query strings and fragments from comparison
+    // as they should not be part of the registered redirect_uri
+    const normalizedPort = port ? `:${port}` : '';
+    return `${url.protocol}//${hostname}${normalizedPort}${path}`;
+  } catch {
+    // Invalid URL
+    return null;
+  }
+}
+
+/**
+ * Check if a provided redirect_uri matches any registered URI
+ *
+ * This function performs secure URL comparison with normalization
+ * to prevent Open Redirect vulnerabilities.
+ *
+ * @param providedUri - The redirect_uri from the authorization request
+ * @param registeredUris - Array of registered redirect_uris for the client
+ * @returns true if the providedUri matches any registered URI
+ */
+export function isRedirectUriRegistered(providedUri: string, registeredUris: string[]): boolean {
+  const normalizedProvided = normalizeRedirectUri(providedUri);
+
+  // If the provided URI cannot be normalized, it's invalid
+  if (!normalizedProvided) {
+    return false;
+  }
+
+  // Check against each registered URI
+  for (const registered of registeredUris) {
+    const normalizedRegistered = normalizeRedirectUri(registered);
+    if (normalizedRegistered && normalizedProvided === normalizedRegistered) {
+      return true;
+    }
+  }
+
+  return false;
+}

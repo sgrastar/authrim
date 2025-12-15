@@ -14,7 +14,13 @@ import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
 import { OIDCError } from '@authrim/shared';
 import { ERROR_CODES, HTTP_STATUS } from '@authrim/shared';
-import { validateClientId, validateRedirectUri, validateScope } from '@authrim/shared';
+import {
+  validateClientId,
+  validateRedirectUri,
+  validateScope,
+  isRedirectUriRegistered,
+  createOAuthConfigManager,
+} from '@authrim/shared';
 import { generateSecureRandomString, getClient } from '@authrim/shared';
 
 /**
@@ -151,7 +157,9 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       );
     }
 
-    if (!(clientData.redirect_uris as string[]).includes(params.redirect_uri)) {
+    // RFC 6749 Section 3.1.2.3: Use URL normalization for secure comparison
+    // to prevent Open Redirect attacks via URL manipulation
+    if (!isRedirectUriRegistered(params.redirect_uri, clientData.redirect_uris as string[])) {
       throw new OIDCError(
         ERROR_CODES.INVALID_REQUEST,
         'redirect_uri not registered for this client'

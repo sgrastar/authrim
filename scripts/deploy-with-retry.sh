@@ -433,20 +433,38 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
         echo "⚠️  Skipping version registration: ISSUER_URL or ADMIN_API_SECRET not found"
     fi
 
-    # Set PUBLIC_JWK_JSON secret for op-token worker (DO bypass optimization)
+    # Set PUBLIC_JWK_JSON secret for workers that need JWT verification
+    # This ensures tokens can be verified even when KeyManager DO is slow
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🔑 Setting PUBLIC_JWK_JSON secret for op-token"
+    echo "🔑 Setting PUBLIC_JWK_JSON secret for workers"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     if [ -n "$ISSUER_URL" ]; then
         echo "   Fetching JWKS from ${ISSUER_URL}/.well-known/jwks.json..."
         JWKS=$(curl -s "${ISSUER_URL}/.well-known/jwks.json" --connect-timeout 10 --max-time 30 2>/dev/null)
         if [ -n "$JWKS" ] && echo "$JWKS" | jq -e '.keys' > /dev/null 2>&1; then
-            echo "   Setting PUBLIC_JWK_JSON secret..."
-            # Skip this step - wrangler secret put can hang waiting for interactive input
-            # The secret is only needed for DO bypass optimization and is not critical
-            echo "   ⏭️  Skipped (manual setup recommended if needed)"
-            echo "   💡 To set manually: echo '\$JWKS' | wrangler secret put PUBLIC_JWK_JSON --name ${DEPLOY_ENV}-authrim-op-token"
+            # Extract the most recent (active) key from JWKS
+            ACTIVE_KEY=$(echo "$JWKS" | jq -c '.keys | last')
+            if [ -n "$ACTIVE_KEY" ] && [ "$ACTIVE_KEY" != "null" ]; then
+                ACTIVE_KID=$(echo "$ACTIVE_KEY" | jq -r '.kid')
+                echo "   Active key: $ACTIVE_KID"
+
+                # Workers that need PUBLIC_JWK_JSON
+                WORKERS_NEEDING_JWK=("op-token" "op-management" "op-userinfo" "op-auth")
+
+                for worker in "${WORKERS_NEEDING_JWK[@]}"; do
+                    WORKER_NAME="${DEPLOY_ENV}-authrim-${worker}"
+                    echo "   Setting PUBLIC_JWK_JSON for ${worker}..."
+                    # Use printf with pipe to avoid interactive input issues
+                    if printf '%s' "$ACTIVE_KEY" | wrangler secret put PUBLIC_JWK_JSON --name "$WORKER_NAME" 2>/dev/null; then
+                        echo "   ✅ ${worker}: Updated"
+                    else
+                        echo "   ⚠️  ${worker}: Skipped (may not exist or already set)"
+                    fi
+                done
+            else
+                echo "   ⚠️  Could not extract active key from JWKS"
+            fi
         else
             echo "   ⚠️  Could not fetch valid JWKS from ${ISSUER_URL}/.well-known/jwks.json"
             echo "   💡 You may need to manually set PUBLIC_JWK_JSON after deployment"

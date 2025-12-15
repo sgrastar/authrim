@@ -455,12 +455,27 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Check for HTTP Basic authentication (client_secret_basic)
+  // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
   if (authHeader && authHeader.startsWith('Basic ')) {
     try {
       const base64Credentials = authHeader.substring(6);
       const credentials = atob(base64Credentials);
-      const [basicClientId, basicClientSecret] = credentials.split(':', 2);
+      const colonIndex = credentials.indexOf(':');
+
+      if (colonIndex === -1) {
+        return c.json(
+          {
+            error: 'invalid_client',
+            error_description: 'Invalid Authorization header format: missing colon separator',
+          },
+          401
+        );
+      }
+
+      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
+      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
+      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
 
       // Use Basic auth credentials if form data doesn't provide them
       if (!client_id && basicClientId) {
@@ -1241,12 +1256,29 @@ async function handleRefreshTokenGrant(
   }
 
   // Check for HTTP Basic authentication (client_secret_basic)
+  // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
   if (authHeader && authHeader.startsWith('Basic ')) {
     try {
       const base64Credentials = authHeader.substring(6);
       const credentials = atob(base64Credentials);
-      const [basicClientId, basicClientSecret] = credentials.split(':', 2);
+      const colonIndex = credentials.indexOf(':');
+
+      if (colonIndex === -1) {
+        c.header('Cache-Control', 'no-store');
+        c.header('Pragma', 'no-cache');
+        return c.json(
+          {
+            error: 'invalid_client',
+            error_description: 'Invalid Authorization header format: missing colon separator',
+          },
+          401
+        );
+      }
+
+      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
+      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
+      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
 
       if (!client_id && basicClientId) {
         client_id = basicClientId;
@@ -3011,17 +3043,33 @@ async function handleTokenExchangeGrant(
   }
 
   // Check HTTP Basic authentication
+  // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
   if (authHeader && authHeader.startsWith('Basic ')) {
     try {
       const base64Credentials = authHeader.substring(6);
       const credentials = atob(base64Credentials);
-      const [basicClientId, basicClientSecret] = credentials.split(':', 2);
+      const colonIndex = credentials.indexOf(':');
+
+      if (colonIndex === -1) {
+        return c.json(
+          {
+            error: 'invalid_client',
+            error_description: 'Invalid Authorization header format: missing colon separator',
+          },
+          401
+        );
+      }
+
+      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
+      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
+      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
+
       if (!client_id && basicClientId) {
-        client_id = decodeURIComponent(basicClientId);
+        client_id = basicClientId;
       }
       if (!client_secret && basicClientSecret) {
-        client_secret = decodeURIComponent(basicClientSecret);
+        client_secret = basicClientSecret;
       }
     } catch {
       return c.json(
@@ -3702,17 +3750,33 @@ async function handleClientCredentialsGrant(
   }
 
   // Check HTTP Basic authentication
+  // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
   if (authHeader && authHeader.startsWith('Basic ')) {
     try {
       const base64Credentials = authHeader.substring(6);
       const credentials = atob(base64Credentials);
-      const [basicClientId, basicClientSecret] = credentials.split(':', 2);
+      const colonIndex = credentials.indexOf(':');
+
+      if (colonIndex === -1) {
+        return c.json(
+          {
+            error: 'invalid_client',
+            error_description: 'Invalid Authorization header format: missing colon separator',
+          },
+          401
+        );
+      }
+
+      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
+      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
+      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
+
       if (!client_id && basicClientId) {
-        client_id = decodeURIComponent(basicClientId);
+        client_id = basicClientId;
       }
       if (!client_secret && basicClientSecret) {
-        client_secret = decodeURIComponent(basicClientSecret);
+        client_secret = basicClientSecret;
       }
     } catch {
       return c.json(

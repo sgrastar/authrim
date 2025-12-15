@@ -4,6 +4,9 @@
  * Implements Initial Access Token validation for Dynamic Client Registration
  * as described in OpenID Connect Dynamic Client Registration 1.0 Section 3.1
  *
+ * Security: Tokens are stored with SHA-256 hash as the key, not plaintext.
+ * This prevents token leakage if KV storage is compromised.
+ *
  * https://openid.net/specs/openid-connect-registration-1_0.html#ClientRegistration
  */
 
@@ -17,6 +20,22 @@ interface TokenMetadata {
   single_use?: boolean;
   description?: string;
 }
+
+/**
+ * Hash token for secure storage comparison using SHA-256
+ * Same implementation as SCIM tokens for consistency
+ * Exported for use by Admin API
+ */
+export async function hashInitialAccessToken(token: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Internal alias for backwards compatibility
+const hashToken = hashInitialAccessToken;
 
 /**
  * Variables added to Hono context
@@ -131,7 +150,11 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
     }
 
     try {
-      const tokenData = await env.INITIAL_ACCESS_TOKENS.get(token, 'json');
+      // Hash the token for secure lookup (same pattern as SCIM tokens)
+      const tokenHash = await hashToken(token);
+      const kvKey = `iat:${tokenHash}`;
+
+      const tokenData = await env.INITIAL_ACCESS_TOKENS.get(kvKey, 'json');
 
       if (!tokenData) {
         return c.json(
@@ -150,11 +173,11 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
       const metadata = tokenData as TokenMetadata;
 
       if (metadata.single_use) {
-        // Delete single-use token immediately
-        await env.INITIAL_ACCESS_TOKENS.delete(token);
-        console.log(`Single-use Initial Access Token consumed: ${token.substring(0, 10)}...`);
+        // Delete single-use token immediately using the hashed key
+        await env.INITIAL_ACCESS_TOKENS.delete(kvKey);
+        console.log(`Single-use Initial Access Token consumed: ${tokenHash.substring(0, 10)}...`);
       } else {
-        console.log(`Reusable Initial Access Token used: ${token.substring(0, 10)}...`);
+        console.log(`Reusable Initial Access Token used: ${tokenHash.substring(0, 10)}...`);
       }
 
       // Store token metadata in context for use by handlers

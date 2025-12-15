@@ -36,6 +36,7 @@ import type { Env as SharedEnv, IStorageAdapter } from '@authrim/shared';
 import {
   versionCheckMiddleware,
   createReBACService,
+  timingSafeEqual,
   type ReBACService,
   type CheckRequest,
   type BatchCheckRequest,
@@ -127,7 +128,8 @@ function authenticateRequest(c: {
   }
 
   const token = authHeader.slice(7);
-  return token === c.env.POLICY_API_SECRET;
+  // Use timing-safe comparison to prevent timing attacks
+  return !!c.env.POLICY_API_SECRET && timingSafeEqual(token, c.env.POLICY_API_SECRET);
 }
 
 // ============================================================

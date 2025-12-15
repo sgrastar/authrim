@@ -13,7 +13,7 @@
 
 import { Context } from 'hono';
 import type { Env } from '@authrim/shared';
-import { getShardCount, buildAuthCodeShardInstanceName } from '@authrim/shared';
+import { getShardCount, buildAuthCodeShardInstanceName, timingSafeEqual } from '@authrim/shared';
 
 /**
  * Result of a warmup operation
@@ -53,7 +53,8 @@ export async function handleWarmup(c: Context<{ Bindings: Env }>): Promise<Respo
   }
 
   const token = authHeader.slice(7);
-  if (token !== c.env.ADMIN_API_SECRET) {
+  // Use timing-safe comparison to prevent timing attacks
+  if (!c.env.ADMIN_API_SECRET || !timingSafeEqual(token, c.env.ADMIN_API_SECRET)) {
     return c.json({ error: 'unauthorized', message: 'Invalid admin secret' }, 401);
   }
 

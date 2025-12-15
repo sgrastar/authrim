@@ -356,13 +356,41 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Validate client authentication (using HTTP Basic Auth or client assertion)
+    // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
     const authHeader = c.req.header('Authorization');
     let clientId: string | undefined;
 
     if (authHeader?.startsWith('Basic ')) {
       // HTTP Basic Authentication
-      const credentials = atob(authHeader.substring(6));
-      const [id, secret] = credentials.split(':');
+      let id: string;
+      let secret: string;
+
+      try {
+        const credentials = atob(authHeader.substring(6));
+        const colonIndex = credentials.indexOf(':');
+
+        if (colonIndex === -1) {
+          return c.json(
+            {
+              error: 'invalid_client',
+              error_description: 'Invalid Authorization header format: missing colon separator',
+            },
+            401
+          );
+        }
+
+        // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
+        id = decodeURIComponent(credentials.substring(0, colonIndex));
+        secret = decodeURIComponent(credentials.substring(colonIndex + 1));
+      } catch {
+        return c.json(
+          {
+            error: 'invalid_client',
+            error_description: 'Invalid Authorization header format',
+          },
+          401
+        );
+      }
 
       // Verify client credentials
       const client = await c.env.DB.prepare(

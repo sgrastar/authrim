@@ -5,6 +5,7 @@ import {
   buildSessionShardInstanceName,
   getShardCount,
   buildAuthCodeShardInstanceName,
+  timingSafeEqual,
 } from '@authrim/shared';
 
 /**
@@ -26,7 +27,8 @@ import {
 export async function warmupHandler(c: Context<{ Bindings: Env }>) {
   // Validate internal API secret
   const secret = c.req.header('X-Admin-Secret') || c.req.query('secret');
-  if (secret !== c.env.ADMIN_API_SECRET) {
+  // Use timing-safe comparison to prevent timing attacks
+  if (!secret || !c.env.ADMIN_API_SECRET || !timingSafeEqual(secret, c.env.ADMIN_API_SECRET)) {
     return c.json({ error: 'unauthorized', message: 'Invalid or missing admin secret' }, 401);
   }
 

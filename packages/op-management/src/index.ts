@@ -59,6 +59,7 @@ import {
   adminScimTokenCreateHandler,
   adminScimTokenRevokeHandler,
 } from './scim-tokens';
+import { adminIATListHandler, adminIATCreateHandler, adminIATRevokeHandler } from './iat-tokens';
 import {
   adminOrganizationsListHandler,
   adminOrganizationGetHandler,
@@ -220,6 +221,13 @@ app.use('/introspect', async (c, next) => {
   })(c, next);
 });
 
+// RFC 7662 Section 4: Token introspection responses MUST NOT be cached
+app.use('/introspect', async (c, next) => {
+  await next();
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+});
+
 // Rate limiting for revoke endpoint
 // Configurable via KV (rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds)
 // or RATE_LIMIT_PROFILE env var for profile selection
@@ -229,6 +237,13 @@ app.use('/revoke', async (c, next) => {
     ...profile,
     endpoints: ['/revoke'],
   })(c, next);
+});
+
+// RFC 7009: Token revocation responses should not be cached
+app.use('/revoke', async (c, next) => {
+  await next();
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
 });
 
 // Health check endpoint
@@ -344,6 +359,13 @@ app.post('/api/admin/signing-keys/emergency-rotate', adminSigningKeysEmergencyRo
 app.get('/api/admin/scim-tokens', adminScimTokensListHandler);
 app.post('/api/admin/scim-tokens', adminScimTokenCreateHandler);
 app.delete('/api/admin/scim-tokens/:tokenHash', adminScimTokenRevokeHandler);
+
+// Admin Initial Access Token (IAT) Management endpoints
+// RFC 7591 Dynamic Client Registration requires Initial Access Token
+// Tokens are stored with SHA-256 hash as key (iat:${hash}) - same pattern as SCIM tokens
+app.get('/api/admin/iat-tokens', adminIATListHandler);
+app.post('/api/admin/iat-tokens', adminIATCreateHandler);
+app.delete('/api/admin/iat-tokens/:tokenHash', adminIATRevokeHandler);
 
 // Admin RBAC endpoints - Phase 1
 

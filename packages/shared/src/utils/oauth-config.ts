@@ -47,6 +47,9 @@ export interface OAuthConfig {
 
   /** Number of auth code DO shards for load distribution */
   CODE_SHARDS: number;
+
+  /** Require state parameter for CSRF protection */
+  STATE_REQUIRED: boolean;
 }
 
 /**
@@ -62,6 +65,7 @@ export const DEFAULT_CONFIG: OAuthConfig = {
   REFRESH_TOKEN_ROTATION_ENABLED: true, // Security best practice
   MAX_CODES_PER_USER: 100, // DDoS protection
   CODE_SHARDS: 64, // Default shard count
+  STATE_REQUIRED: false, // Default false for backwards compatibility (enable for CSRF protection)
 };
 
 /**
@@ -81,6 +85,7 @@ export const CONFIG_NAMES = [
   'REFRESH_TOKEN_ROTATION_ENABLED',
   'MAX_CODES_PER_USER',
   'CODE_SHARDS',
+  'STATE_REQUIRED',
 ] as const;
 
 export type ConfigName = (typeof CONFIG_NAMES)[number];
@@ -158,6 +163,11 @@ export const CONFIG_METADATA: Record<
     min: 1,
     max: 256,
   },
+  STATE_REQUIRED: {
+    type: 'boolean',
+    label: 'State Required',
+    description: 'Require state parameter for CSRF protection (recommended for production)',
+  },
 };
 
 /**
@@ -202,6 +212,7 @@ export function getConfigFromEnv(env: Partial<Env>): OAuthConfig {
     ),
     MAX_CODES_PER_USER: parseNumber(env.MAX_CODES_PER_USER, DEFAULT_CONFIG.MAX_CODES_PER_USER),
     CODE_SHARDS: parseNumber(env.AUTHRIM_CODE_SHARDS, DEFAULT_CONFIG.CODE_SHARDS),
+    STATE_REQUIRED: parseBool(env.STATE_REQUIRED, DEFAULT_CONFIG.STATE_REQUIRED),
   };
 }
 
@@ -314,6 +325,7 @@ export class OAuthConfigManager {
       REFRESH_TOKEN_ROTATION_ENABLED: await this.getBoolean('REFRESH_TOKEN_ROTATION_ENABLED'),
       MAX_CODES_PER_USER: await this.getNumber('MAX_CODES_PER_USER'),
       CODE_SHARDS: await this.getNumber('CODE_SHARDS'),
+      STATE_REQUIRED: await this.getBoolean('STATE_REQUIRED'),
     };
   }
 
@@ -472,6 +484,11 @@ export class OAuthConfigManager {
   /** Get auth code shard count */
   async getCodeShards(): Promise<number> {
     return this.getNumber('CODE_SHARDS');
+  }
+
+  /** Check if state parameter is required (CSRF protection) */
+  async isStateRequired(): Promise<boolean> {
+    return this.getBoolean('STATE_REQUIRED');
   }
 
   /**

@@ -4,8 +4,40 @@ import type { IntrospectionResponse } from '@authrim/shared';
 import { validateClientId, timingSafeEqual } from '@authrim/shared';
 import { getRefreshToken, isTokenRevoked } from '@authrim/shared';
 import { parseToken, verifyToken } from '@authrim/shared';
-import { importJWK, type CryptoKey } from 'jose';
+import { importJWK, decodeProtectedHeader, type CryptoKey, type JWK } from 'jose';
 import { getIntrospectionValidationSettings } from './routes/settings/introspection-validation';
+
+// In-memory JWKS cache with 5-minute TTL
+let jwksCache: { keys: JWK[]; expiry: number } | null = null;
+const JWKS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Get JWKS from KeyManager DO with in-memory caching
+ */
+async function getJwksFromKeyManager(env: Env): Promise<JWK[]> {
+  const now = Date.now();
+
+  // Return cached JWKS if still valid
+  if (jwksCache && jwksCache.expiry > now) {
+    return jwksCache.keys;
+  }
+
+  // Fetch from KeyManager DO
+  try {
+    const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
+    const keyManager = env.KEY_MANAGER.get(keyManagerId);
+    const keys = await keyManager.getAllPublicKeysRpc();
+    jwksCache = {
+      keys,
+      expiry: now + JWKS_CACHE_TTL_MS,
+    };
+    return keys;
+  } catch (error) {
+    console.error('Failed to get JWKS from KeyManager:', error);
+    // Return empty array on error, will fall back to PUBLIC_JWK_JSON
+    return [];
+  }
+}
 
 /**
  * Token Introspection Endpoint Handler
@@ -51,12 +83,27 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   let client_secret = formData.client_secret;
 
   // Check for HTTP Basic authentication (client_secret_basic)
+  // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
   if (authHeader && authHeader.startsWith('Basic ')) {
     try {
       const base64Credentials = authHeader.substring(6);
       const credentials = atob(base64Credentials);
-      const [basicClientId, basicClientSecret] = credentials.split(':', 2);
+      const colonIndex = credentials.indexOf(':');
+
+      if (colonIndex === -1) {
+        return c.json(
+          {
+            error: 'invalid_client',
+            error_description: 'Invalid Authorization header format: missing colon separator',
+          },
+          401
+        );
+      }
+
+      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
+      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
+      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
 
       if (!client_id && basicClientId) {
         client_id = basicClientId;
@@ -140,11 +187,16 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
 
   const jti = tokenPayload.jti as string;
   const sub = tokenPayload.sub as string;
-  const aud = tokenPayload.aud as string;
+  // RFC 7519: aud can be a string or array of strings
+  const audRaw = tokenPayload.aud;
+  const audArray = Array.isArray(audRaw) ? audRaw : audRaw ? [audRaw] : [];
+  const aud = audArray[0] as string; // Primary audience for response
   const scope = tokenPayload.scope as string;
   const iss = tokenPayload.iss as string;
   const exp = tokenPayload.exp as number;
   const iat = tokenPayload.iat as number;
+  // RFC 7519: nbf (not before) claim - token SHOULD NOT be valid before this time
+  const nbf = tokenPayload.nbf as number | undefined;
   const tokenClientId = tokenPayload.client_id as string;
   // V2: Extract version for refresh token validation
   const rtv = typeof tokenPayload.rtv === 'number' ? tokenPayload.rtv : 1;
@@ -154,30 +206,57 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   const resource = tokenPayload.resource as string | undefined;
 
   // Load public key for verification
-  const publicJwkJson = c.env.PUBLIC_JWK_JSON;
-  if (!publicJwkJson) {
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Server configuration error',
-      },
-      500
-    );
+  // Strategy: Try to match kid from token header with JWKS first, fall back to PUBLIC_JWK_JSON
+  let publicKey: CryptoKey | undefined;
+  let tokenKid: string | undefined;
+
+  // Extract kid from token header
+  try {
+    const header = decodeProtectedHeader(token);
+    tokenKid = header.kid;
+  } catch {
+    // If we can't decode the header, continue without kid matching
   }
 
-  let publicKey;
-  try {
-    const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
-    publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
-  } catch (err) {
-    console.error('Failed to import public key:', err);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to load verification key',
-      },
-      500
-    );
+  // Try to find matching key from KeyManager DO (with in-memory caching)
+  if (tokenKid) {
+    try {
+      const jwksKeys = await getJwksFromKeyManager(c.env);
+      const matchingKey = jwksKeys.find((k) => k.kid === tokenKid);
+      if (matchingKey) {
+        publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;
+      }
+    } catch {
+      // KeyManager access failed, fall back to PUBLIC_JWK_JSON
+    }
+  }
+
+  // Fall back to PUBLIC_JWK_JSON if no matching key found
+  if (!publicKey) {
+    const publicJwkJson = c.env.PUBLIC_JWK_JSON;
+    if (!publicJwkJson) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Server configuration error',
+        },
+        500
+      );
+    }
+
+    try {
+      const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
+      publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
+    } catch (err) {
+      console.error('Failed to import public key:', err);
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to load verification key',
+        },
+        500
+      );
+    }
   }
 
   // Verify token signature
@@ -187,7 +266,20 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     // For refresh tokens, aud should be the client_id
     // Use the actual aud from the token to determine verification strategy
     const expectedAud = aud;
-    await verifyToken(token, publicKey, iss, { audience: expectedAud });
+    // RFC 7662: Use server's configured ISSUER_URL for issuer validation
+    // This prevents accepting tokens from other issuers even if signed with the same key
+    const expectedIssuer = c.env.ISSUER_URL;
+    if (!expectedIssuer) {
+      console.error('ISSUER_URL not configured');
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Server configuration error',
+        },
+        500
+      );
+    }
+    await verifyToken(token, publicKey, expectedIssuer, { audience: expectedAud });
   } catch (error) {
     console.error('Token verification failed:', error);
     // Token signature verification failed, return inactive
@@ -202,9 +294,9 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   const { settings: validationSettings } = await getIntrospectionValidationSettings(c.env);
 
   if (validationSettings.strictValidation) {
-    // 1. Audience validation
+    // 1. Audience validation (RFC 7519: aud can be array)
     const expectedAudience = validationSettings.expectedAudience || c.env.ISSUER_URL || '';
-    if (expectedAudience && aud !== expectedAudience) {
+    if (expectedAudience && !audArray.includes(expectedAudience)) {
       // Token audience does not match expected audience
       return c.json<IntrospectionResponse>({
         active: false,
@@ -227,33 +319,55 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   }
   // ========== Strict Validation Mode END ==========
 
-  // Check if token is expired
+  // Check token timing constraints
   const now = Math.floor(Date.now() / 1000);
+
+  // RFC 7519: Check nbf (not before) - token is not valid before this time
+  if (nbf && nbf > now) {
+    return c.json<IntrospectionResponse>({
+      active: false,
+    });
+  }
+
+  // Check if token is expired
   if (exp && exp < now) {
     return c.json<IntrospectionResponse>({
       active: false,
     });
   }
 
-  // Check if token has been revoked (for access tokens)
-  if (jti && token_type_hint !== 'refresh_token') {
-    const revoked = await isTokenRevoked(c.env, jti);
-    if (revoked) {
-      return c.json<IntrospectionResponse>({
-        active: false,
-      });
-    }
-  }
+  // ========== Token Revocation/Existence Check ==========
+  // Logic depends on token_type_hint:
+  // - 'access_token': Check access token revocation store only
+  // - 'refresh_token': Check refresh token existence in DO only
+  // - undefined: Default to access token behavior (most common use case)
+  //
+  // Note: Without a hint, we cannot reliably determine token type.
+  // RFC 7662 Section 2.1 recommends clients provide token_type_hint for optimal handling.
+  // Defaulting to access token revocation check is the safest approach.
 
-  // Check if refresh token exists in DO (for refresh tokens - V2 API)
-  if (jti && token_type_hint === 'refresh_token' && sub) {
-    const refreshTokenData = await getRefreshToken(c.env, sub, rtv, tokenClientId, jti);
-    if (!refreshTokenData) {
-      return c.json<IntrospectionResponse>({
-        active: false,
-      });
+  if (jti) {
+    if (token_type_hint === 'refresh_token') {
+      // Explicitly refresh token - check existence in DO
+      if (sub) {
+        const refreshTokenData = await getRefreshToken(c.env, sub, rtv, tokenClientId, jti);
+        if (!refreshTokenData) {
+          return c.json<IntrospectionResponse>({
+            active: false,
+          });
+        }
+      }
+    } else {
+      // Access token (explicit or default) - check revocation store
+      const revoked = await isTokenRevoked(c.env, jti);
+      if (revoked) {
+        return c.json<IntrospectionResponse>({
+          active: false,
+        });
+      }
     }
   }
+  // ========== Token Revocation/Existence Check END ==========
 
   // Token is active, return introspection response
   const response: IntrospectionResponse = {
@@ -263,6 +377,8 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     token_type: 'Bearer',
     exp,
     iat,
+    // RFC 7519: Include nbf if present
+    ...(nbf !== undefined && { nbf }),
     sub,
     aud,
     iss,

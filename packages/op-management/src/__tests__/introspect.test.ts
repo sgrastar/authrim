@@ -47,6 +47,7 @@ function createMockContext(options: {
   env?: Partial<Env>;
 }) {
   const mockEnv: Partial<Env> = {
+    ISSUER_URL: 'https://op.example.com',
     PUBLIC_JWK_JSON: JSON.stringify({
       kty: 'RSA',
       kid: 'key-1',

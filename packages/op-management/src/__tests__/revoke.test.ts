@@ -20,8 +20,15 @@ vi.mock('@authrim/shared', async () => {
     getRefreshToken: vi.fn(),
     revokeToken: vi.fn(),
     parseToken: vi.fn(),
+    verifyToken: vi.fn(),
   };
 });
+
+// Mock jose
+vi.mock('jose', () => ({
+  importJWK: vi.fn(),
+  decodeProtectedHeader: vi.fn(),
+}));
 
 import { revokeHandler } from '../revoke';
 import {
@@ -31,7 +38,9 @@ import {
   getRefreshToken,
   revokeToken,
   parseToken,
+  verifyToken,
 } from '@authrim/shared';
+import { importJWK, decodeProtectedHeader } from 'jose';
 
 // Helper to create mock context
 function createMockContext(options: {
@@ -41,6 +50,13 @@ function createMockContext(options: {
   env?: Partial<Env>;
 }) {
   const mockEnv: Partial<Env> = {
+    ISSUER_URL: 'https://op.example.com',
+    PUBLIC_JWK_JSON: JSON.stringify({
+      kty: 'RSA',
+      kid: 'key-1',
+      n: 'mock-n',
+      e: 'AQAB',
+    }),
     TOKEN_EXPIRY: '3600',
     DB: {
       prepare: vi.fn().mockReturnValue({
@@ -69,6 +85,11 @@ function createMockContext(options: {
 describe('Token Revocation Endpoint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Setup jose mocks for signature verification
+    vi.mocked(importJWK).mockResolvedValue({} as any);
+    vi.mocked(decodeProtectedHeader).mockReturnValue({ alg: 'RS256', kid: 'key-1' });
+    // verifyToken succeeds by default
+    vi.mocked(verifyToken).mockResolvedValue({} as any);
   });
 
   afterEach(() => {

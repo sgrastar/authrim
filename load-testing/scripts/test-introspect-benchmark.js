@@ -66,10 +66,19 @@ const actClaimPresent = new Rate('act_claim_present'); // act claim存在確認
 const resourceClaimPresent = new Rate('resource_claim_present'); // resource claim存在確認
 
 // 環境変数
+// Note: Replace default values with actual credentials when running tests
 const BASE_URL = __ENV.BASE_URL || 'https://conformance.authrim.com';
-const CLIENT_ID = __ENV.CLIENT_ID || 'test_client';
-const CLIENT_SECRET = __ENV.CLIENT_SECRET || 'test_secret';
+const CLIENT_ID = __ENV.CLIENT_ID; // Required: OAuth client ID
+const CLIENT_SECRET = __ENV.CLIENT_SECRET; // Required: OAuth client secret
 const PRESET = __ENV.PRESET || 'rps300';
+
+// Validate required credentials
+if (!CLIENT_ID || !CLIENT_SECRET) {
+  throw new Error(
+    'CLIENT_ID and CLIENT_SECRET are required. Set them via environment variables:\n' +
+      '  k6 run --env CLIENT_ID=your_client_id --env CLIENT_SECRET=your_secret scripts/test-introspect-benchmark.js'
+  );
+}
 const TOKEN_PATH = __ENV.TOKEN_PATH || '../seeds/access_tokens.json';
 // K6 Cloud用: R2からシードをフェッチするURL
 const TOKEN_URL = __ENV.TOKEN_URL || '';
@@ -377,12 +386,24 @@ export function setup() {
     wrong_client: tokens.filter((t) => t.type === 'wrong_client').length,
   };
   console.log(`📊 Token distribution:`);
-  console.log(`   Valid:           ${counts.valid} (${((counts.valid / tokens.length) * 100).toFixed(1)}%)`);
-  console.log(`   Valid (TE/act):  ${counts.valid_exchanged} (${((counts.valid_exchanged / tokens.length) * 100).toFixed(1)}%)`);
-  console.log(`   Expired:         ${counts.expired} (${((counts.expired / tokens.length) * 100).toFixed(1)}%)`);
-  console.log(`   Revoked:         ${counts.revoked} (${((counts.revoked / tokens.length) * 100).toFixed(1)}%)`);
-  console.log(`   Wrong audience:  ${counts.wrong_audience} (${((counts.wrong_audience / tokens.length) * 100).toFixed(1)}%)`);
-  console.log(`   Wrong client:    ${counts.wrong_client} (${((counts.wrong_client / tokens.length) * 100).toFixed(1)}%)`);
+  console.log(
+    `   Valid:           ${counts.valid} (${((counts.valid / tokens.length) * 100).toFixed(1)}%)`
+  );
+  console.log(
+    `   Valid (TE/act):  ${counts.valid_exchanged} (${((counts.valid_exchanged / tokens.length) * 100).toFixed(1)}%)`
+  );
+  console.log(
+    `   Expired:         ${counts.expired} (${((counts.expired / tokens.length) * 100).toFixed(1)}%)`
+  );
+  console.log(
+    `   Revoked:         ${counts.revoked} (${((counts.revoked / tokens.length) * 100).toFixed(1)}%)`
+  );
+  console.log(
+    `   Wrong audience:  ${counts.wrong_audience} (${((counts.wrong_audience / tokens.length) * 100).toFixed(1)}%)`
+  );
+  console.log(
+    `   Wrong client:    ${counts.wrong_client} (${((counts.wrong_client / tokens.length) * 100).toFixed(1)}%)`
+  );
   console.log(``);
 
   // ウォームアップ: 最初の数リクエストでDOを初期化
@@ -390,17 +411,13 @@ export function setup() {
   const validToken = tokens.find((t) => t.type === 'valid');
   if (validToken) {
     for (let i = 0; i < 5; i++) {
-      http.post(
-        `${BASE_URL}/introspect`,
-        `token=${encodeURIComponent(validToken.access_token)}`,
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Authorization: getBasicAuthHeader(),
-          },
-          tags: { name: 'Warmup' },
-        }
-      );
+      http.post(`${BASE_URL}/introspect`, `token=${encodeURIComponent(validToken.access_token)}`, {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: getBasicAuthHeader(),
+        },
+        tags: { name: 'Warmup' },
+      });
     }
   }
   console.log(`   Warmup complete`);
