@@ -19,6 +19,12 @@ import {
   getMicrosoftIssuer,
   validateMicrosoftConfig,
 } from '../providers/microsoft';
+import {
+  GITHUB_DEFAULT_CONFIG,
+  validateGitHubConfig,
+  getGitHubEffectiveEndpoints,
+  type GitHubProviderQuirks,
+} from '../providers/github';
 import { encrypt, getEncryptionKey } from '../utils/crypto';
 
 /**
@@ -130,6 +136,33 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
         ...MICROSOFT_DEFAULT_CONFIG,
         issuer: getMicrosoftIssuer(tenantType),
         providerQuirks: { tenantType },
+      };
+    } else if (body.template === 'github') {
+      // Apply GitHub defaults
+      const quirks = body.provider_quirks as GitHubProviderQuirks | undefined;
+
+      // Validate GitHub configuration
+      const validationErrors = validateGitHubConfig({
+        clientId: body.client_id,
+        clientSecretEncrypted: 'placeholder', // Will be set later
+        scopes: body.scopes || 'read:user user:email',
+        providerQuirks: (quirks || {}) as Record<string, unknown>,
+      });
+      if (validationErrors.length > 0) {
+        return c.json({ error: 'invalid_request', message: validationErrors.join(', ') }, 400);
+      }
+
+      // Get effective endpoints (handles GitHub Enterprise if configured)
+      const endpoints = getGitHubEffectiveEndpoints({
+        providerQuirks: (quirks || {}) as Record<string, unknown>,
+      });
+
+      defaults = {
+        ...GITHUB_DEFAULT_CONFIG,
+        authorizationEndpoint: endpoints.authorizationEndpoint,
+        tokenEndpoint: endpoints.tokenEndpoint,
+        userinfoEndpoint: endpoints.userinfoEndpoint,
+        providerQuirks: quirks || GITHUB_DEFAULT_CONFIG.providerQuirks,
       };
     }
 

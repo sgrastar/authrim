@@ -231,11 +231,16 @@ CREATE TABLE sessions (
   user_id TEXT NOT NULL,
   expires_at INTEGER NOT NULL,
   created_at INTEGER NOT NULL,
+  -- External provider mapping for backchannel logout (OIDC Back-Channel Logout 1.0)
+  external_provider_id TEXT,
+  external_provider_sub TEXT,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
+-- Index for backchannel logout queries by provider and subject
+CREATE INDEX idx_sessions_external_provider ON sessions(external_provider_id, external_provider_sub);
 
 -- =============================================================================
 -- 7. Roles Table (RBAC)
@@ -2041,9 +2046,14 @@ CREATE TABLE IF NOT EXISTS external_idp_auth_states (
   -- For OIDC proxy flow (future)
   original_auth_request TEXT,            -- JSON of original OIDC auth request
 
+  -- OIDC Core 1.0 parameters (for validation in callback)
+  max_age INTEGER,                       -- max_age parameter for auth_time validation
+  acr_values TEXT,                       -- acr_values parameter for acr validation
+
   -- Timestamps
   expires_at INTEGER NOT NULL,
   created_at INTEGER NOT NULL,
+  consumed_at INTEGER,                   -- When state was consumed (for single-use)
 
   FOREIGN KEY (provider_id) REFERENCES upstream_providers(id) ON DELETE CASCADE
 );
@@ -2052,6 +2062,8 @@ CREATE INDEX IF NOT EXISTS idx_external_idp_auth_states_state
   ON external_idp_auth_states(state);
 CREATE INDEX IF NOT EXISTS idx_external_idp_auth_states_expires_at
   ON external_idp_auth_states(expires_at);
+CREATE INDEX IF NOT EXISTS idx_external_idp_auth_states_consumed_at
+  ON external_idp_auth_states(consumed_at);
 
 -- =============================================================================
 -- 4. Seed Google Provider (commented out - configure via Admin API)

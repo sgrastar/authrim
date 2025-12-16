@@ -1543,7 +1543,7 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
 
     if (isShardedSessionId(sessionId)) {
       try {
-        const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
         sessionData = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
         if (sessionData) {
@@ -1625,7 +1625,7 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
     // Invalidate session in SessionStore DO (sharded) via RPC
     if (isShardedSessionId(sessionId)) {
       try {
-        const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (!deleted) {

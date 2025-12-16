@@ -1,25 +1,41 @@
 /**
- * ChallengeStore Sharding Helper
+ * ChallengeStore Sharding Helper (Region Sharding Version)
  *
  * Provides utilities for routing ChallengeStore operations to sharded
- * Durable Object instances based on email address.
+ * Durable Object instances with region-based locationHint.
  *
- * DO instance name: tenant:default:challenge:shard-{shardIndex}
+ * DO instance name: {tenantId}:{region}:ch:{shard}
+ * Challenge ID format: g{gen}:{region}:{shard}:ch_{uuid}
  *
  * Sharding Strategy:
- * - Email-based sharding: fnv1a32(email.toLowerCase()) % shardCount
- * - Same email always routes to same shard (locality for same user)
- * - Consistent with SessionStore/AuthCodeStore patterns
+ * - Challenge ID or User ID based sharding with region distribution
+ * - Same key always routes to same shard in same region
+ * - locationHint ensures DO placement in optimal region
  *
  * Configuration:
- * - KV: AUTHRIM_CONFIG namespace, key: "challenge_shards"
- * - Environment variable: AUTHRIM_CHALLENGE_SHARDS
- * - Default: 4 shards
+ * - KV: region_shard_config:{tenantId} for dynamic region distribution
+ * - Fallback to legacy shard count settings if region config not present
  */
 
 import type { Env } from '../types/env';
+import type { DurableObjectNamespace, DurableObjectStub } from '@cloudflare/workers-types';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 import { fnv1a32, DEFAULT_TENANT_ID } from './tenant-context';
+import {
+  getRegionShardConfig,
+  resolveShardForNewResource,
+  parseRegionId,
+  createRegionId,
+  buildRegionInstanceName,
+  getRegionAwareDOStub,
+  type ParsedRegionId,
+  type ShardResolution,
+} from './region-sharding';
+
+/**
+ * Type alias for ChallengeStore stub
+ */
+type ChallengeStoreStub = DurableObjectStub<ChallengeStore>;
 
 /**
  * Default shard count for challenge store sharding.
@@ -255,4 +271,192 @@ export async function getChallengeStoreByChallengeId(
 export function resetChallengeShardCountCache(): void {
   cachedChallengeShardCount = null;
   cachedChallengeShardAt = 0;
+}
+
+// =============================================================================
+// Region-Aware Functions (New)
+// =============================================================================
+
+/**
+ * Generate a new region-sharded challenge ID.
+ *
+ * Uses FNV-1a hash of the shardKey to determine which shard the challenge belongs to,
+ * then resolves the region from the shard index using the region shard config.
+ *
+ * @param env - Environment with KV binding for region shard config
+ * @param shardKey - Key for shard calculation (e.g., userId, email, or challengeId)
+ * @param tenantId - Tenant ID (default: 'default')
+ * @returns Object containing challengeId, shardIndex, regionKey, and generation
+ *
+ * @example
+ * const { challengeId, uuid, resolution } = await generateRegionShardedChallengeId(env, userId);
+ * // challengeId: "g1:apac:3:ch_abc123-def456-..."
+ */
+export async function generateRegionShardedChallengeId(
+  env: Env,
+  shardKey: string,
+  tenantId: string = DEFAULT_TENANT_ID
+): Promise<{
+  challengeId: string;
+  uuid: string;
+  shardIndex: number;
+  regionKey: string;
+  generation: number;
+}> {
+  const uuid = crypto.randomUUID();
+  const config = await getRegionShardConfig(env, tenantId);
+  const resolution = resolveShardForNewResource(config, shardKey);
+
+  // Create challenge ID with embedded region info
+  const challengeId = createRegionId(
+    resolution.generation,
+    resolution.regionKey,
+    resolution.shardIndex,
+    `ch_${uuid}`
+  );
+
+  return {
+    challengeId,
+    uuid,
+    shardIndex: resolution.shardIndex,
+    regionKey: resolution.regionKey,
+    generation: resolution.generation,
+  };
+}
+
+/**
+ * Parse a region-sharded challenge ID to extract shard info.
+ *
+ * @param challengeId - Region-sharded challenge ID (format: g{gen}:{region}:{shard}:ch_{uuid})
+ * @returns Parsed region ID with uuid, or null if invalid format
+ *
+ * @example
+ * const result = parseRegionShardedChallengeId("g1:apac:3:ch_abc123");
+ * // { generation: 1, regionKey: 'apac', shardIndex: 3, uuid: 'abc123' }
+ */
+export function parseRegionShardedChallengeId(
+  challengeId: string
+): (ParsedRegionId & { uuid: string }) | null {
+  try {
+    const parsed = parseRegionId(challengeId);
+    // Verify this is a challenge ID
+    if (!parsed.randomPart.startsWith('ch_')) {
+      return null;
+    }
+    return {
+      ...parsed,
+      uuid: parsed.randomPart.substring(3), // Remove 'ch_' prefix
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if a challenge ID is in the region-sharded format.
+ *
+ * @param challengeId - Challenge ID to check
+ * @returns true if the challenge ID follows the region-sharded format
+ */
+export function isRegionShardedChallengeId(challengeId: string): boolean {
+  return parseRegionShardedChallengeId(challengeId) !== null;
+}
+
+/**
+ * Get ChallengeStore Durable Object stub for a region-sharded challenge ID.
+ *
+ * Parses the challenge ID to extract the region and shard info, then routes to
+ * the correct DO instance with locationHint for optimal placement.
+ *
+ * @param env - Environment object with DO bindings
+ * @param challengeId - Region-sharded challenge ID
+ * @param tenantId - Tenant ID (default: 'default')
+ * @returns Object containing DO stub and resolution info
+ * @throws Error if challengeId format is invalid
+ *
+ * @example
+ * const { stub, resolution } = getRegionAwareChallengeStore(env, "g1:apac:3:ch_abc123");
+ * const response = await stub.consumeChallengeRpc({ ... });
+ */
+export function getRegionAwareChallengeStore(
+  env: Env,
+  challengeId: string,
+  tenantId: string = DEFAULT_TENANT_ID
+): {
+  stub: ChallengeStoreStub;
+  resolution: ShardResolution;
+  instanceName: string;
+} {
+  const parsed = parseRegionShardedChallengeId(challengeId);
+  if (!parsed) {
+    throw new Error(`Invalid region-sharded challenge ID format: ${challengeId}`);
+  }
+
+  const resolution: ShardResolution = {
+    generation: parsed.generation,
+    regionKey: parsed.regionKey,
+    shardIndex: parsed.shardIndex,
+  };
+
+  const instanceName = buildRegionInstanceName(
+    tenantId,
+    resolution.regionKey,
+    'challenge',
+    resolution.shardIndex
+  );
+
+  const stub = getRegionAwareDOStub(
+    env.CHALLENGE_STORE as unknown as DurableObjectNamespace,
+    instanceName,
+    resolution.regionKey
+  ) as ChallengeStoreStub;
+
+  return { stub, resolution, instanceName };
+}
+
+/**
+ * Get ChallengeStore Durable Object stub and generate a new challenge ID.
+ *
+ * This is the entry point for creating new challenges. It:
+ * 1. Gets the region shard config from KV
+ * 2. Generates a new region-sharded challenge ID
+ * 3. Returns the DO stub with locationHint for the target region
+ *
+ * @param env - Environment object with DO bindings
+ * @param shardKey - Key for shard calculation (e.g., userId, email)
+ * @param tenantId - Tenant ID (default: 'default')
+ * @returns Object containing DO stub, new challengeId, and resolution info
+ *
+ * @example
+ * const { stub, challengeId, resolution } = await getRegionAwareChallengeStoreForNew(env, userId);
+ * await stub.storeChallengeRpc({ id: challengeId, ... });
+ */
+export async function getRegionAwareChallengeStoreForNew(
+  env: Env,
+  shardKey: string,
+  tenantId: string = DEFAULT_TENANT_ID
+): Promise<{
+  stub: ChallengeStoreStub;
+  challengeId: string;
+  uuid: string;
+  resolution: ShardResolution;
+  instanceName: string;
+}> {
+  const { challengeId, uuid, shardIndex, regionKey, generation } =
+    await generateRegionShardedChallengeId(env, shardKey, tenantId);
+
+  const resolution: ShardResolution = {
+    generation,
+    regionKey,
+    shardIndex,
+  };
+
+  const instanceName = buildRegionInstanceName(tenantId, regionKey, 'challenge', shardIndex);
+  const stub = getRegionAwareDOStub(
+    env.CHALLENGE_STORE as unknown as DurableObjectNamespace,
+    instanceName,
+    regionKey
+  ) as ChallengeStoreStub;
+
+  return { stub, challengeId, uuid, resolution, instanceName };
 }

@@ -16,6 +16,8 @@ import {
   parseRefreshTokenJti,
   buildRefreshTokenRotatorInstanceName,
   generateRefreshTokenRandomPart,
+  // Token Revocation Sharding (Region-aware)
+  generateRegionAwareJti,
   // Configuration Manager (KV > env > default)
   createOAuthConfigManager,
 } from '@authrim/shared';
@@ -931,7 +933,15 @@ async function handleAuthorizationCodeGrant(
   let accessToken: string;
   let tokenJti: string;
   try {
-    const result = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
+    // Generate region-aware JTI for token revocation sharding
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+    const result = await createAccessToken(
+      accessTokenClaims,
+      privateKey,
+      keyId,
+      expiresIn,
+      regionAwareJti
+    );
     accessToken = result.token;
     tokenJti = result.jti;
   } catch (error) {
@@ -1652,7 +1662,15 @@ async function handleRefreshTokenGrant(
       accessTokenClaims.cnf = { jkt: dpopJkt };
     }
 
-    const result = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
+    // Generate region-aware JTI for token revocation sharding
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+    const result = await createAccessToken(
+      accessTokenClaims,
+      privateKey,
+      keyId,
+      expiresIn,
+      regionAwareJti
+    );
     accessToken = result.token;
   } catch (err) {
     console.error('Failed to create access token:', err);
@@ -1983,7 +2001,15 @@ async function handleJWTBearerGrant(
 
   let accessToken: string;
   try {
-    const result = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
+    // Generate region-aware JTI for token revocation sharding
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+    const result = await createAccessToken(
+      accessTokenClaims,
+      privateKey,
+      keyId,
+      expiresIn,
+      regionAwareJti
+    );
     accessToken = result.token;
   } catch (error) {
     console.error('Failed to create access token:', error);
@@ -2293,7 +2319,15 @@ async function handleDeviceCodeGrant(
 
   let accessToken: string;
   try {
-    const result = await createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn);
+    // Generate region-aware JTI for token revocation sharding
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+    const result = await createAccessToken(
+      accessTokenClaims,
+      privateKey,
+      keyId,
+      expiresIn,
+      regionAwareJti
+    );
     accessToken = result.token;
   } catch (error) {
     console.error('Failed to create access token:', error);
@@ -2674,11 +2708,14 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
   }
 
+  // Generate region-aware JTI for token revocation sharding
+  const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
   const { token: accessToken, jti: tokenJti } = await createAccessToken(
     accessTokenClaims,
     privateKey,
     kid,
-    expiresIn
+    expiresIn,
+    regionAwareJti
   );
 
   // Calculate at_hash for ID token
@@ -3614,11 +3651,14 @@ async function handleTokenExchangeGrant(
   let accessToken: string;
   let accessTokenJti: string;
   try {
+    // Generate region-aware JTI for token revocation sharding
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
     const result = await createAccessToken(
       accessTokenClaims as Parameters<typeof createAccessToken>[0],
       privateKey,
       keyId,
-      expiresIn
+      expiresIn,
+      regionAwareJti
     );
     accessToken = result.token;
     accessTokenJti = result.jti;
@@ -3954,11 +3994,14 @@ async function handleClientCredentialsGrant(
 
   let accessToken: string;
   try {
+    // Generate region-aware JTI for token revocation sharding
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
     const result = await createAccessToken(
       accessTokenClaims as Parameters<typeof createAccessToken>[0],
       privateKey,
       keyId,
-      expiresIn
+      expiresIn,
+      regionAwareJti
     );
     accessToken = result.token;
   } catch (error) {

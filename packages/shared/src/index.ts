@@ -28,6 +28,7 @@ export * from './utils/pairwise';
 export * from './utils/sd-jwt';
 export * from './utils/session-state';
 export * from './utils/session-helper';
+export * from './utils/authcode-helper';
 export * from './utils/tenant-context';
 export * from './utils/token-introspection';
 export * from './utils/validation';
@@ -39,6 +40,8 @@ export * from './utils/refresh-token-sharding';
 export * from './utils/oauth-config';
 export * from './utils/challenge-sharding';
 export * from './utils/token-revocation-sharding';
+export * from './utils/region-sharding';
+export * from './utils/do-retry';
 
 // Middleware
 export * from './middleware/admin-auth';

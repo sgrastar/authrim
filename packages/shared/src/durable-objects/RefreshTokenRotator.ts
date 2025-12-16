@@ -134,6 +134,53 @@ export class RefreshTokenRotator extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+
+    // Block all requests until initialization completes
+    // This ensures the DO is in a consistent state before processing any requests
+    // Critical for token theft detection and version validation
+    ctx.blockConcurrencyWhile(async () => {
+      await this.initializeStateBlocking();
+    });
+  }
+
+  /**
+   * Initialize state from Durable Storage
+   * Called by blockConcurrencyWhile() in constructor
+   */
+  private async initializeStateBlocking(): Promise<void> {
+    try {
+      // Load all families from granular storage
+      const familyEntries = await this.ctx.storage.list<TokenFamilyV2>({
+        prefix: STORAGE_PREFIX.FAMILY,
+      });
+
+      for (const [key, family] of familyEntries) {
+        const userId = key.substring(STORAGE_PREFIX.FAMILY.length);
+        this.families.set(userId, family);
+      }
+
+      // Load sharding metadata
+      const storedGeneration = await this.ctx.storage.get<number>(
+        `${STORAGE_PREFIX.META}generation`
+      );
+      const storedShardIndex = await this.ctx.storage.get<number>(
+        `${STORAGE_PREFIX.META}shardIndex`
+      );
+      if (storedGeneration !== undefined) {
+        this.generation = storedGeneration;
+      }
+      if (storedShardIndex !== undefined) {
+        this.shardIndex = storedShardIndex;
+      }
+
+      console.log(
+        `RefreshTokenRotator: Loaded ${this.families.size} families, gen=${this.generation}, shard=${this.shardIndex}`
+      );
+    } catch (error) {
+      console.error('RefreshTokenRotator: Failed to initialize:', error);
+    }
+
+    this.initialized = true;
   }
 
   // ==========================================
@@ -237,65 +284,23 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   // ==========================================
 
   /**
-   * Initialize state from Durable Storage
+   * Ensure state is initialized
+   * Called by public methods for backward compatibility
+   *
+   * Note: With blockConcurrencyWhile() in constructor, this is now a no-op guard.
+   * The actual initialization happens in initializeStateBlocking() during construction.
    */
   private async initializeState(): Promise<void> {
+    // Guard - initialization already completed by blockConcurrencyWhile()
     if (this.initialized) {
       return;
     }
 
-    if (this.initializePromise) {
-      await this.initializePromise;
-      return;
-    }
-
-    this.initializePromise = this.doInitialize();
-
-    try {
-      await this.initializePromise;
-    } catch (error) {
-      this.initializePromise = null;
-      throw error;
-    }
-  }
-
-  /**
-   * Actual initialization logic
-   */
-  private async doInitialize(): Promise<void> {
-    try {
-      // Load all families from granular storage
-      const familyEntries = await this.ctx.storage.list<TokenFamilyV2>({
-        prefix: STORAGE_PREFIX.FAMILY,
-      });
-
-      for (const [key, family] of familyEntries) {
-        const userId = key.substring(STORAGE_PREFIX.FAMILY.length);
-        this.families.set(userId, family);
-      }
-
-      // Load sharding metadata
-      const storedGeneration = await this.ctx.storage.get<number>(
-        `${STORAGE_PREFIX.META}generation`
-      );
-      const storedShardIndex = await this.ctx.storage.get<number>(
-        `${STORAGE_PREFIX.META}shardIndex`
-      );
-      if (storedGeneration !== undefined) {
-        this.generation = storedGeneration;
-      }
-      if (storedShardIndex !== undefined) {
-        this.shardIndex = storedShardIndex;
-      }
-
-      console.log(
-        `RefreshTokenRotator: Loaded ${this.families.size} families, gen=${this.generation}, shard=${this.shardIndex}`
-      );
-    } catch (error) {
-      console.error('RefreshTokenRotator: Failed to initialize:', error);
-    }
-
-    this.initialized = true;
+    // This should not happen with blockConcurrencyWhile(), but as a safety fallback:
+    console.warn(
+      'RefreshTokenRotator: initializeState called but not initialized - this should not happen'
+    );
+    await this.initializeStateBlocking();
   }
 
   /**

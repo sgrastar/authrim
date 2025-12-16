@@ -85,6 +85,11 @@ import {
   resetRevocationShards,
 } from './routes/settings/revocation-shards';
 import {
+  getRegionShards,
+  updateRegionShards,
+  deleteRegionShards,
+} from './routes/settings/region-shards';
+import {
   getRefreshTokenShardingConfig,
   updateRefreshTokenShardingConfig,
   getRefreshTokenShardingStats,
@@ -314,6 +319,11 @@ app.put('/api/admin/settings/code-shards', updateCodeShards);
 app.get('/api/admin/settings/revocation-shards', getRevocationShards);
 app.put('/api/admin/settings/revocation-shards', updateRevocationShards);
 app.delete('/api/admin/settings/revocation-shards', resetRevocationShards);
+
+// Admin Region Sharding endpoints
+app.get('/api/admin/settings/region-shards', getRegionShards);
+app.put('/api/admin/settings/region-shards', updateRegionShards);
+app.delete('/api/admin/settings/region-shards', deleteRegionShards);
 
 // Admin OAuth/OIDC Configuration endpoints
 app.get('/api/admin/settings/oauth-config', getOAuthConfig);

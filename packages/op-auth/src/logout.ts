@@ -132,7 +132,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Delete session from cookie if present (only sharded format)
     if (sessionId && isShardedSessionId(sessionId)) {
       try {
-        const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (deleted) {
@@ -156,7 +156,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       isShardedSessionId(sid)
     ) {
       try {
-        const sessionStore = await getSessionStoreBySessionId(c.env, sid);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sid);
         const deleted = await sessionStore.invalidateSessionRpc(sid);
 
         if (deleted) {
@@ -522,7 +522,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (sessionId && isShardedSessionId(sessionId)) {
       // Invalidate specific session using sharded routing via RPC
       try {
-        const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (!deleted) {

@@ -17,6 +17,7 @@ import {
 } from '../services/linked-identity-store';
 import { getProvider } from '../services/provider-store';
 import { hasPasskeyCredential } from '../services/identity-stitching';
+import { revokeLinkedIdentityTokens } from '../services/token-revocation';
 import type { LinkedIdentityListResponse } from '../types';
 
 /**
@@ -151,10 +152,28 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
       );
     }
 
-    // Delete linked identity
+    // Attempt to revoke tokens at the provider (best-effort, RFC 7009)
+    // This is done before deletion to ensure we have the tokens to revoke
+    const revocationResult = await revokeLinkedIdentityTokens(c.env, identity);
+    if (!revocationResult.success && revocationResult.errors.length > 0) {
+      console.warn(
+        `Token revocation failed for identity ${linkedIdentityId}: ${revocationResult.errors.join(', ')}`
+      );
+    }
+
+    // Delete linked identity (always proceed even if revocation failed)
     await deleteLinkedIdentity(c.env, linkedIdentityId);
 
-    return c.json({ success: true });
+    // Include revocation status in response for transparency
+    return c.json({
+      success: true,
+      token_revocation: {
+        attempted: true,
+        access_token_revoked: revocationResult.accessTokenRevoked,
+        refresh_token_revoked: revocationResult.refreshTokenRevoked,
+        warnings: revocationResult.errors.length > 0 ? revocationResult.errors : undefined,
+      },
+    });
   } catch (error) {
     console.error('Failed to unlink identity:', error);
     return c.json({ error: 'internal_error' }, 500);
@@ -192,7 +211,7 @@ async function verifySession(c: Context<{ Bindings: Env }>): Promise<SessionInfo
   }
 
   try {
-    const sessionStore = await getSessionStoreBySessionId(c.env, sessionToken);
+    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionToken);
     const response = await sessionStore.fetch(
       new Request(`https://session-store/session/${sessionToken}`, {
         method: 'GET',
@@ -203,7 +222,7 @@ async function verifySession(c: Context<{ Bindings: Env }>): Promise<SessionInfo
       return null;
     }
 
-    const session = (await response.json()) as { userId: string; sessionId: string };
+    const session: { sessionId: string; userId: string } = await response.json();
     return { id: session.sessionId, userId: session.userId };
   } catch {
     return null;

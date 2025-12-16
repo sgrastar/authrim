@@ -5,7 +5,6 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import type { Env } from '@authrim/shared';
 import {
   handleAdminListProviders,
   handleAdminCreateProvider,
@@ -13,6 +12,28 @@ import {
   handleAdminUpdateProvider,
   handleAdminDeleteProvider,
 } from '../admin/providers';
+
+// Define Env type locally to avoid importing from @authrim/shared
+// which has cloudflare:workers dependencies
+interface Env {
+  ADMIN_API_SECRET?: string;
+  RP_TOKEN_ENCRYPTION_KEY?: string;
+  DB?: D1Database;
+  SETTINGS?: KVNamespace;
+  [key: string]: unknown;
+}
+
+// Mock @authrim/shared to avoid cloudflare:workers dependency
+vi.mock('@authrim/shared', () => ({
+  timingSafeEqual: (a: string, b: string) => {
+    if (a.length !== b.length) return false;
+    let result = 0;
+    for (let i = 0; i < a.length; i++) {
+      result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    }
+    return result === 0;
+  },
+}));
 
 // Mock provider-store module
 vi.mock('../services/provider-store', () => ({

@@ -91,35 +91,20 @@ export class DeviceCodeStore {
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
+
+    // Block all requests until initialization completes
+    // This ensures the DO is in a consistent state before processing any requests
+    // Critical for device code verification and one-time use guarantee
+    state.blockConcurrencyWhile(async () => {
+      await this.initializeStateBlocking();
+    });
   }
 
   /**
-   * Initialize state from Durable Storage (V2)
+   * Initialize state from Durable Storage
+   * Called by blockConcurrencyWhile() in constructor
    */
-  private async initializeState(): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
-
-    if (this.initializePromise) {
-      await this.initializePromise;
-      return;
-    }
-
-    this.initializePromise = this.doInitialize();
-
-    try {
-      await this.initializePromise;
-    } catch (error) {
-      this.initializePromise = null;
-      throw error;
-    }
-  }
-
-  /**
-   * Actual initialization logic (V2)
-   */
-  private async doInitialize(): Promise<void> {
+  private async initializeStateBlocking(): Promise<void> {
     try {
       // Load all device codes from granular storage
       const deviceEntries = await this.state.storage.list<DeviceCodeV2>({
@@ -149,6 +134,24 @@ export class DeviceCodeStore {
     }
 
     this.initialized = true;
+  }
+
+  /**
+   * Ensure state is initialized
+   * Called by public methods for backward compatibility
+   *
+   * Note: With blockConcurrencyWhile() in constructor, this is now a no-op guard.
+   */
+  private async initializeState(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    // Safety fallback (should not happen with blockConcurrencyWhile)
+    console.warn(
+      'DeviceCodeStore: initializeState called but not initialized - this should not happen'
+    );
+    await this.initializeStateBlocking();
   }
 
   /**
@@ -817,13 +820,30 @@ export class DeviceCodeStore {
 
   /**
    * Alarm handler for cleaning up expired device codes
+   *
+   * Idempotent: Checks lastCleanup timestamp to prevent duplicate execution
+   * Alarms may fire multiple times in rare cases (DO restart, etc.)
    */
   async alarm(): Promise<void> {
     await this.initializeState();
 
+    const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+    const IDEMPOTENCY_BUFFER_MS = 10 * 1000; // 10 second buffer for clock skew
+
+    // Check for duplicate execution (idempotency)
+    const lastCleanupKey = `${STORAGE_PREFIX.META}lastCleanup`;
+    const lastCleanup = (await this.state.storage.get<number>(lastCleanupKey)) || 0;
+    const now = Date.now();
+
+    if (now - lastCleanup < CLEANUP_INTERVAL_MS - IDEMPOTENCY_BUFFER_MS) {
+      console.log('DeviceCodeStore alarm: Skipping duplicate execution');
+      // Reschedule from last cleanup time
+      await this.state.storage.setAlarm(lastCleanup + CLEANUP_INTERVAL_MS);
+      return;
+    }
+
     console.log('DeviceCodeStore alarm: Cleaning up expired device codes');
 
-    const now = Date.now();
     const expiredCodes: string[] = [];
 
     // Find expired codes in memory
@@ -833,7 +853,7 @@ export class DeviceCodeStore {
       }
     }
 
-    // Delete expired codes
+    // Delete expired codes (idempotent - delete is safe on non-existent keys)
     for (const deviceCode of expiredCodes) {
       await this.deleteDeviceCode(deviceCode);
 
@@ -845,7 +865,7 @@ export class DeviceCodeStore {
       });
     }
 
-    // Clean up expired codes in D1
+    // Clean up expired codes in D1 (idempotent - WHERE clause ensures safety)
     if (this.env.DB) {
       await retryD1Operation(
         async () => {
@@ -858,9 +878,12 @@ export class DeviceCodeStore {
       );
     }
 
+    // Record last cleanup time
+    await this.state.storage.put(lastCleanupKey, now);
+
     console.log(`DeviceCodeStore: Cleaned up ${expiredCodes.length} expired device codes`);
 
-    // Schedule next cleanup (every 5 minutes)
-    await this.state.storage.setAlarm(Date.now() + 5 * 60 * 1000);
+    // Schedule next cleanup
+    await this.state.storage.setAlarm(now + CLEANUP_INTERVAL_MS);
   }
 }

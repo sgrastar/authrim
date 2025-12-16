@@ -90,6 +90,10 @@ export interface ExternalIdpAuthState {
   userId?: string; // Set if linking to existing account
   sessionId?: string;
   originalAuthRequest?: string; // JSON for OIDC proxy flow
+  /** max_age parameter sent in authorization request (for auth_time validation) */
+  maxAge?: number;
+  /** acr_values parameter sent in authorization request (for acr validation) */
+  acrValues?: string;
   expiresAt: number;
   createdAt: number;
 }
@@ -110,6 +114,10 @@ export interface ProviderMetadata {
   subject_types_supported?: string[];
   id_token_signing_alg_values_supported?: string[];
   claims_supported?: string[];
+  /** RFC 7009 Token Revocation endpoint */
+  revocation_endpoint?: string;
+  /** OpenID Connect Back-Channel Logout endpoint (for IdPs that support it) */
+  end_session_endpoint?: string;
 }
 
 export interface TokenResponse {
@@ -130,6 +138,12 @@ export interface UserInfo {
   family_name?: string;
   picture?: string;
   locale?: string;
+  /** Time when authentication occurred (OIDC Core) */
+  auth_time?: number;
+  /** Authentication Context Class Reference (OIDC Core) */
+  acr?: string;
+  /** Authentication Methods References (OIDC Core) */
+  amr?: string[];
   [key: string]: unknown;
 }
 
@@ -238,6 +252,19 @@ export const ExternalIdPErrorCode = {
    * User should verify their email first.
    */
   LOCAL_EMAIL_NOT_VERIFIED: 'local_email_not_verified',
+
+  /**
+   * The authentication context class (acr) returned by the provider does not meet
+   * the requested acr_values. The user may need to re-authenticate with a stronger method.
+   * OIDC Core 1.0 Section 3.1.2.1
+   */
+  ACR_VALUES_NOT_SATISFIED: 'acr_values_not_satisfied',
+
+  /**
+   * Token revocation at the provider failed.
+   * The identity was unlinked locally but tokens may still be valid at the provider.
+   */
+  TOKEN_REVOCATION_FAILED: 'token_revocation_failed',
 } as const;
 
 export type ExternalIdPErrorCode = (typeof ExternalIdPErrorCode)[keyof typeof ExternalIdPErrorCode];

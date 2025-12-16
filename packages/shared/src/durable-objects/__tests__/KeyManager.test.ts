@@ -37,6 +37,14 @@ class MockDurableObjectState {
     };
   }
 
+  /**
+   * Mock blockConcurrencyWhile - executes callback immediately
+   * In production, this blocks all requests until the callback completes
+   */
+  async blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
+    return await callback();
+  }
+
   private async get<T>(key: string): Promise<T | undefined> {
     return this.storage.map.get(key) as T | undefined;
   }

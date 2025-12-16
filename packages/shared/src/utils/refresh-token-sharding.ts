@@ -1,20 +1,32 @@
 /**
  * Refresh Token Sharding Utilities
  *
- * Generation-based sharding for RefreshTokenRotator Durable Objects.
- * Enables dynamic shard count changes without breaking existing tokens.
+ * Generation-based sharding with region support for RefreshTokenRotator Durable Objects.
+ * Enables dynamic shard count and region changes without breaking existing tokens.
  *
  * Key Features:
+ * - Region-aware routing with locationHint support
  * - Generation-based routing (each generation has fixed shard count)
  * - Legacy token compatibility (generation=0)
  * - SHA-256 hash-based shard assignment
  * - KV-based configuration with caching
  *
+ * @see region-sharding.ts for region sharding design
  * @see docs/architecture/refresh-token-sharding.md
  */
 
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID } from './tenant-context';
+import {
+  getRegionShardConfig,
+  resolveShardForNewResource,
+  buildRegionInstanceName,
+  getRegionAwareDOStub,
+  createRegionId,
+  parseRegionId,
+  type RegionShardConfig,
+  type ShardResolution,
+} from './region-sharding';
 
 // =============================================================================
 // Types
@@ -28,10 +40,14 @@ export interface ParsedRefreshTokenJti {
   generation: number;
   /** Shard index (null for legacy tokens) */
   shardIndex: number | null;
+  /** Region key (null for legacy tokens) */
+  regionKey: string | null;
   /** Random part of the JTI */
   randomPart: string;
   /** Whether this is a legacy format token */
   isLegacy: boolean;
+  /** Whether this is a region-aware format token */
+  isRegionAware: boolean;
 }
 
 /**
@@ -64,7 +80,7 @@ export interface RefreshTokenShardConfig {
 // =============================================================================
 
 /** Default shard count for production */
-export const DEFAULT_REFRESH_TOKEN_SHARD_COUNT = 8;
+export const DEFAULT_REFRESH_TOKEN_SHARD_COUNT = 16;
 
 /** Default shard count for load testing */
 export const LOAD_TEST_SHARD_COUNT = 32;
@@ -86,45 +102,89 @@ export const GLOBAL_CONFIG_KEY = '__global__';
 // =============================================================================
 
 /**
- * Parse a refresh token JTI to extract generation and shard information.
+ * Parse a refresh token JTI to extract generation, region, and shard information.
  *
  * JTI Formats:
- * - New format: v{generation}_{shardIndex}_{randomPart}
- * - Legacy format: rt_{uuid} (treated as generation=0)
+ * - Region-aware format: g{gen}:{region}:{shard}:{randomPart}
+ * - Legacy format: v{generation}_{shardIndex}_{randomPart}
+ * - Very old format: rt_{uuid} (treated as generation=0)
  *
  * @param jti - JWT ID to parse
  * @returns Parsed JTI information
  *
  * @example
+ * parseRefreshTokenJti('g1:wnam:7:rt_abc123')
+ * // => { generation: 1, shardIndex: 7, regionKey: 'wnam', randomPart: 'rt_abc123', isLegacy: false, isRegionAware: true }
+ *
  * parseRefreshTokenJti('v1_7_rt_abc123')
- * // => { generation: 1, shardIndex: 7, randomPart: 'rt_abc123', isLegacy: false }
+ * // => { generation: 1, shardIndex: 7, regionKey: null, randomPart: 'rt_abc123', isLegacy: false, isRegionAware: false }
  *
  * parseRefreshTokenJti('rt_abc123')
- * // => { generation: 0, shardIndex: null, randomPart: 'rt_abc123', isLegacy: true }
+ * // => { generation: 0, shardIndex: null, regionKey: null, randomPart: 'rt_abc123', isLegacy: true, isRegionAware: false }
  */
 export function parseRefreshTokenJti(jti: string): ParsedRefreshTokenJti {
-  // New format: v{gen}_{shard}_{random}
-  const newFormatMatch = jti.match(/^v(\d+)_(\d+)_(.+)$/);
-  if (newFormatMatch) {
+  // Region-aware format: g{gen}:{region}:{shard}:{random}
+  const regionFormatMatch = jti.match(/^g(\d+):(\w+):(\d+):(.+)$/);
+  if (regionFormatMatch) {
     return {
-      generation: parseInt(newFormatMatch[1], 10),
-      shardIndex: parseInt(newFormatMatch[2], 10),
-      randomPart: newFormatMatch[3],
+      generation: parseInt(regionFormatMatch[1], 10),
+      shardIndex: parseInt(regionFormatMatch[3], 10),
+      regionKey: regionFormatMatch[2],
+      randomPart: regionFormatMatch[4],
       isLegacy: false,
+      isRegionAware: true,
     };
   }
 
-  // Legacy format: anything without v{gen}_{shard}_ prefix
+  // Legacy format: v{gen}_{shard}_{random}
+  const legacyFormatMatch = jti.match(/^v(\d+)_(\d+)_(.+)$/);
+  if (legacyFormatMatch) {
+    return {
+      generation: parseInt(legacyFormatMatch[1], 10),
+      shardIndex: parseInt(legacyFormatMatch[2], 10),
+      regionKey: null,
+      randomPart: legacyFormatMatch[3],
+      isLegacy: false,
+      isRegionAware: false,
+    };
+  }
+
+  // Very old format: anything without prefix
   return {
     generation: 0,
     shardIndex: null,
+    regionKey: null,
     randomPart: jti,
     isLegacy: true,
+    isRegionAware: false,
   };
 }
 
 /**
- * Create a new-format JTI for refresh tokens.
+ * Create a region-aware JTI for refresh tokens.
+ *
+ * @param generation - Generation number
+ * @param regionKey - Region key
+ * @param shardIndex - Shard index
+ * @param randomPart - Random part (typically rt_{uuid})
+ * @returns Formatted JTI string
+ *
+ * @example
+ * createRegionAwareRefreshTokenJti(1, 'wnam', 7, 'rt_abc123')
+ * // => 'g1:wnam:7:rt_abc123'
+ */
+export function createRegionAwareRefreshTokenJti(
+  generation: number,
+  regionKey: string,
+  shardIndex: number,
+  randomPart: string
+): string {
+  return createRegionId(generation, regionKey, shardIndex, randomPart);
+}
+
+/**
+ * Create a legacy-format JTI for refresh tokens.
+ * @deprecated Use createRegionAwareRefreshTokenJti for new tokens
  *
  * @param generation - Generation number
  * @param shardIndex - Shard index
@@ -240,7 +300,28 @@ export function remapRefreshTokenShardIndex(shardIndex: number, shardCount: numb
 // =============================================================================
 
 /**
+ * Build a region-aware Durable Object instance name for RefreshTokenRotator.
+ *
+ * @param tenantId - Tenant ID
+ * @param regionKey - Region key
+ * @param shardIndex - Shard index
+ * @returns DO instance name
+ *
+ * @example
+ * buildRegionAwareRefreshTokenInstanceName('default', 'wnam', 7)
+ * // => 'default:wnam:rt:7'
+ */
+export function buildRegionAwareRefreshTokenInstanceName(
+  tenantId: string,
+  regionKey: string,
+  shardIndex: number
+): string {
+  return buildRegionInstanceName(tenantId, regionKey, 'refresh', shardIndex);
+}
+
+/**
  * Build a Durable Object instance name for RefreshTokenRotator.
+ * @deprecated Use buildRegionAwareRefreshTokenInstanceName for new tokens
  *
  * Instance Name Patterns:
  * - Legacy (gen=0): tenant:{tenantId}:refresh-rotator:{clientId}
@@ -488,7 +569,75 @@ export function findGenerationShardCount(
 // =============================================================================
 
 /**
+ * Result of routing a refresh token.
+ */
+export interface RefreshTokenRouteResult {
+  stub: DurableObjectStub;
+  shardIndex: number | null;
+  instanceName: string;
+  regionKey: string | null;
+  isRegionAware: boolean;
+  isLegacy: boolean;
+}
+
+/**
+ * Route a refresh token to the appropriate DO instance with region support.
+ *
+ * @param env - Environment with DO bindings
+ * @param jti - Token JTI
+ * @param clientId - Client identifier
+ * @param tenantId - Tenant ID (default: 'default')
+ * @returns Route result with DO stub and routing info
+ */
+export function routeRefreshTokenWithRegion(
+  env: Env,
+  jti: string,
+  clientId: string,
+  tenantId: string = DEFAULT_TENANT_ID
+): RefreshTokenRouteResult {
+  const parsed = parseRefreshTokenJti(jti);
+
+  // Region-aware format: use embedded region/shard info with locationHint
+  if (parsed.isRegionAware && parsed.regionKey && parsed.shardIndex !== null) {
+    const instanceName = buildRegionAwareRefreshTokenInstanceName(
+      tenantId,
+      parsed.regionKey,
+      parsed.shardIndex
+    );
+    const stub = getRegionAwareDOStub(env.REFRESH_TOKEN_ROTATOR, instanceName, parsed.regionKey);
+    return {
+      stub,
+      shardIndex: parsed.shardIndex,
+      instanceName,
+      regionKey: parsed.regionKey,
+      isRegionAware: true,
+      isLegacy: false,
+    };
+  }
+
+  // Legacy format: use existing routing
+  const rotatorId = getRefreshTokenRotatorId(env, clientId, parsed.generation, parsed.shardIndex);
+  const stub = env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
+  const instanceName = buildRefreshTokenRotatorInstanceName(
+    clientId,
+    parsed.generation,
+    parsed.shardIndex,
+    tenantId
+  );
+
+  return {
+    stub,
+    shardIndex: parsed.shardIndex,
+    instanceName,
+    regionKey: null,
+    isRegionAware: false,
+    isLegacy: parsed.isLegacy,
+  };
+}
+
+/**
  * Route a refresh token to the appropriate DO instance.
+ * @deprecated Use routeRefreshTokenWithRegion for better region support
  *
  * @param env - Environment with DO bindings
  * @param jti - Token JTI
@@ -496,11 +645,8 @@ export function findGenerationShardCount(
  * @returns Durable Object stub for the RefreshTokenRotator
  */
 export function routeRefreshToken(env: Env, jti: string, clientId: string): DurableObjectStub {
-  const parsed = parseRefreshTokenJti(jti);
-
-  const rotatorId = getRefreshTokenRotatorId(env, clientId, parsed.generation, parsed.shardIndex);
-
-  return env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
+  const result = routeRefreshTokenWithRegion(env, jti, clientId);
+  return result.stub;
 }
 
 /**
@@ -508,28 +654,106 @@ export function routeRefreshToken(env: Env, jti: string, clientId: string): Dura
  *
  * @param jti - Token JTI
  * @param clientId - Client identifier
+ * @param tenantId - Tenant ID (default: 'default')
  * @returns Routing information
  */
 export function getRefreshTokenRoutingInfo(
   jti: string,
-  clientId: string
+  clientId: string,
+  tenantId: string = DEFAULT_TENANT_ID
 ): {
   generation: number;
   shardIndex: number | null;
+  regionKey: string | null;
   instanceName: string;
   isLegacy: boolean;
+  isRegionAware: boolean;
 } {
   const parsed = parseRefreshTokenJti(jti);
-  const instanceName = buildRefreshTokenRotatorInstanceName(
-    clientId,
-    parsed.generation,
-    parsed.shardIndex
-  );
+
+  let instanceName: string;
+  if (parsed.isRegionAware && parsed.regionKey && parsed.shardIndex !== null) {
+    instanceName = buildRegionAwareRefreshTokenInstanceName(
+      tenantId,
+      parsed.regionKey,
+      parsed.shardIndex
+    );
+  } else {
+    instanceName = buildRefreshTokenRotatorInstanceName(
+      clientId,
+      parsed.generation,
+      parsed.shardIndex,
+      tenantId
+    );
+  }
 
   return {
     generation: parsed.generation,
     shardIndex: parsed.shardIndex,
+    regionKey: parsed.regionKey,
     instanceName,
     isLegacy: parsed.isLegacy,
+    isRegionAware: parsed.isRegionAware,
+  };
+}
+
+// =============================================================================
+// Region-Aware JTI Generation
+// =============================================================================
+
+/**
+ * Result of generating a region-aware refresh token JTI.
+ */
+export interface RegionAwareRefreshTokenJtiResult {
+  jti: string;
+  generation: number;
+  shardIndex: number;
+  regionKey: string;
+  instanceName: string;
+}
+
+/**
+ * Generate a new region-aware JTI for refresh tokens.
+ *
+ * Uses region_shard_config for shard distribution across regions.
+ *
+ * @param env - Environment object with KV bindings
+ * @param userId - User identifier (for shard calculation)
+ * @param clientId - Client identifier (for shard calculation)
+ * @param tenantId - Tenant ID (default: 'default')
+ * @returns Promise containing the new JTI and routing info
+ */
+export async function generateRegionAwareRefreshTokenJti(
+  env: Env,
+  userId: string,
+  clientId: string,
+  tenantId: string = DEFAULT_TENANT_ID
+): Promise<RegionAwareRefreshTokenJtiResult> {
+  const config = await getRegionShardConfig(env, tenantId);
+  const randomPart = generateRefreshTokenRandomPart();
+
+  // Use userId:clientId as shard key for consistent routing
+  const shardKey = `${userId}:${clientId}`;
+  const resolution = resolveShardForNewResource(config, shardKey);
+
+  const jti = createRegionAwareRefreshTokenJti(
+    resolution.generation,
+    resolution.regionKey,
+    resolution.shardIndex,
+    randomPart
+  );
+
+  const instanceName = buildRegionAwareRefreshTokenInstanceName(
+    tenantId,
+    resolution.regionKey,
+    resolution.shardIndex
+  );
+
+  return {
+    jti,
+    generation: resolution.generation,
+    shardIndex: resolution.shardIndex,
+    regionKey: resolution.regionKey,
+    instanceName,
   };
 }

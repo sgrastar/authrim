@@ -3,11 +3,13 @@
  * Handles authentication with external identity providers (Google, GitHub, etc.)
  *
  * Endpoints:
- * - GET  /auth/external/providers          - List available providers
- * - GET  /auth/external/:provider/start    - Start external IdP login
- * - GET  /auth/external/:provider/callback - Handle OAuth callback
- * - POST /auth/external/link               - Start linking flow (requires session)
- * - DELETE /auth/external/link/:id         - Unlink identity
+ * - GET  /auth/external/providers                     - List available providers
+ * - GET  /auth/external/:provider/start              - Start external IdP login
+ * - GET  /auth/external/:provider/callback           - Handle OAuth callback
+ * - POST /auth/external/:provider/backchannel-logout - Handle backchannel logout (OIDC Back-Channel Logout 1.0)
+ * - GET  /auth/external/link                         - List linked identities (requires session)
+ * - POST /auth/external/link                         - Start linking flow (requires session)
+ * - DELETE /auth/external/link/:id                   - Unlink identity (requires session)
  *
  * Admin API:
  * - GET    /external-idp/admin/providers     - List all providers
@@ -35,6 +37,7 @@ import {
 import { handleListProviders } from './handlers/list';
 import { handleExternalStart } from './handlers/start';
 import { handleExternalCallback } from './handlers/callback';
+import { handleBackchannelLogout } from './handlers/backchannel-logout';
 import {
   handleLinkIdentity,
   handleUnlinkIdentity,
@@ -49,6 +52,10 @@ import {
   handleAdminUpdateProvider,
   handleAdminDeleteProvider,
 } from './admin/providers';
+
+// Import maintenance utilities
+import { cleanupExpiredStates } from './utils/state';
+import { refreshExpiringTokens } from './services/token-refresh';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -136,6 +143,9 @@ app.get('/auth/external/:provider/start', handleExternalStart);
 // Handle OAuth callback from external IdP
 app.get('/auth/external/:provider/callback', handleExternalCallback);
 
+// Handle backchannel logout from external IdP (OpenID Connect Back-Channel Logout 1.0)
+app.post('/auth/external/:provider/backchannel-logout', handleBackchannelLogout);
+
 // =============================================================================
 // Authenticated Endpoints (require session)
 // =============================================================================
@@ -183,5 +193,39 @@ app.onError((err, c) => {
   return c.json({ error: 'internal_server_error', message: 'An unexpected error occurred' }, 500);
 });
 
+// =============================================================================
+// Scheduled Handler
+// =============================================================================
+
+/**
+ * Scheduled handler for maintenance tasks
+ * Configure in wrangler.toml:
+ *   [triggers]
+ *   crons = ["0 * * * *"]  # Run every hour
+ */
+async function scheduled(
+  _controller: ScheduledController,
+  env: Env,
+  _ctx: ExecutionContext
+): Promise<void> {
+  console.log('Running scheduled maintenance tasks...');
+
+  try {
+    // 1. Clean up expired and consumed auth states
+    const statesDeleted = await cleanupExpiredStates(env);
+    console.log(`Cleaned up ${statesDeleted} expired/consumed auth states`);
+
+    // 2. Refresh tokens that are about to expire
+    const tokensRefreshed = await refreshExpiringTokens(env);
+    console.log(`Refreshed ${tokensRefreshed} expiring tokens`);
+  } catch (error) {
+    console.error('Scheduled maintenance failed:', error);
+    // Don't throw - we don't want to fail the entire scheduled run
+  }
+}
+
 // Export for Cloudflare Workers
-export default app;
+export default {
+  fetch: app.fetch,
+  scheduled,
+};

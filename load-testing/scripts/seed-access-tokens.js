@@ -46,6 +46,12 @@
  *
  * 使い方:
  *   CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz node scripts/seed-access-tokens.js
+ *
+ * ⚠️ 重要: シードデータは負荷テスト実行前に毎回再生成すること
+ *   - Revokedトークンのrevocation状態はサーバー側のKV/DOに保存される
+ *   - デプロイ、時間経過、TTL等でrevocation状態が失われる可能性がある
+ *   - 古いシードを使うとrevokedトークンがactive=trueを返す（False Positive）
+ *   - R2にアップロードする場合も、テスト直前に再生成→アップロードを推奨
  */
 
 import { SignJWT, importPKCS8 } from 'jose';
@@ -114,6 +120,49 @@ if (!ADMIN_API_SECRET) {
 
 const adminAuthHeader = { Authorization: `Bearer ${ADMIN_API_SECRET}` };
 
+// =============================================================================
+// Region Sharding Configuration (matches region-sharding.ts)
+// =============================================================================
+
+/**
+ * Default total shard count (matches region-sharding.ts)
+ */
+const DEFAULT_TOTAL_SHARDS = 20;
+
+/**
+ * Default region distribution (APAC 20%, ENAM 40%, WEUR 40%)
+ * Calculated region ranges for 20 shards:
+ *   enam: 0-7 (8 shards, 40%)
+ *   weur: 8-15 (8 shards, 40%)
+ *   apac: 16-19 (4 shards, 20%)
+ *   wnam: 0-15 (16 shards, 100%) - Western North America (conformance env)
+ */
+const REGION_RANGES = {
+  enam: { start: 0, end: 7 },
+  weur: { start: 8, end: 15 },
+  apac: { start: 16, end: 19 },
+  wnam: { start: 0, end: 15 },
+};
+
+/**
+ * Target region for shard selection.
+ * If set, only shards in this region will be used.
+ * Valid values: 'enam', 'weur', 'apac', or empty for all regions.
+ */
+const TARGET_REGION = process.env.TARGET_REGION || '';
+
+/**
+ * Get region key from shard index
+ */
+function getRegionForShard(shardIndex) {
+  for (const [region, range] of Object.entries(REGION_RANGES)) {
+    if (shardIndex >= range.start && shardIndex <= range.end) {
+      return region;
+    }
+  }
+  return 'enam'; // default fallback
+}
+
 /**
  * Generate secure random string (base64url)
  */
@@ -122,10 +171,44 @@ function generateSecureRandomString(length = 32) {
 }
 
 /**
- * Generate JTI (JWT ID)
+ * Generate region-aware JTI (JWT ID) for new generation-based sharding
+ * Format: g{gen}:{region}:{shard}:{randomPart}
+ * Example: g1:enam:7:at_abc123
+ *
+ * If TARGET_REGION is set, only shards in that region are used.
+ * Otherwise, all shards (0-19) are used.
+ *
+ * @returns {{jti: string, generation: number, shardIndex: number, regionKey: string}}
+ */
+function generateRegionAwareJti() {
+  const generation = 1; // Current generation
+  let shardIndex;
+  let regionKey;
+
+  if (TARGET_REGION && REGION_RANGES[TARGET_REGION]) {
+    // Use only shards in the target region
+    const range = REGION_RANGES[TARGET_REGION];
+    const shardCount = range.end - range.start + 1;
+    shardIndex = range.start + Math.floor(Math.random() * shardCount);
+    regionKey = TARGET_REGION;
+  } else {
+    // Use all shards
+    shardIndex = Math.floor(Math.random() * DEFAULT_TOTAL_SHARDS);
+    regionKey = getRegionForShard(shardIndex);
+  }
+
+  const randomPart = `at_${generateSecureRandomString(32)}`;
+  const jti = `g${generation}:${regionKey}:${shardIndex}:${randomPart}`;
+
+  return { jti, generation, shardIndex, regionKey };
+}
+
+/**
+ * Generate JTI (JWT ID) - Region-aware format
+ * @deprecated Use generateRegionAwareJti for full info
  */
 function generateJti() {
-  return `at_${generateSecureRandomString(32)}`;
+  return generateRegionAwareJti().jti;
 }
 
 /**
@@ -162,12 +245,12 @@ async function fetchSigningKey() {
  * @param {CryptoKey} privateKey - Signing key
  * @param {string} kid - Key ID
  * @param {object} options - Token options
- * @returns {Promise<{token: string, jti: string, exp: number}>}
+ * @returns {Promise<{token: string, jti: string, exp: number, shardIndex: number, regionKey: string}>}
  */
 async function createAccessToken(privateKey, kid, options) {
   const { userId, scope, expiresIn, issuer, audience, clientId } = options;
   const now = Math.floor(Date.now() / 1000);
-  const jti = generateJti();
+  const { jti, shardIndex, regionKey } = generateRegionAwareJti();
   const exp = now + expiresIn;
 
   const token = await new SignJWT({
@@ -183,7 +266,7 @@ async function createAccessToken(privateKey, kid, options) {
     .setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid })
     .sign(privateKey);
 
-  return { token, jti, exp };
+  return { token, jti, exp, shardIndex, regionKey };
 }
 
 /**
@@ -192,7 +275,7 @@ async function createAccessToken(privateKey, kid, options) {
 async function createExchangedToken(privateKey, kid, options) {
   const { userId, scope, expiresIn, issuer } = options;
   const now = Math.floor(Date.now() / 1000);
-  const jti = generateJti();
+  const { jti, shardIndex, regionKey } = generateRegionAwareJti();
   const exp = now + expiresIn;
   const serviceClient = randomPick(SERVICE_CLIENTS);
   const resource = randomPick(RESOURCE_URIS);
@@ -218,7 +301,7 @@ async function createExchangedToken(privateKey, kid, options) {
     .setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid })
     .sign(privateKey);
 
-  return { token, jti, exp, actorClientId: serviceClient.id, resource };
+  return { token, jti, exp, actorClientId: serviceClient.id, resource, shardIndex, regionKey };
 }
 
 /**
@@ -227,7 +310,7 @@ async function createExchangedToken(privateKey, kid, options) {
 async function createWrongAudienceToken(privateKey, kid, options) {
   const { userId, scope, expiresIn, issuer } = options;
   const now = Math.floor(Date.now() / 1000);
-  const jti = generateJti();
+  const { jti, shardIndex, regionKey } = generateRegionAwareJti();
   const exp = now + expiresIn;
 
   // 署名は正しいが、audienceが別のサービス
@@ -244,7 +327,7 @@ async function createWrongAudienceToken(privateKey, kid, options) {
     .setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid })
     .sign(privateKey);
 
-  return { token, jti, exp };
+  return { token, jti, exp, shardIndex, regionKey };
 }
 
 /**
@@ -253,7 +336,7 @@ async function createWrongAudienceToken(privateKey, kid, options) {
 async function createWrongClientToken(privateKey, kid, options) {
   const { userId, scope, expiresIn, issuer } = options;
   const now = Math.floor(Date.now() / 1000);
-  const jti = generateJti();
+  const { jti, shardIndex, regionKey } = generateRegionAwareJti();
   const exp = now + expiresIn;
 
   // 署名は正しいが、client_idが別のクライアント（存在しない）
@@ -270,7 +353,7 @@ async function createWrongClientToken(privateKey, kid, options) {
     .setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid })
     .sign(privateKey);
 
-  return { token, jti, exp };
+  return { token, jti, exp, shardIndex, regionKey };
 }
 
 /**
@@ -405,7 +488,7 @@ async function generateSingleToken(privateKey, kid, issuer, scope, index, tokenT
 
   switch (tokenType) {
     case 'valid': {
-      const { token, jti, exp } = await createAccessToken(privateKey, kid, {
+      const { token, jti, exp, shardIndex, regionKey } = await createAccessToken(privateKey, kid, {
         ...baseOptions,
         expiresIn: 30 * 24 * 3600, // 30 days
       });
@@ -415,18 +498,17 @@ async function generateSingleToken(privateKey, kid, issuer, scope, index, tokenT
         user_id: userId,
         jti,
         exp,
+        shard_index: shardIndex,
+        region_key: regionKey,
       };
     }
 
     case 'valid_exchanged': {
-      const { token, jti, exp, actorClientId, resource } = await createExchangedToken(
-        privateKey,
-        kid,
-        {
+      const { token, jti, exp, actorClientId, resource, shardIndex, regionKey } =
+        await createExchangedToken(privateKey, kid, {
           ...baseOptions,
           expiresIn: 30 * 24 * 3600, // 30 days
-        }
-      );
+        });
       return {
         access_token: token,
         type: 'valid_exchanged',
@@ -435,11 +517,13 @@ async function generateSingleToken(privateKey, kid, issuer, scope, index, tokenT
         exp,
         actor_client_id: actorClientId,
         resource,
+        shard_index: shardIndex,
+        region_key: regionKey,
       };
     }
 
     case 'expired': {
-      const { token, jti, exp } = await createAccessToken(privateKey, kid, {
+      const { token, jti, exp, shardIndex, regionKey } = await createAccessToken(privateKey, kid, {
         ...baseOptions,
         expiresIn: -3600, // 1 hour ago (expired)
       });
@@ -449,11 +533,13 @@ async function generateSingleToken(privateKey, kid, issuer, scope, index, tokenT
         user_id: userId,
         jti,
         exp,
+        shard_index: shardIndex,
+        region_key: regionKey,
       };
     }
 
     case 'revoked': {
-      const { token, jti, exp } = await createAccessToken(privateKey, kid, {
+      const { token, jti, exp, shardIndex, regionKey } = await createAccessToken(privateKey, kid, {
         ...baseOptions,
         expiresIn: 30 * 24 * 3600, // 30 days
       });
@@ -463,34 +549,48 @@ async function generateSingleToken(privateKey, kid, issuer, scope, index, tokenT
         user_id: userId,
         jti,
         exp,
+        shard_index: shardIndex,
+        region_key: regionKey,
       };
     }
 
     case 'wrong_audience': {
-      const { token, jti, exp } = await createWrongAudienceToken(privateKey, kid, {
-        ...baseOptions,
-        expiresIn: 30 * 24 * 3600, // 30 days
-      });
+      const { token, jti, exp, shardIndex, regionKey } = await createWrongAudienceToken(
+        privateKey,
+        kid,
+        {
+          ...baseOptions,
+          expiresIn: 30 * 24 * 3600, // 30 days
+        }
+      );
       return {
         access_token: token,
         type: 'wrong_audience',
         user_id: userId,
         jti,
         exp,
+        shard_index: shardIndex,
+        region_key: regionKey,
       };
     }
 
     case 'wrong_client': {
-      const { token, jti, exp } = await createWrongClientToken(privateKey, kid, {
-        ...baseOptions,
-        expiresIn: 30 * 24 * 3600, // 30 days
-      });
+      const { token, jti, exp, shardIndex, regionKey } = await createWrongClientToken(
+        privateKey,
+        kid,
+        {
+          ...baseOptions,
+          expiresIn: 30 * 24 * 3600, // 30 days
+        }
+      );
       return {
         access_token: token,
         type: 'wrong_client',
         user_id: userId,
         jti,
         exp,
+        shard_index: shardIndex,
+        region_key: regionKey,
       };
     }
 
@@ -502,6 +602,8 @@ async function generateSingleToken(privateKey, kid, issuer, scope, index, tokenT
         user_id: userId,
         jti: null,
         exp: null,
+        shard_index: null,
+        region_key: null,
       };
   }
 }
@@ -646,6 +748,14 @@ async function main() {
   console.log(`   TOKEN_COUNT    : ${TOKEN_COUNT}`);
   console.log(`   CONCURRENCY    : ${CONCURRENCY}`);
   console.log(`   OUTPUT_DIR     : ${OUTPUT_DIR}`);
+  if (TARGET_REGION) {
+    const range = REGION_RANGES[TARGET_REGION];
+    console.log(
+      `   TARGET_REGION  : ${TARGET_REGION} (shards ${range.start}-${range.end}, ${range.end - range.start + 1} shards)`
+    );
+  } else {
+    console.log(`   TARGET_REGION  : all (shards 0-19, 20 shards)`);
+  }
   console.log('');
   console.log(`📊 Token Distribution (RFC 7662 + Keycloak/Auth0 benchmark):`);
   console.log(

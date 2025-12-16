@@ -1,153 +1,251 @@
 /**
- * Session Store Sharding Helper
+ * Session Store Sharding Helper (Region Sharding Version)
  *
- * Provides utilities for generating sharded session IDs and routing
- * session operations to the correct Durable Object shard.
+ * Provides utilities for generating region-sharded session IDs and routing
+ * session operations to the correct Durable Object shard with locationHint.
  *
- * Session ID format: {shardIndex}_session_{uuid}
- * DO instance name: tenant:default:session:shard-{shardIndex}
+ * Session ID format: g{gen}:{region}:{shard}:session_{uuid}
+ * DO instance name: {tenantId}:{region}:s:{shard}
  *
  * IMPORTANT:
- * - generateShardedSessionId() uses FNV-1a hash of UUID to determine shard
- * - parseShardedSessionId() only parses the prefix (no re-hashing)
- * - This prevents "generation vs retrieval shard mismatch" bugs
+ * - generateRegionShardedSessionId() uses region shard config to determine shard and region
+ * - parseRegionShardedSessionId() extracts generation, region, and shard from the ID
+ * - locationHint is used to place DO instances closer to users in specific regions
  */
 
 import type { Env } from '../types/env';
+import type { DurableObjectNamespace, DurableObjectStub } from '@cloudflare/workers-types';
+import type { SessionStore } from '../durable-objects/SessionStore';
 import {
-  fnv1a32,
-  getSessionShardCount,
-  buildSessionShardInstanceName,
-  remapShardIndex,
-  DEFAULT_SESSION_SHARD_COUNT,
-} from './tenant-context';
+  getRegionShardConfig,
+  resolveShardForNewResource,
+  parseRegionId,
+  createRegionId,
+  buildRegionInstanceName,
+  getRegionAwareDOStub,
+  type ParsedRegionId,
+  type ShardResolution,
+} from './region-sharding';
+import { DEFAULT_TENANT_ID } from './tenant-context';
 
 /**
- * Generate a new sharded session ID.
+ * Type alias for SessionStore stub returned from region-aware functions
+ */
+type SessionStoreStub = DurableObjectStub<SessionStore>;
+
+/**
+ * Generate a new region-sharded session ID.
  *
- * Uses FNV-1a hash of the UUID to determine which shard the session belongs to.
- * The shard index is embedded in the session ID for later retrieval.
+ * Uses FNV-1a hash of the UUID to determine which shard the session belongs to,
+ * then resolves the region from the shard index using the region shard config.
  *
- * @param shardCount - Number of shards (default: 32)
- * @returns Object containing sessionId and shardIndex
+ * @param env - Environment with KV binding for region shard config
+ * @param tenantId - Tenant ID (default: 'default')
+ * @returns Object containing sessionId, shardIndex, regionKey, and generation
  *
  * @example
- * const { sessionId, shardIndex } = generateShardedSessionId(32);
- * // sessionId: "7_session_abc123-def456-..."
- * // shardIndex: 7
+ * const { sessionId, shardIndex, regionKey, generation } = await generateRegionShardedSessionId(env);
+ * // sessionId: "g1:apac:3:session_abc123-def456-..."
+ * // shardIndex: 3
+ * // regionKey: "apac"
+ * // generation: 1
  */
-export function generateShardedSessionId(shardCount: number = DEFAULT_SESSION_SHARD_COUNT): {
+export async function generateRegionShardedSessionId(
+  env: Env,
+  tenantId: string = DEFAULT_TENANT_ID
+): Promise<{
   sessionId: string;
   shardIndex: number;
-} {
+  regionKey: string;
+  generation: number;
+  uuid: string;
+}> {
   const uuid = crypto.randomUUID();
-  const shardIndex = fnv1a32(uuid) % shardCount;
+  const config = await getRegionShardConfig(env, tenantId);
+
+  // Use UUID as the shard key for session distribution
+  const resolution = resolveShardForNewResource(config, uuid);
+
+  // Create session ID with embedded region info
+  const sessionId = createRegionId(
+    resolution.generation,
+    resolution.regionKey,
+    resolution.shardIndex,
+    `session_${uuid}`
+  );
+
   return {
-    sessionId: `${shardIndex}_session_${uuid}`,
-    shardIndex,
+    sessionId,
+    shardIndex: resolution.shardIndex,
+    regionKey: resolution.regionKey,
+    generation: resolution.generation,
+    uuid,
   };
 }
 
 /**
- * Parse a sharded session ID to extract shard index and UUID.
+ * Parse a region-sharded session ID to extract shard info.
  *
- * IMPORTANT: This function only parses the prefix - it does NOT re-hash.
- * The shard index is extracted directly from the session ID format.
- *
- * @param sessionId - Sharded session ID (format: {shardIndex}_session_{uuid})
- * @returns Object containing shardIndex and uuid, or null if invalid format
+ * @param sessionId - Region-sharded session ID (format: g{gen}:{region}:{shard}:session_{uuid})
+ * @returns Parsed region ID or null if invalid format
  *
  * @example
- * const result = parseShardedSessionId("7_session_abc123");
- * // { shardIndex: 7, uuid: "abc123" }
+ * const result = parseRegionShardedSessionId("g1:apac:3:session_abc123");
+ * // { generation: 1, regionKey: 'apac', shardIndex: 3, randomPart: 'session_abc123' }
  *
- * const invalid = parseShardedSessionId("invalid-session-id");
+ * const invalid = parseRegionShardedSessionId("invalid-session-id");
  * // null
  */
-export function parseShardedSessionId(
-  sessionId: string
-): { shardIndex: number; uuid: string } | null {
-  // Format: {shardIndex}_session_{uuid}
-  const match = sessionId.match(/^(\d+)_session_(.+)$/);
-  if (!match) {
+export function parseRegionShardedSessionId(sessionId: string): ParsedRegionId | null {
+  try {
+    const parsed = parseRegionId(sessionId);
+    // Verify this is a session ID
+    if (!parsed.randomPart.startsWith('session_')) {
+      return null;
+    }
+    return parsed;
+  } catch {
     return null;
   }
-
-  const shardIndex = parseInt(match[1], 10);
-  if (isNaN(shardIndex) || shardIndex < 0) {
-    return null;
-  }
-
-  return {
-    shardIndex,
-    uuid: match[2],
-  };
 }
 
 /**
  * Get SessionStore Durable Object stub for an existing session ID.
  *
- * Parses the session ID to extract the shard index, then routes to
- * the correct DO instance. Supports scale-down via remapShardIndex().
+ * Parses the session ID to extract the region and shard info, then routes to
+ * the correct DO instance with locationHint for optimal placement.
  *
  * @param env - Environment object with DO bindings
- * @param sessionId - Sharded session ID
- * @returns Promise<DurableObjectStub> for the session's shard
+ * @param sessionId - Region-sharded session ID
+ * @param tenantId - Tenant ID (default: 'default')
+ * @returns Object containing DO stub and resolution info
  * @throws Error if sessionId format is invalid
  *
  * @example
- * const store = await getSessionStoreBySessionId(env, "7_session_abc123");
- * const response = await store.fetch(new Request(...));
+ * const { stub, resolution } = getSessionStoreBySessionId(env, "g1:apac:3:session_abc123");
+ * const response = await stub.fetch(new Request(...));
  */
-export async function getSessionStoreBySessionId(env: Env, sessionId: string) {
-  const parsed = parseShardedSessionId(sessionId);
+export function getSessionStoreBySessionId(
+  env: Env,
+  sessionId: string,
+  tenantId: string = DEFAULT_TENANT_ID
+): {
+  stub: SessionStoreStub;
+  resolution: ShardResolution;
+  instanceName: string;
+} {
+  const parsed = parseRegionShardedSessionId(sessionId);
   if (!parsed) {
-    throw new Error(`Invalid session ID format: ${sessionId}`);
+    throw new Error(`Invalid region-sharded session ID format: ${sessionId}`);
   }
 
-  // Get current shard count (cached for 10 seconds) and remap for scale-down support
-  const currentShardCount = await getSessionShardCount(env);
-  const actualShardIndex = remapShardIndex(parsed.shardIndex, currentShardCount);
+  const resolution: ShardResolution = {
+    generation: parsed.generation,
+    regionKey: parsed.regionKey,
+    shardIndex: parsed.shardIndex,
+  };
 
-  const instanceName = buildSessionShardInstanceName(actualShardIndex);
-  const id = env.SESSION_STORE.idFromName(instanceName);
-  return env.SESSION_STORE.get(id);
+  const instanceName = buildRegionInstanceName(
+    tenantId,
+    resolution.regionKey,
+    'session',
+    resolution.shardIndex
+  );
+
+  const stub = getRegionAwareDOStub(
+    env.SESSION_STORE as unknown as DurableObjectNamespace,
+    instanceName,
+    resolution.regionKey
+  ) as SessionStoreStub;
+
+  return { stub, resolution, instanceName };
 }
 
 /**
  * Get SessionStore Durable Object stub and generate a new session ID.
  *
  * This is the entry point for creating new sessions. It:
- * 1. Gets the current shard count from KV/environment
- * 2. Generates a new sharded session ID
- * 3. Returns the DO stub for the target shard
+ * 1. Gets the region shard config from KV
+ * 2. Generates a new region-sharded session ID
+ * 3. Returns the DO stub with locationHint for the target region
  *
  * @param env - Environment object with DO bindings
- * @returns Object containing DO stub and new sessionId
+ * @param tenantId - Tenant ID (default: 'default')
+ * @returns Object containing DO stub, new sessionId, and resolution info
  *
  * @example
- * const { stub, sessionId } = await getSessionStoreForNewSession(env);
+ * const { stub, sessionId, resolution } = await getSessionStoreForNewSession(env);
  * const response = await stub.fetch(new Request(..., {
  *   body: JSON.stringify({ sessionId, ... })
  * }));
  */
-export async function getSessionStoreForNewSession(env: Env) {
-  const shardCount = await getSessionShardCount(env);
-  const { sessionId, shardIndex } = generateShardedSessionId(shardCount);
+export async function getSessionStoreForNewSession(
+  env: Env,
+  tenantId: string = DEFAULT_TENANT_ID
+): Promise<{
+  stub: SessionStoreStub;
+  sessionId: string;
+  resolution: ShardResolution;
+  instanceName: string;
+}> {
+  const { sessionId, shardIndex, regionKey, generation } = await generateRegionShardedSessionId(
+    env,
+    tenantId
+  );
 
-  const instanceName = buildSessionShardInstanceName(shardIndex);
-  const id = env.SESSION_STORE.idFromName(instanceName);
-  const stub = env.SESSION_STORE.get(id);
+  const resolution: ShardResolution = {
+    generation,
+    regionKey,
+    shardIndex,
+  };
 
-  return { stub, sessionId };
+  const instanceName = buildRegionInstanceName(tenantId, regionKey, 'session', shardIndex);
+  const stub = getRegionAwareDOStub(
+    env.SESSION_STORE as unknown as DurableObjectNamespace,
+    instanceName,
+    regionKey
+  ) as SessionStoreStub;
+
+  return { stub, sessionId, resolution, instanceName };
 }
 
 /**
- * Check if a session ID is in the sharded format.
+ * Check if a session ID is in the region-sharded format.
  *
  * @param sessionId - Session ID to check
- * @returns true if the session ID follows the sharded format
+ * @returns true if the session ID follows the region-sharded format
  */
-export function isShardedSessionId(sessionId: string): boolean {
-  return parseShardedSessionId(sessionId) !== null;
+export function isRegionShardedSessionId(sessionId: string): boolean {
+  return parseRegionShardedSessionId(sessionId) !== null;
 }
+
+/**
+ * Extract UUID from a region-sharded session ID.
+ *
+ * @param sessionId - Region-sharded session ID
+ * @returns UUID string or null if invalid format
+ */
+export function extractSessionUuid(sessionId: string): string | null {
+  const parsed = parseRegionShardedSessionId(sessionId);
+  if (!parsed) {
+    return null;
+  }
+
+  // randomPart is "session_{uuid}"
+  const match = parsed.randomPart.match(/^session_(.+)$/);
+  return match ? match[1] : null;
+}
+
+// =============================================================================
+// Legacy Aliases (for backward compatibility during migration)
+// =============================================================================
+
+/**
+ * @deprecated Use isRegionShardedSessionId instead
+ */
+export const isShardedSessionId = isRegionShardedSessionId;
+
+/**
+ * @deprecated Use parseRegionShardedSessionId instead
+ */
+export const parseShardedSessionId = parseRegionShardedSessionId;

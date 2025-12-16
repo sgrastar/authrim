@@ -282,8 +282,8 @@ export const options = {
     projectID: K6_CLOUD_PROJECT_ID ? Number.parseInt(K6_CLOUD_PROJECT_ID, 10) : undefined,
     name: `${TEST_ID} - ${PRESET}`,
     distribution: {
-      // 単一リージョン（Cloudflareエッジに近いリージョン）
-      'amazon:us:ashburn': { loadZone: 'amazon:us:ashburn', percent: 100 },
+      // 単一リージョン - Portland (wnam region)
+      'amazon:us:portland': { loadZone: 'amazon:us:portland', percent: 100 },
     },
   },
 

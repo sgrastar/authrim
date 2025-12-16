@@ -54,7 +54,7 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
     const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
     if (!session) {
@@ -170,7 +170,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
     const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
     if (!session) {
@@ -257,7 +257,7 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
     const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
     if (!session) {
@@ -362,7 +362,7 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
+    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
     const session = (await sessionStore.extendSessionRpc(
       sessionId,
       extendSeconds

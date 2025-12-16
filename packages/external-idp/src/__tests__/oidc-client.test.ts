@@ -61,6 +61,7 @@ describe('OIDCRPClient', () => {
     clientSecret: 'test-secret',
     redirectUri: 'https://example.com/callback',
     scopes: ['openid', 'email', 'profile'],
+    jwksUri: 'https://www.googleapis.com/oauth2/v3/certs',
   };
 
   beforeEach(() => {
@@ -295,7 +296,7 @@ describe('OIDCRPClient', () => {
       const client = new OIDCRPClient(mockConfig);
 
       await expect(client.handleCallback('invalid-code', 'verifier')).rejects.toThrow(
-        'Token exchange failed: 400 - invalid_grant'
+        'Token exchange failed: HTTP 400'
       );
     });
 
@@ -446,7 +447,7 @@ describe('OIDCRPClient', () => {
       const client = new OIDCRPClient(mockConfig);
 
       await expect(client.refreshTokens('expired-token')).rejects.toThrow(
-        'Token refresh failed: 400 - invalid_grant'
+        'Token refresh failed: HTTP 400'
       );
     });
   });
@@ -600,21 +601,21 @@ describe('OIDCRPClient', () => {
     });
   });
 
-  describe('validateIdToken', () => {
-    const mockJwks = {
-      keys: [
-        {
-          kty: 'RSA',
-          kid: 'test-key-id',
-          n: 'test-n',
-          e: 'AQAB',
-        },
-      ],
-    };
+  // Shared test helpers for ID token validation tests
+  const mockJwks = {
+    keys: [
+      {
+        kty: 'RSA',
+        kid: 'test-key-id',
+        n: 'test-n',
+        e: 'AQAB',
+      },
+    ],
+  };
 
+  const createMockPayload = (overrides: Record<string, unknown> = {}) => {
     const now = Math.floor(Date.now() / 1000);
-
-    const createMockPayload = (overrides: Record<string, unknown> = {}) => ({
+    return {
       iss: 'https://accounts.google.com',
       sub: 'user-123',
       aud: 'test-client-id',
@@ -625,7 +626,11 @@ describe('OIDCRPClient', () => {
       email_verified: true,
       name: 'Test User',
       ...overrides,
-    });
+    };
+  };
+
+  describe('validateIdToken', () => {
+    const now = Math.floor(Date.now() / 1000);
 
     beforeEach(() => {
       vi.clearAllMocks();
@@ -958,6 +963,719 @@ describe('OIDCRPClient', () => {
 
         const userInfo = await client.validateIdToken('mock-id-token', 'test-nonce');
         expect(userInfo.sub).toBe('user-123');
+      });
+    });
+
+    // ============================================================================
+    // OIDC Core 1.0 Compliance Tests
+    // ============================================================================
+
+    describe('OIDC Core 1.0 Compliance', () => {
+      // Helper function to compute at_hash / c_hash per OIDC spec
+      // OIDC Core 3.3.2.11: left half of SHA hash, base64url encoded
+      async function computeTokenHash(tokenValue: string, alg: string): Promise<string> {
+        // Determine hash algorithm based on signing algorithm
+        const hashAlg = alg.includes('384')
+          ? 'SHA-384'
+          : alg.includes('512')
+            ? 'SHA-512'
+            : 'SHA-256';
+
+        const encoder = new TextEncoder();
+        const data = encoder.encode(tokenValue);
+        const hashBuffer = await crypto.subtle.digest(hashAlg, data);
+
+        // Take left-most half
+        const hashArray = new Uint8Array(hashBuffer);
+        const leftHalf = hashArray.slice(0, hashArray.length / 2);
+
+        // Base64url encode
+        const base64 = btoa(String.fromCharCode(...leftHalf));
+        return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      describe('at_hash validation (OIDC Core 3.3.2.11)', () => {
+        it('should validate correct at_hash for access token', async () => {
+          const accessToken = 'SlAV32hkKG';
+          const atHash = await computeTokenHash(accessToken, 'RS256');
+
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            at_hash: atHash,
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', {
+            nonce: 'test-nonce',
+            accessToken: accessToken,
+          });
+
+          expect(userInfo.sub).toBe('user-123');
+        });
+
+        it('should reject invalid at_hash for access token', async () => {
+          const accessToken = 'SlAV32hkKG';
+          const wrongAtHash = 'wronghash123456789012345678901234567890';
+
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            at_hash: wrongAtHash,
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          await expect(
+            client.validateIdToken('mock-id-token', {
+              nonce: 'test-nonce',
+              accessToken: accessToken,
+            })
+          ).rejects.toThrow('at_hash validation failed');
+        });
+
+        it('should skip at_hash validation when access token not provided', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            at_hash: 'some_hash_that_would_fail',
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          // Should succeed because accessToken is not provided
+          const userInfo = await client.validateIdToken('mock-id-token', {
+            nonce: 'test-nonce',
+          });
+          expect(userInfo.sub).toBe('user-123');
+        });
+
+        it('should use SHA-384 for RS384 algorithm', async () => {
+          const accessToken = 'test-access-token-384';
+          const atHash = await computeTokenHash(accessToken, 'RS384');
+
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            at_hash: atHash,
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS384', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', {
+            nonce: 'test-nonce',
+            accessToken: accessToken,
+          });
+          expect(userInfo.sub).toBe('user-123');
+        });
+
+        it('should use SHA-512 for RS512 algorithm', async () => {
+          const accessToken = 'test-access-token-512';
+          const atHash = await computeTokenHash(accessToken, 'RS512');
+
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            at_hash: atHash,
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS512', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', {
+            nonce: 'test-nonce',
+            accessToken: accessToken,
+          });
+          expect(userInfo.sub).toBe('user-123');
+        });
+      });
+
+      describe('c_hash validation (OIDC Core 3.3.2.12)', () => {
+        it('should validate correct c_hash for authorization code', async () => {
+          const code = 'Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk';
+          const cHash = await computeTokenHash(code, 'RS256');
+
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            c_hash: cHash,
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', {
+            nonce: 'test-nonce',
+            code: code,
+          });
+
+          expect(userInfo.sub).toBe('user-123');
+        });
+
+        it('should reject invalid c_hash for authorization code', async () => {
+          const code = 'Qcb0Orv1zh30vL1MPRsbm-diHiMwcLyZvn1arpZv-Jxf_11jnpEX3Tgfvk';
+          const wrongCHash = 'wronghash_for_code_test_12345678901234';
+
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            c_hash: wrongCHash,
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          await expect(
+            client.validateIdToken('mock-id-token', {
+              nonce: 'test-nonce',
+              code: code,
+            })
+          ).rejects.toThrow('c_hash validation failed');
+        });
+
+        it('should skip c_hash validation when code not provided', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            c_hash: 'some_hash_that_would_fail',
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          // Should succeed because code is not provided
+          const userInfo = await client.validateIdToken('mock-id-token', {
+            nonce: 'test-nonce',
+          });
+          expect(userInfo.sub).toBe('user-123');
+        });
+      });
+
+      describe('azp validation (OIDC Core 3.1.3.7 steps 5-6)', () => {
+        it('should accept valid azp matching client_id', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            azp: 'test-client-id', // Same as client_id
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', { nonce: 'test-nonce' });
+          expect(userInfo.sub).toBe('user-123');
+        });
+
+        it('should reject azp not matching client_id', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            azp: 'different-client-id', // Different from client_id
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          await expect(
+            client.validateIdToken('mock-id-token', { nonce: 'test-nonce' })
+          ).rejects.toThrow('azp (different-client-id) does not match client_id (test-client-id)');
+        });
+
+        it('should accept multiple audiences with valid azp', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: ['test-client-id', 'other-audience'],
+            nonce: 'test-nonce',
+            azp: 'test-client-id',
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', { nonce: 'test-nonce' });
+          expect(userInfo.sub).toBe('user-123');
+        });
+
+        it('should accept token without azp when single audience', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            // No azp claim - valid for single audience
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', { nonce: 'test-nonce' });
+          expect(userInfo.sub).toBe('user-123');
+        });
+      });
+
+      describe('auth_time validation (OIDC Core 3.1.3.7 step 11)', () => {
+        it('should accept valid auth_time within max_age', async () => {
+          const now = Math.floor(Date.now() / 1000);
+          const authTime = now - 30; // Authenticated 30 seconds ago
+
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            auth_time: authTime,
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', {
+            nonce: 'test-nonce',
+            maxAge: 300, // 5 minutes max_age
+          });
+          expect(userInfo.sub).toBe('user-123');
+        });
+
+        it('should reject when auth_time exceeds max_age', async () => {
+          const now = Math.floor(Date.now() / 1000);
+          const authTime = now - 400; // Authenticated 400 seconds ago
+
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            auth_time: authTime,
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          await expect(
+            client.validateIdToken('mock-id-token', {
+              nonce: 'test-nonce',
+              maxAge: 300, // max_age is 300 seconds but auth was 400 seconds ago
+            })
+          ).rejects.toThrow('Authentication is too old');
+        });
+
+        it('should require auth_time when max_age is specified', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            // No auth_time claim
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          await expect(
+            client.validateIdToken('mock-id-token', {
+              nonce: 'test-nonce',
+              maxAge: 300,
+            })
+          ).rejects.toThrow('missing auth_time claim (required when max_age is requested)');
+        });
+
+        it('should skip auth_time validation when max_age not specified', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            // No auth_time, no max_age - should be OK
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', {
+            nonce: 'test-nonce',
+            // No maxAge
+          });
+          expect(userInfo.sub).toBe('user-123');
+        });
+
+        it('should allow clock skew tolerance in auth_time validation', async () => {
+          const now = Math.floor(Date.now() / 1000);
+          // Auth was 350 seconds ago, max_age is 300
+          // But with 60 second clock skew tolerance, this should pass
+          const authTime = now - 350;
+
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            auth_time: authTime,
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          // 350 seconds old, max_age 300, but with 60s tolerance should pass
+          const userInfo = await client.validateIdToken('mock-id-token', {
+            nonce: 'test-nonce',
+            maxAge: 300,
+          });
+          expect(userInfo.sub).toBe('user-123');
+        });
+      });
+
+      describe('JWKS refresh on signature failure', () => {
+        it('should retry with fresh JWKS when signature verification fails', async () => {
+          // First JWKS fetch
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+          // Second JWKS fetch after refresh
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+          });
+
+          // First attempt fails with signature error
+          mockJwtVerify.mockRejectedValueOnce(new Error('JWS signature verification failed'));
+
+          // Second attempt succeeds
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', 'test-nonce');
+
+          expect(userInfo.sub).toBe('user-123');
+          expect(mockFetch).toHaveBeenCalledTimes(2); // JWKS fetched twice
+          expect(mockJwtVerify).toHaveBeenCalledTimes(2); // Verification attempted twice
+        });
+
+        it('should retry with fresh JWKS on key not found error', async () => {
+          // First JWKS fetch
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+          // Second JWKS fetch after refresh
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+          });
+
+          // First attempt fails with key error
+          mockJwtVerify.mockRejectedValueOnce(
+            new Error('no applicable key found in the JSON Web Key Set')
+          );
+
+          // Second attempt succeeds
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', 'test-nonce');
+
+          expect(userInfo.sub).toBe('user-123');
+          expect(mockFetch).toHaveBeenCalledTimes(2);
+        });
+
+        it('should not retry for non-signature errors (e.g., nonce mismatch)', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'different-nonce', // Wrong nonce
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          await expect(client.validateIdToken('mock-id-token', 'test-nonce')).rejects.toThrow(
+            'nonce mismatch'
+          );
+
+          // JWKS should only be fetched once (no retry for nonce errors)
+          expect(mockFetch).toHaveBeenCalledTimes(1);
+        });
+
+        it('should propagate error if retry also fails', async () => {
+          // First JWKS fetch
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+          // Second JWKS fetch after refresh
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          // Both attempts fail with signature error
+          mockJwtVerify.mockRejectedValueOnce(new Error('JWS signature verification failed'));
+          mockJwtVerify.mockRejectedValueOnce(new Error('JWS signature verification failed'));
+
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          await expect(client.validateIdToken('mock-id-token', 'test-nonce')).rejects.toThrow(
+            'JWS signature verification failed'
+          );
+
+          expect(mockFetch).toHaveBeenCalledTimes(2);
+          expect(mockJwtVerify).toHaveBeenCalledTimes(2);
+        });
+      });
+
+      describe('auth_time, acr, amr extraction', () => {
+        it('should extract auth_time, acr, and amr from ID token', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'test-nonce',
+            auth_time: 1702000000,
+            acr: 'urn:mace:incommon:iap:silver',
+            amr: ['pwd', 'mfa'],
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          const userInfo = await client.validateIdToken('mock-id-token', { nonce: 'test-nonce' });
+
+          expect(userInfo.auth_time).toBe(1702000000);
+          expect(userInfo.acr).toBe('urn:mace:incommon:iap:silver');
+          expect(userInfo.amr).toEqual(['pwd', 'mfa']);
+        });
+      });
+
+      describe('Legacy signature compatibility', () => {
+        it('should support legacy string nonce signature', async () => {
+          mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: async () => mockJwks,
+          });
+
+          const mockPayload = createMockPayload({
+            iss: 'https://accounts.google.com',
+            aud: 'test-client-id',
+            nonce: 'legacy-nonce',
+          });
+
+          mockJwtVerify.mockResolvedValueOnce({
+            payload: mockPayload,
+            protectedHeader: { alg: 'RS256', kid: 'test-key-id' },
+          });
+          mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
+
+          const client = new OIDCRPClient(mockConfig);
+          // Using legacy string signature
+          const userInfo = await client.validateIdToken('mock-id-token', 'legacy-nonce');
+
+          expect(userInfo.sub).toBe('user-123');
+        });
       });
     });
   });

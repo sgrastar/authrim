@@ -69,6 +69,40 @@ export class KeyManager extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+
+    // Block all requests until initialization completes
+    // This ensures the DO is in a consistent state before processing any requests
+    // Critical for cryptographic key management and migration
+    ctx.blockConcurrencyWhile(async () => {
+      await this.initializeStateBlocking();
+    });
+  }
+
+  /**
+   * Initialize state from Durable Storage
+   * Called by blockConcurrencyWhile() in constructor
+   */
+  private async initializeStateBlocking(): Promise<void> {
+    const stored = await this.ctx.storage.get<KeyManagerState>('state');
+
+    if (stored) {
+      this.keyManagerState = stored;
+      // Run migration if needed
+      await this.migrateIsActiveToStatus();
+    } else {
+      // Initialize with default configuration
+      this.keyManagerState = {
+        keys: [],
+        activeKeyId: null,
+        config: {
+          rotationIntervalDays: 90,
+          retentionPeriodDays: 30,
+        },
+        lastRotation: null,
+      };
+
+      await this.saveState();
+    }
   }
 
   // ==========================================
@@ -180,33 +214,19 @@ export class KeyManager extends DurableObject<Env> {
   // ==========================================
 
   /**
-   * Initialize the KeyManager state
+   * Ensure state is initialized
+   * Called by public methods for backward compatibility
+   *
+   * Note: With blockConcurrencyWhile() in constructor, this is now a no-op guard.
    */
   private async initializeState(): Promise<void> {
     if (this.keyManagerState !== null) {
       return;
     }
 
-    const stored = await this.ctx.storage.get<KeyManagerState>('state');
-
-    if (stored) {
-      this.keyManagerState = stored;
-      // Run migration if needed
-      await this.migrateIsActiveToStatus();
-    } else {
-      // Initialize with default configuration
-      this.keyManagerState = {
-        keys: [],
-        activeKeyId: null,
-        config: {
-          rotationIntervalDays: 90, // Rotate keys every 90 days
-          retentionPeriodDays: 30, // Keep old keys for 30 days after rotation
-        },
-        lastRotation: null,
-      };
-
-      await this.saveState();
-    }
+    // Safety fallback (should not happen with blockConcurrencyWhile)
+    console.warn('KeyManager: initializeState called but not initialized - this should not happen');
+    await this.initializeStateBlocking();
   }
 
   /**

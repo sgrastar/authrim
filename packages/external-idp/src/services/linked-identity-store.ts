@@ -38,6 +38,24 @@ export async function findLinkedIdentity(
 }
 
 /**
+ * Find all linked identities by provider and provider user ID
+ * Used for backchannel logout to find all linked identities across tenants
+ */
+export async function findLinkedIdentitiesByProviderSub(
+  env: Env,
+  providerId: string,
+  providerUserId: string
+): Promise<LinkedIdentity[]> {
+  const result = await env.DB.prepare(
+    `SELECT * FROM linked_identities WHERE provider_id = ? AND provider_user_id = ?`
+  )
+    .bind(providerId, providerUserId)
+    .all<DbLinkedIdentity>();
+
+  return (result.results || []).map(mapDbToLinkedIdentity);
+}
+
+/**
  * List linked identities for a user
  */
 export async function listLinkedIdentities(env: Env, userId: string): Promise<LinkedIdentity[]> {

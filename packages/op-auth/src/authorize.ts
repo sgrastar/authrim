@@ -22,6 +22,7 @@ import {
   getCachedConsent,
   invalidateConsentCache,
   getChallengeStoreByChallengeId,
+  generateRegionAwareJti,
 } from '@authrim/shared';
 import type { CachedUser, CachedConsent } from '@authrim/shared';
 import type { Session, PARRequestData } from '@authrim/shared';
@@ -1409,7 +1410,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Legacy sessions without shard prefix are treated as invalid (user must re-login)
   if (sessionId && c.env.SESSION_STORE && isShardedSessionId(sessionId)) {
     try {
-      const sessionStore = await getSessionStoreBySessionId(c.env, sessionId);
+      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
 
       const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
@@ -1976,6 +1977,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const issuer = c.env.ISSUER_URL;
 
       const { privateKey, kid: signingKeyId } = await getSigningKeyFromKeyManager(c.env);
+
+      // Generate region-aware JTI for token revocation sharding
+      const { jti: regionAwareJti } = await generateRegionAwareJti(c.env);
+
       const tokenResult = await createAccessToken(
         {
           iss: issuer,
@@ -1987,7 +1992,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         },
         privateKey,
         signingKeyId,
-        3600 // 1 hour
+        3600, // 1 hour
+        regionAwareJti
       );
 
       accessToken = tokenResult.token;

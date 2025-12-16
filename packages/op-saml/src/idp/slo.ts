@@ -237,7 +237,7 @@ async function terminateSessionByNameId(
     // If sessionIndex is provided and is a valid sharded session ID, delete that specific session
     if (sessionIndex && isShardedSessionId(sessionIndex)) {
       try {
-        const sessionStore = await getSessionStoreBySessionId(env, sessionIndex);
+        const { stub: sessionStore } = getSessionStoreBySessionId(env, sessionIndex);
         const response = await sessionStore.fetch(
           new Request(`https://session-store/session/${sessionIndex}`, {
             method: 'DELETE',

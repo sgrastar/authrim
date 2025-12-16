@@ -85,35 +85,20 @@ export class CIBARequestStore {
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
+
+    // Block all requests until initialization completes
+    // This ensures the DO is in a consistent state before processing any requests
+    // Critical for CIBA request verification and one-time token issuance
+    state.blockConcurrencyWhile(async () => {
+      await this.initializeStateBlocking();
+    });
   }
 
   /**
-   * Initialize state from Durable Storage (V2)
+   * Initialize state from Durable Storage
+   * Called by blockConcurrencyWhile() in constructor
    */
-  private async initializeState(): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
-
-    if (this.initializePromise) {
-      await this.initializePromise;
-      return;
-    }
-
-    this.initializePromise = this.doInitialize();
-
-    try {
-      await this.initializePromise;
-    } catch (error) {
-      this.initializePromise = null;
-      throw error;
-    }
-  }
-
-  /**
-   * Actual initialization logic (V2)
-   */
-  private async doInitialize(): Promise<void> {
+  private async initializeStateBlocking(): Promise<void> {
     try {
       // Load all CIBA requests from granular storage
       const requestEntries = await this.state.storage.list<CIBARequestV2>({
@@ -143,6 +128,24 @@ export class CIBARequestStore {
     }
 
     this.initialized = true;
+  }
+
+  /**
+   * Ensure state is initialized
+   * Called by public methods for backward compatibility
+   *
+   * Note: With blockConcurrencyWhile() in constructor, this is now a no-op guard.
+   */
+  private async initializeState(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    // Safety fallback (should not happen with blockConcurrencyWhile)
+    console.warn(
+      'CIBARequestStore: initializeState called but not initialized - this should not happen'
+    );
+    await this.initializeStateBlocking();
   }
 
   /**
@@ -917,9 +920,33 @@ export class CIBARequestStore {
 
   /**
    * Alarm handler for cleaning up expired CIBA requests
+   *
+   * Implements idempotency to prevent duplicate execution:
+   * - Stores last cleanup timestamp in meta storage
+   * - Skips execution if within CLEANUP_INTERVAL - IDEMPOTENCY_BUFFER
+   * - This prevents issues from alarm re-delivery or clock skew
    */
   async alarm(): Promise<void> {
     await this.initializeState();
+
+    // Idempotency configuration
+    const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+    const IDEMPOTENCY_BUFFER_MS = 10 * 1000; // 10 seconds buffer
+    const lastCleanupKey = `${STORAGE_PREFIX.META}lastCleanup`;
+
+    // Check for duplicate execution
+    const lastCleanup = (await this.state.storage.get<number>(lastCleanupKey)) || 0;
+    const timeSinceLastCleanup = Date.now() - lastCleanup;
+
+    if (timeSinceLastCleanup < CLEANUP_INTERVAL_MS - IDEMPOTENCY_BUFFER_MS) {
+      console.log(
+        `CIBARequestStore alarm: Skipping duplicate execution ` +
+          `(last cleanup ${Math.round(timeSinceLastCleanup / 1000)}s ago)`
+      );
+      // Reschedule to the correct time
+      await this.state.storage.setAlarm(lastCleanup + CLEANUP_INTERVAL_MS);
+      return;
+    }
 
     console.log('CIBARequestStore alarm: Cleaning up expired CIBA requests');
 
@@ -960,7 +987,10 @@ export class CIBARequestStore {
 
     console.log(`CIBARequestStore: Cleaned up ${expiredRequests.length} expired CIBA requests`);
 
-    // Schedule next cleanup (every 5 minutes)
-    await this.state.storage.setAlarm(Date.now() + 5 * 60 * 1000);
+    // Record successful cleanup for idempotency
+    await this.state.storage.put(lastCleanupKey, Date.now());
+
+    // Schedule next cleanup
+    await this.state.storage.setAlarm(Date.now() + CLEANUP_INTERVAL_MS);
   }
 }

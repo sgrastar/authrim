@@ -76,6 +76,26 @@ export interface SessionResponse {
 const SESSION_KEY_PREFIX = 'session:';
 
 /**
+ * Storage key prefix for tombstones (deleted session markers)
+ * Used to prevent D1 fallback from returning stale sessions after deletion
+ */
+const TOMBSTONE_KEY_PREFIX = 'tombstone:';
+
+/**
+ * Tombstone TTL in milliseconds (24 hours)
+ * After this period, tombstones are automatically cleaned up
+ */
+const TOMBSTONE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Tombstone data interface
+ */
+interface Tombstone {
+  deletedAt: number;
+  expiresAt: number;
+}
+
+/**
  * SessionStore Durable Object
  *
  * Provides distributed session storage with strong consistency guarantees.
@@ -183,6 +203,92 @@ export class SessionStore extends DurableObject<Env> {
   }
 
   /**
+   * Build storage key for a tombstone
+   */
+  private buildTombstoneKey(sessionId: string): string {
+    return `${TOMBSTONE_KEY_PREFIX}${sessionId}`;
+  }
+
+  /**
+   * Create a tombstone for a deleted session
+   * Tombstones prevent D1 fallback from returning stale sessions after deletion
+   * This is critical for OIDC RP-Initiated Logout security
+   */
+  private async createTombstone(sessionId: string): Promise<void> {
+    const tombstone: Tombstone = {
+      deletedAt: Date.now(),
+      expiresAt: Date.now() + TOMBSTONE_TTL_MS,
+    };
+    await this.ctx.storage.put(this.buildTombstoneKey(sessionId), tombstone);
+    console.log(`SessionStore: Created tombstone for session ${sessionId}`);
+  }
+
+  /**
+   * Create tombstones for multiple deleted sessions (batch)
+   */
+  private async createTombstonesBatch(sessionIds: string[]): Promise<void> {
+    if (sessionIds.length === 0) return;
+
+    const tombstoneEntries: Map<string, Tombstone> = new Map();
+    const now = Date.now();
+    const expiresAt = now + TOMBSTONE_TTL_MS;
+
+    for (const sessionId of sessionIds) {
+      tombstoneEntries.set(this.buildTombstoneKey(sessionId), {
+        deletedAt: now,
+        expiresAt,
+      });
+    }
+
+    await this.ctx.storage.put(Object.fromEntries(tombstoneEntries));
+    console.log(`SessionStore: Created ${sessionIds.length} tombstones`);
+  }
+
+  /**
+   * Check if a tombstone exists for a session
+   * Returns true if the session has been deleted and should not be loaded from D1
+   */
+  private async hasTombstone(sessionId: string): Promise<boolean> {
+    const tombstone = await this.ctx.storage.get<Tombstone>(this.buildTombstoneKey(sessionId));
+    if (!tombstone) {
+      return false;
+    }
+    // Tombstone exists and is not expired
+    if (tombstone.expiresAt > Date.now()) {
+      return true;
+    }
+    // Tombstone expired, clean it up
+    await this.ctx.storage.delete(this.buildTombstoneKey(sessionId));
+    return false;
+  }
+
+  /**
+   * Cleanup expired tombstones
+   */
+  private async cleanupTombstones(): Promise<number> {
+    const now = Date.now();
+    let cleaned = 0;
+
+    const tombstones = await this.ctx.storage.list<Tombstone>({
+      prefix: TOMBSTONE_KEY_PREFIX,
+    });
+
+    const keysToDelete: string[] = [];
+    for (const [key, tombstone] of tombstones) {
+      if (tombstone.expiresAt <= now) {
+        keysToDelete.push(key);
+        cleaned++;
+      }
+    }
+
+    if (keysToDelete.length > 0) {
+      await this.ctx.storage.delete(keysToDelete);
+    }
+
+    return cleaned;
+  }
+
+  /**
    * Start periodic cleanup of expired sessions
    */
   private startCleanup(): void {
@@ -199,10 +305,11 @@ export class SessionStore extends DurableObject<Env> {
 
   /**
    * Cleanup expired sessions from memory and Durable Storage
+   * Also cleans up expired tombstones
    */
   private async cleanupExpiredSessions(): Promise<void> {
     const now = Date.now();
-    let cleaned = 0;
+    let cleanedSessions = 0;
 
     // Clean memory cache
     for (const [sessionId, session] of this.sessionCache.entries()) {
@@ -210,7 +317,7 @@ export class SessionStore extends DurableObject<Env> {
         this.sessionCache.delete(sessionId);
         // Delete from Durable Storage
         await this.ctx.storage.delete(this.buildSessionKey(sessionId));
-        cleaned++;
+        cleanedSessions++;
       }
     }
 
@@ -222,12 +329,17 @@ export class SessionStore extends DurableObject<Env> {
     for (const [key, session] of storedSessions) {
       if (session.expiresAt <= now) {
         await this.ctx.storage.delete(key);
-        cleaned++;
+        cleanedSessions++;
       }
     }
 
-    if (cleaned > 0) {
-      console.log(`SessionStore: Cleaned up ${cleaned} expired sessions`);
+    // Clean expired tombstones
+    const cleanedTombstones = await this.cleanupTombstones();
+
+    if (cleanedSessions > 0 || cleanedTombstones > 0) {
+      console.log(
+        `SessionStore: Cleaned up ${cleanedSessions} expired sessions, ${cleanedTombstones} tombstones`
+      );
     }
   }
 
@@ -240,8 +352,17 @@ export class SessionStore extends DurableObject<Env> {
 
   /**
    * Load session from D1 database (cold storage)
+   * Checks for tombstones first to prevent returning deleted sessions
+   * This is critical for OIDC RP-Initiated Logout security
    */
   private async loadFromD1(sessionId: string): Promise<Session | null> {
+    // Check for tombstone first - if exists, session was deleted
+    // This prevents D1 from returning stale sessions after logout
+    if (await this.hasTombstone(sessionId)) {
+      console.log(`SessionStore: Tombstone found for session ${sessionId}, skipping D1 load`);
+      return null;
+    }
+
     if (!this.env.DB) {
       return null;
     }
@@ -400,6 +521,9 @@ export class SessionStore extends DurableObject<Env> {
    *
    * Optimized: No read-before-delete pattern.
    * storage.delete() is idempotent and works safely on non-existent keys.
+   *
+   * Security: Creates tombstone if D1 deletion fails to prevent stale sessions
+   * from being loaded via D1 fallback (OIDC RP-Initiated Logout protection)
    */
   async invalidateSession(sessionId: string): Promise<boolean> {
     // 1. Remove from memory cache
@@ -415,11 +539,28 @@ export class SessionStore extends DurableObject<Env> {
     // Without await, getSession could still find the session in D1
     // before the deletion completes, causing prompt=none to succeed
     // when it should fail with login_required (OIDC RP-Initiated Logout)
+    let d1DeleteFailed = false;
     try {
       await this.deleteFromD1(sessionId);
     } catch (error) {
       console.error('SessionStore: Failed to delete from D1:', error);
-      // Continue even if D1 deletion fails - memory and Durable Storage are authoritative
+      d1DeleteFailed = true;
+    }
+
+    // 4. Create tombstone if D1 deletion failed
+    // This prevents D1 fallback from returning stale sessions
+    // Critical for OIDC RP-Initiated Logout security
+    if (d1DeleteFailed) {
+      try {
+        await this.createTombstone(sessionId);
+      } catch (tombstoneError) {
+        console.error(
+          `SessionStore: CRITICAL - Failed to create tombstone for session ${sessionId}:`,
+          tombstoneError
+        );
+        // This is a critical error - session may be resurrected via D1 fallback
+        // In production, this should trigger an alert
+      }
     }
 
     // Return based on cache only - sufficient for logging/debugging purposes
@@ -431,39 +572,74 @@ export class SessionStore extends DurableObject<Env> {
    * Optimized for admin operations (e.g., delete all user sessions)
    *
    * Optimized: No read-before-delete pattern. Uses batch delete for efficiency.
+   * Uses chunking to prevent timeout on large batches.
+   *
+   * Security: Creates tombstones if D1 deletion fails to prevent stale sessions
+   * from being loaded via D1 fallback (OIDC RP-Initiated Logout protection)
    */
   async invalidateSessionsBatch(
     sessionIds: string[]
   ): Promise<{ deleted: number; failed: string[] }> {
-    const storageKeysToDelete: string[] = [];
+    const MAX_BATCH_SIZE = 1000;
+    const failed: string[] = [];
+    let deleted = 0;
+    const d1FailedSessionIds: string[] = [];
 
-    // Process each session - remove from cache and collect storage keys
-    for (const sessionId of sessionIds) {
-      // Remove from memory cache
-      this.sessionCache.delete(sessionId);
-      // Collect storage keys for batch delete
-      storageKeysToDelete.push(this.buildSessionKey(sessionId));
-    }
+    // Process in chunks to prevent timeout on large batches
+    for (let i = 0; i < sessionIds.length; i += MAX_BATCH_SIZE) {
+      const chunk = sessionIds.slice(i, i + MAX_BATCH_SIZE);
+      const storageKeysToDelete: string[] = [];
 
-    // Batch delete from Durable Storage - delete() is idempotent
-    if (storageKeysToDelete.length > 0) {
-      await this.ctx.storage.delete(storageKeysToDelete);
-    }
+      // Process each session in chunk - remove from cache and collect storage keys
+      for (const sessionId of chunk) {
+        // Remove from memory cache
+        this.sessionCache.delete(sessionId);
+        // Collect storage keys for batch delete
+        storageKeysToDelete.push(this.buildSessionKey(sessionId));
+      }
 
-    // Delete from D1 in batch - MUST await to prevent race condition
-    if (sessionIds.length > 0 && this.env.DB) {
+      // Batch delete from Durable Storage - delete() is idempotent
       try {
-        await this.batchDeleteFromD1(sessionIds);
+        if (storageKeysToDelete.length > 0) {
+          await this.ctx.storage.delete(storageKeysToDelete);
+        }
+        deleted += chunk.length;
       } catch (error) {
-        console.error('SessionStore: Failed to batch delete from D1:', error);
-        // Continue even if D1 deletion fails - memory and Durable Storage are authoritative
+        console.error(`SessionStore: Failed to delete chunk ${i}:`, error);
+        failed.push(...chunk);
+        continue;
+      }
+
+      // Delete from D1 in batch - MUST await to prevent race condition
+      if (chunk.length > 0 && this.env.DB) {
+        try {
+          await this.batchDeleteFromD1(chunk);
+        } catch (error) {
+          console.error('SessionStore: Failed to batch delete from D1:', error);
+          // Track failed D1 deletions for tombstone creation
+          d1FailedSessionIds.push(...chunk);
+        }
       }
     }
 
-    // All sessions are treated as deleted (delete is idempotent)
+    // Create tombstones for sessions where D1 deletion failed
+    // This prevents D1 fallback from returning stale sessions
+    if (d1FailedSessionIds.length > 0) {
+      try {
+        await this.createTombstonesBatch(d1FailedSessionIds);
+      } catch (tombstoneError) {
+        console.error(
+          `SessionStore: CRITICAL - Failed to create tombstones for ${d1FailedSessionIds.length} sessions:`,
+          tombstoneError
+        );
+        // This is a critical error - sessions may be resurrected via D1 fallback
+        // In production, this should trigger an alert
+      }
+    }
+
     return {
-      deleted: sessionIds.length,
-      failed: [],
+      deleted,
+      failed,
     };
   }
 

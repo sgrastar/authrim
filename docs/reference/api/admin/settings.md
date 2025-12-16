@@ -1,6 +1,6 @@
 # Admin Settings API
 
-**Last Updated**: 2025-12-11
+**Last Updated**: 2025-12-15
 
 Administrative API for dynamic system configuration. These settings can be modified at runtime without requiring redeployment.
 
@@ -266,6 +266,161 @@ Cleanup old generation shards after shard count changes.
 
 ---
 
+## Region Shards Settings
+
+Region sharding enables Durable Objects (SessionStore, AuthCodeStore, ChallengeStore) to be placed in specific geographic regions using Cloudflare's `locationHint` feature. This reduces latency for users in specific regions.
+
+### GET /api/admin/settings/region-shards
+
+Get current region sharding configuration.
+
+**Response**:
+```json
+{
+  "currentGeneration": 1,
+  "currentTotalShards": 20,
+  "currentRegions": {
+    "wnam": {
+      "startShard": 0,
+      "endShard": 19,
+      "shardCount": 20
+    }
+  },
+  "previousGenerations": [],
+  "maxPreviousGenerations": 5,
+  "updatedAt": 1702644000000,
+  "updatedBy": "admin-api"
+}
+```
+
+### PUT /api/admin/settings/region-shards
+
+Update region sharding configuration. If `totalShards` or `regionDistribution` changes, a new generation is created automatically.
+
+**Request Body**:
+```json
+{
+  "totalShards": 20,
+  "regionDistribution": {
+    "wnam": 100
+  }
+}
+```
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| totalShards | number | Yes | >= active region count | Total number of shards |
+| regionDistribution | object | Yes | Must sum to 100 | Percentage allocation per region |
+
+**Valid Region Keys**:
+| Key | Region | Cloudflare Location |
+|-----|--------|---------------------|
+| `apac` | Asia Pacific | Tokyo, Singapore, Sydney |
+| `enam` | Eastern North America | Ashburn, Virginia |
+| `wnam` | Western North America | Portland, Oregon |
+| `weur` | Western Europe | Frankfurt, London |
+| `oc` | Oceania | Sydney |
+| `afr` | Africa | Johannesburg |
+| `me` | Middle East | Dubai |
+
+**Response**:
+```json
+{
+  "success": true,
+  "generationIncremented": true,
+  "currentGeneration": 2,
+  "currentTotalShards": 20,
+  "currentRegions": {
+    "wnam": {
+      "startShard": 0,
+      "endShard": 19,
+      "shardCount": 20
+    }
+  },
+  "previousGenerationsCount": 1,
+  "updatedAt": 1702644000000,
+  "note": "New generation created. Existing resources will continue to use old config until they expire."
+}
+```
+
+**Validation Rules**:
+- `regionDistribution` percentages must sum to exactly 100
+- `totalShards` must be >= number of active regions (percentage > 0)
+- Each region with percentage > 0 must get at least 1 shard after rounding
+- Regions with 0% are allowed (disabled regions)
+- Only valid region keys are accepted
+
+### DELETE /api/admin/settings/region-shards
+
+Delete region sharding configuration (reset to defaults).
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Region shard configuration deleted. System will use defaults.",
+  "defaults": {
+    "totalShards": 20,
+    "regionDistribution": {
+      "apac": 20,
+      "enam": 40,
+      "weur": 40
+    },
+    "regions": {
+      "apac": { "startShard": 0, "endShard": 3, "shardCount": 4 },
+      "enam": { "startShard": 4, "endShard": 11, "shardCount": 8 },
+      "weur": { "startShard": 12, "endShard": 19, "shardCount": 8 }
+    }
+  },
+  "note": "Existing resources with embedded generation/region info will continue to work."
+}
+```
+
+### Region Sharding Examples
+
+**Example 1: US West Only (for k6 Cloud Portland)**
+```bash
+curl -X PUT https://your-domain.com/api/admin/settings/region-shards \
+  -H "X-Admin-Secret: YOUR_ADMIN_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"totalShards": 20, "regionDistribution": {"wnam": 100}}'
+```
+
+**Example 2: Multi-Region Distribution**
+```bash
+curl -X PUT https://your-domain.com/api/admin/settings/region-shards \
+  -H "X-Admin-Secret: YOUR_ADMIN_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"totalShards": 20, "regionDistribution": {"apac": 20, "enam": 40, "weur": 40}}'
+```
+
+**Example 3: Using wrangler directly**
+```bash
+# Set configuration (US West 100%)
+npx wrangler kv key put "region_shard_config:default" \
+  '{"currentGeneration":1,"currentTotalShards":20,"currentRegions":{"wnam":{"startShard":0,"endShard":19,"shardCount":20}},"previousGenerations":[],"maxPreviousGenerations":5,"updatedAt":1702644000000,"updatedBy":"wrangler"}' \
+  --namespace-id=YOUR_NAMESPACE_ID --remote
+
+# Check current value
+npx wrangler kv key get "region_shard_config:default" \
+  --namespace-id=YOUR_NAMESPACE_ID --remote
+
+# Delete (reset to default)
+npx wrangler kv key delete "region_shard_config:default" \
+  --namespace-id=YOUR_NAMESPACE_ID --remote
+```
+
+### k6 Cloud Load Zone Mapping
+
+| k6 Cloud Load Zone | Cloudflare Region Key |
+|-------------------|----------------------|
+| `amazon:us:portland` | `wnam` |
+| `amazon:us:ashburn` | `enam` |
+| `amazon:jp:tokyo` | `apac` |
+| `amazon:eu:frankfurt` | `weur` |
+
+---
+
 ## KV Key Reference
 
 All settings are stored in the `AUTHRIM_CONFIG` KV namespace with the following keys:
@@ -283,6 +438,23 @@ All settings are stored in the `AUTHRIM_CONFIG` KV namespace with the following 
 | Rate Limit (loadTest) maxRequests | `rate_limit_loadtest_max_requests` | number | 10,000 |
 | Rate Limit (loadTest) windowSeconds | `rate_limit_loadtest_window_seconds` | number | 60 |
 | RBAC Cache TTL | `rbac_cache_ttl` | number | 600 |
+| Region Shard Config | `region_shard_config:default` | JSON | See below |
+
+### Region Shard Config Default
+
+```json
+{
+  "currentGeneration": 1,
+  "currentTotalShards": 20,
+  "currentRegions": {
+    "apac": { "startShard": 0, "endShard": 3, "shardCount": 4 },
+    "enam": { "startShard": 4, "endShard": 11, "shardCount": 8 },
+    "weur": { "startShard": 12, "endShard": 19, "shardCount": 8 }
+  },
+  "previousGenerations": [],
+  "maxPreviousGenerations": 5
+}
+```
 
 ---
 

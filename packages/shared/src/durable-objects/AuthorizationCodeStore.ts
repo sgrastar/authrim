@@ -171,7 +171,68 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     this.MAX_CODES_PER_USER =
       maxCodesEnv && !isNaN(Number(maxCodesEnv)) ? Number(maxCodesEnv) : 100;
 
-    // State and config will be fully initialized on first request (async)
+    // Block all requests until initialization completes
+    // This ensures the DO is in a consistent state before processing any requests
+    // Critical for one-time code consumption guarantee
+    ctx.blockConcurrencyWhile(async () => {
+      await this.initializeStateBlocking();
+    });
+  }
+
+  /**
+   * Initialize state from Durable Storage and load configuration from KV
+   * Called by blockConcurrencyWhile() in constructor
+   *
+   * Configuration Priority: KV > Environment variable > Default value
+   */
+  private async initializeStateBlocking(): Promise<void> {
+    // Load configuration from KV (with env/default fallback)
+    try {
+      this.CODE_TTL = await this.configManager.getAuthCodeTTL();
+      this.MAX_CODES_PER_USER = await this.configManager.getMaxCodesPerUser();
+      console.log(
+        `AuthCodeStore: Loaded config from KV - CODE_TTL: ${this.CODE_TTL}s, MAX_CODES_PER_USER: ${this.MAX_CODES_PER_USER}`
+      );
+    } catch (error) {
+      console.warn(
+        'AuthCodeStore: Failed to load config from KV, using env/default values:',
+        error
+      );
+      // Keep constructor-initialized values (from env)
+    }
+
+    try {
+      // Load all codes from individual key storage (code:*)
+      const storedCodes = await this.ctx.storage.list<AuthorizationCode>({
+        prefix: CODE_KEY_PREFIX,
+      });
+
+      const now = Date.now();
+      for (const [key, authCode] of storedCodes) {
+        // Extract code from key (remove prefix)
+        const code = key.substring(CODE_KEY_PREFIX.length);
+        this.codes.set(code, authCode);
+
+        // Rebuild userCodeCounts from restored codes (only count non-expired codes)
+        if (authCode.expiresAt > now) {
+          this.incrementUserCodeCount(authCode.userId);
+        }
+      }
+
+      if (this.codes.size > 0) {
+        console.log(
+          `AuthCodeStore: Restored ${this.codes.size} authorization codes from Durable Storage`
+        );
+      }
+    } catch (error) {
+      console.error('AuthCodeStore: Failed to initialize from Durable Storage:', error);
+      // Continue with empty state
+    }
+
+    this.initialized = true;
+
+    // Start periodic cleanup after initialization
+    this.startCleanup();
   }
 
   // ==========================================
@@ -293,69 +354,23 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   // ==========================================
 
   /**
-   * Initialize state from Durable Storage and load configuration from KV
-   * Must be called before any code operations
+   * Ensure state is initialized
+   * Called by public methods for backward compatibility
    *
-   * Configuration Priority: KV > Environment variable > Default value
-   *
-   * Storage Architecture (v2):
-   * - Individual key storage: `code:${code}` for each authorization code
-   * - O(1) reads/writes per code operation
-   * - list() only called once at DO startup, not on every request
+   * Note: With blockConcurrencyWhile() in constructor, this is now a no-op guard.
+   * The actual initialization happens in initializeStateBlocking() during construction.
    */
   private async initializeState(): Promise<void> {
-    // CRITICAL: Guard to prevent repeated list() calls
+    // Guard - initialization already completed by blockConcurrencyWhile()
     if (this.initialized) {
       return;
     }
 
-    // Load configuration from KV (with env/default fallback)
-    try {
-      this.CODE_TTL = await this.configManager.getAuthCodeTTL();
-      this.MAX_CODES_PER_USER = await this.configManager.getMaxCodesPerUser();
-      console.log(
-        `AuthCodeStore: Loaded config from KV - CODE_TTL: ${this.CODE_TTL}s, MAX_CODES_PER_USER: ${this.MAX_CODES_PER_USER}`
-      );
-    } catch (error) {
-      console.warn(
-        'AuthCodeStore: Failed to load config from KV, using env/default values:',
-        error
-      );
-      // Keep constructor-initialized values (from env)
-    }
-
-    try {
-      // Load all codes from individual key storage (code:*)
-      const storedCodes = await this.ctx.storage.list<AuthorizationCode>({
-        prefix: CODE_KEY_PREFIX,
-      });
-
-      const now = Date.now();
-      for (const [key, authCode] of storedCodes) {
-        // Extract code from key (remove prefix)
-        const code = key.substring(CODE_KEY_PREFIX.length);
-        this.codes.set(code, authCode);
-
-        // Rebuild userCodeCounts from restored codes (only count non-expired codes)
-        if (authCode.expiresAt > now) {
-          this.incrementUserCodeCount(authCode.userId);
-        }
-      }
-
-      if (this.codes.size > 0) {
-        console.log(
-          `AuthCodeStore: Restored ${this.codes.size} authorization codes from Durable Storage`
-        );
-      }
-    } catch (error) {
-      console.error('AuthCodeStore: Failed to initialize from Durable Storage:', error);
-      // Continue with empty state
-    }
-
-    this.initialized = true;
-
-    // Start periodic cleanup after initialization
-    this.startCleanup();
+    // This should not happen with blockConcurrencyWhile(), but as a safety fallback:
+    console.warn(
+      'AuthCodeStore: initializeState called but not initialized - this should not happen'
+    );
+    await this.initializeStateBlocking();
   }
 
   /**

@@ -98,17 +98,19 @@ export async function createSDJWTIDTokenFromClaims(
  * @param privateKey - Private key for signing
  * @param kid - Key ID
  * @param expiresIn - Token expiration time in seconds (default: 3600)
+ * @param providedJti - Optional pre-generated JTI (for region-aware sharding)
  * @returns Promise<{ token: string; jti: string }> - Signed JWT and its unique identifier
  */
 export async function createAccessToken(
   claims: Omit<AccessTokenClaims, 'iat' | 'exp' | 'jti'>,
   privateKey: CryptoKey,
   kid: string,
-  expiresIn: number = 3600
+  expiresIn: number = 3600,
+  providedJti?: string
 ): Promise<{ token: string; jti: string }> {
   const now = Math.floor(Date.now() / 1000);
-  // Generate unique token identifier with enhanced security (~128 characters)
-  const jti = generateSecureRandomString(96);
+  // Use provided JTI (for region-aware sharding) or generate a random one
+  const jti = providedJti ?? generateSecureRandomString(96);
 
   const token = await new SignJWT({
     ...claims,

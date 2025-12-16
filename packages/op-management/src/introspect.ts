@@ -7,30 +7,61 @@ import { parseToken, verifyToken } from '@authrim/shared';
 import { importJWK, decodeProtectedHeader, type CryptoKey, type JWK } from 'jose';
 import { getIntrospectionValidationSettings } from './routes/settings/introspection-validation';
 
-// In-memory JWKS cache with 5-minute TTL
+// Hierarchical JWKS cache configuration
+// 1. In-memory cache (fastest, per-isolate)
+// 2. KV cache (shared across Worker instances)
+// 3. KeyManager DO (singleton, fallback)
 let jwksCache: { keys: JWK[]; expiry: number } | null = null;
-const JWKS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const JWKS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes in-memory cache
+const KV_JWKS_CACHE_TTL_SEC = 60; // 1 minute KV cache (shorter to allow key rotation)
+const KV_JWKS_CACHE_KEY = 'cache:jwks';
 
 /**
- * Get JWKS from KeyManager DO with in-memory caching
+ * Get JWKS with hierarchical caching to reduce KeyManager DO load:
+ * 1. In-memory cache (fastest, 5min TTL) - per Worker isolate
+ * 2. KV cache (shared across Workers, 1min TTL) - reduces DO cold starts
+ * 3. KeyManager DO (singleton) - authoritative source
  */
 async function getJwksFromKeyManager(env: Env): Promise<JWK[]> {
   const now = Date.now();
 
-  // Return cached JWKS if still valid
+  // 1. Check in-memory cache (fastest path)
   if (jwksCache && jwksCache.expiry > now) {
     return jwksCache.keys;
   }
 
-  // Fetch from KeyManager DO
+  // 2. Check KV cache (shared across Worker instances)
+  if (env.AUTHRIM_CONFIG) {
+    try {
+      const kvCached = await env.AUTHRIM_CONFIG.get<JWK[]>(KV_JWKS_CACHE_KEY, { type: 'json' });
+      if (kvCached && Array.isArray(kvCached) && kvCached.length > 0) {
+        // Update in-memory cache from KV
+        jwksCache = { keys: kvCached, expiry: now + JWKS_CACHE_TTL_MS };
+        return kvCached;
+      }
+    } catch {
+      // KV read failed, continue to DO
+    }
+  }
+
+  // 3. Fetch from KeyManager DO (singleton)
   try {
     const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
     const keyManager = env.KEY_MANAGER.get(keyManagerId);
     const keys = await keyManager.getAllPublicKeysRpc();
-    jwksCache = {
-      keys,
-      expiry: now + JWKS_CACHE_TTL_MS,
-    };
+
+    // Update in-memory cache
+    jwksCache = { keys, expiry: now + JWKS_CACHE_TTL_MS };
+
+    // Update KV cache (fire-and-forget, non-blocking)
+    if (env.AUTHRIM_CONFIG && keys.length > 0) {
+      env.AUTHRIM_CONFIG.put(KV_JWKS_CACHE_KEY, JSON.stringify(keys), {
+        expirationTtl: KV_JWKS_CACHE_TTL_SEC,
+      }).catch(() => {
+        // Ignore KV write errors - not critical
+      });
+    }
+
     return keys;
   } catch (error) {
     console.error('Failed to get JWKS from KeyManager:', error);
@@ -304,7 +335,9 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // 2. Client ID existence validation
-    if (tokenClientId) {
+    // Optimization: Skip D1 query if tokenClientId matches the already-authenticated client_id
+    // (client_id was already verified in the client authentication step above)
+    if (tokenClientId && tokenClientId !== client_id) {
       const clientExists = await c.env.DB.prepare('SELECT 1 FROM oauth_clients WHERE client_id = ?')
         .bind(tokenClientId)
         .first();
