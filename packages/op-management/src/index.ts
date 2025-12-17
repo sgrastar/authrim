@@ -121,6 +121,11 @@ import {
   updateIntrospectionValidationConfig,
   clearIntrospectionValidationConfig,
 } from './routes/settings/introspection-validation';
+import {
+  getIntrospectionCacheConfigHandler,
+  updateIntrospectionCacheConfigHandler,
+  clearIntrospectionCacheConfigHandler,
+} from './routes/settings/introspection-cache';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -350,6 +355,12 @@ app.delete('/api/admin/settings/token-exchange', clearTokenExchangeConfig);
 app.get('/api/admin/settings/introspection-validation', getIntrospectionValidationConfig);
 app.put('/api/admin/settings/introspection-validation', updateIntrospectionValidationConfig);
 app.delete('/api/admin/settings/introspection-validation', clearIntrospectionValidationConfig);
+
+// Admin Introspection Cache Configuration endpoints
+// Cache active=true responses to reduce DO/D1 load
+app.get('/api/admin/settings/introspection-cache', getIntrospectionCacheConfigHandler);
+app.put('/api/admin/settings/introspection-cache', updateIntrospectionCacheConfigHandler);
+app.delete('/api/admin/settings/introspection-cache', clearIntrospectionCacheConfigHandler);
 
 // Admin Refresh Token Sharding Configuration endpoints
 app.get('/api/admin/settings/refresh-token-sharding', getRefreshTokenShardingConfig);

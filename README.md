@@ -124,7 +124,7 @@ Authrim is an **enterprise-grade Identity & Access Platform** built for:
 | ----- | ------------------------------ | ----------------- | ----------- |
 | 1-5   | Foundation, Core API, UI/UX    | 2025-11           | ✅ Complete |
 | 6     | Enterprise Features            | 2025-12           | ✅ Complete |
-| 7     | **Identity Hub Foundation**    | 2025-12 ~ 2026-Q1 | ⏳ ~85%     |
+| 7     | **Identity Hub Foundation**    | 2025-12 ~ 2026-Q1 | ⏳ ~90%     |
 | 8     | **Unified Policy Integration** | 2026-Q2           | 🔜 Planned  |
 | 9     | **Advanced Identity (VC/DID)** | 2026-Q3           | 🔜 Planned  |
 | 10    | SDK & API                      | 2026-Q4           | 🔜 Planned  |
@@ -230,11 +230,12 @@ Authrim is an **enterprise-grade Identity & Access Platform** built for:
 
 ### Planned
 
-**Phase 7: Identity Hub Foundation (~85% Complete)**
+**Phase 7: Identity Hub Foundation (~90% Complete)**
 
-- Social Login: Google ✅, Microsoft ✅, GitHub 🔜, Apple 🔜, Facebook 🔜
+- Social Login: Google ✅, Microsoft ✅, GitHub ✅ (Apple, Facebook deferred)
 - RP Module (OIDC/OAuth 2.0 client for upstream IdPs) ✅
 - Identity Linking & Stitching (unified user identity across sources) ✅
+- Durable Objects best practices (blockConcurrencyWhile, Tombstone pattern) ✅
 
 **Phase 8: Unified Policy Integration**
 
@@ -396,6 +397,6 @@ See [LICENSE](./LICENSE) for details.
 
 > **Authrim** — _Identity & Access at the edge of everywhere_
 >
-> **Status:** Phase 6 Complete ✅ | Phase 7 ~85% Complete (Identity Hub Foundation)
+> **Status:** Phase 6 Complete ✅ | Phase 7 ~90% Complete (Identity Hub Foundation)
 >
 > _From zero to production-ready Identity & Access Platform in under 5 minutes._ (Goal: 2027-Q2)

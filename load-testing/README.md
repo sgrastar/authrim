@@ -7,10 +7,14 @@ Load testing presets for Authrim, targeting home and semi-commercial use cases.
 - [Overview](#overview)
 - [Performance Benchmarks](#performance-benchmarks)
 - [Test Environment Architecture](#test-environment-architecture)
-- [Test Presets](#test-presets)
 - [Quick Start](#quick-start)
-- [Distributed Load Testing (TEST 4)](#distributed-load-testing-test-4)
-- [Detailed Documentation](#detailed-documentation)
+- [Available Benchmarks](#available-benchmarks)
+- [Distributed Load Testing](#distributed-load-testing-test-4)
+- [Passkey Full Login Benchmark](#passkey-full-login-benchmark)
+- [Directory Structure](#directory-structure)
+- [Seed Scripts Reference](#seed-scripts-reference)
+- [Reports](#reports)
+- [Collected Metrics](#collected-metrics)
 
 ---
 
@@ -108,7 +112,6 @@ flowchart TB
     W --> D1
 ```
 
-For details, see [docs/architecture.md](./docs/architecture.md).
 
 ## Test Presets
 
@@ -142,7 +145,6 @@ Workload closest to real service usage.
 | **Standard** | 30-50  | 180s     | p99 < 500ms                     |
 | **Heavy**    | 80-100 | 180s     | Measure latency spike threshold |
 
-For details, see [docs/test-scenarios.md](./docs/test-scenarios.md).
 
 ## Quick Start
 
@@ -171,7 +173,7 @@ Configure the following:
 
 ```env
 # Target Authrim Worker URL
-BASE_URL=https://conformance.authrim.com
+BASE_URL=https://your-authrim.example.com
 
 # Test client credentials
 CLIENT_ID=test_client_id
@@ -185,24 +187,153 @@ CLOUDFLARE_API_TOKEN=your_api_token
 ### 3. Run Tests
 
 ```bash
-# Run TEST 1 with Light preset
-./scripts/run-test.sh test1 light
+# Run benchmark (example: UserInfo with rps100 preset)
+k6 run \
+  --env PRESET=rps100 \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env TOKEN_URL=https://your-r2-bucket.example.com/seeds/tokens.json \
+  scripts/benchmarks/test-userinfo-benchmark.js
 
-# Run TEST 2 with Standard preset
-./scripts/run-test.sh test2 standard
-
-# Run TEST 3 with Heavy preset
-./scripts/run-test.sh test3 heavy
+# Run on K6 Cloud
+k6 cloud \
+  --env PRESET=rps500 \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env TOKEN_URL=https://your-r2-bucket.example.com/seeds/tokens.json \
+  scripts/benchmarks/test-userinfo-benchmark-cloud.js
 ```
 
-### 4. Collect Results
+### 4. Collect Cloudflare Analytics
 
 ```bash
-# Fetch metrics from Cloudflare Analytics
-./scripts/collect-metrics.sh
+# Fetch metrics from Cloudflare Analytics (last 10 minutes)
+CF_API_TOKEN=xxx CF_ACCOUNT_ID=yyy node scripts/utils/report-cf-analytics.js --minutes 10
 
-# Results are saved in results/ directory
-ls -la results/
+# Fetch metrics for specific time range
+CF_API_TOKEN=xxx CF_ACCOUNT_ID=yyy node scripts/utils/report-cf-analytics.js \
+  --start "2025-12-17T10:00:00Z" --end "2025-12-17T10:30:00Z"
+```
+
+---
+
+## Available Benchmarks
+
+Each benchmark requires specific seed data. Follow the quick start guide for each benchmark.
+
+### Benchmark Overview
+
+| Benchmark | Endpoint | Seed Script | Description |
+|-----------|----------|-------------|-------------|
+| **Token Introspection** | `POST /introspect` | `seed-access-tokens.js` | RFC 7662 token validation |
+| **Token Exchange** | `POST /token` | `seed-access-tokens.js` | RFC 8693 token exchange |
+| **UserInfo** | `GET /userinfo` | `seed-access-tokens.js` | OIDC UserInfo endpoint |
+| **Silent Auth** | `GET /authorize?prompt=none` | Admin API (sessions) | SSO silent authentication |
+| **Mail OTP Full Login** | 5-step OAuth flow | `seed-otp-users.js` | Complete login with email OTP |
+| **Passkey Full Login** | 6-step OAuth flow | `seed-passkey-users.js` | Complete login with WebAuthn |
+
+### Quick Start: Token Introspection / Token Exchange / UserInfo
+
+These benchmarks share the same seed data (access tokens).
+
+```bash
+cd load-testing
+
+# 1. Generate access tokens (3,000 tokens with mixed types)
+BASE_URL=https://your-authrim.example.com \
+CLIENT_ID=xxx \
+CLIENT_SECRET=yyy \
+ADMIN_API_SECRET=zzz \
+TOKEN_COUNT=3000 \
+node scripts/seeds/seed-access-tokens.js
+
+# 2. Run Token Introspection benchmark
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env CLIENT_ID=xxx \
+  --env CLIENT_SECRET=yyy \
+  --env PRESET=rps300 \
+  scripts/benchmarks/test-introspect-benchmark.js
+
+# 3. Run Token Exchange benchmark
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env CLIENT_ID=xxx \
+  --env CLIENT_SECRET=yyy \
+  --env PRESET=rps100 \
+  scripts/benchmarks/test-token-exchange-benchmark.js
+
+# 4. Run UserInfo benchmark
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env PRESET=rps500 \
+  scripts/benchmarks/test-userinfo-benchmark.js
+```
+
+### Quick Start: Silent Authentication
+
+```bash
+cd load-testing
+
+# 1. Seed users first (creates test users via Admin API)
+BASE_URL=https://your-authrim.example.com \
+ADMIN_API_SECRET=zzz \
+OTP_USER_COUNT=500 \
+node scripts/seeds/seed-otp-users.js
+
+# 2. Run Silent Auth benchmark (sessions are created in setup phase)
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env CLIENT_ID=xxx \
+  --env CLIENT_SECRET=yyy \
+  --env ADMIN_API_SECRET=zzz \
+  --env PRESET=rps200 \
+  scripts/benchmarks/test-authorize-silent-benchmark.js
+```
+
+### Quick Start: Mail OTP Full Login
+
+```bash
+cd load-testing
+
+# 1. Seed OTP users
+BASE_URL=https://your-authrim.example.com \
+ADMIN_API_SECRET=zzz \
+OTP_USER_COUNT=500 \
+node scripts/seeds/seed-otp-users.js
+
+# 2. Run Mail OTP Full Login benchmark
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env CLIENT_ID=xxx \
+  --env CLIENT_SECRET=yyy \
+  --env ADMIN_API_SECRET=zzz \
+  --env PRESET=rps50 \
+  scripts/benchmarks/test-mail-otp-full-login-benchmark.js
+```
+
+### Quick Start: Passkey Full Login
+
+Requires custom k6 binary with xk6-passkeys extension. See [Passkey Full Login Benchmark](#passkey-full-login-benchmark) section for detailed instructions.
+
+```bash
+cd load-testing
+
+# 1. Build custom k6 binary (requires Go 1.23+)
+./scripts/utils/build-k6-passkeys.sh
+
+# 2. Seed Passkey users
+BASE_URL=https://your-authrim.example.com \
+ADMIN_API_SECRET=zzz \
+PASSKEY_USER_COUNT=100 \
+node scripts/seeds/seed-passkey-users.js
+
+# 3. Run Passkey Full Login benchmark
+./bin/k6-passkeys run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env CLIENT_ID=xxx \
+  --env CLIENT_SECRET=yyy \
+  --env ADMIN_API_SECRET=zzz \
+  --env PRESET=rps30 \
+  scripts/benchmarks/test-passkey-full-login-benchmark.js
 ```
 
 ---
@@ -302,7 +433,7 @@ cd load-testing
 ```bash
 # Run with default preset (rps30)
 ./bin/k6-passkeys run \
-  --env BASE_URL=https://conformance.authrim.com \
+  --env BASE_URL=https://your-authrim.example.com \
   --env ADMIN_API_SECRET=xxx \
   --env CLIENT_ID=xxx \
   --env CLIENT_SECRET=xxx \
@@ -311,7 +442,7 @@ cd load-testing
 # Run with specific preset
 ./bin/k6-passkeys run \
   --env PRESET=rps50 \
-  --env BASE_URL=https://conformance.authrim.com \
+  --env BASE_URL=https://your-authrim.example.com \
   --env ADMIN_API_SECRET=xxx \
   --env CLIENT_ID=xxx \
   --env CLIENT_SECRET=xxx \
@@ -401,7 +532,7 @@ cd authrim/load-testing
 
 # 4. Create .env file with credentials
 cat > .env << 'EOF'
-BASE_URL=https://conformance.authrim.com
+BASE_URL=https://your-authrim.example.com
 ADMIN_API_SECRET=your-admin-secret
 CLIENT_ID=your-client-id
 CLIENT_SECRET=your-client-secret
@@ -436,7 +567,7 @@ EOF
 # Seed mode - creates users and exports credentials to JSON
 ./bin/k6-passkeys run \
   --env MODE=seed \
-  --env BASE_URL=https://conformance.authrim.com \
+  --env BASE_URL=https://your-authrim.example.com \
   --env ADMIN_API_SECRET=xxx \
   --env PASSKEY_USER_COUNT=500 \
   scripts/test-passkey-full-login-benchmark-vm.js 2>&1 | ./scripts/extract-credentials.sh
@@ -444,7 +575,7 @@ EOF
 # Benchmark mode - uses pre-seeded credentials (pure login benchmark)
 ./bin/k6-passkeys run \
   --env MODE=benchmark \
-  --env BASE_URL=https://conformance.authrim.com \
+  --env BASE_URL=https://your-authrim.example.com \
   --env CLIENT_ID=xxx \
   --env CLIENT_SECRET=xxx \
   --env PRESET=rps125 \
@@ -499,114 +630,126 @@ This matches the Mail OTP benchmark pattern where users are pre-seeded.
 ```
 load-testing/
 ├── README.md                          # This file
-├── bin/                               # Custom binaries (gitignored)
-│   └── k6-passkeys                    # k6 with xk6-passkeys extension
-├── docs/                              # Detailed documentation
-│   ├── architecture.md                # Test environment architecture
-│   ├── test-scenarios.md              # Test scenario details
-│   ├── endpoint-requirements.md       # Endpoint-specific requirements (VU state, rotation)
-│   └── metrics-collection.md          # Metrics collection procedures
 ├── extensions/                        # Custom k6 extensions
 │   └── xk6-passkeys/                  # Forked xk6-passkeys with Import/Export
-├── scripts/                           # Test scripts
-│   ├── test1-token-load.js            # TEST 1: /token endpoint
-│   ├── test2-refresh-storm.js         # TEST 2: Refresh Storm
-│   ├── test3-full-oidc.js             # TEST 3: Full OIDC
-│   ├── test4-distributed-load.js      # TEST 4: Distributed multi-client load
-│   ├── test-passkey-full-login-benchmark.js     # Passkey full login (local)
-│   ├── test-passkey-full-login-benchmark-vm.js  # Passkey full login (VM)
-│   ├── build-k6-passkeys.sh           # Build k6 with passkeys extension
-│   ├── run-passkey-benchmark-vm.sh    # Run passkey benchmark from VM
-│   ├── extract-credentials.sh         # Extract credentials from seed output
-│   ├── run-test.sh                    # Test execution helper
-│   ├── collect-metrics.sh             # Metrics collection script
-│   ├── generate-seeds.js              # Seed data generation script
-│   ├── setup-test-clients.js          # Create test clients for distributed test
-│   ├── cleanup-test-clients.js        # Remove test clients after testing
-│   ├── generate-distributed-seeds.js  # Generate seeds for each client
-│   └── generate-report.js             # Generate HTML/MD/CSV reports
-├── scenarios/                         # Test scenario configurations
-│   └── mau-presets.js                 # MAU-based test presets
-├── seeds/                             # Seed data output directory
-├── queries/                           # GraphQL queries
-│   └── worker_stats.graphql           # Worker statistics query
-├── presets/                           # Preset configurations
-│   ├── light.json                     # Light preset
-│   ├── standard.json                  # Standard preset
-│   └── heavy.json                     # Heavy preset
-└── results/                           # Test results (gitignored)
+├── reports/                           # Load test reports
+│   └── Dec2025/                       # December 2025 test results
+│       ├── README.md                  # Performance summary
+│       ├── silent-auth.md             # Silent Auth benchmark
+│       ├── userinfo.md                # UserInfo benchmark
+│       ├── token-exchange.md          # Token Exchange benchmark
+│       ├── token-introspection.md     # Token Introspection benchmark
+│       └── full-login-otp.md          # Full Login (Mail OTP) benchmark
+└── scripts/
+    ├── benchmarks/                    # k6 benchmark scripts
+    │   ├── test-authorize-silent-benchmark.js      # Silent Auth (local)
+    │   ├── test-authorize-silent-benchmark-cloud.js # Silent Auth (K6 Cloud)
+    │   ├── test-userinfo-benchmark.js              # UserInfo (local)
+    │   ├── test-userinfo-benchmark-cloud.js        # UserInfo (K6 Cloud)
+    │   ├── test-token-exchange-benchmark.js        # Token Exchange (local)
+    │   ├── test-token-exchange-benchmark-cloud.js  # Token Exchange (K6 Cloud)
+    │   ├── test-introspect-benchmark.js            # Token Introspection (local)
+    │   ├── test-introspect-benchmark-cloud.js      # Token Introspection (K6 Cloud)
+    │   ├── test-mail-otp-full-login-benchmark.js   # Full Login Mail OTP (local)
+    │   ├── test-mail-otp-full-login-benchmark-cloud.js # Full Login Mail OTP (K6 Cloud)
+    │   ├── test-passkey-full-login-benchmark.js    # Passkey Login (local)
+    │   ├── test-passkey-full-login-benchmark-vm.js # Passkey Login (VM)
+    │   └── test-refresh.js                         # Refresh Token
+    ├── seeds/                         # Seed data generation scripts
+    │   ├── seed-access-tokens.js      # Generate access tokens for introspection
+    │   ├── seed-authcodes.js          # Generate authorization codes
+    │   ├── seed-otp-users.js          # Generate OTP users
+    │   ├── seed-passkey-users.js      # Generate Passkey users
+    │   └── seed-refresh-tokens.js     # Generate refresh tokens
+    └── utils/                         # Utility scripts
+        ├── build-k6-passkeys.sh       # Build k6 with passkeys extension
+        └── report-cf-analytics.js     # Cloudflare Analytics reporter
 ```
 
 ---
 
-## Seed Data Generation (generate-seeds.js)
+## Seed Scripts Reference
 
-Script to pre-generate authorization codes and refresh tokens for load testing.
+Each benchmark requires specific seed data. All seed scripts are located in `scripts/seeds/`.
 
-### Usage
+### Prerequisites: Create Test Client
 
-```bash
-cd load-testing/scripts
-
-# Basic usage
-CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz node generate-seeds.js
-```
-
-### Environment Variables
-
-| Variable           | Required | Default                           | Description                               |
-| ------------------ | -------- | --------------------------------- | ----------------------------------------- |
-| `BASE_URL`         | No       | `https://conformance.authrim.com` | Target Authrim Worker URL                 |
-| `CLIENT_ID`        | **Yes**  | -                                 | OAuth client ID                           |
-| `CLIENT_SECRET`    | **Yes**  | -                                 | OAuth client secret                       |
-| `REDIRECT_URI`     | No       | `https://localhost:3000/callback` | Redirect URI                              |
-| `ADMIN_API_SECRET` | No       | -                                 | Admin API Bearer token                    |
-| `AUTH_CODE_COUNT`  | No       | `200`                             | Number of authorization codes to generate |
-| `REFRESH_COUNT`    | No       | `200`                             | Number of refresh tokens to generate      |
-| `OUTPUT_DIR`       | No       | `../seeds`                        | Output directory                          |
-
-### Output Files
-
-```
-seeds/
-├── auth_codes.json        # authorization code + PKCE verifier
-└── refresh_tokens.json    # refresh token
-```
-
-### Prerequisites: Client Creation
-
-You can create a test client using the Admin API.
-
-> **Important**: The `redirect_uris` during client creation must match the `REDIRECT_URI` in generate-seeds.js.
+Before running seed scripts, create a test client via Admin API:
 
 ```bash
-# Create client (matching default REDIRECT_URI)
-curl -X POST "https://conformance.authrim.com/api/admin/clients" \
+curl -X POST "https://your-authrim.example.com/api/admin/clients" \
   -H "Authorization: Bearer YOUR_ADMIN_API_SECRET" \
   -H "Content-Type: application/json" \
   -d '{
     "client_name": "Load Test Client",
     "redirect_uris": ["https://localhost:3000/callback"],
-    "grant_types": ["authorization_code", "refresh_token"],
+    "grant_types": ["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:token-exchange"],
     "scope": "openid profile email",
-    "skip_consent": true
+    "skip_consent": true,
+    "token_exchange_allowed": true
   }'
-
-# Example response:
-# {
-#   "client": {
-#     "client_id": "550e8400-e29b-...",
-#     "client_secret": "a1b2c3d4e5f6...",
-#     ...
-#   }
-# }
-
-# Generate seeds using the obtained client_id and client_secret
-CLIENT_ID="550e8400-e29b-..." \
-CLIENT_SECRET="a1b2c3d4e5f6..." \
-ADMIN_API_SECRET="YOUR_ADMIN_API_SECRET" \
-node generate-seeds.js
 ```
+
+### seed-access-tokens.js
+
+Generates access tokens for Token Introspection, Token Exchange, and UserInfo benchmarks.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BASE_URL` | **Yes** | - | Target Authrim Worker URL |
+| `CLIENT_ID` | **Yes** | - | OAuth client ID |
+| `CLIENT_SECRET` | **Yes** | - | OAuth client secret |
+| `ADMIN_API_SECRET` | **Yes** | - | Admin API Bearer token |
+| `TOKEN_COUNT` | No | `1000` | Total tokens to generate |
+| `CONCURRENCY` | No | `20` | Parallel requests |
+
+**Token Mix**: Valid 60%, Token Exchange 5%, Expired 12%, Revoked 12%, Wrong Audience 6%, Wrong Client 5%
+
+### seed-otp-users.js
+
+Generates users for Mail OTP and Silent Auth benchmarks.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BASE_URL` | **Yes** | - | Target Authrim Worker URL |
+| `ADMIN_API_SECRET` | **Yes** | - | Admin API Bearer token |
+| `OTP_USER_COUNT` | No | `500` | Number of users to create |
+| `CONCURRENCY` | No | `20` | Parallel requests |
+
+### seed-passkey-users.js
+
+Generates users with registered passkeys for Passkey benchmark.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BASE_URL` | **Yes** | - | Target Authrim Worker URL |
+| `ADMIN_API_SECRET` | **Yes** | - | Admin API Bearer token |
+| `PASSKEY_USER_COUNT` | No | `100` | Number of users to create |
+| `CONCURRENCY` | No | `10` | Parallel requests |
+
+### seed-authcodes.js
+
+Generates authorization codes for token endpoint benchmarks.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BASE_URL` | **Yes** | - | Target Authrim Worker URL |
+| `CLIENT_ID` | **Yes** | - | OAuth client ID |
+| `CLIENT_SECRET` | **Yes** | - | OAuth client secret |
+| `ADMIN_API_SECRET` | **Yes** | - | Admin API Bearer token |
+| `AUTH_CODE_COUNT` | No | `200` | Number of codes to generate |
+
+### seed-refresh-tokens.js
+
+Generates refresh tokens for refresh token rotation benchmarks.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `BASE_URL` | **Yes** | - | Target Authrim Worker URL |
+| `CLIENT_ID` | **Yes** | - | OAuth client ID |
+| `CLIENT_SECRET` | **Yes** | - | OAuth client secret |
+| `ADMIN_API_SECRET` | **Yes** | - | Admin API Bearer token |
+| `COUNT` | No | `120` | Number of tokens to generate |
 
 ### About Redirect URIs
 
@@ -626,12 +769,17 @@ node generate-seeds.js
 
 For details, see [Admin Client API Documentation](../docs/api/admin/clients.md).
 
-## Detailed Documentation
+## Reports
 
-- [Test Environment Architecture](./docs/architecture.md) - Detailed test environment configuration
-- [Test Scenario Details](./docs/test-scenarios.md) - Detailed specifications for each test
-- [**Endpoint Requirements (NEW)**](./docs/endpoint-requirements.md) - **Critical requirements for each endpoint (state management, VU isolation, token rotation)**
-- [Metrics Collection Procedures](./docs/metrics-collection.md) - How to retrieve results from Cloudflare Analytics
+Load test reports are available in the `reports/Dec2025/` directory:
+
+- [Silent Auth Benchmark](./reports/Dec2025/silent-auth.md)
+- [UserInfo Benchmark](./reports/Dec2025/userinfo.md)
+- [Token Exchange Benchmark](./reports/Dec2025/token-exchange.md)
+- [Token Introspection Benchmark](./reports/Dec2025/token-introspection.md)
+- [Full Login (Mail OTP) Benchmark](./reports/Dec2025/full-login-otp.md)
+
+See also: [Reports Index](./reports/Dec2025/README.md) for performance summary across all benchmarks.
 
 ## Collected Metrics
 

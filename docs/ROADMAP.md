@@ -119,7 +119,7 @@ timeline
 | **M4: Extensions**         | 2025-11-12 | ✅ Complete    | PAR, DPoP, Pairwise, Token Management                                 |
 | **M5: UI/UX**              | 2025-11-18 | ✅ Complete    | SvelteKit Frontend, Admin Dashboard, 15+ pages                        |
 | **M6: Enterprise**         | 2025-12-02 | ✅ Complete    | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer, SAML 2.0 |
-| **M7: Identity Hub**       | 2026-Q1    | ⏳ ~85%        | RP Module ✅, Google ✅, Microsoft ✅, Identity Linking ✅, GitHub 🔜 |
+| **M7: Identity Hub**       | 2026-Q1    | ⏳ ~90%        | RP Module ✅, Google ✅, Microsoft ✅, GitHub ✅, Identity Linking ✅ |
 | **M8: Policy Integration** | 2026-Q2    | 🔜 Planned     | Unified AuthN + AuthZ, Token embedding, Check API                     |
 | **M9: Advanced Identity**  | 2026-Q3    | 🔜 Planned     | OpenID4VP/CI, DID Resolver, VC Issuance                               |
 | **M10: SDK & API**         | 2026-Q4    | 🔜 Planned     | WebSDK, CLI, API Documentation                                        |
@@ -232,7 +232,7 @@ timeline
 
 ---
 
-## Phase 7: Identity Hub Foundation ⏳ IN PROGRESS (~85% Complete)
+## Phase 7: Identity Hub Foundation ⏳ IN PROGRESS (~90% Complete)
 
 **Timeline:** 2025-12 to 2026-Q1
 
@@ -253,13 +253,13 @@ timeline
 | -------------------- | --------- | -------- | ----------- |
 | Google               | OIDC      | High     | ✅ Complete |
 | Microsoft (Entra ID) | OIDC      | High     | ✅ Complete |
-| GitHub               | OAuth 2.0 | High     | 🔜 Planned  |
-| Apple                | OIDC      | Medium   | 🔜 Planned  |
-| Facebook             | OAuth 2.0 | Medium   | 🔜 Planned  |
-| Twitter/X            | OAuth 2.0 | Low      | 🔜 Planned  |
-| LinkedIn             | OAuth 2.0 | Low      | 🔜 Planned  |
+| GitHub               | OAuth 2.0 | High     | ✅ Complete |
+| Apple                | OIDC      | Medium   | 🔜 Deferred |
+| Facebook             | OAuth 2.0 | Medium   | 🔜 Deferred |
+| Twitter/X            | OAuth 2.0 | Low      | 🔜 Deferred |
+| LinkedIn             | OAuth 2.0 | Low      | 🔜 Deferred |
 
-> **Note:** Microsoft supports multi-tenant (common/organizations/consumers) with automatic issuer validation. Any OIDC/OAuth2 provider can be dynamically added via Admin API
+> **Note:** Microsoft supports multi-tenant (common/organizations/consumers) with automatic issuer validation. GitHub supports Enterprise Server. Any OIDC/OAuth2 provider can be dynamically added via Admin API
 
 ### 7.3 Identity Linking ✅ COMPLETE
 
@@ -530,11 +530,14 @@ By 2027, Authrim will be:
 | 2025-12-15 | **Phase 7 ~80% complete**: RP Module, Google, Identity Linking/Stitching done       |
 | 2025-12-15 | Remaining P7 tasks: GitHub/Microsoft templates, Login Flow Designer                 |
 | 2025-12-15 | **Microsoft (Entra ID) complete**: Multi-tenant support (common/organizations/consumers), issuer pattern validation, comprehensive security tests |
+| 2025-12-17 | **GitHub OAuth 2.0 complete**: Enterprise Server support, /user/emails API, 57 tests |
+| 2025-12-17 | **Durable Objects best practices**: blockConcurrencyWhile, Tombstone pattern, DO retry utility |
+| 2025-12-17 | External IdP documentation added, other social providers deferred to Phase 8+ |
 
 ---
 
-> **Last Update:** 2025-12-15
+> **Last Update:** 2025-12-17
 >
-> **Current Status:** Phase 6 Complete ✅ | Phase 7 ~85% Complete (Identity Hub)
+> **Current Status:** Phase 6 Complete ✅ | Phase 7 ~90% Complete (Identity Hub)
 >
 > **Authrim** - The Identity & Access Platform for the modern web.

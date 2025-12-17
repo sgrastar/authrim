@@ -197,4 +197,10 @@ export interface Env {
   // Default: disabled (RFC 7662 standard behavior)
   INTROSPECTION_STRICT_VALIDATION?: string; // "true" to enable strict validation
   INTROSPECTION_EXPECTED_AUDIENCE?: string; // Expected audience value (null = use ISSUER_URL)
+
+  // Token Introspection Response Cache
+  // Caches active=true responses to reduce KeyManager DO and D1 load
+  // Default: enabled with 60 second TTL
+  INTROSPECTION_CACHE_ENABLED?: string; // "true" or "false" (default: "true")
+  INTROSPECTION_CACHE_TTL_SECONDS?: string; // Cache TTL in seconds (default: "60")
 }

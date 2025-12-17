@@ -421,6 +421,147 @@ npx wrangler kv key delete "region_shard_config:default" \
 
 ---
 
+## Introspection Cache Settings
+
+Token Introspection (RFC 7662) のレスポンスをキャッシュする設定です。キャッシュは `active=true` のレスポンスのみを対象とし、revocation 状態は常にフレッシュに確認されます。
+
+### GET /api/admin/settings/introspection-cache
+
+Get current introspection cache configuration.
+
+**Response**:
+```json
+{
+  "settings": {
+    "enabled": {
+      "value": true,
+      "source": "default",
+      "default": true,
+      "description": "When enabled, caches active=true introspection responses to reduce KeyManager DO and D1 load"
+    },
+    "ttlSeconds": {
+      "value": 60,
+      "source": "default",
+      "default": 60,
+      "description": "Cache TTL in seconds (recommended: 30-120 seconds)"
+    }
+  },
+  "note": "Cache only stores active=true responses. Revocation checks bypass cache for security."
+}
+```
+
+### PUT /api/admin/settings/introspection-cache
+
+Update introspection cache settings.
+
+**Request Body**:
+```json
+{
+  "enabled": true,
+  "ttlSeconds": 60
+}
+```
+
+| Field | Type | Required | Constraints | Description |
+|-------|------|----------|-------------|-------------|
+| enabled | boolean | No | - | Enable/disable caching |
+| ttlSeconds | number | No | 1 - 3600 | Cache TTL in seconds |
+
+**Response**:
+```json
+{
+  "success": true,
+  "settings": {
+    "enabled": true,
+    "ttlSeconds": 60
+  },
+  "note": "Introspection cache settings updated successfully."
+}
+```
+
+### DELETE /api/admin/settings/introspection-cache
+
+Clear introspection cache settings override (revert to env/default).
+
+**Response**:
+```json
+{
+  "success": true,
+  "settings": {
+    "enabled": true,
+    "ttlSeconds": 60
+  },
+  "sources": {
+    "enabled": "default",
+    "ttlSeconds": "default"
+  },
+  "note": "Introspection cache settings cleared. Using env/default values."
+}
+```
+
+### Security Considerations
+
+1. **Only `active=true` responses are cached** - Inactive token responses are never cached to prevent false positives
+2. **Revocation is always checked fresh** - Even on cache hit, the revocation status is verified in real-time
+3. **Cache key is hashed** - JTI values are SHA-256 hashed to prevent key enumeration attacks
+4. **RFC 7662 Section 4 compliance** - The spec's "no caching" requirement refers to HTTP caching; application-level caching is acceptable
+5. **Industry standard** - Similar caching is implemented by Keycloak, Auth0, and other major providers
+
+### Cache Behavior
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Introspection Request Flow                   │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  1. Parse token → Extract JTI                                   │
+│                    ↓                                            │
+│  2. Check cache (if enabled)                                    │
+│      ├── Cache HIT → Check expiration → Check revocation        │
+│      │                                    ├── Not revoked → ✓   │
+│      │                                    └── Revoked → Delete  │
+│      │                                         cache → active:  │
+│      │                                         false            │
+│      └── Cache MISS → Continue full validation                  │
+│                    ↓                                            │
+│  3. Full validation (signature, claims, revocation)             │
+│                    ↓                                            │
+│  4. If active=true → Store in cache with TTL                    │
+│                    ↓                                            │
+│  5. Return response                                             │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Environment Variables
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `INTROSPECTION_CACHE_ENABLED` | string | "true" | Enable caching ("true"/"false") |
+| `INTROSPECTION_CACHE_TTL_SECONDS` | string | "60" | Cache TTL in seconds |
+
+### CLI Examples
+
+```bash
+# Enable cache with 30 second TTL
+curl -X PUT https://your-domain.com/api/admin/settings/introspection-cache \
+  -H "X-Admin-Secret: YOUR_ADMIN_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true, "ttlSeconds": 30}'
+
+# Disable cache for debugging
+curl -X PUT https://your-domain.com/api/admin/settings/introspection-cache \
+  -H "X-Admin-Secret: YOUR_ADMIN_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+
+# Reset to defaults
+curl -X DELETE https://your-domain.com/api/admin/settings/introspection-cache \
+  -H "X-Admin-Secret: YOUR_ADMIN_SECRET"
+```
+
+---
+
 ## KV Key Reference
 
 All settings are stored in the `AUTHRIM_CONFIG` KV namespace with the following keys:

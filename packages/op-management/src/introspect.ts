@@ -6,6 +6,7 @@ import { getRefreshToken, isTokenRevoked } from '@authrim/shared';
 import { parseToken, verifyToken } from '@authrim/shared';
 import { importJWK, decodeProtectedHeader, type CryptoKey, type JWK } from 'jose';
 import { getIntrospectionValidationSettings } from './routes/settings/introspection-validation';
+import { getIntrospectionCacheConfig } from './routes/settings/introspection-cache';
 
 // Hierarchical JWKS cache configuration
 // 1. In-memory cache (fastest, per-isolate)
@@ -15,6 +16,24 @@ let jwksCache: { keys: JWK[]; expiry: number } | null = null;
 const JWKS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes in-memory cache
 const KV_JWKS_CACHE_TTL_SEC = 60; // 1 minute KV cache (shorter to allow key rotation)
 const KV_JWKS_CACHE_KEY = 'cache:jwks';
+
+// Introspection Response Cache
+// Key format: introspect_cache:{sha256(jti)}
+// Only active=true responses are cached; revocation always checked fresh
+const INTROSPECT_CACHE_KEY_PREFIX = 'introspect_cache:';
+
+/**
+ * Generate cache key for introspection response
+ * Uses SHA-256 hash of JTI to prevent key enumeration attacks
+ */
+async function getIntrospectCacheKey(jti: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(jti);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${INTROSPECT_CACHE_KEY_PREFIX}${hashHex}`;
+}
 
 /**
  * Get JWKS with hierarchical caching to reduce KeyManager DO load:
@@ -236,6 +255,58 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // RFC 8693: Resource server URI (Token Exchange)
   const resource = tokenPayload.resource as string | undefined;
 
+  // ========== Introspection Response Cache Check ==========
+  // Cache lookup is performed early to skip expensive operations (JWKS, signature verification)
+  // Security: Even on cache hit, revocation status is always checked fresh
+  const cacheConfig = await getIntrospectionCacheConfig(c.env);
+  let cacheKey: string | null = null;
+
+  if (cacheConfig.enabled && jti && c.env.AUTHRIM_CONFIG) {
+    cacheKey = await getIntrospectCacheKey(jti);
+
+    try {
+      const cachedResponse = await c.env.AUTHRIM_CONFIG.get<IntrospectionResponse>(cacheKey, {
+        type: 'json',
+      });
+
+      if (cachedResponse && cachedResponse.active === true) {
+        // Cache hit! But still verify revocation status for security
+        // This ensures revoked tokens are immediately detected
+        const now = Math.floor(Date.now() / 1000);
+
+        // Check expiration (token may have expired since cached)
+        if (cachedResponse.exp && cachedResponse.exp < now) {
+          // Token expired, delete from cache and return inactive
+          c.env.AUTHRIM_CONFIG.delete(cacheKey).catch(() => {});
+          return c.json<IntrospectionResponse>({ active: false });
+        }
+
+        // Check revocation (always fresh check for security)
+        if (token_type_hint === 'refresh_token') {
+          if (sub) {
+            const refreshTokenData = await getRefreshToken(c.env, sub, rtv, tokenClientId, jti);
+            if (!refreshTokenData) {
+              c.env.AUTHRIM_CONFIG.delete(cacheKey).catch(() => {});
+              return c.json<IntrospectionResponse>({ active: false });
+            }
+          }
+        } else {
+          const revoked = await isTokenRevoked(c.env, jti);
+          if (revoked) {
+            c.env.AUTHRIM_CONFIG.delete(cacheKey).catch(() => {});
+            return c.json<IntrospectionResponse>({ active: false });
+          }
+        }
+
+        // Token is still valid, return cached response
+        return c.json(cachedResponse);
+      }
+    } catch {
+      // Cache read failed, continue with full validation
+    }
+  }
+  // ========== Introspection Response Cache Check END ==========
+
   // Load public key for verification
   // Strategy: Try to match kid from token header with JWKS first, fall back to PUBLIC_JWK_JSON
   let publicKey: CryptoKey | undefined;
@@ -421,6 +492,19 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     // RFC 8693: Include resource if present (for Token Exchange with resource parameter)
     ...(resource && { resource }),
   };
+
+  // ========== Cache active=true Response ==========
+  // Store validated response in cache for future requests
+  // Cache TTL is configured via Admin API or environment variables
+  if (cacheConfig.enabled && cacheKey && c.env.AUTHRIM_CONFIG) {
+    // Fire-and-forget cache write (non-blocking)
+    c.env.AUTHRIM_CONFIG.put(cacheKey, JSON.stringify(response), {
+      expirationTtl: cacheConfig.ttlSeconds,
+    }).catch(() => {
+      // Ignore cache write errors - not critical
+    });
+  }
+  // ========== Cache active=true Response END ==========
 
   return c.json(response);
 }
