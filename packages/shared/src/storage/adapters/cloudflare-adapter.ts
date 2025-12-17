@@ -442,33 +442,135 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
         `If you need general KV storage, use env.KV or create a specific namespace.`
     );
   }
+
+  // =============================================================================
+  // PII Database Access (DB_PII) - Phase 6 PII/Non-PII DB Separation
+  // =============================================================================
+
+  /**
+   * Query from PII database (DB_PII)
+   *
+   * Used by UserStore for PII data (email, name, etc.)
+   * DB_PII is required - no fallback to DB (per migration strategy: no backward compatibility).
+   */
+  async queryPII<T>(sql: string, params: unknown[]): Promise<T[]> {
+    if (!this.env.DB_PII) {
+      throw new Error(
+        'DB_PII is required but not configured. PII/Non-PII DB separation requires DB_PII binding.'
+      );
+    }
+    const stmt = this.env.DB_PII.prepare(sql);
+    const results = await stmt.bind(...params).all<T>();
+    return results.results;
+  }
+
+  /**
+   * Execute on PII database (DB_PII)
+   *
+   * Used by UserStore for PII data operations.
+   * DB_PII is required - no fallback to DB (per migration strategy: no backward compatibility).
+   */
+  async executePII(sql: string, params: unknown[]): Promise<D1Result> {
+    if (!this.env.DB_PII) {
+      throw new Error(
+        'DB_PII is required but not configured. PII/Non-PII DB separation requires DB_PII binding.'
+      );
+    }
+    const stmt = this.env.DB_PII.prepare(sql);
+    const result = await stmt.bind(...params).run();
+    return result as D1Result;
+  }
 }
 
 /**
- * UserStore implementation (D1-based)
+ * UserStore implementation (D1-based with PII/Non-PII DB separation)
+ *
+ * Users are stored in two separate databases:
+ * - users_core (DB): Non-PII data (id, email_verified, is_active, etc.)
+ * - users_pii (DB_PII): PII data (email, name, phone, address, etc.)
+ *
+ * This separation enables:
+ * - GDPR/CCPA compliance (PII can be stored in regional DBs)
+ * - Fine-grained access control (PII requires explicit access)
+ * - Audit-friendly data classification
  */
 export class UserStore implements IUserStore {
   constructor(private adapter: CloudflareStorageAdapter) {}
 
+  /**
+   * Get user by ID
+   *
+   * Queries both users_core (DB) and users_pii (DB_PII) and merges the results.
+   */
   async get(userId: string): Promise<User | null> {
-    const results = await this.adapter.query<User>('SELECT * FROM users WHERE id = ?', [userId]);
-    return results[0] || null;
+    // Query both databases in parallel
+    const [coreResults, piiResults] = await Promise.all([
+      this.adapter.query<UserCoreRow>(
+        'SELECT id, tenant_id, email_verified, phone_number_verified, password_hash, is_active, created_at, updated_at, last_login_at FROM users_core WHERE id = ?',
+        [userId]
+      ),
+      this.adapter.queryPII<UserPIIRow>(
+        `SELECT id, email, name, given_name, family_name, middle_name, nickname, preferred_username,
+                profile, picture, website, gender, birthdate, zoneinfo, locale, phone_number,
+                address_formatted, address_street_address, address_locality, address_region,
+                address_postal_code, address_country
+         FROM users_pii WHERE id = ?`,
+        [userId]
+      ),
+    ]);
+
+    const core = coreResults[0];
+    const pii = piiResults[0];
+
+    if (!core) return null;
+
+    return this.mergeUserData(core, pii);
   }
 
+  /**
+   * Get user by email
+   *
+   * Queries users_pii first (since email is stored there), then fetches users_core.
+   */
   async getByEmail(email: string): Promise<User | null> {
-    // Use tenant_id + email for idx_users_tenant_email composite index
+    // Use tenant_id + email for idx_users_pii_email composite index
     // Default to 'default' tenant until multi-tenant support is added to interface
     const tenantId = 'default';
-    const results = await this.adapter.query<User>(
-      'SELECT * FROM users WHERE tenant_id = ? AND email = ?',
+
+    // First find user in PII DB by email
+    const piiResults = await this.adapter.queryPII<UserPIIRow>(
+      `SELECT id, email, name, given_name, family_name, middle_name, nickname, preferred_username,
+              profile, picture, website, gender, birthdate, zoneinfo, locale, phone_number,
+              address_formatted, address_street_address, address_locality, address_region,
+              address_postal_code, address_country
+       FROM users_pii WHERE tenant_id = ? AND email = ?`,
       [tenantId, email]
     );
-    return results[0] || null;
+
+    const pii = piiResults[0];
+    if (!pii) return null;
+
+    // Then fetch core data by ID
+    const coreResults = await this.adapter.query<UserCoreRow>(
+      'SELECT id, tenant_id, email_verified, phone_number_verified, password_hash, is_active, created_at, updated_at, last_login_at FROM users_core WHERE id = ?',
+      [pii.id]
+    );
+
+    const core = coreResults[0];
+    if (!core) return null;
+
+    return this.mergeUserData(core, pii);
   }
 
+  /**
+   * Create a new user
+   *
+   * Inserts into both users_core (DB) and users_pii (DB_PII).
+   */
   async create(user: Partial<User>): Promise<User> {
     const id = crypto.randomUUID();
     const now = Date.now(); // Store in milliseconds
+    const tenantId = 'default';
 
     const newUser: User = {
       id,
@@ -500,42 +602,72 @@ export class UserStore implements IUserStore {
       failed_login_attempts: user.failed_login_attempts,
     };
 
+    // Insert into users_core (DB) - non-PII data
     await this.adapter.execute(
-      `INSERT INTO users (
-        id, email, email_verified, name, family_name, given_name, middle_name,
-        nickname, preferred_username, profile, picture, website, gender, birthdate,
-        zoneinfo, locale, phone_number, phone_number_verified, address_json,
-        created_at, updated_at, last_login_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO users_core (
+        id, tenant_id, email_verified, phone_number_verified, password_hash,
+        is_active, pii_partition, pii_status, created_at, updated_at, last_login_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newUser.id,
-        newUser.email,
+        tenantId,
         newUser.email_verified ? 1 : 0,
-        newUser.name,
-        newUser.family_name,
-        newUser.given_name,
-        newUser.middle_name,
-        newUser.nickname,
-        newUser.preferred_username,
-        newUser.profile,
-        newUser.picture,
-        newUser.website,
-        newUser.gender,
-        newUser.birthdate,
-        newUser.zoneinfo,
-        newUser.locale,
-        newUser.phone_number,
         newUser.phone_number_verified ? 1 : 0,
-        newUser.address ? JSON.stringify(newUser.address) : null,
+        user.password_hash || null,
+        newUser.is_active ? 1 : 0,
+        'default', // pii_partition
+        'active', // pii_status
         newUser.created_at,
         newUser.updated_at,
-        newUser.last_login_at,
+        newUser.last_login_at || null,
+      ]
+    );
+
+    // Insert into users_pii (DB_PII) - PII data
+    await this.adapter.executePII(
+      `INSERT INTO users_pii (
+        id, tenant_id, email, name, given_name, family_name, middle_name, nickname,
+        preferred_username, profile, picture, website, gender, birthdate, zoneinfo, locale,
+        phone_number, address_formatted, address_street_address, address_locality,
+        address_region, address_postal_code, address_country, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        newUser.id,
+        tenantId,
+        newUser.email,
+        newUser.name || null,
+        newUser.given_name || null,
+        newUser.family_name || null,
+        newUser.middle_name || null,
+        newUser.nickname || null,
+        newUser.preferred_username || null,
+        newUser.profile || null,
+        newUser.picture || null,
+        newUser.website || null,
+        newUser.gender || null,
+        newUser.birthdate || null,
+        newUser.zoneinfo || null,
+        newUser.locale || null,
+        newUser.phone_number || null,
+        newUser.address?.formatted || null,
+        newUser.address?.street_address || null,
+        newUser.address?.locality || null,
+        newUser.address?.region || null,
+        newUser.address?.postal_code || null,
+        newUser.address?.country || null,
+        newUser.created_at,
+        newUser.updated_at,
       ]
     );
 
     return newUser;
   }
 
+  /**
+   * Update an existing user
+   *
+   * Updates both users_core (DB) and users_pii (DB_PII).
+   */
   async update(userId: string, updates: Partial<User>): Promise<User> {
     const existing = await this.get(userId);
     if (!existing) {
@@ -549,35 +681,55 @@ export class UserStore implements IUserStore {
       updated_at: Date.now(), // Store in milliseconds
     };
 
+    // Update users_core (DB) - non-PII data
     await this.adapter.execute(
-      `UPDATE users SET
-        email = ?, email_verified = ?, name = ?, family_name = ?, given_name = ?,
-        middle_name = ?, nickname = ?, preferred_username = ?, profile = ?,
-        picture = ?, website = ?, gender = ?, birthdate = ?, zoneinfo = ?,
-        locale = ?, phone_number = ?, phone_number_verified = ?, address_json = ?,
-        updated_at = ?, last_login_at = ?
+      `UPDATE users_core SET
+        email_verified = ?, phone_number_verified = ?, password_hash = ?,
+        is_active = ?, updated_at = ?, last_login_at = ?
+      WHERE id = ?`,
+      [
+        updated.email_verified ? 1 : 0,
+        updated.phone_number_verified ? 1 : 0,
+        updates.password_hash ?? existing.password_hash ?? null,
+        updated.is_active ? 1 : 0,
+        updated.updated_at,
+        updated.last_login_at || null,
+        userId,
+      ]
+    );
+
+    // Update users_pii (DB_PII) - PII data
+    await this.adapter.executePII(
+      `UPDATE users_pii SET
+        email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
+        nickname = ?, preferred_username = ?, profile = ?, picture = ?, website = ?,
+        gender = ?, birthdate = ?, zoneinfo = ?, locale = ?, phone_number = ?,
+        address_formatted = ?, address_street_address = ?, address_locality = ?,
+        address_region = ?, address_postal_code = ?, address_country = ?, updated_at = ?
       WHERE id = ?`,
       [
         updated.email,
-        updated.email_verified ? 1 : 0,
-        updated.name,
-        updated.family_name,
-        updated.given_name,
-        updated.middle_name,
-        updated.nickname,
-        updated.preferred_username,
-        updated.profile,
-        updated.picture,
-        updated.website,
-        updated.gender,
-        updated.birthdate,
-        updated.zoneinfo,
-        updated.locale,
-        updated.phone_number,
-        updated.phone_number_verified ? 1 : 0,
-        updated.address ? JSON.stringify(updated.address) : null,
+        updated.name || null,
+        updated.given_name || null,
+        updated.family_name || null,
+        updated.middle_name || null,
+        updated.nickname || null,
+        updated.preferred_username || null,
+        updated.profile || null,
+        updated.picture || null,
+        updated.website || null,
+        updated.gender || null,
+        updated.birthdate || null,
+        updated.zoneinfo || null,
+        updated.locale || null,
+        updated.phone_number || null,
+        updated.address?.formatted || null,
+        updated.address?.street_address || null,
+        updated.address?.locality || null,
+        updated.address?.region || null,
+        updated.address?.postal_code || null,
+        updated.address?.country || null,
         updated.updated_at,
-        updated.last_login_at,
         userId,
       ]
     );
@@ -585,9 +737,115 @@ export class UserStore implements IUserStore {
     return updated;
   }
 
+  /**
+   * Delete a user (soft delete)
+   *
+   * Sets is_active = 0 in users_core instead of physically deleting.
+   * For GDPR Art.17 compliance, use the Admin API's PII deletion endpoint.
+   */
   async delete(userId: string): Promise<void> {
-    await this.adapter.execute('DELETE FROM users WHERE id = ?', [userId]);
+    // Soft delete: set is_active = 0
+    await this.adapter.execute('UPDATE users_core SET is_active = 0, updated_at = ? WHERE id = ?', [
+      Date.now(),
+      userId,
+    ]);
   }
+
+  // =============================================================================
+  // Helper Methods
+  // =============================================================================
+
+  /**
+   * Merge users_core and users_pii data into a single User object
+   */
+  private mergeUserData(core: UserCoreRow, pii?: UserPIIRow): User {
+    const address =
+      pii?.address_formatted ||
+      pii?.address_street_address ||
+      pii?.address_locality ||
+      pii?.address_region ||
+      pii?.address_postal_code ||
+      pii?.address_country
+        ? {
+            formatted: pii.address_formatted || undefined,
+            street_address: pii.address_street_address || undefined,
+            locality: pii.address_locality || undefined,
+            region: pii.address_region || undefined,
+            postal_code: pii.address_postal_code || undefined,
+            country: pii.address_country || undefined,
+          }
+        : undefined;
+
+    return {
+      id: core.id,
+      email: pii?.email || '', // Fallback if PII not found
+      email_verified: core.email_verified === 1,
+      password_hash: core.password_hash || undefined,
+      name: pii?.name || undefined,
+      family_name: pii?.family_name || undefined,
+      given_name: pii?.given_name || undefined,
+      middle_name: pii?.middle_name || undefined,
+      nickname: pii?.nickname || undefined,
+      preferred_username: pii?.preferred_username || undefined,
+      profile: pii?.profile || undefined,
+      picture: pii?.picture || undefined,
+      website: pii?.website || undefined,
+      gender: pii?.gender || undefined,
+      birthdate: pii?.birthdate || undefined,
+      zoneinfo: pii?.zoneinfo || undefined,
+      locale: pii?.locale || undefined,
+      phone_number: pii?.phone_number || undefined,
+      phone_number_verified: core.phone_number_verified === 1,
+      address,
+      created_at: core.created_at,
+      updated_at: core.updated_at,
+      last_login_at: core.last_login_at || undefined,
+      is_active: core.is_active === 1,
+    };
+  }
+}
+
+// =============================================================================
+// Internal Types for DB Rows
+// =============================================================================
+
+/** Row type for users_core table */
+interface UserCoreRow {
+  id: string;
+  tenant_id: string;
+  email_verified: number; // 0 or 1
+  phone_number_verified: number; // 0 or 1
+  password_hash: string | null;
+  is_active: number; // 0 or 1
+  created_at: number;
+  updated_at: number;
+  last_login_at: number | null;
+}
+
+/** Row type for users_pii table */
+interface UserPIIRow {
+  id: string;
+  email: string;
+  name: string | null;
+  given_name: string | null;
+  family_name: string | null;
+  middle_name: string | null;
+  nickname: string | null;
+  preferred_username: string | null;
+  profile: string | null;
+  picture: string | null;
+  website: string | null;
+  gender: string | null;
+  birthdate: string | null;
+  zoneinfo: string | null;
+  locale: string | null;
+  phone_number: string | null;
+  address_formatted: string | null;
+  address_street_address: string | null;
+  address_locality: string | null;
+  address_region: string | null;
+  address_postal_code: string | null;
+  address_country: string | null;
 }
 
 /**

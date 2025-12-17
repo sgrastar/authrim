@@ -19,6 +19,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { JWK } from 'jose';
 import { generateKeySet } from '../utils/keys';
+import { timingSafeEqual } from '../utils/crypto';
 import type { Env } from '../types/env';
 import type { KeyStatus } from '../types/admin';
 
@@ -588,7 +589,7 @@ export class KeyManager extends DurableObject<Env> {
     }
 
     // Constant-time comparison to prevent timing attacks
-    return token === secret;
+    return timingSafeEqual(token, secret);
   }
 
   /**

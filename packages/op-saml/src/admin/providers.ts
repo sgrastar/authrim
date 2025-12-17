@@ -22,6 +22,7 @@ import type {
   SAMLProviderResponse,
   MetadataImportRequest,
 } from '@authrim/shared';
+import { timingSafeEqual, validateExternalUrl } from '@authrim/shared';
 import {
   parseXml,
   findElement,
@@ -303,6 +304,17 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
     if (body.metadataXml) {
       metadataXml = body.metadataXml;
     } else if (body.metadataUrl) {
+      // SSRF protection: Validate URL before fetching
+      const ssrfError = validateExternalUrl(body.metadataUrl, {
+        requireHttps: true,
+        allowLocalhost: false,
+        errorType: 'invalid_request',
+        fieldName: 'metadataUrl',
+      });
+      if (ssrfError) {
+        return c.json({ error: ssrfError.error_description }, 400);
+      }
+
       // Fetch metadata from URL
       const response = await fetch(body.metadataUrl);
       if (!response.ok) {
@@ -371,7 +383,8 @@ function isAuthorized(c: Context<{ Bindings: Env }>, env: Env): boolean {
   const token = authHeader.substring(7);
   const adminSecret = env.ADMIN_API_SECRET || env.KEY_MANAGER_SECRET;
 
-  return token === adminSecret;
+  // Constant-time comparison to prevent timing attacks
+  return !!adminSecret && timingSafeEqual(token, adminSecret);
 }
 
 /**

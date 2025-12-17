@@ -6,6 +6,8 @@
  * instead of requiring the client to poll the token endpoint.
  */
 
+import { isInternalUrl } from '../utils/url-security';
+
 /**
  * Send tokens directly to client in push mode
  * @param clientNotificationEndpoint - Client's callback URL
@@ -27,7 +29,12 @@ export async function sendPushModeTokens(
   expiresIn: number
 ): Promise<void> {
   try {
-    const payload: any = {
+    // SSRF protection: Block requests to internal addresses
+    if (isInternalUrl(clientNotificationEndpoint)) {
+      throw new Error('SSRF protection: Cannot send tokens to internal addresses');
+    }
+
+    const payload: Record<string, unknown> = {
       auth_req_id: authReqId,
       access_token: accessToken,
       token_type: 'Bearer',
@@ -84,18 +91,24 @@ export function validatePushModeRequirements(
   }
 
   // Validate URL format
+  let parsed: URL;
   try {
-    new URL(clientNotificationEndpoint);
+    parsed = new URL(clientNotificationEndpoint);
   } catch {
     return false;
   }
 
-  // Ensure HTTPS in production
-  if (
-    !clientNotificationEndpoint.startsWith('https://') &&
-    !clientNotificationEndpoint.startsWith('http://localhost') &&
-    !clientNotificationEndpoint.startsWith('http://127.0.0.1')
-  ) {
+  // Ensure HTTPS in production (allow http://localhost or 127.0.0.1 for development)
+  const isHttps = parsed.protocol === 'https:';
+  const isLocalDev =
+    parsed.protocol === 'http:' &&
+    (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+  if (!isHttps && !isLocalDev) {
+    return false;
+  }
+
+  // SSRF protection: Block internal addresses (except localhost/127.0.0.1 for dev)
+  if (isInternalUrl(clientNotificationEndpoint) && !isLocalDev) {
     return false;
   }
 

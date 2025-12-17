@@ -259,25 +259,37 @@ interface ExistingUser {
 
 /**
  * Find user by email
+ * PII/Non-PII DB分離: emailはPII DBから検索、ステータスはCore DBで確認
  */
 async function findUserByEmail(
   env: Env,
   email: string,
   tenantId: string
 ): Promise<ExistingUser | null> {
-  // Use tenant_id first to leverage idx_users_tenant_email composite index
-  const result = await env.DB.prepare(
-    `SELECT id, email, email_verified FROM users WHERE tenant_id = ? AND email = ?`
-  )
-    .bind(tenantId, email)
-    .first<{ id: string; email: string; email_verified: number }>();
+  // Search by email in PII DB
+  if (!env.DB_PII) return null;
 
-  if (!result) return null;
+  const userPII = await env.DB_PII.prepare(
+    'SELECT id, email FROM users_pii WHERE tenant_id = ? AND email = ?'
+  )
+    .bind(tenantId, email.toLowerCase())
+    .first<{ id: string; email: string }>();
+
+  if (!userPII) return null;
+
+  // Verify user is active and get email_verified from Core DB
+  const userCore = await env.DB.prepare(
+    'SELECT id, email_verified FROM users_core WHERE id = ? AND is_active = 1'
+  )
+    .bind(userPII.id)
+    .first<{ id: string; email_verified: number }>();
+
+  if (!userCore) return null;
 
   return {
-    id: result.id,
-    email: result.email,
-    email_verified: result.email_verified === 1,
+    id: userCore.id,
+    email: userPII.email,
+    email_verified: userCore.email_verified === 1,
   };
 }
 
@@ -295,40 +307,53 @@ interface CreateUserParams {
 
 /**
  * Create user from external identity
+ * PII/Non-PII DB分離: Core DBとPII DBに分けて作成
  */
 async function createUserFromExternalIdentity(
   env: Env,
   params: CreateUserParams
 ): Promise<{ id: string }> {
   const id = crypto.randomUUID();
-  const now = Date.now();
+  const now = Math.floor(Date.now() / 1000);
 
   // Generate a placeholder email if not provided
   const email = params.email || `${id}@external.authrim.local`;
 
+  // Step 1: Insert into users_core with pii_status='pending'
   await env.DB.prepare(
-    `INSERT INTO users (
-      id, tenant_id, email, email_verified,
-      name, given_name, family_name, picture, locale,
-      identity_provider_id,
-      created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO users_core (
+      id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at
+    ) VALUES (?, ?, ?, 'end_user', 'default', 'pending', ?, ?)`
   )
-    .bind(
-      id,
-      params.tenantId,
-      email,
-      params.emailVerified ? 1 : 0,
-      params.name || null,
-      params.givenName || null,
-      params.familyName || null,
-      params.picture || null,
-      params.locale || null,
-      params.identityProviderId,
-      now,
-      now
-    )
+    .bind(id, params.tenantId, params.emailVerified ? 1 : 0, now, now)
     .run();
+
+  // Step 2: Insert into users_pii (if DB_PII is configured)
+  if (env.DB_PII) {
+    await env.DB_PII.prepare(
+      `INSERT INTO users_pii (
+        id, tenant_id, email, name, given_name, family_name, picture, locale, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        id,
+        params.tenantId,
+        email.toLowerCase(),
+        params.name || null,
+        params.givenName || null,
+        params.familyName || null,
+        params.picture || null,
+        params.locale || null,
+        now,
+        now
+      )
+      .run();
+
+    // Step 3: Update pii_status to 'active'
+    await env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
+      .bind('active', id)
+      .run();
+  }
 
   return { id };
 }

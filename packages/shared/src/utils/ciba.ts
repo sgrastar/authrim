@@ -278,7 +278,10 @@ export function validateCIBARequest(params: {
 
   // Validate requested_expiry if provided
   if (params.requested_expiry !== undefined) {
+    // Check for NaN (parseInt of non-numeric string returns NaN)
+    // NaN comparisons always return false, so explicit check is needed
     if (
+      Number.isNaN(params.requested_expiry) ||
       params.requested_expiry < CIBA_CONSTANTS.MIN_EXPIRES_IN ||
       params.requested_expiry > CIBA_CONSTANTS.MAX_EXPIRES_IN
     ) {

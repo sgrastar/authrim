@@ -118,18 +118,35 @@ async function getUserInfo(
   env: Env,
   userId: string
 ): Promise<{ id: string; email: string; name?: string } | null> {
-  const result = await env.DB.prepare('SELECT id, email, name FROM users WHERE id = ?')
+  // PII/Non-PII DB分離: Core DBでユーザー存在確認、PII DBからemail/name取得
+  const userCore = await env.DB.prepare('SELECT id FROM users_core WHERE id = ? AND is_active = 1')
     .bind(userId)
     .first();
 
-  if (!result) {
+  if (!userCore) {
+    return null;
+  }
+
+  // Fetch PII from PII DB
+  let email: string | null = null;
+  let name: string | undefined = undefined;
+
+  if (env.DB_PII) {
+    const userPII = await env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
+      .bind(userId)
+      .first();
+    email = (userPII?.email as string) || null;
+    name = (userPII?.name as string) || undefined;
+  }
+
+  if (!email) {
     return null;
   }
 
   return {
-    id: result.id as string,
-    email: result.email as string,
-    name: result.name as string | undefined,
+    id: userCore.id as string,
+    email,
+    name,
   };
 }
 

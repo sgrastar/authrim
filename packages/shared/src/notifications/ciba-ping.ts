@@ -6,6 +6,8 @@
  * when the authentication request has been approved or denied.
  */
 
+import { isInternalUrl } from '../utils/url-security';
+
 /**
  * Send ping notification to client
  * @param clientNotificationEndpoint - Client's callback URL
@@ -19,6 +21,11 @@ export async function sendPingNotification(
   authReqId: string
 ): Promise<void> {
   try {
+    // SSRF protection: Block requests to internal addresses
+    if (isInternalUrl(clientNotificationEndpoint)) {
+      throw new Error('SSRF protection: Cannot send notifications to internal addresses');
+    }
+
     const response = await fetch(clientNotificationEndpoint, {
       method: 'POST',
       headers: {
@@ -66,18 +73,24 @@ export function validatePingModeRequirements(
   }
 
   // Validate URL format
+  let parsed: URL;
   try {
-    new URL(clientNotificationEndpoint);
+    parsed = new URL(clientNotificationEndpoint);
   } catch {
     return false;
   }
 
-  // Ensure HTTPS in production
-  if (
-    !clientNotificationEndpoint.startsWith('https://') &&
-    !clientNotificationEndpoint.startsWith('http://localhost') &&
-    !clientNotificationEndpoint.startsWith('http://127.0.0.1')
-  ) {
+  // Ensure HTTPS in production (allow http://localhost or 127.0.0.1 for development)
+  const isHttps = parsed.protocol === 'https:';
+  const isLocalDev =
+    parsed.protocol === 'http:' &&
+    (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+  if (!isHttps && !isLocalDev) {
+    return false;
+  }
+
+  // SSRF protection: Block internal addresses (except localhost/127.0.0.1 for dev)
+  if (isInternalUrl(clientNotificationEndpoint) && !isLocalDev) {
     return false;
   }
 

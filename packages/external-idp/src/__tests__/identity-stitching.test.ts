@@ -56,9 +56,17 @@ describe('Identity Stitching Service', () => {
     id_token: 'mock-id-token',
   };
 
-  // Mock Env
+  // Mock Env (includes DB_PII for PII/Non-PII DB separation)
   const createMockEnv = (overrides: Record<string, unknown> = {}) => ({
     DB: {
+      prepare: vi.fn().mockReturnValue({
+        bind: vi.fn().mockReturnThis(),
+        first: vi.fn(),
+        all: vi.fn(),
+        run: vi.fn(),
+      }),
+    },
+    DB_PII: {
       prepare: vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnThis(),
         first: vi.fn(),
@@ -195,10 +203,15 @@ describe('Identity Stitching Service', () => {
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
         vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('new-linked-id');
 
-        // Mock findUserByEmail
-        env.DB.prepare().bind().first.mockResolvedValueOnce({
+        // Mock findUserByEmail - PII/Non-PII DB separation pattern:
+        // 1. DB_PII returns user with email (PII DB)
+        env.DB_PII.prepare().bind().first.mockResolvedValueOnce({
           id: 'existing-user-by-email',
           email: 'test@example.com',
+        });
+        // 2. DB returns user core with email_verified: 1 (Core DB)
+        env.DB.prepare().bind().first.mockResolvedValueOnce({
+          id: 'existing-user-by-email',
           email_verified: 1,
         });
 
@@ -288,10 +301,15 @@ describe('Identity Stitching Service', () => {
         const env = createMockEnv();
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
 
-        // Mock findUserByEmail - user exists but email not verified
-        env.DB.prepare().bind().first.mockResolvedValueOnce({
+        // Mock findUserByEmail - PII/Non-PII DB separation pattern:
+        // 1. DB_PII returns user with email (PII DB)
+        env.DB_PII.prepare().bind().first.mockResolvedValueOnce({
           id: 'existing-user-unverified',
           email: 'test@example.com',
+        });
+        // 2. DB returns user core with email_verified: 0 (Core DB)
+        env.DB.prepare().bind().first.mockResolvedValueOnce({
+          id: 'existing-user-unverified',
           email_verified: 0, // Not verified
         });
 

@@ -194,11 +194,20 @@ function createMockContext(options: {
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
   db?: D1Database;
+  dbPII?: D1Database;
   challengeStore?: ReturnType<typeof createMockChallengeStore>;
   sessionStore?: ReturnType<typeof createMockSessionStore>;
 }) {
   const mockDB =
     options.db ??
+    createMockDB({
+      firstResult: null,
+      allResults: [],
+    });
+
+  // DB_PII mock for PII/Non-PII DB separation
+  const mockDBPII =
+    options.dbPII ??
     createMockDB({
       firstResult: null,
       allResults: [],
@@ -220,6 +229,7 @@ function createMockContext(options: {
     },
     env: {
       DB: mockDB,
+      DB_PII: mockDBPII, // Added for PII/Non-PII DB separation
       ISSUER_URL: 'https://example.com',
       ALLOWED_ORIGINS: 'https://example.com',
       CHALLENGE_STORE: challengeStore,
@@ -229,6 +239,7 @@ function createMockContext(options: {
     get: vi.fn((key: string) => contextStore.get(key)),
     set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
     _mockDB: mockDB,
+    _mockDBPII: mockDBPII, // For test assertions
     _challengeStore: challengeStore,
     _sessionStore: sessionStore,
   } as any;
@@ -408,25 +419,39 @@ describe('Passkey Handlers', () => {
     });
 
     it('should generate registration options for existing user', async () => {
+      // PII/Non-PII DB Separation:
+      // 1. Query PII DB for user by email
+      // 2. Query Core DB to verify user exists and is active
+      // 3. Query Core DB for existing passkeys
+
+      // Core DB: returns user exists check and no existing passkeys
       const mockDB = createMockDB({
+        firstResult: { id: 'existing-user-id', is_active: 1 },
+        allResults: [], // No existing passkeys
+      });
+
+      // PII DB: returns user found by email
+      const mockDBPII = createMockDB({
         firstResult: {
           id: 'existing-user-id',
           email: 'existing@example.com',
           name: 'Existing User',
         },
-        allResults: [], // No existing passkeys
       });
 
       const c = createMockContext({
         body: { email: 'existing@example.com' },
         headers: { origin: 'https://example.com' },
         db: mockDB,
+        dbPII: mockDBPII,
       });
 
       await passkeyRegisterOptionsHandler(c);
 
-      // Should not create new user
-      expect(mockDB.prepare).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO users'));
+      // Should not create new user (no INSERT INTO users_core)
+      expect(mockDB.prepare).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO users_core')
+      );
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           options: expect.objectContaining({
@@ -515,26 +540,39 @@ describe('Passkey Handlers', () => {
     });
 
     it('should include user credentials when email provided', async () => {
+      // PII/Non-PII DB Separation:
+      // 1. Query PII DB for user by email
+      // 2. Query Core DB to verify user exists and is active
+      // 3. Query Core DB for user's passkeys
+
+      // Core DB: returns user exists check and passkeys
       const mockDB = createMockDB({
-        firstResult: { id: 'user-123' },
+        firstResult: { id: 'user-123', is_active: 1 },
         allResults: [
           { credential_id: 'cred-1', transports: '["internal"]' },
           { credential_id: 'cred-2', transports: '["usb"]' },
         ],
       });
 
+      // PII DB: returns user found by email
+      const mockDBPII = createMockDB({
+        firstResult: { id: 'user-123', email: 'user@example.com' },
+      });
+
       const c = createMockContext({
         body: { email: 'user@example.com' },
         headers: { origin: 'https://example.com' },
         db: mockDB,
+        dbPII: mockDBPII,
       });
 
       await passkeyLoginOptionsHandler(c);
 
-      // Should query for user and their passkeys (using tenant_id for multi-tenant support)
-      expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT id FROM users WHERE tenant_id')
+      // Should query PII DB for user by email
+      expect(mockDBPII.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT id FROM users_pii WHERE tenant_id')
       );
+      // Should query Core DB for passkeys
       expect(mockDB.prepare).toHaveBeenCalledWith(
         expect.stringContaining('SELECT credential_id, transports FROM passkeys')
       );

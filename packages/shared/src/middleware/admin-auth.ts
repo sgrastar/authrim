@@ -133,11 +133,12 @@ async function authenticateSession(
     }
 
     // Fetch user type and primary organization (Phase 1 RBAC extensions)
+    // PII/Non-PII DB分離: users_coreを使用（user_typeはCore DBに格納）
     const userInfo = await c.env.DB.prepare(
       `SELECT u.user_type, m.org_id
-       FROM users u
+       FROM users_core u
        LEFT JOIN subject_org_membership m ON u.id = m.subject_id AND m.is_primary = 1
-       WHERE u.id = ?`
+       WHERE u.id = ? AND u.is_active = 1`
     )
       .bind(session.user_id)
       .first<{ user_type: string | null; org_id: string | null }>();

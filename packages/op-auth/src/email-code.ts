@@ -19,6 +19,7 @@ import {
   getSessionStoreForNewSession,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
+  generateId,
 } from '@authrim/shared';
 import { ResendEmailProvider } from './utils/email/resend-provider';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
@@ -88,31 +89,67 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Check if user exists, if not create a new user
-    // Use tenant_id + email for idx_users_tenant_email index optimization
+    // PII/Non-PII DB分離: email検索はPII DB、ユーザー作成は両DBに
     const tenantId = getTenantIdFromContext(c);
-    let user = await c.env.DB.prepare(
-      'SELECT id, email, name FROM users WHERE tenant_id = ? AND email = ?'
-    )
-      .bind(tenantId, email.toLowerCase())
-      .first();
+    let user: { id: string; email: string; name: string | null } | null = null;
+
+    // Search by email in PII DB
+    if (c.env.DB_PII) {
+      const userPII = await c.env.DB_PII.prepare(
+        'SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND email = ?'
+      )
+        .bind(tenantId, email.toLowerCase())
+        .first();
+
+      if (userPII) {
+        // Verify user is active in Core DB
+        const userCore = await c.env.DB.prepare(
+          'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
+        )
+          .bind(userPII.id)
+          .first();
+        if (userCore) {
+          user = {
+            id: userPII.id as string,
+            email: userPII.email as string,
+            name: (userPII.name as string) || null,
+          };
+        }
+      }
+    }
 
     if (!user) {
-      const userId = crypto.randomUUID();
+      const userId = generateId();
       const now = Math.floor(Date.now() / 1000);
-
-      // Create user with minimal profile data
       const defaultName = name || null;
       const preferredUsername = email.split('@')[0];
 
+      // Step 1: Insert into users_core with pii_status='pending'
       await c.env.DB.prepare(
-        `INSERT INTO users (
-          id, tenant_id, email, name, preferred_username, email_verified, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`
+        `INSERT INTO users_core (
+          id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at
+        ) VALUES (?, ?, 0, 'end_user', 'default', 'pending', ?, ?)`
       )
-        .bind(userId, tenantId, email.toLowerCase(), defaultName, preferredUsername, now, now)
+        .bind(userId, tenantId, now, now)
         .run();
 
-      user = { id: userId, email: email.toLowerCase(), name: name || email.split('@')[0] };
+      // Step 2: Insert into users_pii (if DB_PII is configured)
+      if (c.env.DB_PII) {
+        await c.env.DB_PII.prepare(
+          `INSERT INTO users_pii (
+            id, tenant_id, email, name, preferred_username, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+          .bind(userId, tenantId, email.toLowerCase(), defaultName, preferredUsername, now, now)
+          .run();
+
+        // Step 3: Update pii_status to 'active'
+        await c.env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
+          .bind('active', userId)
+          .run();
+      }
+
+      user = { id: userId, email: email.toLowerCase(), name: defaultName || email.split('@')[0] };
     }
 
     // Generate OTP session ID for session binding
@@ -327,9 +364,9 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       return c.json({ error: 'invalid_code', error_description: 'Invalid code' }, 400);
     }
 
-    // Parallel: Verify code hash AND fetch user details (independent operations)
+    // Parallel: Verify code hash AND fetch user details from both DBs (independent operations)
     const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
-    const [isValidCode, user] = await Promise.all([
+    const [isValidCode, userCore, userPII] = await Promise.all([
       verifyEmailCodeHash(
         code,
         email.toLowerCase(),
@@ -338,18 +375,30 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         challengeData.challenge,
         hmacSecret
       ),
-      c.env.DB.prepare('SELECT id, email, name FROM users WHERE id = ?')
+      c.env.DB.prepare('SELECT id FROM users_core WHERE id = ? AND is_active = 1')
         .bind(challengeData.userId)
         .first(),
+      c.env.DB_PII
+        ? c.env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
+            .bind(challengeData.userId)
+            .first()
+        : Promise.resolve(null),
     ]);
 
     if (!isValidCode) {
       return c.json({ error: 'invalid_code', error_description: 'Invalid or expired code' }, 400);
     }
 
-    if (!user) {
+    if (!userCore) {
       return c.json({ error: 'invalid_request', error_description: 'User not found' }, 400);
     }
+
+    // Merge Core and PII data
+    const user = {
+      id: userCore.id as string,
+      email: (userPII?.email as string) || email.toLowerCase(),
+      name: (userPII?.name as string) || null,
+    };
 
     const now = Date.now();
 
@@ -383,10 +432,10 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Update user's email_verified and last_login_at (fire-and-forget)
+    // Update user's email_verified and last_login_at in Core DB (fire-and-forget)
     // This is non-critical for the login flow - session is already created
     c.env.DB.prepare(
-      'UPDATE users SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ?'
+      'UPDATE users_core SET email_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ?'
     )
       .bind(now, now, challengeData.userId)
       .run()

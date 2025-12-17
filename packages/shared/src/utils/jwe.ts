@@ -7,6 +7,7 @@
  */
 
 import { CompactEncrypt, compactDecrypt, importJWK, type JWK } from 'jose';
+import { isInternalUrl } from './url-security';
 
 /**
  * Supported JWE Key Management Algorithms (alg)
@@ -204,6 +205,12 @@ export async function getClientPublicKey(
   // Option 2: Fetch from jwks_uri
   if (clientMetadata.jwks_uri) {
     try {
+      // SSRF protection: Block requests to internal addresses
+      if (isInternalUrl(clientMetadata.jwks_uri)) {
+        console.error('SSRF protection: jwks_uri cannot point to internal addresses');
+        return null;
+      }
+
       const response = await fetch(clientMetadata.jwks_uri);
       if (!response.ok) {
         throw new Error(`Failed to fetch JWKS: ${response.status}`);

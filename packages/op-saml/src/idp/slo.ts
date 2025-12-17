@@ -261,11 +261,27 @@ async function terminateSessionByNameId(
 
     // Without a valid sessionIndex, we cannot delete by userId in sharded SessionStore
     // Log warning for debugging
-    // Use tenant_id + email for idx_users_tenant_email composite index (default tenant for SAML)
+    // PII/Non-PII DB分離: emailはPII DBから検索
     const tenantId = 'default';
-    const user = await env.DB.prepare('SELECT id FROM users WHERE tenant_id = ? AND email = ?')
-      .bind(tenantId, nameId)
-      .first();
+    let user: { id: string } | null = null;
+    if (env.DB_PII) {
+      const userPII = await env.DB_PII.prepare(
+        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?'
+      )
+        .bind(tenantId, nameId)
+        .first();
+      if (userPII) {
+        // Verify user exists in Core DB
+        const userCore = await env.DB.prepare(
+          'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
+        )
+          .bind(userPII.id)
+          .first();
+        if (userCore) {
+          user = { id: userCore.id as string };
+        }
+      }
+    }
     if (user) {
       console.warn(
         `SAML IdP SLO: Cannot delete all sessions for user ${user.id as string} (NameID: ${nameId}) - ` +
@@ -428,14 +444,18 @@ export async function initiateIdPLogout(
   spConfig: SAMLSPConfig,
   sessionIndex?: string
 ): Promise<{ logoutRequestXml: string; destination: string }> {
-  // Get user info for NameID
-  const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(userId).first();
-
-  if (!user) {
-    throw new Error('User not found');
+  // Get user info for NameID (PII/Non-PII DB分離対応)
+  let nameId: string | null = null;
+  if (env.DB_PII) {
+    const userPII = await env.DB_PII.prepare('SELECT email FROM users_pii WHERE id = ?')
+      .bind(userId)
+      .first();
+    nameId = (userPII?.email as string) || null;
   }
 
-  const nameId = user.email as string;
+  if (!nameId) {
+    throw new Error('User not found');
+  }
   const issuer = `${env.ISSUER_URL}/saml/idp`;
   const destination = spConfig.sloUrl || spConfig.acsUrl;
 

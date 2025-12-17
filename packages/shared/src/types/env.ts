@@ -14,8 +14,9 @@ import type { ChallengeStore } from '../durable-objects/ChallengeStore';
  * Example: DurableObjectNamespace<SessionStore> enables stub.getSessionRpc()
  */
 export interface Env {
-  // D1 Database
-  DB: D1Database;
+  // D1 Databases
+  DB: D1Database; // Core DB (non-PII data: users_core, sessions, passkeys, clients, roles)
+  DB_PII: D1Database; // PII DB (personal information: users_pii, linked_identities, subject_identifiers)
 
   // R2 Buckets
   AVATARS: R2Bucket;

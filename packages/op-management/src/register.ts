@@ -16,7 +16,7 @@ import type {
   ClientMetadata,
   OAuthErrorResponse,
 } from '@authrim/shared';
-import { generateSecureRandomString } from '@authrim/shared';
+import { generateSecureRandomString, validateExternalUrl } from '@authrim/shared';
 
 /**
  * Validate sector_identifier_uri content (OIDC Core 8.1)
@@ -27,6 +27,17 @@ async function validateSectorIdentifierContent(
   redirectUris: string[]
 ): Promise<{ valid: boolean; error?: OAuthErrorResponse }> {
   try {
+    // SSRF protection: Validate URL before fetching
+    const ssrfError = validateExternalUrl(sectorUri, {
+      requireHttps: true,
+      allowLocalhost: false,
+      errorType: 'invalid_client_metadata',
+      fieldName: 'sector_identifier_uri',
+    });
+    if (ssrfError) {
+      return { valid: false, error: ssrfError };
+    }
+
     const response = await fetch(sectorUri, {
       headers: {
         Accept: 'application/json',
@@ -641,49 +652,78 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (isCertificationTest) {
       console.log('[DCR] OIDC Conformance Test detected, creating test user');
 
-      // Create fixed test user with complete profile (INSERT OR IGNORE to avoid duplicates)
+      const testUserId = 'user-oidc-conformance-test';
+      const testAddress = {
+        formatted: '1234 Main St, Anytown, ST 12345, USA',
+        street_address: '1234 Main St',
+        locality: 'Anytown',
+        region: 'ST',
+        postal_code: '12345',
+        country: 'USA',
+      };
+
+      // Create fixed test user with complete profile (PII/Non-PII DB separation)
+      // Insert into users_core (non-PII database)
       await c.env.DB.prepare(
-        `
-        INSERT OR IGNORE INTO users (
-          id, email, email_verified, name, given_name, family_name,
-          middle_name, nickname, preferred_username, profile, picture,
-          website, gender, birthdate, zoneinfo, locale,
-          phone_number, phone_number_verified, address_json,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
+        `INSERT OR IGNORE INTO users_core (
+          id, tenant_id, email_verified, phone_number_verified,
+          is_active, pii_partition, pii_status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
         .bind(
-          'user-oidc-conformance-test',
-          'test@example.com',
+          testUserId,
+          'default',
           1, // email_verified
-          'John Doe',
-          'John',
-          'Doe',
-          'Q',
-          'Johnny',
-          'test',
-          'https://example.com/johndoe',
-          'https://example.com/avatar.jpg',
-          'https://example.com',
-          'male',
-          '1990-01-01',
-          'America/New_York',
-          'en-US',
-          '+1-555-0100',
           1, // phone_number_verified
-          JSON.stringify({
-            formatted: '1234 Main St, Anytown, ST 12345, USA',
-            street_address: '1234 Main St',
-            locality: 'Anytown',
-            region: 'ST',
-            postal_code: '12345',
-            country: 'USA',
-          }),
+          1, // is_active
+          'default', // pii_partition
+          'active', // pii_status
           issuedAt,
           issuedAt
         )
         .run();
+
+      // Insert into users_pii (PII database)
+      if (c.env.DB_PII) {
+        await c.env.DB_PII.prepare(
+          `INSERT OR IGNORE INTO users_pii (
+            id, tenant_id, email, name, given_name, family_name,
+            middle_name, nickname, preferred_username, profile, picture,
+            website, gender, birthdate, zoneinfo, locale, phone_number,
+            address_formatted, address_street_address, address_locality,
+            address_region, address_postal_code, address_country,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+          .bind(
+            testUserId,
+            'default',
+            'test@example.com',
+            'John Doe',
+            'John',
+            'Doe',
+            'Q',
+            'Johnny',
+            'test',
+            'https://example.com/johndoe',
+            'https://example.com/avatar.jpg',
+            'https://example.com',
+            'male',
+            '1990-01-01',
+            'America/New_York',
+            'en-US',
+            '+1-555-0100',
+            testAddress.formatted,
+            testAddress.street_address,
+            testAddress.locality,
+            testAddress.region,
+            testAddress.postal_code,
+            testAddress.country,
+            issuedAt,
+            issuedAt
+          )
+          .run();
+      }
 
       console.log('[DCR] Test user created/verified: user-oidc-conformance-test');
     }

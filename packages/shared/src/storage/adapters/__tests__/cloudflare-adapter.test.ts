@@ -73,6 +73,15 @@ function createMockEnv(): Env {
         run: vi.fn().mockResolvedValue({ success: true }),
       }),
     } as unknown as D1Database,
+    // DB_PII for PII/Non-PII DB separation
+    DB_PII: {
+      prepare: vi.fn().mockReturnValue({
+        bind: vi.fn().mockReturnThis(),
+        first: vi.fn().mockResolvedValue(null),
+        all: vi.fn().mockResolvedValue({ results: [] }),
+        run: vi.fn().mockResolvedValue({ success: true }),
+      }),
+    } as unknown as D1Database,
     CLIENTS: {
       get: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockResolvedValue(undefined),
@@ -290,25 +299,114 @@ describe('UserStore', () => {
   });
 
   it('should get user by ID', async () => {
-    const mockUser = { id: 'user_123', email: 'test@example.com', created_at: 1234567890 };
-    (env.DB.prepare as any).mockReturnValue({
+    // Mock users_core (DB) response
+    const mockCoreUser = {
+      id: 'user_123',
+      tenant_id: 'default',
+      email_verified: 1,
+      phone_number_verified: 0,
+      password_hash: null,
+      is_active: 1,
+      created_at: 1234567890,
+      updated_at: 1234567890,
+      last_login_at: null,
+    };
+    // Mock users_pii (DB_PII) response
+    const mockPIIUser = {
+      id: 'user_123',
+      email: 'test@example.com',
+      name: 'Test User',
+      given_name: null,
+      family_name: null,
+      middle_name: null,
+      nickname: null,
+      preferred_username: null,
+      profile: null,
+      picture: null,
+      website: null,
+      gender: null,
+      birthdate: null,
+      zoneinfo: null,
+      locale: null,
+      phone_number: null,
+      address_formatted: null,
+      address_street_address: null,
+      address_locality: null,
+      address_region: null,
+      address_postal_code: null,
+      address_country: null,
+    };
+
+    (env.DB.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
       bind: vi.fn().mockReturnThis(),
-      all: vi.fn().mockResolvedValue({ results: [mockUser] }),
+      all: vi.fn().mockResolvedValue({ results: [mockCoreUser] }),
+    });
+    (env.DB_PII.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+      bind: vi.fn().mockReturnThis(),
+      all: vi.fn().mockResolvedValue({ results: [mockPIIUser] }),
     });
 
     const user = await userStore.get('user_123');
-    expect(user).toEqual(mockUser);
+    expect(user).not.toBeNull();
+    expect(user!.id).toBe('user_123');
+    expect(user!.email).toBe('test@example.com');
+    expect(user!.email_verified).toBe(true);
+    expect(user!.created_at).toBe(1234567890);
   });
 
   it('should get user by email', async () => {
-    const mockUser = { id: 'user_123', email: 'test@example.com', created_at: 1234567890 };
-    (env.DB.prepare as any).mockReturnValue({
+    // Mock users_pii (DB_PII) response for email lookup
+    const mockPIIUser = {
+      id: 'user_123',
+      email: 'test@example.com',
+      name: 'Test User',
+      given_name: null,
+      family_name: null,
+      middle_name: null,
+      nickname: null,
+      preferred_username: null,
+      profile: null,
+      picture: null,
+      website: null,
+      gender: null,
+      birthdate: null,
+      zoneinfo: null,
+      locale: null,
+      phone_number: null,
+      address_formatted: null,
+      address_street_address: null,
+      address_locality: null,
+      address_region: null,
+      address_postal_code: null,
+      address_country: null,
+    };
+    // Mock users_core (DB) response
+    const mockCoreUser = {
+      id: 'user_123',
+      tenant_id: 'default',
+      email_verified: 0,
+      phone_number_verified: 0,
+      password_hash: null,
+      is_active: 1,
+      created_at: 1234567890,
+      updated_at: 1234567891,
+      last_login_at: null,
+    };
+
+    (env.DB_PII.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
       bind: vi.fn().mockReturnThis(),
-      all: vi.fn().mockResolvedValue({ results: [mockUser] }),
+      all: vi.fn().mockResolvedValue({ results: [mockPIIUser] }),
+    });
+    (env.DB.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+      bind: vi.fn().mockReturnThis(),
+      all: vi.fn().mockResolvedValue({ results: [mockCoreUser] }),
     });
 
     const user = await userStore.getByEmail('test@example.com');
-    expect(user).toEqual(mockUser);
+    expect(user).not.toBeNull();
+    expect(user!.id).toBe('user_123');
+    expect(user!.email).toBe('test@example.com');
+    expect(user!.created_at).toBe(1234567890);
   });
 
   it('should create new user', async () => {
@@ -319,36 +417,82 @@ describe('UserStore', () => {
     expect(user.email).toBe('new@example.com');
     expect(user.name).toBe('New User');
     expect(user.created_at).toBeDefined();
-    expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO users'));
+    // Should insert into users_core (DB)
+    expect(env.DB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO users_core'));
+    // Should insert into users_pii (DB_PII)
+    expect(env.DB_PII.prepare).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO users_pii')
+    );
   });
 
   it('should update existing user', async () => {
-    const mockUser = {
+    // Mock get() to return existing user
+    const mockCoreUser = {
       id: 'user_123',
-      email: 'test@example.com',
-      email_verified: false,
+      tenant_id: 'default',
+      email_verified: 0,
+      phone_number_verified: 0,
+      password_hash: null,
+      is_active: 1,
       created_at: 1234567890,
       updated_at: 1234567890,
-      is_active: true,
+      last_login_at: null,
     };
-    (env.DB.prepare as any).mockReturnValue({
+    const mockPIIUser = {
+      id: 'user_123',
+      email: 'test@example.com',
+      name: null,
+      given_name: null,
+      family_name: null,
+      middle_name: null,
+      nickname: null,
+      preferred_username: null,
+      profile: null,
+      picture: null,
+      website: null,
+      gender: null,
+      birthdate: null,
+      zoneinfo: null,
+      locale: null,
+      phone_number: null,
+      address_formatted: null,
+      address_street_address: null,
+      address_locality: null,
+      address_region: null,
+      address_postal_code: null,
+      address_country: null,
+    };
+
+    (env.DB.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
       bind: vi.fn().mockReturnThis(),
-      all: vi.fn().mockResolvedValue({ results: [mockUser] }),
+      all: vi.fn().mockResolvedValue({ results: [mockCoreUser] }),
+      run: vi.fn().mockResolvedValue({ success: true }),
+    });
+    (env.DB_PII.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+      bind: vi.fn().mockReturnThis(),
+      all: vi.fn().mockResolvedValue({ results: [mockPIIUser] }),
       run: vi.fn().mockResolvedValue({ success: true }),
     });
 
     const updated = await userStore.update('user_123', { name: 'Updated Name' });
     expect(updated.name).toBe('Updated Name');
-    expect(updated.updated_at).toBeGreaterThan(mockUser.updated_at);
+    expect(updated.updated_at).toBeGreaterThan(mockCoreUser.updated_at);
   });
 
-  it('should delete user', async () => {
+  it('should delete user (soft delete)', async () => {
     await userStore.delete('user_123');
-    expect(env.DB.prepare).toHaveBeenCalledWith('DELETE FROM users WHERE id = ?');
+    // Now uses soft delete (UPDATE users_core SET is_active = 0)
+    expect(env.DB.prepare).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE users_core SET is_active = 0')
+    );
   });
 
   it('should throw error when updating non-existent user', async () => {
-    (env.DB.prepare as any).mockReturnValue({
+    (env.DB.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+      bind: vi.fn().mockReturnThis(),
+      all: vi.fn().mockResolvedValue({ results: [] }),
+    });
+    (env.DB_PII.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
       bind: vi.fn().mockReturnThis(),
       all: vi.fn().mockResolvedValue({ results: [] }),
     });

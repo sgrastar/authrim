@@ -12,6 +12,7 @@ import {
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
   getTenantIdFromContext,
+  generateId,
 } from '@authrim/shared';
 import {
   generateRegistrationOptions,
@@ -115,39 +116,92 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const rpID = originUrl.hostname;
     const origin = originHeader;
 
-    // Check if user exists (use tenant_id + email for idx_users_tenant_email composite index)
+    // Check if user exists
+    // PII/Non-PII DB分離: email検索はPII DB、ID検索はCore DBを使用
     const tenantId = getTenantIdFromContext(c);
-    let user;
+    let user: { id: string; email: string; name: string | null } | null = null;
+
     if (userId) {
-      user = await c.env.DB.prepare('SELECT id, email, name FROM users WHERE id = ?')
+      // Search by userId: Core DB has the ID, PII DB has email/name
+      const userCore = await c.env.DB.prepare(
+        'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
+      )
         .bind(userId)
         .first();
-    } else {
-      user = await c.env.DB.prepare(
-        'SELECT id, email, name FROM users WHERE tenant_id = ? AND email = ?'
+
+      if (userCore && c.env.DB_PII) {
+        const userPII = await c.env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
+          .bind(userId)
+          .first();
+        if (userPII) {
+          user = {
+            id: userCore.id as string,
+            email: userPII.email as string,
+            name: (userPII.name as string) || null,
+          };
+        }
+      } else if (userCore) {
+        // No PII DB - use Core only (email will be missing)
+        user = { id: userCore.id as string, email: '', name: null };
+      }
+    } else if (c.env.DB_PII) {
+      // Search by email: PII DB first to get user id
+      const userPII = await c.env.DB_PII.prepare(
+        'SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND email = ?'
       )
         .bind(tenantId, email)
         .first();
+
+      if (userPII) {
+        // Verify user is active in Core DB
+        const userCore = await c.env.DB.prepare(
+          'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
+        )
+          .bind(userPII.id)
+          .first();
+        if (userCore) {
+          user = {
+            id: userPII.id as string,
+            email: userPII.email as string,
+            name: (userPII.name as string) || null,
+          };
+        }
+      }
     }
 
-    // If user doesn't exist, create a new user
+    // If user doesn't exist, create a new user in both Core and PII DBs
     if (!user) {
-      const newUserId = crypto.randomUUID();
+      const newUserId = generateId();
       const now = Math.floor(Date.now() / 1000);
-
-      // Create user with minimal profile data
       const defaultName = name || null;
       const preferredUsername = email.split('@')[0];
 
+      // Step 1: Insert into users_core with pii_status='pending'
       await c.env.DB.prepare(
-        `INSERT INTO users (
-          id, tenant_id, email, name, preferred_username, email_verified, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`
+        `INSERT INTO users_core (
+          id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at
+        ) VALUES (?, ?, 0, 'end_user', 'default', 'pending', ?, ?)`
       )
-        .bind(newUserId, tenantId, email, defaultName, preferredUsername, now, now)
+        .bind(newUserId, tenantId, now, now)
         .run();
 
-      user = { id: newUserId, email, name: name || email.split('@')[0] };
+      // Step 2: Insert into users_pii (if DB_PII is configured)
+      if (c.env.DB_PII) {
+        await c.env.DB_PII.prepare(
+          `INSERT INTO users_pii (
+            id, tenant_id, email, name, preferred_username, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+          .bind(newUserId, tenantId, email, defaultName, preferredUsername, now, now)
+          .run();
+
+        // Step 3: Update pii_status to 'active'
+        await c.env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
+          .bind('active', newUserId)
+          .run();
+      }
+
+      user = { id: newUserId, email, name: defaultName || email.split('@')[0] };
     }
 
     // Get user's existing passkeys
@@ -391,15 +445,33 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       )
       .run();
 
-    // Step 3: Update user's email_verified status
-    await c.env.DB.prepare('UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?')
+    // Step 3: Update user's email_verified status (Core DB only)
+    await c.env.DB.prepare('UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ?')
       .bind(now, userId)
       .run();
 
-    // Get updated user details
-    const updatedUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
+    // Get updated user details from both Core and PII DBs
+    const updatedUserCore = await c.env.DB.prepare(
+      'SELECT id, email_verified, created_at, updated_at, last_login_at FROM users_core WHERE id = ?'
+    )
       .bind(userId)
       .first();
+
+    let updatedUserPII: { email: string | null; name: string | null } = {
+      email: null,
+      name: null,
+    };
+    if (c.env.DB_PII) {
+      const piiResult = await c.env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
+        .bind(userId)
+        .first();
+      if (piiResult) {
+        updatedUserPII = {
+          email: piiResult.email as string,
+          name: (piiResult.name as string) || null,
+        };
+      }
+    }
 
     // Note: Challenge is already consumed by ChallengeStore DO (atomic operation)
     // No need to explicitly delete - consumed challenges are auto-cleaned by DO
@@ -411,13 +483,13 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       message: 'Passkey registered successfully',
       userId: userId,
       user: {
-        id: updatedUser!.id,
-        email: updatedUser!.email,
-        name: updatedUser!.name,
-        email_verified: updatedUser!.email_verified,
-        created_at: updatedUser!.created_at,
-        updated_at: updatedUser!.updated_at,
-        last_login_at: updatedUser!.last_login_at,
+        id: updatedUserCore!.id,
+        email: updatedUserPII.email,
+        name: updatedUserPII.name,
+        email_verified: updatedUserCore!.email_verified,
+        created_at: updatedUserCore!.created_at,
+        updated_at: updatedUserCore!.updated_at,
+        last_login_at: updatedUserCore!.last_login_at,
       },
     });
   } catch (error) {
@@ -470,12 +542,29 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
       transports?: string[];
     }> = [];
 
-    // If email provided, get user's passkeys (use tenant_id + email for index)
-    if (email) {
+    // If email provided, get user's passkeys
+    // PII/Non-PII DB分離: email検索はPII DBを使用
+    if (email && c.env.DB_PII) {
       const tenantId = getTenantIdFromContext(c);
-      const user = await c.env.DB.prepare('SELECT id FROM users WHERE tenant_id = ? AND email = ?')
+      // Search by email in PII DB
+      const userPII = await c.env.DB_PII.prepare(
+        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?'
+      )
         .bind(tenantId, email)
         .first();
+
+      // Verify user is active in Core DB
+      let user: { id: string } | null = null;
+      if (userPII) {
+        const userCore = await c.env.DB.prepare(
+          'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
+        )
+          .bind(userPII.id)
+          .first();
+        if (userCore) {
+          user = { id: userCore.id as string };
+        }
+      }
 
       if (user) {
         const userPasskeys = await c.env.DB.prepare(
@@ -726,15 +815,33 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       .bind(authenticationInfo.newCounter, now, passkey.id)
       .run();
 
-    // Step 3: Update user's last_login_at
-    await c.env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?')
+    // Step 3: Update user's last_login_at (Core DB only)
+    await c.env.DB.prepare('UPDATE users_core SET last_login_at = ? WHERE id = ?')
       .bind(now, passkey.user_id)
       .run();
 
-    // Get user details
-    const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
+    // Get user details from both Core and PII DBs
+    const userCore = await c.env.DB.prepare(
+      'SELECT id, email_verified, created_at, updated_at, last_login_at FROM users_core WHERE id = ?'
+    )
       .bind(passkey.user_id)
       .first();
+
+    let userPII: { email: string | null; name: string | null } = {
+      email: null,
+      name: null,
+    };
+    if (c.env.DB_PII) {
+      const piiResult = await c.env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
+        .bind(passkey.user_id)
+        .first();
+      if (piiResult) {
+        userPII = {
+          email: piiResult.email as string,
+          name: (piiResult.name as string) || null,
+        };
+      }
+    }
 
     // Note: Challenge is already consumed by ChallengeStore DO (atomic operation)
     // No need to explicitly delete - consumed challenges are auto-cleaned by DO
@@ -744,13 +851,13 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       sessionId: sessionData.id,
       userId: passkey.user_id,
       user: {
-        id: user!.id,
-        email: user!.email,
-        name: user!.name,
-        email_verified: user!.email_verified,
-        created_at: user!.created_at,
-        updated_at: user!.updated_at,
-        last_login_at: user!.last_login_at,
+        id: userCore!.id,
+        email: userPII.email,
+        name: userPII.name,
+        email_verified: userCore!.email_verified,
+        created_at: userCore!.created_at,
+        updated_at: userCore!.updated_at,
+        last_login_at: userCore!.last_login_at,
       },
     });
   } catch (error) {

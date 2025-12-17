@@ -488,6 +488,7 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
     }
 
     // Execute queries in parallel
+    // PII/Non-PII DB分離: JOINできないため、メンバーシップ取得後にPIIを別途取得
     const [totalResult, members] = await Promise.all([
       c.env.DB.prepare(
         'SELECT COUNT(*) as count FROM subject_org_membership WHERE tenant_id = ? AND org_id = ?'
@@ -495,9 +496,8 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
         .bind(tenantId, orgId)
         .first(),
       c.env.DB.prepare(
-        `SELECT m.*, u.email, u.name as user_name
+        `SELECT m.*
          FROM subject_org_membership m
-         LEFT JOIN users u ON m.subject_id = u.id
          WHERE m.tenant_id = ? AND m.org_id = ?
          ORDER BY m.created_at DESC
          LIMIT ? OFFSET ?`
@@ -509,15 +509,38 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
     const total = (totalResult?.count as number) || 0;
     const totalPages = Math.ceil(total / limit);
 
-    const formattedMembers = members.results.map((m: Record<string, unknown>) => ({
-      subject_id: m.subject_id,
-      org_id: m.org_id,
-      org_role: m.org_role,
-      is_primary: Boolean(m.is_primary),
-      joined_at: toMilliseconds(m.created_at as number),
-      user_email: m.email,
-      user_name: m.user_name,
-    }));
+    // Fetch PII for member users from PII DB
+    const memberUserIds = [...new Set(members.results.map((m) => m.subject_id as string))];
+    const memberPIIMap = new Map<string, { email: string | null; name: string | null }>();
+
+    if (c.env.DB_PII && memberUserIds.length > 0) {
+      const placeholders = memberUserIds.map(() => '?').join(',');
+      const piiResult = await c.env.DB_PII.prepare(
+        `SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`
+      )
+        .bind(...memberUserIds)
+        .all();
+
+      for (const pii of piiResult.results) {
+        memberPIIMap.set(pii.id as string, {
+          email: (pii.email as string) || null,
+          name: (pii.name as string) || null,
+        });
+      }
+    }
+
+    const formattedMembers = members.results.map((m: Record<string, unknown>) => {
+      const pii = memberPIIMap.get(m.subject_id as string);
+      return {
+        subject_id: m.subject_id,
+        org_id: m.org_id,
+        org_role: m.org_role,
+        is_primary: Boolean(m.is_primary),
+        joined_at: toMilliseconds(m.created_at as number),
+        user_email: pii?.email || null,
+        user_name: pii?.name || null,
+      };
+    });
 
     return c.json({
       members: formattedMembers,
@@ -583,7 +606,7 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
     }
 
     // Check if user exists
-    const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?')
+    const user = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
       .bind(subject_id)
       .first();
 
@@ -805,7 +828,9 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
     const userId = c.req.param('id');
 
     // Check if user exists
-    const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first();
+    const user = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
+      .bind(userId)
+      .first();
 
     if (!user) {
       return c.json(
@@ -889,7 +914,9 @@ export async function adminUserRoleAssignHandler(c: Context<{ Bindings: Env }>) 
     }
 
     // Check if user exists
-    const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first();
+    const user = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
+      .bind(userId)
+      .first();
 
     if (!user) {
       return c.json(
@@ -1071,12 +1098,14 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
     const userId = c.req.param('id');
     const direction = c.req.query('direction'); // 'outgoing', 'incoming', or undefined for both
 
-    // Check if user exists
-    const user = await c.env.DB.prepare('SELECT id, email, name FROM users WHERE id = ?')
+    // Check if user exists in Core DB
+    const userCore = await c.env.DB.prepare(
+      'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
+    )
       .bind(userId)
       .first();
 
-    if (!user) {
+    if (!userCore) {
       return c.json(
         {
           error: 'not_found',
@@ -1091,11 +1120,11 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
     const incoming: Record<string, unknown>[] = [];
 
     // Get outgoing relationships (where user is the subject)
+    // PII/Non-PII DB分離: JOINできないため、関係性を取得後にPIIを別途取得
     if (!direction || direction === 'outgoing') {
       const outgoingResult = await c.env.DB.prepare(
-        `SELECT r.*, u.email as related_email, u.name as related_name
+        `SELECT r.*
          FROM relationships r
-         LEFT JOIN users u ON r.related_subject_id = u.id
          WHERE r.subject_id = ?
            AND (r.expires_at IS NULL OR r.expires_at > ?)
          ORDER BY r.created_at DESC`
@@ -1103,13 +1132,36 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
         .bind(userId, now)
         .all();
 
+      // Fetch PII for related users from PII DB
+      const relatedUserIds = [
+        ...new Set(outgoingResult.results.map((r) => r.related_subject_id as string)),
+      ];
+      const relatedUserPIIMap = new Map<string, { email: string | null; name: string | null }>();
+
+      if (c.env.DB_PII && relatedUserIds.length > 0) {
+        const placeholders = relatedUserIds.map(() => '?').join(',');
+        const piiResult = await c.env.DB_PII.prepare(
+          `SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`
+        )
+          .bind(...relatedUserIds)
+          .all();
+
+        for (const pii of piiResult.results) {
+          relatedUserPIIMap.set(pii.id as string, {
+            email: (pii.email as string) || null,
+            name: (pii.name as string) || null,
+          });
+        }
+      }
+
       for (const rel of outgoingResult.results) {
+        const pii = relatedUserPIIMap.get(rel.related_subject_id as string);
         outgoing.push({
           id: rel.id,
           relationship_type: rel.relationship_type,
           related_subject_id: rel.related_subject_id,
-          related_email: rel.related_email,
-          related_name: rel.related_name,
+          related_email: pii?.email || null,
+          related_name: pii?.name || null,
           expires_at: rel.expires_at ? toMilliseconds(rel.expires_at as number) : null,
           created_at: toMilliseconds(rel.created_at as number),
         });
@@ -1117,11 +1169,11 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
     }
 
     // Get incoming relationships (where user is the related_subject)
+    // PII/Non-PII DB分離: JOINできないため、関係性を取得後にPIIを別途取得
     if (!direction || direction === 'incoming') {
       const incomingResult = await c.env.DB.prepare(
-        `SELECT r.*, u.email as subject_email, u.name as subject_name
+        `SELECT r.*
          FROM relationships r
-         LEFT JOIN users u ON r.subject_id = u.id
          WHERE r.related_subject_id = ?
            AND (r.expires_at IS NULL OR r.expires_at > ?)
          ORDER BY r.created_at DESC`
@@ -1129,13 +1181,36 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
         .bind(userId, now)
         .all();
 
+      // Fetch PII for subject users from PII DB
+      const subjectUserIds = [
+        ...new Set(incomingResult.results.map((r) => r.subject_id as string)),
+      ];
+      const subjectUserPIIMap = new Map<string, { email: string | null; name: string | null }>();
+
+      if (c.env.DB_PII && subjectUserIds.length > 0) {
+        const placeholders = subjectUserIds.map(() => '?').join(',');
+        const piiResult = await c.env.DB_PII.prepare(
+          `SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`
+        )
+          .bind(...subjectUserIds)
+          .all();
+
+        for (const pii of piiResult.results) {
+          subjectUserPIIMap.set(pii.id as string, {
+            email: (pii.email as string) || null,
+            name: (pii.name as string) || null,
+          });
+        }
+      }
+
       for (const rel of incomingResult.results) {
+        const pii = subjectUserPIIMap.get(rel.subject_id as string);
         incoming.push({
           id: rel.id,
           relationship_type: rel.relationship_type,
           subject_id: rel.subject_id,
-          subject_email: rel.subject_email,
-          subject_name: rel.subject_name,
+          subject_email: pii?.email || null,
+          subject_name: pii?.name || null,
           expires_at: rel.expires_at ? toMilliseconds(rel.expires_at as number) : null,
           created_at: toMilliseconds(rel.created_at as number),
         });
@@ -1207,7 +1282,7 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
     }
 
     // Check if both users exist
-    const subject = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?')
+    const subject = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
       .bind(userId)
       .first();
 
@@ -1221,7 +1296,7 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
       );
     }
 
-    const relatedSubject = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?')
+    const relatedSubject = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
       .bind(related_subject_id)
       .first();
 

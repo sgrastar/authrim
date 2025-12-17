@@ -235,8 +235,8 @@ async function handleJsonConsentGet(
     is_trusted: clientRow.is_trusted === 1,
   };
 
-  // Get user info
-  const userInfo = await getConsentUserInfo(c.env.DB, userId);
+  // Get user info (PII/Non-PII DB分離対応)
+  const userInfo = await getConsentUserInfo(c.env.DB, userId, c.env.DB_PII);
   if (!userInfo) {
     return c.json(
       {

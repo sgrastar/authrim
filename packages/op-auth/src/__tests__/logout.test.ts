@@ -39,7 +39,8 @@ vi.mock('@authrim/shared', async () => {
     validatePostLogoutRedirectUri: vi.fn(),
     validateLogoutParameters: vi.fn(),
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
-    getSessionStoreBySessionId: vi.fn(() => mockShardedSessionStore),
+    // Return { stub: ... } to match the destructuring pattern in logout.ts
+    getSessionStoreBySessionId: vi.fn(() => ({ stub: mockShardedSessionStore })),
   };
 });
 

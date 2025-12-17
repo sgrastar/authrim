@@ -6,6 +6,7 @@
 
 import { jwtVerify, importJWK, type JWK } from 'jose';
 import type { ClientMetadata } from '../types/oidc';
+import { isInternalUrl } from './url-security';
 
 /**
  * Client Assertion Claims (RFC 7523 Section 3)
@@ -185,6 +186,14 @@ export async function validateClientAssertion(
     if (client.jwks_uri) {
       // Fetch JWKS from URI - enables key rotation
       try {
+        // SSRF protection: Block requests to internal addresses
+        if (isInternalUrl(client.jwks_uri)) {
+          return {
+            valid: false,
+            error: 'SSRF protection: jwks_uri cannot point to internal addresses',
+          };
+        }
+
         console.log(`[private_key_jwt] Fetching JWKS from: ${client.jwks_uri}`);
         const response = await fetch(client.jwks_uri, {
           headers: {

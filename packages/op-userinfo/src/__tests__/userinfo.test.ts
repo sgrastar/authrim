@@ -21,6 +21,7 @@ vi.mock('@authrim/shared', async () => {
     isUserInfoEncryptionRequired: vi.fn(),
     getClientPublicKey: vi.fn(),
     validateJWEOptions: vi.fn(),
+    getCachedUser: vi.fn(), // Mock getCachedUser for PII/Non-PII DB separation
   };
 });
 
@@ -32,6 +33,7 @@ import {
   isUserInfoEncryptionRequired,
   getClientPublicKey,
   validateJWEOptions,
+  getCachedUser,
 } from '@authrim/shared';
 
 // Helper to create mock context
@@ -91,9 +93,11 @@ function createMockContext(options: {
   return c;
 }
 
-// Sample user data for testing
+// Sample user data for testing (CachedUser format)
 const sampleUser = {
   id: 'user-123',
+  email: 'test@example.com',
+  email_verified: true,
   name: 'Test User',
   family_name: 'User',
   given_name: 'Test',
@@ -107,22 +111,23 @@ const sampleUser = {
   birthdate: '1990-01-01',
   zoneinfo: 'Asia/Tokyo',
   locale: 'ja-JP',
-  updated_at: 1700000000000,
-  email: 'test@example.com',
-  email_verified: 1,
   phone_number: '+81-90-1234-5678',
-  phone_number_verified: 1,
-  address_json: JSON.stringify({
+  phone_number_verified: true,
+  address: JSON.stringify({
     formatted: '123 Test Street, Tokyo, Japan',
     street_address: '123 Test Street',
     locality: 'Tokyo',
     country: 'Japan',
   }),
+  updated_at: 1700000000000,
 };
 
 describe('UserInfo Endpoint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default mock for getCachedUser - returns sample user
+    // Tests that need different behavior can override this
+    vi.mocked(getCachedUser).mockResolvedValue(sampleUser);
   });
 
   afterEach(() => {
@@ -270,12 +275,8 @@ describe('UserInfo Endpoint', () => {
         },
       });
 
-      // Mock DB to return null (user not found)
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue(null),
-        }),
-      });
+      // Mock getCachedUser to return null (user not found in PII/Non-PII DB)
+      vi.mocked(getCachedUser).mockResolvedValue(null);
 
       await userinfoHandler(c);
 
@@ -872,13 +873,10 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            ...sampleUser,
-            phone_number_verified: 0,
-          }),
-        }),
+      // Mock getCachedUser with phone_number_verified: false (CachedUser format uses boolean)
+      vi.mocked(getCachedUser).mockResolvedValue({
+        ...sampleUser,
+        phone_number_verified: false,
       });
 
       await userinfoHandler(c);
@@ -919,7 +917,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       expect(responseBody.updated_at).toBe(1700000000); // seconds
     });
 
-    it('should handle malformed address_json gracefully', async () => {
+    it('should handle malformed address gracefully', async () => {
       const c = createMockContext({
         headers: { Authorization: 'Bearer valid-token' },
       });
@@ -936,13 +934,10 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            ...sampleUser,
-            address_json: 'invalid-json{{{',
-          }),
-        }),
+      // Mock getCachedUser with malformed address JSON (CachedUser format uses address string)
+      vi.mocked(getCachedUser).mockResolvedValue({
+        ...sampleUser,
+        address: 'invalid-json{{{',
       });
 
       await userinfoHandler(c);
@@ -968,24 +963,38 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            id: 'user-123',
-            name: null,
-            email: null,
-            // All other fields are missing
-          }),
-        }),
+      // Override getCachedUser to return user with null fields
+      vi.mocked(getCachedUser).mockResolvedValue({
+        id: 'user-123',
+        email: 'user-123@unknown', // Fallback email when PII not available
+        email_verified: false,
+        name: null,
+        family_name: null,
+        given_name: null,
+        middle_name: null,
+        nickname: null,
+        preferred_username: null,
+        picture: null,
+        locale: null,
+        phone_number: null,
+        phone_number_verified: false,
+        address: null,
+        birthdate: null,
+        gender: null,
+        profile: null,
+        website: null,
+        zoneinfo: null,
+        updated_at: 0,
       });
 
       await userinfoHandler(c);
 
       const responseBody = vi.mocked(c.json).mock.calls[0][0];
       expect(responseBody.sub).toBe('user-123');
-      // Null/undefined fields should not be included
+      // Null/undefined fields should not be included (except email which has fallback)
       expect(responseBody.name).toBeUndefined();
-      expect(responseBody.email).toBeUndefined();
+      // Note: email now has a fallback value when PII DB is unavailable
+      expect(responseBody.email).toBe('user-123@unknown');
     });
   });
 
@@ -1004,11 +1013,8 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7JHoJfg6yNzLM
         },
       });
 
-      c1.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue(null),
-        }),
-      });
+      // Mock getCachedUser to return null (user not found in PII/Non-PII DB)
+      vi.mocked(getCachedUser).mockResolvedValue(null);
 
       await userinfoHandler(c1);
 

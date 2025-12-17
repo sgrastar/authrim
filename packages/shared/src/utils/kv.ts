@@ -105,64 +105,99 @@ export async function getCachedUser(env: Env, userId: string): Promise<CachedUse
 
 /**
  * Fetch user directly from D1 database
+ * PII/Non-PII DB分離: Core DBとPII DBから並列取得してマージ
  */
 async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | null> {
-  const result = await env.DB.prepare(
-    `SELECT id, email, email_verified, name, family_name, given_name,
-            middle_name, nickname, preferred_username, picture, locale,
-            phone_number, phone_number_verified, address_json, birthdate,
-            gender, profile, website, zoneinfo, updated_at
-     FROM users WHERE id = ?`
+  // Query Core DB for existence and non-PII fields
+  const coreResult = await env.DB.prepare(
+    'SELECT id, email_verified, phone_number_verified, updated_at FROM users_core WHERE id = ? AND is_active = 1'
   )
     .bind(userId)
     .first<{
       id: string;
-      email: string;
       email_verified: number;
-      name: string | null;
-      family_name: string | null;
-      given_name: string | null;
-      middle_name: string | null;
-      nickname: string | null;
-      preferred_username: string | null;
-      picture: string | null;
-      locale: string | null;
-      phone_number: string | null;
       phone_number_verified: number;
-      address_json: string | null;
-      birthdate: string | null;
-      gender: string | null;
-      profile: string | null;
-      website: string | null;
-      zoneinfo: string | null;
       updated_at: number;
     }>();
 
-  if (!result) {
+  if (!coreResult) {
     return null;
   }
 
+  // Query PII DB for PII fields (if available)
+  let piiResult: {
+    email: string | null;
+    name: string | null;
+    family_name: string | null;
+    given_name: string | null;
+    middle_name: string | null;
+    nickname: string | null;
+    preferred_username: string | null;
+    picture: string | null;
+    locale: string | null;
+    phone_number: string | null;
+    address_formatted: string | null;
+    address_street_address: string | null;
+    address_locality: string | null;
+    address_region: string | null;
+    address_postal_code: string | null;
+    address_country: string | null;
+    birthdate: string | null;
+    gender: string | null;
+    profile: string | null;
+    website: string | null;
+    zoneinfo: string | null;
+  } | null = null;
+
+  if (env.DB_PII) {
+    piiResult = await env.DB_PII.prepare(
+      `SELECT email, name, family_name, given_name, middle_name, nickname,
+              preferred_username, picture, locale, phone_number,
+              address_formatted, address_street_address, address_locality,
+              address_region, address_postal_code, address_country,
+              birthdate, gender, profile, website, zoneinfo
+       FROM users_pii WHERE id = ?`
+    )
+      .bind(userId)
+      .first();
+  }
+
+  // Build address JSON from PII fields
+  const addressJson = piiResult
+    ? JSON.stringify({
+        formatted: piiResult.address_formatted,
+        street_address: piiResult.address_street_address,
+        locality: piiResult.address_locality,
+        region: piiResult.address_region,
+        postal_code: piiResult.address_postal_code,
+        country: piiResult.address_country,
+      })
+    : null;
+
+  // If no email from PII DB, use a placeholder (user may need PII DB configuration)
+  const email = piiResult?.email ?? `${coreResult.id}@unknown`;
+
   return {
-    id: result.id,
-    email: result.email,
-    email_verified: result.email_verified === 1,
-    name: result.name,
-    family_name: result.family_name,
-    given_name: result.given_name,
-    middle_name: result.middle_name,
-    nickname: result.nickname,
-    preferred_username: result.preferred_username,
-    picture: result.picture,
-    locale: result.locale,
-    phone_number: result.phone_number,
-    phone_number_verified: result.phone_number_verified === 1,
-    address: result.address_json, // Renamed from address_json for consistency
-    birthdate: result.birthdate,
-    gender: result.gender,
-    profile: result.profile,
-    website: result.website,
-    zoneinfo: result.zoneinfo,
-    updated_at: result.updated_at,
+    id: coreResult.id,
+    email,
+    email_verified: coreResult.email_verified === 1,
+    name: piiResult?.name ?? null,
+    family_name: piiResult?.family_name ?? null,
+    given_name: piiResult?.given_name ?? null,
+    middle_name: piiResult?.middle_name ?? null,
+    nickname: piiResult?.nickname ?? null,
+    preferred_username: piiResult?.preferred_username ?? null,
+    picture: piiResult?.picture ?? null,
+    locale: piiResult?.locale ?? null,
+    phone_number: piiResult?.phone_number ?? null,
+    phone_number_verified: coreResult.phone_number_verified === 1,
+    address: addressJson,
+    birthdate: piiResult?.birthdate ?? null,
+    gender: piiResult?.gender ?? null,
+    profile: piiResult?.profile ?? null,
+    website: piiResult?.website ?? null,
+    zoneinfo: piiResult?.zoneinfo ?? null,
+    updated_at: coreResult.updated_at,
   };
 }
 

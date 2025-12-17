@@ -42,6 +42,7 @@ export * from './utils/challenge-sharding';
 export * from './utils/token-revocation-sharding';
 export * from './utils/region-sharding';
 export * from './utils/do-retry';
+export * from './utils/url-security';
 
 // Middleware
 export * from './middleware/admin-auth';
@@ -54,6 +55,15 @@ export * from './middleware/version-check';
 // Storage
 export * from './storage/interfaces';
 export * from './storage/repositories';
+
+// Database Adapters (PII/Non-PII separation)
+export * from './db';
+
+// Repositories (PII/Non-PII separation)
+export * from './repositories';
+
+// Context (PII/Non-PII separation)
+export * from './context';
 
 // Durable Objects
 export { KeyManager } from './durable-objects/KeyManager';

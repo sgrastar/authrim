@@ -393,37 +393,54 @@ async function findOrCreateUser(
   // Use default tenant for SAML-authenticated users
   const tenantId = 'default';
 
-  // Try to find user by email (use tenant_id + email for idx_users_tenant_email composite index)
-  if (userInfo.email) {
-    const existingUser = await env.DB.prepare(
-      'SELECT id FROM users WHERE tenant_id = ? AND email = ?'
+  // Try to find user by email (PII/Non-PII DB分離対応)
+  if (userInfo.email && env.DB_PII) {
+    const existingUserPII = await env.DB_PII.prepare(
+      'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?'
     )
-      .bind(tenantId, userInfo.email)
+      .bind(tenantId, userInfo.email.toLowerCase())
       .first();
 
-    if (existingUser) {
-      return existingUser.id as string;
+    if (existingUserPII) {
+      // Verify user is active in Core DB
+      const userCore = await env.DB.prepare(
+        'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
+      )
+        .bind(existingUserPII.id)
+        .first();
+      if (userCore) {
+        return userCore.id as string;
+      }
     }
   }
 
-  // Create new user (JIT provisioning)
+  // Create new user (JIT provisioning - PII/Non-PII DB分離対応)
   const userId = crypto.randomUUID();
-  const now = Date.now();
+  const now = Math.floor(Date.now() / 1000);
+  const email = userInfo.email?.toLowerCase() || `${userInfo.nameId}@saml.local`;
 
+  // Step 1: Insert into users_core with pii_status='pending'
   await env.DB.prepare(
-    `INSERT INTO users (id, tenant_id, email, name, email_verified, identity_provider_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 1, ?, ?, ?)`
+    `INSERT INTO users_core (id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at)
+     VALUES (?, ?, 1, 'end_user', 'default', 'pending', ?, ?)`
   )
-    .bind(
-      userId,
-      tenantId,
-      userInfo.email || `${userInfo.nameId}@saml.local`,
-      userInfo.name || null,
-      idpEntityId,
-      now,
-      now
-    )
+    .bind(userId, tenantId, now, now)
     .run();
+
+  // Step 2: Insert into users_pii (if DB_PII is configured)
+  if (env.DB_PII) {
+    await env.DB_PII.prepare(
+      `INSERT INTO users_pii (id, tenant_id, email, name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+      .bind(userId, tenantId, email, userInfo.name || null, now, now)
+      .run();
+
+    // Step 3: Update pii_status to 'active'
+    await env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
+      .bind('active', userId)
+      .run();
+  }
 
   return userId;
 }

@@ -26,6 +26,190 @@ import type { Env } from '@authrim/shared/types/env';
 import { invalidateUserCache, getTenantIdFromContext } from '@authrim/shared';
 import { generateId } from '@authrim/shared/utils/id';
 import { hashPassword } from '@authrim/shared/utils/crypto';
+
+// =============================================================================
+// PII/Non-PII DB分離: Helper Functions
+// =============================================================================
+
+/**
+ * Fetch user from both Core and PII databases and merge into InternalUser
+ */
+async function fetchUserWithPII(env: Env, userId: string): Promise<InternalUser | null> {
+  // Query Core DB
+  const userCore = await env.DB.prepare(
+    `SELECT id, tenant_id, email_verified, phone_number_verified, password_hash,
+            is_active, user_type, external_id, pii_partition, created_at, updated_at
+     FROM users_core WHERE id = ?`
+  )
+    .bind(userId)
+    .first();
+
+  if (!userCore) return null;
+
+  // Query PII DB (if configured)
+  let userPII: any = null;
+  if (env.DB_PII) {
+    userPII = await env.DB_PII.prepare(
+      `SELECT email, name, given_name, family_name, middle_name, nickname,
+              preferred_username, profile, picture, website, gender, birthdate,
+              zoneinfo, locale, phone_number, address_formatted, address_street_address,
+              address_locality, address_region, address_postal_code, address_country
+       FROM users_pii WHERE id = ?`
+    )
+      .bind(userId)
+      .first();
+  }
+
+  // Merge into InternalUser format
+  return {
+    id: userCore.id as string,
+    tenant_id: userCore.tenant_id as string,
+    email: userPII?.email ?? null,
+    email_verified: userCore.email_verified as number,
+    name: userPII?.name ?? null,
+    given_name: userPII?.given_name ?? null,
+    family_name: userPII?.family_name ?? null,
+    middle_name: userPII?.middle_name ?? null,
+    nickname: userPII?.nickname ?? null,
+    preferred_username: userPII?.preferred_username ?? null,
+    profile: userPII?.profile ?? null,
+    picture: userPII?.picture ?? null,
+    website: userPII?.website ?? null,
+    gender: userPII?.gender ?? null,
+    birthdate: userPII?.birthdate ?? null,
+    zoneinfo: userPII?.zoneinfo ?? null,
+    locale: userPII?.locale ?? null,
+    phone_number: userPII?.phone_number ?? null,
+    phone_number_verified: userCore.phone_number_verified as number,
+    address_json: userPII
+      ? JSON.stringify({
+          formatted: userPII.address_formatted,
+          street_address: userPII.address_street_address,
+          locality: userPII.address_locality,
+          region: userPII.address_region,
+          postal_code: userPII.address_postal_code,
+          country: userPII.address_country,
+        })
+      : null,
+    password_hash: userCore.password_hash as string | null,
+    external_id: userCore.external_id as string | null,
+    active: userCore.is_active as number,
+    custom_attributes_json: null,
+    created_at: userCore.created_at as string,
+    updated_at: userCore.updated_at as string,
+  } as InternalUser;
+}
+
+/**
+ * Fetch multiple users with PII for list operations
+ */
+async function fetchUsersWithPII(env: Env, coreUsers: any[]): Promise<InternalUser[]> {
+  if (coreUsers.length === 0) return [];
+
+  // Query PII for all users
+  const userIds = coreUsers.map((u) => u.id);
+  let piiMap = new Map<string, any>();
+
+  if (env.DB_PII && userIds.length > 0) {
+    const placeholders = userIds.map(() => '?').join(',');
+    const piiResult = await env.DB_PII.prepare(
+      `SELECT id, email, name, given_name, family_name, middle_name, nickname,
+              preferred_username, profile, picture, website, gender, birthdate,
+              zoneinfo, locale, phone_number, address_formatted, address_street_address,
+              address_locality, address_region, address_postal_code, address_country
+       FROM users_pii WHERE id IN (${placeholders})`
+    )
+      .bind(...userIds)
+      .all();
+
+    for (const pii of piiResult.results as any[]) {
+      piiMap.set(pii.id, pii);
+    }
+  }
+
+  // Merge Core and PII
+  return coreUsers.map((core) => {
+    const pii = piiMap.get(core.id);
+    return {
+      id: core.id,
+      tenant_id: core.tenant_id,
+      email: pii?.email ?? null,
+      email_verified: core.email_verified,
+      name: pii?.name ?? null,
+      given_name: pii?.given_name ?? null,
+      family_name: pii?.family_name ?? null,
+      middle_name: pii?.middle_name ?? null,
+      nickname: pii?.nickname ?? null,
+      preferred_username: pii?.preferred_username ?? null,
+      profile: pii?.profile ?? null,
+      picture: pii?.picture ?? null,
+      website: pii?.website ?? null,
+      gender: pii?.gender ?? null,
+      birthdate: pii?.birthdate ?? null,
+      zoneinfo: pii?.zoneinfo ?? null,
+      locale: pii?.locale ?? null,
+      phone_number: pii?.phone_number ?? null,
+      phone_number_verified: core.phone_number_verified,
+      address_json: pii
+        ? JSON.stringify({
+            formatted: pii.address_formatted,
+            street_address: pii.address_street_address,
+            locality: pii.address_locality,
+            region: pii.address_region,
+            postal_code: pii.address_postal_code,
+            country: pii.address_country,
+          })
+        : null,
+      password_hash: core.password_hash,
+      external_id: core.external_id,
+      active: core.is_active,
+      custom_attributes_json: null,
+      created_at: core.created_at,
+      updated_at: core.updated_at,
+    } as InternalUser;
+  });
+}
+
+/**
+ * Fetch group members with PII from both Core and PII databases
+ * PII/Non-PII DB分離: JOINできないため、user_rolesとPII DBを別々にクエリ
+ */
+async function fetchGroupMembersWithPII(
+  env: Env,
+  roleId: string
+): Promise<{ user_id: string; email: string }[]> {
+  // Get user_ids from user_roles (Core DB)
+  const roleMembers = await env.DB.prepare('SELECT user_id FROM user_roles WHERE role_id = ?')
+    .bind(roleId)
+    .all<{ user_id: string }>();
+
+  if (roleMembers.results.length === 0) {
+    return [];
+  }
+
+  const userIds = roleMembers.results.map((r) => r.user_id);
+  const emailMap = new Map<string, string>();
+
+  // Fetch emails from PII DB
+  if (env.DB_PII && userIds.length > 0) {
+    const placeholders = userIds.map(() => '?').join(',');
+    const piiResult = await env.DB_PII.prepare(
+      `SELECT id, email FROM users_pii WHERE id IN (${placeholders})`
+    )
+      .bind(...userIds)
+      .all<{ id: string; email: string }>();
+
+    for (const pii of piiResult.results) {
+      emailMap.set(pii.id, pii.email);
+    }
+  }
+
+  // Merge results
+  return roleMembers.results.map((r) => ({
+    user_id: r.user_id,
+    email: emailMap.get(r.user_id) || '',
+  }));
+}
 import {
   // Types
   SCIM_SCHEMAS,
@@ -164,6 +348,7 @@ function parseQueryParams(c: any): ScimQueryParams {
 
 /**
  * GET /scim/v2/Users - List users with filtering and pagination
+ * PII/Non-PII DB分離: Core DBでフィルタ、結果セットのPIIは別途取得
  */
 app.get('/Users', async (c) => {
   try {
@@ -176,28 +361,72 @@ app.get('/Users', async (c) => {
     const count = Math.min(params.count || 100, 1000); // Max 1000 per page
     const offset = startIndex - 1;
 
-    // Build SQL query - tenant_id is always first for index usage
-    let sql = 'SELECT * FROM users WHERE tenant_id = ?';
+    // Build SQL query for Core DB - tenant_id is always first for index usage
+    // Note: For PII filters (email, name, etc.), we query PII DB first to get matching IDs
+    let sql = `SELECT id, tenant_id, email_verified, phone_number_verified, password_hash,
+               is_active, user_type, external_id, pii_partition, created_at, updated_at
+               FROM users_core WHERE tenant_id = ?`;
     const sqlParams: any[] = [tenantId];
 
     // Apply filter if present
+    // For SCIM filters referencing PII fields, we need to query PII DB first
     if (params.filter) {
       try {
         const filterAst = parseScimFilter(params.filter);
 
-        // Map SCIM attributes to database columns
-        const attributeMap: Record<string, string> = {
-          userName: 'preferred_username',
-          'name.givenName': 'given_name',
-          'name.familyName': 'family_name',
-          'emails.value': 'email',
-          active: 'active',
-          externalId: 'external_id',
-        };
+        // Check if filter references PII fields
+        const piiFields = [
+          'email',
+          'name',
+          'given_name',
+          'family_name',
+          'nickname',
+          'preferred_username',
+        ];
+        const filterStr = params.filter.toLowerCase();
+        const hasPiiFilter = piiFields.some((f) => filterStr.includes(f.toLowerCase()));
 
-        const { sql: whereSql, params: whereParams } = filterToSql(filterAst, attributeMap);
-        sql += ` AND ${whereSql}`;
-        sqlParams.push(...whereParams);
+        if (hasPiiFilter && c.env.DB_PII) {
+          // Query PII DB first to get matching user IDs
+          const piiAttributeMap: Record<string, string> = {
+            userName: 'preferred_username',
+            'name.givenName': 'given_name',
+            'name.familyName': 'family_name',
+            'emails.value': 'email',
+          };
+          const { sql: whereSql, params: whereParams } = filterToSql(filterAst, piiAttributeMap);
+          const piiSql = `SELECT id FROM users_pii WHERE tenant_id = ? AND ${whereSql}`;
+          const piiResult = await c.env.DB_PII.prepare(piiSql)
+            .bind(tenantId, ...whereParams)
+            .all();
+          const matchingIds = piiResult.results.map((r: any) => r.id);
+
+          if (matchingIds.length === 0) {
+            // No matches found - return empty result
+            const response: ScimListResponse<ScimUser> = {
+              schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
+              totalResults: 0,
+              startIndex,
+              itemsPerPage: 0,
+              Resources: [],
+            };
+            return c.json(response);
+          }
+
+          // Filter Core DB by matching IDs
+          const placeholders = matchingIds.map(() => '?').join(',');
+          sql += ` AND id IN (${placeholders})`;
+          sqlParams.push(...matchingIds);
+        } else {
+          // Non-PII filter - apply directly to Core DB
+          const coreAttributeMap: Record<string, string> = {
+            active: 'is_active',
+            externalId: 'external_id',
+          };
+          const { sql: whereSql, params: whereParams } = filterToSql(filterAst, coreAttributeMap);
+          sql += ` AND ${whereSql}`;
+          sqlParams.push(...whereParams);
+        }
       } catch (error) {
         return scimError(
           c,
@@ -209,13 +438,14 @@ app.get('/Users', async (c) => {
     }
 
     // Get total count
-    const countQuery = sql.replace('SELECT *', 'SELECT COUNT(*) as total');
+    const countQuery = sql.replace(/SELECT .* FROM/, 'SELECT COUNT(*) as total FROM');
     const totalResult = await c.env.DB.prepare(countQuery)
       .bind(...sqlParams)
       .first<{ total: number }>();
     const totalResults = totalResult?.total || 0;
 
     // Apply sorting with whitelist validation (prevents SQL injection)
+    // Note: Sorting by PII fields requires fetching PII first - not supported in DB-separated mode
     if (params.sortBy) {
       const sortColumn = validateSortColumn(params.sortBy, ALLOWED_USER_SORT_COLUMNS);
       if (!sortColumn) {
@@ -226,8 +456,10 @@ app.get('/Users', async (c) => {
           'invalidValue'
         );
       }
+      // Map Core columns (some may need adjustment for users_core schema)
+      const coreSortColumn = sortColumn === 'active' ? 'is_active' : sortColumn;
       const sortDirection = params.sortOrder === 'descending' ? 'DESC' : 'ASC';
-      sql += ` ORDER BY ${sortColumn} ${sortDirection}`;
+      sql += ` ORDER BY ${coreSortColumn} ${sortDirection}`;
     } else {
       sql += ' ORDER BY created_at DESC';
     }
@@ -236,15 +468,16 @@ app.get('/Users', async (c) => {
     sql += ` LIMIT ? OFFSET ?`;
     sqlParams.push(count, offset);
 
-    // Execute query
-    const result = await c.env.DB.prepare(sql)
+    // Execute query against Core DB
+    const coreResult = await c.env.DB.prepare(sql)
       .bind(...sqlParams)
-      .all<InternalUser>();
+      .all();
+
+    // Fetch PII data and merge into InternalUser format
+    const users = await fetchUsersWithPII(c.env, coreResult.results as any[]);
 
     // Convert to SCIM format
-    const scimUsers = result.results.map((user) =>
-      userToScim(user, { baseUrl, includeGroups: false })
-    );
+    const scimUsers = users.map((user) => userToScim(user, { baseUrl, includeGroups: false }));
 
     const response: ScimListResponse<ScimUser> = {
       schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
@@ -263,15 +496,15 @@ app.get('/Users', async (c) => {
 
 /**
  * GET /scim/v2/Users/{id} - Get user by ID
+ * PII/Non-PII DB分離: 両DBから取得してマージ
  */
 app.get('/Users/:id', async (c) => {
   try {
     const userId = c.req.param('id');
     const baseUrl = getBaseUrl(c);
 
-    const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
-      .bind(userId)
-      .first<InternalUser>();
+    // Fetch user from both Core and PII DBs
+    const user = await fetchUserWithPII(c.env, userId);
 
     if (!user) {
       return scimError(c, 404, `User ${userId} not found`);
@@ -300,6 +533,7 @@ app.get('/Users/:id', async (c) => {
 
 /**
  * POST /scim/v2/Users - Create new user
+ * PII/Non-PII DB分離: CoreとPII両方に挿入
  */
 app.post('/Users', async (c) => {
   try {
@@ -312,14 +546,14 @@ app.post('/Users', async (c) => {
       return scimError(c, 400, validation.errors.join(', '), 'invalidValue');
     }
 
-    // Check for duplicate userName or email (use tenant_id + email for idx_users_tenant_email index)
+    // Check for duplicate userName or email in PII DB
     const tenantId = getTenantIdFromContext(c);
     const primaryEmail =
       scimUser.emails?.find((e) => e.primary)?.value || scimUser.emails?.[0]?.value;
 
-    if (primaryEmail) {
-      const existing = await c.env.DB.prepare(
-        'SELECT id FROM users WHERE tenant_id = ? AND email = ?'
+    if (primaryEmail && c.env.DB_PII) {
+      const existing = await c.env.DB_PII.prepare(
+        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?'
       )
         .bind(tenantId, primaryEmail)
         .first();
@@ -342,6 +576,7 @@ app.post('/Users', async (c) => {
 
     // Set timestamps
     const now = new Date().toISOString();
+    const nowUnix = Math.floor(Date.now() / 1000);
     internalUser.created_at = now;
     internalUser.updated_at = now;
 
@@ -349,50 +584,86 @@ app.post('/Users', async (c) => {
     if (!internalUser.email_verified) internalUser.email_verified = 0;
     if (internalUser.active === undefined) internalUser.active = 1;
 
-    // Insert user with tenant_id for multi-tenant support
+    // Parse address JSON if provided
+    let addressParts: any = {};
+    if (internalUser.address_json) {
+      try {
+        addressParts = JSON.parse(internalUser.address_json);
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    // Step 1: Insert into users_core with pii_status='pending'
     await c.env.DB.prepare(
-      `INSERT INTO users (
-        id, tenant_id, email, email_verified, name, given_name, family_name, middle_name,
-        nickname, preferred_username, profile, picture, website, gender,
-        birthdate, zoneinfo, locale, phone_number, phone_number_verified,
-        address_json, password_hash, external_id, active, custom_attributes_json,
+      `INSERT INTO users_core (
+        id, tenant_id, email_verified, phone_number_verified, password_hash,
+        is_active, user_type, external_id, pii_partition, pii_status,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, 'end_user', ?, 'default', 'pending', ?, ?)`
     )
       .bind(
         userId,
         tenantId,
-        internalUser.email,
         internalUser.email_verified,
-        internalUser.name,
-        internalUser.given_name,
-        internalUser.family_name,
-        internalUser.middle_name,
-        internalUser.nickname,
-        internalUser.preferred_username,
-        internalUser.profile,
-        internalUser.picture,
-        internalUser.website,
-        null, // gender
-        null, // birthdate
-        internalUser.zoneinfo,
-        internalUser.locale,
-        internalUser.phone_number,
-        null, // phone_number_verified
-        internalUser.address_json,
+        0, // phone_number_verified
         internalUser.password_hash,
-        internalUser.external_id,
         internalUser.active,
-        internalUser.custom_attributes_json,
-        now,
-        now
+        internalUser.external_id,
+        nowUnix,
+        nowUnix
       )
       .run();
 
-    // Fetch created user
-    const createdUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
-      .bind(userId)
-      .first<InternalUser>();
+    // Step 2: Insert into users_pii (if DB_PII is configured)
+    if (c.env.DB_PII) {
+      await c.env.DB_PII.prepare(
+        `INSERT INTO users_pii (
+          id, tenant_id, email, name, given_name, family_name, middle_name,
+          nickname, preferred_username, profile, picture, website, gender,
+          birthdate, zoneinfo, locale, phone_number,
+          address_formatted, address_street_address, address_locality,
+          address_region, address_postal_code, address_country,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(
+          userId,
+          tenantId,
+          internalUser.email,
+          internalUser.name,
+          internalUser.given_name,
+          internalUser.family_name,
+          internalUser.middle_name,
+          internalUser.nickname,
+          internalUser.preferred_username,
+          internalUser.profile,
+          internalUser.picture,
+          internalUser.website,
+          null, // gender
+          null, // birthdate
+          internalUser.zoneinfo,
+          internalUser.locale,
+          internalUser.phone_number,
+          addressParts.formatted || null,
+          addressParts.street_address || null,
+          addressParts.locality || null,
+          addressParts.region || null,
+          addressParts.postal_code || null,
+          addressParts.country || null,
+          nowUnix,
+          nowUnix
+        )
+        .run();
+
+      // Step 3: Update pii_status to 'active'
+      await c.env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
+        .bind('active', userId)
+        .run();
+    }
+
+    // Fetch created user from both DBs
+    const createdUser = await fetchUserWithPII(c.env, userId);
 
     if (!createdUser) {
       return scimError(c, 500, 'Failed to create user');
@@ -412,6 +683,7 @@ app.post('/Users', async (c) => {
 
 /**
  * PUT /scim/v2/Users/{id} - Replace user (full update)
+ * PII/Non-PII DB分離: CoreとPII両方を更新
  */
 app.put('/Users/:id', async (c) => {
   try {
@@ -425,10 +697,8 @@ app.put('/Users/:id', async (c) => {
       return scimError(c, 400, validation.errors.join(', '), 'invalidValue');
     }
 
-    // Check if user exists
-    const existingUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
-      .bind(userId)
-      .first<InternalUser>();
+    // Check if user exists - fetch from both DBs
+    const existingUser = await fetchUserWithPII(c.env, userId);
 
     if (!existingUser) {
       return scimError(c, 404, `User ${userId} not found`);
@@ -446,8 +716,7 @@ app.put('/Users/:id', async (c) => {
 
     // Convert SCIM user to internal format
     const internalUser = scimToUser(scimUser);
-
-    // Update timestamp
+    const nowUnix = Math.floor(Date.now() / 1000);
     internalUser.updated_at = new Date().toISOString();
 
     // Hash password if changed
@@ -455,44 +724,75 @@ app.put('/Users/:id', async (c) => {
       internalUser.password_hash = await hashPassword(scimUser.password);
     }
 
-    // Update user
+    // Parse address JSON if provided
+    let addressParts: any = {};
+    if (internalUser.address_json) {
+      try {
+        addressParts = JSON.parse(internalUser.address_json);
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    // Update Core DB (non-PII fields)
     await c.env.DB.prepare(
-      `UPDATE users SET
-        email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
-        nickname = ?, preferred_username = ?, profile = ?, zoneinfo = ?, locale = ?,
-        phone_number = ?, address_json = ?, external_id = ?, active = ?,
-        custom_attributes_json = ?, updated_at = ?, password_hash = COALESCE(?, password_hash)
+      `UPDATE users_core SET
+        is_active = ?, external_id = ?, updated_at = ?,
+        password_hash = COALESCE(?, password_hash)
        WHERE id = ?`
     )
       .bind(
-        internalUser.email,
-        internalUser.name,
-        internalUser.given_name,
-        internalUser.family_name,
-        internalUser.middle_name,
-        internalUser.nickname,
-        internalUser.preferred_username,
-        internalUser.profile,
-        internalUser.zoneinfo,
-        internalUser.locale,
-        internalUser.phone_number,
-        internalUser.address_json,
-        internalUser.external_id,
         internalUser.active,
-        internalUser.custom_attributes_json,
-        internalUser.updated_at,
+        internalUser.external_id,
+        nowUnix,
         internalUser.password_hash,
         userId
       )
       .run();
 
+    // Update PII DB (PII fields)
+    if (c.env.DB_PII) {
+      await c.env.DB_PII.prepare(
+        `UPDATE users_pii SET
+          email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
+          nickname = ?, preferred_username = ?, profile = ?, picture = ?, website = ?,
+          zoneinfo = ?, locale = ?, phone_number = ?,
+          address_formatted = ?, address_street_address = ?, address_locality = ?,
+          address_region = ?, address_postal_code = ?, address_country = ?,
+          updated_at = ?
+         WHERE id = ?`
+      )
+        .bind(
+          internalUser.email,
+          internalUser.name,
+          internalUser.given_name,
+          internalUser.family_name,
+          internalUser.middle_name,
+          internalUser.nickname,
+          internalUser.preferred_username,
+          internalUser.profile,
+          internalUser.picture,
+          internalUser.website,
+          internalUser.zoneinfo,
+          internalUser.locale,
+          internalUser.phone_number,
+          addressParts.formatted || null,
+          addressParts.street_address || null,
+          addressParts.locality || null,
+          addressParts.region || null,
+          addressParts.postal_code || null,
+          addressParts.country || null,
+          nowUnix,
+          userId
+        )
+        .run();
+    }
+
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, userId);
 
-    // Fetch updated user
-    const updatedUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
-      .bind(userId)
-      .first<InternalUser>();
+    // Fetch updated user from both DBs
+    const updatedUser = await fetchUserWithPII(c.env, userId);
 
     if (!updatedUser) {
       return scimError(c, 500, 'Failed to fetch updated user');
@@ -512,6 +812,7 @@ app.put('/Users/:id', async (c) => {
 
 /**
  * PATCH /scim/v2/Users/{id} - Update user (partial update)
+ * PII/Non-PII DB分離: CoreとPII両方を更新
  */
 app.patch('/Users/:id', async (c) => {
   try {
@@ -519,10 +820,8 @@ app.patch('/Users/:id', async (c) => {
     const patchOp = await c.req.json<ScimPatchOp>();
     const baseUrl = getBaseUrl(c);
 
-    // Check if user exists
-    const existingUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
-      .bind(userId)
-      .first<InternalUser>();
+    // Check if user exists - fetch from both DBs
+    const existingUser = await fetchUserWithPII(c.env, userId);
 
     if (!existingUser) {
       return scimError(c, 404, `User ${userId} not found`);
@@ -559,44 +858,77 @@ app.patch('/Users/:id', async (c) => {
       internalUser.password_hash = await hashPassword(scimUser.password);
     }
 
-    // Update user
+    const nowUnix = Math.floor(Date.now() / 1000);
+
+    // Parse address JSON if provided
+    let addressParts: any = {};
+    if (internalUser.address_json) {
+      try {
+        addressParts = JSON.parse(internalUser.address_json);
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    // Update Core DB (non-PII fields)
     await c.env.DB.prepare(
-      `UPDATE users SET
-        email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
-        nickname = ?, preferred_username = ?, profile = ?, zoneinfo = ?, locale = ?,
-        phone_number = ?, address_json = ?, external_id = ?, active = ?,
-        custom_attributes_json = ?, updated_at = ?, password_hash = COALESCE(?, password_hash)
+      `UPDATE users_core SET
+        is_active = ?, external_id = ?, updated_at = ?,
+        password_hash = COALESCE(?, password_hash)
        WHERE id = ?`
     )
       .bind(
-        internalUser.email,
-        internalUser.name,
-        internalUser.given_name,
-        internalUser.family_name,
-        internalUser.middle_name,
-        internalUser.nickname,
-        internalUser.preferred_username,
-        internalUser.profile,
-        internalUser.zoneinfo,
-        internalUser.locale,
-        internalUser.phone_number,
-        internalUser.address_json,
-        internalUser.external_id,
         internalUser.active,
-        internalUser.custom_attributes_json,
-        internalUser.updated_at,
+        internalUser.external_id,
+        nowUnix,
         internalUser.password_hash,
         userId
       )
       .run();
 
+    // Update PII DB (PII fields)
+    if (c.env.DB_PII) {
+      await c.env.DB_PII.prepare(
+        `UPDATE users_pii SET
+          email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
+          nickname = ?, preferred_username = ?, profile = ?, picture = ?, website = ?,
+          zoneinfo = ?, locale = ?, phone_number = ?,
+          address_formatted = ?, address_street_address = ?, address_locality = ?,
+          address_region = ?, address_postal_code = ?, address_country = ?,
+          updated_at = ?
+         WHERE id = ?`
+      )
+        .bind(
+          internalUser.email,
+          internalUser.name,
+          internalUser.given_name,
+          internalUser.family_name,
+          internalUser.middle_name,
+          internalUser.nickname,
+          internalUser.preferred_username,
+          internalUser.profile,
+          internalUser.picture,
+          internalUser.website,
+          internalUser.zoneinfo,
+          internalUser.locale,
+          internalUser.phone_number,
+          addressParts.formatted || null,
+          addressParts.street_address || null,
+          addressParts.locality || null,
+          addressParts.region || null,
+          addressParts.postal_code || null,
+          addressParts.country || null,
+          nowUnix,
+          userId
+        )
+        .run();
+    }
+
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, userId);
 
-    // Fetch updated user
-    const updatedUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
-      .bind(userId)
-      .first<InternalUser>();
+    // Fetch updated user from both DBs
+    const updatedUser = await fetchUserWithPII(c.env, userId);
 
     if (!updatedUser) {
       return scimError(c, 500, 'Failed to fetch updated user');
@@ -616,15 +948,14 @@ app.patch('/Users/:id', async (c) => {
 
 /**
  * DELETE /scim/v2/Users/{id} - Delete user
+ * PII/Non-PII DB分離: Soft delete in Core, hard delete in PII
  */
 app.delete('/Users/:id', async (c) => {
   try {
     const userId = c.req.param('id');
 
-    // Check if user exists
-    const existingUser = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
-      .bind(userId)
-      .first<InternalUser>();
+    // Check if user exists - fetch from both DBs
+    const existingUser = await fetchUserWithPII(c.env, userId);
 
     if (!existingUser) {
       return scimError(c, 404, `User ${userId} not found`);
@@ -640,8 +971,37 @@ app.delete('/Users/:id', async (c) => {
       }
     }
 
-    // Delete user (cascade will handle related records)
-    await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
+    const now = Date.now();
+    const retentionDays = 90; // GDPR retention period
+
+    // Step 1: Create tombstone record in PII DB for GDPR audit trail
+    if (c.env.DB_PII) {
+      await c.env.DB_PII.prepare(
+        `INSERT INTO users_pii_tombstone (
+          id, tenant_id, deleted_at, deleted_by, deletion_reason, retention_until
+        ) VALUES (?, ?, ?, 'scim_api', 'scim_delete', ?)`
+      )
+        .bind(
+          userId,
+          (existingUser as any).tenant_id || 'default',
+          now,
+          now + retentionDays * 24 * 60 * 60 * 1000
+        )
+        .run()
+        .catch(() => {
+          // Ignore tombstone creation errors - not critical
+        });
+
+      // Step 2: Hard delete from PII DB
+      await c.env.DB_PII.prepare('DELETE FROM users_pii WHERE id = ?').bind(userId).run();
+    }
+
+    // Step 3: Soft delete in Core DB (set is_active = 0 and pii_status = 'deleted')
+    await c.env.DB.prepare(
+      `UPDATE users_core SET is_active = 0, pii_status = 'deleted', updated_at = ? WHERE id = ?`
+    )
+      .bind(Math.floor(now / 1000), userId)
+      .run();
 
     return c.body(null, 204); // No Content
   } catch (error) {
@@ -726,17 +1086,10 @@ app.get('/Groups', async (c) => {
     // Convert to SCIM format
     const scimGroups: ScimGroup[] = [];
     for (const group of result.results) {
-      // Fetch members if needed
-      const members = await c.env.DB.prepare(
-        `SELECT ur.user_id, u.email
-         FROM user_roles ur
-         JOIN users u ON ur.user_id = u.id
-         WHERE ur.role_id = ?`
-      )
-        .bind(group.id)
-        .all<{ user_id: string; email: string }>();
+      // Fetch members if needed (PII/Non-PII DB分離対応)
+      const members = await fetchGroupMembersWithPII(c.env, group.id as string);
 
-      scimGroups.push(groupToScim(group, { baseUrl, includeMembers: true }, members.results));
+      scimGroups.push(groupToScim(group, { baseUrl, includeMembers: true }, members));
     }
 
     const response: ScimListResponse<ScimGroup> = {
@@ -779,17 +1132,10 @@ app.get('/Groups/:id', async (c) => {
       }
     }
 
-    // Fetch members
-    const members = await c.env.DB.prepare(
-      `SELECT ur.user_id, u.email
-       FROM user_roles ur
-       JOIN users u ON ur.user_id = u.id
-       WHERE ur.role_id = ?`
-    )
-      .bind(groupId)
-      .all<{ user_id: string; email: string }>();
+    // Fetch members (PII/Non-PII DB分離対応)
+    const members = await fetchGroupMembersWithPII(c.env, groupId);
 
-    const scimGroup = groupToScim(group, { baseUrl, includeMembers: true }, members.results);
+    const scimGroup = groupToScim(group, { baseUrl, includeMembers: true }, members);
 
     // Set ETag header
     c.header('ETag', scimGroup.meta.version || '');
@@ -868,21 +1214,10 @@ app.post('/Groups', async (c) => {
       return scimError(c, 500, 'Failed to create group');
     }
 
-    // Fetch members
-    const members = await c.env.DB.prepare(
-      `SELECT ur.user_id, u.email
-       FROM user_roles ur
-       JOIN users u ON ur.user_id = u.id
-       WHERE ur.role_id = ?`
-    )
-      .bind(groupId)
-      .all<{ user_id: string; email: string }>();
+    // Fetch members (PII/Non-PII DB分離対応)
+    const members = await fetchGroupMembersWithPII(c.env, groupId);
 
-    const responseGroup = groupToScim(
-      createdGroup,
-      { baseUrl, includeMembers: true },
-      members.results
-    );
+    const responseGroup = groupToScim(createdGroup, { baseUrl, includeMembers: true }, members);
 
     // Set Location header
     c.header('Location', responseGroup.meta.location);
@@ -961,21 +1296,10 @@ app.put('/Groups/:id', async (c) => {
       return scimError(c, 500, 'Failed to fetch updated group');
     }
 
-    // Fetch members
-    const members = await c.env.DB.prepare(
-      `SELECT ur.user_id, u.email
-       FROM user_roles ur
-       JOIN users u ON ur.user_id = u.id
-       WHERE ur.role_id = ?`
-    )
-      .bind(groupId)
-      .all<{ user_id: string; email: string }>();
+    // Fetch members (PII/Non-PII DB分離対応)
+    const members = await fetchGroupMembersWithPII(c.env, groupId);
 
-    const responseGroup = groupToScim(
-      updatedGroup,
-      { baseUrl, includeMembers: true },
-      members.results
-    );
+    const responseGroup = groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members);
 
     // Set ETag header
     c.header('ETag', responseGroup.meta.version || '');
@@ -1015,22 +1339,11 @@ app.patch('/Groups/:id', async (c) => {
       }
     }
 
-    // Fetch current members
-    const currentMembers = await c.env.DB.prepare(
-      `SELECT ur.user_id, u.email
-       FROM user_roles ur
-       JOIN users u ON ur.user_id = u.id
-       WHERE ur.role_id = ?`
-    )
-      .bind(groupId)
-      .all<{ user_id: string; email: string }>();
+    // Fetch current members (PII/Non-PII DB分離対応)
+    const currentMembers = await fetchGroupMembersWithPII(c.env, groupId);
 
     // Convert to SCIM format
-    let scimGroup = groupToScim(
-      existingGroup,
-      { baseUrl, includeMembers: true },
-      currentMembers.results
-    );
+    let scimGroup = groupToScim(existingGroup, { baseUrl, includeMembers: true }, currentMembers);
 
     // Apply patch operations
     scimGroup = applyPatchOperations(scimGroup, patchOp.Operations);
@@ -1076,20 +1389,13 @@ app.patch('/Groups/:id', async (c) => {
       return scimError(c, 500, 'Failed to fetch updated group');
     }
 
-    // Fetch updated members
-    const updatedMembers = await c.env.DB.prepare(
-      `SELECT ur.user_id, u.email
-       FROM user_roles ur
-       JOIN users u ON ur.user_id = u.id
-       WHERE ur.role_id = ?`
-    )
-      .bind(groupId)
-      .all<{ user_id: string; email: string }>();
+    // Fetch updated members (PII/Non-PII DB分離対応)
+    const updatedMembers = await fetchGroupMembersWithPII(c.env, groupId);
 
     const responseGroup = groupToScim(
       updatedGroup,
       { baseUrl, includeMembers: true },
-      updatedMembers.results
+      updatedMembers
     );
 
     // Set ETag header

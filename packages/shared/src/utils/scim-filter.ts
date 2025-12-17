@@ -341,6 +341,14 @@ export function parseScimFilter(filter: string): ScimFilterNode {
 }
 
 /**
+ * Escape SQL LIKE wildcards (% and _) to prevent unintended pattern matching.
+ * This is important to prevent DoS attacks or data leakage via crafted search terms.
+ */
+function escapeLikeWildcards(value: unknown): string {
+  return String(value).replace(/[%_]/g, (char) => `\\${char}`);
+}
+
+/**
  * Convert SCIM filter AST to SQL WHERE clause
  *
  * This is a basic implementation that maps SCIM attributes to database columns.
@@ -366,14 +374,14 @@ export function filterToSql(
             params.push(n.value);
             return `${column} != ?${paramIndex + 1}`;
           case 'co':
-            params.push(`%${n.value}%`);
-            return `${column} LIKE ?${paramIndex + 1}`;
+            params.push(`%${escapeLikeWildcards(n.value)}%`);
+            return `${column} LIKE ?${paramIndex + 1} ESCAPE '\\'`;
           case 'sw':
-            params.push(`${n.value}%`);
-            return `${column} LIKE ?${paramIndex + 1}`;
+            params.push(`${escapeLikeWildcards(n.value)}%`);
+            return `${column} LIKE ?${paramIndex + 1} ESCAPE '\\'`;
           case 'ew':
-            params.push(`%${n.value}`);
-            return `${column} LIKE ?${paramIndex + 1}`;
+            params.push(`%${escapeLikeWildcards(n.value)}`);
+            return `${column} LIKE ?${paramIndex + 1} ESCAPE '\\'`;
           case 'pr':
             return `${column} IS NOT NULL`;
           case 'gt':

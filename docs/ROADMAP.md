@@ -123,7 +123,7 @@ timeline
 | **M8: Policy Integration** | 2026-Q2    | 🔜 Planned     | Unified AuthN + AuthZ, Token embedding, Check API                     |
 | **M9: Advanced Identity**  | 2026-Q3    | 🔜 Planned     | OpenID4VP/CI, DID Resolver, VC Issuance                               |
 | **M10: SDK & API**         | 2026-Q4    | 🔜 Planned     | WebSDK, CLI, API Documentation                                        |
-| **M11: Security & QA**     | 2027-Q1    | 🔜 Planned     | Security Audit, Load Testing, MTLS                                    |
+| **M11: Security & QA**     | 2025-12~   | ⏳ ~15%        | Load Testing ✅, Security Audit, MTLS pending                         |
 | **M12: Release**           | 2027-Q2    | 🔜 Final       | OpenID Certification, Public Release                                  |
 
 ---
@@ -402,9 +402,9 @@ timeline
 
 ---
 
-## Phase 11: Security & QA 🔜 PLANNED
+## Phase 11: Security & QA ⏳ IN PROGRESS
 
-**Timeline:** 2027-Q1
+**Timeline:** 2025-12 (Load Testing) ~ 2027-Q1
 
 **Goal:** Security hardening and quality assurance
 
@@ -412,12 +412,23 @@ timeline
 
 | Feature             | Description                        | Status     |
 | ------------------- | ---------------------------------- | ---------- |
-| MTLS                | Mutual TLS (RFC 8705)              | 🔜 Planned |
-| Client Credentials  | RFC 6749 Section 4.4               | 🔜 Planned |
+| Load Testing        | Performance benchmarks             | ✅ Complete |
 | Security Audit      | External security review           | 🔜 Planned |
-| Load Testing        | Performance benchmarks (10k+ RPS)  | 🔜 Planned |
 | Penetration Testing | Third-party security assessment    | 🔜 Planned |
 | Conformance Tests   | Hybrid OP, Dynamic OP, RP profiles | 🔜 Planned |
+
+### Load Testing Results (December 2025) ✅
+
+| Endpoint | Recommended RPS | Peak RPS | Key Finding |
+|----------|-----------------|----------|-------------|
+| Silent Auth (128 shards) | 2,500 | 3,500 | DO sharding eliminates errors |
+| Refresh Token (48 shards) | 2,500 | 3,000 | Linear shard scaling |
+| UserInfo | 2,000 | 2,500 | JWT validation stable at 1-4ms CPU |
+| Token Exchange | 1,500 | 2,500 | 100% token validation accuracy |
+| Token Introspection (32 shards) | 300 | 500 | Region-aware JTI sharding |
+| Full Login (32 shards) | 100 LPS | 150 LPS | 91% P95 latency reduction |
+
+> **Reports:** [load-testing/reports/Dec2025/](../load-testing/reports/Dec2025/)
 
 ---
 
@@ -472,7 +483,7 @@ timeline
 | Policy integration tests | 100+        | -                          | P8    |
 | VC credential types      | 5+          | -                          | P9    |
 | SDK downloads            | 1000+       | -                          | P10   |
-| Load test RPS            | 10,000+     | -                          | P11   |
+| Load test RPS            | 10,000+     | ✅ 3,500 (Silent Auth)     | P11   |
 | OpenID Certification     | ✅ Obtained | -                          | P12   |
 
 ---
@@ -533,11 +544,24 @@ By 2027, Authrim will be:
 | 2025-12-17 | **GitHub OAuth 2.0 complete**: Enterprise Server support, /user/emails API, 57 tests |
 | 2025-12-17 | **Durable Objects best practices**: blockConcurrencyWhile, Tombstone pattern, DO retry utility |
 | 2025-12-17 | External IdP documentation added, other social providers deferred to Phase 8+ |
+| 2025-12-17 | **Phase 11 Load Testing ✅ Complete**: 6 benchmark reports (Silent Auth, UserInfo, Token Exchange, Token Introspection, Refresh Token, Full Login), K6 Cloud distributed testing, DO sharding optimization |
+| 2025-12-17 | **MTLS (RFC 8705) removed from scope**: Cloudflare Workers architecture limitation |
+
+---
+
+## Not Supported
+
+The following features are intentionally **not supported** due to architectural constraints:
+
+| Feature | Reason | Alternative |
+|---------|--------|-------------|
+| **MTLS (RFC 8705)** | Cloudflare Workers terminates TLS at edge; cannot control TLS handshake directly. SHA-256 certificate thumbprint requires additional Cloudflare configuration (Managed Transforms, API Shield). | FAPI 2.0 supports `private_key_jwt` as an alternative client authentication method. DPoP (RFC 9449) provides sender-constrained tokens without MTLS. |
+| **LDAP/AD Integration** | Cloudflare Workers runtime has no TCP socket support. | Use SCIM 2.0 for user provisioning, or connect via external IdP (Azure AD, Okta) that provides OIDC/SAML federation. |
 
 ---
 
 > **Last Update:** 2025-12-17
 >
-> **Current Status:** Phase 6 Complete ✅ | Phase 7 ~90% Complete (Identity Hub)
+> **Current Status:** Phase 6 ✅ | Phase 7 ~90% (Identity Hub) | Phase 11 ~15% (Load Testing ✅)
 >
 > **Authrim** - The Identity & Access Platform for the modern web.

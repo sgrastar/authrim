@@ -40,6 +40,7 @@ import {
   validateDPoPProof,
   calculateSessionState,
   extractOrigin,
+  isInternalUrl,
 } from '@authrim/shared';
 import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 'jose';
 
@@ -282,43 +283,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Prevent SSRF to localhost/internal IPs
-      const hostname = requestUrl.hostname.toLowerCase();
-      const blockedPatterns = [
-        'localhost',
-        '127.',
-        '10.',
-        '172.16.',
-        '172.17.',
-        '172.18.',
-        '172.19.',
-        '172.20.',
-        '172.21.',
-        '172.22.',
-        '172.23.',
-        '172.24.',
-        '172.25.',
-        '172.26.',
-        '172.27.',
-        '172.28.',
-        '172.29.',
-        '172.30.',
-        '172.31.',
-        '192.168.',
-        '169.254.',
-        '0.',
-        '::1',
-        'fe80::',
-        'fc00::',
-        'fd00::',
-      ];
-
-      const isBlocked =
-        blockedPatterns.some((pattern) => hostname === pattern || hostname.startsWith(pattern)) ||
-        hostname.endsWith('.local') ||
-        hostname.endsWith('.internal');
-
-      if (isBlocked) {
-        console.warn(`SSRF prevention: Blocked request_uri to internal address ${hostname}`);
+      if (isInternalUrl(requestUrl)) {
+        console.warn(
+          `SSRF prevention: Blocked request_uri to internal address ${requestUrl.hostname}`
+        );
         return c.json(
           {
             error: 'invalid_request_uri',
@@ -693,6 +661,17 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             publicKey = (await importJWK(signingKey, alg)) as CryptoKey;
           } else if (clientResult.jwks_uri && typeof clientResult.jwks_uri === 'string') {
             // Fetch JWKS from jwks_uri
+            // SSRF protection: Block requests to internal addresses
+            if (isInternalUrl(clientResult.jwks_uri)) {
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description: 'jwks_uri cannot point to internal addresses',
+                },
+                400
+              );
+            }
+
             try {
               const jwksResponse = await fetch(clientResult.jwks_uri);
               if (!jwksResponse.ok) {
@@ -885,6 +864,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       },
       400
     );
+  }
+
+  // Validate max_age if provided (OIDC Core 3.1.2.1)
+  // max_age MUST be a non-negative integer
+  if (max_age) {
+    const maxAgeInt = parseInt(max_age, 10);
+    if (Number.isNaN(maxAgeInt) || maxAgeInt < 0 || !/^\d+$/.test(max_age)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'max_age must be a non-negative integer',
+        },
+        400
+      );
+    }
   }
 
   // Type narrowing: client_id is guaranteed to be a string at this point
@@ -2625,6 +2619,11 @@ async function createJARMResponse(
 
         clientPublicKeyJWK = encKey;
       } else if (client.jwks_uri && typeof client.jwks_uri === 'string') {
+        // SSRF protection: Block requests to internal addresses
+        if (isInternalUrl(client.jwks_uri)) {
+          throw new Error('SSRF protection: jwks_uri cannot point to internal addresses');
+        }
+
         // Fetch JWKS from jwks_uri
         const jwksResponse = await fetch(client.jwks_uri);
         if (!jwksResponse.ok) {
@@ -2871,8 +2870,8 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     userId = 'user-oidc-conformance-test';
     console.log('[LOGIN] Using OIDC Conformance Test user');
 
-    // Verify test user exists (should have been created during DCR)
-    const existingUser = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?')
+    // Verify test user exists in Core DB (should have been created during DCR)
+    const existingUser = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
       .bind(userId)
       .first();
 
@@ -2880,73 +2879,112 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
       console.warn('[LOGIN] Test user not found, creating it now');
       // Create test user if it doesn't exist (fallback)
       const now = Math.floor(Date.now() / 1000);
+
+      // Step 1: Insert into users_core with pii_status='pending'
       await c.env.DB.prepare(
-        `
-        INSERT INTO users (
-          id, email, email_verified, name, given_name, family_name,
-          middle_name, nickname, preferred_username, profile, picture,
-          website, gender, birthdate, zoneinfo, locale,
-          phone_number, phone_number_verified, address_json,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
+        `INSERT INTO users_core (
+          id, tenant_id, email_verified, phone_number_verified, user_type,
+          pii_partition, pii_status, created_at, updated_at
+        ) VALUES (?, 'default', ?, ?, 'end_user', 'default', 'pending', ?, ?)`
       )
-        .bind(
-          userId,
-          'test@example.com',
-          1, // email_verified
-          'John Doe',
-          'John',
-          'Doe',
-          'Q',
-          'Johnny',
-          'test',
-          'https://example.com/johndoe',
-          'https://example.com/avatar.jpg',
-          'https://example.com',
-          'male',
-          '1990-01-01',
-          'America/New_York',
-          'en-US',
-          '+1-555-0100',
-          1, // phone_number_verified
-          JSON.stringify({
-            formatted: '1234 Main St, Anytown, ST 12345, USA',
-            street_address: '1234 Main St',
-            locality: 'Anytown',
-            region: 'ST',
-            postal_code: '12345',
-            country: 'USA',
-          }),
-          now,
-          now
-        )
+        .bind(userId, 1, 1, now, now)
         .run()
         .catch((error: unknown) => {
-          console.error('Failed to create test user:', error);
+          console.error('Failed to create test user in Core DB:', error);
         });
+
+      // Step 2: Insert into users_pii (if DB_PII is configured)
+      if (c.env.DB_PII) {
+        await c.env.DB_PII.prepare(
+          `INSERT INTO users_pii (
+            id, tenant_id, email, name, given_name, family_name,
+            middle_name, nickname, preferred_username, profile, picture,
+            website, gender, birthdate, zoneinfo, locale,
+            phone_number, address_formatted, address_street_address,
+            address_locality, address_region, address_postal_code, address_country,
+            created_at, updated_at
+          ) VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+          .bind(
+            userId,
+            'test@example.com',
+            'John Doe',
+            'John',
+            'Doe',
+            'Q',
+            'Johnny',
+            'test',
+            'https://example.com/johndoe',
+            'https://example.com/avatar.jpg',
+            'https://example.com',
+            'male',
+            '1990-01-01',
+            'America/New_York',
+            'en-US',
+            '+1-555-0100',
+            '1234 Main St, Anytown, ST 12345, USA',
+            '1234 Main St',
+            'Anytown',
+            'ST',
+            '12345',
+            'USA',
+            now,
+            now
+          )
+          .run()
+          .catch((error: unknown) => {
+            console.error('Failed to create test user in PII DB:', error);
+          });
+
+        // Step 3: Update pii_status to 'active'
+        await c.env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
+          .bind('active', userId)
+          .run()
+          .catch((error: unknown) => {
+            console.error('Failed to update pii_status:', error);
+          });
+      }
     }
   } else {
     // Normal client: create new random user
     userId = 'user-' + crypto.randomUUID();
 
-    // Create user in database
+    // Create user in both Core and PII databases
     const now = Math.floor(Date.now() / 1000);
+
+    // Step 1: Insert into users_core with pii_status='pending'
     await c.env.DB.prepare(
-      `INSERT OR IGNORE INTO users (id, email, email_verified, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT OR IGNORE INTO users_core (
+        id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at
+      ) VALUES (?, 'default', 0, 'end_user', 'default', 'pending', ?, ?)`
     )
-      .bind(
-        userId,
-        `${userId}@example.com`, // Placeholder email
-        0, // email not verified
-        now,
-        now
-      )
+      .bind(userId, now, now)
       .run()
       .catch((error: unknown) => {
-        console.error('Failed to create user:', error);
+        console.error('Failed to create user in Core DB:', error);
       });
+
+    // Step 2: Insert into users_pii (if DB_PII is configured)
+    if (c.env.DB_PII) {
+      await c.env.DB_PII.prepare(
+        `INSERT OR IGNORE INTO users_pii (
+          id, tenant_id, email, created_at, updated_at
+        ) VALUES (?, 'default', ?, ?, ?)`
+      )
+        .bind(userId, `${userId}@example.com`, now, now)
+        .run()
+        .catch((error: unknown) => {
+          console.error('Failed to create user in PII DB:', error);
+        });
+
+      // Step 3: Update pii_status to 'active'
+      await c.env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
+        .bind('active', userId)
+        .run()
+        .catch((error: unknown) => {
+          console.error('Failed to update pii_status:', error);
+        });
+    }
   }
 
   // Create session using sharded SessionStore

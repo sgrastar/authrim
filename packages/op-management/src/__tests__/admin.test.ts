@@ -63,9 +63,18 @@ function createMockContext(options: {
   params?: Record<string, string>;
   body?: Record<string, unknown>;
   db?: D1Database;
+  dbPII?: D1Database;
 }) {
   const mockDB =
     options.db ??
+    createMockDB({
+      firstResult: null,
+      allResults: [],
+    });
+
+  // DB_PII mock for PII/Non-PII DB separation
+  const mockDBPII =
+    options.dbPII ??
     createMockDB({
       firstResult: null,
       allResults: [],
@@ -84,6 +93,7 @@ function createMockContext(options: {
     },
     env: {
       DB: mockDB,
+      DB_PII: mockDBPII, // Added for PII/Non-PII DB separation
       ISSUER_URL: 'https://op.example.com',
       CLIENTS_CACHE: createMockKVNamespace(),
     } as unknown as Env,
@@ -91,6 +101,7 @@ function createMockContext(options: {
     get: vi.fn((key: string) => contextStore.get(key)),
     set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
     _mockDB: mockDB,
+    _mockDBPII: mockDBPII, // For test assertions
   } as any;
 
   return c;
@@ -148,15 +159,24 @@ describe('Admin API Handlers', () => {
 
     it('should include recent activity in response', async () => {
       const now = Date.now();
+      // Core DB returns user IDs and timestamps (no PII)
       const mockDB = createMockDB({
         firstResult: { count: 5 },
         allResults: [
-          { id: 'user-1', email: 'new@example.com', name: 'New User', created_at: now },
-          { id: 'user-2', email: 'another@example.com', name: 'Another', created_at: now - 1000 },
+          { id: 'user-1', created_at: now },
+          { id: 'user-2', created_at: now - 1000 },
         ],
       });
 
-      const c = createMockContext({ db: mockDB });
+      // PII DB returns email and name for the user IDs
+      const mockDBPII = createMockDB({
+        allResults: [
+          { id: 'user-1', email: 'new@example.com', name: 'New User' },
+          { id: 'user-2', email: 'another@example.com', name: 'Another' },
+        ],
+      });
+
+      const c = createMockContext({ db: mockDB, dbPII: mockDBPII });
 
       await adminStatsHandler(c);
 
@@ -242,15 +262,24 @@ describe('Admin API Handlers', () => {
     });
 
     it('should support search filtering by email or name', async () => {
+      // PII/Non-PII DB Separation:
+      // 1. Search queries PII DB first to get matching user IDs
+      // 2. Core DB is queried for user_core data with those IDs
+      // 3. PII DB is queried again for full PII data
+
+      // Core DB returns user core data (no PII)
       const mockDB = createMockDB({
         firstResult: { count: 1 },
         allResults: [
           {
             id: 'user-1',
-            email: 'john@example.com',
-            name: 'John Doe',
+            tenant_id: 'default',
             email_verified: 1,
             phone_number_verified: 0,
+            is_active: 1,
+            user_type: 'end_user',
+            pii_partition: 'default',
+            pii_status: 'active',
             created_at: Date.now(),
             updated_at: Date.now(),
             last_login_at: null,
@@ -258,15 +287,27 @@ describe('Admin API Handlers', () => {
         ],
       });
 
+      // PII DB returns IDs for search (first call) and full PII data (second call)
+      const mockDBPII = createMockDB({
+        allResults: [
+          {
+            id: 'user-1',
+            email: 'john@example.com',
+            name: 'John Doe',
+          },
+        ],
+      });
+
       const c = createMockContext({
         query: { search: 'john' },
         db: mockDB,
+        dbPII: mockDBPII,
       });
 
       await adminUsersListHandler(c);
 
-      // Verify search was applied
-      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('LIKE'));
+      // Verify search was applied on PII DB
+      expect(mockDBPII.prepare).toHaveBeenCalledWith(expect.stringContaining('LIKE'));
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           users: expect.arrayContaining([
@@ -358,13 +399,17 @@ describe('Admin API Handlers', () => {
   describe('adminUserGetHandler', () => {
     it('should return user details with passkeys', async () => {
       const userId = 'user-123';
+      // Core DB returns users_core data (no PII) and passkeys
       const mockDB = createMockDB({
         firstResult: {
           id: userId,
-          email: 'user@example.com',
-          name: 'Test User',
+          tenant_id: 'default',
           email_verified: 1,
           phone_number_verified: 0,
+          is_active: 1,
+          user_type: 'end_user',
+          pii_partition: 'default',
+          pii_status: 'active',
           created_at: Date.now(),
           updated_at: Date.now(),
           last_login_at: null,
@@ -380,9 +425,19 @@ describe('Admin API Handlers', () => {
         ],
       });
 
+      // PII DB returns users_pii data (email, name, etc.)
+      const mockDBPII = createMockDB({
+        firstResult: {
+          id: userId,
+          email: 'user@example.com',
+          name: 'Test User',
+        },
+      });
+
       const c = createMockContext({
         params: { id: userId },
         db: mockDB,
+        dbPII: mockDBPII,
       });
 
       await adminUserGetHandler(c);
@@ -472,20 +527,48 @@ describe('Admin API Handlers', () => {
     });
 
     it('should create new user with valid data', async () => {
-      // First call returns null (no existing user), second call returns created user
+      // PII/Non-PII DB Separation:
+      // 1. Check email uniqueness in PII DB (returns null = no existing user)
+      // 2. Insert into Core DB
+      // 3. Insert into PII DB
+      // 4. Update Core DB pii_status
+      // 5. Fetch created user from both DBs
+
       const mockDB = createMockDB({
         runResult: { success: true },
       });
 
-      // Configure mock to return different results for different queries
-      let queryCount = 0;
+      // Configure Core DB mock to return created user on final query
+      let coreQueryCount = 0;
       (mockDB as any)._mockStatement.first.mockImplementation(() => {
-        queryCount++;
-        if (queryCount === 1) {
-          // First query: check for existing user
+        coreQueryCount++;
+        // After inserts and updates, return the created user_core data
+        return Promise.resolve({
+          id: 'new-user-id',
+          tenant_id: 'default',
+          email_verified: 0,
+          phone_number_verified: 0,
+          is_active: 1,
+          user_type: 'end_user',
+          pii_partition: 'default',
+          pii_status: 'active',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        });
+      });
+
+      // PII DB: first call checks email uniqueness, final call returns created PII
+      const mockDBPII = createMockDB({
+        runResult: { success: true },
+      });
+      let piiQueryCount = 0;
+      (mockDBPII as any)._mockStatement.first.mockImplementation(() => {
+        piiQueryCount++;
+        if (piiQueryCount === 1) {
+          // First query: check for existing user by email - return null (no duplicate)
           return Promise.resolve(null);
         }
-        // Second query: get created user
+        // Final query: return created user PII
         return Promise.resolve({
           id: 'new-user-id',
           email: 'newuser@example.com',
@@ -500,11 +583,19 @@ describe('Admin API Handlers', () => {
           name: 'New User',
         },
         db: mockDB,
+        dbPII: mockDBPII,
       });
 
       await adminUserCreateHandler(c);
 
-      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT'));
+      // Verify insert into Core DB
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO users_core')
+      );
+      // Verify insert into PII DB
+      expect(mockDBPII.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO users_pii')
+      );
       // API returns { user }
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -517,7 +608,12 @@ describe('Admin API Handlers', () => {
     });
 
     it('should prevent duplicate email (409 error)', async () => {
-      const mockDB = createMockDB({
+      // PII/Non-PII DB Separation:
+      // Email uniqueness is checked in PII DB (not Core DB)
+      const mockDB = createMockDB({});
+
+      // PII DB returns existing user when checking for duplicate email
+      const mockDBPII = createMockDB({
         firstResult: { id: 'existing-user', email: 'duplicate@example.com' },
       });
 
@@ -528,6 +624,7 @@ describe('Admin API Handlers', () => {
           name: 'Duplicate User',
         },
         db: mockDB,
+        dbPII: mockDBPII,
       });
 
       await adminUserCreateHandler(c);
@@ -544,26 +641,42 @@ describe('Admin API Handlers', () => {
 
   describe('adminUserUpdateHandler', () => {
     it('should update user fields', async () => {
+      // PII/Non-PII DB Separation:
+      // Core fields (email_verified, phone_number_verified, user_type) → Core DB
+      // PII fields (name, phone_number, picture, etc.) → PII DB
+
       const userId = 'user-to-update';
       const mockDB = createMockDB({
         runResult: { success: true },
       });
 
-      // First call checks if user exists, second call gets updated user
-      let queryCount = 0;
+      // Core DB: first call checks user exists, subsequent calls for updates/reads
+      let coreQueryCount = 0;
       (mockDB as any)._mockStatement.first.mockImplementation(() => {
-        queryCount++;
-        if (queryCount === 1) {
-          // Check user exists
-          return Promise.resolve({ id: userId });
-        }
-        // Return updated user
+        coreQueryCount++;
+        // All calls return the user_core data
         return Promise.resolve({
+          id: userId,
+          tenant_id: 'default',
+          email_verified: 1,
+          phone_number_verified: 0,
+          is_active: 1,
+          user_type: 'end_user',
+          pii_partition: 'default',
+          pii_status: 'active',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        });
+      });
+
+      // PII DB: returns updated PII data
+      const mockDBPII = createMockDB({
+        runResult: { success: true },
+        firstResult: {
           id: userId,
           email: 'old@example.com',
           name: 'Updated Name',
-          email_verified: 1,
-        });
+        },
       });
 
       const c = createMockContext({
@@ -574,10 +687,12 @@ describe('Admin API Handlers', () => {
           email_verified: true,
         },
         db: mockDB,
+        dbPII: mockDBPII,
       });
 
       await adminUserUpdateHandler(c);
 
+      // Verify Core DB update was called
       expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('UPDATE'));
       // API returns { user }
       expect(c.json).toHaveBeenCalledWith(
@@ -614,22 +729,39 @@ describe('Admin API Handlers', () => {
     });
 
     it('should update timestamp on modification', async () => {
+      // PII/Non-PII DB Separation:
+      // Updated `name` is a PII field, stored in PII DB
+      // Both Core DB and PII DB have updated_at timestamps
+
       const userId = 'user-update-ts';
       const mockDB = createMockDB({
         runResult: { success: true },
       });
 
-      let queryCount = 0;
+      // Core DB: returns user_core data
       (mockDB as any)._mockStatement.first.mockImplementation(() => {
-        queryCount++;
-        if (queryCount === 1) {
-          return Promise.resolve({ id: userId });
-        }
         return Promise.resolve({
           id: userId,
-          name: 'Updated',
+          tenant_id: 'default',
+          email_verified: 0,
+          phone_number_verified: 0,
+          is_active: 1,
+          user_type: 'end_user',
+          pii_partition: 'default',
+          pii_status: 'active',
+          created_at: Date.now(),
           updated_at: Date.now(),
         });
+      });
+
+      // PII DB: returns updated PII data
+      const mockDBPII = createMockDB({
+        runResult: { success: true },
+        firstResult: {
+          id: userId,
+          email: 'test@example.com',
+          name: 'Updated',
+        },
       });
 
       const c = createMockContext({
@@ -637,12 +769,13 @@ describe('Admin API Handlers', () => {
         params: { id: userId },
         body: { name: 'Updated' },
         db: mockDB,
+        dbPII: mockDBPII,
       });
 
       await adminUserUpdateHandler(c);
 
-      // Verify UPDATE query includes updated_at
-      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('updated_at'));
+      // Verify PII DB UPDATE query includes updated_at (name is a PII field)
+      expect(mockDBPII.prepare).toHaveBeenCalledWith(expect.stringContaining('updated_at'));
     });
   });
 
@@ -662,7 +795,10 @@ describe('Admin API Handlers', () => {
 
       await adminUserDeleteHandler(c);
 
-      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('DELETE'));
+      // PII/Non-PII DB separation: User deletion is now soft delete (UPDATE users_core SET is_active = 0)
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE users_core SET is_active = 0')
+      );
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           success: true,
@@ -707,11 +843,12 @@ describe('Admin API Handlers', () => {
 
       await adminUserDeleteHandler(c);
 
-      // Verify multiple DELETE queries for cascade
-      const deleteCalls = (mockDB.prepare as any).mock.calls.filter((call: any[]) =>
-        call[0].includes('DELETE')
+      // PII/Non-PII DB separation: User deletion is soft delete + cascade deletes for related data
+      // Check for soft delete on users_core
+      const updateCalls = (mockDB.prepare as any).mock.calls.filter((call: any[]) =>
+        call[0].includes('UPDATE users_core SET is_active = 0')
       );
-      expect(deleteCalls.length).toBeGreaterThanOrEqual(1);
+      expect(updateCalls.length).toBeGreaterThanOrEqual(1);
     });
   });
 

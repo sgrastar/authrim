@@ -18,6 +18,7 @@
  */
 
 import type { Env } from '../types/env';
+import { timingSafeEqual } from '../utils/crypto';
 
 /**
  * Version record for a single Worker
@@ -152,7 +153,7 @@ export class VersionManager {
     }
 
     // Constant-time comparison to prevent timing attacks
-    return token === secret;
+    return timingSafeEqual(token, secret);
   }
 
   /**

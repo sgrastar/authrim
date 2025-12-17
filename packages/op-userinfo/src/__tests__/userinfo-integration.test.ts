@@ -27,6 +27,7 @@ vi.mock('@authrim/shared', async () => {
     isUserInfoEncryptionRequired: vi.fn(),
     getClientPublicKey: vi.fn(),
     validateJWEOptions: vi.fn(),
+    getCachedUser: vi.fn(), // Mock getCachedUser for PII/Non-PII DB separation
     rateLimitMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
     RateLimitProfiles: { moderate: {} },
     versionCheckMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
@@ -41,20 +42,33 @@ import {
   isUserInfoEncryptionRequired,
   getClientPublicKey,
   validateJWEOptions,
+  getCachedUser,
 } from '@authrim/shared';
+import type { CachedUser } from '@authrim/shared';
 
-// Sample user data
-const sampleUser = {
+// Sample user data (CachedUser format for PII/Non-PII DB separation)
+
+const sampleUser: CachedUser = {
   id: 'user-123',
   name: 'Test User',
   family_name: 'User',
   given_name: 'Test',
+  middle_name: null,
+  nickname: null,
+  preferred_username: null,
   email: 'test@example.com',
-  email_verified: 1,
+  email_verified: true,
   phone_number: '+81-90-1234-5678',
-  phone_number_verified: 1,
+  phone_number_verified: true,
+  picture: null,
+  profile: null,
+  website: null,
+  gender: null,
+  birthdate: null,
+  zoneinfo: null,
+  locale: null,
   updated_at: 1700000000000,
-  address_json: JSON.stringify({
+  address: JSON.stringify({
     formatted: '123 Test Street, Tokyo',
     country: 'Japan',
   }),
@@ -105,6 +119,8 @@ describe('UserInfo Integration Tests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockEnv = createMockEnv();
+    // Default mock for getCachedUser (PII/Non-PII DB separation)
+    vi.mocked(getCachedUser).mockResolvedValue(sampleUser);
   });
 
   afterEach(() => {
@@ -714,14 +730,8 @@ describe('UserInfo Integration Tests', () => {
       vi.mocked(getClient).mockResolvedValue(null);
       vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
 
-      // Mock DB to return null
-      mockEnv.DB = {
-        prepare: vi.fn().mockReturnValue({
-          bind: vi.fn().mockReturnValue({
-            first: vi.fn().mockResolvedValue(null),
-          }),
-        }),
-      } as unknown as D1Database;
+      // Mock getCachedUser to return null (user not found)
+      vi.mocked(getCachedUser).mockResolvedValue(null);
 
       const req = new Request('http://localhost/userinfo', {
         headers: { Authorization: 'Bearer token' },

@@ -51,8 +51,50 @@ function createMockDB(queryResults: Record<string, unknown>) {
         }
       } else if (sql.includes('FROM relationships')) {
         result = queryResults['relationship'] ?? null;
+      } else if (sql.includes('FROM users_core WHERE id')) {
+        // PII/Non-PII separation: users_core returns { id } only
+        result =
+          (queryResults['userCore'] ?? queryResults['user'])
+            ? {
+                id:
+                  (queryResults['userCore'] as { id: string })?.id ??
+                  (queryResults['user'] as { id: string })?.id,
+              }
+            : null;
       } else if (sql.includes('FROM users WHERE id')) {
+        // Legacy query pattern - kept for backward compatibility
         result = queryResults['user'] ?? null;
+      }
+
+      return {
+        bind: vi.fn().mockReturnThis(),
+        first: vi.fn().mockResolvedValue(result),
+        all: vi.fn().mockResolvedValue(result),
+      };
+    }),
+  } as unknown as D1Database;
+}
+
+/**
+ * Helper to create mock PII database with configurable query results
+ * Used for PII/Non-PII DB separation
+ */
+function createMockPIIDB(queryResults: Record<string, unknown>) {
+  return {
+    prepare: vi.fn((sql: string) => {
+      let result: unknown = null;
+
+      if (sql.includes('FROM users_pii WHERE id')) {
+        // users_pii returns { email, name, picture }
+        const piiData = queryResults['userPII'] ?? queryResults['user'];
+        if (piiData) {
+          const user = piiData as { email?: string; name?: string | null; picture?: string | null };
+          result = {
+            email: user.email,
+            name: user.name,
+            picture: user.picture,
+          };
+        }
       }
 
       return {
@@ -282,19 +324,24 @@ describe('Consent RBAC Utilities', () => {
 
   describe('getActingAsUserInfo', () => {
     it('should return acting-as user info when relationship is valid', async () => {
+      // PII/Non-PII DB Separation:
+      // - Core DB (db) returns relationship and { id } from users_core
+      // - PII DB (dbPII) returns { email, name } from users_pii
       const db = createMockDB({
         relationship: {
           relationship_type: 'parent_child',
           permission_level: 'full',
         },
+        user: { id: 'child-456' },
+      });
+      const dbPII = createMockPIIDB({
         user: {
-          id: 'child-456',
           email: 'child@example.com',
           name: 'Child User',
         },
       });
 
-      const result = await getActingAsUserInfo(db, 'parent-123', 'child-456');
+      const result = await getActingAsUserInfo(db, 'parent-123', 'child-456', dbPII);
 
       expect(result).toEqual({
         id: 'child-456',
@@ -335,17 +382,34 @@ describe('Consent RBAC Utilities', () => {
           relationship_type: 'guardian',
           permission_level: 'manage',
         },
+        user: { id: 'ward-456' },
+      });
+      const dbPII = createMockPIIDB({
         user: {
-          id: 'ward-456',
           email: 'ward@example.com',
           name: null,
         },
       });
 
-      const result = await getActingAsUserInfo(db, 'guardian-123', 'ward-456');
+      const result = await getActingAsUserInfo(db, 'guardian-123', 'ward-456', dbPII);
 
       expect(result?.name).toBeUndefined();
       expect(result?.email).toBe('ward@example.com');
+    });
+
+    it('should fallback to target ID for email when PII DB not provided', async () => {
+      const db = createMockDB({
+        relationship: {
+          relationship_type: 'delegate',
+          permission_level: 'read',
+        },
+        user: { id: 'target-456' },
+      });
+
+      const result = await getActingAsUserInfo(db, 'actor-123', 'target-456');
+
+      expect(result?.email).toBe('target-456'); // Fallback to target ID
+      expect(result?.name).toBeUndefined();
     });
   });
 
@@ -355,16 +419,21 @@ describe('Consent RBAC Utilities', () => {
 
   describe('getConsentUserInfo', () => {
     it('should return user info with all fields', async () => {
+      // PII/Non-PII DB Separation:
+      // - Core DB (db) returns { id } from users_core
+      // - PII DB (dbPII) returns { email, name, picture } from users_pii
       const db = createMockDB({
+        user: { id: 'user-123' },
+      });
+      const dbPII = createMockPIIDB({
         user: {
-          id: 'user-123',
           email: 'user@example.com',
           name: 'Test User',
           picture: 'https://example.com/avatar.jpg',
         },
       });
 
-      const result = await getConsentUserInfo(db, 'user-123');
+      const result = await getConsentUserInfo(db, 'user-123', dbPII);
 
       expect(result).toEqual({
         id: 'user-123',
@@ -376,15 +445,17 @@ describe('Consent RBAC Utilities', () => {
 
     it('should handle null name and picture', async () => {
       const db = createMockDB({
+        user: { id: 'user-123' },
+      });
+      const dbPII = createMockPIIDB({
         user: {
-          id: 'user-123',
           email: 'user@example.com',
           name: null,
           picture: null,
         },
       });
 
-      const result = await getConsentUserInfo(db, 'user-123');
+      const result = await getConsentUserInfo(db, 'user-123', dbPII);
 
       expect(result?.name).toBeUndefined();
       expect(result?.picture).toBeUndefined();
@@ -399,6 +470,22 @@ describe('Consent RBAC Utilities', () => {
       const result = await getConsentUserInfo(db, 'nonexistent-user');
 
       expect(result).toBeNull();
+    });
+
+    it('should fallback to subject ID for email when PII DB not provided', async () => {
+      const db = createMockDB({
+        user: { id: 'user-123' },
+      });
+
+      // Without dbPII, email falls back to subjectId
+      const result = await getConsentUserInfo(db, 'user-123');
+
+      expect(result).toEqual({
+        id: 'user-123',
+        email: 'user-123', // Fallback to subject ID
+        name: undefined,
+        picture: undefined,
+      });
     });
   });
 

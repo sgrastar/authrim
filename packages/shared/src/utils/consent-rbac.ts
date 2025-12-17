@@ -263,7 +263,8 @@ export async function validateActingAsRelationship(
 export async function getActingAsUserInfo(
   db: D1Database,
   actorId: string,
-  targetId: string
+  targetId: string,
+  dbPII?: D1Database
 ): Promise<ConsentActingAsInfo | null> {
   // First validate the relationship
   const validation = await validateActingAsRelationship(db, actorId, targetId);
@@ -272,20 +273,37 @@ export async function getActingAsUserInfo(
     return null;
   }
 
-  // Get target user info
-  const user = await db
-    .prepare(`SELECT id, email, name FROM users WHERE id = ?`)
+  // Get target user info (PII/Non-PII DB分離対応)
+  // Check Core DB for user existence
+  const userCore = await db
+    .prepare('SELECT id FROM users_core WHERE id = ? AND is_active = 1')
     .bind(targetId)
-    .first<{ id: string; email: string; name: string | null }>();
+    .first<{ id: string }>();
 
-  if (!user) {
+  if (!userCore) {
     return null;
   }
 
+  // Fetch PII from PII DB if available
+  let email: string = targetId; // Fallback
+  let name: string | undefined = undefined;
+
+  if (dbPII) {
+    const userPII = await dbPII
+      .prepare('SELECT email, name FROM users_pii WHERE id = ?')
+      .bind(targetId)
+      .first<{ email: string; name: string | null }>();
+
+    if (userPII) {
+      email = userPII.email;
+      name = userPII.name ?? undefined;
+    }
+  }
+
   return {
-    id: user.id,
-    name: user.name ?? undefined,
-    email: user.email,
+    id: userCore.id,
+    name,
+    email,
     relationship_type: validation.relationship_type,
     permission_level: validation.permission_level,
   };
@@ -297,29 +315,51 @@ export async function getActingAsUserInfo(
 
 /**
  * Get user info for consent screen display
+ * PII/Non-PII DB分離対応: Core DBとPII DBを分離
  *
- * @param db - D1 database
+ * @param db - D1 database (Core)
  * @param subjectId - User ID
+ * @param dbPII - D1 database (PII) - optional
  * @returns User info or null if not found
  */
 export async function getConsentUserInfo(
   db: D1Database,
-  subjectId: string
+  subjectId: string,
+  dbPII?: D1Database
 ): Promise<ConsentUserInfo | null> {
-  const result = await db
-    .prepare(`SELECT id, email, name, picture FROM users WHERE id = ?`)
+  // Check Core DB for user existence
+  const userCore = await db
+    .prepare('SELECT id FROM users_core WHERE id = ? AND is_active = 1')
     .bind(subjectId)
-    .first<{ id: string; email: string; name: string | null; picture: string | null }>();
+    .first<{ id: string }>();
 
-  if (!result) {
+  if (!userCore) {
     return null;
   }
 
+  // Fetch PII from PII DB if available
+  let email: string = subjectId; // Fallback
+  let name: string | undefined = undefined;
+  let picture: string | undefined = undefined;
+
+  if (dbPII) {
+    const userPII = await dbPII
+      .prepare('SELECT email, name, picture FROM users_pii WHERE id = ?')
+      .bind(subjectId)
+      .first<{ email: string; name: string | null; picture: string | null }>();
+
+    if (userPII) {
+      email = userPII.email;
+      name = userPII.name ?? undefined;
+      picture = userPII.picture ?? undefined;
+    }
+  }
+
   return {
-    id: result.id,
-    email: result.email,
-    name: result.name ?? undefined,
-    picture: result.picture ?? undefined,
+    id: userCore.id,
+    email,
+    name,
+    picture,
   };
 }
 

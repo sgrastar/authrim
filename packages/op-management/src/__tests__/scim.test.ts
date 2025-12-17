@@ -148,7 +148,25 @@ describe('SCIM 2.0 Endpoints', () => {
           return {
             bind: vi.fn().mockImplementation((...args: any[]) => ({
               first: vi.fn().mockImplementation(async () => {
-                // Handle SELECT queries
+                // Handle SELECT queries for users_core (PII/Non-PII separation)
+                if (sql.includes('FROM users_core WHERE id = ?')) {
+                  const user = mockUsers.get(args[0]);
+                  if (!user) return null;
+                  return {
+                    id: user.id,
+                    tenant_id: user.tenant_id || 'default',
+                    email_verified: user.email_verified,
+                    phone_number_verified: 0,
+                    is_active: user.active,
+                    user_type: 'end_user',
+                    external_id: user.external_id,
+                    pii_partition: 'default',
+                    pii_status: 'active',
+                    created_at: user.created_at,
+                    updated_at: user.updated_at,
+                  };
+                }
+                // Legacy: SELECT * FROM users WHERE id = ?
                 if (sql.includes('SELECT * FROM users WHERE id = ?')) {
                   return mockUsers.get(args[0]) || null;
                 }
@@ -167,7 +185,8 @@ describe('SCIM 2.0 Endpoints', () => {
                   return null;
                 }
                 if (sql.includes('SELECT COUNT(*) as total')) {
-                  if (sql.includes('users')) return { total: mockUsers.size };
+                  if (sql.includes('users') || sql.includes('users_core'))
+                    return { total: mockUsers.size };
                   if (sql.includes('roles')) return { total: mockGroups.size };
                 }
                 if (sql.includes('SELECT * FROM roles WHERE id = ?')) {
@@ -182,6 +201,23 @@ describe('SCIM 2.0 Endpoints', () => {
                 return null;
               }),
               all: vi.fn().mockImplementation(async () => {
+                // Handle SELECT queries for users_core list (PII/Non-PII separation)
+                if (sql.includes('FROM users_core')) {
+                  const results = Array.from(mockUsers.values()).map((user) => ({
+                    id: user.id,
+                    tenant_id: user.tenant_id || 'default',
+                    email_verified: user.email_verified,
+                    phone_number_verified: 0,
+                    is_active: user.active,
+                    user_type: 'end_user',
+                    external_id: user.external_id,
+                    pii_partition: 'default',
+                    pii_status: 'active',
+                    created_at: user.created_at,
+                    updated_at: user.updated_at,
+                  }));
+                  return { results };
+                }
                 if (sql.includes('SELECT * FROM users')) {
                   return { results: Array.from(mockUsers.values()) };
                 }
@@ -196,7 +232,25 @@ describe('SCIM 2.0 Endpoints', () => {
                 return { results: [] };
               }),
               run: vi.fn().mockImplementation(async () => {
-                // Handle INSERT/UPDATE/DELETE
+                // Handle INSERT into users_core (PII/Non-PII separation)
+                if (sql.includes('INSERT INTO users_core')) {
+                  // bind() order: id, tenant_id, email_verified, phone_number_verified, password_hash,
+                  // is_active, user_type, external_id, pii_partition, pii_status, created_at, updated_at
+                  const userId = args[0];
+                  // Timestamps are stored as seconds, convert to ISO string for mock compatibility
+                  const now = Date.now();
+                  mockUsers.set(userId, {
+                    id: userId,
+                    tenant_id: args[1],
+                    email_verified: args[2],
+                    active: args[5],
+                    external_id: args[7],
+                    created_at: new Date(now).toISOString(),
+                    updated_at: new Date(now).toISOString(),
+                  });
+                  return { success: true };
+                }
+                // Legacy: INSERT INTO users
                 if (sql.includes('INSERT INTO users')) {
                   // bind() order: userId, tenantId, email, email_verified, name, given_name, family_name,
                   // middle_name, nickname, preferred_username, profile, picture, website, gender,
@@ -219,6 +273,20 @@ describe('SCIM 2.0 Endpoints', () => {
                   });
                   return { success: true };
                 }
+                // Handle UPDATE users_core SET (PII/Non-PII separation)
+                if (sql.includes('UPDATE users_core SET')) {
+                  const userId = args[args.length - 1];
+                  const user = mockUsers.get(userId);
+                  if (user) {
+                    user.updated_at = new Date().toISOString();
+                    // Handle soft delete (is_active = 0)
+                    if (sql.includes('is_active = 0')) {
+                      user.active = 0;
+                    }
+                  }
+                  return { success: true };
+                }
+                // Legacy: UPDATE users SET
                 if (sql.includes('UPDATE users SET')) {
                   const userId = args[args.length - 1];
                   const user = mockUsers.get(userId);
@@ -228,6 +296,7 @@ describe('SCIM 2.0 Endpoints', () => {
                   }
                   return { success: true };
                 }
+                // DELETE FROM users (now soft delete via UPDATE users_core)
                 if (sql.includes('DELETE FROM users')) {
                   mockUsers.delete(args[0]);
                   return { success: true };
@@ -266,6 +335,123 @@ describe('SCIM 2.0 Endpoints', () => {
                   const members = mockUserRoles.get(roleId) || [];
                   members.push({ user_id: userId, email: mockUsers.get(userId)?.email });
                   mockUserRoles.set(roleId, members);
+                  return { success: true };
+                }
+                return { success: true };
+              }),
+            })),
+          };
+        }),
+      } as any,
+      // DB_PII mock for PII/Non-PII DB separation
+      DB_PII: {
+        prepare: vi.fn().mockImplementation((sql: string) => {
+          return {
+            bind: vi.fn().mockImplementation((...args: any[]) => ({
+              first: vi.fn().mockImplementation(async () => {
+                // Handle SELECT queries for PII data
+                if (sql.includes('SELECT') && sql.includes('FROM users_pii WHERE id = ?')) {
+                  const user = mockUsers.get(args[0]);
+                  if (!user) return null;
+                  return {
+                    id: user.id,
+                    email: user.email,
+                    name: user.name,
+                    given_name: user.given_name,
+                    family_name: user.family_name,
+                    middle_name: null,
+                    nickname: null,
+                    preferred_username: user.preferred_username,
+                    profile: null,
+                    picture: null,
+                    website: null,
+                    gender: null,
+                    birthdate: null,
+                    zoneinfo: null,
+                    locale: null,
+                    phone_number: null,
+                    address_formatted: null,
+                    address_street_address: null,
+                    address_locality: null,
+                    address_region: null,
+                    address_postal_code: null,
+                    address_country: null,
+                  };
+                }
+                // Handle email uniqueness check
+                if (sql.includes('SELECT id FROM users_pii WHERE') && sql.includes('email')) {
+                  const emailArg = sql.includes('tenant_id') ? args[1] : args[0];
+                  for (const user of mockUsers.values()) {
+                    if (user.email === emailArg) return { id: user.id };
+                  }
+                  return null;
+                }
+                return null;
+              }),
+              all: vi.fn().mockImplementation(async () => {
+                // Handle bulk SELECT for PII data
+                if (sql.includes('SELECT') && sql.includes('FROM users_pii WHERE id IN')) {
+                  const results = args
+                    .map((id: string) => {
+                      const user = mockUsers.get(id);
+                      if (!user) return null;
+                      return {
+                        id: user.id,
+                        email: user.email,
+                        name: user.name,
+                        given_name: user.given_name,
+                        family_name: user.family_name,
+                        middle_name: null,
+                        nickname: null,
+                        preferred_username: user.preferred_username,
+                      };
+                    })
+                    .filter(Boolean);
+                  return { results };
+                }
+                return { results: [] };
+              }),
+              run: vi.fn().mockImplementation(async () => {
+                // Handle INSERT/UPDATE/DELETE for PII
+                if (sql.includes('INSERT INTO users_pii')) {
+                  // bind() order for INSERT INTO users_pii:
+                  // id, tenant_id, email, name, given_name, family_name, middle_name,
+                  // nickname, preferred_username, profile, picture, website, gender,
+                  // birthdate, zoneinfo, locale, phone_number,
+                  // address_formatted, address_street_address, address_locality,
+                  // address_region, address_postal_code, address_country,
+                  // created_at, updated_at
+                  const userId = args[0];
+                  const user = mockUsers.get(userId);
+                  if (user) {
+                    // Update existing user with PII data
+                    user.email = args[2];
+                    user.name = args[3];
+                    user.given_name = args[4];
+                    user.family_name = args[5];
+                    user.preferred_username = args[8];
+                  }
+                  return { success: true };
+                }
+                if (sql.includes('UPDATE users_pii SET')) {
+                  // PII update - update mockUsers with new PII
+                  const userId = args[args.length - 1];
+                  const user = mockUsers.get(userId);
+                  if (user) {
+                    user.email = args[0];
+                    user.name = args[1];
+                    user.given_name = args[2];
+                    user.family_name = args[3];
+                    user.preferred_username = args[7];
+                  }
+                  return { success: true };
+                }
+                if (sql.includes('DELETE FROM users_pii')) {
+                  // PII delete
+                  return { success: true };
+                }
+                if (sql.includes('INSERT INTO users_pii_tombstone')) {
+                  // Tombstone insert for GDPR
                   return { success: true };
                 }
                 return { success: true };

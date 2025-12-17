@@ -793,7 +793,8 @@ class BaseDurableObject {
     }
     const token = authHeader.substring(7);
     const secret = this.env.DURABLE_OBJECT_SECRET;
-    return token === secret; // Constant-time comparison
+    // Constant-time comparison to prevent timing attacks
+    return !!secret && timingSafeEqual(token, secret);
   }
 
   async fetch(request: Request): Promise<Response> {

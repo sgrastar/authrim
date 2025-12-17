@@ -90,6 +90,13 @@ import {
   deleteRegionShards,
 } from './routes/settings/region-shards';
 import {
+  getPartitionSettings,
+  updatePartitionSettings,
+  testPartitionRouting,
+  getPartitionStats,
+  deletePartitionSettings,
+} from './routes/settings/pii-partitions';
+import {
   getRefreshTokenShardingConfig,
   updateRefreshTokenShardingConfig,
   getRefreshTokenShardingStats,
@@ -126,6 +133,13 @@ import {
   updateIntrospectionCacheConfigHandler,
   clearIntrospectionCacheConfigHandler,
 } from './routes/settings/introspection-cache';
+import {
+  listTombstones,
+  getTombstone,
+  getTombstoneStats,
+  cleanupTombstones,
+  deleteTombstone,
+} from './routes/settings/tombstones';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -329,6 +343,20 @@ app.delete('/api/admin/settings/revocation-shards', resetRevocationShards);
 app.get('/api/admin/settings/region-shards', getRegionShards);
 app.put('/api/admin/settings/region-shards', updateRegionShards);
 app.delete('/api/admin/settings/region-shards', deleteRegionShards);
+
+// Admin PII Partition endpoints
+app.get('/api/admin/settings/pii-partitions', getPartitionSettings);
+app.put('/api/admin/settings/pii-partitions', updatePartitionSettings);
+app.post('/api/admin/settings/pii-partitions/test', testPartitionRouting);
+app.get('/api/admin/settings/pii-partitions/stats', getPartitionStats);
+app.delete('/api/admin/settings/pii-partitions', deletePartitionSettings);
+
+// Admin Tombstone Management endpoints (GDPR Art.17 deletion tracking)
+app.get('/api/admin/tombstones', listTombstones);
+app.get('/api/admin/tombstones/stats', getTombstoneStats); // Must be before :id
+app.post('/api/admin/tombstones/cleanup', cleanupTombstones);
+app.get('/api/admin/tombstones/:id', getTombstone);
+app.delete('/api/admin/tombstones/:id', deleteTombstone);
 
 // Admin OAuth/OIDC Configuration endpoints
 app.get('/api/admin/settings/oauth-config', getOAuthConfig);

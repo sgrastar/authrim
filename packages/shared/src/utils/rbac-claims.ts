@@ -494,7 +494,7 @@ export async function resolveOrganizationInfo(
  */
 export async function resolveUserType(db: D1Database, subjectId: string): Promise<UserType> {
   const result = await db
-    .prepare('SELECT user_type FROM users WHERE id = ?')
+    .prepare('SELECT user_type FROM users_core WHERE id = ?')
     .bind(subjectId)
     .first<{ user_type: string }>();
 
