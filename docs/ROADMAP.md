@@ -295,9 +295,9 @@ Data separation architecture for GDPR/CCPA compliance:
 
 ---
 
-## Phase 8: Unified Policy Integration 🔜 PLANNED
+## Phase 8: Unified Policy Integration ✅ COMPLETE
 
-**Timeline:** 2026-Q1 to Q2
+**Timeline:** 2025-12 (Completed ahead of schedule)
 
 **Goal:** Integrate authentication and authorization into unified flow
 
@@ -309,23 +309,23 @@ Data separation architecture for GDPR/CCPA compliance:
 | Dynamic Role Assignment   | Assign roles based on upstream attributes      | ✅ Complete |
 | Just-in-Time Provisioning | Create users/roles on first login              | ✅ Complete |
 
-### 8.2 Token Embedding Model
+### 8.2 Token Embedding Model ✅ Complete
 
-| Feature               | Description                                 | Status     |
-| --------------------- | ------------------------------------------- | ---------- |
-| Permissions in Token  | Embed evaluated permissions in access token | 🔜 Planned |
-| Roles in Token        | Embed assigned roles in ID token            | 🔜 Planned |
-| Resource Permissions  | Per-resource permission embedding           | 🔜 Planned |
-| Custom Claims Builder | UI for custom token claims                  | 🔜 Planned |
+| Feature               | Description                                 | Status      |
+| --------------------- | ------------------------------------------- | ----------- |
+| Permissions in Token  | Embed evaluated permissions in access token | ✅ Complete |
+| Roles in Token        | Embed assigned roles in ID token            | ✅ Complete |
+| Resource Permissions  | Per-resource permission embedding           | ✅ Complete |
+| Custom Claims Builder | Token claim rules via Admin API             | ✅ Complete |
 
-### 8.3 Real-time Check API Model
+### 8.3 Real-time Check API Model ✅ Complete
 
-| Feature               | Description                               | Status     |
-| --------------------- | ----------------------------------------- | ---------- |
-| `/api/check` Endpoint | Real-time authorization check             | 🔜 Planned |
-| Batch Check API       | Check multiple permissions at once        | 🔜 Planned |
-| WebSocket Push        | Real-time permission change notifications | 🔜 Planned |
-| SDK Integration       | Client SDK for check API                  | 🔜 Planned |
+| Feature               | Description                               | Status      |
+| --------------------- | ----------------------------------------- | ----------- |
+| `/api/check` Endpoint | Real-time authorization check             | ✅ Complete |
+| Batch Check API       | Check multiple permissions at once        | ✅ Complete |
+| WebSocket Push        | Real-time permission change notifications | ✅ Complete |
+| SDK Integration       | Client SDK for check API                  | 🔜 Phase 10 |
 
 ### 8.4 Policy Admin Console → Moved to Phase 10
 
@@ -562,6 +562,7 @@ By 2027, Authrim will be:
 | 2025-12-18 | **Phase 7 ~95% Complete**: GDPR/CCPA compliant architecture complete, ready for Phase 8 |
 | 2025-12-18 | **8.4 Policy Admin Console → Moved to Phase 10**: Develop alongside SDK for consistent developer experience |
 | 2025-12-18 | **8.1 Policy ↔ Identity Integration ✅ Complete**: Rule Evaluator, JIT Provisioning with dynamic role assignment, org auto-join, email domain hash with key rotation, Admin APIs |
+| 2025-12-19 | **Phase 8 ✅ Complete**: Token Embedding Model (8.2), Real-time Check API (8.3) with UnifiedCheckService, Permission Parser, WebSocket Push via PermissionChangeHub DO, Check API Keys Admin API |
 
 ---
 
@@ -576,8 +577,8 @@ The following features are intentionally **not supported** due to architectural 
 
 ---
 
-> **Last Update:** 2025-12-18
+> **Last Update:** 2025-12-19
 >
-> **Current Status:** Phase 6 ✅ | Phase 7 ~95% (Identity Hub + PII Separation ✅) | Phase 11 ~15% (Load Testing ✅)
+> **Current Status:** Phase 6 ✅ | Phase 7 ~95% | Phase 8 ✅ (Unified Policy Integration) | Phase 11 ~15%
 >
 > **Authrim** - The Identity & Access Platform for the modern web.

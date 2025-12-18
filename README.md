@@ -119,8 +119,8 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 | ----- | ------------------------------ | ----------------- | ----------- |
 | 1-5   | Foundation, Core API, UI/UX    | 2025-11           | ✅ Complete |
 | 6     | Enterprise Features            | 2025-12           | ✅ Complete |
-| 7     | **Identity Hub Foundation**    | 2025-12 ~ 2026-Q1 | ⏳ ~90%     |
-| 8     | **Unified Policy Integration** | 2026-Q2           | 🔜 Planned  |
+| 7     | **Identity Hub Foundation**    | 2025-12 ~ 2026-Q1 | ⏳ ~95%     |
+| 8     | **Unified Policy Integration** | 2025-12           | ✅ Complete |
 | 9     | **Advanced Identity (VC/DID)** | 2026-Q3           | 🔜 Planned  |
 | 10    | SDK & API                      | 2026-Q4           | 🔜 Planned  |
 | 11    | Security & QA                  | 2025-12 ~         | ⏳ ~15%     |
@@ -248,11 +248,12 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 - Identity Linking & Stitching (unified user identity across sources) ✅
 - Durable Objects best practices (blockConcurrencyWhile, Tombstone pattern) ✅
 
-**Phase 8: Unified Policy Integration**
+**Phase 8: Unified Policy Integration** ✅ Complete
 
-- Token-embedded permissions (roles, flags, relationships in tokens)
-- Real-time Policy Check API (`/policy/check`)
-- Policy Admin Console (visual RBAC/ABAC/ReBAC editor)
+- Token-embedded permissions (roles, permissions in tokens) ✅
+- Real-time Check API (`/api/check`, `/api/check/batch`) ✅
+- WebSocket Push (real-time permission change notifications) ✅
+- Policy Admin Console → Moved to Phase 10 (SDK & API)
 
 **Phase 9: Advanced Identity**
 
