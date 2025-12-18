@@ -1,6 +1,6 @@
 # Admin Settings API
 
-**Last Updated**: 2025-12-15
+**Last Updated**: 2025-12-18
 
 Administrative API for dynamic system configuration. These settings can be modified at runtime without requiring redeployment.
 
@@ -11,6 +11,7 @@ Administrative API for dynamic system configuration. These settings can be modif
 The Settings API allows administrators to configure system behavior dynamically. All settings use a **hybrid approach**:
 
 **Configuration Priority**:
+
 1. **In-memory Cache** (10 second TTL) - For performance
 2. **KV Store** (AUTHRIM_CONFIG) - Dynamic override
 3. **Environment Variable** - Deployment-time default
@@ -43,6 +44,7 @@ X-Admin-Secret: {ADMIN_API_SECRET}
 Get all rate limit profile configurations.
 
 **Response**:
+
 ```json
 {
   "profiles": {
@@ -87,6 +89,7 @@ Get specific rate limit profile configuration.
 | profile | string | Profile name: `strict`, `moderate`, `lenient`, `loadTest` |
 
 **Response**:
+
 ```json
 {
   "profile": "loadTest",
@@ -119,6 +122,7 @@ Update rate limit profile settings.
 | profile | string | Profile name: `strict`, `moderate`, `lenient`, `loadTest` |
 
 **Request Body**:
+
 ```json
 {
   "maxRequests": 20000,
@@ -126,12 +130,13 @@ Update rate limit profile settings.
 }
 ```
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| maxRequests | number | No | 1 - 1,000,000 | Maximum requests per window |
-| windowSeconds | number | No | 1 - 86400 | Time window in seconds |
+| Field         | Type   | Required | Constraints   | Description                 |
+| ------------- | ------ | -------- | ------------- | --------------------------- |
+| maxRequests   | number | No       | 1 - 1,000,000 | Maximum requests per window |
+| windowSeconds | number | No       | 1 - 86400     | Time window in seconds      |
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -158,6 +163,7 @@ Reset rate limit profile to default values (removes KV overrides).
 | profile | string | Profile name: `strict`, `moderate`, `lenient`, `loadTest` |
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -174,12 +180,12 @@ Reset rate limit profile to default values (removes KV overrides).
 
 ## Rate Limit Profiles
 
-| Profile | Default maxRequests | Default windowSeconds | Usage |
-|---------|---------------------|----------------------|-------|
-| `strict` | 10 | 60 | Sensitive endpoints (token, PAR) |
-| `moderate` | 60 | 60 | Standard API endpoints |
-| `lenient` | 300 | 60 | Public endpoints (discovery, JWKS) |
-| `loadTest` | 10,000 | 60 | Load testing mode |
+| Profile    | Default maxRequests | Default windowSeconds | Usage                              |
+| ---------- | ------------------- | --------------------- | ---------------------------------- |
+| `strict`   | 10                  | 60                    | Sensitive endpoints (token, PAR)   |
+| `moderate` | 60                  | 60                    | Standard API endpoints             |
+| `lenient`  | 300                 | 60                    | Public endpoints (discovery, JWKS) |
+| `loadTest` | 10,000              | 60                    | Load testing mode                  |
 
 ---
 
@@ -190,6 +196,7 @@ Reset rate limit profile to default values (removes KV overrides).
 Get authorization code shard configuration.
 
 **Response**:
+
 ```json
 {
   "current": 64,
@@ -204,17 +211,19 @@ Get authorization code shard configuration.
 Update authorization code shard count.
 
 **Request Body**:
+
 ```json
 {
   "shards": 128
 }
 ```
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| shards | number | Yes | 1 - 256 | Number of authorization code shards |
+| Field  | Type   | Required | Constraints | Description                         |
+| ------ | ------ | -------- | ----------- | ----------------------------------- |
+| shards | number | Yes      | 1 - 256     | Number of authorization code shards |
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -275,6 +284,7 @@ Region sharding enables Durable Objects (SessionStore, AuthCodeStore, ChallengeS
 Get current region sharding configuration.
 
 **Response**:
+
 ```json
 {
   "currentGeneration": 1,
@@ -298,6 +308,7 @@ Get current region sharding configuration.
 Update region sharding configuration. If `totalShards` or `regionDistribution` changes, a new generation is created automatically.
 
 **Request Body**:
+
 ```json
 {
   "totalShards": 20,
@@ -307,10 +318,10 @@ Update region sharding configuration. If `totalShards` or `regionDistribution` c
 }
 ```
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| totalShards | number | Yes | >= active region count | Total number of shards |
-| regionDistribution | object | Yes | Must sum to 100 | Percentage allocation per region |
+| Field              | Type   | Required | Constraints            | Description                      |
+| ------------------ | ------ | -------- | ---------------------- | -------------------------------- |
+| totalShards        | number | Yes      | >= active region count | Total number of shards           |
+| regionDistribution | object | Yes      | Must sum to 100        | Percentage allocation per region |
 
 **Valid Region Keys**:
 | Key | Region | Cloudflare Location |
@@ -324,6 +335,7 @@ Update region sharding configuration. If `totalShards` or `regionDistribution` c
 | `me` | Middle East | Dubai |
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -344,6 +356,7 @@ Update region sharding configuration. If `totalShards` or `regionDistribution` c
 ```
 
 **Validation Rules**:
+
 - `regionDistribution` percentages must sum to exactly 100
 - `totalShards` must be >= number of active regions (percentage > 0)
 - Each region with percentage > 0 must get at least 1 shard after rounding
@@ -355,6 +368,7 @@ Update region sharding configuration. If `totalShards` or `regionDistribution` c
 Delete region sharding configuration (reset to defaults).
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -379,6 +393,7 @@ Delete region sharding configuration (reset to defaults).
 ### Region Sharding Examples
 
 **Example 1: US West Only (for k6 Cloud Portland)**
+
 ```bash
 curl -X PUT https://your-domain.com/api/admin/settings/region-shards \
   -H "X-Admin-Secret: YOUR_ADMIN_SECRET" \
@@ -387,6 +402,7 @@ curl -X PUT https://your-domain.com/api/admin/settings/region-shards \
 ```
 
 **Example 2: Multi-Region Distribution**
+
 ```bash
 curl -X PUT https://your-domain.com/api/admin/settings/region-shards \
   -H "X-Admin-Secret: YOUR_ADMIN_SECRET" \
@@ -395,6 +411,7 @@ curl -X PUT https://your-domain.com/api/admin/settings/region-shards \
 ```
 
 **Example 3: Using wrangler directly**
+
 ```bash
 # Set configuration (US West 100%)
 npx wrangler kv key put "region_shard_config:default" \
@@ -412,12 +429,12 @@ npx wrangler kv key delete "region_shard_config:default" \
 
 ### k6 Cloud Load Zone Mapping
 
-| k6 Cloud Load Zone | Cloudflare Region Key |
-|-------------------|----------------------|
-| `amazon:us:portland` | `wnam` |
-| `amazon:us:ashburn` | `enam` |
-| `amazon:jp:tokyo` | `apac` |
-| `amazon:eu:frankfurt` | `weur` |
+| k6 Cloud Load Zone    | Cloudflare Region Key |
+| --------------------- | --------------------- |
+| `amazon:us:portland`  | `wnam`                |
+| `amazon:us:ashburn`   | `enam`                |
+| `amazon:jp:tokyo`     | `apac`                |
+| `amazon:eu:frankfurt` | `weur`                |
 
 ---
 
@@ -430,6 +447,7 @@ Token Introspection (RFC 7662) のレスポンスをキャッシュする設定�
 Get current introspection cache configuration.
 
 **Response**:
+
 ```json
 {
   "settings": {
@@ -455,6 +473,7 @@ Get current introspection cache configuration.
 Update introspection cache settings.
 
 **Request Body**:
+
 ```json
 {
   "enabled": true,
@@ -462,12 +481,13 @@ Update introspection cache settings.
 }
 ```
 
-| Field | Type | Required | Constraints | Description |
-|-------|------|----------|-------------|-------------|
-| enabled | boolean | No | - | Enable/disable caching |
-| ttlSeconds | number | No | 1 - 3600 | Cache TTL in seconds |
+| Field      | Type    | Required | Constraints | Description            |
+| ---------- | ------- | -------- | ----------- | ---------------------- |
+| enabled    | boolean | No       | -           | Enable/disable caching |
+| ttlSeconds | number  | No       | 1 - 3600    | Cache TTL in seconds   |
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -484,6 +504,7 @@ Update introspection cache settings.
 Clear introspection cache settings override (revert to env/default).
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -535,10 +556,10 @@ Clear introspection cache settings override (revert to env/default).
 
 ### Environment Variables
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `INTROSPECTION_CACHE_ENABLED` | string | "true" | Enable caching ("true"/"false") |
-| `INTROSPECTION_CACHE_TTL_SECONDS` | string | "60" | Cache TTL in seconds |
+| Variable                          | Type   | Default | Description                     |
+| --------------------------------- | ------ | ------- | ------------------------------- |
+| `INTROSPECTION_CACHE_ENABLED`     | string | "true"  | Enable caching ("true"/"false") |
+| `INTROSPECTION_CACHE_TTL_SECONDS` | string | "60"    | Cache TTL in seconds            |
 
 ### CLI Examples
 
@@ -562,24 +583,386 @@ curl -X DELETE https://your-domain.com/api/admin/settings/introspection-cache \
 
 ---
 
+## PII Partition Settings
+
+PII (個人識別情報) データのパーティショニングを設定します。GDPR/CCPAなどのプライバシー規制対応やマルチテナント分離を実現します。
+
+### GET /api/admin/settings/pii-partitions
+
+Get current PII partition configuration.
+
+**Response**:
+
+```json
+{
+  "defaultPartition": "default",
+  "ipRoutingEnabled": false,
+  "availablePartitions": ["default", "eu", "tenant-acme"],
+  "tenantPartitions": {
+    "tenant-acme": "tenant-acme",
+    "tenant-contoso": "eu"
+  },
+  "partitionRules": [
+    {
+      "name": "enterprise-users",
+      "condition": {
+        "attribute": "plan",
+        "operator": "eq",
+        "value": "enterprise"
+      },
+      "targetPartition": "premium"
+    }
+  ]
+}
+```
+
+### PUT /api/admin/settings/pii-partitions
+
+Update PII partition settings.
+
+**Request Body**:
+
+```json
+{
+  "defaultPartition": "default",
+  "ipRoutingEnabled": false,
+  "availablePartitions": ["default", "eu"],
+  "tenantPartitions": {},
+  "partitionRules": []
+}
+```
+
+| Field               | Type     | Required | Description                                            |
+| ------------------- | -------- | -------- | ------------------------------------------------------ |
+| defaultPartition    | string   | No       | Default partition for new users                        |
+| ipRoutingEnabled    | boolean  | No       | Enable IP-based geo-routing (low trust, fallback only) |
+| availablePartitions | string[] | No       | List of available partition names                      |
+| tenantPartitions    | object   | No       | Tenant ID → Partition mapping                          |
+| partitionRules      | array    | No       | Attribute-based partition rules                        |
+
+**Response**:
+
+```json
+{
+  "success": true,
+  "settings": {
+    "defaultPartition": "default",
+    "ipRoutingEnabled": false,
+    "availablePartitions": ["default", "eu"],
+    "tenantPartitions": {},
+    "partitionRules": []
+  },
+  "note": "PII partition settings updated successfully."
+}
+```
+
+### POST /api/admin/settings/pii-partitions/test
+
+Test partition routing for given user attributes without actually creating a user.
+
+**Request Body**:
+
+```json
+{
+  "tenantId": "tenant-acme",
+  "userAttributes": {
+    "plan": "enterprise",
+    "declared_residence": "eu"
+  },
+  "cfCountry": "DE"
+}
+```
+
+| Field          | Type   | Required | Description                         |
+| -------------- | ------ | -------- | ----------------------------------- |
+| tenantId       | string | No       | Tenant ID to test                   |
+| userAttributes | object | No       | User attributes for rule evaluation |
+| cfCountry      | string | No       | Simulated Cloudflare country code   |
+
+**Response**:
+
+```json
+{
+  "resolvedPartition": "eu",
+  "reason": "declared_residence",
+  "evaluatedRules": [
+    {
+      "rule": "enterprise-users",
+      "matched": false,
+      "reason": "attribute 'plan' was 'standard', expected 'enterprise'"
+    }
+  ],
+  "tenantOverride": null,
+  "ipRoutingResult": "eu",
+  "note": "This is a simulation. No user was created."
+}
+```
+
+### GET /api/admin/settings/pii-partitions/stats
+
+Get PII partition distribution statistics.
+
+**Response**:
+
+```json
+{
+  "partitions": {
+    "default": {
+      "userCount": 15420,
+      "percentage": 85.3
+    },
+    "eu": {
+      "userCount": 2341,
+      "percentage": 12.9
+    },
+    "tenant-acme": {
+      "userCount": 324,
+      "percentage": 1.8
+    }
+  },
+  "totalUsers": 18085,
+  "statusBreakdown": {
+    "active": 17892,
+    "pending": 12,
+    "failed": 3,
+    "deleted": 178
+  }
+}
+```
+
+### Partition Routing Priority
+
+パーティション決定の優先順位（上が高い）:
+
+| Priority | Source             | Trust Level | Description                                 |
+| -------- | ------------------ | ----------- | ------------------------------------------- |
+| 1        | Tenant Policy      | High        | `tenantPartitions` で明示指定               |
+| 2        | declared_residence | High        | ユーザー自己申告の居住地                    |
+| 3        | Partition Rules    | Medium      | 属性ベースのルール評価                      |
+| 4        | IP Routing         | Low         | Cloudflare の国コード（フォールバックのみ） |
+| 5        | Default            | -           | `defaultPartition`                          |
+
+**⚠️ Note**: IP ベースルーティングは VPN/Proxy/Warp/ローミングにより信頼性が低いため、GDPR コンプライアンスの証拠としては使用できません。`declared_residence` またはテナントポリシーを優先してください。
+
+---
+
+## Tombstones (GDPR Deletion Tracking)
+
+GDPR Art.17「忘れられる権利」に基づくPII削除を追跡します。削除されたユーザーのメタデータのみを保持し、実際のPIIは保存しません。
+
+### GET /api/admin/tombstones
+
+List tombstone records with pagination.
+
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| limit | number | 20 | Maximum records per page (1-100) |
+| offset | number | 0 | Records to skip |
+| tenant_id | string | - | Filter by tenant ID |
+| deletion_reason | string | - | Filter by reason: `user_request`, `admin_action`, `inactivity` |
+| expired | boolean | - | Filter expired (`true`) or active (`false`) tombstones |
+
+**Response**:
+
+```json
+{
+  "tombstones": [
+    {
+      "id": "usr_abc123",
+      "tenant_id": "default",
+      "deleted_at": 1702644000000,
+      "deleted_by": "admin_usr_xyz789",
+      "deletion_reason": "user_request",
+      "retention_until": 1710420000000,
+      "is_expired": false
+    }
+  ],
+  "pagination": {
+    "total": 178,
+    "limit": 20,
+    "offset": 0,
+    "has_more": true
+  }
+}
+```
+
+### GET /api/admin/tombstones/:id
+
+Get specific tombstone details.
+
+**Path Parameters**:
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| id | string | Original user ID |
+
+**Response**:
+
+```json
+{
+  "id": "usr_abc123",
+  "tenant_id": "default",
+  "email_blind_index": "sha256:a1b2c3d4...",
+  "deleted_at": 1702644000000,
+  "deleted_by": "admin_usr_xyz789",
+  "deletion_reason": "user_request",
+  "retention_until": 1710420000000,
+  "deletion_metadata": {
+    "request_id": "req_123",
+    "ip_address": "192.168.1.1",
+    "user_agent": "Mozilla/5.0..."
+  },
+  "is_expired": false,
+  "days_until_expiry": 45
+}
+```
+
+### GET /api/admin/tombstones/stats
+
+Get tombstone statistics.
+
+**Response**:
+
+```json
+{
+  "total": 178,
+  "by_reason": {
+    "user_request": 120,
+    "admin_action": 45,
+    "inactivity": 13
+  },
+  "by_tenant": {
+    "default": 150,
+    "tenant-acme": 28
+  },
+  "expired": 23,
+  "expiring_soon": 12,
+  "average_retention_days": 67
+}
+```
+
+### POST /api/admin/tombstones/cleanup
+
+Cleanup expired tombstone records.
+
+**Request Body** (optional):
+
+```json
+{
+  "dry_run": false,
+  "before_timestamp": 1702644000000
+}
+```
+
+| Field            | Type    | Default | Description                                           |
+| ---------------- | ------- | ------- | ----------------------------------------------------- |
+| dry_run          | boolean | false   | Preview without deleting                              |
+| before_timestamp | number  | now     | Only cleanup tombstones expired before this timestamp |
+
+**Response**:
+
+```json
+{
+  "success": true,
+  "deleted_count": 23,
+  "dry_run": false,
+  "note": "Expired tombstones have been permanently deleted."
+}
+```
+
+Or with `dry_run: true`:
+
+```json
+{
+  "success": true,
+  "would_delete_count": 23,
+  "dry_run": true,
+  "sample_ids": ["usr_abc123", "usr_def456", "usr_ghi789"],
+  "note": "No records were deleted. This was a dry run."
+}
+```
+
+### Tombstone Lifecycle
+
+```
+User Deletion Request
+         ↓
+┌────────────────────────────────────────────┐
+│  1. Create Tombstone Record                │
+│     - Store deletion metadata              │
+│     - Set retention_until (default 90 days)│
+│     - Store email_blind_index for          │
+│       duplicate prevention                 │
+└────────────────────────────────────────────┘
+         ↓
+┌────────────────────────────────────────────┐
+│  2. Delete PII Data                        │
+│     - users_pii record                     │
+│     - linked_identities                    │
+│     - subject_identifiers                  │
+└────────────────────────────────────────────┘
+         ↓
+┌────────────────────────────────────────────┐
+│  3. Update Core DB                         │
+│     - Set pii_status = 'deleted'           │
+│     - Set is_active = false                │
+└────────────────────────────────────────────┘
+         ↓
+  [Retention Period: 90 days]
+         ↓
+┌────────────────────────────────────────────┐
+│  4. Cleanup (scheduled or manual)          │
+│     - Delete expired tombstone records     │
+│     - Optionally delete users_core record  │
+└────────────────────────────────────────────┘
+```
+
+### Re-registration Prevention
+
+Tombstone の `email_blind_index` により、削除されたメールアドレスでの再登録を retention 期間中は防止します。
+
+```
+Registration Attempt
+         ↓
+Check email_blind_index in all tombstones
+         ↓
+┌─── Found & Not Expired ───┐
+│                           │
+│  Return Error:            │
+│  "This email address was  │
+│   recently deleted and    │
+│   cannot be re-registered │
+│   until [date]"           │
+│                           │
+└───────────────────────────┘
+         │
+         ↓ (Not Found or Expired)
+┌───────────────────────────┐
+│  Continue Registration    │
+└───────────────────────────┘
+```
+
+---
+
 ## KV Key Reference
 
 All settings are stored in the `AUTHRIM_CONFIG` KV namespace with the following keys:
 
-| Setting | KV Key | Type | Default |
-|---------|--------|------|---------|
-| Code Shards | `code_shards` | number | 64 |
-| Session Shards | `session_shards` | number | 32 |
-| Rate Limit (strict) maxRequests | `rate_limit_strict_max_requests` | number | 10 |
-| Rate Limit (strict) windowSeconds | `rate_limit_strict_window_seconds` | number | 60 |
-| Rate Limit (moderate) maxRequests | `rate_limit_moderate_max_requests` | number | 60 |
-| Rate Limit (moderate) windowSeconds | `rate_limit_moderate_window_seconds` | number | 60 |
-| Rate Limit (lenient) maxRequests | `rate_limit_lenient_max_requests` | number | 300 |
-| Rate Limit (lenient) windowSeconds | `rate_limit_lenient_window_seconds` | number | 60 |
-| Rate Limit (loadTest) maxRequests | `rate_limit_loadtest_max_requests` | number | 10,000 |
-| Rate Limit (loadTest) windowSeconds | `rate_limit_loadtest_window_seconds` | number | 60 |
-| RBAC Cache TTL | `rbac_cache_ttl` | number | 600 |
-| Region Shard Config | `region_shard_config:default` | JSON | See below |
+| Setting                             | KV Key                               | Type   | Default   |
+| ----------------------------------- | ------------------------------------ | ------ | --------- |
+| Code Shards                         | `code_shards`                        | number | 64        |
+| Session Shards                      | `session_shards`                     | number | 32        |
+| Rate Limit (strict) maxRequests     | `rate_limit_strict_max_requests`     | number | 10        |
+| Rate Limit (strict) windowSeconds   | `rate_limit_strict_window_seconds`   | number | 60        |
+| Rate Limit (moderate) maxRequests   | `rate_limit_moderate_max_requests`   | number | 60        |
+| Rate Limit (moderate) windowSeconds | `rate_limit_moderate_window_seconds` | number | 60        |
+| Rate Limit (lenient) maxRequests    | `rate_limit_lenient_max_requests`    | number | 300       |
+| Rate Limit (lenient) windowSeconds  | `rate_limit_lenient_window_seconds`  | number | 60        |
+| Rate Limit (loadTest) maxRequests   | `rate_limit_loadtest_max_requests`   | number | 10,000    |
+| Rate Limit (loadTest) windowSeconds | `rate_limit_loadtest_window_seconds` | number | 60        |
+| RBAC Cache TTL                      | `rbac_cache_ttl`                     | number | 600       |
+| Region Shard Config                 | `region_shard_config:default`        | JSON   | See below |
+| PII Partition Config                | `pii_partition_config:{tenantId}`    | JSON   | See below |
 
 ### Region Shard Config Default
 
@@ -594,6 +977,18 @@ All settings are stored in the `AUTHRIM_CONFIG` KV namespace with the following 
   },
   "previousGenerations": [],
   "maxPreviousGenerations": 5
+}
+```
+
+### PII Partition Config Default
+
+```json
+{
+  "defaultPartition": "default",
+  "ipRoutingEnabled": false,
+  "availablePartitions": ["default"],
+  "tenantPartitions": {},
+  "partitionRules": []
 }
 ```
 

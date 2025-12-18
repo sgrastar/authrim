@@ -201,12 +201,19 @@ describe('Admin API Handlers', () => {
 
       await adminStatsHandler(c);
 
+      // D1Adapter returns null on failure after retries (graceful degradation)
+      // Handler converts null to zeros instead of throwing error
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          error: 'server_error',
-          error_description: 'Failed to retrieve statistics',
-        }),
-        500
+          stats: expect.objectContaining({
+            activeUsers: 0,
+            totalUsers: 0,
+            registeredClients: 0,
+            newUsersToday: 0,
+            loginsToday: 0,
+          }),
+          recentActivity: [],
+        })
       );
     });
   });
@@ -795,9 +802,9 @@ describe('Admin API Handlers', () => {
 
       await adminUserDeleteHandler(c);
 
-      // PII/Non-PII DB separation: User deletion is now soft delete (UPDATE users_core SET is_active = 0)
+      // PII/Non-PII DB separation: User deletion is now soft delete
       expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE users_core SET is_active = 0')
+        expect.stringContaining('UPDATE users_core SET is_active = ?')
       );
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -846,7 +853,7 @@ describe('Admin API Handlers', () => {
       // PII/Non-PII DB separation: User deletion is soft delete + cascade deletes for related data
       // Check for soft delete on users_core
       const updateCalls = (mockDB.prepare as any).mock.calls.filter((call: any[]) =>
-        call[0].includes('UPDATE users_core SET is_active = 0')
+        call[0].includes('UPDATE users_core SET is_active = ?')
       );
       expect(updateCalls.length).toBeGreaterThanOrEqual(1);
     });

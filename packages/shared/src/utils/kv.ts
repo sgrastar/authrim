@@ -14,6 +14,8 @@ import type { RefreshTokenData } from '../types/oidc';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
 import { createOAuthConfigManager } from './oauth-config';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
+import { D1Adapter } from '../db/adapters/d1-adapter';
+import type { DatabaseAdapter } from '../db/adapter';
 
 // ===== User Cache =====
 // Read-Through Cache for user metadata with invalidation hook support
@@ -109,16 +111,16 @@ export async function getCachedUser(env: Env, userId: string): Promise<CachedUse
  */
 async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | null> {
   // Query Core DB for existence and non-PII fields
-  const coreResult = await env.DB.prepare(
-    'SELECT id, email_verified, phone_number_verified, updated_at FROM users_core WHERE id = ? AND is_active = 1'
-  )
-    .bind(userId)
-    .first<{
-      id: string;
-      email_verified: number;
-      phone_number_verified: number;
-      updated_at: number;
-    }>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const coreResult = await coreAdapter.queryOne<{
+    id: string;
+    email_verified: number;
+    phone_number_verified: number;
+    updated_at: number;
+  }>(
+    'SELECT id, email_verified, phone_number_verified, updated_at FROM users_core WHERE id = ? AND is_active = 1',
+    [userId]
+  );
 
   if (!coreResult) {
     return null;
@@ -150,16 +152,38 @@ async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | nul
   } | null = null;
 
   if (env.DB_PII) {
-    piiResult = await env.DB_PII.prepare(
+    const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
+    piiResult = await piiAdapter.queryOne<{
+      email: string | null;
+      name: string | null;
+      family_name: string | null;
+      given_name: string | null;
+      middle_name: string | null;
+      nickname: string | null;
+      preferred_username: string | null;
+      picture: string | null;
+      locale: string | null;
+      phone_number: string | null;
+      address_formatted: string | null;
+      address_street_address: string | null;
+      address_locality: string | null;
+      address_region: string | null;
+      address_postal_code: string | null;
+      address_country: string | null;
+      birthdate: string | null;
+      gender: string | null;
+      profile: string | null;
+      website: string | null;
+      zoneinfo: string | null;
+    }>(
       `SELECT email, name, family_name, given_name, middle_name, nickname,
               preferred_username, picture, locale, phone_number,
               address_formatted, address_street_address, address_locality,
               address_region, address_postal_code, address_country,
               birthdate, gender, profile, website, zoneinfo
-       FROM users_pii WHERE id = ?`
-    )
-      .bind(userId)
-      .first();
+       FROM users_pii WHERE id = ?`,
+      [userId]
+    );
   }
 
   // Build address JSON from PII fields
@@ -306,15 +330,15 @@ async function getConsentFromD1(
   userId: string,
   clientId: string
 ): Promise<CachedConsent | null> {
-  const result = await env.DB.prepare(
-    'SELECT scope, granted_at, expires_at FROM oauth_client_consents WHERE user_id = ? AND client_id = ?'
-  )
-    .bind(userId, clientId)
-    .first<{
-      scope: string;
-      granted_at: number;
-      expires_at: number | null;
-    }>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.queryOne<{
+    scope: string;
+    granted_at: number;
+    expires_at: number | null;
+  }>(
+    'SELECT scope, granted_at, expires_at FROM oauth_client_consents WHERE user_id = ? AND client_id = ?',
+    [userId, clientId]
+  );
 
   if (!result) {
     return null;
@@ -482,45 +506,44 @@ export async function getClient(
   }
 
   // Step 2: Cache miss - fetch from D1 (source of truth)
-  const result = await env.DB.prepare('SELECT * FROM oauth_clients WHERE client_id = ?')
-    .bind(clientId)
-    .first<{
-      client_id: string;
-      client_secret: string | null;
-      client_name: string | null;
-      redirect_uris: string;
-      grant_types: string;
-      response_types: string;
-      scope: string | null;
-      token_endpoint_auth_method: string | null;
-      contacts: string | null;
-      logo_uri: string | null;
-      client_uri: string | null;
-      policy_uri: string | null;
-      tos_uri: string | null;
-      jwks_uri: string | null;
-      jwks: string | null;
-      subject_type: string | null;
-      sector_identifier_uri: string | null;
-      id_token_signed_response_alg: string | null;
-      userinfo_signed_response_alg: string | null;
-      request_object_signing_alg: string | null;
-      is_trusted: number | null;
-      skip_consent: number | null;
-      allow_claims_without_scope: number | null;
-      // RFC 8693: Token Exchange settings
-      token_exchange_allowed: number | null;
-      allowed_subject_token_clients: string | null;
-      allowed_token_exchange_resources: string | null;
-      delegation_mode: string | null;
-      // RFC 6749 Section 4.4: Client Credentials settings
-      client_credentials_allowed: number | null;
-      allowed_scopes: string | null;
-      default_scope: string | null;
-      default_audience: string | null;
-      created_at: number;
-      updated_at: number;
-    }>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.queryOne<{
+    client_id: string;
+    client_secret: string | null;
+    client_name: string | null;
+    redirect_uris: string;
+    grant_types: string;
+    response_types: string;
+    scope: string | null;
+    token_endpoint_auth_method: string | null;
+    contacts: string | null;
+    logo_uri: string | null;
+    client_uri: string | null;
+    policy_uri: string | null;
+    tos_uri: string | null;
+    jwks_uri: string | null;
+    jwks: string | null;
+    subject_type: string | null;
+    sector_identifier_uri: string | null;
+    id_token_signed_response_alg: string | null;
+    userinfo_signed_response_alg: string | null;
+    request_object_signing_alg: string | null;
+    is_trusted: number | null;
+    skip_consent: number | null;
+    allow_claims_without_scope: number | null;
+    // RFC 8693: Token Exchange settings
+    token_exchange_allowed: number | null;
+    allowed_subject_token_clients: string | null;
+    allowed_token_exchange_resources: string | null;
+    delegation_mode: string | null;
+    // RFC 6749 Section 4.4: Client Credentials settings
+    client_credentials_allowed: number | null;
+    allowed_scopes: string | null;
+    default_scope: string | null;
+    default_audience: string | null;
+    created_at: number;
+    updated_at: number;
+  }>('SELECT * FROM oauth_clients WHERE client_id = ?', [clientId]);
 
   if (!result) {
     return null;

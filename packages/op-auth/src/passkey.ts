@@ -13,6 +13,8 @@ import {
   getChallengeStoreByUserId,
   getTenantIdFromContext,
   generateId,
+  createAuthContextFromHono,
+  createPIIContextFromHono,
 } from '@authrim/shared';
 import {
   generateRegistrationOptions,
@@ -20,7 +22,9 @@ import {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
+
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
+
 import type {
   VerifiedRegistrationResponse,
   VerifiedAuthenticationResponse,
@@ -29,6 +33,9 @@ import type {
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/server';
+
+// WebAuthn transport types (matches PasskeyRepository.AuthenticatorTransport)
+type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
 
 // RP (Relying Party) configuration
 const RP_NAME = 'Authrim';
@@ -116,108 +123,93 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const rpID = originUrl.hostname;
     const origin = originHeader;
 
-    // Check if user exists
+    // Check if user exists via Repository pattern
     // PII/Non-PII DB分離: email検索はPII DB、ID検索はCore DBを使用
     const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
 
     if (userId) {
       // Search by userId: Core DB has the ID, PII DB has email/name
-      const userCore = await c.env.DB.prepare(
-        'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
-      )
-        .bind(userId)
-        .first();
+      const userCore = await authCtx.repositories.userCore.findById(userId);
 
-      if (userCore && c.env.DB_PII) {
-        const userPII = await c.env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
-          .bind(userId)
-          .first();
+      if (userCore && userCore.is_active && c.env.DB_PII) {
+        const piiCtx = createPIIContextFromHono(c, tenantId);
+        const userPII = await piiCtx.piiRepositories.userPII.findById(userId);
         if (userPII) {
           user = {
-            id: userCore.id as string,
-            email: userPII.email as string,
-            name: (userPII.name as string) || null,
+            id: userCore.id,
+            email: userPII.email,
+            name: userPII.name || null,
           };
         }
-      } else if (userCore) {
+      } else if (userCore && userCore.is_active) {
         // No PII DB - use Core only (email will be missing)
-        user = { id: userCore.id as string, email: '', name: null };
+        user = { id: userCore.id, email: '', name: null };
       }
     } else if (c.env.DB_PII) {
       // Search by email: PII DB first to get user id
-      const userPII = await c.env.DB_PII.prepare(
-        'SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND email = ?'
-      )
-        .bind(tenantId, email)
-        .first();
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(tenantId, email);
 
       if (userPII) {
         // Verify user is active in Core DB
-        const userCore = await c.env.DB.prepare(
-          'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
-        )
-          .bind(userPII.id)
-          .first();
-        if (userCore) {
+        const userCore = await authCtx.repositories.userCore.findById(userPII.id);
+        if (userCore && userCore.is_active) {
           user = {
-            id: userPII.id as string,
-            email: userPII.email as string,
-            name: (userPII.name as string) || null,
+            id: userPII.id,
+            email: userPII.email,
+            name: userPII.name || null,
           };
         }
       }
     }
 
-    // If user doesn't exist, create a new user in both Core and PII DBs
+    // If user doesn't exist, create a new user via Repository
     if (!user) {
       const newUserId = generateId();
-      const now = Math.floor(Date.now() / 1000);
+      const now = Date.now();
       const defaultName = name || null;
       const preferredUsername = email.split('@')[0];
 
-      // Step 1: Insert into users_core with pii_status='pending'
-      await c.env.DB.prepare(
-        `INSERT INTO users_core (
-          id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at
-        ) VALUES (?, ?, 0, 'end_user', 'default', 'pending', ?, ?)`
-      )
-        .bind(newUserId, tenantId, now, now)
-        .run();
+      // Step 1: Create user in Core DB with pii_status='pending'
+      await authCtx.repositories.userCore.createUser({
+        id: newUserId,
+        tenant_id: tenantId,
+        email_verified: false,
+        user_type: 'end_user',
+        pii_partition: 'default',
+        pii_status: 'pending',
+      });
 
-      // Step 2: Insert into users_pii (if DB_PII is configured)
+      // Step 2: Create user in PII DB (if DB_PII is configured)
       if (c.env.DB_PII) {
-        await c.env.DB_PII.prepare(
-          `INSERT INTO users_pii (
-            id, tenant_id, email, name, preferred_username, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)`
-        )
-          .bind(newUserId, tenantId, email, defaultName, preferredUsername, now, now)
-          .run();
+        const piiCtx = createPIIContextFromHono(c, tenantId);
+        await piiCtx.piiRepositories.userPII.createPII({
+          id: newUserId,
+          tenant_id: tenantId,
+          email,
+          name: defaultName,
+          preferred_username: preferredUsername,
+        });
 
         // Step 3: Update pii_status to 'active'
-        await c.env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
-          .bind('active', newUserId)
-          .run();
+        await authCtx.repositories.userCore.updatePIIStatus(newUserId, 'active');
       }
 
       user = { id: newUserId, email, name: defaultName || email.split('@')[0] };
     }
 
-    // Get user's existing passkeys
-    const existingPasskeys = await c.env.DB.prepare(
-      'SELECT credential_id, transports FROM passkeys WHERE user_id = ?'
-    )
-      .bind(user.id)
-      .all();
+    // Get user's existing passkeys via Repository
+    const existingPasskeys = await authCtx.repositories.passkey.findByUserId(user.id);
 
     const excludeCredentials: Array<{
       id: string;
       type: 'public-key';
-      transports?: string[];
-    }> = existingPasskeys.results
-      .map((pk: any) => {
-        const normalizedId = normalizeStoredCredentialId(pk.credential_id as string);
+      transports?: AuthenticatorTransport[];
+    }> = existingPasskeys
+      .map((pk) => {
+        const normalizedId = normalizeStoredCredentialId(pk.credential_id);
         if (!normalizedId) {
           return null;
         }
@@ -225,7 +217,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
         return {
           id: normalizedId,
           type: 'public-key' as const,
-          transports: pk.transports ? JSON.parse(pk.transports) : undefined,
+          transports: pk.transports.length > 0 ? pk.transports : undefined,
         };
       })
       .filter((cred): cred is NonNullable<typeof cred> => cred !== null);
@@ -427,48 +419,40 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       );
     }
 
-    // Step 2: Store passkey in D1
-    await c.env.DB.prepare(
-      `INSERT INTO passkeys (id, user_id, credential_id, public_key, counter, transports, device_name, created_at, last_used_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
-        passkeyId,
-        userId,
-        credentialIDBase64URL,
-        publicKeyBase64,
-        counter,
-        JSON.stringify(credential.response.transports || []),
-        deviceName || 'Unknown Device',
-        now,
-        now
-      )
-      .run();
+    // Step 2: Store passkey via Repository
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Step 3: Update user's email_verified status (Core DB only)
-    await c.env.DB.prepare('UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ?')
-      .bind(now, userId)
-      .run();
+    await authCtx.repositories.passkey.create({
+      id: passkeyId,
+      user_id: userId,
+      credential_id: credentialIDBase64URL,
+      public_key: publicKeyBase64,
+      counter,
+      transports: (credential.response.transports || []) as AuthenticatorTransport[],
+      device_name: deviceName || 'Unknown Device',
+    });
 
-    // Get updated user details from both Core and PII DBs
-    const updatedUserCore = await c.env.DB.prepare(
-      'SELECT id, email_verified, created_at, updated_at, last_login_at FROM users_core WHERE id = ?'
-    )
-      .bind(userId)
-      .first();
+    // Step 3: Update user's email_verified status via Adapter (direct SQL)
+    await authCtx.coreAdapter.execute(
+      'UPDATE users_core SET email_verified = 1, updated_at = ? WHERE id = ?',
+      [now, userId]
+    );
+
+    // Get updated user details via Repository
+    const updatedUserCore = await authCtx.repositories.userCore.findById(userId);
 
     let updatedUserPII: { email: string | null; name: string | null } = {
       email: null,
       name: null,
     };
     if (c.env.DB_PII) {
-      const piiResult = await c.env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
-        .bind(userId)
-        .first();
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiResult = await piiCtx.piiRepositories.userPII.findById(userId);
       if (piiResult) {
         updatedUserPII = {
-          email: piiResult.email as string,
-          name: (piiResult.name as string) || null,
+          email: piiResult.email,
+          name: piiResult.name || null,
         };
       }
     }
@@ -539,43 +523,34 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
     let allowCredentials: Array<{
       id: string;
       type: 'public-key';
-      transports?: string[];
+      transports?: AuthenticatorTransport[];
     }> = [];
 
-    // If email provided, get user's passkeys
+    // If email provided, get user's passkeys via Repository
     // PII/Non-PII DB分離: email検索はPII DBを使用
     if (email && c.env.DB_PII) {
       const tenantId = getTenantIdFromContext(c);
+      const authCtx = createAuthContextFromHono(c, tenantId);
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+
       // Search by email in PII DB
-      const userPII = await c.env.DB_PII.prepare(
-        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?'
-      )
-        .bind(tenantId, email)
-        .first();
+      const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(tenantId, email);
 
       // Verify user is active in Core DB
       let user: { id: string } | null = null;
       if (userPII) {
-        const userCore = await c.env.DB.prepare(
-          'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
-        )
-          .bind(userPII.id)
-          .first();
-        if (userCore) {
-          user = { id: userCore.id as string };
+        const userCore = await authCtx.repositories.userCore.findById(userPII.id);
+        if (userCore && userCore.is_active) {
+          user = { id: userCore.id };
         }
       }
 
       if (user) {
-        const userPasskeys = await c.env.DB.prepare(
-          'SELECT credential_id, transports FROM passkeys WHERE user_id = ?'
-        )
-          .bind(user.id)
-          .all();
+        const userPasskeys = await authCtx.repositories.passkey.findByUserId(user.id);
 
-        allowCredentials = userPasskeys.results
-          .map((pk: any) => {
-            const normalizedId = normalizeStoredCredentialId(pk.credential_id as string);
+        allowCredentials = userPasskeys
+          .map((pk) => {
+            const normalizedId = normalizeStoredCredentialId(pk.credential_id);
             if (!normalizedId) {
               return null;
             }
@@ -583,7 +558,7 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
             return {
               id: normalizedId,
               type: 'public-key' as const,
-              transports: pk.transports ? JSON.parse(pk.transports) : undefined,
+              transports: pk.transports.length > 0 ? pk.transports : undefined,
             };
           })
           .filter((cred): cred is NonNullable<typeof cred> => cred !== null);
@@ -675,26 +650,23 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     // Get credential ID from response
     const credentialIDBase64URL = toBase64URLString(credential.id);
 
-    // Look up passkey in database
-    let passkey = await c.env.DB.prepare(
-      'SELECT id, user_id, credential_id, public_key, counter FROM passkeys WHERE credential_id = ?'
-    )
-      .bind(credentialIDBase64URL)
-      .first();
+    // Look up passkey via Repository
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
+    let passkey = await authCtx.repositories.passkey.findByCredentialId(credentialIDBase64URL);
 
     // Legacy fallback: credential IDs used to be stored as standard base64
     if (!passkey && isoBase64URL.isBase64URL(credentialIDBase64URL)) {
       const legacyId = isoBase64URL.toBase64(credentialIDBase64URL);
-      passkey = await c.env.DB.prepare(
-        'SELECT id, user_id, credential_id, public_key, counter FROM passkeys WHERE credential_id = ?'
-      )
-        .bind(legacyId)
-        .first();
+      passkey = await authCtx.repositories.passkey.findByCredentialId(legacyId);
 
       if (passkey) {
-        await c.env.DB.prepare('UPDATE passkeys SET credential_id = ? WHERE id = ?')
-          .bind(credentialIDBase64URL, passkey.id)
-          .run();
+        // Update legacy credential ID to base64url format via Adapter
+        await authCtx.coreAdapter.execute('UPDATE passkeys SET credential_id = ? WHERE id = ?', [
+          credentialIDBase64URL,
+          passkey.id,
+        ]);
         passkey.credential_id = credentialIDBase64URL;
       }
     }
@@ -810,35 +782,29 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Step 2: Update counter and last_used_at in database
-    await c.env.DB.prepare('UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?')
-      .bind(authenticationInfo.newCounter, now, passkey.id)
-      .run();
+    // Step 2: Update counter and last_used_at via Repository
+    await authCtx.repositories.passkey.updateCounterAfterAuth(
+      passkey.id,
+      authenticationInfo.newCounter
+    );
 
-    // Step 3: Update user's last_login_at (Core DB only)
-    await c.env.DB.prepare('UPDATE users_core SET last_login_at = ? WHERE id = ?')
-      .bind(now, passkey.user_id)
-      .run();
+    // Step 3: Update user's last_login_at via Repository
+    await authCtx.repositories.userCore.updateLastLogin(passkey.user_id);
 
-    // Get user details from both Core and PII DBs
-    const userCore = await c.env.DB.prepare(
-      'SELECT id, email_verified, created_at, updated_at, last_login_at FROM users_core WHERE id = ?'
-    )
-      .bind(passkey.user_id)
-      .first();
+    // Get user details via Repository
+    const userCore = await authCtx.repositories.userCore.findById(passkey.user_id);
 
     let userPII: { email: string | null; name: string | null } = {
       email: null,
       name: null,
     };
     if (c.env.DB_PII) {
-      const piiResult = await c.env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
-        .bind(passkey.user_id)
-        .first();
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiResult = await piiCtx.piiRepositories.userPII.findById(passkey.user_id);
       if (piiResult) {
         userPII = {
-          email: piiResult.email as string,
-          name: (piiResult.name as string) || null,
+          email: piiResult.email,
+          name: piiResult.name || null,
         };
       }
     }

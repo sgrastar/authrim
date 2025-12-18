@@ -7,6 +7,7 @@
  */
 
 import type { Env } from '@authrim/shared';
+import { D1Adapter, type DatabaseAdapter } from '@authrim/shared';
 import type { LinkedIdentity } from '../types';
 import { getProvider } from './provider-store';
 import { updateLinkedIdentity, decryptLinkedIdentityTokens } from './linked-identity-store';
@@ -85,19 +86,19 @@ async function findExpiringTokens(
   threshold: number,
   limit: number
 ): Promise<LinkedIdentity[]> {
-  const result = await env.DB.prepare(
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.query<DbLinkedIdentity>(
     `SELECT * FROM linked_identities
      WHERE token_expires_at IS NOT NULL
        AND token_expires_at < ?
        AND token_expires_at > ?
        AND refresh_token_encrypted IS NOT NULL
      ORDER BY token_expires_at ASC
-     LIMIT ?`
-  )
-    .bind(threshold, Date.now(), limit)
-    .all<DbLinkedIdentity>();
+     LIMIT ?`,
+    [threshold, Date.now(), limit]
+  );
 
-  return (result.results || []).map(mapDbToLinkedIdentity);
+  return result.map(mapDbToLinkedIdentity);
 }
 
 /**

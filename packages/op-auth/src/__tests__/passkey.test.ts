@@ -47,6 +47,48 @@ const mockChallengeStoreStub = vi.hoisted(() => ({
   deleteChallengeRpc: vi.fn(),
 }));
 
+// Repository mocks for D1Adapter pattern - defined at module level for easy access
+const mockUserCoreRepository = {
+  findById: vi.fn().mockResolvedValue(null),
+  findByEmail: vi.fn().mockResolvedValue(null),
+  createUser: vi.fn().mockResolvedValue('new-user-id'),
+  update: vi.fn().mockResolvedValue(true),
+  updatePIIStatus: vi.fn().mockResolvedValue(true),
+  updateLastLogin: vi.fn().mockResolvedValue(true),
+};
+const mockUserPIIRepository = {
+  findByTenantAndEmail: vi.fn().mockResolvedValue(null),
+  findById: vi.fn().mockResolvedValue(null),
+  createPII: vi.fn().mockResolvedValue('new-user-id'),
+  update: vi.fn().mockResolvedValue(true),
+};
+const mockPasskeyRepository = {
+  findByUserId: vi.fn().mockResolvedValue([]),
+  findByCredentialId: vi.fn().mockResolvedValue(null),
+  create: vi.fn().mockResolvedValue('new-passkey-id'),
+  updateCounter: vi.fn().mockResolvedValue(true),
+  updateCounterAfterAuth: vi.fn().mockResolvedValue(true),
+};
+const mockCoreAdapter = {
+  execute: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+  queryOne: vi.fn().mockResolvedValue(null),
+  query: vi.fn().mockResolvedValue([]),
+};
+
+// Create context return values
+const mockAuthContext = {
+  repositories: {
+    userCore: mockUserCoreRepository,
+    passkey: mockPasskeyRepository,
+  },
+  coreAdapter: mockCoreAdapter,
+};
+const mockPIIContext = {
+  piiRepositories: {
+    userPII: mockUserPIIRepository,
+  },
+};
+
 // Mock @simplewebauthn/server
 vi.mock('@simplewebauthn/server', () => mockWebAuthnFunctions);
 
@@ -60,14 +102,17 @@ vi.mock('@authrim/shared', async () => {
   const actual = await vi.importActual('@authrim/shared');
   return {
     ...actual,
-    getSessionStoreForNewSession: vi.fn(() =>
+    getSessionStoreForNewSession: () =>
       Promise.resolve({
         stub: mockSessionStoreStub,
         sessionId: 'mock-session-id',
-      })
-    ),
-    getChallengeStoreByUserId: vi.fn(() => Promise.resolve(mockChallengeStoreStub)),
-    getChallengeStoreByChallengeId: vi.fn(() => Promise.resolve(mockChallengeStoreStub)),
+      }),
+    getChallengeStoreByUserId: () => Promise.resolve(mockChallengeStoreStub),
+    getChallengeStoreByChallengeId: () => Promise.resolve(mockChallengeStoreStub),
+    // Repository pattern mocks - return the pre-defined context objects
+    createAuthContextFromHono: () => mockAuthContext,
+    createPIIContextFromHono: () => mockPIIContext,
+    getTenantIdFromContext: () => 'default',
   };
 });
 
@@ -335,6 +380,20 @@ describe('Passkey Handlers', () => {
     mockIsoBase64URL.toBuffer.mockImplementation(() => new Uint8Array([1, 2, 3, 4]));
     mockIsoBase64URL.toBase64.mockImplementation((input: string) => input);
     mockIsoBase64URL.fromUTF8String.mockImplementation((input: string) => input);
+
+    // Reset Repository mocks to default values
+    mockUserCoreRepository.findById.mockReset().mockResolvedValue(null);
+    mockUserCoreRepository.createUser.mockReset().mockResolvedValue('new-user-id');
+    mockUserCoreRepository.updatePIIStatus.mockReset().mockResolvedValue(true);
+    mockUserCoreRepository.updateLastLogin.mockReset().mockResolvedValue(true);
+    mockUserPIIRepository.findByTenantAndEmail.mockReset().mockResolvedValue(null);
+    mockUserPIIRepository.findById.mockReset().mockResolvedValue(null);
+    mockUserPIIRepository.createPII.mockReset().mockResolvedValue('new-user-id');
+    mockPasskeyRepository.findByUserId.mockReset().mockResolvedValue([]);
+    mockPasskeyRepository.findByCredentialId.mockReset().mockResolvedValue(null);
+    mockPasskeyRepository.create.mockReset().mockResolvedValue('new-passkey-id');
+    mockPasskeyRepository.updateCounterAfterAuth.mockReset().mockResolvedValue(true);
+    mockCoreAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 1 });
   });
 
   afterEach(() => {
@@ -392,22 +451,24 @@ describe('Passkey Handlers', () => {
     });
 
     it('should generate registration options for new user', async () => {
-      const mockDB = createMockDB({
-        firstResult: null, // User doesn't exist
-        runResult: { success: true },
-        allResults: [], // No existing passkeys
-      });
+      // Setup: No existing user found via Repository
+      mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce(null);
 
       const c = createMockContext({
         body: { email: 'newuser@example.com' },
         headers: { origin: 'https://example.com' },
-        db: mockDB,
       });
 
       await passkeyRegisterOptionsHandler(c);
 
-      // Should create new user and return options
-      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO users'));
+      // Should create new user via Repository
+      expect(mockUserCoreRepository.createUser).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenant_id: 'default',
+          email_verified: false,
+          user_type: 'end_user',
+        })
+      );
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           options: expect.objectContaining({
@@ -419,39 +480,33 @@ describe('Passkey Handlers', () => {
     });
 
     it('should generate registration options for existing user', async () => {
-      // PII/Non-PII DB Separation:
+      // PII/Non-PII DB Separation via Repository:
       // 1. Query PII DB for user by email
       // 2. Query Core DB to verify user exists and is active
-      // 3. Query Core DB for existing passkeys
+      // 3. Query for existing passkeys via Repository
 
-      // Core DB: returns user exists check and no existing passkeys
-      const mockDB = createMockDB({
-        firstResult: { id: 'existing-user-id', is_active: 1 },
-        allResults: [], // No existing passkeys
+      // Setup: User found in PII DB
+      mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
+        id: 'existing-user-id',
+        email: 'existing@example.com',
+        name: 'Existing User',
       });
 
-      // PII DB: returns user found by email
-      const mockDBPII = createMockDB({
-        firstResult: {
-          id: 'existing-user-id',
-          email: 'existing@example.com',
-          name: 'Existing User',
-        },
+      // Setup: User is active in Core DB
+      mockUserCoreRepository.findById.mockResolvedValueOnce({
+        id: 'existing-user-id',
+        is_active: true,
       });
 
       const c = createMockContext({
         body: { email: 'existing@example.com' },
         headers: { origin: 'https://example.com' },
-        db: mockDB,
-        dbPII: mockDBPII,
       });
 
       await passkeyRegisterOptionsHandler(c);
 
-      // Should not create new user (no INSERT INTO users_core)
-      expect(mockDB.prepare).not.toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO users_core')
-      );
+      // Should not create new user via Repository
+      expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           options: expect.objectContaining({
@@ -463,15 +518,20 @@ describe('Passkey Handlers', () => {
     });
 
     it('should store challenge in ChallengeStore', async () => {
-      const mockDB = createMockDB({
-        firstResult: { id: 'user-123', email: 'test@example.com', name: 'Test' },
-        allResults: [],
+      // Setup: User found in PII DB and Core DB
+      mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
+        id: 'user-123',
+        email: 'test@example.com',
+        name: 'Test',
+      });
+      mockUserCoreRepository.findById.mockResolvedValueOnce({
+        id: 'user-123',
+        is_active: true,
       });
 
       const c = createMockContext({
         body: { email: 'test@example.com' },
         headers: { origin: 'https://example.com' },
-        db: mockDB,
       });
 
       await passkeyRegisterOptionsHandler(c);
@@ -481,26 +541,30 @@ describe('Passkey Handlers', () => {
     });
 
     it('should include existing passkeys as excludeCredentials', async () => {
-      const mockDB = createMockDB({
-        firstResult: { id: 'user-123', email: 'test@example.com', name: 'Test' },
-        allResults: [
-          { credential_id: 'existing-cred-1', transports: '["internal"]' },
-          { credential_id: 'existing-cred-2', transports: '["usb"]' },
-        ],
+      // Setup: User found in PII DB and Core DB with existing passkeys
+      mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
+        id: 'user-123',
+        email: 'test@example.com',
+        name: 'Test',
       });
+      mockUserCoreRepository.findById.mockResolvedValueOnce({
+        id: 'user-123',
+        is_active: true,
+      });
+      mockPasskeyRepository.findByUserId.mockResolvedValueOnce([
+        { credential_id: 'existing-cred-1', transports: ['internal'] },
+        { credential_id: 'existing-cred-2', transports: ['usb'] },
+      ]);
 
       const c = createMockContext({
         body: { email: 'test@example.com' },
         headers: { origin: 'https://example.com' },
-        db: mockDB,
       });
 
       await passkeyRegisterOptionsHandler(c);
 
-      // Should query for existing passkeys
-      expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT credential_id, transports FROM passkeys')
-      );
+      // Should query for existing passkeys via Repository
+      expect(mockPasskeyRepository.findByUserId).toHaveBeenCalledWith('user-123');
     });
   });
 
@@ -540,42 +604,43 @@ describe('Passkey Handlers', () => {
     });
 
     it('should include user credentials when email provided', async () => {
-      // PII/Non-PII DB Separation:
+      // PII/Non-PII DB Separation via Repository pattern:
       // 1. Query PII DB for user by email
       // 2. Query Core DB to verify user exists and is active
-      // 3. Query Core DB for user's passkeys
+      // 3. Query for user's passkeys via Repository
 
-      // Core DB: returns user exists check and passkeys
-      const mockDB = createMockDB({
-        firstResult: { id: 'user-123', is_active: 1 },
-        allResults: [
-          { credential_id: 'cred-1', transports: '["internal"]' },
-          { credential_id: 'cred-2', transports: '["usb"]' },
-        ],
+      // Setup: User found in PII DB
+      mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
+        id: 'user-123',
+        email: 'user@example.com',
       });
 
-      // PII DB: returns user found by email
-      const mockDBPII = createMockDB({
-        firstResult: { id: 'user-123', email: 'user@example.com' },
+      // Setup: User is active in Core DB
+      mockUserCoreRepository.findById.mockResolvedValueOnce({
+        id: 'user-123',
+        is_active: true,
       });
+
+      // Setup: User has existing passkeys
+      mockPasskeyRepository.findByUserId.mockResolvedValueOnce([
+        { credential_id: 'cred-1', transports: ['internal'] },
+        { credential_id: 'cred-2', transports: ['usb'] },
+      ]);
 
       const c = createMockContext({
         body: { email: 'user@example.com' },
         headers: { origin: 'https://example.com' },
-        db: mockDB,
-        dbPII: mockDBPII,
       });
 
       await passkeyLoginOptionsHandler(c);
 
-      // Should query PII DB for user by email
-      expect(mockDBPII.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT id FROM users_pii WHERE tenant_id')
+      // Should query PII DB for user by email via Repository
+      expect(mockUserPIIRepository.findByTenantAndEmail).toHaveBeenCalledWith(
+        'default',
+        'user@example.com'
       );
-      // Should query Core DB for passkeys
-      expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT credential_id, transports FROM passkeys')
-      );
+      // Should query for passkeys via Repository
+      expect(mockPasskeyRepository.findByUserId).toHaveBeenCalledWith('user-123');
     });
 
     it('should work without email (discoverable credential flow)', async () => {
@@ -657,9 +722,18 @@ describe('Passkey Handlers', () => {
         email: 'test@example.com',
       });
 
-      const mockDB = createMockDB({
-        firstResult: { id: 'user-123', email: 'test@example.com' },
-        runResult: { success: true },
+      // Setup: User found after registration via Repository
+      mockUserCoreRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        email_verified: true,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+        last_login_at: Date.now(),
+      });
+      mockUserPIIRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        email: 'test@example.com',
+        name: 'Test User',
       });
 
       const c = createMockContext({
@@ -676,15 +750,20 @@ describe('Passkey Handlers', () => {
           },
         },
         headers: { origin: 'https://example.com' },
-        db: mockDB,
         challengeStore,
         sessionStore,
       });
 
       await passkeyRegisterVerifyHandler(c);
 
-      // Should insert passkey into database
-      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO passkeys'));
+      // Should create passkey via Repository
+      expect(mockPasskeyRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 'user-123',
+          credential_id: expect.any(String),
+          public_key: expect.any(String),
+        })
+      );
     });
   });
 
@@ -736,41 +815,28 @@ describe('Passkey Handlers', () => {
         challenge: 'mock-auth-challenge-base64',
       });
 
-      const mockDB = createMockDB({
-        firstResult: {
-          id: 'passkey-1',
-          user_id: 'user-123',
-          credential_id: 'mock-cred-id',
-          public_key: 'YmFzZTY0LXB1YmxpYy1rZXk=', // Valid base64 encoded public key
-          counter: 0,
-        },
-        runResult: { success: true },
+      // Setup: Passkey found via Repository
+      mockPasskeyRepository.findByCredentialId.mockResolvedValue({
+        id: 'passkey-1',
+        user_id: 'user-123',
+        credential_id: 'mock-cred-id',
+        public_key: 'YmFzZTY0LXB1YmxpYy1rZXk=', // Valid base64 encoded public key
+        counter: 0,
+        transports: ['internal'],
       });
 
-      // Make subsequent first() calls return appropriate data
-      let callCount = 0;
-      (mockDB as any)._mockStatement.first.mockImplementation(() => {
-        callCount++;
-        if (callCount === 1) {
-          // First call: SELECT passkey by credential_id
-          return Promise.resolve({
-            id: 'passkey-1',
-            user_id: 'user-123',
-            credential_id: 'mock-cred-id',
-            public_key: 'YmFzZTY0LXB1YmxpYy1rZXk=',
-            counter: 0,
-          });
-        }
-        // Subsequent calls: SELECT user by id
-        return Promise.resolve({
-          id: 'user-123',
-          email: 'test@example.com',
-          name: 'Test User',
-          email_verified: 1,
-          created_at: Date.now(),
-          updated_at: Date.now(),
-          last_login_at: Date.now(),
-        });
+      // Setup: User found via Repository
+      mockUserCoreRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        email_verified: true,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+        last_login_at: Date.now(),
+      });
+      mockUserPIIRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        email: 'test@example.com',
+        name: 'Test User',
       });
 
       const c = createMockContext({
@@ -788,16 +854,16 @@ describe('Passkey Handlers', () => {
           },
         },
         headers: { origin: 'https://example.com' },
-        db: mockDB,
         challengeStore,
         sessionStore,
       });
 
       await passkeyLoginVerifyHandler(c);
 
-      // Should update counter
-      expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE passkeys SET counter')
+      // Should update counter via Repository
+      expect(mockPasskeyRepository.updateCounterAfterAuth).toHaveBeenCalledWith(
+        'passkey-1',
+        1 // newCounter from verifyAuthenticationResponse mock
       );
     });
   });

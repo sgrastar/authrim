@@ -14,6 +14,8 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import type { AdminAuthContext } from '../types/admin';
+import { D1Adapter } from '../db/adapters/d1-adapter';
+import type { DatabaseAdapter } from '../db/adapter';
 
 /**
  * Constant-time string comparison to prevent timing attacks
@@ -91,10 +93,14 @@ async function authenticateSession(
   sessionId: string
 ): Promise<AdminAuthContext | null> {
   try {
+    // Create adapter for database access
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+
     // Fetch session from D1 database
-    const session = await c.env.DB.prepare('SELECT user_id, expires_at FROM sessions WHERE id = ?')
-      .bind(sessionId)
-      .first<{ user_id: string; expires_at: number }>();
+    const session = await coreAdapter.queryOne<{ user_id: string; expires_at: number }>(
+      'SELECT user_id, expires_at FROM sessions WHERE id = ?',
+      [sessionId]
+    );
 
     if (!session) {
       return null;
@@ -111,18 +117,17 @@ async function authenticateSession(
     // Includes roles that are:
     // 1. Not expired (expires_at IS NULL or expires_at > now)
     // 2. Either global scope or any scope (we're checking admin access)
-    const rolesResult = await c.env.DB.prepare(
+    const rolesResult = await coreAdapter.query<{ name: string }>(
       `SELECT DISTINCT r.name
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
-       ORDER BY r.name ASC`
-    )
-      .bind(session.user_id, now)
-      .all<{ name: string }>();
+       ORDER BY r.name ASC`,
+      [session.user_id, now]
+    );
 
-    const roles = rolesResult.results.map((r) => r.name);
+    const roles = rolesResult.map((r) => r.name);
 
     // Check if user has any admin role (system_admin, distributor_admin, org_admin, or legacy 'admin')
     const adminRoles = ['system_admin', 'distributor_admin', 'org_admin', 'admin'];
@@ -134,14 +139,16 @@ async function authenticateSession(
 
     // Fetch user type and primary organization (Phase 1 RBAC extensions)
     // PII/Non-PII DB分離: users_coreを使用（user_typeはCore DBに格納）
-    const userInfo = await c.env.DB.prepare(
+    const userInfo = await coreAdapter.queryOne<{
+      user_type: string | null;
+      org_id: string | null;
+    }>(
       `SELECT u.user_type, m.org_id
        FROM users_core u
        LEFT JOIN subject_org_membership m ON u.id = m.subject_id AND m.is_primary = 1
-       WHERE u.id = ? AND u.is_active = 1`
-    )
-      .bind(session.user_id)
-      .first<{ user_type: string | null; org_id: string | null }>();
+       WHERE u.id = ? AND u.is_active = 1`,
+      [session.user_id]
+    );
 
     return {
       userId: session.user_id,

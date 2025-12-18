@@ -7,7 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env, CIBARequestMetadata } from '@authrim/shared';
-import { parseLoginHint } from '@authrim/shared';
+import { parseLoginHint, D1Adapter, type DatabaseAdapter } from '@authrim/shared';
 
 /**
  * GET /api/ciba/pending
@@ -104,11 +104,14 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Enrich with client metadata from database
-    const client = await c.env.DB.prepare(
-      'SELECT client_id, client_name, logo_uri FROM oauth_clients WHERE client_id = ?'
-    )
-      .bind(metadata.client_id)
-      .first();
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const client = await coreAdapter.queryOne<{
+      client_id: string;
+      client_name: string | null;
+      logo_uri: string | null;
+    }>('SELECT client_id, client_name, logo_uri FROM oauth_clients WHERE client_id = ?', [
+      metadata.client_id,
+    ]);
 
     const request = {
       auth_req_id: metadata.auth_req_id,

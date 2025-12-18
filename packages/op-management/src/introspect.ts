@@ -1,9 +1,16 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
 import type { IntrospectionResponse } from '@authrim/shared';
-import { validateClientId, timingSafeEqual } from '@authrim/shared';
-import { getRefreshToken, isTokenRevoked } from '@authrim/shared';
-import { parseToken, verifyToken } from '@authrim/shared';
+import {
+  validateClientId,
+  timingSafeEqual,
+  getRefreshToken,
+  isTokenRevoked,
+  parseToken,
+  verifyToken,
+  createAuthContextFromHono,
+  getTenantIdFromContext,
+} from '@authrim/shared';
 import { importJWK, decodeProtectedHeader, type CryptoKey, type JWK } from 'jose';
 import { getIntrospectionValidationSettings } from './routes/settings/introspection-validation';
 import { getIntrospectionCacheConfig } from './routes/settings/introspection-cache';
@@ -196,12 +203,10 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // RFC 7662 Section 2.1: The authorization server first validates the client credentials
-  // Fetch client to verify client_secret
-  const clientRecord = await c.env.DB.prepare(
-    'SELECT client_id, client_secret FROM oauth_clients WHERE client_id = ?'
-  )
-    .bind(client_id)
-    .first();
+  // Fetch client to verify client_secret via Repository
+  const tenantId = getTenantIdFromContext(c);
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const clientRecord = await authCtx.repositories.client.findByClientId(client_id);
 
   if (!clientRecord) {
     return c.json(
@@ -214,7 +219,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Verify client_secret using timing-safe comparison to prevent timing attacks
-  if (!client_secret || !timingSafeEqual(clientRecord.client_secret as string, client_secret)) {
+  if (!client_secret || !timingSafeEqual(clientRecord.client_secret ?? '', client_secret)) {
     return c.json(
       {
         error: 'invalid_client',
@@ -405,13 +410,11 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // 2. Client ID existence validation
+    // 2. Client ID existence validation via Repository
     // Optimization: Skip D1 query if tokenClientId matches the already-authenticated client_id
     // (client_id was already verified in the client authentication step above)
     if (tokenClientId && tokenClientId !== client_id) {
-      const clientExists = await c.env.DB.prepare('SELECT 1 FROM oauth_clients WHERE client_id = ?')
-        .bind(tokenClientId)
-        .first();
+      const clientExists = await authCtx.repositories.client.findByClientId(tokenClientId);
 
       if (!clientExists) {
         // Client ID in token does not exist in database

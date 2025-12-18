@@ -21,43 +21,92 @@
  * @see https://datatracker.ietf.org/doc/html/rfc7644
  */
 
-import { Hono } from 'hono';
+import { Hono, Context } from 'hono';
 import type { Env } from '@authrim/shared/types/env';
-import { invalidateUserCache, getTenantIdFromContext } from '@authrim/shared';
-import { generateId } from '@authrim/shared/utils/id';
-import { hashPassword } from '@authrim/shared/utils/crypto';
+import {
+  invalidateUserCache,
+  getTenantIdFromContext,
+  createAuthContextFromHono,
+  createPIIContextFromHono,
+} from '@authrim/shared';
+import { D1Adapter, type DatabaseAdapter, generateId, hashPassword } from '@authrim/shared';
 
-// =============================================================================
-// PII/Non-PII DB分離: Helper Functions
-// =============================================================================
+/**
+ * Create database adapters from Hono context
+ */
+function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
+  coreAdapter: DatabaseAdapter;
+  piiAdapter: DatabaseAdapter | null;
+} {
+  const coreAdapter = new D1Adapter({ db: c.env.DB });
+  const piiAdapter = c.env.DB_PII ? new D1Adapter({ db: c.env.DB_PII }) : null;
+  return { coreAdapter, piiAdapter };
+}
 
 /**
  * Fetch user from both Core and PII databases and merge into InternalUser
  */
-async function fetchUserWithPII(env: Env, userId: string): Promise<InternalUser | null> {
-  // Query Core DB
-  const userCore = await env.DB.prepare(
+async function fetchUserWithPII(
+  coreAdapter: DatabaseAdapter,
+  piiAdapter: DatabaseAdapter | null,
+  userId: string
+): Promise<InternalUser | null> {
+  // Query Core DB via Adapter
+  const userCore = await coreAdapter.queryOne<{
+    id: string;
+    tenant_id: string;
+    email_verified: number;
+    phone_number_verified: number;
+    password_hash: string | null;
+    is_active: number;
+    user_type: string;
+    external_id: string | null;
+    pii_partition: string;
+    created_at: string;
+    updated_at: string;
+  }>(
     `SELECT id, tenant_id, email_verified, phone_number_verified, password_hash,
             is_active, user_type, external_id, pii_partition, created_at, updated_at
-     FROM users_core WHERE id = ?`
-  )
-    .bind(userId)
-    .first();
+     FROM users_core WHERE id = ?`,
+    [userId]
+  );
 
   if (!userCore) return null;
 
-  // Query PII DB (if configured)
-  let userPII: any = null;
-  if (env.DB_PII) {
-    userPII = await env.DB_PII.prepare(
+  // Query PII DB (if configured) via Adapter
+  let userPII: {
+    email: string;
+    name: string | null;
+    given_name: string | null;
+    family_name: string | null;
+    middle_name: string | null;
+    nickname: string | null;
+    preferred_username: string | null;
+    profile: string | null;
+    picture: string | null;
+    website: string | null;
+    gender: string | null;
+    birthdate: string | null;
+    zoneinfo: string | null;
+    locale: string | null;
+    phone_number: string | null;
+    address_formatted: string | null;
+    address_street_address: string | null;
+    address_locality: string | null;
+    address_region: string | null;
+    address_postal_code: string | null;
+    address_country: string | null;
+  } | null = null;
+
+  if (piiAdapter) {
+    userPII = await piiAdapter.queryOne(
       `SELECT email, name, given_name, family_name, middle_name, nickname,
               preferred_username, profile, picture, website, gender, birthdate,
               zoneinfo, locale, phone_number, address_formatted, address_street_address,
               address_locality, address_region, address_postal_code, address_country
-       FROM users_pii WHERE id = ?`
-    )
-      .bind(userId)
-      .first();
+       FROM users_pii WHERE id = ?`,
+      [userId]
+    );
   }
 
   // Merge into InternalUser format
@@ -103,26 +152,28 @@ async function fetchUserWithPII(env: Env, userId: string): Promise<InternalUser 
 /**
  * Fetch multiple users with PII for list operations
  */
-async function fetchUsersWithPII(env: Env, coreUsers: any[]): Promise<InternalUser[]> {
+async function fetchUsersWithPII(
+  piiAdapter: DatabaseAdapter | null,
+  coreUsers: any[]
+): Promise<InternalUser[]> {
   if (coreUsers.length === 0) return [];
 
-  // Query PII for all users
+  // Query PII for all users via Adapter
   const userIds = coreUsers.map((u) => u.id);
-  let piiMap = new Map<string, any>();
+  const piiMap = new Map<string, any>();
 
-  if (env.DB_PII && userIds.length > 0) {
+  if (piiAdapter && userIds.length > 0) {
     const placeholders = userIds.map(() => '?').join(',');
-    const piiResult = await env.DB_PII.prepare(
+    const piiResults = await piiAdapter.query<{ id: string; [key: string]: any }>(
       `SELECT id, email, name, given_name, family_name, middle_name, nickname,
               preferred_username, profile, picture, website, gender, birthdate,
               zoneinfo, locale, phone_number, address_formatted, address_street_address,
               address_locality, address_region, address_postal_code, address_country
-       FROM users_pii WHERE id IN (${placeholders})`
-    )
-      .bind(...userIds)
-      .all();
+       FROM users_pii WHERE id IN (${placeholders})`,
+      userIds
+    );
 
-    for (const pii of piiResult.results as any[]) {
+    for (const pii of piiResults) {
       piiMap.set(pii.id, pii);
     }
   }
@@ -175,37 +226,38 @@ async function fetchUsersWithPII(env: Env, coreUsers: any[]): Promise<InternalUs
  * PII/Non-PII DB分離: JOINできないため、user_rolesとPII DBを別々にクエリ
  */
 async function fetchGroupMembersWithPII(
-  env: Env,
+  coreAdapter: DatabaseAdapter,
+  piiAdapter: DatabaseAdapter | null,
   roleId: string
 ): Promise<{ user_id: string; email: string }[]> {
-  // Get user_ids from user_roles (Core DB)
-  const roleMembers = await env.DB.prepare('SELECT user_id FROM user_roles WHERE role_id = ?')
-    .bind(roleId)
-    .all<{ user_id: string }>();
+  // Get user_ids from user_roles (Core DB) via Adapter
+  const roleMembers = await coreAdapter.query<{ user_id: string }>(
+    'SELECT user_id FROM user_roles WHERE role_id = ?',
+    [roleId]
+  );
 
-  if (roleMembers.results.length === 0) {
+  if (roleMembers.length === 0) {
     return [];
   }
 
-  const userIds = roleMembers.results.map((r) => r.user_id);
+  const userIds = roleMembers.map((r) => r.user_id);
   const emailMap = new Map<string, string>();
 
-  // Fetch emails from PII DB
-  if (env.DB_PII && userIds.length > 0) {
+  // Fetch emails from PII DB via Adapter
+  if (piiAdapter && userIds.length > 0) {
     const placeholders = userIds.map(() => '?').join(',');
-    const piiResult = await env.DB_PII.prepare(
-      `SELECT id, email FROM users_pii WHERE id IN (${placeholders})`
-    )
-      .bind(...userIds)
-      .all<{ id: string; email: string }>();
+    const piiResults = await piiAdapter.query<{ id: string; email: string }>(
+      `SELECT id, email FROM users_pii WHERE id IN (${placeholders})`,
+      userIds
+    );
 
-    for (const pii of piiResult.results) {
+    for (const pii of piiResults) {
       emailMap.set(pii.id, pii.email);
     }
   }
 
   // Merge results
-  return roleMembers.results.map((r) => ({
+  return roleMembers.map((r) => ({
     user_id: r.user_id,
     email: emailMap.get(r.user_id) || '',
   }));
@@ -355,6 +407,7 @@ app.get('/Users', async (c) => {
     const tenantId = getTenantIdFromContext(c);
     const params = parseQueryParams(c);
     const baseUrl = getBaseUrl(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Pagination defaults
     const startIndex = params.startIndex || 1; // SCIM uses 1-based indexing
@@ -386,8 +439,8 @@ app.get('/Users', async (c) => {
         const filterStr = params.filter.toLowerCase();
         const hasPiiFilter = piiFields.some((f) => filterStr.includes(f.toLowerCase()));
 
-        if (hasPiiFilter && c.env.DB_PII) {
-          // Query PII DB first to get matching user IDs
+        if (hasPiiFilter && piiAdapter) {
+          // Query PII DB first to get matching user IDs via Adapter
           const piiAttributeMap: Record<string, string> = {
             userName: 'preferred_username',
             'name.givenName': 'given_name',
@@ -396,10 +449,11 @@ app.get('/Users', async (c) => {
           };
           const { sql: whereSql, params: whereParams } = filterToSql(filterAst, piiAttributeMap);
           const piiSql = `SELECT id FROM users_pii WHERE tenant_id = ? AND ${whereSql}`;
-          const piiResult = await c.env.DB_PII.prepare(piiSql)
-            .bind(tenantId, ...whereParams)
-            .all();
-          const matchingIds = piiResult.results.map((r: any) => r.id);
+          const piiResults = await piiAdapter.query<{ id: string }>(piiSql, [
+            tenantId,
+            ...whereParams,
+          ]);
+          const matchingIds = piiResults.map((r) => r.id);
 
           if (matchingIds.length === 0) {
             // No matches found - return empty result
@@ -437,11 +491,9 @@ app.get('/Users', async (c) => {
       }
     }
 
-    // Get total count
+    // Get total count via Adapter
     const countQuery = sql.replace(/SELECT .* FROM/, 'SELECT COUNT(*) as total FROM');
-    const totalResult = await c.env.DB.prepare(countQuery)
-      .bind(...sqlParams)
-      .first<{ total: number }>();
+    const totalResult = await coreAdapter.queryOne<{ total: number }>(countQuery, sqlParams);
     const totalResults = totalResult?.total || 0;
 
     // Apply sorting with whitelist validation (prevents SQL injection)
@@ -468,13 +520,11 @@ app.get('/Users', async (c) => {
     sql += ` LIMIT ? OFFSET ?`;
     sqlParams.push(count, offset);
 
-    // Execute query against Core DB
-    const coreResult = await c.env.DB.prepare(sql)
-      .bind(...sqlParams)
-      .all();
+    // Execute query against Core DB via Adapter
+    const coreResults = await coreAdapter.query(sql, sqlParams);
 
     // Fetch PII data and merge into InternalUser format
-    const users = await fetchUsersWithPII(c.env, coreResult.results as any[]);
+    const users = await fetchUsersWithPII(piiAdapter, coreResults);
 
     // Convert to SCIM format
     const scimUsers = users.map((user) => userToScim(user, { baseUrl, includeGroups: false }));
@@ -502,9 +552,10 @@ app.get('/Users/:id', async (c) => {
   try {
     const userId = c.req.param('id');
     const baseUrl = getBaseUrl(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
-    // Fetch user from both Core and PII DBs
-    const user = await fetchUserWithPII(c.env, userId);
+    // Fetch user from both Core and PII DBs via Adapter
+    const user = await fetchUserWithPII(coreAdapter, piiAdapter, userId);
 
     if (!user) {
       return scimError(c, 404, `User ${userId} not found`);
@@ -539,6 +590,7 @@ app.post('/Users', async (c) => {
   try {
     const scimUser = await c.req.json<Partial<ScimUser>>();
     const baseUrl = getBaseUrl(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Validate required fields
     const validation = validateScimUser(scimUser);
@@ -546,17 +598,16 @@ app.post('/Users', async (c) => {
       return scimError(c, 400, validation.errors.join(', '), 'invalidValue');
     }
 
-    // Check for duplicate userName or email in PII DB
+    // Check for duplicate userName or email in PII DB via Adapter
     const tenantId = getTenantIdFromContext(c);
     const primaryEmail =
       scimUser.emails?.find((e) => e.primary)?.value || scimUser.emails?.[0]?.value;
 
-    if (primaryEmail && c.env.DB_PII) {
-      const existing = await c.env.DB_PII.prepare(
-        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?'
-      )
-        .bind(tenantId, primaryEmail)
-        .first();
+    if (primaryEmail && piiAdapter) {
+      const existing = await piiAdapter.queryOne<{ id: string }>(
+        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
+        [tenantId, primaryEmail]
+      );
 
       if (existing) {
         return scimError(c, 409, 'User with this email already exists', 'uniqueness');
@@ -594,15 +645,14 @@ app.post('/Users', async (c) => {
       }
     }
 
-    // Step 1: Insert into users_core with pii_status='pending'
-    await c.env.DB.prepare(
+    // Step 1: Insert into users_core with pii_status='pending' via Adapter
+    await coreAdapter.execute(
       `INSERT INTO users_core (
         id, tenant_id, email_verified, phone_number_verified, password_hash,
         is_active, user_type, external_id, pii_partition, pii_status,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'end_user', ?, 'default', 'pending', ?, ?)`
-    )
-      .bind(
+      ) VALUES (?, ?, ?, ?, ?, ?, 'end_user', ?, 'default', 'pending', ?, ?)`,
+      [
         userId,
         tenantId,
         internalUser.email_verified,
@@ -611,13 +661,13 @@ app.post('/Users', async (c) => {
         internalUser.active,
         internalUser.external_id,
         nowUnix,
-        nowUnix
-      )
-      .run();
+        nowUnix,
+      ]
+    );
 
-    // Step 2: Insert into users_pii (if DB_PII is configured)
-    if (c.env.DB_PII) {
-      await c.env.DB_PII.prepare(
+    // Step 2: Insert into users_pii (if PII adapter is configured) via Adapter
+    if (piiAdapter) {
+      await piiAdapter.execute(
         `INSERT INTO users_pii (
           id, tenant_id, email, name, given_name, family_name, middle_name,
           nickname, preferred_username, profile, picture, website, gender,
@@ -625,9 +675,8 @@ app.post('/Users', async (c) => {
           address_formatted, address_street_address, address_locality,
           address_region, address_postal_code, address_country,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
           userId,
           tenantId,
           internalUser.email,
@@ -652,18 +701,19 @@ app.post('/Users', async (c) => {
           addressParts.postal_code || null,
           addressParts.country || null,
           nowUnix,
-          nowUnix
-        )
-        .run();
+          nowUnix,
+        ]
+      );
 
-      // Step 3: Update pii_status to 'active'
-      await c.env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
-        .bind('active', userId)
-        .run();
+      // Step 3: Update pii_status to 'active' via Adapter
+      await coreAdapter.execute('UPDATE users_core SET pii_status = ? WHERE id = ?', [
+        'active',
+        userId,
+      ]);
     }
 
-    // Fetch created user from both DBs
-    const createdUser = await fetchUserWithPII(c.env, userId);
+    // Fetch created user from both DBs via Adapter
+    const createdUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId);
 
     if (!createdUser) {
       return scimError(c, 500, 'Failed to create user');
@@ -690,6 +740,7 @@ app.put('/Users/:id', async (c) => {
     const userId = c.req.param('id');
     const scimUser = await c.req.json<Partial<ScimUser>>();
     const baseUrl = getBaseUrl(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Validate required fields
     const validation = validateScimUser(scimUser);
@@ -698,7 +749,7 @@ app.put('/Users/:id', async (c) => {
     }
 
     // Check if user exists - fetch from both DBs
-    const existingUser = await fetchUserWithPII(c.env, userId);
+    const existingUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId);
 
     if (!existingUser) {
       return scimError(c, 404, `User ${userId} not found`);
@@ -735,24 +786,17 @@ app.put('/Users/:id', async (c) => {
     }
 
     // Update Core DB (non-PII fields)
-    await c.env.DB.prepare(
+    await coreAdapter.execute(
       `UPDATE users_core SET
         is_active = ?, external_id = ?, updated_at = ?,
         password_hash = COALESCE(?, password_hash)
-       WHERE id = ?`
-    )
-      .bind(
-        internalUser.active,
-        internalUser.external_id,
-        nowUnix,
-        internalUser.password_hash,
-        userId
-      )
-      .run();
+       WHERE id = ?`,
+      [internalUser.active, internalUser.external_id, nowUnix, internalUser.password_hash, userId]
+    );
 
     // Update PII DB (PII fields)
-    if (c.env.DB_PII) {
-      await c.env.DB_PII.prepare(
+    if (piiAdapter) {
+      await piiAdapter.execute(
         `UPDATE users_pii SET
           email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
           nickname = ?, preferred_username = ?, profile = ?, picture = ?, website = ?,
@@ -760,9 +804,8 @@ app.put('/Users/:id', async (c) => {
           address_formatted = ?, address_street_address = ?, address_locality = ?,
           address_region = ?, address_postal_code = ?, address_country = ?,
           updated_at = ?
-         WHERE id = ?`
-      )
-        .bind(
+         WHERE id = ?`,
+        [
           internalUser.email,
           internalUser.name,
           internalUser.given_name,
@@ -783,16 +826,16 @@ app.put('/Users/:id', async (c) => {
           addressParts.postal_code || null,
           addressParts.country || null,
           nowUnix,
-          userId
-        )
-        .run();
+          userId,
+        ]
+      );
     }
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, userId);
 
     // Fetch updated user from both DBs
-    const updatedUser = await fetchUserWithPII(c.env, userId);
+    const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId);
 
     if (!updatedUser) {
       return scimError(c, 500, 'Failed to fetch updated user');
@@ -819,9 +862,10 @@ app.patch('/Users/:id', async (c) => {
     const userId = c.req.param('id');
     const patchOp = await c.req.json<ScimPatchOp>();
     const baseUrl = getBaseUrl(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Check if user exists - fetch from both DBs
-    const existingUser = await fetchUserWithPII(c.env, userId);
+    const existingUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId);
 
     if (!existingUser) {
       return scimError(c, 404, `User ${userId} not found`);
@@ -871,24 +915,17 @@ app.patch('/Users/:id', async (c) => {
     }
 
     // Update Core DB (non-PII fields)
-    await c.env.DB.prepare(
+    await coreAdapter.execute(
       `UPDATE users_core SET
         is_active = ?, external_id = ?, updated_at = ?,
         password_hash = COALESCE(?, password_hash)
-       WHERE id = ?`
-    )
-      .bind(
-        internalUser.active,
-        internalUser.external_id,
-        nowUnix,
-        internalUser.password_hash,
-        userId
-      )
-      .run();
+       WHERE id = ?`,
+      [internalUser.active, internalUser.external_id, nowUnix, internalUser.password_hash, userId]
+    );
 
     // Update PII DB (PII fields)
-    if (c.env.DB_PII) {
-      await c.env.DB_PII.prepare(
+    if (piiAdapter) {
+      await piiAdapter.execute(
         `UPDATE users_pii SET
           email = ?, name = ?, given_name = ?, family_name = ?, middle_name = ?,
           nickname = ?, preferred_username = ?, profile = ?, picture = ?, website = ?,
@@ -896,9 +933,8 @@ app.patch('/Users/:id', async (c) => {
           address_formatted = ?, address_street_address = ?, address_locality = ?,
           address_region = ?, address_postal_code = ?, address_country = ?,
           updated_at = ?
-         WHERE id = ?`
-      )
-        .bind(
+         WHERE id = ?`,
+        [
           internalUser.email,
           internalUser.name,
           internalUser.given_name,
@@ -919,16 +955,16 @@ app.patch('/Users/:id', async (c) => {
           addressParts.postal_code || null,
           addressParts.country || null,
           nowUnix,
-          userId
-        )
-        .run();
+          userId,
+        ]
+      );
     }
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, userId);
 
     // Fetch updated user from both DBs
-    const updatedUser = await fetchUserWithPII(c.env, userId);
+    const updatedUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId);
 
     if (!updatedUser) {
       return scimError(c, 500, 'Failed to fetch updated user');
@@ -953,9 +989,10 @@ app.patch('/Users/:id', async (c) => {
 app.delete('/Users/:id', async (c) => {
   try {
     const userId = c.req.param('id');
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Check if user exists - fetch from both DBs
-    const existingUser = await fetchUserWithPII(c.env, userId);
+    const existingUser = await fetchUserWithPII(coreAdapter, piiAdapter, userId);
 
     if (!existingUser) {
       return scimError(c, 404, `User ${userId} not found`);
@@ -975,33 +1012,32 @@ app.delete('/Users/:id', async (c) => {
     const retentionDays = 90; // GDPR retention period
 
     // Step 1: Create tombstone record in PII DB for GDPR audit trail
-    if (c.env.DB_PII) {
-      await c.env.DB_PII.prepare(
-        `INSERT INTO users_pii_tombstone (
+    if (piiAdapter) {
+      await piiAdapter
+        .execute(
+          `INSERT INTO users_pii_tombstone (
           id, tenant_id, deleted_at, deleted_by, deletion_reason, retention_until
-        ) VALUES (?, ?, ?, 'scim_api', 'scim_delete', ?)`
-      )
-        .bind(
-          userId,
-          (existingUser as any).tenant_id || 'default',
-          now,
-          now + retentionDays * 24 * 60 * 60 * 1000
+        ) VALUES (?, ?, ?, 'scim_api', 'scim_delete', ?)`,
+          [
+            userId,
+            (existingUser as any).tenant_id || 'default',
+            now,
+            now + retentionDays * 24 * 60 * 60 * 1000,
+          ]
         )
-        .run()
         .catch(() => {
           // Ignore tombstone creation errors - not critical
         });
 
       // Step 2: Hard delete from PII DB
-      await c.env.DB_PII.prepare('DELETE FROM users_pii WHERE id = ?').bind(userId).run();
+      await piiAdapter.execute('DELETE FROM users_pii WHERE id = ?', [userId]);
     }
 
     // Step 3: Soft delete in Core DB (set is_active = 0 and pii_status = 'deleted')
-    await c.env.DB.prepare(
-      `UPDATE users_core SET is_active = 0, pii_status = 'deleted', updated_at = ? WHERE id = ?`
-    )
-      .bind(Math.floor(now / 1000), userId)
-      .run();
+    await coreAdapter.execute(
+      `UPDATE users_core SET is_active = 0, pii_status = 'deleted', updated_at = ? WHERE id = ?`,
+      [Math.floor(now / 1000), userId]
+    );
 
     return c.body(null, 204); // No Content
   } catch (error) {
@@ -1021,6 +1057,7 @@ app.get('/Groups', async (c) => {
   try {
     const params = parseQueryParams(c);
     const baseUrl = getBaseUrl(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     const startIndex = params.startIndex || 1;
     const count = Math.min(params.count || 100, 1000);
@@ -1052,9 +1089,7 @@ app.get('/Groups', async (c) => {
 
     // Get total count
     const countQuery = sql.replace('SELECT *', 'SELECT COUNT(*) as total');
-    const totalResult = await c.env.DB.prepare(countQuery)
-      .bind(...sqlParams)
-      .first<{ total: number }>();
+    const totalResult = await coreAdapter.queryOne<{ total: number }>(countQuery, sqlParams);
     const totalResults = totalResult?.total || 0;
 
     // Apply sorting with whitelist validation (prevents SQL injection)
@@ -1079,15 +1114,13 @@ app.get('/Groups', async (c) => {
     sqlParams.push(count, offset);
 
     // Execute query
-    const result = await c.env.DB.prepare(sql)
-      .bind(...sqlParams)
-      .all<InternalGroup>();
+    const groups = await coreAdapter.query<InternalGroup>(sql, sqlParams);
 
     // Convert to SCIM format
     const scimGroups: ScimGroup[] = [];
-    for (const group of result.results) {
+    for (const group of groups) {
       // Fetch members if needed (PII/Non-PII DB分離対応)
-      const members = await fetchGroupMembersWithPII(c.env, group.id as string);
+      const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, group.id as string);
 
       scimGroups.push(groupToScim(group, { baseUrl, includeMembers: true }, members));
     }
@@ -1114,10 +1147,11 @@ app.get('/Groups/:id', async (c) => {
   try {
     const groupId = c.req.param('id');
     const baseUrl = getBaseUrl(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
-    const group = await c.env.DB.prepare('SELECT * FROM roles WHERE id = ?')
-      .bind(groupId)
-      .first<InternalGroup>();
+    const group = await coreAdapter.queryOne<InternalGroup>('SELECT * FROM roles WHERE id = ?', [
+      groupId,
+    ]);
 
     if (!group) {
       return scimError(c, 404, `Group ${groupId} not found`);
@@ -1133,7 +1167,7 @@ app.get('/Groups/:id', async (c) => {
     }
 
     // Fetch members (PII/Non-PII DB分離対応)
-    const members = await fetchGroupMembersWithPII(c.env, groupId);
+    const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId);
 
     const scimGroup = groupToScim(group, { baseUrl, includeMembers: true }, members);
 
@@ -1154,6 +1188,7 @@ app.post('/Groups', async (c) => {
   try {
     const scimGroup = await c.req.json<Partial<ScimGroup>>();
     const baseUrl = getBaseUrl(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Validate required fields
     const validation = validateScimGroup(scimGroup);
@@ -1162,9 +1197,10 @@ app.post('/Groups', async (c) => {
     }
 
     // Check for duplicate displayName
-    const existing = await c.env.DB.prepare('SELECT id FROM roles WHERE name = ?')
-      .bind(scimGroup.displayName)
-      .first();
+    const existing = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM roles WHERE name = ?',
+      [scimGroup.displayName]
+    );
 
     if (existing) {
       return scimError(c, 409, 'Group with this name already exists', 'uniqueness');
@@ -1180,42 +1216,41 @@ app.post('/Groups', async (c) => {
     const now = new Date().toISOString();
 
     // Insert group
-    await c.env.DB.prepare(
+    await coreAdapter.execute(
       `INSERT INTO roles (id, name, description, permissions_json, external_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
         groupId,
         internalGroup.name,
         internalGroup.description || null,
         JSON.stringify([]), // Empty permissions by default
         internalGroup.external_id,
-        now
-      )
-      .run();
+        now,
+      ]
+    );
 
     // Add members if specified
     if (scimGroup.members && scimGroup.members.length > 0) {
       for (const member of scimGroup.members) {
-        await c.env.DB.prepare(
-          `INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)`
-        )
-          .bind(member.value, groupId, now)
-          .run();
+        await coreAdapter.execute(
+          `INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)`,
+          [member.value, groupId, now]
+        );
       }
     }
 
     // Fetch created group
-    const createdGroup = await c.env.DB.prepare('SELECT * FROM roles WHERE id = ?')
-      .bind(groupId)
-      .first<InternalGroup>();
+    const createdGroup = await coreAdapter.queryOne<InternalGroup>(
+      'SELECT * FROM roles WHERE id = ?',
+      [groupId]
+    );
 
     if (!createdGroup) {
       return scimError(c, 500, 'Failed to create group');
     }
 
     // Fetch members (PII/Non-PII DB分離対応)
-    const members = await fetchGroupMembersWithPII(c.env, groupId);
+    const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId);
 
     const responseGroup = groupToScim(createdGroup, { baseUrl, includeMembers: true }, members);
 
@@ -1237,6 +1272,7 @@ app.put('/Groups/:id', async (c) => {
     const groupId = c.req.param('id');
     const scimGroup = await c.req.json<Partial<ScimGroup>>();
     const baseUrl = getBaseUrl(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Validate required fields
     const validation = validateScimGroup(scimGroup);
@@ -1245,9 +1281,10 @@ app.put('/Groups/:id', async (c) => {
     }
 
     // Check if group exists
-    const existingGroup = await c.env.DB.prepare('SELECT * FROM roles WHERE id = ?')
-      .bind(groupId)
-      .first<InternalGroup>();
+    const existingGroup = await coreAdapter.queryOne<InternalGroup>(
+      'SELECT * FROM roles WHERE id = ?',
+      [groupId]
+    );
 
     if (!existingGroup) {
       return scimError(c, 404, `Group ${groupId} not found`);
@@ -1267,37 +1304,36 @@ app.put('/Groups/:id', async (c) => {
     const internalGroup = scimToGroup(scimGroup);
 
     // Update group
-    await c.env.DB.prepare(
-      `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ?`
-    )
-      .bind(internalGroup.name, internalGroup.description, internalGroup.external_id, groupId)
-      .run();
+    await coreAdapter.execute(
+      `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ?`,
+      [internalGroup.name, internalGroup.description, internalGroup.external_id, groupId]
+    );
 
     // Update members (replace all)
-    await c.env.DB.prepare('DELETE FROM user_roles WHERE role_id = ?').bind(groupId).run();
+    await coreAdapter.execute('DELETE FROM user_roles WHERE role_id = ?', [groupId]);
 
     if (scimGroup.members && scimGroup.members.length > 0) {
       const now = new Date().toISOString();
       for (const member of scimGroup.members) {
-        await c.env.DB.prepare(
-          `INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)`
-        )
-          .bind(member.value, groupId, now)
-          .run();
+        await coreAdapter.execute(
+          `INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)`,
+          [member.value, groupId, now]
+        );
       }
     }
 
     // Fetch updated group
-    const updatedGroup = await c.env.DB.prepare('SELECT * FROM roles WHERE id = ?')
-      .bind(groupId)
-      .first<InternalGroup>();
+    const updatedGroup = await coreAdapter.queryOne<InternalGroup>(
+      'SELECT * FROM roles WHERE id = ?',
+      [groupId]
+    );
 
     if (!updatedGroup) {
       return scimError(c, 500, 'Failed to fetch updated group');
     }
 
     // Fetch members (PII/Non-PII DB分離対応)
-    const members = await fetchGroupMembersWithPII(c.env, groupId);
+    const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId);
 
     const responseGroup = groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members);
 
@@ -1319,11 +1355,13 @@ app.patch('/Groups/:id', async (c) => {
     const groupId = c.req.param('id');
     const patchOp = await c.req.json<ScimPatchOp>();
     const baseUrl = getBaseUrl(c);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Check if group exists
-    const existingGroup = await c.env.DB.prepare('SELECT * FROM roles WHERE id = ?')
-      .bind(groupId)
-      .first<InternalGroup>();
+    const existingGroup = await coreAdapter.queryOne<InternalGroup>(
+      'SELECT * FROM roles WHERE id = ?',
+      [groupId]
+    );
 
     if (!existingGroup) {
       return scimError(c, 404, `Group ${groupId} not found`);
@@ -1340,7 +1378,7 @@ app.patch('/Groups/:id', async (c) => {
     }
 
     // Fetch current members (PII/Non-PII DB分離対応)
-    const currentMembers = await fetchGroupMembersWithPII(c.env, groupId);
+    const currentMembers = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId);
 
     // Convert to SCIM format
     let scimGroup = groupToScim(existingGroup, { baseUrl, includeMembers: true }, currentMembers);
@@ -1358,39 +1396,38 @@ app.patch('/Groups/:id', async (c) => {
     const internalGroup = scimToGroup(scimGroup);
 
     // Update group
-    await c.env.DB.prepare(
-      `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ?`
-    )
-      .bind(internalGroup.name, internalGroup.description, internalGroup.external_id, groupId)
-      .run();
+    await coreAdapter.execute(
+      `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ?`,
+      [internalGroup.name, internalGroup.description, internalGroup.external_id, groupId]
+    );
 
     // Update members if changed
     if (scimGroup.members !== undefined) {
-      await c.env.DB.prepare('DELETE FROM user_roles WHERE role_id = ?').bind(groupId).run();
+      await coreAdapter.execute('DELETE FROM user_roles WHERE role_id = ?', [groupId]);
 
       if (scimGroup.members.length > 0) {
         const now = new Date().toISOString();
         for (const member of scimGroup.members) {
-          await c.env.DB.prepare(
-            `INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)`
-          )
-            .bind(member.value, groupId, now)
-            .run();
+          await coreAdapter.execute(
+            `INSERT INTO user_roles (user_id, role_id, created_at) VALUES (?, ?, ?)`,
+            [member.value, groupId, now]
+          );
         }
       }
     }
 
     // Fetch updated group
-    const updatedGroup = await c.env.DB.prepare('SELECT * FROM roles WHERE id = ?')
-      .bind(groupId)
-      .first<InternalGroup>();
+    const updatedGroup = await coreAdapter.queryOne<InternalGroup>(
+      'SELECT * FROM roles WHERE id = ?',
+      [groupId]
+    );
 
     if (!updatedGroup) {
       return scimError(c, 500, 'Failed to fetch updated group');
     }
 
     // Fetch updated members (PII/Non-PII DB分離対応)
-    const updatedMembers = await fetchGroupMembersWithPII(c.env, groupId);
+    const updatedMembers = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId);
 
     const responseGroup = groupToScim(
       updatedGroup,
@@ -1414,11 +1451,13 @@ app.patch('/Groups/:id', async (c) => {
 app.delete('/Groups/:id', async (c) => {
   try {
     const groupId = c.req.param('id');
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     // Check if group exists
-    const existingGroup = await c.env.DB.prepare('SELECT * FROM roles WHERE id = ?')
-      .bind(groupId)
-      .first<InternalGroup>();
+    const existingGroup = await coreAdapter.queryOne<InternalGroup>(
+      'SELECT * FROM roles WHERE id = ?',
+      [groupId]
+    );
 
     if (!existingGroup) {
       return scimError(c, 404, `Group ${groupId} not found`);
@@ -1435,7 +1474,7 @@ app.delete('/Groups/:id', async (c) => {
     }
 
     // Delete group (cascade will handle user_roles)
-    await c.env.DB.prepare('DELETE FROM roles WHERE id = ?').bind(groupId).run();
+    await coreAdapter.execute('DELETE FROM roles WHERE id = ?', [groupId]);
 
     return c.body(null, 204); // No Content
   } catch (error) {

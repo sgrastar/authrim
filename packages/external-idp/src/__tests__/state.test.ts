@@ -4,6 +4,48 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Storage for tracking SQL calls across all D1Adapter instances
+const sqlTracker = {
+  calls: [] as { method: string; sql: string; params: unknown[] }[],
+  reset() {
+    this.calls.length = 0;
+  },
+};
+
+// Create hoisted mocks that can be configured in tests
+const { mockExecute, mockQueryOne, MockD1Adapter } = vi.hoisted(() => {
+  // These are the actual mock functions that tests can configure
+  const executeMock = vi.fn().mockResolvedValue({ rowsAffected: 1 });
+  const queryOneMock = vi.fn().mockResolvedValue(null);
+
+  // Create a class that wraps the mock functions and tracks calls
+  class D1AdapterClass {
+    execute = (sql: string, params?: unknown[]) => {
+      sqlTracker.calls.push({ method: 'execute', sql, params: params || [] });
+      return executeMock(sql, params);
+    };
+
+    queryOne = (sql: string, params?: unknown[]) => {
+      sqlTracker.calls.push({ method: 'queryOne', sql, params: params || [] });
+      return queryOneMock(sql, params);
+    };
+
+    query = vi.fn().mockResolvedValue([]);
+  }
+
+  return {
+    mockExecute: executeMock,
+    mockQueryOne: queryOneMock,
+    MockD1Adapter: D1AdapterClass,
+  };
+});
+
+// Mock @authrim/shared to prevent Cloudflare Workers imports
+vi.mock('@authrim/shared', () => ({
+  D1Adapter: MockD1Adapter,
+}));
+
 import {
   storeAuthState,
   consumeAuthState,
@@ -12,42 +54,18 @@ import {
 } from '../utils/state';
 import type { Env } from '@authrim/shared';
 
-// Mock D1 database
-function createMockDb() {
-  const storage = new Map<string, Record<string, unknown>>();
-  let lastBindValues: unknown[] = [];
-
-  const mockStatement = {
-    bind: vi.fn((...values: unknown[]) => {
-      lastBindValues = values;
-      return mockStatement;
-    }),
-    run: vi.fn(async () => {
-      // Simulate INSERT/UPDATE/DELETE
-      const changes = 1; // Default to 1 change
-      return { meta: { changes } };
-    }),
-    first: vi.fn(async <T>(): Promise<T | null> => {
-      return null;
-    }),
-    all: vi.fn(async <T>(): Promise<{ results: T[] }> => {
-      return { results: [] };
-    }),
-  };
-
-  return {
-    prepare: vi.fn((_sql: string) => mockStatement),
-    storage,
-    mockStatement,
-    getLastBindValues: () => lastBindValues,
-  };
-}
-
 describe('Auth State Management', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sqlTracker.reset();
+    // Reset mock implementations to defaults
+    mockExecute.mockResolvedValue({ rowsAffected: 1 });
+    mockQueryOne.mockResolvedValue(null);
+  });
+
   describe('storeAuthState', () => {
     it('should store auth state with all required fields', async () => {
-      const mockDb = createMockDb();
-      const mockEnv = { DB: mockDb } as unknown as Env;
+      const mockEnv = { DB: {} } as unknown as Env;
 
       const stateData = {
         tenantId: 'test-tenant',
@@ -61,23 +79,26 @@ describe('Auth State Management', () => {
 
       await storeAuthState(mockEnv, stateData);
 
-      expect(mockDb.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO external_idp_auth_states')
-      );
-      expect(mockDb.mockStatement.bind).toHaveBeenCalled();
-      expect(mockDb.mockStatement.run).toHaveBeenCalled();
+      // Verify execute was called
+      const executeCalls = sqlTracker.calls.filter((c) => c.method === 'execute');
+      expect(executeCalls.length).toBeGreaterThan(0);
 
-      const bindValues = mockDb.getLastBindValues();
-      expect(bindValues).toContain('test-tenant');
-      expect(bindValues).toContain('google-provider');
-      expect(bindValues).toContain('random-state-value');
-      expect(bindValues).toContain('random-nonce');
-      expect(bindValues).toContain('pkce-verifier');
+      // Verify INSERT SQL was called
+      const insertCall = executeCalls.find((c) =>
+        c.sql.includes('INSERT INTO external_idp_auth_states')
+      );
+      expect(insertCall).toBeDefined();
+
+      // Check params contain expected values
+      expect(insertCall!.params).toContain('test-tenant');
+      expect(insertCall!.params).toContain('google-provider');
+      expect(insertCall!.params).toContain('random-state-value');
+      expect(insertCall!.params).toContain('random-nonce');
+      expect(insertCall!.params).toContain('pkce-verifier');
     });
 
     it('should store auth state with optional fields as null', async () => {
-      const mockDb = createMockDb();
-      const mockEnv = { DB: mockDb } as unknown as Env;
+      const mockEnv = { DB: {} } as unknown as Env;
 
       const stateData = {
         tenantId: 'default',
@@ -90,15 +111,18 @@ describe('Auth State Management', () => {
 
       await storeAuthState(mockEnv, stateData);
 
-      const bindValues = mockDb.getLastBindValues();
-      // Optional fields should be null
-      const nullCount = bindValues.filter((v) => v === null).length;
-      expect(nullCount).toBeGreaterThanOrEqual(3); // nonce, codeVerifier, userId, sessionId, etc.
+      const insertCall = sqlTracker.calls.find((c) =>
+        c.sql.includes('INSERT INTO external_idp_auth_states')
+      );
+      expect(insertCall).toBeDefined();
+
+      // Optional fields should be null (nonce, codeVerifier, userId, sessionId, etc.)
+      const nullCount = insertCall!.params.filter((v) => v === null).length;
+      expect(nullCount).toBeGreaterThanOrEqual(3);
     });
 
     it('should store max_age when provided', async () => {
-      const mockDb = createMockDb();
-      const mockEnv = { DB: mockDb } as unknown as Env;
+      const mockEnv = { DB: {} } as unknown as Env;
 
       const stateData = {
         tenantId: 'default',
@@ -113,45 +137,40 @@ describe('Auth State Management', () => {
 
       await storeAuthState(mockEnv, stateData);
 
-      const bindValues = mockDb.getLastBindValues();
-      expect(bindValues).toContain(300);
+      const insertCall = sqlTracker.calls.find((c) =>
+        c.sql.includes('INSERT INTO external_idp_auth_states')
+      );
+      expect(insertCall).toBeDefined();
+      expect(insertCall!.params).toContain(300);
     });
   });
 
   describe('consumeAuthState', () => {
     it('should consume valid state atomically', async () => {
-      const mockDb = createMockDb();
+      const mockEnv = { DB: {} } as unknown as Env;
       const now = Date.now();
-      let updateCalled = false;
 
-      mockDb.mockStatement.run.mockImplementation(async () => {
-        updateCalled = true;
-        return { meta: { changes: 1 } }; // State was successfully marked as consumed
+      // First call (execute) succeeds with rowsAffected: 1
+      mockExecute.mockResolvedValueOnce({ rowsAffected: 1 });
+
+      // Second call (queryOne) returns the consumed state
+      mockQueryOne.mockResolvedValueOnce({
+        id: 'state-id',
+        tenant_id: 'default',
+        provider_id: 'google',
+        state: 'valid-state',
+        nonce: 'nonce',
+        code_verifier: 'verifier',
+        redirect_uri: 'https://example.com/callback',
+        user_id: null,
+        session_id: null,
+        original_auth_request: null,
+        max_age: null,
+        acr_values: null,
+        expires_at: now + 300000,
+        created_at: now - 60000,
+        consumed_at: now,
       });
-
-      mockDb.mockStatement.first.mockImplementation(async () => {
-        if (updateCalled) {
-          return {
-            id: 'state-id',
-            tenant_id: 'default',
-            provider_id: 'google',
-            state: 'valid-state',
-            nonce: 'nonce',
-            code_verifier: 'verifier',
-            redirect_uri: 'https://example.com/callback',
-            user_id: null,
-            session_id: null,
-            original_auth_request: null,
-            max_age: null,
-            expires_at: now + 300000,
-            created_at: now - 60000,
-            consumed_at: now,
-          };
-        }
-        return null;
-      });
-
-      const mockEnv = { DB: mockDb } as unknown as Env;
 
       const result = await consumeAuthState(mockEnv, 'valid-state');
 
@@ -161,34 +180,32 @@ describe('Auth State Management', () => {
       expect(result?.codeVerifier).toBe('verifier');
 
       // Verify UPDATE was called with correct conditions
-      expect(mockDb.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE external_idp_auth_states')
+      const updateCall = sqlTracker.calls.find((c) =>
+        c.sql.includes('UPDATE external_idp_auth_states')
       );
-      expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('consumed_at IS NULL'));
+      expect(updateCall).toBeDefined();
+      expect(updateCall!.sql).toContain('consumed_at IS NULL');
     });
 
     it('should return null for already consumed state', async () => {
-      const mockDb = createMockDb();
+      const mockEnv = { DB: {} } as unknown as Env;
 
       // Simulate state already consumed (UPDATE affects 0 rows)
-      mockDb.mockStatement.run.mockResolvedValue({ meta: { changes: 0 } });
-
-      const mockEnv = { DB: mockDb } as unknown as Env;
+      mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
 
       const result = await consumeAuthState(mockEnv, 'already-consumed-state');
 
       expect(result).toBeNull();
       // Should not attempt SELECT if UPDATE failed
-      expect(mockDb.mockStatement.first).not.toHaveBeenCalled();
+      const queryOneCalls = sqlTracker.calls.filter((c) => c.method === 'queryOne');
+      expect(queryOneCalls.length).toBe(0);
     });
 
     it('should return null for expired state', async () => {
-      const mockDb = createMockDb();
+      const mockEnv = { DB: {} } as unknown as Env;
 
       // Simulate expired state (UPDATE affects 0 rows)
-      mockDb.mockStatement.run.mockResolvedValue({ meta: { changes: 0 } });
-
-      const mockEnv = { DB: mockDb } as unknown as Env;
+      mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
 
       const result = await consumeAuthState(mockEnv, 'expired-state');
 
@@ -196,12 +213,10 @@ describe('Auth State Management', () => {
     });
 
     it('should return null for non-existent state', async () => {
-      const mockDb = createMockDb();
+      const mockEnv = { DB: {} } as unknown as Env;
 
       // Simulate non-existent state (UPDATE affects 0 rows)
-      mockDb.mockStatement.run.mockResolvedValue({ meta: { changes: 0 } });
-
-      const mockEnv = { DB: mockDb } as unknown as Env;
+      mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
 
       const result = await consumeAuthState(mockEnv, 'nonexistent-state');
 
@@ -209,11 +224,11 @@ describe('Auth State Management', () => {
     });
 
     it('should include max_age in returned state', async () => {
-      const mockDb = createMockDb();
+      const mockEnv = { DB: {} } as unknown as Env;
       const now = Date.now();
 
-      mockDb.mockStatement.run.mockResolvedValue({ meta: { changes: 1 } });
-      mockDb.mockStatement.first.mockResolvedValue({
+      mockExecute.mockResolvedValueOnce({ rowsAffected: 1 });
+      mockQueryOne.mockResolvedValueOnce({
         id: 'state-id',
         tenant_id: 'default',
         provider_id: 'google',
@@ -225,12 +240,11 @@ describe('Auth State Management', () => {
         session_id: null,
         original_auth_request: null,
         max_age: 300, // 5 minutes
+        acr_values: null,
         expires_at: now + 300000,
         created_at: now - 60000,
         consumed_at: now,
       });
-
-      const mockEnv = { DB: mockDb } as unknown as Env;
 
       const result = await consumeAuthState(mockEnv, 'state-with-maxage');
 
@@ -241,19 +255,20 @@ describe('Auth State Management', () => {
 
   describe('atomic consumption guarantees', () => {
     it('should prevent double consumption via UPDATE condition', async () => {
-      const mockDb = createMockDb();
+      const mockEnv = { DB: {} } as unknown as Env;
+      const now = Date.now();
       let consumptionCount = 0;
 
       // First call succeeds, second call fails
-      mockDb.mockStatement.run.mockImplementation(async () => {
+      mockExecute.mockImplementation(async () => {
         if (consumptionCount === 0) {
           consumptionCount++;
-          return { meta: { changes: 1 } };
+          return { rowsAffected: 1 };
         }
-        return { meta: { changes: 0 } }; // Already consumed
+        return { rowsAffected: 0 }; // Already consumed
       });
 
-      mockDb.mockStatement.first.mockResolvedValue({
+      mockQueryOne.mockResolvedValue({
         id: 'state-id',
         tenant_id: 'default',
         provider_id: 'google',
@@ -265,12 +280,11 @@ describe('Auth State Management', () => {
         session_id: null,
         original_auth_request: null,
         max_age: null,
-        expires_at: Date.now() + 300000,
-        created_at: Date.now() - 60000,
-        consumed_at: Date.now(),
+        acr_values: null,
+        expires_at: now + 300000,
+        created_at: now - 60000,
+        consumed_at: now,
       });
-
-      const mockEnv = { DB: mockDb } as unknown as Env;
 
       // Simulate concurrent requests
       const [result1, result2] = await Promise.all([
@@ -286,31 +300,27 @@ describe('Auth State Management', () => {
 
   describe('cleanupExpiredStates', () => {
     it('should delete expired and consumed states', async () => {
-      const mockDb = createMockDb();
+      const mockEnv = { DB: {} } as unknown as Env;
 
-      mockDb.mockStatement.run.mockResolvedValue({ meta: { changes: 5 } });
-
-      const mockEnv = { DB: mockDb } as unknown as Env;
+      mockExecute.mockResolvedValueOnce({ rowsAffected: 5 });
 
       const deleted = await cleanupExpiredStates(mockEnv);
 
       expect(deleted).toBe(5);
-      expect(mockDb.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('DELETE FROM external_idp_auth_states')
+
+      // Verify DELETE SQL was called with correct conditions
+      const deleteCall = sqlTracker.calls.find((c) =>
+        c.sql.includes('DELETE FROM external_idp_auth_states')
       );
-      // Should check both expired and old consumed states
-      expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('expires_at <'));
-      expect(mockDb.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('consumed_at IS NOT NULL')
-      );
+      expect(deleteCall).toBeDefined();
+      expect(deleteCall!.sql).toContain('expires_at <');
+      expect(deleteCall!.sql).toContain('consumed_at IS NOT NULL');
     });
 
     it('should return 0 when no states to cleanup', async () => {
-      const mockDb = createMockDb();
+      const mockEnv = { DB: {} } as unknown as Env;
 
-      mockDb.mockStatement.run.mockResolvedValue({ meta: { changes: 0 } });
-
-      const mockEnv = { DB: mockDb } as unknown as Env;
+      mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
 
       const deleted = await cleanupExpiredStates(mockEnv);
 
@@ -336,21 +346,24 @@ describe('Auth State Management', () => {
 describe('Security considerations', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sqlTracker.reset();
+    mockExecute.mockResolvedValue({ rowsAffected: 0 });
   });
 
-  it('should use UPDATE...WHERE consumed_at IS NULL for atomic consumption', () => {
+  it('should use UPDATE...WHERE consumed_at IS NULL for atomic consumption', async () => {
     // This test documents the security requirement
     // The SQL must include consumed_at IS NULL to prevent replay attacks
-    const mockDb = createMockDb();
-    const mockEnv = { DB: mockDb } as unknown as Env;
+    const mockEnv = { DB: {} } as unknown as Env;
 
-    consumeAuthState(mockEnv, 'test-state');
+    await consumeAuthState(mockEnv, 'test-state');
 
-    const sqlCalls = mockDb.prepare.mock.calls.map((call) => call[0]);
-    const updateCall = sqlCalls.find((sql) => typeof sql === 'string' && sql.includes('UPDATE'));
+    const updateCall = sqlTracker.calls.find(
+      (c) => c.method === 'execute' && c.sql.includes('UPDATE')
+    );
 
-    expect(updateCall).toContain('consumed_at IS NULL');
-    expect(updateCall).toContain('SET consumed_at');
-    expect(updateCall).toContain('expires_at >');
+    expect(updateCall).toBeDefined();
+    expect(updateCall!.sql).toContain('consumed_at IS NULL');
+    expect(updateCall!.sql).toContain('SET consumed_at');
+    expect(updateCall!.sql).toContain('expires_at >');
   });
 });

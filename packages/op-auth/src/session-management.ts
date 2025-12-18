@@ -19,6 +19,8 @@ import {
   getSessionStoreBySessionId,
   isShardedSessionId,
   getChallengeStoreByChallengeId,
+  createPIIContextFromHono,
+  getTenantIdFromContext,
 } from '@authrim/shared';
 
 /**
@@ -281,15 +283,15 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Fetch user email from PII database if available
+    // Fetch user email from PII database if available via Repository
     let userEmail: string | undefined;
     let userName: string | undefined;
 
     if (c.env.DB_PII) {
       try {
-        const userPII = await c.env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
-          .bind(session.userId)
-          .first<{ email: string; name: string | null }>();
+        const tenantId = getTenantIdFromContext(c);
+        const piiCtx = createPIIContextFromHono(c, tenantId);
+        const userPII = await piiCtx.piiRepositories.userPII.findById(session.userId);
 
         if (userPII) {
           userEmail = userPII.email;

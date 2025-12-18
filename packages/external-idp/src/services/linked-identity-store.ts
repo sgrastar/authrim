@@ -4,6 +4,7 @@
  */
 
 import type { Env } from '@authrim/shared';
+import { D1Adapter, type DatabaseAdapter } from '@authrim/shared';
 import type { LinkedIdentity, TokenResponse } from '../types';
 import { encrypt, decrypt, getEncryptionKey } from '../utils/crypto';
 
@@ -11,9 +12,11 @@ import { encrypt, decrypt, getEncryptionKey } from '../utils/crypto';
  * Get linked identity by ID
  */
 export async function getLinkedIdentityById(env: Env, id: string): Promise<LinkedIdentity | null> {
-  const result = await env.DB.prepare(`SELECT * FROM linked_identities WHERE id = ?`)
-    .bind(id)
-    .first<DbLinkedIdentity>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.queryOne<DbLinkedIdentity>(
+    `SELECT * FROM linked_identities WHERE id = ?`,
+    [id]
+  );
 
   if (!result) return null;
   return mapDbToLinkedIdentity(result);
@@ -27,11 +30,11 @@ export async function findLinkedIdentity(
   providerId: string,
   providerUserId: string
 ): Promise<LinkedIdentity | null> {
-  const result = await env.DB.prepare(
-    `SELECT * FROM linked_identities WHERE provider_id = ? AND provider_user_id = ?`
-  )
-    .bind(providerId, providerUserId)
-    .first<DbLinkedIdentity>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.queryOne<DbLinkedIdentity>(
+    `SELECT * FROM linked_identities WHERE provider_id = ? AND provider_user_id = ?`,
+    [providerId, providerUserId]
+  );
 
   if (!result) return null;
   return mapDbToLinkedIdentity(result);
@@ -46,26 +49,26 @@ export async function findLinkedIdentitiesByProviderSub(
   providerId: string,
   providerUserId: string
 ): Promise<LinkedIdentity[]> {
-  const result = await env.DB.prepare(
-    `SELECT * FROM linked_identities WHERE provider_id = ? AND provider_user_id = ?`
-  )
-    .bind(providerId, providerUserId)
-    .all<DbLinkedIdentity>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.query<DbLinkedIdentity>(
+    `SELECT * FROM linked_identities WHERE provider_id = ? AND provider_user_id = ?`,
+    [providerId, providerUserId]
+  );
 
-  return (result.results || []).map(mapDbToLinkedIdentity);
+  return result.map(mapDbToLinkedIdentity);
 }
 
 /**
  * List linked identities for a user
  */
 export async function listLinkedIdentities(env: Env, userId: string): Promise<LinkedIdentity[]> {
-  const result = await env.DB.prepare(
-    `SELECT * FROM linked_identities WHERE user_id = ? ORDER BY linked_at DESC`
-  )
-    .bind(userId)
-    .all<DbLinkedIdentity>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.query<DbLinkedIdentity>(
+    `SELECT * FROM linked_identities WHERE user_id = ? ORDER BY linked_at DESC`,
+    [userId]
+  );
 
-  return (result.results || []).map(mapDbToLinkedIdentity);
+  return result.map(mapDbToLinkedIdentity);
 }
 
 /**
@@ -76,11 +79,11 @@ export async function getLinkedIdentityForUserAndProvider(
   userId: string,
   providerId: string
 ): Promise<LinkedIdentity | null> {
-  const result = await env.DB.prepare(
-    `SELECT * FROM linked_identities WHERE user_id = ? AND provider_id = ?`
-  )
-    .bind(userId, providerId)
-    .first<DbLinkedIdentity>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.queryOne<DbLinkedIdentity>(
+    `SELECT * FROM linked_identities WHERE user_id = ? AND provider_id = ?`,
+    [userId, providerId]
+  );
 
   if (!result) return null;
   return mapDbToLinkedIdentity(result);
@@ -115,16 +118,16 @@ export async function createLinkedIdentity(
     ? await encrypt(params.tokens.refresh_token, encryptionKey)
     : null;
 
-  await env.DB.prepare(
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  await coreAdapter.execute(
     `INSERT INTO linked_identities (
       id, tenant_id, user_id, provider_id, provider_user_id,
       provider_email, email_verified,
       access_token_encrypted, refresh_token_encrypted, token_expires_at,
       raw_claims, profile_data,
       linked_at, last_login_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-    .bind(
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
       id,
       params.tenantId || 'default',
       params.userId,
@@ -139,9 +142,9 @@ export async function createLinkedIdentity(
       null, // profile_data - normalize later
       now,
       now,
-      now
-    )
-    .run();
+      now,
+    ]
+  );
 
   return id;
 }
@@ -198,32 +201,33 @@ export async function updateLinkedIdentity(
 
   params.push(id);
 
-  const result = await env.DB.prepare(
-    `UPDATE linked_identities SET ${setClauses.join(', ')} WHERE id = ?`
-  )
-    .bind(...params)
-    .run();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.execute(
+    `UPDATE linked_identities SET ${setClauses.join(', ')} WHERE id = ?`,
+    params
+  );
 
-  return (result.meta.changes || 0) > 0;
+  return result.rowsAffected > 0;
 }
 
 /**
  * Delete linked identity
  */
 export async function deleteLinkedIdentity(env: Env, id: string): Promise<boolean> {
-  const result = await env.DB.prepare(`DELETE FROM linked_identities WHERE id = ?`).bind(id).run();
-  return (result.meta.changes || 0) > 0;
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.execute(`DELETE FROM linked_identities WHERE id = ?`, [id]);
+  return result.rowsAffected > 0;
 }
 
 /**
  * Count linked identities for user (for unlink validation)
  */
 export async function countLinkedIdentities(env: Env, userId: string): Promise<number> {
-  const result = await env.DB.prepare(
-    `SELECT COUNT(*) as count FROM linked_identities WHERE user_id = ?`
-  )
-    .bind(userId)
-    .first<{ count: number }>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.queryOne<{ count: number }>(
+    `SELECT COUNT(*) as count FROM linked_identities WHERE user_id = ?`,
+    [userId]
+  );
 
   return result?.count || 0;
 }

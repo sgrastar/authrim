@@ -9,6 +9,7 @@
  */
 
 import type { Env } from '@authrim/shared';
+import { D1Adapter, type DatabaseAdapter } from '@authrim/shared';
 import type { ExternalIdpAuthState } from '../types';
 
 const STATE_TTL_SECONDS = 600; // 10 minutes
@@ -23,14 +24,14 @@ export async function storeAuthState(
   const id = crypto.randomUUID();
   const now = Date.now();
 
-  await env.DB.prepare(
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  await coreAdapter.execute(
     `INSERT INTO external_idp_auth_states (
       id, tenant_id, provider_id, state, nonce, code_verifier,
       redirect_uri, user_id, session_id, original_auth_request,
       max_age, acr_values, expires_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-    .bind(
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
       id,
       state.tenantId || 'default',
       state.providerId,
@@ -44,9 +45,9 @@ export async function storeAuthState(
       state.maxAge ?? null,
       state.acrValues || null,
       state.expiresAt,
-      now
-    )
-    .run();
+      now,
+    ]
+  );
 
   return id;
 }
@@ -89,30 +90,30 @@ export async function consumeAuthState(
 ): Promise<ExternalIdpAuthState | null> {
   const now = Date.now();
 
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+
   // Phase 1: Atomically mark as consumed using UPDATE with conditions
   // This only succeeds if state exists, not expired, and not already consumed
-  const updateResult = await env.DB.prepare(
+  const updateResult = await coreAdapter.execute(
     `UPDATE external_idp_auth_states
      SET consumed_at = ?
      WHERE state = ?
        AND expires_at > ?
-       AND consumed_at IS NULL`
-  )
-    .bind(now, state, now)
-    .run();
+       AND consumed_at IS NULL`,
+    [now, state, now]
+  );
 
   // If no rows were updated, state is invalid, expired, or already consumed
-  if (!updateResult.meta.changes || updateResult.meta.changes === 0) {
+  if (updateResult.rowsAffected === 0) {
     return null;
   }
 
   // Phase 2: Retrieve the state we just consumed
   // This is safe because we only reach here if we successfully marked it as consumed
-  const result = await env.DB.prepare(
-    `SELECT * FROM external_idp_auth_states WHERE state = ? AND consumed_at = ?`
-  )
-    .bind(state, now)
-    .first<DbAuthState>();
+  const result = await coreAdapter.queryOne<DbAuthState>(
+    `SELECT * FROM external_idp_auth_states WHERE state = ? AND consumed_at = ?`,
+    [state, now]
+  );
 
   if (!result) {
     // This should not happen if Phase 1 succeeded, but handle defensively
@@ -158,16 +159,16 @@ export async function cleanupExpiredStates(env: Env): Promise<number> {
   const now = Date.now();
   const consumedRetentionMs = 3600000; // 1 hour
 
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   // Delete expired states and old consumed states
-  const result = await env.DB.prepare(
+  const result = await coreAdapter.execute(
     `DELETE FROM external_idp_auth_states
      WHERE expires_at < ?
-        OR (consumed_at IS NOT NULL AND consumed_at < ?)`
-  )
-    .bind(now, now - consumedRetentionMs)
-    .run();
+        OR (consumed_at IS NOT NULL AND consumed_at < ?)`,
+    [now, now - consumedRetentionMs]
+  );
 
-  return result.meta.changes || 0;
+  return result.rowsAffected;
 }
 
 /**

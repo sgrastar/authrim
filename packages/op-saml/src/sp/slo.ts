@@ -13,7 +13,12 @@
 
 import type { Context } from 'hono';
 import type { Env, SAMLIdPConfig } from '@authrim/shared';
-import { getSessionStoreBySessionId, isShardedSessionId } from '@authrim/shared';
+import {
+  getSessionStoreBySessionId,
+  isShardedSessionId,
+  D1Adapter,
+  type DatabaseAdapter,
+} from '@authrim/shared';
 import {
   parseLogoutRequestPost,
   parseLogoutRequestRedirect,
@@ -263,27 +268,29 @@ async function terminateSessionByNameId(
     // PII/Non-PII DB分離: emailはPII DBから検索
     const tenantId = 'default';
     let user: { id: string } | null = null;
-    if (env.DB_PII) {
-      const userPII = await env.DB_PII.prepare(
-        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?'
-      )
-        .bind(tenantId, nameId)
-        .first();
+    const piiAdapter: DatabaseAdapter | null = env.DB_PII
+      ? new D1Adapter({ db: env.DB_PII })
+      : null;
+    if (piiAdapter) {
+      const userPII = await piiAdapter.queryOne<{ id: string }>(
+        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
+        [tenantId, nameId]
+      );
       if (userPII) {
         // Verify user exists in Core DB
-        const userCore = await env.DB.prepare(
-          'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
-        )
-          .bind(userPII.id)
-          .first();
+        const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+        const userCore = await coreAdapter.queryOne<{ id: string }>(
+          'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
+          [userPII.id]
+        );
         if (userCore) {
-          user = { id: userCore.id as string };
+          user = { id: userCore.id };
         }
       }
     }
     if (user) {
       console.warn(
-        `SAML SP SLO: Cannot delete all sessions for user ${user.id as string} (NameID: ${nameId}) - ` +
+        `SAML SP SLO: Cannot delete all sessions for user ${user.id} (NameID: ${nameId}) - ` +
           'sharded SessionStore requires sessionId (sessionIndex). ' +
           'Ensure the IdP includes sessionIndex in LogoutRequest.'
       );
@@ -401,11 +408,13 @@ export async function initiateSPLogout(
 ): Promise<{ html: string }> {
   // Get user info for NameID (PII/Non-PII DB分離対応)
   let nameId: string | null = null;
-  if (env.DB_PII) {
-    const userPII = await env.DB_PII.prepare('SELECT email FROM users_pii WHERE id = ?')
-      .bind(userId)
-      .first();
-    nameId = (userPII?.email as string) || null;
+  const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
+  if (piiAdapter) {
+    const userPII = await piiAdapter.queryOne<{ email: string }>(
+      'SELECT email FROM users_pii WHERE id = ?',
+      [userId]
+    );
+    nameId = userPII?.email || null;
   }
 
   if (!nameId) {

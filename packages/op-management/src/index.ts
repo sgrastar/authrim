@@ -11,6 +11,8 @@ import {
   adminAuthMiddleware,
   versionCheckMiddleware,
   requestContextMiddleware,
+  D1Adapter,
+  type DatabaseAdapter,
 } from '@authrim/shared';
 
 // Import handlers
@@ -30,6 +32,8 @@ import {
   adminUserCreateHandler,
   adminUserUpdateHandler,
   adminUserDeleteHandler,
+  adminUserRetryPiiHandler,
+  adminUserDeletePiiHandler,
   adminClientsListHandler,
   adminClientCreateHandler,
   adminClientGetHandler,
@@ -305,6 +309,8 @@ app.put('/api/admin/users/:id', adminUserUpdateHandler);
 app.delete('/api/admin/users/:id', adminUserDeleteHandler);
 app.post('/api/admin/users/:id/avatar', adminUserAvatarUploadHandler);
 app.delete('/api/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
+app.post('/api/admin/users/:id/retry-pii', adminUserRetryPiiHandler);
+app.delete('/api/admin/users/:id/pii', adminUserDeletePiiHandler);
 app.get('/api/admin/clients', adminClientsListHandler);
 app.post('/api/admin/clients', adminClientCreateHandler);
 app.delete('/api/admin/clients/bulk', adminClientsBulkDeleteHandler); // Must be before :id route
@@ -663,29 +669,32 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   console.log(`[Scheduled] D1 cleanup job started at ${new Date().toISOString()}`);
 
   try {
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+
     // 1. Cleanup expired sessions (with 1-day grace period)
-    const sessionsResult = await env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?')
-      .bind(now - 86400) // 1 day grace period
-      .run();
-    const sessionsDeleted = sessionsResult.meta?.changes || 0;
+    const sessionsResult = await coreAdapter.execute(
+      'DELETE FROM sessions WHERE expires_at < ?',
+      [now - 86400] // 1 day grace period
+    );
+    const sessionsDeleted = sessionsResult.rowsAffected || 0;
     console.log(`[Scheduled] Deleted ${sessionsDeleted} expired sessions`);
 
     // 2. Cleanup expired/used password reset tokens
-    const passwordTokensResult = await env.DB.prepare(
-      'DELETE FROM password_reset_tokens WHERE expires_at < ? OR used = 1'
-    )
-      .bind(now)
-      .run();
-    const passwordTokensDeleted = passwordTokensResult.meta?.changes || 0;
+    const passwordTokensResult = await coreAdapter.execute(
+      'DELETE FROM password_reset_tokens WHERE expires_at < ? OR used = 1',
+      [now]
+    );
+    const passwordTokensDeleted = passwordTokensResult.rowsAffected || 0;
     console.log(`[Scheduled] Deleted ${passwordTokensDeleted} expired/used password reset tokens`);
 
     // 3. Cleanup old audit logs (older than 90 days)
     // Keep audit logs for 90 days for compliance (adjust based on requirements)
     const ninetyDaysAgo = now - 90 * 86400;
-    const auditLogsResult = await env.DB.prepare('DELETE FROM audit_log WHERE created_at < ?')
-      .bind(ninetyDaysAgo)
-      .run();
-    const auditLogsDeleted = auditLogsResult.meta?.changes || 0;
+    const auditLogsResult = await coreAdapter.execute(
+      'DELETE FROM audit_log WHERE created_at < ?',
+      [ninetyDaysAgo]
+    );
+    const auditLogsDeleted = auditLogsResult.rowsAffected || 0;
     console.log(`[Scheduled] Deleted ${auditLogsDeleted} audit logs older than 90 days`);
 
     console.log(

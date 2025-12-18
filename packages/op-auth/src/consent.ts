@@ -30,6 +30,8 @@ import {
   getRolesInOrganization,
   invalidateConsentCache,
   getChallengeStoreByChallengeId,
+  createAuthContextFromHono,
+  getTenantIdFromContext,
 } from '@authrim/shared';
 
 // Scope descriptions (human-readable)
@@ -142,21 +144,23 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
     const scope = metadata.scope as string;
     const userId = typedChallengeData.userId;
 
-    // Load client metadata from D1
-    const clientRow = await c.env.DB.prepare(
-      `SELECT client_id, client_name, logo_uri, client_uri, policy_uri, tos_uri, is_trusted
-       FROM oauth_clients WHERE client_id = ?`
-    )
-      .bind(client_id)
-      .first<{
-        client_id: string;
-        client_name: string | null;
-        logo_uri: string | null;
-        client_uri: string | null;
-        policy_uri: string | null;
-        tos_uri: string | null;
-        is_trusted: number | null;
-      }>();
+    // Load client metadata via Repository
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const client = await authCtx.repositories.client.findByClientId(client_id);
+
+    // Map to clientRow format for compatibility
+    const clientRow = client
+      ? {
+          client_id: client.client_id,
+          client_name: client.client_name ?? null,
+          logo_uri: client.logo_uri ?? null,
+          client_uri: client.client_uri ?? null,
+          policy_uri: client.policy_uri ?? null,
+          tos_uri: client.tos_uri ?? null,
+          is_trusted: client.is_trusted ? 1 : null,
+        }
+      : null;
 
     if (!clientRow) {
       return c.json(
@@ -523,7 +527,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       return c.redirect(redirectUrl.toString(), 302);
     }
 
-    // Save consent to D1
+    // Save consent via Adapter (database-agnostic)
     const scope = metadata.scope as string;
     const client_id = metadata.client_id as string;
     const consentId = crypto.randomUUID();
@@ -533,13 +537,16 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     // Use selected_org_id if provided, otherwise use metadata.org_id
     const effectiveOrgId = selected_org_id || metadata.org_id || null;
 
-    await c.env.DB.prepare(
+    // Get AuthContext for database access
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
+    await authCtx.coreAdapter.execute(
       `INSERT OR REPLACE INTO oauth_client_consents
        (id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`
-    )
-      .bind(consentId, userId, client_id, scope, now, expiresAt)
-      .run();
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [consentId, userId, client_id, scope, now, expiresAt, now, now]
+    );
 
     // Invalidate consent cache so next check reflects updated consent
     await invalidateConsentCache(c.env, userId, client_id);

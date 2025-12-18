@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
-import { getSessionStoreForNewSession } from '@authrim/shared';
+import { D1Adapter, type DatabaseAdapter, getSessionStoreForNewSession } from '@authrim/shared';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
 import { consumeAuthState } from '../utils/state';
@@ -271,19 +271,19 @@ async function createSession(env: Env, options: CreateSessionOptions): Promise<s
     // 2. Also record in D1 for backchannel logout queries
     // This allows us to find sessions by (provider_id, provider_sub)
     try {
-      await env.DB.prepare(
+      const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+      await coreAdapter.execute(
         `INSERT INTO sessions (id, user_id, expires_at, created_at, external_provider_id, external_provider_sub)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
           sessionId,
           options.userId,
           expiresAt,
           now,
           options.externalProviderId,
-          options.externalProviderSub
-        )
-        .run();
+          options.externalProviderSub,
+        ]
+      );
     } catch (dbError) {
       // Log but don't fail session creation if D1 insert fails
       // Session is still valid in DO, just backchannel logout may not work

@@ -15,6 +15,8 @@ import type { Env } from '../types/env';
 import type { AuditLogEntry } from '../types/admin';
 import { generateSecureRandomString } from './crypto';
 import { DEFAULT_TENANT_ID } from './tenant-context';
+import { D1Adapter } from '../db/adapters/d1-adapter';
+import type { DatabaseAdapter } from '../db/adapter';
 
 /**
  * Create an audit log entry in the database
@@ -34,13 +36,13 @@ export async function createAuditLog(
     const tenantId = entry.tenantId || DEFAULT_TENANT_ID;
     const createdAt = Date.now();
 
-    await env.DB.prepare(
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    await coreAdapter.execute(
       `INSERT INTO audit_log (
         id, tenant_id, user_id, action, resource, resource_id,
         ip_address, user_agent, metadata, severity, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
         id,
         tenantId,
         entry.userId,
@@ -51,9 +53,9 @@ export async function createAuditLog(
         entry.userAgent,
         entry.metadata,
         entry.severity,
-        createdAt
-      )
-      .run();
+        createdAt,
+      ]
+    );
 
     // Log critical operations to console for immediate visibility
     if (entry.severity === 'critical') {

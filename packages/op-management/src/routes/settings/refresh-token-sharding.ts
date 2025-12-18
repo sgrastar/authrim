@@ -8,6 +8,7 @@ import {
   buildRefreshTokenRotatorInstanceName,
   clearShardConfigCache,
   getTenantIdFromContext,
+  createAuthContextFromHono,
   type RefreshTokenShardConfig,
 } from '@authrim/shared';
 
@@ -84,14 +85,16 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
     // Save to KV
     await saveRefreshTokenShardConfig(c.env, clientId, newConfig);
 
-    // Record in D1 for audit
+    // Record in D1 for audit via Adapter
     if (c.env.DB) {
-      await c.env.DB.prepare(
+      const tenantId = getTenantIdFromContext(c);
+      const authCtx = createAuthContextFromHono(c, tenantId);
+
+      await authCtx.coreAdapter.execute(
         `INSERT INTO refresh_token_shard_configs
          (id, tenant_id, client_id, generation, shard_count, activated_at, created_by, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
           `rtsc_${crypto.randomUUID()}`,
           'default',
           clientId,
@@ -99,19 +102,18 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
           newConfig.currentShardCount,
           Date.now(),
           adminUser,
-          body.notes || null
-        )
-        .run();
+          body.notes || null,
+        ]
+      );
 
       // Mark previous generation as deprecated
       if (currentConfig.currentGeneration > 0) {
-        await c.env.DB.prepare(
+        await authCtx.coreAdapter.execute(
           `UPDATE refresh_token_shard_configs
            SET deprecated_at = ?
-           WHERE tenant_id = ? AND client_id = ? AND generation = ? AND deprecated_at IS NULL`
-        )
-          .bind(Date.now(), 'default', clientId, currentConfig.currentGeneration)
-          .run();
+           WHERE tenant_id = ? AND client_id = ? AND generation = ? AND deprecated_at IS NULL`,
+          [Date.now(), 'default', clientId, currentConfig.currentGeneration]
+        );
       }
     }
 
@@ -153,8 +155,18 @@ export async function getRefreshTokenShardingStats(c: Context<{ Bindings: Env }>
       );
     }
 
-    // Get token family distribution by generation
-    const statsResult = await c.env.DB.prepare(
+    // Get token family distribution by generation via Adapter
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const now = Date.now();
+
+    const stats = await authCtx.coreAdapter.query<{
+      generation: number;
+      total: number;
+      active: number;
+      revoked: number;
+      expired: number;
+    }>(
       `SELECT
          generation,
          COUNT(*) as total,
@@ -164,10 +176,9 @@ export async function getRefreshTokenShardingStats(c: Context<{ Bindings: Env }>
        FROM user_token_families
        WHERE (? IS NULL OR client_id = ?)
        GROUP BY generation
-       ORDER BY generation DESC`
-    )
-      .bind(Date.now(), Date.now(), clientId, clientId)
-      .all();
+       ORDER BY generation DESC`,
+      [now, now, clientId, clientId]
+    );
 
     // Get shard config
     const config = await getRefreshTokenShardConfig(c.env, clientId || '__global__');
@@ -175,7 +186,7 @@ export async function getRefreshTokenShardingStats(c: Context<{ Bindings: Env }>
     return c.json({
       clientId: clientId || '__global__',
       config,
-      stats: statsResult.results,
+      stats,
     });
   } catch (error) {
     console.error('Failed to get refresh token sharding stats:', error);
@@ -219,14 +230,18 @@ export async function cleanupRefreshTokenGeneration(c: Context<{ Bindings: Env }
       );
     }
 
-    // Safety check: ensure no active tokens exist for this generation
-    const activeResult = await c.env.DB.prepare(
+    // Create AuthContext for database operations
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const now = Date.now();
+
+    // Safety check: ensure no active tokens exist for this generation via Adapter
+    const params = clientId ? [tenantId, generation, now, clientId] : [tenantId, generation, now];
+    const activeResult = await authCtx.coreAdapter.queryOne<{ count: number }>(
       `SELECT COUNT(*) as count FROM user_token_families
        WHERE tenant_id = ? AND generation = ? AND is_revoked = 0 AND expires_at > ?
-       ${clientId ? 'AND client_id = ?' : ''}`
-    )
-      .bind(tenantId, generation, Date.now(), ...(clientId ? [clientId] : []))
-      .first<{ count: number }>();
+       ${clientId ? 'AND client_id = ?' : ''}`,
+      params
+    );
 
     if (activeResult && activeResult.count > 0) {
       return c.json(
@@ -251,16 +266,16 @@ export async function cleanupRefreshTokenGeneration(c: Context<{ Bindings: Env }
       );
     }
 
-    // Delete D1 records
-    const deleteResult = await c.env.DB.prepare(
+    // Delete D1 records via Adapter
+    const deleteParams = clientId ? [generation, clientId] : [generation];
+    const deleteResult = await authCtx.coreAdapter.execute(
       `DELETE FROM user_token_families
        WHERE generation = ?
-       ${clientId ? 'AND client_id = ?' : ''}`
-    )
-      .bind(generation, ...(clientId ? [clientId] : []))
-      .run();
+       ${clientId ? 'AND client_id = ?' : ''}`,
+      deleteParams
+    );
 
-    const deletedCount = deleteResult.meta?.changes || 0;
+    const deletedCount = deleteResult.rowsAffected || 0;
 
     // Remove from shard config's previousGenerations
     const updatedConfig: RefreshTokenShardConfig = {
@@ -320,16 +335,23 @@ export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) 
       );
     }
 
-    // Get all token families for this user
-    const familiesResult = await c.env.DB.prepare(
+    // Get all token families for this user via Adapter
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
+    const params = clientId ? [userId, clientId] : [userId];
+    const families = await authCtx.coreAdapter.query<{
+      jti: string;
+      client_id: string;
+      generation: number;
+    }>(
       `SELECT jti, client_id, generation FROM user_token_families
        WHERE user_id = ? AND is_revoked = 0
-       ${clientId ? 'AND client_id = ?' : ''}`
-    )
-      .bind(userId, ...(clientId ? [clientId] : []))
-      .all<{ jti: string; client_id: string; generation: number }>();
+       ${clientId ? 'AND client_id = ?' : ''}`,
+      params
+    );
 
-    if (!familiesResult.results || familiesResult.results.length === 0) {
+    if (families.length === 0) {
       return c.json({
         success: true,
         message: 'No active refresh tokens found for user',
@@ -340,7 +362,7 @@ export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) 
     // Group by shard for parallel revocation
     const shardGroups = new Map<string, { clientId: string; jtis: string[] }>();
 
-    for (const family of familiesResult.results) {
+    for (const family of families) {
       const parsed = parseRefreshTokenJti(family.jti);
       const instanceName = buildRefreshTokenRotatorInstanceName(
         family.client_id,
@@ -374,20 +396,20 @@ export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) 
 
     await Promise.all(revokePromises);
 
-    // Update D1
-    await c.env.DB.prepare(
+    // Update D1 via Adapter
+    const updateParams = clientId ? [userId, clientId] : [userId];
+    await authCtx.coreAdapter.execute(
       `UPDATE user_token_families
        SET is_revoked = 1
        WHERE user_id = ?
-       ${clientId ? 'AND client_id = ?' : ''}`
-    )
-      .bind(userId, ...(clientId ? [clientId] : []))
-      .run();
+       ${clientId ? 'AND client_id = ?' : ''}`,
+      updateParams
+    );
 
     return c.json({
       success: true,
       message: `Revoked all refresh tokens for user ${userId}`,
-      revoked: familiesResult.results.length,
+      revoked: families.length,
     });
   } catch (error) {
     console.error('Failed to revoke user refresh tokens:', error);

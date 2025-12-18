@@ -9,19 +9,49 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/shared';
 
-// Mock the shared module
-vi.mock('@authrim/shared', async () => {
-  const actual = await vi.importActual('@authrim/shared');
+// Hoist mock functions to ensure they're available when vi.mock runs
+const {
+  mockClientRepository,
+  mockValidateClientId,
+  mockTimingSafeEqual,
+  mockGetRefreshToken,
+  mockIsTokenRevoked,
+  mockParseToken,
+  mockVerifyToken,
+  mockGetTenantIdFromContext,
+  mockCreateAuthContextFromHono,
+} = vi.hoisted(() => {
+  const clientRepo = {
+    findByClientId: vi.fn(),
+  };
   return {
-    ...actual,
-    validateClientId: vi.fn(),
-    timingSafeEqual: vi.fn((a: string, b: string) => a === b),
-    getRefreshToken: vi.fn(),
-    isTokenRevoked: vi.fn(),
-    parseToken: vi.fn(),
-    verifyToken: vi.fn(),
+    mockClientRepository: clientRepo,
+    mockValidateClientId: vi.fn(),
+    mockTimingSafeEqual: vi.fn((a: string, b: string) => a === b),
+    mockGetRefreshToken: vi.fn(),
+    mockIsTokenRevoked: vi.fn(),
+    mockParseToken: vi.fn(),
+    mockVerifyToken: vi.fn(),
+    mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
+    mockCreateAuthContextFromHono: vi.fn().mockReturnValue({
+      repositories: {
+        client: clientRepo,
+      },
+    }),
   };
 });
+
+// Mock the shared module
+vi.mock('@authrim/shared', () => ({
+  validateClientId: mockValidateClientId,
+  timingSafeEqual: mockTimingSafeEqual,
+  getRefreshToken: mockGetRefreshToken,
+  isTokenRevoked: mockIsTokenRevoked,
+  parseToken: mockParseToken,
+  verifyToken: mockVerifyToken,
+  getTenantIdFromContext: mockGetTenantIdFromContext,
+  createAuthContextFromHono: mockCreateAuthContextFromHono,
+}));
 
 // Mock the introspection cache settings module
 vi.mock('../routes/settings/introspection-cache', () => ({
@@ -34,16 +64,16 @@ vi.mock('jose', () => ({
 }));
 
 import { introspectHandler } from '../introspect';
-import {
-  validateClientId,
-  timingSafeEqual,
-  getRefreshToken,
-  isTokenRevoked,
-  parseToken,
-  verifyToken,
-} from '@authrim/shared';
 import { importJWK } from 'jose';
 import { getIntrospectionCacheConfig } from '../routes/settings/introspection-cache';
+
+// Use the hoisted mocks directly (already defined above vi.mock)
+const validateClientId = mockValidateClientId;
+const timingSafeEqual = mockTimingSafeEqual;
+const getRefreshToken = mockGetRefreshToken;
+const isTokenRevoked = mockIsTokenRevoked;
+const parseToken = mockParseToken;
+const verifyToken = mockVerifyToken;
 
 // Helper to create mock context
 function createMockContext(options: {
@@ -99,6 +129,14 @@ const sampleTokenPayload = {
 describe('Token Introspection Endpoint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset repository mock
+    mockClientRepository.findByClientId.mockReset();
+    // Re-setup createAuthContextFromHono to return the mock repository
+    mockCreateAuthContextFromHono.mockReturnValue({
+      repositories: {
+        client: mockClientRepository,
+      },
+    });
     vi.mocked(importJWK).mockResolvedValue({} as any);
     // Default: cache disabled for most tests to test without cache
     vi.mocked(getIntrospectionCacheConfig).mockResolvedValue({
@@ -108,7 +146,8 @@ describe('Token Introspection Endpoint', () => {
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    // Don't use restoreAllMocks as it restores original implementations
+    vi.clearAllMocks();
   });
 
   describe('Content-Type Validation', () => {
@@ -152,13 +191,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -185,13 +220,9 @@ describe('Token Introspection Endpoint', () => {
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -223,13 +254,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -258,13 +285,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -317,11 +340,7 @@ describe('Token Introspection Endpoint', () => {
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue(null),
-        }),
-      });
+      mockClientRepository.findByClientId.mockResolvedValue(null);
 
       await introspectHandler(c);
 
@@ -349,13 +368,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(timingSafeEqual).mockReturnValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'correct-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'correct-secret',
       });
 
       await introspectHandler(c);
@@ -387,13 +402,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -441,13 +452,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -482,13 +489,9 @@ describe('Token Introspection Endpoint', () => {
         throw new Error('Invalid token format');
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -515,13 +518,9 @@ describe('Token Introspection Endpoint', () => {
       });
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -546,13 +545,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(true); // Token is revoked
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -576,13 +571,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
       vi.mocked(verifyToken).mockRejectedValue(new Error('Invalid signature'));
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -613,13 +604,9 @@ describe('Token Introspection Endpoint', () => {
         tokenId: 'token-jti-123',
       } as any);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -657,13 +644,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(getRefreshToken).mockResolvedValue(null); // Refresh token not found
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -689,13 +672,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -728,13 +707,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -766,13 +741,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -830,13 +801,9 @@ describe('Token Introspection Endpoint', () => {
         throw new Error('Invalid token');
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -889,13 +856,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -943,13 +906,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(true); // Token is revoked
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -994,13 +953,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -1041,13 +996,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -1091,13 +1042,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -1136,13 +1083,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -1188,13 +1131,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(tokenWithoutJti);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -1228,13 +1167,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -1294,13 +1229,9 @@ describe('Token Introspection Endpoint', () => {
         tokenId: 'token-jti-123',
       } as any);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -1358,13 +1289,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
       vi.mocked(getRefreshToken).mockResolvedValue(null); // Refresh token not found
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -1407,13 +1334,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -1469,13 +1392,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(tokenWithoutSub);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -1518,13 +1437,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(true); // Token is revoked
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);
@@ -1569,13 +1484,9 @@ describe('Token Introspection Endpoint', () => {
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await introspectHandler(c);

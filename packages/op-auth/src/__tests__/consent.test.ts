@@ -113,6 +113,9 @@ function createMockContext(options: {
 
   const challengeStore = options.challengeStore ?? createMockChallengeStore();
 
+  // Store context values (simulating Hono's context store)
+  const contextStore = new Map<string, unknown>([['tenantId', 'default']]);
+
   const c = {
     req: {
       method: options.method || 'GET',
@@ -145,6 +148,8 @@ function createMockContext(options: {
     redirect: vi.fn(
       (url: string, status: number) => new Response(null, { status, headers: { Location: url } })
     ),
+    get: vi.fn((key: string) => contextStore.get(key)),
+    set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
     _mockDB: mockDB,
     _challengeStore: challengeStore,
   } as any;

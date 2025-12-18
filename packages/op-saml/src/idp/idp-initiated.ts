@@ -8,7 +8,12 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
 import type { SAMLSPConfig } from '@authrim/shared';
-import { getSessionStoreBySessionId, isShardedSessionId } from '@authrim/shared';
+import {
+  getSessionStoreBySessionId,
+  isShardedSessionId,
+  D1Adapter,
+  type DatabaseAdapter,
+} from '@authrim/shared';
 import { generateSAMLId, nowAsDateTime, offsetDateTime } from '../common/xml-utils';
 import { NAMEID_FORMATS, AUTHN_CONTEXT, DEFAULTS, STATUS_CODES } from '../common/constants';
 import { getSigningKey, getSigningCertificate } from '../common/key-utils';
@@ -119,9 +124,11 @@ async function getUserInfo(
   userId: string
 ): Promise<{ id: string; email: string; name?: string } | null> {
   // PII/Non-PII DB分離: Core DBでユーザー存在確認、PII DBからemail/name取得
-  const userCore = await env.DB.prepare('SELECT id FROM users_core WHERE id = ? AND is_active = 1')
-    .bind(userId)
-    .first();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const userCore = await coreAdapter.queryOne<{ id: string }>(
+    'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
+    [userId]
+  );
 
   if (!userCore) {
     return null;
@@ -131,12 +138,14 @@ async function getUserInfo(
   let email: string | null = null;
   let name: string | undefined = undefined;
 
-  if (env.DB_PII) {
-    const userPII = await env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
-      .bind(userId)
-      .first();
-    email = (userPII?.email as string) || null;
-    name = (userPII?.name as string) || undefined;
+  const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
+  if (piiAdapter) {
+    const userPII = await piiAdapter.queryOne<{ email: string; name: string }>(
+      'SELECT email, name FROM users_pii WHERE id = ?',
+      [userId]
+    );
+    email = userPII?.email || null;
+    name = userPII?.name || undefined;
   }
 
   if (!email) {
@@ -144,7 +153,7 @@ async function getUserInfo(
   }
 
   return {
-    id: userCore.id as string,
+    id: userCore.id,
     email,
     name,
   };

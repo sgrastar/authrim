@@ -23,6 +23,9 @@ import {
   invalidateConsentCache,
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
+  createAuthContextFromHono,
+  createPIIContextFromHono,
+  getTenantIdFromContext,
 } from '@authrim/shared';
 import type { CachedUser, CachedConsent } from '@authrim/shared';
 import type { Session, PARRequestData } from '@authrim/shared';
@@ -1732,15 +1735,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const consentId = crypto.randomUUID();
         const now = Date.now();
 
-        await c.env.DB.prepare(
-          `
-          INSERT INTO oauth_client_consents
-          (id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-        `
-        )
-          .bind(consentId, sub, validClientId, scope, now, null)
-          .run();
+        // Use DatabaseAdapter for consent insert (portable across D1/PostgreSQL/MySQL)
+        const tenantId = getTenantIdFromContext(c);
+        const authCtx = createAuthContextFromHono(c, tenantId);
+        await authCtx.coreAdapter.execute(
+          `INSERT INTO oauth_client_consents
+           (id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [consentId, sub, validClientId, scope, now, null, now, now]
+        );
 
         // Invalidate consent cache after insert so next read picks up new consent
         await invalidateConsentCache(c.env, sub, validClientId);
@@ -2866,6 +2869,8 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
 
   // Create a new user and session (stub - in production, verify credentials first)
   let userId: string;
+  const tenantId = getTenantIdFromContext(c);
+  const authCtx = createAuthContextFromHono(c, tenantId);
 
   if (isCertificationTest) {
     // Use fixed test user for OIDC Conformance Tests
@@ -2873,75 +2878,61 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     console.log('[LOGIN] Using OIDC Conformance Test user');
 
     // Verify test user exists in Core DB (should have been created during DCR)
-    const existingUser = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
-      .bind(userId)
-      .first();
+    const existingUser = await authCtx.repositories.userCore.findById(userId);
 
     if (!existingUser) {
       console.warn('[LOGIN] Test user not found, creating it now');
-      // Create test user if it doesn't exist (fallback)
-      const now = Math.floor(Date.now() / 1000);
 
-      // Step 1: Insert into users_core with pii_status='pending'
-      await c.env.DB.prepare(
-        `INSERT INTO users_core (
-          id, tenant_id, email_verified, phone_number_verified, user_type,
-          pii_partition, pii_status, created_at, updated_at
-        ) VALUES (?, 'default', ?, ?, 'end_user', 'default', 'pending', ?, ?)`
-      )
-        .bind(userId, 1, 1, now, now)
-        .run()
+      // Step 1: Create user in Core DB with pii_status='pending'
+      await authCtx.repositories.userCore
+        .createUser({
+          id: userId,
+          tenant_id: tenantId,
+          email_verified: true,
+          phone_number_verified: true,
+          user_type: 'end_user',
+          pii_partition: 'default',
+          pii_status: 'pending',
+        })
         .catch((error: unknown) => {
           console.error('Failed to create test user in Core DB:', error);
         });
 
       // Step 2: Insert into users_pii (if DB_PII is configured)
       if (c.env.DB_PII) {
-        await c.env.DB_PII.prepare(
-          `INSERT INTO users_pii (
-            id, tenant_id, email, name, given_name, family_name,
-            middle_name, nickname, preferred_username, profile, picture,
-            website, gender, birthdate, zoneinfo, locale,
-            phone_number, address_formatted, address_street_address,
-            address_locality, address_region, address_postal_code, address_country,
-            created_at, updated_at
-          ) VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-          .bind(
-            userId,
-            'test@example.com',
-            'John Doe',
-            'John',
-            'Doe',
-            'Q',
-            'Johnny',
-            'test',
-            'https://example.com/johndoe',
-            'https://example.com/avatar.jpg',
-            'https://example.com',
-            'male',
-            '1990-01-01',
-            'America/New_York',
-            'en-US',
-            '+1-555-0100',
-            '1234 Main St, Anytown, ST 12345, USA',
-            '1234 Main St',
-            'Anytown',
-            'ST',
-            '12345',
-            'USA',
-            now,
-            now
-          )
-          .run()
+        const piiCtx = createPIIContextFromHono(c, tenantId);
+        await piiCtx.piiRepositories.userPII
+          .createPII({
+            id: userId,
+            tenant_id: tenantId,
+            pii_class: 'PROFILE',
+            email: 'test@example.com',
+            name: 'John Doe',
+            given_name: 'John',
+            family_name: 'Doe',
+            nickname: 'Johnny',
+            preferred_username: 'test',
+            picture: 'https://example.com/avatar.jpg',
+            website: 'https://example.com',
+            gender: 'male',
+            birthdate: '1990-01-01',
+            zoneinfo: 'America/New_York',
+            locale: 'en-US',
+            phone_number: '+1-555-0100',
+            address_formatted: '1234 Main St, Anytown, ST 12345, USA',
+            address_street_address: '1234 Main St',
+            address_locality: 'Anytown',
+            address_region: 'ST',
+            address_postal_code: '12345',
+            address_country: 'USA',
+          })
           .catch((error: unknown) => {
             console.error('Failed to create test user in PII DB:', error);
           });
 
         // Step 3: Update pii_status to 'active'
-        await c.env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
-          .bind('active', userId)
-          .run()
+        await authCtx.repositories.userCore
+          .updatePIIStatus(userId, 'active')
           .catch((error: unknown) => {
             console.error('Failed to update pii_status:', error);
           });
@@ -2954,38 +2945,36 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     // Use the email from login form, or fall back to a dummy email
     const userEmail = loginUsername || `${userId}@example.com`;
 
-    // Create user in both Core and PII databases
-    const now = Math.floor(Date.now() / 1000);
-
-    // Step 1: Insert into users_core with pii_status='pending'
-    await c.env.DB.prepare(
-      `INSERT OR IGNORE INTO users_core (
-        id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at
-      ) VALUES (?, 'default', 0, 'end_user', 'default', 'pending', ?, ?)`
-    )
-      .bind(userId, now, now)
-      .run()
+    // Step 1: Create user in Core DB with pii_status='pending'
+    await authCtx.repositories.userCore
+      .createUser({
+        id: userId,
+        tenant_id: tenantId,
+        email_verified: false,
+        user_type: 'end_user',
+        pii_partition: 'default',
+        pii_status: 'pending',
+      })
       .catch((error: unknown) => {
         console.error('Failed to create user in Core DB:', error);
       });
 
     // Step 2: Insert into users_pii (if DB_PII is configured)
     if (c.env.DB_PII) {
-      await c.env.DB_PII.prepare(
-        `INSERT OR IGNORE INTO users_pii (
-          id, tenant_id, email, created_at, updated_at
-        ) VALUES (?, 'default', ?, ?, ?)`
-      )
-        .bind(userId, userEmail, now, now)
-        .run()
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      await piiCtx.piiRepositories.userPII
+        .createPII({
+          id: userId,
+          tenant_id: tenantId,
+          email: userEmail,
+        })
         .catch((error: unknown) => {
           console.error('Failed to create user in PII DB:', error);
         });
 
       // Step 3: Update pii_status to 'active'
-      await c.env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
-        .bind('active', userId)
-        .run()
+      await authCtx.repositories.userCore
+        .updatePIIStatus(userId, 'active')
         .catch((error: unknown) => {
           console.error('Failed to update pii_status:', error);
         });

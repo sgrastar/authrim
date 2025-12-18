@@ -7,6 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env, CIBARequestMetadata } from '@authrim/shared';
+import { D1Adapter, type DatabaseAdapter } from '@authrim/shared';
 
 /**
  * GET /api/ciba/request/:auth_req_id
@@ -79,11 +80,16 @@ export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Enrich with client metadata from database
-    const client = await c.env.DB.prepare(
-      'SELECT client_id, client_name, logo_uri, is_trusted FROM oauth_clients WHERE client_id = ?'
-    )
-      .bind(metadata.client_id)
-      .first();
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const client = await coreAdapter.queryOne<{
+      client_id: string;
+      client_name: string | null;
+      logo_uri: string | null;
+      is_trusted: number;
+    }>(
+      'SELECT client_id, client_name, logo_uri, is_trusted FROM oauth_clients WHERE client_id = ?',
+      [metadata.client_id]
+    );
 
     // Calculate time remaining
     const now = Math.floor(Date.now() / 1000);

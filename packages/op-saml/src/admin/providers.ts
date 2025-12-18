@@ -22,7 +22,12 @@ import type {
   SAMLProviderResponse,
   MetadataImportRequest,
 } from '@authrim/shared';
-import { timingSafeEqual, validateExternalUrl } from '@authrim/shared';
+import {
+  timingSafeEqual,
+  validateExternalUrl,
+  D1Adapter,
+  type DatabaseAdapter,
+} from '@authrim/shared';
 import {
   parseXml,
   findElement,
@@ -48,21 +53,31 @@ export async function handleListProviders(c: Context<{ Bindings: Env }>): Promis
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const providers = await env.DB.prepare(
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const providers = await coreAdapter.query<{
+      id: string;
+      name: string;
+      provider_type: string;
+      config_json: string;
+      enabled: number;
+      created_at: number;
+      updated_at: number;
+    }>(
       `SELECT id, name, provider_type, config_json, enabled, created_at, updated_at
        FROM identity_providers
        WHERE provider_type IN ('saml_idp', 'saml_sp')
-       ORDER BY created_at DESC`
-    ).all();
+       ORDER BY created_at DESC`,
+      []
+    );
 
-    const response = providers.results.map((row) => ({
+    const response = providers.map((row) => ({
       id: row.id,
       name: row.name,
       providerType: row.provider_type,
-      config: JSON.parse(row.config_json as string),
+      config: JSON.parse(row.config_json),
       enabled: row.enabled === 1,
-      createdAt: new Date(row.created_at as number).toISOString(),
-      updatedAt: new Date(row.updated_at as number).toISOString(),
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
     }));
 
     return c.json({ providers: response });
@@ -110,20 +125,20 @@ export async function handleCreateProvider(c: Context<{ Bindings: Env }>): Promi
     const id = crypto.randomUUID();
     const now = Date.now();
 
-    await env.DB.prepare(
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    await coreAdapter.execute(
       `INSERT INTO identity_providers (id, name, provider_type, config_json, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
         id,
         body.name,
         body.providerType,
         JSON.stringify(body.config),
         body.enabled !== false ? 1 : 0,
         now,
-        now
-      )
-      .run();
+        now,
+      ]
+    );
 
     return c.json(
       {
@@ -155,13 +170,21 @@ export async function handleGetProvider(c: Context<{ Bindings: Env }>): Promise<
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const provider = await env.DB.prepare(
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const provider = await coreAdapter.queryOne<{
+      id: string;
+      name: string;
+      provider_type: string;
+      config_json: string;
+      enabled: number;
+      created_at: number;
+      updated_at: number;
+    }>(
       `SELECT id, name, provider_type, config_json, enabled, created_at, updated_at
        FROM identity_providers
-       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`
-    )
-      .bind(id)
-      .first();
+       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
+      [id]
+    );
 
     if (!provider) {
       return c.json({ error: 'Provider not found' }, 404);
@@ -171,10 +194,10 @@ export async function handleGetProvider(c: Context<{ Bindings: Env }>): Promise<
       id: provider.id,
       name: provider.name,
       providerType: provider.provider_type,
-      config: JSON.parse(provider.config_json as string),
+      config: JSON.parse(provider.config_json),
       enabled: provider.enabled === 1,
-      createdAt: new Date(provider.created_at as number).toISOString(),
-      updatedAt: new Date(provider.updated_at as number).toISOString(),
+      createdAt: new Date(provider.created_at).toISOString(),
+      updatedAt: new Date(provider.updated_at).toISOString(),
     });
   } catch (error) {
     console.error('Get provider error:', error);
@@ -194,39 +217,45 @@ export async function handleUpdateProvider(c: Context<{ Bindings: Env }>): Promi
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+
     // Get existing provider
-    const existing = await env.DB.prepare(
+    const existing = await coreAdapter.queryOne<{
+      id: string;
+      name: string;
+      provider_type: string;
+      config_json: string;
+      enabled: number;
+    }>(
       `SELECT id, name, provider_type, config_json, enabled
        FROM identity_providers
-       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`
-    )
-      .bind(id)
-      .first();
+       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
+      [id]
+    );
 
     if (!existing) {
       return c.json({ error: 'Provider not found' }, 404);
     }
 
     const body = (await c.req.json()) as SAMLProviderUpdateRequest;
-    const existingConfig = JSON.parse(existing.config_json as string);
+    const existingConfig = JSON.parse(existing.config_json);
 
     // Merge config updates
     const newConfig = body.config ? { ...existingConfig, ...body.config } : existingConfig;
     const now = Date.now();
 
-    await env.DB.prepare(
+    await coreAdapter.execute(
       `UPDATE identity_providers
        SET name = ?, config_json = ?, enabled = ?, updated_at = ?
-       WHERE id = ?`
-    )
-      .bind(
+       WHERE id = ?`,
+      [
         body.name || existing.name,
         JSON.stringify(newConfig),
         body.enabled !== undefined ? (body.enabled ? 1 : 0) : existing.enabled,
         now,
-        id
-      )
-      .run();
+        id,
+      ]
+    );
 
     return c.json({
       id,
@@ -254,14 +283,14 @@ export async function handleDeleteProvider(c: Context<{ Bindings: Env }>): Promi
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const result = await env.DB.prepare(
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const result = await coreAdapter.execute(
       `DELETE FROM identity_providers
-       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`
-    )
-      .bind(id)
-      .run();
+       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
+      [id]
+    );
 
-    if (result.meta.changes === 0) {
+    if (result.rowsAffected === 0) {
       return c.json({ error: 'Provider not found' }, 404);
     }
 
@@ -284,14 +313,19 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+
     // Get existing provider
-    const existing = await env.DB.prepare(
+    const existing = await coreAdapter.queryOne<{
+      id: string;
+      provider_type: string;
+      config_json: string;
+    }>(
       `SELECT id, provider_type, config_json
        FROM identity_providers
-       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`
-    )
-      .bind(id)
-      .first();
+       WHERE id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
+      [id]
+    );
 
     if (!existing) {
       return c.json({ error: 'Provider not found' }, 404);
@@ -335,7 +369,7 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
     }
 
     // Merge with existing config (preserve custom settings)
-    const existingConfig = JSON.parse(existing.config_json as string);
+    const existingConfig = JSON.parse(existing.config_json);
     const mergedConfig = {
       ...existingConfig,
       ...newConfig,
@@ -345,11 +379,10 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
 
     const now = Date.now();
 
-    await env.DB.prepare(
-      `UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ?`
-    )
-      .bind(JSON.stringify(mergedConfig), now, id)
-      .run();
+    await coreAdapter.execute(
+      `UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ?`,
+      [JSON.stringify(mergedConfig), now, id]
+    );
 
     return c.json({
       success: true,
@@ -589,13 +622,15 @@ function parseSPMetadata(xml: string): SAMLSPConfig {
  * Get SP configuration by Entity ID
  */
 export async function getSPConfig(env: Env, entityId: string): Promise<SAMLSPConfig | null> {
-  const result = await env.DB.prepare(
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.query<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
-     WHERE provider_type = 'saml_sp' AND enabled = 1`
-  ).all();
+     WHERE provider_type = 'saml_sp' AND enabled = 1`,
+    []
+  );
 
-  for (const row of result.results) {
-    const config = JSON.parse(row.config_json as string) as SAMLSPConfig;
+  for (const row of result) {
+    const config = JSON.parse(row.config_json) as SAMLSPConfig;
     if (config.entityId === entityId) {
       return config;
     }
@@ -608,18 +643,18 @@ export async function getSPConfig(env: Env, entityId: string): Promise<SAMLSPCon
  * Get IdP configuration by provider ID
  */
 export async function getIdPConfig(env: Env, providerId: string): Promise<SAMLIdPConfig | null> {
-  const result = await env.DB.prepare(
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.queryOne<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
-     WHERE id = ? AND provider_type = 'saml_idp' AND enabled = 1`
-  )
-    .bind(providerId)
-    .first();
+     WHERE id = ? AND provider_type = 'saml_idp' AND enabled = 1`,
+    [providerId]
+  );
 
   if (!result) {
     return null;
   }
 
-  return JSON.parse(result.config_json as string) as SAMLIdPConfig;
+  return JSON.parse(result.config_json) as SAMLIdPConfig;
 }
 
 /**
@@ -629,13 +664,15 @@ export async function getIdPConfigByEntityId(
   env: Env,
   entityId: string
 ): Promise<SAMLIdPConfig | null> {
-  const result = await env.DB.prepare(
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.query<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
-     WHERE provider_type = 'saml_idp' AND enabled = 1`
-  ).all();
+     WHERE provider_type = 'saml_idp' AND enabled = 1`,
+    []
+  );
 
-  for (const row of result.results) {
-    const config = JSON.parse(row.config_json as string) as SAMLIdPConfig;
+  for (const row of result) {
+    const config = JSON.parse(row.config_json) as SAMLIdPConfig;
     if (config.entityId === entityId) {
       return config;
     }
@@ -650,15 +687,21 @@ export async function getIdPConfigByEntityId(
 export async function listSPConfigs(
   env: Env
 ): Promise<Array<{ id: string; name: string; entityId: string }>> {
-  const result = await env.DB.prepare(
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.query<{
+    id: string;
+    name: string;
+    config_json: string;
+  }>(
     `SELECT id, name, config_json FROM identity_providers
-     WHERE provider_type = 'saml_sp' AND enabled = 1`
-  ).all();
+     WHERE provider_type = 'saml_sp' AND enabled = 1`,
+    []
+  );
 
-  return result.results.map((row) => ({
-    id: row.id as string,
-    name: row.name as string,
-    entityId: (JSON.parse(row.config_json as string) as SAMLSPConfig).entityId,
+  return result.map((row) => ({
+    id: row.id,
+    name: row.name,
+    entityId: (JSON.parse(row.config_json) as SAMLSPConfig).entityId,
   }));
 }
 
@@ -668,14 +711,20 @@ export async function listSPConfigs(
 export async function listIdPConfigs(
   env: Env
 ): Promise<Array<{ id: string; name: string; entityId: string }>> {
-  const result = await env.DB.prepare(
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.query<{
+    id: string;
+    name: string;
+    config_json: string;
+  }>(
     `SELECT id, name, config_json FROM identity_providers
-     WHERE provider_type = 'saml_idp' AND enabled = 1`
-  ).all();
+     WHERE provider_type = 'saml_idp' AND enabled = 1`,
+    []
+  );
 
-  return result.results.map((row) => ({
-    id: row.id as string,
-    name: row.name as string,
-    entityId: (JSON.parse(row.config_json as string) as SAMLIdPConfig).entityId,
+  return result.map((row) => ({
+    id: row.id,
+    name: row.name,
+    entityId: (JSON.parse(row.config_json) as SAMLIdPConfig).entityId,
   }));
 }

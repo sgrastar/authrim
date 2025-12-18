@@ -4,6 +4,7 @@
  */
 
 import type { Env } from '@authrim/shared';
+import { D1Adapter, type DatabaseAdapter } from '@authrim/shared';
 import {
   ExternalIdPError,
   ExternalIdPErrorCode,
@@ -269,20 +270,20 @@ async function findUserByEmail(
   // Search by email in PII DB
   if (!env.DB_PII) return null;
 
-  const userPII = await env.DB_PII.prepare(
-    'SELECT id, email FROM users_pii WHERE tenant_id = ? AND email = ?'
-  )
-    .bind(tenantId, email.toLowerCase())
-    .first<{ id: string; email: string }>();
+  const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
+  const userPII = await piiAdapter.queryOne<{ id: string; email: string }>(
+    'SELECT id, email FROM users_pii WHERE tenant_id = ? AND email = ?',
+    [tenantId, email.toLowerCase()]
+  );
 
   if (!userPII) return null;
 
   // Verify user is active and get email_verified from Core DB
-  const userCore = await env.DB.prepare(
-    'SELECT id, email_verified FROM users_core WHERE id = ? AND is_active = 1'
-  )
-    .bind(userPII.id)
-    .first<{ id: string; email_verified: number }>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const userCore = await coreAdapter.queryOne<{ id: string; email_verified: number }>(
+    'SELECT id, email_verified FROM users_core WHERE id = ? AND is_active = 1',
+    [userPII.id]
+  );
 
   if (!userCore) return null;
 
@@ -319,23 +320,24 @@ async function createUserFromExternalIdentity(
   // Generate a placeholder email if not provided
   const email = params.email || `${id}@external.authrim.local`;
 
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+
   // Step 1: Insert into users_core with pii_status='pending'
-  await env.DB.prepare(
+  await coreAdapter.execute(
     `INSERT INTO users_core (
       id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at
-    ) VALUES (?, ?, ?, 'end_user', 'default', 'pending', ?, ?)`
-  )
-    .bind(id, params.tenantId, params.emailVerified ? 1 : 0, now, now)
-    .run();
+    ) VALUES (?, ?, ?, 'end_user', 'default', 'pending', ?, ?)`,
+    [id, params.tenantId, params.emailVerified ? 1 : 0, now, now]
+  );
 
   // Step 2: Insert into users_pii (if DB_PII is configured)
   if (env.DB_PII) {
-    await env.DB_PII.prepare(
+    const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
+    await piiAdapter.execute(
       `INSERT INTO users_pii (
         id, tenant_id, email, name, given_name, family_name, picture, locale, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
         id,
         params.tenantId,
         email.toLowerCase(),
@@ -345,14 +347,12 @@ async function createUserFromExternalIdentity(
         params.picture || null,
         params.locale || null,
         now,
-        now
-      )
-      .run();
+        now,
+      ]
+    );
 
     // Step 3: Update pii_status to 'active'
-    await env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
-      .bind('active', id)
-      .run();
+    await coreAdapter.execute('UPDATE users_core SET pii_status = ? WHERE id = ?', ['active', id]);
   }
 
   return { id };
@@ -374,20 +374,20 @@ async function logAuditEvent(env: Env, params: AuditEventParams): Promise<void> 
     const id = crypto.randomUUID();
     const now = Date.now();
 
-    await env.DB.prepare(
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    await coreAdapter.execute(
       `INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, metadata, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
         id,
         params.userId,
         params.action,
         params.resourceType,
         params.resourceId,
         JSON.stringify(params.metadata || {}),
-        now
-      )
-      .run();
+        now,
+      ]
+    );
   } catch (error) {
     // Don't fail the main operation if audit logging fails
     console.error('Failed to log audit event:', error);
@@ -398,9 +398,11 @@ async function logAuditEvent(env: Env, params: AuditEventParams): Promise<void> 
  * Check if user has passkey credentials
  */
 export async function hasPasskeyCredential(env: Env, userId: string): Promise<boolean> {
-  const result = await env.DB.prepare(`SELECT COUNT(*) as count FROM passkeys WHERE user_id = ?`)
-    .bind(userId)
-    .first<{ count: number }>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.queryOne<{ count: number }>(
+    `SELECT COUNT(*) as count FROM passkeys WHERE user_id = ?`,
+    [userId]
+  );
 
   return (result?.count || 0) > 0;
 }

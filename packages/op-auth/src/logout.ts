@@ -21,6 +21,8 @@ import {
   validateLogoutParameters,
   getSessionStoreBySessionId,
   isShardedSessionId,
+  createAuthContextFromHono,
+  getTenantIdFromContext,
 } from '@authrim/shared';
 import { importJWK, jwtVerify } from 'jose';
 import type { JSONWebKeySet, CryptoKey } from 'jose';
@@ -214,12 +216,10 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         canRedirectToRequestedUri = false;
         validationError = 'invalid_id_token_hint';
       } else {
-        // Get client configuration
-        const client = await c.env.DB.prepare(
-          'SELECT redirect_uris, post_logout_redirect_uris FROM oauth_clients WHERE client_id = ?'
-        )
-          .bind(clientId)
-          .first();
+        // Get client configuration via Repository
+        const tenantId = getTenantIdFromContext(c);
+        const authCtx = createAuthContextFromHono(c, tenantId);
+        const client = await authCtx.repositories.client.findByClientId(clientId);
 
         if (!client) {
           console.warn('Client not found for logout:', clientId);
@@ -229,7 +229,10 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           // Per OIDC RP-Initiated Logout 1.0, only post_logout_redirect_uris should be used
           let registeredUris: string[] = [];
           if (client.post_logout_redirect_uris) {
-            registeredUris = JSON.parse(client.post_logout_redirect_uris as string) as string[];
+            registeredUris =
+              typeof client.post_logout_redirect_uris === 'string'
+                ? JSON.parse(client.post_logout_redirect_uris)
+                : client.post_logout_redirect_uris;
           }
 
           if (registeredUris.length === 0) {
@@ -392,19 +395,13 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      // Verify client credentials
-      const client = await c.env.DB.prepare(
-        'SELECT client_id, client_secret FROM oauth_clients WHERE client_id = ?'
-      )
-        .bind(id)
-        .first();
+      // Verify client credentials via Repository
+      const tenantId = getTenantIdFromContext(c);
+      const authCtx = createAuthContextFromHono(c, tenantId);
+      const client = await authCtx.repositories.client.findByClientId(id);
 
       // Use timing-safe comparison to prevent timing attacks
-      if (
-        !client ||
-        !client.client_secret ||
-        !timingSafeEqual(client.client_secret as string, secret)
-      ) {
+      if (!client || !client.client_secret || !timingSafeEqual(client.client_secret, secret)) {
         return c.json(
           {
             error: 'invalid_client',

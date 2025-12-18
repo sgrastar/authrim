@@ -11,7 +11,12 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
-import { getSessionStoreBySessionId, isShardedSessionId } from '@authrim/shared';
+import {
+  D1Adapter,
+  type DatabaseAdapter,
+  getSessionStoreBySessionId,
+  isShardedSessionId,
+} from '@authrim/shared';
 import * as jose from 'jose';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import {
@@ -234,16 +239,16 @@ async function invalidateUserSessions(
 
     // Terminate sessions that were created via this provider and subject
     // Query D1 for sessions with matching external_provider_id and external_provider_sub
-    const sessions = await env.DB.prepare(
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const sessions = await coreAdapter.query<{ id: string }>(
       `SELECT id FROM sessions
        WHERE external_provider_id = ?
          AND external_provider_sub = ?
-         AND expires_at > ?`
-    )
-      .bind(providerId, claims.sub, Date.now())
-      .all<{ id: string }>();
+         AND expires_at > ?`,
+      [providerId, claims.sub, Date.now()]
+    );
 
-    for (const session of sessions.results || []) {
+    for (const session of sessions) {
       // Terminate session in Durable Object
       if (isShardedSessionId(session.id)) {
         try {
@@ -262,13 +267,12 @@ async function invalidateUserSessions(
 
     // Clean up terminated sessions from D1
     if (sessionsTerminated > 0) {
-      await env.DB.prepare(
+      await coreAdapter.execute(
         `DELETE FROM sessions
          WHERE external_provider_id = ?
-           AND external_provider_sub = ?`
-      )
-        .bind(providerId, claims.sub)
-        .run();
+           AND external_provider_sub = ?`,
+        [providerId, claims.sub]
+      );
     }
   }
 

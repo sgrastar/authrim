@@ -99,6 +99,9 @@ function createMockContext(options: {
     ...options.env,
   };
 
+  // Store context values (simulating Hono's context store)
+  const contextStore = new Map<string, unknown>([['tenantId', 'default']]);
+
   const c = {
     req: {
       query: (name: string) => options.query?.[name],
@@ -112,6 +115,8 @@ function createMockContext(options: {
       (url, status = 302) => new Response(null, { status, headers: { Location: url } })
     ),
     body: vi.fn((body, status = 200) => new Response(body, { status })),
+    get: vi.fn((key: string) => contextStore.get(key)),
+    set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
   } as any;
 
   return { c, mockSessionStore, mockKeyManager };

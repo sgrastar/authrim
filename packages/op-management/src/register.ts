@@ -16,7 +16,15 @@ import type {
   ClientMetadata,
   OAuthErrorResponse,
 } from '@authrim/shared';
-import { generateSecureRandomString, validateExternalUrl } from '@authrim/shared';
+import {
+  generateSecureRandomString,
+  validateExternalUrl,
+  createAuthContextFromHono,
+  createPIIContextFromHono,
+  getTenantIdFromContext,
+  D1Adapter,
+  type DatabaseAdapter,
+} from '@authrim/shared';
 
 /**
  * Validate sector_identifier_uri content (OIDC Core 8.1)
@@ -473,7 +481,8 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
   // Store in D1 (source of truth)
   // CLIENTS_CACHE will be populated via Read-Through pattern on first getClient() call
   const now = Date.now(); // Store in milliseconds
-  await env.DB.prepare(
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  await coreAdapter.execute(
     `
     INSERT OR REPLACE INTO oauth_clients (
       client_id, client_secret, client_name, redirect_uris,
@@ -487,9 +496,8 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       post_logout_redirect_uris,
       created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `
-  )
-    .bind(
+  `,
+    [
       clientId,
       metadata.client_secret || null,
       metadata.client_name || null,
@@ -515,9 +523,9 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
         ? JSON.stringify(metadata.post_logout_redirect_uris)
         : null,
       metadata.created_at || now,
-      metadata.updated_at || now
-    )
-    .run();
+      metadata.updated_at || now,
+    ]
+  );
 }
 
 /**
@@ -662,15 +670,17 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
         country: 'USA',
       };
 
-      // Create fixed test user with complete profile (PII/Non-PII DB separation)
-      // Insert into users_core (non-PII database)
-      await c.env.DB.prepare(
+      // Create fixed test user with complete profile (PII/Non-PII DB separation) via Adapter
+      const tenantId = getTenantIdFromContext(c);
+      const authCtx = createAuthContextFromHono(c, tenantId);
+
+      // Insert into users_core (non-PII database) - use INSERT OR IGNORE for idempotency
+      await authCtx.coreAdapter.execute(
         `INSERT OR IGNORE INTO users_core (
           id, tenant_id, email_verified, phone_number_verified,
           is_active, pii_partition, pii_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
           testUserId,
           'default',
           1, // email_verified
@@ -679,13 +689,14 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
           'default', // pii_partition
           'active', // pii_status
           issuedAt,
-          issuedAt
-        )
-        .run();
+          issuedAt,
+        ]
+      );
 
-      // Insert into users_pii (PII database)
+      // Insert into users_pii (PII database) via PIIContext
       if (c.env.DB_PII) {
-        await c.env.DB_PII.prepare(
+        const piiCtx = createPIIContextFromHono(c, tenantId);
+        await piiCtx.getPiiAdapter('default').execute(
           `INSERT OR IGNORE INTO users_pii (
             id, tenant_id, email, name, given_name, family_name,
             middle_name, nickname, preferred_username, profile, picture,
@@ -693,9 +704,8 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
             address_formatted, address_street_address, address_locality,
             address_region, address_postal_code, address_country,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-          .bind(
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
             testUserId,
             'default',
             'test@example.com',
@@ -720,9 +730,9 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
             testAddress.postal_code,
             testAddress.country,
             issuedAt,
-            issuedAt
-          )
-          .run();
+            issuedAt,
+          ]
+        );
       }
 
       console.log('[DCR] Test user created/verified: user-oidc-conformance-test');

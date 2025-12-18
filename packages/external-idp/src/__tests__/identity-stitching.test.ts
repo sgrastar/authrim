@@ -3,13 +3,69 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  handleIdentity,
-  getStitchingConfig,
-  hasPasskeyCredential,
-} from '../services/identity-stitching';
-import * as linkedIdentityStore from '../services/linked-identity-store';
 import type { UpstreamProvider, UserInfo, TokenResponse } from '../types';
+
+// Create hoisted mocks that can be configured in tests
+const { mockCoreQueryOne, mockCoreExecute, mockPiiQueryOne, MockD1Adapter, sqlTracker } =
+  vi.hoisted(() => {
+    // Storage for tracking SQL calls - differentiate between DB and DB_PII
+    const tracker = {
+      coreDb: [] as { method: string; sql: string; params: unknown[] }[],
+      piiDb: [] as { method: string; sql: string; params: unknown[] }[],
+      reset() {
+        this.coreDb.length = 0;
+        this.piiDb.length = 0;
+      },
+    };
+
+    // Mock functions for Core DB (env.DB)
+    const coreQueryOneMock = vi.fn().mockResolvedValue(null);
+    const coreExecuteMock = vi.fn().mockResolvedValue({ rowsAffected: 1 });
+
+    // Mock functions for PII DB (env.DB_PII)
+    const piiQueryOneMock = vi.fn().mockResolvedValue(null);
+
+    // Create a class that wraps the mock functions and tracks calls
+    // The class determines binding type from the db option's _isPii marker
+    class D1AdapterClass {
+      private binding: 'core' | 'pii';
+
+      constructor(options: { db: unknown }) {
+        // Determine which DB this adapter is for based on the binding marker
+        this.binding = options.db && (options.db as { _isPii?: boolean })._isPii ? 'pii' : 'core';
+      }
+
+      execute = (sql: string, params?: unknown[]) => {
+        tracker.coreDb.push({ method: 'execute', sql, params: params || [] });
+        return coreExecuteMock(sql, params);
+      };
+
+      queryOne = (sql: string, params?: unknown[]) => {
+        if (this.binding === 'pii') {
+          tracker.piiDb.push({ method: 'queryOne', sql, params: params || [] });
+          return piiQueryOneMock(sql, params);
+        } else {
+          tracker.coreDb.push({ method: 'queryOne', sql, params: params || [] });
+          return coreQueryOneMock(sql, params);
+        }
+      };
+
+      query = vi.fn().mockResolvedValue([]);
+    }
+
+    return {
+      mockCoreQueryOne: coreQueryOneMock,
+      mockCoreExecute: coreExecuteMock,
+      mockPiiQueryOne: piiQueryOneMock,
+      MockD1Adapter: D1AdapterClass,
+      sqlTracker: tracker,
+    };
+  });
+
+// Mock @authrim/shared to prevent Cloudflare Workers imports
+vi.mock('@authrim/shared', () => ({
+  D1Adapter: MockD1Adapter,
+}));
 
 // Mock the linked identity store
 vi.mock('../services/linked-identity-store', () => ({
@@ -17,6 +73,13 @@ vi.mock('../services/linked-identity-store', () => ({
   createLinkedIdentity: vi.fn(),
   updateLinkedIdentity: vi.fn(),
 }));
+
+import {
+  handleIdentity,
+  getStitchingConfig,
+  hasPasskeyCredential,
+} from '../services/identity-stitching';
+import * as linkedIdentityStore from '../services/linked-identity-store';
 
 describe('Identity Stitching Service', () => {
   const mockProvider: UpstreamProvider = {
@@ -56,24 +119,10 @@ describe('Identity Stitching Service', () => {
     id_token: 'mock-id-token',
   };
 
-  // Mock Env (includes DB_PII for PII/Non-PII DB separation)
+  // Create mock Env with markers for DB type detection
   const createMockEnv = (overrides: Record<string, unknown> = {}) => ({
-    DB: {
-      prepare: vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnThis(),
-        first: vi.fn(),
-        all: vi.fn(),
-        run: vi.fn(),
-      }),
-    },
-    DB_PII: {
-      prepare: vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnThis(),
-        first: vi.fn(),
-        all: vi.fn(),
-        run: vi.fn(),
-      }),
-    },
+    DB: { _isPii: false }, // Core DB marker
+    DB_PII: { _isPii: true }, // PII DB marker
     SETTINGS: {
       get: vi.fn().mockResolvedValue(null),
     },
@@ -84,12 +133,17 @@ describe('Identity Stitching Service', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    sqlTracker.reset();
+    // Reset mock implementations to defaults
+    mockCoreQueryOne.mockResolvedValue(null);
+    mockCoreExecute.mockResolvedValue({ rowsAffected: 1 });
+    mockPiiQueryOne.mockResolvedValue(null);
   });
 
   describe('getStitchingConfig', () => {
     it('should return config from KV if available', async () => {
       const env = createMockEnv();
-      env.SETTINGS.get.mockResolvedValueOnce(
+      (env.SETTINGS.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
         JSON.stringify({ enabled: true, requireVerifiedEmail: false })
       );
 
@@ -111,7 +165,6 @@ describe('Identity Stitching Service', () => {
       const config = await getStitchingConfig(env as never);
 
       expect(config.enabled).toBe(true);
-      // When IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL is 'false', requireVerifiedEmail should be false
       expect(config.requireVerifiedEmail).toBe(false);
     });
 
@@ -132,9 +185,6 @@ describe('Identity Stitching Service', () => {
       it('should link identity to specified user', async () => {
         const env = createMockEnv();
         vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('linked-id-123');
-        env.DB.prepare()
-          .bind()
-          .run.mockResolvedValueOnce({ meta: { changes: 1 } });
 
         const result = await handleIdentity(env as never, {
           provider: mockProvider,
@@ -185,7 +235,6 @@ describe('Identity Stitching Service', () => {
         expect(result.stitchedFromExisting).toBe(false);
         expect(result.linkedIdentityId).toBe('existing-linked-id');
 
-        // Should update tokens and last login
         expect(linkedIdentityStore.updateLinkedIdentity).toHaveBeenCalledWith(
           env,
           'existing-linked-id',
@@ -205,20 +254,15 @@ describe('Identity Stitching Service', () => {
 
         // Mock findUserByEmail - PII/Non-PII DB separation pattern:
         // 1. DB_PII returns user with email (PII DB)
-        env.DB_PII.prepare().bind().first.mockResolvedValueOnce({
+        mockPiiQueryOne.mockResolvedValueOnce({
           id: 'existing-user-by-email',
           email: 'test@example.com',
         });
         // 2. DB returns user core with email_verified: 1 (Core DB)
-        env.DB.prepare().bind().first.mockResolvedValueOnce({
+        mockCoreQueryOne.mockResolvedValueOnce({
           id: 'existing-user-by-email',
           email_verified: 1,
         });
-
-        // Mock audit log insert
-        env.DB.prepare()
-          .bind()
-          .run.mockResolvedValueOnce({ meta: { changes: 1 } });
 
         const result = await handleIdentity(env as never, {
           provider: mockProvider,
@@ -238,10 +282,8 @@ describe('Identity Stitching Service', () => {
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
         vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('new-linked-id');
 
-        // Mock user creation
-        env.DB.prepare()
-          .bind()
-          .run.mockResolvedValue({ meta: { changes: 1 } });
+        // No user found in PII DB (falls through to JIT provisioning)
+        mockPiiQueryOne.mockResolvedValueOnce(null);
 
         const result = await handleIdentity(env as never, {
           provider: mockProvider,
@@ -260,10 +302,8 @@ describe('Identity Stitching Service', () => {
 
         const providerNoAutoLink = { ...mockProvider, autoLinkEmail: false };
 
-        // Mock user creation
-        env.DB.prepare()
-          .bind()
-          .run.mockResolvedValue({ meta: { changes: 1 } });
+        // No user found in PII DB (falls through to JIT provisioning)
+        mockPiiQueryOne.mockResolvedValueOnce(null);
 
         const result = await handleIdentity(env as never, {
           provider: providerNoAutoLink,
@@ -284,9 +324,6 @@ describe('Identity Stitching Service', () => {
           email_verified: false,
         };
 
-        // Mock findUserByEmail - no user found (so it will try JIT provisioning)
-        env.DB.prepare().bind().first.mockResolvedValueOnce(null);
-
         // Should throw error because email is not verified
         await expect(
           handleIdentity(env as never, {
@@ -303,12 +340,12 @@ describe('Identity Stitching Service', () => {
 
         // Mock findUserByEmail - PII/Non-PII DB separation pattern:
         // 1. DB_PII returns user with email (PII DB)
-        env.DB_PII.prepare().bind().first.mockResolvedValueOnce({
+        mockPiiQueryOne.mockResolvedValueOnce({
           id: 'existing-user-unverified',
           email: 'test@example.com',
         });
         // 2. DB returns user core with email_verified: 0 (Core DB)
-        env.DB.prepare().bind().first.mockResolvedValueOnce({
+        mockCoreQueryOne.mockResolvedValueOnce({
           id: 'existing-user-unverified',
           email_verified: 0, // Not verified
         });
@@ -331,12 +368,7 @@ describe('Identity Stitching Service', () => {
         vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('new-linked-id');
 
         // Mock findUserByEmail - no user found
-        env.DB.prepare().bind().first.mockResolvedValueOnce(null);
-
-        // Mock user creation and audit log
-        env.DB.prepare()
-          .bind()
-          .run.mockResolvedValue({ meta: { changes: 1 } });
+        mockPiiQueryOne.mockResolvedValueOnce(null);
 
         const result = await handleIdentity(env as never, {
           provider: mockProvider,
@@ -356,7 +388,7 @@ describe('Identity Stitching Service', () => {
         const providerNoJIT = { ...mockProvider, jitProvisioning: false };
 
         // Mock findUserByEmail - no user found
-        env.DB.prepare().bind().first.mockResolvedValueOnce(null);
+        mockPiiQueryOne.mockResolvedValueOnce(null);
 
         await expect(
           handleIdentity(env as never, {
@@ -376,14 +408,6 @@ describe('Identity Stitching Service', () => {
           sub: 'google-user-123',
         };
 
-        // Mock findUserByEmail - no user found
-        env.DB.prepare().bind().first.mockResolvedValueOnce(null);
-
-        // Mock user creation and audit log
-        env.DB.prepare()
-          .bind()
-          .run.mockResolvedValue({ meta: { changes: 1 } });
-
         const result = await handleIdentity(env as never, {
           provider: mockProvider,
           userInfo: userInfoNoEmail,
@@ -399,15 +423,6 @@ describe('Identity Stitching Service', () => {
         const env = createMockEnv();
         vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('linked-id-123');
 
-        // Track calls to DB.prepare
-        const runMock = vi.fn().mockResolvedValue({ meta: { changes: 1 } });
-        env.DB.prepare = vi.fn().mockReturnValue({
-          bind: vi.fn().mockReturnThis(),
-          first: vi.fn(),
-          all: vi.fn(),
-          run: runMock,
-        });
-
         await handleIdentity(env as never, {
           provider: mockProvider,
           userInfo: mockUserInfo,
@@ -415,11 +430,11 @@ describe('Identity Stitching Service', () => {
           linkingUserId: 'existing-user-456',
         });
 
-        // Verify audit log was inserted
-        const prepareCallArgs = (env.DB.prepare as ReturnType<typeof vi.fn>).mock.calls.map(
-          (c) => c[0]
+        // Verify audit log was inserted via D1Adapter.execute
+        const auditLogCall = sqlTracker.coreDb.find(
+          (c) => c.method === 'execute' && c.sql.includes('audit_log')
         );
-        expect(prepareCallArgs.some((sql: string) => sql.includes('audit_log'))).toBe(true);
+        expect(auditLogCall).toBeDefined();
       });
     });
   });
@@ -427,7 +442,7 @@ describe('Identity Stitching Service', () => {
   describe('hasPasskeyCredential', () => {
     it('should return true if user has passkey', async () => {
       const env = createMockEnv();
-      env.DB.prepare().bind().first.mockResolvedValueOnce({ count: 1 });
+      mockCoreQueryOne.mockResolvedValueOnce({ count: 1 });
 
       const result = await hasPasskeyCredential(env as never, 'user-123');
 
@@ -436,7 +451,7 @@ describe('Identity Stitching Service', () => {
 
     it('should return false if user has no passkey', async () => {
       const env = createMockEnv();
-      env.DB.prepare().bind().first.mockResolvedValueOnce({ count: 0 });
+      mockCoreQueryOne.mockResolvedValueOnce({ count: 0 });
 
       const result = await hasPasskeyCredential(env as never, 'user-123');
 
@@ -445,7 +460,7 @@ describe('Identity Stitching Service', () => {
 
     it('should return false if query returns null', async () => {
       const env = createMockEnv();
-      env.DB.prepare().bind().first.mockResolvedValueOnce(null);
+      mockCoreQueryOne.mockResolvedValueOnce(null);
 
       const result = await hasPasskeyCredential(env as never, 'user-123');
 

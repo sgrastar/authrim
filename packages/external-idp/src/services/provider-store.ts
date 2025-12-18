@@ -4,15 +4,18 @@
  */
 
 import type { Env } from '@authrim/shared';
+import { D1Adapter, type DatabaseAdapter } from '@authrim/shared';
 import type { UpstreamProvider } from '../types';
 
 /**
  * Get provider by ID
  */
 export async function getProvider(env: Env, id: string): Promise<UpstreamProvider | null> {
-  const result = await env.DB.prepare(`SELECT * FROM upstream_providers WHERE id = ?`)
-    .bind(id)
-    .first<DbUpstreamProvider>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.queryOne<DbUpstreamProvider>(
+    `SELECT * FROM upstream_providers WHERE id = ?`,
+    [id]
+  );
 
   if (!result) return null;
   return mapDbToProvider(result);
@@ -27,18 +30,20 @@ export async function getProviderByIdOrSlug(
   idOrSlug: string,
   tenantId = 'default'
 ): Promise<UpstreamProvider | null> {
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+
   // First try by slug (case-insensitive)
-  let result = await env.DB.prepare(
-    `SELECT * FROM upstream_providers WHERE LOWER(slug) = LOWER(?) AND tenant_id = ?`
-  )
-    .bind(idOrSlug, tenantId)
-    .first<DbUpstreamProvider>();
+  let result = await coreAdapter.queryOne<DbUpstreamProvider>(
+    `SELECT * FROM upstream_providers WHERE LOWER(slug) = LOWER(?) AND tenant_id = ?`,
+    [idOrSlug, tenantId]
+  );
 
   // If not found by slug, try by ID
   if (!result) {
-    result = await env.DB.prepare(`SELECT * FROM upstream_providers WHERE id = ?`)
-      .bind(idOrSlug)
-      .first<DbUpstreamProvider>();
+    result = await coreAdapter.queryOne<DbUpstreamProvider>(
+      `SELECT * FROM upstream_providers WHERE id = ?`,
+      [idOrSlug]
+    );
   }
 
   if (!result) return null;
@@ -53,11 +58,11 @@ export async function getProviderByName(
   name: string,
   tenantId = 'default'
 ): Promise<UpstreamProvider | null> {
-  const result = await env.DB.prepare(
-    `SELECT * FROM upstream_providers WHERE name = ? AND tenant_id = ? AND enabled = 1`
-  )
-    .bind(name, tenantId)
-    .first<DbUpstreamProvider>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.queryOne<DbUpstreamProvider>(
+    `SELECT * FROM upstream_providers WHERE name = ? AND tenant_id = ? AND enabled = 1`,
+    [name, tenantId]
+  );
 
   if (!result) return null;
   return mapDbToProvider(result);
@@ -70,13 +75,13 @@ export async function listEnabledProviders(
   env: Env,
   tenantId = 'default'
 ): Promise<UpstreamProvider[]> {
-  const result = await env.DB.prepare(
-    `SELECT * FROM upstream_providers WHERE tenant_id = ? AND enabled = 1 ORDER BY priority ASC, name ASC`
-  )
-    .bind(tenantId)
-    .all<DbUpstreamProvider>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.query<DbUpstreamProvider>(
+    `SELECT * FROM upstream_providers WHERE tenant_id = ? AND enabled = 1 ORDER BY priority ASC, name ASC`,
+    [tenantId]
+  );
 
-  return (result.results || []).map(mapDbToProvider);
+  return result.map(mapDbToProvider);
 }
 
 /**
@@ -86,13 +91,13 @@ export async function listAllProviders(
   env: Env,
   tenantId = 'default'
 ): Promise<UpstreamProvider[]> {
-  const result = await env.DB.prepare(
-    `SELECT * FROM upstream_providers WHERE tenant_id = ? ORDER BY priority ASC, name ASC`
-  )
-    .bind(tenantId)
-    .all<DbUpstreamProvider>();
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.query<DbUpstreamProvider>(
+    `SELECT * FROM upstream_providers WHERE tenant_id = ? ORDER BY priority ASC, name ASC`,
+    [tenantId]
+  );
 
-  return (result.results || []).map(mapDbToProvider);
+  return result.map(mapDbToProvider);
 }
 
 /**
@@ -105,7 +110,8 @@ export async function createProvider(
   const id = crypto.randomUUID();
   const now = Date.now();
 
-  await env.DB.prepare(
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  await coreAdapter.execute(
     `INSERT INTO upstream_providers (
       id, tenant_id, slug, name, provider_type, enabled, priority,
       issuer, client_id, client_secret_encrypted,
@@ -113,9 +119,8 @@ export async function createProvider(
       scopes, attribute_mapping, auto_link_email, jit_provisioning, require_email_verified,
       provider_quirks, icon_url, button_color, button_text,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  )
-    .bind(
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
       id,
       provider.tenantId || 'default',
       provider.slug || null,
@@ -140,9 +145,9 @@ export async function createProvider(
       provider.buttonColor || null,
       provider.buttonText || null,
       now,
-      now
-    )
-    .run();
+      now,
+    ]
+  );
 
   return {
     ...provider,
@@ -167,7 +172,8 @@ export async function updateProvider(
   const now = Date.now();
   const updated = { ...existing, ...updates, updatedAt: now };
 
-  await env.DB.prepare(
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  await coreAdapter.execute(
     `UPDATE upstream_providers SET
       slug = ?, name = ?, provider_type = ?, enabled = ?, priority = ?,
       issuer = ?, client_id = ?, client_secret_encrypted = ?,
@@ -175,9 +181,8 @@ export async function updateProvider(
       scopes = ?, attribute_mapping = ?, auto_link_email = ?, jit_provisioning = ?, require_email_verified = ?,
       provider_quirks = ?, icon_url = ?, button_color = ?, button_text = ?,
       updated_at = ?
-    WHERE id = ?`
-  )
-    .bind(
+    WHERE id = ?`,
+    [
       updated.slug || null,
       updated.name,
       updated.providerType,
@@ -200,9 +205,9 @@ export async function updateProvider(
       updated.buttonColor || null,
       updated.buttonText || null,
       now,
-      id
-    )
-    .run();
+      id,
+    ]
+  );
 
   return updated;
 }
@@ -211,8 +216,9 @@ export async function updateProvider(
  * Delete provider
  */
 export async function deleteProvider(env: Env, id: string): Promise<boolean> {
-  const result = await env.DB.prepare(`DELETE FROM upstream_providers WHERE id = ?`).bind(id).run();
-  return (result.meta.changes || 0) > 0;
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const result = await coreAdapter.execute(`DELETE FROM upstream_providers WHERE id = ?`, [id]);
+  return result.rowsAffected > 0;
 }
 
 // =============================================================================

@@ -513,4 +513,45 @@ export class UserPIIRepository extends BaseRepository<UserPII> {
       hasPrev: page > 1,
     };
   }
+
+  /**
+   * Find PII by tenant and email
+   *
+   * Used for email uniqueness checks during user creation.
+   *
+   * @param tenantId - Tenant ID
+   * @param email - Email address
+   * @param adapter - Optional partition-specific adapter
+   * @returns PII record or null
+   */
+  async findByTenantAndEmail(
+    tenantId: string,
+    email: string,
+    adapter?: DatabaseAdapter
+  ): Promise<UserPII | null> {
+    const db = adapter ?? this.adapter;
+    return db.queryOne<UserPII>('SELECT * FROM users_pii WHERE tenant_id = ? AND email = ?', [
+      tenantId,
+      email,
+    ]);
+  }
+
+  /**
+   * Check if email exists in tenant
+   *
+   * More efficient than findByTenantAndEmail when only checking existence.
+   *
+   * @param tenantId - Tenant ID
+   * @param email - Email address
+   * @param adapter - Optional partition-specific adapter
+   * @returns True if email exists
+   */
+  async emailExists(tenantId: string, email: string, adapter?: DatabaseAdapter): Promise<boolean> {
+    const db = adapter ?? this.adapter;
+    const result = await db.queryOne<{ id: string }>(
+      'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
+      [tenantId, email]
+    );
+    return result !== null;
+  }
 }

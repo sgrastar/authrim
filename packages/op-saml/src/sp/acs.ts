@@ -8,7 +8,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
 import type { SAMLIdPConfig, SAMLAssertion } from '@authrim/shared';
-import { getSessionStoreForNewSession } from '@authrim/shared';
+import { getSessionStoreForNewSession, D1Adapter, type DatabaseAdapter } from '@authrim/shared';
 import {
   parseXml,
   findElement,
@@ -393,23 +393,24 @@ async function findOrCreateUser(
   // Use default tenant for SAML-authenticated users
   const tenantId = 'default';
 
+  const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+  const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
+
   // Try to find user by email (PII/Non-PII DB分離対応)
-  if (userInfo.email && env.DB_PII) {
-    const existingUserPII = await env.DB_PII.prepare(
-      'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?'
-    )
-      .bind(tenantId, userInfo.email.toLowerCase())
-      .first();
+  if (userInfo.email && piiAdapter) {
+    const existingUserPII = await piiAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
+      [tenantId, userInfo.email.toLowerCase()]
+    );
 
     if (existingUserPII) {
       // Verify user is active in Core DB
-      const userCore = await env.DB.prepare(
-        'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
-      )
-        .bind(existingUserPII.id)
-        .first();
+      const userCore = await coreAdapter.queryOne<{ id: string }>(
+        'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
+        [existingUserPII.id]
+      );
       if (userCore) {
-        return userCore.id as string;
+        return userCore.id;
       }
     }
   }
@@ -420,26 +421,25 @@ async function findOrCreateUser(
   const email = userInfo.email?.toLowerCase() || `${userInfo.nameId}@saml.local`;
 
   // Step 1: Insert into users_core with pii_status='pending'
-  await env.DB.prepare(
+  await coreAdapter.execute(
     `INSERT INTO users_core (id, tenant_id, email_verified, user_type, pii_partition, pii_status, created_at, updated_at)
-     VALUES (?, ?, 1, 'end_user', 'default', 'pending', ?, ?)`
-  )
-    .bind(userId, tenantId, now, now)
-    .run();
+     VALUES (?, ?, 1, 'end_user', 'default', 'pending', ?, ?)`,
+    [userId, tenantId, now, now]
+  );
 
   // Step 2: Insert into users_pii (if DB_PII is configured)
-  if (env.DB_PII) {
-    await env.DB_PII.prepare(
+  if (piiAdapter) {
+    await piiAdapter.execute(
       `INSERT INTO users_pii (id, tenant_id, email, name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-      .bind(userId, tenantId, email, userInfo.name || null, now, now)
-      .run();
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [userId, tenantId, email, userInfo.name || null, now, now]
+    );
 
     // Step 3: Update pii_status to 'active'
-    await env.DB.prepare('UPDATE users_core SET pii_status = ? WHERE id = ?')
-      .bind('active', userId)
-      .run();
+    await coreAdapter.execute('UPDATE users_core SET pii_status = ? WHERE id = ?', [
+      'active',
+      userId,
+    ]);
   }
 
   return userId;

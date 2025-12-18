@@ -1,8 +1,16 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/shared';
-import { validateClientId, timingSafeEqual } from '@authrim/shared';
-import { deleteRefreshToken, getRefreshToken, revokeToken } from '@authrim/shared';
-import { parseToken, verifyToken } from '@authrim/shared';
+import {
+  validateClientId,
+  timingSafeEqual,
+  deleteRefreshToken,
+  getRefreshToken,
+  revokeToken,
+  parseToken,
+  verifyToken,
+  createAuthContextFromHono,
+  getTenantIdFromContext,
+} from '@authrim/shared';
 import { importJWK, decodeProtectedHeader, type CryptoKey, type JWK } from 'jose';
 
 // In-memory JWKS cache with 5-minute TTL (shared pattern with introspect.ts)
@@ -144,12 +152,10 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // RFC 7009 Section 2.1: The authorization server first validates the client credentials
-  // Fetch client to verify client_secret
-  const clientRecord = await c.env.DB.prepare(
-    'SELECT client_id, client_secret FROM oauth_clients WHERE client_id = ?'
-  )
-    .bind(client_id)
-    .first();
+  // Fetch client to verify client_secret via Repository
+  const tenantId = getTenantIdFromContext(c);
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const clientRecord = await authCtx.repositories.client.findByClientId(client_id);
 
   if (!clientRecord) {
     return c.json(
@@ -162,7 +168,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Verify client_secret using timing-safe comparison to prevent timing attacks
-  if (!client_secret || !timingSafeEqual(clientRecord.client_secret as string, client_secret)) {
+  if (!client_secret || !timingSafeEqual(clientRecord.client_secret ?? '', client_secret)) {
     return c.json(
       {
         error: 'invalid_client',

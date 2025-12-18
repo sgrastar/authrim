@@ -17,6 +17,8 @@ import {
   createPIIContextFromHono,
   createAuthContextFromHono,
   generateId,
+  D1Adapter,
+  type DatabaseAdapter,
 } from '@authrim/shared';
 import type { UserCore, UserPII } from '@authrim/shared';
 
@@ -215,15 +217,19 @@ export async function serveAvatarHandler(c: Context<{ Bindings: Env }>) {
  *
  * PII Separation: COUNT queries use users_core (Core DB).
  * Recent users require both Core DB and PII DB queries, merged in application layer.
+ *
+ * Note: Uses DatabaseAdapter directly for aggregate queries (not Repository pattern)
+ * because complex statistics don't fit the entity-centric Repository model.
  */
 export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const todayStart = new Date().setHours(0, 0, 0, 0);
 
     // Run all COUNT queries in parallel for better performance
-    // COUNT queries use users_core (Core DB) - no PII needed for counts
+    // Using coreAdapter directly for aggregate queries
     const [
       activeUsersResult,
       totalUsersResult,
@@ -233,44 +239,40 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
       recentUsersCoreResult,
     ] = await Promise.all([
       // Count active users (logged in within last 30 days) - Core DB
-      c.env.DB.prepare(
-        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND last_login_at > ? AND is_active = 1'
-      )
-        .bind(tenantId, thirtyDaysAgo)
-        .first(),
+      authCtx.coreAdapter.queryOne<{ count: number }>(
+        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND last_login_at > ? AND is_active = 1',
+        [tenantId, thirtyDaysAgo]
+      ),
 
       // Count total users for this tenant - Core DB
-      c.env.DB.prepare(
-        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1'
-      )
-        .bind(tenantId)
-        .first(),
+      authCtx.coreAdapter.queryOne<{ count: number }>(
+        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1',
+        [tenantId]
+      ),
 
       // Count registered clients for this tenant - Core DB
-      c.env.DB.prepare('SELECT COUNT(*) as count FROM oauth_clients WHERE tenant_id = ?')
-        .bind(tenantId)
-        .first(),
+      authCtx.coreAdapter.queryOne<{ count: number }>(
+        'SELECT COUNT(*) as count FROM oauth_clients WHERE tenant_id = ?',
+        [tenantId]
+      ),
 
       // Count users created today - Core DB
-      c.env.DB.prepare(
-        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND created_at >= ? AND is_active = 1'
-      )
-        .bind(tenantId, todayStart)
-        .first(),
+      authCtx.coreAdapter.queryOne<{ count: number }>(
+        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND created_at >= ? AND is_active = 1',
+        [tenantId, todayStart]
+      ),
 
       // Count logins today - Core DB
-      c.env.DB.prepare(
-        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND last_login_at >= ? AND is_active = 1'
-      )
-        .bind(tenantId, todayStart)
-        .first(),
+      authCtx.coreAdapter.queryOne<{ count: number }>(
+        'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND last_login_at >= ? AND is_active = 1',
+        [tenantId, todayStart]
+      ),
 
       // Get recent activity (last 10 user registrations) - Core DB (IDs and timestamps only)
-      c.env.DB.prepare(
-        'SELECT id, created_at FROM users_core WHERE tenant_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 10'
-      )
-        .bind(tenantId)
-        .all(),
+      authCtx.coreAdapter.query<{ id: string; created_at: number }>(
+        'SELECT id, created_at FROM users_core WHERE tenant_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 10',
+        [tenantId]
+      ),
     ]);
 
     // Fetch PII (email, name) for recent users from PII DB
@@ -282,24 +284,26 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
       timestamp: number;
     }[] = [];
 
-    if (c.env.DB_PII && recentUsersCoreResult.results.length > 0) {
-      const userIds = recentUsersCoreResult.results.map((u: any) => u.id);
-      // Query PII DB for email and name
+    if (c.env.DB_PII && recentUsersCoreResult.length > 0) {
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const userIds = recentUsersCoreResult.map((u) => u.id);
+
+      // Query PII DB for email and name via adapter
       const placeholders = userIds.map(() => '?').join(',');
-      const piiResults = await c.env.DB_PII.prepare(
-        `SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`
-      )
-        .bind(...userIds)
-        .all();
+      const piiResults = await piiCtx.defaultPiiAdapter.query<{
+        id: string;
+        email: string | null;
+        name: string | null;
+      }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, userIds);
 
       // Create a map for quick lookup
       const piiMap = new Map<string, { email: string | null; name: string | null }>();
-      for (const pii of piiResults.results as any[]) {
+      for (const pii of piiResults) {
         piiMap.set(pii.id, { email: pii.email, name: pii.name });
       }
 
       // Merge Core and PII data
-      recentActivity = recentUsersCoreResult.results.map((user: any) => {
+      recentActivity = recentUsersCoreResult.map((user) => {
         const pii = piiMap.get(user.id);
         return {
           type: 'user_registration',
@@ -311,7 +315,7 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
       });
     } else {
       // No PII DB configured - return without email/name
-      recentActivity = recentUsersCoreResult.results.map((user: any) => ({
+      recentActivity = recentUsersCoreResult.map((user) => ({
         type: 'user_registration',
         userId: user.id,
         email: null,
@@ -347,16 +351,27 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
  * Get paginated list of users
  * GET /admin/users
  *
- * PII Separation: Search (email/name) queries PII DB, filters (email_verified) query Core DB.
+ * Query Parameters:
+ * - page: Page number (default: 1)
+ * - limit: Items per page (default: 20, max: 100)
+ * - search: Search by email or name (PII DB)
+ * - verified: Filter by email_verified (true/false)
+ * - pii_status: Filter by PII status (none/pending/active/failed/deleted)
+ *
+ * PII Separation: Search (email/name) queries PII DB, filters (email_verified, pii_status) query Core DB.
  * Results are merged in application layer.
+ *
+ * Note: Uses DatabaseAdapter directly for complex cross-database queries.
  */
 export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
     const page = parseInt(c.req.query('page') || '1');
     const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '20')));
     const search = c.req.query('search') || '';
     const verified = c.req.query('verified'); // 'true', 'false', or undefined
+    const piiStatus = c.req.query('pii_status'); // 'none', 'pending', 'active', 'failed', 'deleted', or undefined
 
     const offset = (page - 1) * limit;
 
@@ -367,14 +382,14 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
 
     let matchingUserIds: string[] | null = null;
 
-    // Step 1: If search is provided, find matching users in PII DB
+    // Step 1: If search is provided, find matching users in PII DB via adapter
     if (search && c.env.DB_PII) {
-      const piiSearchResult = await c.env.DB_PII.prepare(
-        'SELECT id FROM users_pii WHERE tenant_id = ? AND (email LIKE ? OR name LIKE ?)'
-      )
-        .bind(tenantId, `%${search}%`, `%${search}%`)
-        .all();
-      matchingUserIds = piiSearchResult.results.map((r: any) => r.id);
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiSearchResult = await piiCtx.defaultPiiAdapter.query<{ id: string }>(
+        'SELECT id FROM users_pii WHERE tenant_id = ? AND (email LIKE ? OR name LIKE ?)',
+        [tenantId, `%${search}%`, `%${search}%`]
+      );
+      matchingUserIds = piiSearchResult.map((r) => r.id);
 
       // If no PII matches, return empty result
       if (matchingUserIds.length === 0) {
@@ -396,8 +411,8 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
     let coreQuery = 'SELECT * FROM users_core WHERE tenant_id = ? AND is_active = 1';
     let countQuery =
       'SELECT COUNT(*) as count FROM users_core WHERE tenant_id = ? AND is_active = 1';
-    const coreBindings: any[] = [tenantId];
-    const countBindings: any[] = [tenantId];
+    const coreBindings: unknown[] = [tenantId];
+    const countBindings: unknown[] = [tenantId];
 
     // Add ID filter if search was performed
     if (matchingUserIds !== null) {
@@ -417,55 +432,63 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
       countBindings.push(verifiedValue);
     }
 
+    // PII status filter (Core DB field)
+    // Valid values: none, pending, active, failed, deleted
+    if (piiStatus !== undefined) {
+      const validStatuses = ['none', 'pending', 'active', 'failed', 'deleted'];
+      if (validStatuses.includes(piiStatus)) {
+        coreQuery += ' AND pii_status = ?';
+        countQuery += ' AND pii_status = ?';
+        coreBindings.push(piiStatus);
+        countBindings.push(piiStatus);
+      }
+    }
+
     // Order and pagination
     coreQuery += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
     coreBindings.push(limit, offset);
 
-    // Execute Core DB queries in parallel
+    // Execute Core DB queries in parallel via adapter
     const [totalResult, coreUsers] = await Promise.all([
-      c.env.DB.prepare(countQuery)
-        .bind(...countBindings)
-        .first(),
-      c.env.DB.prepare(coreQuery)
-        .bind(...coreBindings)
-        .all(),
+      authCtx.coreAdapter.queryOne<{ count: number }>(countQuery, countBindings),
+      authCtx.coreAdapter.query<UserCore>(coreQuery, coreBindings),
     ]);
 
-    const total = (totalResult?.count as number) || 0;
+    const total = totalResult?.count || 0;
     const totalPages = Math.ceil(total / limit);
 
     // Step 3: Fetch PII for the result set
-    let formattedUsers: any[] = [];
+    let formattedUsers: unknown[] = [];
 
-    if (coreUsers.results.length > 0 && c.env.DB_PII) {
-      const userIds = coreUsers.results.map((u: any) => u.id);
+    if (coreUsers.length > 0 && c.env.DB_PII) {
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const userIds = coreUsers.map((u) => u.id);
       const placeholders = userIds.map(() => '?').join(',');
-      const piiResults = await c.env.DB_PII.prepare(
-        `SELECT * FROM users_pii WHERE id IN (${placeholders})`
-      )
-        .bind(...userIds)
-        .all();
+      const piiResults = await piiCtx.defaultPiiAdapter.query<UserPII>(
+        `SELECT * FROM users_pii WHERE id IN (${placeholders})`,
+        userIds
+      );
 
       // Create PII lookup map
-      const piiMap = new Map<string, any>();
-      for (const pii of piiResults.results as any[]) {
+      const piiMap = new Map<string, UserPII>();
+      for (const pii of piiResults) {
         piiMap.set(pii.id, pii);
       }
 
       // Merge Core and PII data
-      formattedUsers = coreUsers.results.map((core: any) => {
-        const pii = piiMap.get(core.id) || {};
+      formattedUsers = coreUsers.map((core) => {
+        const pii = piiMap.get(core.id);
         return {
           id: core.id,
           tenant_id: core.tenant_id,
-          email: pii.email ?? null,
-          name: pii.name ?? null,
-          given_name: pii.given_name ?? null,
-          family_name: pii.family_name ?? null,
-          nickname: pii.nickname ?? null,
-          preferred_username: pii.preferred_username ?? null,
-          picture: pii.picture ?? null,
-          phone_number: pii.phone_number ?? null,
+          email: pii?.email ?? null,
+          name: pii?.name ?? null,
+          given_name: pii?.given_name ?? null,
+          family_name: pii?.family_name ?? null,
+          nickname: pii?.nickname ?? null,
+          preferred_username: pii?.preferred_username ?? null,
+          picture: pii?.picture ?? null,
+          phone_number: pii?.phone_number ?? null,
           email_verified: Boolean(core.email_verified),
           phone_number_verified: Boolean(core.phone_number_verified),
           user_type: core.user_type,
@@ -477,9 +500,9 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
           last_login_at: toMilliseconds(core.last_login_at),
         };
       });
-    } else if (coreUsers.results.length > 0) {
+    } else if (coreUsers.length > 0) {
       // No PII DB - return Core data only
-      formattedUsers = coreUsers.results.map((core: any) => ({
+      formattedUsers = coreUsers.map((core) => ({
         id: core.id,
         tenant_id: core.tenant_id,
         email: null,
@@ -525,17 +548,17 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
  * GET /admin/users/:id
  *
  * PII Separation: Queries both Core DB (users_core) and PII DB (users_pii), then merges.
+ * Uses Repository pattern for database access.
  */
 export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id');
 
-    // Query Core DB for user_core data
-    const userCore = await c.env.DB.prepare(
-      'SELECT * FROM users_core WHERE id = ? AND is_active = 1'
-    )
-      .bind(userId)
-      .first();
+    // Create AuthContext first, then elevate to PIIContext if PII DB is available
+    const authCtx = createAuthContextFromHono(c);
+
+    // Query Core DB for user_core data via Repository
+    const userCore = await authCtx.repositories.userCore.findById(userId);
 
     if (!userCore) {
       return c.json(
@@ -547,27 +570,25 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Query PII DB for user_pii data (if available)
-    let userPII: any = null;
+    // Query PII DB for user_pii data via Repository (if DB_PII is configured)
+    let userPII: UserPII | null = null;
     if (c.env.DB_PII) {
-      userPII = await c.env.DB_PII.prepare('SELECT * FROM users_pii WHERE id = ?')
-        .bind(userId)
-        .first();
+      const piiCtx = createPIIContextFromHono(c);
+      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
+      userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
     }
 
-    // Get user's passkeys from Core DB
-    const passkeys = await c.env.DB.prepare(
-      'SELECT id, credential_id, device_name, created_at, last_used_at FROM passkeys WHERE user_id = ? ORDER BY created_at DESC'
-    )
-      .bind(userId)
-      .all();
+    // Get user's passkeys via Repository
+    const passkeys = await authCtx.repositories.passkey.findByUserId(userId);
 
-    // Get user's custom fields from Core DB
-    const customFields = await c.env.DB.prepare(
-      'SELECT field_name, field_value, field_type FROM user_custom_fields WHERE user_id = ?'
-    )
-      .bind(userId)
-      .all();
+    // Get user's custom fields (direct adapter query - no dedicated repository)
+    const customFields = await authCtx.coreAdapter.query<{
+      field_name: string;
+      field_value: string;
+      field_type: string;
+    }>('SELECT field_name, field_value, field_type FROM user_custom_fields WHERE user_id = ?', [
+      userId,
+    ]);
 
     // Merge Core and PII data
     const formattedUser = {
@@ -595,21 +616,23 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       address_country: userPII?.address_country ?? null,
       declared_residence: userPII?.declared_residence ?? null,
       pii_class: userPII?.pii_class ?? null,
-      // Core fields
-      email_verified: Boolean(userCore.email_verified),
-      phone_number_verified: Boolean(userCore.phone_number_verified),
+      // Core fields (Repository already returns proper boolean types)
+      email_verified: userCore.email_verified,
+      phone_number_verified: userCore.phone_number_verified,
       user_type: userCore.user_type,
-      is_active: Boolean(userCore.is_active),
+      is_active: userCore.is_active,
       pii_partition: userCore.pii_partition,
       pii_status: userCore.pii_status,
-      created_at: toMilliseconds(userCore.created_at as number),
-      updated_at: toMilliseconds(userCore.updated_at as number),
-      last_login_at: toMilliseconds(userCore.last_login_at as number | null),
+      created_at: toMilliseconds(userCore.created_at),
+      updated_at: toMilliseconds(userCore.updated_at),
+      last_login_at: toMilliseconds(userCore.last_login_at),
     };
 
-    // Format passkeys with millisecond timestamps
-    const formattedPasskeys = passkeys.results.map((p: any) => ({
-      ...p,
+    // Format passkeys with millisecond timestamps (Repository returns array directly)
+    const formattedPasskeys = passkeys.map((p) => ({
+      id: p.id,
+      credential_id: p.credential_id,
+      device_name: p.device_name,
       created_at: toMilliseconds(p.created_at),
       last_used_at: toMilliseconds(p.last_used_at),
     }));
@@ -617,7 +640,7 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
     return c.json({
       user: formattedUser,
       passkeys: formattedPasskeys,
-      customFields: customFields.results,
+      customFields, // adapter.query returns array directly
     });
   } catch (error) {
     console.error('Admin user get error:', error);
@@ -636,7 +659,7 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
  * POST /admin/users
  *
  * PII Separation: Creates user in both Core DB (users_core) and PII DB (users_pii).
- * Uses pii_status to track distributed write state:
+ * Uses Repository pattern with pii_status to track distributed write state:
  * 1. Insert into users_core with pii_status='pending'
  * 2. Insert into users_pii
  * 3. Update users_core.pii_status to 'active'
@@ -670,7 +693,6 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       phone_number,
       phone_number_verified,
       user_type,
-      ...otherFields
     } = body;
 
     if (!email) {
@@ -684,16 +706,14 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Check if user already exists - query PII DB for email uniqueness
     if (c.env.DB_PII) {
-      const existingUser = await c.env.DB_PII.prepare(
-        'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?'
-      )
-        .bind(tenantId, email)
-        .first();
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const emailExists = await piiCtx.piiRepositories.userPII.emailExists(tenantId, email);
 
-      if (existingUser) {
+      if (emailExists) {
         return c.json(
           {
             error: 'conflict',
@@ -705,103 +725,57 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const userId = generateId();
-    const now = Date.now();
 
     // Step 1: Insert into users_core (Core DB) with pii_status='pending'
-    await c.env.DB.prepare(
-      `INSERT INTO users_core (
-        id, tenant_id, email_verified, phone_number_verified, password_hash,
-        is_active, user_type, pii_partition, pii_status, created_at, updated_at, last_login_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
-        userId,
-        tenantId,
-        email_verified ? 1 : 0,
-        phone_number_verified ? 1 : 0,
-        null, // password_hash
-        1, // is_active
-        user_type || 'end_user',
-        'default', // pii_partition
-        'pending', // pii_status - will be updated after PII insert
-        now,
-        now,
-        null // last_login_at
-      )
-      .run();
+    await authCtx.repositories.userCore.createUser({
+      id: userId,
+      tenant_id: tenantId,
+      email_verified: email_verified ?? false,
+      phone_number_verified: phone_number_verified ?? false,
+      user_type: (user_type as 'end_user' | 'admin' | 'm2m') || 'end_user',
+      pii_partition: 'default',
+      pii_status: 'pending',
+    });
 
     // Step 2: Insert into users_pii (PII DB) if available
     if (c.env.DB_PII) {
+      const piiCtx = createPIIContextFromHono(c, tenantId);
       try {
-        await c.env.DB_PII.prepare(
-          `INSERT INTO users_pii (
-            id, tenant_id, pii_class, email, email_blind_index, phone_number,
-            name, given_name, family_name, nickname, preferred_username,
-            picture, website, gender, birthdate, locale, zoneinfo,
-            address_formatted, address_street_address, address_locality,
-            address_region, address_postal_code, address_country,
-            declared_residence, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-          .bind(
-            userId,
-            tenantId,
-            'PROFILE', // pii_class
-            email,
-            null, // email_blind_index (TODO: compute blind index)
-            phone_number || null,
-            name || null,
-            given_name || null,
-            family_name || null,
-            nickname || null,
-            preferred_username || null,
-            picture || null,
-            null, // website
-            null, // gender
-            null, // birthdate
-            null, // locale
-            null, // zoneinfo
-            null, // address_formatted
-            null, // address_street_address
-            null, // address_locality
-            null, // address_region
-            null, // address_postal_code
-            null, // address_country
-            null, // declared_residence
-            now,
-            now
-          )
-          .run();
+        await piiCtx.piiRepositories.userPII.createPII({
+          id: userId,
+          tenant_id: tenantId,
+          pii_class: 'PROFILE',
+          email,
+          phone_number: phone_number ?? null,
+          name: name ?? null,
+          given_name: given_name ?? null,
+          family_name: family_name ?? null,
+          nickname: nickname ?? null,
+          preferred_username: preferred_username ?? null,
+          picture: picture ?? null,
+        });
 
         // Step 3: Update pii_status to 'active' on success
-        await c.env.DB.prepare('UPDATE users_core SET pii_status = ?, updated_at = ? WHERE id = ?')
-          .bind('active', now, userId)
-          .run();
+        await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
       } catch (piiError) {
         // PII insert failed - mark as 'failed' for retry
         console.error('PII insert failed:', piiError);
-        await c.env.DB.prepare('UPDATE users_core SET pii_status = ?, updated_at = ? WHERE id = ?')
-          .bind('failed', now, userId)
-          .run();
+        await authCtx.repositories.userCore.updatePIIStatus(userId, 'failed');
         throw piiError;
       }
     } else {
       // No PII DB - mark as 'none' (M2M user or single-DB mode)
-      await c.env.DB.prepare('UPDATE users_core SET pii_status = ?, updated_at = ? WHERE id = ?')
-        .bind('none', now, userId)
-        .run();
+      await authCtx.repositories.userCore.updatePIIStatus(userId, 'none');
     }
 
     // Fetch created user data (merged from both DBs)
-    const userCore = await c.env.DB.prepare('SELECT * FROM users_core WHERE id = ?')
-      .bind(userId)
-      .first();
+    const userCore = await authCtx.repositories.userCore.findById(userId);
 
-    let userPII: any = null;
-    if (c.env.DB_PII) {
-      userPII = await c.env.DB_PII.prepare('SELECT * FROM users_pii WHERE id = ?')
-        .bind(userId)
-        .first();
+    let userPII: UserPII | null = null;
+    if (c.env.DB_PII && userCore) {
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
+      userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
     }
 
     const createdUser = {
@@ -815,14 +789,14 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       preferred_username: userPII?.preferred_username ?? null,
       picture: userPII?.picture ?? null,
       phone_number: userPII?.phone_number ?? null,
-      email_verified: Boolean(userCore?.email_verified),
-      phone_number_verified: Boolean(userCore?.phone_number_verified),
+      email_verified: userCore?.email_verified ?? false,
+      phone_number_verified: userCore?.phone_number_verified ?? false,
       user_type: userCore?.user_type,
-      is_active: Boolean(userCore?.is_active),
+      is_active: userCore?.is_active ?? false,
       pii_partition: userCore?.pii_partition,
       pii_status: userCore?.pii_status,
-      created_at: toMilliseconds(userCore?.created_at as number),
-      updated_at: toMilliseconds(userCore?.updated_at as number),
+      created_at: toMilliseconds(userCore?.created_at),
+      updated_at: toMilliseconds(userCore?.updated_at),
     };
 
     return c.json(
@@ -849,6 +823,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
  * PUT /admin/users/:id
  *
  * PII Separation: Updates split between Core DB (users_core) and PII DB (users_pii).
+ * Uses Repository pattern for database access.
  * Core fields: email_verified, phone_number_verified, user_type
  * PII fields: name, phone_number, picture, given_name, family_name, etc.
  */
@@ -869,12 +844,10 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       [key: string]: any;
     }>();
 
-    // Check if user exists in Core DB
-    const userCore = await c.env.DB.prepare(
-      'SELECT * FROM users_core WHERE id = ? AND is_active = 1'
-    )
-      .bind(userId)
-      .first();
+    const authCtx = createAuthContextFromHono(c);
+
+    // Check if user exists in Core DB via Repository
+    const userCore = await authCtx.repositories.userCore.findById(userId);
 
     if (!userCore) {
       return c.json(
@@ -886,60 +859,46 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const now = Date.now();
-
-    // Separate Core and PII fields
-    const coreUpdates: string[] = [];
-    const coreBindings: any[] = [];
-    const piiUpdates: string[] = [];
-    const piiBindings: any[] = [];
+    // Separate Core and PII field updates
+    const coreUpdateData: Record<string, unknown> = {};
+    const piiUpdateData: Record<string, unknown> = {};
 
     // Core fields
     if (body.email_verified !== undefined) {
-      coreUpdates.push('email_verified = ?');
-      coreBindings.push(body.email_verified ? 1 : 0);
+      coreUpdateData.email_verified = body.email_verified;
     }
     if (body.phone_number_verified !== undefined) {
-      coreUpdates.push('phone_number_verified = ?');
-      coreBindings.push(body.phone_number_verified ? 1 : 0);
+      coreUpdateData.phone_number_verified = body.phone_number_verified;
     }
     if (body.user_type !== undefined) {
-      coreUpdates.push('user_type = ?');
-      coreBindings.push(body.user_type);
+      coreUpdateData.user_type = body.user_type;
     }
 
     // PII fields
     if (body.name !== undefined) {
-      piiUpdates.push('name = ?');
-      piiBindings.push(body.name);
+      piiUpdateData.name = body.name;
     }
     if (body.given_name !== undefined) {
-      piiUpdates.push('given_name = ?');
-      piiBindings.push(body.given_name);
+      piiUpdateData.given_name = body.given_name;
     }
     if (body.family_name !== undefined) {
-      piiUpdates.push('family_name = ?');
-      piiBindings.push(body.family_name);
+      piiUpdateData.family_name = body.family_name;
     }
     if (body.nickname !== undefined) {
-      piiUpdates.push('nickname = ?');
-      piiBindings.push(body.nickname);
+      piiUpdateData.nickname = body.nickname;
     }
     if (body.preferred_username !== undefined) {
-      piiUpdates.push('preferred_username = ?');
-      piiBindings.push(body.preferred_username);
+      piiUpdateData.preferred_username = body.preferred_username;
     }
     if (body.phone_number !== undefined) {
-      piiUpdates.push('phone_number = ?');
-      piiBindings.push(body.phone_number);
+      piiUpdateData.phone_number = body.phone_number;
     }
     if (body.picture !== undefined) {
-      piiUpdates.push('picture = ?');
-      piiBindings.push(body.picture);
+      piiUpdateData.picture = body.picture;
     }
 
     // Check if there are any updates
-    if (coreUpdates.length === 0 && piiUpdates.length === 0) {
+    if (Object.keys(coreUpdateData).length === 0 && Object.keys(piiUpdateData).length === 0) {
       return c.json(
         {
           error: 'invalid_request',
@@ -949,37 +908,29 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Update Core DB if there are core field updates
-    if (coreUpdates.length > 0) {
-      coreUpdates.push('updated_at = ?');
-      coreBindings.push(now, userId);
-      await c.env.DB.prepare(`UPDATE users_core SET ${coreUpdates.join(', ')} WHERE id = ?`)
-        .bind(...coreBindings)
-        .run();
+    // Update Core DB if there are core field updates via Repository
+    if (Object.keys(coreUpdateData).length > 0) {
+      await authCtx.repositories.userCore.update(userId, coreUpdateData);
     }
 
     // Update PII DB if there are PII field updates and DB_PII is available
-    if (piiUpdates.length > 0 && c.env.DB_PII) {
-      piiUpdates.push('updated_at = ?');
-      piiBindings.push(now, userId);
-      await c.env.DB_PII.prepare(`UPDATE users_pii SET ${piiUpdates.join(', ')} WHERE id = ?`)
-        .bind(...piiBindings)
-        .run();
+    if (Object.keys(piiUpdateData).length > 0 && c.env.DB_PII) {
+      const piiCtx = createPIIContextFromHono(c);
+      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
+      await piiCtx.piiRepositories.userPII.updatePII(userId, piiUpdateData, piiAdapter);
     }
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, userId);
 
-    // Fetch updated user data (merged from both DBs)
-    const updatedCore = await c.env.DB.prepare('SELECT * FROM users_core WHERE id = ?')
-      .bind(userId)
-      .first();
+    // Fetch updated user data via Repository
+    const updatedCore = await authCtx.repositories.userCore.findById(userId);
 
-    let updatedPII: any = null;
-    if (c.env.DB_PII) {
-      updatedPII = await c.env.DB_PII.prepare('SELECT * FROM users_pii WHERE id = ?')
-        .bind(userId)
-        .first();
+    let updatedPII: UserPII | null = null;
+    if (c.env.DB_PII && updatedCore) {
+      const piiCtx = createPIIContextFromHono(c);
+      const piiAdapter = piiCtx.getPiiAdapter(updatedCore.pii_partition);
+      updatedPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
     }
 
     const updatedUser = {
@@ -993,15 +944,15 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       preferred_username: updatedPII?.preferred_username ?? null,
       picture: updatedPII?.picture ?? null,
       phone_number: updatedPII?.phone_number ?? null,
-      email_verified: Boolean(updatedCore?.email_verified),
-      phone_number_verified: Boolean(updatedCore?.phone_number_verified),
+      email_verified: updatedCore?.email_verified ?? false,
+      phone_number_verified: updatedCore?.phone_number_verified ?? false,
       user_type: updatedCore?.user_type,
-      is_active: Boolean(updatedCore?.is_active),
+      is_active: updatedCore?.is_active ?? false,
       pii_partition: updatedCore?.pii_partition,
       pii_status: updatedCore?.pii_status,
-      created_at: toMilliseconds(updatedCore?.created_at as number),
-      updated_at: toMilliseconds(updatedCore?.updated_at as number),
-      last_login_at: toMilliseconds(updatedCore?.last_login_at as number | null),
+      created_at: toMilliseconds(updatedCore?.created_at),
+      updated_at: toMilliseconds(updatedCore?.updated_at),
+      last_login_at: toMilliseconds(updatedCore?.last_login_at),
     };
 
     return c.json({
@@ -1024,6 +975,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
  * DELETE /admin/users/:id
  *
  * PII Separation: Soft delete in Core DB, hard delete in PII DB (GDPR requirement).
+ * Uses Repository pattern for database access.
  * - Sets is_active=0 and pii_status='deleted' in users_core
  * - Deletes PII data from users_pii
  * - Creates tombstone record for audit trail
@@ -1031,15 +983,11 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
 export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id');
-    const now = Date.now();
     const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Check if user exists in Core DB
-    const userCore = await c.env.DB.prepare(
-      'SELECT * FROM users_core WHERE id = ? AND is_active = 1'
-    )
-      .bind(userId)
-      .first();
+    // Check if user exists in Core DB via Repository
+    const userCore = await authCtx.repositories.userCore.findById(userId);
 
     if (!userCore) {
       return c.json(
@@ -1052,47 +1000,40 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get PII data for tombstone before deletion
-    let emailBlindIndex: string | null = null;
     if (c.env.DB_PII) {
-      const userPII = await c.env.DB_PII.prepare(
-        'SELECT email_blind_index FROM users_pii WHERE id = ?'
-      )
-        .bind(userId)
-        .first();
-      emailBlindIndex = (userPII?.email_blind_index as string) ?? null;
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
 
-      // Create tombstone record for GDPR audit trail
-      const retentionDays = 90; // Default retention period
-      const retentionUntil = now + retentionDays * 24 * 60 * 60 * 1000;
+      // Get email_blind_index before deletion
+      const userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
+      const emailBlindIndex = userPII?.email_blind_index ?? null;
 
-      await c.env.DB_PII.prepare(
-        `INSERT INTO users_pii_tombstone (
-          id, tenant_id, email_blind_index, deleted_at, deleted_by,
-          deletion_reason, retention_until, deletion_metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
-          userId,
-          tenantId,
-          emailBlindIndex,
-          now,
-          'admin', // deleted_by
-          'admin_action', // deletion_reason
-          retentionUntil,
-          JSON.stringify({ source: 'admin_api', timestamp: new Date(now).toISOString() })
-        )
-        .run();
+      // Create tombstone record for GDPR audit trail via Repository
+      await piiCtx.piiRepositories.tombstone.createTombstone(
+        {
+          id: userId,
+          tenant_id: tenantId,
+          email_blind_index: emailBlindIndex,
+          deleted_by: 'admin',
+          deletion_reason: 'admin_action',
+          retention_days: 90,
+          metadata: {
+            source: 'admin_api',
+            timestamp: new Date().toISOString(),
+          },
+        },
+        piiAdapter
+      );
 
-      // Hard delete PII data (GDPR requirement)
-      await c.env.DB_PII.prepare('DELETE FROM users_pii WHERE id = ?').bind(userId).run();
+      // Hard delete PII data (GDPR requirement) via Repository
+      await piiCtx.piiRepositories.userPII.deletePII(userId, piiAdapter);
     }
 
-    // Soft delete in Core DB
-    await c.env.DB.prepare(
-      'UPDATE users_core SET is_active = 0, pii_status = ?, updated_at = ? WHERE id = ?'
-    )
-      .bind('deleted', now, userId)
-      .run();
+    // Soft delete in Core DB via Repository (update is_active and pii_status)
+    await authCtx.repositories.userCore.update(userId, {
+      is_active: false,
+      pii_status: 'deleted',
+    });
 
     // Invalidate user cache
     await invalidateUserCache(c.env, userId);
@@ -1114,8 +1055,316 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
+ * Retry PII creation for a user with failed PII status
+ * POST /admin/users/:id/retry-pii
+ *
+ * When user creation fails to write PII data (e.g., due to DB_PII unavailability),
+ * the user's pii_status is set to 'failed'. This endpoint allows admin to retry
+ * the PII creation with the data provided in the request body.
+ *
+ * Request Body:
+ * - email: string (required)
+ * - name?: string
+ * - given_name?: string
+ * - family_name?: string
+ * - phone_number?: string
+ * - ... (other PII fields)
+ */
+export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const userId = c.req.param('id');
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
+    // Check if user exists and has failed PII status
+    const userCore = await authCtx.repositories.userCore.findById(userId);
+
+    if (!userCore) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'User not found',
+        },
+        404
+      );
+    }
+
+    if (userCore.pii_status !== 'failed') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: `User PII status is '${userCore.pii_status}', not 'failed'. Retry is only available for users with failed PII status.`,
+        },
+        400
+      );
+    }
+
+    // Check if PII DB is available
+    if (!c.env.DB_PII) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'PII database (DB_PII) is not available',
+        },
+        500
+      );
+    }
+
+    // Parse request body for PII data
+    const body = await c.req.json<{
+      email: string;
+      name?: string;
+      given_name?: string;
+      family_name?: string;
+      nickname?: string;
+      preferred_username?: string;
+      phone_number?: string;
+      picture?: string;
+      website?: string;
+      gender?: string;
+      birthdate?: string;
+      locale?: string;
+      zoneinfo?: string;
+      address_formatted?: string;
+      address_street_address?: string;
+      address_locality?: string;
+      address_region?: string;
+      address_postal_code?: string;
+      address_country?: string;
+      declared_residence?: string;
+    }>();
+
+    if (!body.email) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'email is required',
+        },
+        400
+      );
+    }
+
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
+
+    // Check if PII already exists (shouldn't, but check anyway)
+    const existingPii = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
+    if (existingPii) {
+      // PII exists, just update the status
+      await authCtx.repositories.userCore.update(userId, {
+        pii_status: 'active',
+      });
+
+      return c.json({
+        success: true,
+        message: 'PII already exists. Status updated to active.',
+        user_id: userId,
+        pii_status: 'active',
+      });
+    }
+
+    // Create PII record
+    await piiCtx.piiRepositories.userPII.createPII(
+      {
+        id: userId,
+        tenant_id: tenantId,
+        email: body.email,
+        name: body.name,
+        given_name: body.given_name,
+        family_name: body.family_name,
+        nickname: body.nickname,
+        preferred_username: body.preferred_username,
+        phone_number: body.phone_number,
+        picture: body.picture,
+        website: body.website,
+        gender: body.gender,
+        birthdate: body.birthdate,
+        locale: body.locale,
+        zoneinfo: body.zoneinfo,
+        address_formatted: body.address_formatted,
+        address_street_address: body.address_street_address,
+        address_locality: body.address_locality,
+        address_region: body.address_region,
+        address_postal_code: body.address_postal_code,
+        address_country: body.address_country,
+        declared_residence: body.declared_residence,
+      },
+      piiAdapter
+    );
+
+    // Update Core DB status to active
+    await authCtx.repositories.userCore.update(userId, {
+      pii_status: 'active',
+    });
+
+    // Invalidate user cache
+    await invalidateUserCache(c.env, userId);
+
+    return c.json({
+      success: true,
+      message: 'PII created successfully',
+      user_id: userId,
+      pii_status: 'active',
+    });
+  } catch (error) {
+    console.error('Admin user retry PII error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to retry PII creation',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      500
+    );
+  }
+}
+
+/**
+ * Delete user's PII data only (GDPR Art.17 Right to be Forgotten)
+ * DELETE /admin/users/:id/pii
+ *
+ * Deletes only the PII data while keeping the Core user record active.
+ * This is useful for GDPR deletion requests where you want to:
+ * - Delete all personal information
+ * - Keep the user account for audit trail
+ * - Allow user to continue using the service with re-entered data
+ *
+ * Creates a tombstone record for audit trail.
+ *
+ * Request Body (optional):
+ * - reason?: string (deletion_reason, default: 'user_request')
+ * - retention_days?: number (tombstone retention, default: 90)
+ */
+export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const userId = c.req.param('id');
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
+    // Check if user exists
+    const userCore = await authCtx.repositories.userCore.findById(userId);
+
+    if (!userCore) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'User not found',
+        },
+        404
+      );
+    }
+
+    // Check if PII is already deleted
+    if (userCore.pii_status === 'deleted') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'User PII is already deleted',
+        },
+        400
+      );
+    }
+
+    // Check if user has no PII to delete
+    if (userCore.pii_status === 'none') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'User has no PII data (pii_status is none)',
+        },
+        400
+      );
+    }
+
+    // Check if PII DB is available
+    if (!c.env.DB_PII) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'PII database (DB_PII) is not available',
+        },
+        500
+      );
+    }
+
+    // Parse optional request body
+    let body: { reason?: string; retention_days?: number } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      // No body is fine, use defaults
+    }
+
+    const deletionReason = body.reason ?? 'user_request';
+    const retentionDays = body.retention_days ?? 90;
+
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
+
+    // Get email_blind_index before deletion for tombstone
+    const userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
+    const emailBlindIndex = userPII?.email_blind_index ?? null;
+
+    // Create tombstone record for GDPR audit trail
+    await piiCtx.piiRepositories.tombstone.createTombstone(
+      {
+        id: userId,
+        tenant_id: tenantId,
+        email_blind_index: emailBlindIndex,
+        deleted_by: 'admin',
+        deletion_reason: deletionReason,
+        retention_days: retentionDays,
+        metadata: {
+          source: 'admin_api_pii_deletion',
+          timestamp: new Date().toISOString(),
+          user_active: true, // User account remains active
+        },
+      },
+      piiAdapter
+    );
+
+    // Hard delete PII data (GDPR requirement)
+    await piiCtx.piiRepositories.userPII.deletePII(userId, piiAdapter);
+
+    // Delete linked identities (also PII)
+    await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(userId, piiAdapter);
+
+    // Delete subject identifiers (pairwise subs)
+    await piiCtx.piiRepositories.identifier.deleteByUserId(userId, piiAdapter);
+
+    // Update Core DB status to deleted (but keep is_active=1)
+    await authCtx.repositories.userCore.update(userId, {
+      pii_status: 'deleted',
+    });
+
+    // Invalidate user cache
+    await invalidateUserCache(c.env, userId);
+
+    return c.json({
+      success: true,
+      message: 'User PII deleted successfully. User account remains active.',
+      user_id: userId,
+      pii_status: 'deleted',
+      tombstone_created: true,
+      retention_days: retentionDays,
+    });
+  } catch (error) {
+    console.error('Admin user delete PII error:', error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to delete user PII',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      500
+    );
+  }
+}
+
+/**
  * Create a new OAuth client
  * POST /admin/clients
+ * Uses Repository pattern for database access.
  */
 export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
@@ -1178,77 +1427,65 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    // Generate client_id and client_secret
-    const clientId = crypto.randomUUID();
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
+    // Generate client_secret
     const clientSecret =
       crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
 
-    const now = Date.now();
-
-    // Default values
-    const grantTypes = body.grant_types || ['authorization_code'];
-    const responseTypes = body.response_types || ['code'];
-    const scope = body.scope || 'openid profile email';
-    const tokenEndpointAuthMethod = body.token_endpoint_auth_method || 'client_secret_basic';
-    const subjectType = body.subject_type || 'public';
-
-    // Insert into database
-    await c.env.DB.prepare(
-      `INSERT INTO oauth_clients (
-        client_id, client_secret, client_name, redirect_uris, grant_types,
-        response_types, scope, logo_uri, client_uri, policy_uri, tos_uri,
-        contacts, token_endpoint_auth_method, subject_type, sector_identifier_uri,
-        is_trusted, skip_consent, allow_claims_without_scope, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
-        clientId,
-        clientSecret,
-        body.client_name,
-        JSON.stringify(body.redirect_uris),
-        JSON.stringify(grantTypes),
-        JSON.stringify(responseTypes),
-        scope,
-        body.logo_uri || null,
-        body.client_uri || null,
-        body.policy_uri || null,
-        body.tos_uri || null,
-        body.contacts ? JSON.stringify(body.contacts) : null,
-        tokenEndpointAuthMethod,
-        subjectType,
-        body.sector_identifier_uri || null,
-        body.is_trusted ? 1 : 0,
-        body.skip_consent ? 1 : 0,
-        body.allow_claims_without_scope ? 1 : 0,
-        now,
-        now
-      )
-      .run();
+    // Create client via Repository
+    const client = await authCtx.repositories.client.create({
+      client_name: body.client_name,
+      client_secret: clientSecret,
+      tenant_id: tenantId,
+      redirect_uris: body.redirect_uris,
+      grant_types: body.grant_types || ['authorization_code'],
+      response_types: body.response_types || ['code'],
+      scope: body.scope || 'openid profile email',
+      logo_uri: body.logo_uri || null,
+      client_uri: body.client_uri || null,
+      policy_uri: body.policy_uri || null,
+      tos_uri: body.tos_uri || null,
+      contacts: body.contacts || null,
+      token_endpoint_auth_method:
+        (body.token_endpoint_auth_method as
+          | 'none'
+          | 'client_secret_basic'
+          | 'client_secret_post'
+          | 'client_secret_jwt'
+          | 'private_key_jwt') || 'client_secret_basic',
+      subject_type: (body.subject_type as 'public' | 'pairwise') || 'public',
+      sector_identifier_uri: body.sector_identifier_uri || null,
+      is_trusted: body.is_trusted || false,
+      skip_consent: body.skip_consent || false,
+      allow_claims_without_scope: body.allow_claims_without_scope || false,
+    });
 
     // Return the created client (including client_secret only on creation)
     return c.json(
       {
         client: {
-          client_id: clientId,
-          client_secret: clientSecret,
-          client_name: body.client_name,
-          redirect_uris: body.redirect_uris,
-          grant_types: grantTypes,
-          response_types: responseTypes,
-          scope,
-          logo_uri: body.logo_uri || null,
-          client_uri: body.client_uri || null,
-          policy_uri: body.policy_uri || null,
-          tos_uri: body.tos_uri || null,
-          contacts: body.contacts || [],
-          token_endpoint_auth_method: tokenEndpointAuthMethod,
-          subject_type: subjectType,
-          sector_identifier_uri: body.sector_identifier_uri || null,
-          is_trusted: body.is_trusted || false,
-          skip_consent: body.skip_consent || false,
-          allow_claims_without_scope: body.allow_claims_without_scope || false,
-          created_at: now,
-          updated_at: now,
+          client_id: client.client_id,
+          client_secret: clientSecret, // Return secret only on creation
+          client_name: client.client_name,
+          redirect_uris: JSON.parse(client.redirect_uris),
+          grant_types: JSON.parse(client.grant_types),
+          response_types: JSON.parse(client.response_types),
+          scope: client.scope,
+          logo_uri: client.logo_uri,
+          client_uri: client.client_uri,
+          policy_uri: client.policy_uri,
+          tos_uri: client.tos_uri,
+          contacts: client.contacts ? JSON.parse(client.contacts) : [],
+          token_endpoint_auth_method: client.token_endpoint_auth_method,
+          subject_type: client.subject_type,
+          sector_identifier_uri: client.sector_identifier_uri,
+          is_trusted: client.is_trusted,
+          skip_consent: client.skip_consent,
+          allow_claims_without_scope: client.allow_claims_without_scope,
+          created_at: client.created_at,
+          updated_at: client.updated_at,
         },
       },
       201
@@ -1269,6 +1506,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
 /**
  * Get paginated list of OAuth clients
  * GET /admin/clients
+ * Uses Repository pattern for database access.
  */
 export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
   try {
@@ -1277,43 +1515,22 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
     const limit = parseInt(c.req.query('limit') || '20');
     const search = c.req.query('search') || '';
 
-    const offset = (page - 1) * limit;
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Build query with tenant_id filter for index optimization
-    let query = 'SELECT * FROM oauth_clients WHERE tenant_id = ?';
-    let countQuery = 'SELECT COUNT(*) as count FROM oauth_clients WHERE tenant_id = ?';
-    const bindings: any[] = [tenantId];
-    const countBindings: any[] = [tenantId];
-
-    // Search filter
-    if (search) {
-      query += ' AND (client_name LIKE ? OR client_id LIKE ?)';
-      countQuery += ' AND (client_name LIKE ? OR client_id LIKE ?)';
-      bindings.push(`%${search}%`, `%${search}%`);
-      countBindings.push(`%${search}%`, `%${search}%`);
-    }
-
-    // Order and pagination
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    bindings.push(limit, offset);
-
-    // Execute queries in parallel
-    const [totalResult, clients] = await Promise.all([
-      c.env.DB.prepare(countQuery)
-        .bind(...countBindings)
-        .first(),
-      c.env.DB.prepare(query)
-        .bind(...bindings)
-        .all(),
-    ]);
-
-    const total = (totalResult?.count as number) || 0;
-    const totalPages = Math.ceil(total / limit);
+    // Get clients via Repository with pagination and search
+    const result = await authCtx.repositories.client.listByTenant(tenantId, {
+      page,
+      limit,
+      search: search || undefined,
+    });
 
     // Format clients with millisecond timestamps and parse JSON fields
-    const formattedClients = clients.results.map((client: any) => ({
+    const formattedClients = result.items.map((client) => ({
       ...client,
-      grant_types: client.grant_types ? JSON.parse(client.grant_types) : [],
+      redirect_uris: JSON.parse(client.redirect_uris),
+      grant_types: JSON.parse(client.grant_types),
+      response_types: JSON.parse(client.response_types),
+      contacts: client.contacts ? JSON.parse(client.contacts) : [],
       created_at: toMilliseconds(client.created_at),
       updated_at: toMilliseconds(client.updated_at),
     }));
@@ -1321,12 +1538,12 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
     return c.json({
       clients: formattedClients,
       pagination: {
-        page,
-        limit,
-        total,
-        totalPages,
-        hasNext: page < totalPages,
-        hasPrev: page > 1,
+        page: result.page,
+        limit: result.limit,
+        total: result.total,
+        totalPages: result.totalPages,
+        hasNext: result.hasNext,
+        hasPrev: result.hasPrev,
       },
     });
   } catch (error) {
@@ -1348,10 +1565,10 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
 export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const clientId = c.req.param('id');
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
-    const client = await c.env.DB.prepare('SELECT * FROM oauth_clients WHERE client_id = ?')
-      .bind(clientId)
-      .first();
+    const client = await authCtx.repositories.client.findByClientId(clientId);
 
     if (!client) {
       return c.json(
@@ -1363,7 +1580,8 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Parse JSON fields and convert timestamps to milliseconds
+    // Parse JSON fields for response
+    // Note: Repository handles boolean conversion, but JSON fields are stored as strings
     const formattedClient = {
       ...client,
       redirect_uris: client.redirect_uris ? JSON.parse(client.redirect_uris as string) : [],
@@ -1392,15 +1610,21 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
 /**
  * Update client settings
  * PUT /admin/clients/:id
+ *
+ * Repository pattern migration: Uses ClientRepository.update() which handles:
+ * - Dynamic update query building
+ * - Boolean to integer conversion for SQLite
+ * - JSON stringification for array fields
+ * - Automatic updated_at timestamp
  */
 export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const clientId = c.req.param('id');
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Check if client exists
-    const existingClient = await c.env.DB.prepare('SELECT * FROM oauth_clients WHERE client_id = ?')
-      .bind(clientId)
-      .first();
+    const existingClient = await authCtx.repositories.client.findByClientId(clientId);
 
     if (!existingClient) {
       return c.json(
@@ -1412,10 +1636,8 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Parse request body
+    // Parse request body and extract updatable fields
     const body = await c.req.json();
-
-    // Extract updatable fields
     const {
       client_name,
       redirect_uris,
@@ -1430,120 +1652,51 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       allow_claims_without_scope,
     } = body;
 
-    // Build update query dynamically
-    const updates: string[] = [];
-    const values: unknown[] = [];
+    // Check if there are any actual updates
+    const hasUpdates = [
+      client_name,
+      redirect_uris,
+      grant_types,
+      scope,
+      logo_uri,
+      client_uri,
+      policy_uri,
+      tos_uri,
+      is_trusted,
+      skip_consent,
+      allow_claims_without_scope,
+    ].some((v) => v !== undefined);
 
-    if (client_name !== undefined) {
-      updates.push('client_name = ?');
-      values.push(client_name);
-    }
-    if (redirect_uris !== undefined) {
-      updates.push('redirect_uris = ?');
-      values.push(JSON.stringify(redirect_uris));
-    }
-    if (grant_types !== undefined) {
-      updates.push('grant_types = ?');
-      values.push(JSON.stringify(grant_types));
-    }
-    if (scope !== undefined) {
-      updates.push('scope = ?');
-      values.push(scope);
-    }
-    if (logo_uri !== undefined) {
-      updates.push('logo_uri = ?');
-      values.push(logo_uri);
-    }
-    if (client_uri !== undefined) {
-      updates.push('client_uri = ?');
-      values.push(client_uri);
-    }
-    if (policy_uri !== undefined) {
-      updates.push('policy_uri = ?');
-      values.push(policy_uri);
-    }
-    if (tos_uri !== undefined) {
-      updates.push('tos_uri = ?');
-      values.push(tos_uri);
-    }
-    if (is_trusted !== undefined) {
-      updates.push('is_trusted = ?');
-      values.push(is_trusted ? 1 : 0);
-    }
-    if (skip_consent !== undefined) {
-      updates.push('skip_consent = ?');
-      values.push(skip_consent ? 1 : 0);
-    }
-    if (allow_claims_without_scope !== undefined) {
-      updates.push('allow_claims_without_scope = ?');
-      values.push(allow_claims_without_scope ? 1 : 0);
-    }
-
-    // Always update updated_at timestamp (in milliseconds)
-    updates.push('updated_at = ?');
-    values.push(Date.now());
-
-    if (updates.length === 1) {
-      // Only updated_at, no actual changes
+    if (!hasUpdates) {
       return c.json({
         success: true,
         message: 'No changes to update',
       });
     }
 
-    // Execute update query
-    await c.env.DB.prepare(
-      `
-      UPDATE oauth_clients
-      SET ${updates.join(', ')}
-      WHERE client_id = ?
-    `
-    )
-      .bind(...values, clientId)
-      .run();
+    // Update via Repository (handles dynamic SQL, boolean conversion, JSON stringify)
+    const updatedClient = await authCtx.repositories.client.update(clientId, {
+      client_name,
+      redirect_uris,
+      grant_types,
+      scope,
+      logo_uri,
+      client_uri,
+      policy_uri,
+      tos_uri,
+      is_trusted,
+      skip_consent,
+      allow_claims_without_scope,
+    });
 
-    // Update KV cache
-    const updatedClient = await c.env.DB.prepare('SELECT * FROM oauth_clients WHERE client_id = ?')
-      .bind(clientId)
-      .first();
-
-    if (updatedClient) {
-      // Parse JSON fields for KV storage
-      const clientMetadata = {
-        client_id: updatedClient.client_id,
-        client_secret: updatedClient.client_secret,
-        client_name: updatedClient.client_name,
-        redirect_uris: JSON.parse(updatedClient.redirect_uris as string),
-        grant_types: JSON.parse(updatedClient.grant_types as string),
-        response_types: updatedClient.response_types
-          ? JSON.parse(updatedClient.response_types as string)
-          : ['code'],
-        scope: updatedClient.scope,
-        logo_uri: updatedClient.logo_uri,
-        client_uri: updatedClient.client_uri,
-        policy_uri: updatedClient.policy_uri,
-        tos_uri: updatedClient.tos_uri,
-        contacts: updatedClient.contacts ? JSON.parse(updatedClient.contacts as string) : undefined,
-        subject_type: updatedClient.subject_type || 'public',
-        sector_identifier_uri: updatedClient.sector_identifier_uri,
-        token_endpoint_auth_method:
-          updatedClient.token_endpoint_auth_method || 'client_secret_basic',
-        created_at: updatedClient.created_at,
-        updated_at: updatedClient.updated_at,
-        is_trusted: updatedClient.is_trusted === 1,
-        skip_consent: updatedClient.skip_consent === 1,
-        allow_claims_without_scope: updatedClient.allow_claims_without_scope === 1,
-      };
-
-      // Invalidate CLIENTS_CACHE (explicit invalidation after D1 update)
-      // D1 is source of truth - cache will be repopulated on next getClient() call
-      try {
-        await c.env.CLIENTS_CACHE.delete(clientId);
-      } catch (error) {
-        console.warn(`Failed to invalidate cache for ${clientId}:`, error);
-        // Cache invalidation failure should not block the response
-        // Worst case: stale cache for up to 5 minutes (TTL)
-      }
+    // Invalidate CLIENTS_CACHE (explicit invalidation after D1 update)
+    // D1 is source of truth - cache will be repopulated on next getClient() call
+    try {
+      await c.env.CLIENTS_CACHE.delete(clientId);
+    } catch (error) {
+      console.warn(`Failed to invalidate cache for ${clientId}:`, error);
+      // Cache invalidation failure should not block the response
+      // Worst case: stale cache for up to 5 minutes (TTL)
     }
 
     return c.json({
@@ -1569,15 +1722,13 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
 export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const clientId = c.req.param('id');
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Check if client exists
-    const existingClient = await c.env.DB.prepare(
-      'SELECT client_id FROM oauth_clients WHERE client_id = ?'
-    )
-      .bind(clientId)
-      .first();
+    // Check if client exists using Repository
+    const exists = await authCtx.repositories.client.exists(clientId);
 
-    if (!existingClient) {
+    if (!exists) {
       return c.json(
         {
           error: 'not_found',
@@ -1587,8 +1738,8 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Delete from D1 database
-    await c.env.DB.prepare('DELETE FROM oauth_clients WHERE client_id = ?').bind(clientId).run();
+    // Delete from D1 database via Repository
+    await authCtx.repositories.client.delete(clientId);
 
     // Invalidate CLIENTS_CACHE (explicit invalidation after D1 delete)
     try {
@@ -1644,38 +1795,35 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    let deletedCount = 0;
-    const errors: string[] = [];
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
-    for (const clientId of client_ids) {
+    // Bulk delete via Repository (returns deleted count and failed IDs)
+    const result = await authCtx.repositories.client.bulkDelete(client_ids);
+
+    // Invalidate cache for successfully deleted clients
+    // Calculate successfully deleted IDs = requested - failed
+    const successfullyDeletedIds = client_ids.filter((id) => !result.failed.includes(id));
+    for (const clientId of successfullyDeletedIds) {
       try {
-        // Delete from D1 database
-        const result = await c.env.DB.prepare('DELETE FROM oauth_clients WHERE client_id = ?')
-          .bind(clientId)
-          .run();
-
-        if (result.meta?.changes && result.meta.changes > 0) {
-          // Invalidate CLIENTS_CACHE (explicit invalidation after D1 delete)
-          try {
-            await c.env.CLIENTS_CACHE.delete(clientId);
-          } catch (error) {
-            console.warn(`Failed to invalidate cache for ${clientId}:`, error);
-            // Cache invalidation failure should not block the bulk delete
-          }
-          deletedCount++;
-        }
-      } catch (err) {
-        errors.push(
-          `Failed to delete ${clientId}: ${err instanceof Error ? err.message : 'Unknown error'}`
-        );
+        await c.env.CLIENTS_CACHE.delete(clientId);
+      } catch (error) {
+        console.warn(`Failed to invalidate cache for ${clientId}:`, error);
+        // Cache invalidation failure should not block the bulk delete
       }
     }
 
+    // Convert failed IDs to error messages for backward compatibility
+    const errors =
+      result.failed.length > 0
+        ? result.failed.map((id) => `Failed to delete ${id}: client not found or delete failed`)
+        : undefined;
+
     return c.json({
       success: true,
-      deleted: deletedCount,
+      deleted: result.deleted,
       requested: client_ids.length,
-      errors: errors.length > 0 ? errors : undefined,
+      errors,
     });
   } catch (error) {
     console.error('Admin clients bulk delete error:', error);
@@ -1698,15 +1846,13 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
 export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id');
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Check if user exists in Core DB
-    const userCore = await c.env.DB.prepare(
-      'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
-    )
-      .bind(userId)
-      .first();
+    // Check if user exists in Core DB via Repository
+    const userCore = await authCtx.repositories.userCore.findById(userId);
 
-    if (!userCore) {
+    if (!userCore || !userCore.is_active) {
       return c.json(
         {
           error: 'not_found',
@@ -1770,12 +1916,11 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
     // Construct avatar URL (will use Cloudflare Image Resizing)
     const avatarUrl = `${c.env.ISSUER_URL}/${filePath}`;
 
-    // Update user's picture field in PII DB
-    const now = Date.now();
+    // Update user's picture field in PII DB via Repository
     if (c.env.DB_PII) {
-      await c.env.DB_PII.prepare('UPDATE users_pii SET picture = ?, updated_at = ? WHERE id = ?')
-        .bind(avatarUrl, now, userId)
-        .run();
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
+      await piiCtx.piiRepositories.userPII.updatePII(userId, { picture: avatarUrl }, piiAdapter);
     }
 
     // Invalidate user cache (cache invalidation hook)
@@ -1807,15 +1952,13 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
 export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id');
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Check if user exists in Core DB
-    const userCore = await c.env.DB.prepare(
-      'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
-    )
-      .bind(userId)
-      .first();
+    // Check if user exists in Core DB via Repository
+    const userCore = await authCtx.repositories.userCore.findById(userId);
 
-    if (!userCore) {
+    if (!userCore || !userCore.is_active) {
       return c.json(
         {
           error: 'not_found',
@@ -1825,13 +1968,13 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
       );
     }
 
-    // Get picture URL from PII DB
+    // Get picture URL from PII DB via Repository
     let pictureUrl: string | null = null;
     if (c.env.DB_PII) {
-      const userPII = await c.env.DB_PII.prepare('SELECT picture FROM users_pii WHERE id = ?')
-        .bind(userId)
-        .first();
-      pictureUrl = (userPII?.picture as string) ?? null;
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
+      const userPII = await piiCtx.piiRepositories.userPII.findByUserId(userId, piiAdapter);
+      pictureUrl = userPII?.picture ?? null;
     }
 
     // Check if user has an avatar
@@ -1857,12 +2000,11 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
       // Continue even if R2 delete fails
     }
 
-    // Update user's picture field to null in PII DB
-    const now = Date.now();
+    // Update user's picture field to null in PII DB via Repository
     if (c.env.DB_PII) {
-      await c.env.DB_PII.prepare('UPDATE users_pii SET picture = NULL, updated_at = ? WHERE id = ?')
-        .bind(now, userId)
-        .run();
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
+      await piiCtx.piiRepositories.userPII.updatePII(userId, { picture: null }, piiAdapter);
     }
 
     // Invalidate user cache (cache invalidation hook)
@@ -1894,6 +2036,7 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
 export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
     const page = parseInt(c.req.query('page') || '1');
     const limit = parseInt(c.req.query('limit') || '20');
     const userId = c.req.query('user_id') || c.req.query('userId');
@@ -1906,8 +2049,8 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
     // Build query - sessions are in Core DB (no JOIN with users needed at query time)
     let query = 'SELECT * FROM sessions WHERE tenant_id = ?';
     let countQuery = 'SELECT COUNT(*) as count FROM sessions WHERE tenant_id = ?';
-    const bindings: any[] = [tenantId];
-    const countBindings: any[] = [tenantId];
+    const bindings: unknown[] = [tenantId];
+    const countBindings: unknown[] = [tenantId];
 
     // User filter
     if (userId) {
@@ -1934,39 +2077,46 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
     query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
     bindings.push(limit, offset);
 
-    // Execute session queries in parallel
+    // Execute session queries in parallel via adapter
+    interface SessionRow {
+      id: string;
+      user_id: string;
+      created_at: number;
+      last_accessed_at: number | null;
+      expires_at: number;
+      ip_address: string | null;
+      user_agent: string | null;
+    }
+
     const [totalResult, sessions] = await Promise.all([
-      c.env.DB.prepare(countQuery)
-        .bind(...countBindings)
-        .first(),
-      c.env.DB.prepare(query)
-        .bind(...bindings)
-        .all(),
+      authCtx.coreAdapter.queryOne<{ count: number }>(countQuery, countBindings),
+      authCtx.coreAdapter.query<SessionRow>(query, bindings),
     ]);
 
-    const total = (totalResult?.count as number) || 0;
+    const total = totalResult?.count || 0;
     const totalPages = Math.ceil(total / limit);
 
-    // Fetch PII for users (email, name) from PII DB
+    // Fetch PII for users (email, name) from PII DB via adapter
     const userPIIMap = new Map<string, { email: string | null; name: string | null }>();
-    if (c.env.DB_PII && sessions.results.length > 0) {
-      const userIds = [...new Set(sessions.results.map((s: any) => s.user_id).filter(Boolean))];
+    if (c.env.DB_PII && sessions.length > 0) {
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const userIds = [...new Set(sessions.map((s) => s.user_id).filter(Boolean))];
       if (userIds.length > 0) {
         const placeholders = userIds.map(() => '?').join(',');
-        const piiResults = await c.env.DB_PII.prepare(
-          `SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`
-        )
-          .bind(...userIds)
-          .all();
+        const piiResults = await piiCtx.defaultPiiAdapter.query<{
+          id: string;
+          email: string | null;
+          name: string | null;
+        }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, userIds);
 
-        for (const pii of piiResults.results as any[]) {
+        for (const pii of piiResults) {
           userPIIMap.set(pii.id, { email: pii.email, name: pii.name });
         }
       }
     }
 
     // Format sessions with metadata (snake_case for UI compatibility)
-    const formattedSessions = sessions.results.map((session: any) => {
+    const formattedSessions = sessions.map((session) => {
       const userPII = userPIIMap.get(session.user_id);
       return {
         id: session.id,
@@ -2014,6 +2164,8 @@ export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
 export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const sessionId = c.req.param('id');
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Try to get from SessionStore first (hot data) - sharded
     let sessionData: Session | null = null;
@@ -2034,10 +2186,17 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    // Get from D1 for additional metadata (PII/Non-PII DB分離対応)
-    const session = await c.env.DB.prepare('SELECT * FROM sessions WHERE id = ?')
-      .bind(sessionId)
-      .first();
+    // Get from D1 for additional metadata via adapter
+    interface SessionRow {
+      id: string;
+      user_id: string;
+      created_at: number;
+      expires_at: number;
+    }
+    const session = await authCtx.coreAdapter.queryOne<SessionRow>(
+      'SELECT * FROM sessions WHERE id = ?',
+      [sessionId]
+    );
 
     if (!session && !sessionData) {
       return c.json(
@@ -2049,16 +2208,18 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Fetch user PII separately from PII DB
+    // Fetch user PII separately from PII DB via adapter
     let userEmail: string | null = null;
     let userName: string | null = null;
     const userId = sessionData?.userId || session?.user_id;
     if (userId && c.env.DB_PII) {
-      const userPII = await c.env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
-        .bind(userId)
-        .first();
-      userEmail = (userPII?.email as string) || null;
-      userName = (userPII?.name as string) || null;
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const userPII = await piiCtx.defaultPiiAdapter.queryOne<{
+        email: string | null;
+        name: string | null;
+      }>('SELECT email, name FROM users_pii WHERE id = ?', [userId]);
+      userEmail = userPII?.email || null;
+      userName = userPII?.name || null;
     }
 
     // Merge data from both sources
@@ -2095,11 +2256,14 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
 export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
   try {
     const sessionId = c.req.param('id');
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Check if session exists in D1
-    const session = await c.env.DB.prepare('SELECT id, user_id FROM sessions WHERE id = ?')
-      .bind(sessionId)
-      .first();
+    // Check if session exists in D1 via adapter
+    const session = await authCtx.coreAdapter.queryOne<{ id: string; user_id: string }>(
+      'SELECT id, user_id FROM sessions WHERE id = ?',
+      [sessionId]
+    );
 
     if (!session) {
       return c.json(
@@ -2127,8 +2291,8 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
       console.warn(`Session ${sessionId} is not in sharded format, skipping DO deletion`);
     }
 
-    // Delete from D1
-    await c.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
+    // Delete from D1 via adapter
+    await authCtx.coreAdapter.execute('DELETE FROM sessions WHERE id = ?', [sessionId]);
 
     // TODO: Create Audit Log entry (Phase 6)
     console.log(`Admin revoked session: ${sessionId} for user ${session.user_id}`);
@@ -2161,15 +2325,13 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
 export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id');
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Check if user exists in Core DB
-    const userCore = await c.env.DB.prepare(
-      'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
-    )
-      .bind(userId)
-      .first();
+    // Check if user exists in Core DB via Repository
+    const userCore = await authCtx.repositories.userCore.findById(userId);
 
-    if (!userCore) {
+    if (!userCore || !userCore.is_active) {
       return c.json(
         {
           error: 'not_found',
@@ -2188,12 +2350,13 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
         'Deleting from D1 only.'
     );
 
-    // Delete all sessions from D1
-    const deleteResult = await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?')
-      .bind(userId)
-      .run();
+    // Delete all sessions from D1 via adapter
+    const deleteResult = await authCtx.coreAdapter.execute(
+      'DELETE FROM sessions WHERE user_id = ?',
+      [userId]
+    );
 
-    const dbRevokedCount = deleteResult.meta.changes || 0;
+    const dbRevokedCount = deleteResult.rowsAffected || 0;
 
     // TODO: Create Audit Log entry (Phase 6)
     console.log(
@@ -2281,10 +2444,9 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
     const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
     // Get total count
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
     const countQuery = `SELECT COUNT(*) as total FROM audit_log ${whereClause}`;
-    const countResult = await env.DB.prepare(countQuery)
-      .bind(...params)
-      .first<{ total: number }>();
+    const countResult = await coreAdapter.queryOne<{ total: number }>(countQuery, params);
 
     const total = countResult?.total || 0;
     const totalPages = Math.ceil(total / limit);
@@ -2307,12 +2469,20 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
       LIMIT ? OFFSET ?
     `;
 
-    const result = await env.DB.prepare(query)
-      .bind(...params, limit, offset)
-      .all();
+    const result = await coreAdapter.query<{
+      id: string;
+      user_id: string | null;
+      action: string;
+      resource_type: string | null;
+      resource_id: string | null;
+      ip_address: string | null;
+      user_agent: string | null;
+      metadata_json: string | null;
+      created_at: number;
+    }>(query, [...params, limit, offset]);
 
     // Format entries
-    const entries = (result.results || []).map((row: any) => ({
+    const entries = result.map((row) => ({
       id: row.id,
       userId: row.user_id,
       action: row.action,
@@ -2365,7 +2535,18 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get audit log entry
-    const entry = await env.DB.prepare(
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    const entry = await coreAdapter.queryOne<{
+      id: string;
+      user_id: string | null;
+      action: string;
+      resource_type: string | null;
+      resource_id: string | null;
+      ip_address: string | null;
+      user_agent: string | null;
+      metadata_json: string | null;
+      created_at: number;
+    }>(
       `
       SELECT
         id,
@@ -2379,10 +2560,9 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
         created_at
       FROM audit_log
       WHERE id = ?
-      `
-    )
-      .bind(id)
-      .first();
+      `,
+      [id]
+    );
 
     if (!entry) {
       return c.json(
@@ -2397,18 +2577,18 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
     // Get user information if user_id exists (from both Core and PII DBs)
     let user = null;
     if (entry.user_id) {
-      const userCore = await env.DB.prepare(
-        'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
-      )
-        .bind(entry.user_id)
-        .first();
+      const userCore = await coreAdapter.queryOne<{ id: string }>(
+        'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
+        [entry.user_id]
+      );
 
       if (userCore && env.DB_PII) {
-        const userPII = await env.DB_PII.prepare(
-          'SELECT email, name, picture FROM users_pii WHERE id = ?'
-        )
-          .bind(entry.user_id)
-          .first();
+        const piiAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB_PII });
+        const userPII = await piiAdapter.queryOne<{
+          email: string | null;
+          name: string | null;
+          picture: string | null;
+        }>('SELECT email, name, picture FROM users_pii WHERE id = ?', [entry.user_id]);
 
         user = {
           id: userCore.id,
@@ -3020,6 +3200,9 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
     const body = await c.req.json<{
       user_id: string;
       ttl_seconds?: number;
@@ -3037,14 +3220,10 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    // Verify user exists in Core DB
-    const userCore = await c.env.DB.prepare(
-      'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
-    )
-      .bind(user_id)
-      .first();
+    // Verify user exists in Core DB via Repository
+    const userCore = await authCtx.repositories.userCore.findById(user_id);
 
-    if (!userCore) {
+    if (!userCore || !userCore.is_active) {
       return c.json(
         {
           error: 'not_found',
@@ -3054,15 +3233,18 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    // Get user PII for session metadata
+    // Get user PII for session metadata via adapter
     let userEmail: string | null = null;
     let userName: string | null = null;
     if (c.env.DB_PII) {
-      const userPII = await c.env.DB_PII.prepare('SELECT email, name FROM users_pii WHERE id = ?')
-        .bind(user_id)
-        .first();
-      userEmail = (userPII?.email as string) ?? null;
-      userName = (userPII?.name as string) ?? null;
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiAdapter = piiCtx.getPiiAdapter(userCore.pii_partition);
+      const userPII = await piiAdapter.queryOne<{ email: string | null; name: string | null }>(
+        'SELECT email, name FROM users_pii WHERE id = ?',
+        [user_id]
+      );
+      userEmail = userPII?.email ?? null;
+      userName = userPII?.name ?? null;
     }
 
     // Create session in SessionStore DO (sharded) via RPC
@@ -3221,21 +3403,21 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
 
     // Check if user exists by searching PII DB for email
     const tenantId = getTenantIdFromContext(c);
+    const piiCtx = createPIIContextFromHono(c, tenantId);
     let userId: string | null = null;
     let userEmail: string | null = null;
     let userName: string | null = null;
 
     if (c.env.DB_PII) {
-      const userPII = await c.env.DB_PII.prepare(
-        'SELECT id, email, name FROM users_pii WHERE tenant_id = ? AND email = ?'
-      )
-        .bind(tenantId, email.toLowerCase())
-        .first();
+      const userPII = await piiCtx.piiRepositories.userPII.findByTenantAndEmail(
+        tenantId,
+        email.toLowerCase()
+      );
 
       if (userPII) {
-        userId = userPII.id as string;
-        userEmail = userPII.email as string;
-        userName = userPII.name as string | null;
+        userId = userPII.id;
+        userEmail = userPII.email;
+        userName = userPII.name;
       }
     }
 
@@ -3253,84 +3435,37 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      userId = generateId();
-      const now = Date.now();
+      const authCtx = createAuthContextFromHono(c, tenantId);
       const preferredUsername = email.split('@')[0];
 
-      // Insert into Core DB first with pii_status='pending'
-      await c.env.DB.prepare(
-        `INSERT INTO users_core (
-          id, tenant_id, email_verified, phone_number_verified, password_hash,
-          is_active, user_type, pii_partition, pii_status, created_at, updated_at, last_login_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
-          userId,
-          tenantId,
-          0, // email_verified
-          0, // phone_number_verified
-          null, // password_hash
-          1, // is_active
-          'end_user',
-          'default', // pii_partition
-          'pending', // pii_status
-          now,
-          now,
-          null // last_login_at
-        )
-        .run();
+      // Create user in Core DB with pii_status='pending'
+      const newUser = await authCtx.repositories.userCore.createUser({
+        tenant_id: tenantId,
+        email_verified: false,
+        phone_number_verified: false,
+        password_hash: null,
+        is_active: true,
+        user_type: 'end_user',
+        pii_partition: 'default',
+        pii_status: 'pending',
+      });
+      userId = newUser.id;
 
-      // Insert into PII DB if available
+      // Create PII record if available
       if (c.env.DB_PII) {
-        await c.env.DB_PII.prepare(
-          `INSERT INTO users_pii (
-            id, tenant_id, pii_class, email, email_blind_index, phone_number,
-            name, given_name, family_name, nickname, preferred_username,
-            picture, website, gender, birthdate, locale, zoneinfo,
-            address_formatted, address_street_address, address_locality,
-            address_region, address_postal_code, address_country,
-            declared_residence, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-          .bind(
-            userId,
-            tenantId,
-            'PROFILE',
-            email.toLowerCase(),
-            null, // email_blind_index
-            null, // phone_number
-            null, // name
-            null, // given_name
-            null, // family_name
-            null, // nickname
-            preferredUsername,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            now,
-            now
-          )
-          .run();
+        await piiCtx.piiRepositories.userPII.createPII({
+          id: userId,
+          tenant_id: tenantId,
+          pii_class: 'PROFILE',
+          email: email.toLowerCase(),
+          preferred_username: preferredUsername,
+        });
 
         // Update pii_status to 'active'
-        await c.env.DB.prepare('UPDATE users_core SET pii_status = ?, updated_at = ? WHERE id = ?')
-          .bind('active', now, userId)
-          .run();
+        await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
       } else {
         // No PII DB - mark as 'none'
-        await c.env.DB.prepare('UPDATE users_core SET pii_status = ?, updated_at = ? WHERE id = ?')
-          .bind('none', now, userId)
-          .run();
+        await authCtx.repositories.userCore.updatePIIStatus(userId, 'none');
       }
 
       userEmail = email.toLowerCase();

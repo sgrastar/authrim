@@ -20,6 +20,9 @@ import {
   generateRegionAwareJti,
   // Configuration Manager (KV > env > default)
   createOAuthConfigManager,
+  // Database Adapter
+  D1Adapter,
+  type DatabaseAdapter,
 } from '@authrim/shared';
 import {
   revokeToken,
@@ -2854,13 +2857,13 @@ async function recordTokenFamilyInD1(
     const now = Date.now();
     const expiresAt = now + ttlSeconds * 1000;
 
-    await env.DB.prepare(
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
+    await coreAdapter.execute(
       `INSERT INTO user_token_families (jti, tenant_id, user_id, client_id, generation, expires_at)
        VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (jti) DO NOTHING`
-    )
-      .bind(jti, 'default', userId, clientId, generation, expiresAt)
-      .run();
+       ON CONFLICT (jti) DO NOTHING`,
+      [jti, 'default', userId, clientId, generation, expiresAt]
+    );
   } catch (error) {
     // Log but don't fail - this is a non-critical operation
     console.error('Failed to record token family in D1:', error);

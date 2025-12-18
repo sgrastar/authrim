@@ -37,6 +37,8 @@ import {
   versionCheckMiddleware,
   createReBACService,
   timingSafeEqual,
+  D1Adapter,
+  type DatabaseAdapter,
   type ReBACService,
   type CheckRequest,
   type BatchCheckRequest,
@@ -1132,16 +1134,16 @@ rebacRoutes.post('/write', async (c) => {
     const id = crypto.randomUUID();
 
     // Insert relationship tuple
-    await c.env.DB.prepare(
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    await coreAdapter.execute(
       `INSERT INTO relationships (
         id, tenant_id, relationship_type, from_type, from_id,
         to_type, to_id, permission_level, expires_at, is_bidirectional,
         created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (tenant_id, from_type, from_id, to_type, to_id, relationship_type)
-      DO UPDATE SET expires_at = excluded.expires_at, updated_at = excluded.updated_at`
-    )
-      .bind(
+      DO UPDATE SET expires_at = excluded.expires_at, updated_at = excluded.updated_at`,
+      [
         id,
         tenantId,
         body.relation,
@@ -1153,9 +1155,9 @@ rebacRoutes.post('/write', async (c) => {
         body.expires_at ?? null,
         0, // not bidirectional
         now,
-        now
-      )
-      .run();
+        now,
+      ]
+    );
 
     // Invalidate cache for the affected object
     const rebacService = getReBACService(c.env);
@@ -1267,24 +1269,24 @@ rebacRoutes.delete('/tuple', async (c) => {
     const tenantId = body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default';
 
     // Delete relationship tuple
-    const result = await c.env.DB.prepare(
+    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+    const result = await coreAdapter.execute(
       `DELETE FROM relationships
        WHERE tenant_id = ?
          AND from_type = ?
          AND from_id = ?
          AND to_type = ?
          AND to_id = ?
-         AND relationship_type = ?`
-    )
-      .bind(
+         AND relationship_type = ?`,
+      [
         tenantId,
         body.subject_type,
         body.subject_id,
         body.object_type,
         body.object_id,
-        body.relation
-      )
-      .run();
+        body.relation,
+      ]
+    );
 
     // Invalidate cache for the affected object
     const rebacService = getReBACService(c.env);
@@ -1294,7 +1296,7 @@ rebacRoutes.delete('/tuple', async (c) => {
 
     return c.json({
       success: true,
-      deleted: result.meta.changes > 0,
+      deleted: (result.rowsAffected ?? 0) > 0,
     });
   } catch (error) {
     console.error('ReBAC delete error:', error);

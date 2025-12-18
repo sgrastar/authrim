@@ -12,7 +12,7 @@
 
 import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/shared';
-import { getTenantIdFromContext } from '@authrim/shared';
+import { getTenantIdFromContext, D1Adapter, type DatabaseAdapter } from '@authrim/shared';
 
 /**
  * Convert timestamp to milliseconds for API response
@@ -34,6 +34,18 @@ function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
   return (c as any).get('adminAuth') as AdminAuthContext | null;
 }
 
+/**
+ * Create database adapters from context
+ */
+function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
+  coreAdapter: DatabaseAdapter;
+  piiAdapter: DatabaseAdapter | null;
+} {
+  const coreAdapter = new D1Adapter({ db: c.env.DB });
+  const piiAdapter = c.env.DB_PII ? new D1Adapter({ db: c.env.DB_PII }) : null;
+  return { coreAdapter, piiAdapter };
+}
+
 // =============================================================================
 // Organization Management
 // =============================================================================
@@ -44,6 +56,7 @@ function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
  */
 export async function adminOrganizationsListHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const page = parseInt(c.req.query('page') || '1');
     const limit = parseInt(c.req.query('limit') || '20');
@@ -94,19 +107,15 @@ export async function adminOrganizationsListHandler(c: Context<{ Bindings: Env }
     const queryBindings = [...bindings, limit, offset];
 
     const [totalResult, organizations] = await Promise.all([
-      c.env.DB.prepare(countQuery)
-        .bind(...countBindings)
-        .first(),
-      c.env.DB.prepare(query)
-        .bind(...queryBindings)
-        .all(),
+      coreAdapter.queryOne<{ count: number }>(countQuery, countBindings),
+      coreAdapter.query<Record<string, unknown>>(query, queryBindings),
     ]);
 
-    const total = (totalResult?.count as number) || 0;
+    const total = totalResult?.count || 0;
     const totalPages = Math.ceil(total / limit);
 
     // Format organizations with boolean conversions and millisecond timestamps
-    const formattedOrgs = organizations.results.map((org: Record<string, unknown>) => ({
+    const formattedOrgs = organizations.map((org: Record<string, unknown>) => ({
       ...org,
       is_active: Boolean(org.is_active),
       created_at: toMilliseconds(org.created_at as number),
@@ -142,19 +151,20 @@ export async function adminOrganizationsListHandler(c: Context<{ Bindings: Env }
  */
 export async function adminOrganizationGetHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id');
 
     // Execute queries in parallel
     const [org, memberCount] = await Promise.all([
-      c.env.DB.prepare('SELECT * FROM organizations WHERE tenant_id = ? AND id = ?')
-        .bind(tenantId, orgId)
-        .first(),
-      c.env.DB.prepare(
-        'SELECT COUNT(*) as count FROM subject_org_membership WHERE tenant_id = ? AND org_id = ?'
-      )
-        .bind(tenantId, orgId)
-        .first(),
+      coreAdapter.queryOne<Record<string, unknown>>(
+        'SELECT * FROM organizations WHERE tenant_id = ? AND id = ?',
+        [tenantId, orgId]
+      ),
+      coreAdapter.queryOne<{ count: number }>(
+        'SELECT COUNT(*) as count FROM subject_org_membership WHERE tenant_id = ? AND org_id = ?',
+        [tenantId, orgId]
+      ),
     ]);
 
     if (!org) {
@@ -173,7 +183,7 @@ export async function adminOrganizationGetHandler(c: Context<{ Bindings: Env }>)
       is_active: Boolean(org.is_active),
       created_at: toMilliseconds(org.created_at as number),
       updated_at: toMilliseconds(org.updated_at as number),
-      member_count: (memberCount?.count as number) || 0,
+      member_count: memberCount?.count || 0,
     };
 
     return c.json({
@@ -197,6 +207,7 @@ export async function adminOrganizationGetHandler(c: Context<{ Bindings: Env }>)
  */
 export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const body = await c.req.json<{
       name: string;
       display_name?: string;
@@ -218,9 +229,10 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
     }
 
     // Check if organization with same name already exists
-    const existing = await c.env.DB.prepare('SELECT id FROM organizations WHERE name = ?')
-      .bind(name)
-      .first();
+    const existing = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM organizations WHERE name = ?',
+      [name]
+    );
 
     if (existing) {
       return c.json(
@@ -243,26 +255,17 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
     const validOrgTypes = ['personal', 'team', 'enterprise', 'partner'];
     const orgTypeValue = org_type && validOrgTypes.includes(org_type) ? org_type : 'team';
 
-    await c.env.DB.prepare(
+    await coreAdapter.execute(
       `INSERT INTO organizations (id, tenant_id, name, display_name, plan, org_type, is_active, metadata_json, created_at, updated_at)
-       VALUES (?, '', ?, ?, ?, ?, 1, ?, ?, ?)`
-    )
-      .bind(
-        orgId,
-        name,
-        display_name || name,
-        orgPlan,
-        orgTypeValue,
-        metadata_json || null,
-        now,
-        now
-      )
-      .run();
+       VALUES (?, '', ?, ?, ?, ?, 1, ?, ?, ?)`,
+      [orgId, name, display_name || name, orgPlan, orgTypeValue, metadata_json || null, now, now]
+    );
 
     // Get created organization
-    const org = await c.env.DB.prepare('SELECT * FROM organizations WHERE id = ?')
-      .bind(orgId)
-      .first();
+    const org = await coreAdapter.queryOne<Record<string, unknown>>(
+      'SELECT * FROM organizations WHERE id = ?',
+      [orgId]
+    );
 
     return c.json(
       {
@@ -293,6 +296,7 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
  */
 export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const orgId = c.req.param('id');
     const body = await c.req.json<{
       name?: string;
@@ -304,9 +308,10 @@ export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env 
     }>();
 
     // Check if organization exists
-    const org = await c.env.DB.prepare('SELECT id FROM organizations WHERE id = ?')
-      .bind(orgId)
-      .first();
+    const org = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM organizations WHERE id = ?',
+      [orgId]
+    );
 
     if (!org) {
       return c.json(
@@ -384,14 +389,16 @@ export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env 
 
     // Execute update
     bindings.push(orgId);
-    await c.env.DB.prepare(`UPDATE organizations SET ${updates.join(', ')} WHERE id = ?`)
-      .bind(...bindings)
-      .run();
+    await coreAdapter.execute(
+      `UPDATE organizations SET ${updates.join(', ')} WHERE id = ?`,
+      bindings
+    );
 
     // Get updated organization
-    const updatedOrg = await c.env.DB.prepare('SELECT * FROM organizations WHERE id = ?')
-      .bind(orgId)
-      .first();
+    const updatedOrg = await coreAdapter.queryOne<Record<string, unknown>>(
+      'SELECT * FROM organizations WHERE id = ?',
+      [orgId]
+    );
 
     return c.json({
       organization: {
@@ -419,12 +426,14 @@ export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env 
  */
 export async function adminOrganizationDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const orgId = c.req.param('id');
 
     // Check if organization exists
-    const org = await c.env.DB.prepare('SELECT id FROM organizations WHERE id = ?')
-      .bind(orgId)
-      .first();
+    const org = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM organizations WHERE id = ?',
+      [orgId]
+    );
 
     if (!org) {
       return c.json(
@@ -438,9 +447,10 @@ export async function adminOrganizationDeleteHandler(c: Context<{ Bindings: Env 
 
     // Soft delete by deactivating
     const now = Math.floor(Date.now() / 1000);
-    await c.env.DB.prepare('UPDATE organizations SET is_active = 0, updated_at = ? WHERE id = ?')
-      .bind(now, orgId)
-      .run();
+    await coreAdapter.execute(
+      'UPDATE organizations SET is_active = 0, updated_at = ? WHERE id = ?',
+      [now, orgId]
+    );
 
     return c.json({
       success: true,
@@ -464,6 +474,7 @@ export async function adminOrganizationDeleteHandler(c: Context<{ Bindings: Env 
  */
 export async function adminOrganizationMembersListHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const orgId = c.req.param('id');
     const page = parseInt(c.req.query('page') || '1');
@@ -471,11 +482,10 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
     const offset = (page - 1) * limit;
 
     // Check if organization exists
-    const org = await c.env.DB.prepare(
-      'SELECT id FROM organizations WHERE tenant_id = ? AND id = ?'
-    )
-      .bind(tenantId, orgId)
-      .first();
+    const org = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM organizations WHERE tenant_id = ? AND id = ?',
+      [tenantId, orgId]
+    );
 
     if (!org) {
       return c.json(
@@ -490,46 +500,44 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
     // Execute queries in parallel
     // PII/Non-PII DB分離: JOINできないため、メンバーシップ取得後にPIIを別途取得
     const [totalResult, members] = await Promise.all([
-      c.env.DB.prepare(
-        'SELECT COUNT(*) as count FROM subject_org_membership WHERE tenant_id = ? AND org_id = ?'
-      )
-        .bind(tenantId, orgId)
-        .first(),
-      c.env.DB.prepare(
+      coreAdapter.queryOne<{ count: number }>(
+        'SELECT COUNT(*) as count FROM subject_org_membership WHERE tenant_id = ? AND org_id = ?',
+        [tenantId, orgId]
+      ),
+      coreAdapter.query<Record<string, unknown>>(
         `SELECT m.*
          FROM subject_org_membership m
          WHERE m.tenant_id = ? AND m.org_id = ?
          ORDER BY m.created_at DESC
-         LIMIT ? OFFSET ?`
-      )
-        .bind(tenantId, orgId, limit, offset)
-        .all(),
+         LIMIT ? OFFSET ?`,
+        [tenantId, orgId, limit, offset]
+      ),
     ]);
 
-    const total = (totalResult?.count as number) || 0;
+    const total = totalResult?.count || 0;
     const totalPages = Math.ceil(total / limit);
 
     // Fetch PII for member users from PII DB
-    const memberUserIds = [...new Set(members.results.map((m) => m.subject_id as string))];
+    const memberUserIds = [...new Set(members.map((m) => m.subject_id as string))];
     const memberPIIMap = new Map<string, { email: string | null; name: string | null }>();
 
-    if (c.env.DB_PII && memberUserIds.length > 0) {
+    if (piiAdapter && memberUserIds.length > 0) {
       const placeholders = memberUserIds.map(() => '?').join(',');
-      const piiResult = await c.env.DB_PII.prepare(
-        `SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`
-      )
-        .bind(...memberUserIds)
-        .all();
+      const piiResult = await piiAdapter.query<{
+        id: string;
+        email: string | null;
+        name: string | null;
+      }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, memberUserIds);
 
-      for (const pii of piiResult.results) {
-        memberPIIMap.set(pii.id as string, {
-          email: (pii.email as string) || null,
-          name: (pii.name as string) || null,
+      for (const pii of piiResult) {
+        memberPIIMap.set(pii.id, {
+          email: pii.email || null,
+          name: pii.name || null,
         });
       }
     }
 
-    const formattedMembers = members.results.map((m: Record<string, unknown>) => {
+    const formattedMembers = members.map((m: Record<string, unknown>) => {
       const pii = memberPIIMap.get(m.subject_id as string);
       return {
         subject_id: m.subject_id,
@@ -571,6 +579,7 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
  */
 export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const orgId = c.req.param('id');
     const body = await c.req.json<{
       subject_id: string;
@@ -591,9 +600,10 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
     }
 
     // Check if organization exists
-    const org = await c.env.DB.prepare('SELECT id FROM organizations WHERE id = ?')
-      .bind(orgId)
-      .first();
+    const org = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM organizations WHERE id = ?',
+      [orgId]
+    );
 
     if (!org) {
       return c.json(
@@ -606,9 +616,10 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
     }
 
     // Check if user exists
-    const user = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
-      .bind(subject_id)
-      .first();
+    const user = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM users_core WHERE id = ?',
+      [subject_id]
+    );
 
     if (!user) {
       return c.json(
@@ -621,11 +632,10 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
     }
 
     // Check if membership already exists
-    const existing = await c.env.DB.prepare(
-      'SELECT subject_id FROM subject_org_membership WHERE org_id = ? AND subject_id = ?'
-    )
-      .bind(orgId, subject_id)
-      .first();
+    const existing = await coreAdapter.queryOne<{ subject_id: string }>(
+      'SELECT subject_id FROM subject_org_membership WHERE org_id = ? AND subject_id = ?',
+      [orgId, subject_id]
+    );
 
     if (existing) {
       return c.json(
@@ -643,19 +653,17 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
 
     // If setting as primary, unset other primary memberships for this user
     if (primary) {
-      await c.env.DB.prepare(
-        'UPDATE subject_org_membership SET is_primary = 0 WHERE subject_id = ?'
-      )
-        .bind(subject_id)
-        .run();
+      await coreAdapter.execute(
+        'UPDATE subject_org_membership SET is_primary = 0 WHERE subject_id = ?',
+        [subject_id]
+      );
     }
 
-    await c.env.DB.prepare(
+    await coreAdapter.execute(
       `INSERT INTO subject_org_membership (org_id, subject_id, org_role, is_primary, created_at)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-      .bind(orgId, subject_id, role, primary, now)
-      .run();
+       VALUES (?, ?, ?, ?, ?)`,
+      [orgId, subject_id, role, primary, now]
+    );
 
     return c.json(
       {
@@ -689,15 +697,15 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
  */
 export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const orgId = c.req.param('id');
     const subjectId = c.req.param('subjectId');
 
     // Check if membership exists
-    const membership = await c.env.DB.prepare(
-      'SELECT subject_id FROM subject_org_membership WHERE org_id = ? AND subject_id = ?'
-    )
-      .bind(orgId, subjectId)
-      .first();
+    const membership = await coreAdapter.queryOne<{ subject_id: string }>(
+      'SELECT subject_id FROM subject_org_membership WHERE org_id = ? AND subject_id = ?',
+      [orgId, subjectId]
+    );
 
     if (!membership) {
       return c.json(
@@ -709,9 +717,10 @@ export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings
       );
     }
 
-    await c.env.DB.prepare('DELETE FROM subject_org_membership WHERE org_id = ? AND subject_id = ?')
-      .bind(orgId, subjectId)
-      .run();
+    await coreAdapter.execute(
+      'DELETE FROM subject_org_membership WHERE org_id = ? AND subject_id = ?',
+      [orgId, subjectId]
+    );
 
     return c.json({
       success: true,
@@ -739,13 +748,15 @@ export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings
  */
 export async function adminRolesListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const roles = await c.env.DB.prepare(
+    const { coreAdapter } = createAdaptersFromContext(c);
+    const roles = await coreAdapter.query<Record<string, unknown>>(
       `SELECT id, tenant_id, name, display_name, description, is_system, created_at, updated_at
        FROM roles
-       ORDER BY is_system DESC, name ASC`
-    ).all();
+       ORDER BY is_system DESC, name ASC`,
+      []
+    );
 
-    const formattedRoles = roles.results.map((role: Record<string, unknown>) => ({
+    const formattedRoles = roles.map((role: Record<string, unknown>) => ({
       ...role,
       is_system: Boolean(role.is_system),
       created_at: toMilliseconds(role.created_at as number),
@@ -773,9 +784,13 @@ export async function adminRolesListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const roleId = c.req.param('id');
 
-    const role = await c.env.DB.prepare('SELECT * FROM roles WHERE id = ?').bind(roleId).first();
+    const role = await coreAdapter.queryOne<Record<string, unknown>>(
+      'SELECT * FROM roles WHERE id = ?',
+      [roleId]
+    );
 
     if (!role) {
       return c.json(
@@ -788,11 +803,10 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get count of users with this role
-    const assignmentCount = await c.env.DB.prepare(
-      'SELECT COUNT(DISTINCT subject_id) as count FROM role_assignments WHERE role_id = ?'
-    )
-      .bind(roleId)
-      .first();
+    const assignmentCount = await coreAdapter.queryOne<{ count: number }>(
+      'SELECT COUNT(DISTINCT subject_id) as count FROM role_assignments WHERE role_id = ?',
+      [roleId]
+    );
 
     return c.json({
       role: {
@@ -800,7 +814,7 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
         is_system: Boolean(role.is_system),
         created_at: toMilliseconds(role.created_at as number),
         updated_at: toMilliseconds(role.updated_at as number),
-        assignment_count: (assignmentCount?.count as number) || 0,
+        assignment_count: assignmentCount?.count || 0,
       },
     });
   } catch (error) {
@@ -825,12 +839,14 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const userId = c.req.param('id');
 
     // Check if user exists
-    const user = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
-      .bind(userId)
-      .first();
+    const user = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM users_core WHERE id = ?',
+      [userId]
+    );
 
     if (!user) {
       return c.json(
@@ -845,18 +861,17 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
     const now = Math.floor(Date.now() / 1000);
 
     // Get active role assignments with role info
-    const assignments = await c.env.DB.prepare(
+    const assignments = await coreAdapter.query<Record<string, unknown>>(
       `SELECT ra.*, r.name as role_name, r.display_name as role_display_name, r.is_system
        FROM role_assignments ra
        JOIN roles r ON ra.role_id = r.id
        WHERE ra.subject_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
-       ORDER BY r.name ASC`
-    )
-      .bind(userId, now)
-      .all();
+       ORDER BY r.name ASC`,
+      [userId, now]
+    );
 
-    const formattedAssignments = assignments.results.map((a: Record<string, unknown>) => ({
+    const formattedAssignments = assignments.map((a: Record<string, unknown>) => ({
       id: a.id,
       role_id: a.role_id,
       role_name: a.role_name,
@@ -891,6 +906,7 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserRoleAssignHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const userId = c.req.param('id');
     const adminAuth = getAdminAuth(c);
     const body = await c.req.json<{
@@ -914,9 +930,10 @@ export async function adminUserRoleAssignHandler(c: Context<{ Bindings: Env }>) 
     }
 
     // Check if user exists
-    const user = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
-      .bind(userId)
-      .first();
+    const user = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM users_core WHERE id = ?',
+      [userId]
+    );
 
     if (!user) {
       return c.json(
@@ -931,9 +948,15 @@ export async function adminUserRoleAssignHandler(c: Context<{ Bindings: Env }>) 
     // Get role (by id or name)
     let role;
     if (role_id) {
-      role = await c.env.DB.prepare('SELECT * FROM roles WHERE id = ?').bind(role_id).first();
+      role = await coreAdapter.queryOne<Record<string, unknown>>(
+        'SELECT * FROM roles WHERE id = ?',
+        [role_id]
+      );
     } else {
-      role = await c.env.DB.prepare('SELECT * FROM roles WHERE name = ?').bind(role_name).first();
+      role = await coreAdapter.queryOne<Record<string, unknown>>(
+        'SELECT * FROM roles WHERE name = ?',
+        [role_name]
+      );
     }
 
     if (!role) {
@@ -975,12 +998,11 @@ export async function adminUserRoleAssignHandler(c: Context<{ Bindings: Env }>) 
     }
 
     // Check for duplicate assignment
-    const existing = await c.env.DB.prepare(
+    const existing = await coreAdapter.queryOne<{ id: string }>(
       `SELECT id FROM role_assignments
-       WHERE subject_id = ? AND role_id = ? AND scope = ? AND scope_target = ?`
-    )
-      .bind(userId, role.id, assignmentScope, assignmentScopeTarget)
-      .first();
+       WHERE subject_id = ? AND role_id = ? AND scope = ? AND scope_target = ?`,
+      [userId, role.id, assignmentScope, assignmentScopeTarget]
+    );
 
     if (existing) {
       return c.json(
@@ -995,11 +1017,10 @@ export async function adminUserRoleAssignHandler(c: Context<{ Bindings: Env }>) 
     // Convert expires_at from milliseconds to seconds if provided
     const expiresAtSeconds = expires_at ? Math.floor(expires_at / 1000) : null;
 
-    await c.env.DB.prepare(
+    await coreAdapter.execute(
       `INSERT INTO role_assignments (id, tenant_id, subject_id, role_id, scope, scope_target, granted_by, expires_at, created_at)
-       VALUES (?, '', ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
+       VALUES (?, '', ?, ?, ?, ?, ?, ?, ?)`,
+      [
         assignmentId,
         userId,
         role.id,
@@ -1007,9 +1028,9 @@ export async function adminUserRoleAssignHandler(c: Context<{ Bindings: Env }>) 
         assignmentScopeTarget,
         adminAuth?.userId || 'system',
         expiresAtSeconds,
-        now
-      )
-      .run();
+        now,
+      ]
+    );
 
     return c.json(
       {
@@ -1047,15 +1068,15 @@ export async function adminUserRoleAssignHandler(c: Context<{ Bindings: Env }>) 
  */
 export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const userId = c.req.param('id');
     const assignmentId = c.req.param('assignmentId');
 
     // Check if assignment exists and belongs to this user
-    const assignment = await c.env.DB.prepare(
-      'SELECT id FROM role_assignments WHERE id = ? AND subject_id = ?'
-    )
-      .bind(assignmentId, userId)
-      .first();
+    const assignment = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM role_assignments WHERE id = ? AND subject_id = ?',
+      [assignmentId, userId]
+    );
 
     if (!assignment) {
       return c.json(
@@ -1067,7 +1088,7 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
       );
     }
 
-    await c.env.DB.prepare('DELETE FROM role_assignments WHERE id = ?').bind(assignmentId).run();
+    await coreAdapter.execute('DELETE FROM role_assignments WHERE id = ?', [assignmentId]);
 
     return c.json({
       success: true,
@@ -1095,15 +1116,15 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
  */
 export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const userId = c.req.param('id');
     const direction = c.req.query('direction'); // 'outgoing', 'incoming', or undefined for both
 
     // Check if user exists in Core DB
-    const userCore = await c.env.DB.prepare(
-      'SELECT id FROM users_core WHERE id = ? AND is_active = 1'
-    )
-      .bind(userId)
-      .first();
+    const userCore = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM users_core WHERE id = ? AND is_active = 1',
+      [userId]
+    );
 
     if (!userCore) {
       return c.json(
@@ -1122,39 +1143,38 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
     // Get outgoing relationships (where user is the subject)
     // PII/Non-PII DB分離: JOINできないため、関係性を取得後にPIIを別途取得
     if (!direction || direction === 'outgoing') {
-      const outgoingResult = await c.env.DB.prepare(
+      const outgoingResult = await coreAdapter.query<Record<string, unknown>>(
         `SELECT r.*
          FROM relationships r
          WHERE r.subject_id = ?
            AND (r.expires_at IS NULL OR r.expires_at > ?)
-         ORDER BY r.created_at DESC`
-      )
-        .bind(userId, now)
-        .all();
+         ORDER BY r.created_at DESC`,
+        [userId, now]
+      );
 
       // Fetch PII for related users from PII DB
       const relatedUserIds = [
-        ...new Set(outgoingResult.results.map((r) => r.related_subject_id as string)),
+        ...new Set(outgoingResult.map((r) => r.related_subject_id as string)),
       ];
       const relatedUserPIIMap = new Map<string, { email: string | null; name: string | null }>();
 
-      if (c.env.DB_PII && relatedUserIds.length > 0) {
+      if (piiAdapter && relatedUserIds.length > 0) {
         const placeholders = relatedUserIds.map(() => '?').join(',');
-        const piiResult = await c.env.DB_PII.prepare(
-          `SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`
-        )
-          .bind(...relatedUserIds)
-          .all();
+        const piiResult = await piiAdapter.query<{
+          id: string;
+          email: string | null;
+          name: string | null;
+        }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, relatedUserIds);
 
-        for (const pii of piiResult.results) {
-          relatedUserPIIMap.set(pii.id as string, {
-            email: (pii.email as string) || null,
-            name: (pii.name as string) || null,
+        for (const pii of piiResult) {
+          relatedUserPIIMap.set(pii.id, {
+            email: pii.email || null,
+            name: pii.name || null,
           });
         }
       }
 
-      for (const rel of outgoingResult.results) {
+      for (const rel of outgoingResult) {
         const pii = relatedUserPIIMap.get(rel.related_subject_id as string);
         outgoing.push({
           id: rel.id,
@@ -1171,39 +1191,36 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
     // Get incoming relationships (where user is the related_subject)
     // PII/Non-PII DB分離: JOINできないため、関係性を取得後にPIIを別途取得
     if (!direction || direction === 'incoming') {
-      const incomingResult = await c.env.DB.prepare(
+      const incomingResult = await coreAdapter.query<Record<string, unknown>>(
         `SELECT r.*
          FROM relationships r
          WHERE r.related_subject_id = ?
            AND (r.expires_at IS NULL OR r.expires_at > ?)
-         ORDER BY r.created_at DESC`
-      )
-        .bind(userId, now)
-        .all();
+         ORDER BY r.created_at DESC`,
+        [userId, now]
+      );
 
       // Fetch PII for subject users from PII DB
-      const subjectUserIds = [
-        ...new Set(incomingResult.results.map((r) => r.subject_id as string)),
-      ];
+      const subjectUserIds = [...new Set(incomingResult.map((r) => r.subject_id as string))];
       const subjectUserPIIMap = new Map<string, { email: string | null; name: string | null }>();
 
-      if (c.env.DB_PII && subjectUserIds.length > 0) {
+      if (piiAdapter && subjectUserIds.length > 0) {
         const placeholders = subjectUserIds.map(() => '?').join(',');
-        const piiResult = await c.env.DB_PII.prepare(
-          `SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`
-        )
-          .bind(...subjectUserIds)
-          .all();
+        const piiResult = await piiAdapter.query<{
+          id: string;
+          email: string | null;
+          name: string | null;
+        }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, subjectUserIds);
 
-        for (const pii of piiResult.results) {
-          subjectUserPIIMap.set(pii.id as string, {
-            email: (pii.email as string) || null,
-            name: (pii.name as string) || null,
+        for (const pii of piiResult) {
+          subjectUserPIIMap.set(pii.id, {
+            email: pii.email || null,
+            name: pii.name || null,
           });
         }
       }
 
-      for (const rel of incomingResult.results) {
+      for (const rel of incomingResult) {
         const pii = subjectUserPIIMap.get(rel.subject_id as string);
         incoming.push({
           id: rel.id,
@@ -1240,6 +1257,7 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
  */
 export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const userId = c.req.param('id');
     const body = await c.req.json<{
       related_subject_id: string;
@@ -1282,9 +1300,10 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
     }
 
     // Check if both users exist
-    const subject = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
-      .bind(userId)
-      .first();
+    const subject = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM users_core WHERE id = ?',
+      [userId]
+    );
 
     if (!subject) {
       return c.json(
@@ -1296,9 +1315,10 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
       );
     }
 
-    const relatedSubject = await c.env.DB.prepare('SELECT id FROM users_core WHERE id = ?')
-      .bind(related_subject_id)
-      .first();
+    const relatedSubject = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM users_core WHERE id = ?',
+      [related_subject_id]
+    );
 
     if (!relatedSubject) {
       return c.json(
@@ -1322,12 +1342,11 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
     }
 
     // Check for existing relationship
-    const existing = await c.env.DB.prepare(
+    const existing = await coreAdapter.queryOne<{ id: string }>(
       `SELECT id FROM relationships
-       WHERE subject_id = ? AND related_subject_id = ? AND relationship_type = ?`
-    )
-      .bind(userId, related_subject_id, relationship_type)
-      .first();
+       WHERE subject_id = ? AND related_subject_id = ? AND relationship_type = ?`,
+      [userId, related_subject_id, relationship_type]
+    );
 
     if (existing) {
       return c.json(
@@ -1343,12 +1362,11 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
     const now = Math.floor(Date.now() / 1000);
     const expiresAtSeconds = expires_at ? Math.floor(expires_at / 1000) : null;
 
-    await c.env.DB.prepare(
+    await coreAdapter.execute(
       `INSERT INTO relationships (id, tenant_id, subject_id, related_subject_id, relationship_type, expires_at, created_at)
-       VALUES (?, '', ?, ?, ?, ?, ?)`
-    )
-      .bind(relationshipId, userId, related_subject_id, relationship_type, expiresAtSeconds, now)
-      .run();
+       VALUES (?, '', ?, ?, ?, ?, ?)`,
+      [relationshipId, userId, related_subject_id, relationship_type, expiresAtSeconds, now]
+    );
 
     return c.json(
       {
@@ -1383,15 +1401,15 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
  */
 export async function adminUserRelationshipDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
+    const { coreAdapter } = createAdaptersFromContext(c);
     const userId = c.req.param('id');
     const relationshipId = c.req.param('relationshipId');
 
     // Check if relationship exists and involves this user
-    const relationship = await c.env.DB.prepare(
-      'SELECT id FROM relationships WHERE id = ? AND (subject_id = ? OR related_subject_id = ?)'
-    )
-      .bind(relationshipId, userId, userId)
-      .first();
+    const relationship = await coreAdapter.queryOne<{ id: string }>(
+      'SELECT id FROM relationships WHERE id = ? AND (subject_id = ? OR related_subject_id = ?)',
+      [relationshipId, userId, userId]
+    );
 
     if (!relationship) {
       return c.json(
@@ -1403,7 +1421,7 @@ export async function adminUserRelationshipDeleteHandler(c: Context<{ Bindings: 
       );
     }
 
-    await c.env.DB.prepare('DELETE FROM relationships WHERE id = ?').bind(relationshipId).run();
+    await coreAdapter.execute('DELETE FROM relationships WHERE id = ?', [relationshipId]);
 
     return c.json({
       success: true,

@@ -9,20 +9,52 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/shared';
 
-// Mock the shared module
-vi.mock('@authrim/shared', async () => {
-  const actual = await vi.importActual('@authrim/shared');
+// Hoist mock functions to ensure they're available when vi.mock runs
+const {
+  mockClientRepository,
+  mockValidateClientId,
+  mockTimingSafeEqual,
+  mockDeleteRefreshToken,
+  mockGetRefreshToken,
+  mockRevokeToken,
+  mockParseToken,
+  mockVerifyToken,
+  mockGetTenantIdFromContext,
+  mockCreateAuthContextFromHono,
+} = vi.hoisted(() => {
+  const clientRepo = {
+    findByClientId: vi.fn(),
+  };
   return {
-    ...actual,
-    validateClientId: vi.fn(),
-    timingSafeEqual: vi.fn((a: string, b: string) => a === b),
-    deleteRefreshToken: vi.fn(),
-    getRefreshToken: vi.fn(),
-    revokeToken: vi.fn(),
-    parseToken: vi.fn(),
-    verifyToken: vi.fn(),
+    mockClientRepository: clientRepo,
+    mockValidateClientId: vi.fn(),
+    mockTimingSafeEqual: vi.fn((a: string, b: string) => a === b),
+    mockDeleteRefreshToken: vi.fn(),
+    mockGetRefreshToken: vi.fn(),
+    mockRevokeToken: vi.fn(),
+    mockParseToken: vi.fn(),
+    mockVerifyToken: vi.fn(),
+    mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
+    mockCreateAuthContextFromHono: vi.fn().mockReturnValue({
+      repositories: {
+        client: clientRepo,
+      },
+    }),
   };
 });
+
+// Mock the shared module
+vi.mock('@authrim/shared', () => ({
+  validateClientId: mockValidateClientId,
+  timingSafeEqual: mockTimingSafeEqual,
+  deleteRefreshToken: mockDeleteRefreshToken,
+  getRefreshToken: mockGetRefreshToken,
+  revokeToken: mockRevokeToken,
+  parseToken: mockParseToken,
+  verifyToken: mockVerifyToken,
+  getTenantIdFromContext: mockGetTenantIdFromContext,
+  createAuthContextFromHono: mockCreateAuthContextFromHono,
+}));
 
 // Mock jose
 vi.mock('jose', () => ({
@@ -31,16 +63,16 @@ vi.mock('jose', () => ({
 }));
 
 import { revokeHandler } from '../revoke';
-import {
-  validateClientId,
-  timingSafeEqual,
-  deleteRefreshToken,
-  getRefreshToken,
-  revokeToken,
-  parseToken,
-  verifyToken,
-} from '@authrim/shared';
 import { importJWK, decodeProtectedHeader } from 'jose';
+
+// Use the hoisted mocks directly (already defined above vi.mock)
+const validateClientId = mockValidateClientId;
+const timingSafeEqual = mockTimingSafeEqual;
+const deleteRefreshToken = mockDeleteRefreshToken;
+const getRefreshToken = mockGetRefreshToken;
+const revokeToken = mockRevokeToken;
+const parseToken = mockParseToken;
+const verifyToken = mockVerifyToken;
 
 // Helper to create mock context
 function createMockContext(options: {
@@ -85,15 +117,24 @@ function createMockContext(options: {
 describe('Token Revocation Endpoint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset repository mock
+    mockClientRepository.findByClientId.mockReset();
+    // Re-setup createAuthContextFromHono to return the mock repository
+    mockCreateAuthContextFromHono.mockReturnValue({
+      repositories: {
+        client: mockClientRepository,
+      },
+    });
     // Setup jose mocks for signature verification
     vi.mocked(importJWK).mockResolvedValue({} as any);
     vi.mocked(decodeProtectedHeader).mockReturnValue({ alg: 'RS256', kid: 'key-1' });
     // verifyToken succeeds by default
-    vi.mocked(verifyToken).mockResolvedValue({} as any);
+    verifyToken.mockResolvedValue({} as any);
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    // Don't use restoreAllMocks as it restores original implementations
+    vi.clearAllMocks();
   });
 
   describe('Content-Type Validation', () => {
@@ -138,13 +179,9 @@ describe('Token Revocation Endpoint', () => {
         client_id: 'client-123',
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -167,13 +204,9 @@ describe('Token Revocation Endpoint', () => {
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -206,13 +239,9 @@ describe('Token Revocation Endpoint', () => {
         client_id: 'client-123',
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -238,13 +267,9 @@ describe('Token Revocation Endpoint', () => {
         client_id: 'client-123',
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -293,11 +318,7 @@ describe('Token Revocation Endpoint', () => {
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue(null), // Client not found
-        }),
-      });
+      mockClientRepository.findByClientId.mockResolvedValue(null); // Client not found
 
       await revokeHandler(c);
 
@@ -325,13 +346,9 @@ describe('Token Revocation Endpoint', () => {
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(timingSafeEqual).mockReturnValue(false);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'correct-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'correct-secret',
       });
 
       await revokeHandler(c);
@@ -364,13 +381,9 @@ describe('Token Revocation Endpoint', () => {
         client_id: 'client-123',
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -420,13 +433,9 @@ describe('Token Revocation Endpoint', () => {
       });
       vi.mocked(getRefreshToken).mockResolvedValue(null); // Not a refresh token
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -452,13 +461,9 @@ describe('Token Revocation Endpoint', () => {
         throw new Error('Invalid token format');
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -485,13 +490,9 @@ describe('Token Revocation Endpoint', () => {
         client_id: 'client-123',
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -518,13 +519,9 @@ describe('Token Revocation Endpoint', () => {
         client_id: 'other-client-456', // Different client
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -555,13 +552,9 @@ describe('Token Revocation Endpoint', () => {
         client_id: 'client-123',
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -589,13 +582,9 @@ describe('Token Revocation Endpoint', () => {
         client_id: 'client-123',
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -629,13 +618,9 @@ describe('Token Revocation Endpoint', () => {
         tokenId: 'token-jti-123',
       } as any);
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -669,13 +654,9 @@ describe('Token Revocation Endpoint', () => {
       });
       vi.mocked(getRefreshToken).mockResolvedValue(null); // Not a refresh token
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
@@ -723,22 +704,10 @@ describe('Token Revocation Endpoint', () => {
         throw new Error('Invalid token');
       });
 
-      validTokenContext.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
-      });
-
-      invalidTokenContext.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      // Both contexts use the same mock repository
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(validTokenContext);
@@ -767,13 +736,9 @@ describe('Token Revocation Endpoint', () => {
         client_id: 'other-client', // Token belongs to different client
       });
 
-      c.env.DB.prepare = vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnValue({
-          first: vi.fn().mockResolvedValue({
-            client_id: 'client-123',
-            client_secret: 'client-secret',
-          }),
-        }),
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret: 'client-secret',
       });
 
       await revokeHandler(c);
