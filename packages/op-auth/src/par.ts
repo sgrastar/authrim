@@ -33,7 +33,7 @@ import {
   parseToken,
   isInternalUrl,
 } from '@authrim/shared';
-import { generateSecureRandomString, getClient } from '@authrim/shared';
+import { getClient, getPARRequestStoreForNewRequest } from '@authrim/shared';
 import { jwtVerify, compactDecrypt, importJWK, createRemoteJWKSet } from 'jose';
 
 /**
@@ -105,16 +105,6 @@ function validatePARParams(formData: Record<string, unknown>): PARRequestParams 
     acr_values: typeof formData.acr_values === 'string' ? formData.acr_values : undefined,
     claims: typeof formData.claims === 'string' ? formData.claims : undefined,
   };
-}
-
-/**
- * Generate a secure request URI
- * Uses cryptographically secure random string (~128 characters) for enhanced security
- */
-function generateRequestUri(): string {
-  // RFC 9126: request URI MUST be a URN using urn:ietf:params:oauth:request_uri: scheme
-  // Using 96 bytes results in approximately 128 characters in base64url encoding
-  return `urn:ietf:params:oauth:request_uri:${generateSecureRandomString(96)}`;
 }
 
 /**
@@ -608,9 +598,6 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       console.log('[PAR] DPoP proof validated, jkt:', dpopJkt?.substring(0, 16) + '...');
     }
 
-    // Generate request_uri
-    const requestUri = generateRequestUri();
-
     // =========================================================================
     // P1: Use ConfigManager for expiration (KV → env → default)
     // =========================================================================
@@ -651,7 +638,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       dpop_jkt: dpopJkt,
     };
 
-    // Store in PARRequestStore DO (issue #11: single-use guarantee)
+    // Store in PARRequestStore DO with region-aware sharding (issue #11: single-use guarantee)
     if (!c.env.PAR_REQUEST_STORE) {
       return c.json(
         {
@@ -662,9 +649,15 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       );
     }
 
-    // Use DO ID based on client_id to shard load
-    const id = c.env.PAR_REQUEST_STORE.idFromName(params.client_id);
-    const stub = c.env.PAR_REQUEST_STORE.get(id);
+    // Use region-aware sharding based on client_id
+    // This generates a region-sharded request URI: urn:ietf:params:oauth:request_uri:g{gen}:{region}:{shard}:par_{uuid}
+    const uuid = crypto.randomUUID();
+    const { stub, requestUri } = await getPARRequestStoreForNewRequest(
+      c.env,
+      'default', // tenantId - will support multi-tenant in future
+      params.client_id,
+      uuid
+    );
 
     try {
       await stub.storeRequestRpc({

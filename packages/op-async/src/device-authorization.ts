@@ -84,6 +84,8 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     };
 
     // Store in DeviceCodeStore Durable Object
+    // NOTE: Currently using global DO. Future: implement region-sharding with
+    // KV-based user_code→device_code index for reverse lookups.
     const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName('global');
     const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
 

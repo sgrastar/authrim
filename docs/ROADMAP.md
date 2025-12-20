@@ -12,13 +12,12 @@
 timeline
     title Authrim Development Timeline
     section 2025
-        Nov-Dec : ✅ P1-6 Complete
+        Nov-Dec : ✅ P1-9 Complete
                 : ✅ P8 Policy Integration
-                : ⏳ P7 Identity Hub (~95%)
+                : ✅ P7 Identity Hub
+                : ✅ P9 Advanced Identity (VC/DID)
     section 2026
-        Q1 : P7 Identity Hub Complete
-        Q3 : P9 Advanced Identity
-        Q4 : P10 SDK & API
+        Q3-Q4 : P10 SDK & API
     section 2027
         Q1 : P11 Security & QA
         Q2 : P12 Certification & Release
@@ -26,9 +25,9 @@ timeline
 
 **Legend:**
 
-- ✅ Complete (Phases 1-6, 8)
-- ⏳ In Progress (Phase 7: ~95%, Phase 11: ~15%)
-- 🔜 Planned (Phases 9-10, 12)
+- ✅ Complete (Phases 1-9)
+- ⏳ In Progress (Phase 11: ~20%)
+- 🔜 Planned (Phases 10, 12)
 
 ---
 
@@ -119,11 +118,11 @@ timeline
 | **M4: Extensions**         | 2025-11-12 | ✅ Complete | PAR, DPoP, Pairwise, Token Management                                 |
 | **M5: UI/UX**              | 2025-11-18 | ✅ Complete | SvelteKit Frontend, Admin Dashboard, 15+ pages                        |
 | **M6: Enterprise**         | 2025-12-02 | ✅ Complete | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer, SAML 2.0 |
-| **M7: Identity Hub**       | 2026-Q1    | ⏳ ~95%     | RP Module ✅, Social Login ✅, Identity Linking ✅, **PII分離 ✅**    |
-| **M8: Policy Integration** | 2025-12    | ✅ Complete | Unified AuthN + AuthZ, Token embedding, Check API                     |
-| **M9: Advanced Identity**  | 2026-Q3    | 🔜 Planned  | OpenID4VP/CI, DID Resolver, VC Issuance                               |
+| **M7: Identity Hub**       | 2025-12-20 | ✅ Complete | RP Module, Social Login (Google/Microsoft/GitHub), PII分離           |
+| **M8: Policy Integration** | 2025-12-19 | ✅ Complete | Unified AuthN + AuthZ, Token embedding, Check API                     |
+| **M9: Advanced Identity**  | 2025-12-20 | ✅ Complete | OpenID4VP/CI, DID Resolver, DID Auth, 227 tests                       |
 | **M10: SDK & API**         | 2026-Q4    | 🔜 Planned  | WebSDK, CLI, API Documentation                                        |
-| **M11: Security & QA**     | 2025-12~   | ⏳ ~15%     | Load Testing ✅, Security Audit, MTLS pending                         |
+| **M11: Security & QA**     | 2025-12~   | ⏳ ~20%     | Load Testing ✅, Security Tests ✅, Audit pending                     |
 | **M12: Release**           | 2027-Q2    | 🔜 Final    | OpenID Certification, Public Release                                  |
 
 ---
@@ -232,9 +231,9 @@ timeline
 
 ---
 
-## Phase 7: Identity Hub Foundation ⏳ IN PROGRESS (~95% Complete)
+## Phase 7: Identity Hub Foundation ✅ COMPLETE
 
-**Timeline:** 2025-12 to 2026-Q1
+**Timeline:** 2025-12 to 2026-Q1 | **Actual:** Dec 20, 2025
 
 **Goal:** Transform Authrim from IdP-only to Identity Hub with RP capabilities + GDPR/CCPA compliance
 
@@ -247,19 +246,19 @@ timeline
 | OAuth 2.0 RP Client   | Generic OAuth 2.0 support                  | ✅ Complete |
 | Session Linking       | Link upstream sessions to Authrim sessions | ✅ Complete |
 
-### 7.2 Social Login Providers
+### 7.2 Social Login Providers ✅ COMPLETE
 
 | Provider             | Protocol  | Priority | Status      |
 | -------------------- | --------- | -------- | ----------- |
 | Google               | OIDC      | High     | ✅ Complete |
 | Microsoft (Entra ID) | OIDC      | High     | ✅ Complete |
 | GitHub               | OAuth 2.0 | High     | ✅ Complete |
-| Apple                | OIDC      | Medium   | 🔜 Deferred |
-| Facebook             | OAuth 2.0 | Medium   | 🔜 Deferred |
-| Twitter/X            | OAuth 2.0 | Low      | 🔜 Deferred |
-| LinkedIn             | OAuth 2.0 | Low      | 🔜 Deferred |
+| Apple                | OIDC      | Medium   | ✅ Complete |
+| LinkedIn             | OAuth 2.0 | Medium   | ✅ Complete |
+| Facebook             | OAuth 2.0 | Medium   | ✅ Complete |
+| Twitter/X            | OAuth 2.0 | Medium   | ✅ Complete |
 
-> **Note:** Microsoft supports multi-tenant (common/organizations/consumers) with automatic issuer validation. GitHub supports Enterprise Server. Any OIDC/OAuth2 provider can be dynamically added via Admin API
+> **Note:** All 7 major providers complete. Microsoft supports multi-tenant (common/organizations/consumers) with automatic issuer validation. GitHub supports Enterprise Server. Any OIDC/OAuth2 provider can be dynamically added via Admin API.
 
 ### 7.3 Identity Linking ✅ COMPLETE
 
@@ -334,37 +333,41 @@ Data separation architecture for GDPR/CCPA compliance:
 
 ---
 
-## Phase 9: Advanced Identity Sources 🔜 PLANNED
+## Phase 9: Advanced Identity Sources ✅ COMPLETE
 
-**Timeline:** 2026-Q2 to Q3
+**Timeline:** 2025-12 | **Actual:** Dec 20, 2025
 
 **Goal:** Support next-generation identity protocols (Verifiable Credentials)
 
-### 9.1 OpenID4VP (Verifiable Presentations)
+### 9.1 OpenID4VP (Verifiable Presentations) ✅ COMPLETE
 
-| Feature                  | Description                       | Status     |
-| ------------------------ | --------------------------------- | ---------- |
-| VP Request Generation    | Create presentation requests      | 🔜 Planned |
-| VP Verification          | Verify presentations from wallets | 🔜 Planned |
-| Credential Type Registry | Define accepted credential types  | 🔜 Planned |
-| Selective Disclosure     | Request specific claims only      | 🔜 Planned |
+| Feature                  | Description                       | Status      |
+| ------------------------ | --------------------------------- | ----------- |
+| VP Request Generation    | Create presentation requests      | ✅ Complete |
+| VP Verification          | Verify presentations from wallets | ✅ Complete |
+| Credential Type Registry | Define accepted credential types  | ✅ Complete |
+| Selective Disclosure     | Request specific claims only      | ✅ Complete |
+| HAIP Compliance          | Algorithm restrictions, KB-JWT    | ✅ Complete |
+| Security Tests           | 64+ tests (OWASP coverage)        | ✅ Complete |
 
-### 9.2 OpenID4CI (Credential Issuance)
+### 9.2 OpenID4VCI (Credential Issuance) ✅ COMPLETE
 
-| Feature             | Description                   | Status     |
-| ------------------- | ----------------------------- | ---------- |
-| Credential Endpoint | Issue VCs to users            | 🔜 Planned |
-| Credential Offer    | Generate issuance offers      | 🔜 Planned |
-| SD-JWT VC Format    | Issue SD-JWT credentials      | 🔜 Planned |
-| Credential Status   | Revocation/suspension support | 🔜 Planned |
+| Feature             | Description                   | Status      |
+| ------------------- | ----------------------------- | ----------- |
+| Credential Endpoint | Issue VCs to users            | ✅ Complete |
+| Credential Offer    | Generate issuance offers      | ✅ Complete |
+| SD-JWT VC Format    | Issue SD-JWT credentials      | ✅ Complete |
+| Credential Status   | Revocation/suspension support | 🔜 Phase 10 |
 
-### 9.3 DID Support
+### 9.3 DID Support ✅ COMPLETE
 
-| Feature              | Description                     | Status     |
-| -------------------- | ------------------------------- | ---------- |
-| did:web Resolver     | Resolve did:web identifiers     | 🔜 Planned |
-| did:key Resolver     | Resolve did:key identifiers     | 🔜 Planned |
-| DID Document Hosting | Host Authrim's own DID document | 🔜 Planned |
+| Feature              | Description                     | Status      |
+| -------------------- | ------------------------------- | ----------- |
+| did:web Resolver     | Resolve did:web identifiers     | ✅ Complete |
+| did:key Resolver     | Resolve did:key identifiers     | ✅ Complete |
+| DID Document Hosting | Host Authrim's own DID document | ✅ Complete |
+| DID Authentication   | Challenge-response DID auth     | ✅ Complete |
+| DID Linking          | Link DIDs to user accounts      | ✅ Complete |
 
 ### 9.4 Use Cases Enabled
 
@@ -488,12 +491,12 @@ Data separation architecture for GDPR/CCPA compliance:
 
 | Metric                   | Target      | Current                       | Phase |
 | ------------------------ | ----------- | ----------------------------- | ----- |
-| Social login providers   | 7+          | 2 (Google, Microsoft)+dynamic | P7    |
-| OIDC RP Client tests     | 50+         | 14,756 lines ✅               | P7    |
-| Identity linking tests   | 50+         | 14,666 lines ✅               | P7    |
-| Provider Management UI   | Complete    | ✅ Complete                   | P7    |
-| Policy integration tests | 100+        | -                             | P8    |
-| VC credential types      | 5+          | -                             | P9    |
+| Social login providers   | 7+          | 7 (Google, Microsoft, GitHub, Apple, LinkedIn, Facebook, Twitter/X) | P7 ✅ |
+| OIDC RP Client tests     | 50+         | 315 tests ✅                  | P7 ✅ |
+| Identity linking tests   | 50+         | 14,666 lines ✅               | P7 ✅ |
+| Provider Management UI   | Complete    | ✅ Complete                   | P7 ✅ |
+| Policy integration tests | 100+        | ✅ Complete                   | P8 ✅ |
+| VC/DID tests             | 100+        | 227 tests ✅                  | P9 ✅ |
 | SDK downloads            | 1000+       | -                             | P10   |
 | Load test RPS            | 10,000+     | ✅ 3,500 (Silent Auth)        | P11   |
 | OpenID Certification     | ✅ Obtained | -                             | P12   |
@@ -577,8 +580,8 @@ The following features are intentionally **not supported** due to architectural 
 
 ---
 
-> **Last Update:** 2025-12-19
+> **Last Update:** 2025-12-20
 >
-> **Current Status:** Phase 6 ✅ | Phase 7 ~95% | Phase 8 ✅ (Unified Policy Integration) | Phase 11 ~15%
+> **Current Status:** Phase 6 ✅ | Phase 7 ✅ | Phase 8 ✅ | Phase 9 ✅ | Phase 11 ~20%
 >
 > **Authrim** - The Identity & Access Platform for the modern web.

@@ -540,6 +540,165 @@ IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL = "true"
 # RP_TOKEN_ENCRYPTION_KEY = "set-via-wrangler-secret"
 EXTERNAL_IDP_VARS
 
+# Generate wrangler.toml for vc (OpenID4VP/VCI/DID)
+VC_FILE="packages/vc/wrangler.${DEPLOY_ENV}.toml"
+if [ -d "packages/vc" ]; then
+    if [ -f "$VC_FILE" ]; then
+        echo "  ⚠️  $VC_FILE already exists"
+        read -p "    Overwrite? This will reset VC configuration (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "    ⊗ Skipping vc (keeping existing configuration)"
+        else
+            echo "    ✓ Overwriting vc/wrangler.${DEPLOY_ENV}.toml"
+            cat > "$VC_FILE" << VC_TOML_EOF
+# =============================================================================
+# VC Worker Configuration - Local Development
+# =============================================================================
+# Unified VC/DID package for Authrim
+# - OpenID4VP Verifier: accepts VCs from digital wallets
+# - OpenID4VCI Issuer: issues VCs to wallets
+# - DID Resolver: resolves did:web, did:key
+
+name = "${DEPLOY_ENV}-authrim-vc"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Smart Placement
+[placement]
+mode = "smart"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "authrim-users-db"
+database_id = "placeholder"
+
+# KV Namespace (shared with other packages for region sharding config)
+[[kv_namespaces]]
+binding = "AUTHRIM_CONFIG"
+id = "placeholder"
+preview_id = "placeholder"
+
+# Local Durable Objects
+[[durable_objects.bindings]]
+name = "VP_REQUEST_STORE"
+class_name = "VPRequestStore"
+
+[[durable_objects.bindings]]
+name = "CREDENTIAL_OFFER_STORE"
+class_name = "CredentialOfferStore"
+
+# External Durable Objects (from shared)
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "${DEPLOY_ENV}-authrim-shared"
+
+# Service Bindings
+[[services]]
+binding = "POLICY_SERVICE"
+service = "${DEPLOY_ENV}-authrim-policy-service"
+
+# Migrations for local DOs
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["VPRequestStore", "CredentialOfferStore"]
+
+# Environment variables
+[vars]
+ISSUER_URL = "http://localhost:8787"
+VERIFIER_IDENTIFIER = "did:web:localhost"
+ISSUER_IDENTIFIER = "did:web:localhost"
+HAIP_POLICY_VERSION = "draft-06"
+VP_REQUEST_EXPIRY_SECONDS = "300"
+NONCE_EXPIRY_SECONDS = "300"
+CREDENTIAL_OFFER_EXPIRY_SECONDS = "600"
+C_NONCE_EXPIRY_SECONDS = "300"
+
+# Development configuration
+[dev]
+port = 8796
+VC_TOML_EOF
+        fi
+    else
+        echo "  ✅ vc/wrangler.${DEPLOY_ENV}.toml (OpenID4VP/VCI/DID)"
+        cat > "$VC_FILE" << VC_TOML_EOF
+# =============================================================================
+# VC Worker Configuration - Local Development
+# =============================================================================
+# Unified VC/DID package for Authrim
+# - OpenID4VP Verifier: accepts VCs from digital wallets
+# - OpenID4VCI Issuer: issues VCs to wallets
+# - DID Resolver: resolves did:web, did:key
+
+name = "${DEPLOY_ENV}-authrim-vc"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Smart Placement
+[placement]
+mode = "smart"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "authrim-users-db"
+database_id = "placeholder"
+
+# KV Namespace (shared with other packages for region sharding config)
+[[kv_namespaces]]
+binding = "AUTHRIM_CONFIG"
+id = "placeholder"
+preview_id = "placeholder"
+
+# Local Durable Objects
+[[durable_objects.bindings]]
+name = "VP_REQUEST_STORE"
+class_name = "VPRequestStore"
+
+[[durable_objects.bindings]]
+name = "CREDENTIAL_OFFER_STORE"
+class_name = "CredentialOfferStore"
+
+# External Durable Objects (from shared)
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "${DEPLOY_ENV}-authrim-shared"
+
+# Service Bindings
+[[services]]
+binding = "POLICY_SERVICE"
+service = "${DEPLOY_ENV}-authrim-policy-service"
+
+# Migrations for local DOs
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["VPRequestStore", "CredentialOfferStore"]
+
+# Environment variables
+[vars]
+ISSUER_URL = "http://localhost:8787"
+VERIFIER_IDENTIFIER = "did:web:localhost"
+ISSUER_IDENTIFIER = "did:web:localhost"
+HAIP_POLICY_VERSION = "draft-06"
+VP_REQUEST_EXPIRY_SECONDS = "300"
+NONCE_EXPIRY_SECONDS = "300"
+CREDENTIAL_OFFER_EXPIRY_SECONDS = "600"
+C_NONCE_EXPIRY_SECONDS = "300"
+
+# Development configuration
+[dev]
+port = 8796
+VC_TOML_EOF
+    fi
+fi
+
 # Generate wrangler.toml for router (with Service Bindings)
 echo "  ✅ router/wrangler.toml (with Service Bindings)"
 cat > packages/router/wrangler.toml << 'ROUTER_TOML_EOF'
@@ -584,6 +743,10 @@ service = "${DEPLOY_ENV}-authrim-external-idp"
 [[services]]
 binding = "POLICY_SERVICE"
 service = "${DEPLOY_ENV}-authrim-policy-service"
+
+[[services]]
+binding = "VC_SERVICE"
+service = "${DEPLOY_ENV}-authrim-vc"
 
 # Development configuration
 [dev]

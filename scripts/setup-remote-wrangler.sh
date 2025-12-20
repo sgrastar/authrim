@@ -502,6 +502,32 @@ zone_name = \"$ZONE_NAME\"
 pattern = \"$DOMAIN_ONLY/api/rebac/*\"
 zone_name = \"$ZONE_NAME\""
             ;;
+        vc)
+            routes="
+[[routes]]
+pattern = \"$DOMAIN_ONLY/.well-known/openid-credential-verifier\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/.well-known/openid-credential-issuer\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/.well-known/did.json\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/vp/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/vci/*\"
+zone_name = \"$ZONE_NAME\"
+
+[[routes]]
+pattern = \"$DOMAIN_ONLY/did/*\"
+zone_name = \"$ZONE_NAME\""
+            ;;
     esac
 
     if [ -n "$routes" ]; then
@@ -1034,6 +1060,95 @@ IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL = "true"
 EXTERNAL_IDP_VARS
 fi
 
+# Generate vc wrangler file (OpenID4VP/VCI/DID)
+if [ -d "packages/vc" ] && [ ! -f "packages/vc/wrangler.${DEPLOY_ENV}.toml" ]; then
+    echo "  • Generating vc/wrangler.${DEPLOY_ENV}.toml (OpenID4VP/VCI/DID)..."
+
+    # Extract domain for DID identifiers
+    DOMAIN_FOR_DID=$(echo "$ISSUER_URL" | sed 's|https://||' | sed 's|/.*||')
+
+    cat > "packages/vc/wrangler.${DEPLOY_ENV}.toml" << EOF
+# =============================================================================
+# VC Worker Configuration - ${DEPLOY_ENV} Environment
+# =============================================================================
+# Unified VC/DID package for Authrim
+# - OpenID4VP Verifier: accepts VCs from digital wallets
+# - OpenID4VCI Issuer: issues VCs to wallets
+# - DID Resolver: resolves did:web, did:key
+
+name = "${DEPLOY_ENV}-authrim-vc"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+# Smart Placement
+[placement]
+mode = "smart"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "${DEPLOY_ENV}-authrim-users-db"
+database_id = "placeholder"
+
+# KV Namespace (shared with other packages for region sharding config)
+[[kv_namespaces]]
+binding = "AUTHRIM_CONFIG"
+id = "placeholder"
+preview_id = "placeholder"
+
+# Local Durable Objects
+[[durable_objects.bindings]]
+name = "VP_REQUEST_STORE"
+class_name = "VPRequestStore"
+
+[[durable_objects.bindings]]
+name = "CREDENTIAL_OFFER_STORE"
+class_name = "CredentialOfferStore"
+
+# External Durable Objects (from shared)
+[[durable_objects.bindings]]
+name = "KEY_MANAGER"
+class_name = "KeyManager"
+script_name = "${DEPLOY_ENV}-authrim-shared"
+
+[[durable_objects.bindings]]
+name = "VERSION_MANAGER"
+class_name = "VersionManager"
+script_name = "${DEPLOY_ENV}-authrim-shared"
+
+# Service Bindings
+[[services]]
+binding = "POLICY_SERVICE"
+service = "${DEPLOY_ENV}-authrim-policy-service"
+
+# Migrations for local DOs
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["VPRequestStore", "CredentialOfferStore"]
+
+# Environment variables
+[vars]
+ISSUER_URL = "$ISSUER_URL"
+UI_BASE_URL = "$UI_BASE_URL"
+ALLOWED_ORIGINS = "$ALLOWED_ORIGINS"
+VERIFIER_IDENTIFIER = "did:web:$DOMAIN_FOR_DID"
+ISSUER_IDENTIFIER = "did:web:$DOMAIN_FOR_DID"
+HAIP_POLICY_VERSION = "draft-06"
+VP_REQUEST_EXPIRY_SECONDS = "300"
+NONCE_EXPIRY_SECONDS = "300"
+CREDENTIAL_OFFER_EXPIRY_SECONDS = "600"
+C_NONCE_EXPIRY_SECONDS = "300"
+KEY_MANAGER_SECRET = "$KEY_MANAGER_SECRET"
+ADMIN_API_SECRET = "$KEY_MANAGER_SECRET"
+# Version management
+CODE_VERSION_UUID = ""
+DEPLOY_TIME_UTC = ""
+VERSION_CHECK_ENABLED = "false"
+EOF
+fi
+
 # Update all wrangler.${DEPLOY_ENV}.toml files
 for pkg_dir in packages/*/; do
     pkg_name=$(basename "$pkg_dir")
@@ -1121,6 +1236,10 @@ service = "${DEPLOY_ENV}-authrim-external-idp"
 [[services]]
 binding = "POLICY_SERVICE"
 service = "${DEPLOY_ENV}-authrim-policy-service"
+
+[[services]]
+binding = "VC_SERVICE"
+service = "${DEPLOY_ENV}-authrim-vc"
 
 [vars]
 KEY_ID = "{{KEY_ID}}"

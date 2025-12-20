@@ -146,17 +146,20 @@ describe('Region Sharding Utilities', () => {
   describe('buildRegionInstanceName', () => {
     it('should build session instance name', () => {
       const result = buildRegionInstanceName('default', 'apac', 'session', 3);
-      expect(result).toBe('default:apac:s:3');
+      // 3-character abbreviation: ses
+      expect(result).toBe('default:apac:ses:3');
     });
 
     it('should build authcode instance name', () => {
       const result = buildRegionInstanceName('default', 'weur', 'authcode', 8);
-      expect(result).toBe('default:weur:ac:8');
+      // 3-character abbreviation: acd
+      expect(result).toBe('default:weur:acd:8');
     });
 
     it('should build challenge instance name', () => {
       const result = buildRegionInstanceName('default', 'enam', 'challenge', 12);
-      expect(result).toBe('default:enam:ch:12');
+      // 3-character abbreviation: cha
+      expect(result).toBe('default:enam:cha:12');
     });
 
     it('should only accept known resource types', () => {
@@ -550,6 +553,256 @@ describe('Region Sharding Utilities', () => {
     it('should have reasonable default', () => {
       expect(REGION_MAX_PREVIOUS_GENERATIONS).toBeGreaterThanOrEqual(3);
       expect(REGION_MAX_PREVIOUS_GENERATIONS).toBeLessThanOrEqual(10);
+    });
+  });
+
+  // =========================================================================
+  // Edge Case Tests - Negative values, boundaries, remainders
+  // =========================================================================
+
+  describe('Edge Cases: Negative and Invalid Values', () => {
+    describe('parseRegionId with negative values', () => {
+      it('should reject negative generation (regex does not match)', () => {
+        expect(() => parseRegionId('g-1:apac:3:session_abc')).toThrow('Invalid region ID format');
+      });
+
+      it('should reject negative shard index (regex does not match)', () => {
+        expect(() => parseRegionId('g1:apac:-3:session_abc')).toThrow('Invalid region ID format');
+      });
+    });
+
+    describe('createRegionId with negative values', () => {
+      it('should create ID with negative generation (no validation)', () => {
+        // createRegionId doesn't validate - just creates string
+        const result = createRegionId(-1, 'apac', 3, 'test');
+        expect(result).toBe('g-1:apac:3:test');
+        // But it won't parse back
+        expect(() => parseRegionId(result)).toThrow('Invalid region ID format');
+      });
+
+      it('should create ID with negative shard (no validation)', () => {
+        const result = createRegionId(1, 'apac', -3, 'test');
+        expect(result).toBe('g1:apac:-3:test');
+        // But it won't parse back
+        expect(() => parseRegionId(result)).toThrow('Invalid region ID format');
+      });
+    });
+  });
+
+  describe('Edge Cases: Extreme totalShards Values', () => {
+    describe('validateRegionShardRequest with extreme values', () => {
+      it('should reject totalShards = 0', () => {
+        const result = validateRegionShardRequest({
+          totalShards: 0,
+          regionDistribution: { enam: 100 },
+        });
+
+        expect(result.valid).toBe(false);
+        // 0% of 0 shards = 0, which is invalid for active region
+        expect(result.error).toBeDefined();
+      });
+
+      it('should accept totalShards = 1 with single region', () => {
+        const result = validateRegionShardRequest({
+          totalShards: 1,
+          regionDistribution: { enam: 100 },
+        });
+
+        expect(result.valid).toBe(true);
+      });
+
+      it('should reject totalShards = 1 with multiple active regions', () => {
+        const result = validateRegionShardRequest({
+          totalShards: 1,
+          regionDistribution: { apac: 50, enam: 50 },
+        });
+
+        expect(result.valid).toBe(false);
+        expect(result.error).toContain('must be >= active region count');
+      });
+
+      it('should handle very large totalShards (1000)', () => {
+        const result = validateRegionShardRequest({
+          totalShards: 1000,
+          regionDistribution: { apac: 20, enam: 40, weur: 40 },
+        });
+
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    describe('calculateRegionDistribution with extreme values', () => {
+      it('should handle totalShards = 1', () => {
+        const result = calculateRegionDistribution(1, { enam: 100 });
+
+        expect(result.enam.shardCount).toBe(1);
+        expect(result.enam.startShard).toBe(0);
+        expect(result.enam.endShard).toBe(0);
+      });
+
+      it('should handle very large totalShards (1000)', () => {
+        const result = calculateRegionDistribution(1000, {
+          apac: 20,
+          enam: 40,
+          weur: 40,
+        });
+
+        expect(result.apac.shardCount).toBe(200);
+        expect(result.enam.shardCount).toBe(400);
+        expect(result.weur.shardCount).toBe(400);
+
+        // Verify total
+        const total = result.apac.shardCount + result.enam.shardCount + result.weur.shardCount;
+        expect(total).toBe(1000);
+      });
+    });
+  });
+
+  describe('Edge Cases: Remainder Handling in calculateRegionDistribution', () => {
+    it('should handle prime number shards (7) with 3-way split', () => {
+      // 7 shards, 33/33/34 = 2.31, 2.31, 2.38 → rounds to 2, 2, 2 or 3
+      const result = calculateRegionDistribution(7, {
+        apac: 33,
+        enam: 33,
+        weur: 34,
+      });
+
+      // Each should have at least 1 shard
+      expect(result.apac.shardCount).toBeGreaterThanOrEqual(1);
+      expect(result.enam.shardCount).toBeGreaterThanOrEqual(1);
+      expect(result.weur.shardCount).toBeGreaterThanOrEqual(1);
+
+      // Total must equal 7 (remainder should be adjusted)
+      const total = result.apac.shardCount + result.enam.shardCount + result.weur.shardCount;
+      expect(total).toBe(7);
+
+      // Verify ranges are contiguous and complete
+      const allShards = new Set<number>();
+      for (let i = result.apac.startShard; i <= result.apac.endShard; i++) allShards.add(i);
+      for (let i = result.enam.startShard; i <= result.enam.endShard; i++) allShards.add(i);
+      for (let i = result.weur.startShard; i <= result.weur.endShard; i++) allShards.add(i);
+      expect(allShards.size).toBe(7);
+    });
+
+    it('should handle 11 shards with 10/10/80 split (remainder case)', () => {
+      // 10% of 11 = 1.1 → 1, 10% = 1.1 → 1, 80% = 8.8 → 9
+      // Sum = 11 (correct)
+      const result = calculateRegionDistribution(11, {
+        apac: 10,
+        enam: 10,
+        weur: 80,
+      });
+
+      expect(result.apac.shardCount).toBeGreaterThanOrEqual(1);
+      expect(result.enam.shardCount).toBeGreaterThanOrEqual(1);
+      expect(result.weur.shardCount).toBeGreaterThanOrEqual(1);
+
+      const total = result.apac.shardCount + result.enam.shardCount + result.weur.shardCount;
+      expect(total).toBe(11);
+    });
+
+    it('should handle 3 shards with 3-way equal split (33/33/34)', () => {
+      const result = calculateRegionDistribution(3, {
+        apac: 33,
+        enam: 33,
+        weur: 34,
+      });
+
+      // Each region should get exactly 1 shard
+      expect(result.apac.shardCount).toBe(1);
+      expect(result.enam.shardCount).toBe(1);
+      expect(result.weur.shardCount).toBe(1);
+
+      const total = result.apac.shardCount + result.enam.shardCount + result.weur.shardCount;
+      expect(total).toBe(3);
+    });
+
+    it('should handle extreme 99/1 split', () => {
+      const result = calculateRegionDistribution(100, {
+        apac: 99,
+        enam: 1,
+      });
+
+      expect(result.apac.shardCount).toBe(99);
+      expect(result.enam.shardCount).toBe(1);
+    });
+
+    it('should handle 5-way split with remainders', () => {
+      // 100 shards, 19/19/19/19/24 = 19+19+19+19+24 = 100
+      const result = calculateRegionDistribution(100, {
+        apac: 19,
+        enam: 19,
+        weur: 19,
+        wnam: 19,
+        oc: 24,
+      });
+
+      const total =
+        result.apac.shardCount +
+        result.enam.shardCount +
+        result.weur.shardCount +
+        result.wnam.shardCount +
+        result.oc.shardCount;
+      expect(total).toBe(100);
+    });
+  });
+
+  describe('Edge Cases: Region Distribution Validation', () => {
+    it('should reject sum > 100 (150%)', () => {
+      const result = validateRegionDistribution({
+        apac: 50,
+        enam: 50,
+        weur: 50,
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('must sum to 100, got 150');
+    });
+
+    it('should reject sum < 100 (90%)', () => {
+      const result = validateRegionDistribution({
+        apac: 30,
+        enam: 30,
+        weur: 30,
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('must sum to 100, got 90');
+    });
+
+    it('should reject sum = 0 (all zeros)', () => {
+      const result = validateRegionDistribution({
+        apac: 0,
+        enam: 0,
+        weur: 0,
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('must sum to 100, got 0');
+    });
+
+    it('should accept unusual but valid 1/1/98 split', () => {
+      const result = validateRegionDistribution({
+        apac: 1,
+        enam: 1,
+        weur: 98,
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('should accept all 7 regions with valid distribution', () => {
+      const result = validateRegionDistribution({
+        apac: 14,
+        enam: 14,
+        weur: 14,
+        wnam: 14,
+        oc: 14,
+        afr: 15,
+        me: 15,
+      });
+
+      expect(result.valid).toBe(true);
     });
   });
 });

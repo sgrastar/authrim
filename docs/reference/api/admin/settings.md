@@ -12,12 +12,14 @@ The Settings API allows administrators to configure system behavior dynamically.
 
 **Configuration Priority**:
 
-1. **In-memory Cache** (10 second TTL) - For performance
+1. **In-memory Cache** (180 second / 3 min TTL, configurable) - For performance
 2. **KV Store** (AUTHRIM_CONFIG) - Dynamic override
 3. **Environment Variable** - Deployment-time default
 4. **Default Value** - Hardcoded fallback
 
 This allows settings to be changed instantly via API while maintaining performance through caching.
+
+> **Note**: The cache TTL was increased from 10 seconds to 180 seconds (3 minutes) in December 2025 to reduce KV read costs. This is configurable via `CONFIG_CACHE_TTL`.
 
 ---
 
@@ -74,8 +76,8 @@ Get all rate limit profile configurations.
     }
   },
   "env_rate_limit_profile": "loadTest",
-  "cache_ttl_seconds": 10,
-  "note": "Changes take effect within 10 seconds (cache TTL)"
+  "cache_ttl_seconds": 180,
+  "note": "Changes take effect within 180 seconds (cache TTL)"
 }
 ```
 
@@ -149,7 +151,7 @@ Update rate limit profile settings.
     "maxRequests": "rate_limit_loadtest_max_requests",
     "windowSeconds": "rate_limit_loadtest_window_seconds"
   },
-  "note": "Changes will take effect within 10 seconds (cache TTL)"
+  "note": "Changes will take effect within 180 seconds (cache TTL)"
 }
 ```
 
@@ -172,7 +174,7 @@ Reset rate limit profile to default values (removes KV overrides).
     "maxRequests": 10000,
     "windowSeconds": 60
   },
-  "note": "Profile reset to default values. Changes will take effect within 10 seconds."
+  "note": "Profile reset to default values. Changes will take effect within 180 seconds."
 }
 ```
 
@@ -228,7 +230,7 @@ Update authorization code shard count.
 {
   "success": true,
   "shards": 128,
-  "note": "Cache will refresh within 10 seconds"
+  "note": "Cache will refresh within 180 seconds"
 }
 ```
 
@@ -301,7 +303,7 @@ Update specific OAuth configuration value (stored in KV).
   "success": true,
   "config": "USER_CACHE_TTL",
   "value": 1800,
-  "note": "Config updated. Cache will refresh within 10 seconds."
+  "note": "Config updated. Cache will refresh within 180 seconds."
 }
 ```
 
@@ -315,7 +317,7 @@ Reset specific OAuth configuration to default (removes KV override).
 {
   "success": true,
   "config": "USER_CACHE_TTL",
-  "note": "Config override cleared. Will use env/default value. Cache will refresh within 10 seconds."
+  "note": "Config override cleared. Will use env/default value. Cache will refresh within 180 seconds."
 }
 ```
 
@@ -328,7 +330,7 @@ Reset all OAuth configuration overrides (revert all to env/default).
 ```json
 {
   "success": true,
-  "note": "All config overrides cleared. Will use env/default values. Cache will refresh within 10 seconds."
+  "note": "All config overrides cleared. Will use env/default values. Cache will refresh within 180 seconds."
 }
 ```
 
@@ -348,6 +350,7 @@ Reset all OAuth configuration overrides (revert all to env/default).
 | `USERINFO_REQUIRE_OPENID_SCOPE` | boolean | true | - | - | Require openid scope for UserInfo endpoint |
 | `USER_CACHE_TTL` | number | 3600 | 60 | 86400 | User cache TTL in seconds (includes PII) |
 | `CONSENT_CACHE_TTL` | number | 86400 | 60 | 604800 | Consent cache TTL in seconds |
+| `CONFIG_CACHE_TTL` | number | 180 | 10 | 3600 | In-memory config cache TTL in seconds |
 
 ### Environment Variable Override
 
@@ -2120,6 +2123,7 @@ All settings are stored in the `AUTHRIM_CONFIG` KV namespace with the following 
 | RBAC Cache TTL                      | `rbac_cache_ttl`                         | number | 600       |
 | User Cache TTL                      | `oauth_config:USER_CACHE_TTL`            | number | 3600      |
 | Consent Cache TTL                   | `oauth_config:CONSENT_CACHE_TTL`         | number | 86400     |
+| Config Cache TTL                    | `oauth_config:CONFIG_CACHE_TTL`          | number | 180       |
 | Region Shard Config                 | `region_shard_config:default`            | JSON   | See below |
 | PII Partition Config                | `pii_partition_config:{tenantId}`        | JSON   | See below |
 | JIT Provisioning Config             | `jit_provisioning_config`                | JSON   | See below |

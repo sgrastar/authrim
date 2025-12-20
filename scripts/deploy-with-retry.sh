@@ -368,6 +368,7 @@ PACKAGES=(
     "policy-service:packages/policy-service"
     "op-saml:packages/op-saml"
     "external-idp:packages/external-idp"
+    "vc:packages/vc"
     "router:packages/router"
 )
 

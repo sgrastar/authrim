@@ -40,10 +40,13 @@ export default [
         DurableObjectState: "readonly",
         DurableObjectId: "readonly",
         DurableObjectStorage: "readonly",
+        DurableObjectNamespace: "readonly",
+        DurableObjectStub: "readonly",
         SqlStorage: "readonly",
         KVNamespace: "readonly",
         D1Database: "readonly",
-        Fetcher: "readonly"
+        Fetcher: "readonly",
+        ScheduledEvent: "readonly"
       }
     },
     plugins: {

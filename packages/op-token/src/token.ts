@@ -73,6 +73,8 @@ import {
 } from '@authrim/shared';
 import { importPKCS8, importJWK, type CryptoKey } from 'jose';
 import { extractDPoPProof, validateDPoPProof } from '@authrim/shared';
+import { parseDeviceCodeId, getDeviceCodeStoreById } from '@authrim/shared';
+import { parseCIBARequestId, getCIBARequestStoreById } from '@authrim/shared';
 
 // ===== Key Caching for Performance Optimization =====
 // Cache signing key to avoid expensive RSA key import (5-7ms) and DO hop on every request
@@ -609,7 +611,7 @@ async function handleAuthorizationCodeGrant(
       c.req.method,
       c.req.url,
       undefined, // No access token yet
-      c.env.DPOP_JTI_STORE,
+      c.env, // Pass full Env for region-aware sharding
       client_id
     );
 
@@ -1700,7 +1702,7 @@ async function handleRefreshTokenGrant(
       'POST',
       c.req.url,
       undefined, // No access token yet (this is token refresh)
-      c.env.DPOP_JTI_STORE, // DPoPJTIStore DO for atomic JTI replay protection
+      c.env, // Pass full Env for region-aware sharding
       client_id // Bind JTI to client_id for additional security
     );
 
@@ -2163,8 +2165,21 @@ async function handleDeviceCodeGrant(
   }
 
   // Get device code metadata from DeviceCodeStore
-  const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName('global');
-  const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
+  // Support both region-sharded and legacy global formats
+  const parsedDeviceCode = parseDeviceCodeId(deviceCode);
+  let deviceCodeStore: {
+    fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  };
+
+  if (parsedDeviceCode) {
+    // New region-sharded format: route via embedded shard info
+    const { stub } = getDeviceCodeStoreById(c.env, deviceCode, 'default');
+    deviceCodeStore = stub;
+  } else {
+    // Legacy format: use global DO
+    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName('global');
+    deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
+  }
 
   // Update poll time (for rate limiting)
   try {
@@ -2524,8 +2539,21 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   }
 
   // Get CIBA request metadata from CIBARequestStore
-  const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName('global');
-  const cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
+  // Support both region-sharded and legacy global formats
+  const parsedCIBAId = parseCIBARequestId(authReqId);
+  let cibaRequestStore: {
+    fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  };
+
+  if (parsedCIBAId) {
+    // New region-sharded format: route via embedded shard info
+    const { stub } = getCIBARequestStoreById(c.env, authReqId, 'default');
+    cibaRequestStore = stub;
+  } else {
+    // Legacy format: use global DO
+    const cibaRequestStoreId = c.env.CIBA_REQUEST_STORE.idFromName('global');
+    cibaRequestStore = c.env.CIBA_REQUEST_STORE.get(cibaRequestStoreId);
+  }
 
   // Update poll time (for rate limiting in poll mode)
   try {
@@ -3704,7 +3732,7 @@ async function handleTokenExchangeGrant(
       c.req.method,
       c.req.url,
       undefined,
-      c.env.DPOP_JTI_STORE,
+      c.env, // Pass full Env for region-aware sharding
       client_id!
     );
     if (!dpopValidation.valid) {
@@ -4057,7 +4085,7 @@ async function handleClientCredentialsGrant(
       c.req.method,
       c.req.url,
       undefined,
-      c.env.DPOP_JTI_STORE,
+      c.env, // Pass full Env for region-aware sharding
       client_id!
     );
     if (!dpopValidation.valid) {

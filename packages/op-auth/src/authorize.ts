@@ -26,6 +26,8 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   getTenantIdFromContext,
+  getPARRequestStoreByUri,
+  parsePARRequestUri,
 } from '@authrim/shared';
 import type { CachedUser, CachedConsent } from '@authrim/shared';
 import type { Session, PARRequestData } from '@authrim/shared';
@@ -417,7 +419,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         response_mode?: string;
       } | null = null;
 
-      if (!c.env.PAR_REQUEST_STORE || !client_id) {
+      if (!c.env.PAR_REQUEST_STORE) {
         return c.json(
           {
             error: 'server_error',
@@ -427,16 +429,39 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      // Use PARRequestStore DO for atomic consume
-      const id = c.env.PAR_REQUEST_STORE.idFromName(client_id);
-      const stub = c.env.PAR_REQUEST_STORE.get(id);
+      // Try to parse as region-sharded request_uri (new format)
+      // Format: urn:ietf:params:oauth:request_uri:g{gen}:{region}:{shard}:par_{uuid}
+      const parsedPar = parsePARRequestUri(request_uri!);
 
       try {
-        // request_uri is guaranteed to exist in isPAR branch
-        const consumed = (await stub.consumeRequestRpc({
-          requestUri: request_uri!,
-          client_id: client_id,
-        })) as PARRequestData;
+        let consumed: PARRequestData;
+
+        if (parsedPar) {
+          // New region-sharded format: route via embedded shard info
+          const { stub } = getPARRequestStoreByUri(c.env, request_uri!, 'default');
+          consumed = (await stub.consumeRequestRpc({
+            requestUri: request_uri!,
+            client_id: client_id || '', // May be empty for new format
+          })) as PARRequestData;
+        } else {
+          // Legacy format: route via client_id
+          if (!client_id) {
+            return c.json(
+              {
+                error: 'invalid_request',
+                error_description: 'client_id required for legacy PAR format',
+              },
+              400
+            );
+          }
+          const id = c.env.PAR_REQUEST_STORE.idFromName(client_id);
+          const stub = c.env.PAR_REQUEST_STORE.get(id);
+          consumed = (await stub.consumeRequestRpc({
+            requestUri: request_uri!,
+            client_id: client_id,
+          })) as PARRequestData;
+        }
+
         // Map PARRequestData to the expected format
         parsedData = {
           client_id: consumed.client_id,

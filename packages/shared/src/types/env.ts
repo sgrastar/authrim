@@ -74,6 +74,14 @@ export interface Env {
   AUTHRIM_CHALLENGE_SHARDS?: string; // Number of challenge DO shards (default: 4)
   AUTHRIM_REVOCATION_SHARDS?: string; // Number of token revocation DO shards (default: 4)
 
+  // Region-aware sharding settings (Priority: KV → env → defaults)
+  REGION_SHARD_TOTAL_SHARDS?: string; // Total number of shards (default: 20)
+  REGION_SHARD_GENERATION?: string; // Current generation for migration (default: 1)
+  REGION_SHARD_APAC_PERCENT?: string; // Asia-Pacific region percentage (default: 20)
+  REGION_SHARD_ENAM_PERCENT?: string; // North America East percentage (default: 40)
+  REGION_SHARD_WEUR_PERCENT?: string; // Western Europe percentage (default: 40)
+  REGION_SHARD_GROUPS_JSON?: string; // Colocation groups as JSON (optional, uses defaults if not set)
+
   // Dynamic Client Registration settings
   OPEN_REGISTRATION?: string; // "true" to allow registration without Initial Access Token
 
@@ -136,6 +144,7 @@ export interface Env {
   // User & Consent Cache TTL (KV overrides these)
   USER_CACHE_TTL?: string; // User cache TTL in seconds (default: 3600 = 1 hour)
   CONSENT_CACHE_TTL?: string; // Consent cache TTL in seconds (default: 86400 = 24 hours)
+  CONFIG_CACHE_TTL?: string; // Config in-memory cache TTL in seconds (default: 180 = 3 minutes)
 
   // RBAC Consent Screen Configuration (Phase 2-B)
   // Feature flags to control consent screen RBAC features

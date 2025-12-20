@@ -23,6 +23,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 import { createOAuthConfigManager, type OAuthConfigManager } from '../utils/oauth-config';
+import type { ActorContext } from '../actor';
+import { CloudflareActorContext } from '../actor';
 
 /**
  * Authorization code metadata
@@ -136,6 +138,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
   private configManager: OAuthConfigManager;
+  private actorCtx: ActorContext;
 
   // User code counter for O(1) DDoS protection check (instead of O(n) scan)
   // Maps userId to count of active (non-expired) codes
@@ -148,6 +151,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.actorCtx = new CloudflareActorContext(ctx);
 
     // Create config manager for KV > env > default priority
     this.configManager = createOAuthConfigManager(env);
@@ -174,7 +178,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     // Block all requests until initialization completes
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for one-time code consumption guarantee
-    ctx.blockConcurrencyWhile(async () => {
+    this.actorCtx.blockConcurrencyWhile(async () => {
       await this.initializeStateBlocking();
     });
   }
@@ -203,7 +207,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
     try {
       // Load all codes from individual key storage (code:*)
-      const storedCodes = await this.ctx.storage.list<AuthorizationCode>({
+      const storedCodes = await this.actorCtx.storage.list<AuthorizationCode>({
         prefix: CODE_KEY_PREFIX,
       });
 
@@ -411,7 +415,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     // Batch delete from Durable Storage - O(k) where k = expired codes
     if (expiredCodes.length > 0) {
       const deleteKeys = expiredCodes.map((c) => this.buildCodeKey(c));
-      await this.ctx.storage.delete(deleteKeys);
+      await this.actorCtx.storage.deleteMany(deleteKeys);
       console.log(`AuthCodeStore: Cleaned up ${expiredCodes.length} expired codes`);
     }
   }
@@ -518,7 +522,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     this.incrementUserCodeCount(request.userId);
 
     // Persist to Durable Storage - O(1) individual key
-    await this.ctx.storage.put(this.buildCodeKey(request.code), authCode);
+    await this.actorCtx.storage.put(this.buildCodeKey(request.code), authCode);
 
     return {
       success: true,
@@ -545,7 +549,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     if (!stored) {
       // Fallback: Try to load from storage (handles edge case where code was stored
       // but DO restarted before initializeState saw it)
-      const fromStorage = await this.ctx.storage.get<AuthorizationCode>(
+      const fromStorage = await this.actorCtx.storage.get<AuthorizationCode>(
         this.buildCodeKey(request.code)
       );
       if (fromStorage) {
@@ -562,7 +566,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     // Check expiration
     if (this.isExpired(stored)) {
       this.codes.delete(request.code);
-      await this.ctx.storage.delete(this.buildCodeKey(request.code));
+      await this.actorCtx.storage.delete(this.buildCodeKey(request.code));
       throw new Error('invalid_grant: Authorization code expired');
     }
 
@@ -625,7 +629,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     this.codes.set(request.code, stored);
 
     // Persist to Durable Storage - O(1) individual key
-    await this.ctx.storage.put(this.buildCodeKey(request.code), stored);
+    await this.actorCtx.storage.put(this.buildCodeKey(request.code), stored);
 
     // Return authorization data
     return {
@@ -666,7 +670,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     // Decrement user code counter for O(1) DDoS protection
     this.decrementUserCodeCount(authCode.userId);
     // Delete from Durable Storage - O(1) individual key
-    await this.ctx.storage.delete(this.buildCodeKey(code));
+    await this.actorCtx.storage.delete(this.buildCodeKey(code));
     return true;
   }
 
@@ -694,7 +698,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     this.codes.set(code, stored);
 
     // Persist to Durable Storage - O(1) individual key
-    await this.ctx.storage.put(this.buildCodeKey(code), stored);
+    await this.actorCtx.storage.put(this.buildCodeKey(code), stored);
 
     console.log(`AuthCodeStore: Registered token JTIs for code ${code.substring(0, 8)}...`);
     return true;

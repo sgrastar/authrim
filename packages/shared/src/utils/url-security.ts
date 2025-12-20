@@ -180,40 +180,61 @@ export function validateExternalUrl(
   return null;
 }
 
+/** Default timeout for safe fetch in milliseconds (10 seconds) */
+const DEFAULT_FETCH_TIMEOUT_MS = 10000;
+
+/** Default maximum response size in bytes (1 MB) */
+const DEFAULT_MAX_RESPONSE_SIZE = 1024 * 1024;
+
 /**
- * Safe fetch wrapper with SSRF protection
+ * Safe fetch options extending RequestInit
+ */
+export interface SafeFetchOptions extends RequestInit {
+  /** Require HTTPS protocol (default: true) */
+  requireHttps?: boolean;
+  /** Allow http://localhost for development (default: false) */
+  allowLocalhost?: boolean;
+  /** Request timeout in milliseconds (default: 10000) */
+  timeoutMs?: number;
+  /** Maximum response size in bytes (default: 1MB). Set to 0 to disable. */
+  maxResponseSize?: number;
+}
+
+/**
+ * Safe fetch wrapper with SSRF protection, timeout, and response size limits
  *
  * Validates the URL before making the request and prevents requests to internal addresses.
+ * Includes timeout to prevent hanging requests and response size limits to prevent DoS.
  *
  * @param url - The URL to fetch
  * @param options - Fetch options plus SSRF validation options
  * @returns Fetch response
- * @throws Error if URL is invalid or points to an internal address
+ * @throws Error if URL is invalid, points to an internal address, times out, or exceeds size limit
  *
  * @example
  * ```typescript
  * try {
  *   const response = await safeFetch('https://example.com/api', {
  *     requireHttps: true,
+ *     timeoutMs: 5000,
  *     headers: { Accept: 'application/json' }
  *   });
  *   const data = await response.json();
  * } catch (error) {
- *   // Handle SSRF block or fetch error
+ *   // Handle SSRF block, timeout, or fetch error
  * }
  * ```
  */
-export async function safeFetch(
-  url: string,
-  options: RequestInit & {
-    /** Require HTTPS protocol (default: true) */
-    requireHttps?: boolean;
-    /** Allow http://localhost for development (default: false) */
-    allowLocalhost?: boolean;
-  } = {}
-): Promise<Response> {
-  const { requireHttps, allowLocalhost, ...fetchOptions } = options;
+export async function safeFetch(url: string, options: SafeFetchOptions = {}): Promise<Response> {
+  const {
+    requireHttps,
+    allowLocalhost,
+    timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
+    maxResponseSize = DEFAULT_MAX_RESPONSE_SIZE,
+    ...fetchOptions
+  } = options;
 
+  // SSRF validation
   const validationError = validateExternalUrl(url, {
     requireHttps,
     allowLocalhost,
@@ -225,5 +246,78 @@ export async function safeFetch(
     throw new Error(`SSRF protection: ${validationError.error_description}`);
   }
 
-  return fetch(url, fetchOptions);
+  // Setup timeout with AbortController
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+
+    // Check response size if Content-Length header is present
+    if (maxResponseSize > 0) {
+      const contentLength = response.headers.get('Content-Length');
+      if (contentLength && parseInt(contentLength, 10) > maxResponseSize) {
+        throw new Error(
+          `Response size exceeds limit: ${contentLength} bytes > ${maxResponseSize} bytes`
+        );
+      }
+    }
+
+    return response;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Request timeout after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Safe fetch for JSON responses with size-limited parsing
+ *
+ * Fetches a URL and parses the response as JSON, with SSRF protection,
+ * timeout, and response size limits.
+ *
+ * @param url - The URL to fetch
+ * @param options - Safe fetch options
+ * @returns Parsed JSON response
+ * @throws Error if URL is invalid, fetch fails, or JSON parsing fails
+ *
+ * @example
+ * ```typescript
+ * const data = await safeFetchJson<{ id: string }>('https://example.com/api');
+ * ```
+ */
+export async function safeFetchJson<T = unknown>(
+  url: string,
+  options: SafeFetchOptions = {}
+): Promise<T> {
+  const response = await safeFetch(url, {
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      ...options.headers,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  // Read body with size limit
+  const maxSize = options.maxResponseSize ?? DEFAULT_MAX_RESPONSE_SIZE;
+  if (maxSize > 0) {
+    const text = await response.text();
+    if (text.length > maxSize) {
+      throw new Error(`Response body exceeds limit: ${text.length} > ${maxSize} bytes`);
+    }
+    return JSON.parse(text) as T;
+  }
+
+  return response.json() as Promise<T>;
 }

@@ -61,7 +61,17 @@ export interface OAuthConfig {
 
   /** Consent cache TTL in seconds (default: 86400 = 24 hours) */
   CONSENT_CACHE_TTL: number;
+
+  /** Config cache TTL in seconds (default: 180 = 3 minutes) */
+  CONFIG_CACHE_TTL: number;
 }
+
+/**
+ * Default in-memory cache TTL for config values (milliseconds)
+ * This controls how often the config manager re-reads from KV
+ * Balance: Higher = fewer KV reads (cost saving), Lower = faster config propagation
+ */
+export const DEFAULT_CONFIG_CACHE_TTL_MS = 180000; // 3 minutes (was 10 seconds)
 
 /**
  * Default values for OAuth configuration
@@ -80,6 +90,7 @@ export const DEFAULT_CONFIG: OAuthConfig = {
   USERINFO_REQUIRE_OPENID_SCOPE: true, // Default true for OIDC compliance (set false for OAuth 2.0 compatibility)
   USER_CACHE_TTL: 3600, // 1 hour (includes PII, balance between performance and freshness)
   CONSENT_CACHE_TTL: 86400, // 24 hours (consent changes infrequently)
+  CONFIG_CACHE_TTL: 180, // 3 minutes (balance KV cost vs config propagation speed)
 };
 
 /**
@@ -103,6 +114,7 @@ export const CONFIG_NAMES = [
   'USERINFO_REQUIRE_OPENID_SCOPE',
   'USER_CACHE_TTL',
   'CONSENT_CACHE_TTL',
+  'CONFIG_CACHE_TTL',
 ] as const;
 
 export type ConfigName = (typeof CONFIG_NAMES)[number];
@@ -208,6 +220,15 @@ export const CONFIG_METADATA: Record<
     max: 604800,
     unit: 'seconds',
   },
+  CONFIG_CACHE_TTL: {
+    type: 'number',
+    label: 'Config Cache TTL',
+    description:
+      'In-memory cache TTL for config values in seconds. Higher = fewer KV reads (cost saving), Lower = faster config propagation. Applied on next Worker instance.',
+    min: 10,
+    max: 3600,
+    unit: 'seconds',
+  },
 };
 
 /**
@@ -259,6 +280,7 @@ export function getConfigFromEnv(env: Partial<Env>): OAuthConfig {
     ),
     USER_CACHE_TTL: parseNumber(env.USER_CACHE_TTL, DEFAULT_CONFIG.USER_CACHE_TTL),
     CONSENT_CACHE_TTL: parseNumber(env.CONSENT_CACHE_TTL, DEFAULT_CONFIG.CONSENT_CACHE_TTL),
+    CONFIG_CACHE_TTL: parseNumber(env.CONFIG_CACHE_TTL, DEFAULT_CONFIG.CONFIG_CACHE_TTL),
   };
 }
 
@@ -284,9 +306,13 @@ export class OAuthConfigManager {
   /**
    * @param env Environment variables
    * @param kv KV namespace for dynamic overrides (AUTHRIM_CONFIG)
-   * @param cacheTTL Cache TTL in milliseconds (default: 10 seconds)
+   * @param cacheTTL Cache TTL in milliseconds (default: 180 seconds / 3 minutes)
    */
-  constructor(env: Partial<Env>, kv: KVNamespace | null = null, cacheTTL: number = 10000) {
+  constructor(
+    env: Partial<Env>,
+    kv: KVNamespace | null = null,
+    cacheTTL: number = DEFAULT_CONFIG_CACHE_TTL_MS
+  ) {
     this.envConfig = getConfigFromEnv(env);
     this.kv = kv;
     this.cacheTTL = cacheTTL;
@@ -383,6 +409,7 @@ export class OAuthConfigManager {
       USERINFO_REQUIRE_OPENID_SCOPE: await this.getBoolean('USERINFO_REQUIRE_OPENID_SCOPE'),
       USER_CACHE_TTL: await this.getNumber('USER_CACHE_TTL'),
       CONSENT_CACHE_TTL: await this.getNumber('CONSENT_CACHE_TTL'),
+      CONFIG_CACHE_TTL: await this.getNumber('CONFIG_CACHE_TTL'),
     };
   }
 
@@ -563,6 +590,16 @@ export class OAuthConfigManager {
     return this.getNumber('CONSENT_CACHE_TTL');
   }
 
+  /** Get config cache TTL in seconds */
+  async getConfigCacheTTL(): Promise<number> {
+    return this.getNumber('CONFIG_CACHE_TTL');
+  }
+
+  /** Get current cache TTL in milliseconds (for diagnostics) */
+  getCurrentCacheTTLMs(): number {
+    return this.cacheTTL;
+  }
+
   /**
    * Clear cache (force re-read from KV on next access)
    */
@@ -573,9 +610,72 @@ export class OAuthConfigManager {
 
 /**
  * Create an OAuth config manager
+ *
+ * Cache TTL resolution order:
+ * 1. Explicit cacheTTL parameter (for testing/override)
+ * 2. Environment variable CONFIG_CACHE_TTL (in seconds, converted to ms)
+ * 3. Default: 180 seconds (3 minutes)
+ *
+ * Note: KV-based CONFIG_CACHE_TTL is read asynchronously and applied on next instance.
+ * For immediate KV override, use createOAuthConfigManagerAsync().
  */
 export function createOAuthConfigManager(env: Partial<Env>, cacheTTL?: number): OAuthConfigManager {
   const kv = env.AUTHRIM_CONFIG ?? null;
+
+  // Resolve cache TTL: explicit param > env var > default
+  let resolvedCacheTTL = cacheTTL;
+  if (resolvedCacheTTL === undefined) {
+    const envCacheTTL = env.CONFIG_CACHE_TTL;
+    if (envCacheTTL !== undefined && envCacheTTL !== '') {
+      const parsed = parseInt(envCacheTTL, 10);
+      if (!isNaN(parsed) && parsed >= 10 && parsed <= 3600) {
+        resolvedCacheTTL = parsed * 1000; // Convert seconds to ms
+      }
+    }
+  }
+
+  return new OAuthConfigManager(env, kv, resolvedCacheTTL);
+}
+
+/**
+ * Create an OAuth config manager with KV-based cache TTL (async)
+ *
+ * This reads CONFIG_CACHE_TTL from KV for immediate application.
+ * Use this when you need KV override to take effect immediately.
+ */
+export async function createOAuthConfigManagerAsync(
+  env: Partial<Env>
+): Promise<OAuthConfigManager> {
+  const kv = env.AUTHRIM_CONFIG ?? null;
+
+  // Try to read cache TTL from KV first
+  let cacheTTL = DEFAULT_CONFIG_CACHE_TTL_MS;
+
+  if (kv) {
+    try {
+      const kvValue = await kv.get(`${KV_PREFIX}CONFIG_CACHE_TTL`);
+      if (kvValue !== null) {
+        const parsed = parseInt(kvValue, 10);
+        if (!isNaN(parsed) && parsed >= 10 && parsed <= 3600) {
+          cacheTTL = parsed * 1000; // Convert seconds to ms
+        }
+      }
+    } catch {
+      // Fall through to env/default
+    }
+  }
+
+  // If KV didn't have a value, try env
+  if (cacheTTL === DEFAULT_CONFIG_CACHE_TTL_MS) {
+    const envCacheTTL = env.CONFIG_CACHE_TTL;
+    if (envCacheTTL !== undefined && envCacheTTL !== '') {
+      const parsed = parseInt(envCacheTTL, 10);
+      if (!isNaN(parsed) && parsed >= 10 && parsed <= 3600) {
+        cacheTTL = parsed * 1000;
+      }
+    }
+  }
+
   return new OAuthConfigManager(env, kv, cacheTTL);
 }
 

@@ -34,6 +34,13 @@ import {
 import { frontChannelLogoutHandler, backChannelLogoutHandler } from './logout';
 import { warmupHandler } from './warmup';
 import { configHandler } from './config';
+import { didAuthChallengeHandler, didAuthVerifyHandler } from './did-auth';
+import {
+  didRegisterChallengeHandler,
+  didRegisterVerifyHandler,
+  didListHandler,
+  didUnlinkHandler,
+} from './did-link';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -181,6 +188,28 @@ app.post('/api/auth/passkey/login/verify', passkeyLoginVerifyHandler);
 // Email Code (OTP) endpoints
 app.post('/api/auth/email-code/send', emailCodeSendHandler);
 app.post('/api/auth/email-code/verify', emailCodeVerifyHandler);
+
+// DID Authentication endpoints (Phase 9)
+// Challenge-response pattern for DID-based authentication
+app.post('/api/auth/did/challenge', didAuthChallengeHandler);
+app.post('/api/auth/did/verify', didAuthVerifyHandler);
+// Also register under /auth/did for compatibility
+app.post('/auth/did/challenge', didAuthChallengeHandler);
+app.post('/auth/did/verify', didAuthVerifyHandler);
+
+// DID Link Management endpoints (Phase 9)
+// Register new DID to existing account (requires authenticated session)
+app.post('/api/auth/did/register/challenge', didRegisterChallengeHandler);
+app.post('/api/auth/did/register/verify', didRegisterVerifyHandler);
+// List linked DIDs
+app.get('/api/auth/did/list', didListHandler);
+// Unlink a DID (DID is URL-encoded in path)
+app.delete('/api/auth/did/unlink/:did', didUnlinkHandler);
+// Also register under /auth/did for compatibility
+app.post('/auth/did/register/challenge', didRegisterChallengeHandler);
+app.post('/auth/did/register/verify', didRegisterVerifyHandler);
+app.get('/auth/did/list', didListHandler);
+app.delete('/auth/did/unlink/:did', didUnlinkHandler);
 
 // OAuth Consent endpoints
 // /api/auth/consent - API style path

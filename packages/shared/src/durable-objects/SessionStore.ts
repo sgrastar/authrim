@@ -25,6 +25,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 import { retryD1Operation } from '../utils/d1-retry';
+import type { ActorContext } from '../actor';
+import { CloudflareActorContext } from '../actor';
 
 /**
  * Session data interface
@@ -109,9 +111,11 @@ interface Tombstone {
 export class SessionStore extends DurableObject<Env> {
   private sessionCache: Map<string, Session> = new Map();
   private cleanupInterval: number | null = null;
+  private actorCtx: ActorContext;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.actorCtx = new CloudflareActorContext(ctx);
 
     // Start periodic cleanup
     this.startCleanup();
@@ -179,7 +183,7 @@ export class SessionStore extends DurableObject<Env> {
     cached: number;
     timestamp: number;
   }> {
-    const storedSessions = await this.ctx.storage.list<Session>({
+    const storedSessions = await this.actorCtx.storage.list<Session>({
       prefix: SESSION_KEY_PREFIX,
     });
 
@@ -219,7 +223,7 @@ export class SessionStore extends DurableObject<Env> {
       deletedAt: Date.now(),
       expiresAt: Date.now() + TOMBSTONE_TTL_MS,
     };
-    await this.ctx.storage.put(this.buildTombstoneKey(sessionId), tombstone);
+    await this.actorCtx.storage.put(this.buildTombstoneKey(sessionId), tombstone);
     console.log(`SessionStore: Created tombstone for session ${sessionId}`);
   }
 
@@ -229,18 +233,16 @@ export class SessionStore extends DurableObject<Env> {
   private async createTombstonesBatch(sessionIds: string[]): Promise<void> {
     if (sessionIds.length === 0) return;
 
-    const tombstoneEntries: Map<string, Tombstone> = new Map();
     const now = Date.now();
     const expiresAt = now + TOMBSTONE_TTL_MS;
 
+    // Create tombstones individually (actor abstraction doesn't support batch put)
     for (const sessionId of sessionIds) {
-      tombstoneEntries.set(this.buildTombstoneKey(sessionId), {
+      await this.actorCtx.storage.put(this.buildTombstoneKey(sessionId), {
         deletedAt: now,
         expiresAt,
-      });
+      } as Tombstone);
     }
-
-    await this.ctx.storage.put(Object.fromEntries(tombstoneEntries));
     console.log(`SessionStore: Created ${sessionIds.length} tombstones`);
   }
 
@@ -249,7 +251,7 @@ export class SessionStore extends DurableObject<Env> {
    * Returns true if the session has been deleted and should not be loaded from D1
    */
   private async hasTombstone(sessionId: string): Promise<boolean> {
-    const tombstone = await this.ctx.storage.get<Tombstone>(this.buildTombstoneKey(sessionId));
+    const tombstone = await this.actorCtx.storage.get<Tombstone>(this.buildTombstoneKey(sessionId));
     if (!tombstone) {
       return false;
     }
@@ -258,7 +260,7 @@ export class SessionStore extends DurableObject<Env> {
       return true;
     }
     // Tombstone expired, clean it up
-    await this.ctx.storage.delete(this.buildTombstoneKey(sessionId));
+    await this.actorCtx.storage.delete(this.buildTombstoneKey(sessionId));
     return false;
   }
 
@@ -269,7 +271,7 @@ export class SessionStore extends DurableObject<Env> {
     const now = Date.now();
     let cleaned = 0;
 
-    const tombstones = await this.ctx.storage.list<Tombstone>({
+    const tombstones = await this.actorCtx.storage.list<Tombstone>({
       prefix: TOMBSTONE_KEY_PREFIX,
     });
 
@@ -282,7 +284,7 @@ export class SessionStore extends DurableObject<Env> {
     }
 
     if (keysToDelete.length > 0) {
-      await this.ctx.storage.delete(keysToDelete);
+      await this.actorCtx.storage.deleteMany(keysToDelete);
     }
 
     return cleaned;
@@ -316,19 +318,19 @@ export class SessionStore extends DurableObject<Env> {
       if (session.expiresAt <= now) {
         this.sessionCache.delete(sessionId);
         // Delete from Durable Storage
-        await this.ctx.storage.delete(this.buildSessionKey(sessionId));
+        await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
         cleanedSessions++;
       }
     }
 
     // Also scan storage for expired sessions not in cache
-    const storedSessions = await this.ctx.storage.list<Session>({
+    const storedSessions = await this.actorCtx.storage.list<Session>({
       prefix: SESSION_KEY_PREFIX,
     });
 
     for (const [key, session] of storedSessions) {
       if (session.expiresAt <= now) {
-        await this.ctx.storage.delete(key);
+        await this.actorCtx.storage.delete(key);
         cleanedSessions++;
       }
     }
@@ -447,12 +449,12 @@ export class SessionStore extends DurableObject<Env> {
       }
       // Cleanup expired session
       this.sessionCache.delete(sessionId);
-      await this.ctx.storage.delete(this.buildSessionKey(sessionId));
+      await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
       return null;
     }
 
     // 2. Check Durable Storage
-    const storedSession = await this.ctx.storage.get<Session>(this.buildSessionKey(sessionId));
+    const storedSession = await this.actorCtx.storage.get<Session>(this.buildSessionKey(sessionId));
     if (storedSession) {
       if (!this.isExpired(storedSession)) {
         // Promote to cache
@@ -460,7 +462,7 @@ export class SessionStore extends DurableObject<Env> {
         return storedSession;
       }
       // Cleanup expired session
-      await this.ctx.storage.delete(this.buildSessionKey(sessionId));
+      await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
       return null;
     }
 
@@ -474,7 +476,7 @@ export class SessionStore extends DurableObject<Env> {
       if (d1Session && !this.isExpired(d1Session)) {
         // Promote to cache and storage
         this.sessionCache.set(sessionId, d1Session);
-        await this.ctx.storage.put(this.buildSessionKey(sessionId), d1Session);
+        await this.actorCtx.storage.put(this.buildSessionKey(sessionId), d1Session);
         return d1Session;
       }
     } catch (error) {
@@ -506,7 +508,7 @@ export class SessionStore extends DurableObject<Env> {
     this.sessionCache.set(sessionId, session);
 
     // 2. Persist to Durable Storage (individual key - O(1))
-    await this.ctx.storage.put(this.buildSessionKey(sessionId), session);
+    await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
 
     // 3. Persist to D1 (backup & audit) - async, don't wait
     this.saveToD1(session).catch((error) => {
@@ -533,7 +535,7 @@ export class SessionStore extends DurableObject<Env> {
     // 2. Delete from Durable Storage (individual key - O(1))
     // No need to check existence first - delete() is idempotent
     const storageKey = this.buildSessionKey(sessionId);
-    await this.ctx.storage.delete(storageKey);
+    await this.actorCtx.storage.delete(storageKey);
 
     // 3. Delete from D1 - MUST await to prevent race condition
     // Without await, getSession could still find the session in D1
@@ -601,7 +603,7 @@ export class SessionStore extends DurableObject<Env> {
       // Batch delete from Durable Storage - delete() is idempotent
       try {
         if (storageKeysToDelete.length > 0) {
-          await this.ctx.storage.delete(storageKeysToDelete);
+          await this.actorCtx.storage.deleteMany(storageKeysToDelete);
         }
         deleted += chunk.length;
       } catch (error) {
@@ -676,7 +678,7 @@ export class SessionStore extends DurableObject<Env> {
     const now = Date.now();
 
     // 1. Get from Durable Storage (individual keys)
-    const storedSessions = await this.ctx.storage.list<Session>({
+    const storedSessions = await this.actorCtx.storage.list<Session>({
       prefix: SESSION_KEY_PREFIX,
     });
 
@@ -738,7 +740,7 @@ export class SessionStore extends DurableObject<Env> {
     this.sessionCache.set(sessionId, session);
 
     // Persist to Durable Storage
-    await this.ctx.storage.put(this.buildSessionKey(sessionId), session);
+    await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
 
     // Update in D1 - async
     this.saveToD1(session).catch((error) => {
@@ -893,7 +895,7 @@ export class SessionStore extends DurableObject<Env> {
       // GET /status - Health check and stats
       if (path === '/status' && request.method === 'GET') {
         // Count sessions in storage
-        const storedSessions = await this.ctx.storage.list<Session>({
+        const storedSessions = await this.actorCtx.storage.list<Session>({
           prefix: SESSION_KEY_PREFIX,
         });
 

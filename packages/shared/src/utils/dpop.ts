@@ -7,6 +7,8 @@
 import { importJWK, jwtVerify, calculateJwkThumbprint, base64url, type JWK } from 'jose';
 import type { DPoPClaims, DPoPValidationResult } from '../types/oidc';
 import type { DurableObjectNamespace } from '@cloudflare/workers-types';
+import type { Env } from '../types/env';
+import { getDPoPJTIStoreForNewJTI, parseDPoPJTIId } from './dpop-jti-sharding';
 
 interface DPoPHeader {
   typ: string;
@@ -20,8 +22,9 @@ interface DPoPHeader {
  * @param method - HTTP method (e.g., 'POST', 'GET')
  * @param url - Full request URL
  * @param accessToken - Optional access token for validation (when present, ath claim must match)
- * @param dpopJTIStore - DPoP JTI Store DO for atomic replay protection (issue #12)
- * @param clientId - Optional client ID for JTI binding
+ * @param envOrJTIStore - Environment with DO bindings (preferred) or legacy DPoP JTI Store DO namespace
+ * @param clientId - Optional client ID for JTI binding (used for sharding)
+ * @param tenantId - Optional tenant ID for multi-tenant support (defaults to 'default')
  * @returns Validation result with JWK thumbprint if valid
  */
 export async function validateDPoPProof(
@@ -29,8 +32,9 @@ export async function validateDPoPProof(
   method: string,
   url: string,
   accessToken?: string,
-  dpopJTIStore?: DurableObjectNamespace,
-  clientId?: string
+  envOrJTIStore?: Env | DurableObjectNamespace,
+  clientId?: string,
+  tenantId: string = 'default'
 ): Promise<DPoPValidationResult> {
   try {
     // Parse JWT header without verification first to extract JWK
@@ -213,7 +217,7 @@ export async function validateDPoPProof(
 
     // Replay protection: check if jti has been used before
     // Issue #12: Use DPoPJTIStore DO for atomic check-and-store (prevents race conditions)
-    if (!dpopJTIStore) {
+    if (!envOrJTIStore) {
       return {
         valid: false,
         error: 'server_error',
@@ -221,10 +225,30 @@ export async function validateDPoPProof(
       };
     }
 
-    // Use DO ID based on client_id (or jti if no client_id) to shard load
-    const shardKey = clientId || claims.jti;
-    const id = dpopJTIStore.idFromName(shardKey);
-    const stub = dpopJTIStore.get(id);
+    // Determine if we have Env (new sharded approach) or DurableObjectNamespace (legacy)
+    let stub: { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
+
+    // Check if this is an Env object by looking for the DPOP_JTI_STORE binding
+    const isEnv = 'DPOP_JTI_STORE' in envOrJTIStore && 'SETTINGS' in envOrJTIStore;
+
+    if (isEnv) {
+      // New region-aware sharding approach
+      const env = envOrJTIStore as Env;
+      const shardKey = clientId || claims.jti;
+      const { stub: shardedStub } = await getDPoPJTIStoreForNewJTI(
+        env,
+        tenantId,
+        shardKey,
+        claims.jti
+      );
+      stub = shardedStub;
+    } else {
+      // Legacy approach: use DurableObjectNamespace directly
+      const dpopJTIStore = envOrJTIStore as DurableObjectNamespace;
+      const shardKey = clientId || claims.jti;
+      const id = dpopJTIStore.idFromName(shardKey);
+      stub = dpopJTIStore.get(id);
+    }
 
     // Atomic check-and-store in DPoPJTIStore DO
     const response = await stub.fetch('http://internal/check-and-store', {

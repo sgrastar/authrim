@@ -87,3 +87,5 @@ load-testing/.env.k6cloud
 
 # Load testing seed data (large files, in use locally)
 load-testing/seeds/
+# Conformance test results
+conformance/results/

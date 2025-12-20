@@ -43,7 +43,9 @@ export type ChallengeType =
   | 'session_token'
   | 'reauth'
   | 'login'
-  | 'consent';
+  | 'consent'
+  | 'did_authentication' // DID-based authentication
+  | 'did_registration'; // DID linking to existing account
 
 /**
  * Challenge metadata

@@ -38,29 +38,103 @@ export type RegionShardResourceType =
   | 'authcode'
   | 'challenge'
   | 'refresh'
-  | 'revocation';
+  | 'revocation'
+  | 'vprequest'
+  | 'credoffer'
+  | 'dpop'
+  | 'par'
+  | 'device'
+  | 'ciba';
 
 /**
- * Type abbreviations for DO instance names.
+ * Type abbreviations for DO instance names (3-character unified).
+ *
+ * All abbreviations are exactly 3 characters for:
+ * - Visual consistency in logs and debugging
+ * - Collision avoidance (2 chars too short, 4+ chars redundant)
+ * - Uniform ID format across all DOs
  */
 export const TYPE_ABBREV: Record<RegionShardResourceType, string> = {
-  session: 's',
-  authcode: 'ac',
-  challenge: 'ch',
-  refresh: 'rt',
-  revocation: 'rv',
+  session: 'ses',
+  authcode: 'acd',
+  challenge: 'cha',
+  refresh: 'rft',
+  revocation: 'rev',
+  vprequest: 'vpr',
+  credoffer: 'cof',
+  dpop: 'dpp',
+  par: 'par',
+  device: 'dev',
+  ciba: 'cba',
 };
 
 /**
  * Reverse mapping from abbreviation to resource type.
  */
 export const ABBREV_TO_TYPE: Record<string, RegionShardResourceType> = {
+  ses: 'session',
+  acd: 'authcode',
+  cha: 'challenge',
+  rft: 'refresh',
+  rev: 'revocation',
+  vpr: 'vprequest',
+  cof: 'credoffer',
+  dpp: 'dpop',
+  par: 'par',
+  dev: 'device',
+  cba: 'ciba',
+  // Legacy 2-char mappings for backward compatibility during migration
   s: 'session',
   ac: 'authcode',
   ch: 'challenge',
   rt: 'refresh',
   rv: 'revocation',
+  vp: 'vprequest',
+  co: 'credoffer',
 };
+
+/**
+ * ID prefix for resource IDs (3-character unified).
+ * Used in the randomPart of region IDs: g1:apac:3:{prefix}_{uuid}
+ */
+export const ID_PREFIX: Record<RegionShardResourceType, string> = {
+  session: 'ses',
+  authcode: 'acd',
+  challenge: 'cha',
+  refresh: 'rft',
+  revocation: 'rev',
+  vprequest: 'vpr',
+  credoffer: 'cof',
+  dpop: 'dpp',
+  par: 'par',
+  device: 'dev',
+  ciba: 'cba',
+};
+
+/**
+ * Colocation group configuration.
+ * DOs in the same group MUST have the same shard count.
+ */
+export interface ColocationGroup {
+  /** Group name */
+  name: string;
+  /** Total shards for this group */
+  totalShards: number;
+  /** Member resource types */
+  members: RegionShardResourceType[];
+  /** Description */
+  description?: string;
+}
+
+/**
+ * Extended region shard configuration with group support.
+ */
+export interface RegionShardConfigV2 extends RegionShardConfig {
+  /** Configuration version (2 for group support) */
+  version?: number;
+  /** Colocation group configurations */
+  groups?: Record<string, ColocationGroup>;
+}
 
 /**
  * Region range configuration.
@@ -593,14 +667,19 @@ export async function getRegionShardConfig(
 
   let config: RegionShardConfig | null = null;
 
-  // Try KV
+  // Priority 1: Try KV (dynamic configuration)
   const kv = env.AUTHRIM_CONFIG;
   if (kv) {
     const kvKey = buildRegionShardConfigKvKey(tenantId);
     config = await kv.get<RegionShardConfig>(kvKey, { type: 'json' });
   }
 
-  // Default configuration if not found
+  // Priority 2: Try environment variables
+  if (!config) {
+    config = buildConfigFromEnv(env, now);
+  }
+
+  // Priority 3: Default configuration (safe defaults)
   if (!config) {
     const defaultRegions = calculateRegionRanges(DEFAULT_TOTAL_SHARDS, DEFAULT_REGION_DISTRIBUTION);
     config = {
@@ -620,6 +699,82 @@ export async function getRegionShardConfig(
   });
 
   return config;
+}
+
+/**
+ * Build configuration from environment variables.
+ * Returns null if no environment variables are set.
+ *
+ * @param env - Environment with variables
+ * @param now - Current timestamp
+ * @returns Configuration (V2 with groups) or null
+ */
+function buildConfigFromEnv(env: Env, now: number): RegionShardConfigV2 | null {
+  // Check if any region shard environment variables are set
+  const hasEnvConfig =
+    env.REGION_SHARD_TOTAL_SHARDS ||
+    env.REGION_SHARD_GENERATION ||
+    env.REGION_SHARD_APAC_PERCENT ||
+    env.REGION_SHARD_ENAM_PERCENT ||
+    env.REGION_SHARD_WEUR_PERCENT ||
+    env.REGION_SHARD_GROUPS_JSON;
+
+  if (!hasEnvConfig) {
+    return null;
+  }
+
+  // Parse environment variables with safe defaults
+  const totalShards = env.REGION_SHARD_TOTAL_SHARDS
+    ? parseInt(env.REGION_SHARD_TOTAL_SHARDS, 10)
+    : DEFAULT_TOTAL_SHARDS;
+
+  const generation = env.REGION_SHARD_GENERATION ? parseInt(env.REGION_SHARD_GENERATION, 10) : 1;
+
+  // Parse region distribution
+  const apacPercent = env.REGION_SHARD_APAC_PERCENT
+    ? parseInt(env.REGION_SHARD_APAC_PERCENT, 10)
+    : DEFAULT_REGION_DISTRIBUTION.apac;
+  const enamPercent = env.REGION_SHARD_ENAM_PERCENT
+    ? parseInt(env.REGION_SHARD_ENAM_PERCENT, 10)
+    : DEFAULT_REGION_DISTRIBUTION.enam;
+  const weurPercent = env.REGION_SHARD_WEUR_PERCENT
+    ? parseInt(env.REGION_SHARD_WEUR_PERCENT, 10)
+    : DEFAULT_REGION_DISTRIBUTION.weur;
+
+  const distribution: Record<string, number> = {
+    apac: apacPercent,
+    enam: enamPercent,
+    weur: weurPercent,
+  };
+
+  // Validate percentages sum to 100
+  const sum = apacPercent + enamPercent + weurPercent;
+  if (sum !== 100) {
+    console.warn(`Region distribution percentages sum to ${sum}, not 100. Using defaults.`);
+    return null;
+  }
+
+  // Parse colocation groups if provided
+  let groups: Record<string, ColocationGroup> | undefined;
+  if (env.REGION_SHARD_GROUPS_JSON) {
+    try {
+      groups = JSON.parse(env.REGION_SHARD_GROUPS_JSON);
+    } catch (e) {
+      console.warn('Failed to parse REGION_SHARD_GROUPS_JSON, using defaults:', e);
+    }
+  }
+
+  const regions = calculateRegionRanges(totalShards, distribution);
+
+  return {
+    currentGeneration: generation,
+    currentTotalShards: totalShards,
+    currentRegions: regions,
+    previousGenerations: [],
+    maxPreviousGenerations: REGION_MAX_PREVIOUS_GENERATIONS,
+    groups,
+    updatedAt: now,
+  };
 }
 
 /**
@@ -844,4 +999,239 @@ export function calculateRegionDistribution(
   distribution: Record<string, number>
 ): Record<string, RegionRange> {
   return calculateRegionRanges(totalShards, distribution);
+}
+
+// =============================================================================
+// Colocation Group Management
+// =============================================================================
+
+/**
+ * Default colocation group definitions.
+ * These define which DOs must share the same shard count.
+ */
+export const DEFAULT_COLOCATION_GROUPS: Record<string, Omit<ColocationGroup, 'name'>> = {
+  'user-client': {
+    totalShards: 64,
+    members: ['authcode', 'refresh'],
+    description: 'Colocated by userId:clientId - MUST have same shard count',
+  },
+  'random-high-rps': {
+    totalShards: 64,
+    members: ['revocation'],
+    description: 'High RPS endpoints with random UUID keys',
+  },
+  'random-medium-rps': {
+    totalShards: 32,
+    members: ['session', 'challenge'],
+    description: 'Medium RPS endpoints',
+  },
+  'client-based': {
+    totalShards: 32,
+    members: ['par', 'device', 'ciba', 'dpop'],
+    description: 'client_id based sharding (PAR, DeviceCode, CIBA, DPoP)',
+  },
+  vc: {
+    totalShards: 16,
+    members: ['credoffer', 'vprequest'],
+    description: 'Verifiable Credentials',
+  },
+};
+
+/**
+ * Get shard count for a specific resource type.
+ * Uses group configuration if available, otherwise falls back to global totalShards.
+ *
+ * @param config - Region shard configuration
+ * @param resourceType - Resource type
+ * @returns Shard count for this resource type
+ */
+export function getShardCountForType(
+  config: RegionShardConfig | RegionShardConfigV2,
+  resourceType: RegionShardResourceType
+): number {
+  // Check if config has groups (V2)
+  const configV2 = config as RegionShardConfigV2;
+  if (configV2.groups) {
+    for (const group of Object.values(configV2.groups)) {
+      if (group.members.includes(resourceType)) {
+        return group.totalShards;
+      }
+    }
+  }
+
+  // Fall back to default colocation groups
+  for (const group of Object.values(DEFAULT_COLOCATION_GROUPS)) {
+    if (group.members.includes(resourceType)) {
+      return group.totalShards;
+    }
+  }
+
+  // Final fallback to global totalShards
+  return config.currentTotalShards;
+}
+
+/**
+ * Find which colocation group a resource type belongs to.
+ *
+ * @param resourceType - Resource type to find
+ * @param config - Optional config with custom groups
+ * @returns Group name or null if not in any group
+ */
+export function findColocationGroup(
+  resourceType: RegionShardResourceType,
+  config?: RegionShardConfigV2
+): string | null {
+  // Check custom groups first
+  if (config?.groups) {
+    for (const [groupName, group] of Object.entries(config.groups)) {
+      if (group.members.includes(resourceType)) {
+        return groupName;
+      }
+    }
+  }
+
+  // Check default groups
+  for (const [groupName, group] of Object.entries(DEFAULT_COLOCATION_GROUPS)) {
+    if (group.members.includes(resourceType)) {
+      return groupName;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Colocation validation result.
+ */
+export interface ColocationValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Validate colocation group shard counts.
+ *
+ * CRITICAL: This validates that DOs in the same colocation group have
+ * identical shard counts. Mismatch causes intermittent authentication failures.
+ *
+ * @param config - Region shard configuration
+ * @returns Validation result
+ */
+export function validateColocationGroups(
+  config: RegionShardConfig | RegionShardConfigV2
+): ColocationValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const configV2 = config as RegionShardConfigV2;
+
+  // Validate user-client group (CRITICAL)
+  const userClientGroup =
+    configV2.groups?.['user-client'] || DEFAULT_COLOCATION_GROUPS['user-client'];
+
+  if (userClientGroup) {
+    const shardCounts = new Map<number, RegionShardResourceType[]>();
+
+    for (const member of userClientGroup.members) {
+      const shardCount = getShardCountForType(config, member);
+      const existing = shardCounts.get(shardCount) || [];
+      existing.push(member);
+      shardCounts.set(shardCount, existing);
+    }
+
+    if (shardCounts.size > 1) {
+      const details = Array.from(shardCounts.entries())
+        .map(([count, members]) => `${members.join(', ')}: ${count} shards`)
+        .join('; ');
+      errors.push(
+        `CRITICAL: user-client group has mismatched shard counts! ` +
+          `AuthCode and RefreshToken MUST have identical shard counts. ` +
+          `Current: ${details}`
+      );
+    }
+  }
+
+  // Validate other groups (warnings only)
+  const allGroups = { ...DEFAULT_COLOCATION_GROUPS, ...configV2.groups };
+
+  for (const [groupName, group] of Object.entries(allGroups)) {
+    if (groupName === 'user-client') continue; // Already validated as error
+
+    const shardCounts = new Set<number>();
+    for (const member of group.members) {
+      shardCounts.add(getShardCountForType(config, member));
+    }
+
+    if (shardCounts.size > 1) {
+      warnings.push(`Group '${groupName}' has inconsistent shard counts within members`);
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+
+/**
+ * Validate colocation groups with fail-closed behavior for production.
+ *
+ * @param config - Region shard configuration
+ * @param failClosed - If true, throws on validation errors (default: true in production)
+ * @throws Error if failClosed is true and validation fails
+ */
+export function validateColocationGroupsStrict(
+  config: RegionShardConfig | RegionShardConfigV2,
+  failClosed: boolean = true
+): void {
+  const result = validateColocationGroups(config);
+
+  if (!result.valid) {
+    const errorMessage = result.errors.join('\n');
+    console.error('Shard configuration validation failed:', errorMessage);
+
+    if (failClosed) {
+      throw new Error(`Shard configuration invalid: ${errorMessage}`);
+    }
+  }
+
+  // Log warnings
+  for (const warning of result.warnings) {
+    console.warn('Shard configuration warning:', warning);
+  }
+}
+
+/**
+ * Resolve shard for new resource creation with type-specific shard count.
+ *
+ * This is an enhanced version of resolveShardForNewResource that respects
+ * colocation group shard counts.
+ *
+ * @param config - Region shard configuration
+ * @param resourceType - Resource type
+ * @param shardKey - Key for shard calculation (e.g., userId:clientId)
+ * @returns Shard resolution result
+ */
+export function resolveShardForNewResourceTyped(
+  config: RegionShardConfig | RegionShardConfigV2,
+  resourceType: RegionShardResourceType,
+  shardKey: string
+): ShardResolution {
+  // Get type-specific shard count
+  const totalShards = getShardCountForType(config, resourceType);
+
+  // Calculate shard index using FNV-1a hash
+  const shardIndex = fnv1a32(shardKey) % totalShards;
+
+  // For region resolution, we still use the global region distribution
+  // Shard index is remapped to global range for region lookup
+  const globalShardIndex = shardIndex % config.currentTotalShards;
+  const regionKey = resolveRegionForShard(globalShardIndex, config.currentRegions);
+
+  return {
+    generation: config.currentGeneration,
+    regionKey,
+    shardIndex,
+  };
 }

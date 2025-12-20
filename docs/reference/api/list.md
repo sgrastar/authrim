@@ -187,7 +187,7 @@ System configuration that can be changed at runtime without redeployment.
 | PUT    | `/api/admin/settings`                                | Update system settings                                                |
 | GET    | `/api/admin/settings/code-shards`                    | Get authorization code shard configuration                            |
 | PUT    | `/api/admin/settings/code-shards`                    | Update authorization code shard count                                 |
-| GET    | `/api/admin/settings/oauth-config`                   | Get OAuth/OIDC configuration (TOKEN_EXPIRY, USER_CACHE_TTL, etc.)     |
+| GET    | `/api/admin/settings/oauth-config`                   | Get OAuth/OIDC configuration (TOKEN_EXPIRY, CONFIG_CACHE_TTL, etc.)   |
 | PUT    | `/api/admin/settings/oauth-config/:name`             | Update specific OAuth config value                                    |
 | DELETE | `/api/admin/settings/oauth-config/:name`             | Reset specific OAuth config to default                                |
 | DELETE | `/api/admin/settings/oauth-config`                   | Reset all OAuth config overrides to defaults                          |

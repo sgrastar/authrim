@@ -19,12 +19,13 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { JWK } from 'jose';
 import { generateKeySet } from '../utils/keys';
+import { generateECKeySet, type ECAlgorithm, type ECCurve } from '../utils/ec-keys';
 import { timingSafeEqual } from '../utils/crypto';
 import type { Env } from '../types/env';
 import type { KeyStatus } from '../types/admin';
 
 /**
- * Stored key metadata
+ * Stored key metadata (RSA)
  */
 interface StoredKey {
   kid: string;
@@ -35,6 +36,23 @@ interface StoredKey {
   expiresAt?: number; // When the key expires (for overlap keys)
   revokedAt?: number; // When the key was revoked (for revoked keys)
   revokedReason?: string; // Reason for revocation (for revoked keys)
+}
+
+/**
+ * Stored EC key metadata
+ * Used for SD-JWT VC signing (Phase 9)
+ */
+interface StoredECKey {
+  kid: string;
+  algorithm: ECAlgorithm;
+  curve: ECCurve;
+  publicJWK: JWK;
+  privatePEM: string;
+  createdAt: number;
+  status: KeyStatus;
+  expiresAt?: number;
+  revokedAt?: number;
+  revokedReason?: string;
 }
 
 /**
@@ -56,17 +74,34 @@ interface KeyManagerState {
 }
 
 /**
+ * EC Key Manager State (Phase 9)
+ * Separate state for EC keys used in VC signing
+ */
+interface ECKeyManagerState {
+  keys: StoredECKey[];
+  activeKeyIds: Record<ECAlgorithm, string | null>;
+  config: KeyRotationConfig;
+  lastRotation: number | null;
+}
+
+/**
  * KeyManager Durable Object
  *
  * Manages cryptographic keys for JWT signing with automatic rotation support.
+ * Supports both RSA keys (for OIDC tokens) and EC keys (for SD-JWT VC in Phase 9).
  *
  * RPC Support:
  * - Extends DurableObject base class for RPC method exposure
  * - RPC methods have 'Rpc' suffix (e.g., getActiveKeyRpc, rotateKeysRpc)
  * - fetch() handler is maintained for backward compatibility and debugging
+ *
+ * Key Types:
+ * - RSA: RS256 for OIDC ID tokens and access tokens
+ * - EC: ES256/ES384/ES512 for SD-JWT VC (HAIP compliance)
  */
 export class KeyManager extends DurableObject<Env> {
   private keyManagerState: KeyManagerState | null = null;
+  private ecKeyManagerState: ECKeyManagerState | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -84,6 +119,7 @@ export class KeyManager extends DurableObject<Env> {
    * Called by blockConcurrencyWhile() in constructor
    */
   private async initializeStateBlocking(): Promise<void> {
+    // Initialize RSA key state
     const stored = await this.ctx.storage.get<KeyManagerState>('state');
 
     if (stored) {
@@ -103,6 +139,30 @@ export class KeyManager extends DurableObject<Env> {
       };
 
       await this.saveState();
+    }
+
+    // Initialize EC key state (Phase 9)
+    const storedECState = await this.ctx.storage.get<ECKeyManagerState>('ecState');
+
+    if (storedECState) {
+      this.ecKeyManagerState = storedECState;
+    } else {
+      // Initialize with default configuration for EC keys
+      this.ecKeyManagerState = {
+        keys: [],
+        activeKeyIds: {
+          ES256: null,
+          ES384: null,
+          ES512: null,
+        },
+        config: {
+          rotationIntervalDays: 90,
+          retentionPeriodDays: 30,
+        },
+        lastRotation: null,
+      };
+
+      await this.saveECState();
     }
   }
 
@@ -211,6 +271,96 @@ export class KeyManager extends DurableObject<Env> {
   }
 
   // ==========================================
+  // EC Key RPC Methods (Phase 9: SD-JWT VC)
+  // ==========================================
+
+  /**
+   * RPC: Get the active EC signing key for a specific algorithm (without private key)
+   */
+  async getActiveECKeyRpc(algorithm: ECAlgorithm): Promise<Omit<StoredECKey, 'privatePEM'> | null> {
+    const activeKey = await this.getActiveECKey(algorithm);
+    if (!activeKey) return null;
+    return this.sanitizeECKey(activeKey);
+  }
+
+  /**
+   * RPC: Get the active EC signing key with private key (for internal VC signing)
+   */
+  async getActiveECKeyWithPrivateRpc(algorithm: ECAlgorithm): Promise<StoredECKey | null> {
+    return this.getActiveECKey(algorithm);
+  }
+
+  /**
+   * RPC: Get all EC public keys (for JWKS endpoint)
+   */
+  async getAllECPublicKeysRpc(): Promise<JWK[]> {
+    return this.getAllECPublicKeys();
+  }
+
+  /**
+   * RPC: Rotate EC keys for a specific algorithm
+   */
+  async rotateECKeysRpc(algorithm: ECAlgorithm): Promise<Omit<StoredECKey, 'privatePEM'>> {
+    const newKey = await this.rotateECKeys(algorithm);
+    return this.sanitizeECKey(newKey);
+  }
+
+  /**
+   * RPC: Rotate EC keys with private key (for internal use)
+   */
+  async rotateECKeysWithPrivateRpc(algorithm: ECAlgorithm): Promise<StoredECKey> {
+    return this.rotateECKeys(algorithm);
+  }
+
+  /**
+   * RPC: Emergency EC key rotation
+   */
+  async emergencyRotateECKeysRpc(
+    algorithm: ECAlgorithm,
+    reason: string
+  ): Promise<{ oldKid: string; newKid: string }> {
+    return this.emergencyRotateECKeys(algorithm, reason);
+  }
+
+  /**
+   * RPC: Get EC key status for all algorithms
+   */
+  async getECStatusRpc(): Promise<{
+    keys: Array<{
+      kid: string;
+      algorithm: ECAlgorithm;
+      curve: ECCurve;
+      status: KeyStatus;
+      createdAt: number;
+      expiresAt?: number;
+      revokedAt?: number;
+      revokedReason?: string;
+    }>;
+    activeKeyIds: Record<ECAlgorithm, string | null>;
+    lastRotation: number | null;
+  }> {
+    await this.initializeECState();
+    const state = this.getECState();
+
+    const keys = state.keys.map((k) => ({
+      kid: k.kid,
+      algorithm: k.algorithm,
+      curve: k.curve,
+      status: k.status,
+      createdAt: k.createdAt,
+      expiresAt: k.expiresAt,
+      revokedAt: k.revokedAt,
+      revokedReason: k.revokedReason,
+    }));
+
+    return {
+      keys,
+      activeKeyIds: state.activeKeyIds,
+      lastRotation: state.lastRotation,
+    };
+  }
+
+  // ==========================================
   // Internal Methods
   // ==========================================
 
@@ -271,6 +421,59 @@ export class KeyManager extends DurableObject<Env> {
     if (this.keyManagerState) {
       await this.ctx.storage.put('state', this.keyManagerState);
     }
+  }
+
+  /**
+   * Save EC key state to durable storage
+   */
+  private async saveECState(): Promise<void> {
+    if (this.ecKeyManagerState) {
+      await this.ctx.storage.put('ecState', this.ecKeyManagerState);
+    }
+  }
+
+  /**
+   * Ensure EC state is initialized
+   */
+  private async initializeECState(): Promise<void> {
+    if (this.ecKeyManagerState !== null) {
+      return;
+    }
+
+    // Safety fallback (should not happen with blockConcurrencyWhile)
+    console.warn(
+      'KeyManager: initializeECState called but not initialized - this should not happen'
+    );
+    const storedECState = await this.ctx.storage.get<ECKeyManagerState>('ecState');
+
+    if (storedECState) {
+      this.ecKeyManagerState = storedECState;
+    } else {
+      this.ecKeyManagerState = {
+        keys: [],
+        activeKeyIds: {
+          ES256: null,
+          ES384: null,
+          ES512: null,
+        },
+        config: {
+          rotationIntervalDays: 90,
+          retentionPeriodDays: 30,
+        },
+        lastRotation: null,
+      };
+      await this.saveECState();
+    }
+  }
+
+  /**
+   * Get EC state with assertion that it has been initialized
+   */
+  private getECState(): ECKeyManagerState {
+    if (!this.ecKeyManagerState) {
+      throw new Error('EC KeyManager state not initialized');
+    }
+    return this.ecKeyManagerState;
   }
 
   /**
@@ -566,6 +769,263 @@ export class KeyManager extends DurableObject<Env> {
     return `key-${timestamp}-${random}`;
   }
 
+  // ==========================================
+  // EC Key Internal Methods (Phase 9: SD-JWT VC)
+  // ==========================================
+
+  /**
+   * Generate a new EC key and add it to the key set
+   *
+   * @param algorithm - EC algorithm (ES256, ES384, ES512)
+   */
+  async generateNewECKey(algorithm: ECAlgorithm): Promise<StoredECKey> {
+    await this.initializeECState();
+
+    const kid = this.generateECKeyId(algorithm);
+    const keySet = await generateECKeySet(kid, algorithm);
+
+    console.log('KeyManager generateNewECKey - keySet:', {
+      kid,
+      algorithm,
+      curve: keySet.curve,
+      hasPEM: !!keySet.privatePEM,
+      pemLength: keySet.privatePEM?.length,
+    });
+
+    const newKey: StoredECKey = {
+      kid,
+      algorithm,
+      curve: keySet.curve,
+      publicJWK: keySet.publicJWK,
+      privatePEM: keySet.privatePEM,
+      createdAt: Date.now(),
+      status: 'overlap', // New keys start as overlap until set as active
+    };
+
+    const state = this.getECState();
+    state.keys.push(newKey);
+    await this.saveECState();
+
+    return newKey;
+  }
+
+  /**
+   * Set an EC key as the active signing key for its algorithm
+   */
+  async setActiveECKey(kid: string): Promise<void> {
+    await this.initializeECState();
+
+    const state = this.getECState();
+    const key = state.keys.find((k) => k.kid === kid);
+    if (!key) {
+      throw new Error(`EC key with kid ${kid} not found`);
+    }
+
+    const algorithm = key.algorithm;
+
+    // Set previous active key for this algorithm to overlap status with expiry
+    const previousActiveKeyId = state.activeKeyIds[algorithm];
+    if (previousActiveKeyId) {
+      const previousActiveKey = state.keys.find((k) => k.kid === previousActiveKeyId);
+      if (previousActiveKey) {
+        previousActiveKey.status = 'overlap';
+        // Set expiry to 24 hours from now (overlap period)
+        previousActiveKey.expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+      }
+    }
+
+    // Set new key as active
+    key.status = 'active';
+    state.activeKeyIds[algorithm] = kid;
+    await this.saveECState();
+  }
+
+  /**
+   * Get the active EC signing key for a specific algorithm
+   */
+  async getActiveECKey(algorithm: ECAlgorithm): Promise<StoredECKey | null> {
+    await this.initializeECState();
+
+    const state = this.getECState();
+    const activeKeyId = state.activeKeyIds[algorithm];
+    if (!activeKeyId) {
+      return null;
+    }
+
+    return state.keys.find((k) => k.kid === activeKeyId) || null;
+  }
+
+  /**
+   * Get all EC public keys (for JWKS endpoint)
+   * Excludes revoked keys from JWKS
+   */
+  async getAllECPublicKeys(): Promise<JWK[]> {
+    await this.initializeECState();
+
+    const state = this.getECState();
+    // Only return active and overlap keys, exclude revoked keys
+    return state.keys.filter((k) => k.status !== 'revoked').map((k) => k.publicJWK);
+  }
+
+  /**
+   * Rotate EC keys for a specific algorithm (generate new key and set as active)
+   */
+  async rotateECKeys(algorithm: ECAlgorithm): Promise<StoredECKey> {
+    await this.initializeECState();
+
+    // Generate new key
+    const newKey = await this.generateNewECKey(algorithm);
+
+    // Set new key as active
+    await this.setActiveECKey(newKey.kid);
+
+    // Update last rotation timestamp
+    const state = this.getECState();
+    state.lastRotation = Date.now();
+
+    // Clean up expired EC keys
+    await this.cleanupExpiredECKeys();
+
+    await this.saveECState();
+
+    // Return the key from state.keys to ensure it's the current version after cleanup
+    const rotatedKey = state.keys.find((k) => k.kid === newKey.kid);
+    if (!rotatedKey) {
+      throw new Error('Rotated EC key not found in state after rotation');
+    }
+
+    console.log('KeyManager rotateECKeys - returning key:', {
+      kid: rotatedKey.kid,
+      algorithm: rotatedKey.algorithm,
+      hasPEM: !!rotatedKey.privatePEM,
+      pemLength: rotatedKey.privatePEM?.length,
+    });
+
+    // Explicitly reconstruct the object to ensure all properties are serializable
+    const result: StoredECKey = {
+      kid: rotatedKey.kid,
+      algorithm: rotatedKey.algorithm,
+      curve: rotatedKey.curve,
+      publicJWK: rotatedKey.publicJWK,
+      privatePEM: rotatedKey.privatePEM,
+      createdAt: rotatedKey.createdAt,
+      status: rotatedKey.status,
+      expiresAt: rotatedKey.expiresAt,
+      revokedAt: rotatedKey.revokedAt,
+      revokedReason: rotatedKey.revokedReason,
+    };
+
+    return result;
+  }
+
+  /**
+   * Emergency EC key rotation for key compromise scenarios
+   * Immediately revokes the current active EC key and generates a new one
+   *
+   * @param algorithm - EC algorithm (ES256, ES384, ES512)
+   * @param reason - Reason for emergency rotation (for audit purposes)
+   * @returns Object with old and new key IDs
+   */
+  async emergencyRotateECKeys(
+    algorithm: ECAlgorithm,
+    reason: string
+  ): Promise<{ oldKid: string; newKid: string }> {
+    await this.initializeECState();
+
+    const state = this.getECState();
+    const now = Date.now();
+
+    // Find current active key for this algorithm
+    const currentActiveKeyId = state.activeKeyIds[algorithm];
+    if (!currentActiveKeyId) {
+      throw new Error(`No active EC key found for algorithm ${algorithm}`);
+    }
+
+    const currentActiveKey = state.keys.find((k) => k.kid === currentActiveKeyId);
+    if (!currentActiveKey) {
+      throw new Error(`Active EC key with kid ${currentActiveKeyId} not found`);
+    }
+
+    // Generate new key
+    const newKey = await this.generateNewECKey(algorithm);
+    newKey.status = 'active';
+
+    // Immediately revoke old key (NO overlap period for security)
+    currentActiveKey.status = 'revoked';
+    currentActiveKey.revokedAt = now;
+    currentActiveKey.revokedReason = reason;
+
+    // Update state
+    state.activeKeyIds[algorithm] = newKey.kid;
+    state.lastRotation = now;
+    await this.saveECState();
+
+    console.warn('[KeyManager] Emergency EC rotation executed', {
+      algorithm,
+      oldKid: currentActiveKey.kid,
+      newKid: newKey.kid,
+      reason,
+      timestamp: new Date(now).toISOString(),
+    });
+
+    return {
+      oldKid: currentActiveKey.kid,
+      newKid: newKey.kid,
+    };
+  }
+
+  /**
+   * Clean up expired EC keys based on retention period
+   */
+  private async cleanupExpiredECKeys(): Promise<void> {
+    const state = this.getECState();
+    const retentionMillis = state.config.retentionPeriodDays * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    state.keys = state.keys.filter((k) => {
+      // Always keep active keys
+      if (k.status === 'active') {
+        return true;
+      }
+
+      // Remove overlap keys that have expired
+      if (k.status === 'overlap' && k.expiresAt && k.expiresAt < now) {
+        return false;
+      }
+
+      // Remove revoked keys after retention period (for audit purposes)
+      if (k.status === 'revoked' && k.revokedAt) {
+        const revokedAge = now - k.revokedAt;
+        return revokedAge < retentionMillis;
+      }
+
+      // Keep everything else
+      return true;
+    });
+  }
+
+  /**
+   * Generate a unique EC key ID
+   */
+  private generateECKeyId(algorithm: ECAlgorithm): string {
+    const timestamp = Date.now();
+    const random = crypto.randomUUID();
+    return `ec-${algorithm.toLowerCase()}-${timestamp}-${random}`;
+  }
+
+  /**
+   * Sanitize EC key data for safe HTTP response (remove private key material)
+   */
+  private sanitizeECKey(key: StoredECKey): Omit<StoredECKey, 'privatePEM'> {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { privatePEM: _privatePEM, ...safeKey } = key;
+    return safeKey;
+  }
+
+  // ==========================================
+  // Authentication & HTTP Handler
+  // ==========================================
+
   /**
    * Authenticate requests using Bearer token
    *
@@ -805,6 +1265,226 @@ export class KeyManager extends DurableObject<Env> {
           JSON.stringify({
             keys,
             activeKeyId: state.activeKeyId,
+            lastRotation: state.lastRotation,
+          }),
+          {
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      // ==========================================
+      // EC Key HTTP Endpoints (Phase 9: SD-JWT VC)
+      // ==========================================
+
+      // GET /ec/active/:algorithm - Get active EC signing key
+      if (path.startsWith('/ec/active/') && request.method === 'GET') {
+        const algorithm = path.split('/')[3] as ECAlgorithm;
+        if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
+          return new Response(
+            JSON.stringify({
+              error: 'Bad Request',
+              message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const activeKey = await this.getActiveECKey(algorithm);
+
+        if (!activeKey) {
+          return new Response(
+            JSON.stringify({ error: `No active EC key found for ${algorithm}` }),
+            {
+              status: 404,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        // Sanitize key data (remove private key material)
+        const safeKey = this.sanitizeECKey(activeKey);
+
+        return new Response(JSON.stringify(safeKey), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // GET /internal/ec/active-with-private/:algorithm - Get active EC key with private key
+      if (path.startsWith('/internal/ec/active-with-private/') && request.method === 'GET') {
+        const algorithm = path.split('/')[4] as ECAlgorithm;
+        if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
+          return new Response(
+            JSON.stringify({
+              error: 'Bad Request',
+              message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const activeKey = await this.getActiveECKey(algorithm);
+
+        if (!activeKey) {
+          return new Response(
+            JSON.stringify({ error: `No active EC key found for ${algorithm}` }),
+            {
+              status: 404,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        // Return full key data including privatePEM for internal VC signing
+        const result: StoredECKey = {
+          kid: activeKey.kid,
+          algorithm: activeKey.algorithm,
+          curve: activeKey.curve,
+          publicJWK: activeKey.publicJWK,
+          privatePEM: activeKey.privatePEM,
+          createdAt: activeKey.createdAt,
+          status: activeKey.status,
+          expiresAt: activeKey.expiresAt,
+          revokedAt: activeKey.revokedAt,
+          revokedReason: activeKey.revokedReason,
+        };
+
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // GET /ec/jwks - Get all EC public keys (JWKS format)
+      if (path === '/ec/jwks' && request.method === 'GET') {
+        const keys = await this.getAllECPublicKeys();
+
+        return new Response(JSON.stringify({ keys }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // POST /ec/rotate/:algorithm - Rotate EC keys for a specific algorithm
+      if (path.startsWith('/ec/rotate/') && request.method === 'POST') {
+        const algorithm = path.split('/')[3] as ECAlgorithm;
+        if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
+          return new Response(
+            JSON.stringify({
+              error: 'Bad Request',
+              message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const newKey = await this.rotateECKeys(algorithm);
+
+        // Sanitize key data (remove private key material)
+        const safeKey = this.sanitizeECKey(newKey);
+
+        return new Response(JSON.stringify({ success: true, key: safeKey }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // POST /internal/ec/rotate/:algorithm - Rotate EC keys and return with private key
+      if (path.startsWith('/internal/ec/rotate/') && request.method === 'POST') {
+        const algorithm = path.split('/')[4] as ECAlgorithm;
+        if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
+          return new Response(
+            JSON.stringify({
+              error: 'Bad Request',
+              message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const newKey = await this.rotateECKeys(algorithm);
+
+        console.log('KeyManager /internal/ec/rotate - newKey:', {
+          kid: newKey.kid,
+          algorithm: newKey.algorithm,
+          hasPEM: !!newKey.privatePEM,
+          pemLength: newKey.privatePEM?.length,
+        });
+
+        // Return full key data including privatePEM for internal VC signing
+        return new Response(JSON.stringify({ success: true, key: newKey }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // POST /ec/emergency-rotate/:algorithm - Emergency EC key rotation
+      if (path.startsWith('/ec/emergency-rotate/') && request.method === 'POST') {
+        const algorithm = path.split('/')[3] as ECAlgorithm;
+        if (!['ES256', 'ES384', 'ES512'].includes(algorithm)) {
+          return new Response(
+            JSON.stringify({
+              error: 'Bad Request',
+              message: 'Invalid algorithm. Must be ES256, ES384, or ES512',
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const body = (await request.json()) as { reason: string };
+
+        if (!body.reason || body.reason.length < 10) {
+          return new Response(
+            JSON.stringify({
+              error: 'Bad Request',
+              message: 'Reason is required (minimum 10 characters)',
+            }),
+            {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const result = await this.emergencyRotateECKeys(algorithm, body.reason);
+
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // GET /ec/status - Get status of all EC keys (for admin dashboard)
+      if (path === '/ec/status' && request.method === 'GET') {
+        await this.initializeECState();
+        const state = this.getECState();
+
+        // Sanitize keys (remove private key material)
+        const keys = state.keys.map((k) => ({
+          kid: k.kid,
+          algorithm: k.algorithm,
+          curve: k.curve,
+          status: k.status,
+          createdAt: k.createdAt,
+          expiresAt: k.expiresAt,
+          revokedAt: k.revokedAt,
+          revokedReason: k.revokedReason,
+        }));
+
+        return new Response(
+          JSON.stringify({
+            keys,
+            activeKeyIds: state.activeKeyIds,
             lastRotation: state.lastRotation,
           }),
           {

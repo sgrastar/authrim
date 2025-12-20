@@ -105,5 +105,35 @@ export {
   type CacheStats,
 } from './cache';
 
+// VC repositories (Phase 9)
+export {
+  TrustedIssuerRepository,
+  type TrustedIssuerRecord,
+  type CreateTrustedIssuerInput,
+  type UpdateTrustedIssuerInput,
+  type TrustedIssuerFilterOptions,
+  type TrustLevel,
+  type IssuerStatus,
+  UserVerifiedAttributeRepository,
+  type UserVerifiedAttribute,
+  type CreateUserVerifiedAttributeInput,
+  type UserVerifiedAttributeFilterOptions,
+  type AttributeSourceType,
+  AttributeVerificationRepository,
+  type AttributeVerification,
+  type CreateAttributeVerificationInput,
+  type AttributeVerificationFilterOptions,
+  type VerificationResultStatus,
+  IssuedCredentialRepository,
+  type IssuedCredentialRecord,
+  type CreateIssuedCredentialInput,
+  type UpdateIssuedCredentialInput,
+  type IssuedCredentialFilterOptions,
+  type CredentialStatus,
+  DIDDocumentCacheRepository,
+  type DIDDocumentCache,
+  D1StatusListRepository,
+} from './vc';
+
 // Re-export database types for convenience
 export type { DatabaseAdapter, ExecuteResult, PIIStatus, PIIClass } from '../db/adapter';

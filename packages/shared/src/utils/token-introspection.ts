@@ -431,12 +431,13 @@ export async function introspectToken(
       (tokenClaims.azp as string | undefined) || (tokenClaims.client_id as string | undefined);
 
     // Validate DPoP proof with htm, htu, and ath parameters (issue #12: DPoP JTI replay protection via DO)
+    // Pass full Env for region-aware sharding support
     const dpopValidation = await validateDPoPProof(
       dpopProof,
       request.method,
       request.url,
       accessToken, // Include access token for ath validation
-      request.env.DPOP_JTI_STORE, // DPoPJTIStore DO for atomic JTI replay protection
+      request.env, // Pass full Env for region-aware DPoP JTI sharding
       client_id // Bind JTI to client_id for additional security
     );
 

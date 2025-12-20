@@ -92,6 +92,8 @@ import {
   getRegionShards,
   updateRegionShards,
   deleteRegionShards,
+  migrateRegionShards,
+  validateRegionShardsConfig,
 } from './routes/settings/region-shards';
 import {
   getPartitionSettings,
@@ -207,6 +209,14 @@ import {
   deleteCheckApiKey,
   rotateCheckApiKey,
 } from './routes/settings/check-api-keys';
+import {
+  revokeCredentialHandler,
+  suspendCredentialHandler,
+  activateCredentialHandler,
+  listStatusListsHandler,
+  getStatusListHandler,
+  getStatusListStatsHandler,
+} from './routes/vc/credential-status';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -412,6 +422,8 @@ app.delete('/api/admin/settings/revocation-shards', resetRevocationShards);
 app.get('/api/admin/settings/region-shards', getRegionShards);
 app.put('/api/admin/settings/region-shards', updateRegionShards);
 app.delete('/api/admin/settings/region-shards', deleteRegionShards);
+app.post('/api/admin/settings/region-shards/migrate', migrateRegionShards);
+app.get('/api/admin/settings/region-shards/validate', validateRegionShardsConfig);
 
 // Admin PII Partition endpoints
 app.get('/api/admin/settings/pii-partitions', getPartitionSettings);
@@ -587,6 +599,20 @@ app.get('/api/admin/check-api-keys', listCheckApiKeys);
 app.get('/api/admin/check-api-keys/:id', getCheckApiKey);
 app.delete('/api/admin/check-api-keys/:id', deleteCheckApiKey);
 app.post('/api/admin/check-api-keys/:id/rotate', rotateCheckApiKey);
+
+// =============================================================================
+// VC Credential Status Management (Phase 9)
+// =============================================================================
+
+// Credential status management endpoints
+app.post('/api/admin/vc/credentials/:id/revoke', revokeCredentialHandler);
+app.post('/api/admin/vc/credentials/:id/suspend', suspendCredentialHandler);
+app.post('/api/admin/vc/credentials/:id/activate', activateCredentialHandler);
+
+// Status list management endpoints
+app.get('/api/admin/vc/status-lists', listStatusListsHandler);
+app.get('/api/admin/vc/status-lists/stats', getStatusListStatsHandler); // Must be before :id
+app.get('/api/admin/vc/status-lists/:id', getStatusListHandler);
 
 // SCIM 2.0 endpoints - RFC 7643, 7644
 app.route('/scim/v2', scimApp);

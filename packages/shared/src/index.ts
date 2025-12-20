@@ -11,6 +11,11 @@ export * from './types/jit-config';
 export * from './types/token-claim-rules';
 export * from './types/check-api';
 
+// Phase 9: VC/DID Types
+export * from './types/did';
+export * from './types/openid4vp';
+export * from './types/openid4vci';
+
 // Utils
 export * from './utils/audit-log';
 export * from './utils/client-authentication';
@@ -30,6 +35,7 @@ export * from './utils/logger';
 export * from './utils/origin-validator';
 export * from './utils/pairwise';
 export * from './utils/sd-jwt';
+export * from './utils/ec-keys';
 export * from './utils/session-state';
 export * from './utils/session-helper';
 export * from './utils/authcode-helper';
@@ -46,10 +52,20 @@ export * from './utils/oauth-config';
 export * from './utils/challenge-sharding';
 export * from './utils/token-revocation-sharding';
 export * from './utils/region-sharding';
+export * from './utils/dpop-jti-sharding';
+export * from './utils/par-sharding';
+export * from './utils/device-code-sharding';
+export * from './utils/ciba-sharding';
 export * from './utils/do-retry';
 export * from './utils/url-security';
 export * from './utils/email-domain-hash';
 export * from './utils/claim-normalizer';
+
+// Phase 9: VC (Verifiable Credentials)
+export * from './vc/haip-policy';
+export * from './vc/sd-jwt-vc';
+export * from './vc/status-list';
+export * from './vc/status-list-manager';
 
 // Services
 export * from './services/rule-evaluator';
@@ -79,9 +95,21 @@ export * from './repositories';
 // Context (PII/Non-PII separation)
 export * from './context';
 
+// Actor abstraction (platform-agnostic DO interfaces)
+export type { ActorContext } from './actor';
+export type { ActorStorage, StoragePutOptions, StorageListOptions } from './actor';
+export { CloudflareActorContext } from './actor';
+
 // Durable Objects
 export { KeyManager } from './durable-objects/KeyManager';
 export { ChallengeStore } from './durable-objects/ChallengeStore';
+export type {
+  ChallengeType,
+  Challenge,
+  StoreChallengeRequest,
+  ConsumeChallengeRequest,
+  ConsumeChallengeResponse,
+} from './durable-objects/ChallengeStore';
 export { DeviceCodeStore } from './durable-objects/DeviceCodeStore';
 export { CIBARequestStore } from './durable-objects/CIBARequestStore';
 export { VersionManager } from './durable-objects/VersionManager';

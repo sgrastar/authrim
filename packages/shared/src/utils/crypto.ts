@@ -75,6 +75,17 @@ export function base64UrlToArrayBuffer(base64url: string): Uint8Array {
 }
 
 /**
+ * Decode a base64url string to a UTF-8 string
+ *
+ * @param base64url - Base64url-encoded string
+ * @returns Decoded UTF-8 string
+ */
+export function decodeBase64Url(base64url: string): string {
+  const bytes = base64UrlToArrayBuffer(base64url);
+  return new TextDecoder().decode(bytes);
+}
+
+/**
  * Timing-safe string comparison
  *
  * Compares two strings in constant time to prevent timing attacks.

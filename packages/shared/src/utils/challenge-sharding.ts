@@ -273,6 +273,41 @@ export function resetChallengeShardCountCache(): void {
   cachedChallengeShardAt = 0;
 }
 
+/**
+ * Calculate shard index from a DID.
+ *
+ * @param did - Decentralized Identifier
+ * @param shardCount - Number of shards
+ * @returns Shard index (0 to shardCount - 1)
+ */
+export function getChallengeShardIndexByDID(did: string, shardCount: number): number {
+  return fnv1a32(did) % shardCount;
+}
+
+/**
+ * Get ChallengeStore Durable Object stub by DID.
+ *
+ * Routes to the appropriate shard based on the DID hash.
+ * Use this for DID-based authentication flows.
+ *
+ * @param env - Environment object with DO bindings
+ * @param did - Decentralized Identifier for sharding
+ * @returns DurableObjectStub<ChallengeStore> for the challenge shard
+ *
+ * @example
+ * const challengeStore = getChallengeStoreByDID(env, 'did:web:example.com');
+ * await challengeStore.storeChallengeRpc({ ... });
+ */
+export function getChallengeStoreByDID(env: Env, did: string): DurableObjectStub<ChallengeStore> {
+  // Use a synchronous version for DID - simpler since it's just for sharding
+  const shardCount = cachedChallengeShardCount || DEFAULT_CHALLENGE_SHARD_COUNT;
+  const shardIndex = getChallengeShardIndexByDID(did, shardCount);
+  const instanceName = buildChallengeShardInstanceName(shardIndex);
+
+  const id = env.CHALLENGE_STORE.idFromName(instanceName);
+  return env.CHALLENGE_STORE.get(id);
+}
+
 // =============================================================================
 // Region-Aware Functions (New)
 // =============================================================================
