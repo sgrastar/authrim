@@ -7,6 +7,7 @@
 import { jwtVerify, importJWK, type JWK } from 'jose';
 import type { ClientMetadata } from '../types/oidc';
 import { isInternalUrl } from './url-security';
+import { ALLOWED_ASYMMETRIC_ALGS } from '../constants';
 
 /**
  * Client Assertion Claims (RFC 7523 Section 3)
@@ -260,11 +261,12 @@ export async function validateClientAssertion(
     }
 
     // Step 8: Verify JWT signature
+    // SECURITY: Use algorithm whitelist to prevent algorithm confusion attacks
     const cryptoKey = await importJWK(publicKey, publicKey.alg || 'RS256');
     await jwtVerify(assertion, cryptoKey, {
       issuer: client.client_id,
       audience: tokenEndpoint,
-      algorithms: ['RS256', 'ES256', 'RS384', 'ES384', 'RS512', 'ES512'],
+      algorithms: [...ALLOWED_ASYMMETRIC_ALGS],
     });
 
     // All validations passed

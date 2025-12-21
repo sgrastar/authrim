@@ -11,6 +11,8 @@ import {
   generateCIBAUserCode,
   CIBA_CONSTANTS,
   validateCIBARequest,
+  validateCIBAIdTokenHint,
+  validateCIBALoginHintToken,
   determineDeliveryMode,
   calculatePollingInterval,
   parseLoginHint,
@@ -140,20 +142,59 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // TODO: Resolve user identity from login hints
-    // For now, we'll store the hint and resolve it during user approval
-    // In production, you would:
-    // 1. Parse login_hint to identify user (email, phone, sub, etc.)
-    // 2. Optionally verify id_token_hint signature and extract sub
-    // 3. Decode login_hint_token JWT and extract user info
-    // 4. Send notification to user via push notification, SMS, or other channel
-
-    // Parse login_hint if provided
+    // Resolve and validate user identity from login hints
+    // Priority: id_token_hint > login_hint_token > login_hint
+    let resolvedSubjectId: string | undefined;
     let resolvedLoginHint = login_hint;
-    if (login_hint) {
+
+    // Validate id_token_hint if provided (JWT signed by this server)
+    if (id_token_hint) {
+      const idTokenValidation = validateCIBAIdTokenHint(id_token_hint, {
+        issuerUrl: c.env.ISSUER_URL,
+        // TODO: Add JWKS for signature verification
+      });
+
+      if (!idTokenValidation.valid) {
+        return c.json(
+          {
+            error: idTokenValidation.error,
+            error_description: idTokenValidation.error_description,
+          },
+          400
+        );
+      }
+
+      resolvedSubjectId = idTokenValidation.subjectId;
+      console.log('Validated id_token_hint, subject:', resolvedSubjectId);
+    }
+
+    // Validate login_hint_token if provided (JWT from third party)
+    if (login_hint_token && !resolvedSubjectId) {
+      const loginHintTokenValidation = validateCIBALoginHintToken(login_hint_token, {
+        audience: c.env.ISSUER_URL,
+        // TODO: Add JWKS for signature verification (third-party issuer)
+      });
+
+      if (!loginHintTokenValidation.valid) {
+        return c.json(
+          {
+            error: loginHintTokenValidation.error,
+            error_description: loginHintTokenValidation.error_description,
+          },
+          400
+        );
+      }
+
+      resolvedSubjectId = loginHintTokenValidation.subjectId;
+      console.log('Validated login_hint_token, subject:', resolvedSubjectId);
+    }
+
+    // Parse login_hint if provided (fallback)
+    if (login_hint && !resolvedSubjectId) {
       const parsed = parseLoginHint(login_hint);
       console.log('Parsed login_hint:', parsed);
       // In production, use this to look up user in database
+      // For now, we store the hint for resolution during approval
     }
 
     // Generate auth_req_id and optional user_code
@@ -187,6 +228,8 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       poll_count: 0,
       interval,
       token_issued: false,
+      // Store resolved subject ID from JWT hint validation
+      resolved_subject_id: resolvedSubjectId,
     };
 
     // Store in CIBARequestStore Durable Object

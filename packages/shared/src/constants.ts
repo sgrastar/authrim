@@ -189,6 +189,31 @@ export const SIGNING_ALGS = {
 } as const;
 
 /**
+ * Allowed asymmetric signing algorithms (no symmetric HS* algorithms)
+ * Used for client assertions, DPoP proofs, and other public key cryptography
+ *
+ * SECURITY: Symmetric algorithms (HS256, HS384, HS512) are excluded to prevent
+ * algorithm confusion attacks where an attacker uses a public key as a symmetric key.
+ */
+export const ALLOWED_ASYMMETRIC_ALGS = [
+  'RS256',
+  'RS384',
+  'RS512',
+  'ES256',
+  'ES384',
+  'ES512',
+  'PS256',
+  'PS384',
+  'PS512',
+] as const;
+
+/**
+ * Allowed DPoP signing algorithms per discovery.ts
+ * A subset of asymmetric algorithms supported for DPoP proofs
+ */
+export const ALLOWED_DPOP_ALGS = ['RS256', 'ES256'] as const;
+
+/**
  * HTTP Status Codes (commonly used in OIDC)
  */
 export const HTTP_STATUS = {

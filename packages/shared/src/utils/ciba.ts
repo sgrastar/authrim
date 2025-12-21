@@ -5,6 +5,75 @@
  */
 
 import type { CIBARequestMetadata } from '../types/oidc';
+import type { JWK } from 'jose';
+
+// =============================================================================
+// JWT Hint Validation Types
+// =============================================================================
+
+/**
+ * Allowed asymmetric JWT algorithms for id_token_hint and login_hint_token
+ * Symmetric algorithms (HS256, etc.) are not allowed per security best practices
+ */
+const ALLOWED_JWT_ALGORITHMS = [
+  'RS256',
+  'RS384',
+  'RS512',
+  'ES256',
+  'ES384',
+  'ES512',
+  'PS256',
+  'PS384',
+  'PS512',
+] as const;
+
+/**
+ * JWT Header structure
+ */
+interface JWTHeader {
+  alg: string;
+  typ?: string;
+  kid?: string;
+}
+
+/**
+ * JWT Payload structure for CIBA hints
+ */
+interface CIBAJWTPayload {
+  iss?: string;
+  sub?: string;
+  aud?: string | string[];
+  exp?: number;
+  iat?: number;
+  nbf?: number;
+  jti?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Result of JWT hint validation
+ */
+export interface JWTHintValidationResult {
+  valid: boolean;
+  error?: string;
+  error_description?: string;
+  payload?: CIBAJWTPayload;
+  subjectId?: string;
+}
+
+/**
+ * Options for validating JWT hints
+ */
+export interface ValidateJWTHintOptions {
+  /** Expected issuer (required for id_token_hint, this server's URL) */
+  issuerUrl?: string;
+  /** Expected audience (required for login_hint_token) */
+  audience?: string;
+  /** Clock skew tolerance in seconds (default: 60) */
+  clockSkewSeconds?: number;
+  /** JWKS for signature verification (optional, if not provided, signature is not verified) */
+  jwks?: { keys: JWK[] };
+}
 
 /**
  * Generate an authentication request ID (auth_req_id)
@@ -230,6 +299,237 @@ export const CIBA_CONSTANTS = {
   // Default auth_req_id TTL in cache (should match expires_in)
   DEFAULT_AUTH_REQ_TTL: 300, // 5 minutes
 } as const;
+
+// =============================================================================
+// JWT Hint Validation Functions
+// =============================================================================
+
+/**
+ * Parse JWT without signature verification (internal use)
+ *
+ * @param jwt - JWT string
+ * @returns Parsed header and payload, or null if invalid format
+ */
+function parseJWTWithoutVerification(jwt: string): {
+  header: JWTHeader;
+  payload: CIBAJWTPayload;
+} | null {
+  try {
+    const parts = jwt.split('.');
+    if (parts.length !== 3) {
+      return null;
+    }
+
+    // Decode header (base64url -> JSON)
+    const headerJson = atob(parts[0].replace(/-/g, '+').replace(/_/g, '/'));
+    const header = JSON.parse(headerJson) as JWTHeader;
+
+    // Decode payload (base64url -> JSON)
+    const payloadJson = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
+    const payload = JSON.parse(payloadJson) as CIBAJWTPayload;
+
+    return { header, payload };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Validate id_token_hint JWT for CIBA flow
+ *
+ * Per CIBA spec, id_token_hint must be a valid ID token previously issued
+ * by this authorization server. It's used to identify the end-user.
+ *
+ * Security validations:
+ * - Algorithm must be asymmetric (RS256, ES256, etc.) - not 'none' or symmetric
+ * - Issuer must match this authorization server
+ * - Token must not be expired (with clock skew tolerance)
+ * - Token must not be used before nbf (if present)
+ * - Sub claim must be present
+ *
+ * @param idTokenHint - The id_token_hint JWT string
+ * @param options - Validation options
+ * @returns Validation result with extracted subject ID
+ */
+export function validateCIBAIdTokenHint(
+  idTokenHint: string,
+  options: ValidateJWTHintOptions = {}
+): JWTHintValidationResult {
+  const clockSkew = options.clockSkewSeconds ?? 60;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  // Parse JWT
+  const parsed = parseJWTWithoutVerification(idTokenHint);
+  if (!parsed) {
+    return {
+      valid: false,
+      error: 'invalid_request',
+      error_description: 'Invalid id_token_hint format: malformed JWT',
+    };
+  }
+
+  const { header, payload } = parsed;
+
+  // Validate algorithm (must be asymmetric)
+  if (!ALLOWED_JWT_ALGORITHMS.includes(header.alg as (typeof ALLOWED_JWT_ALGORITHMS)[number])) {
+    return {
+      valid: false,
+      error: 'invalid_request',
+      error_description: `Invalid id_token_hint: algorithm '${header.alg}' is not allowed`,
+    };
+  }
+
+  // Validate issuer (must match our authorization server)
+  if (options.issuerUrl && payload.iss !== options.issuerUrl) {
+    return {
+      valid: false,
+      error: 'invalid_request',
+      error_description: 'Invalid id_token_hint: issuer does not match authorization server',
+    };
+  }
+
+  // Validate expiration
+  if (payload.exp !== undefined && nowSeconds > payload.exp + clockSkew) {
+    return {
+      valid: false,
+      error: 'expired_token',
+      error_description: 'Invalid id_token_hint: token has expired',
+    };
+  }
+
+  // Validate not-before
+  if (payload.nbf !== undefined && nowSeconds < payload.nbf - clockSkew) {
+    return {
+      valid: false,
+      error: 'invalid_request',
+      error_description: 'Invalid id_token_hint: token is not yet valid',
+    };
+  }
+
+  // Validate sub claim (required to identify user)
+  if (!payload.sub) {
+    return {
+      valid: false,
+      error: 'invalid_request',
+      error_description: 'Invalid id_token_hint: missing sub claim',
+    };
+  }
+
+  // TODO: Implement signature verification when JWKS is provided
+  // For now, log warning if JWKS not configured
+  if (!options.jwks) {
+    console.warn(
+      '[CIBA] id_token_hint signature verification skipped - JWKS not configured. ' +
+        'Configure JWKS for production security.'
+    );
+  }
+
+  return {
+    valid: true,
+    payload,
+    subjectId: payload.sub,
+  };
+}
+
+/**
+ * Validate login_hint_token JWT for CIBA flow
+ *
+ * Per CIBA spec, login_hint_token is a JWT that contains information about
+ * the end-user. It may be issued by a third party that can identify users.
+ *
+ * Security validations:
+ * - Algorithm must be asymmetric (RS256, ES256, etc.)
+ * - Audience must match this authorization server
+ * - Token must not be expired
+ * - Token must not be used before nbf (if present)
+ * - Sub or subject claim must be present
+ *
+ * @param loginHintToken - The login_hint_token JWT string
+ * @param options - Validation options
+ * @returns Validation result with extracted subject ID
+ */
+export function validateCIBALoginHintToken(
+  loginHintToken: string,
+  options: ValidateJWTHintOptions = {}
+): JWTHintValidationResult {
+  const clockSkew = options.clockSkewSeconds ?? 60;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+
+  // Parse JWT
+  const parsed = parseJWTWithoutVerification(loginHintToken);
+  if (!parsed) {
+    return {
+      valid: false,
+      error: 'invalid_request',
+      error_description: 'Invalid login_hint_token format: malformed JWT',
+    };
+  }
+
+  const { header, payload } = parsed;
+
+  // Validate algorithm (must be asymmetric)
+  if (!ALLOWED_JWT_ALGORITHMS.includes(header.alg as (typeof ALLOWED_JWT_ALGORITHMS)[number])) {
+    return {
+      valid: false,
+      error: 'invalid_request',
+      error_description: `Invalid login_hint_token: algorithm '${header.alg}' is not allowed`,
+    };
+  }
+
+  // Validate audience (must include our authorization server)
+  if (options.audience) {
+    const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+    if (!audiences.includes(options.audience)) {
+      return {
+        valid: false,
+        error: 'invalid_request',
+        error_description: 'Invalid login_hint_token: audience does not match authorization server',
+      };
+    }
+  }
+
+  // Validate expiration
+  if (payload.exp !== undefined && nowSeconds > payload.exp + clockSkew) {
+    return {
+      valid: false,
+      error: 'expired_token',
+      error_description: 'Invalid login_hint_token: token has expired',
+    };
+  }
+
+  // Validate not-before
+  if (payload.nbf !== undefined && nowSeconds < payload.nbf - clockSkew) {
+    return {
+      valid: false,
+      error: 'invalid_request',
+      error_description: 'Invalid login_hint_token: token is not yet valid',
+    };
+  }
+
+  // Validate sub claim (required to identify user)
+  if (!payload.sub) {
+    return {
+      valid: false,
+      error: 'invalid_request',
+      error_description: 'Invalid login_hint_token: missing sub claim',
+    };
+  }
+
+  // TODO: Implement signature verification when JWKS is provided
+  // For login_hint_token, the issuer could be a third party
+  if (!options.jwks) {
+    console.warn(
+      '[CIBA] login_hint_token signature verification skipped - JWKS not configured. ' +
+        'Configure JWKS for production security.'
+    );
+  }
+
+  return {
+    valid: true,
+    payload,
+    subjectId: payload.sub,
+  };
+}
 
 /**
  * Validate CIBA authentication request parameters

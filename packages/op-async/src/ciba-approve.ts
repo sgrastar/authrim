@@ -7,6 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env, CIBARequestMetadata } from '@authrim/shared';
+import { isMockAuthEnabled } from '@authrim/shared';
 import { sendPingNotification } from '@authrim/shared/notifications';
 
 /**
@@ -103,8 +104,32 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // TODO: In production, get user_id and sub from session
-    // For now, use provided values or mock values
+    // Check if we need to use mock credentials
+    const needsMockCredentials = !userId || !sub;
+
+    if (needsMockCredentials) {
+      // Check if mock auth is enabled (SECURITY: default is disabled)
+      const mockAuthEnabled = await isMockAuthEnabled(c.env);
+
+      if (!mockAuthEnabled) {
+        return c.json(
+          {
+            success: false,
+            error: 'authentication_required',
+            error_description:
+              'User credentials (user_id and sub) are required. Mock authentication is disabled.',
+          },
+          401
+        );
+      }
+
+      // DEVELOPMENT ONLY: Log warning about mock auth usage
+      console.warn(
+        '[CIBA] WARNING: Mock authentication is enabled. This should NEVER be used in production!'
+      );
+    }
+
+    // Use provided credentials or fallback to mock (only if mock auth is enabled)
     const finalUserId = userId || 'user_' + Date.now();
     const finalSub = sub || 'mock-user@example.com';
 

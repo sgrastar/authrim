@@ -9,7 +9,7 @@
 
 import type { Context } from 'hono';
 import type { Env, DeviceCodeMetadata } from '@authrim/shared';
-import { normalizeUserCode, validateUserCodeFormat } from '@authrim/shared';
+import { normalizeUserCode, validateUserCodeFormat, isMockAuthEnabled } from '@authrim/shared';
 import { html } from 'hono/html';
 
 /**
@@ -121,11 +121,25 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
       return c.redirect(`/device?error=This code has already been ${metadata.status}`);
     }
 
-    // TODO: Authenticate user and get user_id and sub
-    // For now, we'll show a success message and redirect to login
-    // In production, this would integrate with the session/auth flow
+    // Check if mock authentication is enabled (SECURITY: default is disabled)
+    const mockAuthEnabled = await isMockAuthEnabled(c.env);
 
-    // For demonstration, auto-approve with mock user
+    if (!mockAuthEnabled) {
+      // Production mode: Redirect to proper authentication flow
+      // Store user_code in session and redirect to login
+      if (c.env.UI_BASE_URL) {
+        const loginUrl = new URL(`${c.env.UI_BASE_URL}/device/authorize`);
+        loginUrl.searchParams.set('user_code', userCode);
+        return c.redirect(loginUrl.toString());
+      }
+      // No UI configured - show error
+      return c.redirect('/device?error=Authentication required. Please use the full UI.');
+    }
+
+    // DEVELOPMENT ONLY: Auto-approve with mock user
+    console.warn(
+      '[Device] WARNING: Mock authentication is enabled. This should NEVER be used in production!'
+    );
     const mockUserId = 'user_' + Date.now();
     const mockSub = 'mock-user@example.com';
 

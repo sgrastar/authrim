@@ -27,6 +27,7 @@ import {
   type ShardResolution,
 } from './region-sharding';
 import { DEFAULT_TENANT_ID } from './tenant-context';
+import { generateSecureSessionId } from './crypto';
 
 /**
  * Type alias for SessionStore stub returned from region-aware functions
@@ -36,16 +37,20 @@ type SessionStoreStub = DurableObjectStub<SessionStore>;
 /**
  * Generate a new region-sharded session ID.
  *
- * Uses FNV-1a hash of the UUID to determine which shard the session belongs to,
+ * Uses FNV-1a hash of the random ID to determine which shard the session belongs to,
  * then resolves the region from the shard index using the region shard config.
+ *
+ * Security: Uses 128 bits of cryptographically secure random data (base64url encoded)
+ * instead of UUID v4 (which has only 122 bits). This meets OWASP recommendations
+ * for session identifier entropy.
  *
  * @param env - Environment with KV binding for region shard config
  * @param tenantId - Tenant ID (default: 'default')
- * @returns Object containing sessionId, shardIndex, regionKey, and generation
+ * @returns Object containing sessionId, shardIndex, regionKey, generation, and randomPart
  *
  * @example
  * const { sessionId, shardIndex, regionKey, generation } = await generateRegionShardedSessionId(env);
- * // sessionId: "g1:apac:3:session_abc123-def456-..."
+ * // sessionId: "g1:apac:3:session_X7g9_kPq2Lm4Rn8sT1wZ-A"
  * // shardIndex: 3
  * // regionKey: "apac"
  * // generation: 1
@@ -58,20 +63,22 @@ export async function generateRegionShardedSessionId(
   shardIndex: number;
   regionKey: string;
   generation: number;
-  uuid: string;
+  randomPart: string;
 }> {
-  const uuid = crypto.randomUUID();
+  // Use 128-bit secure random ID instead of UUID (122 bits)
+  // This meets OWASP recommendations for session ID entropy
+  const randomPart = generateSecureSessionId();
   const config = await getRegionShardConfig(env, tenantId);
 
-  // Use UUID as the shard key for session distribution
-  const resolution = resolveShardForNewResource(config, uuid);
+  // Use random part as the shard key for session distribution
+  const resolution = resolveShardForNewResource(config, randomPart);
 
   // Create session ID with embedded region info
   const sessionId = createRegionId(
     resolution.generation,
     resolution.regionKey,
     resolution.shardIndex,
-    `session_${uuid}`
+    `session_${randomPart}`
   );
 
   return {
@@ -79,7 +86,7 @@ export async function generateRegionShardedSessionId(
     shardIndex: resolution.shardIndex,
     regionKey: resolution.regionKey,
     generation: resolution.generation,
-    uuid,
+    randomPart,
   };
 }
 
@@ -220,20 +227,28 @@ export function isRegionShardedSessionId(sessionId: string): boolean {
 }
 
 /**
- * Extract UUID from a region-sharded session ID.
+ * Extract the random part from a region-sharded session ID.
  *
  * @param sessionId - Region-sharded session ID
- * @returns UUID string or null if invalid format
+ * @returns Random part string (base64url) or null if invalid format
  */
-export function extractSessionUuid(sessionId: string): string | null {
+export function extractSessionRandomPart(sessionId: string): string | null {
   const parsed = parseRegionShardedSessionId(sessionId);
   if (!parsed) {
     return null;
   }
 
-  // randomPart is "session_{uuid}"
+  // randomPart is "session_{randomPart}"
   const match = parsed.randomPart.match(/^session_(.+)$/);
   return match ? match[1] : null;
+}
+
+/**
+ * @deprecated Use extractSessionRandomPart instead
+ * Extract UUID from a region-sharded session ID.
+ */
+export function extractSessionUuid(sessionId: string): string | null {
+  return extractSessionRandomPart(sessionId);
 }
 
 // =============================================================================

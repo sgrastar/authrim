@@ -9,6 +9,8 @@ import type { DPoPClaims, DPoPValidationResult } from '../types/oidc';
 import type { DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
 import { getDPoPJTIStoreForNewJTI, parseDPoPJTIId } from './dpop-jti-sharding';
+import { ALLOWED_DPOP_ALGS } from '../constants';
+import { timingSafeEqual } from './crypto';
 
 interface DPoPHeader {
   typ: string;
@@ -72,11 +74,17 @@ export async function validateDPoPProof(
       };
     }
 
-    if (!header.alg || header.alg === 'none') {
+    // SECURITY: Validate algorithm against allowed list
+    // Prevents algorithm confusion attacks and ensures consistency with discovery
+    if (
+      !header.alg ||
+      header.alg === 'none' ||
+      !ALLOWED_DPOP_ALGS.includes(header.alg as (typeof ALLOWED_DPOP_ALGS)[number])
+    ) {
       return {
         valid: false,
         error: 'invalid_dpop_proof',
-        error_description: 'DPoP proof must use a valid signing algorithm',
+        error_description: `DPoP proof must use a supported signing algorithm (${ALLOWED_DPOP_ALGS.join(', ')})`,
       };
     }
 
@@ -119,11 +127,13 @@ export async function validateDPoPProof(
       };
     }
 
-    // Verify JWT signature
+    // Verify JWT signature with algorithm restriction
     let verifiedPayload;
     try {
       const { payload: verified } = await jwtVerify(dpopProof, publicKey, {
         typ: 'dpop+jwt',
+        // Defense in depth: explicitly restrict algorithms even though key was imported with specific algorithm
+        algorithms: [...ALLOWED_DPOP_ALGS],
       });
       verifiedPayload = verified as unknown as DPoPClaims;
     } catch {
@@ -205,8 +215,9 @@ export async function validateDPoPProof(
       }
 
       // Validate ath (access token hash)
+      // SECURITY: Use timing-safe comparison to prevent timing attacks
       const expectedAth = await calculateAccessTokenHash(accessToken);
-      if (claims.ath !== expectedAth) {
+      if (!timingSafeEqual(claims.ath, expectedAth)) {
         return {
           valid: false,
           error: 'invalid_dpop_proof',

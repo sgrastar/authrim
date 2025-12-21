@@ -30,6 +30,11 @@ import {
   isOperationAllowed,
   type CheckAuthResult,
 } from '../middleware/check-auth';
+import {
+  checkRateLimit,
+  addRateLimitHeaders,
+  type RateLimitContext,
+} from '../middleware/rate-limit';
 
 // =============================================================================
 // Types
@@ -42,12 +47,18 @@ interface Env extends SharedEnv {
   REBAC_CACHE_KV?: KVNamespace;
   /** KV namespace for Check API caching */
   CHECK_CACHE_KV?: KVNamespace;
+  /** KV namespace for feature flags (dynamic override) - uses AUTHRIM_CONFIG if not set */
+  POLICY_FLAGS_KV?: KVNamespace;
+  /** Shared config KV namespace (fallback for POLICY_FLAGS_KV) */
+  AUTHRIM_CONFIG?: KVNamespace;
   /** Default tenant ID */
   DEFAULT_TENANT_ID?: string;
   /** Feature flag: Enable Check API */
   ENABLE_CHECK_API?: string;
   /** Feature flag: Enable Check API debug mode */
   CHECK_API_DEBUG_MODE?: string;
+  /** Batch size limit for batch check API (1-1000, default: 100) */
+  CHECK_API_BATCH_SIZE_LIMIT?: string;
 }
 
 // =============================================================================
@@ -97,16 +108,103 @@ class D1StorageAdapter implements IStorageAdapter {
 // Helpers
 // =============================================================================
 
+/** KV key for Check API enable flag */
+const KV_CHECK_API_ENABLED_KEY = 'CHECK_API_ENABLED';
+
+/** KV key for batch size limit */
+const KV_BATCH_SIZE_LIMIT_KEY = 'CHECK_API_BATCH_SIZE_LIMIT';
+
+/** Default batch size limit (secure default: not too large to prevent DoS) */
+const DEFAULT_BATCH_SIZE_LIMIT = 100;
+
+/** In-memory cache for batch size limit (to reduce KV reads) */
+let batchSizeLimitCache: { value: number; expiresAt: number } | null = null;
+
+/**
+ * Clear batch size limit cache (for testing)
+ */
+export function clearBatchSizeLimitCache(): void {
+  batchSizeLimitCache = null;
+}
+
+/**
+ * Get config KV namespace (POLICY_FLAGS_KV or AUTHRIM_CONFIG)
+ * Priority: POLICY_FLAGS_KV → AUTHRIM_CONFIG
+ */
+function getConfigKV(env: Env): KVNamespace | undefined {
+  return env.POLICY_FLAGS_KV || env.AUTHRIM_CONFIG;
+}
+
+/**
+ * Get batch size limit from KV → Environment Variable → Default
+ * Uses in-memory cache to reduce KV reads
+ */
+async function getBatchSizeLimit(env: Env): Promise<number> {
+  // 1. Check in-memory cache first (5 minute TTL)
+  const now = Date.now();
+  if (batchSizeLimitCache && batchSizeLimitCache.expiresAt > now) {
+    return batchSizeLimitCache.value;
+  }
+
+  let limit = DEFAULT_BATCH_SIZE_LIMIT;
+
+  // 2. Check KV for dynamic override (highest priority)
+  const configKV = getConfigKV(env);
+  if (configKV) {
+    try {
+      const kvValue = await configKV.get(KV_BATCH_SIZE_LIMIT_KEY);
+      if (kvValue !== null) {
+        const parsed = parseInt(kvValue, 10);
+        if (!isNaN(parsed) && parsed > 0 && parsed <= 1000) {
+          limit = parsed;
+          // Cache the KV value
+          batchSizeLimitCache = { value: limit, expiresAt: now + 5 * 60 * 1000 };
+          return limit;
+        }
+      }
+    } catch (error) {
+      console.error('[Check API] Failed to read batch size limit from KV:', error);
+    }
+  }
+
+  // 3. Check environment variable
+  if (env.CHECK_API_BATCH_SIZE_LIMIT) {
+    const parsed = parseInt(env.CHECK_API_BATCH_SIZE_LIMIT, 10);
+    if (!isNaN(parsed) && parsed > 0 && parsed <= 1000) {
+      limit = parsed;
+    }
+  }
+
+  // Cache the resolved value
+  batchSizeLimitCache = { value: limit, expiresAt: now + 5 * 60 * 1000 };
+  return limit;
+}
+
 /**
  * Check if Check API feature is enabled
+ * Priority: KV → Environment Variable → Default (disabled for security)
  */
 async function isCheckApiEnabled(env: Env): Promise<boolean> {
-  // Default: disabled (secure default)
+  // 1. Check KV for dynamic override (highest priority)
+  const configKV = getConfigKV(env);
+  if (configKV) {
+    try {
+      const kvValue = await configKV.get(KV_CHECK_API_ENABLED_KEY);
+      if (kvValue !== null) {
+        return kvValue === 'true';
+      }
+    } catch (error) {
+      // KV error: log and fall through to env var check
+      console.error('[Check API] Failed to read KV flag:', error);
+    }
+  }
+
+  // 2. Check environment variable
   if (env.ENABLE_CHECK_API === 'true') {
     return true;
   }
 
-  // TODO: Check KV for dynamic override
+  // 3. Default: disabled (secure default)
   return false;
 }
 
@@ -158,6 +256,7 @@ checkRoutes.get('/health', async (c) => {
   const enabled = await isCheckApiEnabled(c.env);
   const hasDatabase = !!c.env.DB;
   const hasCache = !!c.env.CHECK_CACHE_KV;
+  const batchSizeLimit = await getBatchSizeLimit(c.env);
 
   return c.json({
     status: enabled && hasDatabase ? 'ok' : 'limited',
@@ -168,6 +267,7 @@ checkRoutes.get('/health', async (c) => {
     database: hasDatabase,
     cache: hasCache,
     debug_mode: isDebugModeEnabled(c.env),
+    batch_size_limit: batchSizeLimit,
   });
 });
 
@@ -231,6 +331,31 @@ checkRoutes.post('/', async (c) => {
         error_description: 'API key does not have permission for check operation',
       },
       403
+    );
+  }
+
+  // Check rate limit
+  const rateLimitCtx: RateLimitContext = {
+    cache: c.env.CHECK_CACHE_KV,
+    configKv: getConfigKV(c.env),
+  };
+  const rateLimitResult = await checkRateLimit(auth, rateLimitCtx);
+
+  // Add rate limit headers to response
+  const responseHeaders = new Headers();
+  addRateLimitHeaders(responseHeaders, rateLimitResult);
+
+  if (!rateLimitResult.allowed) {
+    return c.json(
+      {
+        error: 'rate_limit_exceeded',
+        error_description: 'Too many requests. Please retry later.',
+        retry_after: rateLimitResult.retryAfter,
+      },
+      {
+        status: 429,
+        headers: Object.fromEntries(responseHeaders.entries()),
+      }
     );
   }
 
@@ -300,7 +425,11 @@ checkRoutes.post('/', async (c) => {
     // Execute check
     const result = await checkService.check(request);
 
-    return c.json(result);
+    // Return with rate limit headers
+    return c.json(result, {
+      status: 200,
+      headers: Object.fromEntries(responseHeaders.entries()),
+    });
   } catch (error) {
     console.error('[Check API] Check error:', error);
     return c.json(
@@ -359,6 +488,31 @@ checkRoutes.post('/batch', async (c) => {
     );
   }
 
+  // Check rate limit
+  const rateLimitCtx: RateLimitContext = {
+    cache: c.env.CHECK_CACHE_KV,
+    configKv: getConfigKV(c.env),
+  };
+  const rateLimitResult = await checkRateLimit(auth, rateLimitCtx);
+
+  // Add rate limit headers to response
+  const responseHeaders = new Headers();
+  addRateLimitHeaders(responseHeaders, rateLimitResult);
+
+  if (!rateLimitResult.allowed) {
+    return c.json(
+      {
+        error: 'rate_limit_exceeded',
+        error_description: 'Too many requests. Please retry later.',
+        retry_after: rateLimitResult.retryAfter,
+      },
+      {
+        status: 429,
+        headers: Object.fromEntries(responseHeaders.entries()),
+      }
+    );
+  }
+
   // Get check service
   const debugMode = isDebugModeEnabled(c.env);
   const checkService = getCheckService(c.env, debugMode);
@@ -389,12 +543,13 @@ checkRoutes.post('/batch', async (c) => {
       );
     }
 
-    // Limit batch size
-    if (body.checks.length > 100) {
+    // Limit batch size (configurable via KV → Environment Variable → Default)
+    const batchSizeLimit = await getBatchSizeLimit(c.env);
+    if (body.checks.length > batchSizeLimit) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: 'Maximum batch size is 100 checks',
+          error_description: `Maximum batch size is ${batchSizeLimit} checks`,
         },
         400
       );
@@ -440,7 +595,11 @@ checkRoutes.post('/batch', async (c) => {
       stop_on_deny: body.stop_on_deny,
     });
 
-    return c.json(result);
+    // Return with rate limit headers
+    return c.json(result, {
+      status: 200,
+      headers: Object.fromEntries(responseHeaders.entries()),
+    });
   } catch (error) {
     console.error('[Check API] Batch check error:', error);
     return c.json(

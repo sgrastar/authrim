@@ -128,36 +128,223 @@ export function timingSafeEqual(a: string, b: string): boolean {
 }
 
 /**
- * Hash a password using SHA-256
+ * Password hashing configuration
  *
- * Note: In production, you should use a proper password hashing algorithm
- * like bcrypt, scrypt, or Argon2. This is a simplified implementation
- * suitable for demo/development purposes.
+ * Uses PBKDF2 with SHA-256, which is supported by Cloudflare Workers' Web Crypto API.
+ * Configuration follows NIST SP 800-132 and OWASP recommendations.
+ */
+const PASSWORD_HASH_CONFIG = {
+  /** Salt length in bytes (128 bits) */
+  SALT_LENGTH: 16,
+  /** Number of PBKDF2 iterations (OWASP recommends 600,000 for SHA-256 in 2023) */
+  ITERATIONS: 600000,
+  /** Hash algorithm */
+  HASH: 'SHA-256',
+  /** Derived key length in bytes (256 bits) */
+  KEY_LENGTH: 32,
+  /** Version identifier for future algorithm upgrades */
+  VERSION: 'pbkdf2v1',
+} as const;
+
+/**
+ * Hash a password using PBKDF2 with SHA-256
  *
- * For production use, consider using Cloudflare Workers' crypto API with
- * a proper key derivation function.
+ * Uses cryptographically secure salt and high iteration count to resist
+ * brute-force and rainbow table attacks.
  *
  * @param password - Plain text password
- * @returns Hashed password (hex string)
+ * @returns Hashed password in format: version$iterations$salt$hash (all base64url encoded)
+ *
+ * @example
+ * ```ts
+ * const hash = await hashPassword('mySecurePassword');
+ * // Returns: "pbkdf2v1$600000$<salt>$<hash>"
+ * ```
+ *
+ * @see NIST SP 800-132: Recommendation for Password-Based Key Derivation
+ * @see OWASP Password Storage Cheat Sheet
  */
 export async function hashPassword(password: string): Promise<string> {
+  // Generate cryptographically secure random salt
+  const salt = new Uint8Array(PASSWORD_HASH_CONFIG.SALT_LENGTH);
+  crypto.getRandomValues(salt);
+
+  // Import password as key material
+  const encoder = new TextEncoder();
+  const passwordKey = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+
+  // Derive key using PBKDF2
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: PASSWORD_HASH_CONFIG.ITERATIONS,
+      hash: PASSWORD_HASH_CONFIG.HASH,
+    },
+    passwordKey,
+    PASSWORD_HASH_CONFIG.KEY_LENGTH * 8 // bits
+  );
+
+  // Encode salt and hash as base64url
+  const saltBase64 = arrayBufferToBase64Url(salt.buffer);
+  const hashBase64 = arrayBufferToBase64Url(derivedBits);
+
+  // Return formatted hash string
+  return `${PASSWORD_HASH_CONFIG.VERSION}$${PASSWORD_HASH_CONFIG.ITERATIONS}$${saltBase64}$${hashBase64}`;
+}
+
+/**
+ * Verify a password against a PBKDF2 hash
+ *
+ * Supports both new PBKDF2 format and legacy SHA-256 format for migration.
+ *
+ * @param password - Plain text password
+ * @param hash - Hashed password (PBKDF2 or legacy SHA-256 format)
+ * @returns True if password matches hash
+ */
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  // Check if this is a PBKDF2 hash (contains $ separators)
+  if (hash.includes('$')) {
+    return verifyPbkdf2Password(password, hash);
+  }
+
+  // Legacy SHA-256 hash (for migration - should be upgraded on next login)
+  return verifyLegacySha256Password(password, hash);
+}
+
+/**
+ * Verify password against PBKDF2 hash
+ */
+async function verifyPbkdf2Password(password: string, hash: string): Promise<boolean> {
+  const parts = hash.split('$');
+  if (parts.length !== 4) {
+    return false;
+  }
+
+  const [version, iterationsStr, saltBase64, expectedHashBase64] = parts;
+
+  // Validate version
+  if (version !== PASSWORD_HASH_CONFIG.VERSION) {
+    console.warn(`Unknown password hash version: ${version}`);
+    return false;
+  }
+
+  const iterations = parseInt(iterationsStr, 10);
+  if (isNaN(iterations) || iterations < 1) {
+    return false;
+  }
+
+  // Decode salt from base64url
+  const salt = base64UrlToArrayBuffer(saltBase64);
+
+  // Import password as key material
+  const encoder = new TextEncoder();
+  const passwordKey = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+
+  // Derive key using PBKDF2 with stored parameters
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: new Uint8Array(salt),
+      iterations: iterations,
+      hash: PASSWORD_HASH_CONFIG.HASH,
+    },
+    passwordKey,
+    PASSWORD_HASH_CONFIG.KEY_LENGTH * 8
+  );
+
+  // Compare using timing-safe comparison
+  const computedHashBase64 = arrayBufferToBase64Url(derivedBits);
+  return timingSafeEqual(computedHashBase64, expectedHashBase64);
+}
+
+/**
+ * Verify password against legacy SHA-256 hash (for migration)
+ *
+ * @deprecated Use PBKDF2 hashing for new passwords
+ */
+async function verifyLegacySha256Password(password: string, hash: string): Promise<boolean> {
   const encoder = new TextEncoder();
   const data = encoder.encode(password);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  const computedHash = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return timingSafeEqual(computedHash, hash);
 }
 
 /**
- * Verify a password against a hash
+ * Check if a password hash needs to be upgraded to the latest algorithm
  *
- * @param password - Plain text password
- * @param hash - Hashed password
- * @returns True if password matches hash
+ * @param hash - Current password hash
+ * @returns True if hash should be upgraded (e.g., on next successful login)
  */
-export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  const passwordHash = await hashPassword(password);
-  return timingSafeEqual(passwordHash, hash);
+export function passwordHashNeedsUpgrade(hash: string): boolean {
+  // Legacy SHA-256 hashes need upgrade
+  if (!hash.includes('$')) {
+    return true;
+  }
+
+  const parts = hash.split('$');
+  if (parts.length !== 4) {
+    return true;
+  }
+
+  const [version, iterationsStr] = parts;
+  const iterations = parseInt(iterationsStr, 10);
+
+  // Upgrade if using old version or insufficient iterations
+  if (version !== PASSWORD_HASH_CONFIG.VERSION) {
+    return true;
+  }
+
+  if (iterations < PASSWORD_HASH_CONFIG.ITERATIONS) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Generate a cryptographically secure session ID with 128 bits of entropy
+ *
+ * Uses 128 bits (16 bytes) of random data encoded as base64url, meeting OWASP
+ * recommendations for session identifier entropy. The result is a 22-character
+ * URL-safe string.
+ *
+ * Advantages over UUID v4:
+ * - 128 bits of entropy (vs 122 bits for UUIDv4)
+ * - Shorter representation (22 chars vs 36 chars)
+ * - URL-safe encoding (no special characters)
+ * - No predictable version/variant bits
+ *
+ * @returns A 22-character base64url-encoded random string
+ *
+ * @example
+ * ```ts
+ * const sessionId = generateSecureSessionId();
+ * // Returns: "X7g9_kPq2Lm4Rn8sT1wZ-A"
+ * ```
+ *
+ * @see OWASP Session Management Cheat Sheet
+ * @see RFC 4086: Randomness Requirements for Security
+ */
+export function generateSecureSessionId(): string {
+  // 128 bits = 16 bytes, encoded as base64url = 22 characters
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return arrayBufferToBase64Url(bytes);
 }
 
 /**

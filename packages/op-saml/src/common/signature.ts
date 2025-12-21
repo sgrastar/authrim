@@ -14,6 +14,44 @@ import { SignedXml } from 'xml-crypto';
 import { SIGNATURE_ALGORITHMS, DIGEST_ALGORITHMS, CANONICALIZATION_ALGORITHMS } from './constants';
 import { parseXml, serializeXml } from './xml-utils';
 
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/**
+ * Find all elements with a specific ID attribute
+ *
+ * @xmldom/xmldom doesn't support querySelectorAll, so we use a manual traversal
+ *
+ * @param doc - XML document or element to search
+ * @param id - ID value to search for
+ * @returns Array of elements with matching ID attribute
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function findElementsById(doc: any, id: string): any[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const results: any[] = [];
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function traverse(node: any): void {
+    if (node.nodeType === 1) {
+      // Element node
+      if (node.getAttribute && node.getAttribute('ID') === id) {
+        results.push(node);
+      }
+    }
+    // Traverse children for both Document (nodeType 9) and Element (nodeType 1) nodes
+    if (node.childNodes) {
+      for (let i = 0; i < node.childNodes.length; i++) {
+        traverse(node.childNodes[i]);
+      }
+    }
+  }
+
+  traverse(doc);
+  return results;
+}
+
 /**
  * Options for XML signature creation
  */
@@ -36,6 +74,16 @@ export interface SignOptions {
 export interface VerifyOptions {
   /** X.509 certificate or public key in PEM format */
   certificateOrKey: string;
+  /**
+   * Expected ID of the signed element (XSW attack protection)
+   * If provided, verifies that the signature's Reference URI points to this ID
+   */
+  expectedId?: string;
+  /**
+   * Strict mode: require expectedId and reject multiple same-ID elements
+   * Default: false (for backward compatibility)
+   */
+  strictXswProtection?: boolean;
 }
 
 /**
@@ -113,15 +161,23 @@ export function signXml(xml: string, options: SignOptions): string {
 }
 
 /**
- * Verify XML signature
+ * Verify XML signature with XSW (XML Signature Wrapping) attack protection
+ *
+ * Security features:
+ * - SHA-1 algorithm rejection
+ * - Reference URI validation
+ * - XSW attack detection (optional strict mode)
+ * - Multiple element with same ID detection
  *
  * @param xml - Signed XML string
  * @param options - Verification options
  * @returns true if signature is valid
  * @throws Error if signature is invalid or verification fails
+ *
+ * @see https://www.usenix.org/conference/usenixsecurity12/technical-sessions/presentation/somorovsky
  */
 export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean {
-  const { certificateOrKey } = options;
+  const { certificateOrKey, expectedId, strictXswProtection = false } = options;
 
   const doc = parseXml(xml);
 
@@ -134,6 +190,76 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
   // Verify each signature
   for (let i = 0; i < signatures.length; i++) {
     const signatureNode = signatures[i];
+
+    // ==========================================================================
+    // SECURITY CHECKS BEFORE SIGNATURE VERIFICATION
+    // These checks are performed first to detect attacks early and avoid
+    // unnecessary cryptographic operations on malicious input.
+    // ==========================================================================
+
+    // 1. Check that Reference exists and has valid URI
+    const references = signatureNode.getElementsByTagNameNS(
+      'http://www.w3.org/2000/09/xmldsig#',
+      'Reference'
+    );
+    if (references.length === 0) {
+      throw new Error('No Reference found in signature');
+    }
+
+    // 2. XSW Attack Protection: Validate Reference URI format
+    const referenceUri = references[0].getAttribute('URI');
+
+    // Reference URI must be a fragment identifier (starts with #) or empty
+    // External URIs (http://, file://, etc.) are rejected to prevent SSRF attacks
+    if (referenceUri && !referenceUri.startsWith('#') && referenceUri !== '') {
+      throw new Error('XSW Protection: Reference URI must be a fragment identifier or empty');
+    }
+
+    // 3. Validate expectedId if provided (XSW protection)
+    if (expectedId) {
+      const expectedUri = `#${expectedId}`;
+      if (referenceUri !== expectedUri && referenceUri !== '') {
+        throw new Error(
+          `XSW Protection: Reference URI "${referenceUri}" does not match expected "#${expectedId}"`
+        );
+      }
+
+      // Verify the referenced element actually exists
+      // Note: @xmldom/xmldom doesn't support querySelectorAll, so we use a manual search
+      const referencedElements = findElementsById(doc, expectedId);
+      if (referencedElements.length === 0) {
+        throw new Error(`XSW Protection: Element with ID "${expectedId}" not found`);
+      }
+
+      // Strict mode: Check for multiple elements with the same ID (XSW attack indicator)
+      if (strictXswProtection && referencedElements.length > 1) {
+        throw new Error(
+          `XSW Protection: Multiple elements with ID "${expectedId}" detected (possible XSW attack)`
+        );
+      }
+    }
+
+    // 4. Strict mode requires expectedId
+    if (strictXswProtection && !expectedId) {
+      throw new Error('XSW Protection: expectedId is required in strict mode');
+    }
+
+    // 5. Check signature algorithm (reject SHA-1) BEFORE verification
+    const signatureMethod = signatureNode.getElementsByTagNameNS(
+      'http://www.w3.org/2000/09/xmldsig#',
+      'SignatureMethod'
+    )[0];
+    if (signatureMethod) {
+      const algorithm = signatureMethod.getAttribute('Algorithm');
+      if (algorithm === SIGNATURE_ALGORITHMS.RSA_SHA1) {
+        throw new Error('SHA-1 signature algorithm is not allowed');
+      }
+    }
+
+    // ==========================================================================
+    // CRYPTOGRAPHIC SIGNATURE VERIFICATION
+    // Only perform expensive cryptographic operations after all security checks pass
+    // ==========================================================================
 
     const sig = new SignedXml();
 
@@ -149,29 +275,6 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const errors = (sig as any).validationErrors || [];
       throw new Error(`Signature verification failed: ${errors.join(', ')}`);
-    }
-
-    // Additional security checks
-
-    // 1. Check that the Reference URI points to the expected element
-    const references = signatureNode.getElementsByTagNameNS(
-      'http://www.w3.org/2000/09/xmldsig#',
-      'Reference'
-    );
-    if (references.length === 0) {
-      throw new Error('No Reference found in signature');
-    }
-
-    // 2. Check signature algorithm (reject SHA-1)
-    const signatureMethod = signatureNode.getElementsByTagNameNS(
-      'http://www.w3.org/2000/09/xmldsig#',
-      'SignatureMethod'
-    )[0];
-    if (signatureMethod) {
-      const algorithm = signatureMethod.getAttribute('Algorithm');
-      if (algorithm === SIGNATURE_ALGORITHMS.RSA_SHA1) {
-        throw new Error('SHA-1 signature algorithm is not allowed');
-      }
     }
   }
 
@@ -306,11 +409,12 @@ export async function verifyRedirectBindingSignature(
   }
 
   // Rebuild the signed string (must match exactly what was signed)
+  // Per SAML 2.0 Bindings Section 3.4.4.1, the signed string uses URL-encoded values
   let signInput = `${samlParam}=${samlValue}`;
   if (relayState) {
     signInput += `&RelayState=${relayState}`;
   }
-  signInput += `&SigAlg=${sigAlg}`;
+  signInput += `&SigAlg=${encodeURIComponent(sigAlg)}`;
 
   // Import certificate/public key
   const publicKey = await importPublicKeyFromCertificate(certificatePem);
@@ -348,6 +452,88 @@ async function importPrivateKeyPem(pem: string): Promise<CryptoKey> {
 }
 
 /**
+ * Simple ASN.1 DER parser for extracting SubjectPublicKeyInfo from X.509 certificates
+ */
+interface Asn1Element {
+  tag: number;
+  length: number;
+  data: Uint8Array;
+  offset: number;
+  headerLength: number;
+}
+
+function parseAsn1Element(data: Uint8Array, offset: number): Asn1Element {
+  const tag = data[offset];
+  let length = data[offset + 1];
+  let headerLength = 2;
+
+  if (length > 127) {
+    // Long form length
+    const numLengthBytes = length & 0x7f;
+    length = 0;
+    for (let i = 0; i < numLengthBytes; i++) {
+      length = (length << 8) | data[offset + 2 + i];
+    }
+    headerLength = 2 + numLengthBytes;
+  }
+
+  return {
+    tag,
+    length,
+    data: data.subarray(offset + headerLength, offset + headerLength + length),
+    offset,
+    headerLength,
+  };
+}
+
+function extractSubjectPublicKeyInfo(certDer: Uint8Array): Uint8Array {
+  // X.509 Certificate structure:
+  // SEQUENCE {
+  //   tbsCertificate SEQUENCE { ... subjectPublicKeyInfo SEQUENCE ... }
+  //   signatureAlgorithm SEQUENCE
+  //   signatureValue BIT STRING
+  // }
+
+  // Parse outer SEQUENCE (certificate)
+  const certSeq = parseAsn1Element(certDer, 0);
+  if (certSeq.tag !== 0x30) throw new Error('Invalid certificate: expected SEQUENCE');
+
+  // Parse TBSCertificate SEQUENCE
+  const tbsSeq = parseAsn1Element(certSeq.data, 0);
+  if (tbsSeq.tag !== 0x30) throw new Error('Invalid TBSCertificate: expected SEQUENCE');
+
+  // Navigate through TBSCertificate to find SubjectPublicKeyInfo
+  // Fields: version?, serialNumber, signature, issuer, validity, subject, subjectPublicKeyInfo
+  let pos = 0;
+  let fieldIndex = 0;
+
+  while (pos < tbsSeq.data.length && fieldIndex < 7) {
+    const element = parseAsn1Element(tbsSeq.data, pos);
+
+    // Handle optional version field [0] EXPLICIT
+    if (fieldIndex === 0 && element.tag === 0xa0) {
+      // Version is explicit tag [0], skip it but count it as field 0
+      pos += element.headerLength + element.length;
+      fieldIndex++;
+      continue;
+    }
+
+    if (fieldIndex === 6) {
+      // This is SubjectPublicKeyInfo
+      // Return the raw DER bytes for this SEQUENCE
+      const start = pos;
+      const end = pos + element.headerLength + element.length;
+      return tbsSeq.data.subarray(start, end);
+    }
+
+    pos += element.headerLength + element.length;
+    fieldIndex++;
+  }
+
+  throw new Error('SubjectPublicKeyInfo not found in certificate');
+}
+
+/**
  * Import public key from X.509 certificate PEM
  */
 async function importPublicKeyFromCertificate(pem: string): Promise<CryptoKey> {
@@ -357,15 +543,14 @@ async function importPublicKeyFromCertificate(pem: string): Promise<CryptoKey> {
     .replace(/-----END CERTIFICATE-----/g, '')
     .replace(/\s+/g, '');
 
-  const binaryDer = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
+  const certDer = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
 
-  // Note: This is simplified. In a full implementation, you would parse
-  // the X.509 certificate to extract the public key.
-  // For now, we assume the certificate is in the correct format.
+  // Extract SubjectPublicKeyInfo from the X.509 certificate
+  const spki = extractSubjectPublicKeyInfo(certDer);
 
   return crypto.subtle.importKey(
     'spki',
-    binaryDer,
+    spki,
     { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
     true,
     ['verify']

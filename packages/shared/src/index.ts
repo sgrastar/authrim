@@ -60,6 +60,7 @@ export * from './utils/do-retry';
 export * from './utils/url-security';
 export * from './utils/email-domain-hash';
 export * from './utils/claim-normalizer';
+export * from './utils/feature-flags';
 
 // Phase 9: VC (Verifiable Credentials)
 export * from './vc/haip-policy';

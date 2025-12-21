@@ -15,6 +15,7 @@ import {
   serializeXml,
   parseXml,
   findElement,
+  findElements,
   getAttribute,
   getTextContent,
   base64Decode,
@@ -76,7 +77,10 @@ export interface ParsedLogoutRequest {
   destination?: string;
   nameId: string;
   nameIdFormat?: string;
+  /** First SessionIndex (for backward compatibility) */
   sessionIndex?: string;
+  /** All SessionIndex elements (SAML 2.0 allows multiple) */
+  sessionIndices?: string[];
   notOnOrAfter?: string;
 }
 
@@ -282,15 +286,24 @@ export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
   const nameId = getTextContent(nameIdElement) || '';
   const nameIdFormat = getAttribute(nameIdElement, 'Format') || undefined;
 
-  // Parse SessionIndex (optional)
-  const sessionIndexElement = findElement(
+  // Parse SessionIndex (optional, can have multiple per SAML 2.0 spec)
+  const sessionIndexElements = findElements(
     logoutRequestElement,
     SAML_NAMESPACES.SAML2P,
     'SessionIndex'
   );
-  const sessionIndex = sessionIndexElement
-    ? getTextContent(sessionIndexElement) || undefined
-    : undefined;
+
+  // Extract all session indices
+  const sessionIndices: string[] = [];
+  for (const element of sessionIndexElements) {
+    const value = getTextContent(element);
+    if (value) {
+      sessionIndices.push(value);
+    }
+  }
+
+  // First session index for backward compatibility
+  const sessionIndex = sessionIndices.length > 0 ? sessionIndices[0] : undefined;
 
   return {
     id,
@@ -300,6 +313,7 @@ export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
     nameId,
     nameIdFormat,
     sessionIndex,
+    sessionIndices: sessionIndices.length > 0 ? sessionIndices : undefined,
     notOnOrAfter: notOnOrAfter || undefined,
   };
 }

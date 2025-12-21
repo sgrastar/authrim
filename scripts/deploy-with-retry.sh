@@ -29,6 +29,7 @@ VERSIONED_WORKERS=(
     "policy-service"
     "op-saml"
     "external-idp"
+    "vc"
 )
 
 # Parse command line arguments

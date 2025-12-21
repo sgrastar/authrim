@@ -63,6 +63,9 @@ function createMockSAMLResponse(
     inResponseTo = undefined,
   } = options;
 
+  // SubjectConfirmation NotOnOrAfter for bearer assertion (same as Conditions NotOnOrAfter)
+  const subjectConfirmationNotOnOrAfter = notOnOrAfter;
+
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
   xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
@@ -79,6 +82,12 @@ function createMockSAMLResponse(
     <saml:Issuer>${issuer}</saml:Issuer>
     <saml:Subject>
       <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">${nameId}</saml:NameID>
+      <saml:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+        <saml:SubjectConfirmationData
+          Recipient="${destination}"
+          NotOnOrAfter="${subjectConfirmationNotOnOrAfter}"
+          ${inResponseTo ? `InResponseTo="${inResponseTo}"` : ''}/>
+      </saml:SubjectConfirmation>
     </saml:Subject>
     <saml:Conditions NotBefore="${notBefore}" NotOnOrAfter="${notOnOrAfter}">
       <saml:AudienceRestriction>

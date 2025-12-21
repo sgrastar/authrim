@@ -7,7 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env, DeviceCodeMetadata } from '@authrim/shared';
-import { normalizeUserCode, validateUserCodeFormat } from '@authrim/shared';
+import { normalizeUserCode, validateUserCodeFormat, isMockAuthEnabled } from '@authrim/shared';
 
 /**
  * POST /api/device/verify
@@ -189,8 +189,32 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
 
     // Handle approval or denial
     if (approve) {
-      // TODO: In production, get user_id and sub from session
-      // For now, use provided values or mock values
+      // Check if we need to use mock credentials
+      const needsMockCredentials = !userId || !sub;
+
+      if (needsMockCredentials) {
+        // Check if mock auth is enabled (SECURITY: default is disabled)
+        const mockAuthEnabled = await isMockAuthEnabled(c.env);
+
+        if (!mockAuthEnabled) {
+          return c.json(
+            {
+              success: false,
+              error: 'authentication_required',
+              error_description:
+                'User credentials (user_id and sub) are required. Mock authentication is disabled.',
+            },
+            401
+          );
+        }
+
+        // DEVELOPMENT ONLY: Log warning about mock auth usage
+        console.warn(
+          '[Device API] WARNING: Mock authentication is enabled. This should NEVER be used in production!'
+        );
+      }
+
+      // Use provided credentials or fallback to mock (only if mock auth is enabled)
       const finalUserId = userId || 'user_' + Date.now();
       const finalSub = sub || 'mock-user@example.com';
 

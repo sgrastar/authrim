@@ -522,6 +522,9 @@ export interface DeviceCodeMetadata {
   poll_count?: number; // Number of times the device has polled
   user_id?: string; // Set when user approves the device
   sub?: string; // Subject (user identifier) - set when approved
+  // Token issuance tracking (RFC 8628 token replay prevention)
+  token_issued?: boolean; // True if tokens have been issued
+  token_issued_at?: number; // Timestamp when tokens were issued
 }
 
 /**
@@ -581,6 +584,8 @@ export interface CIBARequestMetadata {
   // Token issuance tracking
   token_issued?: boolean; // True if tokens have been issued
   token_issued_at?: number; // Timestamp when tokens were issued
+  // Subject ID resolved from JWT hints (id_token_hint or login_hint_token)
+  resolved_subject_id?: string;
 }
 
 /**

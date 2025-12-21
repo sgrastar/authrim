@@ -101,4 +101,11 @@ export const DEFAULTS = {
   SESSION_VALIDITY_SECONDS: 3600, // 1 hour
   /** Clock skew tolerance in seconds */
   CLOCK_SKEW_SECONDS: 60, // 1 minute
+  /**
+   * Strict InResponseTo validation mode
+   * When enabled, InResponseTo MUST match a stored AuthnRequest ID
+   * This prevents assertion theft/injection attacks but breaks IdP-initiated SSO
+   * Default: false (for backward compatibility with IdP-initiated SSO)
+   */
+  STRICT_INRESPONSETO: false,
 } as const;

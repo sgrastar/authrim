@@ -2,7 +2,7 @@
 
 **Vision:** Identity & Access Platform for the modern web — Authentication, Authorization, and Identity Hub in one.
 
-**Timeline:** November 2025 - 2027
+**Timeline:** November 2025 - 2026-Q1
 
 ---
 
@@ -16,18 +16,17 @@ timeline
                 : ✅ P8 Policy Integration
                 : ✅ P7 Identity Hub
                 : ✅ P9 Advanced Identity (VC/DID)
+                : ⏳ P10 SDK & API
+                : ⏳ P11 Security & QA
     section 2026
-        Q3-Q4 : P10 SDK & API
-    section 2027
-        Q1 : P11 Security & QA
-        Q2 : P12 Certification & Release
+        Q1 : P12 Certification & Release
 ```
 
 **Legend:**
 
 - ✅ Complete (Phases 1-9)
-- ⏳ In Progress (Phase 11: ~20%)
-- 🔜 Planned (Phases 10, 12)
+- ⏳ In Progress (Phase 10, 11)
+- 🔜 Planned (Phase 12: 2026-Q1)
 
 ---
 
@@ -118,12 +117,12 @@ timeline
 | **M4: Extensions**         | 2025-11-12 | ✅ Complete | PAR, DPoP, Pairwise, Token Management                                 |
 | **M5: UI/UX**              | 2025-11-18 | ✅ Complete | SvelteKit Frontend, Admin Dashboard, 15+ pages                        |
 | **M6: Enterprise**         | 2025-12-02 | ✅ Complete | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer, SAML 2.0 |
-| **M7: Identity Hub**       | 2025-12-20 | ✅ Complete | RP Module, Social Login (Google/Microsoft/GitHub), PII分離           |
+| **M7: Identity Hub**       | 2025-12-20 | ✅ Complete | RP Module, Social Login (7 providers), PII分離                        |
 | **M8: Policy Integration** | 2025-12-19 | ✅ Complete | Unified AuthN + AuthZ, Token embedding, Check API                     |
 | **M9: Advanced Identity**  | 2025-12-20 | ✅ Complete | OpenID4VP/CI, DID Resolver, DID Auth, 227 tests                       |
-| **M10: SDK & API**         | 2026-Q4    | 🔜 Planned  | WebSDK, CLI, API Documentation                                        |
-| **M11: Security & QA**     | 2025-12~   | ⏳ ~20%     | Load Testing ✅, Security Tests ✅, Audit pending                     |
-| **M12: Release**           | 2027-Q2    | 🔜 Final    | OpenID Certification, Public Release                                  |
+| **M10: SDK & API**         | 2025-Q4    | 🔜 Planned  | WebSDK, CLI, API Documentation                                        |
+| **M11: Security & QA**     | 2025-Q4    | ⏳ ~20%     | Load Testing ✅, Security Tests ✅, Audit pending                     |
+| **M12: Release**           | 2026-Q1    | 🔜 Final    | OpenID Certification, Public Release                                  |
 
 ---
 
@@ -398,7 +397,7 @@ Data separation architecture for GDPR/CCPA compliance:
 
 ## Phase 10: SDK & API 🔜 PLANNED
 
-**Timeline:** 2026-Q3 to Q4
+**Timeline:** 2025-Q4 (December 2025)
 
 **Goal:** Developer SDKs and comprehensive API documentation
 
@@ -419,7 +418,7 @@ Data separation architecture for GDPR/CCPA compliance:
 
 ## Phase 11: Security & QA ⏳ IN PROGRESS
 
-**Timeline:** 2025-12 (Load Testing) ~ 2027-Q1
+**Timeline:** 2025-Q4 (December 2025)
 
 **Goal:** Security hardening and quality assurance
 
@@ -449,7 +448,7 @@ Data separation architecture for GDPR/CCPA compliance:
 
 ## Phase 12: Certification & Release 🔜 FINAL
 
-**Timeline:** 2027-Q2
+**Timeline:** 2026-Q1 (January - March 2026)
 
 **Goal:** OpenID Certification and official public release
 
@@ -491,14 +490,15 @@ Data separation architecture for GDPR/CCPA compliance:
 
 | Metric                   | Target      | Current                       | Phase |
 | ------------------------ | ----------- | ----------------------------- | ----- |
-| Social login providers   | 7+          | 7 (Google, Microsoft, GitHub, Apple, LinkedIn, Facebook, Twitter/X) | P7 ✅ |
-| OIDC RP Client tests     | 50+         | 315 tests ✅                  | P7 ✅ |
-| Identity linking tests   | 50+         | 14,666 lines ✅               | P7 ✅ |
+| Social login providers   | 7+          | ✅ 7 (Google, MS, GitHub, Apple, LinkedIn, FB, X) | P7 ✅ |
+| OIDC RP Client tests     | 50+         | ✅ 315 tests                  | P7 ✅ |
+| Identity linking tests   | 50+         | ✅ 14,666 lines               | P7 ✅ |
 | Provider Management UI   | Complete    | ✅ Complete                   | P7 ✅ |
 | Policy integration tests | 100+        | ✅ Complete                   | P8 ✅ |
-| VC/DID tests             | 100+        | 227 tests ✅                  | P9 ✅ |
+| VC/DID tests             | 100+        | ✅ 227 tests                  | P9 ✅ |
 | SDK downloads            | 1000+       | -                             | P10   |
 | Load test RPS            | 10,000+     | ✅ 3,500 (Silent Auth)        | P11   |
+| Security hardening       | 100%        | ⏳ ~20%                       | P11   |
 | OpenID Certification     | ✅ Obtained | -                             | P12   |
 
 ---
@@ -508,13 +508,14 @@ Data separation architecture for GDPR/CCPA compliance:
 | Capability                | Auth0 | Okta | Keycloak | Ory | **Authrim** |
 | ------------------------- | ----- | ---- | -------- | --- | ----------- |
 | **Authentication**        | ✅    | ✅   | ✅       | ✅  | ✅          |
-| **Social Login**          | ✅    | ✅   | ✅       | ✅  | 🔜 P7       |
+| **Social Login**          | ✅    | ✅   | ✅       | ✅  | ✅ (7 providers) |
 | **RBAC**                  | ✅    | ✅   | ✅       | ✅  | ✅          |
 | **ABAC**                  | ⚠️    | ⚠️   | ✅       | ✅  | ✅          |
 | **ReBAC**                 | ❌    | ❌   | ❌       | ✅  | ✅          |
 | **AuthN + AuthZ Unified** | ⚠️    | ⚠️   | ⚠️       | ❌  | ✅          |
-| **OpenID4VP**             | ❌    | ❌   | ❌       | ❌  | 🔜 P9       |
-| **OpenID4CI**             | ❌    | ❌   | ❌       | ❌  | 🔜 P9       |
+| **OpenID4VP**             | ❌    | ❌   | ❌       | ❌  | ✅          |
+| **OpenID4VCI**            | ❌    | ❌   | ❌       | ❌  | ✅          |
+| **DID Support**           | ❌    | ❌   | ❌       | ❌  | ✅          |
 | **Edge Deployment**       | ❌    | ❌   | ❌       | ❌  | ✅          |
 | **Self-hosted**           | ❌    | ❌   | ✅       | ✅  | ✅          |
 
@@ -522,7 +523,7 @@ Data separation architecture for GDPR/CCPA compliance:
 
 ## Key Results (Overall)
 
-By 2027, Authrim will be:
+By 2026-Q1, Authrim will be:
 
 1. **Identity Hub** - Unified authentication from multiple sources (Social, SAML, OIDC, Wallets)
 2. **Policy-Integrated** - AuthN + AuthZ in single platform (RBAC, ABAC, ReBAC)
@@ -566,6 +567,9 @@ By 2027, Authrim will be:
 | 2025-12-18 | **8.4 Policy Admin Console → Moved to Phase 10**: Develop alongside SDK for consistent developer experience                                                                                                |
 | 2025-12-18 | **8.1 Policy ↔ Identity Integration ✅ Complete**: Rule Evaluator, JIT Provisioning with dynamic role assignment, org auto-join, email domain hash with key rotation, Admin APIs                          |
 | 2025-12-19 | **Phase 8 ✅ Complete**: Token Embedding Model (8.2), Real-time Check API (8.3) with UnifiedCheckService, Permission Parser, WebSocket Push via PermissionChangeHub DO, Check API Keys Admin API           |
+| 2025-12-20 | **Phase 7 ✅ Complete**: All 7 social login providers (Google, Microsoft, GitHub, Apple, LinkedIn, Facebook, Twitter/X)                                                                                      |
+| 2025-12-20 | **Phase 9 ✅ Complete**: OpenID4VP/VCI, DID Support (did:web, did:key, DID Auth), 227 tests                                                                                                                   |
+| 2025-12-21 | **Phase 11 Security Hardening**: DPoP `ath` timing-safe comparison (RFC 9449), JWT algorithm consistency (`ALLOWED_ASYMMETRIC_ALGS`), Policy Flags Admin API (CLAUDE.md準拠)                                |
 
 ---
 
@@ -580,7 +584,7 @@ The following features are intentionally **not supported** due to architectural 
 
 ---
 
-> **Last Update:** 2025-12-20
+> **Last Update:** 2025-12-21
 >
 > **Current Status:** Phase 6 ✅ | Phase 7 ✅ | Phase 8 ✅ | Phase 9 ✅ | Phase 11 ~20%
 >

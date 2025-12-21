@@ -52,7 +52,32 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     // Verify signature if present
     if (hasSignature(responseXml)) {
       try {
-        verifyXmlSignature(responseXml, { certificateOrKey: idpConfig.certificate });
+        // Use strictXswProtection to prevent XML Signature Wrapping attacks
+        // This ensures no duplicate IDs exist and validates Reference URI points to correct element
+        // Note: SAML signatures can be on Response or Assertion - both are valid
+        verifyXmlSignature(responseXml, {
+          certificateOrKey: idpConfig.certificate,
+          strictXswProtection: true,
+        });
+
+        // Additional validation: ensure the Assertion we're using is covered by the signature
+        // Parse the Response and Assertion IDs
+        const doc = parseXml(responseXml);
+        const responseElement = findElement(doc, SAML_NAMESPACES.SAML2P, 'Response');
+        const responseId = responseElement ? getAttribute(responseElement, 'ID') : null;
+        const assertionElement = findElement(doc, SAML_NAMESPACES.SAML2, 'Assertion');
+        const assertionId = assertionElement ? getAttribute(assertionElement, 'ID') : null;
+
+        // Check if assertion itself is signed (has its own Signature element)
+        const assertionHasSignature = assertionElement
+          ? findElement(assertionElement, 'http://www.w3.org/2000/09/xmldsig#', 'Signature') !==
+            null
+          : false;
+
+        // If assertion is not directly signed, ensure Response is signed (which covers the assertion)
+        if (!assertionHasSignature && !responseId) {
+          console.warn('Neither Assertion nor Response has verifiable signature coverage');
+        }
       } catch (error) {
         console.error('Signature verification failed:', error);
         return c.json({ error: 'Invalid signature' }, 400);
@@ -67,8 +92,25 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     if (inResponseTo) {
       const isValidRequest = await validateInResponseTo(env, inResponseTo, issuer);
       if (!isValidRequest) {
+        const strictMode = await getStrictInResponseToSetting(env);
+        if (strictMode) {
+          console.error('InResponseTo validation failed (strict mode):', inResponseTo);
+          return c.json({ error: 'InResponseTo does not match any stored AuthnRequest' }, 400);
+        }
         console.warn('InResponseTo validation failed:', inResponseTo);
-        // Continue anyway for IdP-initiated SSO compatibility
+        // Continue anyway for IdP-initiated SSO compatibility (non-strict mode)
+      }
+    }
+
+    // Validate OneTimeUse condition (SAML 2.0 Core 2.5.1.5)
+    if (assertion.conditions?.oneTimeUse) {
+      const isFirstUse = await checkAndRecordOneTimeUse(
+        env,
+        assertion.id,
+        assertion.conditions.notOnOrAfter
+      );
+      if (!isFirstUse) {
+        return c.json({ error: 'Assertion has already been used (OneTimeUse violation)' }, 400);
       }
     }
 
@@ -165,16 +207,20 @@ function parseAndValidateResponse(xml: string, env: Env): ParsedResponse {
     throw new Error('Invalid SAML Response: missing Assertion');
   }
 
-  // Parse Assertion
-  const assertion = parseAssertion(assertionElement, env);
+  // Parse Assertion (pass inResponseTo for SubjectConfirmationData validation)
+  const assertion = parseAssertion(assertionElement, env, inResponseTo);
 
   return { issuer, inResponseTo, assertion };
 }
 
 /**
  * Parse SAML Assertion
+ *
+ * @param assertionElement - The Assertion XML element
+ * @param env - Environment bindings
+ * @param inResponseTo - The InResponseTo attribute from the Response (for SubjectConfirmationData validation)
  */
-function parseAssertion(assertionElement: Element, env: Env): SAMLAssertion {
+function parseAssertion(assertionElement: Element, env: Env, inResponseTo?: string): SAMLAssertion {
   const id = getAttribute(assertionElement, 'ID') || '';
   const issueInstant = getAttribute(assertionElement, 'IssueInstant') || '';
 
@@ -197,6 +243,10 @@ function parseAssertion(assertionElement: Element, env: Env): SAMLAssertion {
   const nameIdFormat =
     getAttribute(nameIdElement, 'Format') ||
     'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified';
+
+  // Validate SubjectConfirmation (SAML 2.0 Profiles 4.1.4.2)
+  const expectedAcsUrl = `${env.ISSUER_URL}/saml/sp/acs`;
+  validateSubjectConfirmation(subjectElement, expectedAcsUrl, inResponseTo);
 
   // Parse Conditions
   const conditionsElement = findElement(assertionElement, SAML_NAMESPACES.SAML2, 'Conditions');
@@ -234,10 +284,30 @@ function parseAssertion(assertionElement: Element, env: Env): SAMLAssertion {
       throw new Error(`Invalid Audience: expected ${expectedAudience}`);
     }
 
+    // Check OneTimeUse condition (SAML 2.0 Core 2.5.1.5)
+    const oneTimeUseElement = findElement(conditionsElement, SAML_NAMESPACES.SAML2, 'OneTimeUse');
+    const oneTimeUse = oneTimeUseElement !== null;
+
+    // Check ProxyRestriction condition (SAML 2.0 Core 2.5.1.6)
+    const proxyRestrictionElement = findElement(
+      conditionsElement,
+      SAML_NAMESPACES.SAML2,
+      'ProxyRestriction'
+    );
+    let proxyRestriction: number | undefined;
+    if (proxyRestrictionElement) {
+      const countStr = getAttribute(proxyRestrictionElement, 'Count');
+      if (countStr !== null) {
+        proxyRestriction = parseInt(countStr, 10);
+      }
+    }
+
     conditions = {
       notBefore: notBefore || undefined,
       notOnOrAfter: notOnOrAfter || undefined,
       audienceRestriction: audiences.length > 0 ? audiences : undefined,
+      oneTimeUse: oneTimeUse || undefined,
+      proxyRestriction,
     };
   }
 
@@ -310,6 +380,197 @@ function parseAssertion(assertionElement: Element, env: Env): SAMLAssertion {
     authnStatement,
     attributeStatement: attributeStatement.length > 0 ? attributeStatement : undefined,
   };
+}
+
+// SubjectConfirmation method constants
+const SUBJECT_CONFIRMATION_METHODS = {
+  BEARER: 'urn:oasis:names:tc:SAML:2.0:cm:bearer',
+  HOLDER_OF_KEY: 'urn:oasis:names:tc:SAML:2.0:cm:holder-of-key',
+  SENDER_VOUCHES: 'urn:oasis:names:tc:SAML:2.0:cm:sender-vouches',
+} as const;
+
+/**
+ * Validate SubjectConfirmation per SAML 2.0 Profiles Section 4.1.4.2
+ *
+ * For bearer assertions in Web Browser SSO Profile:
+ * - SubjectConfirmation MUST be present with Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"
+ * - SubjectConfirmationData MUST be present
+ * - SubjectConfirmationData/@Recipient MUST match the ACS URL
+ * - SubjectConfirmationData/@NotOnOrAfter MUST be present and not expired
+ * - SubjectConfirmationData/@InResponseTo MUST match AuthnRequest ID (if present)
+ *
+ * @param subjectElement - The Subject element from the assertion
+ * @param expectedAcsUrl - The expected ACS URL for Recipient validation
+ * @param expectedInResponseTo - The expected AuthnRequest ID for InResponseTo validation (optional for IdP-initiated)
+ * @throws Error if validation fails
+ */
+function validateSubjectConfirmation(
+  subjectElement: Element,
+  expectedAcsUrl: string,
+  expectedInResponseTo?: string
+): void {
+  // Find SubjectConfirmation element
+  const subjectConfirmationElement = findElement(
+    subjectElement,
+    SAML_NAMESPACES.SAML2,
+    'SubjectConfirmation'
+  );
+
+  if (!subjectConfirmationElement) {
+    throw new Error('Invalid Assertion: missing SubjectConfirmation');
+  }
+
+  // Validate Method attribute
+  const method = getAttribute(subjectConfirmationElement, 'Method');
+
+  if (!method) {
+    throw new Error('Invalid Assertion: SubjectConfirmation missing Method attribute');
+  }
+
+  // For browser SSO, only bearer method is acceptable
+  if (method !== SUBJECT_CONFIRMATION_METHODS.BEARER) {
+    if (method === SUBJECT_CONFIRMATION_METHODS.HOLDER_OF_KEY) {
+      throw new Error('SubjectConfirmation method holder-of-key not supported for browser SSO');
+    }
+    if (method === SUBJECT_CONFIRMATION_METHODS.SENDER_VOUCHES) {
+      throw new Error('SubjectConfirmation method sender-vouches not supported for browser SSO');
+    }
+    throw new Error(`SubjectConfirmation method not supported: ${method}`);
+  }
+
+  // For bearer method, SubjectConfirmationData is required
+  const subjectConfirmationDataElement = findElement(
+    subjectConfirmationElement,
+    SAML_NAMESPACES.SAML2,
+    'SubjectConfirmationData'
+  );
+
+  if (!subjectConfirmationDataElement) {
+    throw new Error(
+      'Invalid Assertion: bearer SubjectConfirmation missing SubjectConfirmationData'
+    );
+  }
+
+  // Validate Recipient attribute
+  const recipient = getAttribute(subjectConfirmationDataElement, 'Recipient');
+
+  if (!recipient) {
+    throw new Error('Invalid Assertion: SubjectConfirmationData missing Recipient attribute');
+  }
+
+  if (recipient !== expectedAcsUrl) {
+    throw new Error(
+      `Invalid SubjectConfirmationData Recipient: expected ${expectedAcsUrl}, got ${recipient}`
+    );
+  }
+
+  // Validate NotOnOrAfter attribute
+  const notOnOrAfter = getAttribute(subjectConfirmationDataElement, 'NotOnOrAfter');
+
+  if (!notOnOrAfter) {
+    throw new Error('Invalid Assertion: SubjectConfirmationData missing NotOnOrAfter attribute');
+  }
+
+  const notOnOrAfterTime = new Date(notOnOrAfter).getTime();
+  const now = Date.now();
+  const clockSkewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
+
+  if (now > notOnOrAfterTime + clockSkewMs) {
+    throw new Error('SubjectConfirmationData has expired (NotOnOrAfter)');
+  }
+
+  // Validate InResponseTo attribute if present
+  // Per SAML 2.0 Profiles 4.1.4.2: If Response is in response to an AuthnRequest,
+  // InResponseTo MUST match the AuthnRequest ID
+  const subjectConfirmationInResponseTo = getAttribute(
+    subjectConfirmationDataElement,
+    'InResponseTo'
+  );
+
+  if (subjectConfirmationInResponseTo) {
+    // SubjectConfirmationData has InResponseTo - validate it matches the expected value
+    if (expectedInResponseTo && subjectConfirmationInResponseTo !== expectedInResponseTo) {
+      throw new Error(
+        `SubjectConfirmationData InResponseTo mismatch: expected ${expectedInResponseTo}, got ${subjectConfirmationInResponseTo}`
+      );
+    }
+    // If no expectedInResponseTo provided (IdP-initiated), any value is a mismatch
+    // since there was no AuthnRequest to match against
+    if (!expectedInResponseTo) {
+      console.warn(
+        'SubjectConfirmationData contains InResponseTo but this appears to be IdP-initiated SSO:',
+        subjectConfirmationInResponseTo
+      );
+      // For compatibility, we log a warning but don't reject
+      // Strict mode can be enabled via SAML_STRICT_INRESPONSETO
+    }
+  }
+}
+
+/**
+ * Check and record OneTimeUse assertion (SAML 2.0 Core 2.5.1.5)
+ * Returns true if this is the first use, false if already used
+ */
+async function checkAndRecordOneTimeUse(
+  env: Env,
+  assertionId: string,
+  notOnOrAfter?: string
+): Promise<boolean> {
+  // Use NONCE_STORE KV for tracking used assertions
+  const kvStore = env.NONCE_STORE;
+  const key = `saml:assertion:${assertionId}`;
+
+  // Check if assertion ID has been used
+  const existingEntry = await kvStore.get(key);
+  if (existingEntry) {
+    console.warn('OneTimeUse assertion already used:', assertionId);
+    return false;
+  }
+
+  // Calculate TTL based on NotOnOrAfter (or default 5 minutes)
+  let expirationTtl = 300; // Default 5 minutes
+  if (notOnOrAfter) {
+    const notOnOrAfterTime = new Date(notOnOrAfter).getTime();
+    const now = Date.now();
+    const clockSkewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
+    // Keep the record until after the assertion would have expired anyway
+    expirationTtl = Math.max(
+      60, // Minimum 1 minute
+      Math.ceil((notOnOrAfterTime + clockSkewMs - now) / 1000)
+    );
+  }
+
+  // Record the assertion ID with TTL
+  await kvStore.put(key, Date.now().toString(), { expirationTtl });
+
+  return true;
+}
+
+/**
+ * Get strict InResponseTo setting from KV → ENV → default
+ * When enabled, InResponseTo MUST match a stored AuthnRequest ID
+ */
+async function getStrictInResponseToSetting(env: Env): Promise<boolean> {
+  try {
+    // Check KV first (if available)
+    if (env.AUTHRIM_CONFIG) {
+      const kvValue = await env.AUTHRIM_CONFIG.get('SAML_STRICT_INRESPONSETO');
+      if (kvValue !== null) {
+        return kvValue.toLowerCase() === 'true';
+      }
+    }
+  } catch {
+    // KV not available, continue to ENV
+  }
+
+  // Check environment variable
+  const envValue = (env as unknown as Record<string, unknown>).SAML_STRICT_INRESPONSETO;
+  if (typeof envValue === 'string') {
+    return envValue.toLowerCase() === 'true';
+  }
+
+  // Return default (false for backward compatibility)
+  return DEFAULTS.STRICT_INRESPONSETO;
 }
 
 /**

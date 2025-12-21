@@ -16,7 +16,13 @@
  */
 
 import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
-import { timingSafeEqual } from '@authrim/shared';
+import {
+  timingSafeEqual,
+  verifyToken,
+  importPublicKeyFromJWK,
+  parseTokenHeader,
+} from '@authrim/shared';
+import type { JWK } from 'jose';
 import type { CheckApiKey, RateLimitTier, CheckApiOperation } from '@authrim/shared';
 
 // =============================================================================
@@ -59,6 +65,12 @@ export interface CheckAuthContext {
   cache?: KVNamespace;
   policyApiSecret?: string;
   defaultTenantId?: string;
+  /** Issuer URL for JWT verification (e.g., https://auth.example.com) */
+  issuerUrl?: string;
+  /** Expected audience for JWT verification */
+  expectedAudience?: string;
+  /** JWKS (JSON Web Key Set) for JWT signature verification */
+  jwks?: { keys: JWK[] };
 }
 
 // =============================================================================
@@ -257,45 +269,102 @@ interface AccessTokenValidationResult {
 }
 
 /**
- * Validate Access Token (JWT)
+ * Validate Access Token (JWT) with full signature verification
  *
- * Note: This is a simplified validation. In production, you should:
- * 1. Verify JWT signature using the issuer's public key
- * 2. Check token expiration
- * 3. Validate audience, issuer, etc.
+ * Security features:
+ * - JWT signature verification using JWKS
+ * - Token expiration check (via jose library)
+ * - Issuer validation
+ * - Audience validation
  */
 async function validateAccessToken(
-  _ctx: CheckAuthContext,
+  ctx: CheckAuthContext,
   token: string
 ): Promise<AccessTokenValidationResult> {
   try {
-    // Decode JWT payload (middle part)
+    // Parse JWT parts for validation
     const parts = token.split('.');
     if (parts.length !== 3) {
       return { valid: false, error: 'invalid_jwt_format' };
     }
 
-    // Decode payload
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+    // If JWKS is not configured, fall back to basic validation with warning
+    if (!ctx.jwks || !ctx.issuerUrl) {
+      console.warn(
+        '[Check Auth] JWKS or issuerUrl not configured - falling back to expiration-only validation. ' +
+          'Configure JWKS for production security.'
+      );
 
-    // Check expiration
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
-      return { valid: false, error: 'token_expired' };
+      // Decode payload for basic validation
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+
+      // Check expiration
+      if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+        return { valid: false, error: 'token_expired' };
+      }
+
+      return {
+        valid: true,
+        clientId: payload.client_id || payload.azp,
+        subjectId: payload.sub,
+        tenantId: payload.tenant_id || 'default',
+      };
     }
 
-    // TODO: Implement full JWT verification:
-    // 1. Fetch issuer's JWKS
-    // 2. Verify signature
-    // 3. Validate claims (iss, aud, etc.)
-    // For now, we trust the token structure for internal use
+    // Full JWT verification with signature check
+    // Extract kid from header to select the correct key
+    const header = parseTokenHeader(token);
+    const kid = header.kid;
+
+    // Find the matching key from JWKS
+    let publicKey: JWK | undefined;
+    if (kid) {
+      publicKey = ctx.jwks.keys.find((key) => key.kid === kid);
+    }
+    if (!publicKey) {
+      // If no kid match, use the first RS256 key
+      publicKey = ctx.jwks.keys.find((key) => key.alg === 'RS256' || key.kty === 'RSA');
+    }
+
+    if (!publicKey) {
+      console.error('[Check Auth] No suitable public key found in JWKS');
+      return { valid: false, error: 'no_suitable_key' };
+    }
+
+    // Import the public key
+    const cryptoKey = await importPublicKeyFromJWK(publicKey);
+
+    // Verify the token (signature, expiration, issuer, audience)
+    const payload = await verifyToken(token, cryptoKey, ctx.issuerUrl, {
+      audience: ctx.expectedAudience,
+      skipAudienceCheck: !ctx.expectedAudience, // Skip if not configured
+    });
 
     return {
       valid: true,
-      clientId: payload.client_id || payload.azp,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      clientId: (payload as any).client_id || (payload as any).azp,
       subjectId: payload.sub,
-      tenantId: payload.tenant_id || 'default',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      tenantId: (payload as any).tenant_id || 'default',
     };
   } catch (error) {
+    if (error instanceof Error) {
+      // Handle specific jose library errors
+      if (error.message.includes('expired')) {
+        return { valid: false, error: 'token_expired' };
+      }
+      if (error.message.includes('signature')) {
+        console.error('[Check Auth] JWT signature verification failed');
+        return { valid: false, error: 'invalid_signature' };
+      }
+      if (error.message.includes('issuer')) {
+        return { valid: false, error: 'invalid_issuer' };
+      }
+      if (error.message.includes('audience')) {
+        return { valid: false, error: 'invalid_audience' };
+      }
+    }
     console.error('[Check Auth] Access token validation error:', error);
     return { valid: false, error: 'invalid_token' };
   }
@@ -413,6 +482,26 @@ export async function authenticateCheckApiRequest(
           error: 'unauthorized',
           description: 'Access token has expired',
           status: 401,
+        },
+        invalid_signature: {
+          error: 'unauthorized',
+          description: 'Invalid token signature',
+          status: 401,
+        },
+        invalid_issuer: {
+          error: 'unauthorized',
+          description: 'Invalid token issuer',
+          status: 401,
+        },
+        invalid_audience: {
+          error: 'unauthorized',
+          description: 'Invalid token audience',
+          status: 401,
+        },
+        no_suitable_key: {
+          error: 'server_error',
+          description: 'No suitable key found for signature verification',
+          status: 500,
         },
         invalid_token: {
           error: 'unauthorized',

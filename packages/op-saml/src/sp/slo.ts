@@ -110,7 +110,7 @@ async function processLogoutRequest(
   logoutRequest: ParsedLogoutRequest,
   relayState: string | null,
   binding: 'post' | 'redirect',
-  originalXml?: string
+  samlBase64?: string
 ): Promise<Response> {
   // Get IdP configuration
   const idpConfig = await getIdPConfigByEntityId(env, logoutRequest.issuer);
@@ -121,12 +121,20 @@ async function processLogoutRequest(
   }
 
   // Verify signature if present (for POST binding with embedded signature)
-  if (originalXml && hasSignature(atob(originalXml))) {
-    try {
-      verifyXmlSignature(atob(originalXml), { certificateOrKey: idpConfig.certificate });
-    } catch (error) {
-      console.error('LogoutRequest signature verification failed:', error);
-      return c.json({ error: 'Invalid signature on LogoutRequest' }, 400);
+  if (samlBase64) {
+    const decodedXml = atob(samlBase64);
+    if (hasSignature(decodedXml)) {
+      try {
+        // Use expectedId and strictXswProtection to prevent XSW attacks
+        verifyXmlSignature(decodedXml, {
+          certificateOrKey: idpConfig.certificate,
+          expectedId: logoutRequest.id,
+          strictXswProtection: true,
+        });
+      } catch (error) {
+        console.error('LogoutRequest signature verification failed:', error);
+        return c.json({ error: 'Invalid signature on LogoutRequest' }, 400);
+      }
     }
   }
 
@@ -162,18 +170,26 @@ async function processLogoutResponse(
   env: Env,
   logoutResponse: ParsedLogoutResponse,
   relayState: string | null,
-  originalXml?: string
+  samlBase64?: string
 ): Promise<Response> {
   // Get IdP configuration
   const idpConfig = await getIdPConfigByEntityId(env, logoutResponse.issuer);
 
   // Verify signature if present
-  if (idpConfig && originalXml && hasSignature(atob(originalXml))) {
-    try {
-      verifyXmlSignature(atob(originalXml), { certificateOrKey: idpConfig.certificate });
-    } catch (error) {
-      console.error('LogoutResponse signature verification failed:', error);
-      // Log but continue - some IdPs may not sign LogoutResponses
+  if (idpConfig && samlBase64) {
+    const decodedXml = atob(samlBase64);
+    if (hasSignature(decodedXml)) {
+      try {
+        // Use expectedId and strictXswProtection to prevent XSW attacks
+        verifyXmlSignature(decodedXml, {
+          certificateOrKey: idpConfig.certificate,
+          expectedId: logoutResponse.id,
+          strictXswProtection: true,
+        });
+      } catch (error) {
+        console.error('LogoutResponse signature verification failed:', error);
+        // Log but continue - some IdPs may not sign LogoutResponses
+      }
     }
   }
 

@@ -133,6 +133,8 @@ export interface SAMLAssertion {
     notBefore?: string;
     notOnOrAfter?: string;
     audienceRestriction?: string[];
+    oneTimeUse?: boolean; // SAML 2.0 Core 2.5.1.5 - Replay attack prevention
+    proxyRestriction?: number; // SAML 2.0 Core 2.5.1.6 - Proxy count limit
   };
   authnStatement?: {
     authnInstant: string;

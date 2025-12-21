@@ -7,6 +7,48 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { sendPingNotification, validatePingModeRequirements } from '../ciba-ping';
 import { sendPushModeTokens, validatePushModeRequirements } from '../ciba-push';
 
+/**
+ * Create a mock Response object for testing
+ */
+function createMockResponse(
+  status: number,
+  ok: boolean,
+  body: string = '',
+  statusText: string = ''
+): Response {
+  // Try to parse as JSON for json() method, fallback to null
+  let jsonBody: unknown = null;
+  try {
+    if (body) {
+      jsonBody = JSON.parse(body);
+    }
+  } catch {
+    // Not JSON, that's ok
+  }
+
+  return {
+    ok,
+    status,
+    statusText,
+    headers: new Headers({
+      'Content-Type': 'application/json',
+      'Content-Length': String(body.length),
+    }),
+    text: vi.fn().mockResolvedValue(body),
+    json: vi.fn().mockResolvedValue(jsonBody),
+    blob: vi.fn(),
+    arrayBuffer: vi.fn(),
+    formData: vi.fn(),
+    clone: vi.fn(),
+    body: null,
+    bodyUsed: false,
+    url: '',
+    type: 'basic',
+    redirected: false,
+    bytes: vi.fn(),
+  } as unknown as Response;
+}
+
 // Mock fetch globally
 global.fetch = vi.fn();
 
@@ -17,10 +59,9 @@ describe('CIBA Ping Mode Notifications', () => {
 
   describe('sendPingNotification', () => {
     it('should send ping notification successfully', async () => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-      });
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        createMockResponse(200, true)
+      );
 
       await sendPingNotification(
         'https://client.example.com/callback',
@@ -44,16 +85,30 @@ describe('CIBA Ping Mode Notifications', () => {
     });
 
     it('should throw error on failed notification', async () => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        statusText: 'Internal Server Error',
-        text: async () => 'Error details',
-      });
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        createMockResponse(500, false, 'Error details', 'Internal Server Error')
+      );
 
       await expect(
         sendPingNotification('https://client.example.com/callback', 'token123', 'auth_req_id_123')
-      ).rejects.toThrow();
+      ).rejects.toThrow('Ping notification failed: 500 Internal Server Error');
+    });
+
+    it('should block internal URLs (SSRF protection)', async () => {
+      await expect(
+        sendPingNotification('https://192.168.1.1/callback', 'token123', 'auth_req_id_123')
+      ).rejects.toThrow('SSRF protection');
+
+      // Verify fetch was never called
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('should block localhost URLs (SSRF protection) when allowLocalhost is false', async () => {
+      await expect(
+        sendPingNotification('https://localhost/callback', 'token123', 'auth_req_id_123')
+      ).rejects.toThrow('SSRF protection');
+
+      expect(fetch).not.toHaveBeenCalled();
     });
   });
 
@@ -102,10 +157,9 @@ describe('CIBA Push Mode Token Delivery', () => {
 
   describe('sendPushModeTokens', () => {
     it('should send tokens successfully', async () => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-      });
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        createMockResponse(200, true)
+      );
 
       await sendPushModeTokens(
         'https://client.example.com/callback',
@@ -138,10 +192,9 @@ describe('CIBA Push Mode Token Delivery', () => {
     });
 
     it('should handle null refresh token', async () => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-      });
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        createMockResponse(200, true)
+      );
 
       await sendPushModeTokens(
         'https://client.example.com/callback',
@@ -153,7 +206,7 @@ describe('CIBA Push Mode Token Delivery', () => {
         3600
       );
 
-      const callArgs = (fetch as any).mock.calls[0][1];
+      const callArgs = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1];
       const body = JSON.parse(callArgs.body);
 
       expect(body.refresh_token).toBeUndefined();
@@ -162,12 +215,9 @@ describe('CIBA Push Mode Token Delivery', () => {
     });
 
     it('should throw error on failed delivery', async () => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        statusText: 'Internal Server Error',
-        text: async () => 'Error details',
-      });
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        createMockResponse(500, false, 'Error details', 'Internal Server Error')
+      );
 
       await expect(
         sendPushModeTokens(
@@ -179,7 +229,7 @@ describe('CIBA Push Mode Token Delivery', () => {
           null,
           3600
         )
-      ).rejects.toThrow();
+      ).rejects.toThrow('Push token delivery failed: 500 Internal Server Error');
     });
   });
 

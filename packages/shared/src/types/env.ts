@@ -254,6 +254,12 @@ export interface Env {
   CHECK_API_WEBSOCKET_ENABLED?: string; // "true" to enable WebSocket Push (default: disabled)
   CHECK_API_AUDIT_ENABLED?: string; // "true" to enable audit logging (default: enabled)
 
+  // Mock Authentication Feature Flag (Development/Testing Only)
+  // SECURITY WARNING: Never enable this in production!
+  // When "true", allows device/CIBA flows to use mock users without real authentication
+  // Default: disabled (secure by default)
+  ENABLE_MOCK_AUTH?: string;
+
   // Check API KV Cache
   CHECK_CACHE_KV?: KVNamespace; // Cache for permission check results
 

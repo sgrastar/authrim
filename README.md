@@ -27,7 +27,7 @@ Key caveats:
 **Authrim** makes identity & access management as simple as deploying a website:
 
 ```bash
-# Future goal (Phase 12)
+# Coming in 2026-Q1 (Phase 12)
 npx create-authrim my-identity-provider
 ```
 
@@ -132,9 +132,9 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 | 7     | **Identity Hub Foundation**    | 2025-12           | ✅ Complete |
 | 8     | **Unified Policy Integration** | 2025-12           | ✅ Complete |
 | 9     | **Advanced Identity (VC/DID)** | 2025-12           | ✅ Complete |
-| 10    | SDK & API                      | 2026-Q4           | 🔜 Planned  |
-| 11    | Security & QA                  | 2025-12 ~         | ⏳ ~20%     |
-| 12    | Certification & Release        | 2027-Q2           | 🔜 Final    |
+| 10    | SDK & API                      | 2025-Q4           | 🔜 Planned  |
+| 11    | Security & QA                  | 2025-Q4           | ⏳ ~20%     |
+| 12    | Certification & Release        | 2026-Q1           | 🔜 Final    |
 
 [View detailed roadmap](./docs/ROADMAP.md)
 
@@ -181,14 +181,14 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 | `op-discovery`   | Worker    | Discovery & JWKS endpoints               |
 | `op-async`       | Worker    | Device Flow, CIBA polling                |
 | `op-saml`        | Worker    | SAML 2.0 IdP & SP                        |
-| `external-idp`   | Worker    | Social login (Google, Microsoft, GitHub) |
+| `external-idp`   | Worker    | Social login (Google, MS, GitHub, Apple, LinkedIn, Facebook, X) |
 | `policy-service` | Worker    | Policy evaluation API                    |
 | `scim`           | Worker    | SCIM 2.0 user provisioning               |
 | `vc`             | Worker    | OpenID4VP/VCI, DID resolution            |
 | `router`         | Worker    | Request routing & load balancing         |
 | `ui`             | SvelteKit | Authentication & admin UI                |
 
-### Durable Objects (16 total)
+### Durable Objects (17 total)
 
 | Durable Object         | Purpose                          |
 | ---------------------- | -------------------------------- |
@@ -208,6 +208,7 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 | VersionManager         | Version management               |
 | VPRequestStore         | OpenID4VP request management     |
 | CredentialOfferStore   | OpenID4VCI offer management      |
+| PermissionChangeHub    | Real-time permission notifications |
 
 ## Features
 
@@ -317,4 +318,4 @@ See [LICENSE](./LICENSE) for details.
 >
 > **Status:** Phase 6 ✅ | Phase 7 ✅ | Phase 8 ✅ | Phase 9 ✅ | Phase 11 ~20%
 >
-> _From zero to production-ready Identity & Access Platform in under 5 minutes._ (Goal: 2027-Q2)
+> _From zero to production-ready Identity & Access Platform in under 5 minutes._ (Goal: 2026-Q1)

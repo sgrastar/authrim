@@ -19,6 +19,7 @@
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { versionCheckMiddleware, requestContextMiddleware } from '@authrim/shared';
 import type { Env } from './types';
 
 // Verifier routes
@@ -45,7 +46,9 @@ import { didResolveRoute } from './did/routes/resolve';
 
 const app = new Hono<{ Bindings: Env }>();
 
-// CORS middleware
+// Middleware
+app.use('*', versionCheckMiddleware('vc'));
+app.use('*', requestContextMiddleware());
 app.use('*', cors());
 
 // =============================================================================

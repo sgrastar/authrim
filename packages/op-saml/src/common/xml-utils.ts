@@ -15,9 +15,72 @@ export type XMLDocument = ReturnType<DOMParser['parseFromString']>;
 export type XMLElement = any;
 
 /**
+ * XXE (XML External Entity) attack patterns to detect
+ *
+ * These patterns detect potentially malicious XML constructs:
+ * - DOCTYPE declarations (can define entities)
+ * - ENTITY declarations (internal or external)
+ * - SYSTEM/PUBLIC external references
+ *
+ * SAML messages should never contain DOCTYPE or ENTITY declarations.
+ *
+ * @see https://owasp.org/www-community/vulnerabilities/XML_External_Entity_(XXE)_Processing
+ */
+const XXE_PATTERNS = {
+  /** DOCTYPE declaration - can be used to define entities */
+  DOCTYPE: /<!DOCTYPE\s/i,
+  /** ENTITY declaration - defines internal or external entities */
+  ENTITY: /<!ENTITY\s/i,
+  /** SYSTEM keyword - external file/URL reference */
+  SYSTEM: /SYSTEM\s+["']/i,
+  /** PUBLIC keyword - external DTD reference */
+  PUBLIC: /PUBLIC\s+["']/i,
+} as const;
+
+/**
+ * Validate XML string for XXE attack patterns
+ *
+ * @param xmlString - XML string to validate
+ * @throws Error if XXE attack pattern is detected
+ */
+function validateXmlSecurity(xmlString: string): void {
+  // Check for DOCTYPE (most common XXE vector)
+  if (XXE_PATTERNS.DOCTYPE.test(xmlString)) {
+    throw new Error('XML security error: DOCTYPE declarations are not allowed in SAML messages');
+  }
+
+  // Check for ENTITY declarations (can be inline in DOCTYPE)
+  if (XXE_PATTERNS.ENTITY.test(xmlString)) {
+    throw new Error('XML security error: ENTITY declarations are not allowed in SAML messages');
+  }
+
+  // Check for SYSTEM references (external file access)
+  if (XXE_PATTERNS.SYSTEM.test(xmlString)) {
+    throw new Error('XML security error: SYSTEM references are not allowed in SAML messages');
+  }
+
+  // Check for PUBLIC references (external DTD)
+  if (XXE_PATTERNS.PUBLIC.test(xmlString)) {
+    throw new Error('XML security error: PUBLIC references are not allowed in SAML messages');
+  }
+}
+
+/**
  * Parse XML string into DOM Document
+ *
+ * Security features:
+ * - XXE (XML External Entity) attack prevention
+ * - DOCTYPE/ENTITY declaration rejection
+ * - External reference (SYSTEM/PUBLIC) rejection
+ *
+ * @param xmlString - XML string to parse
+ * @returns Parsed XML document
+ * @throws Error if XML is malformed or contains security threats
  */
 export function parseXml(xmlString: string): XMLDocument {
+  // Security: Validate XML before parsing to prevent XXE attacks
+  validateXmlSecurity(xmlString);
+
   // ErrorHandlerFunction signature: (level: 'error' | 'warning' | 'fatalError', msg: string, context: any) => void
   const errorHandler = (level: 'error' | 'warning' | 'fatalError', msg: string) => {
     if (level === 'error') {

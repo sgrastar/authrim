@@ -115,6 +115,7 @@ import {
   clearOAuthConfig,
   clearAllOAuthConfig,
 } from './routes/settings/oauth-config';
+import { getPolicyFlags, updatePolicyFlag, clearPolicyFlag } from './routes/settings/policy-flags';
 import {
   getRateLimitSettings,
   getRateLimitProfile,
@@ -445,6 +446,11 @@ app.put('/api/admin/settings/oauth-config/:name', updateOAuthConfig);
 app.delete('/api/admin/settings/oauth-config/:name', clearOAuthConfig);
 app.delete('/api/admin/settings/oauth-config', clearAllOAuthConfig);
 
+// Admin Policy Flags (Check API) Configuration endpoints
+app.get('/api/admin/settings/policy-flags', getPolicyFlags);
+app.put('/api/admin/settings/policy-flags/:name', updatePolicyFlag);
+app.delete('/api/admin/settings/policy-flags/:name', clearPolicyFlag);
+
 // Admin Rate Limit Configuration endpoints
 app.get('/api/admin/settings/rate-limit', getRateLimitSettings);
 app.get('/api/admin/settings/rate-limit/profile-override', getProfileOverride);
@@ -677,6 +683,7 @@ app.post('/api/internal/version/:workerName', adminAuthMiddleware(), async (c) =
     'policy-service',
     'op-saml',
     'external-idp',
+    'vc',
   ];
   if (!validWorkers.includes(workerName)) {
     return c.json(

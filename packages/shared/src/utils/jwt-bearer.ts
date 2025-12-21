@@ -7,6 +7,7 @@
  */
 
 import { jwtVerify, importJWK, type JWK, type JWTPayload } from 'jose';
+import { ALLOWED_ASYMMETRIC_ALGS } from '../constants';
 
 /**
  * JWT Bearer Assertion Claims
@@ -186,11 +187,12 @@ export async function validateJWTBearerAssertion(
     }
 
     // Step 7: Verify JWT signature
-    const cryptoKey = await importJWK(publicKey, 'RS256');
+    // SECURITY: Use algorithm whitelist to prevent algorithm confusion attacks
+    const cryptoKey = await importJWK(publicKey, publicKey.alg || 'RS256');
     const { payload } = await jwtVerify(assertion, cryptoKey, {
       issuer: claims.iss,
       audience: expectedAudience,
-      algorithms: ['RS256', 'ES256'],
+      algorithms: [...ALLOWED_ASYMMETRIC_ALGS],
     });
 
     // Step 8: Verify expiration
