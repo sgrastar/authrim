@@ -80,6 +80,10 @@ app.get('/api/health', (c) => {
 // OpenID Connect Discovery endpoint
 app.get('/.well-known/openid-configuration', discoveryHandler);
 
+// RFC 8414: OAuth 2.0 Authorization Server Metadata
+// Returns the same metadata as openid-configuration for OAuth 2.0 clients
+app.get('/.well-known/oauth-authorization-server', discoveryHandler);
+
 // JWKS endpoint (JSON Web Key Set)
 app.get('/.well-known/jwks.json', jwksHandler);
 

@@ -290,10 +290,61 @@ import {
   scimAuthMiddleware,
 } from '@authrim/scim';
 
+/**
+ * SCIM Service Provider Configuration type (RFC 7643 Section 5)
+ */
+interface ScimServiceProviderConfig {
+  schemas: string[];
+  documentationUri?: string;
+  patch: { supported: boolean };
+  bulk: { supported: boolean; maxOperations: number; maxPayloadSize: number };
+  filter: { supported: boolean; maxResults: number };
+  changePassword: { supported: boolean };
+  sort: { supported: boolean };
+  etag: { supported: boolean };
+  authenticationSchemes: Array<{
+    type: string;
+    name: string;
+    description: string;
+    specUri?: string;
+    documentationUri?: string;
+    primary?: boolean;
+  }>;
+  meta: {
+    location: string;
+    resourceType: string;
+    created?: string;
+    lastModified?: string;
+    version?: string;
+  };
+}
+
 const app = new Hono<{ Bindings: Env }>();
 
-// Apply SCIM authentication to all routes
-app.use('*', scimAuthMiddleware);
+// SCIM Discovery endpoints that should be accessible without authentication (RFC 7644 Section 4)
+const SCIM_DISCOVERY_PATHS = ['/ServiceProviderConfig', '/ResourceTypes', '/Schemas'];
+
+// Set SCIM Content-Type for all responses (RFC 7644 Section 3.1)
+app.use('*', async (c, next) => {
+  await next();
+  // Set Content-Type to application/scim+json for JSON responses
+  const contentType = c.res.headers.get('Content-Type');
+  if (contentType?.includes('application/json')) {
+    c.res.headers.set('Content-Type', 'application/scim+json; charset=utf-8');
+  }
+});
+
+// Apply SCIM authentication to all routes EXCEPT discovery endpoints
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  // Skip auth for discovery endpoints (RFC 7644 Section 4 recommends unauthenticated access)
+  for (const discoveryPath of SCIM_DISCOVERY_PATHS) {
+    if (path.endsWith(discoveryPath) || path.includes(`${discoveryPath}/`)) {
+      return next();
+    }
+  }
+  return scimAuthMiddleware(c, next);
+});
 
 /**
  * Helper: Get base URL from request
@@ -393,6 +444,490 @@ function parseQueryParams(c: any): ScimQueryParams {
 
   return params;
 }
+
+// ============================================================================
+// SCIM Discovery Endpoints (RFC 7644 Section 4)
+// ============================================================================
+
+/**
+ * GET /scim/v2/ServiceProviderConfig - Service Provider Configuration
+ * RFC 7644 Section 4 - REQUIRED endpoint
+ */
+app.get('/ServiceProviderConfig', (c) => {
+  const baseUrl = getBaseUrl(c);
+
+  const config: ScimServiceProviderConfig = {
+    schemas: [SCIM_SCHEMAS.SERVICE_PROVIDER_CONFIG],
+    documentationUri: `${baseUrl}/docs/scim`,
+    patch: {
+      supported: true,
+    },
+    bulk: {
+      supported: false,
+      maxOperations: 0,
+      maxPayloadSize: 0,
+    },
+    filter: {
+      supported: true,
+      maxResults: 1000,
+    },
+    changePassword: {
+      supported: true,
+    },
+    sort: {
+      supported: true,
+    },
+    etag: {
+      supported: true,
+    },
+    authenticationSchemes: [
+      {
+        type: 'oauthbearertoken',
+        name: 'OAuth Bearer Token',
+        description: 'Authentication scheme using the OAuth Bearer Token Standard',
+        specUri: 'https://tools.ietf.org/html/rfc6750',
+        primary: true,
+      },
+    ],
+    meta: {
+      location: `${baseUrl}/scim/v2/ServiceProviderConfig`,
+      resourceType: 'ServiceProviderConfig',
+      created: '2024-01-01T00:00:00Z',
+      lastModified: '2024-12-22T00:00:00Z',
+    },
+  };
+
+  return c.json(config);
+});
+
+/**
+ * GET /scim/v2/ResourceTypes - Resource Type definitions
+ * RFC 7644 Section 4 - REQUIRED endpoint
+ */
+app.get('/ResourceTypes', (c) => {
+  const baseUrl = getBaseUrl(c);
+
+  const resourceTypes = {
+    schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
+    totalResults: 2,
+    Resources: [
+      {
+        schemas: [SCIM_SCHEMAS.RESOURCE_TYPE],
+        id: 'User',
+        name: 'User',
+        endpoint: '/Users',
+        description: 'User Account',
+        schema: SCIM_SCHEMAS.USER,
+        schemaExtensions: [
+          {
+            schema: SCIM_SCHEMAS.ENTERPRISE_USER,
+            required: false,
+          },
+        ],
+        meta: {
+          location: `${baseUrl}/scim/v2/ResourceTypes/User`,
+          resourceType: 'ResourceType',
+        },
+      },
+      {
+        schemas: [SCIM_SCHEMAS.RESOURCE_TYPE],
+        id: 'Group',
+        name: 'Group',
+        endpoint: '/Groups',
+        description: 'Group',
+        schema: SCIM_SCHEMAS.GROUP,
+        meta: {
+          location: `${baseUrl}/scim/v2/ResourceTypes/Group`,
+          resourceType: 'ResourceType',
+        },
+      },
+    ],
+  };
+
+  return c.json(resourceTypes);
+});
+
+/**
+ * GET /scim/v2/ResourceTypes/:name - Single Resource Type
+ */
+app.get('/ResourceTypes/:name', (c) => {
+  const name = c.req.param('name');
+  const baseUrl = getBaseUrl(c);
+
+  if (name === 'User') {
+    return c.json({
+      schemas: [SCIM_SCHEMAS.RESOURCE_TYPE],
+      id: 'User',
+      name: 'User',
+      endpoint: '/Users',
+      description: 'User Account',
+      schema: SCIM_SCHEMAS.USER,
+      schemaExtensions: [
+        {
+          schema: SCIM_SCHEMAS.ENTERPRISE_USER,
+          required: false,
+        },
+      ],
+      meta: {
+        location: `${baseUrl}/scim/v2/ResourceTypes/User`,
+        resourceType: 'ResourceType',
+      },
+    });
+  }
+
+  if (name === 'Group') {
+    return c.json({
+      schemas: [SCIM_SCHEMAS.RESOURCE_TYPE],
+      id: 'Group',
+      name: 'Group',
+      endpoint: '/Groups',
+      description: 'Group',
+      schema: SCIM_SCHEMAS.GROUP,
+      meta: {
+        location: `${baseUrl}/scim/v2/ResourceTypes/Group`,
+        resourceType: 'ResourceType',
+      },
+    });
+  }
+
+  return scimError(c, 404, `ResourceType ${name} not found`);
+});
+
+/**
+ * GET /scim/v2/Schemas - Schema definitions
+ * RFC 7644 Section 4 - REQUIRED endpoint
+ */
+app.get('/Schemas', (c) => {
+  const baseUrl = getBaseUrl(c);
+
+  // Simplified schema definitions - full SCIM Core Schema
+  const schemas = {
+    schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
+    totalResults: 3,
+    Resources: [
+      {
+        schemas: [SCIM_SCHEMAS.SCHEMA],
+        id: SCIM_SCHEMAS.USER,
+        name: 'User',
+        description: 'User Account',
+        attributes: [
+          {
+            name: 'userName',
+            type: 'string',
+            multiValued: false,
+            required: true,
+            caseExact: false,
+            mutability: 'readWrite',
+            returned: 'default',
+            uniqueness: 'server',
+          },
+          {
+            name: 'name',
+            type: 'complex',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+            subAttributes: [
+              { name: 'formatted', type: 'string', multiValued: false, required: false },
+              { name: 'familyName', type: 'string', multiValued: false, required: false },
+              { name: 'givenName', type: 'string', multiValued: false, required: false },
+              { name: 'middleName', type: 'string', multiValued: false, required: false },
+              { name: 'honorificPrefix', type: 'string', multiValued: false, required: false },
+              { name: 'honorificSuffix', type: 'string', multiValued: false, required: false },
+            ],
+          },
+          {
+            name: 'displayName',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'emails',
+            type: 'complex',
+            multiValued: true,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+            subAttributes: [
+              { name: 'value', type: 'string', multiValued: false, required: false },
+              { name: 'type', type: 'string', multiValued: false, required: false },
+              { name: 'primary', type: 'boolean', multiValued: false, required: false },
+            ],
+          },
+          {
+            name: 'phoneNumbers',
+            type: 'complex',
+            multiValued: true,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+            subAttributes: [
+              { name: 'value', type: 'string', multiValued: false, required: false },
+              { name: 'type', type: 'string', multiValued: false, required: false },
+              { name: 'primary', type: 'boolean', multiValued: false, required: false },
+            ],
+          },
+          {
+            name: 'active',
+            type: 'boolean',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+        ],
+        meta: {
+          location: `${baseUrl}/scim/v2/Schemas/${encodeURIComponent(SCIM_SCHEMAS.USER)}`,
+          resourceType: 'Schema',
+        },
+      },
+      {
+        schemas: [SCIM_SCHEMAS.SCHEMA],
+        id: SCIM_SCHEMAS.GROUP,
+        name: 'Group',
+        description: 'Group',
+        attributes: [
+          {
+            name: 'displayName',
+            type: 'string',
+            multiValued: false,
+            required: true,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'members',
+            type: 'complex',
+            multiValued: true,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+            subAttributes: [
+              { name: 'value', type: 'string', multiValued: false, required: false },
+              { name: '$ref', type: 'reference', multiValued: false, required: false },
+              { name: 'type', type: 'string', multiValued: false, required: false },
+            ],
+          },
+        ],
+        meta: {
+          location: `${baseUrl}/scim/v2/Schemas/${encodeURIComponent(SCIM_SCHEMAS.GROUP)}`,
+          resourceType: 'Schema',
+        },
+      },
+      {
+        schemas: [SCIM_SCHEMAS.SCHEMA],
+        id: SCIM_SCHEMAS.ENTERPRISE_USER,
+        name: 'EnterpriseUser',
+        description: 'Enterprise User Extension',
+        attributes: [
+          {
+            name: 'employeeNumber',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'organization',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'department',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+        ],
+        meta: {
+          location: `${baseUrl}/scim/v2/Schemas/${encodeURIComponent(SCIM_SCHEMAS.ENTERPRISE_USER)}`,
+          resourceType: 'Schema',
+        },
+      },
+    ],
+  };
+
+  return c.json(schemas);
+});
+
+/**
+ * GET /scim/v2/Schemas/:id - Single Schema
+ */
+app.get('/Schemas/:id', (c) => {
+  const schemaId = decodeURIComponent(c.req.param('id'));
+  const baseUrl = getBaseUrl(c);
+
+  // Return schema based on ID
+  if (schemaId === SCIM_SCHEMAS.USER) {
+    return c.json({
+      schemas: [SCIM_SCHEMAS.SCHEMA],
+      id: SCIM_SCHEMAS.USER,
+      name: 'User',
+      description: 'User Account',
+      attributes: [
+        {
+          name: 'userName',
+          type: 'string',
+          multiValued: false,
+          required: true,
+          caseExact: false,
+          mutability: 'readWrite',
+          returned: 'default',
+          uniqueness: 'server',
+        },
+        {
+          name: 'name',
+          type: 'complex',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+          subAttributes: [
+            { name: 'formatted', type: 'string', multiValued: false, required: false },
+            { name: 'familyName', type: 'string', multiValued: false, required: false },
+            { name: 'givenName', type: 'string', multiValued: false, required: false },
+            { name: 'middleName', type: 'string', multiValued: false, required: false },
+            { name: 'honorificPrefix', type: 'string', multiValued: false, required: false },
+            { name: 'honorificSuffix', type: 'string', multiValued: false, required: false },
+          ],
+        },
+        {
+          name: 'displayName',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'emails',
+          type: 'complex',
+          multiValued: true,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+          subAttributes: [
+            { name: 'value', type: 'string', multiValued: false, required: false },
+            { name: 'type', type: 'string', multiValued: false, required: false },
+            { name: 'primary', type: 'boolean', multiValued: false, required: false },
+          ],
+        },
+        {
+          name: 'phoneNumbers',
+          type: 'complex',
+          multiValued: true,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+          subAttributes: [
+            { name: 'value', type: 'string', multiValued: false, required: false },
+            { name: 'type', type: 'string', multiValued: false, required: false },
+            { name: 'primary', type: 'boolean', multiValued: false, required: false },
+          ],
+        },
+        {
+          name: 'active',
+          type: 'boolean',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+      ],
+      meta: {
+        location: `${baseUrl}/scim/v2/Schemas/${encodeURIComponent(SCIM_SCHEMAS.USER)}`,
+        resourceType: 'Schema',
+      },
+    });
+  }
+
+  if (schemaId === SCIM_SCHEMAS.GROUP) {
+    return c.json({
+      schemas: [SCIM_SCHEMAS.SCHEMA],
+      id: SCIM_SCHEMAS.GROUP,
+      name: 'Group',
+      description: 'Group',
+      attributes: [
+        {
+          name: 'displayName',
+          type: 'string',
+          multiValued: false,
+          required: true,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'members',
+          type: 'complex',
+          multiValued: true,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+          subAttributes: [
+            { name: 'value', type: 'string', multiValued: false, required: false },
+            { name: '$ref', type: 'reference', multiValued: false, required: false },
+            { name: 'type', type: 'string', multiValued: false, required: false },
+          ],
+        },
+      ],
+      meta: {
+        location: `${baseUrl}/scim/v2/Schemas/${encodeURIComponent(SCIM_SCHEMAS.GROUP)}`,
+        resourceType: 'Schema',
+      },
+    });
+  }
+
+  if (schemaId === SCIM_SCHEMAS.ENTERPRISE_USER) {
+    return c.json({
+      schemas: [SCIM_SCHEMAS.SCHEMA],
+      id: SCIM_SCHEMAS.ENTERPRISE_USER,
+      name: 'EnterpriseUser',
+      description: 'Enterprise User Extension',
+      attributes: [
+        {
+          name: 'employeeNumber',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'organization',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'department',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+      ],
+      meta: {
+        location: `${baseUrl}/scim/v2/Schemas/${encodeURIComponent(SCIM_SCHEMAS.ENTERPRISE_USER)}`,
+        resourceType: 'Schema',
+      },
+    });
+  }
+
+  return scimError(c, 404, `Schema ${schemaId} not found`);
+});
 
 // ============================================================================
 // SCIM User Endpoints
