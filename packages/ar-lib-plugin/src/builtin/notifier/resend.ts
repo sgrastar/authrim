@@ -30,38 +30,47 @@ import { NOTIFIER_SECURITY_DEFAULTS, renderTemplate } from './types';
  * Resend notifier configuration
  *
  * Following CLAUDE.md: KV → Environment Variables → Default values
+ * Each field uses .describe() for Admin UI display.
  */
 export const ResendNotifierConfigSchema = z.object({
-  /** Resend API key (required) */
-  apiKey: z.string().min(1, 'API key is required'),
+  apiKey: z
+    .string()
+    .min(1, 'API key is required')
+    .describe('Resend APIキー（re_で始まる）。Resendダッシュボードから取得'),
 
-  /** Default sender email address */
-  defaultFrom: z.string().email('Invalid sender email address'),
+  defaultFrom: z
+    .string()
+    .email('Invalid sender email address')
+    .describe('デフォルトの送信元メールアドレス。ドメイン認証が必要'),
 
-  /** Default reply-to address (optional) */
-  replyTo: z.string().email().optional(),
+  replyTo: z.string().email().optional().describe('返信先メールアドレス（任意）'),
 
-  /** Request timeout in milliseconds */
   timeoutMs: z
     .number()
     .int()
     .min(1000)
     .max(NOTIFIER_SECURITY_DEFAULTS.MAX_TIMEOUT_MS)
-    .default(NOTIFIER_SECURITY_DEFAULTS.DEFAULT_TIMEOUT_MS),
+    .default(NOTIFIER_SECURITY_DEFAULTS.DEFAULT_TIMEOUT_MS)
+    .describe('APIリクエストのタイムアウト（ミリ秒）'),
 
-  /** Maximum recipients per request */
   maxRecipientsPerRequest: z
     .number()
     .int()
     .min(1)
     .max(NOTIFIER_SECURITY_DEFAULTS.MAX_RECIPIENTS_PER_REQUEST)
-    .default(10),
+    .default(10)
+    .describe('1リクエストあたりの最大受信者数（To+CC+BCC合計）'),
 
-  /** Enable sandbox mode (for testing) */
-  sandboxMode: z.boolean().default(false),
+  sandboxMode: z
+    .boolean()
+    .default(false)
+    .describe('サンドボックスモード。有効にするとメールは実際には送信されない（テスト用）'),
 
-  /** Custom API endpoint (for testing or regional endpoints) */
-  apiEndpoint: z.string().url().default('https://api.resend.com'),
+  apiEndpoint: z
+    .string()
+    .url()
+    .default('https://api.resend.com')
+    .describe('Resend APIエンドポイント。通常は変更不要'),
 });
 
 export type ResendNotifierConfig = z.infer<typeof ResendNotifierConfigSchema>;
@@ -110,11 +119,58 @@ export const resendEmailPlugin: AuthrimPlugin<ResendNotifierConfig> = {
   configSchema: ResendNotifierConfigSchema,
 
   meta: {
+    // Required fields
     name: 'Resend Email',
-    description: 'Send transactional emails via Resend API',
-    icon: 'mail',
+    description:
+      'Resend APIを使用したトランザクションメール送信。OTP認証コード、パスワードリセット等に対応。',
     category: 'notification',
+
+    // Author (official plugin)
+    author: {
+      name: 'Authrim Team',
+      organization: 'Authrim',
+      url: 'https://authrim.io',
+    },
+    license: 'MIT',
+
+    // Display
+    icon: 'mail',
+    tags: ['email', 'resend', 'transactional', 'otp', 'notification'],
+    logoUrl: 'https://resend.com/static/brand/resend-icon-black.svg',
+
+    // Documentation
     documentationUrl: 'https://resend.com/docs',
+    repositoryUrl: 'https://github.com/sgrastar/authrim',
+
+    // External dependencies
+    externalDependencies: [
+      {
+        name: 'Resend API',
+        url: 'https://resend.com',
+        required: true,
+        description: 'メール送信サービス。APIキーとドメイン認証が必要',
+      },
+    ],
+
+    // Compatibility
+    minAuthrimVersion: '1.0.0',
+
+    // Status
+    stability: 'stable',
+
+    // Admin notes
+    adminNotes: `
+## セットアップ手順
+1. https://resend.com でアカウント作成
+2. ドメインを追加してDNS認証を完了
+3. APIキー（re_で始まる）を取得
+4. Admin APIで設定を更新
+
+## 注意事項
+- sandboxModeをtrueにすると実際にはメールが送信されません
+- 本番環境ではドメイン認証済みのFromアドレスのみ使用可能
+- レート制限: 無料プランは100通/日
+    `.trim(),
   },
 
   register(registry: CapabilityRegistry, config: ResendNotifierConfig) {

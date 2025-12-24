@@ -23,25 +23,35 @@ import { CapabilityRegistry } from '../../core/registry';
 
 /**
  * Console notifier configuration
+ *
+ * Each field uses .describe() for Admin UI display.
  */
 export const ConsoleNotifierConfigSchema = z.object({
-  /** Prefix for log messages */
-  prefix: z.string().default('[AUTHRIM-NOTIFY]'),
+  prefix: z.string().default('[AUTHRIM-NOTIFY]').describe('ログメッセージのプレフィックス'),
 
-  /** Include timestamp in logs */
-  includeTimestamp: z.boolean().default(true),
+  includeTimestamp: z.boolean().default(true).describe('ログにタイムスタンプを含めるか'),
 
-  /** Log level */
-  logLevel: z.enum(['debug', 'info', 'warn']).default('info'),
+  logLevel: z
+    .enum(['debug', 'info', 'warn'])
+    .default('info')
+    .describe('ログレベル（debug/info/warn）'),
 
-  /** Pretty print JSON payloads */
-  prettyPrint: z.boolean().default(true),
+  prettyPrint: z.boolean().default(true).describe('JSONペイロードを整形して表示するか'),
 
-  /** Simulate delay (ms) - useful for testing timeout handling */
-  simulateDelayMs: z.number().int().min(0).max(5000).default(0),
+  simulateDelayMs: z
+    .number()
+    .int()
+    .min(0)
+    .max(5000)
+    .default(0)
+    .describe('シミュレート遅延（ミリ秒）。タイムアウト処理のテストに使用'),
 
-  /** Simulate failure rate (0-1) - useful for testing error handling */
-  simulateFailureRate: z.number().min(0).max(1).default(0),
+  simulateFailureRate: z
+    .number()
+    .min(0)
+    .max(1)
+    .default(0)
+    .describe('失敗シミュレート率（0-1）。0.5=50%の確率で失敗。エラーハンドリングのテストに使用'),
 });
 
 export type ConsoleNotifierConfig = z.infer<typeof ConsoleNotifierConfigSchema>;
@@ -63,11 +73,50 @@ export const consoleNotifierPlugin: AuthrimPlugin<ConsoleNotifierConfig> = {
   configSchema: ConsoleNotifierConfigSchema,
 
   meta: {
+    // Required fields
     name: 'Console Notifier',
-    description: 'Logs notifications to console (development only)',
-    icon: 'terminal',
+    description:
+      '通知をコンソールにログ出力します。開発・テスト専用。本番環境では使用しないでください。',
     category: 'notification',
-    documentationUrl: 'https://docs.authrim.com/plugins/notifier-console',
+
+    // Author (official plugin)
+    author: {
+      name: 'Authrim Team',
+      organization: 'Authrim',
+      url: 'https://authrim.io',
+    },
+    license: 'MIT',
+
+    // Display
+    icon: 'terminal',
+    tags: ['console', 'debug', 'development', 'testing', 'mock'],
+
+    // Documentation
+    repositoryUrl: 'https://github.com/sgrastar/authrim',
+
+    // Compatibility
+    minAuthrimVersion: '1.0.0',
+
+    // Status
+    stability: 'stable',
+    hidden: false, // Show in dev, but warn in production
+
+    // Admin notes
+    adminNotes: `
+## ⚠️ 開発専用プラグイン
+このプラグインは実際に通知を送信しません。
+本番環境で使用すると、ユーザーに通知が届かなくなります。
+
+## 用途
+- ローカル開発でのデバッグ
+- 統合テスト
+- 障害シミュレーション（simulateFailureRate）
+- レイテンシテスト（simulateDelayMs）
+
+## 本番環境での対処
+本番環境で誤って有効になっている場合は、
+Resend等の実際のメール送信プラグインに切り替えてください。
+    `.trim(),
   },
 
   register(registry: CapabilityRegistry, config: ConsoleNotifierConfig) {

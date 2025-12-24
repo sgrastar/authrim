@@ -29,31 +29,64 @@ import { CapabilityRegistry } from '../../core/registry';
 
 /**
  * TOTP configuration schema
+ *
+ * Each field uses .describe() for Admin UI display.
  */
 export const TOTPConfigSchema = z.object({
-  /** Issuer name displayed in authenticator apps */
-  issuer: z.string().min(1).default('Authrim'),
+  issuer: z
+    .string()
+    .min(1)
+    .default('Authrim')
+    .describe('認証アプリに表示される発行者名（組織名やサービス名）'),
 
-  /** HMAC algorithm (sha1 is most compatible) */
-  algorithm: z.enum(['sha1', 'sha256', 'sha512']).default('sha1'),
+  algorithm: z
+    .enum(['sha1', 'sha256', 'sha512'])
+    .default('sha1')
+    .describe(
+      'HMACアルゴリズム。sha1が最も互換性が高い（Google Authenticator等）。セキュリティ要件が厳しい場合はsha256/sha512を推奨'
+    ),
 
-  /** Number of digits in OTP code */
-  digits: z.literal(6).or(z.literal(8)).default(6),
+  digits: z
+    .literal(6)
+    .or(z.literal(8))
+    .default(6)
+    .describe('OTPコードの桁数。6桁が標準、8桁はより高いセキュリティ'),
 
-  /** Time step in seconds */
-  period: z.number().int().min(15).max(120).default(30),
+  period: z
+    .number()
+    .int()
+    .min(15)
+    .max(120)
+    .default(30)
+    .describe('コード更新間隔（秒）。30秒が標準。短くするとセキュリティ向上、長くすると利便性向上'),
 
-  /** Number of steps to check before/after current time (for clock drift) */
-  window: z.number().int().min(0).max(5).default(1),
+  window: z
+    .number()
+    .int()
+    .min(0)
+    .max(5)
+    .default(1)
+    .describe(
+      '時間ドリフト許容範囲（±ステップ数）。1=前後30秒を許容。0だと厳密だがクロックずれで失敗しやすい'
+    ),
 
-  /** Secret length in bytes (20 = 160 bits, RFC 4226 recommended) */
-  secretLength: z.number().int().min(16).max(64).default(20),
+  secretLength: z
+    .number()
+    .int()
+    .min(16)
+    .max(64)
+    .default(20)
+    .describe('シークレットキーの長さ（バイト）。20バイト=160ビットがRFC推奨値'),
 
-  /** Allow TOTP setup during registration */
-  allowSetupDuringRegistration: z.boolean().default(true),
+  allowSetupDuringRegistration: z
+    .boolean()
+    .default(true)
+    .describe('ユーザー登録時にTOTPセットアップを許可するか'),
 
-  /** Require TOTP verification before enabling */
-  requireVerificationBeforeEnable: z.boolean().default(true),
+  requireVerificationBeforeEnable: z
+    .boolean()
+    .default(true)
+    .describe('TOTP有効化前に検証コードの確認を必須にするか（推奨: true）'),
 });
 
 export type TOTPConfig = z.infer<typeof TOTPConfigSchema>;
@@ -75,11 +108,44 @@ export const totpAuthenticatorPlugin: AuthrimPlugin<TOTPConfig> = {
   configSchema: TOTPConfigSchema,
 
   meta: {
+    // Required fields
     name: 'TOTP Authenticator',
-    description: 'Time-based One-Time Password (Google Authenticator, Authy, etc.)',
-    icon: 'shield-check',
+    description:
+      'Time-based One-Time Password認証。Google Authenticator、Authy、Microsoft Authenticator等と互換性があります。',
     category: 'authentication',
+
+    // Author (official plugin)
+    author: {
+      name: 'Authrim Team',
+      organization: 'Authrim',
+      url: 'https://authrim.io',
+    },
+    license: 'MIT',
+
+    // Display
+    icon: 'shield-check',
+    tags: ['totp', 'otp', '2fa', 'mfa', 'authenticator', 'google-authenticator'],
+
+    // Documentation
     documentationUrl: 'https://datatracker.ietf.org/doc/html/rfc6238',
+    repositoryUrl: 'https://github.com/sgrastar/authrim',
+
+    // Compatibility
+    minAuthrimVersion: '1.0.0',
+
+    // Status
+    stability: 'stable',
+
+    // Admin notes
+    adminNotes: `
+## 設定のヒント
+- algorithm: Google Authenticatorはsha1のみ対応。Microsoft Authenticatorはsha256も対応
+- period: 60秒以上に設定するとコード入力に余裕ができるが、セキュリティは低下
+- window: 2以上にするとクロックずれに強くなるが、リプレイ攻撃のリスクが増加
+
+## 既知の制限
+- QRコードの生成はクライアント側で行う必要があります（otpauth:// URIを返却）
+    `.trim(),
   },
 
   register(registry: CapabilityRegistry, config: TOTPConfig) {

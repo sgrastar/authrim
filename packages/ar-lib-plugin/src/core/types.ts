@@ -32,11 +32,19 @@ export interface AuthrimPlugin<TConfig = unknown> {
    * Configuration schema (Zod) - used for validation and UI generation
    *
    * Note: Using z.ZodType with unknown input type to support schemas with defaults
+   *
+   * IMPORTANT: Use .describe() on each field for UI display:
+   * ```typescript
+   * z.object({
+   *   apiKey: z.string().describe('API key for the service'),
+   *   timeout: z.number().default(30).describe('Request timeout in seconds'),
+   * })
+   * ```
    */
   readonly configSchema: z.ZodType<TConfig, z.ZodTypeDef, unknown>;
 
-  /** UI display metadata */
-  readonly meta?: PluginMeta;
+  /** Plugin metadata for UI display and management */
+  readonly meta: PluginMeta;
 
   /**
    * Register capabilities with the registry
@@ -153,23 +161,192 @@ export interface FlowPortDefinition {
 // =============================================================================
 
 /**
- * UI display metadata for plugins
+ * Plugin metadata for UI display and management
+ *
+ * This metadata is used for:
+ * - Admin UI plugin list and detail pages
+ * - Plugin marketplace/catalog
+ * - Documentation generation
+ * - Audit and compliance tracking
  */
 export interface PluginMeta {
-  /** Display name */
+  // ---------------------------------------------------------------------------
+  // Required Fields
+  // ---------------------------------------------------------------------------
+
+  /** Display name (e.g., "Resend Email Notifier") */
   name: string;
 
-  /** Description */
+  /**
+   * Short description (1-2 sentences)
+   * Should explain what the plugin does, not how it works.
+   */
   description: string;
 
-  /** Icon identifier */
+  /** Category for UI grouping and filtering */
+  category: PluginCategory;
+
+  // ---------------------------------------------------------------------------
+  // Author & License (Required for non-official plugins)
+  // ---------------------------------------------------------------------------
+
+  /** Author information */
+  author?: PluginAuthor;
+
+  /**
+   * License identifier (SPDX format recommended)
+   * Examples: "MIT", "Apache-2.0", "proprietary"
+   */
+  license?: string;
+
+  // ---------------------------------------------------------------------------
+  // Display & Branding
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Icon identifier
+   *
+   * Can be:
+   * - Lucide icon name (e.g., "mail", "shield-check")
+   * - URL to icon image (https://...)
+   * - Base64 data URL (data:image/svg+xml;base64,...)
+   */
   icon?: string;
 
-  /** Category for UI grouping */
-  category: PluginCategory;
+  /**
+   * Tags for search and filtering
+   * Examples: ["email", "transactional", "marketing"]
+   */
+  tags?: string[];
+
+  /**
+   * Logo URL for detailed plugin view
+   * Recommended size: 256x256 PNG with transparency
+   */
+  logoUrl?: string;
+
+  // ---------------------------------------------------------------------------
+  // Documentation & Support
+  // ---------------------------------------------------------------------------
 
   /** Link to documentation */
   documentationUrl?: string;
+
+  /** Link to source repository (GitHub, GitLab, etc.) */
+  repositoryUrl?: string;
+
+  /** Link to changelog */
+  changelogUrl?: string;
+
+  /** Support information */
+  support?: PluginSupport;
+
+  // ---------------------------------------------------------------------------
+  // Compatibility & Requirements
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Minimum Authrim version required (semver)
+   * Example: "1.0.0"
+   */
+  minAuthrimVersion?: string;
+
+  /**
+   * External service dependencies
+   * Used to show warnings if services are unavailable
+   */
+  externalDependencies?: ExternalDependency[];
+
+  // ---------------------------------------------------------------------------
+  // Status & Lifecycle
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Plugin stability status
+   * - stable: Production ready
+   * - beta: Feature complete but may have bugs
+   * - alpha: Experimental, API may change
+   * - deprecated: No longer maintained
+   */
+  stability?: 'stable' | 'beta' | 'alpha' | 'deprecated';
+
+  /**
+   * Deprecation notice (when stability is 'deprecated')
+   * Should include migration instructions
+   */
+  deprecationNotice?: string;
+
+  /**
+   * Hide from public plugin list (internal plugins)
+   * Plugin can still be enabled via Admin API
+   */
+  hidden?: boolean;
+
+  // ---------------------------------------------------------------------------
+  // Admin Notes (Internal Use)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Internal notes for administrators
+   * Not shown to end users, only in Admin API responses
+   *
+   * Use for:
+   * - Configuration tips
+   * - Known issues
+   * - Deployment notes
+   */
+  adminNotes?: string;
+}
+
+/**
+ * Plugin author information
+ */
+export interface PluginAuthor {
+  /** Author or organization name */
+  name: string;
+
+  /** Contact email */
+  email?: string;
+
+  /** Website URL */
+  url?: string;
+
+  /** Organization/company name (if different from author name) */
+  organization?: string;
+}
+
+/**
+ * Plugin support information
+ */
+export interface PluginSupport {
+  /** Support email */
+  email?: string;
+
+  /** Support URL (help desk, forum, etc.) */
+  url?: string;
+
+  /** Issue tracker URL */
+  issuesUrl?: string;
+
+  /** Discord/Slack invite URL */
+  chatUrl?: string;
+}
+
+/**
+ * External service dependency
+ */
+export interface ExternalDependency {
+  /** Service name (e.g., "Resend API", "Google OAuth") */
+  name: string;
+
+  /** Service URL for reference */
+  url?: string;
+
+  /** Whether this dependency is required or optional */
+  required: boolean;
+
+  /** Description of why this dependency is needed */
+  description?: string;
 }
 
 // =============================================================================
