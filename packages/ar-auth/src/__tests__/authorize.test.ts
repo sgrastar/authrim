@@ -84,6 +84,10 @@ function createMockAuthCodeStore() {
 
         return new Response(JSON.stringify({ success: true }));
       }),
+      // RPC methods
+      storeCodeRpc: vi.fn().mockResolvedValue({ success: true }),
+      getCodeRpc: vi.fn().mockResolvedValue(null),
+      consumeCodeRpc: vi.fn().mockResolvedValue(null),
     }),
     _storedCodes: storedCodes,
   };
@@ -153,9 +157,12 @@ function createMockEnv(): Env {
     NONCE_EXPIRY: '300',
     REFRESH_TOKEN_EXPIRY: '2592000',
     ALLOW_HTTP_REDIRECT: 'true',
+    CONFORMANCE_MODE: 'true', // Enable conformance mode for testing (uses built-in forms)
     STATE_STORE: new MockKVNamespace() as unknown as KVNamespace,
     NONCE_STORE: new MockKVNamespace() as unknown as KVNamespace,
     CLIENTS_CACHE: new MockKVNamespace() as unknown as KVNamespace,
+    SETTINGS: new MockKVNamespace() as unknown as KVNamespace,
+    AUTHRIM_CONFIG: new MockKVNamespace() as unknown as KVNamespace,
     DB: createMockDB(),
     AVATARS: {} as R2Bucket,
     KEY_MANAGER: createMockDO() as unknown as Env['KEY_MANAGER'],

@@ -8,6 +8,7 @@ import {
   RateLimitProfiles,
   versionCheckMiddleware,
   requestContextMiddleware,
+  pluginContextMiddleware,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
@@ -21,6 +22,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', logger());
 app.use('*', versionCheckMiddleware('op-discovery'));
 app.use('*', requestContextMiddleware());
+app.use('*', pluginContextMiddleware());
 
 // Enhanced security headers
 app.use(

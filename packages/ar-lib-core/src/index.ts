@@ -135,6 +135,9 @@ export * from './middleware/initial-access-token';
 export * from './middleware/request-context';
 export * from './middleware/version-check';
 
+// Plugin Context (Phase 9 - Plugin Architecture)
+export * from './middleware/plugin-context';
+
 // Storage
 export * from './storage/interfaces';
 export * from './storage/repositories';

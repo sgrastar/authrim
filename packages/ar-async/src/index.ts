@@ -11,7 +11,11 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '@authrim/ar-lib-core';
-import { versionCheckMiddleware, requestContextMiddleware } from '@authrim/ar-lib-core';
+import {
+  versionCheckMiddleware,
+  requestContextMiddleware,
+  pluginContextMiddleware,
+} from '@authrim/ar-lib-core';
 import { deviceAuthorizationHandler } from './device-authorization';
 import { deviceVerifyHandler } from './device-verify';
 import { deviceVerifyApiHandler } from './device-verify-api';
@@ -40,6 +44,9 @@ app.use('/*', versionCheckMiddleware('ar-async'));
 
 // Request context middleware (tenantId, requestId, logger)
 app.use('/*', requestContextMiddleware());
+
+// Plugin Context - provides access to notifiers, idp handlers, authenticators
+app.use('/*', pluginContextMiddleware());
 
 /**
  * POST /device_authorization

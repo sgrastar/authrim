@@ -31,6 +31,7 @@ import {
   parseAllowedOrigins,
   versionCheckMiddleware,
   requestContextMiddleware,
+  pluginContextMiddleware,
   createErrorResponse,
   AR_ERROR_CODES,
 } from '@authrim/ar-lib-core';
@@ -66,6 +67,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', logger());
 app.use('*', versionCheckMiddleware('ar-bridge'));
 app.use('*', requestContextMiddleware());
+app.use('*', pluginContextMiddleware());
 
 // Enhanced security headers
 app.use('*', async (c, next) => {

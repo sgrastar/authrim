@@ -19,6 +19,8 @@ import {
   buildUIUrl,
   shouldUseBuiltinForms,
   createConfigurationError,
+  // Plugin Context (Phase 9 - Plugin Architecture)
+  pluginContextMiddleware,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
@@ -58,6 +60,11 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', logger());
 app.use('*', versionCheckMiddleware('ar-auth'));
 app.use('*', requestContextMiddleware());
+
+// Plugin Context - provides access to notifiers, idp handlers, authenticators
+// Plugins are loaded lazily on first request and cached per Worker lifecycle
+// Configuration can be passed via loadPlugins option for custom plugin loading
+app.use('*', pluginContextMiddleware());
 
 // Enhanced security headers
 // Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)

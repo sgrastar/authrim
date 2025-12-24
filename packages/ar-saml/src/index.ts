@@ -28,8 +28,13 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '@authrim/ar-lib-core';
-import { versionCheckMiddleware } from '@authrim/ar-lib-core/middleware/version-check';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import {
+  versionCheckMiddleware,
+  requestContextMiddleware,
+  pluginContextMiddleware,
+  createErrorResponse,
+  AR_ERROR_CODES,
+} from '@authrim/ar-lib-core';
 
 // Import handlers (to be implemented)
 import { handleIdPMetadata } from './idp/metadata';
@@ -66,6 +71,8 @@ app.use(
 
 // Version check middleware - ensures consistent code version across Cloudflare PoPs
 app.use('*', versionCheckMiddleware('ar-saml'));
+app.use('*', requestContextMiddleware());
+app.use('*', pluginContextMiddleware());
 
 // Health check
 app.get('/saml/health', (c) => {

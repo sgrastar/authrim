@@ -27,8 +27,8 @@ import {
   createRFCErrorResponse,
   AR_ERROR_CODES,
   RFC_ERROR_CODES,
+  getPluginContext,
 } from '@authrim/ar-lib-core';
-import { ResendEmailProvider } from './utils/email/resend-provider';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import {
   generateEmailCode,
@@ -253,30 +253,32 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         maxAge: EMAIL_CODE_TTL,
       });
 
-      // Send email via Resend
-      const resendApiKey = c.env.RESEND_API_KEY;
-      if (!resendApiKey) {
-        console.warn('RESEND_API_KEY not configured. Code:', code);
-        // In development, return the code directly
+      // Send email via Notifier Plugin
+      const pluginCtx = getPluginContext(c);
+      const emailNotifier = pluginCtx.registry.getNotifier('email');
+
+      if (!emailNotifier) {
+        // Development mode: no email notifier configured
+        console.warn('[EMAIL-CODE] No email notifier plugin configured. Code:', code);
         return c.json({
           success: true,
-          message: 'Verification code generated (email not sent - RESEND_API_KEY not configured)',
+          message: 'Verification code generated (email not sent - no notifier plugin configured)',
           code: code, // Only for development
         });
       }
 
-      const emailProvider = new ResendEmailProvider(resendApiKey);
       const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
 
       // Authentication-Info header for OTP AutoFill (Safari/iOS)
       // This enables domain-bound code verification for phishing protection
       const authenticationInfoHeader = `<${c.env.ISSUER_URL}>; otpauth=email`;
 
-      const emailResult = await emailProvider.send({
+      const emailResult = await emailNotifier.send({
+        channel: 'email',
         to: email,
         from: fromEmail,
         subject: 'Your Authrim verification code',
-        html: getEmailCodeHtml({
+        body: getEmailCodeHtml({
           name: (user.name as string) || undefined,
           email,
           code,
@@ -284,21 +286,25 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           appName: 'Authrim',
           logoUrl: undefined,
         }),
-        text: getEmailCodeText({
-          name: (user.name as string) || undefined,
-          email,
-          code,
-          expiresInMinutes: EMAIL_CODE_TTL / 60,
-          appName: 'Authrim',
-        }),
-        headers: {
-          'Authentication-Info': authenticationInfoHeader,
+        metadata: {
+          // Plain text version for email clients that prefer it
+          textBody: getEmailCodeText({
+            name: (user.name as string) || undefined,
+            email,
+            code,
+            expiresInMinutes: EMAIL_CODE_TTL / 60,
+            appName: 'Authrim',
+          }),
+          // OTP AutoFill header for Safari/iOS
+          headers: {
+            'Authentication-Info': authenticationInfoHeader,
+          },
         },
       });
 
       if (!emailResult.success) {
         // PII Protection: Don't log full error (may contain email details)
-        console.error('Failed to send email code');
+        console.error('[EMAIL-CODE] Failed to send email code:', emailResult.error);
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 

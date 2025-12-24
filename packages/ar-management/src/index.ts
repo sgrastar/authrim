@@ -11,6 +11,7 @@ import {
   adminAuthMiddleware,
   versionCheckMiddleware,
   requestContextMiddleware,
+  pluginContextMiddleware,
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
@@ -264,6 +265,16 @@ import {
   getStatusListHandler,
   getStatusListStatsHandler,
 } from './routes/vc/credential-status';
+import {
+  listPluginsHandler,
+  getPluginHandler,
+  getPluginConfigHandler,
+  updatePluginConfigHandler,
+  enablePluginHandler,
+  disablePluginHandler,
+  getPluginHealthHandler,
+  getPluginSchemaHandler,
+} from './routes/settings/plugins';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -272,6 +283,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', logger());
 app.use('*', versionCheckMiddleware('ar-management'));
 app.use('*', requestContextMiddleware());
+app.use('*', pluginContextMiddleware());
 
 // Enhanced security headers
 app.use(
@@ -711,6 +723,26 @@ app.post('/api/admin/vc/credentials/:id/activate', activateCredentialHandler);
 app.get('/api/admin/vc/status-lists', listStatusListsHandler);
 app.get('/api/admin/vc/status-lists/stats', getStatusListStatsHandler); // Must be before :id
 app.get('/api/admin/vc/status-lists/:id', getStatusListHandler);
+
+// =============================================================================
+// Plugin Management (Phase 9 - Plugin Architecture)
+// =============================================================================
+
+// Plugin listing and details
+app.get('/api/admin/plugins', listPluginsHandler);
+app.get('/api/admin/plugins/:id', getPluginHandler);
+
+// Plugin configuration
+app.get('/api/admin/plugins/:id/config', getPluginConfigHandler);
+app.put('/api/admin/plugins/:id/config', updatePluginConfigHandler);
+
+// Plugin enable/disable
+app.put('/api/admin/plugins/:id/enable', enablePluginHandler);
+app.put('/api/admin/plugins/:id/disable', disablePluginHandler);
+
+// Plugin health and schema
+app.get('/api/admin/plugins/:id/health', getPluginHealthHandler);
+app.get('/api/admin/plugins/:id/schema', getPluginSchemaHandler);
 
 // SCIM 2.0 endpoints - RFC 7643, 7644
 app.route('/scim/v2', scimApp);

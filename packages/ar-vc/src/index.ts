@@ -22,6 +22,7 @@ import { cors } from 'hono/cors';
 import {
   versionCheckMiddleware,
   requestContextMiddleware,
+  pluginContextMiddleware,
   createErrorResponse,
   AR_ERROR_CODES,
 } from '@authrim/ar-lib-core';
@@ -54,6 +55,7 @@ const app = new Hono<{ Bindings: Env }>();
 // Middleware
 app.use('*', versionCheckMiddleware('ar-vc'));
 app.use('*', requestContextMiddleware());
+app.use('*', pluginContextMiddleware());
 app.use('*', cors());
 
 // =============================================================================

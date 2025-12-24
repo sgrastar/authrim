@@ -8,6 +8,8 @@ import {
   getRateLimitProfileAsync,
   versionCheckMiddleware,
   requestContextMiddleware,
+  // Plugin Context (Phase 9 - Plugin Architecture)
+  pluginContextMiddleware,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
@@ -21,6 +23,10 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', logger());
 app.use('*', versionCheckMiddleware('op-token'));
 app.use('*', requestContextMiddleware());
+
+// Plugin Context - provides access to notifiers, idp handlers, authenticators
+// Plugins are loaded lazily on first request and cached per Worker lifecycle
+app.use('*', pluginContextMiddleware());
 
 // Enhanced security headers
 app.use(

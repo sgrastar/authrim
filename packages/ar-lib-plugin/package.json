@@ -1,0 +1,53 @@
+{
+  "name": "@authrim/ar-lib-plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./core": {
+      "import": "./dist/core/index.js",
+      "types": "./dist/core/index.d.ts",
+      "default": "./src/core/index.ts"
+    },
+    "./infra": {
+      "import": "./dist/infra/index.js",
+      "types": "./dist/infra/index.d.ts",
+      "default": "./src/infra/index.ts"
+    },
+    "./builtin": {
+      "import": "./dist/builtin/index.js",
+      "types": "./dist/builtin/index.d.ts",
+      "default": "./src/builtin/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "lint:check": "eslint src --ext .ts",
+    "format:check": "prettier --check 'src/**/*.ts'",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "hono": "^4.10.6",
+    "zod": "^3.24.4",
+    "zod-to-json-schema": "^3.24.5"
+  },
+  "peerDependencies": {
+    "@authrim/ar-lib-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251121.0",
+    "@types/node": "^20.19.25",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.3"
+  }
+}
