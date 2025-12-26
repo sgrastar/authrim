@@ -109,7 +109,7 @@ export async function getCachedUser(env: Env, userId: string): Promise<CachedUse
 
 /**
  * Fetch user directly from D1 database
- * PII/Non-PII DB分離: Core DBとPII DBから並列取得してマージ
+ * PII/Non-PII DB separation: fetches from Core DB and PII DB in parallel and merges
  */
 async function getUserFromD1(env: Env, userId: string): Promise<CachedUser | null> {
   // Query Core DB for existence and non-PII fields

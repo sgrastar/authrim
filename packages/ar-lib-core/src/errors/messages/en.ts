@@ -259,6 +259,36 @@ export const errorMessagesEn: ErrorMessages = {
   'rate.too_many_requests.detail': 'Too many requests. Please try again later.',
 
   // ============================================
+  // FLOW
+  // ============================================
+  'flow.missing_challenge_id.title': 'Missing Challenge ID',
+  'flow.missing_challenge_id.detail':
+    'A challenge_id is required. Please start a new authentication flow.',
+  'flow.challenge_not_found.title': 'Challenge Not Found',
+  'flow.challenge_not_found.detail':
+    'The authentication challenge was not found. Please start a new flow.',
+  'flow.challenge_expired.title': 'Challenge Expired',
+  'flow.challenge_expired.detail':
+    'The authentication challenge has expired. Please start a new flow.',
+  'flow.challenge_consumed.title': 'Challenge Already Used',
+  'flow.challenge_consumed.detail':
+    'This authentication challenge has already been completed. Please start a new flow.',
+  'flow.invalid_event.title': 'Invalid Event',
+  'flow.invalid_event.detail': 'The event type "{event}" is not recognized.',
+  'flow.invalid_transition.title': 'Invalid Transition',
+  'flow.invalid_transition.detail':
+    'The event "{event}" is not allowed in the current state "{state}".',
+  'flow.validation_failed.title': 'Validation Failed',
+  'flow.validation_failed.detail': 'The submitted data failed validation. Please check your input.',
+  'flow.webauthn_failed.title': 'Passkey Verification Failed',
+  'flow.webauthn_failed.detail': 'Passkey verification failed. Please try again.',
+  'flow.external_idp_failed.title': 'External Login Failed',
+  'flow.external_idp_failed.detail':
+    'Authentication with the external provider failed. Please try again.',
+  'flow.capability_not_found.title': 'Capability Not Found',
+  'flow.capability_not_found.detail': 'The capability "{capability_id}" was not found.',
+
+  // ============================================
   // INTERNAL
   // ============================================
   'internal.error.title': 'Internal Error',

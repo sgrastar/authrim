@@ -20,6 +20,7 @@
  * - AR090001 ~ AR099999: BRIDGE (External IdP)
  * - AR100001 ~ AR109999: CONFIG
  * - AR110001 ~ AR119999: RATE (Rate Limiting)
+ * - AR120001 ~ AR129999: FLOW (Flow View API)
  * - AR900001 ~ AR999999: INTERNAL (Reserved)
  *
  * @packageDocumentation
@@ -218,6 +219,20 @@ export const AR_ERROR_CODES = {
   RATE_LIMIT_EXCEEDED: 'AR110001',
   RATE_SLOW_DOWN: 'AR110002',
   RATE_TOO_MANY_REQUESTS: 'AR110003',
+
+  // ============================================
+  // FLOW - Flow View API (AR120001 ~ AR129999)
+  // ============================================
+  FLOW_MISSING_CHALLENGE_ID: 'AR120001',
+  FLOW_CHALLENGE_NOT_FOUND: 'AR120002',
+  FLOW_CHALLENGE_EXPIRED: 'AR120003',
+  FLOW_CHALLENGE_CONSUMED: 'AR120004',
+  FLOW_INVALID_EVENT: 'AR120005',
+  FLOW_INVALID_TRANSITION: 'AR120006',
+  FLOW_VALIDATION_FAILED: 'AR120007',
+  FLOW_WEBAUTHN_FAILED: 'AR120008',
+  FLOW_EXTERNAL_IDP_FAILED: 'AR120009',
+  FLOW_CAPABILITY_NOT_FOUND: 'AR120010',
 
   // ============================================
   // INTERNAL (AR900001 ~ AR999999) - Reserved
@@ -1078,6 +1093,110 @@ export const ERROR_DEFINITIONS: Record<ARErrorCode, ErrorCodeDefinition> = {
     titleKey: 'rate.too_many_requests.title',
     detailKey: 'rate.too_many_requests.detail',
     meta: { retryable: true, user_action: 'retry', severity: 'warn' },
+    securityLevel: 'public',
+  },
+
+  // ============================================
+  // FLOW - Flow View API
+  // ============================================
+  [AR_ERROR_CODES.FLOW_MISSING_CHALLENGE_ID]: {
+    code: 'AR120001',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'flow/missing-challenge-id',
+    titleKey: 'flow.missing_challenge_id.title',
+    detailKey: 'flow.missing_challenge_id.detail',
+    meta: { retryable: false, user_action: 'login', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.FLOW_CHALLENGE_NOT_FOUND]: {
+    code: 'AR120002',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 404,
+    typeSlug: 'flow/challenge-not-found',
+    titleKey: 'flow.challenge_not_found.title',
+    detailKey: 'flow.challenge_not_found.detail',
+    meta: { retryable: false, user_action: 'login', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.FLOW_CHALLENGE_EXPIRED]: {
+    code: 'AR120003',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 410,
+    typeSlug: 'flow/challenge-expired',
+    titleKey: 'flow.challenge_expired.title',
+    detailKey: 'flow.challenge_expired.detail',
+    meta: { retryable: false, user_action: 'login', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.FLOW_CHALLENGE_CONSUMED]: {
+    code: 'AR120004',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 410,
+    typeSlug: 'flow/challenge-consumed',
+    titleKey: 'flow.challenge_consumed.title',
+    detailKey: 'flow.challenge_consumed.detail',
+    meta: { retryable: false, user_action: 'login', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.FLOW_INVALID_EVENT]: {
+    code: 'AR120005',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'flow/invalid-event',
+    titleKey: 'flow.invalid_event.title',
+    detailKey: 'flow.invalid_event.detail',
+    meta: { retryable: false, user_action: 'none', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.FLOW_INVALID_TRANSITION]: {
+    code: 'AR120006',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'flow/invalid-transition',
+    titleKey: 'flow.invalid_transition.title',
+    detailKey: 'flow.invalid_transition.detail',
+    meta: { retryable: false, user_action: 'none', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.FLOW_VALIDATION_FAILED]: {
+    code: 'AR120007',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 422,
+    typeSlug: 'flow/validation-failed',
+    titleKey: 'flow.validation_failed.title',
+    detailKey: 'flow.validation_failed.detail',
+    meta: { retryable: true, user_action: 'retry', severity: 'info' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.FLOW_WEBAUTHN_FAILED]: {
+    code: 'AR120008',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'flow/webauthn-failed',
+    titleKey: 'flow.webauthn_failed.title',
+    detailKey: 'flow.webauthn_failed.detail',
+    meta: { retryable: true, user_action: 'retry', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.FLOW_EXTERNAL_IDP_FAILED]: {
+    code: 'AR120009',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'flow/external-idp-failed',
+    titleKey: 'flow.external_idp_failed.title',
+    detailKey: 'flow.external_idp_failed.detail',
+    meta: { retryable: true, user_action: 'retry', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.FLOW_CAPABILITY_NOT_FOUND]: {
+    code: 'AR120010',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 404,
+    typeSlug: 'flow/capability-not-found',
+    titleKey: 'flow.capability_not_found.title',
+    detailKey: 'flow.capability_not_found.detail',
+    meta: { retryable: false, user_action: 'none', severity: 'warn' },
     securityLevel: 'public',
   },
 

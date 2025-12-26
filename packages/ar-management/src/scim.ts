@@ -223,7 +223,7 @@ async function fetchUsersWithPII(
 
 /**
  * Fetch group members with PII from both Core and PII databases
- * PII/Non-PII DB分離: JOINできないため、user_rolesとPII DBを別々にクエリ
+ * PII/Non-PII DB separation: Cannot JOIN, so query user_roles and PII DB separately
  */
 async function fetchGroupMembersWithPII(
   coreAdapter: DatabaseAdapter,
@@ -935,7 +935,7 @@ app.get('/Schemas/:id', (c) => {
 
 /**
  * GET /scim/v2/Users - List users with filtering and pagination
- * PII/Non-PII DB分離: Core DBでフィルタ、結果セットのPIIは別途取得
+ * PII/Non-PII DB separation: Filter on Core DB, fetch PII separately for result set
  */
 app.get('/Users', async (c) => {
   try {
@@ -1079,7 +1079,7 @@ app.get('/Users', async (c) => {
 
 /**
  * GET /scim/v2/Users/{id} - Get user by ID
- * PII/Non-PII DB分離: 両DBから取得してマージ
+ * PII/Non-PII DB separation: Fetch from both DBs and merge
  */
 app.get('/Users/:id', async (c) => {
   try {
@@ -1117,7 +1117,7 @@ app.get('/Users/:id', async (c) => {
 
 /**
  * POST /scim/v2/Users - Create new user
- * PII/Non-PII DB分離: CoreとPII両方に挿入
+ * PII/Non-PII DB separation: Insert into both Core and PII DBs
  */
 app.post('/Users', async (c) => {
   try {
@@ -1266,7 +1266,7 @@ app.post('/Users', async (c) => {
 
 /**
  * PUT /scim/v2/Users/{id} - Replace user (full update)
- * PII/Non-PII DB分離: CoreとPII両方を更新
+ * PII/Non-PII DB separation: Update both Core and PII DBs
  */
 app.put('/Users/:id', async (c) => {
   try {
@@ -1388,7 +1388,7 @@ app.put('/Users/:id', async (c) => {
 
 /**
  * PATCH /scim/v2/Users/{id} - Update user (partial update)
- * PII/Non-PII DB分離: CoreとPII両方を更新
+ * PII/Non-PII DB separation: Update both Core and PII DBs
  */
 app.patch('/Users/:id', async (c) => {
   try {
@@ -1517,7 +1517,7 @@ app.patch('/Users/:id', async (c) => {
 
 /**
  * DELETE /scim/v2/Users/{id} - Delete user
- * PII/Non-PII DB分離: Soft delete in Core, hard delete in PII
+ * PII/Non-PII DB separation: Soft delete in Core, hard delete in PII
  */
 app.delete('/Users/:id', async (c) => {
   try {
@@ -1650,7 +1650,7 @@ app.get('/Groups', async (c) => {
     // Convert to SCIM format
     const scimGroups: ScimGroup[] = [];
     for (const group of groups) {
-      // Fetch members if needed (PII/Non-PII DB分離対応)
+      // Fetch members if needed (PII/Non-PII DB separation)
       const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, group.id as string);
 
       scimGroups.push(groupToScim(group, { baseUrl, includeMembers: true }, members));
@@ -1697,7 +1697,7 @@ app.get('/Groups/:id', async (c) => {
       }
     }
 
-    // Fetch members (PII/Non-PII DB分離対応)
+    // Fetch members (PII/Non-PII DB separation)
     const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId);
 
     const scimGroup = groupToScim(group, { baseUrl, includeMembers: true }, members);
@@ -1780,7 +1780,7 @@ app.post('/Groups', async (c) => {
       return scimError(c, 500, 'Failed to create group');
     }
 
-    // Fetch members (PII/Non-PII DB分離対応)
+    // Fetch members (PII/Non-PII DB separation)
     const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId);
 
     const responseGroup = groupToScim(createdGroup, { baseUrl, includeMembers: true }, members);
@@ -1863,7 +1863,7 @@ app.put('/Groups/:id', async (c) => {
       return scimError(c, 500, 'Failed to fetch updated group');
     }
 
-    // Fetch members (PII/Non-PII DB分離対応)
+    // Fetch members (PII/Non-PII DB separation)
     const members = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId);
 
     const responseGroup = groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members);
@@ -1908,7 +1908,7 @@ app.patch('/Groups/:id', async (c) => {
       }
     }
 
-    // Fetch current members (PII/Non-PII DB分離対応)
+    // Fetch current members (PII/Non-PII DB separation)
     const currentMembers = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId);
 
     // Convert to SCIM format
@@ -1957,7 +1957,7 @@ app.patch('/Groups/:id', async (c) => {
       return scimError(c, 500, 'Failed to fetch updated group');
     }
 
-    // Fetch updated members (PII/Non-PII DB分離対応)
+    // Fetch updated members (PII/Non-PII DB separation)
     const updatedMembers = await fetchGroupMembersWithPII(coreAdapter, piiAdapter, groupId);
 
     const responseGroup = groupToScim(

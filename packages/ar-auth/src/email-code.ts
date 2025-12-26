@@ -135,7 +135,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Check if user exists, if not create a new user via Repository
-      // PII/Non-PII DB分離: email検索はPII DB、ユーザー作成は両DBに
+      // PII/Non-PII DB separation: email lookup uses PII DB, user creation uses both DBs
       const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);
       let user: { id: string; email: string; name: string | null } | null = null;

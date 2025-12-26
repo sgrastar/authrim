@@ -1,48 +1,44 @@
-# Authrim プラグイン配布・責任ポリシー
+# Authrim Plugin Distribution and Responsibility Policy
 
-## 概要
+## Overview
 
-このドキュメントは、Authrim プラグインの配布方式、責任分界、および互換性ポリシーを定義します。
+This document defines the distribution methods, responsibility boundaries, and compatibility policies for Authrim plugins.
 
 ---
 
-## 1. 責任分界（Responsibility Model）
+## 1. Responsibility Model
 
-### Authrim の責務
+### Authrim's Responsibilities
 
-1. **プラットフォームの安定性**
-   - メジャーバージョン内（例: 1.x.x）で破壊的変更を行わない
-   - プラグインAPI の後方互換性を維持
+1. **Platform Stability**
+   - No breaking changes within major versions (e.g., 1.x.x)
+   - Maintain backward compatibility of the Plugin API
 
-2. **破壊が発生した場合の対応**
-   - 影響を受けるプラグインの作者に連絡
-   - 修正版のリリースまたはドキュメント更新
+2. **Response When Breaking Changes Occur**
+   - Contact affected plugin authors
+   - Release fixes or update documentation
 
-3. **情報提供**
-   - 互換性警告の表示
-   - プラグインソース（読み込み元）の表示
+3. **Information Provision**
+   - Display compatibility warnings
+   - Display plugin source (loading origin)
 
-### プラグイン作者の責務
+### Plugin Author's Responsibilities
 
-1. **セキュリティ**
-   - 脆弱性のないコードの提供
-   - 依存関係の管理
+1. **Security**
+   - Provide vulnerability-free code
+   - Manage dependencies
 
-2. **互換性**
-   - `minAuthrimVersion` / `maxAuthrimVersion` の正確な宣言
-   - Authrim バージョンアップ時の動作確認
+2. **Compatibility**
+   - Accurate declaration of `minAuthrimVersion` / `maxAuthrimVersion`
+   - Verify functionality when Authrim versions are upgraded
 
-3. **メンテナンス**
-   - バグ修正
-   - ユーザーサポート
+3. **Maintenance**
+   - Bug fixes
+   - User support
 
-### 免責事項
+### Disclaimer
 
 ```
-サードパーティプラグインは、その作者により提供されています。
-Authrim はサードパーティプラグインのセキュリティ、信頼性、
-互換性を保証しません。ご利用は自己責任でお願いします。
-
 Third-party plugins are provided by their respective authors.
 Authrim does not guarantee the security, reliability, or
 compatibility of third-party plugins. Use at your own risk.
@@ -50,18 +46,18 @@ compatibility of third-party plugins. Use at your own risk.
 
 ---
 
-## 2. プラグインの配布方式
+## 2. Plugin Distribution Methods
 
-### 推奨される配布方式
+### Recommended Distribution Methods
 
-| 方式 | 対象 | 特徴 |
-|------|------|------|
-| **npm パッケージ** | 公開プラグイン | バージョン管理、依存関係解決が容易 |
-| **モノレポ内蔵** | 公式プラグイン | Authrim と同時リリース |
-| **プライベートnpm** | 企業内プラグイン | npm の仕組みを活用しつつ非公開 |
-| **ローカルファイル** | 開発・テスト用 | 最も柔軟 |
+| Method | Target | Characteristics |
+|--------|--------|-----------------|
+| **npm package** | Public plugins | Easy version management and dependency resolution |
+| **Monorepo built-in** | Official plugins | Released simultaneously with Authrim |
+| **Private npm** | Enterprise plugins | Utilizes npm mechanisms while remaining private |
+| **Local files** | Development/testing | Most flexible |
 
-### npm パッケージの推奨構成
+### Recommended npm Package Structure
 
 ```json
 {
@@ -78,132 +74,132 @@ compatibility of third-party plugins. Use at your own risk.
 
 ---
 
-## 3. 公式プラグインの判定
+## 3. Official Plugin Determination
 
-### 判定基準
+### Criteria
 
-| 条件 | 判定 | UI 表示 |
-|------|------|---------|
-| `ar-lib-plugin/src/builtin/` 内蔵 | 公式 | ⭐ Authrim Official (Built-in) |
-| npm `@authrim/*` スコープ | 公式 | ⭐ Authrim Official (npm) |
-| それ以外 | コミュニティ | 🧩 Community Plugin |
+| Condition | Determination | UI Display |
+|-----------|---------------|------------|
+| Built into `ar-lib-plugin/src/builtin/` | Official | ⭐ Authrim Official (Built-in) |
+| npm `@authrim/*` scope | Official | ⭐ Authrim Official (npm) |
+| Other | Community | 🧩 Community Plugin |
 
-### 重要な注意
+### Important Notes
 
-- `official: true` フラグは **UI 補助情報** であり、信頼の根拠にはならない
-- `author.name: 'Authrim'` は **自己申告** であり、検証されない
-- 公式性は **配布経路（ソース）** のみで判定される
+- The `official: true` flag is **UI supplementary information** and is not a basis for trust
+- `author.name: 'Authrim'` is **self-declared** and not verified
+- Official status is determined **only by distribution channel (source)**
 
 ---
 
-## 4. 互換性ポリシー
+## 4. Compatibility Policy
 
-### Authrim のバージョニング規約
+### Authrim Versioning Convention
 
 ```
-メジャー.マイナー.パッチ (例: 1.5.2)
-   │       │      └── バグ修正（互換性維持）
-   │       └────────── 機能追加（互換性維持）
-   └────────────────── 破壊的変更
+Major.Minor.Patch (e.g., 1.5.2)
+   │       │      └── Bug fixes (maintains compatibility)
+   │       └────────── Feature additions (maintains compatibility)
+   └────────────────── Breaking changes
 ```
 
-### プラグインの互換性宣言
+### Plugin Compatibility Declaration
 
 ```typescript
 meta: {
-  // 最小対応バージョン（必須推奨）
+  // Minimum supported version (recommended as required)
   minAuthrimVersion: '1.0.0',
 
-  // 最大対応バージョン（任意）
-  // メジャーバージョンが上がった場合に設定
+  // Maximum supported version (optional)
+  // Set when major version increases
   maxAuthrimVersion: '1.999.999',
 }
 ```
 
-### 起動時の互換性チェック
+### Compatibility Check at Startup
 
-| 状態 | レベル | 動作 |
-|------|--------|------|
-| `minAuthrimVersion` より古い | ⚠️ warn | ログ出力、動作継続 |
-| `maxAuthrimVersion` より新しい | ⚠️ warn | ログ出力、動作継続 |
-| `stability: 'deprecated'` | ⚠️ warn | 非推奨警告 |
-| `stability: 'alpha'` in production | ⚠️ warn | 本番環境警告 |
+| State | Level | Behavior |
+|-------|-------|----------|
+| Older than `minAuthrimVersion` | ⚠️ warn | Log output, continue operation |
+| Newer than `maxAuthrimVersion` | ⚠️ warn | Log output, continue operation |
+| `stability: 'deprecated'` | ⚠️ warn | Deprecation warning |
+| `stability: 'alpha'` in production | ⚠️ warn | Production environment warning |
 
-**注意:** デフォルトでは警告のみで、プラグインの読み込みは継続されます。
-これは作者の宣言が保守的すぎる場合を考慮しています。
+**Note:** By default, only warnings are issued and plugin loading continues.
+This accounts for cases where the author's declaration may be overly conservative.
 
-### 環境変数による制御
+### Control via Environment Variables
 
 ```bash
-# 互換性チェックのレベル
-PLUGIN_COMPATIBILITY_CHECK=warn   # デフォルト
-PLUGIN_COMPATIBILITY_CHECK=error  # 非互換時に停止
-PLUGIN_COMPATIBILITY_CHECK=ignore # チェックしない
+# Compatibility check level
+PLUGIN_COMPATIBILITY_CHECK=warn   # Default
+PLUGIN_COMPATIBILITY_CHECK=error  # Stop on incompatibility
+PLUGIN_COMPATIBILITY_CHECK=ignore # Skip check
 ```
 
 ---
 
-## 5. 更新通知
+## 5. Update Notifications
 
-### npm プラグインの場合
+### For npm Plugins
 
-- Admin UI でバージョン情報を表示
-- 新バージョンの有無は参考情報として提供
-- **更新の判断・実行は利用者の責任**
+- Display version information in Admin UI
+- Availability of new versions is provided as reference information
+- **Update decisions and execution are the user's responsibility**
 
-### ローカル/プライベートプラグインの場合
+### For Local/Private Plugins
 
-- バージョン文字列のみ表示
-- 更新通知機能は提供されない
-
----
-
-## 6. セキュリティに関する注意
-
-### プラグインのインストール前に確認すべきこと
-
-1. **作者の信頼性** - 誰が開発したか
-2. **ソースコード** - 可能であればレビュー
-3. **依存関係** - 不審な依存がないか
-4. **アクティビティ** - メンテナンスされているか
-
-### Authrim が提供しないもの
-
-- プラグインのセキュリティ監査
-- 脆弱性スキャン
-- 悪意あるプラグインの検出
+- Only version string is displayed
+- Update notification feature is not provided
 
 ---
 
-## 7. 中央レジストリについて
+## 6. Security Considerations
 
-### Authrim はプラグインレジストリを運営しません
+### Things to Verify Before Installing a Plugin
 
-理由:
-- 中央集権的な管理は Authrim の思想に反する
-- 作者同一性の検証が技術的に困難
-- OSS と企業内利用で差が生じる
+1. **Author Trustworthiness** - Who developed it
+2. **Source Code** - Review if possible
+3. **Dependencies** - Check for suspicious dependencies
+4. **Activity** - Is it being maintained
 
-### 代替手段
+### What Authrim Does NOT Provide
 
-- npm レジストリ（パブリック/プライベート）
+- Plugin security audits
+- Vulnerability scanning
+- Detection of malicious plugins
+
+---
+
+## 7. About Central Registry
+
+### Authrim Does Not Operate a Plugin Registry
+
+Reasons:
+- Centralized management is contrary to Authrim's philosophy
+- Author identity verification is technically difficult
+- Differences would arise between OSS and enterprise use
+
+### Alternatives
+
+- npm registry (public/private)
 - GitHub Releases
-- 企業内パッケージリポジトリ
+- Enterprise package repositories
 
 ---
 
-## 8. サードパーティプラグイン開発者向け
+## 8. For Third-Party Plugin Developers
 
-### 推奨プラクティス
+### Recommended Practices
 
-1. **明確なメタデータ**
+1. **Clear Metadata**
    ```typescript
    meta: {
      name: 'Your Plugin Name',
-     description: '何をするプラグインか',
+     description: 'What the plugin does',
      author: {
        name: 'Your Name',
-       email: 'contact@example.com', // 任意
+       email: 'contact@example.com', // Optional
      },
      license: 'MIT',
      minAuthrimVersion: '1.0.0',
@@ -211,19 +207,19 @@ PLUGIN_COMPATIBILITY_CHECK=ignore # チェックしない
    }
    ```
 
-2. **セマンティックバージョニング**
-   - 破壊的変更はメジャーバージョンで
+2. **Semantic Versioning**
+   - Breaking changes in major versions
 
-3. **テスト**
-   - Authrim の複数バージョンでテスト
+3. **Testing**
+   - Test with multiple Authrim versions
 
-4. **ドキュメント**
-   - インストール方法
-   - 設定オプション
-   - 既知の制限
+4. **Documentation**
+   - Installation instructions
+   - Configuration options
+   - Known limitations
 
 ---
 
-## 変更履歴
+## Changelog
 
-- 2024-12-24: 初版作成
+- 2024-12-24: Initial version created

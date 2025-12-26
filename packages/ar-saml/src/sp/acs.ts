@@ -689,7 +689,7 @@ async function findOrCreateUser(
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
 
-  // Try to find user by email (PII/Non-PII DB分離対応)
+  // Try to find user by email (PII/Non-PII DB separation)
   if (userInfo.email && piiAdapter) {
     const existingUserPII = await piiAdapter.queryOne<{ id: string }>(
       'SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?',
@@ -708,7 +708,7 @@ async function findOrCreateUser(
     }
   }
 
-  // Create new user (JIT provisioning - PII/Non-PII DB分離対応)
+  // Create new user (JIT provisioning - PII/Non-PII DB separation)
   const userId = crypto.randomUUID();
   const now = Math.floor(Date.now() / 1000);
   const email = userInfo.email?.toLowerCase() || `${userInfo.nameId}@saml.local`;

@@ -9,7 +9,7 @@ import {
 
 /**
  * GET /api/admin/settings/code-shards
- * 現在のシャード数設定を取得
+ * Get current shard count settings
  */
 export async function getCodeShards(c: Context) {
   const kvValue = await c.env.AUTHRIM_CONFIG?.get('code_shards');
@@ -26,7 +26,7 @@ export async function getCodeShards(c: Context) {
 
 /**
  * PUT /api/admin/settings/code-shards
- * シャード数を動的に変更（KVに保存）
+ * Dynamically change shard count (saved to KV)
  */
 export async function updateCodeShards(c: Context<{ Bindings: Env }>) {
   const kv = c.env.AUTHRIM_CONFIG;
@@ -36,7 +36,7 @@ export async function updateCodeShards(c: Context<{ Bindings: Env }>) {
 
   const { shards } = await c.req.json();
 
-  // バリデーション
+  // Validation
   if (typeof shards !== 'number' || shards <= 0 || shards > 256) {
     return createRFCErrorResponse(
       c,
@@ -46,10 +46,10 @@ export async function updateCodeShards(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  // KVに保存
+  // Save to KV
   await kv.put('code_shards', shards.toString());
 
-  // キャッシュクリア（10秒待てば自動的にリフレッシュされる）
+  // Cache clear (will auto-refresh within 10 seconds)
   return c.json({
     success: true,
     shards,

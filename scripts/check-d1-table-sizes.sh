@@ -1,17 +1,27 @@
 #!/bin/bash
-# D1データベースのテーブルごとのレコード数を確認するスクリプト
+# Script to check record counts for each table in D1 database
+#
+# Usage:
+#   CF_D1_DATABASE_NAME=xxx ./scripts/check-d1-table-sizes.sh
+#
+# Environment variables:
+#   CF_D1_DATABASE_NAME - D1 Database name (required, used by wrangler)
 
-DB_NAME="conformance-authrim-users-db"
-DB_ID="REDACTED_DB_ID"
+if [ -z "$CF_D1_DATABASE_NAME" ]; then
+    echo "Error: CF_D1_DATABASE_NAME environment variable is not set"
+    echo "Usage: CF_D1_DATABASE_NAME=your-db-name ./scripts/check-d1-table-sizes.sh"
+    exit 1
+fi
+
+DB_NAME="$CF_D1_DATABASE_NAME"
 
 echo "=========================================="
-echo "D1 データベーステーブルサイズ確認"
+echo "D1 Database Table Size Check"
 echo "=========================================="
-echo "データベース: $DB_NAME"
-echo "データベースID: $DB_ID"
+echo "Database: $DB_NAME"
 echo ""
 
-# テーブルリスト
+# Table list
 TABLES=(
     "audit_log"
     "branding_settings"
@@ -45,9 +55,9 @@ TABLES=(
     "user_token_families"
 )
 
-echo "テーブル数: ${#TABLES[@]}"
+echo "Table count: ${#TABLES[@]}"
 echo ""
-echo "各テーブルのレコード数を確認中..."
+echo "Checking record counts for each table..."
 echo ""
 
 TOTAL_RECORDS=0
@@ -55,23 +65,23 @@ TOTAL_RECORDS=0
 for table in "${TABLES[@]}"; do
     echo -n "  $table: "
 
-    # テーブルの行数を取得
+    # Get table row count
     RESULT=$(wrangler d1 execute $DB_NAME --remote --command "SELECT COUNT(*) as count FROM $table;" 2>&1)
 
     if echo "$RESULT" | grep -q "error\|ERROR\|Error"; then
-        echo "⚠️  エラー"
+        echo "⚠️  Error"
     else
-        # COUNT(*)の結果を抽出
+        # Extract COUNT(*) result
         COUNT=$(echo "$RESULT" | grep -A 1 "count" | tail -n 1 | tr -d ' ')
         if [ -z "$COUNT" ]; then
             COUNT="0"
         fi
-        echo "$COUNT レコード"
+        echo "$COUNT records"
         TOTAL_RECORDS=$((TOTAL_RECORDS + COUNT))
     fi
 done
 
 echo ""
 echo "=========================================="
-echo "合計レコード数: $TOTAL_RECORDS"
+echo "Total records: $TOTAL_RECORDS"
 echo "=========================================="

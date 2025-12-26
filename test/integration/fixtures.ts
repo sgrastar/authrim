@@ -516,7 +516,7 @@ export async function createMockEnv(): Promise<Env> {
       const url = new URL(request.url);
       const path = url.pathname;
 
-      // GET /challenge/:id - チャレンジ取得
+      // GET /challenge/:id - Get challenge
       if (request.method === 'GET' && path.includes('/challenge')) {
         const id = url.searchParams.get('id') || path.split('/').pop() || '';
         const record = this.challenges.get(id);
@@ -539,7 +539,7 @@ export async function createMockEnv(): Promise<Env> {
         });
       }
 
-      // POST /challenge - チャレンジ保存
+      // POST /challenge - Store challenge
       if (request.method === 'POST' && path.endsWith('/challenge')) {
         const body = (await request.json()) as {
           id: string;
@@ -571,7 +571,7 @@ export async function createMockEnv(): Promise<Env> {
         return jsonResponse({ success: true });
       }
 
-      // POST /challenge/consume - チャレンジ消費（原子的操作）
+      // POST /challenge/consume - Consume challenge (atomic operation)
       if (request.method === 'POST' && path.endsWith('/challenge/consume')) {
         const body = (await request.json()) as { id: string };
         const record = this.challenges.get(body.id);
@@ -633,7 +633,7 @@ export async function createMockEnv(): Promise<Env> {
       const url = new URL(request.url);
       const path = url.pathname;
 
-      // POST /session - 新規セッション作成
+      // POST /session - Create new session
       if (request.method === 'POST' && path.endsWith('/session')) {
         const body = (await request.json()) as {
           id: string;
@@ -660,7 +660,7 @@ export async function createMockEnv(): Promise<Env> {
         return jsonResponse({ success: true, session });
       }
 
-      // GET /session/:id - セッション取得
+      // GET /session/:id - Get session
       if (request.method === 'GET' && path.includes('/session')) {
         const id = url.searchParams.get('id') || path.split('/').pop() || '';
         const session = this.sessions.get(id);
@@ -672,7 +672,7 @@ export async function createMockEnv(): Promise<Env> {
         return jsonResponse(session);
       }
 
-      // DELETE /session/:id - セッション削除
+      // DELETE /session/:id - Delete session
       if (request.method === 'DELETE' && path.includes('/session')) {
         const id = url.searchParams.get('id') || path.split('/').pop() || '';
         const existed = this.sessions.delete(id);
@@ -703,7 +703,7 @@ export async function createMockEnv(): Promise<Env> {
       const url = new URL(request.url);
       const path = url.pathname;
 
-      // POST /check - ブロック状態確認
+      // POST /check - Check block status
       if (request.method === 'POST' && path.endsWith('/check')) {
         const body = (await request.json()) as { key: string };
         const record = this.failures.get(body.key);
@@ -722,7 +722,7 @@ export async function createMockEnv(): Promise<Env> {
         });
       }
 
-      // POST /record-failure - 失敗記録
+      // POST /record-failure - Record failure
       if (request.method === 'POST' && path.endsWith('/record-failure')) {
         const body = (await request.json()) as { key: string };
         const record = this.failures.get(body.key) || { count: 0, blockedUntil: 0 };
@@ -742,7 +742,7 @@ export async function createMockEnv(): Promise<Env> {
         });
       }
 
-      // POST /reset - レート制限リセット
+      // POST /reset - Reset rate limit
       if (request.method === 'POST' && path.endsWith('/reset')) {
         const body = (await request.json()) as { key: string };
         this.failures.delete(body.key);
@@ -782,7 +782,7 @@ export async function createMockEnv(): Promise<Env> {
       const url = new URL(request.url);
       const path = url.pathname;
 
-      // POST /store - デバイスコード保存
+      // POST /store - Store device code
       if (request.method === 'POST' && path.endsWith('/store')) {
         const body = (await request.json()) as {
           deviceCode: string;
@@ -809,7 +809,7 @@ export async function createMockEnv(): Promise<Env> {
         return jsonResponse({ success: true });
       }
 
-      // POST /get-by-user-code - ユーザーコードで検索
+      // POST /get-by-user-code - Lookup by user code
       if (request.method === 'POST' && path.endsWith('/get-by-user-code')) {
         const body = (await request.json()) as { userCode: string };
         // Normalize the input user code
@@ -828,7 +828,7 @@ export async function createMockEnv(): Promise<Env> {
         return jsonResponse(record);
       }
 
-      // GET /device-code/:code - デバイスコード取得
+      // GET /device-code/:code - Get device code
       if (request.method === 'GET' && path.includes('/device-code')) {
         const code = url.searchParams.get('code') || path.split('/').pop() || '';
         const record = this.deviceCodes.get(code);
@@ -840,7 +840,7 @@ export async function createMockEnv(): Promise<Env> {
         return jsonResponse(record);
       }
 
-      // POST /authorize - デバイス認可
+      // POST /authorize - Authorize device
       if (request.method === 'POST' && path.endsWith('/authorize')) {
         const body = (await request.json()) as { deviceCode: string; userId: string };
         const record = this.deviceCodes.get(body.deviceCode);
@@ -856,7 +856,7 @@ export async function createMockEnv(): Promise<Env> {
         return jsonResponse({ success: true });
       }
 
-      // POST /deny - デバイス拒否
+      // POST /deny - Deny device
       if (request.method === 'POST' && path.endsWith('/deny')) {
         const body = (await request.json()) as { deviceCode: string };
         const record = this.deviceCodes.get(body.deviceCode);
@@ -890,7 +890,7 @@ export async function createMockEnv(): Promise<Env> {
       const url = new URL(request.url);
       const path = url.pathname;
 
-      // POST /revoke - トークン失効
+      // POST /revoke - Revoke token
       if (request.method === 'POST' && path.endsWith('/revoke')) {
         const body = (await request.json()) as { jti: string; ttl: number; reason?: string };
 
@@ -903,7 +903,7 @@ export async function createMockEnv(): Promise<Env> {
         return jsonResponse({ success: true });
       }
 
-      // GET /check - 失効確認
+      // GET /check - Check revocation
       if (request.method === 'GET' && path.endsWith('/check')) {
         const jti = url.searchParams.get('jti') || '';
         const record = this.revokedTokens.get(jti);

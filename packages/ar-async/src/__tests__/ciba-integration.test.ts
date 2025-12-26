@@ -405,7 +405,7 @@ describe('CIBA Integration', () => {
       const body = (await response.json()) as any;
 
       expect(response.status).toBe(404);
-      // RFC準拠: リソース不在でも invalid_request を返す（status 404でリソース不在を示す）
+      // RFC compliance: Returns invalid_request even for missing resource (status 404 indicates resource not found)
       expect(body.error).toBe('invalid_request');
     });
 

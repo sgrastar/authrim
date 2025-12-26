@@ -22,6 +22,9 @@ export * from './types/logout';
 // Settings Types (Settings API v2)
 export * from './types/settings';
 
+// Contract Types (Three-Layer Policy Hierarchy)
+export * from './types/contracts';
+
 // Utils
 export * from './utils/audit-log';
 export * from './utils/client-authentication';
@@ -132,6 +135,7 @@ export * from './services/unified-check-service';
 export * from './services/permission-change-notifier';
 export * from './services/backchannel-logout-sender';
 export * from './services/frontchannel-logout';
+export * from './services/policy-resolver';
 
 // Middleware
 export * from './middleware/admin-auth';

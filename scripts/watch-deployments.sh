@@ -151,7 +151,7 @@ display_deployments() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     echo "  Environment: ${DEPLOY_ENV}"
-    echo "  最終取得: ${last_update}"
+    echo "  Last update: ${last_update}"
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     printf "  %-38s %-26s %-40s\n" "VERSION ID" "CREATED" "WORKER"
@@ -168,7 +168,7 @@ display_deployments() {
 
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo "  [q]終了  [r]更新  (次回自動更新: ${next_refresh})"
+    echo "  [q]Quit  [r]Refresh  (Next auto-refresh: ${next_refresh})"
     echo ""
 }
 
@@ -179,9 +179,9 @@ format_time_remaining() {
     local secs=$((seconds % 60))
 
     if [ $minutes -gt 0 ]; then
-        echo "${minutes}分${secs}秒後"
+        echo "in ${minutes}m ${secs}s"
     else
-        echo "${secs}秒後"
+        echo "in ${secs}s"
     fi
 }
 

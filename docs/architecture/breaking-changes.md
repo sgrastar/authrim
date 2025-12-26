@@ -1,17 +1,17 @@
-# Authrim 破壊的変更チェックリスト
+# Authrim Breaking Changes Checklist
 
-> **目的**: 本ドキュメントはAuthrimの設計決定において、変更すると破壊的影響が生じる項目を一覧化したものです。
-> 新機能開発やリファクタリング時に参照し、互換性を維持してください。
+> **Purpose**: This document lists items that would have breaking impacts if changed in Authrim's design decisions.
+> Reference this when developing new features or refactoring to maintain compatibility.
 
 ---
 
-## 1. API 命名・URL構造
+## 1. API Naming & URL Structure
 
-**影響**: 全クライアント・SDKが破壊的変更になる
+**Impact**: All clients and SDKs would have breaking changes
 
-### OIDC Core エンドポイント（変更不可）
+### OIDC Core Endpoints (Cannot be changed)
 
-| メソッド   | エンドポイント                      | 仕様                     |
+| Method     | Endpoint                            | Specification            |
 | ---------- | ----------------------------------- | ------------------------ |
 | `GET`      | `/.well-known/openid-configuration` | OIDC Discovery 1.0       |
 | `GET`      | `/.well-known/jwks.json`            | RFC 7517                 |
@@ -24,9 +24,9 @@
 | `POST`     | `/revoke`                           | RFC 7009                 |
 | `POST`     | `/register`                         | RFC 7591 (DCR)           |
 
-### OAuth 2.0 拡張エンドポイント
+### OAuth 2.0 Extension Endpoints
 
-| メソッド   | エンドポイント          | 仕様           |
+| Method     | Endpoint                | Specification  |
 | ---------- | ----------------------- | -------------- |
 | `POST`     | `/as/par`               | RFC 9126 (PAR) |
 | `POST`     | `/device_authorization` | RFC 8628       |
@@ -35,83 +35,83 @@
 
 ### Session Management
 
-| メソッド   | エンドポイント       | 仕様                        |
+| Method     | Endpoint             | Specification               |
 | ---------- | -------------------- | --------------------------- |
 | `GET/POST` | `/session/check`     | OIDC Session Management 1.0 |
 | `GET/POST` | `/authorize/confirm` | Re-authentication           |
 | `GET/POST` | `/authorize/login`   | Session-less Auth           |
 
-### 認証API（内部）
+### Authentication API (Internal)
 
-| メソッド   | エンドポイント                       | 用途                       |
+| Method     | Endpoint                             | Purpose                    |
 | ---------- | ------------------------------------ | -------------------------- |
-| `POST`     | `/api/auth/passkey/register/options` | WebAuthn登録オプション     |
-| `POST`     | `/api/auth/passkey/register/verify`  | WebAuthn登録検証           |
-| `POST`     | `/api/auth/passkey/login/options`    | WebAuthnログインオプション |
-| `POST`     | `/api/auth/passkey/login/verify`     | WebAuthnログイン検証       |
-| `POST`     | `/api/auth/email-code/send`          | Email OTP送信              |
-| `POST`     | `/api/auth/email-code/verify`        | Email OTP検証              |
-| `GET/POST` | `/api/auth/consent`                  | OAuth同意画面              |
+| `POST`     | `/api/auth/passkey/register/options` | WebAuthn registration options |
+| `POST`     | `/api/auth/passkey/register/verify`  | WebAuthn registration verify |
+| `POST`     | `/api/auth/passkey/login/options`    | WebAuthn login options     |
+| `POST`     | `/api/auth/passkey/login/verify`     | WebAuthn login verify      |
+| `POST`     | `/api/auth/email-code/send`          | Email OTP send             |
+| `POST`     | `/api/auth/email-code/verify`        | Email OTP verify           |
+| `GET/POST` | `/api/auth/consent`                  | OAuth consent screen       |
 
 ### Admin API
 
-| メソッド              | エンドポイント              | 用途                     |
-| --------------------- | --------------------------- | ------------------------ |
-| `GET/POST/PUT/DELETE` | `/api/admin/users/*`        | ユーザー管理             |
-| `GET/POST/PUT/DELETE` | `/api/admin/clients/*`      | クライアント管理         |
-| `GET/DELETE`          | `/api/admin/sessions/*`     | セッション管理           |
-| `GET`                 | `/api/admin/audit-log/*`    | 監査ログ                 |
-| `GET/PUT`             | `/api/admin/settings/*`     | 設定管理                 |
-| `GET/POST`            | `/api/admin/signing-keys/*` | 署名キー管理             |
-| `ALL`                 | `/scim/v2/*`                | SCIM 2.0 (RFC 7643/7644) |
+| Method                | Endpoint                  | Purpose             |
+| --------------------- | ------------------------- | ------------------- |
+| `GET/POST/PUT/DELETE` | `/api/admin/users/*`      | User management     |
+| `GET/POST/PUT/DELETE` | `/api/admin/clients/*`    | Client management   |
+| `GET/DELETE`          | `/api/admin/sessions/*`   | Session management  |
+| `GET`                 | `/api/admin/audit-log/*`  | Audit log           |
+| `GET/PUT`             | `/api/admin/settings/*`   | Settings management |
+| `GET/POST`            | `/api/admin/signing-keys/*` | Signing key management |
+| `ALL`                 | `/scim/v2/*`              | SCIM 2.0 (RFC 7643/7644) |
 
 ---
 
-## 2. ID 形式
+## 2. ID Format
 
-**影響**: データ全再発行レベル
+**Impact**: Full data re-issuance level
 
-### 現在のID形式一覧
+### Current ID Format List
 
-| ID種別                           | 形式                                     | 例                                     | 生成ロジック                               |
-| -------------------------------- | ---------------------------------------- | -------------------------------------- | ------------------------------------------ |
-| **ユーザーID**                   | UUID v4                                  | `550e8400-e29b-41d4-a716-446655440000` | `crypto.randomUUID()`                      |
-| **クライアントID**               | 長い一意識別子 (~135文字) またはカスタム | `b42bdc5e-7183-46ef-859c-fd21d4589cd6` | `generateSecureRandomString()` + Base64URL |
-| **セッションID**                 | `{shardIndex}_session_{uuid}`            | `7_session_550e8400-...`               | FNV-1a hash → shard routing                |
-| **認可コード**                   | `{shardIndex}_{randomCode}`              | `23_eyJhbGciOi...`                     | FNV-1a(userId:clientId) % shardCount       |
-| **Refresh Token JTI**            | `v{gen}_{shard}_{randomPart}`            | `v1_7_rt_550e8400-...`                 | SHA-256(userId:clientId) % shardCount      |
-| **Refresh Token JTI (レガシー)** | `rt_{uuid}`                              | `rt_550e8400-...`                      | generation=0 扱い                          |
+| ID Type                       | Format                              | Example                                | Generation Logic                          |
+| ----------------------------- | ----------------------------------- | -------------------------------------- | ----------------------------------------- |
+| **User ID**                   | UUID v4                             | `550e8400-e29b-41d4-a716-446655440000` | `crypto.randomUUID()`                     |
+| **Client ID**                 | Long unique identifier (~135 chars) or custom | `b42bdc5e-7183-46ef-859c-fd21d4589cd6` | `generateSecureRandomString()` + Base64URL |
+| **Session ID**                | `{shardIndex}_session_{uuid}`       | `7_session_550e8400-...`               | FNV-1a hash → shard routing               |
+| **Authorization Code**        | `{shardIndex}_{randomCode}`         | `23_eyJhbGciOi...`                     | FNV-1a(userId:clientId) % shardCount      |
+| **Refresh Token JTI**         | `v{gen}_{shard}_{randomPart}`       | `v1_7_rt_550e8400-...`                 | SHA-256(userId:clientId) % shardCount     |
+| **Refresh Token JTI (Legacy)** | `rt_{uuid}`                        | `rt_550e8400-...`                      | generation=0 treatment                    |
 
-### Subject (sub) クレーム
+### Subject (sub) Claim
 
-| 種別         | 形式              | 説明                             |
+| Type         | Format            | Description                      |
 | ------------ | ----------------- | -------------------------------- |
-| **public**   | ユーザーID (UUID) | 全クライアント共通               |
-| **pairwise** | ハッシュ値        | `hash(userId + clientId + salt)` |
+| **public**   | User ID (UUID)    | Same across all clients          |
+| **pairwise** | Hash value        | `hash(userId + clientId + salt)` |
 
-### 関連ファイル
+### Related Files
 
-- `packages/shared/src/utils/id.ts` - ID生成
-- `packages/shared/src/utils/session-helper.ts` - セッションID
-- `packages/shared/src/utils/tenant-context.ts` - 認可コードシャーディング
-- `packages/shared/src/utils/refresh-token-sharding.ts` - RTシャーディング
+- `packages/shared/src/utils/id.ts` - ID generation
+- `packages/shared/src/utils/session-helper.ts` - Session ID
+- `packages/shared/src/utils/tenant-context.ts` - Authorization code sharding
+- `packages/shared/src/utils/refresh-token-sharding.ts` - RT sharding
 - `packages/shared/src/utils/pairwise.ts` - Pairwise Subject
 
 ---
 
-## 3. セッションモデル
+## 3. Session Model
 
-**影響**: 認証根本の作り直し
+**Impact**: Complete authentication rebuild
 
-### セッション構造
+### Session Structure
 
 ```typescript
 interface Session {
   id: string; // "{shardIndex}_session_{uuid}"
-  userId: string; // ユーザーID (UUID)
-  expiresAt: number; // 有効期限（ミリ秒タイムスタンプ）
-  createdAt: number; // 作成時刻（ミリ秒タイムスタンプ）
-  data?: SessionData; // 追加メタデータ
+  userId: string; // User ID (UUID)
+  expiresAt: number; // Expiration (milliseconds timestamp)
+  createdAt: number; // Creation time (milliseconds timestamp)
+  data?: SessionData; // Additional metadata
 }
 
 interface SessionData {
@@ -124,80 +124,80 @@ interface SessionData {
 }
 ```
 
-### ストレージアーキテクチャ（3層）
+### Storage Architecture (3 Layers)
 
-| 層                         | 用途                  | アクセス速度       |
+| Layer                      | Purpose               | Access Speed       |
 | -------------------------- | --------------------- | ------------------ |
-| **メモリキャッシュ** (Hot) | SessionStore DO内 Map | サブミリ秒         |
-| **Durable Storage** (Warm) | SessionStore DO永続化 | O(1)               |
-| **D1 Database** (Cold)     | バックアップ・監査    | 100ms タイムアウト |
+| **Memory Cache** (Hot)     | SessionStore DO Map   | Sub-millisecond    |
+| **Durable Storage** (Warm) | SessionStore DO persistent | O(1)          |
+| **D1 Database** (Cold)     | Backup & Audit        | 100ms timeout      |
 
-### シャーディング設定
+### Sharding Configuration
 
-| 項目                 | 値                                     |
-| -------------------- | -------------------------------------- |
-| デフォルトシャード数 | 32                                     |
-| DO名パターン         | `tenant:default:session:shard-{index}` |
-| 設定キー             | `AUTHRIM_SESSION_SHARDS` (KV/環境変数) |
-| クリーンアップ間隔   | 5分                                    |
+| Item                    | Value                                  |
+| ----------------------- | -------------------------------------- |
+| Default shard count     | 32                                     |
+| DO name pattern         | `tenant:default:session:shard-{index}` |
+| Config key              | `AUTHRIM_SESSION_SHARDS` (KV/env var)  |
+| Cleanup interval        | 5 minutes                              |
 
-### 関連ファイル
+### Related Files
 
 - `packages/shared/src/durable-objects/SessionStore.ts`
 
 ---
 
-## 4. Refresh Token モデル
+## 4. Refresh Token Model
 
-**影響**: 全ユーザー強制再ログイン
+**Impact**: All users forced re-login
 
-### トークン構造 (JWT)
+### Token Structure (JWT)
 
 ```typescript
 interface RefreshTokenClaims {
   iss: string; // Issuer
-  sub: string; // Subject (ユーザーID)
-  aud: string; // Audience (クライアントID)
+  sub: string; // Subject (User ID)
+  aud: string; // Audience (Client ID)
   exp: number; // Expiration Time
   iat: number; // Issued At
-  jti: string; // JWT ID (一意識別子)
-  rtv: number; // Refresh Token Version (ローテーション世代)
+  jti: string; // JWT ID (unique identifier)
+  rtv: number; // Refresh Token Version (rotation generation)
 }
 ```
 
-### Token Family 構造
+### Token Family Structure
 
 ```typescript
 interface TokenFamilyV2 {
-  version: number; // ローテーション世代（単調増加）
-  last_jti: string; // 最後に発行されたJWT ID
-  last_used_at: number; // 最後の使用時刻（ミリ秒）
-  expires_at: number; // 絶対有効期限（ミリ秒）
-  user_id: string; // ユーザーID
-  client_id: string; // クライアントID
-  allowed_scope: string; // 初期スコープ（拡大防止）
+  version: number; // Rotation generation (monotonically increasing)
+  last_jti: string; // Last issued JWT ID
+  last_used_at: number; // Last used time (milliseconds)
+  expires_at: number; // Absolute expiration (milliseconds)
+  user_id: string; // User ID
+  client_id: string; // Client ID
+  allowed_scope: string; // Initial scope (prevent escalation)
 }
 ```
 
-### ローテーション戦略 (Version-Based Theft Detection)
+### Rotation Strategy (Version-Based Theft Detection)
 
-| イベント                                           | 動作                            |
-| -------------------------------------------------- | ------------------------------- |
-| `incomingVersion < currentVersion`                 | **盗難検出** → Family全体失効   |
-| `incomingVersion == currentVersion` かつ `jti一致` | 新バージョン発行                |
-| `jti不一致`                                        | **改ざん検出** → Family全体失効 |
-| スコープ拡大リクエスト                             | **拒否** (invalid_scope)        |
+| Event                                             | Action                          |
+| ------------------------------------------------- | ------------------------------- |
+| `incomingVersion < currentVersion`                | **Theft detected** → Invalidate entire family |
+| `incomingVersion == currentVersion` and `jti matches` | Issue new version           |
+| `jti mismatch`                                    | **Tampering detected** → Invalidate entire family |
+| Scope escalation request                          | **Reject** (invalid_scope)      |
 
-### シャーディング
+### Sharding
 
-| 項目                 | 値                                                               |
-| -------------------- | ---------------------------------------------------------------- |
-| デフォルトシャード数 | 8                                                                |
-| JTI形式 (新)         | `v{generation}_{shardIndex}_{randomPart}`                        |
-| JTI形式 (レガシー)   | `rt_{uuid}` (generation=0)                                       |
-| DO名パターン         | `tenant:default:refresh-rotator:{clientId}:v{gen}:shard-{index}` |
+| Item                    | Value                                                            |
+| ----------------------- | ---------------------------------------------------------------- |
+| Default shard count     | 8                                                                |
+| JTI format (new)        | `v{generation}_{shardIndex}_{randomPart}`                        |
+| JTI format (legacy)     | `rt_{uuid}` (generation=0)                                       |
+| DO name pattern         | `tenant:default:refresh-rotator:{clientId}:v{gen}:shard-{index}` |
 
-### 関連ファイル
+### Related Files
 
 - `packages/shared/src/durable-objects/RefreshTokenRotator.ts`
 - `packages/shared/src/utils/refresh-token-sharding.ts`
@@ -205,80 +205,80 @@ interface TokenFamilyV2 {
 
 ---
 
-## 5. OIDC クレーム構造
+## 5. OIDC Claim Structure
 
-**影響**: 全RPが動かなくなる
+**Impact**: All RPs would break
 
-### ID Token クレーム
+### ID Token Claims
 
-#### 必須クレーム (OIDC Core)
+#### Required Claims (OIDC Core)
 
-| クレーム | 型     | 説明                     |
-| -------- | ------ | ------------------------ |
-| `iss`    | string | Issuer URL               |
-| `sub`    | string | Subject (ユーザー識別子) |
-| `aud`    | string | Audience (client_id)     |
-| `exp`    | number | 有効期限 (UNIX秒)        |
-| `iat`    | number | 発行時刻 (UNIX秒)        |
+| Claim | Type   | Description              |
+| ----- | ------ | ------------------------ |
+| `iss` | string | Issuer URL               |
+| `sub` | string | Subject (User identifier) |
+| `aud` | string | Audience (client_id)     |
+| `exp` | number | Expiration (UNIX seconds) |
+| `iat` | number | Issued at (UNIX seconds) |
 
-#### 認証コンテキストクレーム
+#### Authentication Context Claims
 
-| クレーム    | 型       | 説明                                   |
+| Claim       | Type     | Description                            |
 | ----------- | -------- | -------------------------------------- |
-| `auth_time` | number   | 認証実行時刻                           |
-| `nonce`     | string   | リプレイ攻撃防止                       |
+| `auth_time` | number   | Authentication execution time          |
+| `nonce`     | string   | Replay attack prevention               |
 | `acr`       | string   | Authentication Context Class Reference |
 | `amr`       | string[] | Authentication Methods References      |
 | `azp`       | string   | Authorized Party                       |
 
-#### トークンハッシュ
+#### Token Hashes
 
-| クレーム  | 用途                          |
+| Claim     | Purpose                       |
 | --------- | ----------------------------- |
 | `at_hash` | Access Token Hash (code flow) |
 | `c_hash`  | Code Hash (hybrid flow)       |
 
-#### セッション管理
+#### Session Management
 
-| クレーム | 用途                               |
-| -------- | ---------------------------------- |
-| `sid`    | Session ID (RP-Initiated Logout用) |
+| Claim | Purpose                            |
+| ----- | ---------------------------------- |
+| `sid` | Session ID (for RP-Initiated Logout) |
 
-#### RBAC クレーム (Authrim拡張)
+#### RBAC Claims (Authrim Extension)
 
-| クレーム            | 型       | 説明             |
-| ------------------- | -------- | ---------------- |
-| `authrim_roles`     | string[] | 有効なロール     |
-| `authrim_user_type` | string   | ユーザータイプ   |
-| `authrim_org_id`    | string   | プライマリ組織ID |
-| `authrim_plan`      | string   | 組織プラン       |
-| `authrim_org_type`  | string   | 組織タイプ       |
+| Claim               | Type     | Description       |
+| ------------------- | -------- | ----------------- |
+| `authrim_roles`     | string[] | Effective roles   |
+| `authrim_user_type` | string   | User type         |
+| `authrim_org_id`    | string   | Primary org ID    |
+| `authrim_plan`      | string   | Organization plan |
+| `authrim_org_type`  | string   | Organization type |
 
-### スコープベースクレーム (UserInfo)
+### Scope-Based Claims (UserInfo)
 
-| スコープ  | クレーム                                                                                                                                             |
+| Scope     | Claims                                                                                                                                               |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `profile` | name, family_name, given_name, middle_name, nickname, preferred_username, profile, picture, website, gender, birthdate, zoneinfo, locale, updated_at |
 | `email`   | email, email_verified                                                                                                                                |
 | `phone`   | phone_number, phone_number_verified                                                                                                                  |
 | `address` | address (nested object)                                                                                                                              |
 
-### Access Token クレーム
+### Access Token Claims
 
-| クレーム              | 型       | 説明                         |
+| Claim                 | Type     | Description                  |
 | --------------------- | -------- | ---------------------------- |
 | `iss`                 | string   | Issuer                       |
 | `sub`                 | string   | Subject                      |
-| `aud`                 | string   | Audience (リソースサーバー)  |
-| `exp`                 | number   | 有効期限                     |
-| `iat`                 | number   | 発行時刻                     |
-| `jti`                 | string   | JWT ID (失効管理用)          |
-| `scope`               | string   | 付与されたスコープ           |
-| `client_id`           | string   | クライアントID               |
-| `cnf`                 | object   | DPoP確認 (`{ jkt: string }`) |
+| `aud`                 | string   | Audience (resource server)   |
+| `exp`                 | number   | Expiration                   |
+| `iat`                 | number   | Issued at                    |
+| `jti`                 | string   | JWT ID (for revocation)      |
+| `scope`               | string   | Granted scopes               |
+| `client_id`           | string   | Client ID                    |
+| `cnf`                 | object   | DPoP confirmation (`{ jkt: string }`) |
 | `authrim_permissions` | string[] | Phase 2 Policy Embedding     |
 
-### 関連ファイル
+### Related Files
 
 - `packages/shared/src/types/oidc.ts`
 - `packages/shared/src/utils/jwt.ts`
@@ -287,121 +287,121 @@ interface TokenFamilyV2 {
 
 ---
 
-## 6. データモデル
+## 6. Data Model
 
-**影響**: マイグレーション地獄
+**Impact**: Migration nightmare
 
-### コアエンティティ
+### Core Entities
 
-#### users テーブル
+#### users Table
 
-| カラム                              | 型               | 説明               |
+| Column                              | Type             | Description        |
 | ----------------------------------- | ---------------- | ------------------ |
 | `id`                                | TEXT PRIMARY KEY | UUID v4            |
-| `email`                             | TEXT UNIQUE      | メールアドレス     |
-| `email_verified`                    | INTEGER          | 検証済みフラグ     |
-| `password_hash`                     | TEXT             | パスワードハッシュ |
-| `name`, `given_name`, `family_name` | TEXT             | OIDC標準クレーム   |
-| `nickname`, `profile`, `picture`    | TEXT             | OIDC標準クレーム   |
-| `created_at`, `updated_at`          | INTEGER          | UNIX秒             |
+| `email`                             | TEXT UNIQUE      | Email address      |
+| `email_verified`                    | INTEGER          | Verified flag      |
+| `password_hash`                     | TEXT             | Password hash      |
+| `name`, `given_name`, `family_name` | TEXT             | OIDC standard claims |
+| `nickname`, `profile`, `picture`    | TEXT             | OIDC standard claims |
+| `created_at`, `updated_at`          | INTEGER          | UNIX seconds       |
 
-#### oauth_clients テーブル
+#### oauth_clients Table
 
-| カラム                       | 型               | 説明                     |
-| ---------------------------- | ---------------- | ------------------------ |
-| `client_id`                  | TEXT PRIMARY KEY | クライアントID           |
-| `client_secret`              | TEXT             | クライアントシークレット |
-| `redirect_uris`              | TEXT             | JSON配列                 |
-| `grant_types`                | TEXT             | JSON配列                 |
-| `response_types`             | TEXT             | JSON配列                 |
-| `token_endpoint_auth_method` | TEXT             | 認証方式                 |
-| `subject_type`               | TEXT             | public/pairwise          |
+| Column                       | Type             | Description         |
+| ---------------------------- | ---------------- | ------------------- |
+| `client_id`                  | TEXT PRIMARY KEY | Client ID           |
+| `client_secret`              | TEXT             | Client secret       |
+| `redirect_uris`              | TEXT             | JSON array          |
+| `grant_types`                | TEXT             | JSON array          |
+| `response_types`             | TEXT             | JSON array          |
+| `token_endpoint_auth_method` | TEXT             | Auth method         |
+| `subject_type`               | TEXT             | public/pairwise     |
 
-#### sessions テーブル
+#### sessions Table
 
-| カラム       | 型               | 説明              |
-| ------------ | ---------------- | ----------------- |
-| `id`         | TEXT PRIMARY KEY | セッションID      |
-| `user_id`    | TEXT             | ユーザーID (FK)   |
-| `expires_at` | INTEGER          | 有効期限 (UNIX秒) |
-| `created_at` | INTEGER          | 作成時刻 (UNIX秒) |
+| Column       | Type             | Description           |
+| ------------ | ---------------- | --------------------- |
+| `id`         | TEXT PRIMARY KEY | Session ID            |
+| `user_id`    | TEXT             | User ID (FK)          |
+| `expires_at` | INTEGER          | Expiration (UNIX seconds) |
+| `created_at` | INTEGER          | Creation (UNIX seconds) |
 
-### RBAC Phase 1 エンティティ
+### RBAC Phase 1 Entities
 
-#### organizations テーブル
+#### organizations Table
 
-| カラム          | 型               | 説明                                 |
+| Column          | Type             | Description                          |
 | --------------- | ---------------- | ------------------------------------ |
-| `id`            | TEXT PRIMARY KEY | 組織ID                               |
-| `tenant_id`     | TEXT             | テナントID                           |
-| `name`          | TEXT             | 組織名                               |
+| `id`            | TEXT PRIMARY KEY | Organization ID                      |
+| `tenant_id`     | TEXT             | Tenant ID                            |
+| `name`          | TEXT             | Organization name                    |
 | `org_type`      | TEXT             | distributor/enterprise/department    |
-| `parent_org_id` | TEXT             | 親組織ID (階層構造)                  |
+| `parent_org_id` | TEXT             | Parent org ID (hierarchy)            |
 | `plan`          | TEXT             | free/starter/professional/enterprise |
-| `is_active`     | INTEGER          | アクティブフラグ                     |
+| `is_active`     | INTEGER          | Active flag                          |
 
-#### roles テーブル
+#### roles Table
 
-| カラム             | 型               | 説明                  |
-| ------------------ | ---------------- | --------------------- |
-| `id`               | TEXT PRIMARY KEY | ロールID              |
-| `name`             | TEXT             | ロール名              |
-| `permissions_json` | TEXT             | 権限JSON配列          |
-| `role_type`        | TEXT             | system/builtin/custom |
-| `hierarchy_level`  | INTEGER          | 0-100 (高いほど特権)  |
-| `parent_role_id`   | TEXT             | 親ロールID (継承)     |
+| Column             | Type             | Description            |
+| ------------------ | ---------------- | ---------------------- |
+| `id`               | TEXT PRIMARY KEY | Role ID                |
+| `name`             | TEXT             | Role name              |
+| `permissions_json` | TEXT             | Permissions JSON array |
+| `role_type`        | TEXT             | system/builtin/custom  |
+| `hierarchy_level`  | INTEGER          | 0-100 (higher = more privilege) |
+| `parent_role_id`   | TEXT             | Parent role ID (inheritance) |
 
-#### role_assignments テーブル
+#### role_assignments Table
 
-| カラム         | 型               | 説明                  |
-| -------------- | ---------------- | --------------------- |
-| `id`           | TEXT PRIMARY KEY | 割当ID                |
-| `subject_id`   | TEXT             | ユーザーID            |
-| `role_id`      | TEXT             | ロールID              |
-| `scope_type`   | TEXT             | global/org/resource   |
-| `scope_target` | TEXT             | スコープ対象          |
-| `expires_at`   | INTEGER          | 有効期限 (オプション) |
+| Column         | Type             | Description            |
+| -------------- | ---------------- | ---------------------- |
+| `id`           | TEXT PRIMARY KEY | Assignment ID          |
+| `subject_id`   | TEXT             | User ID                |
+| `role_id`      | TEXT             | Role ID                |
+| `scope_type`   | TEXT             | global/org/resource    |
+| `scope_target` | TEXT             | Scope target           |
+| `expires_at`   | INTEGER          | Expiration (optional)  |
 
-### 関連ファイル
+### Related Files
 
-- `migrations/001_initial_schema.sql` - 初期スキーマ
+- `migrations/001_initial_schema.sql` - Initial schema
 - `migrations/009-012_rbac_phase1_*.sql` - RBAC Phase 1
 
 ---
 
-## 7. /authorize & /token の構造
+## 7. /authorize & /token Structure
 
-**影響**: OIDC的に変更不可能
+**Impact**: Cannot be changed per OIDC spec
 
-### /authorize パラメータ
+### /authorize Parameters
 
-#### 必須パラメータ
+#### Required Parameters
 
-| パラメータ      | 説明                                               |
+| Parameter       | Description                                        |
 | --------------- | -------------------------------------------------- |
 | `response_type` | `code`, `id_token`, `token`, `code id_token`, etc. |
-| `client_id`     | 登録済みクライアントID                             |
-| `redirect_uri`  | 登録済みリダイレクトURI                            |
-| `scope`         | `openid` 必須 + 追加スコープ                       |
+| `client_id`     | Registered client ID                               |
+| `redirect_uri`  | Registered redirect URI                            |
+| `scope`         | `openid` required + additional scopes              |
 
-#### 推奨/任意パラメータ
+#### Recommended/Optional Parameters
 
-| パラメータ              | 説明                                          |
+| Parameter               | Description                                   |
 | ----------------------- | --------------------------------------------- |
-| `state`                 | CSRF保護                                      |
+| `state`                 | CSRF protection                               |
 | `nonce`                 | ID Token binding                              |
 | `code_challenge`        | PKCE (S256)                                   |
-| `code_challenge_method` | `S256` のみ                                   |
+| `code_challenge_method` | `S256` only                                   |
 | `prompt`                | `login`, `consent`, `select_account`, `none`  |
-| `max_age`               | 最大認証経過時間                              |
-| `claims`                | クレームリクエスト (JSON)                     |
+| `max_age`               | Max authentication age                        |
+| `claims`                | Claims request (JSON)                         |
 | `response_mode`         | `query`, `fragment`, `form_post`, `query.jwt` |
 | `request`               | JAR (RFC 9101)                                |
 | `request_uri`           | PAR (RFC 9126)                                |
 
-### /authorize レスポンス
+### /authorize Response
 
-| response_mode  | 形式                                       |
+| response_mode  | Format                                     |
 | -------------- | ------------------------------------------ |
 | `query`        | `?code=...&state=...&iss=...`              |
 | `fragment`     | `#access_token=...&id_token=...&state=...` |
@@ -410,7 +410,7 @@ interface TokenFamilyV2 {
 
 ### /token Grant Types
 
-| Grant Type                                     | 仕様          |
+| Grant Type                                     | Specification |
 | ---------------------------------------------- | ------------- |
 | `authorization_code`                           | RFC 6749 §4.1 |
 | `refresh_token`                                | RFC 6749 §6   |
@@ -418,7 +418,7 @@ interface TokenFamilyV2 {
 | `urn:ietf:params:oauth:grant-type:device_code` | RFC 8628      |
 | `urn:openid:params:grant-type:ciba`            | OIDC CIBA     |
 
-### /token レスポンス
+### /token Response
 
 ```json
 {
@@ -432,9 +432,9 @@ interface TokenFamilyV2 {
 }
 ```
 
-### クライアント認証方式
+### Client Authentication Methods
 
-| 方式                  | 説明                    |
+| Method                | Description             |
 | --------------------- | ----------------------- |
 | `client_secret_basic` | HTTP Basic Auth         |
 | `client_secret_post`  | Form parameter          |
@@ -442,60 +442,60 @@ interface TokenFamilyV2 {
 | `private_key_jwt`     | JWT Bearer (asymmetric) |
 | `none`                | Public clients          |
 
-### 関連ファイル
+### Related Files
 
 - `packages/op-auth/src/authorize.ts`
 - `packages/op-token/src/token.ts`
 
 ---
 
-## 8. RBAC/ABAC 評価順序
+## 8. RBAC/ABAC Evaluation Order
 
-**影響**: 許可/拒否結果が変わり炎上
+**Impact**: Allow/deny results change, causing major issues
 
-### 評価フロー
+### Evaluation Flow
 
 ```
-1. Authentication 確認
-   └─ 失敗 → 401 Unauthorized
+1. Authentication check
+   └─ Fail → 401 Unauthorized
 
-2. ロールメンバーシップ確認
-   └─ requireRole(role) → 単一ロール必須
-   └─ requireAnyRole([roles]) → いずれか必須 (OR)
-   └─ requireAllRoles([roles]) → 全て必須 (AND)
+2. Role membership check
+   └─ requireRole(role) → Single role required
+   └─ requireAnyRole([roles]) → Any one required (OR)
+   └─ requireAllRoles([roles]) → All required (AND)
    └─ requireAdmin() → system_admin|distributor_admin|org_admin|admin
-   └─ requireSystemAdmin() → system_admin のみ
+   └─ requireSystemAdmin() → system_admin only
 
-3. アクセス判定
-   └─ 許可 → 処理続行
-   └─ 拒否 → 403 Forbidden
+3. Access decision
+   └─ Allow → Continue processing
+   └─ Deny → 403 Forbidden
 ```
 
-### デフォルトロール階層
+### Default Role Hierarchy
 
-| ロール              | hierarchy_level | 説明                       |
-| ------------------- | --------------- | -------------------------- |
-| `system_admin`      | 100             | 最高権限                   |
-| `distributor_admin` | 50              | ディストリビューター管理者 |
-| `org_admin`         | 30              | 組織管理者                 |
-| `end_user`          | 0               | 一般ユーザー               |
+| Role                | hierarchy_level | Description           |
+| ------------------- | --------------- | --------------------- |
+| `system_admin`      | 100             | Highest privilege     |
+| `distributor_admin` | 50              | Distributor admin     |
+| `org_admin`         | 30              | Organization admin    |
+| `end_user`          | 0               | General user          |
 
-### RBAC クレーム解決順序
+### RBAC Claim Resolution Order
 
 ```
-1. キャッシュ確認 (KV RBAC_CACHE - TTL 5分)
-2. キャッシュミス時:
+1. Cache check (KV RBAC_CACHE - TTL 5 min)
+2. On cache miss:
    a. resolveEffectiveRoles (DB)
    b. resolveOrganizationInfo (DB)
    c. resolveUserType (DB)
    d. resolveScopedRoles (Phase 2)
    e. resolveAllOrganizations (Phase 2)
    f. resolveRelationshipsSummary (Phase 2)
-3. 環境変数 RBAC_ID_TOKEN_CLAIMS でフィルタリング
-4. キャッシュに保存 (Fire-and-forget)
+3. Filter by env var RBAC_ID_TOKEN_CLAIMS
+4. Save to cache (Fire-and-forget)
 ```
 
-### 関連ファイル
+### Related Files
 
 - `packages/shared/src/middleware/rbac.ts`
 - `packages/shared/src/utils/rbac-claims.ts`
@@ -503,11 +503,11 @@ interface TokenFamilyV2 {
 
 ---
 
-## 9. Audit Log スキーマ
+## 9. Audit Log Schema
 
-**影響**: 過去ログ読めなくなる
+**Impact**: Cannot read past logs
 
-### テーブル構造
+### Table Structure
 
 ```sql
 CREATE TABLE audit_log (
@@ -523,7 +523,7 @@ CREATE TABLE audit_log (
 );
 ```
 
-### 型定義
+### Type Definition
 
 ```typescript
 interface AuditLogEntry {
@@ -535,18 +535,18 @@ interface AuditLogEntry {
   resourceId: string;
   ipAddress: string;
   userAgent: string;
-  metadata: string; // JSON文字列
+  metadata: string; // JSON string
   severity: 'info' | 'warning' | 'critical';
-  createdAt: number; // UNIXミリ秒
+  createdAt: number; // UNIX milliseconds
 }
 ```
 
-### アクション命名規則
+### Action Naming Convention
 
 ```
 {resource}.{action}.{detail}
 
-例:
+Examples:
 - signing_keys.rotate.emergency
 - signing_keys.rotate.normal
 - signing_keys.revoke
@@ -557,16 +557,16 @@ interface AuditLogEntry {
 - session.revoke
 ```
 
-### インデックス
+### Indexes
 
-| インデックス               | カラム                     |
+| Index                      | Columns                    |
 | -------------------------- | -------------------------- |
 | `idx_audit_log_user_id`    | user_id                    |
 | `idx_audit_log_created_at` | created_at                 |
 | `idx_audit_log_action`     | action                     |
 | `idx_audit_log_resource`   | resource_type, resource_id |
 
-### 関連ファイル
+### Related Files
 
 - `migrations/001_initial_schema.sql`
 - `packages/shared/src/utils/audit-log.ts`
@@ -574,47 +574,47 @@ interface AuditLogEntry {
 
 ---
 
-## 10. エラーコード体系
+## 10. Error Code System
 
-**影響**: SDKが壊れる
+**Impact**: SDKs would break
 
-### OAuth 2.0 標準エラー (RFC 6749)
+### OAuth 2.0 Standard Errors (RFC 6749)
 
-| エラーコード                | HTTP | 説明                    |
+| Error Code                  | HTTP | Description             |
 | --------------------------- | ---- | ----------------------- |
-| `invalid_request`           | 400  | パラメータ不正          |
-| `invalid_client`            | 401  | クライアント認証失敗    |
-| `invalid_grant`             | 400  | 認可グラント無効        |
-| `unauthorized_client`       | 400  | クライアント権限なし    |
-| `unsupported_grant_type`    | 400  | 未サポートGrant Type    |
-| `invalid_scope`             | 400  | スコープ無効            |
-| `access_denied`             | 403  | アクセス拒否            |
-| `unsupported_response_type` | 400  | 未サポートResponse Type |
-| `server_error`              | 500  | サーバーエラー          |
-| `temporarily_unavailable`   | 503  | 一時的に利用不可        |
+| `invalid_request`           | 400  | Invalid parameters      |
+| `invalid_client`            | 401  | Client auth failed      |
+| `invalid_grant`             | 400  | Invalid auth grant      |
+| `unauthorized_client`       | 400  | Client unauthorized     |
+| `unsupported_grant_type`    | 400  | Unsupported grant type  |
+| `invalid_scope`             | 400  | Invalid scope           |
+| `access_denied`             | 403  | Access denied           |
+| `unsupported_response_type` | 400  | Unsupported response type |
+| `server_error`              | 500  | Server error            |
+| `temporarily_unavailable`   | 503  | Temporarily unavailable |
 
-### OIDC 固有エラー
+### OIDC Specific Errors
 
-| エラーコード                 | 説明                  |
-| ---------------------------- | --------------------- |
-| `interaction_required`       | ユーザー操作必要      |
-| `login_required`             | ログイン必要          |
-| `account_selection_required` | アカウント選択必要    |
-| `consent_required`           | 同意必要              |
-| `invalid_request_uri`        | request_uri無効       |
-| `invalid_request_object`     | Request Object無効    |
-| `request_not_supported`      | request未サポート     |
-| `request_uri_not_supported`  | request_uri未サポート |
-| `registration_not_supported` | 登録未サポート        |
+| Error Code                   | Description               |
+| ---------------------------- | ------------------------- |
+| `interaction_required`       | User interaction required |
+| `login_required`             | Login required            |
+| `account_selection_required` | Account selection required |
+| `consent_required`           | Consent required          |
+| `invalid_request_uri`        | Invalid request_uri       |
+| `invalid_request_object`     | Invalid Request Object    |
+| `request_not_supported`      | Request not supported     |
+| `request_uri_not_supported`  | request_uri not supported |
+| `registration_not_supported` | Registration not supported |
 
-### Resource Server エラー
+### Resource Server Errors
 
-| エラーコード         | HTTP | 説明         |
-| -------------------- | ---- | ------------ |
-| `invalid_token`      | 401  | トークン無効 |
-| `insufficient_scope` | 403  | スコープ不足 |
+| Error Code           | HTTP | Description   |
+| -------------------- | ---- | ------------- |
+| `invalid_token`      | 401  | Invalid token |
+| `insufficient_scope` | 403  | Insufficient scope |
 
-### エラーレスポンス形式
+### Error Response Format
 
 ```json
 {
@@ -624,7 +624,7 @@ interface AuditLogEntry {
 }
 ```
 
-### RBAC エラー拡張
+### RBAC Error Extension
 
 ```json
 {
@@ -635,42 +635,42 @@ interface AuditLogEntry {
 }
 ```
 
-### 関連ファイル
+### Related Files
 
-- `packages/shared/src/constants.ts` - エラーコード定義
-- `packages/shared/src/utils/errors.ts` - OIDCError クラス
-
----
-
-## 変更時の影響度マトリクス
-
-| 項目              | 影響度      | 影響範囲             | 移行難易度 |
-| ----------------- | ----------- | -------------------- | ---------- |
-| API URL構造       | 🔴 Critical | 全クライアント/SDK   | 高         |
-| ID形式            | 🔴 Critical | 全データ再発行       | 最高       |
-| セッションモデル  | 🔴 Critical | 認証基盤             | 高         |
-| Refresh Token     | 🔴 Critical | 全ユーザー再ログイン | 高         |
-| OIDCクレーム      | 🔴 Critical | 全RP                 | 高         |
-| データモデル      | 🟠 High     | マイグレーション必須 | 中〜高     |
-| /authorize /token | 🔴 Critical | OIDC仕様準拠         | 変更不可   |
-| RBAC評価順序      | 🟠 High     | 権限判定結果         | 中         |
-| Audit Log         | 🟡 Medium   | 過去ログ互換性       | 中         |
-| エラーコード      | 🟠 High     | SDK/クライアント     | 中         |
+- `packages/shared/src/constants.ts` - Error code definitions
+- `packages/shared/src/utils/errors.ts` - OIDCError class
 
 ---
 
-## 変更前チェックリスト
+## Impact Matrix for Changes
 
-変更を行う前に以下を確認してください：
-
-- [ ] 本ドキュメントの該当項目を確認した
-- [ ] 破壊的変更の場合、移行計画を策定した
-- [ ] 影響を受けるクライアント/SDKをリストアップした
-- [ ] 後方互換性を維持する代替案を検討した
-- [ ] OIDC/OAuth 2.0仕様への準拠を確認した
-- [ ] テスト環境で影響範囲を検証した
-- [ ] ドキュメント更新計画を作成した
+| Item               | Impact      | Scope                | Migration Difficulty |
+| ------------------ | ----------- | -------------------- | -------------------- |
+| API URL structure  | 🔴 Critical | All clients/SDKs     | High                 |
+| ID format          | 🔴 Critical | Full data re-issue   | Highest              |
+| Session model      | 🔴 Critical | Auth foundation      | High                 |
+| Refresh Token      | 🔴 Critical | All users re-login   | High                 |
+| OIDC claims        | 🔴 Critical | All RPs              | High                 |
+| Data model         | 🟠 High     | Migration required   | Medium-High          |
+| /authorize /token  | 🔴 Critical | OIDC spec compliance | Cannot change        |
+| RBAC eval order    | 🟠 High     | Permission results   | Medium               |
+| Audit Log          | 🟡 Medium   | Past log compatibility | Medium             |
+| Error codes        | 🟠 High     | SDK/clients          | Medium               |
 
 ---
 
-_最終更新: 2025-12-09_
+## Pre-Change Checklist
+
+Before making changes, confirm the following:
+
+- [ ] Reviewed relevant items in this document
+- [ ] For breaking changes, created a migration plan
+- [ ] Listed affected clients/SDKs
+- [ ] Considered alternative approaches maintaining backward compatibility
+- [ ] Verified OIDC/OAuth 2.0 spec compliance
+- [ ] Validated impact scope in test environment
+- [ ] Created documentation update plan
+
+---
+
+_Last updated: 2025-12-09_

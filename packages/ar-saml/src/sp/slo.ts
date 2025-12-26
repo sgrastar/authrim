@@ -313,7 +313,7 @@ async function terminateSessionByNameId(
 
     // Without a valid sessionIndex, we cannot delete by userId in sharded SessionStore
     // Log warning for debugging
-    // PII/Non-PII DB分離: emailはPII DBから検索
+    // PII/Non-PII DB separation: search email in PII DB
     const tenantId = 'default';
     let user: { id: string } | null = null;
     const piiAdapter: DatabaseAdapter | null = env.DB_PII
@@ -455,7 +455,7 @@ export async function initiateSPLogout(
   sessionIndex?: string,
   returnUrl?: string
 ): Promise<{ html: string }> {
-  // Get user info for NameID (PII/Non-PII DB分離対応)
+  // Get user info for NameID (PII/Non-PII DB separation)
   let nameId: string | null = null;
   const piiAdapter: DatabaseAdapter | null = env.DB_PII ? new D1Adapter({ db: env.DB_PII }) : null;
   if (piiAdapter) {

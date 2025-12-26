@@ -355,7 +355,7 @@ async function getUserInfo(
   env: Env,
   userId: string
 ): Promise<{ id: string; email: string; name?: string } | null> {
-  // PII/Non-PII DB分離: Core DBでユーザー存在確認、PII DBからemail/name取得
+  // PII/Non-PII DB separation: verify user in Core DB, fetch email/name from PII DB
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const userCore = await coreAdapter.queryOne<{ id: string }>(
     'SELECT id FROM users_core WHERE id = ? AND is_active = 1',

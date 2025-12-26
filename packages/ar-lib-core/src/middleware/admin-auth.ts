@@ -138,7 +138,7 @@ async function authenticateSession(
     }
 
     // Fetch user type and primary organization (Phase 1 RBAC extensions)
-    // PII/Non-PII DB分離: users_coreを使用（user_typeはCore DBに格納）
+    // PII/Non-PII DB separation: uses users_core (user_type is stored in Core DB)
     const userInfo = await coreAdapter.queryOne<{
       user_type: string | null;
       org_id: string | null;

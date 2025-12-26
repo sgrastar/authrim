@@ -957,7 +957,7 @@ g{generation}:{region}:{shard}:{type}_{uuid}
 
 ## Introspection Cache Settings
 
-Token Introspection (RFC 7662) のレスポンスをキャッシュする設定です。キャッシュは `active=true` のレスポンスのみを対象とし、revocation 状態は常にフレッシュに確認されます。
+Settings for caching Token Introspection (RFC 7662) responses. The cache only stores `active=true` responses, and revocation status is always checked fresh.
 
 ### GET /api/admin/settings/introspection-cache
 
@@ -1102,7 +1102,7 @@ curl -X DELETE https://your-domain.com/api/admin/settings/introspection-cache \
 
 ## PII Partition Settings
 
-PII (個人識別情報) データのパーティショニングを設定します。GDPR/CCPAなどのプライバシー規制対応やマルチテナント分離を実現します。
+Configure partitioning for PII (Personally Identifiable Information) data. This enables compliance with privacy regulations such as GDPR/CCPA and supports multi-tenant isolation.
 
 ### GET /api/admin/settings/pii-partitions
 
@@ -1249,23 +1249,23 @@ Get PII partition distribution statistics.
 
 ### Partition Routing Priority
 
-パーティション決定の優先順位（上が高い）:
+Partition determination priority (higher priority at top):
 
-| Priority | Source             | Trust Level | Description                                 |
-| -------- | ------------------ | ----------- | ------------------------------------------- |
-| 1        | Tenant Policy      | High        | `tenantPartitions` で明示指定               |
-| 2        | declared_residence | High        | ユーザー自己申告の居住地                    |
-| 3        | Partition Rules    | Medium      | 属性ベースのルール評価                      |
-| 4        | IP Routing         | Low         | Cloudflare の国コード（フォールバックのみ） |
-| 5        | Default            | -           | `defaultPartition`                          |
+| Priority | Source             | Trust Level | Description                                     |
+| -------- | ------------------ | ----------- | ----------------------------------------------- |
+| 1        | Tenant Policy      | High        | Explicitly specified via `tenantPartitions`     |
+| 2        | declared_residence | High        | User's self-declared residence                  |
+| 3        | Partition Rules    | Medium      | Attribute-based rule evaluation                 |
+| 4        | IP Routing         | Low         | Cloudflare country code (fallback only)         |
+| 5        | Default            | -           | `defaultPartition`                              |
 
-**⚠️ Note**: IP ベースルーティングは VPN/Proxy/Warp/ローミングにより信頼性が低いため、GDPR コンプライアンスの証拠としては使用できません。`declared_residence` またはテナントポリシーを優先してください。
+**⚠️ Note**: IP-based routing is unreliable due to VPN/Proxy/Warp/roaming and cannot be used as evidence for GDPR compliance. Prefer `declared_residence` or tenant policy.
 
 ---
 
 ## Tombstones (GDPR Deletion Tracking)
 
-GDPR Art.17「忘れられる権利」に基づくPII削除を追跡します。削除されたユーザーのメタデータのみを保持し、実際のPIIは保存しません。
+Tracks PII deletion based on GDPR Art.17 "Right to be Forgotten". Only deletion metadata is retained; actual PII is not stored.
 
 ### GET /api/admin/tombstones
 
@@ -1436,7 +1436,7 @@ User Deletion Request
 
 ### Re-registration Prevention
 
-Tombstone の `email_blind_index` により、削除されたメールアドレスでの再登録を retention 期間中は防止します。
+The tombstone's `email_blind_index` prevents re-registration with deleted email addresses during the retention period.
 
 ```
 Registration Attempt
@@ -1463,7 +1463,7 @@ Check email_blind_index in all tombstones
 
 ## JIT Provisioning Settings
 
-Just-In-Time (JIT) Provisioning は、外部IdPからの初回ログイン時にユーザーを自動作成する機能です。ドメインベースの組織自動参加や、IdPクレームに基づく自動ロール割り当てをサポートします。
+Just-In-Time (JIT) Provisioning is a feature that automatically creates users on their first login from an external IdP. It supports automatic organization joining based on domain and automatic role assignment based on IdP claims.
 
 ### GET /api/admin/settings/jit-provisioning
 
@@ -1483,14 +1483,14 @@ Get current JIT provisioning configuration.
 }
 ```
 
-| Field                            | Type    | Default         | Description                              |
-| -------------------------------- | ------- | --------------- | ---------------------------------------- |
-| enabled                          | boolean | true            | JIT Provisioning の有効/無効             |
-| auto_create_org_on_domain_match  | boolean | false           | ドメインマッチ時に組織を自動作成         |
-| join_all_matching_orgs           | boolean | false           | 複数の組織にマッチした場合、全組織に参加 |
-| allow_user_without_org           | boolean | true            | 組織に属さないユーザーを許可             |
-| default_role_id                  | string  | "role_end_user" | デフォルトで割り当てるロールID           |
-| allow_unverified_domain_mappings | boolean | false           | 未検証のドメインマッピングを許可         |
+| Field                            | Type    | Default         | Description                                            |
+| -------------------------------- | ------- | --------------- | ------------------------------------------------------ |
+| enabled                          | boolean | true            | Enable/disable JIT Provisioning                        |
+| auto_create_org_on_domain_match  | boolean | false           | Automatically create organization on domain match      |
+| join_all_matching_orgs           | boolean | false           | Join all matching organizations when multiple match    |
+| allow_user_without_org           | boolean | true            | Allow users without organization membership            |
+| default_role_id                  | string  | "role_end_user" | Default role ID to assign                              |
+| allow_unverified_domain_mappings | boolean | false           | Allow unverified domain mappings                       |
 
 ### PUT /api/admin/settings/jit-provisioning
 
@@ -1594,9 +1594,9 @@ External IdP Login
 
 ## Domain Hash Keys Settings (Key Rotation)
 
-email_domain_hash の生成に使用するHMAC秘密鍵を管理します。キーローテーションをサポートし、ダウンタイムなしで秘密鍵を更新できます。
+Manages HMAC secret keys used for email_domain_hash generation. Supports key rotation to update secret keys without downtime.
 
-### アルゴリズム仕様
+### Algorithm Specification
 
 ```
 Algorithm: HMAC-SHA256
@@ -1625,12 +1625,12 @@ Get domain hash key configuration (secrets are masked).
 }
 ```
 
-| Field                 | Type     | Description                                    |
-| --------------------- | -------- | ---------------------------------------------- |
-| current_version       | number   | 新規ユーザーに使用するバージョン               |
-| secrets               | object   | バージョン → 秘密鍵（APIレスポンスではマスク） |
-| migration_in_progress | boolean  | マイグレーション中フラグ                       |
-| deprecated_versions   | number[] | 廃止予定のバージョンリスト                     |
+| Field                 | Type     | Description                                     |
+| --------------------- | -------- | ----------------------------------------------- |
+| current_version       | number   | Version used for new users                      |
+| secrets               | object   | Version → secret key (masked in API response)   |
+| migration_in_progress | boolean  | Migration in progress flag                      |
+| deprecated_versions   | number[] | List of deprecated versions                     |
 
 ### POST /api/admin/settings/domain-hash-keys/rotate
 
@@ -1644,9 +1644,9 @@ Start key rotation by adding a new secret version.
 }
 ```
 
-| Field      | Type   | Required | Constraints    | Description  |
-| ---------- | ------ | -------- | -------------- | ------------ |
-| new_secret | string | Yes      | 16+ characters | 新しい秘密鍵 |
+| Field      | Type   | Required | Constraints    | Description    |
+| ---------- | ------ | -------- | -------------- | -------------- |
+| new_secret | string | Yes      | 16+ characters | New secret key |
 
 **Response**:
 
@@ -1672,9 +1672,9 @@ Complete key rotation and deprecate old versions.
 }
 ```
 
-| Field              | Type     | Required | Description              |
-| ------------------ | -------- | -------- | ------------------------ |
-| deprecate_versions | number[] | No       | 廃止するバージョンリスト |
+| Field              | Type     | Required | Description                   |
+| ------------------ | -------- | -------- | ----------------------------- |
+| deprecate_versions | number[] | No       | List of versions to deprecate |
 
 **Response**:
 
@@ -1718,7 +1718,7 @@ Delete a deprecated secret version.
 **Path Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| version | number | 削除するバージョン番号 |
+| version | number | Version number to delete |
 
 **Response**:
 
@@ -1777,7 +1777,7 @@ Steps:
 
 ## Role Assignment Rules
 
-外部IdPのクレームやメールドメインに基づいて、ログイン時にロールを自動割り当てするルールを管理します。
+Manages rules for automatically assigning roles at login based on external IdP claims or email domains.
 
 ### POST /api/admin/role-assignment-rules
 
@@ -1834,15 +1834,15 @@ Create a new role assignment rule.
 
 **Condition Fields**:
 
-| Field             | claim_path | Description                            | Example                                                                                           |
-| ----------------- | ---------- | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| email_domain_hash | -          | メールドメインのブラインドインデックス | `{ "field": "email_domain_hash", "operator": "eq", "value": "a1b2c3..." }`                        |
-| email_verified    | -          | メール検証状態                         | `{ "field": "email_verified", "operator": "eq", "value": true }`                                  |
-| provider_id       | -          | IdPプロバイダーID                      | `{ "field": "provider_id", "operator": "in", "value": ["google", "azure-ad"] }`                   |
-| idp_claim         | groups     | IdPグループ                            | `{ "field": "idp_claim", "claim_path": "groups", "operator": "contains", "value": "admin" }`      |
-| idp_claim         | hd         | Google Workspace ドメイン              | `{ "field": "idp_claim", "claim_path": "hd", "operator": "eq", "value": "company.com" }`          |
-| idp_claim         | roles      | Azure AD ロール                        | `{ "field": "idp_claim", "claim_path": "roles", "operator": "contains", "value": "GlobalAdmin" }` |
-| idp_claim         | acr        | 認証コンテキストクラス                 | `{ "field": "idp_claim", "claim_path": "acr", "operator": "eq", "value": "urn:..." }`             |
+| Field             | claim_path | Description                  | Example                                                                                           |
+| ----------------- | ---------- | ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| email_domain_hash | -          | Email domain blind index     | `{ "field": "email_domain_hash", "operator": "eq", "value": "a1b2c3..." }`                        |
+| email_verified    | -          | Email verification status    | `{ "field": "email_verified", "operator": "eq", "value": true }`                                  |
+| provider_id       | -          | IdP provider ID              | `{ "field": "provider_id", "operator": "in", "value": ["google", "azure-ad"] }`                   |
+| idp_claim         | groups     | IdP groups                   | `{ "field": "idp_claim", "claim_path": "groups", "operator": "contains", "value": "admin" }`      |
+| idp_claim         | hd         | Google Workspace domain      | `{ "field": "idp_claim", "claim_path": "hd", "operator": "eq", "value": "company.com" }`          |
+| idp_claim         | roles      | Azure AD roles               | `{ "field": "idp_claim", "claim_path": "roles", "operator": "contains", "value": "GlobalAdmin" }` |
+| idp_claim         | acr        | Authentication context class | `{ "field": "idp_claim", "claim_path": "acr", "operator": "eq", "value": "urn:..." }`             |
 
 **Condition Operators**:
 
@@ -1859,20 +1859,20 @@ Create a new role assignment rule.
 
 **Actions**:
 
-| Type          | Fields                            | Description                           |
-| ------------- | --------------------------------- | ------------------------------------- |
-| assign_role   | role_id, scope_type, scope_target | ロールを割り当て                      |
-| join_org      | org_id                            | 組織に参加（"auto" でドメインマッチ） |
-| set_attribute | -                                 | (将来拡張用)                          |
-| deny          | deny_code, deny_description       | 認証を拒否                            |
+| Type          | Fields                            | Description                                 |
+| ------------- | --------------------------------- | ------------------------------------------- |
+| assign_role   | role_id, scope_type, scope_target | Assign role                                 |
+| join_org      | org_id                            | Join organization ("auto" for domain match) |
+| set_attribute | -                                 | (Reserved for future use)                   |
+| deny          | deny_code, deny_description       | Deny authentication                         |
 
 **deny_code to OIDC Error Mapping**:
 
-| deny_code            | OIDC error           | Description                   |
-| -------------------- | -------------------- | ----------------------------- |
-| access_denied        | access_denied        | アクセス拒否（RFC 6749）      |
-| interaction_required | interaction_required | 追加の対話が必要（OIDC Core） |
-| login_required       | login_required       | 再ログインが必要（OIDC Core） |
+| deny_code            | OIDC error           | Description                              |
+| -------------------- | -------------------- | ---------------------------------------- |
+| access_denied        | access_denied        | Access denied (RFC 6749)                 |
+| interaction_required | interaction_required | Additional interaction required (OIDC Core) |
+| login_required       | login_required       | Re-login required (OIDC Core)            |
 
 **Response**:
 
@@ -2070,7 +2070,7 @@ Evaluate all rules against sample context.
 
 ## Organization Domain Mappings
 
-メールドメインと組織をマッピングし、JIT Provisioning時の組織自動参加を設定します。
+Maps email domains to organizations and configures automatic organization joining during JIT Provisioning.
 
 ### POST /api/admin/org-domain-mappings
 
@@ -2089,16 +2089,16 @@ Create a new domain-to-organization mapping.
 }
 ```
 
-| Field               | Type    | Required | Default  | Description                               |
-| ------------------- | ------- | -------- | -------- | ----------------------------------------- |
-| domain              | string  | Yes      | -        | メールドメイン（内部でハッシュ化）        |
-| org_id              | string  | Yes      | -        | マッピング先の組織ID                      |
-| auto_join_enabled   | boolean | No       | true     | 自動参加の有効/無効                       |
-| membership_type     | string  | No       | "member" | メンバーシップタイプ: "member" or "admin" |
-| auto_assign_role_id | string  | No       | null     | 組織参加時に自動割り当てするロール        |
-| priority            | number  | No       | 0        | 複数マッチ時の優先度（大きいほど優先）    |
+| Field               | Type    | Required | Default  | Description                                    |
+| ------------------- | ------- | -------- | -------- | ---------------------------------------------- |
+| domain              | string  | Yes      | -        | Email domain (hashed internally)               |
+| org_id              | string  | Yes      | -        | Target organization ID                         |
+| auto_join_enabled   | boolean | No       | true     | Enable/disable auto-join                       |
+| membership_type     | string  | No       | "member" | Membership type: "member" or "admin"           |
+| auto_assign_role_id | string  | No       | null     | Role to auto-assign on organization join       |
+| priority            | number  | No       | 0        | Priority for multiple matches (higher = first) |
 
-**Note**: `domain` フィールドはAPIで受け取った後、`email_domain_hash` に変換されてDBに保存されます。元のドメイン文字列は保存されません（PII保護）。
+**Note**: The `domain` field is converted to `email_domain_hash` and stored in DB after being received by the API. The original domain string is not stored (PII protection).
 
 **Response**:
 
@@ -2184,7 +2184,7 @@ Update an existing mapping.
 }
 ```
 
-**Note**: `domain` と `org_id` は変更できません。変更が必要な場合は削除して再作成してください。
+**Note**: `domain` and `org_id` cannot be changed. Delete and recreate if modification is needed.
 
 ### DELETE /api/admin/org-domain-mappings/:id
 
@@ -2234,7 +2234,7 @@ Verify domain ownership (DNS TXT record check).
 
 ### Domain Mapping Resolution
 
-複数のマッピングが同じドメインにマッチする場合の解決順序:
+Resolution order when multiple mappings match the same domain:
 
 ```sql
 SELECT * FROM org_domain_mappings
@@ -2243,16 +2243,16 @@ WHERE tenant_id = ?
   AND auto_join_enabled = 1
   AND is_active = 1
 ORDER BY
-  verified DESC,      -- 検証済みを優先
-  priority DESC,      -- 優先度順
-  created_at ASC      -- 同優先度なら古いものを優先
+  verified DESC,      -- Verified takes priority
+  priority DESC,      -- Priority order
+  created_at ASC      -- Same priority: older takes priority
 LIMIT 1
 ```
 
-**JIT Config による挙動**:
+**JIT Config Behavior**:
 
-- `allow_unverified_domain_mappings = false` → `verified = 0` のマッピングはスキップ
-- `join_all_matching_orgs = true` → LIMIT を外して全マッチ組織に参加
+- `allow_unverified_domain_mappings = false` → Skip mappings with `verified = 0`
+- `join_all_matching_orgs = true` → Remove LIMIT and join all matching organizations
 
 ---
 
@@ -2334,7 +2334,7 @@ All settings are stored in the `AUTHRIM_CONFIG` KV namespace with the following 
 }
 ```
 
-**Note**: `secrets` の値は環境変数 `EMAIL_DOMAIN_HASH_SECRET` から初期化されます。KVに保存された後は、API経由でのみ更新できます。
+**Note**: The `secrets` value is initialized from the `EMAIL_DOMAIN_HASH_SECRET` environment variable. After being stored in KV, it can only be updated via the API.
 
 ---
 

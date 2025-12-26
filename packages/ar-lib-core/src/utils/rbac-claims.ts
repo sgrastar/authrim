@@ -75,7 +75,7 @@ export async function getRBACCacheTTL(env: Env): Promise<number> {
     return cachedRBACCacheTTL;
   }
 
-  // KV が存在すれば優先（動的変更可能）
+  // KV takes priority if available (dynamically changeable)
   if (env.AUTHRIM_CONFIG) {
     const kvValue = await env.AUTHRIM_CONFIG.get('rbac_cache_ttl');
     if (kvValue) {
@@ -88,7 +88,7 @@ export async function getRBACCacheTTL(env: Env): Promise<number> {
     }
   }
 
-  // 環境変数にフォールバック
+  // Fallback to environment variable
   if (env.RBAC_CACHE_TTL) {
     const parsed = parseInt(env.RBAC_CACHE_TTL, 10);
     if (!isNaN(parsed) && parsed > 0) {
@@ -98,7 +98,7 @@ export async function getRBACCacheTTL(env: Env): Promise<number> {
     }
   }
 
-  // デフォルト値
+  // Default value
   cachedRBACCacheTTL = DEFAULT_RBAC_CACHE_TTL;
   cachedRBACCacheTTLAt = now;
   return DEFAULT_RBAC_CACHE_TTL;
@@ -123,7 +123,7 @@ export async function getRBACCacheVersion(env: Env): Promise<number> {
     return cachedRBACCacheVersion;
   }
 
-  // KV が存在すれば優先（動的変更可能）
+  // KV takes priority if available (dynamically changeable)
   if (env.AUTHRIM_CONFIG) {
     const kvValue = await env.AUTHRIM_CONFIG.get('rbac_cache_version');
     if (kvValue) {
@@ -136,7 +136,7 @@ export async function getRBACCacheVersion(env: Env): Promise<number> {
     }
   }
 
-  // 環境変数にフォールバック
+  // Fallback to environment variable
   if (env.RBAC_CACHE_VERSION) {
     const parsed = parseInt(env.RBAC_CACHE_VERSION, 10);
     if (!isNaN(parsed) && parsed > 0) {
@@ -146,7 +146,7 @@ export async function getRBACCacheVersion(env: Env): Promise<number> {
     }
   }
 
-  // デフォルト値
+  // Default value
   cachedRBACCacheVersion = DEFAULT_RBAC_CACHE_VERSION;
   cachedRBACCacheVersionAt = now;
   return DEFAULT_RBAC_CACHE_VERSION;
@@ -960,7 +960,7 @@ export async function resolveOrganizationName(
  * @returns Array of enabled claim keys (empty array if config is "none")
  */
 function parseClaimsConfig<T extends string>(config: string | undefined, defaults: T[]): T[] {
-  // "none" で完全スキップ（負荷テスト用）
+  // "none" skips all claims (for load testing)
   if (config === 'none') {
     return [];
   }

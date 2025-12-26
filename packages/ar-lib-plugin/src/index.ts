@@ -8,9 +8,9 @@
  * - Application (Workers): Use 'Infra' namespace for Infrastructure access
  */
 
-// Plugin 開発者向け（Infra を意識しない）
+// For plugin developers (infrastructure-agnostic)
 export * from './core';
 export * from './builtin';
 
-// アプリ側向け（Infrastructure 明示的にアクセス）
+// For application side (explicit infrastructure access)
 export * as Infra from './infra';

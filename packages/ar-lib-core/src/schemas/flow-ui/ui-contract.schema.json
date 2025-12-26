@@ -1,0 +1,320 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://authrim.io/schemas/flow-ui/ui-contract.schema.json",
+  "title": "UIContract",
+  "description": "UI Contract for Flow x UI separation architecture. Defines what a UI should render for a given flow state.",
+  "type": "object",
+  "required": ["version", "state", "intent", "features", "capabilities", "actions"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "0.1",
+      "description": "Schema version"
+    },
+    "state": {
+      "type": "string",
+      "description": "Current flow state identifier (e.g., 'needsLogin', 'needsConsent')"
+    },
+    "intent": {
+      "$ref": "intent.schema.json#/definitions/Intent",
+      "description": "What this state aims to achieve"
+    },
+    "stability": {
+      "$ref": "#/definitions/StabilityLevel",
+      "description": "Contract-level stability indicator"
+    },
+    "features": {
+      "$ref": "#/definitions/FeatureFlags",
+      "description": "Enabled features for this flow (derived from profile)"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "capability.schema.json"
+      },
+      "description": "UI capabilities required for this state"
+    },
+    "context": {
+      "$ref": "#/definitions/FlowContext",
+      "description": "Contextual data for rendering"
+    },
+    "actions": {
+      "$ref": "#/definitions/ActionSet",
+      "description": "Available user actions"
+    }
+  },
+  "definitions": {
+    "StabilityLevel": {
+      "type": "string",
+      "enum": ["core", "stable", "experimental", "deprecated"],
+      "description": "Stability level for API contracts"
+    },
+    "FeatureFlags": {
+      "type": "object",
+      "description": "Feature flags derived from the active profile",
+      "properties": {
+        "policy": {
+          "type": "object",
+          "properties": {
+            "rbac": {
+              "oneOf": [
+                { "type": "boolean" },
+                { "type": "string", "enum": ["simple", "full"] }
+              ]
+            },
+            "abac": { "type": "boolean" },
+            "rebac": { "type": "boolean" }
+          }
+        },
+        "targets": {
+          "type": "object",
+          "properties": {
+            "human": { "type": "boolean" },
+            "iot": { "type": "boolean" },
+            "ai_agent": { "type": "boolean" },
+            "ai_mcp": { "type": "boolean" },
+            "service": { "type": "boolean" }
+          }
+        },
+        "authMethods": {
+          "type": "object",
+          "properties": {
+            "passkey": { "type": "boolean" },
+            "email_code": { "type": "boolean" },
+            "password": { "type": "boolean" },
+            "external_idp": { "type": "boolean" },
+            "did": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "FlowContext": {
+      "type": "object",
+      "description": "Contextual data for UI rendering",
+      "properties": {
+        "branding": {
+          "$ref": "#/definitions/BrandingContext"
+        },
+        "user": {
+          "$ref": "#/definitions/UserContext"
+        },
+        "organization": {
+          "$ref": "#/definitions/OrganizationContext"
+        },
+        "client": {
+          "$ref": "#/definitions/ClientContext"
+        },
+        "error": {
+          "$ref": "#/definitions/ErrorContext"
+        },
+        "locale": {
+          "type": "string",
+          "description": "Preferred locale (e.g., 'en', 'ja')"
+        }
+      }
+    },
+    "BrandingContext": {
+      "type": "object",
+      "description": "Branding information for UI customization",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name (client or tenant)"
+        },
+        "logoUri": {
+          "type": "string",
+          "format": "uri",
+          "description": "Logo URL"
+        },
+        "policyUri": {
+          "type": "string",
+          "format": "uri",
+          "description": "Privacy policy URL"
+        },
+        "tosUri": {
+          "type": "string",
+          "format": "uri",
+          "description": "Terms of service URL"
+        },
+        "primaryColor": {
+          "type": "string",
+          "description": "Primary brand color (hex)"
+        }
+      }
+    },
+    "UserContext": {
+      "type": "object",
+      "description": "Current user information (if authenticated)",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "User ID"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "User email"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name"
+        },
+        "picture": {
+          "type": "string",
+          "format": "uri",
+          "description": "Profile picture URL"
+        }
+      }
+    },
+    "OrganizationContext": {
+      "type": "object",
+      "description": "Organization context (if ReBAC enabled)",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Organization ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Organization name"
+        },
+        "role": {
+          "type": "string",
+          "description": "User's role in this organization"
+        },
+        "availableOrganizations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "isPrimary": { "type": "boolean" }
+            }
+          },
+          "description": "Organizations the user can select"
+        }
+      }
+    },
+    "ClientContext": {
+      "type": "object",
+      "description": "OAuth client information",
+      "properties": {
+        "clientId": {
+          "type": "string",
+          "description": "Client ID"
+        },
+        "clientName": {
+          "type": "string",
+          "description": "Client display name"
+        },
+        "clientUri": {
+          "type": "string",
+          "format": "uri",
+          "description": "Client website URL"
+        },
+        "logoUri": {
+          "type": "string",
+          "format": "uri",
+          "description": "Client logo URL"
+        },
+        "policyUri": {
+          "type": "string",
+          "format": "uri",
+          "description": "Client privacy policy URL"
+        },
+        "tosUri": {
+          "type": "string",
+          "format": "uri",
+          "description": "Client terms of service URL"
+        },
+        "isTrusted": {
+          "type": "boolean",
+          "description": "Whether this is a first-party client"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "title": { "type": "string" },
+              "description": { "type": "string" },
+              "required": { "type": "boolean" }
+            }
+          },
+          "description": "Requested scopes"
+        }
+      }
+    },
+    "ErrorContext": {
+      "type": "object",
+      "description": "Error information",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Error code"
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable error message"
+        },
+        "details": {
+          "type": "object",
+          "description": "Additional error details"
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "Whether the operation can be retried"
+        }
+      },
+      "required": ["code", "message"]
+    },
+    "ActionSet": {
+      "type": "object",
+      "description": "Available user actions for this state",
+      "required": ["primary"],
+      "properties": {
+        "primary": {
+          "$ref": "#/definitions/ActionDefinition",
+          "description": "Primary action (e.g., Submit, Continue)"
+        },
+        "secondary": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ActionDefinition"
+          },
+          "description": "Secondary actions (e.g., Cancel, Skip)"
+        }
+      }
+    },
+    "ActionDefinition": {
+      "type": "object",
+      "description": "Definition of a user action",
+      "required": ["type", "label"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Action type identifier"
+        },
+        "label": {
+          "type": "string",
+          "description": "Display label (can be i18n key)"
+        },
+        "disabled": {
+          "type": "boolean",
+          "description": "Whether the action is disabled"
+        },
+        "loading": {
+          "type": "boolean",
+          "description": "Whether the action is in loading state"
+        },
+        "variant": {
+          "type": "string",
+          "enum": ["primary", "secondary", "danger", "link"],
+          "description": "Visual variant"
+        }
+      }
+    }
+  }
+}

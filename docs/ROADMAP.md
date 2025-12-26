@@ -117,7 +117,7 @@ timeline
 | **M4: Extensions**         | 2025-11-12 | ✅ Complete | PAR, DPoP, Pairwise, Token Management                                 |
 | **M5: UI/UX**              | 2025-11-18 | ✅ Complete | SvelteKit Frontend, Admin Dashboard, 15+ pages                        |
 | **M6: Enterprise**         | 2025-12-02 | ✅ Complete | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer, SAML 2.0 |
-| **M7: Identity Hub**       | 2025-12-20 | ✅ Complete | RP Module, Social Login (7 providers), PII分離                        |
+| **M7: Identity Hub**       | 2025-12-20 | ✅ Complete | RP Module, Social Login (7 providers), PII Separation                 |
 | **M8: Policy Integration** | 2025-12-19 | ✅ Complete | Unified AuthN + AuthZ, Token embedding, Check API                     |
 | **M9: Advanced Identity**  | 2025-12-20 | ✅ Complete | OpenID4VP/CI, DID Resolver, DID Auth, 227 tests                       |
 | **M10: SDK & API**         | 2025-Q4    | 🔜 Planned  | WebSDK, CLI, API Documentation                                        |
@@ -417,20 +417,20 @@ Data separation architecture for GDPR/CCPA compliance:
 
 ### 10.1 SDK Error Handling Documentation 📌 REQUIRED
 
-> **重要**: SDK公開前に必ず実施すること
+> **Important**: Must be completed before SDK public release
 
-エラーコード関連の実装が完了（2024-12-23）。以下のドキュメントをSDKに含める必要あり:
+Error code implementation completed (2024-12-23). The following documentation must be included in the SDK:
 
-| ドキュメント | 内容 | 参照 |
-|-------------|------|------|
-| Error Code Reference | RFC標準エラーコード一覧 | `private/docs/error-codes-inventory.md` Section 1 |
-| Error Handling Guide | エラーハンドリングのベストプラクティス | `private/docs/error-codes-inventory.md` Section 9 |
-| Security Considerations | セキュリティレベル（public/masked/internal）の説明 | `private/docs/error-codes-inventory.md` Section 8 |
+| Document | Content | Reference |
+|----------|---------|-----------|
+| Error Code Reference | RFC standard error codes list | `private/docs/error-codes-inventory.md` Section 1 |
+| Error Handling Guide | Error handling best practices | `private/docs/error-codes-inventory.md` Section 9 |
+| Security Considerations | Security levels (public/masked/internal) explanation | `private/docs/error-codes-inventory.md` Section 8 |
 
-**実装済みの変更**:
-- ErrorFactory: 28関数に拡張（RFC 6749/6750/8628/9449/7591/8693対応）
-- error_description: RFC準拠の英語メッセージに統一
-- エラーコード統合: `internal_server_error`→`server_error`, `unauthorized`→`invalid_token` 等
+**Implemented Changes**:
+- ErrorFactory: Extended to 28 functions (RFC 6749/6750/8628/9449/7591/8693 compliant)
+- error_description: Unified to RFC-compliant English messages
+- Error code consolidation: `internal_server_error`→`server_error`, `unauthorized`→`invalid_token`, etc.
 
 ---
 
@@ -448,6 +448,28 @@ Data separation architecture for GDPR/CCPA compliance:
 | Security Audit      | External security review           | 🔜 Planned  |
 | Penetration Testing | Third-party security assessment    | 🔜 Planned  |
 | Conformance Tests   | Hybrid OP, Dynamic OP, RP profiles | 🔜 Planned  |
+
+### API Deprecation Plan
+
+With the introduction of **Contract-based Presets** (FAPI 2.0, regulated-finance, etc.), the following legacy APIs will be deprecated:
+
+| Legacy API/Feature | Replacement | Timeline | Status |
+| ------------------ | ----------- | -------- | ------ |
+| `GET/PUT /api/admin/settings/fapi-security` | Contract Presets (`fapi2-security-profile`, `fapi2-message-signing`) | Phase 12 | 🔜 Planned |
+| `fapi.enabled` system flag | `TenantContract.preset` per tenant | Phase 12 | 🔜 Planned |
+| Global FAPI mode toggle | Per-tenant preset selection | Phase 12 | 🔜 Planned |
+| Certification Profiles API | Contract Presets (for production) | Phase 12 | 🔜 Planned |
+
+**Migration Path:**
+1. New tenants use Contract Presets from creation
+2. Existing tenants assigned appropriate preset based on current `fapi.enabled` setting
+3. Legacy APIs return deprecation warning headers
+4. Legacy APIs removed in v1.0 release
+
+**Benefits of Contract-based Approach:**
+- Multi-tenant support with different security levels (e.g., Tenant A: FAPI 2.0, Tenant B: B2C standard)
+- No environment variables or API calls needed for FAPI compliance
+- Preset selection at tenant creation time
 
 ### Load Testing Results (December 2025) ✅
 
@@ -587,7 +609,8 @@ By 2026-Q1, Authrim will be:
 | 2025-12-19 | **Phase 8 ✅ Complete**: Token Embedding Model (8.2), Real-time Check API (8.3) with UnifiedCheckService, Permission Parser, WebSocket Push via PermissionChangeHub DO, Check API Keys Admin API           |
 | 2025-12-20 | **Phase 7 ✅ Complete**: All 7 social login providers (Google, Microsoft, GitHub, Apple, LinkedIn, Facebook, Twitter/X)                                                                                    |
 | 2025-12-20 | **Phase 9 ✅ Complete**: OpenID4VP/VCI, DID Support (did:web, did:key, DID Auth), 227 tests                                                                                                                |
-| 2025-12-21 | **Phase 11 Security Hardening**: DPoP `ath` timing-safe comparison (RFC 9449), JWT algorithm consistency (`ALLOWED_ASYMMETRIC_ALGS`), Policy Flags Admin API (CLAUDE.md準拠)                               |
+| 2025-12-21 | **Phase 11 Security Hardening**: DPoP `ath` timing-safe comparison (RFC 9449), JWT algorithm consistency (`ALLOWED_ASYMMETRIC_ALGS`), Policy Flags Admin API (CLAUDE.md compliant)                         |
+| 2025-12-26 | **FAPI 2.0 Contract Presets**: Added `fapi2-security-profile` and `fapi2-message-signing` presets based on OIDF FAPI 2.0 Final specs. Deprecation plan for legacy `fapi-security` API added to roadmap. |
 
 ---
 
@@ -602,7 +625,7 @@ The following features are intentionally **not supported** due to architectural 
 
 ---
 
-> **Last Update:** 2025-12-21
+> **Last Update:** 2025-12-26
 >
 > **Current Status:** Phase 6 ✅ | Phase 7 ✅ | Phase 8 ✅ | Phase 9 ✅ | Phase 11 ~20%
 >

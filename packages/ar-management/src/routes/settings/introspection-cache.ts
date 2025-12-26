@@ -5,13 +5,13 @@
  * PUT    /api/admin/settings/introspection-cache  - Update settings
  * DELETE /api/admin/settings/introspection-cache  - Clear override
  *
- * Token Introspection のレスポンスをキャッシュする設定
+ * Settings for caching Token Introspection responses
  *
- * セキュリティ考慮事項:
- *   - active=true のレスポンスのみキャッシュ（revoke状態は常にフレッシュにチェック）
- *   - RFC 7662 Section 4: "responses MUST NOT be cached" はHTTPキャッシュについての規定
- *   - サーバー内部のアプリケーションキャッシュは許容される
- *   - 業界標準（Keycloak, Auth0等）でも同様の実装
+ * Security considerations:
+ *   - Only cache active=true responses (revoke status is always checked fresh)
+ *   - RFC 7662 Section 4: "responses MUST NOT be cached" refers to HTTP caching
+ *   - Server-side application caching is permitted
+ *   - Industry standards (Keycloak, Auth0, etc.) implement similarly
  *
  * Settings stored in SETTINGS KV under "system_settings" key:
  * {
@@ -32,7 +32,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 
-// Default settings (デフォルトON = 実運用向け最適化)
+// Default settings (default ON = optimized for production)
 const DEFAULT_SETTINGS = {
   enabled: true,
   ttlSeconds: 60,

@@ -273,7 +273,7 @@ export async function getActingAsUserInfo(
     return null;
   }
 
-  // Get target user info (PII/Non-PII DB分離対応)
+  // Get target user info (PII/Non-PII DB separation)
   // Check Core DB for user existence
   const userCore = await db
     .prepare('SELECT id FROM users_core WHERE id = ? AND is_active = 1')
@@ -315,7 +315,7 @@ export async function getActingAsUserInfo(
 
 /**
  * Get user info for consent screen display
- * PII/Non-PII DB分離対応: Core DBとPII DBを分離
+ * PII/Non-PII DB separation: separates Core DB and PII DB
  *
  * @param db - D1 database (Core)
  * @param subjectId - User ID

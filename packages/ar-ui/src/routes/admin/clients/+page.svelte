@@ -437,24 +437,24 @@
 </div>
 
 <!-- Delete Confirmation Dialog -->
-<Dialog bind:open={showDeleteDialog} title="削除の確認">
+<Dialog bind:open={showDeleteDialog} title="Confirm Delete">
 	{#if deleteDialogMode === 'single'}
 		<p class="text-gray-600 dark:text-gray-300">
-			このクライアントを削除しますか？この操作は取り消せません。
+			Are you sure you want to delete this client? This action cannot be undone.
 		</p>
 	{:else}
 		<p class="text-gray-600 dark:text-gray-300">
-			選択した <span class="font-bold">{selectedClients.size}</span> 件のクライアントを削除しますか？この操作は取り消せません。
+			Are you sure you want to delete <span class="font-bold">{selectedClients.size}</span> selected clients? This action cannot be undone.
 		</p>
 	{/if}
 
 	<div slot="footer" class="flex justify-end gap-3">
-		<Button variant="secondary" onclick={closeDeleteDialog} disabled={deleting}>キャンセル</Button>
+		<Button variant="secondary" onclick={closeDeleteDialog} disabled={deleting}>Cancel</Button>
 		<Button variant="danger" onclick={confirmDelete} disabled={deleting}>
 			{#if deleting}
-				削除中...
+				Deleting...
 			{:else}
-				削除
+				Delete
 			{/if}
 		</Button>
 	</div>

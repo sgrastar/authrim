@@ -1,13 +1,29 @@
 /**
- * D1データベースの各テーブルのレコード数を確認するスクリプト
+ * Script to check record counts for each table in D1 database
  *
  * Usage:
- *   CF_API_TOKEN=xxx npx tsx scripts/check-d1-sizes.ts
+ *   CF_API_TOKEN=xxx CF_ACCOUNT_ID=xxx CF_D1_DATABASE_ID=xxx npx tsx scripts/check-d1-sizes.ts
+ *
+ * Environment variables:
+ *   CF_API_TOKEN      - Cloudflare API token (required)
+ *   CF_ACCOUNT_ID     - Cloudflare Account ID (required)
+ *   CF_D1_DATABASE_ID - D1 Database ID (required)
+ *   CF_D1_DATABASE_NAME - D1 Database name (optional, for display only)
  */
 
-const ACCOUNT_ID = 'REDACTED_ACCOUNT_ID';
-const DB_ID = 'REDACTED_DB_ID';
-const DB_NAME = 'conformance-authrim-users-db';
+const ACCOUNT_ID = process.env.CF_ACCOUNT_ID;
+const DB_ID = process.env.CF_D1_DATABASE_ID;
+const DB_NAME = process.env.CF_D1_DATABASE_NAME || 'D1 Database';
+
+if (!ACCOUNT_ID) {
+  console.error('Error: CF_ACCOUNT_ID environment variable is not set');
+  process.exit(1);
+}
+
+if (!DB_ID) {
+  console.error('Error: CF_D1_DATABASE_ID environment variable is not set');
+  process.exit(1);
+}
 
 const TABLES = [
   'audit_log',
@@ -83,15 +99,15 @@ async function queryD1(sql: string): Promise<number | null> {
 
 async function main() {
   console.log('==========================================');
-  console.log('D1 データベーステーブルサイズ確認');
+  console.log('D1 Database Table Size Check');
   console.log('==========================================');
-  console.log(`データベース: ${DB_NAME}`);
-  console.log(`データベースID: ${DB_ID}`);
-  console.log(`アカウントID: ${ACCOUNT_ID}`);
+  console.log(`Database: ${DB_NAME}`);
+  console.log(`Database ID: ${DB_ID}`);
+  console.log(`Account ID: ${ACCOUNT_ID}`);
   console.log('');
-  console.log(`テーブル数: ${TABLES.length}`);
+  console.log(`Table count: ${TABLES.length}`);
   console.log('');
-  console.log('各テーブルのレコード数を確認中...');
+  console.log('Checking record counts for each table...');
   console.log('');
 
   const results: Array<{ table: string; count: number | null }> = [];
@@ -103,49 +119,49 @@ async function main() {
     const count = await queryD1(`SELECT COUNT(*) as count FROM ${table}`);
 
     if (count === null) {
-      console.log('⚠️  エラー');
+      console.log('⚠️  Error');
       results.push({ table, count: null });
     } else {
-      console.log(`${count.toLocaleString()} レコード`);
+      console.log(`${count.toLocaleString()} records`);
       results.push({ table, count });
       totalRecords += count;
     }
 
-    // Rate limiting対策: 少し待機
+    // Rate limiting mitigation: short delay
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   console.log('');
   console.log('==========================================');
-  console.log('集計結果');
+  console.log('Summary');
   console.log('==========================================');
   console.log('');
 
-  // レコード数でソート
+  // Sort by record count
   const sortedResults = results
     .filter((r) => r.count !== null && r.count > 0)
     .sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
 
-  console.log('【レコード数が多いテーブル Top 10】');
+  console.log('[Top 10 Tables by Record Count]');
   sortedResults.slice(0, 10).forEach((r, i) => {
-    console.log(`  ${i + 1}. ${r.table.padEnd(30)}: ${r.count?.toLocaleString()} レコード`);
+    console.log(`  ${i + 1}. ${r.table.padEnd(30)}: ${r.count?.toLocaleString()} records`);
   });
 
   console.log('');
-  console.log('【空のテーブル】');
+  console.log('[Empty Tables]');
   const emptyTables = results.filter((r) => r.count === 0);
   if (emptyTables.length > 0) {
     emptyTables.forEach((r) => {
       console.log(`  - ${r.table}`);
     });
   } else {
-    console.log('  なし');
+    console.log('  None');
   }
 
   console.log('');
   console.log('==========================================');
-  console.log(`合計レコード数: ${totalRecords.toLocaleString()}`);
-  console.log(`データが存在するテーブル数: ${sortedResults.length}/${TABLES.length}`);
+  console.log(`Total records: ${totalRecords.toLocaleString()}`);
+  console.log(`Tables with data: ${sortedResults.length}/${TABLES.length}`);
   console.log('==========================================');
 }
 

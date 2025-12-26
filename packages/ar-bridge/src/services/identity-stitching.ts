@@ -352,7 +352,7 @@ interface ExistingUser {
 
 /**
  * Find user by email
- * PII/Non-PII DB分離: emailはPII DBから検索、ステータスはCore DBで確認
+ * PII/Non-PII DB separation: email lookup uses PII DB, status verification uses Core DB
  */
 async function findUserByEmail(
   env: Env,
@@ -400,7 +400,7 @@ interface CreateUserParams {
 
 /**
  * Create user from external identity
- * PII/Non-PII DB分離: Core DBとPII DBに分けて作成
+ * PII/Non-PII DB separation: creates records in both Core DB and PII DB
  */
 async function createUserFromExternalIdentity(
   env: Env,

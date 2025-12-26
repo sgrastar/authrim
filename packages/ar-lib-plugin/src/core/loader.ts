@@ -3,7 +3,7 @@
  *
  * Responsible for loading, initializing, and managing plugin lifecycle.
  *
- * Initialization Order (固定順序):
+ * Initialization Order (fixed order):
  * 1. validate() - Configuration validation using Zod schema
  * 2. initialize() - External service connection, warmup, dependency checks
  * 3. register() - Capability registration (side-effect free)

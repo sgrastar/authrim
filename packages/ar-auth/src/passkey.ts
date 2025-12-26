@@ -121,7 +121,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const origin = originHeader;
 
     // Check if user exists via Repository pattern
-    // PII/Non-PII DB分離: email検索はPII DB、ID検索はCore DBを使用
+    // PII/Non-PII DB separation: email lookup uses PII DB, ID lookup uses Core DB
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
@@ -515,7 +515,7 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
     }> = [];
 
     // If email provided, get user's passkeys via Repository
-    // PII/Non-PII DB分離: email検索はPII DBを使用
+    // PII/Non-PII DB separation: email lookup uses PII DB
     if (email && c.env.DB_PII) {
       const tenantId = getTenantIdFromContext(c);
       const authCtx = createAuthContextFromHono(c, tenantId);

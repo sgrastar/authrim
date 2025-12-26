@@ -106,7 +106,7 @@ describe('Policy Service API', () => {
 
       expect(res.status).toBe(401);
       const body = await res.json();
-      // RFC準拠: 認証が必要な場合は login_required
+      // RFC-compliant: returns login_required when authentication is required
       expect(body.error).toBe('login_required');
     });
 
@@ -479,7 +479,7 @@ describe('Policy Service API', () => {
       });
       const res = await app.fetch(req, mockEnv);
 
-      // POLICY_FEATURE_DISABLED: RFC準拠で access_denied + 403
+      // POLICY_FEATURE_DISABLED: RFC-compliant access_denied + 403
       expect(res.status).toBe(403);
       const body = await res.json();
       expect(body.error).toBe('access_denied');
@@ -574,7 +574,7 @@ describe('Policy Service API', () => {
 
       expect(res.status).toBe(404);
       const body = await res.json();
-      // RFC準拠: 404でも error は invalid_request を使用
+      // RFC-compliant: uses invalid_request error even for 404
       expect(body.error).toBe('invalid_request');
       expect(body.error_description).toContain('not found');
     });

@@ -11,7 +11,7 @@
  * - CHECK_API_ENABLED (boolean): Enable/disable Check API
  * - CHECK_API_BATCH_SIZE_LIMIT (number, 1-1000): Maximum batch size
  *
- * @see CLAUDE.md: 設定項目・Feature Flagsの実装方針
+ * @see CLAUDE.md: Settings and Feature Flags implementation policy
  */
 
 import type { Context } from 'hono';

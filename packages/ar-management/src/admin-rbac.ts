@@ -505,7 +505,7 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
     }
 
     // Execute queries in parallel
-    // PII/Non-PII DB分離: JOINできないため、メンバーシップ取得後にPIIを別途取得
+    // PII/Non-PII DB separation: Cannot JOIN, so fetch PII separately after getting membership
     const [totalResult, members] = await Promise.all([
       coreAdapter.queryOne<{ count: number }>(
         'SELECT COUNT(*) as count FROM subject_org_membership WHERE tenant_id = ? AND org_id = ?',
@@ -1148,7 +1148,7 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
     const incoming: Record<string, unknown>[] = [];
 
     // Get outgoing relationships (where user is the subject)
-    // PII/Non-PII DB分離: JOINできないため、関係性を取得後にPIIを別途取得
+    // PII/Non-PII DB separation: Cannot JOIN, so fetch PII separately after getting relationships
     if (!direction || direction === 'outgoing') {
       const outgoingResult = await coreAdapter.query<Record<string, unknown>>(
         `SELECT r.*
@@ -1196,7 +1196,7 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
     }
 
     // Get incoming relationships (where user is the related_subject)
-    // PII/Non-PII DB分離: JOINできないため、関係性を取得後にPIIを別途取得
+    // PII/Non-PII DB separation: Cannot JOIN, so fetch PII separately after getting relationships
     if (!direction || direction === 'incoming') {
       const incomingResult = await coreAdapter.query<Record<string, unknown>>(
         `SELECT r.*

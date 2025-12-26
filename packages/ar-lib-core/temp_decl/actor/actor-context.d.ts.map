@@ -1,1 +1,0 @@
-{"version":3,"file":"actor-context.d.ts","sourceRoot":"","sources":["../../src/actor/actor-context.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,YAAY,EAAE,MAAM,iBAAiB,CAAC;AAEpD;;;;;;;;;;GAUG;AACH,MAAM,WAAW,YAAY;IAC3B;;OAEG;IACH,QAAQ,CAAC,OAAO,EAAE,YAAY,CAAC;IAE/B;;;;;;;;OAQG;IACH,qBAAqB,CAAC,CAAC,EAAE,QAAQ,EAAE,MAAM,OAAO,CAAC,CAAC,CAAC,GAAG,OAAO,CAAC,CAAC,CAAC,CAAC;CAClE"}

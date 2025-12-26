@@ -1,28 +1,28 @@
 #!/bin/bash
 # =============================================================================
-# Passkey負荷テスト用カスタムk6バイナリビルドスクリプト
+# Custom k6 Binary Build Script for Passkey Load Testing
 # =============================================================================
 #
-# 概要:
-#   xk6-passkeys拡張(Authrimフォーク版)を含むカスタムk6バイナリをビルドします。
-#   このバイナリを使うことで、Passkey認証のECDSA P-256署名を
-#   k6スクリプト内で生成できるようになります。
+# Overview:
+#   Builds a custom k6 binary including the xk6-passkeys extension (Authrim fork).
+#   This binary enables ECDSA P-256 signature generation for Passkey authentication
+#   within k6 scripts.
 #
-#   フォーク版の追加機能:
-#   - ExportCredential() / ImportCredential(): setup()とdefault()間でのクレデンシャル共有
-#   - ExportRelyingParty() / ImportRelyingParty(): RP設定のシリアライズ
+#   Fork-specific features:
+#   - ExportCredential() / ImportCredential(): Share credentials between setup() and default()
+#   - ExportRelyingParty() / ImportRelyingParty(): Serialize RP configuration
 #
-# 必要環境:
+# Requirements:
 #   - Go 1.23+ (https://go.dev/dl/)
 #   - Git
-#   - Make (オプション)
-#   ※ Dockerは不要
+#   - Make (optional)
+#   * Docker is not required
 #
-# 使い方:
+# Usage:
 #   ./scripts/build-k6-passkeys.sh
 #
-# 出力:
-#   ./bin/k6-passkeys (カスタムk6バイナリ)
+# Output:
+#   ./bin/k6-passkeys (custom k6 binary)
 #
 # =============================================================================
 
@@ -38,7 +38,7 @@ echo "🔨 Building k6 with xk6-passkeys extension"
 echo "=============================================="
 echo ""
 
-# Go バージョン確認
+# Check Go version
 if ! command -v go &> /dev/null; then
     echo "❌ Error: Go is not installed"
     echo "   Please install Go 1.23+ from https://go.dev/dl/"
@@ -56,43 +56,43 @@ fi
 
 echo "✅ Go version: go${GO_VERSION}"
 
-# xk6 インストール
+# Install xk6
 echo ""
 echo "📦 Installing xk6 build tool..."
 go install go.k6.io/xk6/cmd/xk6@latest
 
-# PATH確認
+# Verify PATH
 if ! command -v xk6 &> /dev/null; then
     export PATH="$PATH:$(go env GOPATH)/bin"
 fi
 
-# ビルド実行
+# Execute build
 echo ""
 echo "🔨 Building k6 with passkeys extension (Authrim fork)..."
 echo "   Extension: github.com/authrim/xk6-passkeys (local)"
 echo "   Source: ${PROJECT_ROOT}/extensions/xk6-passkeys"
 
-# 一時ディレクトリでビルド（既存のgo.modとの競合を避ける）
+# Build in temporary directory (to avoid conflicts with existing go.mod)
 BUILD_DIR=$(mktemp -d)
 cd "$BUILD_DIR"
 
-# ローカルフォーク版を使用してビルド
+# Build using local fork
 xk6 build --with github.com/authrim/xk6-passkeys="${PROJECT_ROOT}/extensions/xk6-passkeys"
 
-# 出力ディレクトリ作成・移動
+# Create output directory and move binary
 echo ""
 echo "📁 Moving k6 binary to ${OUTPUT_BINARY}"
 mkdir -p "$OUTPUT_DIR"
 mv ./k6 "$OUTPUT_BINARY"
 
-# 一時ディレクトリ削除
+# Remove temporary directory
 cd "$PROJECT_ROOT"
 rm -rf "$BUILD_DIR"
 
-# 実行権限付与
+# Grant execute permission
 chmod +x "$OUTPUT_BINARY"
 
-# バージョン確認
+# Verify version
 echo ""
 echo "✅ Build complete!"
 echo ""

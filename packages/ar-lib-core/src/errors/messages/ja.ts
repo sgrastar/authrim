@@ -260,6 +260,36 @@ export const errorMessagesJa: ErrorMessages = {
     'リクエストが多すぎます。しばらくしてからもう一度お試しください。',
 
   // ============================================
+  // フロー API (FLOW)
+  // ============================================
+  'flow.missing_challenge_id.title': 'チャレンジID未指定',
+  'flow.missing_challenge_id.detail':
+    'challenge_idが必要です。新しい認証フローを開始してください。',
+  'flow.challenge_not_found.title': 'チャレンジが見つかりません',
+  'flow.challenge_not_found.detail':
+    '認証チャレンジが見つかりませんでした。新しいフローを開始してください。',
+  'flow.challenge_expired.title': 'チャレンジ期限切れ',
+  'flow.challenge_expired.detail':
+    '認証チャレンジの有効期限が切れました。新しいフローを開始してください。',
+  'flow.challenge_consumed.title': 'チャレンジ使用済み',
+  'flow.challenge_consumed.detail':
+    'この認証チャレンジは既に完了しています。新しいフローを開始してください。',
+  'flow.invalid_event.title': '無効なイベント',
+  'flow.invalid_event.detail': 'イベントタイプ「{event}」は認識されていません。',
+  'flow.invalid_transition.title': '無効な遷移',
+  'flow.invalid_transition.detail':
+    '現在の状態「{state}」ではイベント「{event}」は許可されていません。',
+  'flow.validation_failed.title': '検証失敗',
+  'flow.validation_failed.detail': '入力データの検証に失敗しました。入力内容をご確認ください。',
+  'flow.webauthn_failed.title': 'パスキー検証失敗',
+  'flow.webauthn_failed.detail': 'パスキーの検証に失敗しました。もう一度お試しください。',
+  'flow.external_idp_failed.title': '外部ログイン失敗',
+  'flow.external_idp_failed.detail':
+    '外部プロバイダーでの認証に失敗しました。もう一度お試しください。',
+  'flow.capability_not_found.title': 'Capability未検出',
+  'flow.capability_not_found.detail': 'Capability「{capability_id}」が見つかりませんでした。',
+
+  // ============================================
   // 内部エラー (INTERNAL)
   // ============================================
   'internal.error.title': '内部エラー',

@@ -2526,6 +2526,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const browserState = await generateBrowserState(sessionId);
         const sessionState = await calculateSessionState(validClientId, rpOrigin, browserState);
         responseParams.session_state = sessionState;
+
+        // CRITICAL: Set browser_state cookie for check_session_iframe
+        // This is needed when user has existing session but no browser_state cookie
+        // (e.g., session created before browser_state feature was deployed)
+        c.res.headers.append(
+          'Set-Cookie',
+          `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=None; Secure; Max-Age=3600`
+        );
       }
     } catch (error) {
       console.error('Failed to calculate session_state:', error);

@@ -9,11 +9,11 @@
  * Priority: env > KV > default
  *
  * Design principles (from Settings API v2):
- * - URLにスコープIDを明示（tenantId/clientId）
- * - 設定(config)と状態(state)の分離
- * - 楽観的ロック（version/ifMatch）
- * - clear/disable の意味分離
- * - disable は値ではなく状態（"__DISABLED__"）
+ * - Explicit scope ID in URL (tenantId/clientId)
+ * - Separation of config and state
+ * - Optimistic locking (version/ifMatch)
+ * - Semantic distinction between clear and disable
+ * - disable is a state, not a value ("__DISABLED__")
  */
 
 import { createHash } from 'node:crypto';

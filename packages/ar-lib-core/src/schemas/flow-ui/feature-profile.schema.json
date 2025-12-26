@@ -1,0 +1,295 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://authrim.io/schemas/flow-ui/feature-profile.schema.json",
+  "title": "FeatureProfile",
+  "description": "Feature Profile definition for Flow x UI separation. Profiles are pre-defined, tested configurations.",
+  "type": "object",
+  "required": ["id", "name", "description", "policy", "targets", "authMethods", "capabilities", "intents"],
+  "properties": {
+    "id": {
+      "$ref": "#/definitions/ProfileId",
+      "description": "Unique profile identifier"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable profile name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Profile description and use case"
+    },
+    "stability": {
+      "type": "string",
+      "enum": ["core", "stable", "experimental"],
+      "default": "stable",
+      "description": "Profile stability level"
+    },
+    "policy": {
+      "$ref": "#/definitions/PolicyConfig",
+      "description": "Policy engine configuration"
+    },
+    "targets": {
+      "$ref": "#/definitions/TargetConfig",
+      "description": "Authentication target configuration"
+    },
+    "authMethods": {
+      "$ref": "#/definitions/AuthMethodConfig",
+      "description": "Authentication method configuration"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Available capabilities in this profile"
+    },
+    "intents": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Available intents in this profile"
+    },
+    "extends": {
+      "$ref": "#/definitions/ProfileId",
+      "description": "Profile to extend (inherit capabilities/intents)"
+    }
+  },
+  "definitions": {
+    "ProfileId": {
+      "type": "string",
+      "enum": ["human-basic", "human-org", "ai-agent", "iot-device"],
+      "description": "Supported profile identifiers"
+    },
+    "PolicyConfig": {
+      "type": "object",
+      "description": "Policy engine feature configuration",
+      "required": ["rbac"],
+      "properties": {
+        "rbac": {
+          "oneOf": [
+            { "type": "boolean" },
+            {
+              "type": "string",
+              "enum": ["simple", "full"],
+              "description": "simple: Admin/User only, full: custom roles"
+            }
+          ],
+          "description": "Role-Based Access Control configuration"
+        },
+        "abac": {
+          "type": "boolean",
+          "default": false,
+          "description": "Attribute-Based Access Control"
+        },
+        "rebac": {
+          "type": "boolean",
+          "default": false,
+          "description": "Relationship-Based Access Control (organizations)"
+        }
+      }
+    },
+    "TargetConfig": {
+      "type": "object",
+      "description": "Authentication target configuration",
+      "properties": {
+        "human": {
+          "type": "boolean",
+          "default": true,
+          "description": "Human user authentication (always true)"
+        },
+        "iot": {
+          "$ref": "#/definitions/FeatureToggle",
+          "description": "IoT device authentication"
+        },
+        "ai_agent": {
+          "$ref": "#/definitions/FeatureToggle",
+          "description": "AI agent authentication"
+        },
+        "ai_mcp": {
+          "$ref": "#/definitions/FeatureToggle",
+          "description": "AI MCP (Model Context Protocol) authentication"
+        },
+        "service": {
+          "$ref": "#/definitions/FeatureToggle",
+          "description": "Service-to-service authentication"
+        }
+      }
+    },
+    "AuthMethodConfig": {
+      "type": "object",
+      "description": "Authentication method configuration",
+      "properties": {
+        "passkey": {
+          "$ref": "#/definitions/FeatureToggle",
+          "description": "WebAuthn/Passkey authentication"
+        },
+        "email_code": {
+          "$ref": "#/definitions/FeatureToggle",
+          "description": "Email OTP authentication"
+        },
+        "password": {
+          "$ref": "#/definitions/FeatureToggle",
+          "description": "Password authentication"
+        },
+        "external_idp": {
+          "$ref": "#/definitions/FeatureToggle",
+          "description": "External Identity Provider (SSO)"
+        },
+        "did": {
+          "$ref": "#/definitions/FeatureToggle",
+          "description": "Decentralized Identifier authentication"
+        }
+      }
+    },
+    "FeatureToggle": {
+      "oneOf": [
+        {
+          "type": "boolean",
+          "description": "Simple enable/disable"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "allowed": {
+              "type": "boolean",
+              "description": "Whether this feature can be enabled via adjustments"
+            },
+            "default": {
+              "type": "boolean",
+              "description": "Default enabled state"
+            }
+          },
+          "required": ["allowed", "default"],
+          "description": "Configurable feature with default"
+        }
+      ],
+      "description": "Feature toggle configuration"
+    },
+    "TenantProfileConfig": {
+      "type": "object",
+      "description": "Tenant-specific profile configuration stored in KV",
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/ProfileId",
+          "description": "Selected profile"
+        },
+        "adjustments": {
+          "type": "object",
+          "description": "Profile adjustments (subtractive only)",
+          "properties": {
+            "authMethods": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "description": "Auth method overrides"
+            },
+            "ui": {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "UI customization flags"
+            }
+          }
+        },
+        "activatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this profile was activated"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "id": "human-basic",
+      "name": "Human Basic",
+      "description": "Simple authentication for individual users",
+      "stability": "core",
+      "policy": {
+        "rbac": "simple",
+        "abac": false,
+        "rebac": false
+      },
+      "targets": {
+        "human": true,
+        "iot": false,
+        "ai_agent": false,
+        "ai_mcp": false,
+        "service": false
+      },
+      "authMethods": {
+        "passkey": true,
+        "email_code": true,
+        "password": { "allowed": true, "default": false },
+        "external_idp": { "allowed": true, "default": false },
+        "did": false
+      },
+      "capabilities": [
+        "collect_identifier",
+        "collect_secret",
+        "verify_possession",
+        "confirm_consent",
+        "display_info",
+        "redirect"
+      ],
+      "intents": [
+        "identify_user",
+        "authenticate_user",
+        "obtain_consent",
+        "complete_flow",
+        "handle_error"
+      ]
+    },
+    {
+      "id": "human-org",
+      "name": "Human Organization",
+      "description": "Authentication with organization context and role management",
+      "stability": "stable",
+      "extends": "human-basic",
+      "policy": {
+        "rbac": "full",
+        "abac": false,
+        "rebac": true
+      },
+      "targets": {
+        "human": true,
+        "iot": false,
+        "ai_agent": false,
+        "ai_mcp": false,
+        "service": { "allowed": true, "default": false }
+      },
+      "authMethods": {
+        "passkey": true,
+        "email_code": true,
+        "password": { "allowed": true, "default": false },
+        "external_idp": { "allowed": true, "default": true },
+        "did": { "allowed": true, "default": false }
+      },
+      "capabilities": [
+        "collect_identifier",
+        "collect_secret",
+        "verify_possession",
+        "confirm_consent",
+        "display_info",
+        "redirect",
+        "choose_organization",
+        "choose_role",
+        "delegate_access",
+        "view_permissions"
+      ],
+      "intents": [
+        "identify_user",
+        "authenticate_user",
+        "obtain_consent",
+        "complete_flow",
+        "handle_error",
+        "select_organization",
+        "select_role",
+        "delegate_identity",
+        "review_permissions"
+      ]
+    }
+  ]
+}

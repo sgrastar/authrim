@@ -1,32 +1,32 @@
 # Event Catalog
 
-Authrim のイベント体系を定義するドキュメント。
-Webhook、Auth Flow Designer、カスタムスクリプト実行基盤の設計指針として使用。
+A document defining the event system for Authrim.
+Used as a design guideline for Webhooks, Auth Flow Designer, and custom script execution infrastructure.
 
-> **Note**: このドキュメントは実際のコードを確認して作成されています。
-> Authrim はパスワードレス認証を採用しており、パスワード関連機能は存在しません。
+> **Note**: This document was created by reviewing the actual code.
+> Authrim uses passwordless authentication and does not have password-related features.
 
 ## Overview
 
-### Authrim の認証方法
+### Authrim Authentication Methods
 
-| 方法                   | 説明                                                             |
-| ---------------------- | ---------------------------------------------------------------- |
-| **Passkey** (WebAuthn) | Discoverable Credentials によるパスワードレス認証                |
-| **メールコード** (OTP) | メールアドレスに送信されるワンタイムコード                       |
-| **外部 IdP**           | Google, GitHub, Microsoft, Apple, Facebook, LinkedIn, Twitter 等 |
+| Method                | Description                                                    |
+| --------------------- | -------------------------------------------------------------- |
+| **Passkey** (WebAuthn)| Passwordless authentication using Discoverable Credentials     |
+| **Email Code** (OTP)  | One-time code sent to email address                            |
+| **External IdP**      | Google, GitHub, Microsoft, Apple, Facebook, LinkedIn, Twitter, etc. |
 
-### Authrim の主要機能
+### Authrim Main Features
 
-| 機能                 | 説明                                        |
-| -------------------- | ------------------------------------------- |
-| **OAuth 2.0 / OIDC** | Authorization Code, PAR, PKCE               |
+| Feature              | Description                              |
+| -------------------- | ---------------------------------------- |
+| **OAuth 2.0 / OIDC** | Authorization Code, PAR, PKCE            |
 | **CIBA**             | Client Initiated Backchannel Authentication |
-| **Device Code**      | Device Authorization Grant (TV/IoT向け)     |
-| **SAML**             | IdP および SP として動作                    |
-| **SCIM**             | ユーザー/グループのプロビジョニング         |
-| **ReBAC**            | Relationship-Based Access Control           |
-| **VC/DID**           | Verifiable Credentials (Phase 9)            |
+| **Device Code**      | Device Authorization Grant (for TV/IoT)  |
+| **SAML**             | Operates as both IdP and SP              |
+| **SCIM**             | User/Group provisioning                  |
+| **ReBAC**            | Relationship-Based Access Control        |
+| **VC/DID**           | Verifiable Credentials (Phase 9)         |
 
 ---
 
@@ -35,7 +35,7 @@ Webhook、Auth Flow Designer、カスタムスクリプト実行基盤の設計�
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Event Source                            │
-│  (認証フロー、管理操作、システムイベント)                          │
+│  (Authentication flows, Admin operations, System events)        │
 └───────────────────────────────┬─────────────────────────────────┘
                                 │
                                 ▼
@@ -43,11 +43,11 @@ Webhook、Auth Flow Designer、カスタムスクリプト実行基盤の設計�
 │                      Event Dispatcher                           │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
 │  │ Pre-hooks   │  │ Core Logic  │  │ Post-hooks              │ │
-│  │ (同期)      │  │             │  │ (同期/非同期)            │ │
+│  │ (Sync)      │  │             │  │ (Sync/Async)            │ │
 │  │             │  │             │  │                         │ │
-│  │ ・検証      │  │ ・処理実行  │  │ ・監査ログ              │ │
-│  │ ・変換      │  │             │  │ ・Webhook送信           │ │
-│  │ ・中断可能  │  │             │  │ ・カスタムスクリプト     │ │
+│  │ - Validation│  │ - Execute   │  │ - Audit log             │ │
+│  │ - Transform │  │   process   │  │ - Webhook send          │ │
+│  │ - Can abort │  │             │  │ - Custom scripts        │ │
 │  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -56,20 +56,20 @@ Webhook、Auth Flow Designer、カスタムスクリプト実行基盤の設計�
 
 ## Event Naming Convention
 
-### 形式
+### Format
 
 ```
 {domain}.{resource}.{action}[.{modifier}]
 ```
 
-### 例
+### Examples
 
-| イベント名                     | 説明                         |
-| ------------------------------ | ---------------------------- |
-| `auth.passkey.login.succeeded` | Passkey ログイン成功         |
-| `auth.email_code.verified`     | メールコード検証成功         |
-| `oauth.consent.granted`        | OAuth 同意付与               |
-| `admin.client.created`         | 管理者によるクライアント作成 |
+| Event Name                      | Description                     |
+| ------------------------------- | ------------------------------- |
+| `auth.passkey.login.succeeded`  | Passkey login succeeded         |
+| `auth.email_code.verified`      | Email code verification succeeded |
+| `oauth.consent.granted`         | OAuth consent granted           |
+| `admin.client.created`          | Client created by admin         |
 
 ---
 
@@ -77,324 +77,324 @@ Webhook、Auth Flow Designer、カスタムスクリプト実行基盤の設計�
 
 ### 1. Authentication Events (`auth.*`)
 
-認証フローに関するイベント。Auth Flow Designer でフック可能。
+Events related to authentication flows. Hookable in Auth Flow Designer.
 
-#### 1.1 Passkey (WebAuthn) 認証
+#### 1.1 Passkey (WebAuthn) Authentication
 
-| Event                                  | Phase | PII | Hookable | Webhook | Description                         |
-| -------------------------------------- | ----- | --- | -------- | ------- | ----------------------------------- |
-| `auth.passkey.login.started`           | Pre   | ❌  | ✅       | ❌      | Passkey ログイン開始                |
-| `auth.passkey.login.challenge_created` | Pre   | ❌  | ❌       | ❌      | WebAuthn チャレンジ生成             |
-| `auth.passkey.login.succeeded`         | Post  | ❌  | ✅       | ✅      | Passkey ログイン成功                |
-| `auth.passkey.login.failed`            | Post  | ❌  | ❌       | ✅      | Passkey ログイン失敗                |
-| `auth.passkey.register.started`        | Pre   | ✅  | ✅       | ❌      | Passkey 登録開始（メール+名前入力） |
-| `auth.passkey.register.succeeded`      | Post  | ✅  | ✅       | ✅      | Passkey 登録成功                    |
-| `auth.passkey.register.failed`         | Post  | ✅  | ❌       | ✅      | Passkey 登録失敗                    |
+| Event                                  | Phase | PII | Hookable | Webhook | Description                           |
+| -------------------------------------- | ----- | --- | -------- | ------- | ------------------------------------- |
+| `auth.passkey.login.started`           | Pre   | No  | Yes      | No      | Passkey login started                 |
+| `auth.passkey.login.challenge_created` | Pre   | No  | No       | No      | WebAuthn challenge created            |
+| `auth.passkey.login.succeeded`         | Post  | No  | Yes      | Yes     | Passkey login succeeded               |
+| `auth.passkey.login.failed`            | Post  | No  | No       | Yes     | Passkey login failed                  |
+| `auth.passkey.register.started`        | Pre   | Yes | Yes      | No      | Passkey registration started (email+name input) |
+| `auth.passkey.register.succeeded`      | Post  | Yes | Yes      | Yes     | Passkey registration succeeded        |
+| `auth.passkey.register.failed`         | Post  | Yes | No       | Yes     | Passkey registration failed           |
 
-#### 1.2 メールコード (OTP) 認証
+#### 1.2 Email Code (OTP) Authentication
 
-| Event                       | Phase | PII | Hookable | Webhook | Description                                       |
-| --------------------------- | ----- | --- | -------- | ------- | ------------------------------------------------- |
-| `auth.email_code.requested` | Pre   | ✅  | ✅       | ❌      | メールコード送信要求                              |
-| `auth.email_code.sent`      | Post  | ✅  | ❌       | ❌      | メールコード送信完了                              |
-| `auth.email_code.verified`  | Post  | ✅  | ✅       | ✅      | メールコード検証成功（ログイン/サインアップ完了） |
-| `auth.email_code.failed`    | Post  | ✅  | ❌       | ✅      | メールコード検証失敗                              |
-| `auth.email_code.expired`   | Post  | ✅  | ❌       | ❌      | メールコード期限切れ                              |
+| Event                       | Phase | PII | Hookable | Webhook | Description                                      |
+| --------------------------- | ----- | --- | -------- | ------- | ------------------------------------------------ |
+| `auth.email_code.requested` | Pre   | Yes | Yes      | No      | Email code send requested                        |
+| `auth.email_code.sent`      | Post  | Yes | No       | No      | Email code send completed                        |
+| `auth.email_code.verified`  | Post  | Yes | Yes      | Yes     | Email code verification succeeded (login/signup complete) |
+| `auth.email_code.failed`    | Post  | Yes | No       | Yes     | Email code verification failed                   |
+| `auth.email_code.expired`   | Post  | Yes | No       | No      | Email code expired                               |
 
-#### 1.3 外部 IdP 認証
+#### 1.3 External IdP Authentication
 
-| Event                                 | Phase | PII | Hookable | Webhook | Description                              |
-| ------------------------------------- | ----- | --- | -------- | ------- | ---------------------------------------- |
-| `auth.external_idp.started`           | Pre   | ❌  | ✅       | ❌      | 外部 IdP 認証開始（リダイレクト前）      |
-| `auth.external_idp.callback_received` | Pre   | ✅  | ❌       | ❌      | コールバック受信                         |
-| `auth.external_idp.succeeded`         | Post  | ✅  | ✅       | ✅      | 外部 IdP 認証成功                        |
-| `auth.external_idp.failed`            | Post  | ❌  | ❌       | ✅      | 外部 IdP 認証失敗                        |
-| `auth.external_idp.linked`            | Post  | ✅  | ✅       | ✅      | アカウント連携成功                       |
-| `auth.external_idp.unlinked`          | Post  | ❌  | ❌       | ✅      | アカウント連携解除                       |
-| `auth.external_idp.jit_provisioned`   | Post  | ✅  | ✅       | ✅      | JIT プロビジョニング（新規ユーザー作成） |
+| Event                                 | Phase | PII | Hookable | Webhook | Description                               |
+| ------------------------------------- | ----- | --- | -------- | ------- | ----------------------------------------- |
+| `auth.external_idp.started`           | Pre   | No  | Yes      | No      | External IdP auth started (before redirect) |
+| `auth.external_idp.callback_received` | Pre   | Yes | No       | No      | Callback received                         |
+| `auth.external_idp.succeeded`         | Post  | Yes | Yes      | Yes     | External IdP auth succeeded               |
+| `auth.external_idp.failed`            | Post  | No  | No       | Yes     | External IdP auth failed                  |
+| `auth.external_idp.linked`            | Post  | Yes | Yes      | Yes     | Account linked                            |
+| `auth.external_idp.unlinked`          | Post  | No  | No       | Yes     | Account unlinked                          |
+| `auth.external_idp.jit_provisioned`   | Post  | Yes | Yes      | Yes     | JIT provisioning (new user created)       |
 
-#### 1.4 ログイン・ログアウト（共通）
+#### 1.4 Login/Logout (Common)
 
-| Event                               | Phase | PII | Hookable | Webhook | Description                      |
-| ----------------------------------- | ----- | --- | -------- | ------- | -------------------------------- |
-| `auth.login.succeeded`              | Post  | ✅  | ✅       | ✅      | ログイン成功（全認証方法共通）   |
-| `auth.login.failed`                 | Post  | ✅  | ✅       | ✅      | ログイン失敗（全認証方法共通）   |
-| `auth.logout.initiated`             | Pre   | ❌  | ✅       | ❌      | ログアウト開始（RP-Initiated）   |
-| `auth.logout.succeeded`             | Post  | ❌  | ❌       | ✅      | ログアウト完了                   |
-| `auth.logout.backchannel_sent`      | Post  | ❌  | ❌       | ✅      | Back-Channel Logout 送信         |
-| `auth.logout.frontchannel_rendered` | Post  | ❌  | ❌       | ❌      | Front-Channel Logout iframe 描画 |
+| Event                               | Phase | PII | Hookable | Webhook | Description                        |
+| ----------------------------------- | ----- | --- | -------- | ------- | ---------------------------------- |
+| `auth.login.succeeded`              | Post  | Yes | Yes      | Yes     | Login succeeded (all auth methods) |
+| `auth.login.failed`                 | Post  | Yes | Yes      | Yes     | Login failed (all auth methods)    |
+| `auth.logout.initiated`             | Pre   | No  | Yes      | No      | Logout started (RP-Initiated)      |
+| `auth.logout.succeeded`             | Post  | No  | No       | Yes     | Logout completed                   |
+| `auth.logout.backchannel_sent`      | Post  | No  | No       | Yes     | Back-Channel Logout sent           |
+| `auth.logout.frontchannel_rendered` | Post  | No  | No       | No      | Front-Channel Logout iframe rendered |
 
-#### 1.5 再認証 (Step-up Auth)
+#### 1.5 Re-authentication (Step-up Auth)
 
-| Event                   | Phase | PII | Hookable | Webhook | Description                  |
-| ----------------------- | ----- | --- | -------- | ------- | ---------------------------- |
-| `auth.reauth.required`  | Pre   | ❌  | ✅       | ❌      | 再認証要求（max_age 超過等） |
-| `auth.reauth.succeeded` | Post  | ❌  | ❌       | ❌      | 再認証成功                   |
-| `auth.reauth.failed`    | Post  | ❌  | ❌       | ✅      | 再認証失敗                   |
+| Event                   | Phase | PII | Hookable | Webhook | Description                        |
+| ----------------------- | ----- | --- | -------- | ------- | ---------------------------------- |
+| `auth.reauth.required`  | Pre   | No  | Yes      | No      | Re-auth required (max_age exceeded, etc.) |
+| `auth.reauth.succeeded` | Post  | No  | No       | No      | Re-auth succeeded                  |
+| `auth.reauth.failed`    | Post  | No  | No       | Yes     | Re-auth failed                     |
 
 ---
 
 ### 2. OAuth/OIDC Events (`oauth.*`)
 
-OAuth 2.0 / OpenID Connect フローに関するイベント。
+Events related to OAuth 2.0 / OpenID Connect flows.
 
 #### 2.1 Authorization
 
-| Event                         | Phase | PII | Hookable | Webhook | Description        |
-| ----------------------------- | ----- | --- | -------- | ------- | ------------------ |
-| `oauth.authorize.started`     | Pre   | ❌  | ❌       | ❌      | 認可リクエスト受信 |
-| `oauth.authorize.validated`   | Pre   | ❌  | ❌       | ❌      | パラメータ検証完了 |
-| `oauth.authorize.code_issued` | Post  | ❌  | ❌       | ❌      | 認可コード発行     |
-| `oauth.authorize.failed`      | Post  | ❌  | ❌       | ❌      | 認可失敗           |
+| Event                         | Phase | PII | Hookable | Webhook | Description                  |
+| ----------------------------- | ----- | --- | -------- | ------- | ---------------------------- |
+| `oauth.authorize.started`     | Pre   | No  | No       | No      | Authorization request received |
+| `oauth.authorize.validated`   | Pre   | No  | No       | No      | Parameters validated         |
+| `oauth.authorize.code_issued` | Post  | No  | No       | No      | Authorization code issued    |
+| `oauth.authorize.failed`      | Post  | No  | No       | No      | Authorization failed         |
 
 #### 2.2 PAR (Pushed Authorization Request)
 
-| Event                | Phase | PII | Hookable | Webhook | Description            |
-| -------------------- | ----- | --- | -------- | ------- | ---------------------- |
-| `oauth.par.created`  | Post  | ❌  | ❌       | ❌      | PAR リクエスト作成     |
-| `oauth.par.consumed` | Post  | ❌  | ❌       | ❌      | PAR リクエスト消費     |
-| `oauth.par.expired`  | Post  | ❌  | ❌       | ❌      | PAR リクエスト期限切れ |
+| Event                | Phase | PII | Hookable | Webhook | Description          |
+| -------------------- | ----- | --- | -------- | ------- | -------------------- |
+| `oauth.par.created`  | Post  | No  | No       | No      | PAR request created  |
+| `oauth.par.consumed` | Post  | No  | No       | No      | PAR request consumed |
+| `oauth.par.expired`  | Post  | No  | No       | No      | PAR request expired  |
 
-#### 2.3 Consent（同意）
+#### 2.3 Consent
 
-| Event                   | Phase | PII | Hookable | Webhook | Description  |
-| ----------------------- | ----- | --- | -------- | ------- | ------------ |
-| `oauth.consent.shown`   | Pre   | ❌  | ✅       | ❌      | 同意画面表示 |
-| `oauth.consent.granted` | Post  | ❌  | ✅       | ✅      | 同意付与     |
-| `oauth.consent.denied`  | Post  | ❌  | ❌       | ❌      | 同意拒否     |
-| `oauth.consent.revoked` | Post  | ❌  | ❌       | ✅      | 同意取り消し |
+| Event                   | Phase | PII | Hookable | Webhook | Description      |
+| ----------------------- | ----- | --- | -------- | ------- | ---------------- |
+| `oauth.consent.shown`   | Pre   | No  | Yes      | No      | Consent screen shown |
+| `oauth.consent.granted` | Post  | No  | Yes      | Yes     | Consent granted  |
+| `oauth.consent.denied`  | Post  | No  | No       | No      | Consent denied   |
+| `oauth.consent.revoked` | Post  | No  | No       | Yes     | Consent revoked  |
 
 ---
 
 ### 3. CIBA Events (`ciba.*`)
 
-Client Initiated Backchannel Authentication に関するイベント。
+Events related to Client Initiated Backchannel Authentication.
 
-| Event                 | Phase | PII | Hookable | Webhook | Description             |
-| --------------------- | ----- | --- | -------- | ------- | ----------------------- |
-| `ciba.auth.requested` | Pre   | ✅  | ❌       | ❌      | CIBA 認証リクエスト受信 |
-| `ciba.auth.pending`   | Post  | ❌  | ❌       | ❌      | ユーザー承認待ち        |
-| `ciba.auth.approved`  | Post  | ✅  | ❌       | ✅      | ユーザー承認            |
-| `ciba.auth.denied`    | Post  | ✅  | ❌       | ✅      | ユーザー拒否            |
-| `ciba.auth.expired`   | Post  | ❌  | ❌       | ❌      | タイムアウト            |
-| `ciba.ping.sent`      | Post  | ❌  | ❌       | ❌      | Ping 通知送信           |
-| `ciba.push.sent`      | Post  | ❌  | ❌       | ❌      | Push 通知送信           |
+| Event                 | Phase | PII | Hookable | Webhook | Description               |
+| --------------------- | ----- | --- | -------- | ------- | ------------------------- |
+| `ciba.auth.requested` | Pre   | Yes | No       | No      | CIBA auth request received |
+| `ciba.auth.pending`   | Post  | No  | No       | No      | Waiting for user approval |
+| `ciba.auth.approved`  | Post  | Yes | No       | Yes     | User approved             |
+| `ciba.auth.denied`    | Post  | Yes | No       | Yes     | User denied               |
+| `ciba.auth.expired`   | Post  | No  | No       | No      | Timeout                   |
+| `ciba.ping.sent`      | Post  | No  | No       | No      | Ping notification sent    |
+| `ciba.push.sent`      | Post  | No  | No       | No      | Push notification sent    |
 
 ---
 
 ### 4. Device Code Events (`device.*`)
 
-Device Authorization Grant に関するイベント。
+Events related to Device Authorization Grant.
 
 | Event                  | Phase | PII | Hookable | Webhook | Description            |
 | ---------------------- | ----- | --- | -------- | ------- | ---------------------- |
-| `device.code.created`  | Post  | ❌  | ❌       | ❌      | デバイスコード発行     |
-| `device.code.verified` | Post  | ✅  | ❌       | ❌      | ユーザーコード入力     |
-| `device.auth.approved` | Post  | ✅  | ❌       | ✅      | ユーザー承認           |
-| `device.auth.denied`   | Post  | ✅  | ❌       | ✅      | ユーザー拒否           |
-| `device.code.expired`  | Post  | ❌  | ❌       | ❌      | デバイスコード期限切れ |
-| `device.token.issued`  | Post  | ❌  | ❌       | ❌      | トークン発行           |
+| `device.code.created`  | Post  | No  | No       | No      | Device code issued     |
+| `device.code.verified` | Post  | Yes | No       | No      | User code entered      |
+| `device.auth.approved` | Post  | Yes | No       | Yes     | User approved          |
+| `device.auth.denied`   | Post  | Yes | No       | Yes     | User denied            |
+| `device.code.expired`  | Post  | No  | No       | No      | Device code expired    |
+| `device.token.issued`  | Post  | No  | No       | No      | Token issued           |
 
 ---
 
 ### 5. Session Events (`session.*`)
 
-セッションライフサイクルに関するイベント。
+Events related to session lifecycle.
 
-| Event                      | Phase | PII | Hookable | Webhook | Description                    |
-| -------------------------- | ----- | --- | -------- | ------- | ------------------------------ |
-| `session.created`          | Post  | ❌  | ❌       | ❌      | セッション作成                 |
-| `session.extended`         | Post  | ❌  | ❌       | ❌      | セッション延長                 |
-| `session.expired`          | Post  | ❌  | ❌       | ❌      | セッション期限切れ（自動）     |
-| `session.revoked`          | Post  | ❌  | ❌       | ✅      | セッション失効（手動）         |
-| `session.revoked.logout`   | Post  | ❌  | ❌       | ✅      | ログアウトによる失効           |
-| `session.revoked.admin`    | Post  | ❌  | ❌       | ✅      | 管理者による失効               |
-| `session.revoked.security` | Post  | ❌  | ❌       | ✅      | セキュリティ上の理由による失効 |
+| Event                      | Phase | PII | Hookable | Webhook | Description                       |
+| -------------------------- | ----- | --- | -------- | ------- | --------------------------------- |
+| `session.created`          | Post  | No  | No       | No      | Session created                   |
+| `session.extended`         | Post  | No  | No       | No      | Session extended                  |
+| `session.expired`          | Post  | No  | No       | No      | Session expired (automatic)       |
+| `session.revoked`          | Post  | No  | No       | Yes     | Session revoked (manual)          |
+| `session.revoked.logout`   | Post  | No  | No       | Yes     | Revoked by logout                 |
+| `session.revoked.admin`    | Post  | No  | No       | Yes     | Revoked by admin                  |
+| `session.revoked.security` | Post  | No  | No       | Yes     | Revoked for security reasons      |
 
 ---
 
 ### 6. Token Events (`token.*`)
 
-トークン発行・失効に関するイベント。
+Events related to token issuance and revocation.
 
 | Event                   | Phase | PII | Hookable | Webhook | Description                   |
 | ----------------------- | ----- | --- | -------- | ------- | ----------------------------- |
-| `token.access.issued`   | Post  | ❌  | ❌       | ❌      | Access Token 発行             |
-| `token.refresh.issued`  | Post  | ❌  | ❌       | ❌      | Refresh Token 発行            |
-| `token.refresh.rotated` | Post  | ❌  | ❌       | ❌      | Refresh Token ローテーション  |
-| `token.revoked`         | Post  | ❌  | ❌       | ✅      | トークン失効                  |
-| `token.introspected`    | Post  | ❌  | ❌       | ❌      | トークン検証（Introspection） |
+| `token.access.issued`   | Post  | No  | No       | No      | Access Token issued           |
+| `token.refresh.issued`  | Post  | No  | No       | No      | Refresh Token issued          |
+| `token.refresh.rotated` | Post  | No  | No       | No      | Refresh Token rotated         |
+| `token.revoked`         | Post  | No  | No       | Yes     | Token revoked                 |
+| `token.introspected`    | Post  | No  | No       | No      | Token introspected            |
 
 ---
 
 ### 7. User Events (`user.*`)
 
-ユーザーライフサイクル・プロフィールに関するイベント。
+Events related to user lifecycle and profile.
 
-> **Note**: パスワードレス認証のため、パスワード関連イベントは存在しない。
+> **Note**: Due to passwordless authentication, there are no password-related events.
 
-| Event                     | Phase | PII | Hookable | Webhook | Description                       |
-| ------------------------- | ----- | --- | -------- | ------- | --------------------------------- |
-| `user.created`            | Post  | ✅  | ✅       | ✅      | ユーザー作成                      |
-| `user.updated`            | Post  | ✅  | ❌       | ✅      | ユーザー情報更新                  |
-| `user.deleted`            | Post  | ❌  | ❌       | ✅      | ユーザー削除（PII削除、UUID残存） |
-| `user.suspended`          | Post  | ❌  | ❌       | ✅      | ユーザー停止                      |
-| `user.reactivated`        | Post  | ❌  | ❌       | ✅      | ユーザー再有効化                  |
-| `user.email.changed`      | Post  | ✅  | ✅       | ✅      | メールアドレス変更                |
-| `user.email.verified`     | Post  | ✅  | ❌       | ✅      | メール確認完了                    |
-| `user.passkey.registered` | Post  | ❌  | ❌       | ✅      | Passkey 登録                      |
-| `user.passkey.removed`    | Post  | ❌  | ❌       | ✅      | Passkey 削除                      |
-| `user.passkey.renamed`    | Post  | ❌  | ❌       | ❌      | Passkey 名前変更                  |
+| Event                     | Phase | PII | Hookable | Webhook | Description                             |
+| ------------------------- | ----- | --- | -------- | ------- | --------------------------------------- |
+| `user.created`            | Post  | Yes | Yes      | Yes     | User created                            |
+| `user.updated`            | Post  | Yes | No       | Yes     | User info updated                       |
+| `user.deleted`            | Post  | No  | No       | Yes     | User deleted (PII deleted, UUID remains) |
+| `user.suspended`          | Post  | No  | No       | Yes     | User suspended                          |
+| `user.reactivated`        | Post  | No  | No       | Yes     | User reactivated                        |
+| `user.email.changed`      | Post  | Yes | Yes      | Yes     | Email address changed                   |
+| `user.email.verified`     | Post  | Yes | No       | Yes     | Email verified                          |
+| `user.passkey.registered` | Post  | No  | No       | Yes     | Passkey registered                      |
+| `user.passkey.removed`    | Post  | No  | No       | Yes     | Passkey removed                         |
+| `user.passkey.renamed`    | Post  | No  | No       | No      | Passkey renamed                         |
 
 ---
 
 ### 8. Permission Events (`permission.*`)
 
-認可・権限（ReBAC）に関するイベント。
+Events related to authorization and permissions (ReBAC).
 
-| Event                | Phase | PII | Hookable | Webhook | Description                  |
-| -------------------- | ----- | --- | -------- | ------- | ---------------------------- |
-| `permission.granted` | Post  | ❌  | ❌       | ✅      | 権限付与                     |
-| `permission.revoked` | Post  | ❌  | ❌       | ✅      | 権限剥奪                     |
-| `permission.checked` | Post  | ❌  | ❌       | ❌      | 権限チェック実行             |
-| `permission.changed` | Post  | ❌  | ❌       | ✅      | 権限変更通知（リアルタイム） |
-| `role.assigned`      | Post  | ❌  | ❌       | ✅      | ロール割り当て               |
-| `role.removed`       | Post  | ❌  | ❌       | ✅      | ロール削除                   |
+| Event                | Phase | PII | Hookable | Webhook | Description                    |
+| -------------------- | ----- | --- | -------- | ------- | ------------------------------ |
+| `permission.granted` | Post  | No  | No       | Yes     | Permission granted             |
+| `permission.revoked` | Post  | No  | No       | Yes     | Permission revoked             |
+| `permission.checked` | Post  | No  | No       | No      | Permission check executed      |
+| `permission.changed` | Post  | No  | No       | Yes     | Permission change notification (realtime) |
+| `role.assigned`      | Post  | No  | No       | Yes     | Role assigned                  |
+| `role.removed`       | Post  | No  | No       | Yes     | Role removed                   |
 
 ---
 
 ### 9. SAML Events (`saml.*`)
 
-SAML IdP/SP に関するイベント。
+Events related to SAML IdP/SP.
 
-#### 9.1 SAML IdP（Authrim が IdP として動作）
+#### 9.1 SAML IdP (Authrim operates as IdP)
 
-| Event                              | Phase | PII | Hookable | Webhook | Description        |
-| ---------------------------------- | ----- | --- | -------- | ------- | ------------------ |
-| `saml.idp.authn_request_received`  | Pre   | ❌  | ❌       | ❌      | AuthnRequest 受信  |
-| `saml.idp.response_sent`           | Post  | ✅  | ❌       | ❌      | SAML Response 送信 |
-| `saml.idp.logout_request_received` | Pre   | ❌  | ❌       | ❌      | SLO Request 受信   |
-| `saml.idp.logout_response_sent`    | Post  | ❌  | ❌       | ❌      | SLO Response 送信  |
+| Event                              | Phase | PII | Hookable | Webhook | Description          |
+| ---------------------------------- | ----- | --- | -------- | ------- | -------------------- |
+| `saml.idp.authn_request_received`  | Pre   | No  | No       | No      | AuthnRequest received |
+| `saml.idp.response_sent`           | Post  | Yes | No       | No      | SAML Response sent   |
+| `saml.idp.logout_request_received` | Pre   | No  | No       | No      | SLO Request received |
+| `saml.idp.logout_response_sent`    | Post  | No  | No       | No      | SLO Response sent    |
 
-#### 9.2 SAML SP（Authrim が SP として動作）
+#### 9.2 SAML SP (Authrim operates as SP)
 
-| Event                         | Phase | PII | Hookable | Webhook | Description              |
-| ----------------------------- | ----- | --- | -------- | ------- | ------------------------ |
-| `saml.sp.authn_request_sent`  | Pre   | ❌  | ❌       | ❌      | AuthnRequest 送信        |
-| `saml.sp.response_received`   | Post  | ✅  | ✅       | ✅      | SAML Response 受信・検証 |
-| `saml.sp.assertion_validated` | Post  | ✅  | ❌       | ❌      | Assertion 検証成功       |
-| `saml.sp.login_succeeded`     | Post  | ✅  | ✅       | ✅      | SAML ログイン成功        |
-| `saml.sp.login_failed`        | Post  | ❌  | ❌       | ✅      | SAML ログイン失敗        |
+| Event                         | Phase | PII | Hookable | Webhook | Description                 |
+| ----------------------------- | ----- | --- | -------- | ------- | --------------------------- |
+| `saml.sp.authn_request_sent`  | Pre   | No  | No       | No      | AuthnRequest sent           |
+| `saml.sp.response_received`   | Post  | Yes | Yes      | Yes     | SAML Response received/verified |
+| `saml.sp.assertion_validated` | Post  | Yes | No       | No      | Assertion validation succeeded |
+| `saml.sp.login_succeeded`     | Post  | Yes | Yes      | Yes     | SAML login succeeded        |
+| `saml.sp.login_failed`        | Post  | No  | No       | Yes     | SAML login failed           |
 
 ---
 
 ### 10. SCIM Events (`scim.*`)
 
-SCIM プロビジョニングに関するイベント。
+Events related to SCIM provisioning.
 
-| Event                 | Phase | PII | Hookable | Webhook | Description         |
-| --------------------- | ----- | --- | -------- | ------- | ------------------- |
-| `scim.user.created`   | Post  | ✅  | ❌       | ✅      | SCIM ユーザー作成   |
-| `scim.user.updated`   | Post  | ✅  | ❌       | ✅      | SCIM ユーザー更新   |
-| `scim.user.deleted`   | Post  | ❌  | ❌       | ✅      | SCIM ユーザー削除   |
-| `scim.group.created`  | Post  | ❌  | ❌       | ✅      | SCIM グループ作成   |
-| `scim.group.updated`  | Post  | ❌  | ❌       | ✅      | SCIM グループ更新   |
-| `scim.group.deleted`  | Post  | ❌  | ❌       | ✅      | SCIM グループ削除   |
-| `scim.bulk.completed` | Post  | ❌  | ❌       | ✅      | SCIM バルク操作完了 |
+| Event                 | Phase | PII | Hookable | Webhook | Description            |
+| --------------------- | ----- | --- | -------- | ------- | ---------------------- |
+| `scim.user.created`   | Post  | Yes | No       | Yes     | SCIM user created      |
+| `scim.user.updated`   | Post  | Yes | No       | Yes     | SCIM user updated      |
+| `scim.user.deleted`   | Post  | No  | No       | Yes     | SCIM user deleted      |
+| `scim.group.created`  | Post  | No  | No       | Yes     | SCIM group created     |
+| `scim.group.updated`  | Post  | No  | No       | Yes     | SCIM group updated     |
+| `scim.group.deleted`  | Post  | No  | No       | Yes     | SCIM group deleted     |
+| `scim.bulk.completed` | Post  | No  | No       | Yes     | SCIM bulk operation completed |
 
 ---
 
 ### 11. Admin Events (`admin.*`)
 
-管理者操作に関するイベント（監査ログ対象）。
+Events related to admin operations (subject to audit logging).
 
-#### 11.1 クライアント管理
+#### 11.1 Client Management
 
-| Event                         | Phase | PII | Hookable | Webhook | Description                |
-| ----------------------------- | ----- | --- | -------- | ------- | -------------------------- |
-| `admin.client.created`        | Post  | ❌  | ❌       | ✅      | クライアント作成           |
-| `admin.client.updated`        | Post  | ❌  | ❌       | ✅      | クライアント更新           |
-| `admin.client.deleted`        | Post  | ❌  | ❌       | ✅      | クライアント削除           |
-| `admin.client.secret_rotated` | Post  | ❌  | ❌       | ✅      | シークレットローテーション |
+| Event                         | Phase | PII | Hookable | Webhook | Description         |
+| ----------------------------- | ----- | --- | -------- | ------- | ------------------- |
+| `admin.client.created`        | Post  | No  | No       | Yes     | Client created      |
+| `admin.client.updated`        | Post  | No  | No       | Yes     | Client updated      |
+| `admin.client.deleted`        | Post  | No  | No       | Yes     | Client deleted      |
+| `admin.client.secret_rotated` | Post  | No  | No       | Yes     | Secret rotated      |
 
-#### 11.2 ユーザー管理
+#### 11.2 User Management
 
 | Event                   | Phase | PII | Hookable | Webhook | Description                |
 | ----------------------- | ----- | --- | -------- | ------- | -------------------------- |
-| `admin.user.created`    | Post  | ✅  | ❌       | ✅      | 管理者によるユーザー作成   |
-| `admin.user.updated`    | Post  | ✅  | ❌       | ✅      | 管理者によるユーザー更新   |
-| `admin.user.deleted`    | Post  | ❌  | ❌       | ✅      | 管理者によるユーザー削除   |
-| `admin.user.suspended`  | Post  | ❌  | ❌       | ✅      | 管理者によるユーザー停止   |
-| `admin.session.revoked` | Post  | ❌  | ❌       | ✅      | 管理者によるセッション失効 |
+| `admin.user.created`    | Post  | Yes | No       | Yes     | User created by admin      |
+| `admin.user.updated`    | Post  | Yes | No       | Yes     | User updated by admin      |
+| `admin.user.deleted`    | Post  | No  | No       | Yes     | User deleted by admin      |
+| `admin.user.suspended`  | Post  | No  | No       | Yes     | User suspended by admin    |
+| `admin.session.revoked` | Post  | No  | No       | Yes     | Session revoked by admin   |
 
-#### 11.3 鍵管理
+#### 11.3 Key Management
 
-| Event                                 | Phase | PII | Hookable | Webhook | Description            |
-| ------------------------------------- | ----- | --- | -------- | ------- | ---------------------- |
-| `admin.signing_key.rotated`           | Post  | ❌  | ❌       | ✅      | 署名鍵ローテーション   |
-| `admin.signing_key.rotated.emergency` | Post  | ❌  | ❌       | ✅      | 緊急鍵ローテーション   |
-| `admin.encryption_key.rotated`        | Post  | ❌  | ❌       | ✅      | 暗号化鍵ローテーション |
+| Event                                 | Phase | PII | Hookable | Webhook | Description               |
+| ------------------------------------- | ----- | --- | -------- | ------- | ------------------------- |
+| `admin.signing_key.rotated`           | Post  | No  | No       | Yes     | Signing key rotated       |
+| `admin.signing_key.rotated.emergency` | Post  | No  | No       | Yes     | Emergency key rotation    |
+| `admin.encryption_key.rotated`        | Post  | No  | No       | Yes     | Encryption key rotated    |
 
-#### 11.4 設定変更
+#### 11.4 Settings Changes
 
-| Event                    | Phase | PII | Hookable | Webhook | Description       |
-| ------------------------ | ----- | --- | -------- | ------- | ----------------- |
-| `admin.settings.updated` | Post  | ❌  | ❌       | ✅      | システム設定変更  |
-| `admin.idp.created`      | Post  | ❌  | ❌       | ✅      | 外部 IdP 設定追加 |
-| `admin.idp.updated`      | Post  | ❌  | ❌       | ✅      | 外部 IdP 設定更新 |
-| `admin.idp.deleted`      | Post  | ❌  | ❌       | ✅      | 外部 IdP 設定削除 |
+| Event                    | Phase | PII | Hookable | Webhook | Description           |
+| ------------------------ | ----- | --- | -------- | ------- | --------------------- |
+| `admin.settings.updated` | Post  | No  | No       | Yes     | System settings changed |
+| `admin.idp.created`      | Post  | No  | No       | Yes     | External IdP config added |
+| `admin.idp.updated`      | Post  | No  | No       | Yes     | External IdP config updated |
+| `admin.idp.deleted`      | Post  | No  | No       | Yes     | External IdP config deleted |
 
 ---
 
 ### 12. Security Events (`security.*`)
 
-セキュリティ関連イベント（SIEM 連携対象）。
+Security-related events (subject to SIEM integration).
 
-| Event                             | Phase | PII | Hookable | Webhook | Description          |
-| --------------------------------- | ----- | --- | -------- | ------- | -------------------- |
-| `security.brute_force.detected`   | Post  | ✅  | ❌       | ✅      | ブルートフォース検知 |
-| `security.account.locked`         | Post  | ✅  | ❌       | ✅      | アカウントロック     |
-| `security.account.unlocked`       | Post  | ❌  | ❌       | ✅      | アカウントロック解除 |
-| `security.suspicious_login`       | Post  | ✅  | ❌       | ✅      | 不審なログイン検知   |
-| `security.rate_limit.exceeded`    | Post  | ✅  | ❌       | ✅      | レート制限超過       |
-| `security.replay_attack.detected` | Post  | ❌  | ❌       | ✅      | リプレイ攻撃検知     |
-| `security.token.replay_detected`  | Post  | ❌  | ❌       | ✅      | 認可コード再利用検知 |
+| Event                             | Phase | PII | Hookable | Webhook | Description              |
+| --------------------------------- | ----- | --- | -------- | ------- | ------------------------ |
+| `security.brute_force.detected`   | Post  | Yes | No       | Yes     | Brute force detected     |
+| `security.account.locked`         | Post  | Yes | No       | Yes     | Account locked           |
+| `security.account.unlocked`       | Post  | No  | No       | Yes     | Account unlocked         |
+| `security.suspicious_login`       | Post  | Yes | No       | Yes     | Suspicious login detected |
+| `security.rate_limit.exceeded`    | Post  | Yes | No       | Yes     | Rate limit exceeded      |
+| `security.replay_attack.detected` | Post  | No  | No       | Yes     | Replay attack detected   |
+| `security.token.replay_detected`  | Post  | No  | No       | Yes     | Auth code reuse detected |
 
 ---
 
 ### 13. VC/DID Events (`vc.*`) - Phase 9
 
-Verifiable Credentials に関するイベント（開発中）。
+Events related to Verifiable Credentials (in development).
 
 #### 13.1 Credential Issuance
 
-| Event                     | Phase | PII | Hookable | Webhook | Description               |
-| ------------------------- | ----- | --- | -------- | ------- | ------------------------- |
-| `vc.credential.requested` | Pre   | ✅  | ❌       | ❌      | Credential 発行リクエスト |
-| `vc.credential.issued`    | Post  | ✅  | ❌       | ✅      | Credential 発行完了       |
-| `vc.credential.revoked`   | Post  | ❌  | ❌       | ✅      | Credential 失効           |
+| Event                     | Phase | PII | Hookable | Webhook | Description             |
+| ------------------------- | ----- | --- | -------- | ------- | ----------------------- |
+| `vc.credential.requested` | Pre   | Yes | No       | No      | Credential issuance requested |
+| `vc.credential.issued`    | Post  | Yes | No       | Yes     | Credential issued       |
+| `vc.credential.revoked`   | Post  | No  | No       | Yes     | Credential revoked      |
 
 #### 13.2 Presentation
 
-| Event                       | Phase | PII | Hookable | Webhook | Description             |
-| --------------------------- | ----- | --- | -------- | ------- | ----------------------- |
-| `vc.presentation.requested` | Pre   | ❌  | ❌       | ❌      | Presentation リクエスト |
-| `vc.presentation.verified`  | Post  | ✅  | ❌       | ✅      | Presentation 検証成功   |
-| `vc.presentation.failed`    | Post  | ❌  | ❌       | ✅      | Presentation 検証失敗   |
+| Event                       | Phase | PII | Hookable | Webhook | Description                |
+| --------------------------- | ----- | --- | -------- | ------- | -------------------------- |
+| `vc.presentation.requested` | Pre   | No  | No       | No      | Presentation requested     |
+| `vc.presentation.verified`  | Post  | Yes | No       | Yes     | Presentation verification succeeded |
+| `vc.presentation.failed`    | Post  | No  | No       | Yes     | Presentation verification failed |
 
 ---
 
 ### 14. System Events (`system.*`)
 
-システムイベント（内部用）。
+System events (internal use).
 
-| Event                      | Phase | PII | Hookable | Webhook | Description              |
-| -------------------------- | ----- | --- | -------- | ------- | ------------------------ |
-| `system.startup`           | Post  | ❌  | ❌       | ❌      | システム起動             |
-| `system.config.reloaded`   | Post  | ❌  | ❌       | ❌      | 設定リロード             |
-| `system.key.rotated`       | Post  | ❌  | ❌       | ❌      | 内部鍵自動ローテーション |
-| `system.cleanup.completed` | Post  | ❌  | ❌       | ❌      | クリーンアップ完了       |
-| `system.do.evicted`        | Post  | ❌  | ❌       | ❌      | Durable Object eviction  |
+| Event                      | Phase | PII | Hookable | Webhook | Description               |
+| -------------------------- | ----- | --- | -------- | ------- | ------------------------- |
+| `system.startup`           | Post  | No  | No       | No      | System startup            |
+| `system.config.reloaded`   | Post  | No  | No       | No      | Config reloaded           |
+| `system.key.rotated`       | Post  | No  | No       | No      | Internal key auto-rotation |
+| `system.cleanup.completed` | Post  | No  | No       | No      | Cleanup completed         |
+| `system.do.evicted`        | Post  | No  | No       | No      | Durable Object eviction   |
 
 ---
 
@@ -404,41 +404,41 @@ Verifiable Credentials に関するイベント（開発中）。
 
 ```typescript
 interface BaseEventPayload {
-  // メタデータ
+  // Metadata
   eventId: string; // UUID v4
   eventName: string; // e.g., "auth.passkey.login.succeeded"
   timestamp: number; // Unix timestamp (ms)
-  tenantId: string; // テナントID
+  tenantId: string; // Tenant ID
 
-  // コンテキスト
+  // Context
   context: {
-    requestId?: string; // リクエストID
-    sessionId?: string; // セッションID（あれば）
-    clientId?: string; // OAuthクライアントID（あれば）
-    ipAddress?: string; // IPアドレス
+    requestId?: string; // Request ID
+    sessionId?: string; // Session ID (if available)
+    clientId?: string; // OAuth client ID (if available)
+    ipAddress?: string; // IP address
     userAgent?: string; // User-Agent
     geoLocation?: {
-      // 地理情報（あれば）
+      // Geo info (if available)
       country?: string;
       region?: string;
       city?: string;
     };
   };
 
-  // アクター（誰が）
+  // Actor (who)
   actor?: {
     type: 'user' | 'admin' | 'system' | 'client' | 'scim';
     id: string; // UUID
-    // PII は含めない（必要なら PII DB を参照）
+    // PII not included (reference PII DB if needed)
   };
 
-  // 対象（何に対して）
+  // Target (what)
   target?: {
     type: string; // e.g., "user", "session", "client"
     id: string; // UUID
   };
 
-  // イベント固有データ
+  // Event-specific data
   data: Record<string, unknown>;
 }
 ```
@@ -478,34 +478,34 @@ interface BaseEventPayload {
 
 ## Audit Log vs Event Log
 
-### 違い
+### Differences
 
-| 観点           | Audit Log                  | Event Log              |
-| -------------- | -------------------------- | ---------------------- |
-| **目的**       | コンプライアンス・法的証拠 | システム連携・自動化   |
-| **保持期間**   | 長期（90日〜永久）         | 短期〜中期             |
-| **PII**        | 最小限（UUID のみ）        | 含む場合あり（暗号化） |
-| **変更可能性** | 不変（Append-only）        | 削除可能               |
-| **送信先**     | D1 (Core DB)               | Webhook、Queue         |
+| Aspect            | Audit Log                      | Event Log              |
+| ----------------- | ------------------------------ | ---------------------- |
+| **Purpose**       | Compliance / Legal evidence    | System integration / Automation |
+| **Retention**     | Long-term (90 days to permanent) | Short to medium term |
+| **PII**           | Minimal (UUID only)            | May include (encrypted) |
+| **Mutability**    | Immutable (Append-only)        | Deletable              |
+| **Destination**   | D1 (Core DB)                   | Webhook, Queue         |
 
-### PII 分離の原則
+### PII Separation Principle
 
 ```
-ユーザー削除時:
+On user deletion:
 
-1. PII DB から個人情報を削除
-   - users_pii.email → 削除
-   - users_pii.name → 削除
+1. Delete personal info from PII DB
+   - users_pii.email → Delete
+   - users_pii.name → Delete
 
-2. Core DB のユーザーレコードは Tombstone 化
-   - users.id → 維持
+2. Tombstone user record in Core DB
+   - users.id → Maintain
    - users.status → 'deleted'
-   - users.deleted_at → 削除日時
+   - users.deleted_at → Deletion timestamp
 
-3. 監査ログは保持（PII なし）
+3. Retain audit logs (no PII)
    - audit_log.action → 'user.deleted'
-   - audit_log.target_id → UUID（残す）
-   - audit_log.metadata → PII 除去済み
+   - audit_log.target_id → UUID (retain)
+   - audit_log.metadata → PII removed
 ```
 
 ---
@@ -514,23 +514,23 @@ interface BaseEventPayload {
 
 | Category              | Events Defined | Audit Log | Webhook            | Hooks |
 | --------------------- | -------------- | --------- | ------------------ | ----- |
-| `auth.passkey.*`      | ✅             | ❌        | ❌                 | ❌    |
-| `auth.email_code.*`   | ✅             | ❌        | ❌                 | ❌    |
-| `auth.external_idp.*` | ✅             | △ 部分的  | ❌                 | ❌    |
-| `auth.logout.*`       | ✅             | ❌        | ✅ (Back-Channel)  | ❌    |
-| `oauth.*`             | ✅             | ❌        | ❌                 | ❌    |
-| `ciba.*`              | ✅             | ❌        | ❌                 | ❌    |
-| `device.*`            | ✅             | ❌        | ❌                 | ❌    |
-| `session.*`           | ✅             | △ 部分的  | ✅ (Back-Channel)  | ❌    |
-| `token.*`             | ✅             | ❌        | ❌                 | ❌    |
-| `user.*`              | ✅             | △ 部分的  | ❌                 | ❌    |
-| `permission.*`        | ✅             | ❌        | ❌ (Notifier あり) | ❌    |
-| `saml.*`              | ✅             | ❌        | ❌                 | ❌    |
-| `scim.*`              | ✅             | ❌        | ❌                 | ❌    |
-| `admin.*`             | ✅             | ✅        | ❌                 | ❌    |
-| `security.*`          | ✅             | △ 部分的  | ❌                 | ❌    |
-| `vc.*`                | ✅             | ❌        | ❌                 | ❌    |
-| `system.*`            | ✅             | ❌        | ❌                 | ❌    |
+| `auth.passkey.*`      | Yes            | No        | No                 | No    |
+| `auth.email_code.*`   | Yes            | No        | No                 | No    |
+| `auth.external_idp.*` | Yes            | Partial   | No                 | No    |
+| `auth.logout.*`       | Yes            | No        | Yes (Back-Channel) | No    |
+| `oauth.*`             | Yes            | No        | No                 | No    |
+| `ciba.*`              | Yes            | No        | No                 | No    |
+| `device.*`            | Yes            | No        | No                 | No    |
+| `session.*`           | Yes            | Partial   | Yes (Back-Channel) | No    |
+| `token.*`             | Yes            | No        | No                 | No    |
+| `user.*`              | Yes            | Partial   | No                 | No    |
+| `permission.*`        | Yes            | No        | No (Notifier exists) | No  |
+| `saml.*`              | Yes            | No        | No                 | No    |
+| `scim.*`              | Yes            | No        | No                 | No    |
+| `admin.*`             | Yes            | Yes       | No                 | No    |
+| `security.*`          | Yes            | Partial   | No                 | No    |
+| `vc.*`                | Yes            | No        | No                 | No    |
+| `system.*`            | Yes            | No        | No                 | No    |
 
 ---
 

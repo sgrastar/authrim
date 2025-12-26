@@ -360,7 +360,7 @@ export function remapShardIndex(parsedShardIndex: number, currentShardCount: num
  * @returns Current shard count
  */
 async function getCurrentShardCount(env: Env): Promise<number> {
-  // KV が存在すれば優先（動的変更可能）
+  // KV takes priority if available (dynamically changeable)
   if (env.AUTHRIM_CONFIG) {
     const kvValue = await env.AUTHRIM_CONFIG.get('code_shards');
     if (kvValue) {
@@ -371,7 +371,7 @@ async function getCurrentShardCount(env: Env): Promise<number> {
     }
   }
 
-  // フォールバックとして env を使う
+  // Fallback to environment variable
   if (env.AUTHRIM_CODE_SHARDS) {
     const parsed = parseInt(env.AUTHRIM_CODE_SHARDS, 10);
     if (!isNaN(parsed) && parsed > 0) {
@@ -379,7 +379,7 @@ async function getCurrentShardCount(env: Env): Promise<number> {
     }
   }
 
-  // デフォルト値
+  // Default value
   return DEFAULT_CODE_SHARD_COUNT;
 }
 
@@ -445,7 +445,7 @@ let cachedSessionShardAt = 0;
  * @returns Current session shard count
  */
 async function getCurrentSessionShardCount(env: Env): Promise<number> {
-  // KV が存在すれば優先（動的変更可能）
+  // KV takes priority if available (dynamically changeable)
   if (env.AUTHRIM_CONFIG) {
     const kvValue = await env.AUTHRIM_CONFIG.get('session_shards');
     if (kvValue) {
@@ -456,7 +456,7 @@ async function getCurrentSessionShardCount(env: Env): Promise<number> {
     }
   }
 
-  // フォールバックとして env を使う
+  // Fallback to environment variable
   if (env.AUTHRIM_SESSION_SHARDS) {
     const parsed = parseInt(env.AUTHRIM_SESSION_SHARDS, 10);
     if (!isNaN(parsed) && parsed > 0) {
@@ -464,7 +464,7 @@ async function getCurrentSessionShardCount(env: Env): Promise<number> {
     }
   }
 
-  // デフォルト値
+  // Default value
   return DEFAULT_SESSION_SHARD_COUNT;
 }
 

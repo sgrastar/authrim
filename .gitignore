@@ -89,3 +89,6 @@ load-testing/.env.k6cloud
 load-testing/seeds/
 # Conformance test results
 conformance/results/
+
+# Wrangler/Miniflare remote storage cache
+remote/

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
+import { bodyLimit } from 'hono/body-limit';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   rateLimitMiddleware,
@@ -259,6 +260,7 @@ import {
 } from './routes/settings/logout-failures';
 import { getEncryptionStatus } from './routes/settings/encryption-config';
 import settingsV2 from './routes/settings-v2';
+import policyRouter from './routes/policy';
 import {
   revokeCredentialHandler,
   suspendCredentialHandler,
@@ -431,6 +433,24 @@ app.post('/revoke', revokeHandler);
 // Supports both Bearer token (for headless/API usage) and session-based auth (for UI)
 app.use('/api/admin/*', adminAuthMiddleware());
 
+// Body size limit for Admin API - prevents DoS attacks via large payloads
+// 100KB is sufficient for policy/settings updates while blocking malicious large payloads
+app.use(
+  '/api/admin/*',
+  bodyLimit({
+    maxSize: 100 * 1024, // 100KB
+    onError: (c) => {
+      return c.json(
+        {
+          error: 'payload_too_large',
+          message: 'Request body exceeds maximum allowed size (100KB)',
+        },
+        413
+      );
+    },
+  })
+);
+
 // Admin API endpoints
 app.get('/api/admin/stats', adminStatsHandler);
 app.get('/api/admin/users', adminUsersListHandler);
@@ -483,6 +503,22 @@ app.put('/api/admin/settings', adminSettingsUpdateHandler);
 // Migration: Legacy endpoints below will be deprecated in favor of settings-v2
 // =============================================================================
 app.route('/api/admin', settingsV2);
+
+// =============================================================================
+// Policy API (Contract Hierarchy - Tenant Policy / Client Profile / Effective Policy)
+// =============================================================================
+// Routes:
+// - GET/PUT /api/admin/tenant-policy
+// - GET /api/admin/tenant-policy/presets
+// - POST /api/admin/tenant-policy/apply-preset
+// - GET /api/admin/tenant-policy/validate
+// - GET/PUT /api/admin/clients/:clientId/profile
+// - GET /api/admin/client-profile-presets
+// - POST /api/admin/clients/:clientId/apply-preset
+// - GET /api/admin/clients/:clientId/profile/validate
+// - GET /api/admin/effective-policy?client_id=xxx
+// - GET /api/admin/effective-policy/options?client_id=xxx
+app.route('/api/admin', policyRouter);
 
 // Admin Certification Profile endpoints (OpenID Certification)
 // NOTE: Profiles apply predefined settings - kept for certification testing

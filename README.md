@@ -257,7 +257,7 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 
 **Phase 7: Identity Hub Foundation** ✅ Complete
 
-- Social Login: Google, Microsoft, GitHub, Apple, LinkedIn, Facebook, Twitter/X (全7プロバイダ) ✅
+- Social Login: Google, Microsoft, GitHub, Apple, LinkedIn, Facebook, Twitter/X (all 7 providers) ✅
 - RP Module (OIDC/OAuth 2.0 client for upstream IdPs) ✅
 - Identity Linking & Stitching (unified user identity across sources) ✅
 - PII/Non-PII Database Separation (GDPR/CCPA compliance) ✅

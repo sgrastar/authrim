@@ -13,7 +13,7 @@ import {
 
 /**
  * GET /api/admin/settings/revocation-shards
- * 現在のToken Revocationシャード設定を取得（Generation-based対応）
+ * Get current Token Revocation shard settings (generation-based)
  */
 export async function getRevocationShards(c: Context<{ Bindings: Env }>) {
   const config = await getRevocationShardConfig(c.env);
@@ -46,7 +46,7 @@ export async function getRevocationShards(c: Context<{ Bindings: Env }>) {
 
 /**
  * PUT /api/admin/settings/revocation-shards
- * Token Revocationシャード数を動的に変更（新世代を作成）
+ * Dynamically change Token Revocation shard count (creates new generation)
  */
 export async function updateRevocationShards(c: Context<{ Bindings: Env }>) {
   if (!c.env.AUTHRIM_CONFIG) {
@@ -62,7 +62,7 @@ export async function updateRevocationShards(c: Context<{ Bindings: Env }>) {
   const body = await c.req.json<{ shards?: number; updatedBy?: string }>();
   const { shards, updatedBy } = body;
 
-  // バリデーション
+  // Validation
   if (typeof shards !== 'number' || shards <= 0 || shards > 256) {
     return c.json(
       {
@@ -109,7 +109,7 @@ export async function updateRevocationShards(c: Context<{ Bindings: Env }>) {
 
 /**
  * DELETE /api/admin/settings/revocation-shards
- * Token Revocationシャード設定をリセット（KVから削除、デフォルトに戻す）
+ * Reset Token Revocation shard settings (delete from KV, restore defaults)
  */
 export async function resetRevocationShards(c: Context<{ Bindings: Env }>) {
   if (!c.env.AUTHRIM_CONFIG) {
@@ -122,11 +122,11 @@ export async function resetRevocationShards(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  // KVから両方のキーを削除
+  // Delete both keys from KV
   await c.env.AUTHRIM_CONFIG.delete(REVOCATION_SHARD_CONFIG_KEY);
   await c.env.AUTHRIM_CONFIG.delete('revocation_shards');
 
-  // キャッシュクリア
+  // Clear cache
   resetRevocationShardCountCache();
 
   return c.json({
@@ -140,7 +140,7 @@ export async function resetRevocationShards(c: Context<{ Bindings: Env }>) {
 
 /**
  * GET /api/admin/settings/revocation-shards/config
- * 詳細な設定情報を取得（デバッグ用）
+ * Get detailed configuration (for debugging)
  */
 export async function getRevocationShardsConfig(c: Context<{ Bindings: Env }>) {
   const config = await getRevocationShardConfig(c.env);

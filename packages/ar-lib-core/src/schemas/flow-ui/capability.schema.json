@@ -1,0 +1,240 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://authrim.io/schemas/flow-ui/capability.schema.json",
+  "title": "Capability",
+  "description": "UI Capability definition for Flow x UI separation. Represents a distinct UI interaction pattern.",
+  "type": "object",
+  "required": ["type", "id"],
+  "properties": {
+    "type": {
+      "$ref": "#/definitions/CapabilityType",
+      "description": "Capability type identifier"
+    },
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for this capability instance"
+    },
+    "category": {
+      "$ref": "#/definitions/CapabilityCategory",
+      "description": "Capability category"
+    },
+    "stability": {
+      "type": "string",
+      "enum": ["core", "stable", "experimental", "deprecated"],
+      "default": "stable",
+      "description": "Stability level"
+    },
+    "required": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether this capability must be fulfilled to proceed"
+    },
+    "hints": {
+      "$ref": "#/definitions/CapabilityHints",
+      "description": "UI rendering hints"
+    },
+    "validation": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ValidationRule"
+      },
+      "description": "Input validation rules"
+    },
+    "requires": {
+      "$ref": "#/definitions/FeatureRequirement",
+      "description": "Feature requirements for this capability"
+    }
+  },
+  "definitions": {
+    "CapabilityType": {
+      "type": "string",
+      "description": "All available capability types",
+      "oneOf": [
+        {
+          "enum": [
+            "collect_identifier",
+            "collect_secret",
+            "verify_possession",
+            "display_info",
+            "redirect",
+            "confirm_consent"
+          ],
+          "description": "Core capabilities (always available)"
+        },
+        {
+          "enum": [
+            "choose_organization",
+            "choose_role",
+            "delegate_access",
+            "view_permissions"
+          ],
+          "description": "Policy capabilities (RBAC/ReBAC)"
+        },
+        {
+          "enum": [
+            "agent_scope_request",
+            "agent_consent",
+            "mcp_tool_binding",
+            "mcp_resource_select",
+            "device_attestation",
+            "device_binding"
+          ],
+          "description": "Target capabilities (AI/IoT)"
+        }
+      ]
+    },
+    "CapabilityCategory": {
+      "type": "string",
+      "enum": ["core", "auth", "policy", "target"],
+      "description": "Capability category for organization"
+    },
+    "CapabilityHints": {
+      "type": "object",
+      "description": "UI rendering hints for the capability",
+      "properties": {
+        "inputType": {
+          "type": "string",
+          "enum": [
+            "text",
+            "email",
+            "password",
+            "tel",
+            "number",
+            "otp",
+            "select",
+            "multiselect",
+            "checkbox",
+            "radio",
+            "button",
+            "hidden"
+          ],
+          "description": "Input element type"
+        },
+        "label": {
+          "type": "string",
+          "description": "Field label (can be i18n key)"
+        },
+        "placeholder": {
+          "type": "string",
+          "description": "Placeholder text (can be i18n key)"
+        },
+        "helpText": {
+          "type": "string",
+          "description": "Help text (can be i18n key)"
+        },
+        "autoComplete": {
+          "type": "string",
+          "description": "HTML autocomplete attribute value"
+        },
+        "autoFocus": {
+          "type": "boolean",
+          "description": "Whether to auto-focus this input"
+        },
+        "mask": {
+          "type": "string",
+          "description": "Input mask pattern"
+        },
+        "maxLength": {
+          "type": "integer",
+          "description": "Maximum input length"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "value": { "type": "string" },
+              "label": { "type": "string" },
+              "disabled": { "type": "boolean" },
+              "description": { "type": "string" }
+            },
+            "required": ["value", "label"]
+          },
+          "description": "Options for select/multiselect/radio"
+        },
+        "variant": {
+          "type": "string",
+          "enum": ["default", "success", "warning", "error", "info"],
+          "description": "Visual variant for display_info"
+        },
+        "icon": {
+          "type": "string",
+          "description": "Icon identifier"
+        },
+        "webauthn": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["register", "authenticate"]
+            },
+            "discoverable": {
+              "type": "boolean",
+              "description": "Use discoverable credentials (passkey)"
+            }
+          },
+          "description": "WebAuthn-specific hints for verify_possession"
+        }
+      }
+    },
+    "ValidationRule": {
+      "type": "object",
+      "description": "Input validation rule",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "required",
+            "email",
+            "minLength",
+            "maxLength",
+            "pattern",
+            "numeric",
+            "alphanumeric",
+            "url",
+            "custom"
+          ],
+          "description": "Validation type"
+        },
+        "value": {
+          "description": "Validation value (e.g., minLength value, pattern regex)"
+        },
+        "message": {
+          "type": "string",
+          "description": "Error message (can be i18n key)"
+        }
+      }
+    },
+    "FeatureRequirement": {
+      "type": "object",
+      "description": "Features required for this capability to be available",
+      "properties": {
+        "policy": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["rbac", "abac", "rebac"]
+          },
+          "description": "Required policy features (any of)"
+        },
+        "target": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["human", "iot", "ai_agent", "ai_mcp", "service"]
+          },
+          "description": "Required target types (any of)"
+        },
+        "authMethod": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["passkey", "email_code", "password", "external_idp", "did"]
+          },
+          "description": "Required auth methods (any of)"
+        }
+      }
+    }
+  }
+}

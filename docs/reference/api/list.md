@@ -1,7 +1,7 @@
 # Authrim API Endpoints List
 
-**Last Updated**: 2025-12-25
-**Total Endpoints**: 150+
+**Last Updated**: 2025-12-26
+**Total Endpoints**: 160+
 
 This document provides a concise list of all available API endpoints in Authrim OIDC Provider.
 
@@ -287,6 +287,47 @@ Unified settings management with category-based endpoints and optimistic locking
 | POST   | `/api/admin/settings/migrate`        | Execute migration (v1→v2) |
 | GET    | `/api/admin/settings/migrate/status` | Get migration status     |
 | DELETE | `/api/admin/settings/migrate/lock`   | Clear migration lock     |
+
+---
+
+### ⭐ Policy API (Contract Hierarchy)
+
+Three-layer contract hierarchy management for policy-based access control.
+
+**Hierarchy**: `Tenant Policy → Client Profile → Effective Policy`
+
+#### Tenant Policy
+
+| Method | Endpoint                            | Description                        |
+| ------ | ----------------------------------- | ---------------------------------- |
+| GET    | `/api/admin/tenant-policy`          | Get current tenant policy          |
+| PUT    | `/api/admin/tenant-policy`          | Update tenant policy (ifMatch)     |
+| GET    | `/api/admin/tenant-policy/presets`  | List available presets             |
+| POST   | `/api/admin/tenant-policy/apply-preset` | Apply preset to tenant         |
+| GET    | `/api/admin/tenant-policy/validate` | Validate tenant policy             |
+
+**Presets**: `startup-minimal`, `b2c-standard`, `b2b-standard`, `b2b-enterprise`, `regulated-finance`, `regulated-healthcare`, `high-security`, `custom`
+
+#### Client Profile
+
+| Method | Endpoint                                  | Description                        |
+| ------ | ----------------------------------------- | ---------------------------------- |
+| GET    | `/api/admin/clients/:clientId/profile`    | Get client profile                 |
+| PUT    | `/api/admin/clients/:clientId/profile`    | Update client profile (ifMatch)    |
+| GET    | `/api/admin/client-profile-presets`       | List available presets             |
+| POST   | `/api/admin/clients/:clientId/apply-preset` | Apply preset to client           |
+| GET    | `/api/admin/clients/:clientId/profile/validate` | Validate against tenant policy |
+
+**Presets**: `spa-public`, `mobile-native`, `server-confidential`, `first-party-web`, `first-party-mobile`, `m2m-service`, `iot-device`, `custom`
+
+#### Effective Policy
+
+| Method | Endpoint                              | Description                                |
+| ------ | ------------------------------------- | ------------------------------------------ |
+| GET    | `/api/admin/effective-policy`         | Get resolved policy (requires `client_id`) |
+| GET    | `/api/admin/effective-policy/options` | Get flow designer options (requires `client_id`) |
+
+**Example**: `GET /api/admin/effective-policy?client_id=abc123&debug=true`
 
 ---
 

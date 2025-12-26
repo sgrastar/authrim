@@ -5,12 +5,12 @@
  * PUT    /api/admin/settings/introspection-validation  - Update settings
  * DELETE /api/admin/settings/introspection-validation  - Clear override
  *
- * Token Introspection Control Plane Test 用の厳密検証設定
+ * Strict validation settings for Token Introspection Control Plane Test
  *
- * RFC 7662では aud/client_id の検証はOptionalだが、
- * 厳密検証モードを有効にすると以下の追加チェックを行う:
- *   - aud がISSUER_URL と一致するか
- *   - client_id が登録されたクライアントか
+ * RFC 7662 states aud/client_id validation is optional, but
+ * when strict validation mode is enabled, the following additional checks are performed:
+ *   - Whether aud matches ISSUER_URL
+ *   - Whether client_id is a registered client
  *
  * Settings stored in SETTINGS KV under "system_settings" key:
  * {
@@ -26,7 +26,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 
-// Default settings (セキュリティ上、デフォルトはOFF = RFC 7662標準動作)
+// Default settings (for security, default is OFF = RFC 7662 standard behavior)
 const DEFAULT_SETTINGS = {
   strictValidation: false,
   expectedAudience: null as string | null,

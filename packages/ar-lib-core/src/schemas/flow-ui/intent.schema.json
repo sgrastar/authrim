@@ -1,0 +1,168 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://authrim.io/schemas/flow-ui/intent.schema.json",
+  "title": "Intent",
+  "description": "Flow Intent definitions. Represents what a flow state aims to achieve.",
+  "definitions": {
+    "Intent": {
+      "type": "string",
+      "description": "Intent identifier",
+      "oneOf": [
+        {
+          "enum": [
+            "identify_user",
+            "authenticate_user",
+            "verify_factor",
+            "obtain_consent",
+            "complete_flow",
+            "handle_error"
+          ],
+          "description": "Core intents (always available)"
+        },
+        {
+          "enum": [
+            "select_organization",
+            "select_role",
+            "delegate_identity",
+            "review_permissions"
+          ],
+          "description": "Policy intents (RBAC/ReBAC)"
+        },
+        {
+          "enum": [
+            "authorize_agent",
+            "scope_agent",
+            "bind_mcp_tools",
+            "authorize_mcp",
+            "attest_device",
+            "bind_device",
+            "authenticate_service"
+          ],
+          "description": "Target intents (AI/IoT/Service)"
+        }
+      ]
+    },
+    "IntentDefinition": {
+      "type": "object",
+      "description": "Detailed intent definition with metadata",
+      "required": ["id", "category", "description", "stability"],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/Intent",
+          "description": "Intent identifier"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["core", "policy", "target"],
+          "description": "Intent category"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the intent"
+        },
+        "stability": {
+          "type": "string",
+          "enum": ["core", "stable", "experimental", "deprecated"],
+          "description": "Stability level"
+        },
+        "requiredCapabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Capabilities typically used with this intent"
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Profiles that include this intent"
+        }
+      }
+    },
+    "CoreIntent": {
+      "type": "string",
+      "enum": [
+        "identify_user",
+        "authenticate_user",
+        "verify_factor",
+        "obtain_consent",
+        "complete_flow",
+        "handle_error"
+      ],
+      "description": "Core intents available in all profiles"
+    },
+    "PolicyIntent": {
+      "type": "string",
+      "enum": [
+        "select_organization",
+        "select_role",
+        "delegate_identity",
+        "review_permissions"
+      ],
+      "description": "Policy intents for RBAC/ReBAC features"
+    },
+    "TargetIntent": {
+      "type": "string",
+      "enum": [
+        "authorize_agent",
+        "scope_agent",
+        "bind_mcp_tools",
+        "authorize_mcp",
+        "attest_device",
+        "bind_device",
+        "authenticate_service"
+      ],
+      "description": "Target-specific intents for AI/IoT/Service"
+    }
+  },
+  "type": "object",
+  "description": "Intent registry containing all intent definitions",
+  "properties": {
+    "intents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/IntentDefinition"
+      }
+    }
+  },
+  "examples": [
+    {
+      "intents": [
+        {
+          "id": "identify_user",
+          "category": "core",
+          "description": "Collect user identifier (email, phone, username)",
+          "stability": "core",
+          "requiredCapabilities": ["collect_identifier"],
+          "profiles": ["human-basic", "human-org", "ai-agent", "iot-device"]
+        },
+        {
+          "id": "authenticate_user",
+          "category": "core",
+          "description": "Verify user identity through authentication",
+          "stability": "core",
+          "requiredCapabilities": ["collect_secret", "verify_possession"],
+          "profiles": ["human-basic", "human-org", "ai-agent", "iot-device"]
+        },
+        {
+          "id": "select_organization",
+          "category": "policy",
+          "description": "Select organization context for the session",
+          "stability": "stable",
+          "requiredCapabilities": ["choose_organization"],
+          "profiles": ["human-org", "ai-agent"]
+        },
+        {
+          "id": "authorize_agent",
+          "category": "target",
+          "description": "Authorize an AI agent to act on behalf of user",
+          "stability": "experimental",
+          "requiredCapabilities": ["agent_scope_request", "agent_consent"],
+          "profiles": ["ai-agent"]
+        }
+      ]
+    }
+  ]
+}

@@ -27,16 +27,16 @@ import { CapabilityRegistry } from '../../core/registry';
  * Each field uses .describe() for Admin UI display.
  */
 export const ConsoleNotifierConfigSchema = z.object({
-  prefix: z.string().default('[AUTHRIM-NOTIFY]').describe('ログメッセージのプレフィックス'),
+  prefix: z.string().default('[AUTHRIM-NOTIFY]').describe('Prefix for log messages'),
 
-  includeTimestamp: z.boolean().default(true).describe('ログにタイムスタンプを含めるか'),
+  includeTimestamp: z.boolean().default(true).describe('Include timestamp in logs'),
 
   logLevel: z
     .enum(['debug', 'info', 'warn'])
     .default('info')
-    .describe('ログレベル（debug/info/warn）'),
+    .describe('Log level (debug/info/warn)'),
 
-  prettyPrint: z.boolean().default(true).describe('JSONペイロードを整形して表示するか'),
+  prettyPrint: z.boolean().default(true).describe('Pretty print JSON payloads'),
 
   simulateDelayMs: z
     .number()
@@ -44,14 +44,14 @@ export const ConsoleNotifierConfigSchema = z.object({
     .min(0)
     .max(5000)
     .default(0)
-    .describe('シミュレート遅延（ミリ秒）。タイムアウト処理のテストに使用'),
+    .describe('Simulated delay (ms). Used for timeout handling tests'),
 
   simulateFailureRate: z
     .number()
     .min(0)
     .max(1)
     .default(0)
-    .describe('失敗シミュレート率（0-1）。0.5=50%の確率で失敗。エラーハンドリングのテストに使用'),
+    .describe('Failure simulation rate (0-1). 0.5 = 50% failure rate. Used for error handling tests'),
 });
 
 export type ConsoleNotifierConfig = z.infer<typeof ConsoleNotifierConfigSchema>;
@@ -76,7 +76,7 @@ export const consoleNotifierPlugin: AuthrimPlugin<ConsoleNotifierConfig> = {
     // Required fields
     name: 'Console Notifier',
     description:
-      '通知をコンソールにログ出力します。開発・テスト専用。本番環境では使用しないでください。',
+      'Logs notifications to console. For development and testing only. Do not use in production.',
     category: 'notification',
 
     // Author (official plugin)
@@ -102,19 +102,19 @@ export const consoleNotifierPlugin: AuthrimPlugin<ConsoleNotifierConfig> = {
 
     // Admin notes
     adminNotes: `
-## ⚠️ 開発専用プラグイン
-このプラグインは実際に通知を送信しません。
-本番環境で使用すると、ユーザーに通知が届かなくなります。
+## ⚠️ Development Only Plugin
+This plugin does not actually send notifications.
+Using it in production will prevent users from receiving notifications.
 
-## 用途
-- ローカル開発でのデバッグ
-- 統合テスト
-- 障害シミュレーション（simulateFailureRate）
-- レイテンシテスト（simulateDelayMs）
+## Use Cases
+- Debugging during local development
+- Integration testing
+- Failure simulation (simulateFailureRate)
+- Latency testing (simulateDelayMs)
 
-## 本番環境での対処
-本番環境で誤って有効になっている場合は、
-Resend等の実際のメール送信プラグインに切り替えてください。
+## Production Environment
+If accidentally enabled in production,
+switch to an actual email sending plugin like Resend.
     `.trim(),
   },
 

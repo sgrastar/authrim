@@ -36,14 +36,14 @@ export const ResendNotifierConfigSchema = z.object({
   apiKey: z
     .string()
     .min(1, 'API key is required')
-    .describe('Resend APIキー（re_で始まる）。Resendダッシュボードから取得'),
+    .describe('Resend API key (starts with re_). Obtain from Resend dashboard'),
 
   defaultFrom: z
     .string()
     .email('Invalid sender email address')
-    .describe('デフォルトの送信元メールアドレス。ドメイン認証が必要'),
+    .describe('Default sender email address. Requires domain verification'),
 
-  replyTo: z.string().email().optional().describe('返信先メールアドレス（任意）'),
+  replyTo: z.string().email().optional().describe('Reply-to email address (optional)'),
 
   timeoutMs: z
     .number()
@@ -51,7 +51,7 @@ export const ResendNotifierConfigSchema = z.object({
     .min(1000)
     .max(NOTIFIER_SECURITY_DEFAULTS.MAX_TIMEOUT_MS)
     .default(NOTIFIER_SECURITY_DEFAULTS.DEFAULT_TIMEOUT_MS)
-    .describe('APIリクエストのタイムアウト（ミリ秒）'),
+    .describe('API request timeout (milliseconds)'),
 
   maxRecipientsPerRequest: z
     .number()
@@ -59,18 +59,18 @@ export const ResendNotifierConfigSchema = z.object({
     .min(1)
     .max(NOTIFIER_SECURITY_DEFAULTS.MAX_RECIPIENTS_PER_REQUEST)
     .default(10)
-    .describe('1リクエストあたりの最大受信者数（To+CC+BCC合計）'),
+    .describe('Maximum recipients per request (To+CC+BCC combined)'),
 
   sandboxMode: z
     .boolean()
     .default(false)
-    .describe('サンドボックスモード。有効にするとメールは実際には送信されない（テスト用）'),
+    .describe('Sandbox mode. When enabled, emails are not actually sent (for testing)'),
 
   apiEndpoint: z
     .string()
     .url()
     .default('https://api.resend.com')
-    .describe('Resend APIエンドポイント。通常は変更不要'),
+    .describe('Resend API endpoint. Usually no need to change'),
 });
 
 export type ResendNotifierConfig = z.infer<typeof ResendNotifierConfigSchema>;
@@ -122,7 +122,7 @@ export const resendEmailPlugin: AuthrimPlugin<ResendNotifierConfig> = {
     // Required fields
     name: 'Resend Email',
     description:
-      'Resend APIを使用したトランザクションメール送信。OTP認証コード、パスワードリセット等に対応。',
+      'Transactional email sending via Resend API. Supports OTP codes, password reset, and more.',
     category: 'notification',
 
     // Author (official plugin)
@@ -147,7 +147,7 @@ export const resendEmailPlugin: AuthrimPlugin<ResendNotifierConfig> = {
         name: 'Resend API',
         url: 'https://resend.com',
         required: true,
-        description: 'メール送信サービス。APIキーとドメイン認証が必要',
+        description: 'Email sending service. Requires API key and domain verification',
       },
     ],
 
@@ -159,16 +159,16 @@ export const resendEmailPlugin: AuthrimPlugin<ResendNotifierConfig> = {
 
     // Admin notes
     adminNotes: `
-## セットアップ手順
-1. https://resend.com でアカウント作成
-2. ドメインを追加してDNS認証を完了
-3. APIキー（re_で始まる）を取得
-4. Admin APIで設定を更新
+## Setup Steps
+1. Create an account at https://resend.com
+2. Add your domain and complete DNS verification
+3. Obtain an API key (starts with re_)
+4. Update settings via Admin API
 
-## 注意事項
-- sandboxModeをtrueにすると実際にはメールが送信されません
-- 本番環境ではドメイン認証済みのFromアドレスのみ使用可能
-- レート制限: 無料プランは100通/日
+## Notes
+- When sandboxMode is true, emails are not actually sent
+- In production, only verified domain From addresses can be used
+- Rate limits: Free plan allows 100 emails/day
     `.trim(),
   },
 

@@ -2488,16 +2488,16 @@ export class RefreshTokenRotator {
 }
 ```
 
-**Option B: Synchronous Auditlog（強consistency）**
+**Option B: Synchronous Audit Log (Strong Consistency)**
 
-Securityevent（Theft detection等）onlySynchronouswrite.
+Only synchronous write for security events (such as theft detection).
 
 ```typescript
 async rotate(request: RotateTokenRequest): Promise<RotateTokenResponse> {
   // ... token rotation processing ...
 
   if (theftDetected) {
-    // Theft detection → Synchronous logwrite（Failed, return Error返却）
+    // Theft detection → Synchronous log write (if failed, return error)
     await this.logToD1Sync({
       event: 'refresh_token.theft_detected',
       userId: request.userId,
@@ -2508,7 +2508,7 @@ async rotate(request: RotateTokenRequest): Promise<RotateTokenResponse> {
     throw new Error('invalid_grant: Token theft detected');
   }
 
-  // normallyrotation → Async log（best effort）
+  // Normal rotation → Async log (best effort)
   void this.auditQueue.enqueue({ ... });
 
   return result;
@@ -2525,29 +2525,29 @@ private async logToD1Sync(entry: AuditLogEntry): Promise<void> {
 }
 ```
 
-**Recommended**: Option A (Retryqueue) + Option B (ImportanteventSync)Hybrid
+**Recommended**: Hybrid of Option A (Retry queue) + Option B (Sync for important events)
 
 ---
 
-### 2.6 Rate LimitingDesign Choices
+### 2.6 Rate Limiting Design Choices
 
 #### Option Comparison
 
-| Option                   | precision      | Performance         | Complexity | Cost   |
+| Option                   | Precision      | Performance         | Complexity | Cost   |
 | ------------------------ | -------------- | ------------------- | ---------- | ------ |
-| Option 1: DO             | ✅ Perfect     | ⚠️ Shardingrequired | High       | High   |
+| Option 1: DO             | ✅ Perfect     | ⚠️ Sharding required | High       | High   |
 | Option 2: DO Alarms + KV | ✅ High        | ✅ Good             | Medium     | Medium |
-| Option 3: KV (Current)   | ⚠️ best effort | ✅ Best             | Low        | Low    |
+| Option 3: KV (Current)   | ⚠️ Best effort | ✅ Best             | Low        | Low    |
 
-**Recommended**: Option 3（CurrentMaintain） + Documentation
+**Recommended**: Option 3 (Maintain current) + Documentation
 
 **Reason**:
 
-- Rate limiting「best effort」in many cases多い
-- perfect precisionAlso than, simplicity and low cost priority
-- AttackersMultipleIPusefor, Single IP precisionImprovementEffectlimited
+- Rate limiting is "best effort" in many cases
+- Simplicity and low cost take priority over perfect precision
+- Attackers use multiple IPs, so single IP precision improvement has limited effect
 
-**DocumentationAdd**:
+**Documentation to Add**:
 
 ```typescript
 // packages/shared/src/middleware/rate-limit.ts
@@ -2555,27 +2555,27 @@ private async logToD1Sync(entry: AuditLogEntry): Promise<void> {
 /**
  * Rate Limiting Middleware (Best-Effort)
  *
- * This rate limitingimplementation is KV-based, , eventual consistency, not perfect precisionis not guaranteed.
- * ParallelrequestThanCount不accuratebecomepossibleexist, 以DecreaseReasonThanacceptable range内：
+ * This rate limiting implementation is KV-based with eventual consistency, so perfect precision is not guaranteed.
+ * Parallel requests may cause inaccurate counts, but this is acceptable for the following reasons:
  *
- * 1. Rate limitingMain DDoSCountermeasure (Large number of requests）Purpose, boundary value precisionNot important
- * 2. Attackersnormally, MultipleIP addresses, use for, Single IP precisionImprovement is limited
- * 3. Simple implementationThan, PerformanceCostOptimization
+ * 1. Rate limiting mainly targets DDoS countermeasures (large number of requests), so boundary value precision is not critical
+ * 2. Attackers normally use multiple IP addresses, so single IP precision improvement has limited effect
+ * 3. Simple implementation optimizes performance and cost
  *
- * Higher precision Rate limiting required case（example: Billing API quotaManagement）,
- * Durable ObjectsBasedimplementationConsiderしてくさい.
+ * For cases requiring higher precision rate limiting (e.g., billing API quota management),
+ * please consider a Durable Objects-based implementation.
  */
 export function rateLimitMiddleware(config: RateLimitConfig) {
   // ...
 }
 ```
 
-**Alternative (FutureImprovement)**:
+**Alternative (Future Improvement)**:
 
-Strict precisionrequired caseonly, SpecificendpointDOBaseduse.
+Use DO-based approach only for specific endpoints that require strict precision.
 
 ```typescript
-// Rate Limit DO (Highprecision版)
+// Rate Limit DO (High precision version)
 export class RateLimitCounter {
   private counts: Map<string, { count: number; resetAt: number }> = new Map();
 
@@ -2597,9 +2597,9 @@ export class RateLimitCounter {
 
 ---
 
-### 2.7 Passkey Counter Compare-and-Swap implementation
+### 2.7 Passkey Counter Compare-and-Swap Implementation
 
-#### implementationDetails
+#### Implementation Details
 
 ```typescript
 // packages/shared/src/storage/adapters/cloudflare-adapter.ts
@@ -2687,17 +2687,17 @@ export class PasskeyStore implements IPasskeyStore {
 }
 ```
 
-**WebAuthnSpecificationcompliance**:
+**WebAuthn Specification Compliance**:
 
-- ✅ CounterMonotonicIncreaseguarantee
-- ✅ CloneDetection（counterDecreaseWhenError）
-- ✅ ParallelrequestSupport（Compare-and-Swap）
+- ✅ Counter monotonic increase guarantee
+- ✅ Clone detection (error on counter decrease)
+- ✅ Parallel request support (Compare-and-Swap)
 
 ---
 
-### 2.8 sessiontokenManagementImprovement
+### 2.8 Session Token Management Improvement
 
-#### Option A: TTLshortening（最alsoSimple）
+#### Option A: TTL Shortening (Simplest)
 
 ```typescript
 // packages/op-auth/src/session-management.ts
@@ -2705,21 +2705,21 @@ export class PasskeyStore implements IPasskeyStore {
 // Current: 5 minutes
 const SESSION_TOKEN_TTL = 300;
 
-// Improvement: 30 secondsshortening
+// Improvement: Shorten to 30 seconds
 const SESSION_TOKEN_TTL = 30;
 ```
 
 **Benefits**:
 
-- implementationChangesNone
-- Race conditionstateImpactMinimize
+- No implementation changes required
+- Minimizes race condition impact
 
 **Drawbacks**:
 
-- UXLowDecrease（ShortTTLuserRe-authenticationRequiredpossible）
-- ITPSupportEssential resolvenot
+- UX may degrade (shorter TTL may require user re-authentication)
+- Does not completely resolve ITP support issues
 
-#### Option B: Durable ObjectManagement（Perfect複雑）
+#### Option B: Durable Object Management (Perfect but Complex)
 
 ```typescript
 // packages/shared/src/durable-objects/SessionTokenStore.ts (new)
@@ -2744,7 +2744,7 @@ export class SessionTokenStore {
       return null;
     }
 
-    // AtomicuseMark
+    // Atomic use mark
     tokenData.used = true;
     this.tokens.set(token, tokenData);
 
@@ -2756,28 +2756,28 @@ export class SessionTokenStore {
 **Benefits**:
 
 - ✅ Perfect consistency
-- ✅ Race conditionstateNone
+- ✅ No race condition
 
 **Drawbacks**:
 
-- ComplexityIncrease
-- CostIncrease
+- Increased complexity
+- Increased cost
 
-#### Recommended: Option A（TTLshortening + Documentation）
+#### Recommended: Option A (TTL Shortening + Documentation)
 
 **Reason**:
 
-- sessiontoken一When的 also, perfect precisionRequirednot
-- TTLshorteningImpactMinimizeすれば十 minutes
-- SimpleさMaintain
+- Session tokens are temporary, so perfect precision is not required
+- Minimizing impact through TTL shortening is sufficient
+- Maintains simplicity
 
 ---
 
-### 2.9 SessionStore DO persistence implementation（Critical）⚠️ NEW
+### 2.9 SessionStore DO Persistence Implementation (Critical) ⚠️ NEW
 
-**strategy**: KeyManagerPatternApply
+**Strategy**: Apply KeyManager pattern
 
-#### Step 1: Durable StorageInterfaceAdd
+#### Step 1: Add Durable Storage Interface
 
 ```typescript
 // packages/shared/src/durable-objects/SessionStore.ts
@@ -3107,7 +3107,7 @@ export class AuthorizationCodeStore {
 }
 ```
 
-#### Step 2: Token Endpointmigration（最Important）
+#### Step 2: Token Endpoint Migration (Most Important)
 
 ```typescript
 // packages/op-token/src/token.ts
@@ -3161,9 +3161,9 @@ async function handleAuthorizationCodeGrant(c, formData) {
 
 ---
 
-### 2.11 PAR request_uri Race conditionstate対処（Medium）⚠️ NEW
+### 2.11 PAR request_uri Race Condition Handling (Medium) ⚠️ NEW
 
-#### Option 1: Durable Object for PAR（完all resolve）
+#### Option 1: Durable Object for PAR (Complete Resolution)
 
 ```typescript
 // packages/shared/src/durable-objects/PARRequestStore.ts (new)
@@ -3236,15 +3236,15 @@ export class PARRequestStore {
 }
 ```
 
-#### Option 2: Current受容 + Monitoring（Recommended）
+#### Option 2: Accept Current State + Monitoring (Recommended)
 
 **Reason**:
 
-- 攻撃難易度極めてHigh（precise taiミnグcontrolrequired）
-- Impactrangelimited（他Security層保護）
-- implementationCostHigh（newDO + Migration）
+- Attack difficulty is extremely high (requires precise timing control)
+- Impact range is limited (protected by other security layers)
+- Implementation cost is high (new DO + migration)
 
-**代替apロチ**:
+**Alternative Approach**:
 
 ```typescript
 // packages/op-auth/src/authorize.ts
@@ -3279,25 +3279,25 @@ await c.env.STATE_STORE.delete(`request_uri:${request_uri}`);
 await c.env.STATE_STORE.delete(processingKey);
 ```
 
-**Recommended**: Option 2（Current受容 + Monitoring）
+**Recommended**: Option 2 (Accept Current State + Monitoring)
 
-**Effort estimation**: 0.5-1days（Monitoringonly）
+**Effort estimation**: 0.5-1 days (Monitoring only)
 
 ---
 
-## 3. implementationPriority順位
+## 3. Implementation Priority Order
 
-### Priority 1: CriticalSecuritymodification
+### Priority 1: Critical Security Modifications
 
-#### 3.1 authorizationcodeDOmigration (Estimated effort: 2-3days)
+#### 3.1 Authorization Code DO Migration (Estimated effort: 2-3 days)
 
 **Task**:
 
-1. `authorize.ts` modification - AuthorizationCodeStore DOuse
-2. `token.ts` modification - consumeCode() APIuse
-3. `AuthorizationCodeStore.ts` Extension - PKCEVerification, 再利用Detection
-4. integratetest - authorizationflowall体
-5. Securitytest - 再利用攻撃シナriオ
+1. `authorize.ts` modification - Use AuthorizationCodeStore DO
+2. `token.ts` modification - Use consumeCode() API
+3. `AuthorizationCodeStore.ts` extension - PKCE verification, reuse detection
+4. Integration test - Full authorization flow
+5. Security test - Reuse attack scenarios
 
 **File changes**:
 
@@ -3306,13 +3306,13 @@ await c.env.STATE_STORE.delete(processingKey);
 - `packages/shared/src/durable-objects/AuthorizationCodeStore.ts`
 - `test/integration/authorization-code-flow.test.ts` (new)
 
-#### 3.2 KVcacheDisable化modification (Estimated effort: 1days)
+#### 3.2 KV Cache Invalidation Modification (Estimated effort: 1 day)
 
 **Task**:
 
 1. `cloudflare-adapter.ts` modification - Delete-Then-Write
-2. ErrorハnドrinグAdd
-3. integratetest - clientUpdateflow
+2. Add error handling
+3. Integration test - Client update flow
 
 **File changes**:
 
@@ -3321,17 +3321,17 @@ await c.env.STATE_STORE.delete(processingKey);
 
 ---
 
-### Priority 2: 信頼性Improvement
+### Priority 2: Reliability Improvement
 
-#### 3.3 D1writeRetryLogic (Estimated effort: 3-4days)
+#### 3.3 D1 Write Retry Logic (Estimated effort: 3-4 days)
 
 **Task**:
 
-1. `SessionStore.ts` modification - Retryqueueimplementation
-2. MonitoringユtiritiCreate - `monitoring.ts`
-3. Alertintegrate - Cloudflare Analytics Engine
-4. integratetest - Failureシナriオ
-5. loadtest - queuePerformance
+1. `SessionStore.ts` modification - Retry queue implementation
+2. Create monitoring utility - `monitoring.ts`
+3. Alert integration - Cloudflare Analytics Engine
+4. Integration test - Failure scenarios
+5. Load test - Queue performance
 
 **File changes**:
 
@@ -3339,30 +3339,30 @@ await c.env.STATE_STORE.delete(processingKey);
 - `packages/shared/src/utils/monitoring.ts` (new)
 - `test/durable-objects/SessionStore.retry.test.ts` (new)
 
-#### 3.4 RefreshTokenRotatorpersistence (Estimated effort: 2-3days)
+#### 3.4 RefreshTokenRotator Persistence (Estimated effort: 2-3 days)
 
 **Task**:
 
-1. `RefreshTokenRotator.ts` modification - Durable Storageuse
-2. `initializeState()` / `saveState()` メソtドAdd
-3. ExistingメソtドpersistenceSupport (create, rotate, revoke)
-4. migrationtest - Existingtokenfamilymigration
-5. loadtest - storageサiズ制限Confirm
+1. `RefreshTokenRotator.ts` modification - Use Durable Storage
+2. Add `initializeState()` / `saveState()` methods
+3. Add persistence support to existing methods (create, rotate, revoke)
+4. Migration test - Existing token family migration
+5. Load test - Confirm storage size limits
 
 **File changes**:
 
 - `packages/shared/src/durable-objects/RefreshTokenRotator.ts`
 - `test/durable-objects/RefreshTokenRotator.persistence.test.ts` (new)
 
-#### 3.5 Passkey Counter Compare-and-Swap implementation (Estimated effort: 1-2days)
+#### 3.5 Passkey Counter Compare-and-Swap Implementation (Estimated effort: 1-2 days)
 
 **Task**:
 
 1. `cloudflare-adapter.ts` `updateCounter()` modification
-2. Conditional付きUPDATE文implementation
-3. RetryLogicAdd
-4. WebAuthnSpecificationcompliancetest
-5. Parallelrequestloadtest
+2. Implement conditional UPDATE statement
+3. Add retry logic
+4. WebAuthn specification compliance test
+5. Parallel request load test
 
 **File changes**:
 
@@ -3371,17 +3371,17 @@ await c.env.STATE_STORE.delete(processingKey);
 
 ---
 
-### Priority 3: 観測性Documentation
+### Priority 3: Observability and Documentation
 
-#### 3.6 Auditlog信頼性Improvement (Estimated effort: 2-3days)
+#### 3.6 Audit Log Reliability Improvement (Estimated effort: 2-3 days)
 
 **Task**:
 
-1. `AuditLogQueue` kuラスCreate
-2. `SessionStore` `RefreshTokenRotator` tointegrate
-3. SecurityeventSync logimplementation
-4. Alertintegrate
-5. コnpラianスtest
+1. Create `AuditLogQueue` class
+2. Integrate with `SessionStore` and `RefreshTokenRotator`
+3. Implement sync log for security events
+4. Alert integration
+5. Compliance test
 
 **File changes**:
 
@@ -3390,37 +3390,37 @@ await c.env.STATE_STORE.delete(processingKey);
 - `packages/shared/src/durable-objects/RefreshTokenRotator.ts`
 - `test/audit/audit-log-reliability.test.ts` (new)
 
-#### 3.7 Rate LimitingDocumentation (Estimated effort: 0.5days)
+#### 3.7 Rate Limiting Documentation (Estimated effort: 0.5 days)
 
 **Task**:
 
-1. `rate-limit.ts` DocumentationAdd（best effortprecision説明）
-2. FutureImprovementOption記載
-3. DO版参考implementation（コメnト）
+1. Add documentation to `rate-limit.ts` (explain best-effort precision)
+2. Document future improvement options
+3. Add DO version reference implementation (in comments)
 
 **File changes**:
 
 - `packages/shared/src/middleware/rate-limit.ts`
 
-#### 3.8 sessiontokenTTLshortening (Estimated effort: 0.5days)
+#### 3.8 Session Token TTL Shortening (Estimated effort: 0.5 days)
 
 **Task**:
 
-1. `session-management.ts` TTL 調整 (300 seconds → 30 seconds)
-2. DocumentationAdd（Race conditionstateImpactMinimize説明）
-3. UXImpact評価
+1. Adjust TTL in `session-management.ts` (300 seconds → 30 seconds)
+2. Add documentation (explain race condition impact minimization)
+3. Evaluate UX impact
 
 **File changes**:
 
 - `packages/op-auth/src/session-management.ts`
 
-#### 3.9 consistencyレベru明示化 (Estimated effort: 2days)
+#### 3.9 Consistency Level Documentation (Estimated effort: 2 days)
 
 **Task**:
 
-1. intaフェスExtension - `WriteOptions`
-2. DocumentationCreate - consistencyモデru説明
-3. clientガiド - 各操作guaranteeレベru
+1. Interface extension - `WriteOptions`
+2. Create documentation - Consistency model explanation
+3. Client guide - Guarantee level for each operation
 
 **File changes**:
 
@@ -3429,18 +3429,18 @@ await c.env.STATE_STORE.delete(processingKey);
 
 ---
 
-### Priority 4: 新発見problemSupport（v3.0）⚠️ NEW
+### Priority 4: Newly Discovered Issues (v3.0) ⚠️ NEW
 
-#### 3.10 SessionStore DO persistence implementation (Estimated effort: 2-3days)
+#### 3.10 SessionStore DO Persistence Implementation (Estimated effort: 2-3 days)
 
 **Task**:
 
-1. `SessionStore.ts` modification - Durable Storageuse
-2. `initializeState()` / `saveState()` メソtドimplementation
-3. Map → Record 変換（シriaラiゼショnSupport）
-4. D1fallbackmigrationsupportimplementation
-5. MigrationstrategyExecute（Dual Write period）
-6. Performancetest - persistenceオバヘtド測定
+1. `SessionStore.ts` modification - Use Durable Storage
+2. Implement `initializeState()` / `saveState()` methods
+3. Map → Record conversion (serialization support)
+4. Implement D1 fallback migration support
+5. Execute migration strategy (dual write period)
+6. Performance test - Measure persistence overhead
 
 **File changes**:
 
@@ -3448,20 +3448,20 @@ await c.env.STATE_STORE.delete(processingKey);
 - `test/durable-objects/SessionStore.persistence.test.ts` (new)
 - `test/integration/session-migration.test.ts` (new)
 
-**Priority度**: **CRITICAL** - alluser DO on restartlogaウトed
+**Priority**: **CRITICAL** - All users are logged out on DO restart
 
 ---
 
-#### 3.11 AuthorizationCodeStore DO persistence + Token Endpoint migration (Estimated effort: 2-3days)
+#### 3.11 AuthorizationCodeStore DO Persistence + Token Endpoint Migration (Estimated effort: 2-3 days)
 
 **Task**:
 
-1. `AuthorizationCodeStore.ts` modification - Durable Storageuse
-2. `initializeState()` / `saveState()` メソtドimplementation
-3. **Token endpoint (`token.ts`) DO usemigration** ← 最Important
-4. KV BasedFunctionDeprecation (`getAuthCode`, `markAuthCodeAsUsed`)
-5. integratetest - OAuth flowall体（DO経由）
-6. Securitytest - Race conditionstate解消Confirm
+1. `AuthorizationCodeStore.ts` modification - Use Durable Storage
+2. Implement `initializeState()` / `saveState()` methods
+3. **Token endpoint (`token.ts`) DO use migration** ← Most Important
+4. Deprecate KV-based functions (`getAuthCode`, `markAuthCodeAsUsed`)
+5. Integration test - Full OAuth flow (via DO)
+6. Security test - Confirm race condition resolution
 
 **File changes**:
 
@@ -3470,76 +3470,76 @@ await c.env.STATE_STORE.delete(processingKey);
 - `packages/shared/src/utils/kv.ts` (Delete: `getAuthCode`, `markAuthCodeAsUsed`)
 - `test/integration/authorization-code-do.test.ts` (new)
 
-**Priority度**: **CRITICAL** - problem3（KVRace conditionstate）problem10（Lack of persistence）bothresolve
+**Priority**: **CRITICAL** - Resolves both issue #3 (KV race condition) and issue #10 (lack of persistence)
 
-**注**: こTask 3.1（authorizationcodeDOmigration）integrate可能
+**Note**: This task can be integrated with Task 3.1 (authorization code DO migration)
 
 ---
 
-#### 3.12 PAR request_uri Monitoringimplementation (Estimated effort: 0.5-1days)
+#### 3.12 PAR request_uri Monitoring Implementation (Estimated effort: 0.5-1 days)
 
 **Task**:
 
-1. `authorize.ts` processingマkaAdd
-2. ParalleluseDetectionLogicimplementation
-3. Alertintegrate - 疑わしいusePatternDetection
-4. Documentation - RFC 9126 制限事項
+1. Add processing marker to `authorize.ts`
+2. Implement parallel use detection logic
+3. Alert integration - Detect suspicious usage patterns
+4. Documentation - RFC 9126 limitations
 
 **File changes**:
 
 - `packages/op-auth/src/authorize.ts`
 - `docs/security/par-limitations.md` (new)
 
-**Priority度**: MEDIUM - 攻撃難易度Highく, Impactlimited
+**Priority**: MEDIUM - Attack difficulty is high and impact is limited
 
-**Recommended**: Option 2（Current受容 + Monitoring）採用
+**Recommended**: Adopt Option 2 (Accept Current State + Monitoring)
 
 ---
 
-### 総合Estimated effort（v3.0Update）
+### Total Effort Estimation (v3.0 Update)
 
-| Priority              | Task                                          | Effort        | problem       |
+| Priority              | Task                                          | Effort        | Issue         |
 | --------------------- | --------------------------------------------- | ------------- | ------------- |
 | **Priority 1**        |                                               |               |               |
-| 3.1                   | authorizationcodeDOmigration                  | 2-3days       | #3            |
-| 3.2                   | KVcacheDisable化modification                  | 1days         | #2            |
+| 3.1                   | Authorization code DO migration               | 2-3 days      | #3            |
+| 3.2                   | KV cache invalidation modification            | 1 day         | #2            |
 | **Priority 2**        |                                               |               |               |
-| 3.3                   | D1writeRetryLogic                             | 3-4days       | #1            |
-| 3.4                   | RefreshTokenRotatorpersistence                | 2-3days       | #4            |
-| 3.5                   | Passkey Counter CASimplementation             | 1-2days       | #7            |
+| 3.3                   | D1 write retry logic                          | 3-4 days      | #1            |
+| 3.4                   | RefreshTokenRotator persistence               | 2-3 days      | #4            |
+| 3.5                   | Passkey Counter CAS implementation            | 1-2 days      | #7            |
 | **Priority 3**        |                                               |               |               |
-| 3.6                   | Auditlog信頼性Improvement                     | 2-3days       | #5            |
-| 3.7                   | Rate LimitingDocumentation                    | 0.5days       | #6            |
-| 3.8                   | sessiontokenTTLshortening                     | 0.5days       | #8            |
-| 3.9                   | consistencyレベru明示化                       | 2days         | -             |
+| 3.6                   | Audit log reliability improvement             | 2-3 days      | #5            |
+| 3.7                   | Rate limiting documentation                   | 0.5 days      | #6            |
+| 3.8                   | Session token TTL shortening                  | 0.5 days      | #8            |
+| 3.9                   | Consistency level documentation               | 2 days        | -             |
 | **Priority 4 ⚠️ NEW** |                                               |               |               |
-| 3.10                  | SessionStore DO persistence                   | 2-3days       | **#9**        |
-| 3.11                  | AuthCodeStore DO persistence + Tokenmigration | 2-3days       | **#10 + #3**  |
-| 3.12                  | PAR request_uri Monitoring                    | 0.5-1days     | **#11**       |
-| **Total（v2.0）**     |                                               | **14-20days** | 8problem      |
-| **Total（v3.0）**     |                                               | **19-27days** | **11problem** |
+| 3.10                  | SessionStore DO persistence                   | 2-3 days      | **#9**        |
+| 3.11                  | AuthCodeStore DO persistence + Token migration | 2-3 days     | **#10 + #3**  |
+| 3.12                  | PAR request_uri Monitoring                    | 0.5-1 days    | **#11**       |
+| **Total (v2.0)**      |                                               | **14-20 days**| 8 issues      |
+| **Total (v3.0)**      |                                               | **19-27 days**| **11 issues** |
 
-**v2.0 → v3.0 Increase minutes**: +5-7days（new3problemSupport）
+**v2.0 → v3.0 Increase**: +5-7 days (new 3 issues support)
 
-**Recommendedimplementation順序（v3.0Update）**:
+**Recommended Implementation Order (v3.0 Update)**:
 
-**最Priority（userImpactMaximum）**:
+**Highest Priority (Maximum User Impact)**:
 
-1. **3.10 SessionStore DO persistence（problem#9）** ← alluserDO再起動強制logaウト
-2. **3.4 RefreshTokenRotator persistence（problem#4）** ← alluserRe-authenticationRequired
-3. **3.11 AuthCodeStore DO persistence（problem#10）** ← OAuth flowFailure
+1. **3.10 SessionStore DO persistence (issue #9)** ← All users forced logout on DO restart
+2. **3.4 RefreshTokenRotator persistence (issue #4)** ← All users require re-authentication
+3. **3.11 AuthCodeStore DO persistence (issue #10)** ← OAuth flow failure
 
-**次点（Security）**: 4. **3.1 + 3.11integrate: authorizationcodeDOmigration（problem#3）** ← 3.11Support 5. **3.5 Passkey Counter CAS（problem#7）** ← WebAuthnSpecification違反
+**Secondary (Security)**: 4. **3.1 + 3.11 integration: Authorization code DO migration (issue #3)** ← Supports 3.11 5. **3.5 Passkey Counter CAS (issue #7)** ← WebAuthn specification violation
 
-**そ他**: 6. 3.2 KVcache（problem#2） → 3.3 D1Retry（problem#1） → 3.6 Auditlog（problem#5）7. 3.12 PAR Monitoring（problem#11） → 3.7-3.9 Documentation
+**Others**: 6. 3.2 KV cache (issue #2) → 3.3 D1 Retry (issue #1) → 3.6 Audit log (issue #5) 7. 3.12 PAR Monitoring (issue #11) → 3.7-3.9 Documentation
 
-**注**: Task3.13.11integrate可能（AuthorizationCodeStore関連for）
+**Note**: Tasks 3.1 and 3.11 can be integrated (both related to AuthorizationCodeStore)
 
 ---
 
-## 4. teststrategy
+## 4. Test Strategy
 
-### 4.1 ユニtトtest
+### 4.1 Unit Test
 
 ```typescript
 // test/durable-objects/SessionStore.retry.test.ts
@@ -3561,13 +3561,13 @@ describe('SessionStore - Retry Logic', () => {
     const store = new SessionStore(state, { ...env, DB: mockD1 });
     const session = await store.createSession('user_123', 3600);
 
-    // memoryImmediatesaveされて
+    // Immediately saved to memory
     expect(store.sessions.has(session.id)).toBe(true);
 
-    // Retryprocessing待
+    // Wait for retry processing
     await waitForQueueProcessing(store);
 
-    // 最終的D1writeSuccess
+    // Eventually D1 write succeeds
     expect(mockD1.prepare).toHaveBeenCalledTimes(3);
   });
 
@@ -3584,9 +3584,9 @@ describe('SessionStore - Retry Logic', () => {
     const store = new SessionStore(state, { ...env, DB: mockD1 }, { onAlert: alertSpy });
 
     await store.createSession('user_123', 3600);
-    await waitForQueueProcessing(store, 10000); // Maximum10 secondsWait
+    await waitForQueueProcessing(store, 10000); // Wait maximum 10 seconds
 
-    // AlertsendConfirm
+    // Confirm alert was sent
     expect(alertSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'D1_WRITE_FAILURE',
@@ -3597,14 +3597,14 @@ describe('SessionStore - Retry Logic', () => {
 });
 ```
 
-### 4.2 integratetest
+### 4.2 Integration Test
 
 ```typescript
 // test/integration/authorization-code-flow.test.ts
 
 describe('Authorization Code Flow - Race Condition', () => {
   it('should prevent code reuse across multiple requests', async () => {
-    // 1. authorizationcodefetch
+    // 1. Get authorization code
     const authResponse = await app.request('/authorize', {
       method: 'GET',
       query: {
@@ -3618,7 +3618,7 @@ describe('Authorization Code Flow - Race Condition', () => {
     const location = new URL(authResponse.headers.get('Location')!);
     const code = location.searchParams.get('code')!;
 
-    // 2. Parallelしてtokenrequest（Race conditionstateシミュレショn）
+    // 2. Make parallel token requests (simulate race condition)
     const [response1, response2] = await Promise.all([
       app.request('/token', {
         method: 'POST',
@@ -3640,16 +3640,16 @@ describe('Authorization Code Flow - Race Condition', () => {
       }),
     ]);
 
-    // 3. Verification: 1onlySuccess, alsoう1Failure
+    // 3. Verification: Only 1 succeeds, the other fails
     const results = [response1, response2].map((r) => r.status);
-    expect(results).toContain(200); // 1Success
-    expect(results).toContain(400); // 1Failure
-    expect(results.filter((s) => s === 200).length).toBe(1); // Success1only
+    expect(results).toContain(200); // 1 success
+    expect(results).toContain(400); // 1 failure
+    expect(results.filter((s) => s === 200).length).toBe(1); // Only 1 success
   });
 });
 ```
 
-### 4.3 loadtest
+### 4.3 Load Test
 
 ```typescript
 // test/load/cache-invalidation.test.ts
@@ -3658,12 +3658,12 @@ describe('Client Cache Invalidation - Load Test', () => {
   it('should handle concurrent reads during cache invalidation', async () => {
     const clientId = 'load_test_client';
 
-    // 100Parallelrequest
+    // 100 parallel requests
     const reads = Array.from({ length: 100 }, () =>
       app.request(`/clients/${clientId}`, { method: 'GET' })
     );
 
-    // readMediumclientUpdate
+    // Client update while reading
     const update = app.request(`/clients/${clientId}`, {
       method: 'PUT',
       body: JSON.stringify({ client_name: 'Updated Name' }),
@@ -3674,15 +3674,15 @@ describe('Client Cache Invalidation - Load Test', () => {
     // Verification
     expect(updateResponse.status).toBe(200);
 
-    // allてreadSuccess（old newdata）
+    // All reads succeed (with either old or new data)
     for (const response of readResponses) {
       expect(response.status).toBe(200);
       const data = await response.json();
-      // data一貫して（old new , どちら ）
+      // Data is consistent (either old or new)
       expect(['Old Name', 'Updated Name']).toContain(data.client_name);
     }
 
-    // Updateafterread必ずnewdata
+    // Reads after update must return new data
     const finalRead = await app.request(`/clients/${clientId}`);
     const finalData = await finalRead.json();
     expect(finalData.client_name).toBe('Updated Name');
@@ -3692,49 +3692,49 @@ describe('Client Cache Invalidation - Load Test', () => {
 
 ---
 
-## 5. Migration計画
+## 5. Migration Plan
 
-### 5.1 authorizationcodeDOmigration
+### 5.1 Authorization Code DO Migration
 
-**Gradualロruaウト**:
+**Gradual Rollout**:
 
 ```typescript
-// 環境VariableフiチャFlagcontrol
+// Environment variable feature flag control
 const USE_AUTH_CODE_DO = env.FEATURE_AUTH_CODE_DO === 'true';
 
 if (USE_AUTH_CODE_DO) {
-  // 新method: Durable Object
+  // New method: Durable Object
   await storeCodeInDO(env, code, data);
 } else {
-  // 旧method: KV
+  // Old method: KV
   await storeAuthCode(env, code, data);
 }
 ```
 
-**ロruaウトステジ**:
+**Rollout Stages**:
 
-1. **Stage 1** (1weeks): 開発環境DOEnable化, test
-2. **Stage 2** (1weeks): Canary環境5%トラフitku
-3. **Stage 3** (1weeks): Canary環境50%トラフitku
-4. **Stage 4** (1weeks): 本番環境100%
-5. **Stage 5** (2weeksafter): KV AUTH_CODESDelete
+1. **Stage 1** (1 week): Enable DO in development environment, test
+2. **Stage 2** (1 week): Canary environment 5% traffic
+3. **Stage 3** (1 week): Canary environment 50% traffic
+4. **Stage 4** (1 week): Production environment 100%
+5. **Stage 5** (2 weeks after): Delete KV AUTH_CODES
 
-### 5.2 Monitoring指標
+### 5.2 Monitoring Metrics
 
 ```typescript
-// メトrikuス収集
+// Metrics collection
 interface StorageMetrics {
-  // D1write
+  // D1 write
   d1_write_success: number;
   d1_write_failure: number;
   d1_write_retry_count: number;
   d1_write_latency_ms: number;
 
-  // KVcache
+  // KV cache
   kv_cache_hit_rate: number;
   kv_cache_invalidation_latency_ms: number;
 
-  // authorizationcode
+  // Authorization code
   auth_code_reuse_detected: number;
   auth_code_do_latency_ms: number;
 }
@@ -3749,308 +3749,308 @@ await env.ANALYTICS.writeDataPoint({
 
 ---
 
-## 6. riスku軽減策
+## 6. Risk Mitigation
 
-### 6.1 Retryqueuememoryuse
+### 6.1 Retry Queue Memory Usage
 
-**riスku**: queueサiズ大きく りすぎてmemory不足
+**Risk**: Queue size grows too large causing memory shortage
 
-**軽減策**:
+**Mitigation**:
 
-- Maximumqueueサiズ制限（example: 1000aiテム）
-- oldaiテムdead letterqueueMove
-- メトrikuスMonitoring: `queue_size` Alert
+- Maximum queue size limit (e.g., 1000 items)
+- Move old items to dead letter queue
+- Metrics monitoring: `queue_size` alert
 
 ```typescript
 private readonly MAX_QUEUE_SIZE = 1000;
 
 async queueD1Write(operation, session): Promise<void> {
   if (this.writeQueue.size >= this.MAX_QUEUE_SIZE) {
-    // dead letterqueuetoMove
+    // Move to dead letter queue
     await this.moveToDeadLetterQueue(this.writeQueue.entries().next().value);
   }
   // ...
 }
 ```
 
-### 6.2 Durable Objectスケラビriti
+### 6.2 Durable Object Scalability
 
-**riスku**: SingleDO inスtanスボトruネtku
+**Risk**: Single DO instance bottleneck
 
-**軽減策**:
+**Mitigation**:
 
-- Shardingstrategy: userIDBased複数DO minutes散
-- Monitoring: requestレト, レiテnシ
+- Sharding strategy: Distribute across multiple DOs based on user ID
+- Monitoring: Request rate, latency
 
 ```typescript
-// Shardingexample
-const shard = hashUserId(userId) % 10; // 10シャド
+// Sharding example
+const shard = hashUserId(userId) % 10; // 10 shards
 const doId = env.SESSION_STORE.idFromName(`shard_${shard}`);
 ```
 
-### 6.3 D1write遅延累積
+### 6.3 D1 Write Delay Accumulation
 
-**riスku**: Retry多すぎて遅延増大
+**Risk**: Too many retries causing increasing delays
 
-**軽減策**:
+**Mitigation**:
 
-- バtkuオフ上限設定（Maximum30 seconds）
-- D1ヘruスチェtku: 継続的障害WhenAlert + 緊急Support
+- Backoff limit setting (maximum 30 seconds)
+- D1 health check: Alert on continuous failure + emergency support
 
 ---
 
-## 7. 結論
+## 7. Conclusion
 
-本設計Than, 以Decreaseconsistencyguarantee実現され：
+This design achieves the following consistency guarantees:
 
-### Improvedconsistencyモデru（v3.0）
+### Improved Consistency Model (v3.0)
 
-| 操作                         | storage                       | consistencyレベru           | guarantee内容                                     | problem |
-| ---------------------------- | ----------------------------- | --------------------------- | ------------------------------------------------- | ------- |
-| **sessionCreate**            | DO (persistence) + D1 (Queue) | Strong (DO) + Eventual (D1) | Durable Storagepersistence, DO再起動耐性 ✅       | #9      |
-| **sessionDisable化**         | DO (persistence) + D1 (Queue) | Strong                      | Durable StorageDelete, Immediate反映 ✅           | #9      |
-| **authorizationcodesave**    | DO (persistence)              | Strong                      | ワntaiムユスguarantee, DO再起動耐性 ✅            | #10     |
-| **authorizationcodeconsume** | DO (persistence)              | Strong                      | Atomic操作, 再利用Detection, PKCEVerification ✅  | #10, #3 |
-| **clientUpdate**             | D1 + KV                       | Strong                      | Delete-Then-Write, 不整合windowNone ✅            | #2      |
-| **tokenrotation**            | DO (persistence)              | Strong                      | Atomic, Theft detection, DO再起動耐性 ✅          | #4      |
-| **Passkey Counter**          | D1 (CAS)                      | Strong                      | MonotonicIncreaseguarantee, WebAuthncompliance ✅ | #7      |
-| **Auditlog**                 | D1 (Queue + Sync)             | Eventual/Strong (選択可)    | Retryguarantee, ImportanteventSync ✅             | #5, #1  |
-| **PAR request_uri**          | KV (Monitoring)               | Eventual + Detection        | ParalleluseDetection, Alert ⚠️                    | #11     |
-| **Rate Limiting**            | KV                            | Eventual (best effort)      | Documentation, acceptable range ⚠️                | #6      |
-| **sessiontoken**             | KV (TTLshortening)            | Eventual                    | ImpactMinimize（30 secondsTTL） ⚠️                | #8      |
+| Operation                      | Storage                       | Consistency Level           | Guarantee                                        | Issue   |
+| ------------------------------ | ----------------------------- | --------------------------- | ------------------------------------------------ | ------- |
+| **Session Create**             | DO (persistence) + D1 (Queue) | Strong (DO) + Eventual (D1) | Durable Storage persistence, DO restart resilient ✅ | #9   |
+| **Session Invalidation**       | DO (persistence) + D1 (Queue) | Strong                      | Durable Storage delete, immediate reflection ✅   | #9      |
+| **Authorization Code Save**    | DO (persistence)              | Strong                      | One-time use guarantee, DO restart resilient ✅   | #10     |
+| **Authorization Code Consume** | DO (persistence)              | Strong                      | Atomic operation, reuse detection, PKCE verification ✅ | #10, #3 |
+| **Client Update**              | D1 + KV                       | Strong                      | Delete-Then-Write, no inconsistency window ✅     | #2      |
+| **Token Rotation**             | DO (persistence)              | Strong                      | Atomic, theft detection, DO restart resilient ✅  | #4      |
+| **Passkey Counter**            | D1 (CAS)                      | Strong                      | Monotonic increase guarantee, WebAuthn compliant ✅ | #7     |
+| **Audit Log**                  | D1 (Queue + Sync)             | Eventual/Strong (selectable)| Retry guarantee, important event sync ✅          | #5, #1  |
+| **PAR request_uri**            | KV (Monitoring)               | Eventual + Detection        | Parallel use detection, alert ⚠️                  | #11     |
+| **Rate Limiting**              | KV                            | Eventual (best effort)      | Documentation, acceptable range ⚠️                | #6      |
+| **Session Token**              | KV (TTL shortening)           | Eventual                    | Impact minimized (30 second TTL) ⚠️               | #8      |
 
-### 発見されたproblemresolve策サマri（v3.0）
+### Discovered Issues Resolution Summary (v3.0)
 
-**Criticalproblem** (6件):
+**Critical Issues** (6 items):
 
-1. ✅ DOfromD1toAsyncwrite → Retryqueueimplementation
-2. ✅ KVcacheDisable化consistencywindow → Delete-Then-Write
-3. ✅ authorizationcodeKVuse → Durable Objectmigration（3.11Support）
-4. ✅ RefreshTokenRotatorLack of persistence → Durable Storageimplementation
-5. ⚠️ **SessionStore DOLack of persistence → Durable Storageimplementation（NEW）**
-6. ⚠️ **AuthorizationCodeStore DOLack of persistence → Durable Storageimplementation + Tokenmigration（NEW）**
-7. ✅ Passkey CounterRace conditionstate → Compare-and-Swap
+1. ✅ Async write from DO to D1 → Retry queue implementation
+2. ✅ KV cache invalidation consistency window → Delete-Then-Write
+3. ✅ Authorization code KV usage → Durable Object migration (supported by 3.11)
+4. ✅ RefreshTokenRotator lack of persistence → Durable Storage implementation
+5. ⚠️ **SessionStore DO lack of persistence → Durable Storage implementation (NEW)**
+6. ⚠️ **AuthorizationCodeStore DO lack of persistence → Durable Storage implementation + Token migration (NEW)**
+7. ✅ Passkey Counter race condition → Compare-and-Swap
 
-**High MediumPriority度problem** (4件): 8. ✅ Auditlog信頼性 → Retryqueue + Sync log 9. ⚠️ Rate Limitingprecisionproblem → Documentation（許容）10. ⚠️ sessiontokenRace conditionstate → TTLshortening（許容）11. ⚠️ **PAR request_uri Race conditionstate → Monitoringimplementation（NEW）**
+**High/Medium Priority Issues** (4 items): 8. ✅ Audit log reliability → Retry queue + Sync log 9. ⚠️ Rate limiting precision issue → Documentation (acceptable) 10. ⚠️ Session token race condition → TTL shortening (acceptable) 11. ⚠️ **PAR request_uri race condition → Monitoring implementation (NEW)**
 
-**Total**: **11issues**（v2.0: 8issues + v3.0new: 3issues）対包括的 resolve策
+**Total**: **11 issues** (v2.0: 8 issues + v3.0 new: 3 issues) with comprehensive resolution strategies
 
-### Important 発見: Durable ObjectPermanent性Pattern系統的欠陥
+### Important Discovery: Durable Object Persistence Pattern Systematic Flaw
 
-**v3.0DetailsAudit判明ed事実**:
+**Facts revealed by v3.0 detailed audit**:
 
-- 4Durable Objectsうち**3（75%）**Permanent性problem抱えて
-- problem抱えるDO: RefreshTokenRotator (#4), SessionStore (#9), AuthorizationCodeStore (#10)
-- correctimplementation: KeyManager only（`state.storage.put/get()` use）
+- **3 out of 4 (75%)** Durable Objects have persistence issues
+- DOs with issues: RefreshTokenRotator (#4), SessionStore (#9), AuthorizationCodeStore (#10)
+- Correct implementation: KeyManager only (uses `state.storage.put/get()`)
 
-**根本原因**:
+**Root Cause**:
 
-- KeyManager最初正しくimplementationされた
-- after続DO「in-memory + D1バtkuatp」Patternimplementationされた
-- こPatternDurable Objects設計思想反
+- KeyManager was implemented correctly first
+- Subsequent DOs were implemented with "in-memory + D1 backup" pattern
+- This pattern goes against Durable Objects design philosophy
 
 **Impact**:
 
-- DOon restartallsession消失（problem#9） → alluser強制logaウト
-- DOon restartalltokenfamily消失（problem#4） → alluserRe-authenticationRequired
-- DOon restartauthorizationcode消失（problem#10） → OAuth flowFailure
+- All sessions lost on DO restart (issue #9) → All users forced logout
+- All token families lost on DO restart (issue #4) → All users require re-authentication
+- Authorization codes lost on DO restart (issue #10) → OAuth flow failure
 
-**resolve策**:
+**Resolution**:
 
-- 3allDOKeyManagerPatternriファkutarinグ
-- `state.storage.put/get()` よるpersistence implementation
-- D1Audit log only（Option）
+- Refactor all 3 DOs to KeyManager pattern
+- Implement persistence via `state.storage.put/get()`
+- D1 for audit log only (optional)
 
-### 次ステtp（v3.0Update）
+### Next Steps (v3.0 Update)
 
-1. ✅ 本設計Documentationレビュ（v3.0Complete）
-2. 🔧 **Priority 4（最Priority）**: DOpersistence implementation（5-7days）
+1. ✅ Design documentation review (v3.0 complete)
+2. 🔧 **Priority 4 (Highest Priority)**: DO persistence implementation (5-7 days)
    - 3.10 SessionStore DO persistence
    - 3.4 RefreshTokenRotator persistence
-   - 3.11 AuthCodeStore DO persistence + Tokenmigration
-3. 🔧 Priority 1: Securitymodification（3-4days）
-4. 🔧 Priority 2: 信頼性Improvement（6-9days）
-5. 📝 Priority 3: Documentation Monitoring（3-4days）
-6. 🧪 integratetest Securitytest
-7. 📊 Monitoring Alert設定
-8. 🚀 Gradualロruaウト
+   - 3.11 AuthCodeStore DO persistence + Token migration
+3. 🔧 Priority 1: Security modifications (3-4 days)
+4. 🔧 Priority 2: Reliability improvement (6-9 days)
+5. 📝 Priority 3: Documentation and Monitoring (3-4 days)
+6. 🧪 Integration test and security test
+7. 📊 Monitoring and alert configuration
+8. 🚀 Gradual rollout
 
-**総Estimated effort**:
+**Total Effort Estimation**:
 
-- v2.0: 14-20days
-- **v3.0: 19-27days**（+5-7days）
-- **約4-5weeks**
+- v2.0: 14-20 days
+- **v3.0: 19-27 days** (+5-7 days)
+- **Approximately 4-5 weeks**
 
 ---
 
-## 付録
+## Appendix
 
-### A. 参考資料
+### A. References
 
 - [RFC 6749 - OAuth 2.0](https://datatracker.ietf.org/doc/html/rfc6749)
 - [OAuth 2.0 Security Best Current Practice](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-security-topics)
 - [Cloudflare Durable Objects Documentation](https://developers.cloudflare.com/durable-objects/)
 - [Cloudflare KV Consistency Model](https://developers.cloudflare.com/kv/reference/kv-consistency/)
 
-### B. Changes履歴
+### B. Change History
 
-| days付     | version | Changes内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Date       | Version | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2025-11-15 | 1.0     | 初版Create（Main要3issues minutes析resolve策）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| 2025-11-15 | 2.0     | 包括的Auditよる5Addproblem発見resolve策Add:<br>- RefreshTokenRotatorLack of persistence<br>- Auditlog信頼性<br>- Rate Limitingprecisionproblem<br>- Passkey CounterRace conditionstate<br>- sessiontokenRace conditionstate<br>Total8issuestoSupport完allDocumentation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 2025-11-15 | 3.0     | **DetailsAuditよる3newCriticalproblem発見**:<br>- **problem#9: SessionStore DO Lack of persistence（CRITICAL）**<br> → DO再起動alluser強制logaウト<br>- **problem#10: AuthorizationCodeStore DO Lack of persistence（CRITICAL）**<br> → OAuth flowFailure + Token endpoint未migration<br>- **problem#11: PAR request_uri Race conditionstate（MEDIUM）**<br> → RFC 9126Singleuseguarantee違反<br><br>**系統的Pattern発見**: 4DOうち3（75%）Permanent性problem<br>→ KeyManagerPatternto統一riファkutarinグrequired<br><br>Total**11issues**完allDocumentation, Effort19-27daysUpdate                                                                                                                                                                                |
-| 2025-11-15 | 6.0     | **allDurable Objects化to方針決定**:<br>- KV起因5issues（#6, #8, #11, #12, #21）完allresolve<br>- operation DocumentationSupport事象発生防げnotissuesDO化<br>- allstateManagementDO統一明確 aキテkuチャ原則<br>- newDO: RateLimiterCounter, SessionTokenStore, PARRequestStore, MagicLinkStore, PasskeyChallengeStore<br>- 総Effort: 20.5-28.5days（4-6weeks）<br><br>**製品方針**: OPasSecurity consistency最Priority, RFC/OIDC完allcompliance実現                                                                                                                                                                                                                                                                                                                 |
-| 2025-11-16 | 7.0     | **allDOintegrateimplementationComplete**:<br>- ✅ #6: RateLimiterCounter DOimplementation integrateComplete（100%precisionguarantee）<br>- ✅ #11: PARRequestStore DOimplementation integrateComplete（RFC 9126完allcompliance）<br>- ✅ #12: DPoPJTIStore DOimplementation integrateComplete（Replay攻撃完all防止）<br>- ✅ #13: JWKS Endpoint動的fetchimplementationComplete（KeyManager DO経由）<br>- ✅ #8, #21: ChallengeStore DOintegrateComplete（Session Token, Passkey, Magic Link）<br><br>**all8DOimplementationComplete**: SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, ChallengeStore, RateLimiterCounter, PARRequestStore, DPoPJTIStore<br><br>**Security強化**: Atomic操作Thanrace condition完all排除, RFC/OIDC完allcompliance達成 |
-| 2025-11-16 | 8.0     | **#14: スキマversionManagementimplementationComplete**:<br>- ✅ D1MigrationManagementテブruCreate（schema_migrations, migration_metadata）<br>- ✅ MigrationRunnerkuラスimplementation（チェtkuサムVerification, べき等性guarantee）<br>- ✅ CLIツruimplementation（migrate:create コマnド）<br>- ✅ DO data structure versioningimplementation（SessionStore v1）<br>- ✅ 自動Migration機能（versionDetection→migrate→save）<br>- ✅ MigrationREADMEUpdate<br><br>**all24problemMedium23problemimplementationComplete** - 残り1problemonly（#20: ConfirmproblemNone）                                                                                                                                                                                             |
+| 2025-11-15 | 1.0     | Initial version (Analysis and resolution for main 3 issues)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 2025-11-15 | 2.0     | Added 5 additional issues found through comprehensive audit with resolution strategies:<br>- RefreshTokenRotator lack of persistence<br>- Audit log reliability<br>- Rate limiting precision issue<br>- Passkey Counter race condition<br>- Session token race condition<br>Total 8 issues fully documented                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 2025-11-15 | 3.0     | **3 new critical issues found through detailed audit**:<br>- **Issue #9: SessionStore DO lack of persistence (CRITICAL)**<br> → All users forced logout on DO restart<br>- **Issue #10: AuthorizationCodeStore DO lack of persistence (CRITICAL)**<br> → OAuth flow failure + Token endpoint not migrated<br>- **Issue #11: PAR request_uri race condition (MEDIUM)**<br> → RFC 9126 single use guarantee violation<br><br>**Systematic pattern discovered**: 3 out of 4 DOs (75%) have persistence issues<br>→ Refactoring to unified KeyManager pattern required<br><br>Total **11 issues** fully documented, effort updated to 19-27 days                                                                                                                                |
+| 2025-11-15 | 6.0     | **Decision to migrate all to Durable Objects**:<br>- Complete resolution of 5 KV-related issues (#6, #8, #11, #12, #21)<br>- DO migration for issues that cannot be prevented by operations/documentation<br>- Unified state management in DO with clear architecture principles<br>- New DOs: RateLimiterCounter, SessionTokenStore, PARRequestStore, MagicLinkStore, PasskeyChallengeStore<br>- Total effort: 20.5-28.5 days (4-6 weeks)<br><br>**Product policy**: Security consistency is highest priority as OP, achieve full RFC/OIDC compliance                                                                                                                                                                                                                 |
+| 2025-11-16 | 7.0     | **All DO integration implementation complete**:<br>- ✅ #6: RateLimiterCounter DO implementation & integration complete (100% precision guarantee)<br>- ✅ #11: PARRequestStore DO implementation & integration complete (full RFC 9126 compliance)<br>- ✅ #12: DPoPJTIStore DO implementation & integration complete (complete replay attack prevention)<br>- ✅ #13: JWKS Endpoint dynamic fetch implementation complete (via KeyManager DO)<br>- ✅ #8, #21: ChallengeStore DO integration complete (Session Token, Passkey, Magic Link)<br><br>**All 8 DOs implementation complete**: SessionStore, AuthCodeStore, RefreshTokenRotator, KeyManager, ChallengeStore, RateLimiterCounter, PARRequestStore, DPoPJTIStore<br><br>**Security enhancement**: Complete elimination of race conditions through atomic operations, full RFC/OIDC compliance achieved |
+| 2025-11-16 | 8.0     | **#14: Schema version management implementation complete**:<br>- ✅ D1 migration management tables created (schema_migrations, migration_metadata)<br>- ✅ MigrationRunner class implementation (checksum verification, idempotency guarantee)<br>- ✅ CLI tool implementation (migrate:create command)<br>- ✅ DO data structure versioning implementation (SessionStore v1)<br>- ✅ Automatic migration function (version detection → migrate → save)<br>- ✅ Migration README update<br><br>**23 out of 24 issues implementation complete** - Only 1 issue remaining (#20: Confirmed no issues)                                                                                                                                                                                             |
 
 ---
 
-## 6. allDurable Objects化 implementation計画（v6.0）
+## 6. Full Durable Objects Migration Implementation Plan (v6.0)
 
-### 6.1 方針決定背景
+### 6.1 Background for Policy Decision
 
-#### OPas製品特性
+#### OP Product Characteristics
 
-Authrim OAuth 2.0 / OpenID Connect Provider（OP）as, 以Decrease要件満たすrequiredexist：
+As an OAuth 2.0 / OpenID Connect Provider (OP), Authrim must meet the following requirements:
 
-- **Security consistency最Priority**: 「best effort」不十 minutes
-- **RFC/OIDCSpecificationto完allcompliance**: Authentication基盤as信頼性
-- **攻撃耐性**: Replay攻撃, taiミnグ攻撃, Race conditionstate攻撃to完all 防御
+- **Security consistency is highest priority**: "Best effort" is insufficient
+- **Full RFC/OIDC specification compliance**: Reliability as an authentication infrastructure
+- **Attack resistance**: Complete defense against replay attacks, timing attacks, and race condition attacks
 
-#### operationSupportresolvecannot5issues
+#### 5 Issues That Cannot Be Resolved by Operations Support
 
-以Decreaseissues, Cloudflare KV**結果整合性**いう技術的制約起因for, operation Monitoring Documentation事象発生**完all防げません**：
+The following issues are caused by Cloudflare KV's **eventual consistency** technical constraint, and **cannot be completely prevented** by operations, monitoring, or documentation:
 
-1. **#6: Rate Limitingprecision** - ParallelrequestCount不accuratebecomepossible
-2. **#8: sessiontokenRace condition** - TTLshorteningしてalsoRace conditionwindow残る
-3. **#11: PAR request_uriRace condition** - Monitoring検知possibleRace condition自体防げnot
-4. **#12: DPoP JTIRace condition** - Low確率技術的発生可能
-5. **#21: Passkey/Magic Link チャレnジ再利用** - Parallelrequestsameチャレnジ複数回use可能
+1. **#6: Rate limiting precision** - Parallel requests may cause inaccurate counts
+2. **#8: Session token race condition** - Race condition window remains even with TTL shortening
+3. **#11: PAR request_uri race condition** - Monitoring can detect but cannot prevent the race condition itself
+4. **#12: DPoP JTI race condition** - Technically possible at low probability
+5. **#21: Passkey/Magic Link challenge reuse** - Parallel requests can use the same challenge multiple times
 
-#### allDO化判断根拠
+#### Rationale for Full DO Migration
 
-**Cost minutes析**:
+**Cost Analysis**:
 
-- 100万ID規模also**数万円/月程度**
-- SecurityinシデnトriスkuCost比較して十 minutesLowい
-- Durable ObjectsrequestBilling（$0.15/million requests）
+- Even at 1 million ID scale, **approximately tens of thousands of yen per month**
+- Sufficiently low compared to security incident risk cost
+- Durable Objects request billing ($0.15/million requests)
 
-**複雑性評価**:
+**Complexity Evaluation**:
 
-- newDOkuラス: 5個Add
-- 総code量Increase: 約300-400行
-- し し, **統一Pattern**Than保守性Improvement
-- Current「KVDO混在」解消ed
+- New DO classes: 5 additions
+- Total code increase: Approximately 300-400 lines
+- However, **unified pattern** improves maintainability
+- Current "KV and DO mixture" eliminated
 
-**aキテkuチャ上利点**:
+**Architectural Advantages**:
 
-- all「stateManagement」DO統一 → 一貫edPattern
-- KV vs DO使い minutesけ判断不要
-- test容易性Improvement（DO単体test可能）
+- All "state management" unified in DO → Consistent pattern
+- No need to decide between KV vs DO
+- Improved testability (DO unit tests possible)
 
 ---
 
-### 6.2 allDO化afteraキテkuチャ原則
+### 6.2 Architecture Principles After Full DO Migration
 
-#### storage使い minutesけ明確化
+#### Storage Usage Clarification
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              Authrim Storage Architecture                  │
-│                   (Full DO Migration)                    │
+│              Authrim Storage Architecture               │
+│                   (Full DO Migration)                   │
 └─────────────────────────────────────────────────────────┘
 
-【Durable Objects】- 強consistency, Atomic操作, stateManagement
+【Durable Objects】- Strong consistency, atomic operations, state management
 ├─ SessionStore              (#9 - persistence implementation) ✅
 ├─ RefreshTokenRotator       (#4, #17 - persistence implementation) ✅
 ├─ AuthorizationCodeStore    (#3, #10 - persistence implementation) ✅
-├─ KeyManager                (Existing - correctimplementation) ✅
-├─ RateLimiterCounter        (#6 - newimplementation) ★ ✅
-├─ PARRequestStore           (#11 - newimplementation) ★ ✅
-├─ DPoPJTIStore              (#12 - newimplementation) ★ ✅
-└─ ChallengeStore            (#8, #21 - integrateimplementation) ★ ✅
-    ├─ session_token (ITP-bypass用)
+├─ KeyManager                (Existing - correct implementation) ✅
+├─ RateLimiterCounter        (#6 - new implementation) ★ ✅
+├─ PARRequestStore           (#11 - new implementation) ★ ✅
+├─ DPoPJTIStore              (#12 - new implementation) ★ ✅
+└─ ChallengeStore            (#8, #21 - integrated implementation) ★ ✅
+    ├─ session_token (for ITP bypass)
     ├─ passkey_registration
     ├─ passkey_authentication
     └─ magic_link
 
-【D1 (SQLite)】- riレショナrudata, Auditlog, persistence
+【D1 (SQLite)】- Relational data, audit log, persistence
 ├─ users
 ├─ clients
 ├─ passkeys
 ├─ audit_log
 └─ password_reset_tokens
 
-【KV】- read専用cacheonly
+【KV】- Read-only cache only
 └─ CLIENTS_CACHE (client metadata cache)
 
-【Deleteplanned】- KVfromDOto完allmigration
+【Deletion planned】- Full migration from KV to DO
 ├─ AUTH_CODES → AuthorizationCodeStore DO ✅
 ├─ REFRESH_TOKENS → RefreshTokenRotator DO ✅
 ├─ MAGIC_LINKS → ChallengeStore DO ✅
-├─ STATE_STORE (rate limit) → RateLimiterCounter DO (implementation, integratewaiting)
-├─ PAR request → PARRequestStore DO (implementation, integratewaiting)
-└─ DPoP JTI → DPoPJTIStore DO (implementation, integratewaiting)
+├─ STATE_STORE (rate limit) → RateLimiterCounter DO (implementation complete, integration pending)
+├─ PAR request → PARRequestStore DO (implementation complete, integration pending)
+└─ DPoP JTI → DPoPJTIStore DO (implementation complete, integration pending)
 ```
 
-**new原則**:
+**New Principles**:
 
-- **state持riソス** → Durable Objects
-- **Singleuseriソス** → Durable Objects
-- **read専用cache** → KV
-- **riレショナrudata** → D1
+- **Stateful resources** → Durable Objects
+- **Single-use resources** → Durable Objects
+- **Read-only cache** → KV
+- **Relational data** → D1
 
 ---
 
-### 6.3 implementationPhase
+### 6.3 Implementation Phases
 
-#### Phase 1: ExistingDOpersistence（CRITICAL - 5-7days）
+#### Phase 1: Existing DO Persistence (CRITICAL - 5-7 days)
 
-**Purpose**: DOon restartdata損失防止
+**Purpose**: Prevent data loss on DO restart
 
-| Task                                  | File                        | Effort  | problem |
-| ------------------------------------- | --------------------------- | ------- | ------- |
-| SessionStore DO persistence           | `SessionStore.ts`           | 2-3days | #9      |
-| RefreshTokenRotator DO persistence    | `RefreshTokenRotator.ts`    | 2-3days | #4      |
-| AuthorizationCodeStore DO persistence | `AuthorizationCodeStore.ts` | 1days   | #10     |
+| Task                                  | File                        | Effort    | Issue   |
+| ------------------------------------- | --------------------------- | --------- | ------- |
+| SessionStore DO persistence           | `SessionStore.ts`           | 2-3 days  | #9      |
+| RefreshTokenRotator DO persistence    | `RefreshTokenRotator.ts`    | 2-3 days  | #4      |
+| AuthorizationCodeStore DO persistence | `AuthorizationCodeStore.ts` | 1 day     | #10     |
 
-**implementation内容**:
+**Implementation Details**:
 
-- `state.storage.put/get()` よるpersistence
-- KeyManagerPatternApply
-- D1Auditlog用バtkuatponly
+- Persistence via `state.storage.put/get()`
+- Apply KeyManager pattern
+- D1 for audit log backup only
 
 **Impact**:
 
-- alluserDO再起動強制logaウトedproblemresolve
-- DOon restartalltokenfamily消失防止
-- OAuth flowFailure防止
+- Resolves all users forced logout on DO restart issue
+- Prevents all token family loss on DO restart
+- Prevents OAuth flow failure
 
 ---
 
-#### Phase 2: Securitymodification（CRITICAL - 2.5-3.5days）
+#### Phase 2: Security Modifications (CRITICAL - 2.5-3.5 days)
 
-**Purpose**: RFCSecurity要件tocompliance
+**Purpose**: Compliance with RFC security requirements
 
-| Task                                     | File                                          | Effort  | problem |
-| ---------------------------------------- | --------------------------------------------- | ------- | ------- |
-| Client Secret taiミnグ攻撃Countermeasure | logout.ts, token.ts, revoke.ts, introspect.ts | 0.5days | #15     |
-| /revoke, /introspect AuthenticationAdd   | revoke.ts, introspect.ts                      | 1days   | #16     |
-| RefreshTokenRotator usestart             | token.ts                                      | 1-2days | #17     |
+| Task                                   | File                                          | Effort    | Issue   |
+| -------------------------------------- | --------------------------------------------- | --------- | ------- |
+| Client Secret timing attack countermeasure | logout.ts, token.ts, revoke.ts, introspect.ts | 0.5 days | #15     |
+| /revoke, /introspect authentication add | revoke.ts, introspect.ts                     | 1 day     | #16     |
+| RefreshTokenRotator use start          | token.ts                                      | 1-2 days  | #17     |
 
-**implementation内容**:
+**Implementation Details**:
 
-- `timingSafeEqual()` to置換
-- client_secretVerificationAdd
-- KVFunctionfromDOusetomigration
+- Replace with `timingSafeEqual()`
+- Add client_secret verification
+- Migration from KV function to DO usage
 
 ---
 
-#### Phase 3: newDOimplementation（consistencyproblem完allresolve - 6-8days）★ allDO化核心
+#### Phase 3: New DO Implementation (Complete Consistency Issue Resolution - 6-8 days) ★ Core of Full DO Migration
 
-**Purpose**: KV起因Race conditionstate完all排除
+**Purpose**: Complete elimination of KV-caused race conditions
 
-##### 3.1 RateLimiterCounter DO implementation (#6) - 1-1.5days
+##### 3.1 RateLimiterCounter DO Implementation (#6) - 1-1.5 days
 
 **File**: `packages/shared/src/durable-objects/RateLimiterCounter.ts` (new)
 
@@ -4080,21 +4080,21 @@ export class RateLimiterCounter {
     let record = this.counts.get(clientIP);
 
     if (!record || now >= record.resetAt) {
-      // newウinドウstart
+      // New window start
       record = {
         count: 1,
         resetAt: now + config.windowSeconds,
         firstRequestAt: now,
       };
     } else {
-      // Countinkuriメnト（Atomic）
+      // Count increment (atomic)
       record.count++;
     }
 
     this.counts.set(clientIP, record);
     await this.state.storage.put(clientIP, record); // persistence
 
-    // Cleanup（oldエnトriDelete）
+    // Cleanup (delete old entries)
     if (this.counts.size > 10000) {
       await this.cleanup();
     }
@@ -4114,7 +4114,7 @@ export class RateLimiterCounter {
 
     for (const [ip, record] of this.counts.entries()) {
       if (now >= record.resetAt + 3600) {
-        // 1When間猶予
+        // 1 hour grace period
         toDelete.push(ip);
       }
     }
@@ -4146,13 +4146,13 @@ interface RateLimitResult {
 }
 ```
 
-**migration元**: `packages/shared/src/middleware/rate-limit.ts`
+**Migration Source**: `packages/shared/src/middleware/rate-limit.ts`
 
 **Benefits**:
 
 - ✅ Rate limiting**perfect precisionguarantee**（100%）
 - ✅ Parallelrequestalsoaccurate Count
-- ✅ Atomic inkuriメnト
+- ✅ Atomic increment
 
 ---
 
@@ -4215,17 +4215,17 @@ export class SessionTokenStore {
       }
     }
 
-    // tokenExistしnot, use, orexpired
+    // Token doesn't exist, used, or expired
     if (!data || data.used || data.expiresAt <= Date.now()) {
       return null;
     }
 
-    // AtomicuseMark（これallDO化核心）
+    // Atomic use mark (this is the core of full DO migration)
     data.used = true;
     this.tokens.set(token, data);
     await this.state.storage.put(token, data);
 
-    // usetokenImmediateDelete（Option）
+    // Delete used token immediately (optional)
     setTimeout(() => {
       this.tokens.delete(token);
       this.state.storage.delete(token);
@@ -4243,12 +4243,12 @@ interface SessionTokenData {
 }
 ```
 
-**migration元**: `packages/op-auth/src/session-management.ts`
+**Migration Source**: `packages/op-auth/src/session-management.ts`
 
 **Benefits**:
 
-- ✅ sessiontoken**完all Singleuseguarantee**
-- ✅ Race conditionstateNone（KVTTLshorteningresolvecan ったproblem完allresolve）
+- ✅ Session token **complete single-use guarantee**
+- ✅ No race condition (completely resolves issue that couldn't be resolved with KV TTL shortening)
 
 ---
 
@@ -4304,12 +4304,12 @@ export class PARRequestStore {
       }
     }
 
-    // requestExistしnotorexpired
+    // Request does not exist or is expired
     if (!data || data.expiresAt <= Date.now()) {
       return null;
     }
 
-    // AtomicDelete（Singleuseguarantee - RFC 9126要件）
+    // Atomic delete (Single-use guarantee - RFC 9126 requirement)
     this.requests.delete(requestUri);
     await this.state.storage.delete(requestUri);
 
@@ -4330,12 +4330,12 @@ interface PARRequestData {
 }
 ```
 
-**migration元**: `packages/op-auth/src/authorize.ts`
+**Migration source**: `packages/op-auth/src/authorize.ts`
 
 **Benefits**:
 
-- ✅ **RFC 9126完allcompliance**（request_uriSingleuseguarantee）
-- ✅ Race conditionstateNone（Monitoringresolvecan ったproblem完allresolve）
+- ✅ **RFC 9126 full compliance** (request_uri single-use guarantee)
+- ✅ No race condition state (Completely resolves monitoring-identified issues)
 
 ---
 
@@ -4398,12 +4398,12 @@ export class MagicLinkStore {
       }
     }
 
-    // rinkuExistしnot, use, orexpired
+    // Link does not exist, is used, or expired
     if (!data || data.used || data.expiresAt <= Date.now()) {
       return null;
     }
 
-    // AtomicuseMark（Replay攻撃防止）
+    // Atomically mark as used (Replay attack prevention)
     data.used = true;
     this.links.set(token, data);
     await this.state.storage.put(token, data);
@@ -4411,14 +4411,14 @@ export class MagicLinkStore {
     return data;
   }
 
-  // 定期Cleanup（aラムExecute）
+  // Periodic cleanup (Alarm execution)
   async alarm(): Promise<void> {
     const now = Date.now();
     const toDelete: string[] = [];
 
     for (const [token, data] of this.links.entries()) {
       if (data.expiresAt < now - 3600000) {
-        // expired+1When間
+        // 1 hour after expiration
         toDelete.push(token);
       }
     }
@@ -4428,8 +4428,8 @@ export class MagicLinkStore {
       await this.state.storage.delete(token);
     }
 
-    // NextCleanupスケジュru
-    await this.state.storage.setAlarm(Date.now() + 3600000); // 1When間after
+    // Schedule next cleanup
+    await this.state.storage.setAlarm(Date.now() + 3600000); // 1 hour later
   }
 }
 
@@ -4441,12 +4441,12 @@ interface MagicLinkData {
 }
 ```
 
-**migration元**: `packages/op-auth/src/magic-link.ts`
+**Migration source**: `packages/op-auth/src/magic-link.ts`
 
 **Benefits**:
 
-- ✅ Magic Link**Replay攻撃完all防止**
-- ✅ 15 minutesTTL内Parallelrequestalso確実Detection
+- ✅ Magic Link **Complete replay attack prevention**
+- ✅ Reliable detection of parallel requests within 15 minute TTL
 
 ---
 
@@ -4507,12 +4507,12 @@ export class PasskeyChallengeStore {
       }
     }
 
-    // チャレnジExistしnot, use, orexpired
+    // Challenge does not exist, is used, or expired
     if (!data || data.used || data.expiresAt <= Date.now()) {
       return null;
     }
 
-    // AtomicuseMark（Replay攻撃防止）
+    // Atomically mark as used (Replay attack prevention)
     data.used = true;
     this.challenges.set(challenge, data);
     await this.state.storage.put(challenge, data);
@@ -4520,14 +4520,14 @@ export class PasskeyChallengeStore {
     return data;
   }
 
-  // 定期Cleanup
+  // Periodic cleanup
   async alarm(): Promise<void> {
     const now = Date.now();
     const toDelete: string[] = [];
 
     for (const [challenge, data] of this.challenges.entries()) {
       if (data.expiresAt < now - 3600000) {
-        // expired+1When間
+        // 1 hour after expiration
         toDelete.push(challenge);
       }
     }
@@ -4537,8 +4537,8 @@ export class PasskeyChallengeStore {
       await this.state.storage.delete(challenge);
     }
 
-    // NextCleanupスケジュru
-    await this.state.storage.setAlarm(Date.now() + 3600000); // 1When間after
+    // Schedule next cleanup
+    await this.state.storage.setAlarm(Date.now() + 3600000); // 1 hour later
   }
 }
 
@@ -4551,114 +4551,114 @@ interface PasskeyChallengeData {
 }
 ```
 
-**migration元**: `packages/op-auth/src/passkey.ts` (6箇所)
+**Migration source**: `packages/op-auth/src/passkey.ts` (6 locations)
 
 **Benefits**:
 
-- ✅ Passkeyチャレnジ**Replay攻撃完all防止**
-- ✅ WebAuthnSpecificationto完allcompliance
+- ✅ Passkey challenge **Complete replay attack prevention**
+- ✅ Full WebAuthn specification compliance
 
 ---
 
-#### Phase 4: 信頼性Improvement Cleanup（4-6days）
+#### Phase 4: Reliability Improvement & Cleanup (4-6 days)
 
-| Task                                   | Effort  | problem  |
+| Task                                   | Effort  | Issue    |
 | -------------------------------------- | ------- | -------- |
-| AuthCodeStore Token Endpoint migration | 1days   | #3, #10  |
-| D1writeRetryLogic                      | 3-4days | #1       |
-| KVcacheDisable化modification           | 1days   | #2       |
-| Passkey Counter CASimplementation      | 1-2days | #7       |
-| D1CleanupJob                           | 1-2days | #18      |
-| OIDCcompliancemodification             | 1-2days | #19, #23 |
-| 部 minutesFailureCountermeasure        | 1-2days | #22      |
+| AuthCodeStore Token Endpoint migration | 1 day   | #3, #10  |
+| D1 write retry logic                   | 3-4 days| #1       |
+| KV cache disable modification          | 1 day   | #2       |
+| Passkey Counter CAS implementation     | 1-2 days| #7       |
+| D1 cleanup job                         | 1-2 days| #18      |
+| OIDC compliance modification           | 1-2 days| #19, #23 |
+| Partial failure countermeasure         | 1-2 days| #22      |
 
 ---
 
-#### Phase 5: test Monitoring Documentation（3-4days）
+#### Phase 5: Testing, Monitoring & Documentation (3-4 days)
 
-**test**:
+**Testing**:
 
-- allOAuth/OIDCflowintegratetest
-- DO再起動test
-- Parallelrequesttest
-- Securitytest（taiミnグ攻撃, Replay攻撃）
+- All OAuth/OIDC flow integration tests
+- DO restart tests
+- Parallel request tests
+- Security tests (timing attacks, replay attacks)
 
-**Monitoring Alert**:
+**Monitoring & Alerts**:
 
-- DOwriteFailureAlert
-- 異常PatternDetection
-- CostMonitoringダtシュボド
+- DO write failure alerts
+- Anomaly pattern detection
+- Cost monitoring dashboard
 
 **Documentation**:
 
-- aキテkuチャ図Update
-- consistencyモデru説明
-- operationガiド
+- Architecture diagram updates
+- Consistency model explanation
+- Operations guide
 
 ---
 
-### 6.4 総Effort estimation
+### 6.4 Total Effort Estimation
 
-| Phase       | 内容                               | Effort            | Priority度      |
-| ----------- | ---------------------------------- | ----------------- | --------------- |
-| Phase 1     | ExistingDOpersistence              | 5-7days           | P0 (CRITICAL)   |
-| Phase 2     | Securitymodification               | 2.5-3.5days       | P0 (CRITICAL)   |
-| **Phase 3** | **newDOimplementation（allDO化）** | **6-8days**       | **P1 (HIGH)** ★ |
-| Phase 4     | 信頼性Improvement                  | 4-6days           | P2 (MEDIUM)     |
-| Phase 5     | test Monitoring                    | 3-4days           | P1 (HIGH)       |
-| **Total**   |                                    | **20.5-28.5days** |                 |
+| Phase       | Content                              | Effort            | Priority        |
+| ----------- | ------------------------------------ | ----------------- | --------------- |
+| Phase 1     | Existing DO persistence              | 5-7 days          | P0 (CRITICAL)   |
+| Phase 2     | Security modifications               | 2.5-3.5 days      | P0 (CRITICAL)   |
+| **Phase 3** | **New DO implementation (Full DO)**  | **6-8 days**      | **P1 (HIGH)** ★ |
+| Phase 4     | Reliability improvements             | 4-6 days          | P2 (MEDIUM)     |
+| Phase 5     | Testing & Monitoring                 | 3-4 days          | P1 (HIGH)       |
+| **Total**   |                                      | **20.5-28.5 days**|                 |
 
-**Recommendedスケジュru**: 4-6weeks
-
----
-
-### 6.5 implementation順序（Recommended）
-
-#### Week 1-2: CRITICALSupport（7.5-10days）
-
-1. SessionStore DO persistence（2-3days）
-2. RefreshTokenRotator DO persistence（2-3days）
-3. AuthCodeStore persistence + Tokenmigration（1-2days）
-4. Client Secret taiミnグ攻撃Countermeasure (0.5days）
-5. /revoke, /introspect AuthenticationAdd（1days）
-6. RefreshTokenRotator usestart（1-2days）
-
-#### Week 3: allDO化核心 ★（3-4.5days）
-
-7. RateLimiterCounter DO（1-1.5days）
-8. SessionTokenStore DO（0.5-1days）
-9. PARRequestStore DO（0.5-1days）
-10. integratetest（1days）
-
-#### Week 4: allDO化完成（2.5-3.5days）
-
-11. MagicLinkStore DO（1-1.5days）
-12. PasskeyChallengeStore DO（1.5-2days）
-
-#### Week 5-6: 信頼性 Optimization（7-10days）
-
-13. D1RetryLogic（3-4days）
-14. そ他信頼性Improvement（4-5days）
-15. Securitytest Documentation（2-3days）
+**Recommended schedule**: 4-6 weeks
 
 ---
 
-### 6.6 Migrationstrategy
+### 6.5 Implementation Order (Recommended)
 
-#### Dual Write period
+#### Week 1-2: CRITICAL Support (7.5-10 days)
 
-各DOmigrationGradual実施：
+1. SessionStore DO persistence (2-3 days)
+2. RefreshTokenRotator DO persistence (2-3 days)
+3. AuthCodeStore persistence + Token migration (1-2 days)
+4. Client Secret timing attack countermeasure (0.5 days)
+5. /revoke, /introspect authentication addition (1 day)
+6. RefreshTokenRotator start using (1-2 days)
+
+#### Week 3: Full DO Core ★ (3-4.5 days)
+
+7. RateLimiterCounter DO (1-1.5 days)
+8. SessionTokenStore DO (0.5-1 day)
+9. PARRequestStore DO (0.5-1 day)
+10. Integration tests (1 day)
+
+#### Week 4: Full DO Completion (2.5-3.5 days)
+
+11. MagicLinkStore DO (1-1.5 days)
+12. PasskeyChallengeStore DO (1.5-2 days)
+
+#### Week 5-6: Reliability Optimization (7-10 days)
+
+13. D1 retry logic (3-4 days)
+14. Other reliability improvements (4-5 days)
+15. Security tests & documentation (2-3 days)
+
+---
+
+### 6.6 Migration Strategy
+
+#### Dual Write Period
+
+Gradual migration for each DO:
 
 ```
 Week N:     KV only (Current)
 Week N+1:   Dual Write (KV + DO) - Read from KV
-Week N+2:   Dual Write (KV + DO) - Read from DO ← 切替
-Week N+3:   DO only - KVDelete
+Week N+2:   Dual Write (KV + DO) - Read from DO ← Switch
+Week N+3:   DO only - KV Delete
 ```
 
-#### フiチャFlag
+#### Feature Flags
 
-各DO環境VariableフiチャFlag設定：
+Set feature flags via environment variables for each DO:
 
 ```toml
 # wrangler.toml
@@ -4670,7 +4670,7 @@ USE_MAGIC_LINK_DO = "true"
 USE_PASSKEY_CHALLENGE_DO = "true"
 ```
 
-problem発生WhenImmediateKV戻せる設計.
+Design allows immediate rollback to KV when issues occur.
 
 ---
 
@@ -4678,7 +4678,7 @@ problem発生WhenImmediateKV戻せる設計.
 
 ```toml
 # ========================================
-# new Durable Objects バinデinグ
+# New Durable Objects Bindings
 # ========================================
 
 [[durable_objects.bindings]]
@@ -4702,58 +4702,58 @@ class_name = "ChallengeStore"
 script_name = "authrim-shared"
 
 # ========================================
-# KVDeleteplanned（Gradualmigrationafter）
+# KV Delete Planned (After Gradual Migration)
 # ========================================
-# 以DecreaseallDO化CompleteafterDelete:
-# - AUTH_CODES → AuthorizationCodeStore DO (migration)
-# - REFRESH_TOKENS → RefreshTokenRotator DO (migration)
-# - MAGIC_LINKS → ChallengeStore DO (migration)
-# - STATE_STORE (rate limit部 minutes) → RateLimiterCounter DO (implementation, integratewaiting)
-# - PAR request → PARRequestStore DO (implementation, integratewaiting)
-# - DPoP JTI → DPoPJTIStore DO (implementation, integratewaiting)
+# Delete the following after full DO migration:
+# - AUTH_CODES → AuthorizationCodeStore DO (migrated)
+# - REFRESH_TOKENS → RefreshTokenRotator DO (migrated)
+# - MAGIC_LINKS → ChallengeStore DO (migrated)
+# - STATE_STORE (rate limit part) → RateLimiterCounter DO (implementation, integration pending)
+# - PAR request → PARRequestStore DO (implementation, integration pending)
+# - DPoP JTI → DPoPJTIStore DO (implementation, integration pending)
 ```
 
 ---
 
-### 6.8 Success指標（KPI）
+### 6.8 Success Metrics (KPI)
 
-#### 技術指標
+#### Technical Metrics
 
-- [ ] DOon restartdata損失: **0件**
-- [ ] Race conditionstateよる重複発行: **0件**
-- [ ] RFC/OIDCSpecification違反: **0件**
-- [ ] Securitytest合格率: **100%**
+- [ ] DO restart data loss: **0 cases**
+- [ ] Duplicate issuance due to race conditions: **0 cases**
+- [ ] RFC/OIDC specification violations: **0 cases**
+- [ ] Security test pass rate: **100%**
 
-#### Performance指標
+#### Performance Metrics
 
-- [ ] Rate limitingprecision: **100%**（Current: best effort）
-- [ ] tokenSingleuseguarantee: **100%**（Current: 99.x%）
-- [ ] DO応答When間: **< 50ms (p95)**
+- [ ] Rate limiting precision: **100%** (Current: best effort)
+- [ ] Token single-use guarantee: **100%** (Current: 99.x%)
+- [ ] DO response time: **< 50ms (p95)**
 
-#### operation指標
+#### Operations Metrics
 
-- [ ] Alert設定: 5種類以上
-- [ ] Monitoringダtシュボド: 完成
-- [ ] DocumentationUpdate: 100%
-
----
-
-### 6.9 riスkuCountermeasure
-
-| riスku                 | Countermeasure        | 軽減策                       |
-| ---------------------- | --------------------- | ---------------------------- |
-| DOimplementation複雑性 | 統一Pattern採用       | KeyManagerSuccessexample踏襲 |
-| MigrationMedium不整合  | Dual Write period設定 | フiチャFlagロruバtku         |
-| Performance劣化        | loadtest実施          | DOLowレiテnシ                |
-| CostIncrease           | CostMonitoring        | 100万ID級数万円/月試算       |
+- [ ] Alert configuration: 5+ types
+- [ ] Monitoring dashboard: Complete
+- [ ] Documentation update: 100%
 
 ---
 
-### 6.10 DO設計Pattern（統一規約）
+### 6.9 Risk Countermeasures
 
-#### 統一intaフェス
+| Risk                    | Countermeasure             | Mitigation                          |
+| ----------------------- | -------------------------- | ----------------------------------- |
+| DO implementation complexity | Unified pattern adoption | Follow KeyManager success example  |
+| Migration inconsistency | Dual write period setup    | Feature flag rollback               |
+| Performance degradation | Load testing execution     | DO low latency                      |
+| Cost increase           | Cost monitoring            | ~10K-30K yen/month estimate for 1M IDs |
 
-all「Singleuseriソス」DO以DecreasePattern従う：
+---
+
+### 6.10 DO Design Pattern (Unified Convention)
+
+#### Unified Interface
+
+All "Single-use resource" DOs follow this pattern:
 
 ```typescript
 export interface SingleUseResourceStore<T> {
@@ -4763,7 +4763,7 @@ export interface SingleUseResourceStore<T> {
 }
 ```
 
-#### persistencePattern（KeyManagercompliance）
+#### Persistence Pattern (KeyManager Compliance)
 
 ```typescript
 export class ExampleStore {
@@ -4784,57 +4784,57 @@ export class ExampleStore {
   }
 
   async alarm(): Promise<void> {
-    // 定期Cleanupprocessing
+    // Periodic cleanup processing
     await this.cleanup();
-    await this.state.storage.setAlarm(Date.now() + 3600000); // 1When間after
+    await this.state.storage.setAlarm(Date.now() + 3600000); // 1 hour later
   }
 }
 ```
 
-これThan, 保守性 可読性大幅Improvementし.
+This significantly improves maintainability and readability.
 
 ---
 
-### 6.11 allDO化Effectまめ
+### 6.11 Full DO Migration Effect Summary
 
-#### resolveedissues
+#### Resolved Issues
 
-| problem                               | Current           | allDO化after                    |
-| ------------------------------------- | ----------------- | ------------------------------- |
-| #6: Rate Limitingprecision            | best effort       | **100% precisionguarantee** ✅  |
-| #8: sessiontokenRace condition        | TTLshorteningonly | **完all Singleuseguarantee** ✅ |
-| #11: PAR request_uriRace condition    | Monitoringonly    | **RFC 9126完allcompliance** ✅  |
-| #12: DPoP JTIRace condition           | Low確率発生       | **Race conditionstateNone** ✅  |
-| #21: Magic Link/PasskeyRace condition | Replay攻撃可能    | **Replay攻撃完all防止** ✅      |
+| Issue                                 | Current           | After Full DO Migration           |
+| ------------------------------------- | ----------------- | --------------------------------- |
+| #6: Rate limiting precision           | best effort       | **100% precision guarantee** ✅   |
+| #8: Session token race condition      | TTL shortening only| **Complete single-use guarantee** ✅|
+| #11: PAR request_uri race condition   | Monitoring only   | **RFC 9126 full compliance** ✅   |
+| #12: DPoP JTI race condition          | Low probability   | **No race condition state** ✅    |
+| #21: Magic Link/Passkey race condition| Replay attack possible| **Complete replay attack prevention** ✅|
 
-#### aキテkuチャ上Improvement
+#### Architectural Improvements
 
-- ✅ **統一性**: allstateManagementDOPattern統一
-- ✅ **保守性**: KV vs DO使い minutesけ判断不要
-- ✅ **test容易性**: DO単体test容易
-- ✅ **RFC/OIDCcompliance**: Specificationto完allcompliance証明可能
-- ✅ **Security**: 攻撃耐性大幅Improvement
+- ✅ **Consistency**: All state management unified under DO pattern
+- ✅ **Maintainability**: No need to decide between KV vs DO
+- ✅ **Testability**: Easy DO unit testing
+- ✅ **RFC/OIDC compliance**: Can prove full specification compliance
+- ✅ **Security**: Significantly improved attack resistance
 
-#### Cost対Effect
+#### Cost vs Effect
 
-**投資**:
+**Investment**:
 
-- implementationEffort: 20.5-28.5days（4-6weeks）
-- operationCost: +数万円/月（100万ID規模）
+- Implementation effort: 20.5-28.5 days (4-6 weeks)
+- Operation cost: +10K-30K yen/month (1M ID scale)
 
-**ritan**:
+**Return**:
 
-- Securityinシデnトriスku: ほぼゼロ
-- operationload: 大幅減（Monitoring Alert不要）
-- 信頼性: OAuth/OIDC OP as完all 信頼獲得
+- Security incident risk: Nearly zero
+- Operations load: Significantly reduced (no monitoring alerts needed)
+- Reliability: Full trust as OAuth/OIDC OP
 
-**結論**: OPas製品価Value考える, allDO化**Required投資**
+**Conclusion**: Considering product value as an OP, full DO migration is a **required investment**
 
 ---
 
-### 6.12 次ステtp
+### 6.12 Next Steps
 
-1. ✅ allDO化implementation計画レビュ（v6.0Complete）
-2. 🔧 **Phase 1start**: SessionStore DO persistencefrom着手
-3. 📊 継続的 進捗報告test実施
-4. 🚀 GradualロruaウトMonitoring
+1. ✅ Full DO migration implementation plan review (v6.0 Complete)
+2. 🔧 **Phase 1 start**: Begin with SessionStore DO persistence
+3. 📊 Continuous progress reporting and testing
+4. 🚀 Gradual rollout with monitoring

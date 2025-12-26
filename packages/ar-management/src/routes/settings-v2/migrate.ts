@@ -399,7 +399,7 @@ const migrateRouter = new Hono<{
 
 /**
  * Platform admin middleware for migration routes
- * Per spec: "Migration API の実行制限 - platform admin only"
+ * Per spec: "Migration API execution restriction - platform admin only"
  */
 migrateRouter.use('/migrate', async (c, next) => {
   const adminUser = c.get('adminUser');

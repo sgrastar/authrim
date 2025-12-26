@@ -643,7 +643,7 @@ async function handleAuthorizationCodeGrant(
   let authCodeStoreId: DurableObjectId;
 
   if (shardInfo) {
-    // Get current shard count (KV優先、キャッシュあり)
+    // Get current shard count (KV priority, with caching)
     const currentShardCount = await getShardCount(c.env);
 
     // Remap shard index for scale-down compatibility

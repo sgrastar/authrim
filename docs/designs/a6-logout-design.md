@@ -1,54 +1,54 @@
-# A-6: Logout/Session Management 設計書
+# A-6: Logout/Session Management Design Document
 
-> **Phase A-6**: RP-Initiated, Frontchannel, Backchannel Logout の実装設計
+> **Phase A-6**: Implementation design for RP-Initiated, Frontchannel, and Backchannel Logout
 
-## 1. 概要
+## 1. Overview
 
-### 1.1 目的
+### 1.1 Purpose
 
-OIDCの3種類のログアウト方式をサポートし、SSOにおけるセッション管理とログアウト同期を実現する。
+Support three types of OIDC logout methods to enable session management and logout synchronization in SSO.
 
-### 1.2 対象仕様
+### 1.2 Target Specifications
 
-| 仕様                | RFC/Spec                                                                                       | 状態                    |
-| ------------------- | ---------------------------------------------------------------------------------------------- | ----------------------- |
-| RP-Initiated Logout | [OIDC RP-Initiated Logout 1.0](https://openid.net/specs/openid-connect-rpinitiated-1_0.html)   | ✅ 実装済み             |
-| Frontchannel Logout | [OIDC Front-Channel Logout 1.0](https://openid.net/specs/openid-connect-frontchannel-1_0.html) | 🔲 未実装               |
-| Backchannel Logout  | [OIDC Back-Channel Logout 1.0](https://openid.net/specs/openid-connect-backchannel-1_0.html)   | 🔲 一部実装（受信のみ） |
-| Session Management  | [OIDC Session Management 1.0](https://openid.net/specs/openid-connect-session-1_0.html)        | 🔲 未実装               |
+| Specification       | RFC/Spec                                                                                       | Status                              |
+| ------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------- |
+| RP-Initiated Logout | [OIDC RP-Initiated Logout 1.0](https://openid.net/specs/openid-connect-rpinitiated-1_0.html)   | ✅ Implemented                      |
+| Frontchannel Logout | [OIDC Front-Channel Logout 1.0](https://openid.net/specs/openid-connect-frontchannel-1_0.html) | 🔲 Not implemented                  |
+| Backchannel Logout  | [OIDC Back-Channel Logout 1.0](https://openid.net/specs/openid-connect-backchannel-1_0.html)   | 🔲 Partially implemented (receive only) |
+| Session Management  | [OIDC Session Management 1.0](https://openid.net/specs/openid-connect-session-1_0.html)        | 🔲 Not implemented                  |
 
-### 1.3 決定事項サマリ
+### 1.3 Decision Summary
 
-| 項目                             | 決定                              |
-| -------------------------------- | --------------------------------- |
-| Frontchannel用フィールド同時追加 | ✅ Yes                            |
-| Logout Token `exp` 有効期限      | 120秒（AdminAPIで変更可能）       |
-| `sub` と `sid` 両方含める        | ✅ Yes（AdminAPIで変更可能）      |
-| 送信メカニズム                   | ハイブリッド（waitUntil + Queue） |
-| リトライ回数                     | 3回（AdminAPIで変更可能）         |
-| 最終失敗時の処理                 | 選択可能、デフォルトはログのみ    |
+| Item                                  | Decision                              |
+| ------------------------------------- | ------------------------------------- |
+| Add Frontchannel fields simultaneously | ✅ Yes                                |
+| Logout Token `exp` expiration         | 120 seconds (configurable via AdminAPI) |
+| Include both `sub` and `sid`          | ✅ Yes (configurable via AdminAPI)    |
+| Delivery mechanism                    | Hybrid (waitUntil + Queue)            |
+| Retry count                           | 3 times (configurable via AdminAPI)   |
+| Final failure handling                | Selectable, default is log only       |
 
-### 1.4 設計レビュー結果
+### 1.4 Design Review Results
 
-> **評価：A（非常に完成度が高く、実装に進んで問題なし）**
+> **Evaluation: A (Very high completion level, ready for implementation)**
 
-| 観点            | 評価  |
-| --------------- | ----- |
-| OIDC 準拠       | ★★★★★ |
-| 実運用耐性      | ★★★★★ |
-| Cloudflare 適合 | ★★★★★ |
-| 将来拡張性      | ★★★★☆ |
-| 実装リスク      | 低    |
+| Aspect              | Rating |
+| ------------------- | ------ |
+| OIDC Compliance     | ★★★★★  |
+| Production Readiness | ★★★★★  |
+| Cloudflare Fit      | ★★★★★  |
+| Future Extensibility | ★★★★☆  |
+| Implementation Risk | Low    |
 
-**差別化ポイント**:
+**Differentiation Point**:
 
-> `waitUntil + Queue + session_clients` の組み合わせは Authrim の差別化ポイント
+> The combination of `waitUntil + Queue + session_clients` is Authrim's differentiation point
 
 ---
 
-## 2. アーキテクチャ
+## 2. Architecture
 
-### 2.1 全体フロー
+### 2.1 Overall Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -88,112 +88,112 @@ OIDCの3種類のログアウト方式をサポートし、SSOにおけるセッ
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 コンポーネント構成
+### 2.2 Component Structure
 
 ```
 packages/
 ├── ar-auth/
 │   └── src/
-│       ├── logout.ts              # 既存: RP-Initiated Logout (受信)
-│       └── logout-sender.ts       # 新規: Backchannel/Frontchannel 送信
+│       ├── logout.ts              # Existing: RP-Initiated Logout (receive)
+│       └── logout-sender.ts       # New: Backchannel/Frontchannel send
 ├── ar-lib-core/
 │   └── src/
 │       ├── services/
-│       │   └── backchannel-logout-sender.ts  # 新規: Logout Token生成・送信
+│       │   └── backchannel-logout-sender.ts  # New: Logout Token generation & send
 │       ├── repositories/
 │       │   └── core/
-│       │       ├── client.ts      # 変更: logout URI フィールド追加
-│       │       └── session-client.ts  # 新規: セッション-クライアント紐付け
+│       │       ├── client.ts      # Modified: Add logout URI fields
+│       │       └── session-client.ts  # New: Session-Client association
 │       └── types/
-│           └── logout.ts          # 新規: Logout関連型定義
+│           └── logout.ts          # New: Logout-related type definitions
 └── ar-management/
     └── src/
         └── routes/settings/
-            └── logout-config.ts   # 新規: ログアウト設定API
+            └── logout-config.ts   # New: Logout settings API
 ```
 
 ---
 
-## 3. データベース設計
+## 3. Database Design
 
-### 3.1 クライアントテーブル拡張
+### 3.1 Client Table Extension
 
 ```sql
--- マイグレーション: add_logout_fields_to_clients
+-- Migration: add_logout_fields_to_clients
 ALTER TABLE oauth_clients ADD COLUMN backchannel_logout_uri TEXT;
 ALTER TABLE oauth_clients ADD COLUMN backchannel_logout_session_required INTEGER DEFAULT 0;
 ALTER TABLE oauth_clients ADD COLUMN frontchannel_logout_uri TEXT;
 ALTER TABLE oauth_clients ADD COLUMN frontchannel_logout_session_required INTEGER DEFAULT 0;
 ```
 
-### 3.2 セッション-クライアント紐付けテーブル（新規）
+### 3.2 Session-Client Association Table (New)
 
 ```sql
--- マイグレーション: create_session_clients_table
+-- Migration: create_session_clients_table
 --
--- 目的: ユーザーセッションに対してトークンを発行したクライアントを追跡
--- 用途: Backchannel Logout時に通知すべきRPを特定
+-- Purpose: Track clients that have issued tokens for a user session
+-- Usage: Identify RPs to notify during Backchannel Logout
 --
--- 設計レビュー: これはこの設計の一番の価値。
--- Auth0 / Keycloak でも内部的に必須な構造であり、Authrim の設計思想（DO 分離）とも整合。
+-- Design Review: This is the most valuable part of this design.
+-- Required internally by Auth0 / Keycloak, and aligns with Authrim's design philosophy (DO separation).
 --
 CREATE TABLE session_clients (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
   client_id TEXT NOT NULL,
-  -- トークン発行時刻（最初にトークンを発行した時刻）
+  -- Token issuance time (first token issued)
   first_token_at INTEGER NOT NULL,
-  -- 最後にトークンを発行した時刻（リフレッシュ時に更新）
+  -- Last token issuance time (updated on refresh)
   last_token_at INTEGER NOT NULL,
-  -- RPが最後に生存確認した時刻（Dead RP の自動スキップに使用可能）
-  -- 将来拡張: Token refresh / UserInfo call 時に更新
+  -- Last RP liveness check time (usable for auto-skipping Dead RPs)
+  -- Future extension: Update on Token refresh / UserInfo call
   last_seen_at INTEGER,
 
   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
   FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
 
-  -- 同一セッション・クライアントの組み合わせは一意
+  -- Same session-client combination is unique
   UNIQUE (session_id, client_id)
 );
 
--- インデックス
+-- Indexes
 CREATE INDEX idx_session_clients_session_id ON session_clients(session_id);
 CREATE INDEX idx_session_clients_client_id ON session_clients(client_id);
 CREATE INDEX idx_session_clients_last_seen_at ON session_clients(last_seen_at);
 ```
 
-### 3.3 Logout Token JTIキャッシュ（既存KVを使用）
+### 3.3 Logout Token JTI Cache (Using Existing KV)
 
 ```typescript
-// KVキー形式: bcl_jti:{jti}
-// TTL: logout_token_exp_seconds + 60 (バッファ)
-// 用途: Logout Tokenの再送信防止（リトライ時の重複チェック用）
+// KV key format: bcl_jti:{jti}
+// TTL: logout_token_exp_seconds + 60 (buffer)
+// Purpose: Prevent Logout Token resend (duplicate check for retries)
 ```
 
-### 3.4 Logout送信ペンディングキャッシュ（多重enqueue防止）
+### 3.4 Logout Send Pending Cache (Prevent Multiple Enqueue)
 
 ```typescript
-// KVキー形式: logout:pending:{sessionId}:{clientId}
-// TTL: 300秒（5分）
-// 用途: 短時間に複数logoutが走るケースでの多重enqueue防止
+// KV key format: logout:pending:{sessionId}:{clientId}
+// TTL: 300 seconds (5 minutes)
+// Purpose: Prevent multiple enqueues when multiple logouts occur in short time
 //
-// 設計レビュー【必須】: 同一 client + session の多重 enqueue 防止として追加
+// Design Review [REQUIRED]: Added for preventing duplicate enqueue for same client + session
 ```
 
 ---
 
-## 4. 設定値設計
+## 4. Configuration Design
 
-### 4.1 KV設定キー
+### 4.1 KV Configuration Keys
 
 ```typescript
-// SETTINGS KV に格納
+// Stored in SETTINGS KV
 interface LogoutSettings {
   logout: {
-    // Backchannel Logout設定
+    // Backchannel Logout settings
     backchannel: {
       enabled: boolean; // default: true
-      logout_token_exp_seconds: number; // default: 120 (仕様推奨2分)
+      logout_token_exp_seconds: number; // default: 120 (spec recommends 2 min)
       include_sub_claim: boolean; // default: true
       include_sid_claim: boolean; // default: true
       request_timeout_ms: number; // default: 5000
@@ -205,25 +205,25 @@ interface LogoutSettings {
       };
       on_final_failure: 'log_only' | 'alert'; // default: 'log_only'
     };
-    // Frontchannel Logout設定
+    // Frontchannel Logout settings
     frontchannel: {
       enabled: boolean; // default: true
       iframe_timeout_ms: number; // default: 3000
       max_concurrent_iframes: number; // default: 10
     };
-    // Session Management設定
+    // Session Management settings
     session_management: {
       enabled: boolean; // default: true
-      check_session_iframe_enabled: boolean; // default: true (conformance用)
+      check_session_iframe_enabled: boolean; // default: true (for conformance)
     };
   };
 }
 ```
 
-### 4.2 環境変数フォールバック
+### 4.2 Environment Variable Fallback
 
 ```bash
-# 環境変数（KVが利用できない場合のフォールバック）
+# Environment variables (fallback when KV is unavailable)
 LOGOUT_BACKCHANNEL_ENABLED=true
 LOGOUT_TOKEN_EXP_SECONDS=120
 LOGOUT_INCLUDE_SUB_CLAIM=true
@@ -238,26 +238,26 @@ LOGOUT_FRONTCHANNEL_ENABLED=true
 LOGOUT_IFRAME_TIMEOUT_MS=3000
 ```
 
-### 4.3 設定値読み込み優先順位
+### 4.3 Configuration Value Load Priority
 
 ```
-1. Cache（インメモリ、リクエスト内で有効）
-2. KV（SETTINGS KV）
-3. 環境変数
-4. コードデフォルト値（セキュリティ寄り）
+1. Cache (in-memory, valid within request)
+2. KV (SETTINGS KV)
+3. Environment variables
+4. Code default values (security-oriented)
 ```
 
 ---
 
-## 5. Logout Token仕様
+## 5. Logout Token Specification
 
-### 5.1 クレーム構造
+### 5.1 Claims Structure
 
 ```typescript
 interface LogoutTokenClaims {
-  // 必須クレーム
+  // Required claims
   iss: string; // Issuer URL
-  aud: string; // Client ID（単一RPに対して発行）
+  aud: string; // Client ID (issued to single RP)
   iat: number; // Issued at (Unix timestamp)
   exp: number; // Expiration (iat + exp_seconds)
   jti: string; // Unique token ID (UUID v4)
@@ -265,30 +265,30 @@ interface LogoutTokenClaims {
     'http://schemas.openid.net/event/backchannel-logout': {};
   };
 
-  // 条件付き必須（設定による）
+  // Conditionally required (based on settings)
   sub?: string; // Subject (user ID)
   sid?: string; // Session ID
 }
 
-// 注意: nonce は含めてはいけない（仕様要件）
+// Note: nonce MUST NOT be included (spec requirement)
 ```
 
-> **設計レビュー【必須】**: `aud` は常に **単一 client_id** を設定する。
+> **Design Review [REQUIRED]**: `aud` is always set to a **single client_id**.
 >
-> - Backchannel Logout Token は原則「単一 RP」宛て
-> - `string[]` にすると RP 実装差異によるバグの原因になる
+> - Backchannel Logout Token is principally for a "single RP"
+> - Using `string[]` causes bugs due to RP implementation differences
 
-### 5.2 署名
+### 5.2 Signing
 
 ```typescript
-// ID Tokenと同じ署名キーを使用
-// アルゴリズム: RS256（設定変更不可）
-// 'none' アルゴリズムは使用禁止
+// Uses the same signing key as ID Token
+// Algorithm: RS256 (not configurable)
+// 'none' algorithm is prohibited
 //
-// 設計レビュー: 将来 FAPI 対応時も流用可
+// Design Review: Reusable for future FAPI support
 ```
 
-### 5.3 サンプルトークン
+### 5.3 Sample Token
 
 ```json
 {
@@ -307,21 +307,21 @@ interface LogoutTokenClaims {
 
 ---
 
-## 6. 送信メカニズム
+## 6. Delivery Mechanism
 
-### 6.1 ハイブリッドアプローチ
+### 6.1 Hybrid Approach
 
 ```typescript
-// logout.ts - メインフロー
+// logout.ts - Main flow
 async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
-  // 1. セッション削除（同期）
+  // 1. Delete session (synchronous)
   await deleteSession(sessionId);
 
-  // 2. Backchannel Logout送信（非同期、waitUntil）
+  // 2. Send Backchannel Logout (asynchronous, waitUntil)
   c.executionCtx.waitUntil(
     sendBackchannelLogouts(env, userId, sessionId, {
       onRetryNeeded: async (clientId, attempt) => {
-        // 【必須】多重enqueue防止チェック
+        // [REQUIRED] Check for preventing duplicate enqueue
         const pendingKey = `logout:pending:${sessionId}:${clientId}`;
         const existing = await env.SETTINGS.get(pendingKey);
         if (existing) {
@@ -329,12 +329,12 @@ async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           return;
         }
 
-        // ペンディングフラグを設定（TTL: 5分）
+        // Set pending flag (TTL: 5 min)
         await env.SETTINGS.put(pendingKey, JSON.stringify({ attempt, enqueuedAt: Date.now() }), {
           expirationTtl: 300,
         });
 
-        // 必要に応じてQueueに追加
+        // Add to Queue if needed
         await env.LOGOUT_RETRY_QUEUE.send({
           type: 'backchannel_logout_retry',
           clientId,
@@ -347,12 +347,12 @@ async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     })
   );
 
-  // 3. 即座にレスポンス返却
+  // 3. Return response immediately
   return c.redirect(postLogoutRedirectUri, 302);
 }
 ```
 
-### 6.2 リトライフロー
+### 6.2 Retry Flow
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -374,7 +374,7 @@ async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 │   │  attempt 2: wait 5s → POST → fail? → re-queue           │  │
 │   │  attempt 3: wait 30s → POST → fail? → final failure     │  │
 │   │                                        ↓                │  │
-│   │                              on_final_failure処理       │  │
+│   │                              on_final_failure handling  │  │
 │   │                              (log_only or alert)        │  │
 │   │                              Clear pending lock         │  │
 │   └─────────────────────────────────────────────────────────┘  │
@@ -382,7 +382,7 @@ async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 └────────────────────────────────────────────────────────────────┘
 ```
 
-### 6.3 送信サービス実装
+### 6.3 Send Service Implementation
 
 ```typescript
 // packages/ar-lib-core/src/services/backchannel-logout-sender.ts
@@ -421,16 +421,16 @@ export async function sendBackchannelLogout(
 
     const duration_ms = Date.now() - startTime;
 
-    // 200 OK または 204 No Content は成功
+    // 200 OK or 204 No Content is success
     if (response.status === 200 || response.status === 204) {
       return { clientId, success: true, statusCode: response.status, duration_ms };
     }
 
-    // 400 Bad Request はリトライしない（RPがトークンを拒否）
+    // 400 Bad Request is not retried (RP rejected the token)
     if (response.status === 400) {
       const errorBody = await response.text().catch(() => '');
       console.warn(`Backchannel logout rejected by ${clientId}: ${errorBody}`);
-      // 失敗ログをDB/KVに記録（運用可視化用）
+      // Record failure log to DB/KV (for operational visibility)
       await recordLogoutFailure(env, clientId, {
         statusCode: response.status,
         error: 'rejected_by_rp',
@@ -447,7 +447,7 @@ export async function sendBackchannelLogout(
       };
     }
 
-    // その他のエラーはリトライ対象
+    // Other errors are retry candidates
     return {
       clientId,
       success: false,
@@ -459,7 +459,7 @@ export async function sendBackchannelLogout(
   } catch (error) {
     const duration_ms = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    // 失敗ログを記録
+    // Record failure log
     await recordLogoutFailure(env, clientId, {
       error: errorMessage,
       timestamp: Date.now(),
@@ -475,8 +475,8 @@ export async function sendBackchannelLogout(
 }
 
 /**
- * 失敗ログをKVに記録（運用可視化用）
- * 設計レビュー【推奨】: Admin UI に「失敗した RP 一覧」「最後のエラー」を可視化
+ * Record failure log to KV (for operational visibility)
+ * Design Review [RECOMMENDED]: Visualize "Failed RP list" and "Last error" in Admin UI
  */
 async function recordLogoutFailure(
   env: Env,
@@ -489,7 +489,7 @@ async function recordLogoutFailure(
   }
 ): Promise<void> {
   const key = `logout:failures:${clientId}`;
-  // 最新の失敗のみ保持（TTL: 7日）
+  // Keep only the latest failure (TTL: 7 days)
   await env.SETTINGS.put(key, JSON.stringify(failure), {
     expirationTtl: 7 * 24 * 60 * 60,
   });
@@ -498,12 +498,12 @@ async function recordLogoutFailure(
 
 ---
 
-## 7. Admin API設計
+## 7. Admin API Design
 
-### 7.1 設定取得/更新
+### 7.1 Get/Update Settings
 
 ```http
-# 設定取得
+# Get settings
 GET /admin/settings/logout
 Authorization: Bearer {admin_token}
 
@@ -534,7 +534,7 @@ Response:
   }
 }
 
-# 設定更新（部分更新）
+# Update settings (partial update)
 PATCH /admin/settings/logout
 Authorization: Bearer {admin_token}
 Content-Type: application/json
@@ -556,10 +556,10 @@ Response: 200 OK
 }
 ```
 
-### 7.2 クライアント設定更新
+### 7.2 Client Settings Update
 
 ```http
-# クライアントのLogout URI設定
+# Configure client Logout URIs
 PATCH /admin/clients/{client_id}
 Authorization: Bearer {admin_token}
 Content-Type: application/json
@@ -572,12 +572,12 @@ Content-Type: application/json
 }
 ```
 
-> **設計レビュー【任意】**: `backchannel_logout_uri` 設定時に以下を実施するとUX向上
+> **Design Review [OPTIONAL]**: Implement the following when setting `backchannel_logout_uri` for better UX
 >
-> - HTTPS 検証（localhost 例外のみ許可）
-> - Reachability check（オプション、設定で無効化可能）
+> - HTTPS validation (only allow localhost exception)
+> - Reachability check (optional, can be disabled in settings)
 
-### 7.3 動的クライアント登録対応
+### 7.3 Dynamic Client Registration Support
 
 ```http
 # RFC 7591 Dynamic Client Registration
@@ -594,10 +594,10 @@ Content-Type: application/json
 }
 ```
 
-### 7.4 Logout失敗状況の可視化（運用機能）
+### 7.4 Logout Failure Status Visibility (Operational Feature)
 
 ```http
-# 失敗したRPの一覧取得
+# Get list of failed RPs
 GET /admin/logout/failures
 Authorization: Bearer {admin_token}
 
@@ -618,7 +618,7 @@ Response:
   "total": 1
 }
 
-# 特定クライアントの失敗履歴クリア
+# Clear failure history for specific client
 DELETE /admin/logout/failures/{client_id}
 Authorization: Bearer {admin_token}
 
@@ -627,9 +627,9 @@ Response: 204 No Content
 
 ---
 
-## 8. 型定義
+## 8. Type Definitions
 
-### 8.1 Logout関連型
+### 8.1 Logout-Related Types
 
 ```typescript
 // packages/ar-lib-core/src/types/logout.ts
@@ -638,13 +638,13 @@ Response: 204 No Content
  * Logout Token Claims
  * OIDC Back-Channel Logout 1.0 Section 2.4
  *
- * 設計レビュー【必須】: aud は単一 string に固定
- * - Backchannel Logout Token は原則「単一 RP」宛て
- * - string[] にすると RP 実装差異によるバグの原因になる
+ * Design Review [REQUIRED]: aud is fixed to single string
+ * - Backchannel Logout Token is principally for a "single RP"
+ * - Using string[] causes bugs due to RP implementation differences
  */
 export interface LogoutTokenClaims {
   iss: string;
-  aud: string; // 単一 client_id（配列ではない）
+  aud: string; // Single client_id (not an array)
   iat: number;
   exp: number;
   jti: string;
@@ -657,7 +657,7 @@ export interface LogoutTokenClaims {
 }
 
 /**
- * Backchannel Logout設定
+ * Backchannel Logout Configuration
  */
 export interface BackchannelLogoutConfig {
   enabled: boolean;
@@ -670,7 +670,7 @@ export interface BackchannelLogoutConfig {
 }
 
 /**
- * リトライ設定
+ * Retry Configuration
  */
 export interface RetryConfig {
   max_attempts: number;
@@ -680,11 +680,11 @@ export interface RetryConfig {
 }
 
 /**
- * Frontchannel Logout設定
+ * Frontchannel Logout Configuration
  *
- * 注意【推奨】: iframe_timeout_ms は UX 制御用であり、セキュリティ保証ではない
- * - iframe のロード成功/失敗を OP が検知することは不可能（Frontchannel の本質的制約）
- * - セキュリティが重要な場合は Backchannel Logout を使用すること
+ * Note [RECOMMENDED]: iframe_timeout_ms is for UX control, not a security guarantee
+ * - It's impossible for OP to detect iframe load success/failure (fundamental Frontchannel limitation)
+ * - Use Backchannel Logout when security is important
  */
 export interface FrontchannelLogoutConfig {
   enabled: boolean;
@@ -693,11 +693,11 @@ export interface FrontchannelLogoutConfig {
 }
 
 /**
- * Session Management設定
+ * Session Management Configuration
  *
- * 注意: Session Management は Conformance 専用機能として割り切り
- * - 実運用ではほぼ使われない（サードパーティ Cookie 制限）
- * - check_session_iframe_enabled で無効化可能
+ * Note: Session Management is treated as a Conformance-only feature
+ * - Increasing environments where it doesn't work in production
+ * - Can be disabled via check_session_iframe_enabled
  */
 export interface SessionManagementConfig {
   enabled: boolean;
@@ -705,7 +705,7 @@ export interface SessionManagementConfig {
 }
 
 /**
- * 統合Logout設定
+ * Integrated Logout Configuration
  */
 export interface LogoutConfig {
   backchannel: BackchannelLogoutConfig;
@@ -714,7 +714,7 @@ export interface LogoutConfig {
 }
 
 /**
- * Logout送信結果
+ * Logout Send Result
  */
 export interface LogoutSendResult {
   clientId: string;
@@ -727,7 +727,7 @@ export interface LogoutSendResult {
 }
 
 /**
- * Logout失敗記録
+ * Logout Failure Record
  */
 export interface LogoutFailureRecord {
   clientId: string;
@@ -743,18 +743,18 @@ export interface LogoutFailureRecord {
 
 ---
 
-## 9. セキュリティ考慮事項
+## 9. Security Considerations
 
-### 9.1 Logout Token署名検証
+### 9.1 Logout Token Signature Verification
 
-- **必須**: RPはLogout Tokenの署名を検証しなければならない
-- **署名アルゴリズム**: RS256のみサポート（`none`は禁止）
-- **キー**: ID Token署名と同じJWKSを使用
+- **Required**: RP MUST verify Logout Token signature
+- **Signing algorithm**: Only RS256 supported (`none` is prohibited)
+- **Key**: Uses the same JWKS as ID Token signing
 
-### 9.2 Replay Attack防止
+### 9.2 Replay Attack Prevention
 
 ```typescript
-// JTIキャッシュによる重複チェック
+// Duplicate check using JTI cache
 const jtiCacheKey = `bcl_jti:${jti}`;
 const existing = await env.SETTINGS.get(jtiCacheKey);
 if (existing) {
@@ -765,23 +765,23 @@ await env.SETTINGS.put(jtiCacheKey, '1', {
 });
 ```
 
-### 9.3 HTTPS要件
+### 9.3 HTTPS Requirements
 
-- `backchannel_logout_uri`はHTTPS必須
-- `frontchannel_logout_uri`はHTTPS必須
-- 開発環境のみlocalhostでHTTP許可
+- `backchannel_logout_uri` requires HTTPS
+- `frontchannel_logout_uri` requires HTTPS
+- HTTP allowed only for localhost in development environments
 
-### 9.4 タイムアウト
+### 9.4 Timeouts
 
-- Backchannel: 5秒（設定可能）
-- Frontchannel iframe: 3秒（設定可能）
-- 長時間ブロックを防止
+- Backchannel: 5 seconds (configurable)
+- Frontchannel iframe: 3 seconds (configurable)
+- Prevents long blocking
 
-### 9.5 Session Invalidation の完全性
+### 9.5 Session Invalidation Completeness
 
-> **設計レビュー【必須】**: Logout の本質は「通知」ではなく **Session invalidation の完全性**
+> **Design Review [REQUIRED]**: The essence of Logout is not "notification" but **Session invalidation completeness**
 
-セッション削除後、以下のエンドポイントが確実に失敗することを保証：
+After session deletion, ensure the following endpoints reliably fail:
 
 - `/token` (Refresh Token)
 - `/token` (Token Exchange)
@@ -789,59 +789,59 @@ await env.SETTINGS.put(jtiCacheKey, '1', {
 
 ---
 
-## 10. 実装フェーズ
+## 10. Implementation Phases
 
-### Phase 1: Backchannel Logout送信（優先）
+### Phase 1: Backchannel Logout Send (Priority)
 
-1. DBマイグレーション（クライアントフィールド追加、session_clientsテーブル）
-2. Logout Token生成ロジック
-3. 送信サービス実装
-4. リトライ機構実装（多重enqueue防止含む）
-5. Admin API実装
-6. テスト
+1. DB migration (client field additions, session_clients table)
+2. Logout Token generation logic
+3. Send service implementation
+4. Retry mechanism implementation (including duplicate enqueue prevention)
+5. Admin API implementation
+6. Testing
 
 ### Phase 2: Frontchannel Logout
 
-1. Frontchannel送信ロジック（iframe生成）
-2. タイムアウト処理
-3. テスト
+1. Frontchannel send logic (iframe generation)
+2. Timeout handling
+3. Testing
 
-### Phase 3: Session Management（Conformance用）
+### Phase 3: Session Management (For Conformance)
 
-1. `/session/check` エンドポイント実装
-2. `session_state` パラメータ生成
+1. `/session/check` endpoint implementation
+2. `session_state` parameter generation
 3. Session iframe HTML
-4. テスト
+4. Testing
 
 ---
 
-## 11. テスト計画
+## 11. Test Plan
 
-### 11.1 ユニットテスト
+### 11.1 Unit Tests
 
-- [ ] Logout Token生成
-- [ ] Logout Token `aud` が常に単一 string であること
-- [ ] 署名検証
-- [ ] 設定値読み込み（KV → 環境変数 → デフォルト）
-- [ ] リトライロジック
-- [ ] 多重enqueue防止ロジック
+- [ ] Logout Token generation
+- [ ] Logout Token `aud` is always a single string
+- [ ] Signature verification
+- [ ] Configuration value loading (KV → Environment variables → Default)
+- [ ] Retry logic
+- [ ] Duplicate enqueue prevention logic
 
-### 11.2 統合テスト
+### 11.2 Integration Tests
 
-- [ ] Backchannel Logout E2Eフロー
-- [ ] リトライ→最終失敗フロー
-- [ ] 複数RP同時通知
-- [ ] Frontchannel iframe生成
+- [ ] Backchannel Logout E2E flow
+- [ ] Retry → Final failure flow
+- [ ] Multiple RP simultaneous notification
+- [ ] Frontchannel iframe generation
 
-### 11.3 Session Invalidation 完全性テスト
+### 11.3 Session Invalidation Completeness Tests
 
-> **設計レビュー【必須】**: 追加すべきテスト
+> **Design Review [REQUIRED]**: Tests to add
 
-- [ ] Session削除後に `/token` (Refresh Token) が失敗すること
-- [ ] Session削除後に `/token` (Token Exchange) が失敗すること
-- [ ] Session削除後に `/userinfo` が失敗すること
+- [ ] `/token` (Refresh Token) fails after session deletion
+- [ ] `/token` (Token Exchange) fails after session deletion
+- [ ] `/userinfo` fails after session deletion
 
-### 11.4 Conformance Test
+### 11.4 Conformance Tests
 
 - [ ] OIDC Conformance Suite: Back-Channel Logout
 - [ ] OIDC Conformance Suite: Front-Channel Logout
@@ -849,37 +849,37 @@ await env.SETTINGS.put(jtiCacheKey, '1', {
 
 ---
 
-## 12. 注意事項・制約
+## 12. Notes and Limitations
 
-### 12.1 Frontchannel Logout の制約
+### 12.1 Frontchannel Logout Limitations
 
-> **設計レビュー【推奨】**: README / Admin UI に明示すべき
+> **Design Review [RECOMMENDED]**: Should be documented in README / Admin UI
 
-iframe 方式の Frontchannel Logout には以下の本質的制約があります：
+The iframe-based Frontchannel Logout has the following fundamental limitations:
 
-1. **OP が成功/失敗を検知できない**
-   - ブラウザの Same-Origin Policy により、iframe の読み込み結果を親ウィンドウから確認できない
-   - `iframe_timeout_ms` は「待ち時間の上限」であり、RP での処理成功を保証しない
+1. **OP cannot detect success/failure**
+   - Due to browser Same-Origin Policy, parent window cannot check iframe load result
+   - `iframe_timeout_ms` is the "wait time limit", not a guarantee of RP processing success
 
-2. **サードパーティ Cookie 制限**
-   - Safari, Brave, 将来の Chrome では、iframe 内のリクエストに Cookie が付与されない可能性
-   - これにより RP 側でセッション特定ができず、logout が機能しない
+2. **Third-party Cookie Restrictions**
+   - In Safari, Brave, and future Chrome, cookies may not be attached to iframe requests
+   - This prevents RP from identifying the session, making logout ineffective
 
-3. **推奨事項**
-   - セキュリティが重要な場合は **Backchannel Logout** を使用
-   - Frontchannel は UX 向上のための「ベストエフォート」として位置づけ
+3. **Recommendations**
+   - Use **Backchannel Logout** when security is important
+   - Position Frontchannel as a "best effort" for UX improvement
 
-### 12.2 Session Management の位置づけ
+### 12.2 Session Management Positioning
 
-Session Management（check_session_iframe）は：
+Session Management (check_session_iframe):
 
-- **Conformance 専用機能**として割り切り
-- 実運用では機能しない環境が増えている
-- 設定で無効化可能（`check_session_iframe_enabled: false`）
+- Treated as a **Conformance-only feature**
+- Increasing environments where it doesn't work in production
+- Can be disabled via settings (`check_session_iframe_enabled: false`)
 
 ---
 
-## 13. 参考文献
+## 13. References
 
 - [OIDC Back-Channel Logout 1.0](https://openid.net/specs/openid-connect-backchannel-1_0.html)
 - [OIDC Front-Channel Logout 1.0](https://openid.net/specs/openid-connect-frontchannel-1_0.html)

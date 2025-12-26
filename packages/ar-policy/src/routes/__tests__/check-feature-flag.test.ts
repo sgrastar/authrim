@@ -7,7 +7,7 @@
  * - Default disabled state (secure default)
  * - KV error handling
  *
- * @see CLAUDE.md: 設定項目・Feature Flagsの実装方針
+ * @see CLAUDE.md: Settings and Feature Flags implementation policy
  * @see packages/policy-service/src/routes/check.ts
  */
 
@@ -297,7 +297,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
       });
       const res = await app.fetch(req, env);
 
-      // POLICY_FEATURE_DISABLED: RFC準拠で access_denied + 403
+      // POLICY_FEATURE_DISABLED: RFC-compliant access_denied + 403
       expect(res.status).toBe(403);
       const body = await res.json();
       expect(body.error).toBe('access_denied');
@@ -346,7 +346,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
       });
       const res = await app.fetch(req, env);
 
-      // POLICY_FEATURE_DISABLED: RFC準拠で access_denied + 403
+      // POLICY_FEATURE_DISABLED: RFC-compliant access_denied + 403
       expect(res.status).toBe(403);
       const body = await res.json();
       expect(body.error).toBe('access_denied');
@@ -364,7 +364,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
  * - In-memory cache behavior
  * - Validation of limits (1-1000)
  *
- * @see CLAUDE.md: 設定項目・Feature Flagsの実装方針
+ * @see CLAUDE.md: Settings and Feature Flags implementation policy
  */
 describe('Batch Size Limit Configuration', () => {
   beforeEach(() => {

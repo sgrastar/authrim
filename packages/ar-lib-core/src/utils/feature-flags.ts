@@ -2,7 +2,7 @@
  * Feature Flag Utilities
  *
  * Implements hybrid approach: KV → Environment Variable → Default Value
- * Per CLAUDE.md: コード内のデフォルト値はセキュリティ的に安全な方の設定値にする
+ * Per CLAUDE.md: code defaults should use secure values
  *
  * Priority:
  * 1. KV (dynamic, no redeploy needed)
