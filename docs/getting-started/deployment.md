@@ -449,7 +449,7 @@ After deployment:
 2. **Test OAuth Flow** - Register a client and test authorization
 3. **Configure Email** - `./scripts/setup-resend.sh --env=prod`
 4. **Set Up Monitoring** - Cloudflare Analytics dashboard
-5. **Run Conformance Tests** - `pnpm run conformance:all`
+5. **Run Conformance Tests** - [OpenID Conformance Suite](https://www.certification.openid.net)
 
 ---
 

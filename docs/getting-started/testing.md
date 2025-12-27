@@ -26,8 +26,8 @@ This guide covers Authrim's comprehensive testing strategy including unit tests,
 | **E2E**           | Playwright      | User flows, UI functionality  | `test-e2e/`         |
 | **Accessibility** | axe-core        | WCAG 2.1 AA compliance        | `test-e2e/`         |
 | **Performance**   | Lighthouse CI   | Core Web Vitals               | `lighthouserc.json` |
-| **Conformance**   | OIDC Foundation | OpenID certification          | `conformance/`      |
 | **Load**          | k6              | Performance at scale          | `load-testing/`     |
+| **Conformance**   | OIDC Foundation | OpenID certification          | (separate setup)    |
 
 ---
 
@@ -195,54 +195,25 @@ pnpm test:lighthouse:assert
 
 ## OIDC Conformance Tests
 
-Run OpenID Foundation certification tests against Authrim.
-
-### Running Conformance Tests
-
-```bash
-# Run specific test plan
-pnpm conformance:basic     # Basic OP tests
-pnpm conformance:config    # Config OP tests
-pnpm conformance:dynamic   # Dynamic OP tests
-pnpm conformance:fapi2     # FAPI 2.0 tests
-
-# Run all plans
-pnpm conformance:all
-
-# View test details
-pnpm conformance:details
-pnpm conformance:errors    # Failed tests only
-```
+Authrim supports running against the OpenID Foundation certification tests.
 
 ### Test Plans
 
-| Plan         | Description                 | Module Count |
-| ------------ | --------------------------- | ------------ |
-| `basic-op`   | Standard OIDC Provider      | ~60 modules  |
-| `config-op`  | Configuration endpoint      | ~30 modules  |
-| `dynamic-op` | Dynamic client registration | ~40 modules  |
-| `fapi2-op`   | Financial-grade API 2.0     | ~50 modules  |
+| Plan         | Description                 | Status |
+| ------------ | --------------------------- | ------ |
+| Basic OP     | Standard OIDC Provider      | ✓      |
+| Config OP    | Configuration endpoint      | ✓      |
+| Dynamic OP   | Dynamic client registration | ✓      |
+| FAPI 2.0     | Financial-grade API 2.0     | Testing |
 
-### How It Works
+### Running Conformance Tests
 
-1. Creates test plan on OIDC Conformance Suite
-2. Registers test client dynamically
-3. Runs each test module with browser automation
-4. Handles user interactions (login, consent)
-5. Collects and reports results
+1. Deploy Authrim to a public endpoint
+2. Register at [OpenID Conformance Suite](https://www.certification.openid.net)
+3. Configure your test plan with your Authrim endpoints
+4. Run tests through the web interface
 
-### Configuration
-
-**Files**:
-
-- `conformance/config/*.json` - Test plan configurations
-- `conformance/scripts/` - Automation scripts
-
-**Environment Variables** (optional):
-
-```bash
-CONFORMANCE_SUITE_URL=https://www.certification.openid.net
-```
+See the OpenID Foundation's documentation for detailed instructions.
 
 ---
 
@@ -250,7 +221,7 @@ CONFORMANCE_SUITE_URL=https://www.certification.openid.net
 
 Test Authrim's performance under realistic load using K6.
 
-> **Full documentation**: See [load-testing/README.md](../../load-testing/README.md) for complete setup and benchmark guides.
+> **Full documentation**: See `load-testing/README.md` in the repository root for complete setup and benchmark guides.
 
 ### Quick Start
 
@@ -355,7 +326,7 @@ pnpm run lint && pnpm run typecheck && pnpm test
 ### Full Test Suite
 
 ```bash
-# All tests (except conformance and load)
+# All tests (except load tests)
 pnpm test                  # Unit tests
 pnpm test:e2e              # E2E + Accessibility
 pnpm test:lighthouse       # Performance
@@ -367,8 +338,7 @@ pnpm test:lighthouse       # Performance
 # Run everything
 pnpm test && \
 pnpm test:e2e && \
-pnpm test:lighthouse && \
-pnpm conformance:basic
+pnpm test:lighthouse
 ```
 
 ---
@@ -381,7 +351,6 @@ pnpm conformance:basic
 | E2E Coverage       | All critical flows |
 | Accessibility      | 100% WCAG 2.1 AA   |
 | Performance        | 90+ Lighthouse     |
-| Conformance        | All plans passing  |
 
 ---
 
@@ -403,16 +372,6 @@ pnpm --filter=ui build
 
 # Then run E2E
 pnpm test:e2e
-```
-
-### Conformance Test Failures
-
-```bash
-# Check detailed errors
-pnpm conformance:errors
-
-# View specific test
-pnpm conformance:details --test-id=xxx
 ```
 
 ---

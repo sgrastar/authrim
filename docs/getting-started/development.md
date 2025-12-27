@@ -26,7 +26,7 @@ Before you begin, ensure you have the following installed:
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR-USERNAME/authrim.git
+git clone https://github.com/sgrastar/authrim.git
 cd authrim
 
 # Install dependencies
@@ -141,7 +141,7 @@ authrim/
 │   └── ui/               # SvelteKit frontend
 ├── scripts/              # Setup & deployment scripts
 ├── migrations/           # D1 database migrations
-├── conformance/          # OpenID conformance testing
+├── load-testing/         # Performance benchmarks
 └── docs/                 # Documentation
 ```
 
@@ -192,16 +192,6 @@ pnpm run format:check     # Check code formatting
 pnpm run deploy           # Deploy workers with retry logic
 pnpm run deploy:ui        # Deploy UI to Cloudflare Pages
 pnpm run deploy:all       # Deploy everything
-```
-
-### Conformance Testing
-
-```bash
-pnpm run conformance:basic    # Run Basic OP tests
-pnpm run conformance:config   # Run Config OP tests
-pnpm run conformance:dynamic  # Run Dynamic OP tests
-pnpm run conformance:fapi2    # Run FAPI 2.0 tests
-pnpm run conformance:all      # Run all conformance tests
 ```
 
 ### Database
