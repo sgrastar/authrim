@@ -107,16 +107,12 @@ packages/shared/wrangler.conformance.toml
 packages/*/wrangler.toml.backup
 .claude/settings.local.json
 
-# OIDC Conformance Test Results
-conformance/*/results/
-conformance/scripts/screenshots/
-conformance/OIDC All Tests/
-load-testing/.env.k6cloud
+# OIDC Conformance (moved to private/)
+conformance/
 
-# Load testing seed data (large files, in use locally)
+# Load testing
+load-testing/.env.k6cloud
 load-testing/seeds/
-# Conformance test results
-conformance/results/
 
 # Wrangler/Miniflare remote storage cache
 remote/
