@@ -1,6 +1,29 @@
 /**
  * VersionManager Durable Object
  *
+ * @deprecated This Durable Object is deprecated and will be removed in a future version.
+ * Use Cloudflare Versions Deploy with gradual rollout instead:
+ * ```bash
+ * ./scripts/deploy-with-retry.sh --env=prod --gradual
+ * ```
+ *
+ * Reason for deprecation:
+ * - Cloudflare Versions Deploy now provides native traffic splitting
+ * - Gradual rollout (10% → 50% → 100%) is safer than hard 503 rejection
+ * - wrangler rollback provides instant rollback without custom DO
+ * - Eliminates the need for this DO's maintenance overhead
+ *
+ * Migration:
+ * 1. Stop using versionCheckMiddleware in your Workers
+ * 2. Use --gradual flag in deploy-with-retry.sh for production deployments
+ * 3. This DO can be safely removed once no Workers depend on it
+ *
+ * Note: This DO is currently still used by deploy-with-retry.sh for
+ * backward compatibility. It will be removed in a future version.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * Original Description (for reference):
+ *
  * Manages code version identifiers for Cloudflare Workers to detect and
  * reject stale bundles. Each Worker's version is tracked independently,
  * allowing partial deployments.
@@ -38,6 +61,9 @@ interface VersionManagerState {
 
 /**
  * VersionManager Durable Object
+ *
+ * @deprecated Use Cloudflare Versions Deploy with --gradual flag instead.
+ * See module documentation for migration instructions.
  *
  * Centralized version management for all Workers in the deployment.
  */
@@ -176,6 +202,12 @@ export class VersionManager {
   }
 
   /**
+   * Maximum request body size (1KB should be more than enough for version registration)
+   * Security: Prevents DoS via large JSON payloads
+   */
+  private static readonly MAX_BODY_SIZE = 1024;
+
+  /**
    * Handle HTTP requests to the VersionManager Durable Object
    */
   async fetch(request: Request): Promise<Response> {
@@ -183,9 +215,15 @@ export class VersionManager {
     const path = url.pathname;
 
     try {
-      // GET /version/:workerName - Get version for a specific Worker (no auth required for read)
-      const versionMatch = path.match(/^\/version\/([a-z0-9-]+)$/);
+      // GET /version/:workerName - Get version for a specific Worker (auth required)
+      // Security: Authentication required to prevent version information disclosure
+      // Security: workerName limited to 1-64 chars to prevent ReDoS
+      const versionMatch = path.match(/^\/version\/([a-z0-9-]{1,64})$/);
       if (versionMatch && request.method === 'GET') {
+        if (!this.authenticate(request)) {
+          return this.unauthorizedResponse();
+        }
+
         const workerName = versionMatch[1];
         const version = await this.getVersion(workerName);
 
@@ -205,6 +243,21 @@ export class VersionManager {
       if (versionMatch && request.method === 'POST') {
         if (!this.authenticate(request)) {
           return this.unauthorizedResponse();
+        }
+
+        // Security: Check Content-Length to prevent DoS via large payloads
+        const contentLength = request.headers.get('Content-Length');
+        if (contentLength && parseInt(contentLength, 10) > VersionManager.MAX_BODY_SIZE) {
+          return new Response(
+            JSON.stringify({
+              error: 'Payload Too Large',
+              message: `Request body must not exceed ${VersionManager.MAX_BODY_SIZE} bytes`,
+            }),
+            {
+              status: 413,
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
         }
 
         const workerName = versionMatch[1];

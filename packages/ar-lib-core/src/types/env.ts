@@ -128,6 +128,19 @@ export interface Env {
   DEPLOY_TIME_UTC?: string; // ISO 8601 timestamp of deployment
   VERSION_CHECK_ENABLED?: string; // "false" to disable version check middleware (default: enabled)
 
+  // API Versioning (Stripe-style date-based versioning)
+  API_VERSIONING_ENABLED?: string; // "false" to disable API versioning middleware (default: enabled)
+  API_DEFAULT_VERSION?: string; // Default API version when not specified (YYYY-MM-DD format, default: "2024-12-01")
+  API_CURRENT_STABLE_VERSION?: string; // Current stable version (YYYY-MM-DD format, default: "2024-12-01")
+  API_SUPPORTED_VERSIONS?: string; // Comma-separated list of supported versions (YYYY-MM-DD format)
+  API_UNKNOWN_VERSION_MODE?: string; // "fallback" | "warn" | "reject" - how to handle unknown versions (default: "fallback")
+
+  // Deprecation Headers (RFC 8594 Sunset Header)
+  DEPRECATION_HEADERS_ENABLED?: string; // "false" to disable deprecation headers (default: enabled)
+
+  // SDK Compatibility Check (preparation for future SDK)
+  SDK_COMPATIBILITY_CHECK_ENABLED?: string; // "false" to disable SDK compatibility checking (default: disabled until SDKs are developed)
+
   // Rate Limiting Override (for load testing)
   // Set to "loadTest" to use 10000 req/min instead of default limits
   RATE_LIMIT_PROFILE?: string;

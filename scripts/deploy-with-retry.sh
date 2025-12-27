@@ -7,9 +7,17 @@
 # - Service unavailable errors (code 7010) from concurrent deployments
 # - API overload from parallel deployments
 #
+# Gradual Rollout:
+# This script supports Cloudflare Versions Deploy for gradual rollouts.
+# When --gradual is specified, each worker is deployed to a percentage of traffic,
+# health checks are performed, and rollback is automatic on failure.
+#
 # Usage:
 #   ./scripts/deploy-with-retry.sh --env=dev
 #   ./scripts/deploy-with-retry.sh --env=staging --api-only
+#   ./scripts/deploy-with-retry.sh --env=prod --gradual
+#   ./scripts/deploy-with-retry.sh --env=prod --gradual-stages=10,30,50,100
+#   ./scripts/deploy-with-retry.sh --env=prod --gradual --gradual-wait=5
 
 set -e
 
@@ -19,6 +27,9 @@ trap 'echo ""; echo "⚠️  Deployment cancelled by user"; exit 130' INT TERM
 INTER_DEPLOY_DELAY=5     # Delay between deployments to avoid rate limits
 DEPLOY_ENV=""
 API_ONLY=false
+GRADUAL_ROLLOUT=false
+GRADUAL_STAGES="10,50,100"    # Default gradual rollout stages (percentage)
+GRADUAL_WAIT=3                 # Wait time between stages in minutes
 VERSIONED_WORKERS=(
     "ar-auth"
     "ar-token"
@@ -43,19 +54,38 @@ while [[ $# -gt 0 ]]; do
             API_ONLY=true
             shift
             ;;
+        --gradual)
+            GRADUAL_ROLLOUT=true
+            shift
+            ;;
+        --gradual-stages=*)
+            GRADUAL_STAGES="${1#*=}"
+            GRADUAL_ROLLOUT=true
+            shift
+            ;;
+        --gradual-wait=*)
+            GRADUAL_WAIT="${1#*=}"
+            shift
+            ;;
         *)
             echo "❌ Unknown parameter: $1"
             echo ""
-            echo "Usage: $0 --env=<environment> [--api-only]"
+            echo "Usage: $0 --env=<environment> [options]"
             echo ""
             echo "Options:"
-            echo "  --env=<name>    Environment name (required, e.g., dev, staging, prod)"
-            echo "  --api-only      Deploy API packages only (exclude UI)"
+            echo "  --env=<name>           Environment name (required, e.g., dev, staging, prod)"
+            echo "  --api-only             Deploy API packages only (exclude UI)"
+            echo "  --gradual              Enable gradual rollout (default: 10% → 50% → 100%)"
+            echo "  --gradual-stages=N,N   Custom rollout stages (comma-separated percentages)"
+            echo "  --gradual-wait=N       Wait time between stages in minutes (default: 3)"
             echo ""
             echo "Examples:"
             echo "  $0 --env=dev"
             echo "  $0 --env=staging --api-only"
             echo "  $0 --env=prod"
+            echo "  $0 --env=prod --gradual"
+            echo "  $0 --env=prod --gradual-stages=10,30,50,100"
+            echo "  $0 --env=prod --gradual --gradual-wait=5"
             exit 1
             ;;
     esac
@@ -90,7 +120,202 @@ DEPLOY_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 echo "📋 Version Information:"
 echo "   UUID: ${VERSION_UUID}"
 echo "   Time: ${DEPLOY_TIME}"
+if [ "$GRADUAL_ROLLOUT" = true ]; then
+    echo "   Mode: Gradual Rollout"
+    echo "   Stages: ${GRADUAL_STAGES}%"
+    echo "   Wait: ${GRADUAL_WAIT} minutes between stages"
+fi
 echo ""
+
+# Validate URL format (security: prevent command injection via malformed URLs)
+# Only allows https:// URLs with valid hostname format
+validate_url() {
+    local url=$1
+
+    # Check if URL is empty
+    if [ -z "$url" ]; then
+        return 1
+    fi
+
+    # Check URL format: must be https:// with valid hostname
+    # Pattern: https://[a-z0-9.-]+(/[^<>&'\"]*)?
+    if [[ ! "$url" =~ ^https://[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+(/[^\<\>\&\'\"]*)?$ ]]; then
+        # Also allow localhost for development
+        if [[ ! "$url" =~ ^https?://localhost(:[0-9]+)?(/[^\<\>\&\'\"]*)?$ ]]; then
+            echo "❌ Invalid URL format: $url"
+            return 1
+        fi
+    fi
+
+    # Check for shell metacharacters that could cause command injection
+    if [[ "$url" =~ [\$\`\|\;\&\(\)\{\}\[\]] ]]; then
+        echo "❌ URL contains invalid characters: $url"
+        return 1
+    fi
+
+    return 0
+}
+
+# Health check function for gradual rollout
+# Checks OIDC Discovery endpoint and optionally API version header
+perform_health_check() {
+    local issuer_url=$1
+    local expected_version=$2
+    local max_retries=3
+    local retry_delay=10
+
+    echo "   🔎 Performing health check..."
+
+    local attempt=1
+    while [ $attempt -le $max_retries ]; do
+        # Check OIDC Discovery endpoint
+        local response=$(curl -s -w "\n%{http_code}" \
+            "${issuer_url}/.well-known/openid-configuration" \
+            --connect-timeout 10 \
+            --max-time 30 2>/dev/null)
+
+        local http_code=$(echo "$response" | tail -n1)
+        local body=$(echo "$response" | sed '$d')
+
+        if [ "$http_code" = "200" ]; then
+            # Verify issuer matches
+            local issuer=$(echo "$body" | jq -r '.issuer // empty')
+            if [ -n "$issuer" ]; then
+                echo "   ✅ OIDC Discovery: OK (issuer: $issuer)"
+
+                # Optionally check API version header
+                local version_response=$(curl -s -I \
+                    "${issuer_url}/api/admin/health" \
+                    -H "Authrim-Version: ${expected_version}" \
+                    --connect-timeout 10 \
+                    --max-time 30 2>/dev/null)
+
+                local api_version=$(echo "$version_response" | grep -i "X-Authrim-Version:" | awk '{print $2}' | tr -d '\r')
+                if [ -n "$api_version" ]; then
+                    echo "   ✅ API Version: ${api_version}"
+                fi
+
+                return 0
+            fi
+        fi
+
+        if [ $attempt -lt $max_retries ]; then
+            echo "   ⏳ Health check failed (attempt $attempt/$max_retries), retrying in ${retry_delay}s..."
+            sleep $retry_delay
+        fi
+        ((attempt++))
+    done
+
+    echo "   ❌ Health check failed after $max_retries attempts"
+    return 1
+}
+
+# Rollback function for gradual rollout
+perform_rollback() {
+    local worker_name=$1
+    local package_path=$2
+
+    echo "   🔄 Rolling back ${worker_name}..."
+
+    if (cd "$package_path" && pnpm exec wrangler rollback --config "wrangler.${DEPLOY_ENV}.toml" 2>/dev/null); then
+        echo "   ✅ Rollback successful for ${worker_name}"
+        return 0
+    else
+        echo "   ❌ Rollback failed for ${worker_name}"
+        return 1
+    fi
+}
+
+# Gradual deploy function - deploys to a percentage of traffic
+deploy_gradual_stage() {
+    local package_name=$1
+    local package_path=$2
+    local percentage=$3
+    local worker_name="${DEPLOY_ENV}-${package_name}"
+
+    echo "   📊 Deploying to ${percentage}% of traffic..."
+
+    # Build the deploy command
+    local deploy_cmd="pnpm exec wrangler deploy --config wrangler.${DEPLOY_ENV}.toml"
+
+    # Add version vars for non-shared packages
+    if [ "$package_name" != "ar-lib-core" ] && [ "$package_name" != "ar-router" ]; then
+        deploy_cmd="$deploy_cmd --var CODE_VERSION_UUID:${VERSION_UUID} --var DEPLOY_TIME_UTC:${DEPLOY_TIME}"
+    fi
+
+    # First deployment creates a new version
+    if (cd "$package_path" && eval "$deploy_cmd"); then
+        if [ "$percentage" -lt 100 ]; then
+            # Use wrangler versions deploy to set percentage
+            # Note: This requires the version to be created first
+            echo "   📈 Setting traffic split to ${percentage}%..."
+            if (cd "$package_path" && pnpm exec wrangler versions deploy --percentage "${percentage}" --config "wrangler.${DEPLOY_ENV}.toml" 2>/dev/null); then
+                echo "   ✅ Traffic split set to ${percentage}%"
+                return 0
+            else
+                # Fallback: Cloudflare may not support percentage for all worker types
+                echo "   ⚠️  Traffic split not available, deployed to 100%"
+                return 0
+            fi
+        else
+            echo "   ✅ Deployed to 100%"
+            return 0
+        fi
+    else
+        local exit_code=$?
+        echo "   ❌ Deploy failed (exit code: $exit_code)"
+        return $exit_code
+    fi
+}
+
+# Deploy package with gradual rollout stages
+deploy_package_gradual() {
+    local package_name=$1
+    local package_path=$2
+    local issuer_url=$3
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📦 Deploying (Gradual): $package_name"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    # Parse stages from comma-separated list
+    IFS=',' read -ra STAGES <<< "$GRADUAL_STAGES"
+
+    for stage in "${STAGES[@]}"; do
+        echo ""
+        echo "   ▶ Stage: ${stage}%"
+
+        # Deploy to this percentage
+        if ! deploy_gradual_stage "$package_name" "$package_path" "$stage"; then
+            echo "   ❌ Deployment failed at ${stage}%"
+            perform_rollback "$package_name" "$package_path"
+            return 1
+        fi
+
+        # Skip health check and wait for 100% stage (final)
+        if [ "$stage" -lt 100 ]; then
+            # Wait before health check
+            echo "   ⏳ Waiting 30s for deployment to stabilize..."
+            sleep 30
+
+            # Perform health check if issuer_url is available
+            if [ -n "$issuer_url" ]; then
+                if ! perform_health_check "$issuer_url" ""; then
+                    echo "   ⚠️  Health check failed at ${stage}%, initiating rollback..."
+                    perform_rollback "$package_name" "$package_path"
+                    return 1
+                fi
+            fi
+
+            # Wait between stages
+            echo "   ⏳ Waiting ${GRADUAL_WAIT} minutes before next stage..."
+            sleep $((GRADUAL_WAIT * 60))
+        fi
+    done
+
+    echo "✅ Successfully deployed: $package_name (gradual rollout complete)"
+    return 0
+}
 
 deploy_package() {
     local package_name=$1
@@ -374,6 +599,31 @@ PACKAGES=(
     "ar-router:packages/ar-router"
 )
 
+# Get ISSUER_URL early for health checks during gradual rollout
+ISSUER_URL=""
+if [ -f "packages/ar-discovery/wrangler.${DEPLOY_ENV}.toml" ]; then
+    ISSUER_URL=$(grep 'ISSUER_URL = ' "packages/ar-discovery/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
+    # Validate URL before use (security: prevent command injection)
+    if [ -n "$ISSUER_URL" ] && ! validate_url "$ISSUER_URL"; then
+        echo "⚠️  ISSUER_URL validation failed. Health checks will be skipped."
+        ISSUER_URL=""
+    fi
+fi
+
+# Display gradual rollout warning
+if [ "$GRADUAL_ROLLOUT" = true ]; then
+    echo "⚠️  Gradual rollout enabled. Each worker will be deployed in stages:"
+    echo "   Stages: ${GRADUAL_STAGES}%"
+    echo "   Wait time: ${GRADUAL_WAIT} minutes between stages"
+    if [ -n "$ISSUER_URL" ]; then
+        echo "   Health check URL: ${ISSUER_URL}/.well-known/openid-configuration"
+    fi
+    echo ""
+    echo "   Note: Gradual rollout is applied to user-facing workers only."
+    echo "   ar-lib-core and ar-router are deployed directly to 100%."
+    echo ""
+fi
+
 FAILED_PACKAGES=()
 FIRST_DEPLOY=true
 
@@ -396,8 +646,21 @@ for pkg in "${PACKAGES[@]}"; do
         echo ""
     fi
 
-    if ! deploy_package "$name" "$path"; then
-        FAILED_PACKAGES+=("$name")
+    # Use gradual rollout for user-facing workers (not for shared/router packages)
+    if [ "$GRADUAL_ROLLOUT" = true ] && [ "$name" != "ar-lib-core" ] && [ "$name" != "ar-router" ]; then
+        if ! deploy_package_gradual "$name" "$path" "$ISSUER_URL"; then
+            FAILED_PACKAGES+=("$name")
+            # On gradual rollout failure, stop deployment
+            echo ""
+            echo "❌ Gradual rollout failed for $name. Stopping deployment."
+            echo "   Previous packages may have been deployed."
+            echo "   Run ./scripts/rollback-all.sh --env=$DEPLOY_ENV to rollback all."
+            break
+        fi
+    else
+        if ! deploy_package "$name" "$path"; then
+            FAILED_PACKAGES+=("$name")
+        fi
     fi
     echo ""
 done
@@ -416,6 +679,11 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     ADMIN_API_SECRET=""
     if [ -f "packages/ar-discovery/wrangler.${DEPLOY_ENV}.toml" ]; then
         ISSUER_URL=$(grep 'ISSUER_URL = ' "packages/ar-discovery/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
+        # Validate URL before use (security: prevent command injection)
+        if [ -n "$ISSUER_URL" ] && ! validate_url "$ISSUER_URL"; then
+            echo "⚠️  ISSUER_URL validation failed. Skipping version registration and endpoint display."
+            ISSUER_URL=""
+        fi
     fi
     if [ -f "packages/ar-management/wrangler.${DEPLOY_ENV}.toml" ]; then
         ADMIN_API_SECRET=$(grep 'ADMIN_API_SECRET = ' "packages/ar-management/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*ADMIN_API_SECRET = "\(.*\)"/\1/')

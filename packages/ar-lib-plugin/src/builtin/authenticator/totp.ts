@@ -58,7 +58,9 @@ export const TOTPConfigSchema = z.object({
     .min(15)
     .max(120)
     .default(30)
-    .describe('Code refresh interval (seconds). 30 seconds is standard. Shorter increases security, longer increases convenience'),
+    .describe(
+      'Code refresh interval (seconds). 30 seconds is standard. Shorter increases security, longer increases convenience'
+    ),
 
   window: z
     .number()

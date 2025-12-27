@@ -1,5 +1,14 @@
 # Worker Version Management System
 
+> ⚠️ **DEPRECATED**: This version management system is deprecated.
+> Use Cloudflare Versions Deploy with gradual rollout instead:
+> ```bash
+> ./scripts/deploy-with-retry.sh --env=prod --gradual
+> ```
+> See [Rollback Procedures](./rollback.md) for the new approach.
+
+---
+
 An internal version management system to solve the Stale Bundle problem in Cloudflare Workers' globally distributed environment.
 
 ## Background

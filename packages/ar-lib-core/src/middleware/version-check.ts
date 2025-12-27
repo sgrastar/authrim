@@ -1,6 +1,26 @@
 /**
  * Version Check Middleware
  *
+ * @deprecated This middleware is deprecated and will be removed in a future version.
+ * Use Cloudflare Versions Deploy with gradual rollout instead:
+ * ```bash
+ * ./scripts/deploy-with-retry.sh --env=prod --gradual
+ * ```
+ *
+ * Reason for deprecation:
+ * - Cloudflare Versions Deploy now provides native traffic splitting
+ * - Gradual rollout (10% → 50% → 100%) is safer than hard 503 rejection
+ * - wrangler rollback provides instant rollback without custom DO
+ * - Eliminates need for VersionManager DO maintenance
+ *
+ * Migration:
+ * 1. Remove versionCheckMiddleware from your Worker's middleware chain
+ * 2. Use --gradual flag in deploy-with-retry.sh for production deployments
+ * 3. VERSION_CHECK_ENABLED="false" is already the default (no action needed)
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * Original Description (for reference):
+ *
  * Validates that the Worker is running the latest deployed code version.
  * Rejects requests from stale bundles to ensure consistent behavior
  * across Cloudflare's globally distributed Points of Presence (PoPs).
@@ -34,8 +54,55 @@ interface VersionCache {
 // 5000ms (5 seconds) provides good balance between performance and consistency
 const CACHE_TTL_MS = 5000;
 
-// Per-worker version cache (worker name -> cache entry)
+/**
+ * Maximum cache size to prevent memory exhaustion DoS
+ * Security: Limits memory growth from malicious worker name enumeration
+ */
+const MAX_CACHE_SIZE = 50;
+
+/**
+ * Sanitize a string for safe log output
+ *
+ * Security: Prevents log injection attacks by removing control characters
+ * (including newlines that could be used to spoof log entries)
+ *
+ * @param value - Value to sanitize
+ * @param maxLength - Maximum length (default: 64)
+ * @returns Sanitized string safe for logging
+ */
+function sanitizeForLog(value: string, maxLength = 64): string {
+  // Remove control characters (ASCII 0-31 and 127-159)
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\x00-\x1f\x7f-\x9f]/g, '').substring(0, maxLength);
+}
+
+/**
+ * Per-worker version cache (worker name -> cache entry)
+ *
+ * Threading model: Cloudflare Workers are single-threaded per isolate,
+ * so there's no race condition within an isolate. Cache staleness across
+ * isolates is acceptable given our TTL-based expiration strategy.
+ *
+ * Security: Bounded to MAX_CACHE_SIZE to prevent memory exhaustion
+ */
 const versionCaches = new Map<string, VersionCache>();
+
+/**
+ * Evict oldest entries when cache exceeds max size (simple LRU-like behavior)
+ * Note: Map iteration order is insertion order in JavaScript
+ */
+function evictVersionCacheIfNeeded(): void {
+  if (versionCaches.size >= MAX_CACHE_SIZE) {
+    // Remove oldest 10% of entries
+    const toRemove = Math.ceil(MAX_CACHE_SIZE * 0.1);
+    let removed = 0;
+    for (const key of versionCaches.keys()) {
+      if (removed >= toRemove) break;
+      versionCaches.delete(key);
+      removed++;
+    }
+  }
+}
 
 /**
  * Get the latest version from VersionManager DO with caching
@@ -44,6 +111,9 @@ async function getLatestVersion(env: Env, workerName: string): Promise<string | 
   // Check cache first
   const cached = versionCaches.get(workerName);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    // LRU: Re-insert to move to end (most recently used)
+    versionCaches.delete(workerName);
+    versionCaches.set(workerName, cached);
     return cached.uuid;
   }
 
@@ -52,9 +122,13 @@ async function getLatestVersion(env: Env, workerName: string): Promise<string | 
     const vmId = env.VERSION_MANAGER.idFromName('global');
     const vm = env.VERSION_MANAGER.get(vmId);
 
+    // Security: Include auth header for defense-in-depth
     const response = await vm.fetch(
       new Request(`https://do/version/${workerName}`, {
         method: 'GET',
+        headers: {
+          Authorization: `Bearer ${env.ADMIN_API_SECRET || ''}`,
+        },
       })
     );
 
@@ -63,11 +137,23 @@ async function getLatestVersion(env: Env, workerName: string): Promise<string | 
       if (response.status === 404) {
         return null;
       }
-      console.error(`[VersionCheck] Failed to get version: ${response.status}`);
+      // Security: Log authentication failures as potential security events
+      if (response.status === 401 || response.status === 403) {
+        console.error(
+          `[VersionCheck] SECURITY: Auth failure for VersionManager DO (status=${response.status}). ` +
+            `This may indicate misconfigured ADMIN_API_SECRET or an attack attempt.`
+        );
+      } else {
+        console.error(`[VersionCheck] Failed to get version: ${response.status}`);
+      }
+      // Fail-open for availability - allow request to proceed
       return null;
     }
 
     const data = (await response.json()) as { uuid: string };
+
+    // Security: Evict old entries before adding new ones to prevent unbounded growth
+    evictVersionCacheIfNeeded();
 
     // Update cache
     versionCaches.set(workerName, {
@@ -77,7 +163,10 @@ async function getLatestVersion(env: Env, workerName: string): Promise<string | 
 
     return data.uuid;
   } catch (error) {
-    console.error('[VersionCheck] Error fetching version:', error);
+    // Fail-safe: log sanitized error and return null
+    // Security: Only log error type/message, not full stack traces
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[VersionCheck] Error fetching version:', errorMessage);
     // On error, allow request to proceed (fail-open for availability)
     return null;
   }
@@ -86,15 +175,19 @@ async function getLatestVersion(env: Env, workerName: string): Promise<string | 
 /**
  * Version check middleware factory
  *
+ * @deprecated Use Cloudflare Versions Deploy with --gradual flag instead.
+ * See module documentation for migration instructions.
+ *
  * @param workerName - The name of the Worker (e.g., 'op-auth', 'op-token')
  * @returns Hono middleware handler
  *
  * @example
  * ```typescript
+ * // DEPRECATED: Remove this middleware and use --gradual deployment instead
  * import { versionCheckMiddleware } from '@authrim/ar-lib-core';
  *
  * app.use('*', logger());
- * app.use('*', versionCheckMiddleware('op-auth'));
+ * // app.use('*', versionCheckMiddleware('op-auth')); // Remove this line
  * ```
  */
 export function versionCheckMiddleware(workerName: string): MiddlewareHandler<{ Bindings: Env }> {
@@ -137,8 +230,9 @@ export function versionCheckMiddleware(workerName: string): MiddlewareHandler<{ 
     // Check if this Worker's version matches the latest
     if (myVersion !== latestVersion) {
       // Log for internal tracking (never exposed to clients)
+      // Security: Sanitize workerName to prevent log injection
       console.warn(`[VersionCheck] Outdated bundle detected`, {
-        workerName,
+        workerName: sanitizeForLog(workerName),
         myVersion: myVersion.substring(0, 8) + '...', // Truncate for log safety
         latestVersion: latestVersion.substring(0, 8) + '...',
         timestamp: new Date().toISOString(),

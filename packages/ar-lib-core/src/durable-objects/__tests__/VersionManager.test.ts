@@ -130,7 +130,7 @@ describe('VersionManager Durable Object', () => {
       expect(data).toHaveProperty('error', 'Unauthorized');
     });
 
-    it('should allow public access to GET /version/:workerName', async () => {
+    it('should require authentication for GET /version/:workerName', async () => {
       // First register a version (with auth)
       const registerRequest = createRequest('/version/op-auth', 'POST', 'test-secret-token', {
         uuid: testUUID1,
@@ -138,8 +138,25 @@ describe('VersionManager Durable Object', () => {
       });
       await versionManager.fetch(registerRequest);
 
-      // GET should be accessible without authentication
+      // GET should also require authentication (defense-in-depth)
       const request = createRequest('/version/op-auth', 'GET'); // No auth
+      const response = await versionManager.fetch(request);
+
+      expect(response.status).toBe(401);
+      const data = (await response.json()) as Record<string, unknown>;
+      expect(data).toHaveProperty('error', 'Unauthorized');
+    });
+
+    it('should allow authenticated access to GET /version/:workerName', async () => {
+      // First register a version (with auth)
+      const registerRequest = createRequest('/version/op-auth', 'POST', 'test-secret-token', {
+        uuid: testUUID1,
+        deployTime: testDeployTime1,
+      });
+      await versionManager.fetch(registerRequest);
+
+      // GET with authentication should succeed
+      const request = createRequest('/version/op-auth', 'GET', 'test-secret-token');
       const response = await versionManager.fetch(request);
 
       expect(response.status).toBe(200);
@@ -233,7 +250,7 @@ describe('VersionManager Durable Object', () => {
       await versionManager.fetch(request2);
 
       // Verify the version was updated
-      const getRequest = createRequest('/version/op-auth', 'GET');
+      const getRequest = createRequest('/version/op-auth', 'GET', 'test-secret-token');
       const response = await versionManager.fetch(getRequest);
 
       expect(response.status).toBe(200);
@@ -252,8 +269,8 @@ describe('VersionManager Durable Object', () => {
       });
       await versionManager.fetch(registerRequest);
 
-      // Get version
-      const getRequest = createRequest('/version/op-auth', 'GET');
+      // Get version (requires auth)
+      const getRequest = createRequest('/version/op-auth', 'GET', 'test-secret-token');
       const response = await versionManager.fetch(getRequest);
 
       expect(response.status).toBe(200);
@@ -264,7 +281,7 @@ describe('VersionManager Durable Object', () => {
     });
 
     it('should return 404 for unregistered worker', async () => {
-      const request = createRequest('/version/nonexistent-worker', 'GET');
+      const request = createRequest('/version/nonexistent-worker', 'GET', 'test-secret-token');
       const response = await versionManager.fetch(request);
 
       expect(response.status).toBe(404);
@@ -288,7 +305,7 @@ describe('VersionManager Durable Object', () => {
 
       // Verify each worker has the correct version
       for (let i = 0; i < workers.length; i++) {
-        const request = createRequest(`/version/${workers[i]}`, 'GET');
+        const request = createRequest(`/version/${workers[i]}`, 'GET', 'test-secret-token');
         const response = await versionManager.fetch(request);
         const data = (await response.json()) as Record<string, unknown>;
 
@@ -320,13 +337,17 @@ describe('VersionManager Durable Object', () => {
         })
       );
 
-      // Verify op-auth was updated
-      const authResponse = await versionManager.fetch(createRequest('/version/op-auth', 'GET'));
+      // Verify op-auth was updated (requires auth)
+      const authResponse = await versionManager.fetch(
+        createRequest('/version/op-auth', 'GET', 'test-secret-token')
+      );
       const authData = (await authResponse.json()) as Record<string, unknown>;
       expect(authData.uuid).toBe(testUUID2);
 
-      // Verify op-token was NOT changed
-      const tokenResponse = await versionManager.fetch(createRequest('/version/op-token', 'GET'));
+      // Verify op-token was NOT changed (requires auth)
+      const tokenResponse = await versionManager.fetch(
+        createRequest('/version/op-token', 'GET', 'test-secret-token')
+      );
       const tokenData = (await tokenResponse.json()) as Record<string, unknown>;
       expect(tokenData.uuid).toBe(testUUID1);
     });
@@ -431,8 +452,10 @@ describe('VersionManager Durable Object', () => {
       // Create a new instance with the same state
       const newVersionManager = new VersionManager(state as unknown as DurableObjectState, env);
 
-      // Verify the version is still there
-      const response = await newVersionManager.fetch(createRequest('/version/op-auth', 'GET'));
+      // Verify the version is still there (requires auth)
+      const response = await newVersionManager.fetch(
+        createRequest('/version/op-auth', 'GET', 'test-secret-token')
+      );
       const data = (await response.json()) as Record<string, unknown>;
 
       expect(data.uuid).toBe(testUUID1);

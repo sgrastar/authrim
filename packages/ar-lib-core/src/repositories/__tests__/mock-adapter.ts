@@ -210,8 +210,8 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
   private parseWhereConditions(
     sql: string,
     params?: unknown[]
-  ): Array<{ field: string; value: unknown }> {
-    const conditions: Array<{ field: string; value: unknown }> = [];
+  ): Array<{ field: string; value: unknown; operator?: string }> {
+    const conditions: Array<{ field: string; value: unknown; operator?: string }> = [];
     const whereMatch = sql.match(/WHERE\s+(.+?)(?:\s+ORDER|\s+LIMIT|\s+GROUP|$)/i);
     if (!whereMatch) return conditions;
 
@@ -227,6 +227,44 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
         if (fieldName && paramIndex < params.length) {
           conditions.push({ field: fieldName, value: params[paramIndex] });
           paramIndex++;
+        }
+      }
+    }
+
+    // Parse comparison operators (field <= ?, field > ?, etc.)
+    const comparisonMatches = wherePart.match(/(\w+)\s*(<=|>=|<|>)\s*\?/g);
+    if (comparisonMatches && params) {
+      for (const match of comparisonMatches) {
+        const parts = match.match(/(\w+)\s*(<=|>=|<|>)\s*\?/);
+        if (parts && paramIndex < params.length) {
+          conditions.push({
+            field: parts[1],
+            value: params[paramIndex],
+            operator: parts[2],
+          });
+          paramIndex++;
+        }
+      }
+    }
+
+    // Parse IS NULL conditions
+    const isNullMatches = wherePart.match(/(\w+)\s+IS\s+NULL/gi);
+    if (isNullMatches) {
+      for (const match of isNullMatches) {
+        const parts = match.match(/(\w+)\s+IS\s+NULL/i);
+        if (parts) {
+          conditions.push({ field: parts[1], value: null, operator: 'IS NULL' });
+        }
+      }
+    }
+
+    // Parse IS NOT NULL conditions
+    const isNotNullMatches = wherePart.match(/(\w+)\s+IS\s+NOT\s+NULL/gi);
+    if (isNotNullMatches) {
+      for (const match of isNotNullMatches) {
+        const parts = match.match(/(\w+)\s+IS\s+NOT\s+NULL/i);
+        if (parts) {
+          conditions.push({ field: parts[1], value: null, operator: 'IS NOT NULL' });
         }
       }
     }
@@ -308,11 +346,40 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
 
   private matchesConditions(
     row: Record<string, unknown>,
-    conditions: Array<{ field: string; value: unknown }>
+    conditions: Array<{ field: string; value: unknown; operator?: string }>
   ): boolean {
     for (const cond of conditions) {
-      if (row[cond.field] !== cond.value) {
-        return false;
+      const rowValue = row[cond.field];
+
+      if (cond.operator === 'IS NULL') {
+        if (rowValue !== null && rowValue !== undefined) {
+          return false;
+        }
+      } else if (cond.operator === 'IS NOT NULL') {
+        if (rowValue === null || rowValue === undefined) {
+          return false;
+        }
+      } else if (cond.operator === '<=') {
+        if ((rowValue as number) > (cond.value as number)) {
+          return false;
+        }
+      } else if (cond.operator === '>=') {
+        if ((rowValue as number) < (cond.value as number)) {
+          return false;
+        }
+      } else if (cond.operator === '<') {
+        if ((rowValue as number) >= (cond.value as number)) {
+          return false;
+        }
+      } else if (cond.operator === '>') {
+        if ((rowValue as number) <= (cond.value as number)) {
+          return false;
+        }
+      } else {
+        // Default equality check
+        if (rowValue !== cond.value) {
+          return false;
+        }
       }
     }
     return true;

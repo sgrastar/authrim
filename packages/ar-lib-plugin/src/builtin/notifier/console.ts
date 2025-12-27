@@ -51,7 +51,9 @@ export const ConsoleNotifierConfigSchema = z.object({
     .min(0)
     .max(1)
     .default(0)
-    .describe('Failure simulation rate (0-1). 0.5 = 50% failure rate. Used for error handling tests'),
+    .describe(
+      'Failure simulation rate (0-1). 0.5 = 50% failure rate. Used for error handling tests'
+    ),
 });
 
 export type ConsoleNotifierConfig = z.infer<typeof ConsoleNotifierConfigSchema>;
