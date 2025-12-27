@@ -49,7 +49,7 @@ Using the WebAuthn verification as a starting point, an investigation of PII dis
 2. **Regional Compliance**: Enable storing PII in region-specific databases
 3. **Abstraction**: Make database backends interchangeable (D1, Postgres, DynamoDB, etc.)
 4. **Type Safety**: Control PII access through TypeScript's type system
-5. **Beyond Auth0/Okta**: Differentiation through built-in ReBAC + PII separation
+5. **Unified Platform**: Built-in ReBAC + PII separation in a single system
 
 ---
 
@@ -208,7 +208,7 @@ Abstract database access to ensure future portability:
 | KV              | ElastiCache / DynamoDB              |
 | Workers         | Lambda@Edge                         |
 
-**Design Philosophy**: Authrim aims to "surpass Auth0". Infrastructure-agnostic design enables operation on both Cloudflare and AWS.
+**Design Philosophy**: Infrastructure-agnostic design enables operation on both Cloudflare and AWS.
 
 ### 3.4 ReBAC and Durable Objects Compatibility
 
@@ -219,7 +219,7 @@ ReBAC (Relationship-Based Access Control) is highly compatible with Durable Obje
 - **Shard by tenant_id or group_id**: Easy per-tenant sharding
 - **ReBAC evaluation can be instant with KV/D1 alone**
 
-**Differentiation Point**: Auth0 and Okta don't have built-in ReBAC and require external services (OpenFGA, etc.). Authrim differentiates by building in ReBAC.
+**Key Feature**: Authrim includes built-in ReBAC, eliminating the need for external policy services.
 
 ---
 

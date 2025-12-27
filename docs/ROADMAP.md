@@ -543,24 +543,6 @@ With the introduction of **Contract-based Presets** (FAPI 2.0, regulated-finance
 
 ---
 
-## Competitive Positioning
-
-| Capability                | Auth0 | Okta | Keycloak | Ory | **Authrim**      |
-| ------------------------- | ----- | ---- | -------- | --- | ---------------- |
-| **Authentication**        | ✅    | ✅   | ✅       | ✅  | ✅               |
-| **Social Login**          | ✅    | ✅   | ✅       | ✅  | ✅ (7 providers) |
-| **RBAC**                  | ✅    | ✅   | ✅       | ✅  | ✅               |
-| **ABAC**                  | ⚠️    | ⚠️   | ✅       | ✅  | ✅               |
-| **ReBAC**                 | ❌    | ❌   | ❌       | ✅  | ✅               |
-| **AuthN + AuthZ Unified** | ⚠️    | ⚠️   | ⚠️       | ❌  | ✅               |
-| **OpenID4VP**             | ❌    | ❌   | ❌       | ❌  | ✅               |
-| **OpenID4VCI**            | ❌    | ❌   | ❌       | ❌  | ✅               |
-| **DID Support**           | ❌    | ❌   | ❌       | ❌  | ✅               |
-| **Edge Deployment**       | ❌    | ❌   | ❌       | ❌  | ✅               |
-| **Self-hosted**           | ❌    | ❌   | ✅       | ✅  | ✅               |
-
----
-
 ## Key Results (Overall)
 
 By 2026-Q1, Authrim will be:
