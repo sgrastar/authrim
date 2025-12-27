@@ -1,10 +1,10 @@
 # Authrim
 
-> **Unified Identity & Access Platform for the modern web**
+> **Open Source Identity & Access Platform for the modern web**
 
-A lightweight, serverless **Identity Hub** that combines authentication, authorization, and identity federation on **Cloudflare's global edge network**.
+An open-source, serverless **Identity Hub** that combines authentication, authorization, and identity federation on **Cloudflare's global edge network**.
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Open Source](https://img.shields.io/badge/Open%20Source-Apache%202.0-green.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange?logo=cloudflare)](https://workers.cloudflare.com/)
 
@@ -29,6 +29,26 @@ npx create-authrim my-identity-provider
 ```
 
 [Read the full vision](./docs/VISION.md)
+
+## Quick Start
+
+```bash
+# 1. Clone and install
+git clone https://github.com/sgrastar/authrim.git
+cd authrim && pnpm install
+
+# 2. Setup (generates keys, configures local environment)
+./scripts/setup-keys.sh
+./scripts/setup-local-wrangler.sh
+./scripts/setup-kv.sh --env=dev
+./scripts/setup-d1.sh
+
+# 3. Run locally
+pnpm run dev
+# → http://localhost:8787/.well-known/openid-configuration
+```
+
+📚 **Full guides:** [Development](./docs/getting-started/development.md) | [Deployment](./docs/getting-started/deployment.md) | [Testing](./docs/getting-started/testing.md)
 
 ## Performance
 
@@ -200,15 +220,11 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 
 ## Contributing
 
-Authrim is primarily a solo development project. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+Authrim is open source under Apache 2.0, currently maintained by a single author.
 
-**What we accept:**
-
-- Bug reports via GitHub Issues
-
-**What we don't accept:**
-
-- Pull requests (development is maintained solely by the original author)
+- 🐛 **Bug reports** — Welcome via [GitHub Issues](https://github.com/sgrastar/authrim/issues)
+- 💡 **Feature requests** — Welcome via [GitHub Discussions](https://github.com/sgrastar/authrim/discussions)
+- 🔧 **Pull requests** — Not accepted at this time (see [CONTRIBUTING.md](./CONTRIBUTING.md) for details)
 
 ---
 
