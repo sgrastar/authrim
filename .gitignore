@@ -18,8 +18,7 @@ dist/
 .dev.vars
 
 # Editor directories and files
-.vscode/*
-!.vscode/settings.json
+.vscode/
 .idea/
 *.suo
 *.ntvs*
