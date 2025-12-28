@@ -28,6 +28,9 @@ import {
   AR_ERROR_CODES,
   // Custom Redirect URIs (Authrim Extension)
   validateAllowedOrigins,
+  // Simple Logout Webhook (Authrim Extension)
+  validateWebhookUrl,
+  encryptValue,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -106,10 +109,19 @@ async function validateSectorIdentifierContent(
 }
 
 /**
+ * Options for client registration validation
+ */
+interface RegistrationValidationOptions {
+  /** Allow localhost HTTP for webhook URLs (development only) */
+  allowLocalhostHttp?: boolean;
+}
+
+/**
  * Validate client registration request
  */
 function validateRegistrationRequest(
-  body: unknown
+  body: unknown,
+  options: RegistrationValidationOptions = {}
 ): { valid: true; data: ClientRegistrationRequest } | { valid: false; error: OAuthErrorResponse } {
   if (!body || typeof body !== 'object') {
     return {
@@ -587,6 +599,64 @@ function validateRegistrationRequest(
   }
 
   // ==========================================================================
+  // Simple Logout Webhook (Authrim Extension)
+  // A simplified alternative to OIDC Back-Channel Logout for clients that
+  // don't support the full OIDC spec.
+  // ==========================================================================
+  if (data.logout_webhook_uri !== undefined) {
+    if (typeof data.logout_webhook_uri !== 'string') {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: 'logout_webhook_uri must be a string',
+        },
+      };
+    }
+
+    // Use SSRF protection for webhook URL validation
+    // Only allow localhost HTTP in development environments
+    const webhookValidation = validateWebhookUrl(
+      data.logout_webhook_uri,
+      options.allowLocalhostHttp ?? false
+    );
+
+    if (!webhookValidation.valid) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: `Invalid logout_webhook_uri: ${webhookValidation.error}`,
+        },
+      };
+    }
+  }
+
+  // logout_webhook_secret validation (optional - auto-generated if not provided)
+  if (data.logout_webhook_secret !== undefined) {
+    if (typeof data.logout_webhook_secret !== 'string') {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: 'logout_webhook_secret must be a string',
+        },
+      };
+    }
+
+    // Minimum length requirement for security (32 bytes = 256 bits)
+    if (data.logout_webhook_secret.length < 32) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: 'logout_webhook_secret must be at least 32 characters',
+        },
+      };
+    }
+  }
+
+  // ==========================================================================
   // Custom Redirect URIs (Authrim Extension)
   // x_allowed_redirect_origins: Array of origins for error_uri/cancel_uri
   // ==========================================================================
@@ -671,8 +741,9 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       backchannel_logout_uri, backchannel_logout_session_required,
       frontchannel_logout_uri, frontchannel_logout_session_required,
       allowed_redirect_origins,
+      logout_webhook_uri, logout_webhook_secret_encrypted,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
@@ -704,6 +775,9 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       metadata.frontchannel_logout_uri || null,
       metadata.frontchannel_logout_session_required ? 1 : 0,
       metadata.allowed_redirect_origins ? JSON.stringify(metadata.allowed_redirect_origins) : null,
+      (metadata as ClientMetadata & { logout_webhook_uri?: string }).logout_webhook_uri || null,
+      (metadata as ClientMetadata & { logout_webhook_secret_encrypted?: string })
+        .logout_webhook_secret_encrypted || null,
       metadata.created_at || now,
       metadata.updated_at || now,
     ]
@@ -721,7 +795,11 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
 
     // Validate registration request
-    const validation = validateRegistrationRequest(body);
+    // Allow localhost HTTP webhooks only in development environment
+    const isDevelopment = c.env.ENVIRONMENT === 'development' || c.env.NODE_ENV === 'development';
+    const validation = validateRegistrationRequest(body, {
+      allowLocalhostHttp: isDevelopment,
+    });
     if (!validation.valid) {
       return c.json(validation.error, 400);
     }
@@ -828,13 +906,62 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (request.frontchannel_logout_session_required !== undefined)
       response.frontchannel_logout_session_required = request.frontchannel_logout_session_required;
 
+    // ==========================================================================
+    // Simple Logout Webhook (Authrim Extension)
+    // Process logout_webhook_uri and encrypt logout_webhook_secret
+    // ==========================================================================
+    let webhookSecretEncrypted: string | null = null;
+    let webhookSecretPlain: string | undefined;
+
+    if (request.logout_webhook_uri) {
+      // Include webhook URI in response
+      (
+        response as ClientRegistrationResponse & { logout_webhook_uri?: string }
+      ).logout_webhook_uri = request.logout_webhook_uri;
+
+      // Get or generate webhook secret
+      webhookSecretPlain = request.logout_webhook_secret || generateSecureRandomString(32);
+
+      // Encrypt the webhook secret for storage
+      // Use RP_TOKEN_ENCRYPTION_KEY (for RP-related secrets)
+      const encryptionKey = c.env.RP_TOKEN_ENCRYPTION_KEY || c.env.PII_ENCRYPTION_KEY;
+      if (encryptionKey) {
+        const encrypted = await encryptValue(webhookSecretPlain, encryptionKey, 'AES-256-GCM', 1);
+        webhookSecretEncrypted = encrypted.encrypted;
+      } else {
+        // SECURITY: If no encryption key, fail-close (reject registration)
+        console.error(
+          '[DCR] logout_webhook_secret requires RP_TOKEN_ENCRYPTION_KEY or PII_ENCRYPTION_KEY'
+        );
+        return c.json(
+          {
+            error: 'server_error',
+            error_description: 'Webhook secret encryption not configured',
+          },
+          500
+        );
+      }
+
+      // Return the plaintext secret ONLY on initial registration (like client_secret)
+      // Client must store this securely - it will not be returned again
+      (
+        response as ClientRegistrationResponse & { logout_webhook_secret?: string }
+      ).logout_webhook_secret = webhookSecretPlain;
+
+      console.log(`[DCR] Logout webhook configured for client: ${clientId}`);
+    }
+
     // OIDC Conformance Test: Detect certification.openid.net
     const isCertificationTest = request.redirect_uris.some((uri) =>
       uri.includes('certification.openid.net')
     );
 
     // Store client metadata
-    const metadata: ClientMetadata = {
+    // Note: We store the encrypted webhook secret, not the plaintext
+    const metadata: ClientMetadata & {
+      logout_webhook_uri?: string;
+      logout_webhook_secret_encrypted?: string;
+    } = {
       ...response,
       created_at: issuedAt,
       updated_at: issuedAt,
@@ -842,6 +969,14 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       skip_consent: isTrusted, // Trusted clients skip consent by default
       allow_claims_without_scope: isCertificationTest, // OIDC conformance tests need flexible claims parameter handling
     };
+
+    // Add webhook fields to metadata (store encrypted secret, not plaintext)
+    if (request.logout_webhook_uri) {
+      metadata.logout_webhook_uri = request.logout_webhook_uri;
+      metadata.logout_webhook_secret_encrypted = webhookSecretEncrypted ?? undefined;
+      // Remove plaintext secret from response spread (we already set it separately)
+      delete (metadata as unknown as Record<string, unknown>).logout_webhook_secret;
+    }
 
     await storeClient(c.env, clientId, metadata);
 

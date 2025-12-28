@@ -277,6 +277,13 @@ export interface ClientRegistrationRequest {
   // https://openid.net/specs/openid-connect-frontchannel-1_0.html
   frontchannel_logout_uri?: string;
   frontchannel_logout_session_required?: boolean;
+  // ==========================================================================
+  // Simple Logout Webhook (Authrim Extension)
+  // A simplified alternative to OIDC Back-Channel Logout for clients that
+  // don't support the full OIDC spec (e.g., Zendesk Remote Logout URL style)
+  // ==========================================================================
+  logout_webhook_uri?: string;
+  logout_webhook_secret?: string; // Client-provided or auto-generated, min 32 chars
 }
 
 /**
@@ -332,6 +339,12 @@ export interface ClientRegistrationResponse {
   // OIDC Front-Channel Logout 1.0
   frontchannel_logout_uri?: string;
   frontchannel_logout_session_required?: boolean;
+  // ==========================================================================
+  // Simple Logout Webhook (Authrim Extension)
+  // Returns URI and secret on initial registration only
+  // ==========================================================================
+  logout_webhook_uri?: string;
+  logout_webhook_secret?: string; // Returned only on initial registration
 }
 
 /**

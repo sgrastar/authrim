@@ -25,6 +25,7 @@
 
 import { generateId, getCurrentTimestamp } from '../base';
 import type { DatabaseAdapter } from '../../db/adapter';
+import type { SessionClientWithWebhook } from '../../types/logout';
 
 /**
  * Session-Client association entity
@@ -342,6 +343,51 @@ export class SessionClientRepository {
       backchannel_logout_session_required: Boolean(row.backchannel_logout_session_required),
       frontchannel_logout_uri: row.frontchannel_logout_uri,
       frontchannel_logout_session_required: Boolean(row.frontchannel_logout_session_required),
+    }));
+  }
+
+  /**
+   * Find all clients with logout webhook URI for a session
+   *
+   * Optimized query that only returns clients that have
+   * logout_webhook_uri configured (Simple Logout Webhook - Authrim Extension).
+   *
+   * @param sessionId - Session ID
+   * @returns Array of session-clients with webhook configuration
+   */
+  async findWebhookClients(sessionId: string): Promise<SessionClientWithWebhook[]> {
+    const sql = `
+      SELECT
+        sc.id,
+        sc.session_id,
+        sc.client_id,
+        c.client_name,
+        c.logout_webhook_uri,
+        c.logout_webhook_secret_encrypted
+      FROM session_clients sc
+      JOIN oauth_clients c ON sc.client_id = c.client_id
+      WHERE sc.session_id = ?
+        AND c.logout_webhook_uri IS NOT NULL
+        AND c.logout_webhook_uri != ''
+      ORDER BY sc.first_token_at ASC
+    `;
+
+    const rows = await this.adapter.query<{
+      id: string;
+      session_id: string;
+      client_id: string;
+      client_name: string | null;
+      logout_webhook_uri: string | null;
+      logout_webhook_secret_encrypted: string | null;
+    }>(sql, [sessionId]);
+
+    return rows.map((row) => ({
+      id: row.id,
+      session_id: row.session_id,
+      client_id: row.client_id,
+      client_name: row.client_name,
+      logout_webhook_uri: row.logout_webhook_uri,
+      logout_webhook_secret_encrypted: row.logout_webhook_secret_encrypted,
     }));
   }
 

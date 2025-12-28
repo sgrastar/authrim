@@ -849,6 +849,15 @@ app.delete('/api/admin/settings/logout/failures/:clientId', clearLogoutFailure);
 app.delete('/api/admin/settings/logout/failures', clearAllLogoutFailures);
 
 // Logout Webhook Configuration (Simple Logout Webhook - Authrim Extension)
+// Rate limited with RateLimitProfiles.moderate to prevent abuse
+app.use('/api/admin/settings/logout-webhook', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/settings/logout-webhook'],
+  })(c, next);
+});
+
 app.get('/api/admin/settings/logout-webhook', getLogoutWebhookConfig);
 app.put('/api/admin/settings/logout-webhook', updateLogoutWebhookConfig);
 app.delete('/api/admin/settings/logout-webhook', resetLogoutWebhookConfig);

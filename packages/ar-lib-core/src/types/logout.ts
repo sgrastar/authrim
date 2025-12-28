@@ -384,3 +384,148 @@ export const LOGOUT_KV_PREFIXES = {
  * Logout Token Event URI
  */
 export const LOGOUT_TOKEN_EVENT_URI = 'http://schemas.openid.net/event/backchannel-logout';
+
+// ============================================================================
+// Simple Logout Webhook Types
+// ============================================================================
+
+/**
+ * Logout Webhook Configuration
+ *
+ * Settings for the simplified webhook-based logout notifications.
+ * This is an alternative to OIDC Back-Channel Logout for clients
+ * that don't support the full OIDC spec.
+ */
+export interface LogoutWebhookConfig {
+  /** Whether webhook logout is enabled globally */
+  enabled: boolean;
+
+  /** Request timeout in milliseconds (default: 5000) */
+  request_timeout_ms: number;
+
+  /** Retry configuration */
+  retry: LogoutRetryConfig;
+
+  /** Whether to include sub claim in payload (default: true) */
+  include_sub_claim: boolean;
+
+  /** Whether to include sid claim in payload (default: true) */
+  include_sid_claim: boolean;
+
+  /** Action on final failure after all retries */
+  on_final_failure: 'log_only' | 'alert';
+}
+
+/**
+ * Default Logout Webhook Configuration
+ *
+ * Security-focused defaults per CLAUDE.md guidelines.
+ */
+export const DEFAULT_LOGOUT_WEBHOOK_CONFIG: LogoutWebhookConfig = {
+  enabled: false, // Disabled by default (new feature)
+  request_timeout_ms: 5000, // 5 seconds
+  retry: {
+    max_attempts: 3,
+    initial_delay_ms: 1000,
+    max_delay_ms: 30000,
+    backoff_multiplier: 2,
+  },
+  include_sub_claim: true,
+  include_sid_claim: true,
+  on_final_failure: 'log_only',
+};
+
+/**
+ * Logout Webhook Payload
+ *
+ * The JSON payload sent to the client's logout_webhook_uri.
+ * This is a simplified format compared to OIDC Logout Token.
+ */
+export interface LogoutWebhookPayload {
+  /** Event type (always 'user.logout') */
+  event: 'user.logout';
+
+  /** Subject (user ID) - optional based on config */
+  sub?: string;
+
+  /** Session ID - optional based on config */
+  sid?: string;
+
+  /** Issued at timestamp (Unix seconds) */
+  iat: number;
+
+  /** Client ID receiving the notification */
+  client_id: string;
+
+  /** Issuer URL (Authrim instance) */
+  issuer: string;
+}
+
+/**
+ * Logout Webhook Send Result
+ *
+ * Result of attempting to send a webhook notification.
+ */
+export interface LogoutWebhookSendResult {
+  /** Client ID of the recipient */
+  clientId: string;
+
+  /** Whether the notification was successful */
+  success: boolean;
+
+  /** Method identifier */
+  method: 'webhook';
+
+  /** HTTP status code (if applicable) */
+  statusCode?: number;
+
+  /** Error message (if failed) */
+  error?: string;
+
+  /** Whether a retry has been scheduled */
+  retryScheduled?: boolean;
+
+  /** Duration of the request in milliseconds */
+  duration_ms?: number;
+}
+
+/**
+ * Session Client With Webhook
+ *
+ * Extended session client info including webhook configuration.
+ */
+export interface SessionClientWithWebhook {
+  /** Session-client record ID */
+  id: string;
+
+  /** Session ID */
+  session_id: string;
+
+  /** Client ID */
+  client_id: string;
+
+  /** Client name (for logging) */
+  client_name: string | null;
+
+  /** Webhook URI */
+  logout_webhook_uri: string | null;
+
+  /** Encrypted webhook secret */
+  logout_webhook_secret_encrypted: string | null;
+}
+
+/**
+ * KV Settings Key for Webhook Config
+ */
+export const LOGOUT_WEBHOOK_SETTINGS_KEY = 'settings:logout_webhook';
+
+/**
+ * KV Key Prefixes for Webhook
+ */
+export const LOGOUT_WEBHOOK_KV_PREFIXES = {
+  /** Pending webhook lock (duplicate prevention) */
+  PENDING_LOCK: 'logout_webhook:pending:',
+
+  /** Webhook failure record */
+  FAILURE_RECORD: 'logout_webhook:failures:',
+} as const;

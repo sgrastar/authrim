@@ -8,8 +8,10 @@ import {
   LOGOUT_SETTINGS_KEY,
   getTenantIdFromContext,
   isNativeSSOEnabled,
+  loadTenantProfile,
+  filterGrantTypesByProfile,
 } from '@authrim/ar-lib-core';
-import type { LogoutConfig } from '@authrim/ar-lib-core';
+import type { LogoutConfig, TenantProfile } from '@authrim/ar-lib-core';
 
 // Cache for metadata to improve performance
 // Key: tenantId:settingsHash, Value: metadata
@@ -90,9 +92,18 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // Check SETTINGS KV first, then fall back to environment variable
   const aiScopesEnabled = oidcConfig.aiScopes?.enabled ?? c.env.ENABLE_AI_SCOPES === 'true';
 
-  // Check if cached metadata is still valid (include feature flags and tenant in cache key)
+  // Load TenantProfile for profile-based grant_types filtering
+  // §16: Human Auth / AI Ephemeral Auth two-layer model
+  const tenantProfile: TenantProfile = await loadTenantProfile(
+    c.env.AUTHRIM_CONFIG,
+    c.env,
+    tenantId
+  );
+
+  // Check if cached metadata is still valid (include feature flags, profile, and tenant in cache key)
   const logoutHash = `bc=${logoutConfig.backchannel.enabled}:fc=${logoutConfig.frontchannel.enabled}:sm=${logoutConfig.session_management.enabled}`;
-  const settingsHash = `${currentSettingsJson}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:${logoutHash}`;
+  const profileHash = `profile=${tenantProfile.type}`;
+  const settingsHash = `${currentSettingsJson}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:${profileHash}:${logoutHash}`;
   const cacheKey = `${tenantId}:${settingsHash}`;
 
   const cachedMetadata = metadataCache.get(cacheKey);
@@ -138,17 +149,22 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'code token',
       'code id_token token',
     ],
-    grant_types_supported: [
-      'authorization_code',
-      'refresh_token',
-      'implicit', // Required for Dynamic OP certification (id_token/token response types)
-      'urn:ietf:params:oauth:grant-type:jwt-bearer', // RFC 7523: JWT Bearer Flow
-      'urn:ietf:params:oauth:grant-type:device_code', // RFC 8628: Device Authorization Grant
-      'urn:openid:params:grant-type:ciba', // OIDC CIBA: Client Initiated Backchannel Authentication
-      // Conditionally include optional grant types based on feature flags
-      ...(tokenExchangeEnabled ? ['urn:ietf:params:oauth:grant-type:token-exchange'] : []), // RFC 8693: Token Exchange
-      ...(clientCredentialsEnabled ? ['client_credentials'] : []), // RFC 6749 Section 4.4: Client Credentials
-    ],
+    // Grant types filtered by TenantProfile capabilities (§16: Two-layer model)
+    // RFC 8414 §2: Discovery metadata SHOULD reflect actual capabilities
+    grant_types_supported: filterGrantTypesByProfile(
+      [
+        'authorization_code',
+        'refresh_token',
+        'implicit', // Required for Dynamic OP certification (id_token/token response types)
+        'urn:ietf:params:oauth:grant-type:jwt-bearer', // RFC 7523: JWT Bearer Flow
+        'urn:ietf:params:oauth:grant-type:device_code', // RFC 8628: Device Authorization Grant
+        'urn:openid:params:grant-type:ciba', // OIDC CIBA: Client Initiated Backchannel Authentication
+        'urn:ietf:params:oauth:grant-type:token-exchange', // RFC 8693: Token Exchange
+        'client_credentials', // RFC 6749 Section 4.4: Client Credentials
+      ],
+      tenantProfile,
+      { tokenExchangeEnabled, clientCredentialsEnabled }
+    ),
     id_token_signing_alg_values_supported: ['RS256'],
     // OIDC Core 8: Both public and pairwise subject identifiers are supported
     subject_types_supported: ['public', 'pairwise'],

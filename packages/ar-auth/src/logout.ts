@@ -40,8 +40,18 @@ import {
   D1Adapter,
   DeviceSecretRepository,
   isNativeSSOEnabled,
+  // Simple Logout Webhook (Authrim Extension)
+  createLogoutWebhookOrchestrator,
+  getLogoutWebhookConfig,
+  decryptValue,
 } from '@authrim/ar-lib-core';
-import type { BackchannelLogoutConfig, LogoutSendResult, LogoutConfig } from '@authrim/ar-lib-core';
+import type {
+  BackchannelLogoutConfig,
+  LogoutSendResult,
+  LogoutConfig,
+  SessionClientWithWebhook,
+  LogoutWebhookSendResult,
+} from '@authrim/ar-lib-core';
 import { importJWK, jwtVerify, importPKCS8 } from 'jose';
 import type { JSONWebKeySet, CryptoKey } from 'jose';
 
@@ -203,7 +213,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     // Collect all data needed for logout **before** deleting the session.
     // Session deletion cascades to session_clients via FK, so we need the client
-    // lists upfront to send backchannel/frontchannel notifications.
+    // lists upfront to send backchannel/frontchannel/webhook notifications.
     type SessionNotificationTarget = {
       sessionId: string;
       userId: string;
@@ -213,6 +223,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       frontchannelClients: Awaited<
         ReturnType<typeof authCtx.repositories.sessionClient.findFrontchannelLogoutClients>
       >;
+      webhookClients: SessionClientWithWebhook[];
     };
     const sessionsToNotify: SessionNotificationTarget[] = [];
 
@@ -236,7 +247,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         }
 
         // Get clients from session_clients table (this works regardless of D1 session)
-        const [backchannelClients, frontchannelClients] = await Promise.all([
+        const [backchannelClients, frontchannelClients, webhookClients] = await Promise.all([
           authCtx.repositories.sessionClient.findBackchannelLogoutClients(sessId).catch((error) => {
             console.warn(
               `[BACKCHANNEL_LOGOUT] Failed to load backchannel clients for ${sessId}:`,
@@ -253,18 +264,27 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
               );
               return [];
             }),
+          authCtx.repositories.sessionClient.findWebhookClients(sessId).catch((error) => {
+            console.warn(`[LOGOUT_WEBHOOK] Failed to load webhook clients for ${sessId}:`, error);
+            return [];
+          }),
         ]);
 
         // Only add if we have clients to notify
-        if (backchannelClients.length > 0 || frontchannelClients.length > 0) {
+        if (
+          backchannelClients.length > 0 ||
+          frontchannelClients.length > 0 ||
+          webhookClients.length > 0
+        ) {
           console.log(
-            `[LOGOUT] Collected ${backchannelClients.length} backchannel + ${frontchannelClients.length} frontchannel clients for session ${sessId}`
+            `[LOGOUT] Collected ${backchannelClients.length} backchannel + ${frontchannelClients.length} frontchannel + ${webhookClients.length} webhook clients for session ${sessId}`
           );
           sessionsToNotify.push({
             sessionId: sessId,
             userId: effectiveUserId,
             backchannelClients,
             frontchannelClients,
+            webhookClients,
           });
         } else {
           console.debug(`[LOGOUT] No logout clients found for session ${sessId}`);
@@ -445,6 +465,95 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             console.log(`[BACKCHANNEL_LOGOUT] Completed: ${succeeded} succeeded, ${failed} failed`);
           } catch (error) {
             console.error('[BACKCHANNEL_LOGOUT] Error sending notifications:', error);
+          }
+        })()
+      );
+    }
+
+    // ========================================
+    // Step 2.6: Send Simple Logout Webhook notifications (async)
+    // ========================================
+    // Use waitUntil() to send webhook notifications without blocking the response
+    // This is an Authrim extension for clients that don't support OIDC Back-Channel Logout
+    if (deletedSessions.length > 0 && c.executionCtx) {
+      c.executionCtx.waitUntil(
+        (async () => {
+          try {
+            // Get webhook configuration from KV
+            const webhookConfig = await getLogoutWebhookConfig(c.env.SETTINGS);
+
+            if (!webhookConfig.enabled) {
+              console.debug('[LOGOUT_WEBHOOK] Logout webhook is disabled');
+              return;
+            }
+
+            // Check if we have any webhook clients to notify
+            const hasWebhookClients = sessionsToNotify.some((s) => s.webhookClients.length > 0);
+            if (!hasWebhookClients) {
+              console.debug('[LOGOUT_WEBHOOK] No webhook clients to notify');
+              return;
+            }
+
+            // Get encryption key for decrypting webhook secrets
+            const encryptionKey = c.env.RP_TOKEN_ENCRYPTION_KEY || c.env.PII_ENCRYPTION_KEY;
+            if (!encryptionKey) {
+              console.error('[LOGOUT_WEBHOOK] No encryption key for decrypting webhook secrets');
+              return;
+            }
+
+            // Create secret decryption function
+            // SECURITY: Wrap decryption in try-catch to avoid leaking key info in errors
+            const decryptSecret = async (encrypted: string): Promise<string> => {
+              try {
+                const result = await decryptValue(encrypted, encryptionKey);
+                return result.decrypted;
+              } catch {
+                // SECURITY: Do not expose decryption error details
+                console.error('[LOGOUT_WEBHOOK] Failed to decrypt webhook secret');
+                throw new Error('Decryption failed');
+              }
+            };
+
+            // Create orchestrator
+            const kv = c.env.SETTINGS || c.env.STATE_STORE;
+            const orchestrator = createLogoutWebhookOrchestrator(kv);
+
+            // Send webhook notifications for each deleted session
+            const allResults: LogoutWebhookSendResult[] = [];
+
+            for (const {
+              sessionId: sessId,
+              userId: sessUserId,
+              webhookClients,
+            } of sessionsToNotify) {
+              if (webhookClients.length === 0) {
+                continue;
+              }
+
+              console.log(
+                `[LOGOUT_WEBHOOK] Sending webhook notifications for session ${sessId} to ${webhookClients.length} clients`
+              );
+
+              const results = await orchestrator.sendToAll(
+                webhookClients,
+                {
+                  issuer: c.env.ISSUER_URL,
+                  userId: sessUserId,
+                  sessionId: sessId,
+                },
+                webhookConfig,
+                decryptSecret
+              );
+
+              allResults.push(...results);
+            }
+
+            // Log summary
+            const succeeded = allResults.filter((r) => r.success).length;
+            const failed = allResults.filter((r) => !r.success).length;
+            console.log(`[LOGOUT_WEBHOOK] Completed: ${succeeded} succeeded, ${failed} failed`);
+          } catch (error) {
+            console.error('[LOGOUT_WEBHOOK] Error sending notifications:', error);
           }
         })()
       );

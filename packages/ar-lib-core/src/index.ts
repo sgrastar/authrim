@@ -82,6 +82,7 @@ export * from './utils/url-security';
 export * from './utils/email-domain-hash';
 export * from './utils/claim-normalizer';
 export * from './utils/feature-flags';
+export * from './utils/ssrf-protection';
 export * from './utils/ui-config';
 export * from './utils/conformance-config';
 export * from './utils/custom-redirect';
@@ -100,6 +101,7 @@ export * from './utils/native-sso-config';
 export * from './utils/setup-token';
 export * from './utils/setup-session';
 export * from './utils/system-init';
+export * from './utils/contract-loader';
 
 // Error System (Phase 10 - SDK public types)
 // Note: Exported with namespace to avoid conflicts with legacy error types
@@ -158,6 +160,7 @@ export * from './services/unified-check-service';
 export * from './services/permission-change-notifier';
 export * from './services/backchannel-logout-sender';
 export * from './services/frontchannel-logout';
+export * from './services/logout-webhook-sender';
 export * from './services/policy-resolver';
 
 // Middleware
