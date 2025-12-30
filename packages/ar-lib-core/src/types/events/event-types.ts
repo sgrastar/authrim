@@ -96,6 +96,9 @@ export const TOKEN_EVENTS = {
 
   // ID tokens
   ID_ISSUED: 'token.id.issued',
+
+  // Batch operations
+  BATCH_REVOKED: 'token.batch.revoked',
 } as const;
 
 export type TokenEventType = (typeof TOKEN_EVENTS)[keyof typeof TOKEN_EVENTS];
@@ -160,6 +163,10 @@ export const CLIENT_EVENTS = {
   UPDATED: 'client.updated',
   DELETED: 'client.deleted',
   SECRET_ROTATED: 'client.secret_rotated',
+  // RFC 7592: Client Configuration Endpoint events
+  CONFIG_READ: 'client.config.read',
+  CONFIG_UPDATED: 'client.config.updated',
+  CONFIG_DELETED: 'client.config.deleted',
 } as const;
 
 export type ClientEventType = (typeof CLIENT_EVENTS)[keyof typeof CLIENT_EVENTS];
@@ -189,6 +196,48 @@ export const SECURITY_EVENTS = {
 export type SecurityEventType = (typeof SECURITY_EVENTS)[keyof typeof SECURITY_EVENTS];
 
 // =============================================================================
+// Domain Verification Events
+// =============================================================================
+
+/**
+ * Domain verification event types.
+ *
+ * Pattern: domain.verification.<action>
+ */
+export const DOMAIN_EVENTS = {
+  /** Domain verification initiated */
+  VERIFICATION_STARTED: 'domain.verification.started',
+  /** Domain verification completed successfully */
+  VERIFICATION_SUCCEEDED: 'domain.verification.succeeded',
+  /** Domain verification failed */
+  VERIFICATION_FAILED: 'domain.verification.failed',
+} as const;
+
+export type DomainEventType = (typeof DOMAIN_EVENTS)[keyof typeof DOMAIN_EVENTS];
+
+// =============================================================================
+// Settings Events
+// =============================================================================
+
+/**
+ * Settings configuration event types.
+ *
+ * Pattern: settings.<action>
+ */
+export const SETTINGS_EVENTS = {
+  /** Settings updated */
+  UPDATED: 'settings.updated',
+  /** Settings rollback started */
+  ROLLBACK_STARTED: 'settings.rollback.started',
+  /** Settings rollback completed */
+  ROLLBACK_COMPLETED: 'settings.rollback.completed',
+  /** Settings rollback failed */
+  ROLLBACK_FAILED: 'settings.rollback.failed',
+} as const;
+
+export type SettingsEventType = (typeof SETTINGS_EVENTS)[keyof typeof SETTINGS_EVENTS];
+
+// =============================================================================
 // Combined Event Types
 // =============================================================================
 
@@ -203,6 +252,8 @@ export const EVENT_TYPES = {
   ...USER_EVENTS,
   ...CLIENT_EVENTS,
   ...SECURITY_EVENTS,
+  ...DOMAIN_EVENTS,
+  ...SETTINGS_EVENTS,
 } as const;
 
 export type EventType =
@@ -212,7 +263,9 @@ export type EventType =
   | ConsentEventType
   | UserEventType
   | ClientEventType
-  | SecurityEventType;
+  | SecurityEventType
+  | DomainEventType
+  | SettingsEventType;
 
 // =============================================================================
 // Event Data Types
@@ -233,7 +286,16 @@ export interface AuthEventData extends BaseEventData {
   /** User ID (subject) - omit in failed events for security */
   userId?: string;
   /** Authentication method */
-  method: 'passkey' | 'password' | 'email_code' | 'magic_link' | 'external_idp' | 'did' | 'saml';
+  method:
+    | 'passkey'
+    | 'password'
+    | 'email_code'
+    | 'magic_link'
+    | 'external_idp'
+    | 'did'
+    | 'saml'
+    | 'anonymous'
+    | 'upgrade'; // architecture-decisions.md §17
   /** Client ID */
   clientId: string;
   /** Session ID (for successful auth) */
@@ -276,6 +338,20 @@ export interface TokenEventData extends BaseEventData {
   expiresAt?: number;
   /** Grant type used */
   grantType?: string;
+}
+
+/**
+ * Batch revocation event data.
+ */
+export interface BatchRevokeEventData extends BaseEventData {
+  /** Client ID that initiated the batch revocation */
+  clientId: string;
+  /** Total number of tokens in the batch */
+  total: number;
+  /** Number of tokens successfully revoked */
+  revoked: number;
+  /** Number of invalid/already revoked tokens */
+  invalid: number;
 }
 
 /**
@@ -352,4 +428,38 @@ export interface SecurityEventData extends BaseEventData {
     windowSeconds: number;
     retryAfter: number;
   };
+}
+
+/**
+ * Domain verification event data.
+ */
+export interface DomainEventData extends BaseEventData {
+  /** Domain mapping ID */
+  mappingId: string;
+  /** Domain name (masked for privacy in logs) */
+  domain?: string;
+  /** Organization ID */
+  orgId: string;
+  /** Verification method used */
+  verificationMethod: string;
+  /** Error message (for failed events) */
+  errorMessage?: string;
+}
+
+/**
+ * Settings event data.
+ */
+export interface SettingsEventData extends BaseEventData {
+  /** Settings category (oauth, rate_limit, logout, etc.) */
+  category: string;
+  /** Current version number */
+  currentVersion?: number;
+  /** Target version number (for rollback) */
+  targetVersion?: number;
+  /** Actor who made the change */
+  actorId?: string;
+  /** Change source (admin_api, settings_ui, etc.) */
+  changeSource?: string;
+  /** Error message (for failed events) */
+  errorMessage?: string;
 }

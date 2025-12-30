@@ -31,6 +31,11 @@ import {
 // Import handlers
 import { registerHandler } from './register';
 import {
+  clientConfigGetHandler,
+  clientConfigUpdateHandler,
+  clientConfigDeleteHandler,
+} from './client-config';
+import {
   adminSigningKeysStatusHandler,
   adminSigningKeysRotateHandler,
   adminSigningKeysEmergencyRotateHandler,
@@ -481,7 +486,23 @@ app.use('/revoke/batch', async (c, next) => {
   c.header('Pragma', 'no-cache');
 });
 
-// Health check endpoints
+// Health check endpoints - rate limited with lenient profile
+// These are public endpoints that should be protected from abuse
+app.use('/api/health', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'lenient');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/health'],
+  })(c, next);
+});
+app.use('/health/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'lenient');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/health/*'],
+  })(c, next);
+});
+
 app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
@@ -504,6 +525,24 @@ app.get('/health/ready', healthHandlers.readiness);
 
 // Dynamic Client Registration endpoint - RFC 7591
 app.post('/register', registerHandler);
+
+// Client Configuration Endpoint - RFC 7592
+// Rate limit: moderate (sensitive but not auth-critical)
+app.get(
+  '/clients/:client_id',
+  rateLimitMiddleware(RateLimitProfiles.moderate),
+  clientConfigGetHandler
+);
+app.put(
+  '/clients/:client_id',
+  rateLimitMiddleware(RateLimitProfiles.moderate),
+  clientConfigUpdateHandler
+);
+app.delete(
+  '/clients/:client_id',
+  rateLimitMiddleware(RateLimitProfiles.moderate),
+  clientConfigDeleteHandler
+);
 
 // Token Introspection endpoint - RFC 7662
 app.post('/introspect', introspectHandler);
@@ -1100,6 +1139,18 @@ app.get('/api/admin/users/:userId/consents', adminUserConsentsListHandler);
 app.delete('/api/admin/users/:userId/consents/:clientId', adminUserConsentRevokeHandler);
 
 // SCIM 2.0 endpoints - RFC 7643, 7644
+// Rate limited with moderate profile for standard operations, stricter for bulk
+app.use('/scim/v2/*', async (c, next) => {
+  // Use stricter rate limiting for bulk operations
+  const path = new URL(c.req.url).pathname;
+  const profileName = path.endsWith('/Bulk') ? 'strict' : 'moderate';
+  const profile = await getRateLimitProfileAsync(c.env, profileName);
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/scim/v2/*'],
+  })(c, next);
+});
+
 app.route('/scim/v2', scimApp);
 
 // =====================================================

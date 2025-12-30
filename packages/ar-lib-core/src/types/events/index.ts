@@ -129,6 +129,8 @@ export {
   USER_EVENTS,
   CLIENT_EVENTS,
   SECURITY_EVENTS,
+  DOMAIN_EVENTS,
+  SETTINGS_EVENTS,
   EVENT_TYPES,
 } from './event-types';
 
@@ -140,14 +142,19 @@ export type {
   UserEventType,
   ClientEventType,
   SecurityEventType,
+  DomainEventType,
+  SettingsEventType,
   EventType,
   BaseEventData,
   AuthEventData,
   SessionEventData,
   TokenEventData,
+  BatchRevokeEventData,
   ConsentEventData,
   ExtendedConsentEventData,
   UserEventData,
   ClientEventData,
   SecurityEventData,
+  DomainEventData,
+  SettingsEventData,
 } from './event-types';

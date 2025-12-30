@@ -274,6 +274,10 @@ export interface ClientRegistrationRequest {
   userinfo_encrypted_response_enc?: string;
   // UserInfo signing - OIDC Core 5.3.3
   userinfo_signed_response_alg?: string;
+  // ID Token signing - OIDC Core 2 (Client Metadata)
+  id_token_signed_response_alg?: string;
+  // JAR (JWT-Secured Authorization Request) - RFC 9101
+  request_object_signing_alg?: string;
   // SD-JWT (Selective Disclosure JWT) - RFC 9901
   // When set to 'sd-jwt', ID tokens will be issued as SD-JWT format
   id_token_signed_response_type?: 'jwt' | 'sd-jwt';
@@ -297,6 +301,11 @@ export interface ClientRegistrationRequest {
   // ==========================================================================
   logout_webhook_uri?: string;
   logout_webhook_secret?: string; // Client-provided or auto-generated, min 32 chars
+  // ==========================================================================
+  // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
+  // https://openid.net/specs/openid-connect-core-1_0.html#ThirdPartyInitiatedLogin
+  // ==========================================================================
+  initiate_login_uri?: string;
 }
 
 /**
@@ -333,6 +342,8 @@ export interface ClientRegistrationResponse {
   userinfo_encrypted_response_enc?: string;
   // UserInfo signing - OIDC Core 5.3.3
   userinfo_signed_response_alg?: string;
+  // ID Token signing - OIDC Core 2 (Client Metadata)
+  id_token_signed_response_alg?: string;
   // JAR (JWT-Secured Authorization Request) - RFC 9101
   request_object_signing_alg?: string;
   request_object_encryption_alg?: string;
@@ -358,6 +369,17 @@ export interface ClientRegistrationResponse {
   // ==========================================================================
   logout_webhook_uri?: string;
   logout_webhook_secret?: string; // Returned only on initial registration
+  // ==========================================================================
+  // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
+  // https://openid.net/specs/openid-connect-core-1_0.html#ThirdPartyInitiatedLogin
+  // ==========================================================================
+  initiate_login_uri?: string;
+  // ==========================================================================
+  // RFC 7592: Client Configuration Endpoint
+  // https://datatracker.ietf.org/doc/html/rfc7592
+  // ==========================================================================
+  registration_access_token?: string; // Returned only on initial registration
+  registration_client_uri?: string; // URL for client configuration management
 }
 
 /**
@@ -441,6 +463,18 @@ export interface ClientMetadata extends ClientRegistrationResponse {
    * Default: false (more secure, same client only)
    */
   allow_cross_client_native_sso?: boolean;
+
+  // ==========================================================================
+  // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
+  // ==========================================================================
+  /** URI for third-party initiated login */
+  initiate_login_uri?: string;
+
+  // ==========================================================================
+  // RFC 7592: Client Configuration Endpoint
+  // ==========================================================================
+  /** SHA-256 hash of registration_access_token (never store plaintext) */
+  registration_access_token_hash?: string;
 }
 
 /**

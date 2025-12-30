@@ -31,6 +31,8 @@ import {
   // Simple Logout Webhook (Authrim Extension)
   validateWebhookUrl,
   encryptValue,
+  // RFC 7592: Token hashing for registration_access_token
+  arrayBufferToBase64Url,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -327,11 +329,12 @@ function validateRegistrationRequest(
       };
     }
 
-    // Supported response types per OIDC Core 3.3 (Hybrid Flow)
+    // Supported response types per OIDC Core 3.3 (Hybrid Flow) + OAuth 2.0
     const validResponseTypes = [
       'code', // Authorization Code Flow
-      'id_token', // Implicit Flow (ID Token only)
-      'id_token token', // Implicit Flow (ID Token + Access Token)
+      'token', // OAuth 2.0 Implicit Flow (Access Token only)
+      'id_token', // OIDC Implicit Flow (ID Token only)
+      'id_token token', // OIDC Implicit Flow (ID Token + Access Token)
       'code id_token', // Hybrid Flow 1
       'code token', // Hybrid Flow 2
       'code id_token token', // Hybrid Flow 3
@@ -599,6 +602,60 @@ function validateRegistrationRequest(
   }
 
   // ==========================================================================
+  // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
+  // https://openid.net/specs/openid-connect-core-1_0.html#ThirdPartyInitiatedLogin
+  // ==========================================================================
+  if (data.initiate_login_uri !== undefined) {
+    if (typeof data.initiate_login_uri !== 'string') {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: 'initiate_login_uri must be a string',
+        },
+      };
+    }
+
+    try {
+      const parsed = new URL(data.initiate_login_uri);
+
+      // HTTPS required (allow http://localhost for development)
+      if (
+        parsed.protocol !== 'https:' &&
+        !(parsed.protocol === 'http:' && parsed.hostname === 'localhost')
+      ) {
+        return {
+          valid: false,
+          error: {
+            error: 'invalid_client_metadata',
+            error_description:
+              'initiate_login_uri must use HTTPS (except http://localhost for development)',
+          },
+        };
+      }
+
+      // Fragment identifier not allowed
+      if (parsed.hash) {
+        return {
+          valid: false,
+          error: {
+            error: 'invalid_client_metadata',
+            error_description: 'initiate_login_uri must not contain fragment identifiers',
+          },
+        };
+      }
+    } catch {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_client_metadata',
+          error_description: `Invalid initiate_login_uri: ${data.initiate_login_uri}`,
+        },
+      };
+    }
+  }
+
+  // ==========================================================================
   // Simple Logout Webhook (Authrim Extension)
   // A simplified alternative to OIDC Back-Channel Logout for clients that
   // don't support the full OIDC spec.
@@ -737,13 +794,16 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       allow_claims_without_scope,
       jwks, jwks_uri,
       userinfo_signed_response_alg,
+      id_token_signed_response_alg,
+      request_object_signing_alg,
       post_logout_redirect_uris,
       backchannel_logout_uri, backchannel_logout_session_required,
       frontchannel_logout_uri, frontchannel_logout_session_required,
       allowed_redirect_origins,
       logout_webhook_uri, logout_webhook_secret_encrypted,
+      initiate_login_uri, registration_access_token_hash,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
@@ -767,6 +827,8 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       metadata.jwks ? JSON.stringify(metadata.jwks) : null,
       metadata.jwks_uri || null,
       metadata.userinfo_signed_response_alg || null,
+      metadata.id_token_signed_response_alg || null,
+      metadata.request_object_signing_alg || null,
       metadata.post_logout_redirect_uris
         ? JSON.stringify(metadata.post_logout_redirect_uris)
         : null,
@@ -778,6 +840,10 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       (metadata as ClientMetadata & { logout_webhook_uri?: string }).logout_webhook_uri || null,
       (metadata as ClientMetadata & { logout_webhook_secret_encrypted?: string })
         .logout_webhook_secret_encrypted || null,
+      // OIDC 3rd Party Initiated Login
+      metadata.initiate_login_uri || null,
+      // RFC 7592: Client Configuration Endpoint
+      metadata.registration_access_token_hash || null,
       metadata.created_at || now,
       metadata.updated_at || now,
     ]
@@ -892,6 +958,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // OIDC Core 5.3.3: UserInfo signing algorithm
     if (request.userinfo_signed_response_alg)
       response.userinfo_signed_response_alg = request.userinfo_signed_response_alg;
+    // OIDC Core 2: ID Token signing algorithm
+    if (request.id_token_signed_response_alg)
+      response.id_token_signed_response_alg = request.id_token_signed_response_alg;
+    // RFC 9101 (JAR): Request Object signing algorithm
+    if (request.request_object_signing_alg)
+      response.request_object_signing_alg = request.request_object_signing_alg;
     // OIDC RP-Initiated Logout 1.0: post_logout_redirect_uris
     if (request.post_logout_redirect_uris)
       response.post_logout_redirect_uris = request.post_logout_redirect_uris;
@@ -905,6 +977,34 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       response.frontchannel_logout_uri = request.frontchannel_logout_uri;
     if (request.frontchannel_logout_session_required !== undefined)
       response.frontchannel_logout_session_required = request.frontchannel_logout_session_required;
+
+    // ==========================================================================
+    // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
+    // Echo back initiate_login_uri if provided
+    // ==========================================================================
+    if (request.initiate_login_uri) {
+      response.initiate_login_uri = request.initiate_login_uri;
+    }
+
+    // ==========================================================================
+    // RFC 7592: Client Configuration Endpoint
+    // Generate registration_access_token for client self-management
+    // https://www.rfc-editor.org/rfc/rfc7592.html
+    // ==========================================================================
+    const registrationAccessToken = generateSecureRandomString(32);
+
+    // Hash the token for secure storage (SHA-256)
+    const encoder = new TextEncoder();
+    const tokenData = encoder.encode(registrationAccessToken);
+    const tokenHashBuffer = await crypto.subtle.digest('SHA-256', tokenData);
+    const registrationAccessTokenHash = arrayBufferToBase64Url(tokenHashBuffer);
+
+    // Build registration_client_uri
+    const registrationClientUri = `${c.env.ISSUER_URL}/clients/${clientId}`;
+
+    // Add to response (token is returned only on initial registration)
+    response.registration_access_token = registrationAccessToken;
+    response.registration_client_uri = registrationClientUri;
 
     // ==========================================================================
     // Simple Logout Webhook (Authrim Extension)
@@ -977,6 +1077,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       // Remove plaintext secret from response spread (we already set it separately)
       delete (metadata as unknown as Record<string, unknown>).logout_webhook_secret;
     }
+
+    // RFC 7592: Store hashed registration_access_token, remove plaintext from metadata
+    metadata.registration_access_token_hash = registrationAccessTokenHash;
+    // Remove fields that should not be stored (they are derived/sensitive)
+    delete (metadata as unknown as Record<string, unknown>).registration_access_token;
+    delete (metadata as unknown as Record<string, unknown>).registration_client_uri;
 
     await storeClient(c.env, clientId, metadata);
 

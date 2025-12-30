@@ -262,6 +262,8 @@ export interface UserCoreExistence {
   email_verified: boolean;
   phone_number_verified: boolean;
   updated_at: number;
+  /** User type for anonymous user detection (architecture-decisions.md §17) */
+  user_type?: string;
 }
 
 /**
@@ -289,8 +291,9 @@ export async function getCachedUserCore(
     email_verified: number;
     phone_number_verified: number;
     updated_at: number;
+    user_type: string | null;
   }>(
-    'SELECT id, email_verified, phone_number_verified, updated_at FROM users_core WHERE id = ? AND is_active = 1',
+    'SELECT id, email_verified, phone_number_verified, updated_at, user_type FROM users_core WHERE id = ? AND is_active = 1',
     [userId]
   );
 
@@ -303,6 +306,7 @@ export async function getCachedUserCore(
     email_verified: coreResult.email_verified === 1,
     phone_number_verified: coreResult.phone_number_verified === 1,
     updated_at: coreResult.updated_at,
+    user_type: coreResult.user_type ?? undefined,
   };
 }
 
@@ -603,6 +607,16 @@ export async function getClient(
     allowed_scopes: string | null;
     default_scope: string | null;
     default_audience: string | null;
+    // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
+    initiate_login_uri: string | null;
+    // RFC 7592: Client Configuration Endpoint
+    registration_access_token_hash: string | null;
+    // OIDC Logout endpoints
+    post_logout_redirect_uris: string | null;
+    backchannel_logout_uri: string | null;
+    backchannel_logout_session_required: number | null;
+    frontchannel_logout_uri: string | null;
+    frontchannel_logout_session_required: number | null;
     // Multi-tenant support
     tenant_id: string;
     created_at: number;
@@ -652,6 +666,18 @@ export async function getClient(
     allowed_scopes: result.allowed_scopes ? JSON.parse(result.allowed_scopes) : undefined,
     default_scope: result.default_scope,
     default_audience: result.default_audience,
+    // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
+    initiate_login_uri: result.initiate_login_uri,
+    // RFC 7592: Client Configuration Endpoint (hash only, not exposed)
+    registration_access_token_hash: result.registration_access_token_hash,
+    // OIDC Logout endpoints
+    post_logout_redirect_uris: result.post_logout_redirect_uris
+      ? JSON.parse(result.post_logout_redirect_uris)
+      : undefined,
+    backchannel_logout_uri: result.backchannel_logout_uri,
+    backchannel_logout_session_required: result.backchannel_logout_session_required === 1,
+    frontchannel_logout_uri: result.frontchannel_logout_uri,
+    frontchannel_logout_session_required: result.frontchannel_logout_session_required === 1,
     // Multi-tenant support
     tenant_id: result.tenant_id || 'default',
     created_at: result.created_at,
