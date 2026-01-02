@@ -79,6 +79,8 @@ export * from './utils/device-code-sharding';
 export * from './utils/ciba-sharding';
 export * from './utils/do-retry';
 export * from './utils/url-security';
+export * from './utils/basic-auth';
+export * from './utils/jwks-cache';
 export * from './utils/email-domain-hash';
 export * from './utils/claim-normalizer';
 export * from './utils/feature-flags';

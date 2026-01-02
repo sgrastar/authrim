@@ -17,19 +17,13 @@ import {
   publishEvent,
   TOKEN_EVENTS,
   type TokenEventData,
+  // Shared utilities
+  parseBasicAuth,
+  getKeyByKid,
 } from '@authrim/ar-lib-core';
-import { importJWK, decodeProtectedHeader, type CryptoKey, type JWK } from 'jose';
+import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
 import { getIntrospectionValidationSettings } from './routes/settings/introspection-validation';
 import { getIntrospectionCacheConfig } from './routes/settings/introspection-cache';
-
-// Hierarchical JWKS cache configuration
-// 1. In-memory cache (fastest, per-isolate)
-// 2. KV cache (shared across Worker instances)
-// 3. KeyManager DO (singleton, fallback)
-let jwksCache: { keys: JWK[]; expiry: number } | null = null;
-const JWKS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes in-memory cache
-const KV_JWKS_CACHE_TTL_SEC = 60; // 1 minute KV cache (shorter to allow key rotation)
-const KV_JWKS_CACHE_KEY = 'cache:jwks';
 
 // Introspection Response Cache
 // Key format: introspect_cache:{sha256(jti)}
@@ -47,60 +41,6 @@ async function getIntrospectCacheKey(jti: string): Promise<string> {
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
   return `${INTROSPECT_CACHE_KEY_PREFIX}${hashHex}`;
-}
-
-/**
- * Get JWKS with hierarchical caching to reduce KeyManager DO load:
- * 1. In-memory cache (fastest, 5min TTL) - per Worker isolate
- * 2. KV cache (shared across Workers, 1min TTL) - reduces DO cold starts
- * 3. KeyManager DO (singleton) - authoritative source
- */
-async function getJwksFromKeyManager(env: Env): Promise<JWK[]> {
-  const now = Date.now();
-
-  // 1. Check in-memory cache (fastest path)
-  if (jwksCache && jwksCache.expiry > now) {
-    return jwksCache.keys;
-  }
-
-  // 2. Check KV cache (shared across Worker instances)
-  if (env.AUTHRIM_CONFIG) {
-    try {
-      const kvCached = await env.AUTHRIM_CONFIG.get<JWK[]>(KV_JWKS_CACHE_KEY, { type: 'json' });
-      if (kvCached && Array.isArray(kvCached) && kvCached.length > 0) {
-        // Update in-memory cache from KV
-        jwksCache = { keys: kvCached, expiry: now + JWKS_CACHE_TTL_MS };
-        return kvCached;
-      }
-    } catch {
-      // KV read failed, continue to DO
-    }
-  }
-
-  // 3. Fetch from KeyManager DO (singleton)
-  try {
-    const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
-    const keyManager = env.KEY_MANAGER.get(keyManagerId);
-    const keys = await keyManager.getAllPublicKeysRpc();
-
-    // Update in-memory cache
-    jwksCache = { keys, expiry: now + JWKS_CACHE_TTL_MS };
-
-    // Update KV cache (fire-and-forget, non-blocking)
-    if (env.AUTHRIM_CONFIG && keys.length > 0) {
-      env.AUTHRIM_CONFIG.put(KV_JWKS_CACHE_KEY, JSON.stringify(keys), {
-        expirationTtl: KV_JWKS_CACHE_TTL_SEC,
-      }).catch(() => {
-        // Ignore KV write errors - not critical
-      });
-    }
-
-    return keys;
-  } catch (error) {
-    console.error('Failed to get JWKS from KeyManager:', error);
-    // Return empty array on error, will fall back to PUBLIC_JWK_JSON
-    return [];
-  }
 }
 
 /**
@@ -141,29 +81,13 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // Check for HTTP Basic authentication (client_secret_basic)
   // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
-  if (authHeader && authHeader.startsWith('Basic ')) {
-    try {
-      const base64Credentials = authHeader.substring(6);
-      const credentials = atob(base64Credentials);
-      const colonIndex = credentials.indexOf(':');
-
-      if (colonIndex === -1) {
-        return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
-      }
-
-      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
-      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
-      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
-
-      if (!client_id && basicClientId) {
-        client_id = basicClientId;
-      }
-      if (!client_secret && basicClientSecret) {
-        client_secret = basicClientSecret;
-      }
-    } catch {
-      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
-    }
+  const basicAuth = parseBasicAuth(authHeader);
+  if (basicAuth.success) {
+    if (!client_id) client_id = basicAuth.credentials.username;
+    if (!client_secret) client_secret = basicAuth.credentials.password;
+  } else if (basicAuth.error !== 'missing_header' && basicAuth.error !== 'invalid_scheme') {
+    // Basic auth was attempted but malformed
+    return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
   }
 
   // Validate token parameter
@@ -332,33 +256,18 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     // If we can't decode the header, continue without kid matching
   }
 
-  // Try to find matching key from KeyManager DO (with in-memory caching)
-  if (tokenKid) {
+  // Get matching key with hierarchical caching (memory → KV → DO → env)
+  const matchingKey = await getKeyByKid(c.env, tokenKid);
+  if (matchingKey) {
     try {
-      const jwksKeys = await getJwksFromKeyManager(c.env);
-      const matchingKey = jwksKeys.find((k) => k.kid === tokenKid);
-      if (matchingKey) {
-        publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;
-      }
-    } catch {
-      // KeyManager access failed, fall back to PUBLIC_JWK_JSON
-    }
-  }
-
-  // Fall back to PUBLIC_JWK_JSON if no matching key found
-  if (!publicKey) {
-    const publicJwkJson = c.env.PUBLIC_JWK_JSON;
-    if (!publicJwkJson) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
-
-    try {
-      const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
-      publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
+      publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;
     } catch (err) {
       console.error('Failed to import public key:', err);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
+  } else {
+    console.error('No matching key found for token verification');
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   // Verify token signature

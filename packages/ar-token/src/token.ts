@@ -72,6 +72,8 @@ import {
   isCustomClaimsEnabled,
   isIdLevelPermissionsEnabled,
   getEmbeddingLimits,
+  // Shared utilities
+  parseBasicAuth,
   type TokenClaimEvaluationContext,
   type JWEAlgorithm,
   type JWEEncryption,
@@ -523,35 +525,14 @@ async function handleAuthorizationCodeGrant(
   // Check for HTTP Basic authentication (client_secret_basic)
   // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
-  if (authHeader && authHeader.startsWith('Basic ')) {
-    try {
-      const base64Credentials = authHeader.substring(6);
-      const credentials = atob(base64Credentials);
-      const colonIndex = credentials.indexOf(':');
-
-      if (colonIndex === -1) {
-        return oauthError(
-          c,
-          'invalid_client',
-          'Invalid Authorization header format: missing colon separator',
-          401
-        );
-      }
-
-      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
-      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
-      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
-
-      // Use Basic auth credentials if form data doesn't provide them
-      if (!client_id && basicClientId) {
-        client_id = basicClientId;
-      }
-      if (!client_secret && basicClientSecret) {
-        client_secret = basicClientSecret;
-      }
-    } catch {
-      return oauthError(c, 'invalid_client', 'Invalid Authorization header format', 401);
-    }
+  const basicAuth = parseBasicAuth(authHeader);
+  if (basicAuth.success) {
+    // Use Basic auth credentials if form data doesn't provide them
+    if (!client_id) client_id = basicAuth.credentials.username;
+    if (!client_secret) client_secret = basicAuth.credentials.password;
+  } else if (basicAuth.error === 'malformed_credentials' || basicAuth.error === 'decode_error') {
+    // Basic auth was attempted but malformed
+    return oauthError(c, 'invalid_client', 'Invalid Authorization header format', 401);
   }
 
   // Validate grant_type
@@ -1574,34 +1555,13 @@ async function handleRefreshTokenGrant(
   // Check for HTTP Basic authentication (client_secret_basic)
   // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
-  if (authHeader && authHeader.startsWith('Basic ')) {
-    try {
-      const base64Credentials = authHeader.substring(6);
-      const credentials = atob(base64Credentials);
-      const colonIndex = credentials.indexOf(':');
-
-      if (colonIndex === -1) {
-        return oauthError(
-          c,
-          'invalid_client',
-          'Invalid Authorization header format: missing colon separator',
-          401
-        );
-      }
-
-      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
-      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
-      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
-
-      if (!client_id && basicClientId) {
-        client_id = basicClientId;
-      }
-      if (!client_secret && basicClientSecret) {
-        client_secret = basicClientSecret;
-      }
-    } catch {
-      return oauthError(c, 'invalid_client', 'Invalid Authorization header format', 401);
-    }
+  const basicAuth = parseBasicAuth(authHeader);
+  if (basicAuth.success) {
+    if (!client_id) client_id = basicAuth.credentials.username;
+    if (!client_secret) client_secret = basicAuth.credentials.password;
+  } else if (basicAuth.error === 'malformed_credentials' || basicAuth.error === 'decode_error') {
+    // Basic auth was attempted but malformed
+    return oauthError(c, 'invalid_client', 'Invalid Authorization header format', 401);
   }
 
   // Validate refresh_token parameter
@@ -3466,34 +3426,13 @@ async function handleTokenExchangeGrant(
   // Check HTTP Basic authentication
   // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
-  if (authHeader && authHeader.startsWith('Basic ')) {
-    try {
-      const base64Credentials = authHeader.substring(6);
-      const credentials = atob(base64Credentials);
-      const colonIndex = credentials.indexOf(':');
-
-      if (colonIndex === -1) {
-        return oauthError(
-          c,
-          'invalid_client',
-          'Invalid Authorization header format: missing colon separator',
-          401
-        );
-      }
-
-      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
-      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
-      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
-
-      if (!client_id && basicClientId) {
-        client_id = basicClientId;
-      }
-      if (!client_secret && basicClientSecret) {
-        client_secret = basicClientSecret;
-      }
-    } catch {
-      return oauthError(c, 'invalid_client', 'Invalid Authorization header format', 401);
-    }
+  const basicAuth = parseBasicAuth(authHeader);
+  if (basicAuth.success) {
+    if (!client_id) client_id = basicAuth.credentials.username;
+    if (!client_secret) client_secret = basicAuth.credentials.password;
+  } else if (basicAuth.error === 'malformed_credentials' || basicAuth.error === 'decode_error') {
+    // Basic auth was attempted but malformed
+    return oauthError(c, 'invalid_client', 'Invalid Authorization header format', 401);
   }
 
   // Validate client_id
@@ -4716,34 +4655,13 @@ async function handleClientCredentialsGrant(
   // Check HTTP Basic authentication
   // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
-  if (authHeader && authHeader.startsWith('Basic ')) {
-    try {
-      const base64Credentials = authHeader.substring(6);
-      const credentials = atob(base64Credentials);
-      const colonIndex = credentials.indexOf(':');
-
-      if (colonIndex === -1) {
-        return oauthError(
-          c,
-          'invalid_client',
-          'Invalid Authorization header format: missing colon separator',
-          401
-        );
-      }
-
-      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
-      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
-      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
-
-      if (!client_id && basicClientId) {
-        client_id = basicClientId;
-      }
-      if (!client_secret && basicClientSecret) {
-        client_secret = basicClientSecret;
-      }
-    } catch {
-      return oauthError(c, 'invalid_client', 'Invalid Authorization header format', 401);
-    }
+  const basicAuth = parseBasicAuth(authHeader);
+  if (basicAuth.success) {
+    if (!client_id) client_id = basicAuth.credentials.username;
+    if (!client_secret) client_secret = basicAuth.credentials.password;
+  } else if (basicAuth.error === 'malformed_credentials' || basicAuth.error === 'decode_error') {
+    // Basic auth was attempted but malformed
+    return oauthError(c, 'invalid_client', 'Invalid Authorization header format', 401);
   }
 
   // Validate client_id

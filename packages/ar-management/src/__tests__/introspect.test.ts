@@ -21,6 +21,7 @@ const {
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
   mockValidateClientAssertion,
+  mockGetKeyByKid,
 } = vi.hoisted(() => {
   const clientRepo = {
     findByClientId: vi.fn(),
@@ -40,6 +41,13 @@ const {
       },
     }),
     mockValidateClientAssertion: vi.fn().mockResolvedValue({ valid: true }),
+    // Mock for JWKS cache utility
+    mockGetKeyByKid: vi.fn().mockResolvedValue({
+      kty: 'RSA',
+      kid: 'key-1',
+      n: 'mock-n',
+      e: 'AQAB',
+    }),
   };
 });
 
@@ -57,6 +65,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     validateClientAssertion: mockValidateClientAssertion,
+    // JWKS cache utility
+    getKeyByKid: mockGetKeyByKid,
   };
 });
 
@@ -68,6 +78,7 @@ vi.mock('../routes/settings/introspection-cache', () => ({
 // Mock jose
 vi.mock('jose', () => ({
   importJWK: vi.fn(),
+  decodeProtectedHeader: vi.fn().mockReturnValue({ kid: 'key-1' }),
 }));
 
 import { introspectHandler } from '../introspect';
@@ -685,7 +696,7 @@ describe('Token Introspection Endpoint', () => {
   });
 
   describe('Server Configuration Errors', () => {
-    it('should return 500 when PUBLIC_JWK_JSON is missing', async () => {
+    it('should return 500 when no JWKS key is available', async () => {
       const c = createMockContext({
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -702,6 +713,8 @@ describe('Token Introspection Endpoint', () => {
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
+      // Simulate no key available from JWKS cache hierarchy
+      mockGetKeyByKid.mockResolvedValueOnce(undefined);
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
@@ -716,7 +729,7 @@ describe('Token Introspection Endpoint', () => {
       expect(body.error).toBe('server_error');
     });
 
-    it('should return 500 when PUBLIC_JWK_JSON is invalid', async () => {
+    it('should return 500 when key import fails', async () => {
       const c = createMockContext({
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -733,6 +746,14 @@ describe('Token Introspection Endpoint', () => {
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
+      // Key is returned but importJWK fails
+      mockGetKeyByKid.mockResolvedValueOnce({
+        kty: 'RSA',
+        kid: 'key-1',
+        n: 'invalid',
+        e: 'AQAB',
+      });
+      vi.mocked(importJWK).mockRejectedValueOnce(new Error('Invalid key material'));
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',

@@ -19,40 +19,11 @@ import {
   TOKEN_EVENTS,
   type TokenEventData,
   type BatchRevokeEventData,
+  // Shared utilities
+  parseBasicAuth,
+  getKeyByKid,
 } from '@authrim/ar-lib-core';
-import { importJWK, decodeProtectedHeader, type CryptoKey, type JWK } from 'jose';
-
-// In-memory JWKS cache with 5-minute TTL (shared pattern with introspect.ts)
-let jwksCache: { keys: JWK[]; expiry: number } | null = null;
-const JWKS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-/**
- * Get JWKS from KeyManager DO with in-memory caching
- */
-async function getJwksFromKeyManager(env: Env): Promise<JWK[]> {
-  const now = Date.now();
-
-  // Return cached JWKS if still valid
-  if (jwksCache && jwksCache.expiry > now) {
-    return jwksCache.keys;
-  }
-
-  // Fetch from KeyManager DO
-  try {
-    const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
-    const keyManager = env.KEY_MANAGER.get(keyManagerId);
-    const keys = await keyManager.getAllPublicKeysRpc();
-    jwksCache = {
-      keys,
-      expiry: now + JWKS_CACHE_TTL_MS,
-    };
-    return keys;
-  } catch (error) {
-    console.error('Failed to get JWKS from KeyManager:', error);
-    // Return empty array on error, will fall back to PUBLIC_JWK_JSON
-    return [];
-  }
-}
+import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
 
 /**
  * Token Revocation Endpoint Handler
@@ -92,29 +63,13 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   // Check for HTTP Basic authentication (client_secret_basic)
   // RFC 7617: client_id and client_secret are URL-encoded before Base64 encoding
   const authHeader = c.req.header('Authorization');
-  if (authHeader && authHeader.startsWith('Basic ')) {
-    try {
-      const base64Credentials = authHeader.substring(6);
-      const credentials = atob(base64Credentials);
-      const colonIndex = credentials.indexOf(':');
-
-      if (colonIndex === -1) {
-        return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
-      }
-
-      // RFC 7617 Section 2: The user-id and password are URL-decoded after Base64 decoding
-      const basicClientId = decodeURIComponent(credentials.substring(0, colonIndex));
-      const basicClientSecret = decodeURIComponent(credentials.substring(colonIndex + 1));
-
-      if (!client_id && basicClientId) {
-        client_id = basicClientId;
-      }
-      if (!client_secret && basicClientSecret) {
-        client_secret = basicClientSecret;
-      }
-    } catch {
-      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
-    }
+  const basicAuth = parseBasicAuth(authHeader);
+  if (basicAuth.success) {
+    if (!client_id) client_id = basicAuth.credentials.username;
+    if (!client_secret) client_secret = basicAuth.credentials.password;
+  } else if (basicAuth.error !== 'missing_header' && basicAuth.error !== 'invalid_scheme') {
+    // Basic auth was attempted but malformed
+    return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
   }
 
   // Validate token parameter
@@ -232,35 +187,18 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
     return c.body(null, 200);
   }
 
-  // Try to find matching key from KeyManager DO (with in-memory caching)
-  if (tokenKid) {
+  // Get matching key from KeyManager DO (with hierarchical caching: memory → KV → DO → env)
+  const matchingKey = await getKeyByKid(c.env, tokenKid);
+  if (matchingKey) {
     try {
-      const jwksKeys = await getJwksFromKeyManager(c.env);
-      const matchingKey = jwksKeys.find((k) => k.kid === tokenKid);
-      if (matchingKey) {
-        publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;
-      }
-    } catch {
-      // KeyManager access failed, fall back to PUBLIC_JWK_JSON
-    }
-  }
-
-  // Fall back to PUBLIC_JWK_JSON if no matching key found
-  if (!publicKey) {
-    const publicJwkJson = c.env.PUBLIC_JWK_JSON;
-    if (!publicJwkJson) {
-      console.error('PUBLIC_JWK_JSON not configured for revocation');
-      // Return 200 to prevent information disclosure
-      return c.body(null, 200);
-    }
-
-    try {
-      const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
-      publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
+      publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;
     } catch (err) {
       console.error('Failed to import public key for revocation:', err);
       return c.body(null, 200);
     }
+  } else {
+    console.error('No matching key found for revocation');
+    return c.body(null, 200);
   }
 
   // Verify token signature
@@ -484,21 +422,13 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
   let client_secret: string | undefined;
 
   const authHeader = c.req.header('Authorization');
-  if (authHeader && authHeader.startsWith('Basic ')) {
-    try {
-      const base64Credentials = authHeader.substring(6);
-      const credentials = atob(base64Credentials);
-      const colonIndex = credentials.indexOf(':');
-
-      if (colonIndex === -1) {
-        return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
-      }
-
-      client_id = decodeURIComponent(credentials.substring(0, colonIndex));
-      client_secret = decodeURIComponent(credentials.substring(colonIndex + 1));
-    } catch {
-      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
-    }
+  const basicAuth = parseBasicAuth(authHeader);
+  if (basicAuth.success) {
+    client_id = basicAuth.credentials.username;
+    client_secret = basicAuth.credentials.password;
+  } else if (basicAuth.error === 'malformed_credentials' || basicAuth.error === 'decode_error') {
+    // Basic auth was attempted but malformed
+    return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
   } else if (authHeader && authHeader.startsWith('Bearer ')) {
     // Support Bearer token for admin API access (not RFC 7009 standard)
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
@@ -577,29 +507,18 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
           return { token_hint: tokenHint, status: 'invalid' };
         }
 
-        if (tokenKid) {
+        // Get matching key with hierarchical caching (memory → KV → DO → env)
+        const matchingKey = await getKeyByKid(c.env, tokenKid);
+        if (matchingKey) {
           try {
-            const jwksKeys = await getJwksFromKeyManager(c.env);
-            const matchingKey = jwksKeys.find((k) => k.kid === tokenKid);
-            if (matchingKey) {
-              publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;
-            }
+            publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;
           } catch {
-            // Fall through to PUBLIC_JWK_JSON
+            return { token_hint: tokenHint, status: 'invalid' };
           }
         }
 
         if (!publicKey) {
-          const publicJwkJson = c.env.PUBLIC_JWK_JSON;
-          if (!publicJwkJson) {
-            return { token_hint: tokenHint, status: 'invalid' };
-          }
-          try {
-            const jwk = JSON.parse(publicJwkJson) as Parameters<typeof importJWK>[0];
-            publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
-          } catch {
-            return { token_hint: tokenHint, status: 'invalid' };
-          }
+          return { token_hint: tokenHint, status: 'invalid' };
         }
 
         // Verify token signature
