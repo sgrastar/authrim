@@ -19,12 +19,7 @@
 import { Hono } from 'hono';
 import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { Env as SharedEnv } from '@authrim/ar-lib-core';
-import {
-  createErrorResponse,
-  createRFCErrorResponse,
-  AR_ERROR_CODES,
-  RFC_ERROR_CODES,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 import {
   authenticateCheckApiRequest,
   isOperationAllowed,
@@ -88,43 +83,23 @@ const subscribeRoutes = new Hono<{ Bindings: Env }>();
 subscribeRoutes.get('/subscribe', async (c) => {
   // Check if Check API is enabled
   if (!isCheckApiEnabled(c.env)) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.ACCESS_DENIED,
-      403,
-      'Check API is not enabled'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
   // Check if WebSocket Push is enabled
   if (!isWebSocketEnabled(c.env)) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.ACCESS_DENIED,
-      403,
-      'WebSocket Push is not enabled. Set CHECK_API_WEBSOCKET_ENABLED=true to enable.'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
   // Check if PermissionChangeHub DO is available
   if (!c.env.PERMISSION_CHANGE_HUB) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-      503,
-      'PermissionChangeHub Durable Object not configured'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   // Check for WebSocket upgrade request
   const upgradeHeader = c.req.header('Upgrade');
   if (upgradeHeader !== 'websocket') {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      426,
-      'WebSocket upgrade required. This endpoint only accepts WebSocket connections.'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Get token from query parameter (WebSocket can't send custom headers during upgrade)
@@ -149,12 +124,7 @@ subscribeRoutes.get('/subscribe', async (c) => {
 
   // Check if subscribe operation is allowed
   if (!isOperationAllowed(auth, 'subscribe')) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.ACCESS_DENIED,
-      403,
-      'API key does not have permission for subscribe operation'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
   }
 
   // Get tenant ID from auth context or query param
@@ -196,12 +166,7 @@ subscribeRoutes.get('/subscribe', async (c) => {
 subscribeRoutes.get('/subscribe/stats', async (c) => {
   // Check if Check API is enabled
   if (!isCheckApiEnabled(c.env)) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.ACCESS_DENIED,
-      403,
-      'Check API is not enabled'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
   // Authentication
@@ -218,12 +183,7 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
 
   // Check if PermissionChangeHub DO is available
   if (!c.env.PERMISSION_CHANGE_HUB) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-      503,
-      'PermissionChangeHub Durable Object not configured'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   const tenantId =

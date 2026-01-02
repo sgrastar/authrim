@@ -13,9 +13,7 @@ import {
   validateClientAssertion,
   createOAuthConfigManager,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   // Event System
   publishEvent,
   TOKEN_EVENTS,
@@ -66,12 +64,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   // Verify Content-Type is application/x-www-form-urlencoded
   const contentType = c.req.header('Content-Type');
   if (!contentType || !contentType.includes('application/x-www-form-urlencoded')) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Content-Type must be application/x-www-form-urlencoded'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Parse form data
@@ -82,12 +75,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
       Object.entries(body).map(([key, value]) => [key, typeof value === 'string' ? value : ''])
     );
   } catch {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Failed to parse request body'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   const token = formData.token;
@@ -131,12 +119,9 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
   // Validate token parameter
   if (!token) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'token parameter is required'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'token' },
+    });
   }
 
   // Validate client_id (client authentication required for revocation)
@@ -438,12 +423,7 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
   // Verify Content-Type is application/json
   const contentType = c.req.header('Content-Type');
   if (!contentType || !contentType.includes('application/json')) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Content-Type must be application/json'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Parse JSON body
@@ -451,22 +431,14 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
   try {
     body = (await c.req.json()) as BatchRevokeRequest;
   } catch {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Failed to parse request body as JSON'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Validate tokens array
   if (!body.tokens || !Array.isArray(body.tokens) || body.tokens.length === 0) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'tokens array is required and must not be empty'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tokens' },
+    });
   }
 
   // Get max tokens limit from KV (with fallback to default)
@@ -485,36 +457,21 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   if (body.tokens.length > maxTokens) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      `Too many tokens. Maximum ${maxTokens} tokens per request`
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Validate each token item
   for (let i = 0; i < body.tokens.length; i++) {
     const item = body.tokens[i];
     if (!item.token || typeof item.token !== 'string') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        `Invalid token at index ${i}: token string is required`
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
     if (
       item.token_type_hint &&
       item.token_type_hint !== 'access_token' &&
       item.token_type_hint !== 'refresh_token'
     ) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        `Invalid token_type_hint at index ${i}: must be 'access_token' or 'refresh_token'`
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
   }
 
@@ -544,12 +501,7 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
     }
   } else if (authHeader && authHeader.startsWith('Bearer ')) {
     // Support Bearer token for admin API access (not RFC 7009 standard)
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Batch revocation requires client authentication via Basic auth'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Validate client_id

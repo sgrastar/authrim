@@ -5,13 +5,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  timingSafeEqual,
-  createErrorResponse,
-  createRFCErrorResponse,
-  AR_ERROR_CODES,
-  RFC_ERROR_CODES,
-} from '@authrim/ar-lib-core';
+import { timingSafeEqual, createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 import {
   listAllProviders,
   getProvider,
@@ -137,12 +131,9 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
 
     // Validate required fields
     if (!body.name || !body.client_id || !body.client_secret) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'name, client_id, and client_secret are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'name, client_id, client_secret' },
+      });
     }
 
     // Apply template defaults if specified
@@ -162,12 +153,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
         providerQuirks: { tenantType },
       });
       if (validationErrors.length > 0) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          validationErrors.join(', ')
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       defaults = {
@@ -187,12 +173,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
         providerQuirks: (quirks || {}) as Record<string, unknown>,
       });
       if (validationErrors.length > 0) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          validationErrors.join(', ')
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Get effective endpoints (handles GitHub Enterprise if configured)
@@ -215,12 +196,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
         scopes: body.scopes || 'openid profile email',
       });
       if (validationErrors.length > 0) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          validationErrors.join(', ')
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       defaults = { ...LINKEDIN_DEFAULT_CONFIG };
@@ -235,12 +211,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
         providerQuirks: (quirks || {}) as Record<string, unknown>,
       });
       if (validationErrors.length > 0) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          validationErrors.join(', ')
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Get effective endpoints with API version
@@ -264,12 +235,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
         providerQuirks: (quirks || {}) as Record<string, unknown>,
       });
       if (validationErrors.length > 0) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          validationErrors.join(', ')
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Get effective endpoints with user.fields
@@ -293,12 +259,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
         providerQuirks: (quirks || {}) as Record<string, unknown>,
       });
       if (validationErrors.length > 0) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          validationErrors.join(', ')
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       defaults = {
@@ -493,12 +454,7 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
         const isValidDomain = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(quirks.tenantType);
 
         if (!isValidBuiltIn && !isValidGuid && !isValidDomain) {
-          return createRFCErrorResponse(
-            c,
-            RFC_ERROR_CODES.INVALID_REQUEST,
-            400,
-            'tenantType must be "common", "organizations", "consumers", a valid tenant ID (GUID), or domain'
-          );
+          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
         }
       }
       updates.providerQuirks = body.provider_quirks;

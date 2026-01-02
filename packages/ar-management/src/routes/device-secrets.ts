@@ -15,8 +15,6 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   D1Adapter,
   DeviceSecretRepository,
-  createRFCErrorResponse,
-  RFC_ERROR_CODES,
   createErrorResponse,
   AR_ERROR_CODES,
 } from '@authrim/ar-lib-core';
@@ -123,7 +121,9 @@ export async function listUserDeviceSecrets(c: Context<{ Bindings: Env }>): Prom
   const userId = c.req.param('userId');
 
   if (!userId) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'User ID is required');
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'userId' },
+    });
   }
 
   try {
@@ -182,12 +182,9 @@ export async function getDeviceSecret(c: Context<{ Bindings: Env }>): Promise<Re
   const id = c.req.param('id');
 
   if (!id) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Device secret ID is required'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
   }
 
   try {
@@ -197,12 +194,7 @@ export async function getDeviceSecret(c: Context<{ Bindings: Env }>): Promise<Re
     const secret = await repo.findById(id);
 
     if (!secret) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        404,
-        'Device secret not found'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     return c.json(toAdminResponse(secret));
@@ -224,12 +216,9 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
   const id = c.req.param('id');
 
   if (!id) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Device secret ID is required'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
   }
 
   try {
@@ -240,7 +229,7 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
       const body = await c.req.json();
       const validation = validateReason(body?.reason, 'admin_revocation');
       if (!validation.valid) {
-        return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, validation.error);
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
       reason = validation.reason;
     } catch {
@@ -253,21 +242,11 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
     // Check if secret exists
     const existing = await repo.findById(id);
     if (!existing) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        404,
-        'Device secret not found'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     if (existing.revoked_at) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Device secret is already revoked'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const success = await repo.revoke(id, reason);
@@ -305,7 +284,9 @@ export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>):
   const userId = c.req.param('userId');
 
   if (!userId) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'User ID is required');
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'userId' },
+    });
   }
 
   try {
@@ -316,7 +297,7 @@ export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>):
       const body = await c.req.json();
       const validation = validateReason(body?.reason, 'admin_bulk_revocation');
       if (!validation.valid) {
-        return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, validation.error);
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
       reason = validation.reason;
     } catch {

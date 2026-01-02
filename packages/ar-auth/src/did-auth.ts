@@ -27,9 +27,7 @@ import {
   type VerificationMethod,
   type ConsumeChallengeResponse,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   // Event System
   publishEvent,
   AUTH_EVENTS,
@@ -62,12 +60,14 @@ export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Pr
 
     // SECURITY: Check for both null/undefined and empty/whitespace-only string
     if (!did || (typeof did === 'string' && did.trim() === '')) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'DID is required');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'did' },
+      });
     }
 
     // Validate DID format
     if (!did.startsWith('did:')) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid DID format');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Resolve DID document
@@ -76,12 +76,7 @@ export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Pr
       didDocument = await resolveDID(did);
     } catch (error) {
       // SECURITY: Do not expose DID value in error message to prevent DID enumeration
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'DID authentication failed'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Get all authentication verification methods
@@ -100,12 +95,7 @@ export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Pr
     }
 
     if (verificationMethods.length === 0) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'No authentication methods found in DID document'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Generate challenge
@@ -169,12 +159,9 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     const isEmptyString = (val: unknown): boolean => typeof val === 'string' && val.trim() === '';
 
     if (!challenge_id || !proof || isEmptyString(challenge_id) || isEmptyString(proof)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'challenge_id and proof are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'challenge_id and proof' },
+      });
     }
 
     // Decode proof header to get kid (verification method ID)
@@ -182,28 +169,20 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     try {
       protectedHeader = decodeProtectedHeader(proof);
     } catch {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid JWS format');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const kid = protectedHeader.kid;
     if (!kid) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Proof must include kid header'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'kid header' },
+      });
     }
 
     // Extract DID from kid (kid format: did:method:identifier#key-id)
     const didMatch = kid.match(/^(did:[^#]+)/);
     if (!didMatch) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'kid must be a DID URL'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
     const did = didMatch[1];
 
@@ -225,12 +204,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       | undefined;
     const allowedMethods = metadata?.allowedVerificationMethods || [];
     if (!allowedMethods.includes(kid)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Verification method not allowed'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Resolve DID document
@@ -239,24 +213,14 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       didDocument = await resolveDID(did);
     } catch {
       // SECURITY: Do not expose DID value in error message to prevent DID enumeration
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'DID authentication failed'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Find verification method
     const verificationMethod = didDocument.verificationMethod?.find((vm) => vm.id === kid);
     if (!verificationMethod || !verificationMethod.publicKeyJwk) {
       // SECURITY: Use generic message to prevent DID key enumeration
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'DID authentication failed'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Import public key
@@ -265,12 +229,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       publicKey = await importJWK(verificationMethod.publicKeyJwk);
     } catch {
       // SECURITY: Use generic message to prevent information leakage
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'DID authentication failed'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Verify JWT signature
@@ -279,12 +238,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     if (!issuerUrl) {
       // Log internally but return generic error to avoid revealing server configuration
       console.error('[did-auth] ISSUER_URL is not configured');
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-        503,
-        'Service temporarily unavailable'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
     let payload;
@@ -308,26 +262,16 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
         console.error('[Event] Failed to publish auth.did.failed:', err);
       });
 
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Signature verification failed'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
 
     // Verify required claims
     const expectedNonce = metadata?.nonce;
     if (payload.iss !== did) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Issuer must match DID'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
     if (payload.nonce !== expectedNonce) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Nonce mismatch');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Find linked user (use DB_PII for linked identities)

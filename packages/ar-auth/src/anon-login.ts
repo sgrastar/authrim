@@ -29,9 +29,7 @@ import {
   generateId,
   createAuthContextFromHono,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   generateBrowserState,
   BROWSER_STATE_COOKIE_NAME,
   isAnonymousAuthEnabled,
@@ -97,12 +95,7 @@ export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
 
       // Check feature flag
       if (!(await isAnonymousAuthEnabled(c.env))) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Anonymous authentication is not enabled'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       const body = await c.req.json<{
@@ -119,31 +112,20 @@ export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
 
       // Validate required fields
       if (!client_id) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'client_id is required'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+          variables: { field: 'client_id' },
+        });
       }
 
       if (!device_id) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'device_id is required'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+          variables: { field: 'device_id' },
+        });
       }
 
       // Validate device_id format
       if (!validateDeviceId(device_id)) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Invalid device_id format'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Load client contract to check anonymous auth settings
@@ -155,28 +137,18 @@ export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
       );
 
       if (!clientContract) {
-        return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_CLIENT, 400, 'Unknown client_id');
+        return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
       }
 
       // Check if anonymous auth is enabled for this client
       if (!clientContract.anonymousAuth?.enabled) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Anonymous authentication is not enabled for this client'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Validate device_stability if provided
       const resolvedStability = device_stability || clientContract.anonymousAuth.deviceStability;
       if (device_stability && !validateDeviceStability(device_stability)) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Invalid device_stability value'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Generate challenge
@@ -250,12 +222,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Check feature flag
       if (!(await isAnonymousAuthEnabled(c.env))) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Anonymous authentication is not enabled'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       const body = await c.req.json<{
@@ -280,22 +247,14 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Validate required fields
       if (!challenge_id || !device_id || !response || !timestamp) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Missing required fields: challenge_id, device_id, response, timestamp'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+          variables: { field: 'challenge_id, device_id, response, timestamp' },
+        });
       }
 
       // Validate device_id format
       if (!validateDeviceId(device_id)) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Invalid device_id format'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Get challenge from ChallengeStore

@@ -281,6 +281,21 @@ export async function createErrorResponse(
 
 /**
  * Helper to create RFC error response
+ *
+ * @deprecated Use createErrorResponse() with appropriate AR_ERROR_CODES instead.
+ * This function bypasses security masking and should not be used for new code.
+ * It will be removed in the next major version.
+ *
+ * Migration example:
+ * ```ts
+ * // Before (deprecated)
+ * return createRFCErrorResponse(c, 'invalid_request', 400, 'Email is required');
+ *
+ * // After (recommended)
+ * return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+ *   variables: { field: 'email' }
+ * });
+ * ```
  */
 export async function createRFCErrorResponse(
   c: Context,

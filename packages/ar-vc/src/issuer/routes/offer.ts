@@ -12,12 +12,7 @@
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { getCredentialOfferStoreById } from '../../utils/credential-offer-sharding';
-import {
-  createErrorResponse,
-  createRFCErrorResponse,
-  AR_ERROR_CODES,
-  RFC_ERROR_CODES,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 
 interface CredentialOffer {
   credential_issuer: string;
@@ -47,12 +42,9 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
     const offerId = c.req.param('id');
 
     if (!offerId) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Offer ID is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'id' },
+      });
     }
 
     // Get DO stub using region-aware sharding (self-routing from ID)
@@ -76,17 +68,12 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
 
     // Check expiration
     if (Date.now() > offer.expiresAt) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Offer has expired');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Check status
     if (offer.status !== 'pending') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        `Offer is ${offer.status}`
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Build credential offer response

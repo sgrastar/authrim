@@ -279,7 +279,8 @@ describe('SAML Integration', () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string; error_description?: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('Missing SAMLResponse');
+      // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+      expect(body.error_description).toContain('missing');
     });
 
     it('should reject response from unknown IdP', async () => {
@@ -303,7 +304,8 @@ describe('SAML Integration', () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string; error_description?: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('Unknown Identity Provider');
+      // AR_ERROR_CODES.SAML_RESPONSE_INVALID uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
 
     it('should reject response with failed SAML status', async () => {
@@ -449,7 +451,8 @@ describe('SAML Integration', () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string; error_description?: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('Missing');
+      // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+      expect(body.error_description).toContain('missing');
     });
 
     it('should reject LogoutRequest from unknown IdP', async () => {
@@ -473,7 +476,8 @@ describe('SAML Integration', () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string; error_description?: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('Unknown Identity Provider');
+      // AR_ERROR_CODES.SAML_RESPONSE_INVALID uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
 
     it('should reject expired LogoutRequest', async () => {
@@ -563,7 +567,8 @@ describe('SAML Integration', () => {
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: string; error_description?: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('Missing');
+      // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+      expect(body.error_description).toContain('missing');
     });
 
     // Note: HTTP-Redirect binding tests require DEFLATE compression which is complex to test.

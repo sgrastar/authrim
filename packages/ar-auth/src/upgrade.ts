@@ -28,9 +28,7 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   isAnonymousAuthEnabled,
   loadClientContract,
   // Event System
@@ -100,12 +98,7 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
 
     // Check feature flag
     if (!(await isAnonymousAuthEnabled(c.env))) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Anonymous authentication is not enabled'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Get anonymous session
@@ -124,12 +117,7 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
 
     // Validate method
     if (!method || !['email', 'passkey', 'social', 'phone'].includes(method)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Invalid upgrade method. Allowed: email, passkey, social, phone'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Load client contract to check allowed upgrade methods
@@ -143,12 +131,7 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
     if (clientContract?.anonymousAuth?.allowedUpgradeMethods) {
       const allowedMethods = clientContract.anonymousAuth.allowedUpgradeMethods;
       if (!allowedMethods.includes(method)) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          `Upgrade method '${method}' is not allowed for this client`
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
     }
 
@@ -205,12 +188,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
     // Check feature flag
     if (!(await isAnonymousAuthEnabled(c.env))) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Anonymous authentication is not enabled'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Get anonymous session
@@ -250,23 +228,15 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       const upgradeNonce = session.data?.upgrade_nonce as string | undefined;
 
       if (!verifiedEmail) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Email verification required. Complete /api/auth/email-codes/verify first.'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+          variables: { field: 'verified email' },
+        });
       }
 
       // TOCTOU FIX: Atomically consume the upgrade nonce
       // If nonce is missing, another concurrent request already consumed it
       if (!upgradeNonce) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Upgrade already in progress or completed. Please start over if needed.'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Immediately clear the nonce to prevent concurrent requests
@@ -287,12 +257,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
           verified_email_at: undefined,
           verified_email_user_id: undefined,
         });
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Email verification expired. Please verify your email again.'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
       }
 
       // Use verified email from session, NOT from request body

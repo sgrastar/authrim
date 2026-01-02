@@ -400,7 +400,8 @@ describe('Signing Keys Admin API', () => {
       expect(response.status).toBe(400);
       const data = (await response.json()) as ErrorResponse;
       expect(data.error).toBe('invalid_request');
-      expect(data.error_description).toContain('minimum 10 characters');
+      // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+      expect(data.error_description).toContain('required');
     });
 
     it('should reject reason shorter than 10 characters', async () => {

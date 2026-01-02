@@ -1,11 +1,6 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  createErrorResponse,
-  createRFCErrorResponse,
-  AR_ERROR_CODES,
-  RFC_ERROR_CODES,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 
 /**
  * GET /api/admin/settings/code-shards
@@ -38,12 +33,7 @@ export async function updateCodeShards(c: Context<{ Bindings: Env }>) {
 
   // Validation
   if (typeof shards !== 'number' || shards <= 0 || shards > 256) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Invalid shard count: must be between 1 and 256'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Save to KV

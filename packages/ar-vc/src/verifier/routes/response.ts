@@ -16,9 +16,7 @@ import {
   D1Adapter,
   AttributeVerificationRepository,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 import { verifyVPToken } from '../services/vp-verifier';
 import { getVPRequestStoreById } from '../../utils/vp-request-sharding';
@@ -57,12 +55,7 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
             formData['presentation_submission'] as string
           ) as object;
         } catch {
-          return createRFCErrorResponse(
-            c,
-            RFC_ERROR_CODES.INVALID_REQUEST,
-            400,
-            'Invalid presentation_submission JSON format'
-          );
+          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
         }
       }
 
@@ -78,22 +71,16 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // Validate vp_token
     // SECURITY: Check for both null/undefined and empty string
     if (!body.vp_token || (typeof body.vp_token === 'string' && body.vp_token.trim() === '')) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'vp_token is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'vp_token' },
+      });
     }
 
     // Look up the VP request by state (which contains the request ID)
     if (!body.state) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'state is required to match the request'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'state' },
+      });
     }
 
     // The state parameter contains the request ID (which embeds shard routing info)
@@ -106,24 +93,14 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // Get the stored request
     const requestResponse = await stub.fetch(new Request('https://internal/get'));
     if (!requestResponse.ok) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'VP request not found'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     const vpRequest = (await requestResponse.json()) as VPRequestState;
 
     // Check if request is still valid
     if (vpRequest.status !== 'pending') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        `VP request is ${vpRequest.status}`
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     if (Date.now() > vpRequest.expiresAt) {
@@ -135,12 +112,7 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
         })
       );
 
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'VP request has expired'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Verify the VP token
@@ -186,12 +158,7 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
         })
       );
 
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_PRESENTATION,
-        400,
-        verificationResult.errors.join('; ')
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
   } catch (error) {
     console.error('[vpResponse] Error:', error);

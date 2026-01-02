@@ -69,6 +69,30 @@ export default [
       '@typescript-eslint/no-unsafe-argument': 'warn',
       '@typescript-eslint/no-unsafe-call': 'warn',
       'no-console': ['warn', { allow: ['warn', 'error', 'info', 'debug'] }],
+
+      // Deprecation enforcement: Prevent use of createRFCErrorResponse
+      // Use createErrorResponse() with AR_ERROR_CODES instead for security masking
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@authrim/ar-lib-core',
+              importNames: ['createRFCErrorResponse'],
+              message:
+                'createRFCErrorResponse is deprecated. Use createErrorResponse() with AR_ERROR_CODES instead.',
+            },
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.name='createRFCErrorResponse']",
+          message:
+            'createRFCErrorResponse is deprecated. Use createErrorResponse() with AR_ERROR_CODES instead.',
+        },
+      ],
     },
   },
 ];

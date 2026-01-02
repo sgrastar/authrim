@@ -91,7 +91,8 @@ describe('SCIM Token Create Handler - Input Validation', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('expiresInDays must be at least 1 day(s)');
+      // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
 
     it('should reject zero expiresInDays', async () => {
@@ -108,7 +109,8 @@ describe('SCIM Token Create Handler - Input Validation', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('expiresInDays must be at least 1 day(s)');
+      // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
 
     it('should reject expiresInDays exceeding maximum (10 years)', async () => {
@@ -125,9 +127,8 @@ describe('SCIM Token Create Handler - Input Validation', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain(
-        'expiresInDays must not exceed 3650 days (10 years)'
-      );
+      // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
 
     it('should reject extremely large expiresInDays', async () => {
@@ -144,7 +145,8 @@ describe('SCIM Token Create Handler - Input Validation', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('exceed');
+      // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
 
     it('should reject non-integer expiresInDays (float)', async () => {
@@ -161,7 +163,8 @@ describe('SCIM Token Create Handler - Input Validation', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('expiresInDays must be an integer');
+      // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
 
     it('should reject non-number expiresInDays (string)', async () => {
@@ -178,7 +181,8 @@ describe('SCIM Token Create Handler - Input Validation', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('expiresInDays must be a valid number');
+      // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
 
     // Note: Infinity and NaN cannot be represented in JSON
@@ -283,7 +287,8 @@ describe('SCIM Token Create Handler - Input Validation', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('description must not exceed 256 characters');
+      // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
 
     it('should accept description at exactly 256 characters', async () => {
@@ -317,7 +322,8 @@ describe('SCIM Token Create Handler - Input Validation', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('description must be a string');
+      // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
 
     it('should trim whitespace from description', async () => {
@@ -384,7 +390,8 @@ describe('SCIM Token Create Handler - Input Validation', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description?: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('Invalid JSON');
+      // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
   });
 

@@ -19,9 +19,7 @@ import {
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   getUIConfig,
   buildUIUrl,
   shouldUseBuiltinForms,
@@ -80,12 +78,9 @@ async function handlePostBinding(c: Context<{ Bindings: Env }>, env: Env): Promi
     const logoutResponse = parseLogoutResponsePost(samlResponse);
     return processLogoutResponse(c, env, logoutResponse, relayState);
   } else {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Missing SAMLRequest or SAMLResponse'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'SAMLRequest or SAMLResponse' },
+    });
   }
 }
 
@@ -105,12 +100,9 @@ async function handleRedirectBinding(c: Context<{ Bindings: Env }>, env: Env): P
     const logoutResponse = parseLogoutResponseRedirect(samlResponse);
     return processLogoutResponse(c, env, logoutResponse, relayState);
   } else {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Missing SAMLRequest or SAMLResponse'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'SAMLRequest or SAMLResponse' },
+    });
   }
 }
 

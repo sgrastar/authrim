@@ -12,9 +12,7 @@ import {
   D1Adapter,
   IssuedCredentialRepository,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 import { validateVCIAccessToken } from '../services/token-validation';
 import { generateSecureNonce } from '../../utils/crypto';
@@ -34,40 +32,27 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     // Verify access token
     const authHeader = c.req.header('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_TOKEN, 401, 'Missing access token');
+      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
     }
 
     const accessToken = authHeader.substring(7);
     const tokenResult = await validateVCIAccessToken(c.env, accessToken);
 
     if (!tokenResult.valid) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_TOKEN,
-        401,
-        tokenResult.error || 'Invalid access token'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
     }
 
     // Ensure userId is present
     if (!tokenResult.userId) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_TOKEN,
-        401,
-        'Token missing user claim'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
     }
 
     const body = await c.req.json<DeferredCredentialRequest>();
 
     if (!body.transaction_id) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'transaction_id is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'transaction_id' },
+      });
     }
 
     // Look up deferred credential using repository
@@ -80,12 +65,7 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     );
 
     if (!result) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_TRANSACTION_ID,
-        400,
-        'Deferred credential not found'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Check if credential is ready (has claims populated)
@@ -97,12 +77,7 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
       Object.keys(claims).length > 0;
 
     if (!isReady) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.ISSUANCE_PENDING,
-        400,
-        'Credential issuance is still pending'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VC_ISSUANCE_PENDING);
     }
 
     // Parse holder binding

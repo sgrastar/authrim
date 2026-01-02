@@ -25,7 +25,7 @@
 
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
-import { createRFCErrorResponse, RFC_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 import {
   maskSensitiveFieldsRecursive,
   validateExternalUrl,
@@ -405,12 +405,7 @@ function identifySecretFields(config: Record<string, unknown>): string[] {
 export async function listPluginsHandler(c: Context<{ Bindings: Env }>) {
   const kv = getPluginKV(c.env);
   if (!kv) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.SERVER_ERROR,
-      500,
-      'Plugin storage not available'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   const registry = await getPluginRegistry(kv);
@@ -460,19 +455,14 @@ export async function getPluginHandler(c: Context<{ Bindings: Env }>) {
   const kv = getPluginKV(c.env);
 
   if (!kv) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.SERVER_ERROR,
-      500,
-      'Plugin storage not available'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   const registry = await getPluginRegistry(kv);
   const entry = registry[pluginId];
 
   if (!entry) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 404, 'Plugin not found');
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
 
   const enabled = await isPluginEnabled(kv, pluginId);
@@ -529,12 +519,7 @@ export async function getPluginConfigHandler(c: Context<{ Bindings: Env }>) {
   const kv = getPluginKV(c.env);
 
   if (!kv) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.SERVER_ERROR,
-      500,
-      'Plugin storage not available'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   const { config, source } = await getPluginConfig(kv, c.env, pluginId, tenantId);
@@ -563,18 +548,13 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   const kv = getPluginKV(c.env);
 
   if (!kv) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.SERVER_ERROR,
-      500,
-      'Plugin storage not available'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   // Verify plugin exists
   const registry = await getPluginRegistry(kv);
   if (!registry[pluginId]) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 404, 'Plugin not found');
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
 
   const body = await c.req.json<{
@@ -585,12 +565,7 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   }>();
 
   if (!body.config || typeof body.config !== 'object') {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'config must be an object'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Get existing config for audit logging
@@ -656,18 +631,13 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
   const kv = getPluginKV(c.env);
 
   if (!kv) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.SERVER_ERROR,
-      500,
-      'Plugin storage not available'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   // Verify plugin exists
   const registry = await getPluginRegistry(kv);
   if (!registry[pluginId]) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 404, 'Plugin not found');
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
 
   let tenantId: string | undefined;
@@ -708,18 +678,13 @@ export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
   const kv = getPluginKV(c.env);
 
   if (!kv) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.SERVER_ERROR,
-      500,
-      'Plugin storage not available'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   // Verify plugin exists
   const registry = await getPluginRegistry(kv);
   if (!registry[pluginId]) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 404, 'Plugin not found');
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
 
   let tenantId: string | undefined;
@@ -758,18 +723,13 @@ export async function getPluginHealthHandler(c: Context<{ Bindings: Env }>) {
   const kv = getPluginKV(c.env);
 
   if (!kv) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.SERVER_ERROR,
-      500,
-      'Plugin storage not available'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   // Verify plugin exists
   const registry = await getPluginRegistry(kv);
   if (!registry[pluginId]) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 404, 'Plugin not found');
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
 
   // Get last health check from KV
@@ -806,19 +766,14 @@ export async function getPluginSchemaHandler(c: Context<{ Bindings: Env }>) {
   const kv = getPluginKV(c.env);
 
   if (!kv) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.SERVER_ERROR,
-      500,
-      'Plugin storage not available'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   // Verify plugin exists
   const registry = await getPluginRegistry(kv);
   const entry = registry[pluginId];
   if (!entry) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 404, 'Plugin not found');
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
 
   // Get schema from KV
@@ -833,12 +788,7 @@ export async function getPluginSchemaHandler(c: Context<{ Bindings: Env }>) {
   }
 
   if (!configSchema) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      404,
-      'Schema not available for this plugin'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
 
   return c.json({

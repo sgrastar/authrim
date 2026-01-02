@@ -47,9 +47,24 @@ export class ErrorFactory {
     const locale = options.locale || this.locale;
     const errorIdMode = options.errorIdMode || this.errorIdMode;
 
-    // Get localized messages
+    // Get title (always from titleKey)
     const title = getTitle(definition.titleKey, locale);
-    const detail = getDetail(definition.detailKey, locale, options.variables);
+
+    // Get detail message:
+    // 1. If detailFixed exists, use it (RFC-compliant fixed messages)
+    // 2. Otherwise, resolve from detailKey
+    // 3. Variables are only applied for 'public' security level
+    let detail: string;
+    if (definition.detailFixed) {
+      // Use fixed detail (RFC-compliant, no translation, no variables)
+      detail = definition.detailFixed;
+    } else {
+      // Resolve from detailKey
+      // Variables are only applied for 'public' security level to prevent information leakage
+      const effectiveVariables =
+        definition.securityLevel === 'public' ? options.variables : undefined;
+      detail = getDetail(definition.detailKey, locale, effectiveVariables);
+    }
 
     // Generate error ID if applicable
     const errorId = generateErrorId(
@@ -72,7 +87,7 @@ export class ErrorFactory {
       state: options.state,
     };
 
-    // Apply security masking
+    // Apply security masking (replaces detail with generic message for masked/internal levels)
     descriptor = applySecurityMasking(descriptor, definition, locale);
 
     return descriptor;
@@ -340,6 +355,41 @@ export const Errors = {
     createError(AR_ERROR_CODES.INTERNAL_ERROR, options),
   serverError: (options?: ErrorFactoryOptions) =>
     createError(AR_ERROR_CODES.INTERNAL_ERROR, options),
+
+  // Validation
+  requiredField: (field?: string, options?: ErrorFactoryOptions) =>
+    createError(AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      ...options,
+      variables: field ? { field, ...options?.variables } : options?.variables,
+    }),
+  invalidFormat: (field?: string, options?: ErrorFactoryOptions) =>
+    createError(AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+      ...options,
+      variables: field ? { field, ...options?.variables } : options?.variables,
+    }),
+  invalidValue: (options?: ErrorFactoryOptions) =>
+    createError(AR_ERROR_CODES.VALIDATION_INVALID_VALUE, options),
+  invalidJson: (options?: ErrorFactoryOptions) =>
+    createError(AR_ERROR_CODES.VALIDATION_INVALID_JSON, options),
+  invalidLength: (options?: ErrorFactoryOptions) =>
+    createError(AR_ERROR_CODES.VALIDATION_INVALID_LENGTH, options),
+
+  // Device Flow (RFC 8628)
+  deviceAuthorizationPending: (options?: ErrorFactoryOptions) =>
+    createError(AR_ERROR_CODES.DEVICE_AUTHORIZATION_PENDING, options),
+  deviceSlowDown: (options?: ErrorFactoryOptions) =>
+    createError(AR_ERROR_CODES.DEVICE_SLOW_DOWN, options),
+  deviceCodeExpired: (options?: ErrorFactoryOptions) =>
+    createError(AR_ERROR_CODES.DEVICE_CODE_EXPIRED, options),
+
+  // CIBA
+  cibaAuthorizationPending: (options?: ErrorFactoryOptions) =>
+    createError(AR_ERROR_CODES.CIBA_AUTHORIZATION_PENDING, options),
+  cibaSlowDown: (options?: ErrorFactoryOptions) =>
+    createError(AR_ERROR_CODES.CIBA_SLOW_DOWN, options),
+  cibaExpired: (options?: ErrorFactoryOptions) => createError(AR_ERROR_CODES.CIBA_EXPIRED, options),
+  cibaInvalidBindingMessage: (options?: ErrorFactoryOptions) =>
+    createError(AR_ERROR_CODES.CIBA_INVALID_BINDING_MESSAGE, options),
 };
 
 // Re-export codes for convenience

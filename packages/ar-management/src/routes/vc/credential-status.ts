@@ -21,9 +21,7 @@ import {
   StatusValue,
   getTenantIdFromContext,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -36,12 +34,9 @@ export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Pr
   const credentialId = c.req.param('id');
 
   if (!credentialId) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Credential ID is required'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
   }
 
   try {
@@ -66,21 +61,11 @@ export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Pr
     }
 
     if (credential.status === 'revoked') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Credential is already revoked'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     if (!credential.status_list_id || credential.status_list_index === null) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Credential does not have status list information'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Update status in the status list
@@ -112,12 +97,9 @@ export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): P
   const credentialId = c.req.param('id');
 
   if (!credentialId) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Credential ID is required'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
   }
 
   try {
@@ -142,30 +124,15 @@ export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): P
     }
 
     if (credential.status === 'revoked') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Cannot suspend a revoked credential'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     if (credential.status === 'suspended') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Credential is already suspended'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     if (!credential.status_list_id || credential.status_list_index === null) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Credential does not have status list information'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Update status in the status list
@@ -197,12 +164,9 @@ export async function activateCredentialHandler(c: Context<{ Bindings: Env }>): 
   const credentialId = c.req.param('id');
 
   if (!credentialId) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Credential ID is required'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
   }
 
   try {
@@ -227,30 +191,15 @@ export async function activateCredentialHandler(c: Context<{ Bindings: Env }>): 
     }
 
     if (credential.status === 'revoked') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Cannot activate a revoked credential'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     if (credential.status === 'active') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Credential is already active'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     if (!credential.status_list_id || credential.status_list_index === null) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Credential does not have status list information'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Update status in the status list
@@ -324,12 +273,9 @@ export async function getStatusListHandler(c: Context<{ Bindings: Env }>): Promi
   const listId = c.req.param('id');
 
   if (!listId) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Status list ID is required'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
   }
 
   try {

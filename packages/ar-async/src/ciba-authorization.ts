@@ -18,13 +18,8 @@ import {
   parseLoginHint,
   getClient,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
-
-// Type for RFC error codes
-type RFCErrorCode = (typeof RFC_ERROR_CODES)[keyof typeof RFC_ERROR_CODES];
 
 /**
  * POST /bc-authorize
@@ -51,12 +46,9 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
 
     // Validate client_id
     if (!client_id) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'client_id is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'client_id' },
+      });
     }
 
     // Validate CIBA request parameters
@@ -71,44 +63,25 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     });
 
     if (!validation.valid) {
-      return createRFCErrorResponse(
-        c,
-        validation.error as RFCErrorCode,
-        400,
-        validation.error_description
-      );
+      // CIBA validation errors use AR codes directly
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Validate client exists and is authorized for CIBA
     const clientMetadata = await getClient(c.env, client_id);
     if (!clientMetadata) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_CLIENT,
-        401,
-        'Client authentication failed'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
     }
 
     // Verify client is authorized to use CIBA grant type
     const grantTypes = clientMetadata.grant_types as string[] | undefined;
     if (grantTypes && !grantTypes.includes('urn:openid:params:grant-type:ciba')) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.UNAUTHORIZED_CLIENT,
-        400,
-        'Client is not authorized to use CIBA flow'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_GRANT);
     }
 
     // Verify scope includes 'openid'
     if (!scope.includes('openid')) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_SCOPE,
-        400,
-        'scope must include openid'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_SCOPE);
     }
 
     // Determine delivery mode based on client configuration
@@ -122,24 +95,16 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
 
     // For ping/push modes, client_notification_token is required
     if ((deliveryMode === 'ping' || deliveryMode === 'push') && !client_notification_token) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'client_notification_token is required for ping/push modes'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'client_notification_token' },
+      });
     }
 
     // Verify client supports requested delivery mode
     const supportedModesStr = (clientMetadata.backchannel_token_delivery_mode as string) || 'poll';
     const supportedModes = supportedModesStr.split(',').map((m) => m.trim());
     if (!supportedModes.includes(deliveryMode)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        `Client does not support ${deliveryMode} delivery mode`
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_GRANT);
     }
 
     // Resolve and validate user identity from login hints
@@ -155,12 +120,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       });
 
       if (!idTokenValidation.valid) {
-        return createRFCErrorResponse(
-          c,
-          idTokenValidation.error as RFCErrorCode,
-          400,
-          idTokenValidation.error_description
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
       }
 
       resolvedSubjectId = idTokenValidation.subjectId;
@@ -175,12 +135,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       });
 
       if (!loginHintTokenValidation.valid) {
-        return createRFCErrorResponse(
-          c,
-          loginHintTokenValidation.error as RFCErrorCode,
-          400,
-          loginHintTokenValidation.error_description
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
       }
 
       resolvedSubjectId = loginHintTokenValidation.subjectId;

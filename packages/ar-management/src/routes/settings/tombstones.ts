@@ -17,12 +17,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  createErrorResponse,
-  createRFCErrorResponse,
-  AR_ERROR_CODES,
-  RFC_ERROR_CODES,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 
 /**
  * Tombstone entity from database
@@ -175,12 +170,9 @@ export async function getTombstone(c: Context<{ Bindings: Env }>) {
 
   const id = c.req.param('id');
   if (!id) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'id parameter is required'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
   }
 
   try {
@@ -417,12 +409,9 @@ export async function deleteTombstone(c: Context<{ Bindings: Env }>) {
 
   const id = c.req.param('id');
   if (!id) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'id parameter is required'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
   }
 
   try {

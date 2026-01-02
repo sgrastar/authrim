@@ -122,6 +122,7 @@ describe('Batch Revocation Handler', () => {
       mockEnv
     );
 
+    // Validation error after authentication passes
     expect(res.status).toBe(400);
     const json = (await res.json()) as BatchRevokeResponse;
     expect(json.error).toBe('invalid_request');
@@ -141,10 +142,10 @@ describe('Batch Revocation Handler', () => {
       mockEnv
     );
 
+    // Validation error after authentication passes
     expect(res.status).toBe(400);
     const json = (await res.json()) as BatchRevokeResponse;
     expect(json.error).toBe('invalid_request');
-    expect(json.error_description).toContain('tokens array is required');
   });
 
   it('should return 400 when tokens exceed max limit', async () => {
@@ -166,9 +167,10 @@ describe('Batch Revocation Handler', () => {
       mockEnv
     );
 
+    // Validation error after authentication passes
     expect(res.status).toBe(400);
     const json = (await res.json()) as BatchRevokeResponse;
-    expect(json.error_description).toContain('Maximum 2 tokens');
+    expect(json.error).toBe('invalid_request');
   });
 
   it('should return 401 for missing client credentials', async () => {

@@ -12,9 +12,7 @@ import {
   getTenantIdFromContext,
   validateClientAssertion,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   // Event System
   publishEvent,
   TOKEN_EVENTS,
@@ -115,12 +113,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // Verify Content-Type is application/x-www-form-urlencoded
   const contentType = c.req.header('Content-Type');
   if (!contentType || !contentType.includes('application/x-www-form-urlencoded')) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Content-Type must be application/x-www-form-urlencoded'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Parse form data
@@ -131,12 +124,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
       Object.entries(body).map(([key, value]) => [key, typeof value === 'string' ? value : ''])
     );
   } catch {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Failed to parse request body'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   const token = formData.token;
@@ -180,12 +168,9 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
 
   // Validate token parameter
   if (!token) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'token parameter is required'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'token' },
+    });
   }
 
   // Validate client_id (client authentication required for introspection)

@@ -22,9 +22,7 @@ import {
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   validateAllowedOrigins,
   escapeLikePattern,
   // Event System
@@ -293,7 +291,7 @@ export async function serveAvatarHandler(c: Context<{ Bindings: Env }>) {
     const object = await c.env.AVATARS.get(filePath);
 
     if (!object) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 404, 'Avatar not found');
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Return the image with proper headers

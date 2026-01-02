@@ -14,9 +14,7 @@ import {
   D1StatusListRepository,
   StatusListManager,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 import { generateSecureNonce } from '../../utils/crypto';
 import { importPKCS8 } from 'jose';
@@ -116,7 +114,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // Verify access token
     const authHeader = c.req.header('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_TOKEN, 401, 'Missing access token');
+      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
     }
 
     const accessToken = authHeader.substring(7);
@@ -125,12 +123,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     const tokenResult = await validateVCIAccessToken(c.env, accessToken);
 
     if (!tokenResult.valid) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_TOKEN,
-        401,
-        tokenResult.error || 'Invalid access token'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
     }
 
     // Ensure required fields are present
@@ -138,24 +131,14 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // The token signature verification ensures these claims cannot be tampered with.
     // This is the standard OAuth 2.0 / OpenID4VCI security model.
     if (!tokenResult.userId || !tokenResult.tenantId) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_TOKEN,
-        401,
-        'Token missing required claims'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
     }
 
     const body = await c.req.json<CredentialRequest>();
 
     // Validate format
     if (body.format !== 'dc+sd-jwt') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.UNSUPPORTED_CREDENTIAL_FORMAT,
-        400,
-        'Only dc+sd-jwt is supported'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VC_UNSUPPORTED_FORMAT);
     }
 
     // Get expected c_nonce from KV (stored during token request)
@@ -166,12 +149,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     let holderBinding = tokenResult.holderBinding;
     if (body.proof) {
       if (!expectedNonce) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_PROOF,
-          400,
-          'No c_nonce found for this session'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VC_INVALID_PROOF);
       }
 
       const proofResult = await validateProofOfPossession(
@@ -181,12 +159,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
         expectedAudience
       );
       if (!proofResult.valid) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_PROOF,
-          400,
-          proofResult.error || 'Proof of possession verification failed'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VC_INVALID_PROOF);
       }
 
       // Use holder key from proof if not in token
@@ -224,12 +197,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     const issuerUrl = c.env.ISSUER_IDENTIFIER;
     if (!issuerUrl) {
       console.error('[credential] ISSUER_IDENTIFIER is not configured');
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-        503,
-        'Service temporarily unavailable'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
     // Add credentialStatus claim (W3C VC compatible format)

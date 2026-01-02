@@ -16,9 +16,7 @@ import {
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   requireSystemAdmin,
   requireAnyRole,
   // Native SSO device_secret cleanup
@@ -1165,12 +1163,7 @@ app.route('/scim/v2', scimApp);
  */
 app.use('/api/admin/test/*', async (c, next) => {
   if (c.env.ENABLE_TEST_ENDPOINTS !== 'true') {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      404,
-      'Test endpoints are disabled. Set ENABLE_TEST_ENDPOINTS=true to enable.'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
   return next();
 });
@@ -1215,34 +1208,21 @@ app.post('/api/internal/versions/:workerName', adminAuthMiddleware(), async (c) 
     'ar-vc',
   ];
   if (!validWorkers.includes(workerName)) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      `Invalid worker name: ${workerName}`
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   const body = (await c.req.json()) as { uuid: string; deployTime: string };
 
   if (!body.uuid || !body.deployTime) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'uuid and deployTime are required'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'uuid, deployTime' },
+    });
   }
 
   // Validate UUID format
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuidRegex.test(body.uuid)) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'uuid must be a valid UUID v4'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   try {
@@ -1317,12 +1297,7 @@ app.get('/api/internal/version-manager/status', adminAuthMiddleware(), async (c)
 
 // 404 handler
 app.notFound((c) => {
-  return createRFCErrorResponse(
-    c,
-    RFC_ERROR_CODES.INVALID_REQUEST,
-    404,
-    'The requested resource was not found'
-  );
+  return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 });
 
 // Error handler

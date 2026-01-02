@@ -28,9 +28,7 @@ import {
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -106,43 +104,29 @@ export async function handleCreateProvider(c: Context<{ Bindings: Env }>): Promi
 
     // Validate request
     if (!body.name || !body.providerType || !body.config) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Missing required fields: name, providerType, config'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'name, providerType, config' },
+      });
     }
 
     if (!['saml_idp', 'saml_sp'].includes(body.providerType)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Invalid providerType. Must be saml_idp or saml_sp'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Validate config based on type
     if (body.providerType === 'saml_idp') {
       const config = body.config as SAMLIdPConfig;
       if (!config.entityId || !config.ssoUrl || !config.certificate) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'IdP config requires entityId, ssoUrl, and certificate'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+          variables: { field: 'entityId, ssoUrl, certificate' },
+        });
       }
     } else {
       const config = body.config as SAMLSPConfig;
       if (!config.entityId || !config.acsUrl) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'SP config requires entityId and acsUrl'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+          variables: { field: 'entityId, acsUrl' },
+        });
       }
     }
 
@@ -370,32 +354,19 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
         fieldName: 'metadataUrl',
       });
       if (ssrfError) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          ssrfError.error_description
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Fetch metadata from URL
       const response = await fetch(body.metadataUrl);
       if (!response.ok) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          `Failed to fetch metadata from URL: ${response.status}`
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
       metadataXml = await response.text();
     } else {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Either metadataXml or metadataUrl is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'metadataXml or metadataUrl' },
+      });
     }
 
     // Parse metadata based on provider type

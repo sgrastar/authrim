@@ -11,9 +11,7 @@ import {
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -43,12 +41,9 @@ export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
     const authReqId = c.req.param('auth_req_id');
 
     if (!authReqId) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'auth_req_id is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'auth_req_id' },
+      });
     }
 
     // Get CIBA request metadata from CIBARequestStore

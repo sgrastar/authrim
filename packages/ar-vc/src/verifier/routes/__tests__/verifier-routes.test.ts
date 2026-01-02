@@ -180,7 +180,8 @@ describe('VP Authorize Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toContain('tenant_id');
+    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+    expect(data.error_description).toContain('required');
   });
 
   it('should reject request without client_id', async () => {
@@ -197,7 +198,8 @@ describe('VP Authorize Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toContain('client_id');
+    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+    expect(data.error_description).toContain('required');
   });
 
   it('should reject request without presentation definition', async () => {
@@ -215,7 +217,8 @@ describe('VP Authorize Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toContain('presentation_definition');
+    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+    expect(data.error_description).toContain('required');
   });
 
   it('should accept DCQL query instead of presentation definition', async () => {
@@ -333,7 +336,8 @@ describe('VP Response Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toContain('vp_token');
+    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+    expect(data.error_description).toContain('required');
   });
 
   it('should reject request without state', async () => {
@@ -351,7 +355,8 @@ describe('VP Response Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toContain('state');
+    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+    expect(data.error_description).toContain('required');
   });
 
   it('should reject expired request', async () => {
@@ -395,7 +400,8 @@ describe('VP Response Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toContain('expired');
+    // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+    expect(data.error_description).toContain('invalid');
   });
 
   it('should handle form-urlencoded content type', async () => {
@@ -498,8 +504,11 @@ describe('VP Response Route', () => {
     };
 
     expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_presentation');
-    expect(data.error_description).toContain('Invalid signature');
+    // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses invalid_request
+    // (invalid_presentation is OpenID4VP-specific but not used in current implementation)
+    expect(data.error).toBe('invalid_request');
+    // Standardized message is returned instead of specific error details
+    expect(data.error_description).toContain('invalid');
     // Note: warnings field is not included in standard error response
   });
 });
@@ -704,7 +713,8 @@ describe('VP Request Status Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toContain('Request ID');
+    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+    expect(data.error_description).toContain('required');
   });
 
   it('should return 500 for invalid request ID format', async () => {

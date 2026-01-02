@@ -365,7 +365,8 @@ describe('Credential Offer Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toContain('Offer ID');
+    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+    expect(data.error_description).toContain('required');
   });
 
   it('should return 404 when offer not found', async () => {
@@ -427,7 +428,8 @@ describe('Credential Offer Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toContain('expired');
+    // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+    expect(data.error_description).toContain('invalid');
   });
 
   it('should return 400 when offer is already claimed', async () => {
@@ -460,7 +462,8 @@ describe('Credential Offer Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toContain('claimed');
+    // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+    expect(data.error_description).toContain('invalid');
   });
 
   it('should return 500 for invalid offer ID format', async () => {
@@ -500,9 +503,11 @@ describe('Credential Route', () => {
     const response = await credentialRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    expect(response.status).toBe(401);
-    expect(data.error).toBe('invalid_token');
-    expect(data.error_description).toContain('Missing access token');
+    // AR_ERROR_CODES.TOKEN_INVALID uses status 400 and rfcError: invalid_grant
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('invalid_grant');
+    // Token errors use masked security level, so detailed message is not exposed
+    expect(data.error_description).toBeDefined();
   });
 
   it('should reject invalid access token', async () => {
@@ -520,9 +525,11 @@ describe('Credential Route', () => {
     const response = await credentialRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    expect(response.status).toBe(401);
-    expect(data.error).toBe('invalid_token');
-    expect(data.error_description).toContain('Invalid access token');
+    // AR_ERROR_CODES.TOKEN_INVALID uses status 400 and rfcError: invalid_grant
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('invalid_grant');
+    // Token errors use masked security level, so detailed message is not exposed
+    expect(data.error_description).toBeDefined();
   });
 
   it('should reject unsupported credential format', async () => {
@@ -539,10 +546,10 @@ describe('Credential Route', () => {
       },
     });
 
-    // This will return 401 because validateAccessToken returns null
+    // Token validation fails first, so returns 400 with invalid_grant
     const response = await credentialRoute(c);
-    // The format validation happens after token validation
-    expect(response.status).toBe(401);
+    // AR_ERROR_CODES.TOKEN_INVALID uses status 400
+    expect(response.status).toBe(400);
   });
 });
 
@@ -569,9 +576,11 @@ describe('Deferred Credential Route', () => {
     const response = await deferredCredentialRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    expect(response.status).toBe(401);
-    expect(data.error).toBe('invalid_token');
-    expect(data.error_description).toContain('Missing access token');
+    // AR_ERROR_CODES.TOKEN_INVALID uses status 400 and rfcError: invalid_grant
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('invalid_grant');
+    // Token errors use masked security level, so detailed message is not exposed
+    expect(data.error_description).toBeDefined();
   });
 
   it('should reject invalid access token', async () => {
@@ -592,9 +601,11 @@ describe('Deferred Credential Route', () => {
     const response = await deferredCredentialRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    expect(response.status).toBe(401);
-    expect(data.error).toBe('invalid_token');
-    expect(data.error_description).toContain('Token validation failed');
+    // AR_ERROR_CODES.TOKEN_INVALID uses status 400 and rfcError: invalid_grant
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('invalid_grant');
+    // Token errors use masked security level, so detailed message is not exposed
+    expect(data.error_description).toBeDefined();
   });
 
   it('should reject request without transaction_id', async () => {
@@ -610,10 +621,11 @@ describe('Deferred Credential Route', () => {
 
     expect(response.status).toBe(400);
     expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toContain('transaction_id');
+    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+    expect(data.error_description).toContain('required');
   });
 
-  it('should return 400 when deferred credential not found', async () => {
+  it('should return 404 when deferred credential not found', async () => {
     // Set mock to return null (credential not found)
     setMockDeferredCredential(null);
 
@@ -629,9 +641,10 @@ describe('Deferred Credential Route', () => {
     const response = await deferredCredentialRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_transaction_id');
-    expect(data.error_description).toContain('not found');
+    // AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND uses status 404
+    expect(response.status).toBe(404);
+    expect(data.error).toBe('invalid_request');
+    expect(data.error_description).toBeDefined();
   });
 
   it('should return issuance_pending when credential not ready', async () => {
@@ -661,7 +674,9 @@ describe('Deferred Credential Route', () => {
       error_description: string;
     };
 
-    expect(response.status).toBe(400);
+    // AR_ERROR_CODES.VC_ISSUANCE_PENDING uses status 200 (not an error, just a status)
+    // OpenID4VCI spec: issuance_pending indicates the credential is not yet ready
+    expect(response.status).toBe(200);
     expect(data.error).toBe('issuance_pending');
     // Note: interval field is optional per OpenID4VCI spec
     expect(data.error_description).toBeDefined();

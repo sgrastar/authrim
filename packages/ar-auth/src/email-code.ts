@@ -25,9 +25,7 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   getPluginContext,
   generateBrowserState,
   BROWSER_STATE_COOKIE_NAME,
@@ -112,18 +110,15 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       const { email, name } = body;
 
       if (!email) {
-        return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Email is required');
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+          variables: { field: 'email' },
+        });
       }
 
       // Email validation
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Invalid email format'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Rate limiting check: 3 requests per 15 minutes per email via RPC
@@ -350,22 +345,14 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       const { code, email } = body;
 
       if (!code || !email) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Code and email are required'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+          variables: { field: 'code and email' },
+        });
       }
 
       // Validate code format (6 digits)
       if (!/^\d{6}$/.test(code)) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Invalid code format'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Get OTP session ID from cookie

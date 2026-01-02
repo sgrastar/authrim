@@ -471,7 +471,8 @@ describe('Batch Size Limit Configuration', () => {
 
       expect(res.status).toBe(400);
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('Maximum batch size is 5');
+      // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
   });
 

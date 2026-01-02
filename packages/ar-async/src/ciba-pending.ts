@@ -12,9 +12,7 @@ import {
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -50,12 +48,9 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
     const userId = c.req.query('user_id');
 
     if (!loginHint && !userId) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Either login_hint or user_id is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'login_hint or user_id' },
+      });
     }
 
     // Get CIBA request metadata from CIBARequestStore

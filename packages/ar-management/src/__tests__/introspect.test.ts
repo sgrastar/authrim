@@ -176,7 +176,8 @@ describe('Token Introspection Endpoint', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('application/x-www-form-urlencoded');
+      // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
+      expect(body.error_description).toContain('invalid');
     });
 
     it('should accept application/x-www-form-urlencoded with charset', async () => {
@@ -236,7 +237,8 @@ describe('Token Introspection Endpoint', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description?: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('token');
+      // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+      expect(body.error_description).toContain('required');
     });
   });
 

@@ -48,9 +48,7 @@ import {
   createPermissionChangeNotifier,
   createPermissionChangeEvent,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   type DatabaseAdapter,
   type ReBACService,
   type CheckRequest,
@@ -229,23 +227,13 @@ policyRoutes.put('/flags/:name', async (c) => {
   ];
 
   if (!validNames.includes(name)) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      `Invalid flag name. Valid names: ${validNames.join(', ')}`
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   try {
     const body = await c.req.json<{ value: boolean }>();
     if (typeof body.value !== 'boolean') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'value must be a boolean'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const flagsManager = getFeatureFlagsManager(c.env);
@@ -258,12 +246,7 @@ policyRoutes.put('/flags/:name', async (c) => {
     });
   } catch (error) {
     if (error instanceof Error && error.message.includes('KV not configured')) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-        503,
-        'KV storage not configured. Dynamic flag changes require POLICY_FLAGS_KV binding.'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
     throw error;
   }
@@ -288,12 +271,7 @@ policyRoutes.delete('/flags/:name', async (c) => {
   ];
 
   if (!validNames.includes(name)) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      `Invalid flag name. Valid names: ${validNames.join(', ')}`
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   try {
@@ -307,12 +285,7 @@ policyRoutes.delete('/flags/:name', async (c) => {
     });
   } catch (error) {
     if (error instanceof Error && error.message.includes('KV not configured')) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-        503,
-        'KV storage not configured.'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
     throw error;
   }
@@ -331,12 +304,7 @@ policyRoutes.post('/evaluate', async (c) => {
     const body = await c.req.json<PolicyContext>();
 
     if (!body.subject || !body.resource || !body.action) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'subject, resource, and action are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const context: PolicyContext = {
@@ -372,7 +340,9 @@ policyRoutes.post('/check-role', async (c) => {
     }>();
 
     if (!body.subject) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'subject is required');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'subject' },
+      });
     }
 
     let subject: PolicySubject;
@@ -398,12 +368,7 @@ policyRoutes.post('/check-role', async (c) => {
         hasRequiredRole = hasAnyRole(subject, body.roles, options);
       }
     } else {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Either role or roles is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const activeRoles = subject.roles
@@ -443,12 +408,7 @@ policyRoutes.post('/check-access', async (c) => {
     }>();
 
     if (!body.resourceType || !body.resourceId || !body.action) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'resourceType, resourceId, and action are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     let subject: PolicySubject;
@@ -463,12 +423,7 @@ policyRoutes.post('/check-access', async (c) => {
         roles: body.roles,
       };
     } else {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Either claims or roles is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const context: PolicyContext = {
@@ -523,12 +478,7 @@ policyRoutes.post('/is-admin', async (c) => {
         roles: body.roles.map((name) => ({ name, scope: 'global' as const })),
       };
     } else {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Either claims or roles is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     return c.json({
@@ -670,22 +620,12 @@ rebacRoutes.post('/check', async (c) => {
   const flagsManager = getFeatureFlagsManager(c.env);
   const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
   if (!rebacEnabled) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.ACCESS_DENIED,
-      403,
-      'ReBAC is not enabled. Set ENABLE_REBAC=true to enable.'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
   const rebacService = getReBACService(c.env);
   if (!rebacService) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-      503,
-      'D1 database not configured for ReBAC'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   try {
@@ -698,12 +638,7 @@ rebacRoutes.post('/check', async (c) => {
     }>();
 
     if (!body.user_id || !body.relation || !body.object) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'user_id, relation, and object are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const request: CheckRequest = {
@@ -743,39 +678,26 @@ rebacRoutes.post('/batch-check', async (c) => {
   const flagsManager = getFeatureFlagsManager(c.env);
   const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
   if (!rebacEnabled) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.ACCESS_DENIED, 403, 'ReBAC is not enabled');
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
   const rebacService = getReBACService(c.env);
   if (!rebacService) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-      503,
-      'D1 database not configured for ReBAC'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   try {
     const body = await c.req.json<{ checks: CheckRequest[] }>();
 
     if (!body.checks || !Array.isArray(body.checks) || body.checks.length === 0) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'checks array is required and must not be empty'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'checks' },
+      });
     }
 
     // Limit batch size
     if (body.checks.length > 100) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Maximum batch size is 100 checks'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const defaultTenantId = c.env.DEFAULT_TENANT_ID || 'default';
@@ -817,29 +739,19 @@ rebacRoutes.post('/list-objects', async (c) => {
   const flagsManager = getFeatureFlagsManager(c.env);
   const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
   if (!rebacEnabled) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.ACCESS_DENIED, 403, 'ReBAC is not enabled');
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
   const rebacService = getReBACService(c.env);
   if (!rebacService) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-      503,
-      'D1 database not configured for ReBAC'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   try {
     const body = await c.req.json<ListObjectsRequest>();
 
     if (!body.user_id || !body.relation || !body.object_type) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'user_id, relation, and object_type are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const request: ListObjectsRequest = {
@@ -880,29 +792,19 @@ rebacRoutes.post('/list-users', async (c) => {
   const flagsManager = getFeatureFlagsManager(c.env);
   const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
   if (!rebacEnabled) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.ACCESS_DENIED, 403, 'ReBAC is not enabled');
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
   const rebacService = getReBACService(c.env);
   if (!rebacService) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-      503,
-      'D1 database not configured for ReBAC'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   try {
     const body = await c.req.json<ListUsersRequest>();
 
     if (!body.object || !body.relation) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'object and relation are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const request: ListUsersRequest = {
@@ -946,16 +848,11 @@ rebacRoutes.post('/write', async (c) => {
   const flagsManager = getFeatureFlagsManager(c.env);
   const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
   if (!rebacEnabled) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.ACCESS_DENIED, 403, 'ReBAC is not enabled');
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
   if (!c.env.DB) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-      503,
-      'D1 database not configured for ReBAC'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   try {
@@ -976,12 +873,7 @@ rebacRoutes.post('/write', async (c) => {
       !body.subject_type ||
       !body.subject_id
     ) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'object_type, object_id, relation, subject_type, and subject_id are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const tenantId = body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default';
@@ -1077,16 +969,11 @@ rebacRoutes.delete('/tuples', async (c) => {
   const flagsManager = getFeatureFlagsManager(c.env);
   const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
   if (!rebacEnabled) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.ACCESS_DENIED, 403, 'ReBAC is not enabled');
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
   if (!c.env.DB) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-      503,
-      'D1 database not configured for ReBAC'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   try {
@@ -1106,12 +993,7 @@ rebacRoutes.delete('/tuples', async (c) => {
       !body.subject_type ||
       !body.subject_id
     ) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'object_type, object_id, relation, subject_type, and subject_id are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const tenantId = body.tenant_id || c.env.DEFAULT_TENANT_ID || 'default';
@@ -1189,12 +1071,7 @@ rebacRoutes.post('/invalidate', async (c) => {
 
   const rebacService = getReBACService(c.env);
   if (!rebacService) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-      503,
-      'D1 database not configured for ReBAC'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   try {
@@ -1210,31 +1087,18 @@ rebacRoutes.post('/invalidate', async (c) => {
 
     if (body.type === 'user') {
       if (!body.user_id) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'user_id is required for type=user'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+          variables: { field: 'user_id' },
+        });
       }
       await rebacService.invalidateUserCache(tenantId, body.user_id);
     } else if (body.type === 'object') {
       if (!body.object_type || !body.object_id) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'object_type and object_id are required for type=object'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
       await rebacService.invalidateCache(tenantId, body.object_type, body.object_id);
     } else {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'type must be "user" or "object"'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     return c.json({ success: true });
@@ -1271,12 +1135,7 @@ app.route('/', policyRoutes);
 
 // 404 handler
 app.notFound((c) => {
-  return createRFCErrorResponse(
-    c,
-    RFC_ERROR_CODES.INVALID_REQUEST,
-    404,
-    'The requested resource was not found'
-  );
+  return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 });
 
 // Error handler

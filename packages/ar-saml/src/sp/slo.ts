@@ -19,9 +19,7 @@ import {
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   getUIConfig,
   buildUIUrl,
   shouldUseBuiltinForms,
@@ -81,12 +79,9 @@ async function handlePostBinding(c: Context<{ Bindings: Env }>, env: Env): Promi
     const logoutResponse = parseLogoutResponsePost(samlResponse);
     return processLogoutResponse(c, env, logoutResponse, relayState, samlResponse);
   } else {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Missing SAMLRequest or SAMLResponse'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'SAMLRequest or SAMLResponse' },
+    });
   }
 }
 
@@ -106,12 +101,9 @@ async function handleRedirectBinding(c: Context<{ Bindings: Env }>, env: Env): P
     const logoutResponse = parseLogoutResponseRedirect(samlResponse);
     return processLogoutResponse(c, env, logoutResponse, relayState);
   } else {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Missing SAMLRequest or SAMLResponse'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'SAMLRequest or SAMLResponse' },
+    });
   }
 }
 
@@ -131,12 +123,7 @@ async function processLogoutRequest(
 
   if (!idpConfig) {
     console.error('Unknown IdP:', logoutRequest.issuer);
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Unknown Identity Provider'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
   }
 
   // Verify signature if present (for POST binding with embedded signature)
@@ -152,12 +139,7 @@ async function processLogoutRequest(
         });
       } catch (error) {
         console.error('LogoutRequest signature verification failed:', error);
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Invalid signature on LogoutRequest'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
     }
   }

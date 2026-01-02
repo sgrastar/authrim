@@ -16,8 +16,8 @@ import {
   type DatabaseAdapter,
   getSessionStoreBySessionId,
   isShardedSessionId,
-  createRFCErrorResponse,
-  RFC_ERROR_CODES,
+  createErrorResponse,
+  AR_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 import * as jose from 'jose';
 import { getProviderByIdOrSlug } from '../services/provider-store';
@@ -66,30 +66,22 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
     const provider = await getProviderByIdOrSlug(c.env, providerIdOrSlug, tenantId);
     if (!provider) {
       console.error(`Backchannel logout: Provider not found: ${providerIdOrSlug}`);
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Unknown provider');
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // 2. Parse form body to get logout_token
     const contentType = c.req.header('Content-Type');
     if (!contentType?.includes('application/x-www-form-urlencoded')) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Content-Type must be application/x-www-form-urlencoded'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const formData = await c.req.parseBody();
     const logoutToken = formData['logout_token'];
 
     if (!logoutToken || typeof logoutToken !== 'string') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'logout_token is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'logout_token' },
+      });
     }
 
     // 3. Validate logout token
@@ -116,30 +108,7 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
 
     // Return 400 for token validation errors
     // SECURITY: Don't leak internal error details to prevent information disclosure
-    // Log the actual error for debugging but return a generic message
-    if (error instanceof Error) {
-      // Only return safe, non-sensitive error messages
-      const safeErrors = [
-        'logout_token is required',
-        'Content-Type must be application/x-www-form-urlencoded',
-        'Logout token missing backchannel-logout event',
-        'Logout token must contain either sub or sid claim',
-        'Logout token MUST NOT contain nonce claim',
-        'Logout token missing jti claim',
-        'Logout token is too old',
-        'Logout token replay detected',
-      ];
-      const isSafeError = safeErrors.some((msg) => error.message === msg);
-      const description = isSafeError ? error.message : 'Invalid logout token';
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, description);
-    }
-
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'Failed to process logout token'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 }
 

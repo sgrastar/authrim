@@ -29,8 +29,8 @@ import {
   DEFAULT_TOTAL_SHARDS,
   DEFAULT_REGION_DISTRIBUTION,
   DEFAULT_COLOCATION_GROUPS,
-  createRFCErrorResponse,
-  RFC_ERROR_CODES,
+  createErrorResponse,
+  AR_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -122,32 +122,24 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
   try {
     body = await c.req.json();
   } catch {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid JSON body');
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Basic field validation
   if (typeof body.totalShards !== 'number' || body.totalShards <= 0) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'totalShards must be a positive number'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   if (!body.regionDistribution || typeof body.regionDistribution !== 'object') {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      'regionDistribution is required and must be an object'
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'regionDistribution' },
+    });
   }
 
   // Validate region distribution
   const requestValidation = validateRegionShardRequest(body);
   if (!requestValidation.valid) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, requestValidation.error);
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Get current config
@@ -206,12 +198,7 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
   // Validate colocation groups before saving
   const colocationValidation = validateColocationGroups(newConfig);
   if (!colocationValidation.valid) {
-    return createRFCErrorResponse(
-      c,
-      RFC_ERROR_CODES.INVALID_REQUEST,
-      400,
-      `Colocation group validation failed: ${colocationValidation.errors.join(', ')}`
-    );
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Save to KV

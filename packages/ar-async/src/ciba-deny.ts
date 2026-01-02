@@ -7,12 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
-import {
-  createErrorResponse,
-  createRFCErrorResponse,
-  AR_ERROR_CODES,
-  RFC_ERROR_CODES,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 
 /**
  * POST /api/ciba/deny
@@ -39,12 +34,9 @@ export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
 
     // Validate auth_req_id is present
     if (!authReqId) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'auth_req_id is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'auth_req_id' },
+      });
     }
 
     // Get CIBA request metadata from CIBARequestStore
@@ -72,12 +64,7 @@ export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
 
     // Check if request is still pending
     if (metadata.status !== 'pending') {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        `This request has already been ${metadata.status}`
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Deny the request

@@ -29,9 +29,7 @@ import {
   type VerificationMethod,
   type ConsumeChallengeResponse,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
 
@@ -92,12 +90,14 @@ export async function didRegisterChallengeHandler(
 
     // SECURITY: Check for both null/undefined and empty/whitespace-only string
     if (!did || (typeof did === 'string' && did.trim() === '')) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'DID is required');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'did' },
+      });
     }
 
     // Validate DID format
     if (!did.startsWith('did:')) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid DID format');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Check if DID is already linked to another account
@@ -107,19 +107,9 @@ export async function didRegisterChallengeHandler(
 
     if (existingLink) {
       if (existingLink.user_id === userId) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'This DID is already linked to your account'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'This DID is linked to another account'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Resolve DID document
@@ -127,12 +117,7 @@ export async function didRegisterChallengeHandler(
     try {
       didDocument = await resolveDID(did);
     } catch (error) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        `Failed to resolve DID: ${did}`
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Get all authentication verification methods
@@ -150,12 +135,7 @@ export async function didRegisterChallengeHandler(
     }
 
     if (verificationMethods.length === 0) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'No authentication methods found in DID document'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Generate challenge
@@ -217,12 +197,9 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
     const isEmptyString = (val: unknown): boolean => typeof val === 'string' && val.trim() === '';
 
     if (!challenge_id || !proof || isEmptyString(challenge_id) || isEmptyString(proof)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'challenge_id and proof are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'challenge_id and proof' },
+      });
     }
 
     // Decode proof header to get kid
@@ -230,28 +207,20 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
     try {
       protectedHeader = decodeProtectedHeader(proof);
     } catch {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid JWS format');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const kid = protectedHeader.kid;
     if (!kid) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Proof must include kid header'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'kid header' },
+      });
     }
 
     // Extract DID from kid
     const didMatch = kid.match(/^(did:[^#]+)/);
     if (!didMatch) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'kid must be a DID URL'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
     const did = didMatch[1];
 
@@ -261,12 +230,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
     const existingLinkEarly = await linkedIdentityRepo.findByProviderUser('did', did);
     if (existingLinkEarly) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'This DID is already linked to an account'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Get challenge store and consume challenge
@@ -289,12 +253,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
 
     // Verify kid is in allowed methods
     if (!allowedMethods.includes(kid)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Verification method not allowed'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Resolve DID document
@@ -302,23 +261,13 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
     try {
       didDocument = await resolveDID(did);
     } catch {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        `Failed to resolve DID: ${did}`
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Find verification method
     const verificationMethod = didDocument.verificationMethod?.find((vm) => vm.id === kid);
     if (!verificationMethod || !verificationMethod.publicKeyJwk) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Verification method not found or no public key'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Import public key
@@ -326,12 +275,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
     try {
       publicKey = await importJWK(verificationMethod.publicKeyJwk);
     } catch {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Failed to import public key'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Verify JWT signature
@@ -340,12 +284,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
     if (!issuerUrl) {
       // Log internally but return generic error to avoid revealing server configuration
       console.error('[did-link] ISSUER_URL is not configured');
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
-        503,
-        'Service temporarily unavailable'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
     let payload;
@@ -356,26 +295,16 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
       });
       payload = result.payload;
     } catch {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Signature verification failed'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
 
     // Verify required claims
     const expectedNonce = metadata?.nonce;
     if (payload.iss !== did) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Issuer must match DID'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
     if (payload.nonce !== expectedNonce) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Nonce mismatch');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Create the link with race condition protection
@@ -413,12 +342,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
             message: 'DID is already linked to your account',
           });
         }
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'This DID is already linked to another account'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
       // Re-throw other errors
       throw error;
@@ -486,14 +410,16 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
     // Get DID from URL - URL encoded
     const didEncoded = c.req.param('did');
     if (!didEncoded) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'DID is required');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'did' },
+      });
     }
 
     const did = decodeURIComponent(didEncoded);
 
     // Validate DID format
     if (!did.startsWith('did:')) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid DID format');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const adapter = new D1Adapter({ db: c.env.DB_PII });
@@ -502,17 +428,12 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
     // Find the link
     const link = await linkedIdentityRepo.findByProviderUser('did', did);
     if (!link) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 404, 'DID link not found');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Verify ownership
     if (link.user_id !== userId) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.ACCESS_DENIED,
-        403,
-        'Cannot unlink DID belonging to another user'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
     // Delete the link

@@ -238,6 +238,31 @@ export const AR_ERROR_CODES = {
   FLOW_CAPABILITY_NOT_FOUND: 'AR120010',
 
   // ============================================
+  // VALIDATION (AR130001 ~ AR139999)
+  // ============================================
+  VALIDATION_REQUIRED_FIELD: 'AR130001',
+  VALIDATION_INVALID_FORMAT: 'AR130002',
+  VALIDATION_INVALID_VALUE: 'AR130003',
+  VALIDATION_INVALID_JSON: 'AR130004',
+  VALIDATION_INVALID_LENGTH: 'AR130005',
+  VALIDATION_METHOD_NOT_ALLOWED: 'AR130006',
+
+  // ============================================
+  // DEVICE_FLOW (AR140001 ~ AR149999)
+  // ============================================
+  DEVICE_AUTHORIZATION_PENDING: 'AR140001',
+  DEVICE_SLOW_DOWN: 'AR140002',
+  DEVICE_CODE_EXPIRED: 'AR140003',
+
+  // ============================================
+  // CIBA (AR150001 ~ AR159999)
+  // ============================================
+  CIBA_AUTHORIZATION_PENDING: 'AR150001',
+  CIBA_SLOW_DOWN: 'AR150002',
+  CIBA_EXPIRED: 'AR150003',
+  CIBA_INVALID_BINDING_MESSAGE: 'AR150004',
+
+  // ============================================
   // INTERNAL (AR900001 ~ AR999999) - Reserved
   // ============================================
   INTERNAL_ERROR: 'AR900001',
@@ -1235,6 +1260,161 @@ export const ERROR_DEFINITIONS: Record<ARErrorCode, ErrorCodeDefinition> = {
     detailKey: 'internal.queue_error.detail',
     meta: { retryable: true, user_action: 'retry', severity: 'error' },
     securityLevel: 'internal',
+  },
+
+  // ============================================
+  // VALIDATION
+  // ============================================
+  [AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD]: {
+    code: 'AR130001',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'validation/required-field',
+    titleKey: 'validation.required_field.title',
+    detailKey: 'validation.required_field.detail',
+    detailFixed: 'A required field is missing.',
+    meta: { retryable: false, user_action: 'none', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.VALIDATION_INVALID_FORMAT]: {
+    code: 'AR130002',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'validation/invalid-format',
+    titleKey: 'validation.invalid_format.title',
+    detailKey: 'validation.invalid_format.detail',
+    detailFixed: 'The field format is invalid.',
+    meta: { retryable: false, user_action: 'none', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.VALIDATION_INVALID_VALUE]: {
+    code: 'AR130003',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'validation/invalid-value',
+    titleKey: 'validation.invalid_value.title',
+    detailKey: 'validation.invalid_value.detail',
+    detailFixed: 'The provided value is invalid.',
+    meta: { retryable: false, user_action: 'none', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.VALIDATION_INVALID_JSON]: {
+    code: 'AR130004',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'validation/invalid-json',
+    titleKey: 'validation.invalid_json.title',
+    detailKey: 'validation.invalid_json.detail',
+    detailFixed: 'The request body is not valid JSON.',
+    meta: { retryable: false, user_action: 'none', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.VALIDATION_INVALID_LENGTH]: {
+    code: 'AR130005',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'validation/invalid-length',
+    titleKey: 'validation.invalid_length.title',
+    detailKey: 'validation.invalid_length.detail',
+    detailFixed: 'The field length is invalid.',
+    meta: { retryable: false, user_action: 'none', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.VALIDATION_METHOD_NOT_ALLOWED]: {
+    code: 'AR130006',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 405,
+    typeSlug: 'validation/method-not-allowed',
+    titleKey: 'validation.method_not_allowed.title',
+    detailKey: 'validation.method_not_allowed.detail',
+    detailFixed: 'The HTTP method is not allowed for this endpoint.',
+    meta: { retryable: false, user_action: 'none', severity: 'warn' },
+    securityLevel: 'public',
+  },
+
+  // ============================================
+  // DEVICE_FLOW (RFC 8628)
+  // ============================================
+  [AR_ERROR_CODES.DEVICE_AUTHORIZATION_PENDING]: {
+    code: 'AR140001',
+    rfcError: RFC_ERROR_CODES.AUTHORIZATION_PENDING,
+    status: 400,
+    typeSlug: 'device-flow/authorization-pending',
+    titleKey: 'device_flow.authorization_pending.title',
+    detailKey: 'device_flow.authorization_pending.detail',
+    detailFixed: 'The authorization request is still pending.',
+    meta: { retryable: true, user_action: 'retry', severity: 'info' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.DEVICE_SLOW_DOWN]: {
+    code: 'AR140002',
+    rfcError: RFC_ERROR_CODES.SLOW_DOWN,
+    status: 400,
+    typeSlug: 'device-flow/slow-down',
+    titleKey: 'device_flow.slow_down.title',
+    detailKey: 'device_flow.slow_down.detail',
+    detailFixed: 'Polling too frequently. Please slow down.',
+    meta: { retryable: true, user_action: 'retry', severity: 'info' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.DEVICE_CODE_EXPIRED]: {
+    code: 'AR140003',
+    rfcError: RFC_ERROR_CODES.EXPIRED_TOKEN,
+    status: 400,
+    typeSlug: 'device-flow/code-expired',
+    titleKey: 'device_flow.code_expired.title',
+    detailKey: 'device_flow.code_expired.detail',
+    detailFixed: 'The device code has expired.',
+    meta: { retryable: false, user_action: 'login', severity: 'warn' },
+    securityLevel: 'public',
+  },
+
+  // ============================================
+  // CIBA (OpenID Connect CIBA)
+  // ============================================
+  [AR_ERROR_CODES.CIBA_AUTHORIZATION_PENDING]: {
+    code: 'AR150001',
+    rfcError: RFC_ERROR_CODES.AUTHORIZATION_PENDING,
+    status: 400,
+    typeSlug: 'ciba/authorization-pending',
+    titleKey: 'ciba.authorization_pending.title',
+    detailKey: 'ciba.authorization_pending.detail',
+    detailFixed: 'The end-user has not yet completed the authentication.',
+    meta: { retryable: true, user_action: 'retry', severity: 'info' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.CIBA_SLOW_DOWN]: {
+    code: 'AR150002',
+    rfcError: RFC_ERROR_CODES.SLOW_DOWN,
+    status: 400,
+    typeSlug: 'ciba/slow-down',
+    titleKey: 'ciba.slow_down.title',
+    detailKey: 'ciba.slow_down.detail',
+    detailFixed: 'Polling too frequently. Please slow down.',
+    meta: { retryable: true, user_action: 'retry', severity: 'info' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.CIBA_EXPIRED]: {
+    code: 'AR150003',
+    rfcError: RFC_ERROR_CODES.EXPIRED_TOKEN,
+    status: 400,
+    typeSlug: 'ciba/expired',
+    titleKey: 'ciba.expired.title',
+    detailKey: 'ciba.expired.detail',
+    detailFixed: 'The auth_req_id has expired.',
+    meta: { retryable: false, user_action: 'login', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.CIBA_INVALID_BINDING_MESSAGE]: {
+    code: 'AR150004',
+    rfcError: RFC_ERROR_CODES.INVALID_BINDING_MESSAGE,
+    status: 400,
+    typeSlug: 'ciba/invalid-binding-message',
+    titleKey: 'ciba.invalid_binding_message.title',
+    detailKey: 'ciba.invalid_binding_message.detail',
+    detailFixed: 'The binding_message is invalid or unacceptable.',
+    meta: { retryable: false, user_action: 'none', severity: 'warn' },
+    securityLevel: 'public',
   },
 };
 

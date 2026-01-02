@@ -11,9 +11,7 @@ import {
   getSessionStoreBySessionId,
   isShardedSessionId,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 import {
   getLinkedIdentityById,
@@ -87,12 +85,9 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
     }>();
 
     if (!body.provider_id) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'provider_id is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'provider_id' },
+      });
     }
 
     // Check if provider exists
@@ -108,12 +103,7 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
       body.provider_id
     );
     if (existing) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Account is already linked to this provider'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Build URL to start linking flow
@@ -154,12 +144,7 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
     const hasPasskey = await hasPasskeyCredential(c.env, session.userId);
 
     if (linkedCount === 1 && !hasPasskey) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Cannot remove last authentication method'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Attempt to revoke tokens at the provider (best-effort, RFC 7009)

@@ -32,8 +32,6 @@ import {
   getTenantIdFromContext,
   parseAllowedOrigins,
   isAllowedOrigin,
-  createRFCErrorResponse,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';

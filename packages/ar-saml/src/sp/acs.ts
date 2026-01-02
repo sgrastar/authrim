@@ -13,9 +13,7 @@ import {
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   getUIConfig,
   getTenantIdFromContext,
   buildIssuerUrl,
@@ -51,12 +49,9 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const relayState = formData.get('RelayState') as string | null;
 
     if (!samlResponse) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Missing SAMLResponse'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'SAMLResponse' },
+      });
     }
 
     // Decode SAML Response
@@ -68,12 +63,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     // Get IdP configuration
     const idpConfig = await getIdPConfigByEntityId(env, issuer);
     if (!idpConfig) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Unknown Identity Provider'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
     }
 
     // Verify signature if present
@@ -107,7 +97,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         }
       } catch (error) {
         console.error('Signature verification failed:', error);
-        return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid signature');
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
     } else if (idpConfig.certificate) {
       // IdP is expected to sign, but no signature found
@@ -122,12 +112,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         const strictMode = await getStrictInResponseToSetting(env);
         if (strictMode) {
           console.error('InResponseTo validation failed (strict mode):', inResponseTo);
-          return createRFCErrorResponse(
-            c,
-            RFC_ERROR_CODES.INVALID_REQUEST,
-            400,
-            'InResponseTo does not match any stored AuthnRequest'
-          );
+          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
         }
         console.warn('InResponseTo validation failed:', inResponseTo);
         // Continue anyway for IdP-initiated SSO compatibility (non-strict mode)
@@ -142,12 +127,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         assertion.conditions.notOnOrAfter
       );
       if (!isFirstUse) {
-        return createRFCErrorResponse(
-          c,
-          RFC_ERROR_CODES.INVALID_REQUEST,
-          400,
-          'Assertion has already been used (OneTimeUse violation)'
-        );
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
     }
 

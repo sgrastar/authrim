@@ -14,12 +14,7 @@ import type { Context } from 'hono';
 import type { Env, VPRequestState } from '../../types';
 import { generateSecureNonce } from '../../utils/crypto';
 import { getVPRequestStoreForNewRequest } from '../../utils/vp-request-sharding';
-import {
-  createErrorResponse,
-  createRFCErrorResponse,
-  AR_ERROR_CODES,
-  RFC_ERROR_CODES,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 
 /** Supported client_id_scheme values per OID4VP */
 type ClientIdScheme = 'pre-registered' | 'did' | 'redirect_uri';
@@ -116,46 +111,32 @@ export async function vpAuthorizeRoute(c: Context<{ Bindings: Env }>): Promise<R
 
     // Validate required fields
     if (!body.tenant_id) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'tenant_id is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'tenant_id' },
+      });
     }
 
     if (!body.client_id) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'client_id is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'client_id' },
+      });
     }
 
     // Validate client_id_scheme if provided
     if (body.client_id_scheme && !SUPPORTED_CLIENT_ID_SCHEMES.includes(body.client_id_scheme)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        `Unsupported client_id_scheme: ${body.client_id_scheme}. Supported: ${SUPPORTED_CLIENT_ID_SCHEMES.join(', ')}`
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Validate client_id matches the declared scheme
     const clientIdSchemeError = validateClientIdScheme(body.client_id, body.client_id_scheme);
     if (clientIdSchemeError) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, clientIdSchemeError);
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     if (!body.presentation_definition_id && !body.presentation_definition && !body.dcql_query) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'presentation_definition_id, presentation_definition, or dcql_query is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'presentation_definition' },
+      });
     }
 
     // Generate UUID and nonce

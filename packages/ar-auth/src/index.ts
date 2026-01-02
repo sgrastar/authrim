@@ -10,9 +10,7 @@ import {
   parseAllowedOrigins,
   versionCheckMiddleware,
   requestContextMiddleware,
-  createRFCErrorResponse,
   createErrorResponse,
-  RFC_ERROR_CODES,
   AR_ERROR_CODES,
   // UI Configuration
   getUIConfig,
@@ -220,12 +218,7 @@ app.post('/par', parHandler);
 
 // PAR endpoint should reject non-POST methods
 app.get('/par', (c) => {
-  return createRFCErrorResponse(
-    c,
-    RFC_ERROR_CODES.INVALID_REQUEST,
-    405,
-    'PAR endpoint only accepts POST requests'
-  );
+  return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_METHOD_NOT_ALLOWED);
 });
 
 // Passkey/WebAuthn endpoints
@@ -493,12 +486,7 @@ app.get('/logout-error', async (c) => {
 
 // 404 handler
 app.notFound((c) => {
-  return createRFCErrorResponse(
-    c,
-    RFC_ERROR_CODES.INVALID_REQUEST,
-    404,
-    'The requested resource was not found'
-  );
+  return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 });
 
 // Error handler

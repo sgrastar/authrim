@@ -12,9 +12,7 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   createAuditLogFromContext,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 import type {
   SigningKeysStatusResponse,
@@ -129,12 +127,9 @@ export async function adminSigningKeysEmergencyRotateHandler(c: Context<{ Bindin
 
     // Validate reason (required, minimum 10 characters)
     if (!body.reason || body.reason.length < 10) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Reason is required (minimum 10 characters)'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'reason' },
+      });
     }
 
     // Execute emergency rotation via KeyManager RPC

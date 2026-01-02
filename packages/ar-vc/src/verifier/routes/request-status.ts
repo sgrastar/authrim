@@ -12,12 +12,7 @@
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { getVPRequestStoreById } from '../../utils/vp-request-sharding';
-import {
-  createErrorResponse,
-  createRFCErrorResponse,
-  AR_ERROR_CODES,
-  RFC_ERROR_CODES,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 
 /**
  * GET /vp/request/:id
@@ -29,12 +24,9 @@ export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promi
     const requestId = c.req.param('id');
 
     if (!requestId) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Request ID is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'id' },
+      });
     }
 
     // Get DO stub using region-aware sharding (self-routing from ID)

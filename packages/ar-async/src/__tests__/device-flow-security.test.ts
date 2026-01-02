@@ -72,7 +72,8 @@ describe('Device Flow Security', () => {
 
       expect(response.status).toBe(400);
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('client_id is required');
+      // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
+      expect(body.error_description).toContain('required');
     });
 
     it('should reject request with unregistered client_id', async () => {
@@ -128,7 +129,8 @@ describe('Device Flow Security', () => {
 
       expect(response.status).toBe(400);
       expect(body.error).toBe('unauthorized_client');
-      expect(body.error_description).toContain('not authorized to use device flow');
+      // AR_ERROR_CODES.CLIENT_GRANT_TYPE_UNAUTHORIZED uses standardized message
+      expect(body.error_description).toContain('not authorized to use this grant type');
     });
   });
 

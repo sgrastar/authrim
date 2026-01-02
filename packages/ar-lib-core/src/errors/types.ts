@@ -205,8 +205,15 @@ export interface ErrorCodeDefinition {
   /** Default English title */
   titleKey: string;
 
-  /** Default English detail message key */
+  /** Default English detail message key (used when detailFixed is not set) */
   detailKey: string;
+
+  /**
+   * Fixed detail message (RFC-compliant, not translated).
+   * When set, this takes precedence over detailKey.
+   * Used for RFC-mandated error messages like Device Flow.
+   */
+  detailFixed?: string;
 
   /** Error metadata */
   meta: ErrorMeta;

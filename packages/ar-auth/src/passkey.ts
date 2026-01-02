@@ -16,9 +16,7 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   // Event System
   publishEvent,
   AUTH_EVENTS,
@@ -103,7 +101,9 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const { email, userId, name } = body;
 
     if (!email) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Email is required');
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'email' },
+      });
     }
 
     // Validate Origin header against allowlist
@@ -113,12 +113,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
 
     // Reject unauthorized origins
     if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.ACCESS_DENIED,
-        403,
-        'Origin not allowed for WebAuthn operations'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
     // Use validated origin for RP ID and origin
@@ -305,12 +300,9 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     const { userId, credential, deviceName } = body;
 
     if (!userId || !credential) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'User ID and credential are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'userId and credential' },
+      });
     }
 
     // Consume challenge from ChallengeStore DO (atomic operation, RPC)
@@ -337,12 +329,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
 
     // Reject unauthorized origins
     if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.ACCESS_DENIED,
-        403,
-        'Origin not allowed for WebAuthn operations'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
     // Use validated origin for RP ID and origin
@@ -502,12 +489,7 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
 
     // Reject unauthorized origins
     if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.ACCESS_DENIED,
-        403,
-        'Origin not allowed for WebAuthn operations'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
     // Use validated origin for RP ID
@@ -609,12 +591,9 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     const { challengeId, credential } = body;
 
     if (!challengeId || !credential) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Challenge ID and credential are required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'challengeId and credential' },
+      });
     }
 
     // Consume challenge from ChallengeStore DO (atomic operation, RPC)
@@ -682,12 +661,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
     // Reject unauthorized origins
     if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.ACCESS_DENIED,
-        403,
-        'Origin not allowed for WebAuthn operations'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
     // Use validated origin for RP ID and origin

@@ -13,9 +13,7 @@ import {
   DEVICE_FLOW_CONSTANTS,
   getClient,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
   // UI Configuration
   getUIConfig,
   buildIssuerUrl,
@@ -37,12 +35,9 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
 
     // Validate client_id
     if (!client_id) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'client_id is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'client_id' },
+      });
     }
 
     // Validate client exists and is authorized for device flow
@@ -50,23 +45,13 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
     // but we MUST verify the client is registered
     const clientMetadata = await getClient(c.env, client_id);
     if (!clientMetadata) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_CLIENT,
-        401,
-        'Client authentication failed'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
     }
 
     // Verify client is authorized to use device flow grant type
     const grantTypes = clientMetadata.grant_types as string[] | undefined;
     if (grantTypes && !grantTypes.includes('urn:ietf:params:oauth:grant-type:device_code')) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.UNAUTHORIZED_CLIENT,
-        400,
-        'Client is not authorized to use device flow'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_GRANT);
     }
 
     // Generate device code and user code

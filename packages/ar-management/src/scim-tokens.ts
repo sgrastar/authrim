@@ -7,12 +7,7 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { generateScimToken, revokeScimToken, listScimTokens } from '@authrim/ar-lib-scim';
-import {
-  createErrorResponse,
-  createRFCErrorResponse,
-  AR_ERROR_CODES,
-  RFC_ERROR_CODES,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 
 /**
  * Validation constraints for SCIM token creation
@@ -122,24 +117,14 @@ export async function adminScimTokenCreateHandler(c: Context<{ Bindings: Env }>)
     try {
       body = await c.req.json();
     } catch {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Invalid JSON in request body'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Validate and sanitize input
     const validation = validateScimTokenInput(body);
 
     if (!validation.valid) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        `Validation failed: ${validation.errors.join(', ')}`
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     const { description, expiresInDays } = validation.sanitized;
@@ -176,18 +161,15 @@ export async function adminScimTokenRevokeHandler(c: Context<{ Bindings: Env }>)
     const tokenHash = c.req.param('tokenHash');
 
     if (!tokenHash) {
-      return createRFCErrorResponse(
-        c,
-        RFC_ERROR_CODES.INVALID_REQUEST,
-        400,
-        'Token hash is required'
-      );
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'tokenHash' },
+      });
     }
 
     const success = await revokeScimToken(c.env, tokenHash);
 
     if (!success) {
-      return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 404, 'Token not found');
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     return c.json({

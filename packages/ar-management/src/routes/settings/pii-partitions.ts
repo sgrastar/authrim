@@ -27,9 +27,7 @@ import {
   buildPartitionSettingsKvKey,
   DEFAULT_PARTITION,
   createErrorResponse,
-  createRFCErrorResponse,
   AR_ERROR_CODES,
-  RFC_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -163,7 +161,7 @@ export async function updatePartitionSettings(c: Context<{ Bindings: Env }>) {
   try {
     body = await c.req.json();
   } catch {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid JSON body');
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   const availablePartitions = getAvailablePartitions(c.env as unknown as Record<string, unknown>);
@@ -197,7 +195,7 @@ export async function updatePartitionSettings(c: Context<{ Bindings: Env }>) {
   // Validate settings
   const validation = validatePartitionSettings(newSettings, availablePartitions);
   if (!validation.valid) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, validation.error);
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   // Save to KV
@@ -235,11 +233,13 @@ export async function testPartitionRouting(c: Context<{ Bindings: Env }>) {
   try {
     body = await c.req.json();
   } catch {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid JSON body');
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   if (!body.tenantId) {
-    return createRFCErrorResponse(c, RFC_ERROR_CODES.INVALID_REQUEST, 400, 'tenantId is required');
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'tenantId' },
+    });
   }
 
   const kv = c.env.AUTHRIM_CONFIG;

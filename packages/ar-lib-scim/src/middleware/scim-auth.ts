@@ -280,7 +280,10 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
   if (!authHeader) {
     await recordFailedAttempt(c.env, clientIP, rateLimitConfig);
     logAuthAttempt(clientIP, false, 'missing_auth_header');
-    await applyFailureDelay(rateLimitConfig.maxFailedAttempts - rateLimit.remaining + 1, rateLimitConfig);
+    await applyFailureDelay(
+      rateLimitConfig.maxFailedAttempts - rateLimit.remaining + 1,
+      rateLimitConfig
+    );
 
     // Security: Generic message to prevent authentication enumeration
     return scimErrorResponse(c, 401, 'Authentication failed');
@@ -290,7 +293,10 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
   if (parts.length !== 2 || parts[0] !== 'Bearer') {
     await recordFailedAttempt(c.env, clientIP, rateLimitConfig);
     logAuthAttempt(clientIP, false, 'invalid_auth_format');
-    await applyFailureDelay(rateLimitConfig.maxFailedAttempts - rateLimit.remaining + 1, rateLimitConfig);
+    await applyFailureDelay(
+      rateLimitConfig.maxFailedAttempts - rateLimit.remaining + 1,
+      rateLimitConfig
+    );
 
     // Security: Generic message to prevent authentication enumeration
     return scimErrorResponse(c, 401, 'Authentication failed');
@@ -305,7 +311,10 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
     if (!isValid) {
       await recordFailedAttempt(c.env, clientIP, rateLimitConfig);
       logAuthAttempt(clientIP, false, 'invalid_token');
-      await applyFailureDelay(rateLimitConfig.maxFailedAttempts - rateLimit.remaining + 1, rateLimitConfig);
+      await applyFailureDelay(
+        rateLimitConfig.maxFailedAttempts - rateLimit.remaining + 1,
+        rateLimitConfig
+      );
 
       // Security: Generic message to prevent token enumeration
       return scimErrorResponse(c, 401, 'Authentication failed');
