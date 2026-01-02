@@ -381,8 +381,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     // Handle @simplewebauthn version compatibility (v9 vs v10+ response format)
     const regInfo = registrationInfo as unknown as RegistrationInfoCompat;
     const credentialID = regInfo.credentialID || regInfo.credential?.id;
-    const credentialPublicKey =
-      regInfo.credentialPublicKey || regInfo.credential?.publicKey;
+    const credentialPublicKey = regInfo.credentialPublicKey || regInfo.credential?.publicKey;
     const counter = regInfo.counter ?? regInfo.credential?.counter ?? 0;
 
     if (!credentialID || !credentialPublicKey) {

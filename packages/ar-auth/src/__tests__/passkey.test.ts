@@ -412,7 +412,8 @@ describe('Passkey Handlers', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: string; error_description?: string };
       expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('Email is required');
+      // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD returns generic message
+      expect(body.error_description).toContain('required');
     });
 
     it('should reject unauthorized origins', async () => {

@@ -189,13 +189,7 @@ export type ScimErrorType =
  * - Complex: A single object with attribute key-value pairs
  * - Multi-valued: An array of primitives or objects
  */
-export type ScimPatchValue =
-  | string
-  | number
-  | boolean
-  | null
-  | Record<string, unknown>
-  | unknown[];
+export type ScimPatchValue = string | number | boolean | null | Record<string, unknown> | unknown[];
 
 /**
  * SCIM Filter Value Type (RFC 7644 Section 3.4.2.2)

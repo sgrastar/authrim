@@ -162,7 +162,9 @@ export function userToScim(user: InternalUser, context: UserToScimContext): Scim
   let enterpriseExtension: ScimEnterpriseExtension | undefined = undefined;
   if (user.custom_attributes_json) {
     try {
-      const customAttrs = JSON.parse(user.custom_attributes_json) as Partial<ScimEnterpriseExtension>;
+      const customAttrs = JSON.parse(
+        user.custom_attributes_json
+      ) as Partial<ScimEnterpriseExtension>;
       if (
         customAttrs.employeeNumber ||
         customAttrs.costCenter ||

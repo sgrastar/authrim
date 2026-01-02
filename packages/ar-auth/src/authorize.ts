@@ -849,7 +849,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             Array.isArray(clientResult.jwks.keys)
           ) {
             // Find a suitable key for signature verification
-            const signingKey = (clientResult.jwks.keys as PublicJWK[]).find((key) => isSigningJWK(key));
+            const signingKey = (clientResult.jwks.keys as PublicJWK[]).find((key) =>
+              isSigningJWK(key)
+            );
 
             if (!signingKey) {
               return c.json(

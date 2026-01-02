@@ -658,10 +658,13 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     allowed_token_exchange_resources: result.allowed_token_exchange_resources
       ? (JSON.parse(result.allowed_token_exchange_resources) as string[])
       : undefined,
-    delegation_mode: (result.delegation_mode as 'none' | 'delegation' | 'impersonation') || 'delegation',
+    delegation_mode:
+      (result.delegation_mode as 'none' | 'delegation' | 'impersonation') || 'delegation',
     // RFC 6749 Section 4.4: Client Credentials settings
     client_credentials_allowed: result.client_credentials_allowed === 1,
-    allowed_scopes: result.allowed_scopes ? (JSON.parse(result.allowed_scopes) as string[]) : undefined,
+    allowed_scopes: result.allowed_scopes
+      ? (JSON.parse(result.allowed_scopes) as string[])
+      : undefined,
     default_scope: result.default_scope ?? undefined,
     default_audience: result.default_audience ?? undefined,
     // OIDC 3rd Party Initiated Login (OIDC Core Section 4)

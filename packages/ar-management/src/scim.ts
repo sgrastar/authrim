@@ -1091,7 +1091,9 @@ app.get('/Users', async (c) => {
           const { sql: whereSql, params: whereParams } = filterToSql(filterAst, coreAttributeMap);
           sql += ` AND ${whereSql}`;
           // Filter out undefined values from whereParams
-          sqlParams.push(...whereParams.filter((p): p is string | number | boolean | null => p !== undefined));
+          sqlParams.push(
+            ...whereParams.filter((p): p is string | number | boolean | null => p !== undefined)
+          );
         }
       } catch (error) {
         // Log full error for debugging but don't expose to client
@@ -1714,7 +1716,9 @@ app.get('/Groups', async (c) => {
         const { sql: whereSql, params: whereParams } = filterToSql(filterAst, attributeMap);
         sql += ` WHERE ${whereSql}`;
         // Filter out undefined values from whereParams
-        sqlParams.push(...whereParams.filter((p): p is string | number | boolean | null => p !== undefined));
+        sqlParams.push(
+          ...whereParams.filter((p): p is string | number | boolean | null => p !== undefined)
+        );
       } catch (error) {
         // Log full error for debugging but don't expose to client
         console.error('[SCIM] Invalid filter:', error);

@@ -2883,7 +2883,10 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   );
 
   if (!markIssuedResponse.ok) {
-    const error = (await markIssuedResponse.json()) as { error?: string; error_description?: string };
+    const error = (await markIssuedResponse.json()) as {
+      error?: string;
+      error_description?: string;
+    };
     console.error('Failed to mark tokens as issued:', error);
     // If tokens were already issued, return error
     if (error.error_description?.includes('already issued')) {
@@ -4316,14 +4319,18 @@ async function handleNativeSSOTokenExchange(
     // 2. Requesting client (App B) must have cross-client SSO enabled
     // 3. Original client (App A) must also allow its tokens to be used by other clients
     const crossClientAllowed = nativeSSOConfig.allowCrossClientNativeSSO;
-    const requestingClientCrossClientAllowed = Boolean(clientMetadata.allow_cross_client_native_sso);
+    const requestingClientCrossClientAllowed = Boolean(
+      clientMetadata.allow_cross_client_native_sso
+    );
 
     // Verify original client also allows cross-client SSO
     let originalClientCrossClientAllowed = false;
     if (originalClientId) {
       try {
         const originalClientMetadata = await getClient(c.env, originalClientId);
-        originalClientCrossClientAllowed = Boolean(originalClientMetadata?.allow_cross_client_native_sso);
+        originalClientCrossClientAllowed = Boolean(
+          originalClientMetadata?.allow_cross_client_native_sso
+        );
       } catch {
         // If we can't verify original client, deny cross-client SSO for safety
         console.warn(`[NativeSSO] Failed to verify original client: ${originalClientId}`);
