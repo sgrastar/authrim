@@ -554,9 +554,8 @@ function getReBACService(env: Env): ReBACService | null {
   const adapter = new D1StorageAdapter(env.DB);
   // ReBACConfig uses Cloudflare Workers' global KVNamespace type
   // Use type assertion to bypass incompatibility between KVNamespace versions
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const config: ReBACConfig = {
-    cache_namespace: env.REBAC_CACHE_KV as any,
+    cache_namespace: env.REBAC_CACHE_KV as unknown as ReBACConfig['cache_namespace'],
     cache_ttl: 60,
     max_depth: 5,
   };

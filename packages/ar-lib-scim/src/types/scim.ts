@@ -182,6 +182,29 @@ export type ScimErrorType =
   | 'sensitive';
 
 /**
+ * SCIM Patch Operation Value Type (RFC 7644 Section 3.5.2)
+ *
+ * The value can be:
+ * - Primitive: string, number, boolean, null
+ * - Complex: A single object with attribute key-value pairs
+ * - Multi-valued: An array of primitives or objects
+ */
+export type ScimPatchValue =
+  | string
+  | number
+  | boolean
+  | null
+  | Record<string, unknown>
+  | unknown[];
+
+/**
+ * SCIM Filter Value Type (RFC 7644 Section 3.4.2.2)
+ *
+ * Filter comparison operands are limited to primitive types.
+ */
+export type ScimFilterValue = string | number | boolean | null;
+
+/**
  * SCIM Patch Operation (RFC 7644 Section 3.5.2)
  */
 export interface ScimPatchOp {
@@ -189,7 +212,7 @@ export interface ScimPatchOp {
   Operations: Array<{
     op: 'add' | 'remove' | 'replace';
     path?: string;
-    value?: any;
+    value?: ScimPatchValue;
   }>;
 }
 
@@ -215,7 +238,8 @@ export interface ScimFilterNode {
   type: 'comparison' | 'logical' | 'grouping' | 'valuePath';
   operator?: ScimFilterOperator | 'and' | 'or' | 'not';
   attribute?: string;
-  value?: any;
+  /** Filter comparison value (primitives only) or sub-attribute path for valuePath nodes */
+  value?: ScimFilterValue | string;
   left?: ScimFilterNode;
   right?: ScimFilterNode;
   expression?: ScimFilterNode;

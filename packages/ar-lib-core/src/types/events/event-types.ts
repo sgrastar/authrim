@@ -247,22 +247,22 @@ export type SettingsEventType = (typeof SETTINGS_EVENTS)[keyof typeof SETTINGS_E
  * Pattern: scim.<resource>.<action>
  */
 export const SCIM_EVENTS = {
-  // User provisioning
-  USER_CREATED: 'scim.user.created',
-  USER_UPDATED: 'scim.user.updated',
-  USER_DELETED: 'scim.user.deleted',
+  // User provisioning (SCIM_ prefix to avoid collision with SESSION_EVENTS)
+  SCIM_USER_CREATED: 'scim.user.created',
+  SCIM_USER_UPDATED: 'scim.user.updated',
+  SCIM_USER_DELETED: 'scim.user.deleted',
 
   // Group provisioning
-  GROUP_CREATED: 'scim.group.created',
-  GROUP_UPDATED: 'scim.group.updated',
-  GROUP_DELETED: 'scim.group.deleted',
+  SCIM_GROUP_CREATED: 'scim.group.created',
+  SCIM_GROUP_UPDATED: 'scim.group.updated',
+  SCIM_GROUP_DELETED: 'scim.group.deleted',
 
   // Bulk operations
-  BULK_COMPLETED: 'scim.bulk.completed',
+  SCIM_BULK_COMPLETED: 'scim.bulk.completed',
 
   // Token management
-  TOKEN_CREATED: 'scim.token.created',
-  TOKEN_REVOKED: 'scim.token.revoked',
+  SCIM_TOKEN_CREATED: 'scim.token.created',
+  SCIM_TOKEN_REVOKED: 'scim.token.revoked',
 } as const;
 
 export type ScimEventType = (typeof SCIM_EVENTS)[keyof typeof SCIM_EVENTS];

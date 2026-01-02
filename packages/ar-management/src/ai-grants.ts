@@ -19,6 +19,11 @@ import {
   createAuditLog,
 } from '@authrim/ar-lib-core';
 
+/**
+ * Hono context type with admin auth variable
+ */
+type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -77,9 +82,17 @@ const AI_GRANT_LIMITS = {
 /**
  * Get admin auth context from request
  */
-function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (c as any).get('adminAuth') as AdminAuthContext | null;
+function getAdminAuth(c: AdminContext): AdminAuthContext | null {
+  return c.get('adminAuth') ?? null;
+}
+
+/**
+ * Get tenant ID from admin context
+ * Wrapper around getTenantIdFromContext to handle type compatibility
+ */
+function getAdminTenantId(c: AdminContext): string {
+  // AdminContext is structurally compatible with Context<{ Bindings: Env }>
+  return getTenantIdFromContext(c as unknown as Context<{ Bindings: Env }>);
 }
 
 /**
@@ -237,10 +250,10 @@ export async function adminAIGrantGetHandler(c: Context<{ Bindings: Env }>) {
  * - expires_at range validation (prevents infinite grants)
  * - INSERT ON CONFLICT for race condition protection (TOCTOU)
  */
-export async function adminAIGrantCreateHandler(c: Context<{ Bindings: Env }>) {
+export async function adminAIGrantCreateHandler(c: AdminContext) {
   try {
-    const adapter = createAdapterFromContext(c);
-    const tenantId = getTenantIdFromContext(c);
+    const adapter = createAdapterFromContext(c as unknown as Context<{ Bindings: Env }>);
+    const tenantId = getAdminTenantId(c);
     const adminAuth = getAdminAuth(c);
     const body = await c.req.json<AIGrantCreateRequest>();
 
@@ -361,10 +374,10 @@ export async function adminAIGrantCreateHandler(c: Context<{ Bindings: Env }>) {
  * Security features:
  * - expires_at range validation (prevents infinite grants)
  */
-export async function adminAIGrantUpdateHandler(c: Context<{ Bindings: Env }>) {
+export async function adminAIGrantUpdateHandler(c: AdminContext) {
   try {
-    const adapter = createAdapterFromContext(c);
-    const tenantId = getTenantIdFromContext(c);
+    const adapter = createAdapterFromContext(c as unknown as Context<{ Bindings: Env }>);
+    const tenantId = getAdminTenantId(c);
     const adminAuth = getAdminAuth(c);
     const grantId = c.req.param('id');
     const body = await c.req.json<AIGrantUpdateRequest>();
@@ -455,10 +468,10 @@ export async function adminAIGrantUpdateHandler(c: Context<{ Bindings: Env }>) {
  * DELETE /api/admin/ai-grants/:id
  * Revoke AI grant (soft delete)
  */
-export async function adminAIGrantRevokeHandler(c: Context<{ Bindings: Env }>) {
+export async function adminAIGrantRevokeHandler(c: AdminContext) {
   try {
-    const adapter = createAdapterFromContext(c);
-    const tenantId = getTenantIdFromContext(c);
+    const adapter = createAdapterFromContext(c as unknown as Context<{ Bindings: Env }>);
+    const tenantId = getAdminTenantId(c);
     const adminAuth = getAdminAuth(c);
     const grantId = c.req.param('id');
 

@@ -59,7 +59,22 @@ import type {
   LogoutWebhookSendResult,
 } from '@authrim/ar-lib-core';
 import { importJWK, jwtVerify, importPKCS8 } from 'jose';
-import type { JSONWebKeySet, CryptoKey } from 'jose';
+import type { JSONWebKeySet, CryptoKey, JWTPayload } from 'jose';
+
+/**
+ * OIDC Back-Channel Logout Token events claim structure
+ * @see https://openid.net/specs/openid-connect-backchannel-1_0.html#LogoutToken
+ */
+interface BackchannelLogoutEvents {
+  'http://schemas.openid.net/event/backchannel-logout': Record<string, never>;
+}
+
+/**
+ * Extended JWT Payload for Logout Token with events claim
+ */
+interface LogoutTokenPayload extends JWTPayload {
+  events?: BackchannelLogoutEvents;
+}
 
 /**
  * Import a PEM-encoded RSA private key for JWT signing
@@ -932,7 +947,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Verify logout token
-    let logoutClaims;
+    let logoutClaims: LogoutTokenPayload;
     try {
       // Get signing key from KeyManager
       const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
@@ -979,7 +994,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         algorithms: ['RS256'],
       });
 
-      logoutClaims = payload;
+      logoutClaims = payload as LogoutTokenPayload;
     } catch (error) {
       console.error('Logout token validation error:', error);
       return c.json(
@@ -1003,7 +1018,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Validate events claim
-    const events = logoutClaims.events as any;
+    const events = logoutClaims.events;
     if (!events || !events['http://schemas.openid.net/event/backchannel-logout']) {
       return c.json(
         {

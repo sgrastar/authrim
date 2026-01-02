@@ -12,7 +12,13 @@
  * @see https://datatracker.ietf.org/doc/html/rfc7644#section-3.4.2.2
  */
 
-import type { ScimFilterNode } from '../types/scim';
+import type { ScimFilterNode, ScimFilterValue } from '../types/scim';
+
+/**
+ * SCIM comparison operator types
+ * RFC 7644 Section 3.4.2.2
+ */
+type ScimComparisonOperator = 'eq' | 'ne' | 'co' | 'sw' | 'ew' | 'pr' | 'gt' | 'ge' | 'lt' | 'le';
 
 /**
  * Tokenizer for SCIM filter expressions
@@ -267,12 +273,12 @@ export class ScimFilterParser {
 
     // Standard comparison
     if (this.currentToken?.type === 'OPERATOR') {
-      const operator = this.currentToken.value as any;
+      const operator = this.currentToken.value as ScimComparisonOperator;
       this.advance(); // Move to value token
 
       // After advance(), currentToken is now the value token (not OPERATOR anymore)
       const valueToken = this.currentToken;
-      let value: any;
+      let value: ScimFilterValue;
 
       if (valueToken?.type === 'STRING') {
         value = valueToken.value;
@@ -349,8 +355,8 @@ export function parseScimFilter(filter: string): ScimFilterNode {
 export function filterToSql(
   node: ScimFilterNode,
   attributeMap: Record<string, string> = {}
-): { sql: string; params: any[] } {
-  const params: any[] = [];
+): { sql: string; params: (ScimFilterValue | undefined)[] } {
+  const params: (ScimFilterValue | undefined)[] = [];
 
   function nodeToSql(n: ScimFilterNode): string {
     switch (n.type) {
@@ -413,7 +419,7 @@ export function filterToSql(
         throw new Error('Value path filters require custom implementation based on your schema');
 
       default:
-        throw new Error(`Unsupported node type: ${(n as any).type}`);
+        throw new Error(`Unsupported node type: ${n.type}`);
     }
   }
 

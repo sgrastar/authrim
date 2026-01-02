@@ -4,6 +4,7 @@
 
 import type { OrganizationType, PlanType, UserType } from './rbac';
 import type { AuthorizationDetails } from './rar';
+import type { JWKS } from './jwk';
 
 /**
  * OpenID Provider Metadata (Discovery Document)
@@ -325,7 +326,7 @@ export interface ClientRegistrationResponse {
   tos_uri?: string;
   policy_uri?: string;
   jwks_uri?: string;
-  jwks?: { keys: unknown[] };
+  jwks?: JWKS;
   software_id?: string;
   software_version?: string;
   token_endpoint_auth_method?: string;
@@ -388,6 +389,8 @@ export interface ClientRegistrationResponse {
 export interface ClientMetadata extends ClientRegistrationResponse {
   created_at: number;
   updated_at: number;
+  // Multi-tenant support
+  tenant_id?: string;
   // OIDC Core 8: Subject Identifier Types
   subject_type?: 'public' | 'pairwise';
   sector_identifier_uri?: string; // For pairwise subject type
@@ -401,12 +404,21 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   id_token_encrypted_response_enc?: string;
   userinfo_encrypted_response_alg?: string;
   userinfo_encrypted_response_enc?: string;
-  jwks?: { keys: unknown[] };
+  jwks?: JWKS;
   // CIBA (Client Initiated Backchannel Authentication) settings
   backchannel_token_delivery_mode?: string; // 'poll', 'ping', 'push', or combination
   backchannel_client_notification_endpoint?: string; // Callback URL for ping/push modes
   backchannel_authentication_request_signing_alg?: string; // Algorithm for signed auth requests
   backchannel_user_code_parameter?: boolean; // Whether client supports user_code parameter
+
+  // ==========================================================================
+  // RFC 9449: DPoP (Demonstrating Proof of Possession)
+  // ==========================================================================
+  /**
+   * When true, access tokens issued to this client MUST be DPoP-bound.
+   * Client must provide a valid DPoP proof in all token requests.
+   */
+  dpop_bound_access_tokens?: boolean;
 
   // ==========================================================================
   // RFC 8693: Token Exchange Settings

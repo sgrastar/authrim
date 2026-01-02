@@ -764,7 +764,8 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       phone_number?: string;
       phone_number_verified?: boolean;
       user_type?: string;
-      [key: string]: any;
+      /** Additional custom attributes */
+      [key: string]: string | boolean | number | null | undefined;
     }>();
 
     const {
@@ -939,7 +940,8 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       phone_number_verified?: boolean;
       picture?: string;
       user_type?: string;
-      [key: string]: any;
+      /** Additional custom attributes */
+      [key: string]: string | boolean | number | null | undefined;
     }>();
 
     const authCtx = createAuthContextFromHono(c);
@@ -2650,7 +2652,7 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
 
     // Build WHERE clause - tenant_id is always first for index usage
     const conditions: string[] = ['tenant_id = ?'];
-    const params: any[] = [tenantId];
+    const params: (string | number)[] = [tenantId];
 
     if (userId) {
       conditions.push('user_id = ?');

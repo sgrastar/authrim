@@ -11,6 +11,9 @@ export * from './types/jit-config';
 export * from './types/token-claim-rules';
 export * from './types/check-api';
 
+// RFC 7517: JWK Types
+export * from './types/jwk';
+
 // Phase 9: VC/DID Types
 export * from './types/did';
 export * from './types/openid4vp';

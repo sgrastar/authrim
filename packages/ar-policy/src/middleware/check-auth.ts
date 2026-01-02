@@ -30,6 +30,17 @@ import type { CheckApiKey, RateLimitTier, CheckApiOperation } from '@authrim/ar-
 // =============================================================================
 
 /**
+ * Extended JWT Payload with OAuth/OIDC access token claims
+ * Includes standard claims plus custom Authrim claims
+ */
+interface AccessTokenPayload {
+  sub?: string;
+  client_id?: string;
+  azp?: string;
+  tenant_id?: string;
+}
+
+/**
  * Authentication result
  */
 export interface CheckAuthResult {
@@ -340,13 +351,13 @@ async function validateAccessToken(
       skipAudienceCheck: !ctx.expectedAudience, // Skip if not configured
     });
 
+    // Cast payload to access token type for custom claims
+    const tokenPayload = payload as AccessTokenPayload;
     return {
       valid: true,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      clientId: (payload as any).client_id || (payload as any).azp,
+      clientId: tokenPayload.client_id || tokenPayload.azp,
       subjectId: payload.sub,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tenantId: (payload as any).tenant_id || 'default',
+      tenantId: tokenPayload.tenant_id || 'default',
     };
   } catch (error) {
     if (error instanceof Error) {

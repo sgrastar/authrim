@@ -236,6 +236,141 @@ describe('OIDCRPClient', () => {
       // Should not call discovery
       expect(mockFetch).not.toHaveBeenCalled();
     });
+
+    describe('Request Object (JAR - RFC 9101)', () => {
+      // Real RSA key pair for testing (2048-bit)
+      const testPrivateKeyJwk = {
+        kty: 'RSA',
+        n: 'u4jBCZcz98idgSy0X4fZSna1P1x2QHVR5-nejx_3zYUosh7Bhm_rckVGSBruSJJsXFRY02SIVBZouwuvKq3CO_FYHZMtUtciMsdMb1BABV9Z896Y8VHUuNiJi1vVNacEI_fWJpEil1gBInUq3Z2ojnuhEd3UjUtMdt3m7XWb90rCbpUBsne65WFEUrrSRZZKvMBH2LOYehrYpnHxaOb1W0B6-V_a__DkB1uWQbhAhqbDoInaB7-YUdJeIFWrwROzeAMcewctpIOWR25JDGjb-gD5IWKAkkLHJ80JcuxMYdxfT8MZs8sdn_lhLr2CeiIzhCkhylIoytDfBR20X8p94Q',
+        e: 'AQAB',
+        d: 'D5phe0eMEJvttONwD3m5U8d8LY0nHpZUTgAonw5pGv2vBODnt6SEubF3V0T8Wefq4aS37kCxUhO6O4PNm3axEDU0oGNQNFIHe6OW4bUS2o-UJ6T34y4sjYOgsApgOzJN9yMl-3f8YYy2LXSDsEQvk8lH_blP98CR2Fr-nXe5VhIKqYJELHA4oc2gZEoXqyG6pEvpLsA4JuBR6TXSTP65gHZO721mkAZHXOCHAmo_EajrMmYB0f3tbckgEOq75DXfp2JQuskv_unrTBW44r4YCYuEINJFb2_If7GKONywLYj_azfRy0LezR4nvowUNA_8iQcKsPju_Q_Ouq11FyoCJQ',
+        p: '_vTIZ3ShdFzVvq4q1drqyU4oOQN-izQ5xoCtOOSMOrOJg6vpYwuy7TjHfL0zlLHjdqFnLhEfAczVreYFUTr5g87BoItu7MBIolCUUkKxZ2HuhjRAOXaeVmPNM-xz_9hnB2kOgUSqq7M2SpU85uiHUWQZKcYR8N6eq8d4eanKS7U',
+        q: 'vE1Oj1b-qO_X-xDQuvil2-CtU6PzaQemXxVcVGJEtdWIrekbD0wIMIXuMCBOSCPHPU0DjtHp1_HAzOlZLV-ag-wQu_Ujeoc0i9rqfcp0_39K1okpQtZt-J_w3IN1KcvM7bFiSCvdaTRlbpJ35g7hAirJW_tNHpUOlmu6iBCqfP0',
+        dp: 'wAX9Km5dbBa_pe3ntUo8q4GCKe7H0HB1U1x3GvKH625tlA5WqZKWILUzCnA1-ThB6YeG_ttGT0THa0JjntqcMvn2O8TItufbzOSD0bEJjKPl0o5oEN-WQdrJIuJkO73xW1N06Ueeg9NmgKYGSKO5x0Ns8FmOCayiNR73TirjgkE',
+        dq: 'Tvho8wp8AKOdw8h4kYFIJd-jMUm4AptXtdbCgw03Xb7w9Ganl5G-eYMhsoNJ8U03-Mh8rn_wf0T_I7DVWocWyS7OkdUsDO35JpIn95tZ1_EtlK2vZT2Cn1uMax6im2XCSwkye6wRzlZQF8BLkms5CGyjR_UrkaDXnlQNxZSfu40',
+        qi: 'zjgnRUCDIZkOU7l0pVn8_7dkRfOActdIgUT_PT8kpo9a7_FrB4eXXK03SCNxhAbfjWAEUfX3q8W730OwmuxTONwaX4qK2Q4_VYGZqXW3sQJE09T9gxxftuV_sVwMiM0u0hnAIYj9V1zTR4yonYyHOWB3g4uzMuO7U4RM9LQvg04',
+        kid: 'test-key-1',
+        use: 'sig',
+        alg: 'RS256',
+      };
+
+      it('should create client with request object configuration via fromProvider', () => {
+        const providerWithRequestObject = {
+          ...mockProvider,
+          useRequestObject: true,
+          requestObjectSigningAlg: 'RS256',
+        };
+
+        const client = OIDCRPClient.fromProvider(
+          providerWithRequestObject,
+          'https://example.com/callback',
+          'decrypted-secret',
+          testPrivateKeyJwk
+        );
+
+        expect(client).toBeInstanceOf(OIDCRPClient);
+      });
+
+      it('should generate authorization URL with request parameter when useRequestObject is true', async () => {
+        const configWithRequestObject = {
+          ...mockConfig,
+          authorizationEndpoint: 'https://op.example.com/authorize',
+          useRequestObject: true,
+          requestObjectSigningAlg: 'RS256',
+          privateKeyJwk: testPrivateKeyJwk,
+          keyId: 'test-key-1',
+        };
+
+        const client = new OIDCRPClient(configWithRequestObject);
+        const url = await client.createAuthorizationUrl({
+          state: 'test-state',
+          nonce: 'test-nonce',
+          codeVerifier: 'test-verifier-1234567890123456789012345678901234567890',
+        });
+
+        // URL should contain request parameter with JWT
+        expect(url).toContain('https://op.example.com/authorize');
+        expect(url).toContain('request=');
+        // client_id should still be in URL per RFC 9101
+        expect(url).toContain('client_id=' + mockConfig.clientId);
+        // Should not have individual parameters in URL when using request object
+        expect(url).not.toContain('response_type=');
+        expect(url).not.toContain('redirect_uri=');
+
+        // Extract and verify the request object JWT
+        const urlObj = new URL(url);
+        const requestJwt = urlObj.searchParams.get('request');
+        expect(requestJwt).toBeTruthy();
+
+        // JWT should have 3 parts (header.payload.signature)
+        const jwtParts = requestJwt!.split('.');
+        expect(jwtParts.length).toBe(3);
+
+        // Decode and verify header
+        const header = JSON.parse(atob(jwtParts[0]));
+        expect(header.alg).toBe('RS256');
+        expect(header.typ).toBe('oauth-authz-req+jwt');
+        expect(header.kid).toBe('test-key-1');
+
+        // Decode and verify payload
+        const payload = JSON.parse(atob(jwtParts[1]));
+        expect(payload.iss).toBe(mockConfig.clientId); // RFC 9101: iss = client_id
+        expect(payload.aud).toBe(mockConfig.issuer); // RFC 9101: aud = OP issuer
+        expect(payload.response_type).toBe('code');
+        expect(payload.client_id).toBe(mockConfig.clientId);
+        expect(payload.redirect_uri).toBe(mockConfig.redirectUri);
+        expect(payload.state).toBe('test-state');
+        expect(payload.nonce).toBe('test-nonce');
+        expect(payload.code_challenge).toBeTruthy();
+        expect(payload.code_challenge_method).toBe('S256');
+        expect(payload.iat).toBeDefined();
+        expect(payload.exp).toBeDefined();
+        expect(payload.jti).toBeDefined();
+      });
+
+      it('should use standard query parameters when useRequestObject is false', async () => {
+        const configWithoutRequestObject = {
+          ...mockConfig,
+          authorizationEndpoint: 'https://op.example.com/authorize',
+          useRequestObject: false,
+        };
+
+        const client = new OIDCRPClient(configWithoutRequestObject);
+        const url = await client.createAuthorizationUrl({
+          state: 'test-state',
+          nonce: 'test-nonce',
+          codeVerifier: 'test-verifier-1234567890123456789012345678901234567890',
+        });
+
+        // Should have standard parameters
+        expect(url).toContain('response_type=code');
+        expect(url).toContain('redirect_uri=');
+        expect(url).toContain('state=test-state');
+        // Should not have request parameter
+        expect(url).not.toContain('request=');
+      });
+
+      it('should not create request object when privateKeyJwk is missing even if useRequestObject is true', async () => {
+        const configMissingKey = {
+          ...mockConfig,
+          authorizationEndpoint: 'https://op.example.com/authorize',
+          useRequestObject: true,
+          requestObjectSigningAlg: 'RS256',
+          // privateKeyJwk is missing
+        };
+
+        const client = new OIDCRPClient(configMissingKey);
+        const url = await client.createAuthorizationUrl({
+          state: 'test-state',
+          nonce: 'test-nonce',
+          codeVerifier: 'test-verifier-1234567890123456789012345678901234567890',
+        });
+
+        // Should fall back to standard parameters
+        expect(url).toContain('response_type=code');
+        expect(url).not.toContain('request=');
+      });
+    });
   });
 
   describe('handleCallback', () => {

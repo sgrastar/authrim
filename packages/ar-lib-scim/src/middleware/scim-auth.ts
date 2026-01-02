@@ -16,7 +16,7 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { SCIM_SCHEMAS } from '../types/scim';
-import type { ScimError } from '../types/scim';
+import type { ScimError, ScimErrorType } from '../types/scim';
 
 /**
  * Default SCIM authentication rate limit configuration
@@ -388,7 +388,7 @@ function scimErrorResponse(
   c: Context,
   status: 400 | 401 | 403 | 404 | 409 | 500,
   detail: string,
-  scimType?: string
+  scimType?: ScimErrorType
 ) {
   const error: ScimError = {
     schemas: [SCIM_SCHEMAS.ERROR],
@@ -397,7 +397,7 @@ function scimErrorResponse(
   };
 
   if (scimType) {
-    error.scimType = scimType as any;
+    error.scimType = scimType;
   }
 
   return c.json(error, status);

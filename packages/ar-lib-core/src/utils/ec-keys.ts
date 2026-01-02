@@ -13,6 +13,7 @@
 
 import { generateKeyPair, exportJWK, exportPKCS8, importJWK } from 'jose';
 import type { JWK } from 'jose';
+import type { ECCurve } from '../types/jwk';
 
 // =============================================================================
 // Key Import Cache (LRU)
@@ -111,10 +112,8 @@ export function getKeyCacheStats(): {
  */
 export type ECAlgorithm = 'ES256' | 'ES384' | 'ES512';
 
-/**
- * EC curve names corresponding to algorithms
- */
-export type ECCurve = 'P-256' | 'P-384' | 'P-521';
+// Re-export ECCurve from types for backwards compatibility
+export type { ECCurve } from '../types/jwk';
 
 /**
  * Algorithm to curve mapping

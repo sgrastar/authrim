@@ -13,6 +13,40 @@ import {
 } from '@authrim/ar-lib-core';
 import type { LogoutConfig, TenantProfile } from '@authrim/ar-lib-core';
 
+/**
+ * OIDC Configuration interface for discovery metadata
+ * Loaded from SETTINGS KV (system_settings.oidc)
+ */
+interface OIDCConfig {
+  /** RFC 9101: HTTPS request_uri support */
+  httpsRequestUri?: { enabled: boolean };
+  /** RFC 8693: Token Exchange */
+  tokenExchange?: { enabled: boolean };
+  /** RFC 6749 Section 4.4: Client Credentials */
+  clientCredentials?: { enabled: boolean };
+  /** RFC 9396: Rich Authorization Requests */
+  rar?: { enabled: boolean };
+  /** AI Ephemeral Auth scopes */
+  aiScopes?: { enabled: boolean };
+  /** RFC 9126: Require PAR */
+  requirePar?: boolean;
+  /** OIDC Core: Supported claims */
+  claimsSupported?: string[];
+  /** Token endpoint auth methods */
+  tokenEndpointAuthMethodsSupported?: string[];
+  /** Allow 'none' algorithm for request objects */
+  allowNoneAlgorithm?: boolean;
+}
+
+/**
+ * FAPI Configuration interface for discovery metadata
+ * Loaded from SETTINGS KV (system_settings.fapi)
+ */
+interface FAPIConfig {
+  /** FAPI 2.0 Security Profile enabled */
+  enabled?: boolean;
+}
+
 // Cache for metadata to improve performance
 // Key: tenantId:settingsHash, Value: metadata
 const metadataCache = new Map<string, OIDCProviderMetadata>();
@@ -31,8 +65,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   const issuer = buildIssuerUrl(c.env, tenantId);
 
   // Load dynamic configuration from SETTINGS KV
-  let oidcConfig: any = {};
-  let fapiConfig: any = {};
+  let oidcConfig: OIDCConfig = {};
+  let fapiConfig: FAPIConfig = {};
   let logoutConfig: LogoutConfig = DEFAULT_LOGOUT_CONFIG;
   let currentSettingsJson = '';
 

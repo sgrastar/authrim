@@ -13,14 +13,55 @@ import type {
   ScimAddress,
   UserToScimContext,
   GroupToScimContext,
+  ScimPatchValue,
 } from '../types/scim';
 import { SCIM_SCHEMAS } from '../types/scim';
+
+/**
+ * SCIM Enterprise User Extension attributes
+ * RFC 7643 Section 4.3 - Enterprise User Schema Extension
+ */
+interface ScimEnterpriseExtension {
+  employeeNumber?: string;
+  costCenter?: string;
+  organization?: string;
+  division?: string;
+  department?: string;
+  manager?: {
+    value: string;
+    $ref: string;
+  };
+}
+
+/**
+ * Resource with timestamp fields for ETag generation
+ */
+interface ResourceWithTimestamp {
+  updated_at?: string;
+  created_at: string;
+}
+
+/**
+ * Generic resource type for patch operations
+ * Uses index signature to allow dynamic property access during patching
+ *
+ * Note: The any type is intentionally used here because SCIM patch operations
+ * require dynamic property access with arbitrary depth (e.g., "name.givenName",
+ * "emails[type eq \"work\"].value"). TypeScript's index signatures cannot
+ * represent this pattern type-safely without losing the convenience of dynamic access.
+ *
+ * The applyPatchOperations function uses generics to preserve the input type
+ * for the caller, while internally using this flexible type for manipulation.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PatchableRecord = { [key: string]: any };
 
 /**
  * Internal User model (from database)
  */
 export interface InternalUser {
   id: string;
+  tenant_id?: string;
   email: string;
   email_verified: number;
   name?: string | null;
@@ -118,10 +159,10 @@ export function userToScim(user: InternalUser, context: UserToScimContext): Scim
     : undefined;
 
   // Parse custom attributes for enterprise extension
-  let enterpriseExtension: any = undefined;
+  let enterpriseExtension: ScimEnterpriseExtension | undefined = undefined;
   if (user.custom_attributes_json) {
     try {
-      const customAttrs = JSON.parse(user.custom_attributes_json);
+      const customAttrs = JSON.parse(user.custom_attributes_json) as Partial<ScimEnterpriseExtension>;
       if (
         customAttrs.employeeNumber ||
         customAttrs.costCenter ||
@@ -138,8 +179,8 @@ export function userToScim(user: InternalUser, context: UserToScimContext): Scim
           department: customAttrs.department,
           manager: customAttrs.manager
             ? {
-                value: customAttrs.manager,
-                $ref: `${baseUrl}/scim/v2/Users/${customAttrs.manager}`,
+                value: customAttrs.manager.value,
+                $ref: `${baseUrl}/scim/v2/Users/${customAttrs.manager.value}`,
               }
             : undefined,
         };
@@ -250,7 +291,7 @@ export function scimToUser(scimUser: Partial<ScimUser>): Partial<InternalUser> {
   // Enterprise extension
   const enterpriseExt = scimUser['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'];
   if (enterpriseExt) {
-    const customAttrs: any = {};
+    const customAttrs: Record<string, string> = {};
     if (enterpriseExt.employeeNumber) customAttrs.employeeNumber = enterpriseExt.employeeNumber;
     if (enterpriseExt.costCenter) customAttrs.costCenter = enterpriseExt.costCenter;
     if (enterpriseExt.organization) customAttrs.organization = enterpriseExt.organization;
@@ -317,7 +358,7 @@ export function scimToGroup(scimGroup: Partial<ScimGroup>): Partial<InternalGrou
 /**
  * Generate ETag for versioning
  */
-export function generateEtag(resource: any): string {
+export function generateEtag(resource: ResourceWithTimestamp): string {
   // Simple implementation: hash of updated_at timestamp
   const timestamp = resource.updated_at || resource.created_at;
   const date = new Date(timestamp).getTime();
@@ -333,12 +374,21 @@ export function parseEtag(etag: string): string {
 
 /**
  * Apply SCIM Patch operations to a resource
+ *
+ * Uses generics to preserve the input type for the caller.
+ * Internally uses PatchableRecord for dynamic property manipulation.
+ *
+ * @template T - The resource type (e.g., ScimUser, ScimGroup)
+ * @param resource - The resource to patch
+ * @param operations - SCIM patch operations to apply
+ * @returns The patched resource with the same type as input
  */
-export function applyPatchOperations(
-  resource: any,
-  operations: Array<{ op: 'add' | 'remove' | 'replace'; path?: string; value?: any }>
-): any {
-  const result = { ...resource };
+export function applyPatchOperations<T extends object>(
+  resource: T,
+  operations: Array<{ op: 'add' | 'remove' | 'replace'; path?: string; value?: ScimPatchValue }>
+): T {
+  // Cast to PatchableRecord for dynamic manipulation
+  const result: PatchableRecord = { ...resource };
 
   for (const operation of operations) {
     const { op, path, value } = operation;
@@ -357,26 +407,26 @@ export function applyPatchOperations(
     switch (op) {
       case 'add':
       case 'replace': {
-        let current = result;
+        let current: PatchableRecord = result;
         for (let i = 0; i < pathParts.length - 1; i++) {
           const part = pathParts[i];
           if (!current[part]) {
             current[part] = {};
           }
-          current = current[part];
+          current = current[part] as PatchableRecord;
         }
         current[pathParts[pathParts.length - 1]] = value;
         break;
       }
 
       case 'remove': {
-        let current = result;
+        let current: PatchableRecord = result;
         for (let i = 0; i < pathParts.length - 1; i++) {
           const part = pathParts[i];
           if (!current[part]) {
             break;
           }
-          current = current[part];
+          current = current[part] as PatchableRecord;
         }
         delete current[pathParts[pathParts.length - 1]];
         break;
@@ -384,7 +434,8 @@ export function applyPatchOperations(
     }
   }
 
-  return result;
+  // Cast back to original type - the structure is preserved
+  return result as T;
 }
 
 /**

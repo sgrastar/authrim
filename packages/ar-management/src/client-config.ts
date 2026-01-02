@@ -14,7 +14,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import type { ClientRegistrationResponse, ClientMetadata } from '@authrim/ar-lib-core';
+import type { ClientRegistrationResponse, ClientMetadata, JWKS } from '@authrim/ar-lib-core';
 import {
   getClient,
   timingSafeEqual,
@@ -243,7 +243,7 @@ async function validateRegistrationAccessToken(
  * @returns Client metadata suitable for response
  */
 function buildClientResponse(
-  client: Record<string, unknown>,
+  client: ClientMetadata,
   issuerUrl: string
 ): Partial<ClientRegistrationResponse> {
   const response: Partial<ClientRegistrationResponse> = {
@@ -266,7 +266,7 @@ function buildClientResponse(
   if (client.policy_uri) response.policy_uri = client.policy_uri as string;
   if (client.tos_uri) response.tos_uri = client.tos_uri as string;
   if (client.jwks_uri) response.jwks_uri = client.jwks_uri as string;
-  if (client.jwks) response.jwks = client.jwks as { keys: unknown[] };
+  if (client.jwks) response.jwks = client.jwks as JWKS;
   if (client.subject_type) response.subject_type = client.subject_type as 'public' | 'pairwise';
   if (client.sector_identifier_uri)
     response.sector_identifier_uri = client.sector_identifier_uri as string;

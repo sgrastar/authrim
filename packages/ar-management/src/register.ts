@@ -15,6 +15,7 @@ import type {
   ClientRegistrationResponse,
   ClientMetadata,
   OAuthErrorResponse,
+  JWKS,
 } from '@authrim/ar-lib-core';
 import {
   generateSecureRandomString,
@@ -946,7 +947,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (request.contacts) response.contacts = request.contacts;
     if (request.tos_uri) response.tos_uri = request.tos_uri;
     if (request.policy_uri) response.policy_uri = request.policy_uri;
-    if (request.jwks) response.jwks = request.jwks;
+    if (request.jwks) response.jwks = request.jwks as JWKS;
     if (request.jwks_uri) response.jwks_uri = request.jwks_uri;
     if (request.software_id) response.software_id = request.software_id;
     if (request.software_version) response.software_version = request.software_version;

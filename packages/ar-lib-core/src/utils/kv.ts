@@ -10,7 +10,7 @@
  */
 
 import type { Env } from '../types/env';
-import type { RefreshTokenData } from '../types/oidc';
+import type { ClientMetadata, RefreshTokenData } from '../types/oidc';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
 import { createOAuthConfigManager } from './oauth-config';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
@@ -547,12 +547,9 @@ export async function deleteNonce(env: Env, nonce: string): Promise<void> {
  *
  * @param env - Cloudflare environment bindings
  * @param clientId - Client ID to retrieve
- * @returns Promise<Record<string, unknown> | null>
+ * @returns Promise<ClientMetadata | null>
  */
-export async function getClient(
-  env: Env,
-  clientId: string
-): Promise<Record<string, unknown> | null> {
+export async function getClient(env: Env, clientId: string): Promise<ClientMetadata | null> {
   const cacheKey = buildKVKey('client', clientId);
 
   // Step 1: Try CLIENTS_CACHE (Read-Through Cache)
@@ -560,7 +557,7 @@ export async function getClient(
 
   if (cached) {
     try {
-      return JSON.parse(cached) as Record<string, unknown>;
+      return JSON.parse(cached) as ClientMetadata;
     } catch (error) {
       // Cache is corrupted - delete it and fetch from D1
       // PII Protection: Don't log full error (may contain cached data)
@@ -628,55 +625,56 @@ export async function getClient(
   }
 
   // Step 3: Convert D1 result to client metadata format
-  const clientData: Record<string, unknown> = {
+  // Note: ClientMetadata has many optional properties; we construct the subset stored in D1
+  const clientData: ClientMetadata = {
     client_id: result.client_id,
-    client_secret: result.client_secret,
-    client_name: result.client_name,
-    redirect_uris: JSON.parse(result.redirect_uris),
-    grant_types: JSON.parse(result.grant_types),
-    response_types: JSON.parse(result.response_types),
-    scope: result.scope,
-    token_endpoint_auth_method: result.token_endpoint_auth_method,
-    contacts: result.contacts ? JSON.parse(result.contacts) : undefined,
-    logo_uri: result.logo_uri,
-    client_uri: result.client_uri,
-    policy_uri: result.policy_uri,
-    tos_uri: result.tos_uri,
-    jwks_uri: result.jwks_uri,
+    client_secret: result.client_secret ?? undefined,
+    client_name: result.client_name ?? undefined,
+    redirect_uris: JSON.parse(result.redirect_uris) as string[],
+    grant_types: JSON.parse(result.grant_types) as string[],
+    response_types: JSON.parse(result.response_types) as string[],
+    scope: result.scope ?? undefined,
+    token_endpoint_auth_method: result.token_endpoint_auth_method ?? undefined,
+    contacts: result.contacts ? (JSON.parse(result.contacts) as string[]) : undefined,
+    logo_uri: result.logo_uri ?? undefined,
+    client_uri: result.client_uri ?? undefined,
+    policy_uri: result.policy_uri ?? undefined,
+    tos_uri: result.tos_uri ?? undefined,
+    jwks_uri: result.jwks_uri ?? undefined,
     jwks: result.jwks ? JSON.parse(result.jwks) : undefined,
-    subject_type: result.subject_type,
-    sector_identifier_uri: result.sector_identifier_uri,
-    id_token_signed_response_alg: result.id_token_signed_response_alg,
-    userinfo_signed_response_alg: result.userinfo_signed_response_alg,
-    request_object_signing_alg: result.request_object_signing_alg,
+    subject_type: (result.subject_type as 'public' | 'pairwise' | undefined) ?? undefined,
+    sector_identifier_uri: result.sector_identifier_uri ?? undefined,
+    id_token_signed_response_alg: result.id_token_signed_response_alg ?? undefined,
+    userinfo_signed_response_alg: result.userinfo_signed_response_alg ?? undefined,
+    request_object_signing_alg: result.request_object_signing_alg ?? undefined,
     is_trusted: result.is_trusted === 1,
     skip_consent: result.skip_consent === 1,
     allow_claims_without_scope: result.allow_claims_without_scope === 1,
     // RFC 8693: Token Exchange settings
     token_exchange_allowed: result.token_exchange_allowed === 1,
     allowed_subject_token_clients: result.allowed_subject_token_clients
-      ? JSON.parse(result.allowed_subject_token_clients)
+      ? (JSON.parse(result.allowed_subject_token_clients) as string[])
       : undefined,
     allowed_token_exchange_resources: result.allowed_token_exchange_resources
-      ? JSON.parse(result.allowed_token_exchange_resources)
+      ? (JSON.parse(result.allowed_token_exchange_resources) as string[])
       : undefined,
-    delegation_mode: result.delegation_mode || 'delegation',
+    delegation_mode: (result.delegation_mode as 'none' | 'delegation' | 'impersonation') || 'delegation',
     // RFC 6749 Section 4.4: Client Credentials settings
     client_credentials_allowed: result.client_credentials_allowed === 1,
-    allowed_scopes: result.allowed_scopes ? JSON.parse(result.allowed_scopes) : undefined,
-    default_scope: result.default_scope,
-    default_audience: result.default_audience,
+    allowed_scopes: result.allowed_scopes ? (JSON.parse(result.allowed_scopes) as string[]) : undefined,
+    default_scope: result.default_scope ?? undefined,
+    default_audience: result.default_audience ?? undefined,
     // OIDC 3rd Party Initiated Login (OIDC Core Section 4)
-    initiate_login_uri: result.initiate_login_uri,
+    initiate_login_uri: result.initiate_login_uri ?? undefined,
     // RFC 7592: Client Configuration Endpoint (hash only, not exposed)
-    registration_access_token_hash: result.registration_access_token_hash,
+    registration_access_token_hash: result.registration_access_token_hash ?? undefined,
     // OIDC Logout endpoints
     post_logout_redirect_uris: result.post_logout_redirect_uris
-      ? JSON.parse(result.post_logout_redirect_uris)
+      ? (JSON.parse(result.post_logout_redirect_uris) as string[])
       : undefined,
-    backchannel_logout_uri: result.backchannel_logout_uri,
+    backchannel_logout_uri: result.backchannel_logout_uri ?? undefined,
     backchannel_logout_session_required: result.backchannel_logout_session_required === 1,
-    frontchannel_logout_uri: result.frontchannel_logout_uri,
+    frontchannel_logout_uri: result.frontchannel_logout_uri ?? undefined,
     frontchannel_logout_session_required: result.frontchannel_logout_session_required === 1,
     // Multi-tenant support
     tenant_id: result.tenant_id || 'default',

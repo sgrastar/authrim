@@ -45,6 +45,23 @@ import type {
 // WebAuthn transport types (matches PasskeyRepository.AuthenticatorTransport)
 type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
 
+/**
+ * @simplewebauthn registrationInfo type compatibility layer
+ * The library changed its response format across versions, so we need to support both:
+ * - v9 and earlier: credentialID, credentialPublicKey, counter at root level
+ * - v10+: nested under credential property
+ */
+interface RegistrationInfoCompat {
+  credentialID?: Uint8Array;
+  credentialPublicKey?: Uint8Array;
+  counter?: number;
+  credential?: {
+    id: Uint8Array;
+    publicKey: Uint8Array;
+    counter: number;
+  };
+}
+
 // RP (Relying Party) configuration
 const RP_NAME = 'Authrim';
 
@@ -249,7 +266,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       userID: encoder.encode(user.id as string),
       userName: email,
       userDisplayName: (user.name as string) || email,
-      excludeCredentials: excludeCredentials as any,
+      excludeCredentials: excludeCredentials,
       // Use platform authenticator (device-bound) for better security
       authenticatorSelection: {
         residentKey: 'required',
@@ -361,11 +378,12 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
 
-    const registrationInfoAny = registrationInfo as any;
-    const credentialID = registrationInfoAny.credentialID || registrationInfoAny.credential?.id;
+    // Handle @simplewebauthn version compatibility (v9 vs v10+ response format)
+    const regInfo = registrationInfo as unknown as RegistrationInfoCompat;
+    const credentialID = regInfo.credentialID || regInfo.credential?.id;
     const credentialPublicKey =
-      registrationInfoAny.credentialPublicKey || registrationInfoAny.credential?.publicKey;
-    const counter = registrationInfoAny.counter || registrationInfoAny.credential?.counter || 0;
+      regInfo.credentialPublicKey || regInfo.credential?.publicKey;
+    const counter = regInfo.counter ?? regInfo.credential?.counter ?? 0;
 
     if (!credentialID || !credentialPublicKey) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -546,8 +564,8 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
       rpID,
       userVerification: 'required',
       // Always include allowCredentials, even if empty (required by @simplewebauthn/browser v11+)
-      allowCredentials: allowCredentials.length > 0 ? (allowCredentials as any) : [],
-    } as any);
+      allowCredentials: allowCredentials.length > 0 ? allowCredentials : [],
+    });
 
     // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes) (RPC)
     // Use challengeId-based sharding for discoverable credentials (email may not be provided)
@@ -691,7 +709,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           publicKey: publicKey,
           counter: passkey.counter as number,
         },
-      } as any);
+      });
     } catch (error) {
       // Publish auth.passkey.failed event (non-blocking)
       publishEvent(c, {

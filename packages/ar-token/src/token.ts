@@ -601,7 +601,7 @@ async function handleAuthorizationCodeGrant(
     console.error('Failed to load FAPI settings for DPoP:', error);
   }
 
-  const clientRequiresDpop = Boolean((clientMetadata as any).dpop_bound_access_tokens);
+  const clientRequiresDpop = Boolean(clientMetadata.dpop_bound_access_tokens);
   const dpopProof = extractDPoPProof(c.req.raw.headers);
 
   if ((requireDpop || clientRequiresDpop) && !dpopProof) {
@@ -1081,7 +1081,7 @@ async function handleAuthorizationCodeGrant(
 
   // Check if Native SSO is enabled (feature flag + client configuration)
   const nativeSSOGloballyEnabled = await isNativeSSOEnabled(c.env);
-  const clientNativeSSOEnabled = Boolean((clientMetadata as any).native_sso_enabled);
+  const clientNativeSSOEnabled = Boolean(clientMetadata.native_sso_enabled);
 
   if (nativeSSOGloballyEnabled && clientNativeSSOEnabled && authCodeData.sid && c.env.DB) {
     try {
@@ -1179,17 +1179,14 @@ async function handleAuthorizationCodeGrant(
   try {
     // Check if client requests SD-JWT ID Token (RFC 9901)
     const useSDJWT =
-      (clientMetadata as any).id_token_signed_response_type === 'sd-jwt' &&
-      c.env.ENABLE_SD_JWT === 'true';
+      clientMetadata.id_token_signed_response_type === 'sd-jwt' && c.env.ENABLE_SD_JWT === 'true';
 
     if (useSDJWT) {
       // Create SD-JWT ID Token with selective disclosure
-      const selectiveClaims = (clientMetadata as any).sd_jwt_selective_claims || [
-        'email',
-        'phone_number',
-        'address',
-        'birthdate',
-      ];
+      const rawSelectiveClaims = clientMetadata.sd_jwt_selective_claims;
+      const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
+        ? rawSelectiveClaims
+        : ['email', 'phone_number', 'address', 'birthdate'];
       idToken = await createSDJWTIDTokenFromClaims(
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
         privateKey,
@@ -1881,16 +1878,13 @@ async function handleRefreshTokenGrant(
 
     // Check if client requests SD-JWT ID Token (RFC 9901)
     const useSDJWT =
-      (clientMetadata as any).id_token_signed_response_type === 'sd-jwt' &&
-      c.env.ENABLE_SD_JWT === 'true';
+      clientMetadata.id_token_signed_response_type === 'sd-jwt' && c.env.ENABLE_SD_JWT === 'true';
 
     if (useSDJWT) {
-      const selectiveClaims = (clientMetadata as any).sd_jwt_selective_claims || [
-        'email',
-        'phone_number',
-        'address',
-        'birthdate',
-      ];
+      const rawSelectiveClaims = clientMetadata.sd_jwt_selective_claims;
+      const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
+        ? rawSelectiveClaims
+        : ['email', 'phone_number', 'address', 'birthdate'];
       idToken = await createSDJWTIDTokenFromClaims(
         idTokenClaims,
         privateKey,
@@ -2889,7 +2883,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   );
 
   if (!markIssuedResponse.ok) {
-    const error = (await markIssuedResponse.json()) as any;
+    const error = (await markIssuedResponse.json()) as { error?: string; error_description?: string };
     console.error('Failed to mark tokens as issued:', error);
     // If tokens were already issued, return error
     if (error.error_description?.includes('already issued')) {
@@ -4086,7 +4080,7 @@ async function handleNativeSSOTokenExchange(
   }
 
   // 2. Check if client supports Native SSO
-  const clientNativeSSOEnabled = Boolean((clientMetadata as any).native_sso_enabled);
+  const clientNativeSSOEnabled = Boolean(clientMetadata.native_sso_enabled);
   if (!clientNativeSSOEnabled) {
     return c.json(
       {
@@ -4322,18 +4316,14 @@ async function handleNativeSSOTokenExchange(
     // 2. Requesting client (App B) must have cross-client SSO enabled
     // 3. Original client (App A) must also allow its tokens to be used by other clients
     const crossClientAllowed = nativeSSOConfig.allowCrossClientNativeSSO;
-    const requestingClientCrossClientAllowed = Boolean(
-      (clientMetadata as any).allow_cross_client_native_sso
-    );
+    const requestingClientCrossClientAllowed = Boolean(clientMetadata.allow_cross_client_native_sso);
 
     // Verify original client also allows cross-client SSO
     let originalClientCrossClientAllowed = false;
     if (originalClientId) {
       try {
         const originalClientMetadata = await getClient(c.env, originalClientId);
-        originalClientCrossClientAllowed = Boolean(
-          (originalClientMetadata as any)?.allow_cross_client_native_sso
-        );
+        originalClientCrossClientAllowed = Boolean(originalClientMetadata?.allow_cross_client_native_sso);
       } catch {
         // If we can't verify original client, deny cross-client SSO for safety
         console.warn(`[NativeSSO] Failed to verify original client: ${originalClientId}`);
@@ -4367,7 +4357,7 @@ async function handleNativeSSOTokenExchange(
   const idTokenScope = idTokenPayload.scope as string | undefined;
   const originalScopes = idTokenScope ? idTokenScope.split(' ') : ['openid'];
   const requestedScopes = requestedScope ? requestedScope.split(' ') : originalScopes;
-  const allowedScopes = (clientMetadata as any).allowed_scopes || [];
+  const allowedScopes = clientMetadata.allowed_scopes || [];
 
   // Intersection: requested ∩ original ∩ client.allowed_scopes
   let grantedScopes = requestedScopes;

@@ -104,7 +104,11 @@ describe('SCIM 2.0 Endpoints', () => {
     mockGroups = new Map();
     mockUserRoles = new Map();
 
-    // Seed some test data
+    // Seed some test data (timestamps as Unix seconds, matching D1 database format)
+    const jan15 = Math.floor(new Date('2024-01-15T10:00:00Z').getTime() / 1000);
+    const jan16 = Math.floor(new Date('2024-01-16T10:00:00Z').getTime() / 1000);
+    const jan10 = Math.floor(new Date('2024-01-10T10:00:00Z').getTime() / 1000);
+
     mockUsers.set('user-001', {
       id: 'user-001',
       email: 'john.doe@example.com',
@@ -115,8 +119,8 @@ describe('SCIM 2.0 Endpoints', () => {
       preferred_username: 'johndoe',
       active: 1,
       external_id: 'ext-001',
-      created_at: '2024-01-15T10:00:00Z',
-      updated_at: '2024-01-15T10:00:00Z',
+      created_at: jan15,
+      updated_at: jan15,
     });
 
     mockUsers.set('user-002', {
@@ -129,8 +133,8 @@ describe('SCIM 2.0 Endpoints', () => {
       preferred_username: 'janesmith',
       active: 1,
       external_id: 'ext-002',
-      created_at: '2024-01-16T10:00:00Z',
-      updated_at: '2024-01-16T10:00:00Z',
+      created_at: jan16,
+      updated_at: jan16,
     });
 
     mockGroups.set('group-001', {
@@ -138,7 +142,7 @@ describe('SCIM 2.0 Endpoints', () => {
       name: 'Administrators',
       description: 'Admin group',
       external_id: 'ext-grp-001',
-      created_at: '2024-01-10T10:00:00Z',
+      created_at: jan10,
     });
 
     // Mock database
@@ -216,16 +220,16 @@ describe('SCIM 2.0 Endpoints', () => {
                   // bind() order: id, tenant_id, email_verified, phone_number_verified, password_hash,
                   // is_active, user_type, external_id, pii_partition, pii_status, created_at, updated_at
                   const userId = args[0];
-                  // Timestamps are stored as seconds, convert to ISO string for mock compatibility
-                  const now = Date.now();
+                  // Timestamps are stored as Unix seconds (matching D1 database format)
+                  const nowSeconds = Math.floor(Date.now() / 1000);
                   mockUsers.set(userId, {
                     id: userId,
                     tenant_id: args[1],
                     email_verified: args[2],
                     active: args[5],
                     external_id: args[7],
-                    created_at: new Date(now).toISOString(),
-                    updated_at: new Date(now).toISOString(),
+                    created_at: nowSeconds,
+                    updated_at: nowSeconds,
                   });
                   return { success: true };
                 }
@@ -234,7 +238,7 @@ describe('SCIM 2.0 Endpoints', () => {
                   const userId = args[args.length - 1];
                   const user = mockUsers.get(userId);
                   if (user) {
-                    user.updated_at = new Date().toISOString();
+                    user.updated_at = Math.floor(Date.now() / 1000);
                     // Handle soft delete (is_active = 0)
                     if (sql.includes('is_active = 0')) {
                       user.active = 0;

@@ -13,6 +13,8 @@
 import { SignedXml } from 'xml-crypto';
 import { SIGNATURE_ALGORITHMS, DIGEST_ALGORITHMS, CANONICALIZATION_ALGORITHMS } from './constants';
 import { parseXml, serializeXml } from './xml-utils';
+import type { XMLNode, XMLElement, SignedXmlWithErrors } from './types';
+import { NodeType, isElementNode } from './types';
 
 // =============================================================================
 // Helper Functions
@@ -27,15 +29,11 @@ import { parseXml, serializeXml } from './xml-utils';
  * @param id - ID value to search for
  * @returns Array of elements with matching ID attribute
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function findElementsById(doc: any, id: string): any[] {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const results: any[] = [];
+function findElementsById(doc: XMLNode, id: string): XMLElement[] {
+  const results: XMLElement[] = [];
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function traverse(node: any): void {
-    if (node.nodeType === 1) {
-      // Element node
+  function traverse(node: XMLNode): void {
+    if (isElementNode(node)) {
       if (node.getAttribute && node.getAttribute('ID') === id) {
         results.push(node);
       }
@@ -43,7 +41,10 @@ function findElementsById(doc: any, id: string): any[] {
     // Traverse children for both Document (nodeType 9) and Element (nodeType 1) nodes
     if (node.childNodes) {
       for (let i = 0; i < node.childNodes.length; i++) {
-        traverse(node.childNodes[i]);
+        const child = node.childNodes[i];
+        if (child) {
+          traverse(child);
+        }
       }
     }
   }
@@ -226,7 +227,8 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
 
       // Verify the referenced element actually exists
       // Note: @xmldom/xmldom doesn't support querySelectorAll, so we use a manual search
-      const referencedElements = findElementsById(doc, expectedId);
+      // Cast doc to XMLNode for compatibility with our type-safe helper
+      const referencedElements = findElementsById(doc as unknown as XMLNode, expectedId);
       if (referencedElements.length === 0) {
         throw new Error(`XSW Protection: Element with ID "${expectedId}" not found`);
       }
@@ -272,8 +274,8 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
     // Verify
     const isValid = sig.checkSignature(xml);
     if (!isValid) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const errors = (sig as any).validationErrors || [];
+      const sigWithErrors = sig as unknown as SignedXmlWithErrors;
+      const errors = sigWithErrors.validationErrors || [];
       throw new Error(`Signature verification failed: ${errors.join(', ')}`);
     }
   }

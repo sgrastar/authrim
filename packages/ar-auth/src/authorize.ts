@@ -35,7 +35,6 @@ import {
   createConfigurationError,
   // Custom Redirect URIs (Authrim Extension)
   validateCustomRedirectParams,
-  parseClientAllowedOrigins,
   // Contract Loader (Human Auth / AI Ephemeral Auth two-layer model)
   loadTenantProfile,
   loadClientContract,
@@ -46,6 +45,8 @@ import {
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
 import type { Session, PARRequestData } from '@authrim/ar-lib-core';
+import type { PublicJWK, JWKS } from '@authrim/ar-lib-core';
+import { isSigningJWK, isEncryptionJWK } from '@authrim/ar-lib-core';
 import { validateAuthorizationDetails } from '@authrim/ar-lib-core';
 import {
   generateSecureRandomString,
@@ -57,6 +58,8 @@ import {
   calculateAtHash,
   getTokenFormat,
   encryptJWT,
+  type JWEAlgorithm,
+  type JWEEncryption,
   extractDPoPProof,
   validateDPoPProof,
   calculateSessionState,
@@ -846,9 +849,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             Array.isArray(clientResult.jwks.keys)
           ) {
             // Find a suitable key for signature verification
-            const signingKey = (clientResult.jwks.keys as any[]).find((key: any) => {
-              return key.use === 'sig' || !key.use; // Accept keys with use=sig or no use specified
-            });
+            const signingKey = (clientResult.jwks.keys as PublicJWK[]).find((key) => isSigningJWK(key));
 
             if (!signingKey) {
               return c.json(
@@ -886,10 +887,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 );
               }
 
-              const jwks = (await jwksResponse.json()) as { keys: any[] };
-              const signingKey = jwks.keys.find((key: any) => {
-                return key.use === 'sig' || !key.use;
-              });
+              const jwks = (await jwksResponse.json()) as JWKS;
+              const signingKey = jwks.keys.find((key) => isSigningJWK(key));
 
               if (!signingKey) {
                 return c.json(
@@ -1137,8 +1136,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Load FAPI 2.0 configuration from SETTINGS KV
-  let fapiConfig: any = {};
-  let oidcConfig: any = {};
+  interface FAPIConfig {
+    enabled?: boolean;
+    allowPublicClients?: boolean;
+    /** Strict DPoP enforcement mode */
+    strictDPoP?: boolean;
+  }
+  interface OIDCConfig {
+    requirePar?: boolean;
+    /** RFC 9396: Rich Authorization Requests */
+    rar?: { enabled: boolean };
+    /** Supported ACR values */
+    supportedAcrValues?: string[];
+  }
+  let fapiConfig: FAPIConfig = {};
+  let oidcConfig: OIDCConfig = {};
   try {
     const settingsJson = await c.env.SETTINGS?.get('system_settings');
     if (settingsJson) {
@@ -1482,10 +1494,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // ==========================================================================
   // Custom Redirect URIs Validation (Authrim Extension)
   // ==========================================================================
-  // Parse allowed_redirect_origins from client metadata
-  const allowedRedirectOrigins = parseClientAllowedOrigins(
-    (clientMetadata.allowed_redirect_origins as string | null) ?? null
-  );
+  // Get allowed_redirect_origins from client metadata (already an array from getClient)
+  const allowedRedirectOrigins = clientMetadata.allowed_redirect_origins ?? [];
 
   // Validate error_uri and cancel_uri if provided
   let validatedErrorUri: string | undefined;
@@ -3129,7 +3139,7 @@ async function createJARMResponse(
       client.authorization_encrypted_response_enc
     ) {
       // Encrypt the JWT using client's public key
-      let clientPublicKeyJWK: any;
+      let clientPublicKeyJWK: PublicJWK | undefined;
 
       if (
         client.jwks &&
@@ -3139,9 +3149,7 @@ async function createJARMResponse(
         Array.isArray(client.jwks.keys)
       ) {
         // Find encryption key
-        const encKey = (client.jwks.keys as any[]).find((key: any) => {
-          return key.use === 'enc' || !key.use;
-        });
+        const encKey = (client.jwks.keys as PublicJWK[]).find((key) => isEncryptionJWK(key));
 
         if (!encKey) {
           throw new Error('No suitable encryption key found in client jwks');
@@ -3160,10 +3168,8 @@ async function createJARMResponse(
           throw new Error('Failed to fetch client jwks_uri');
         }
 
-        const jwks = (await jwksResponse.json()) as { keys: any[] };
-        const encKey = jwks.keys.find((key: any) => {
-          return key.use === 'enc' || !key.use;
-        });
+        const jwks = (await jwksResponse.json()) as JWKS;
+        const encKey = jwks.keys.find((key) => isEncryptionJWK(key));
 
         if (!encKey) {
           throw new Error('No suitable encryption key found in client jwks_uri');
@@ -3175,12 +3181,13 @@ async function createJARMResponse(
       }
 
       // Encrypt the signed JWT (using jwe.ts encryptJWT)
+      // Type assertions for JWE algorithm types (validated during client registration)
       responseToken = await encryptJWT(
         jwt, // The signed JWT string
         clientPublicKeyJWK, // JWK format
         {
-          alg: client.authorization_encrypted_response_alg as any,
-          enc: client.authorization_encrypted_response_enc as any,
+          alg: client.authorization_encrypted_response_alg as JWEAlgorithm,
+          enc: client.authorization_encrypted_response_enc as JWEEncryption,
           cty: 'JWT',
         }
       );

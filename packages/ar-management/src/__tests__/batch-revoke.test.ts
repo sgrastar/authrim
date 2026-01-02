@@ -72,8 +72,10 @@ vi.mock('@authrim/ar-lib-core', async () => {
       );
     }),
     createErrorResponse: vi.fn().mockImplementation((_c, code) => {
+      // Validation errors (AR13xxxx) return 400, auth errors return 401
+      const status = typeof code === 'string' && code.startsWith('AR13') ? 400 : 401;
       return new Response(JSON.stringify({ error: code }), {
-        status: 401,
+        status,
         headers: { 'Content-Type': 'application/json' },
       });
     }),
@@ -125,7 +127,8 @@ describe('Batch Revocation Handler', () => {
     // Validation error after authentication passes
     expect(res.status).toBe(400);
     const json = (await res.json()) as BatchRevokeResponse;
-    expect(json.error).toBe('invalid_request');
+    // AR130003 = VALIDATION_INVALID_VALUE (Content-Type must be application/json)
+    expect(json.error).toBe('AR130003');
   });
 
   it('should return 400 for empty tokens array', async () => {
@@ -145,7 +148,8 @@ describe('Batch Revocation Handler', () => {
     // Validation error after authentication passes
     expect(res.status).toBe(400);
     const json = (await res.json()) as BatchRevokeResponse;
-    expect(json.error).toBe('invalid_request');
+    // AR130001 = VALIDATION_REQUIRED_FIELD (tokens array is empty)
+    expect(json.error).toBe('AR130001');
   });
 
   it('should return 400 when tokens exceed max limit', async () => {
@@ -170,7 +174,8 @@ describe('Batch Revocation Handler', () => {
     // Validation error after authentication passes
     expect(res.status).toBe(400);
     const json = (await res.json()) as BatchRevokeResponse;
-    expect(json.error).toBe('invalid_request');
+    // AR130003 = VALIDATION_INVALID_VALUE (tokens exceed max limit)
+    expect(json.error).toBe('AR130003');
   });
 
   it('should return 401 for missing client credentials', async () => {

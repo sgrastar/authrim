@@ -20,6 +20,11 @@ import {
 } from '@authrim/ar-lib-core';
 
 /**
+ * Hono context type with admin auth variable
+ */
+type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
+
+/**
  * Convert timestamp to milliseconds for API response
  * Handles both seconds (10 digits) and milliseconds (13 digits) timestamps
  */
@@ -34,9 +39,8 @@ function toMilliseconds(timestamp: number | null | undefined): number | null {
 /**
  * Get admin auth context from request
  */
-function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (c as any).get('adminAuth') as AdminAuthContext | null;
+function getAdminAuth(c: AdminContext): AdminAuthContext | null {
+  return c.get('adminAuth') ?? null;
 }
 
 /**
@@ -911,9 +915,9 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
  * POST /api/admin/users/:id/roles
  * Assign a role to user
  */
-export async function adminUserRoleAssignHandler(c: Context<{ Bindings: Env }>) {
+export async function adminUserRoleAssignHandler(c: AdminContext) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter } = createAdaptersFromContext(c as unknown as Context<{ Bindings: Env }>);
     const userId = c.req.param('id');
     const adminAuth = getAdminAuth(c);
     const body = await c.req.json<{

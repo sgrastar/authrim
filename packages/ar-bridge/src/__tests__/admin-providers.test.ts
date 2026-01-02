@@ -31,6 +31,8 @@ vi.mock('@authrim/ar-lib-core', () => {
     AR060001: { status: 401, rfcError: 'invalid_request' }, // ADMIN_AUTH_REQUIRED
     AR020002: { status: 404, rfcError: 'invalid_request' }, // CLIENT_NOT_FOUND
     AR060004: { status: 404, rfcError: 'invalid_request' }, // ADMIN_RESOURCE_NOT_FOUND
+    AR010001: { status: 400, rfcError: 'invalid_request' }, // VALIDATION_REQUIRED_FIELD
+    AR010002: { status: 400, rfcError: 'invalid_request' }, // VALIDATION_INVALID_VALUE
   };
 
   return {
@@ -47,6 +49,8 @@ vi.mock('@authrim/ar-lib-core', () => {
       ADMIN_AUTH_REQUIRED: 'AR060001',
       CLIENT_NOT_FOUND: 'AR020002',
       ADMIN_RESOURCE_NOT_FOUND: 'AR060004',
+      VALIDATION_REQUIRED_FIELD: 'AR010001',
+      VALIDATION_INVALID_VALUE: 'AR010002',
     },
     RFC_ERROR_CODES: {
       INVALID_REQUEST: 'invalid_request',

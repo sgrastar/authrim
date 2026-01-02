@@ -63,8 +63,8 @@ async function fetchUserWithPII(
     user_type: string;
     external_id: string | null;
     pii_partition: string;
-    created_at: string;
-    updated_at: string;
+    created_at: number;
+    updated_at: number;
   }>(
     `SELECT id, tenant_id, email_verified, phone_number_verified, password_hash,
             is_active, user_type, external_id, pii_partition, created_at, updated_at
@@ -145,9 +145,66 @@ async function fetchUserWithPII(
     external_id: userCore.external_id as string | null,
     active: userCore.is_active as number,
     custom_attributes_json: null,
-    created_at: userCore.created_at as string,
-    updated_at: userCore.updated_at as string,
+    created_at: new Date(userCore.created_at * 1000).toISOString(),
+    updated_at: new Date(userCore.updated_at * 1000).toISOString(),
   } as InternalUser;
+}
+
+/**
+ * Core user row from database
+ */
+interface CoreUserRow {
+  id: string;
+  tenant_id: string;
+  email_verified: number;
+  phone_number_verified: number;
+  password_hash: string | null;
+  is_active: number;
+  user_type: string;
+  external_id: string | null;
+  pii_partition: string;
+  created_at: number;
+  updated_at: number;
+}
+
+/**
+ * Address components for SCIM address parsing
+ */
+interface AddressComponents {
+  formatted?: string;
+  street_address?: string;
+  locality?: string;
+  region?: string;
+  postal_code?: string;
+  country?: string;
+}
+
+/**
+ * PII user row from database
+ */
+interface PIIUserRow {
+  id: string;
+  email: string | null;
+  name: string | null;
+  given_name: string | null;
+  family_name: string | null;
+  middle_name: string | null;
+  nickname: string | null;
+  preferred_username: string | null;
+  profile: string | null;
+  picture: string | null;
+  website: string | null;
+  gender: string | null;
+  birthdate: string | null;
+  zoneinfo: string | null;
+  locale: string | null;
+  phone_number: string | null;
+  address_formatted: string | null;
+  address_street_address: string | null;
+  address_locality: string | null;
+  address_region: string | null;
+  address_postal_code: string | null;
+  address_country: string | null;
 }
 
 /**
@@ -155,17 +212,17 @@ async function fetchUserWithPII(
  */
 async function fetchUsersWithPII(
   piiAdapter: DatabaseAdapter | null,
-  coreUsers: any[]
+  coreUsers: CoreUserRow[]
 ): Promise<InternalUser[]> {
   if (coreUsers.length === 0) return [];
 
   // Query PII for all users via Adapter
   const userIds = coreUsers.map((u) => u.id);
-  const piiMap = new Map<string, any>();
+  const piiMap = new Map<string, PIIUserRow>();
 
   if (piiAdapter && userIds.length > 0) {
     const placeholders = userIds.map(() => '?').join(',');
-    const piiResults = await piiAdapter.query<{ id: string; [key: string]: any }>(
+    const piiResults = await piiAdapter.query<PIIUserRow>(
       `SELECT id, email, name, given_name, family_name, middle_name, nickname,
               preferred_username, profile, picture, website, gender, birthdate,
               zoneinfo, locale, phone_number, address_formatted, address_street_address,
@@ -216,8 +273,8 @@ async function fetchUsersWithPII(
       external_id: core.external_id,
       active: core.is_active,
       custom_attributes_json: null,
-      created_at: core.created_at,
-      updated_at: core.updated_at,
+      created_at: new Date(core.created_at * 1000).toISOString(),
+      updated_at: new Date(core.updated_at * 1000).toISOString(),
     } as InternalUser;
   });
 }
@@ -273,10 +330,12 @@ import {
   type ScimError,
   type ScimPatchOp,
   type ScimQueryParams,
+  type ScimErrorType,
   type ScimBulkRequest,
   type ScimBulkResponse,
   type ScimBulkOperation,
   type ScimBulkOperationResponse,
+  type ScimBulkMethod,
   type BulkOperationConfig,
   // Mapper utilities
   userToScim,
@@ -354,9 +413,14 @@ app.use('*', async (c, next) => {
 });
 
 /**
+ * SCIM Context type alias
+ */
+type ScimContext = Context<{ Bindings: Env }>;
+
+/**
  * Helper: Get base URL from request
  */
-function getBaseUrl(c: any): string {
+function getBaseUrl(c: ScimContext): string {
   const url = new URL(c.req.url);
   return `${url.protocol}//${url.host}`;
 }
@@ -364,7 +428,12 @@ function getBaseUrl(c: any): string {
 /**
  * Helper: Return SCIM error response
  */
-function scimError(c: any, status: number, detail: string, scimType?: string): Response {
+function scimError(
+  c: ScimContext,
+  status: 400 | 401 | 403 | 404 | 409 | 412 | 413 | 500,
+  detail: string,
+  scimType?: ScimErrorType
+): Response {
   const error: ScimError = {
     schemas: [SCIM_SCHEMAS.ERROR],
     status: status.toString(),
@@ -372,7 +441,7 @@ function scimError(c: any, status: number, detail: string, scimType?: string): R
   };
 
   if (scimType) {
-    error.scimType = scimType as any;
+    error.scimType = scimType;
   }
 
   return c.json(error, status);
@@ -424,7 +493,7 @@ function validateSortColumn(sortBy: string, allowedColumns: Record<string, strin
 /**
  * Helper: Parse query parameters
  */
-function parseQueryParams(c: any): ScimQueryParams {
+function parseQueryParams(c: ScimContext): ScimQueryParams {
   const params: ScimQueryParams = {};
 
   const filter = c.req.query('filter');
@@ -961,7 +1030,7 @@ app.get('/Users', async (c) => {
     let sql = `SELECT id, tenant_id, email_verified, phone_number_verified, password_hash,
                is_active, user_type, external_id, pii_partition, created_at, updated_at
                FROM users_core WHERE tenant_id = ?`;
-    const sqlParams: any[] = [tenantId];
+    const sqlParams: (string | number | boolean | null)[] = [tenantId];
 
     // Apply filter if present
     // For SCIM filters referencing PII fields, we need to query PII DB first
@@ -1021,7 +1090,8 @@ app.get('/Users', async (c) => {
           };
           const { sql: whereSql, params: whereParams } = filterToSql(filterAst, coreAttributeMap);
           sql += ` AND ${whereSql}`;
-          sqlParams.push(...whereParams);
+          // Filter out undefined values from whereParams
+          sqlParams.push(...whereParams.filter((p): p is string | number | boolean | null => p !== undefined));
         }
       } catch (error) {
         // Log full error for debugging but don't expose to client
@@ -1061,7 +1131,7 @@ app.get('/Users', async (c) => {
     sqlParams.push(count, offset);
 
     // Execute query against Core DB via Adapter
-    const coreResults = await coreAdapter.query(sql, sqlParams);
+    const coreResults = await coreAdapter.query<CoreUserRow>(sql, sqlParams);
 
     // Fetch PII data and merge into InternalUser format
     const users = await fetchUsersWithPII(piiAdapter, coreResults);
@@ -1176,7 +1246,7 @@ app.post('/Users', async (c) => {
     if (internalUser.active === undefined) internalUser.active = 1;
 
     // Parse address JSON if provided
-    let addressParts: any = {};
+    let addressParts: AddressComponents = {};
     if (internalUser.address_json) {
       try {
         addressParts = JSON.parse(internalUser.address_json);
@@ -1321,7 +1391,7 @@ app.put('/Users/:id', async (c) => {
     }
 
     // Parse address JSON if provided
-    let addressParts: any = {};
+    let addressParts: AddressComponents = {};
     if (internalUser.address_json) {
       try {
         addressParts = JSON.parse(internalUser.address_json);
@@ -1434,7 +1504,7 @@ app.patch('/Users/:id', async (c) => {
     // Convert to SCIM format
     let scimUser = userToScim(existingUser, { baseUrl, includeGroups: false });
 
-    // Apply patch operations
+    // Apply patch operations (generic function preserves ScimUser type)
     scimUser = applyPatchOperations(scimUser, patchOp.Operations);
 
     // Validate after patching
@@ -1455,7 +1525,7 @@ app.patch('/Users/:id', async (c) => {
     const nowUnix = Math.floor(Date.now() / 1000);
 
     // Parse address JSON if provided
-    let addressParts: any = {};
+    let addressParts: AddressComponents = {};
     if (internalUser.address_json) {
       try {
         addressParts = JSON.parse(internalUser.address_json);
@@ -1575,7 +1645,7 @@ app.delete('/Users/:id', async (c) => {
         ) VALUES (?, ?, ?, 'scim_api', 'scim_delete', ?)`,
           [
             userId,
-            (existingUser as any).tenant_id || 'default',
+            existingUser.tenant_id || 'default',
             now,
             now + retentionDays * 24 * 60 * 60 * 1000,
           ]
@@ -1631,7 +1701,7 @@ app.get('/Groups', async (c) => {
     const offset = startIndex - 1;
 
     let sql = 'SELECT * FROM roles';
-    const sqlParams: any[] = [];
+    const sqlParams: (string | number | boolean | null)[] = [];
 
     // Apply filter if present
     if (params.filter) {
@@ -1643,7 +1713,8 @@ app.get('/Groups', async (c) => {
         };
         const { sql: whereSql, params: whereParams } = filterToSql(filterAst, attributeMap);
         sql += ` WHERE ${whereSql}`;
-        sqlParams.push(...whereParams);
+        // Filter out undefined values from whereParams
+        sqlParams.push(...whereParams.filter((p): p is string | number | boolean | null => p !== undefined));
       } catch (error) {
         // Log full error for debugging but don't expose to client
         console.error('[SCIM] Invalid filter:', error);
@@ -1962,7 +2033,7 @@ app.patch('/Groups/:id', async (c) => {
     // Convert to SCIM format
     let scimGroup = groupToScim(existingGroup, { baseUrl, includeMembers: true }, currentMembers);
 
-    // Apply patch operations
+    // Apply patch operations (generic function preserves ScimGroup type)
     scimGroup = applyPatchOperations(scimGroup, patchOp.Operations);
 
     // Validate after patching
@@ -2884,7 +2955,7 @@ async function processUserOperation(
 
     default:
       return {
-        method: method as any,
+        method: method as ScimBulkMethod,
         status: '400',
         response: {
           schemas: [SCIM_SCHEMAS.ERROR],
@@ -3244,7 +3315,7 @@ async function processGroupOperation(
 
     default:
       return {
-        method: method as any,
+        method: method as ScimBulkMethod,
         status: '400',
         response: {
           schemas: [SCIM_SCHEMAS.ERROR],
