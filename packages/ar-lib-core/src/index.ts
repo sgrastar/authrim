@@ -37,6 +37,12 @@ export * from './types/deprecation';
 // SDK Compatibility Types (preparation for future SDK)
 export * from './types/sdk-compatibility';
 
+// ID-JAG (Identity Assertion Authorization Grant) Types
+export * from './types/id-jag';
+
+// Assurance Levels Types (NIST SP 800-63-4)
+export * from './types/settings/assurance-levels';
+
 // Utils
 export * from './utils/audit-log';
 export * from './utils/client-authentication';
@@ -73,6 +79,7 @@ export * from './utils/oauth-config';
 export * from './utils/encryption-config';
 export * from './utils/settings-manager';
 export * from './utils/pii-encryption';
+export * from './utils/pii-config';
 export * from './utils/challenge-sharding';
 export * from './utils/token-revocation-sharding';
 export * from './utils/region-sharding';
@@ -177,6 +184,9 @@ export * from './services/frontchannel-logout';
 export * from './services/logout-webhook-sender';
 export * from './services/policy-resolver';
 
+// Audit Logging (Phase 10 - Unified Audit System)
+export * from './services/audit';
+
 // Event System (Unified Event System)
 // Note: types/events exports are namespaced to avoid conflicts with types/contracts
 export * as Events from './types/events';
@@ -242,6 +252,7 @@ export * from './middleware/version-check';
 export * from './middleware/api-version';
 export * from './middleware/deprecation-headers';
 export * from './middleware/sdk-compatibility';
+export * from './middleware/idempotency';
 
 // Plugin Context (Phase 9 - Plugin Architecture)
 export * from './middleware/plugin-context';

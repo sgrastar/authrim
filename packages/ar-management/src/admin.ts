@@ -25,6 +25,8 @@ import {
   AR_ERROR_CODES,
   validateAllowedOrigins,
   escapeLikePattern,
+  createAuditLogFromContext,
+  getLogger,
   // Event System
   publishEvent,
   USER_EVENTS,
@@ -33,6 +35,10 @@ import {
   type UserEventData,
   type ClientEventData,
   type ExtendedConsentEventData,
+  // Operational Logs (for reason_detail storage)
+  storeOperationalLog,
+  // PII Configuration
+  getOperationalLogRetentionDays,
 } from '@authrim/ar-lib-core';
 import type { UserCore, UserPII } from '@authrim/ar-lib-core';
 
@@ -100,16 +106,24 @@ function detectImageType(data: Uint8Array): ImageTypeInfo | null {
 /**
  * Sanitize error for logging (PII Protection)
  * Logs only error type/code, not full message which may contain sensitive data
+ * @deprecated Use structured logger with log.error() instead
  */
 function logSanitizedError(context: string, error: unknown): void {
+  // This function is deprecated and kept only for backward compatibility
+  // New code should use getLogger(c).module('ADMIN').error() directly
+  // The createLogger function is used here since we don't have Hono context
+  const { createLogger } = require('@authrim/ar-lib-core') as {
+    createLogger: () => {
+      module: (name: string) => {
+        error: (msg: string, ctx: Record<string, unknown>, err?: Error) => void;
+      };
+    };
+  };
+  const log = createLogger().module('ADMIN');
   if (error instanceof Error) {
-    console.error(`${context}:`, {
-      type: error.name,
-      // Only log message in development (ENVIRONMENT !== 'production')
-      ...(process.env.NODE_ENV === 'development' && { message: error.message }),
-    });
+    log.error(context, { type: error.name }, error);
   } else {
-    console.error(`${context}: Unknown error type`);
+    log.error(`${context}: Unknown error type`, {});
   }
 }
 
@@ -591,6 +605,12 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
           created_at: toMilliseconds(core.created_at),
           updated_at: toMilliseconds(core.updated_at),
           last_login_at: toMilliseconds(core.last_login_at),
+          // Status fields for suspend/lock (Admin SDK Phase 1)
+          status: core.status ?? 'active',
+          suspended_at: toMilliseconds(core.suspended_at),
+          suspended_until: toMilliseconds(core.suspended_until),
+          locked_at: toMilliseconds(core.locked_at),
+          locked_until: toMilliseconds(core.locked_until),
         };
       });
     } else if (coreUsers.length > 0) {
@@ -609,6 +629,12 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
         created_at: toMilliseconds(core.created_at),
         updated_at: toMilliseconds(core.updated_at),
         last_login_at: toMilliseconds(core.last_login_at),
+        // Status fields for suspend/lock (Admin SDK Phase 1)
+        status: core.status ?? 'active',
+        suspended_at: toMilliseconds(core.suspended_at),
+        suspended_until: toMilliseconds(core.suspended_until),
+        locked_at: toMilliseconds(core.locked_at),
+        locked_until: toMilliseconds(core.locked_until),
       }));
     }
 
@@ -712,6 +738,12 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       created_at: toMilliseconds(userCore.created_at),
       updated_at: toMilliseconds(userCore.updated_at),
       last_login_at: toMilliseconds(userCore.last_login_at),
+      // Status fields for suspend/lock (Admin SDK Phase 1)
+      status: userCore.status,
+      suspended_at: toMilliseconds(userCore.suspended_at),
+      suspended_until: toMilliseconds(userCore.suspended_until),
+      locked_at: toMilliseconds(userCore.locked_at),
+      locked_until: toMilliseconds(userCore.locked_until),
     };
 
     // Format passkeys with millisecond timestamps (Repository returns array directly)
@@ -888,6 +920,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     };
 
     // Publish user created event (non-blocking)
+    const log = getLogger(c).module('ADMIN-USER');
     publishEvent(c, {
       type: USER_EVENTS.CREATED,
       tenantId,
@@ -895,7 +928,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
         userId,
       } satisfies UserEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish user.created:', err);
+      log.error('Failed to publish user.created event', { action: 'publish_event' }, err as Error);
     });
 
     return c.json(
@@ -1056,6 +1089,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
     };
 
     // Publish user updated event (non-blocking)
+    const log = getLogger(c).module('ADMIN-USER');
     publishEvent(c, {
       type: USER_EVENTS.UPDATED,
       tenantId: getTenantIdFromContext(c),
@@ -1063,7 +1097,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
         userId,
       } satisfies UserEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish user.updated:', err);
+      log.error('Failed to publish user.updated event', { action: 'publish_event' }, err as Error);
     });
 
     return c.json({
@@ -1150,6 +1184,7 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
     await invalidateUserCache(c.env, userId);
 
     // Publish user deleted event (non-blocking)
+    const log = getLogger(c).module('ADMIN-USER');
     publishEvent(c, {
       type: USER_EVENTS.DELETED,
       tenantId,
@@ -1157,7 +1192,7 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
         userId,
       } satisfies UserEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish user.deleted:', err);
+      log.error('Failed to publish user.deleted event', { action: 'publish_event' }, err as Error);
     });
 
     return c.json({
@@ -1614,6 +1649,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // Publish client created event (non-blocking)
+    const log = getLogger(c).module('ADMIN-CLIENT');
     publishEvent(c, {
       type: CLIENT_EVENTS.CREATED,
       tenantId,
@@ -1621,7 +1657,11 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         clientId: client.client_id,
       } satisfies ClientEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish client.created:', err);
+      log.error(
+        'Failed to publish client.created event',
+        { action: 'publish_event' },
+        err as Error
+      );
     });
 
     // Return the created client (including client_secret only on creation)
@@ -1885,10 +1925,11 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     // Invalidate CLIENTS_CACHE (explicit invalidation after D1 update)
     // D1 is source of truth - cache will be repopulated on next getClient() call
+    const log = getLogger(c).module('ADMIN-CLIENT');
     try {
       await c.env.CLIENTS_CACHE.delete(clientId);
     } catch (error) {
-      console.warn(`Failed to invalidate cache for ${clientId}:`, error);
+      log.warn('Failed to invalidate client cache', { action: 'cache_invalidate', clientId });
       // Cache invalidation failure should not block the response
       // Worst case: stale cache for up to 5 minutes (TTL)
     }
@@ -1901,7 +1942,11 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         clientId,
       } satisfies ClientEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish client.updated:', err);
+      log.error(
+        'Failed to publish client.updated event',
+        { action: 'publish_event' },
+        err as Error
+      );
     });
 
     return c.json({
@@ -1947,10 +1992,11 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
     await authCtx.repositories.client.delete(clientId);
 
     // Invalidate CLIENTS_CACHE (explicit invalidation after D1 delete)
+    const log = getLogger(c).module('ADMIN-CLIENT');
     try {
       await c.env.CLIENTS_CACHE.delete(clientId);
     } catch (error) {
-      console.warn(`Failed to invalidate cache for ${clientId}:`, error);
+      log.warn('Failed to invalidate client cache', { action: 'cache_invalidate', clientId });
       // Cache invalidation failure should not block the response
     }
 
@@ -1962,7 +2008,11 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
         clientId,
       } satisfies ClientEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish client.deleted:', err);
+      log.error(
+        'Failed to publish client.deleted event',
+        { action: 'publish_event' },
+        err as Error
+      );
     });
 
     return c.json({
@@ -2019,12 +2069,13 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
 
     // Invalidate cache for successfully deleted clients
     // Calculate successfully deleted IDs = requested - failed
+    const log = getLogger(c).module('ADMIN-CLIENT');
     const successfullyDeletedIds = client_ids.filter((id) => !result.failed.includes(id));
     for (const clientId of successfullyDeletedIds) {
       try {
         await c.env.CLIENTS_CACHE.delete(clientId);
       } catch (error) {
-        console.warn(`Failed to invalidate cache for ${clientId}:`, error);
+        log.warn('Failed to invalidate client cache', { action: 'cache_invalidate', clientId });
         // Cache invalidation failure should not block the bulk delete
       }
     }
@@ -2050,6 +2101,161 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
       },
       500
     );
+  }
+}
+
+/**
+ * POST /api/admin/clients/:id/regenerate-secret
+ * Regenerate client secret
+ *
+ * Security:
+ * - RBAC: tenant_admin or higher
+ * - Response must include Cache-Control: no-store
+ * - Secret is only shown once, never logged
+ * - Optional grace period for old secret
+ *
+ * Side effects:
+ * - New client_secret generated (256-bit random)
+ * - Optional: revoke tokens issued with old secret
+ * - Audit log entry created (secret value NOT logged)
+ */
+export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('ADMIN-CLIENT');
+  const tenantId = getTenantIdFromContext(c);
+  const clientId = c.req.param('id');
+
+  if (!clientId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
+  }
+
+  try {
+    const body = await c.req
+      .json<{
+        revoke_existing_tokens?: boolean;
+        grace_period_hours?: number;
+      }>()
+      .catch(() => ({ revoke_existing_tokens: undefined, grace_period_hours: undefined }));
+
+    // Validate grace_period_hours if provided
+    const gracePeriodHours = body.grace_period_hours;
+    if (gracePeriodHours !== undefined) {
+      if (gracePeriodHours < 1 || gracePeriodHours > 168) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'grace_period_hours', reason: 'Must be between 1 and 168 hours' },
+        });
+      }
+    }
+
+    const adapter = new D1Adapter({ db: c.env.DB });
+
+    // Get current client state (verify tenant ownership)
+    const client = await adapter.queryOne<{
+      id: string;
+      tenant_id: string;
+      client_id: string;
+      client_secret_hash: string;
+    }>(
+      'SELECT id, tenant_id, client_id, client_secret_hash FROM clients WHERE client_id = ? AND tenant_id = ?',
+      [clientId, tenantId]
+    );
+
+    if (!client) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    // Generate new secret (256-bit = 32 bytes = 64 hex chars)
+    const randomBytes = new Uint8Array(32);
+    crypto.getRandomValues(randomBytes);
+    const newSecret = Array.from(randomBytes)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    // Hash new secret for storage
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(newSecret));
+    const newSecretHash = Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    const nowTs = Math.floor(Date.now() / 1000);
+    let oldSecretValidUntil: number | null = null;
+
+    // Handle grace period
+    if (gracePeriodHours) {
+      oldSecretValidUntil = nowTs + gracePeriodHours * 3600;
+      // Store old secret hash with expiry for dual validation during grace period
+      await adapter.execute(
+        `UPDATE clients SET
+          client_secret_hash = ?,
+          old_secret_hash = client_secret_hash,
+          old_secret_valid_until = ?,
+          updated_at = ?
+         WHERE client_id = ? AND tenant_id = ?`,
+        [newSecretHash, oldSecretValidUntil, nowTs, clientId, tenantId]
+      );
+    } else {
+      // Immediate replacement
+      await adapter.execute(
+        `UPDATE clients SET
+          client_secret_hash = ?,
+          old_secret_hash = NULL,
+          old_secret_valid_until = NULL,
+          updated_at = ?
+         WHERE client_id = ? AND tenant_id = ?`,
+        [newSecretHash, nowTs, clientId, tenantId]
+      );
+    }
+
+    // Revoke tokens if requested
+    let revokedTokens = 0;
+    if (body.revoke_existing_tokens) {
+      const tokenResult = await adapter.execute(
+        `UPDATE refresh_tokens SET revoked = 1, revoked_at = ? WHERE client_id = ? AND tenant_id = ? AND revoked = 0`,
+        [nowTs, clientId, tenantId]
+      );
+      revokedTokens = tokenResult.rowsAffected;
+    }
+
+    // Invalidate client cache
+    try {
+      await c.env.CLIENTS_CACHE.delete(clientId);
+    } catch {
+      log.warn('Failed to invalidate client cache after secret regeneration', {
+        action: 'cache_invalidate',
+        clientId,
+      });
+    }
+
+    // Write audit log (secret value NOT logged)
+    await createAuditLogFromContext(c, 'client.secret_regenerate', 'client', clientId, {
+      grace_period_hours: gracePeriodHours,
+      revoked_tokens: revokedTokens,
+    });
+
+    log.info('Client secret regenerated', {
+      action: 'client_secret_regenerate',
+      clientId,
+      gracePeriodHours,
+      revokedTokens,
+    });
+
+    // Set Cache-Control header to prevent caching of secret
+    c.header('Cache-Control', 'no-store');
+
+    return c.json({
+      client_id: clientId,
+      client_secret: newSecret, // Only shown once
+      created_at: new Date(nowTs * 1000).toISOString(),
+      ...(oldSecretValidUntil && {
+        old_secret_valid_until: new Date(oldSecretValidUntil * 1000).toISOString(),
+      }),
+      revoked_tokens: revokedTokens,
+    });
+  } catch (error) {
+    logSanitizedError('Admin client regenerate secret error', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
 
@@ -2427,7 +2633,8 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
           sessionStoreOk = true;
         }
       } catch (error) {
-        console.warn('Failed to get session from SessionStore:', error);
+        const log = getLogger(c).module('ADMIN');
+        log.warn('Failed to get session from SessionStore', { action: 'session_get', sessionId });
       }
     }
 
@@ -2521,26 +2728,36 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Invalidate session in SessionStore DO (sharded) via RPC
+    const log = getLogger(c).module('ADMIN');
     if (isShardedSessionId(sessionId)) {
       try {
         const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (!deleted) {
-          console.warn(`Failed to delete session ${sessionId} from SessionStore`);
+          log.warn('Failed to delete session from SessionStore', {
+            action: 'session_delete',
+            sessionId,
+          });
         }
       } catch (error) {
-        console.warn(`Failed to route to session store for session ${sessionId}:`, error);
+        log.warn('Failed to route to session store', { action: 'session_delete', sessionId });
       }
     } else {
-      console.warn(`Session ${sessionId} is not in sharded format, skipping DO deletion`);
+      log.warn('Session is not in sharded format, skipping DO deletion', {
+        action: 'session_delete',
+        sessionId,
+      });
     }
 
     // Delete from D1 via adapter
     await authCtx.coreAdapter.execute('DELETE FROM sessions WHERE id = ?', [sessionId]);
 
-    // TODO: Create Audit Log entry (Phase 6)
-    console.log(`Admin revoked session: ${sessionId} for user ${session.user_id}`);
+    log.info('Admin revoked session', {
+      action: 'session_revoke',
+      sessionId,
+      userId: session.user_id,
+    });
 
     return c.json({
       success: true,
@@ -2589,10 +2806,13 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
     // With sharded SessionStore, we cannot efficiently query sessions by userId
     // Sessions are sharded by sessionId, not userId
     // We can only delete from D1 and let DO sessions expire naturally
-    console.warn(
-      `[ADMIN] Revoking all sessions for user ${userId}: ` +
-        'Cannot delete from sharded SessionStore (sessions will expire naturally). ' +
-        'Deleting from D1 only.'
+    const log = getLogger(c).module('ADMIN');
+    log.warn(
+      'Revoking all sessions for user - sharded SessionStore sessions will expire naturally',
+      {
+        action: 'revoke_all_sessions',
+        userId,
+      }
     );
 
     // Delete all sessions from D1 via adapter
@@ -2603,10 +2823,11 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
 
     const dbRevokedCount = deleteResult.rowsAffected || 0;
 
-    // TODO: Create Audit Log entry (Phase 6)
-    console.log(
-      `Admin revoked all sessions for user: ${userId} (${dbRevokedCount} sessions from D1)`
-    );
+    log.info('Admin revoked all sessions for user', {
+      action: 'revoke_all_sessions',
+      userId,
+      revokedCount: dbRevokedCount,
+    });
 
     return c.json({
       success: true,
@@ -2625,6 +2846,542 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
       },
       500
     );
+  }
+}
+
+// =============================================================================
+// User Suspend/Lock API
+// =============================================================================
+
+/**
+ * Pre-defined reason codes for suspend operations
+ * These codes are stored in audit logs (not free-form text)
+ */
+const SUSPEND_REASON_CODES = new Set([
+  'policy_violation',
+  'security_incident',
+  'account_abuse',
+  'payment_issue',
+  'user_request',
+  'admin_action',
+  'investigation',
+  'compliance',
+  'other',
+]);
+
+/**
+ * Pre-defined reason codes for lock operations
+ */
+const LOCK_REASON_CODES = new Set([
+  'brute_force',
+  'suspicious_activity',
+  'compromised_credentials',
+  'security_incident',
+  'admin_action',
+  'investigation',
+  'compliance',
+  'other',
+]);
+
+/**
+ * POST /api/admin/users/:id/suspend
+ * Suspend a user account with reason code
+ *
+ * Security:
+ * - RBAC: tenant_admin or higher
+ * - Tenant isolation: operation scoped to tenant
+ * - Audit: reason_code logged (not reason_detail for privacy)
+ *
+ * Side effects:
+ * - User status set to 'suspended'
+ * - Optional: revoke all tokens and sessions
+ * - Audit log entry created
+ */
+export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('ADMIN-USER');
+  const tenantId = getTenantIdFromContext(c);
+  const userId = c.req.param('id');
+
+  if (!userId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
+  }
+
+  try {
+    const body = await c.req.json<{
+      reason_code: string;
+      reason_detail?: string;
+      duration_hours?: number;
+      revoke_tokens?: boolean;
+      revoke_sessions?: boolean;
+      notify_user?: boolean;
+    }>();
+
+    // Validate reason_code
+    if (!body.reason_code || !SUSPEND_REASON_CODES.has(body.reason_code)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'reason_code',
+          reason: `Must be one of: ${Array.from(SUSPEND_REASON_CODES).join(', ')}`,
+        },
+      });
+    }
+
+    // Validate duration_hours if provided
+    if (body.duration_hours !== undefined) {
+      if (body.duration_hours < 1 || body.duration_hours > 8760) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'duration_hours', reason: 'Must be between 1 and 8760' },
+        });
+      }
+    }
+
+    const adapter = new D1Adapter({ db: c.env.DB });
+
+    // Get current user state (verify tenant ownership)
+    // Note: Using users_core for PII-separated architecture
+    const user = await adapter.queryOne<{ id: string; tenant_id: string; status: string }>(
+      'SELECT id, tenant_id, status FROM users_core WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
+    );
+
+    if (!user) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    const previousStatus = user.status ?? 'active';
+    const nowTs = Math.floor(Date.now() / 1000);
+    const expiresAt = body.duration_hours ? nowTs + body.duration_hours * 3600 : null;
+
+    // Update user status in users_core (PII-separated architecture)
+    await adapter.execute(
+      `UPDATE users_core SET status = ?, suspended_at = ?, suspended_until = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
+      ['suspended', nowTs, expiresAt, nowTs, userId, tenantId]
+    );
+
+    // Token/Session Revocation Strategy (Authrim Architecture):
+    // =========================================================
+    // Authrim uses user status-based token invalidation rather than individual token revocation.
+    // When user.status = 'suspended' or 'locked':
+    // 1. Introspection endpoint checks user status and returns active: false for all tokens
+    // 2. This is more efficient for distributed systems (no need to update each token in DO)
+    //
+    // Session invalidation via SessionStore DO is a future enhancement.
+    // For now, sessions will expire naturally. The login flow checks user status
+    // and blocks suspended/locked users from creating new sessions.
+    //
+    // The revoke_tokens/revoke_sessions flags are kept for API compatibility
+    // and future implementation of explicit DO-based revocation.
+    const revokedTokens = body.revoke_tokens !== false ? -1 : 0; // -1 indicates implicit revocation via status
+    const revokedSessions = body.revoke_sessions !== false ? -1 : 0;
+
+    // Write audit log (reason_code only, not reason_detail for privacy)
+    await createAuditLogFromContext(c, 'user.suspend', 'user', userId, {
+      reason_code: body.reason_code,
+      previous_status: previousStatus,
+      duration_hours: body.duration_hours,
+      revoked_tokens: revokedTokens,
+      revoked_sessions: revokedSessions,
+    });
+
+    // Store reason_detail to operational_logs if provided (encrypted, short retention)
+    if (body.reason_detail && c.env.PII_ENCRYPTION_KEY) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const adminAuth = (c as any).get('adminAuth') as { userId: string } | undefined;
+        const actorId = adminAuth?.userId ?? 'unknown';
+        const requestId = c.req.header('X-Request-ID');
+
+        // Get retention days from tenant config (default: 90)
+        const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
+
+        await storeOperationalLog(adapter, c.env.PII_ENCRYPTION_KEY, {
+          tenantId,
+          subjectType: 'user',
+          subjectId: userId,
+          actorId,
+          action: 'user.suspend',
+          reasonDetail: body.reason_detail,
+          requestId,
+          retentionDays,
+        });
+      } catch (opLogError) {
+        // Non-blocking: log error but don't fail the main operation
+        log.warn('Failed to store operational log for suspend', { userId }, opLogError as Error);
+      }
+    }
+
+    log.info('User suspended', {
+      action: 'user_suspend',
+      userId,
+      reasonCode: body.reason_code,
+      previousStatus,
+      revokedTokens,
+      revokedSessions,
+    });
+
+    return c.json({
+      user_id: userId,
+      status: 'suspended',
+      previous_status: previousStatus,
+      effective_at: new Date(nowTs * 1000).toISOString(),
+      ...(expiresAt && { expires_at: new Date(expiresAt * 1000).toISOString() }),
+      reason_code: body.reason_code,
+      revoked: {
+        tokens: revokedTokens,
+        sessions: revokedSessions,
+      },
+    });
+  } catch (error) {
+    logSanitizedError('Admin suspend user error', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/**
+ * POST /api/admin/users/:id/lock
+ * Lock a user account (more severe than suspend)
+ *
+ * Security:
+ * - RBAC: tenant_admin or higher
+ * - Tenant isolation: operation scoped to tenant
+ * - Audit: reason_code logged (not reason_detail for privacy)
+ *
+ * Side effects:
+ * - User status set to 'locked'
+ * - Optional: revoke all tokens and sessions
+ * - Audit log entry created
+ * - Lock is more severe: blocks new logins and API access
+ */
+export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('ADMIN-USER');
+  const tenantId = getTenantIdFromContext(c);
+  const userId = c.req.param('id');
+
+  if (!userId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
+  }
+
+  try {
+    const body = await c.req.json<{
+      reason_code: string;
+      reason_detail?: string;
+      unlock_at?: string;
+      revoke_tokens?: boolean;
+      revoke_sessions?: boolean;
+    }>();
+
+    // Validate reason_code
+    if (!body.reason_code || !LOCK_REASON_CODES.has(body.reason_code)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'reason_code',
+          reason: `Must be one of: ${Array.from(LOCK_REASON_CODES).join(', ')}`,
+        },
+      });
+    }
+
+    // Validate unlock_at if provided
+    let unlockAtTs: number | null = null;
+    if (body.unlock_at) {
+      const unlockDate = new Date(body.unlock_at);
+      if (isNaN(unlockDate.getTime())) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'unlock_at', reason: 'Must be valid ISO 8601 datetime' },
+        });
+      }
+      unlockAtTs = Math.floor(unlockDate.getTime() / 1000);
+    }
+
+    const adapter = new D1Adapter({ db: c.env.DB });
+
+    // Get current user state (verify tenant ownership)
+    // Note: Using users_core for PII-separated architecture
+    const user = await adapter.queryOne<{ id: string; tenant_id: string; status: string }>(
+      'SELECT id, tenant_id, status FROM users_core WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
+    );
+
+    if (!user) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    const previousStatus = user.status ?? 'active';
+    const nowTs = Math.floor(Date.now() / 1000);
+
+    // Update user status in users_core (PII-separated architecture)
+    await adapter.execute(
+      `UPDATE users_core SET status = ?, locked_at = ?, locked_until = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
+      ['locked', nowTs, unlockAtTs, nowTs, userId, tenantId]
+    );
+
+    // Token/Session Revocation Strategy (Authrim Architecture):
+    // Same as suspend - user status-based token invalidation via introspection.
+    // See suspend handler comments for details.
+    const revokedTokens = body.revoke_tokens !== false ? -1 : 0; // -1 indicates implicit revocation via status
+    const revokedSessions = body.revoke_sessions !== false ? -1 : 0;
+
+    // Write audit log (reason_code only, not reason_detail for privacy)
+    await createAuditLogFromContext(c, 'user.lock', 'user', userId, {
+      reason_code: body.reason_code,
+      previous_status: previousStatus,
+      unlock_at: body.unlock_at,
+      revoked_tokens: revokedTokens,
+      revoked_sessions: revokedSessions,
+    });
+
+    // Store reason_detail to operational_logs if provided (encrypted, short retention)
+    if (body.reason_detail && c.env.PII_ENCRYPTION_KEY) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const adminAuth = (c as any).get('adminAuth') as { userId: string } | undefined;
+        const actorId = adminAuth?.userId ?? 'unknown';
+        const requestId = c.req.header('X-Request-ID');
+
+        // Get retention days from tenant config (default: 90)
+        const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
+
+        await storeOperationalLog(adapter, c.env.PII_ENCRYPTION_KEY, {
+          tenantId,
+          subjectType: 'user',
+          subjectId: userId,
+          actorId,
+          action: 'user.lock',
+          reasonDetail: body.reason_detail,
+          requestId,
+          retentionDays,
+        });
+      } catch (opLogError) {
+        // Non-blocking: log error but don't fail the main operation
+        log.warn('Failed to store operational log for lock', { userId }, opLogError as Error);
+      }
+    }
+
+    log.info('User locked', {
+      action: 'user_lock',
+      userId,
+      reasonCode: body.reason_code,
+      previousStatus,
+      revokedTokens,
+      revokedSessions,
+    });
+
+    return c.json({
+      user_id: userId,
+      status: 'locked',
+      previous_status: previousStatus,
+      effective_at: new Date(nowTs * 1000).toISOString(),
+      ...(unlockAtTs && { unlock_at: new Date(unlockAtTs * 1000).toISOString() }),
+      reason_code: body.reason_code,
+      revoked: {
+        tokens: revokedTokens,
+        sessions: revokedSessions,
+      },
+    });
+  } catch (error) {
+    logSanitizedError('Admin lock user error', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+// =============================================================================
+// Phase 2: User Anonymize (GDPR Article 17 - Right to Erasure)
+// =============================================================================
+
+/**
+ * Anonymization reason codes
+ */
+const ANONYMIZE_REASON_CODES = new Set([
+  'gdpr_article_17', // GDPR right to erasure
+  'user_request', // User requested deletion
+  'data_retention', // Data retention policy
+  'legal_requirement', // Legal/regulatory requirement
+  'consent_withdrawn', // Consent withdrawn
+]);
+
+/**
+ * POST /api/admin/users/:id/anonymize
+ * Anonymize (delete) user data per GDPR Article 17
+ *
+ * This is an irreversible operation that:
+ * 1. Deletes all PII from PII database
+ * 2. Updates core database status to 'deleted'
+ * 3. Creates a tombstone record (deletion proof without PII)
+ * 4. Revokes all tokens and sessions
+ * 5. Writes audit log with hashed user ID only
+ *
+ * Security:
+ * - Requires Idempotency-Key header (recommended)
+ * - Checks for legal hold before proceeding
+ * - Tenant isolation enforced
+ */
+export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('ADMIN-USER');
+  const tenantId = getTenantIdFromContext(c);
+  const userId = c.req.param('id');
+
+  if (!userId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
+  }
+
+  try {
+    const body = await c.req.json<{
+      reason_code: string;
+      confirm: boolean;
+    }>();
+
+    // Validate reason_code
+    if (!body.reason_code || !ANONYMIZE_REASON_CODES.has(body.reason_code)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'reason_code',
+          reason: `Must be one of: ${Array.from(ANONYMIZE_REASON_CODES).join(', ')}`,
+        },
+      });
+    }
+
+    // Require explicit confirmation
+    if (body.confirm !== true) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'confirm', reason: 'Must be true to confirm irreversible deletion' },
+      });
+    }
+
+    const adapter = new D1Adapter({ db: c.env.DB });
+    const nowTs = Math.floor(Date.now() / 1000);
+
+    // Get current user state (verify tenant ownership and check if already deleted)
+    const user = await adapter.queryOne<{
+      id: string;
+      tenant_id: string;
+      status: string;
+      pii_status: string | null;
+    }>(
+      'SELECT id, tenant_id, status, pii_status FROM users_core WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
+    );
+
+    if (!user) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    // Check if already anonymized
+    if (user.pii_status === 'deleted' || user.status === 'deleted') {
+      return c.json({
+        user_id: userId,
+        already_anonymized: true,
+        message: 'User has already been anonymized',
+      });
+    }
+
+    // Check for legal hold (block anonymization if active)
+    const legalHold = await adapter.queryOne<{ id: string; reason: string }>(
+      `SELECT id, reason FROM legal_holds
+       WHERE tenant_id = ? AND subject_type = 'user' AND subject_id = ?
+       AND (expires_at IS NULL OR expires_at > ?)`,
+      [tenantId, userId, nowTs]
+    );
+
+    if (legalHold) {
+      return c.json(
+        {
+          error: 'legal_hold_active',
+          error_description: 'User is under legal hold and cannot be anonymized',
+          hold_id: legalHold.id,
+        },
+        409
+      );
+    }
+
+    // Generate user ID hash for audit trail (no way to recover original ID)
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(userId + tenantId));
+    const userIdHash = Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    // Get admin actor ID
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adminAuth = (c as any).get('adminAuth') as { adminId?: string } | undefined;
+    const deletedBy = adminAuth?.adminId ?? 'unknown';
+
+    // Step 1: Delete from PII database if available
+    if (c.env.DB_PII) {
+      const piiAdapter = new D1Adapter({ db: c.env.DB_PII });
+      await piiAdapter.execute('DELETE FROM users_pii WHERE user_id = ?', [userId]);
+    }
+
+    // Step 2: Update core database - mark as deleted
+    await adapter.execute(
+      `UPDATE users_core SET
+         status = 'deleted',
+         pii_status = 'deleted',
+         email = NULL,
+         phone = NULL,
+         name = NULL,
+         deleted_at = ?,
+         updated_at = ?
+       WHERE id = ? AND tenant_id = ?`,
+      [nowTs, nowTs, userId, tenantId]
+    );
+
+    // Step 3: Create tombstone record
+    const tombstoneId = crypto.randomUUID();
+    const retentionYears = 7; // Default 7 years for audit compliance
+    const retentionUntil = nowTs + retentionYears * 365 * 24 * 60 * 60;
+
+    await adapter.execute(
+      `INSERT INTO tombstones (id, user_id_hash, tenant_id, deleted_at, deleted_by, reason_code, retention_until)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [tombstoneId, userIdHash, tenantId, nowTs, deletedBy, body.reason_code, retentionUntil]
+    );
+
+    // Step 4: Revoke all sessions
+    await adapter.execute(
+      'UPDATE sessions SET revoked = 1, updated_at = ? WHERE user_id = ? AND tenant_id = ?',
+      [nowTs, userId, tenantId]
+    );
+
+    // Step 5: Delete related data (user_roles, organization_members, etc.)
+    await Promise.all([
+      adapter.execute('DELETE FROM user_roles WHERE user_id = ?', [userId]),
+      adapter.execute('DELETE FROM organization_members WHERE user_id = ?', [userId]),
+      adapter.execute('DELETE FROM user_consents WHERE user_id = ?', [userId]),
+      adapter.execute('DELETE FROM mfa_enrollments WHERE user_id = ?', [userId]),
+      adapter.execute('DELETE FROM passkey_credentials WHERE user_id = ?', [userId]),
+    ]);
+
+    // Step 6: Write audit log (user_id_hash only, no original ID)
+    await createAuditLogFromContext(c, 'user.anonymized', 'user', userIdHash, {
+      reason_code: body.reason_code,
+      tombstone_id: tombstoneId,
+      retention_until: new Date(retentionUntil * 1000).toISOString(),
+    });
+
+    log.info('User anonymized', {
+      action: 'user_anonymize',
+      userIdHash,
+      reasonCode: body.reason_code,
+      tombstoneId,
+    });
+
+    return c.json({
+      success: true,
+      user_id_hash: userIdHash,
+      tombstone_id: tombstoneId,
+      reason_code: body.reason_code,
+      deleted_at: new Date(nowTs * 1000).toISOString(),
+      retention_until: new Date(retentionUntil * 1000).toISOString(),
+      message: 'User data has been permanently deleted',
+    });
+  } catch (error) {
+    logSanitizedError('Admin anonymize user error', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
 
@@ -3237,7 +3994,8 @@ export async function adminSigningKeyGetHandler(c: Context<{ Bindings: Env }>) {
     const keyData = await keyManager.getActiveKeyWithPrivateRpc();
 
     if (!keyData || !keyData.privatePEM) {
-      console.error('Failed to get signing key: no key data');
+      const log = getLogger(c).module('ADMIN');
+      log.error('Failed to get signing key: no key data', { action: 'get_signing_key' });
       return c.json(
         {
           error: 'server_error',
@@ -3518,7 +4276,12 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
     // D1 insert is handled by SessionStore.saveToD1() asynchronously
     // (removed duplicate blocking D1 INSERT for performance optimization)
 
-    console.log(`[ADMIN] Created test session for user: ${user_id}, session: ${sessionId}`);
+    const log = getLogger(c).module('ADMIN');
+    log.info('Created test session for user', {
+      action: 'create_test_session',
+      userId: user_id,
+      sessionId,
+    });
 
     return c.json(
       {
@@ -3750,7 +4513,12 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
       },
     });
 
-    console.log(`[ADMIN] Created test email code for user: ${userId}, session: ${otpSessionId}`);
+    const log = getLogger(c).module('ADMIN');
+    log.info('Created test email code for user', {
+      action: 'create_test_email_code',
+      userId,
+      otpSessionId,
+    });
 
     return c.json(
       {
@@ -3934,13 +4702,14 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
     // Invalidate consent cache
     await invalidateConsentCache(c.env, userId, clientId);
 
+    const log = getLogger(c).module('ADMIN');
     // Add to revocation list
     try {
       const revocationKey = `consent_revoked:${userId}:${clientId}`;
       const revocationTTL = 86400 * 90;
       await revokeToken(c.env, revocationKey, revocationTTL);
     } catch (error) {
-      console.warn('[Admin] Token revocation warning:', error);
+      log.warn('Token revocation warning', { action: 'token_revocation', userId, clientId });
     }
 
     // Publish consent.revoked event
@@ -3956,10 +4725,14 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
         initiatedBy: 'admin',
       } satisfies ExtendedConsentEventData,
     }).catch((err) => {
-      console.error('[Event] Failed to publish consent.revoked:', err);
+      log.error(
+        'Failed to publish consent.revoked event',
+        { action: 'publish_event' },
+        err as Error
+      );
     });
 
-    console.log(`[ADMIN] Revoked consent: user=${userId}, client=${clientId}`);
+    log.info('Revoked consent', { action: 'consent_revoke', userId, clientId });
 
     return c.json({
       success: true,

@@ -13,6 +13,7 @@ import {
   versionCheckMiddleware,
   requestContextMiddleware,
   pluginContextMiddleware,
+  idempotencyMiddleware,
   D1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
@@ -24,6 +25,9 @@ import {
   isNativeSSOEnabled,
   // Health Check
   createHealthCheckHandlers,
+  // Logger
+  getLogger,
+  createLogger,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
@@ -74,6 +78,10 @@ import {
   adminTestEmailCodeHandler,
   adminUserConsentsListHandler,
   adminUserConsentRevokeHandler,
+  adminUserSuspendHandler,
+  adminUserLockHandler,
+  adminUserAnonymizeHandler,
+  adminClientRegenerateSecretHandler,
 } from './admin';
 import scimApp from './scim';
 import {
@@ -99,6 +107,8 @@ import {
   adminUserRelationshipsListHandler,
   adminUserRelationshipCreateHandler,
   adminUserRelationshipDeleteHandler,
+  adminOrganizationHierarchyHandler,
+  adminUserEffectivePermissionsHandler,
 } from './admin-rbac';
 import {
   adminAIGrantsListHandler,
@@ -107,6 +117,37 @@ import {
   adminAIGrantUpdateHandler,
   adminAIGrantRevokeHandler,
 } from './ai-grants';
+import {
+  adminJobsListHandler,
+  adminJobGetHandler,
+  adminJobResultHandler,
+  adminJobsImportUploadUrlHandler,
+  adminJobsUsersImportHandler,
+  adminJobsUsersBulkUpdateHandler,
+  adminJobsReportsGenerateHandler,
+} from './admin-jobs';
+import {
+  adminStatsTokensHandler,
+  adminStatsAuthHandler,
+  adminStatsTimelineHandler,
+  adminStatsClientHandler,
+} from './admin-stats';
+import {
+  adminSecurityAlertsListHandler,
+  adminSecurityAlertAcknowledgeHandler,
+  adminSecuritySuspiciousActivitiesHandler,
+  adminSecurityThreatsHandler,
+} from './admin-security';
+import {
+  adminComplianceStatusHandler,
+  adminComplianceAccessReviewsListHandler,
+  adminComplianceAccessReviewsCreateHandler,
+  adminComplianceReportsListHandler,
+} from './admin-compliance';
+import {
+  adminSettingsDiffHandler,
+  adminSettingsSchemaHandler,
+} from './admin-settings-meta';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
 import {
   dataExportRequestHandler,
@@ -336,7 +377,38 @@ import {
   getWebhook,
   updateWebhook,
   deleteWebhook,
+  testWebhook,
+  listWebhookDeliveries,
 } from './routes/settings/webhooks';
+import {
+  getLoggingConfig,
+  updateLoggingConfig,
+  resetLoggingConfig,
+  getTenantLoggingConfig,
+  updateTenantLoggingConfig,
+  resetTenantLoggingConfig,
+  listTenantLoggingOverrides,
+} from './routes/settings/logging-config';
+import {
+  getTenantPIIConfig,
+  updateTenantPIIConfig,
+  resetTenantPIIConfig,
+  applyGDPRPreset,
+  applyMinimalPreset,
+  listAllTenantPIIConfigs,
+} from './routes/settings/audit-pii-config';
+import {
+  getAuditStorageConfig,
+  updateAuditStorageConfig,
+  getRetentionConfig,
+  updateRetentionConfig,
+  getRoutingRules,
+  updateRoutingRules,
+  addRoutingRule,
+  deleteRoutingRule,
+  triggerRetentionCleanup,
+  getStorageStats,
+} from './routes/settings/audit-storage';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -592,11 +664,57 @@ app.get('/api/admin/clients/:id', adminClientGetHandler);
 app.put('/api/admin/clients/:id', adminClientUpdateHandler);
 app.delete('/api/admin/clients/:id', adminClientDeleteHandler);
 
+// Rate limiting for sensitive client operations (strict profile)
+// regenerate-secret: Credential regeneration is a sensitive operation
+app.use('/api/admin/clients/:id/regenerate-secret', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/clients/:id/regenerate-secret'],
+  })(c, next);
+});
+// Idempotency support for regenerate-secret (prevents duplicate credential regeneration)
+app.use('/api/admin/clients/:id/regenerate-secret', idempotencyMiddleware());
+app.post('/api/admin/clients/:id/regenerate-secret', adminClientRegenerateSecretHandler);
+
 // Admin Session Management endpoints (RESTful naming)
 app.get('/api/admin/sessions', adminSessionsListHandler);
 app.get('/api/admin/sessions/:id', adminSessionGetHandler);
 app.delete('/api/admin/sessions/:id', adminSessionRevokeHandler); // RESTful: DELETE instead of POST
 app.delete('/api/admin/users/:id/sessions', adminUserRevokeAllSessionsHandler); // RESTful: /sessions instead of /revoke-all-sessions
+
+// Admin User Suspend/Lock endpoints (センシティブ操作 - 監査ログ付き)
+// Rate limiting with strict profile (10 req/min) to prevent abuse
+app.use('/api/admin/users/:id/suspend', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/users/:id/suspend'],
+  })(c, next);
+});
+app.use('/api/admin/users/:id/lock', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/users/:id/lock'],
+  })(c, next);
+});
+// RBAC: Require tenant_admin or higher for suspend/lock operations
+app.use(
+  '/api/admin/users/:id/suspend',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+app.use(
+  '/api/admin/users/:id/lock',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+// Idempotency support for suspend/lock (prevents duplicate status changes on retry)
+app.use('/api/admin/users/:id/suspend', idempotencyMiddleware());
+app.use('/api/admin/users/:id/lock', idempotencyMiddleware());
+app.post('/api/admin/users/:id/suspend', adminUserSuspendHandler);
+app.post('/api/admin/users/:id/lock', adminUserLockHandler);
+app.use('/api/admin/users/:id/anonymize', idempotencyMiddleware());
+app.post('/api/admin/users/:id/anonymize', adminUserAnonymizeHandler);
 
 // Admin Audit Log endpoints
 app.get('/api/admin/audit-logs', adminAuditLogListHandler);
@@ -605,6 +723,12 @@ app.get('/api/admin/audit-logs/:id', adminAuditLogGetHandler);
 // Admin Settings endpoints (legacy - will be deprecated)
 app.get('/api/admin/settings', adminSettingsGetHandler);
 app.put('/api/admin/settings', adminSettingsUpdateHandler);
+
+// Settings Metadata API (Phase 2)
+// - GET /api/admin/settings/diff   - Compare settings between versions
+// - GET /api/admin/settings/schema - Get settings schema definition
+app.get('/api/admin/settings/diff', adminSettingsDiffHandler);
+app.get('/api/admin/settings/schema', adminSettingsSchemaHandler);
 
 // =============================================================================
 // Settings API v2 (Unified Settings Management) - RECOMMENDED
@@ -835,6 +959,9 @@ app.get('/api/admin/organizations/:id/members', adminOrganizationMembersListHand
 app.post('/api/admin/organizations/:id/members', adminOrganizationMemberAddHandler);
 app.delete('/api/admin/organizations/:id/members/:subjectId', adminOrganizationMemberRemoveHandler);
 
+// Organization hierarchy
+app.get('/api/admin/organizations/:id/hierarchy', adminOrganizationHierarchyHandler);
+
 // Role management (read-only for system roles)
 app.get('/api/admin/roles', adminRolesListHandler);
 app.get('/api/admin/roles/:id', adminRoleGetHandler);
@@ -851,6 +978,9 @@ app.delete(
   '/api/admin/users/:id/relationships/:relationshipId',
   adminUserRelationshipDeleteHandler
 );
+
+// User effective permissions (aggregated from all sources)
+app.get('/api/admin/users/:id/effective-permissions', adminUserEffectivePermissionsHandler);
 
 // =============================================================================
 // AI Grants (Human Auth / AI Ephemeral Auth Two-Layer Model)
@@ -1070,6 +1200,249 @@ app.get('/api/admin/webhooks', listWebhooks);
 app.get('/api/admin/webhooks/:id', getWebhook);
 app.put('/api/admin/webhooks/:id', updateWebhook);
 app.delete('/api/admin/webhooks/:id', deleteWebhook);
+app.post('/api/admin/webhooks/:id/test', testWebhook);
+app.get('/api/admin/webhooks/:id/deliveries', listWebhookDeliveries);
+
+// =============================================================================
+// Logging Configuration API
+// =============================================================================
+// Manage logging settings dynamically via KV.
+// Supports global settings and per-tenant overrides.
+// RBAC: Requires system_admin role for global settings.
+// Rate limit: moderate profile.
+
+// Rate limiting for Logging config endpoints
+app.use('/api/admin/settings/logging', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/settings/logging'],
+  })(c, next);
+});
+app.use('/api/admin/settings/logging/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/settings/logging/*'],
+  })(c, next);
+});
+
+// Global logging config (system_admin only)
+app.get('/api/admin/settings/logging', requireSystemAdmin(), getLoggingConfig);
+app.put('/api/admin/settings/logging', requireSystemAdmin(), updateLoggingConfig);
+app.delete('/api/admin/settings/logging', requireSystemAdmin(), resetLoggingConfig);
+
+// Tenant-specific logging overrides
+app.get('/api/admin/settings/logging/tenants', listTenantLoggingOverrides);
+app.get('/api/admin/settings/logging/tenant/:tenantId', getTenantLoggingConfig);
+app.put('/api/admin/settings/logging/tenant/:tenantId', updateTenantLoggingConfig);
+app.delete('/api/admin/settings/logging/tenant/:tenantId', resetTenantLoggingConfig);
+
+// =============================================================================
+// Audit PII Configuration API
+// =============================================================================
+// Per-tenant PII configuration for audit logging.
+// Determines which fields are PII, encryption settings, retention periods.
+// RBAC: Requires tenant_admin or higher.
+// Rate limit: moderate profile.
+
+// Rate limiting for Audit PII config endpoints
+app.use('/api/admin/tenants/:tenantId/audit/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/tenants/:tenantId/audit/*'],
+  })(c, next);
+});
+
+// RBAC for PII config
+app.use(
+  '/api/admin/tenants/:tenantId/audit/*',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+
+app.get('/api/admin/tenants/:tenantId/audit/pii-config', getTenantPIIConfig);
+app.put('/api/admin/tenants/:tenantId/audit/pii-config', updateTenantPIIConfig);
+app.delete('/api/admin/tenants/:tenantId/audit/pii-config', resetTenantPIIConfig);
+app.post('/api/admin/tenants/:tenantId/audit/pii-config/preset/gdpr', applyGDPRPreset);
+app.post('/api/admin/tenants/:tenantId/audit/pii-config/preset/minimal', applyMinimalPreset);
+
+// List all tenant PII configs (system_admin only)
+app.get('/api/admin/settings/audit/pii-config', requireSystemAdmin(), listAllTenantPIIConfigs);
+
+// =============================================================================
+// Audit Storage Configuration API
+// =============================================================================
+// Manage audit log storage backends, routing rules, and retention policies.
+// RBAC: Requires system_admin role (infrastructure-level settings).
+// Rate limit: moderate profile.
+
+// Rate limiting for Audit Storage config endpoints
+app.use('/api/admin/settings/audit-storage', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/settings/audit-storage'],
+  })(c, next);
+});
+app.use('/api/admin/settings/audit-storage/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/settings/audit-storage/*'],
+  })(c, next);
+});
+
+// Storage config (system_admin only)
+app.get('/api/admin/settings/audit-storage', requireSystemAdmin(), getAuditStorageConfig);
+app.put('/api/admin/settings/audit-storage', requireSystemAdmin(), updateAuditStorageConfig);
+
+// Retention config
+app.get('/api/admin/settings/audit-storage/retention', requireSystemAdmin(), getRetentionConfig);
+app.put('/api/admin/settings/audit-storage/retention', requireSystemAdmin(), updateRetentionConfig);
+
+// Routing rules
+app.get('/api/admin/settings/audit-storage/routing-rules', requireSystemAdmin(), getRoutingRules);
+app.put(
+  '/api/admin/settings/audit-storage/routing-rules',
+  requireSystemAdmin(),
+  updateRoutingRules
+);
+app.post('/api/admin/settings/audit-storage/routing-rules', requireSystemAdmin(), addRoutingRule);
+app.delete(
+  '/api/admin/settings/audit-storage/routing-rules/:name',
+  requireSystemAdmin(),
+  deleteRoutingRule
+);
+
+// Maintenance operations
+app.post(
+  '/api/admin/settings/audit-storage/cleanup',
+  requireSystemAdmin(),
+  triggerRetentionCleanup
+);
+app.get('/api/admin/settings/audit-storage/stats', requireSystemAdmin(), getStorageStats);
+
+// =============================================================================
+// Admin Jobs Management (Async Job Tracking)
+// =============================================================================
+// Endpoints for tracking async job execution status and results.
+// Used for bulk imports, exports, and other long-running operations.
+// RBAC: Requires tenant_admin or higher role.
+// Rate limit: moderate profile.
+
+// Rate limiting for Jobs endpoints
+app.use('/api/admin/jobs', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/jobs'],
+  })(c, next);
+});
+app.use('/api/admin/jobs/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/jobs/*'],
+  })(c, next);
+});
+
+// RBAC: Require tenant_admin or higher for job management
+app.use('/api/admin/jobs', requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin']));
+app.use('/api/admin/jobs/*', requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin']));
+
+app.get('/api/admin/jobs', adminJobsListHandler);
+// Job creation endpoints (must be before :id routes)
+app.post('/api/admin/jobs/users/import/upload-url', adminJobsImportUploadUrlHandler);
+app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
+app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
+app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
+// Job status endpoints
+app.get('/api/admin/jobs/:id/result', adminJobResultHandler); // Must be before :id
+app.get('/api/admin/jobs/:id', adminJobGetHandler);
+
+// =============================================================================
+// Admin Statistics API (Dashboard Analytics)
+// =============================================================================
+// Time-series and aggregate statistics for administrative dashboards.
+// Supports date range filtering, interval selection, and timezone output.
+// RBAC: Requires tenant_admin or higher role.
+// Rate limit: moderate profile.
+
+// Rate limiting for Stats endpoints
+app.use('/api/admin/stats/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/stats/*'],
+  })(c, next);
+});
+
+// RBAC: Require tenant_admin or higher for statistics access
+app.use(
+  '/api/admin/stats/*',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+
+app.get('/api/admin/stats/tokens', adminStatsTokensHandler);
+app.get('/api/admin/stats/auth', adminStatsAuthHandler);
+app.get('/api/admin/stats/timeline', adminStatsTimelineHandler);
+app.get('/api/admin/stats/clients/:id', adminStatsClientHandler);
+
+// =============================================================================
+// Security Alerts API
+// =============================================================================
+// Security monitoring and alert management endpoints.
+// Routes:
+// - GET  /api/admin/security/alerts - List security alerts
+// - POST /api/admin/security/alerts/:id/acknowledge - Acknowledge alert
+//
+// Security:
+// - RBAC: tenant_admin or higher required
+// - Rate limit: moderate profile
+// - Tenant isolation: All queries scoped by tenant_id
+// =============================================================================
+
+// Rate limiting for Security endpoints (moderate profile: 60 req/min)
+app.use('/api/admin/security/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/security/*'],
+  })(c, next);
+});
+
+// RBAC: Require tenant_admin or higher for security alerts
+app.use(
+  '/api/admin/security/*',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+
+app.get('/api/admin/security/alerts', adminSecurityAlertsListHandler);
+app.post('/api/admin/security/alerts/:id/acknowledge', adminSecurityAlertAcknowledgeHandler);
+app.get('/api/admin/security/suspicious-activities', adminSecuritySuspiciousActivitiesHandler);
+app.get('/api/admin/security/threats', adminSecurityThreatsHandler);
+
+// =============================================================================
+// Compliance API
+// =============================================================================
+// Compliance monitoring and status overview.
+// Routes:
+// - GET /api/admin/compliance/status - Get compliance status
+//
+// Security:
+// - RBAC: tenant_admin or higher required
+// - Tenant isolation: All data scoped by tenant_id
+// =============================================================================
+app.use(
+  '/api/admin/compliance/*',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+
+app.get('/api/admin/compliance/status', adminComplianceStatusHandler);
+app.get('/api/admin/compliance/access-reviews', adminComplianceAccessReviewsListHandler);
+app.post('/api/admin/compliance/access-reviews', adminComplianceAccessReviewsCreateHandler);
+app.get('/api/admin/compliance/reports', adminComplianceReportsListHandler);
 
 // =============================================================================
 // User Consent Management API (GDPR Article 7 - User Rights)
@@ -1245,18 +1618,22 @@ app.post('/api/internal/versions/:workerName', adminAuthMiddleware(), async (c) 
 
     if (!response.ok) {
       const error = await response.text();
-      console.error(`[Version API] Failed to register version: ${error}`);
+      const log = getLogger(c).module('VERSION-API');
+      log.error('Failed to register version', { workerName, error });
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    console.log(`[Version API] Registered version for ${workerName}`, {
+    const log = getLogger(c).module('VERSION-API');
+    log.info('Registered version', {
+      workerName,
       uuid: body.uuid.substring(0, 8) + '...',
       deployTime: body.deployTime,
     });
 
     return c.json({ success: true, workerName, uuid: body.uuid });
   } catch (error) {
-    console.error('[Version API] Error:', error);
+    const log = getLogger(c).module('VERSION-API');
+    log.error('Version registration error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -1283,14 +1660,16 @@ app.get('/api/internal/version-manager/status', adminAuthMiddleware(), async (c)
 
     if (!response.ok) {
       const error = await response.text();
-      console.error(`[Version API] Failed to get status: ${error}`);
+      const log = getLogger(c).module('VERSION-API');
+      log.error('Failed to get version status', { error });
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
     const data = await response.json();
     return c.json(data);
   } catch (error) {
-    console.error('[Version API] Error:', error);
+    const log = getLogger(c).module('VERSION-API');
+    log.error('Version status error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -1302,7 +1681,8 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-  console.error('Error:', err);
+  const log = getLogger(c).module('MANAGEMENT');
+  log.error('Unhandled error', {}, err);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 
@@ -1316,7 +1696,8 @@ app.onError((err, c) => {
  */
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const now = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
-  console.log(`[Scheduled] D1 cleanup job started at ${new Date().toISOString()}`);
+  const log = createLogger().module('SCHEDULED');
+  log.info('D1 cleanup job started', { timestamp: new Date().toISOString() });
 
   try {
     const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
@@ -1327,7 +1708,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       [now - 86400] // 1 day grace period
     );
     const sessionsDeleted = sessionsResult.rowsAffected || 0;
-    console.log(`[Scheduled] Deleted ${sessionsDeleted} expired sessions`);
+    log.debug('Deleted expired sessions', { count: sessionsDeleted });
 
     // 2. Cleanup expired/used password reset tokens
     const passwordTokensResult = await coreAdapter.execute(
@@ -1335,7 +1716,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       [now]
     );
     const passwordTokensDeleted = passwordTokensResult.rowsAffected || 0;
-    console.log(`[Scheduled] Deleted ${passwordTokensDeleted} expired/used password reset tokens`);
+    log.debug('Deleted expired/used password reset tokens', { count: passwordTokensDeleted });
 
     // 3. Cleanup old audit logs (older than 90 days)
     // Keep audit logs for 90 days for compliance (adjust based on requirements)
@@ -1345,7 +1726,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       [ninetyDaysAgo]
     );
     const auditLogsDeleted = auditLogsResult.rowsAffected || 0;
-    console.log(`[Scheduled] Deleted ${auditLogsDeleted} audit logs older than 90 days`);
+    log.debug('Deleted old audit logs', { count: auditLogsDeleted, olderThanDays: 90 });
 
     // 4. Cleanup expired Native SSO device_secrets (if enabled)
     // This cleans up device secrets that have passed their expiration date
@@ -1355,19 +1736,56 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       if (nativeSSOEnabled) {
         const deviceSecretRepo = new DeviceSecretRepository(coreAdapter);
         deviceSecretsDeleted = await deviceSecretRepo.cleanupExpired();
-        console.log(`[Scheduled] Cleaned up ${deviceSecretsDeleted} expired device secrets`);
+        log.debug('Cleaned up expired device secrets', { count: deviceSecretsDeleted });
       }
     } catch (deviceSecretError) {
       // Log but don't fail the entire cleanup job
-      console.error('[Scheduled] Device secret cleanup failed:', deviceSecretError);
+      log.error('Device secret cleanup failed', {}, deviceSecretError as Error);
     }
 
-    console.log(
-      `[Scheduled] D1 cleanup completed: ${sessionsDeleted} sessions, ${passwordTokensDeleted} tokens, ` +
-        `${auditLogsDeleted} audit logs, ${deviceSecretsDeleted} device secrets`
-    );
+    // 5. Cleanup expired operational logs (reason_detail storage)
+    // Retention period is tenant-configurable, defaults to 90 days
+    let operationalLogsDeleted = 0;
+    try {
+      const operationalLogsResult = await coreAdapter.execute(
+        'DELETE FROM operational_logs WHERE expires_at < ?',
+        [now]
+      );
+      operationalLogsDeleted = operationalLogsResult.rowsAffected || 0;
+      log.debug('Deleted expired operational logs', { count: operationalLogsDeleted });
+    } catch (operationalLogError) {
+      // Log but don't fail - table might not exist yet
+      log.warn('Operational logs cleanup failed (table may not exist)', {
+        error: (operationalLogError as Error).message,
+      });
+    }
+
+    // 6. Cleanup expired idempotency keys (24 hour TTL)
+    let idempotencyKeysDeleted = 0;
+    try {
+      const idempotencyResult = await coreAdapter.execute(
+        'DELETE FROM idempotency_keys WHERE expires_at < ?',
+        [now]
+      );
+      idempotencyKeysDeleted = idempotencyResult.rowsAffected || 0;
+      log.debug('Deleted expired idempotency keys', { count: idempotencyKeysDeleted });
+    } catch (idempotencyError) {
+      // Log but don't fail - table might not exist yet
+      log.warn('Idempotency keys cleanup failed (table may not exist)', {
+        error: (idempotencyError as Error).message,
+      });
+    }
+
+    log.info('D1 cleanup completed', {
+      sessionsDeleted,
+      passwordTokensDeleted,
+      auditLogsDeleted,
+      deviceSecretsDeleted,
+      operationalLogsDeleted,
+      idempotencyKeysDeleted,
+    });
   } catch (error) {
-    console.error('[Scheduled] D1 cleanup job failed:', error);
+    log.error('D1 cleanup job failed', {}, error as Error);
     // Don't throw - we don't want to mark the cron job as failed
     // Errors are logged for monitoring
   }
