@@ -17,6 +17,7 @@ import {
   shouldUseBuiltinForms,
   createConfigurationError,
   getTenantIdFromContext,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { html } from 'hono/html';
 
@@ -87,6 +88,7 @@ async function showMinimalVerificationForm(c: Context<{ Bindings: Env }>) {
  * User enters user_code and approves/denies
  */
 async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('DEVICE');
   try {
     const body = await c.req.parseBody();
     let userCode = body.user_code as string;
@@ -156,9 +158,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     }
 
     // DEVELOPMENT ONLY: Auto-approve with mock user
-    console.warn(
-      '[Device] WARNING: Mock authentication is enabled. This should NEVER be used in production!'
-    );
+    log.warn('Mock authentication is enabled. This should NEVER be used in production!');
     const mockUserId = 'user_' + Date.now();
     const mockSub = 'mock-user@example.com';
 
@@ -181,7 +181,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
 
     return c.redirect('/device?success=Device authorized successfully! You can close this window.');
   } catch (error) {
-    console.error('Device verification error:', error);
+    log.error('Device verification error', {}, error as Error);
     return c.redirect('/device?error=An error occurred. Please try again.');
   }
 }

@@ -29,6 +29,7 @@ import {
   introspectTokenFromContext,
   getSessionStoreBySessionId,
   createOAuthConfigManager,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { getCookie } from 'hono/cookie';
 
@@ -71,7 +72,8 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
         }
       }
     } catch (error) {
-      console.error('[DataExport] Session validation error:', error);
+      const log = getLogger(c).module('DATA-EXPORT');
+      log.error('Session validation error', {}, error as Error);
     }
   }
 
@@ -194,7 +196,8 @@ export async function dataExportRequestHandler(c: Context<{ Bindings: Env }>) {
       );
     }
   } catch (error) {
-    console.error('[DataExport] Request error:', error);
+    const log = getLogger(c).module('DATA-EXPORT');
+    log.error('Failed to create export request', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -283,7 +286,8 @@ export async function dataExportStatusHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json(response);
   } catch (error) {
-    console.error('[DataExport] Status check error:', error);
+    const log = getLogger(c).module('DATA-EXPORT');
+    log.error('Failed to check export status', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -392,7 +396,8 @@ export async function dataExportDownloadHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json(exportedData);
   } catch (error) {
-    console.error('[DataExport] Download error:', error);
+    const log = getLogger(c).module('DATA-EXPORT');
+    log.error('Failed to download export', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

@@ -27,6 +27,9 @@ import type { Env } from '../types/env';
 import { retryD1Operation } from '../utils/d1-retry';
 import type { ActorContext } from '../actor';
 import { CloudflareActorContext } from '../actor';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('DO-SESSION-STORE');
 
 /**
  * Session data interface
@@ -252,7 +255,7 @@ export class SessionStore extends DurableObject<Env> {
       expiresAt: Date.now() + TOMBSTONE_TTL_MS,
     };
     await this.actorCtx.storage.put(this.buildTombstoneKey(sessionId), tombstone);
-    console.log(`SessionStore: Created tombstone for session ${sessionId}`);
+    log.debug('Created tombstone for session', { sessionId });
   }
 
   /**
@@ -271,7 +274,7 @@ export class SessionStore extends DurableObject<Env> {
         expiresAt,
       } as Tombstone);
     }
-    console.log(`SessionStore: Created ${sessionIds.length} tombstones`);
+    log.debug('Created tombstones', { count: sessionIds.length });
   }
 
   /**
@@ -367,9 +370,10 @@ export class SessionStore extends DurableObject<Env> {
     const cleanedTombstones = await this.cleanupTombstones();
 
     if (cleanedSessions > 0 || cleanedTombstones > 0) {
-      console.log(
-        `SessionStore: Cleaned up ${cleanedSessions} expired sessions, ${cleanedTombstones} tombstones`
-      );
+      log.info('Cleaned up expired sessions and tombstones', {
+        sessions: cleanedSessions,
+        tombstones: cleanedTombstones,
+      });
     }
   }
 
@@ -389,7 +393,7 @@ export class SessionStore extends DurableObject<Env> {
     // Check for tombstone first - if exists, session was deleted
     // This prevents D1 from returning stale sessions after logout
     if (await this.hasTombstone(sessionId)) {
-      console.log(`SessionStore: Tombstone found for session ${sessionId}, skipping D1 load`);
+      log.debug('Tombstone found for session, skipping D1 load', { sessionId });
       return null;
     }
 
@@ -415,7 +419,7 @@ export class SessionStore extends DurableObject<Env> {
         createdAt: (result.created_at as number) * 1000,
       };
     } catch (error) {
-      console.error('SessionStore: D1 load error:', error);
+      log.error('D1 load error', { sessionId }, error as Error);
       return null;
     }
   }
@@ -508,7 +512,7 @@ export class SessionStore extends DurableObject<Env> {
         return d1Session;
       }
     } catch (error) {
-      console.error('SessionStore: D1 fallback error:', error);
+      log.error('D1 fallback error', { sessionId }, error as Error);
     }
 
     return null;
@@ -540,7 +544,7 @@ export class SessionStore extends DurableObject<Env> {
 
     // 3. Persist to D1 (backup & audit) - async, don't wait
     this.saveToD1(session).catch((error) => {
-      console.error('SessionStore: Failed to save to D1:', error);
+      log.error('Failed to save to D1', { sessionId }, error as Error);
     });
 
     return session;
@@ -573,7 +577,7 @@ export class SessionStore extends DurableObject<Env> {
     try {
       await this.deleteFromD1(sessionId);
     } catch (error) {
-      console.error('SessionStore: Failed to delete from D1:', error);
+      log.error('Failed to delete from D1', { sessionId }, error as Error);
       d1DeleteFailed = true;
     }
 
@@ -584,9 +588,10 @@ export class SessionStore extends DurableObject<Env> {
       try {
         await this.createTombstone(sessionId);
       } catch (tombstoneError) {
-        console.error(
-          `SessionStore: CRITICAL - Failed to create tombstone for session ${sessionId}:`,
-          tombstoneError
+        log.error(
+          'CRITICAL - Failed to create tombstone for session',
+          { sessionId },
+          tombstoneError as Error
         );
         // This is a critical error - session may be resurrected via D1 fallback
         // In production, this should trigger an alert
@@ -635,7 +640,7 @@ export class SessionStore extends DurableObject<Env> {
         }
         deleted += chunk.length;
       } catch (error) {
-        console.error(`SessionStore: Failed to delete chunk ${i}:`, error);
+        log.error('Failed to delete chunk', { chunkIndex: i }, error as Error);
         failed.push(...chunk);
         continue;
       }
@@ -645,7 +650,7 @@ export class SessionStore extends DurableObject<Env> {
         try {
           await this.batchDeleteFromD1(chunk);
         } catch (error) {
-          console.error('SessionStore: Failed to batch delete from D1:', error);
+          log.error('Failed to batch delete from D1', { count: chunk.length }, error as Error);
           // Track failed D1 deletions for tombstone creation
           d1FailedSessionIds.push(...chunk);
         }
@@ -658,9 +663,10 @@ export class SessionStore extends DurableObject<Env> {
       try {
         await this.createTombstonesBatch(d1FailedSessionIds);
       } catch (tombstoneError) {
-        console.error(
-          `SessionStore: CRITICAL - Failed to create tombstones for ${d1FailedSessionIds.length} sessions:`,
-          tombstoneError
+        log.error(
+          'CRITICAL - Failed to create tombstones',
+          { count: d1FailedSessionIds.length },
+          tombstoneError as Error
         );
         // This is a critical error - sessions may be resurrected via D1 fallback
         // In production, this should trigger an alert
@@ -745,7 +751,7 @@ export class SessionStore extends DurableObject<Env> {
           }
         }
       } catch (error) {
-        console.error('SessionStore: D1 list error:', error);
+        log.error('D1 list error', { userId }, error as Error);
       }
     }
 
@@ -772,7 +778,7 @@ export class SessionStore extends DurableObject<Env> {
 
     // Update in D1 - async
     this.saveToD1(session).catch((error) => {
-      console.error('SessionStore: Failed to extend session in D1:', error);
+      log.error('Failed to extend session in D1', { sessionId }, error as Error);
     });
 
     return session;
@@ -832,13 +838,11 @@ export class SessionStore extends DurableObject<Env> {
         .bind(newUserId, sessionId)
         .run()
         .catch((error) => {
-          console.error('SessionStore: Failed to update user_id in D1:', error);
+          log.error('Failed to update user_id in D1', { sessionId, newUserId }, error as Error);
         });
     }
 
-    console.log(
-      `SessionStore: Updated session ${sessionId} user from ${oldUserId} to ${newUserId}`
-    );
+    log.info('Updated session user', { sessionId, oldUserId, newUserId });
 
     return session;
   }
@@ -1007,7 +1011,7 @@ export class SessionStore extends DurableObject<Env> {
 
       return new Response('Not Found', { status: 404 });
     } catch (error) {
-      console.error('SessionStore error:', error);
+      log.error('Request error', {}, error as Error);
       return new Response(
         JSON.stringify({
           error: 'Internal Server Error',

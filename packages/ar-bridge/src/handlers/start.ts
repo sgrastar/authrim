@@ -16,6 +16,8 @@ import {
   getUIConfig,
   buildIssuerUrl,
   getTenantIdFromContext,
+  getLogger,
+  createLogger,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
@@ -55,6 +57,7 @@ const DEFAULT_RATE_LIMIT: RateLimitConfig = {
  * - acr_values: Optional authentication context class reference values (OIDC)
  */
 export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('START');
   try {
     // Rate limiting check
     const rateLimitResult = await checkRateLimit(c);
@@ -193,7 +196,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     // 8. Redirect to provider
     return c.redirect(authUrl);
   } catch (error) {
-    console.error('External start error:', error);
+    log.error('External start error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -266,7 +269,8 @@ async function checkRateLimit(c: Context<{ Bindings: Env }>): Promise<RateLimitR
     };
   } catch (error) {
     // If rate limiting fails, allow the request (fail open)
-    console.warn('Rate limit check failed, allowing request:', error);
+    const log = getLogger(c).module('START');
+    log.warn('Rate limit check failed, allowing request');
     return { allowed: true, remaining: config.maxRequests, retryAfter: 0 };
   }
 }
@@ -413,15 +417,17 @@ async function validateRedirectUri(
     }
 
     // Log blocked redirect attempt for security monitoring
-    console.warn(
-      `Blocked redirect to unauthorized origin: ${requestedUrl.origin}. ` +
-        `Allowed: ${Array.from(allowedOrigins).join(', ')}`
-    );
+    const log = createLogger().module('START');
+    log.warn('Blocked redirect to unauthorized origin', {
+      requestedOrigin: requestedUrl.origin,
+      allowedOrigins: Array.from(allowedOrigins),
+    });
 
     return defaultRedirect;
   } catch {
     // Invalid URL format - use default
-    console.warn(`Invalid redirect_uri format: ${requestedUri}`);
+    const log = createLogger().module('START');
+    log.warn('Invalid redirect_uri format', { requestedUri });
     return defaultRedirect;
   }
 }

@@ -24,6 +24,7 @@ import {
   shouldUseBuiltinForms,
   createConfigurationError,
   getTenantIdFromContext,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
 import {
@@ -54,6 +55,7 @@ import { getSPConfig } from '../admin/providers';
 export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const method = c.req.method;
+  const log = getLogger(c).module('SAML-IDP');
 
   try {
     // Parse AuthnRequest based on binding
@@ -131,7 +133,7 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
     // Return response based on SP's preferred binding
     return sendSAMLResponse(c, spConfig, responseXml, relayState);
   } catch (error) {
-    console.error('SSO Error:', error);
+    log.error('SSO Error', { method }, error as Error);
     // SECURITY: Do not expose internal error details in response
     return createErrorResponse(c, 'SSO processing failed', STATUS_CODES.RESPONDER);
   }

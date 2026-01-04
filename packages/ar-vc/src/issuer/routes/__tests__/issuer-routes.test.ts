@@ -157,6 +157,8 @@ const createMockContext = (
         headers: { 'Content-Type': 'application/json' },
       });
     }),
+    // Mock get method for getLogger
+    get: vi.fn().mockReturnValue(undefined),
   } as unknown as Context<{ Bindings: Env }>;
 };
 

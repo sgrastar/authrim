@@ -13,13 +13,23 @@ import { deviceAuthorizationHandler } from '../device-authorization';
 import { deviceVerifyApiHandler } from '../device-verify-api';
 import type { Env } from '@authrim/ar-lib-core';
 
-// Mock getClient at module level - must use vi.hoisted for proper hoisting
+// Mock getClient and logger at module level - must use vi.hoisted for proper hoisting
 const mockGetClient = vi.hoisted(() => vi.fn());
+const mockLogger = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+  child: vi.fn().mockReturnThis(),
+  module: vi.fn().mockReturnThis(),
+  startTimer: vi.fn().mockReturnValue(() => {}),
+}));
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
     getClient: mockGetClient,
+    getLogger: () => mockLogger,
   };
 });
 

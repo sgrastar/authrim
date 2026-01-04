@@ -18,6 +18,7 @@ import {
   getEmailDomainHashConfig,
   validateDomainHashConfig,
   getMappingCountByVersion,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -116,6 +117,7 @@ export async function getDomainHashKeysConfig(c: Context) {
  * Start key rotation by adding a new secret
  */
 export async function rotateDomainHashKey(c: Context) {
+  const log = getLogger(c).module('DomainHashKeysAPI');
   const body = await c.req.json<KeyRotationInput>();
 
   // Validate new secret
@@ -200,7 +202,7 @@ export async function rotateDomainHashKey(c: Context) {
 
     return c.json(result);
   } catch (error) {
-    console.error('[Domain Hash Keys API] Rotate error:', error);
+    log.error('Rotate error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -216,6 +218,7 @@ export async function rotateDomainHashKey(c: Context) {
  * Complete key rotation (deprecate old versions)
  */
 export async function completeDomainHashKeyRotation(c: Context) {
+  const log = getLogger(c).module('DomainHashKeysAPI');
   const body = await c.req.json<{ deprecate_versions?: number[] }>();
 
   if (!c.env.SETTINGS) {
@@ -264,7 +267,7 @@ export async function completeDomainHashKeyRotation(c: Context) {
       deprecated_versions: newDeprecatedVersions,
     });
   } catch (error) {
-    console.error('[Domain Hash Keys API] Complete error:', error);
+    log.error('Complete error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -280,6 +283,7 @@ export async function completeDomainHashKeyRotation(c: Context) {
  * Get key rotation migration status
  */
 export async function getDomainHashKeyStatus(c: Context) {
+  const log = getLogger(c).module('DomainHashKeysAPI');
   const tenantId = 'default';
 
   try {
@@ -328,7 +332,7 @@ export async function getDomainHashKeyStatus(c: Context) {
 
     return c.json(status);
   } catch (error) {
-    console.error('[Domain Hash Keys API] Status error:', error);
+    log.error('Status error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -344,6 +348,7 @@ export async function getDomainHashKeyStatus(c: Context) {
  * Remove a deprecated secret version
  */
 export async function deleteDomainHashKeyVersion(c: Context) {
+  const log = getLogger(c).module('DomainHashKeysAPI');
   const version = parseInt(c.req.param('version'), 10);
 
   if (isNaN(version)) {
@@ -396,9 +401,10 @@ export async function deleteDomainHashKeyVersion(c: Context) {
     const usersByVersion = await getUserCountByVersion(c.env.DB, 'default');
     if (usersByVersion[version] && usersByVersion[version] > 0) {
       // SECURITY: Do not expose user count in error message
-      console.warn(
-        `[Domain Hash Keys API] Cannot delete version ${version}: ${usersByVersion[version]} users still using this version`
-      );
+      log.warn('Cannot delete version - users still using it', {
+        version,
+        userCount: usersByVersion[version],
+      });
       return c.json(
         {
           error: 'invalid_request',
@@ -425,7 +431,7 @@ export async function deleteDomainHashKeyVersion(c: Context) {
       remaining_versions: Object.keys(remainingSecrets).map((v) => parseInt(v, 10)),
     });
   } catch (error) {
-    console.error('[Domain Hash Keys API] Delete error:', error);
+    log.error('Delete error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

@@ -1,5 +1,4 @@
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
 import {
   getRefreshTokenShardConfig,
   saveRefreshTokenShardConfig,
@@ -9,7 +8,9 @@ import {
   clearShardConfigCache,
   getTenantIdFromContext,
   createAuthContextFromHono,
+  getLogger,
   type RefreshTokenShardConfig,
+  type Env,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -17,6 +18,7 @@ import {
  * Get current refresh token sharding configuration
  */
 export async function getRefreshTokenShardingConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('RefreshTokenShardingAPI');
   const clientId = c.req.query('clientId') || null;
 
   try {
@@ -28,7 +30,7 @@ export async function getRefreshTokenShardingConfig(c: Context<{ Bindings: Env }
       config,
     });
   } catch (error) {
-    console.error('Failed to get refresh token sharding config:', error);
+    log.error('Failed to get refresh token sharding config', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -44,6 +46,7 @@ export async function getRefreshTokenShardingConfig(c: Context<{ Bindings: Env }
  * Update refresh token sharding configuration (creates new generation)
  */
 export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('RefreshTokenShardingAPI');
   try {
     const body = (await c.req.json()) as {
       clientId?: string;
@@ -126,7 +129,7 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
       config: newConfig,
     });
   } catch (error) {
-    console.error('Failed to update refresh token sharding config:', error);
+    log.error('Failed to update refresh token sharding config', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -142,6 +145,7 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
  * Get shard distribution statistics
  */
 export async function getRefreshTokenShardingStats(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('RefreshTokenShardingAPI');
   const clientId = c.req.query('clientId') || null;
 
   try {
@@ -189,7 +193,7 @@ export async function getRefreshTokenShardingStats(c: Context<{ Bindings: Env }>
       stats,
     });
   } catch (error) {
-    console.error('Failed to get refresh token sharding stats:', error);
+    log.error('Failed to get refresh token sharding stats', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -205,6 +209,7 @@ export async function getRefreshTokenShardingStats(c: Context<{ Bindings: Env }>
  * Cleanup a deprecated generation (delete D1 records)
  */
 export async function cleanupRefreshTokenGeneration(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('RefreshTokenShardingAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
     const generation = parseInt(c.req.query('generation') || '', 10);
@@ -295,7 +300,7 @@ export async function cleanupRefreshTokenGeneration(c: Context<{ Bindings: Env }
       note: 'DO storage will be garbage collected by Cloudflare automatically',
     });
   } catch (error) {
-    console.error('Failed to cleanup refresh token generation:', error);
+    log.error('Failed to cleanup refresh token generation', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -311,6 +316,7 @@ export async function cleanupRefreshTokenGeneration(c: Context<{ Bindings: Env }
  * Revoke all refresh tokens for a user
  */
 export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('RefreshTokenShardingAPI');
   try {
     const userId = c.req.param('userId');
     const clientId = c.req.query('clientId') || null;
@@ -412,7 +418,7 @@ export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) 
       revoked: families.length,
     });
   } catch (error) {
-    console.error('Failed to revoke user refresh tokens:', error);
+    log.error('Failed to revoke user refresh tokens', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

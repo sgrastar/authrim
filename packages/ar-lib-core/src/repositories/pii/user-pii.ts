@@ -31,6 +31,9 @@ import {
   generateId,
   getCurrentTimestamp,
 } from '../base';
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger().module('UserPIIRepository');
 
 /**
  * User PII entity
@@ -376,13 +379,13 @@ export class UserPIIRepository extends BaseRepository<UserPII> {
 
       // Validate field name against whitelist
       if (!this.isValidUpdateField(k)) {
-        console.warn(`UserPIIRepository.updatePII: Invalid field '${k}' ignored`);
+        log.warn('Invalid field ignored in updatePII', { field: k });
         return false;
       }
 
       // Additional validation: field name must be alphanumeric + underscore
       if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(k)) {
-        console.warn(`UserPIIRepository.updatePII: Malformed field '${k}' ignored`);
+        log.warn('Malformed field ignored in updatePII', { field: k });
         return false;
       }
 

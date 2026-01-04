@@ -7,7 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 import {
   SAML_NAMESPACES,
   BINDING_URIS,
@@ -32,6 +32,7 @@ import { getSigningCertificate } from '../common/key-utils';
  */
 export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
+  const log = getLogger(c).module('SAML-IDP');
 
   // Get issuer URL from environment
   const issuerUrl = env.ISSUER_URL || 'https://conformance.authrim.com';
@@ -42,7 +43,7 @@ export async function handleIdPMetadata(c: Context<{ Bindings: Env }>): Promise<
   try {
     signingCertificate = await getSigningCertificate(env);
   } catch (error) {
-    console.error('Failed to get signing certificate:', error);
+    log.error('Failed to get signing certificate', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 

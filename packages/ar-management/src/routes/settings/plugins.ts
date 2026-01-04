@@ -25,7 +25,7 @@
 
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 import {
   maskSensitiveFieldsRecursive,
   validateExternalUrl,
@@ -242,17 +242,19 @@ function validatePluginMetaUrls(meta?: PluginRegistryEntry['meta']): {
 
 /**
  * Log plugin configuration change for audit
+ * Note: This helper returns an object for logging, caller should use getLogger(c).info()
  */
-function logPluginConfigChange(
+function buildPluginAuditLog(
   action: 'update' | 'enable' | 'disable',
   adminId: string | undefined,
   details: Record<string, unknown>
-): void {
-  console.log(`[Plugin Admin] ${action}`, {
+): Record<string, unknown> {
+  return {
+    action,
     adminId: adminId ?? 'unknown',
     timestamp: new Date().toISOString(),
     ...details,
-  });
+  };
 }
 
 /**
@@ -316,9 +318,9 @@ async function decryptConfigIfNeeded(
       env as { PLUGIN_ENCRYPTION_KEY?: string; KEY_MANAGER_SECRET?: string }
     );
     return await decryptSecretFields(encryptedConfig, key);
-  } catch (error) {
-    // If decryption fails, log and return config as-is (may be unencrypted legacy data)
-    console.warn('[Plugin Config] Failed to decrypt config, returning as-is:', error);
+  } catch {
+    // If decryption fails, return config as-is (may be unencrypted legacy data)
+    // Note: Caller should handle logging if needed
     // Remove _encrypted marker to avoid confusion
     const { _encrypted, ...rest } = config as EncryptedConfig;
     return rest;
@@ -542,6 +544,7 @@ export async function getPluginConfigHandler(c: Context<{ Bindings: Env }>) {
  * - Requires PLUGIN_ENCRYPTION_KEY or KEY_MANAGER_SECRET environment variable
  */
 export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('PluginAdminAPI');
   const pluginId = c.req.param('id');
   const adminAuth = getAdminAuth(c);
   const adminId = adminAuth?.userId ?? adminAuth?.authMethod;
@@ -592,10 +595,7 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
       configToStore = await encryptSecretFields(newConfig, secretFields, encryptionKey);
     } catch (error) {
       // If encryption fails due to missing key, store unencrypted with warning
-      console.warn(
-        '[Plugin Config] Encryption key not available, storing config unencrypted:',
-        error
-      );
+      log.warn('Encryption key not available, storing config unencrypted', {}, error as Error);
       // Continue with unencrypted config
     }
   }
@@ -604,12 +604,15 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   await kv.put(configKey, JSON.stringify(configToStore));
 
   // Log the change (with masked values for audit)
-  logPluginConfigChange('update', adminId, {
-    pluginId,
-    tenantId: body.tenant_id ?? null,
-    changedFields: Object.keys(body.config),
-    encryptedFields: secretFields,
-  });
+  log.info(
+    'Plugin config updated',
+    buildPluginAuditLog('update', adminId, {
+      pluginId,
+      tenantId: body.tenant_id ?? null,
+      changedFields: Object.keys(body.config),
+      encryptedFields: secretFields,
+    })
+  );
 
   return c.json({
     success: true,
@@ -625,6 +628,7 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
  * Enable a plugin
  */
 export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('PluginAdminAPI');
   const pluginId = c.req.param('id');
   const adminAuth = getAdminAuth(c);
   const adminId = adminAuth?.userId ?? adminAuth?.authMethod;
@@ -654,10 +658,13 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
 
   await kv.put(enableKey, 'true');
 
-  logPluginConfigChange('enable', adminId, {
-    pluginId,
-    tenantId: tenantId ?? null,
-  });
+  log.info(
+    'Plugin enabled',
+    buildPluginAuditLog('enable', adminId, {
+      pluginId,
+      tenantId: tenantId ?? null,
+    })
+  );
 
   return c.json({
     success: true,
@@ -672,6 +679,7 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
  * Disable a plugin
  */
 export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('PluginAdminAPI');
   const pluginId = c.req.param('id');
   const adminAuth = getAdminAuth(c);
   const adminId = adminAuth?.userId ?? adminAuth?.authMethod;
@@ -701,10 +709,13 @@ export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
 
   await kv.put(enableKey, 'false');
 
-  logPluginConfigChange('disable', adminId, {
-    pluginId,
-    tenantId: tenantId ?? null,
-  });
+  log.info(
+    'Plugin disabled',
+    buildPluginAuditLog('disable', adminId, {
+      pluginId,
+      tenantId: tenantId ?? null,
+    })
+  );
 
   return c.json({
     success: true,
@@ -820,7 +831,7 @@ export async function registerPlugin(
     source?: PluginSource;
   },
   schema?: Record<string, unknown>
-): Promise<void> {
+): Promise<{ warnings?: string[] }> {
   const registry = await getPluginRegistry(kv);
 
   // Determine source - default to unknown if not provided
@@ -831,13 +842,11 @@ export async function registerPlugin(
 
   // Validate URLs in metadata (for headless security)
   const urlValidation = validatePluginMetaUrls(plugin.meta);
-  if (urlValidation.warnings.length > 0) {
-    // Log warnings for operator review
-    console.warn(`[Plugin Registration] ${plugin.id}: URL validation warnings`, {
-      trustLevel,
-      warnings: urlValidation.warnings,
-    });
-  }
+  // Note: Caller should log warnings if needed using structured logger
+  const warnings =
+    urlValidation.warnings.length > 0
+      ? urlValidation.warnings.map((w) => `[${plugin.id}] ${w} (trust: ${trustLevel})`)
+      : undefined;
 
   registry[plugin.id] = {
     id: plugin.id,
@@ -856,6 +865,8 @@ export async function registerPlugin(
   if (schema) {
     await kv.put(`plugins:schema:${plugin.id}`, JSON.stringify(schema));
   }
+
+  return { warnings };
 }
 
 /**

@@ -32,6 +32,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * Challenge types
@@ -117,6 +118,7 @@ const CHALLENGE_KEY_PREFIX = 'challenge:';
 export class ChallengeStore extends DurableObject<Env> {
   private challengeCache: Map<string, Challenge> = new Map();
   private cleanupInterval: number | null = null;
+  private readonly log: Logger = createLogger().module('ChallengeStore');
 
   // Configuration
   private readonly CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
@@ -255,7 +257,7 @@ export class ChallengeStore extends DurableObject<Env> {
     }
 
     if (cleaned > 0) {
-      console.log(`ChallengeStore: Cleaned up ${cleaned} expired/consumed challenges`);
+      this.log.info('Cleaned up expired/consumed challenges', { count: cleaned });
     }
   }
 
@@ -464,7 +466,7 @@ export class ChallengeStore extends DurableObject<Env> {
             headers: { 'Content-Type': 'application/json' },
           });
         } catch (error) {
-          console.error('[ChallengeStore] consumeChallenge error:', error);
+          this.log.warn('consumeChallenge error', {}, error as Error);
           const message = error instanceof Error ? error.message : '';
 
           // SECURITY: Use generic error descriptions
@@ -549,7 +551,7 @@ export class ChallengeStore extends DurableObject<Env> {
       return new Response('Not Found', { status: 404 });
     } catch (error) {
       // Log full error for debugging but don't expose to client
-      console.error('ChallengeStore error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(
         JSON.stringify({

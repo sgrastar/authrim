@@ -24,6 +24,9 @@ import type { ErrorDescriptor, ErrorLocale, ErrorIdMode, ErrorResponseFormat } f
 import type { ARErrorCode, RFCErrorCode } from './codes';
 import { ErrorFactory } from './factory';
 import { serializeError, determineFormat } from './serializer';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('ErrorMiddleware');
 
 // KV key constants for configuration
 const KV_KEY_LOCALE = 'error_locale';
@@ -209,7 +212,7 @@ export function errorMiddleware(options: ErrorMiddlewareOptions = {}): Middlewar
           options.onError(error, c);
         } else {
           // Default error logging
-          console.error('Unhandled error:', error);
+          log.error('Unhandled error', {}, error as Error);
         }
       }
 

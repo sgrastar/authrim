@@ -46,7 +46,12 @@ import {
   // Rate limiting
   rateLimitMiddleware,
   getRateLimitProfileAsync,
+  // Logger
+  createLogger,
 } from '@authrim/ar-lib-core';
+
+// Module-level logger for settings audit
+const log = createLogger().module('SETTINGS_AUDIT');
 
 /**
  * Context variables for auth
@@ -120,7 +125,14 @@ function getSettingsManager(env: Env): SettingsManager {
     cacheTTL: 5000, // 5 seconds (as per plan)
     auditCallback: async (event) => {
       // Log audit event (can be extended to write to KV/R2)
-      console.log('[SETTINGS_AUDIT]', JSON.stringify(event));
+      log.info('Settings change', {
+        action: event.event,
+        scope: event.scope,
+        scopeId: event.scopeId,
+        category: event.category,
+        actor: event.actor,
+        diff: event.diff,
+      });
     },
   });
 

@@ -30,6 +30,9 @@
 
 import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { PermissionChangeEvent, AuditLogConfig } from '../types/check-api';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('PERMISSION-CHANGE-NOTIFIER');
 
 // =============================================================================
 // Types
@@ -118,8 +121,8 @@ export function createPermissionChangeNotifier(
     debug = false,
   } = config;
 
-  const log = debug
-    ? (...args: unknown[]) => console.log('[PermissionChangeNotifier]', ...args)
+  const debugLog = debug
+    ? (message: string, context?: Record<string, unknown>) => log.debug(message, context)
     : () => {};
 
   /**
@@ -127,7 +130,7 @@ export function createPermissionChangeNotifier(
    */
   async function invalidateKVCache(event: PermissionChangeEvent): Promise<boolean> {
     if (!cache) {
-      log('No cache configured, skipping cache invalidation');
+      debugLog('No cache configured, skipping cache invalidation');
       return false;
     }
 
@@ -174,17 +177,17 @@ export function createPermissionChangeNotifier(
         specificKeys.map(async (key) => {
           try {
             await cache.delete(key);
-            log('Deleted cache key:', key);
+            debugLog('Deleted cache key', { key });
           } catch (e) {
             // Ignore errors for non-existent keys
           }
         })
       );
 
-      log('Cache invalidation complete for event:', event.event, event.subject_id);
+      debugLog('Cache invalidation complete', { event: event.event, subjectId: event.subject_id });
       return true;
     } catch (error) {
-      console.error('[PermissionChangeNotifier] Cache invalidation error:', error);
+      log.error('Cache invalidation error', {}, error as Error);
       return false;
     }
   }
@@ -194,7 +197,7 @@ export function createPermissionChangeNotifier(
    */
   async function recordAuditLog(event: PermissionChangeEvent): Promise<boolean> {
     if (!db) {
-      log('No database configured, skipping audit log');
+      debugLog('No database configured, skipping audit log');
       return false;
     }
 
@@ -223,16 +226,16 @@ export function createPermissionChangeNotifier(
         )
         .run();
 
-      log('Audit log recorded for event:', event.event, event.subject_id);
+      debugLog('Audit log recorded', { event: event.event, subjectId: event.subject_id });
       return true;
     } catch (error) {
       // If table doesn't exist, log warning but don't fail
       const errorMsg = error instanceof Error ? error.message : String(error);
       if (errorMsg.includes('no such table')) {
-        log('Audit log table not found, skipping (run migration to enable)');
+        debugLog('Audit log table not found, skipping (run migration to enable)');
         return false;
       }
-      console.error('[PermissionChangeNotifier] Audit log error:', error);
+      log.error('Audit log error', {}, error as Error);
       return false;
     }
   }
@@ -242,7 +245,7 @@ export function createPermissionChangeNotifier(
    */
   async function notifyWebSockets(event: PermissionChangeEvent): Promise<number> {
     if (!permissionChangeHub) {
-      log('No PermissionChangeHub configured, skipping WebSocket notification');
+      debugLog('No PermissionChangeHub configured, skipping WebSocket notification');
       return 0;
     }
 
@@ -259,25 +262,22 @@ export function createPermissionChangeNotifier(
       });
 
       if (!response.ok) {
-        console.error(
-          '[PermissionChangeNotifier] WebSocket broadcast failed:',
-          await response.text()
-        );
+        log.error('WebSocket broadcast failed', { status: response.status });
         return 0;
       }
 
       const result = (await response.json()) as { notified?: number };
-      log('WebSocket notification sent, notified:', result.notified ?? 0);
+      debugLog('WebSocket notification sent', { notified: result.notified ?? 0 });
       return result.notified ?? 0;
     } catch (error) {
-      console.error('[PermissionChangeNotifier] WebSocket notification error:', error);
+      log.error('WebSocket notification error', {}, error as Error);
       return 0;
     }
   }
 
   return {
     async publish(event: PermissionChangeEvent): Promise<PublishResult> {
-      log('Publishing event:', event.event, 'for subject:', event.subject_id);
+      debugLog('Publishing event', { event: event.event, subjectId: event.subject_id });
 
       // Execute all operations concurrently
       const [cacheInvalidated, auditLogged, websocketNotified] = await Promise.all([
@@ -305,9 +305,9 @@ export function createPermissionChangeNotifier(
         ];
 
         await Promise.all(keys.map((key) => cache.delete(key).catch(() => {})));
-        log('Invalidated cache for subject:', subjectId);
+        debugLog('Invalidated cache for subject', { subjectId });
       } catch (error) {
-        console.error('[PermissionChangeNotifier] Subject cache invalidation error:', error);
+        log.error('Subject cache invalidation error', { subjectId }, error as Error);
       }
     },
 
@@ -322,9 +322,9 @@ export function createPermissionChangeNotifier(
         ];
 
         await Promise.all(keys.map((key) => cache.delete(key).catch(() => {})));
-        log('Invalidated cache for resource:', resource);
+        debugLog('Invalidated cache for resource', { resource });
       } catch (error) {
-        console.error('[PermissionChangeNotifier] Resource cache invalidation error:', error);
+        log.error('Resource cache invalidation error', { resource }, error as Error);
       }
     },
   };

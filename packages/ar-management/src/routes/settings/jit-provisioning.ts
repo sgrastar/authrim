@@ -9,7 +9,7 @@
  */
 
 import type { Context } from 'hono';
-import { type JITProvisioningConfig, DEFAULT_JIT_CONFIG } from '@authrim/ar-lib-core';
+import { type JITProvisioningConfig, DEFAULT_JIT_CONFIG, getLogger } from '@authrim/ar-lib-core';
 
 // =============================================================================
 // Constants
@@ -107,6 +107,7 @@ function validateConfig(config: Partial<JITProvisioningConfig>): string[] {
  * Get JIT Provisioning configuration
  */
 export async function getJITProvisioningConfig(c: Context) {
+  const log = getLogger(c).module('JITProvisioningAPI');
   try {
     let config: JITProvisioningConfig = { ...DEFAULT_JIT_CONFIG };
     let source = 'default';
@@ -130,7 +131,7 @@ export async function getJITProvisioningConfig(c: Context) {
       defaults: DEFAULT_JIT_CONFIG,
     });
   } catch (error) {
-    console.error('[JIT Provisioning API] Get error:', error);
+    log.error('Get error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -146,6 +147,7 @@ export async function getJITProvisioningConfig(c: Context) {
  * Update JIT Provisioning configuration
  */
 export async function updateJITProvisioningConfig(c: Context) {
+  const log = getLogger(c).module('JITProvisioningAPI');
   const body = await c.req.json<Partial<JITProvisioningConfig>>();
 
   // Validate input
@@ -202,7 +204,7 @@ export async function updateJITProvisioningConfig(c: Context) {
       message: 'JIT Provisioning configuration updated',
     });
   } catch (error) {
-    console.error('[JIT Provisioning API] Update error:', error);
+    log.error('Update error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -218,6 +220,7 @@ export async function updateJITProvisioningConfig(c: Context) {
  * Reset JIT Provisioning configuration to defaults
  */
 export async function resetJITProvisioningConfig(c: Context) {
+  const log = getLogger(c).module('JITProvisioningAPI');
   if (!c.env.SETTINGS) {
     return c.json(
       {
@@ -236,7 +239,7 @@ export async function resetJITProvisioningConfig(c: Context) {
       message: 'JIT Provisioning configuration reset to defaults',
     });
   } catch (error) {
-    console.error('[JIT Provisioning API] Reset error:', error);
+    log.error('Reset error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

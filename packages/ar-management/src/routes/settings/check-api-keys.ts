@@ -15,12 +15,13 @@
 
 import type { Context } from 'hono';
 import type { D1Database } from '@cloudflare/workers-types';
-import type {
-  CheckApiKey,
-  CheckApiOperation,
-  RateLimitTier,
-  CreateCheckApiKeyRequest,
-  CreateCheckApiKeyResponse,
+import {
+  getLogger,
+  type CheckApiKey,
+  type CheckApiOperation,
+  type RateLimitTier,
+  type CreateCheckApiKeyRequest,
+  type CreateCheckApiKeyResponse,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -91,6 +92,7 @@ function getAdminUserId(c: Context): string | undefined {
  * Create a new Check API key
  */
 export async function createCheckApiKey(c: Context) {
+  const log = getLogger(c).module('CheckAPIKeysAPI');
   const db = c.env?.DB as D1Database | undefined;
   if (!db) {
     return c.json(
@@ -213,11 +215,11 @@ export async function createCheckApiKey(c: Context) {
       created_at: now,
     };
 
-    console.log(`[Check API Keys] Created key ${prefix}... for client ${body.client_id}`);
+    log.info('Created API key', { keyPrefix: prefix, clientId: body.client_id });
 
     return c.json(response, 201);
   } catch (error) {
-    console.error('[Check API Keys] Create error:', error);
+    log.error('Create error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -233,6 +235,7 @@ export async function createCheckApiKey(c: Context) {
  * List Check API keys
  */
 export async function listCheckApiKeys(c: Context) {
+  const log = getLogger(c).module('CheckAPIKeysAPI');
   const db = c.env?.DB as D1Database | undefined;
   if (!db) {
     return c.json(
@@ -329,7 +332,7 @@ export async function listCheckApiKeys(c: Context) {
 
     return c.json(response);
   } catch (error) {
-    console.error('[Check API Keys] List error:', error);
+    log.error('List error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -345,6 +348,7 @@ export async function listCheckApiKeys(c: Context) {
  * Get Check API key details
  */
 export async function getCheckApiKey(c: Context) {
+  const log = getLogger(c).module('CheckAPIKeysAPI');
   const db = c.env?.DB as D1Database | undefined;
   if (!db) {
     return c.json(
@@ -411,7 +415,7 @@ export async function getCheckApiKey(c: Context) {
 
     return c.json(keyDetails);
   } catch (error) {
-    console.error('[Check API Keys] Get error:', error);
+    log.error('Get error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -427,6 +431,7 @@ export async function getCheckApiKey(c: Context) {
  * Delete (revoke) Check API key
  */
 export async function deleteCheckApiKey(c: Context) {
+  const log = getLogger(c).module('CheckAPIKeysAPI');
   const db = c.env?.DB as D1Database | undefined;
   if (!db) {
     return c.json(
@@ -462,11 +467,11 @@ export async function deleteCheckApiKey(c: Context) {
       );
     }
 
-    console.log(`[Check API Keys] Revoked key ${id}`);
+    log.info('Revoked API key', { keyId: id });
 
     return c.json({ success: true, id });
   } catch (error) {
-    console.error('[Check API Keys] Delete error:', error);
+    log.error('Delete error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -482,6 +487,7 @@ export async function deleteCheckApiKey(c: Context) {
  * Rotate Check API key (generate new key, invalidate old one)
  */
 export async function rotateCheckApiKey(c: Context) {
+  const log = getLogger(c).module('CheckAPIKeysAPI');
   const db = c.env?.DB as D1Database | undefined;
   if (!db) {
     return c.json(
@@ -564,7 +570,7 @@ export async function rotateCheckApiKey(c: Context) {
       .bind(now, id)
       .run();
 
-    console.log(`[Check API Keys] Rotated key ${id} -> ${newId}`);
+    log.info('Rotated API key', { oldKeyId: id, newKeyId: newId });
 
     // Return new key (only returned once)
     const response: CreateCheckApiKeyResponse = {
@@ -581,7 +587,7 @@ export async function rotateCheckApiKey(c: Context) {
 
     return c.json(response, 201);
   } catch (error) {
-    console.error('[Check API Keys] Rotate error:', error);
+    log.error('Rotate error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

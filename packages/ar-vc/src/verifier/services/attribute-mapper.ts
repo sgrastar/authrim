@@ -15,6 +15,9 @@ import type {
   UserVerifiedAttributeRepository,
   AttributeVerificationRepository,
 } from '@authrim/ar-lib-core';
+import { createLogger } from '@authrim/ar-lib-core';
+
+const log = createLogger().module('VC-ATTR-MAPPER');
 
 /**
  * Mapping from VC claims to normalized attribute names
@@ -210,7 +213,7 @@ export async function storeUserVerifiedAttributes(
 
       attributeIds.push(result.id);
     } catch (error) {
-      console.error(`[storeVerifiedAttributes] Failed to store attribute ${attr.name}:`, error);
+      log.error('Failed to store verified attribute', { attributeName: attr.name }, error as Error);
       // SECURITY: Do not expose internal error details in response
       errors.push(`Failed to store attribute ${attr.name}`);
     }

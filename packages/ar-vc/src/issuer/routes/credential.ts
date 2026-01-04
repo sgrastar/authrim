@@ -15,6 +15,7 @@ import {
   StatusListManager,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { generateSecureNonce } from '../../utils/crypto';
 import { importPKCS8 } from 'jose';
@@ -110,6 +111,8 @@ function validateCredentialResponse(response: CredentialResponse): void {
  * Issues a credential to the wallet.
  */
 export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC-ISSUER');
   try {
     // Verify access token
     const authHeader = c.req.header('Authorization');
@@ -196,7 +199,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // SECURITY: Never trust Host header - always use configured ISSUER_IDENTIFIER
     const issuerUrl = c.env.ISSUER_IDENTIFIER;
     if (!issuerUrl) {
-      console.error('[credential] ISSUER_IDENTIFIER is not configured');
+      log.error('ISSUER_IDENTIFIER is not configured');
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
@@ -261,7 +264,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
     return c.json(response);
   } catch (error) {
-    console.error('[credential] Error:', error);
+    log.error('Credential issuance failed', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

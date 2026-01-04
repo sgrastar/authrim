@@ -1,5 +1,5 @@
 /**
- * Token Exchange (RFC 8693) Settings Admin API
+ * Token Exchange (RFC 8693) & ID-JAG Settings Admin API
  *
  * GET  /api/admin/settings/token-exchange     - Get Token Exchange settings
  * PUT  /api/admin/settings/token-exchange     - Update Token Exchange settings
@@ -11,14 +11,24 @@
  *       "enabled": boolean,
  *       "allowedSubjectTokenTypes": string[],
  *       "maxResourceParams": number,
- *       "maxAudienceParams": number
+ *       "maxAudienceParams": number,
+ *       "idJag": {
+ *         "enabled": boolean,
+ *         "allowedIssuers": string[],
+ *         "maxTokenLifetime": number,
+ *         "includeTenantClaim": boolean,
+ *         "requireConfidentialClient": boolean
+ *       }
  *     }
  *   }
  * }
+ *
+ * @see RFC 8693 (Token Exchange)
+ * @see draft-ietf-oauth-identity-assertion-authz-grant (ID-JAG)
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import { getLogger, type Env } from '@authrim/ar-lib-core';
 
 // Valid token types for Token Exchange
 const VALID_TOKEN_TYPES = ['access_token', 'jwt', 'id_token'] as const;
@@ -27,6 +37,28 @@ type TokenType = (typeof VALID_TOKEN_TYPES)[number];
 // Parameter limits constraints
 const MIN_PARAM_LIMIT = 1;
 const MAX_PARAM_LIMIT = 100; // Reasonable upper bound
+
+// ID-JAG token lifetime constraints (seconds)
+const MIN_ID_JAG_LIFETIME = 60; // 1 minute
+const MAX_ID_JAG_LIFETIME = 86400; // 24 hours
+
+// ID-JAG Settings
+interface IdJagSettings {
+  enabled: boolean;
+  allowedIssuers: string[];
+  maxTokenLifetime: number;
+  includeTenantClaim: boolean;
+  requireConfidentialClient: boolean;
+}
+
+// Default ID-JAG settings (secure defaults per spec)
+const DEFAULT_ID_JAG_SETTINGS: IdJagSettings = {
+  enabled: false,
+  allowedIssuers: [],
+  maxTokenLifetime: 3600, // 1 hour
+  includeTenantClaim: true,
+  requireConfidentialClient: true, // SHOULD only be supported for confidential clients
+};
 
 // Default settings
 const DEFAULT_SETTINGS = {
@@ -41,11 +73,20 @@ interface TokenExchangeSettings {
   allowedSubjectTokenTypes: TokenType[];
   maxResourceParams: number;
   maxAudienceParams: number;
+  idJag?: IdJagSettings;
 }
 
+// SystemSettings stores partial/incomplete settings in KV
+// Each field can be undefined until explicitly set
 interface SystemSettings {
   oidc?: {
-    tokenExchange?: Partial<TokenExchangeSettings>;
+    tokenExchange?: {
+      enabled?: boolean;
+      allowedSubjectTokenTypes?: TokenType[];
+      maxResourceParams?: number;
+      maxAudienceParams?: number;
+      idJag?: Partial<IdJagSettings>;
+    };
     clientCredentials?: { enabled?: boolean };
   };
   rateLimit?: unknown;
@@ -60,12 +101,99 @@ interface TokenExchangeSettingsSources {
   maxAudienceParams: SettingSource;
 }
 
+interface IdJagSettingsSources {
+  enabled: SettingSource;
+  allowedIssuers: SettingSource;
+  maxTokenLifetime: SettingSource;
+  includeTenantClaim: SettingSource;
+  requireConfidentialClient: SettingSource;
+}
+
+/**
+ * Get current ID-JAG settings (hybrid: KV > env > default)
+ * Exported for use in token endpoint and discovery
+ */
+export async function getIdJagSettings(env: Env): Promise<{
+  settings: IdJagSettings;
+  sources: IdJagSettingsSources;
+}> {
+  const settings: IdJagSettings = { ...DEFAULT_ID_JAG_SETTINGS };
+  const sources: IdJagSettingsSources = {
+    enabled: 'default',
+    allowedIssuers: 'default',
+    maxTokenLifetime: 'default',
+    includeTenantClaim: 'default',
+    requireConfidentialClient: 'default',
+  };
+
+  // Check environment variables
+  if (env.ID_JAG_ENABLED !== undefined) {
+    settings.enabled = env.ID_JAG_ENABLED === 'true';
+    sources.enabled = 'env';
+  }
+
+  if (env.ID_JAG_ALLOWED_ISSUERS) {
+    settings.allowedIssuers = env.ID_JAG_ALLOWED_ISSUERS.split(',').map((s: string) => s.trim());
+    sources.allowedIssuers = 'env';
+  }
+
+  if (env.ID_JAG_MAX_TOKEN_LIFETIME) {
+    const parsed = parseInt(env.ID_JAG_MAX_TOKEN_LIFETIME, 10);
+    if (!isNaN(parsed) && parsed >= MIN_ID_JAG_LIFETIME && parsed <= MAX_ID_JAG_LIFETIME) {
+      settings.maxTokenLifetime = parsed;
+      sources.maxTokenLifetime = 'env';
+    }
+  }
+
+  // Check KV (takes priority)
+  try {
+    const settingsJson = await env.SETTINGS?.get('system_settings');
+    if (settingsJson) {
+      const systemSettings = JSON.parse(settingsJson) as SystemSettings;
+      const kvSettings = systemSettings.oidc?.tokenExchange?.idJag;
+
+      if (kvSettings?.enabled !== undefined) {
+        settings.enabled = kvSettings.enabled === true;
+        sources.enabled = 'kv';
+      }
+
+      if (Array.isArray(kvSettings?.allowedIssuers)) {
+        settings.allowedIssuers = kvSettings.allowedIssuers;
+        sources.allowedIssuers = 'kv';
+      }
+
+      if (typeof kvSettings?.maxTokenLifetime === 'number') {
+        const value = kvSettings.maxTokenLifetime;
+        if (value >= MIN_ID_JAG_LIFETIME && value <= MAX_ID_JAG_LIFETIME) {
+          settings.maxTokenLifetime = value;
+          sources.maxTokenLifetime = 'kv';
+        }
+      }
+
+      if (kvSettings?.includeTenantClaim !== undefined) {
+        settings.includeTenantClaim = kvSettings.includeTenantClaim === true;
+        sources.includeTenantClaim = 'kv';
+      }
+
+      if (kvSettings?.requireConfidentialClient !== undefined) {
+        settings.requireConfidentialClient = kvSettings.requireConfidentialClient === true;
+        sources.requireConfidentialClient = 'kv';
+      }
+    }
+  } catch {
+    // Ignore KV errors
+  }
+
+  return { settings, sources };
+}
+
 /**
  * Get current Token Exchange settings (hybrid: KV > env > default)
  */
 async function getTokenExchangeSettings(env: Env): Promise<{
   settings: TokenExchangeSettings;
   sources: TokenExchangeSettingsSources;
+  idJag: { settings: IdJagSettings; sources: IdJagSettingsSources };
 }> {
   const settings: TokenExchangeSettings = { ...DEFAULT_SETTINGS };
   const sources: TokenExchangeSettingsSources = {
@@ -150,7 +278,10 @@ async function getTokenExchangeSettings(env: Env): Promise<{
     // Ignore KV errors
   }
 
-  return { settings, sources };
+  // Get ID-JAG settings
+  const idJag = await getIdJagSettings(env);
+
+  return { settings, sources, idJag };
 }
 
 /**
@@ -158,8 +289,9 @@ async function getTokenExchangeSettings(env: Env): Promise<{
  * Get Token Exchange settings with their sources
  */
 export async function getTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('TokenExchangeSettingsAPI');
   try {
-    const { settings, sources } = await getTokenExchangeSettings(c.env);
+    const { settings, sources, idJag } = await getTokenExchangeSettings(c.env);
 
     return c.json({
       settings: {
@@ -188,11 +320,49 @@ export async function getTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
           min: MIN_PARAM_LIMIT,
           max: MAX_PARAM_LIMIT,
         },
+        // ID-JAG (Identity Assertion Authorization Grant) settings
+        idJag: {
+          enabled: {
+            value: idJag.settings.enabled,
+            source: idJag.sources.enabled,
+            default: DEFAULT_ID_JAG_SETTINGS.enabled,
+            description: 'Enable ID-JAG token type for identity chaining',
+          },
+          allowedIssuers: {
+            value: idJag.settings.allowedIssuers,
+            source: idJag.sources.allowedIssuers,
+            default: DEFAULT_ID_JAG_SETTINGS.allowedIssuers,
+            description: 'List of trusted IdP issuers for subject_token validation',
+          },
+          maxTokenLifetime: {
+            value: idJag.settings.maxTokenLifetime,
+            source: idJag.sources.maxTokenLifetime,
+            default: DEFAULT_ID_JAG_SETTINGS.maxTokenLifetime,
+            min: MIN_ID_JAG_LIFETIME,
+            max: MAX_ID_JAG_LIFETIME,
+            unit: 'seconds',
+            description: 'Maximum lifetime for issued ID-JAG tokens',
+          },
+          includeTenantClaim: {
+            value: idJag.settings.includeTenantClaim,
+            source: idJag.sources.includeTenantClaim,
+            default: DEFAULT_ID_JAG_SETTINGS.includeTenantClaim,
+            description: 'Include tenant claim in ID-JAG tokens',
+          },
+          requireConfidentialClient: {
+            value: idJag.settings.requireConfidentialClient,
+            source: idJag.sources.requireConfidentialClient,
+            default: DEFAULT_ID_JAG_SETTINGS.requireConfidentialClient,
+            description: 'Only allow confidential clients to use ID-JAG (recommended per spec)',
+          },
+        },
       },
       note: 'refresh_token is never allowed for security reasons, regardless of settings.',
+      idJagNote:
+        'ID-JAG implements draft-ietf-oauth-identity-assertion-authz-grant for IdP-mediated authorization.',
     });
   } catch (error) {
-    console.error('[Token Exchange Settings API] Error getting settings:', error);
+    log.error('Error getting settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -212,10 +382,18 @@ export async function getTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
  *   "enabled": boolean,                    // Optional
  *   "allowedSubjectTokenTypes": string[],  // Optional
  *   "maxResourceParams": number,           // Optional (1-100)
- *   "maxAudienceParams": number            // Optional (1-100)
+ *   "maxAudienceParams": number,           // Optional (1-100)
+ *   "idJag": {                             // Optional - ID-JAG settings
+ *     "enabled": boolean,
+ *     "allowedIssuers": string[],
+ *     "maxTokenLifetime": number,
+ *     "includeTenantClaim": boolean,
+ *     "requireConfidentialClient": boolean
+ *   }
  * }
  */
 export async function updateTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('TokenExchangeSettingsAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -227,7 +405,7 @@ export async function updateTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  let body: Partial<TokenExchangeSettings>;
+  let body: Partial<TokenExchangeSettings> & { idJag?: Partial<IdJagSettings> };
   try {
     body = await c.req.json();
   } catch {
@@ -333,6 +511,122 @@ export async function updateTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
     }
   }
 
+  // Validate ID-JAG settings
+  if (body.idJag !== undefined) {
+    if (typeof body.idJag !== 'object' || body.idJag === null) {
+      return c.json(
+        {
+          error: 'invalid_value',
+          error_description: '"idJag" must be an object',
+        },
+        400
+      );
+    }
+
+    // Validate idJag.enabled
+    if (body.idJag.enabled !== undefined && typeof body.idJag.enabled !== 'boolean') {
+      return c.json(
+        {
+          error: 'invalid_value',
+          error_description: '"idJag.enabled" must be a boolean',
+        },
+        400
+      );
+    }
+
+    // Validate idJag.allowedIssuers
+    if (body.idJag.allowedIssuers !== undefined) {
+      if (!Array.isArray(body.idJag.allowedIssuers)) {
+        return c.json(
+          {
+            error: 'invalid_value',
+            error_description: '"idJag.allowedIssuers" must be an array of strings',
+          },
+          400
+        );
+      }
+      for (const issuer of body.idJag.allowedIssuers) {
+        if (typeof issuer !== 'string' || issuer.trim().length === 0) {
+          return c.json(
+            {
+              error: 'invalid_value',
+              error_description: 'Each issuer in "idJag.allowedIssuers" must be a non-empty string',
+            },
+            400
+          );
+        }
+        // Validate issuer is a valid URL
+        try {
+          new URL(issuer);
+        } catch {
+          return c.json(
+            {
+              error: 'invalid_value',
+              error_description: `Invalid issuer URL: ${issuer}`,
+            },
+            400
+          );
+        }
+      }
+    }
+
+    // Validate idJag.maxTokenLifetime
+    if (body.idJag.maxTokenLifetime !== undefined) {
+      if (
+        typeof body.idJag.maxTokenLifetime !== 'number' ||
+        !Number.isInteger(body.idJag.maxTokenLifetime)
+      ) {
+        return c.json(
+          {
+            error: 'invalid_value',
+            error_description: '"idJag.maxTokenLifetime" must be an integer',
+          },
+          400
+        );
+      }
+      if (
+        body.idJag.maxTokenLifetime < MIN_ID_JAG_LIFETIME ||
+        body.idJag.maxTokenLifetime > MAX_ID_JAG_LIFETIME
+      ) {
+        return c.json(
+          {
+            error: 'invalid_value',
+            error_description: `"idJag.maxTokenLifetime" must be between ${MIN_ID_JAG_LIFETIME} and ${MAX_ID_JAG_LIFETIME} seconds`,
+          },
+          400
+        );
+      }
+    }
+
+    // Validate idJag.includeTenantClaim
+    if (
+      body.idJag.includeTenantClaim !== undefined &&
+      typeof body.idJag.includeTenantClaim !== 'boolean'
+    ) {
+      return c.json(
+        {
+          error: 'invalid_value',
+          error_description: '"idJag.includeTenantClaim" must be a boolean',
+        },
+        400
+      );
+    }
+
+    // Validate idJag.requireConfidentialClient
+    if (
+      body.idJag.requireConfidentialClient !== undefined &&
+      typeof body.idJag.requireConfidentialClient !== 'boolean'
+    ) {
+      return c.json(
+        {
+          error: 'invalid_value',
+          error_description: '"idJag.requireConfidentialClient" must be a boolean',
+        },
+        400
+      );
+    }
+  }
+
   try {
     // Read existing system_settings
     let systemSettings: SystemSettings = {};
@@ -364,19 +658,43 @@ export async function updateTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
       systemSettings.oidc.tokenExchange.maxAudienceParams = body.maxAudienceParams;
     }
 
+    // Update ID-JAG settings
+    if (body.idJag !== undefined) {
+      const existingIdJag = systemSettings.oidc.tokenExchange.idJag ?? {};
+      systemSettings.oidc.tokenExchange.idJag = {
+        ...existingIdJag,
+        ...(body.idJag.enabled !== undefined && { enabled: body.idJag.enabled }),
+        ...(body.idJag.allowedIssuers !== undefined && {
+          allowedIssuers: body.idJag.allowedIssuers,
+        }),
+        ...(body.idJag.maxTokenLifetime !== undefined && {
+          maxTokenLifetime: body.idJag.maxTokenLifetime,
+        }),
+        ...(body.idJag.includeTenantClaim !== undefined && {
+          includeTenantClaim: body.idJag.includeTenantClaim,
+        }),
+        ...(body.idJag.requireConfidentialClient !== undefined && {
+          requireConfidentialClient: body.idJag.requireConfidentialClient,
+        }),
+      };
+    }
+
     // Save back to KV
     await c.env.SETTINGS.put('system_settings', JSON.stringify(systemSettings));
 
     // Get updated settings
-    const { settings } = await getTokenExchangeSettings(c.env);
+    const { settings, idJag } = await getTokenExchangeSettings(c.env);
 
     return c.json({
       success: true,
-      settings,
+      settings: {
+        ...settings,
+        idJag: idJag.settings,
+      },
       note: 'Settings updated successfully.',
     });
   } catch (error) {
-    console.error('[Token Exchange Settings API] Error updating settings:', error);
+    log.error('Error updating settings', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
       {
@@ -393,6 +711,7 @@ export async function updateTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
  * Clear Token Exchange settings override (revert to env/default)
  */
 export async function clearTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('TokenExchangeSettingsAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -429,7 +748,7 @@ export async function clearTokenExchangeConfig(c: Context<{ Bindings: Env }>) {
       note: 'Token Exchange settings cleared. Using env/default values.',
     });
   } catch (error) {
-    console.error('[Token Exchange Settings API] Error clearing settings:', error);
+    log.error('Error clearing settings', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
       {

@@ -12,6 +12,10 @@
  * @see https://docs.authrim.com/api-versioning
  */
 
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('Deprecation');
+
 /**
  * Deprecation entry for a version or route
  */
@@ -89,7 +93,7 @@ export function parseDeprecationEntry(json: string | null): DeprecationEntry | n
 
   // Security: Limit JSON size to prevent DoS via huge payloads
   if (json.length > MAX_DEPRECATION_JSON_SIZE) {
-    console.warn('[Deprecation] JSON payload too large, rejecting');
+    log.warn('JSON payload too large, rejecting');
     return null;
   }
 
@@ -119,12 +123,12 @@ export function formatSunsetDate(isoDate: string): string | null {
     const date = new Date(isoDate);
     // Check if date is valid (NaN check)
     if (Number.isNaN(date.getTime())) {
-      console.warn('[Deprecation] Invalid sunset date format:', isoDate);
+      log.warn('Invalid sunset date format', { isoDate });
       return null;
     }
     return date.toUTCString();
   } catch {
-    console.warn('[Deprecation] Error parsing sunset date:', isoDate);
+    log.warn('Error parsing sunset date', { isoDate });
     return null;
   }
 }

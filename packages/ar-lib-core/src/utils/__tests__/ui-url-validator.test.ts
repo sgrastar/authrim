@@ -312,10 +312,11 @@ describe('UI URL Validator', () => {
         newValue: 'https://new.example.com',
       });
 
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[AUDIT][UI Config]'));
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('admin=admin-123'));
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('UPDATE'));
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('field=baseUrl'));
+      // Structured logger outputs JSON format
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"message":"UI config change"'));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"adminId":"admin-123"'));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"action":"UPDATE"'));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"field":"baseUrl"'));
     });
 
     it('should log config changes with unknown admin', () => {
@@ -325,17 +326,21 @@ describe('UI URL Validator', () => {
         newValue: null,
       });
 
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('admin=unknown'));
-      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('DELETE'));
+      // Structured logger outputs JSON format
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"adminId":"unknown"'));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"action":"DELETE"'));
     });
 
     it('should log validation failures', () => {
       logUIConfigValidationFailure('admin-456', 'https://evil.com', 'Origin not allowed');
 
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[AUDIT][UI Config][REJECTED]'));
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('admin=admin-456'));
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('url=https://evil.com'));
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('error="Origin not allowed"'));
+      // Structured logger outputs JSON format
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('"message":"UI config validation rejected"')
+      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"adminId":"admin-456"'));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"url":"https://evil.com"'));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"error":"Origin not allowed"'));
     });
   });
 

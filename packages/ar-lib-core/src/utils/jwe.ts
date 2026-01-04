@@ -8,6 +8,9 @@
 
 import { CompactEncrypt, compactDecrypt, importJWK, type JWK } from 'jose';
 import { isInternalUrl } from './url-security';
+import { createLogger } from './logger';
+
+const log = createLogger().module('JWE');
 
 /**
  * Supported JWE Key Management Algorithms (alg)
@@ -207,7 +210,7 @@ export async function getClientPublicKey(
     try {
       // SSRF protection: Block requests to internal addresses
       if (isInternalUrl(clientMetadata.jwks_uri)) {
-        console.error('SSRF protection: jwks_uri cannot point to internal addresses');
+        log.error('SSRF protection: jwks_uri cannot point to internal addresses');
         return null;
       }
 
@@ -220,10 +223,7 @@ export async function getClientPublicKey(
       return key || null;
     } catch (error) {
       // PII Protection: Don't log full error object (may contain client JWKS URI)
-      console.error(
-        'Error fetching client JWKS:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.error('Error fetching client JWKS', {}, error as Error);
       return null;
     }
   }

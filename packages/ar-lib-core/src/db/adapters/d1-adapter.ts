@@ -23,6 +23,9 @@ import type {
   QueryOptions,
 } from '../adapter';
 import { retryD1Operation, type RetryConfig } from '../../utils/d1-retry';
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger().module('D1');
 
 /**
  * D1 Database type (from @cloudflare/workers-types)
@@ -110,16 +113,15 @@ export class D1Adapter implements DatabaseAdapter {
       if (!result) {
         // Retry exhausted - throw error instead of returning empty array
         // Returning [] would make it impossible to distinguish "no data" from "query failed"
-        const errorMsg = `D1Adapter.query failed after retries exhausted`;
-        console.error(errorMsg, {
+        log.error('D1Adapter.query failed after retries exhausted', {
           partition: this.partition,
           sql: this.truncateSql(sql),
         });
-        throw new Error(errorMsg);
+        throw new Error(`D1Adapter.query failed after retries exhausted`);
       }
 
       if (this.debug) {
-        console.log(`D1Adapter.query completed`, {
+        log.debug('D1Adapter.query completed', {
           partition: this.partition,
           durationMs: Date.now() - startTime,
           rowCount: result.results?.length ?? 0,
@@ -128,11 +130,14 @@ export class D1Adapter implements DatabaseAdapter {
 
       return result.results ?? [];
     } catch (error) {
-      console.error(`D1Adapter.query error`, {
-        partition: this.partition,
-        sql: this.truncateSql(sql),
-        error: error instanceof Error ? error.message : String(error),
-      });
+      log.error(
+        'D1Adapter.query error',
+        {
+          partition: this.partition,
+          sql: this.truncateSql(sql),
+        },
+        error as Error
+      );
       throw error;
     }
   }
@@ -154,7 +159,7 @@ export class D1Adapter implements DatabaseAdapter {
       );
 
       if (this.debug) {
-        console.log(`D1Adapter.queryOne completed`, {
+        log.debug('D1Adapter.queryOne completed', {
           partition: this.partition,
           durationMs: Date.now() - startTime,
           found: result !== null,
@@ -163,11 +168,14 @@ export class D1Adapter implements DatabaseAdapter {
 
       return result;
     } catch (error) {
-      console.error(`D1Adapter.queryOne error`, {
-        partition: this.partition,
-        sql: this.truncateSql(sql),
-        error: error instanceof Error ? error.message : String(error),
-      });
+      log.error(
+        'D1Adapter.queryOne error',
+        {
+          partition: this.partition,
+          sql: this.truncateSql(sql),
+        },
+        error as Error
+      );
       throw error;
     }
   }
@@ -191,12 +199,11 @@ export class D1Adapter implements DatabaseAdapter {
       if (!result) {
         // Retry exhausted - throw error instead of returning success: false
         // Returning { success: false } could be silently ignored by callers
-        const errorMsg = `D1Adapter.execute failed after retries exhausted`;
-        console.error(errorMsg, {
+        log.error('D1Adapter.execute failed after retries exhausted', {
           partition: this.partition,
           sql: this.truncateSql(sql),
         });
-        throw new Error(errorMsg);
+        throw new Error(`D1Adapter.execute failed after retries exhausted`);
       }
 
       const executeResult: ExecuteResult = {
@@ -207,7 +214,7 @@ export class D1Adapter implements DatabaseAdapter {
       };
 
       if (this.debug) {
-        console.log(`D1Adapter.execute completed`, {
+        log.debug('D1Adapter.execute completed', {
           partition: this.partition,
           durationMs: executeResult.durationMs,
           rowsAffected: executeResult.rowsAffected,
@@ -216,11 +223,14 @@ export class D1Adapter implements DatabaseAdapter {
 
       return executeResult;
     } catch (error) {
-      console.error(`D1Adapter.execute error`, {
-        partition: this.partition,
-        sql: this.truncateSql(sql),
-        error: error instanceof Error ? error.message : String(error),
-      });
+      log.error(
+        'D1Adapter.execute error',
+        {
+          partition: this.partition,
+          sql: this.truncateSql(sql),
+        },
+        error as Error
+      );
       throw error;
     }
   }
@@ -333,7 +343,7 @@ export class D1Adapter implements DatabaseAdapter {
       }
 
       if (this.debug) {
-        console.log(`D1Adapter.transaction completed`, {
+        log.debug('D1Adapter.transaction completed', {
           partition: this.partition,
           durationMs: Date.now() - startTime,
           statementCount: collectedStatements.length,
@@ -347,11 +357,14 @@ export class D1Adapter implements DatabaseAdapter {
         pending.reject(error);
       }
 
-      console.error(`D1Adapter.transaction error`, {
-        partition: this.partition,
-        error: error instanceof Error ? error.message : String(error),
-        statementCount: collectedStatements.length,
-      });
+      log.error(
+        'D1Adapter.transaction error',
+        {
+          partition: this.partition,
+          statementCount: collectedStatements.length,
+        },
+        error as Error
+      );
       throw error;
     }
   }
@@ -379,12 +392,11 @@ export class D1Adapter implements DatabaseAdapter {
 
       if (!results) {
         // Retry exhausted - throw error for consistent behavior
-        const errorMsg = `D1Adapter.batch failed after retries exhausted`;
-        console.error(errorMsg, {
+        log.error('D1Adapter.batch failed after retries exhausted', {
           partition: this.partition,
           statementCount: statements.length,
         });
-        throw new Error(errorMsg);
+        throw new Error(`D1Adapter.batch failed after retries exhausted`);
       }
 
       const executeResults: ExecuteResult[] = results.map((result) => ({
@@ -395,7 +407,7 @@ export class D1Adapter implements DatabaseAdapter {
       }));
 
       if (this.debug) {
-        console.log(`D1Adapter.batch completed`, {
+        log.debug('D1Adapter.batch completed', {
           partition: this.partition,
           durationMs: Date.now() - startTime,
           statementCount: statements.length,
@@ -404,11 +416,14 @@ export class D1Adapter implements DatabaseAdapter {
 
       return executeResults;
     } catch (error) {
-      console.error(`D1Adapter.batch error`, {
-        partition: this.partition,
-        error: error instanceof Error ? error.message : String(error),
-        statementCount: statements.length,
-      });
+      log.error(
+        'D1Adapter.batch error',
+        {
+          partition: this.partition,
+          statementCount: statements.length,
+        },
+        error as Error
+      );
       throw error;
     }
   }

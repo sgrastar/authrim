@@ -1,7 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createAuditLog, createAuditLogFromContext } from '../audit-log';
 import type { Env } from '../../types/env';
 import type { Context } from 'hono';
+
+// Mock logger - hoisted before other imports
+const mockLogger = vi.hoisted(() => ({
+  warn: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+  child: vi.fn().mockReturnThis(),
+  module: vi.fn().mockReturnThis(),
+  startTimer: vi.fn().mockReturnValue(() => {}),
+}));
+
+vi.mock('../logger', () => ({
+  createLogger: () => mockLogger,
+}));
+
+import { createAuditLog, createAuditLogFromContext } from '../audit-log';
 
 /**
  * Audit Log Utility Tests
@@ -69,14 +85,10 @@ function createMockContext(options: {
 
 describe('createAuditLog', () => {
   let mockEnv: Env;
-  let consoleSpy: ReturnType<typeof vi.spyOn>;
-  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockEnv = createMockEnv();
-    consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -153,8 +165,8 @@ describe('createAuditLog', () => {
     });
 
     // PII Protection: userId and metadata are intentionally omitted from console output
-    expect(consoleSpy).toHaveBeenCalledWith(
-      '[CRITICAL AUDIT]',
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'CRITICAL AUDIT',
       expect.objectContaining({
         action: 'signing_keys.rotate.emergency',
         resource: 'signing_keys',
@@ -162,7 +174,7 @@ describe('createAuditLog', () => {
       })
     );
     // Verify userId is NOT in the output (PII protection)
-    const loggedObject = consoleSpy.mock.calls[0][1];
+    const loggedObject = mockLogger.warn.mock.calls[0][1];
     expect(loggedObject.userId).toBeUndefined();
     expect(loggedObject.metadata).toBeUndefined();
   });
@@ -179,7 +191,7 @@ describe('createAuditLog', () => {
       severity: 'info',
     });
 
-    expect(consoleSpy).not.toHaveBeenCalled();
+    expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
   describe('Error Handling (Non-blocking)', () => {
@@ -201,9 +213,10 @@ describe('createAuditLog', () => {
       ).resolves.not.toThrow();
 
       // Should log the error (PII-safe: only error name, not full error or audit data)
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'Failed to create audit log:',
-        'Error' // Only error.name is logged for PII protection
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Failed to create audit log',
+        {},
+        expect.any(Error)
       );
     });
 
@@ -225,13 +238,17 @@ describe('createAuditLog', () => {
 
       // PII Protection: Audit data should NOT be logged (may contain PII in metadata)
       // Only the sanitized error message should be logged
-      expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to create audit log:', 'Error');
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Failed to create audit log',
+        {},
+        expect.any(Error)
+      );
       // Verify audit data is NOT logged (old behavior would log the full entry)
-      const allCalls = consoleErrorSpy.mock.calls;
+      const allCalls = mockLogger.error.mock.calls;
       const hasAuditDataCall = allCalls.some(
         (call) =>
           call[0] === 'Audit log data:' ||
-          (call[1] && typeof call[1] === 'object' && call[1].userId)
+          (call[1] && typeof call[1] === 'object' && (call[1] as { userId?: string }).userId)
       );
       expect(hasAuditDataCall).toBe(false);
     });
@@ -239,11 +256,8 @@ describe('createAuditLog', () => {
 });
 
 describe('createAuditLogFromContext', () => {
-  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -427,7 +441,7 @@ describe('createAuditLogFromContext', () => {
     await createAuditLogFromContext(mockContext, 'test.action', 'resource', 'id-1', {}, 'info');
 
     // Should log error and not call DB
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
+    expect(mockLogger.error).toHaveBeenCalledWith(
       'Cannot create audit log: adminAuth context not found'
     );
     expect(mockEnv.DB.prepare).not.toHaveBeenCalled();

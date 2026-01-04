@@ -732,7 +732,8 @@ export interface CIBARequestRow extends Omit<CIBARequestMetadata, 'token_issued'
 export type TokenTypeURN =
   | 'urn:ietf:params:oauth:token-type:access_token'
   | 'urn:ietf:params:oauth:token-type:refresh_token'
-  | 'urn:ietf:params:oauth:token-type:id_token';
+  | 'urn:ietf:params:oauth:token-type:id_token'
+  | 'urn:ietf:params:oauth:token-type:id-jag'; // ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant)
 
 /**
  * Token Exchange Request Parameters

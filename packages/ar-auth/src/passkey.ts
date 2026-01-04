@@ -23,7 +23,13 @@ import {
   SESSION_EVENTS,
   type AuthEventData,
   type SessionEventData,
+  // Logging
+  getLogger,
+  createLogger,
 } from '@authrim/ar-lib-core';
+
+// ===== Module-level Logger for Helper Functions =====
+const moduleLogger = createLogger().module('PASSKEY');
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -108,6 +114,7 @@ function normalizeStoredCredentialId(id?: string | null): string | null {
  * POST /auth/passkey/register/options
  */
 export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('PASSKEY');
   try {
     const body = await c.req.json<{
       email: string;
@@ -213,23 +220,25 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
           await authCtx.repositories.userCore.updatePIIStatus(newUserId, 'active');
         } catch (piiError: unknown) {
           // PII Protection: Don't log full error (may contain PII)
-          console.error(
-            '[PASSKEY] Failed to create user in PII DB:',
-            piiError instanceof Error ? piiError.name : 'Unknown error'
-          );
+          log.error('Failed to create user in PII DB', {
+            action: 'pii_create',
+            errorType: piiError instanceof Error ? piiError.name : 'Unknown',
+          });
           // Update pii_status to 'failed' to indicate PII DB write failure
           await authCtx.repositories.userCore
             .updatePIIStatus(newUserId, 'failed')
             .catch((statusError: unknown) => {
-              console.error(
-                '[PASSKEY] Failed to update pii_status to failed:',
-                statusError instanceof Error ? statusError.name : 'Unknown error'
-              );
+              log.error('Failed to update pii_status to failed', {
+                action: 'pii_status_update',
+                errorType: statusError instanceof Error ? statusError.name : 'Unknown',
+              });
             });
           // Note: We continue with registration - Core DB user exists, PII can be retried
         }
       } else {
-        console.warn('[PASSKEY] DB_PII not configured - user created with pii_status=pending');
+        log.warn('DB_PII not configured - user created with pii_status=pending', {
+          action: 'pii_config',
+        });
       }
 
       user = { id: newUserId, email, name: defaultName || email.split('@')[0] };
@@ -294,10 +303,10 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     });
   } catch (error) {
     // PII Protection: Don't log full error (may contain user data)
-    console.error(
-      'Passkey registration options error:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Passkey registration options error', {
+      action: 'register_options',
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -307,6 +316,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
  * POST /auth/passkey/register/verify
  */
 export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('PASSKEY');
   try {
     const body = await c.req.json<{
       userId: string;
@@ -365,10 +375,10 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       });
     } catch (error) {
       // PII Protection: Don't log full error
-      console.error(
-        'Registration verification failed:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.error('Registration verification failed', {
+        action: 'register_verify',
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
 
@@ -413,10 +423,10 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       sessionData = { id: createdSession.id };
     } catch (error) {
       // PII Protection: Don't log full error
-      console.error(
-        'Failed to create session:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.error('Failed to create session', {
+        action: 'session_create',
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
       return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
     }
 
@@ -479,10 +489,10 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     });
   } catch (error) {
     // PII Protection: Don't log full error (may contain credential data)
-    console.error(
-      'Passkey registration verify error:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Passkey registration verify error', {
+      action: 'register_verify_final',
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -492,6 +502,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
  * POST /auth/passkey/login/options
  */
 export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('PASSKEY');
   try {
     const body = await c.req.json<{
       email?: string;
@@ -586,10 +597,10 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
     });
   } catch (error) {
     // PII Protection: Don't log full error (may contain user data)
-    console.error(
-      'Passkey login options error:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Passkey login options error', {
+      action: 'login_options',
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -599,6 +610,7 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
  * POST /auth/passkey/login/verify
  */
 export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('PASSKEY');
   try {
     const body = await c.req.json<{
       challengeId: string;
@@ -664,7 +676,10 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           errorCode: 'credential_not_found',
         } satisfies AuthEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish auth.passkey.failed:', err);
+        log.error('Failed to publish auth.passkey.failed event', {
+          action: 'event_publish',
+          errorType: err instanceof Error ? err.name : 'Unknown',
+        });
       });
 
       // Security: Generic message to prevent passkey enumeration
@@ -690,7 +705,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     const normalizedCredentialId = normalizeStoredCredentialId(passkey.credential_id as string);
     if (!normalizedCredentialId) {
       // PII Protection: Don't log passkey.id
-      console.error('Stored credential ID could not be normalized');
+      log.error('Stored credential ID could not be normalized', { action: 'credential_normalize' });
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
     const publicKey = Uint8Array.from(Buffer.from(passkey.public_key as string, 'base64'));
@@ -720,14 +735,17 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           errorCode: 'verification_exception',
         } satisfies AuthEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish auth.passkey.failed:', err);
+        log.error('Failed to publish auth.passkey.failed event', {
+          action: 'event_publish',
+          errorType: err instanceof Error ? err.name : 'Unknown',
+        });
       });
 
       // PII Protection: Don't log full error
-      console.error(
-        'Authentication verification failed:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.error('Authentication verification failed', {
+        action: 'login_verify',
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
 
@@ -744,7 +762,10 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           errorCode: 'verification_failed',
         } satisfies AuthEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish auth.passkey.failed:', err);
+        log.error('Failed to publish auth.passkey.failed event', {
+          action: 'event_publish',
+          errorType: err instanceof Error ? err.name : 'Unknown',
+        });
       });
 
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
@@ -770,10 +791,10 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       sessionData = { id: createdSession.id };
     } catch (error) {
       // PII Protection: Don't log full error
-      console.error(
-        'Failed to create session:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.error('Failed to create session', {
+        action: 'session_create',
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
       return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
     }
 
@@ -819,7 +840,10 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       } satisfies AuthEventData,
     }).catch((err) => {
       // Non-blocking: log error but don't fail the request
-      console.error('[Event] Failed to publish auth.passkey.succeeded:', err);
+      log.error('Failed to publish auth.passkey.succeeded event', {
+        action: 'event_publish',
+        errorType: err instanceof Error ? err.name : 'Unknown',
+      });
     });
 
     // Publish session.user.created event (non-blocking)
@@ -832,7 +856,10 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         ttlSeconds: 30 * 24 * 60 * 60, // 30 days
       } satisfies SessionEventData,
     }).catch((err) => {
-      console.error('[Event] Failed to publish session.user.created:', err);
+      log.error('Failed to publish session.user.created event', {
+        action: 'event_publish',
+        errorType: err instanceof Error ? err.name : 'Unknown',
+      });
     });
 
     return c.json({
@@ -851,10 +878,10 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     });
   } catch (error) {
     // PII Protection: Don't log full error (may contain credential data)
-    console.error(
-      'Passkey login verify error:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Passkey login verify error', {
+      action: 'login_verify_final',
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

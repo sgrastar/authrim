@@ -13,6 +13,7 @@ import {
   IssuedCredentialRepository,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { validateVCIAccessToken } from '../services/token-validation';
 import { generateSecureNonce } from '../../utils/crypto';
@@ -28,6 +29,8 @@ interface DeferredCredentialRequest {
  * Retrieves a credential that was deferred during initial issuance.
  */
 export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC-ISSUER');
   try {
     // Verify access token
     const authHeader = c.req.header('Authorization');
@@ -122,7 +125,7 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
       c_nonce_expires_in: cNonceExpiresIn,
     });
   } catch (error) {
-    console.error('[deferredCredential] Error:', error);
+    log.error('Deferred credential retrieval failed', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

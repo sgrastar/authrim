@@ -43,6 +43,8 @@ import {
   getCurrentPolicyVersions,
   checkRequiresReconsent,
   recordConsentHistory,
+  // Logger
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 // Scope descriptions (human-readable)
@@ -104,6 +106,8 @@ function parseScopesToInfo(scope: string): ConsentScopeInfo[] {
  * Returns JSON if Accept: application/json, otherwise HTML
  */
 export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('CONSENT');
+
   try {
     const challenge_id = c.req.query('challenge_id');
 
@@ -205,7 +209,7 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
       client_id,
     });
   } catch (error) {
-    console.error('Consent get error:', error);
+    log.error('Consent get error', { action: 'get_consent' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -565,6 +569,8 @@ function renderHtmlConsent(
  * - JSON: { challenge_id, approved, selected_org_id, acting_as_user_id, selected_scopes }
  */
 export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('CONSENT');
+
   try {
     // Determine content type and parse body
     const contentType = c.req.header('Content-Type') || '';
@@ -658,7 +664,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
           scopes: (metadata.scope as string).split(' '),
         } satisfies ConsentEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish consent.denied:', err);
+        log.warn('Failed to publish consent.denied event', { action: 'event_publish' });
       });
 
       const redirectUri = metadata.redirect_uri as string;
@@ -796,7 +802,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
           userAgent: c.req.header('User-Agent'),
         });
       } catch (historyError) {
-        console.error('[Consent] Failed to record history:', historyError);
+        log.warn('Failed to record consent history', { action: 'record_history' });
         // Non-blocking - don't fail the consent flow
       }
     }
@@ -811,7 +817,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
         scopes: effectiveScope.split(' '),
       } satisfies ConsentEventData,
     }).catch((err) => {
-      console.error('[Event] Failed to publish consent.granted:', err);
+      log.warn('Failed to publish consent.granted event', { action: 'event_publish' });
     });
 
     // Publish VERSION_UPGRADED event if policy versions were acknowledged
@@ -827,12 +833,12 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
           newTosVersion: tosVersion ?? undefined,
         } satisfies ExtendedConsentEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish consent.version_upgraded:', err);
+        log.warn('Failed to publish consent.version_upgraded event', { action: 'event_publish' });
       });
     }
 
     // PII Protection: Don't log userId (can be used for user tracking)
-    console.log(`Consent granted: scope=${effectiveScope}`);
+    log.info('Consent granted', { action: 'grant', scope: effectiveScope });
 
     // Build query string for internal redirect to /authorize
     const params = new URLSearchParams();
@@ -876,7 +882,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     }
     return c.redirect(redirectUrl, 302);
   } catch (error) {
-    console.error('Consent post error:', error);
+    log.error('Consent post error', { action: 'post_consent' }, error as Error);
     return c.json(
       {
         error: 'server_error',

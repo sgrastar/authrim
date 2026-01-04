@@ -8,8 +8,12 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
-import { createEncryptionConfigManager, ENCRYPTABLE_PII_FIELDS } from '@authrim/ar-lib-core';
+import {
+  createEncryptionConfigManager,
+  ENCRYPTABLE_PII_FIELDS,
+  getLogger,
+  type Env,
+} from '@authrim/ar-lib-core';
 
 type AppContext = Context<{ Bindings: Env }>;
 
@@ -18,6 +22,7 @@ type AppContext = Context<{ Bindings: Env }>;
  * Get encryption status and diagnostics
  */
 export async function getEncryptionStatus(c: AppContext) {
+  const log = getLogger(c).module('EncryptionConfigAPI');
   const configManager = createEncryptionConfigManager(c.env);
 
   try {
@@ -75,7 +80,7 @@ export async function getEncryptionStatus(c: AppContext) {
       note: 'Encryption settings are controlled via environment variables. Redeploy to change settings.',
     });
   } catch (error) {
-    console.error('[Encryption Config API] Error getting status:', error);
+    log.error('Error getting status', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

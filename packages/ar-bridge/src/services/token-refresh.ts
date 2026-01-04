@@ -7,7 +7,9 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
-import { D1Adapter, type DatabaseAdapter } from '@authrim/ar-lib-core';
+import { D1Adapter, type DatabaseAdapter, createLogger } from '@authrim/ar-lib-core';
+
+const log = createLogger().module('TOKEN-REFRESH');
 import type { LinkedIdentity } from '../types';
 import { getProvider } from './provider-store';
 import { updateLinkedIdentity, decryptLinkedIdentityTokens } from './linked-identity-store';
@@ -47,7 +49,7 @@ export async function refreshExpiringTokens(env: Env): Promise<number> {
 
   const encryptionKey = getEncryptionKeyOrUndefined(env);
   if (!encryptionKey) {
-    console.warn('Token refresh skipped: RP_TOKEN_ENCRYPTION_KEY not configured');
+    log.warn('Token refresh skipped: RP_TOKEN_ENCRYPTION_KEY not configured');
     return 0;
   }
 
@@ -71,10 +73,9 @@ export async function refreshExpiringTokens(env: Env): Promise<number> {
       }
     } catch (error) {
       // PII Protection: Don't log full error object (may contain token info)
-      console.error(
-        `Failed to refresh token for identity:`,
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.error('Failed to refresh token for identity', {
+        errorName: error instanceof Error ? error.name : 'Unknown error',
+      });
       // Continue with other tokens
     }
   }
@@ -117,7 +118,7 @@ async function refreshIdentityToken(
   const provider = await getProvider(env, identity.providerId);
   if (!provider) {
     // PII Protection: Don't log identity.id (technical identifier)
-    console.warn(`Provider not found for token refresh`);
+    log.warn('Provider not found for token refresh');
     return false;
   }
 
@@ -125,7 +126,7 @@ async function refreshIdentityToken(
   const { refreshToken } = await decryptLinkedIdentityTokens(env, identity);
   if (!refreshToken) {
     // PII Protection: Don't log identity.id
-    console.warn(`No refresh token available for identity`);
+    log.warn('No refresh token available for identity');
     return false;
   }
 
@@ -145,7 +146,7 @@ async function refreshIdentityToken(
   });
 
   // PII Protection: Don't log identity.id
-  console.log(`Successfully refreshed external IdP token`);
+  log.info('Successfully refreshed external IdP token');
   return true;
 }
 

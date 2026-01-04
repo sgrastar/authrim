@@ -16,6 +16,9 @@
 
 import { importJWK, type JWK } from 'jose';
 import type { Env } from '../types/env';
+import { createLogger } from './logger';
+
+const log = createLogger().module('JWKS');
 
 /**
  * JWKS cache configuration options
@@ -128,7 +131,7 @@ export async function getJwksWithCache(
         return { keys, source: 'do' };
       }
     } catch (error) {
-      console.error('Failed to get JWKS from KeyManager:', error);
+      log.error('Failed to get JWKS from KeyManager', {}, error as Error);
       // Continue to fallback
     }
   }
@@ -142,7 +145,7 @@ export async function getJwksWithCache(
       jwksCache = { keys, expiry: now + inMemoryTtlMs, source: 'env' };
       return { keys, source: 'env' };
     } catch {
-      console.error('Failed to parse PUBLIC_JWK_JSON');
+      log.error('Failed to parse PUBLIC_JWK_JSON');
     }
   }
 
@@ -214,7 +217,7 @@ export async function getVerificationKey(
   try {
     return (await importJWK(jwk, algorithm)) as CryptoKey;
   } catch (error) {
-    console.error('Failed to import JWK:', error);
+    log.error('Failed to import JWK', {}, error as Error);
     return undefined;
   }
 }

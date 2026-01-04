@@ -248,6 +248,31 @@ ALLOWED_ORIGINS=${ALLOWED_ORIGINS_INPUT:-$UI_BASE_URL}
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "📬 Async Audit Logging (Optional)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "Enable Cloudflare Queues for async audit log processing?"
+echo ""
+echo "  • Requires: Workers Paid plan (\$5/month base)"
+echo "  • Cost: ~\$1.20 per million audit messages"
+echo "  • Benefits: Non-blocking audit writes, better performance"
+echo "  • Without: Audit logs write directly to D1 (still works fine)"
+echo ""
+echo "If you don't have Workers Paid plan or don't need async audit,"
+echo "select 'No' - audit logging will still work via direct D1 writes."
+echo ""
+read -p "Enable async audit logging with Queues? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    ENABLE_AUDIT_QUEUE="true"
+    echo -e "${GREEN}✅ Async audit logging enabled${NC}"
+else
+    ENABLE_AUDIT_QUEUE="false"
+    echo -e "${YELLOW}ℹ️  Async audit logging disabled (using D1 direct writes)${NC}"
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✅ Configuration Summary"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
@@ -255,6 +280,7 @@ echo "Deployment Mode: $([ "$DEPLOYMENT_MODE" = "test" ] && echo "Test (Router W
 echo "ISSUER_URL: $ISSUER_URL"
 echo "UI_BASE_URL: $UI_BASE_URL"
 echo "ALLOWED_ORIGINS: $ALLOWED_ORIGINS"
+echo "Async Audit Logging: $([ "$ENABLE_AUDIT_QUEUE" = "true" ] && echo "Enabled (Queues)" || echo "Disabled (D1 direct)")"
 echo ""
 
 # For production mode, extract domain and zone info
@@ -287,6 +313,28 @@ generate_base_wrangler() {
 
     local file="packages/$package/wrangler.${DEPLOY_ENV}.toml"
 
+    # Generate audit config section based on ENABLE_AUDIT_QUEUE
+    local audit_config=""
+    if [ "$ENABLE_AUDIT_QUEUE" = "true" ]; then
+        audit_config="# Audit Logging (async via Cloudflare Queues)
+# Run ./scripts/setup-audit.sh --env=${DEPLOY_ENV} to create these resources
+[[r2_buckets]]
+binding = \"AUDIT_ARCHIVE\"
+bucket_name = \"${DEPLOY_ENV}-audit-archive\"
+
+[[queues.producers]]
+queue = \"${DEPLOY_ENV}-audit-queue\"
+binding = \"AUDIT_QUEUE\"
+"
+    else
+        audit_config="# Audit Logging: DISABLED (using D1 direct writes)
+# To enable async audit logging with Queues:
+#   1. Subscribe to Workers Paid plan (\$5/month)
+#   2. Re-run this script and select 'y' for async audit logging
+#   3. Run ./scripts/setup-audit.sh --env=${DEPLOY_ENV}
+"
+    fi
+
     cat > "$file" << TOML_EOF
 name = "${DEPLOY_ENV}-authrim-$package"
 main = "src/index.ts"
@@ -304,6 +352,7 @@ $kv_namespaces
 $d1_databases
 # R2 Buckets
 $r2_buckets
+$audit_config
 # Durable Objects Bindings
 $do_bindings
 

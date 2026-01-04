@@ -15,6 +15,10 @@ import type {
   VerifiedAttribute,
   PolicySubjectWithAttributes,
 } from './types';
+import { createLogger } from '@authrim/ar-lib-core';
+
+// Module-level logger for policy engine
+const log = createLogger().module('POLICY_ENGINE');
 
 /**
  * Policy Engine configuration
@@ -118,7 +122,7 @@ export class PolicyEngine {
   private evaluateCondition(condition: PolicyCondition, context: PolicyContext): boolean {
     const evaluator = conditionEvaluators[condition.type];
     if (!evaluator) {
-      console.warn(`Unknown condition type: ${condition.type}`);
+      log.warn('Unknown condition type', { conditionType: condition.type });
       return false;
     }
     return evaluator(condition.params, context);

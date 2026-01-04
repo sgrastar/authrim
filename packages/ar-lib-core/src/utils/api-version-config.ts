@@ -18,6 +18,9 @@
 import type { Env } from '../types/env';
 import type { ApiVersionConfig, ApiVersionString, UnknownVersionMode } from '../types/api-version';
 import { DEFAULT_API_VERSION_CONFIG, isValidApiVersionFormat } from '../types/api-version';
+import { createLogger } from './logger';
+
+const log = createLogger().module('API_VERSION_CONFIG');
 
 /** KV key for API version configuration */
 const CONFIG_KV_KEY = 'api_versions:config';
@@ -57,7 +60,7 @@ function getCacheTtlMs(env: Env): number {
   }
   // Overflow protection: cap at 24 hours to prevent integer overflow
   if (ttlSeconds > MAX_TTL_SECONDS) {
-    console.warn(`[ApiVersion] TTL ${ttlSeconds}s exceeds max ${MAX_TTL_SECONDS}s, using max`);
+    log.warn(`TTL ${ttlSeconds}s exceeds max ${MAX_TTL_SECONDS}s, using max`);
     return MAX_TTL_SECONDS * 1000;
   }
   return ttlSeconds * 1000;
@@ -158,14 +161,13 @@ export async function getApiVersionConfig(env: Env): Promise<ApiVersionConfig> {
         if (isValidApiVersionKvConfig(parsed)) {
           config = mergeConfig(config, parsed);
         } else {
-          console.warn('[ApiVersion] Invalid config structure in KV, using defaults');
+          log.warn('Invalid config structure in KV, using defaults');
         }
       }
     } catch (error) {
       // Fail-safe: log sanitized error and continue with env/default
       // Security: Only log error type/message, not full stack traces
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.warn('[ApiVersion] Error reading KV config:', errorMessage);
+      log.warn('Error reading KV config');
     }
   }
 
@@ -280,16 +282,14 @@ function applyEnvOverrides(config: ApiVersionConfig, env: Env): ApiVersionConfig
 function validateConfig(config: ApiVersionConfig): ApiVersionConfig {
   // Ensure default version is in supported versions
   if (!config.supportedVersions.includes(config.defaultVersion)) {
-    console.warn(
-      `[ApiVersion] Default version ${config.defaultVersion} not in supported versions, adding it`
-    );
+    log.warn(`Default version ${config.defaultVersion} not in supported versions, adding it`);
     config.supportedVersions = [...config.supportedVersions, config.defaultVersion];
   }
 
   // Ensure current stable version is in supported versions
   if (!config.supportedVersions.includes(config.currentStableVersion)) {
-    console.warn(
-      `[ApiVersion] Current stable version ${config.currentStableVersion} not in supported versions, adding it`
+    log.warn(
+      `Current stable version ${config.currentStableVersion} not in supported versions, adding it`
     );
     config.supportedVersions = [...config.supportedVersions, config.currentStableVersion];
   }

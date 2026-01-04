@@ -82,6 +82,9 @@ import {
   adminUserLockHandler,
   adminUserAnonymizeHandler,
   adminClientRegenerateSecretHandler,
+  adminClientUsageHandler,
+  adminUserActivityLogHandler,
+  adminUserSendEmailHandler,
 } from './admin';
 import scimApp from './scim';
 import {
@@ -109,6 +112,7 @@ import {
   adminUserRelationshipDeleteHandler,
   adminOrganizationHierarchyHandler,
   adminUserEffectivePermissionsHandler,
+  adminRoleCreateHandler,
 } from './admin-rbac';
 import {
   adminAIGrantsListHandler,
@@ -125,28 +129,34 @@ import {
   adminJobsUsersImportHandler,
   adminJobsUsersBulkUpdateHandler,
   adminJobsReportsGenerateHandler,
+  adminJobsOrgBulkMembersHandler,
 } from './admin-jobs';
 import {
   adminStatsTokensHandler,
   adminStatsAuthHandler,
   adminStatsTimelineHandler,
   adminStatsClientHandler,
+  adminStatsGeographyHandler,
 } from './admin-stats';
 import {
   adminSecurityAlertsListHandler,
   adminSecurityAlertAcknowledgeHandler,
   adminSecuritySuspiciousActivitiesHandler,
   adminSecurityThreatsHandler,
+  adminSecurityIpReputationHandler,
 } from './admin-security';
 import {
   adminComplianceStatusHandler,
   adminComplianceAccessReviewsListHandler,
   adminComplianceAccessReviewsCreateHandler,
   adminComplianceReportsListHandler,
+  adminDataRetentionStatusHandler,
 } from './admin-compliance';
 import {
   adminSettingsDiffHandler,
   adminSettingsSchemaHandler,
+  adminSettingsValidateHandler,
+  adminTenantCloneHandler,
 } from './admin-settings-meta';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
 import {
@@ -245,6 +255,11 @@ import {
   updateFapiSecurityConfig,
   clearFapiSecurityConfig,
 } from './routes/settings/fapi-security';
+import {
+  getAssuranceLevelsConfig,
+  updateAssuranceLevelsConfig,
+  deleteAssuranceLevelsConfig,
+} from './routes/settings/assurance-levels';
 import {
   getIpSecurityConfig,
   updateIpSecurityConfig,
@@ -379,6 +394,7 @@ import {
   deleteWebhook,
   testWebhook,
   listWebhookDeliveries,
+  replayWebhookDelivery,
 } from './routes/settings/webhooks';
 import {
   getLoggingConfig,
@@ -676,6 +692,7 @@ app.use('/api/admin/clients/:id/regenerate-secret', async (c, next) => {
 // Idempotency support for regenerate-secret (prevents duplicate credential regeneration)
 app.use('/api/admin/clients/:id/regenerate-secret', idempotencyMiddleware());
 app.post('/api/admin/clients/:id/regenerate-secret', adminClientRegenerateSecretHandler);
+app.get('/api/admin/clients/:id/usage', adminClientUsageHandler);
 
 // Admin Session Management endpoints (RESTful naming)
 app.get('/api/admin/sessions', adminSessionsListHandler);
@@ -715,6 +732,9 @@ app.post('/api/admin/users/:id/suspend', adminUserSuspendHandler);
 app.post('/api/admin/users/:id/lock', adminUserLockHandler);
 app.use('/api/admin/users/:id/anonymize', idempotencyMiddleware());
 app.post('/api/admin/users/:id/anonymize', adminUserAnonymizeHandler);
+// Phase 3: User activity log and send-email
+app.get('/api/admin/users/:id/activity-log', adminUserActivityLogHandler);
+app.post('/api/admin/users/:id/send-email', adminUserSendEmailHandler);
 
 // Admin Audit Log endpoints
 app.get('/api/admin/audit-logs', adminAuditLogListHandler);
@@ -725,10 +745,16 @@ app.get('/api/admin/settings', adminSettingsGetHandler);
 app.put('/api/admin/settings', adminSettingsUpdateHandler);
 
 // Settings Metadata API (Phase 2)
-// - GET /api/admin/settings/diff   - Compare settings between versions
-// - GET /api/admin/settings/schema - Get settings schema definition
+// - GET /api/admin/settings/diff     - Compare settings between versions
+// - GET /api/admin/settings/schema   - Get settings schema definition
+// - POST /api/admin/settings/validate - Validate settings before applying (Phase 3)
 app.get('/api/admin/settings/diff', adminSettingsDiffHandler);
 app.get('/api/admin/settings/schema', adminSettingsSchemaHandler);
+app.post('/api/admin/settings/validate', adminSettingsValidateHandler);
+
+// Tenant Clone (Phase 3)
+// - POST /api/admin/tenants/:id/clone - Clone tenant settings to new tenant
+app.post('/api/admin/tenants/:id/clone', adminTenantCloneHandler);
 
 // =============================================================================
 // Settings API v2 (Unified Settings Management) - RECOMMENDED
@@ -895,6 +921,12 @@ app.get('/api/admin/settings/fapi-security', getFapiSecurityConfig);
 app.put('/api/admin/settings/fapi-security', updateFapiSecurityConfig);
 app.delete('/api/admin/settings/fapi-security', clearFapiSecurityConfig);
 
+// NIST SP 800-63-4 Assurance Levels Configuration
+// → Migrate to: /api/admin/tenants/:tenantId/settings/security
+app.get('/api/admin/settings/assurance-levels', getAssuranceLevelsConfig);
+app.put('/api/admin/settings/assurance-levels', updateAssuranceLevelsConfig);
+app.delete('/api/admin/settings/assurance-levels', deleteAssuranceLevelsConfig);
+
 // [DEPRECATED] Admin IP Security Configuration
 // → Migrate to: /api/admin/tenants/:tenantId/settings/security
 // Security: Requires system_admin role
@@ -962,9 +994,10 @@ app.delete('/api/admin/organizations/:id/members/:subjectId', adminOrganizationM
 // Organization hierarchy
 app.get('/api/admin/organizations/:id/hierarchy', adminOrganizationHierarchyHandler);
 
-// Role management (read-only for system roles)
+// Role management (read-only for system roles, custom roles can be created)
 app.get('/api/admin/roles', adminRolesListHandler);
 app.get('/api/admin/roles/:id', adminRoleGetHandler);
+app.post('/api/admin/roles', adminRoleCreateHandler);
 
 // User role assignment management
 app.get('/api/admin/users/:id/roles', adminUserRolesListHandler);
@@ -1202,6 +1235,7 @@ app.put('/api/admin/webhooks/:id', updateWebhook);
 app.delete('/api/admin/webhooks/:id', deleteWebhook);
 app.post('/api/admin/webhooks/:id/test', testWebhook);
 app.get('/api/admin/webhooks/:id/deliveries', listWebhookDeliveries);
+app.post('/api/admin/webhooks/:id/replay', replayWebhookDelivery);
 
 // =============================================================================
 // Logging Configuration API
@@ -1357,6 +1391,7 @@ app.post('/api/admin/jobs/users/import/upload-url', adminJobsImportUploadUrlHand
 app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
 app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
 app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
+app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
 // Job status endpoints
 app.get('/api/admin/jobs/:id/result', adminJobResultHandler); // Must be before :id
 app.get('/api/admin/jobs/:id', adminJobGetHandler);
@@ -1387,6 +1422,7 @@ app.use(
 app.get('/api/admin/stats/tokens', adminStatsTokensHandler);
 app.get('/api/admin/stats/auth', adminStatsAuthHandler);
 app.get('/api/admin/stats/timeline', adminStatsTimelineHandler);
+app.get('/api/admin/stats/geography', adminStatsGeographyHandler);
 app.get('/api/admin/stats/clients/:id', adminStatsClientHandler);
 
 // =============================================================================
@@ -1422,6 +1458,7 @@ app.get('/api/admin/security/alerts', adminSecurityAlertsListHandler);
 app.post('/api/admin/security/alerts/:id/acknowledge', adminSecurityAlertAcknowledgeHandler);
 app.get('/api/admin/security/suspicious-activities', adminSecuritySuspiciousActivitiesHandler);
 app.get('/api/admin/security/threats', adminSecurityThreatsHandler);
+app.post('/api/admin/security/ip-reputation', adminSecurityIpReputationHandler);
 
 // =============================================================================
 // Compliance API
@@ -1443,6 +1480,23 @@ app.get('/api/admin/compliance/status', adminComplianceStatusHandler);
 app.get('/api/admin/compliance/access-reviews', adminComplianceAccessReviewsListHandler);
 app.post('/api/admin/compliance/access-reviews', adminComplianceAccessReviewsCreateHandler);
 app.get('/api/admin/compliance/reports', adminComplianceReportsListHandler);
+
+// =============================================================================
+// Data Retention API (Phase 3)
+// =============================================================================
+// Data retention policy status and statistics.
+// Routes:
+// - GET /api/admin/data-retention/status - Get retention policy status
+//
+// Security:
+// - RBAC: tenant_admin or higher required
+// - Tenant isolation: All data scoped by tenant_id
+// =============================================================================
+app.use(
+  '/api/admin/data-retention/*',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+app.get('/api/admin/data-retention/status', adminDataRetentionStatusHandler);
 
 // =============================================================================
 // User Consent Management API (GDPR Article 7 - User Rights)

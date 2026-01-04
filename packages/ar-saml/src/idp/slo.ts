@@ -26,6 +26,8 @@ import {
   createConfigurationError,
   getTenantIdFromContext,
   buildIssuerUrl,
+  getLogger,
+  createLogger,
 } from '@authrim/ar-lib-core';
 import {
   parseLogoutRequestPost,
@@ -49,6 +51,7 @@ import { getSPConfig } from '../admin/providers';
 export async function handleIdPSLO(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const method = c.req.method;
+  const log = getLogger(c).module('SAML-IDP');
 
   try {
     if (method === 'GET') {
@@ -57,7 +60,7 @@ export async function handleIdPSLO(c: Context<{ Bindings: Env }>): Promise<Respo
       return handlePostBinding(c, env);
     }
   } catch (error) {
-    console.error('IdP SLO Error:', error);
+    log.error('IdP SLO Error', { method }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -116,6 +119,8 @@ async function processLogoutRequest(
   relayState: string | null,
   binding: 'post' | 'redirect'
 ): Promise<Response> {
+  const log = getLogger(c).module('SAML-IDP');
+
   // Validate LogoutRequest
   validateLogoutRequest(logoutRequest, env);
 
@@ -134,6 +139,7 @@ async function processLogoutRequest(
 
   // Find and terminate session by NameID
   const sessionTerminated = await terminateSessionByNameId(
+    c,
     env,
     logoutRequest.nameId,
     logoutRequest.sessionIndex
@@ -141,7 +147,7 @@ async function processLogoutRequest(
 
   if (!sessionTerminated) {
     // PII Protection: Do not log NameID (may contain email/PII)
-    console.warn('SAML IdP SLO: No session found for logout request');
+    log.warn('No session found for logout request', {});
     // Still return success - session may have already been terminated
   }
 
@@ -172,13 +178,14 @@ async function processLogoutResponse(
   logoutResponse: ParsedLogoutResponse,
   relayState: string | null
 ): Promise<Response> {
+  const log = getLogger(c).module('SAML-IDP');
+
   // Validate LogoutResponse
   if (logoutResponse.statusCode !== STATUS_CODES.SUCCESS) {
-    console.warn(
-      'SP returned logout error:',
-      logoutResponse.statusCode,
-      logoutResponse.statusMessage
-    );
+    log.warn('SP returned logout error', {
+      statusCode: logoutResponse.statusCode,
+      statusMessage: logoutResponse.statusMessage,
+    });
   }
 
   // TODO: If we're propagating logout to multiple SPs, continue to next SP here
@@ -242,10 +249,13 @@ function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, env: Env): vo
  * would require a userId -> sessionIds index which is not implemented.
  */
 async function terminateSessionByNameId(
+  c: Context<{ Bindings: Env }>,
   env: Env,
   nameId: string,
   sessionIndex?: string
 ): Promise<boolean> {
+  const log = getLogger(c).module('SAML-IDP');
+
   try {
     // If sessionIndex is provided and is a valid sharded session ID, delete that specific session
     if (sessionIndex && isShardedSessionId(sessionIndex)) {
@@ -257,19 +267,16 @@ async function terminateSessionByNameId(
           })
         );
         if (response.ok) {
-          console.log('SAML IdP SLO: Terminated session:', sessionIndex);
+          log.info('Terminated session', { sessionIndex });
           return true;
         } else {
-          console.debug('SAML IdP SLO: Session not found or already deleted:', sessionIndex);
+          log.debug('Session not found or already deleted', { sessionIndex });
         }
       } catch (error) {
-        console.warn('SAML IdP SLO: Failed to delete session:', sessionIndex, error);
+        log.error('Failed to delete session', { sessionIndex }, error as Error);
       }
     } else if (sessionIndex) {
-      console.warn(
-        'SAML IdP SLO: sessionIndex is not in sharded format, cannot delete:',
-        sessionIndex
-      );
+      log.warn('sessionIndex is not in sharded format, cannot delete', { sessionIndex });
     }
 
     // Without a valid sessionIndex, we cannot delete by userId in sharded SessionStore
@@ -299,20 +306,20 @@ async function terminateSessionByNameId(
     }
     if (user) {
       // PII Protection: Do not log NameID (may contain email/PII)
-      console.warn(
-        `SAML IdP SLO: Cannot delete all sessions for user (sharded SessionStore requires sessionIndex). ` +
-          'Ensure the SP includes sessionIndex in LogoutRequest.'
+      log.warn(
+        'Cannot delete all sessions for user (sharded SessionStore requires sessionIndex). Ensure the SP includes sessionIndex in LogoutRequest.',
+        {}
       );
       // Return true to indicate the logout request was processed (even if we couldn't delete all sessions)
       // The session cookie will still be cleared by the caller
       return true;
     } else {
       // PII Protection: Do not log NameID (may contain email/PII)
-      console.warn('SAML IdP SLO: No user found for logout request');
+      log.warn('No user found for logout request', {});
       return false;
     }
   } catch (error) {
-    console.error('Error terminating session:', error);
+    log.error('Error terminating session', {}, error as Error);
     return false;
   }
 }
@@ -369,6 +376,8 @@ async function sendLogoutResponse(
     statusMessage,
   });
 
+  const log = getLogger(c).module('SAML-IDP');
+
   // Sign the response
   try {
     const { privateKeyPem } = await getSigningKey(env);
@@ -382,7 +391,7 @@ async function sendLogoutResponse(
       includeKeyInfo: true,
     });
   } catch (error) {
-    console.error('Error signing LogoutResponse:', error);
+    log.error('Error signing LogoutResponse', {}, error as Error);
     // Continue without signature if signing fails
   }
 
@@ -547,7 +556,8 @@ export async function initiateIdPLogout(
       includeKeyInfo: true,
     });
   } catch (error) {
-    console.error('Error signing LogoutRequest:', error);
+    const log = createLogger().module('SAML-IDP-SLO');
+    log.error('Error signing LogoutRequest', { action: 'sign_logout_request' }, error as Error);
   }
 
   return { logoutRequestXml, destination };

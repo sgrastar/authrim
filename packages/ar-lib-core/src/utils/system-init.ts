@@ -8,6 +8,9 @@
 import type { Env } from '../types/env';
 import { D1Adapter } from '../db/adapters/d1-adapter';
 import type { DatabaseAdapter } from '../db/adapter';
+import { createLogger } from './logger';
+
+const log = createLogger().module('SYSTEM_INIT');
 
 /**
  * System initialization status
@@ -65,7 +68,7 @@ export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
   } catch (error) {
     // If there's a database error (e.g., tables don't exist yet),
     // treat it as not initialized
-    console.error('Failed to check system initialization status:', error);
+    log.error('Failed to check system initialization status', {}, error as Error);
     return {
       initialized: false,
       adminCount: 0,

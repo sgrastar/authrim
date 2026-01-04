@@ -5,7 +5,10 @@
  * Ensures single-use nonces and request lifecycle.
  */
 
+import { createLogger } from '@authrim/ar-lib-core';
 import type { VPRequestState } from '../../types';
+
+const log = createLogger().module('VC-VP-REQUEST-STORE');
 
 export class VPRequestStore {
   private state: DurableObjectState;
@@ -35,7 +38,7 @@ export class VPRequestStore {
           return new Response('Not found', { status: 404 });
       }
     } catch (error) {
-      console.error('[VPRequestStore] Error:', error);
+      log.error('VP request store operation failed', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(JSON.stringify({ error: 'Internal server error' }), {
         status: 500,

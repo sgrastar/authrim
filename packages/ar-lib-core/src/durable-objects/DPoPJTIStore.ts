@@ -23,6 +23,7 @@
  */
 
 import type { Env } from '../types/env';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * DPoP JTI record
@@ -64,6 +65,7 @@ export class DPoPJTIStore {
   private jtis: Map<string, DPoPJTIRecord> = new Map();
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
+  private readonly log: Logger = createLogger().module('DPoPJTIStore');
 
   // Configuration
   private readonly CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
@@ -87,10 +89,10 @@ export class DPoPJTIStore {
 
       if (stored) {
         this.jtis = new Map(Object.entries(stored.jtis));
-        console.log(`DPoPJTIStore: Restored ${this.jtis.size} JTIs from Durable Storage`);
+        this.log.info('Restored JTIs from Durable Storage', { count: this.jtis.size });
       }
     } catch (error) {
-      console.error('DPoPJTIStore: Failed to initialize from Durable Storage:', error);
+      this.log.error('Failed to initialize from Durable Storage', {}, error as Error);
     }
 
     this.initialized = true;
@@ -109,7 +111,7 @@ export class DPoPJTIStore {
 
       await this.state.storage.put('state', stateToSave);
     } catch (error) {
-      console.error('DPoPJTIStore: Failed to save to Durable Storage:', error);
+      this.log.error('Failed to save to Durable Storage', {}, error as Error);
     }
   }
 
@@ -139,7 +141,7 @@ export class DPoPJTIStore {
     }
 
     if (cleaned > 0) {
-      console.log(`DPoPJTIStore: Cleaned up ${cleaned} expired JTIs`);
+      this.log.info('Cleaned up expired JTIs', { count: cleaned });
       await this.saveState();
     }
   }
@@ -294,7 +296,7 @@ export class DPoPJTIStore {
             headers: { 'Content-Type': 'application/json' },
           });
         } catch (error) {
-          console.error('[DPoPJTIStore] checkAndStoreJTI error:', error);
+          this.log.warn('checkAndStoreJTI replay detected', {}, error as Error);
           return new Response(
             JSON.stringify({
               error: 'replay_detected',
@@ -355,7 +357,7 @@ export class DPoPJTIStore {
       return new Response('Not Found', { status: 404 });
     } catch (error) {
       // Log full error for debugging but don't expose to client
-      console.error('DPoPJTIStore error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(
         JSON.stringify({

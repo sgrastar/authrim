@@ -35,6 +35,8 @@ import {
   SESSION_EVENTS,
   type AuthEventData,
   type SessionEventData,
+  // Logging
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import {
@@ -100,6 +102,7 @@ async function constantTimeWrapper<T>(operation: () => Promise<T>): Promise<T> {
  * All responses take at least MIN_RESPONSE_TIME_MS to complete.
  */
 export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('EMAIL-CODE');
   return constantTimeWrapper(async () => {
     try {
       const body = await c.req.json<{
@@ -194,23 +197,27 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
             await authCtx.repositories.userCore.updatePIIStatus(userId, 'active');
           } catch (piiError: unknown) {
             // PII Protection: Don't log full error (may contain PII)
-            console.error(
-              '[EMAIL-CODE] Failed to create user in PII DB:',
-              piiError instanceof Error ? piiError.name : 'Unknown error'
+            log.error(
+              'Failed to create user in PII DB',
+              { action: 'pii_create' },
+              piiError instanceof Error ? piiError : undefined
             );
             // Update pii_status to 'failed' to indicate PII DB write failure
             await authCtx.repositories.userCore
               .updatePIIStatus(userId, 'failed')
               .catch((statusError: unknown) => {
-                console.error(
-                  '[EMAIL-CODE] Failed to update pii_status to failed:',
-                  statusError instanceof Error ? statusError.name : 'Unknown error'
+                log.error(
+                  'Failed to update pii_status to failed',
+                  { action: 'pii_status_update' },
+                  statusError instanceof Error ? statusError : undefined
                 );
               });
             // Note: We continue with user creation - Core DB user exists, PII can be retried
           }
         } else {
-          console.warn('[EMAIL-CODE] DB_PII not configured - user created with pii_status=pending');
+          log.warn('DB_PII not configured - user created with pii_status=pending', {
+            action: 'pii_config',
+          });
         }
 
         user = { id: userId, email: email.toLowerCase(), name: defaultName || email.split('@')[0] };
@@ -263,7 +270,10 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
 
       if (!emailNotifier) {
         // Development mode: no email notifier configured
-        console.warn('[EMAIL-CODE] No email notifier plugin configured. Code:', code);
+        log.warn('No email notifier plugin configured', {
+          action: 'notifier_check',
+          devCode: code,
+        });
         return c.json({
           success: true,
           message: 'Verification code generated (email not sent - no notifier plugin configured)',
@@ -308,7 +318,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
 
       if (!emailResult.success) {
         // PII Protection: Don't log full error (may contain email details)
-        console.error('[EMAIL-CODE] Failed to send email code:', emailResult.error);
+        log.error('Failed to send email code', { action: 'email_send', error: emailResult.error });
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
@@ -319,10 +329,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
       });
     } catch (error) {
       // PII Protection: Don't log full error (may contain email/user data)
-      console.error(
-        'Email code send error:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.error('Email code send error', { action: 'send' }, error as Error);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
   });
@@ -335,6 +342,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
  * Security: Uses constant-time wrapper to prevent timing-based user enumeration.
  */
 export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('EMAIL-CODE');
   return constantTimeWrapper(async () => {
     try {
       const body = await c.req.json<{
@@ -397,7 +405,11 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
             errorCode: 'challenge_error',
           } satisfies AuthEventData,
         }).catch((err) => {
-          console.error('[Event] Failed to publish auth.email_code.failed:', err);
+          log.error(
+            'Failed to publish auth.email_code.failed event',
+            { action: 'event_publish' },
+            err as Error
+          );
         });
 
         // Security: Return same generic error for all challenge-related failures
@@ -405,10 +417,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         // Do NOT branch on error message content (e.g., 'not found', 'expired', 'already consumed')
         // as this can leak information about challenge state to attackers.
         // PII Protection: Don't log full error
-        console.error(
-          'Challenge store error:',
-          error instanceof Error ? error.name : 'Unknown error'
-        );
+        log.error('Challenge store error', { action: 'challenge_consume' }, error as Error);
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
 
@@ -454,7 +463,11 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
             errorCode: 'invalid_code',
           } satisfies AuthEventData,
         }).catch((err) => {
-          console.error('[Event] Failed to publish auth.email_code.failed:', err);
+          log.error(
+            'Failed to publish auth.email_code.failed event',
+            { action: 'event_publish' },
+            err as Error
+          );
         });
 
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
@@ -471,7 +484,11 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
             errorCode: 'user_inactive',
           } satisfies AuthEventData,
         }).catch((err) => {
-          console.error('[Event] Failed to publish auth.email_code.failed:', err);
+          log.error(
+            'Failed to publish auth.email_code.failed event',
+            { action: 'event_publish' },
+            err as Error
+          );
         });
 
         return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
@@ -518,9 +535,9 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
             if (userCore.email_verified) {
               // Email is already verified by an existing user
               // Anonymous user cannot claim this email - they should login instead
-              console.warn(
-                '[EMAIL-CODE] Anonymous upgrade blocked: email already verified by existing user'
-              );
+              log.warn('Anonymous upgrade blocked: email already verified by existing user', {
+                action: 'anon_upgrade_check',
+              });
               // Don't set isAnonymousUpgrade - create new session for the existing user instead
             } else {
               // Email is new or unverified - safe to use for anonymous upgrade
@@ -565,17 +582,14 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           );
         } catch (error) {
           // PII Protection: Don't log full error
-          console.error(
-            'Failed to create session:',
-            error instanceof Error ? error.name : 'Unknown error'
-          );
+          log.error('Failed to create session', { action: 'session_create' }, error as Error);
           return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
         }
       }
 
       // Safety check - sessionId should always be assigned at this point
       if (!sessionId) {
-        console.error('[EMAIL-CODE] Unexpected state: sessionId not assigned');
+        log.error('Unexpected state: sessionId not assigned', { action: 'session_check' });
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
@@ -588,9 +602,10 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         )
         .catch((error) => {
           // PII Protection: Don't log full error
-          console.error(
-            'Failed to update user login timestamp:',
-            error instanceof Error ? error.name : 'Unknown error'
+          log.error(
+            'Failed to update user login timestamp',
+            { action: 'user_update' },
+            error as Error
           );
         });
 
@@ -634,7 +649,11 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           sessionId,
         } satisfies AuthEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish auth.email_code.succeeded:', err);
+        log.error(
+          'Failed to publish auth.email_code.succeeded event',
+          { action: 'event_publish' },
+          err as Error
+        );
       });
 
       // Publish session.user.created event (non-blocking)
@@ -647,7 +666,11 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           ttlSeconds: 24 * 60 * 60, // 24 hours
         } satisfies SessionEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish session.user.created:', err);
+        log.error(
+          'Failed to publish session.user.created event',
+          { action: 'event_publish' },
+          err as Error
+        );
       });
 
       return c.json({
@@ -663,10 +686,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       });
     } catch (error) {
       // PII Protection: Don't log full error (may contain email/code data)
-      console.error(
-        'Email code verify error:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.error('Email code verify error', { action: 'verify' }, error as Error);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
   });

@@ -27,6 +27,24 @@ vi.mock('../../common/signature', () => ({
   hasSignature: vi.fn().mockReturnValue(false),
 }));
 
+// Mock structured logger
+const mockLogger = {
+  info: vi.fn(),
+  debug: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+};
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    getLogger: () => ({
+      module: () => mockLogger,
+    }),
+    publishEvent: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
 // Import after mocks
 import { handleSPACS } from '../acs';
 

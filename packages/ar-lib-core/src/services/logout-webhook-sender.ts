@@ -40,6 +40,9 @@ import {
   calculateRetryDelay,
   type WebhookRetryConfig,
 } from './webhook-sender';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('LOGOUT-WEBHOOK');
 
 /**
  * Parameters for creating a webhook payload
@@ -449,7 +452,7 @@ export function createLogoutWebhookOrchestrator(kv: KVNamespace): LogoutWebhookO
               };
             } catch (error) {
               const duration_ms = Date.now() - startTime;
-              console.error('[LogoutWebhook] Client webhook error:', error);
+              log.error('Client webhook error', { clientId: client.client_id }, error as Error);
 
               // Clear pending lock on unexpected error (fail-safe)
               await WebhookKVHelpers.clearPending(kv, params.sessionId, client.client_id);

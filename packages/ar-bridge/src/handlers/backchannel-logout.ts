@@ -18,6 +18,7 @@ import {
   isShardedSessionId,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import * as jose from 'jose';
 import { getProviderByIdOrSlug } from '../services/provider-store';
@@ -58,6 +59,7 @@ interface LogoutTokenClaims {
  * - logout_token: The logout token JWT
  */
 export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('BACKCHANNEL-LOGOUT');
   const providerIdOrSlug = c.req.param('provider');
   const tenantId = c.req.query('tenant_id') || 'default';
 
@@ -65,7 +67,7 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
     // 1. Get provider configuration
     const provider = await getProviderByIdOrSlug(c.env, providerIdOrSlug, tenantId);
     if (!provider) {
-      console.error(`Backchannel logout: Provider not found: ${providerIdOrSlug}`);
+      log.error('Backchannel logout: Provider not found', { providerIdOrSlug });
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
@@ -88,12 +90,15 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
     const claims = await validateLogoutToken(c.env, provider, logoutToken);
 
     // 4. Find and invalidate sessions/tokens for the subject
-    const result = await invalidateUserSessions(c.env, provider.id, claims);
+    const result = await invalidateUserSessions(c.env, provider.id, claims, log);
 
-    console.warn(
-      `Backchannel logout processed: provider=${provider.name}, sub=${claims.sub}, sid=${claims.sid}, ` +
-        `identities_affected=${result.identitiesAffected}, sessions_terminated=${result.sessionsTerminated}`
-    );
+    log.info('Backchannel logout processed', {
+      provider: provider.name,
+      sub: claims.sub,
+      sid: claims.sid,
+      identitiesAffected: result.identitiesAffected,
+      sessionsTerminated: result.sessionsTerminated,
+    });
 
     // 5. Return success (spec requires 200 OK for success)
     // Cache-Control: no-store per spec
@@ -104,7 +109,7 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
       },
     });
   } catch (error) {
-    console.error('Backchannel logout error:', error);
+    log.error('Backchannel logout error', {}, error as Error);
 
     // Return 400 for token validation errors
     // SECURITY: Don't leak internal error details to prevent information disclosure
@@ -189,7 +194,8 @@ async function validateLogoutToken(
 async function invalidateUserSessions(
   env: Env,
   providerId: string,
-  claims: LogoutTokenClaims
+  claims: LogoutTokenClaims,
+  log: ReturnType<ReturnType<typeof getLogger>['module']>
 ): Promise<{ identitiesAffected: number; sessionsTerminated: number }> {
   let identitiesAffected = 0;
   let sessionsTerminated = 0;
@@ -234,7 +240,7 @@ async function invalidateUserSessions(
           );
           sessionsTerminated++;
         } catch (error) {
-          console.warn(`Failed to terminate session ${session.id}:`, error);
+          log.warn('Failed to terminate session', { sessionId: session.id });
         }
       }
     }
@@ -252,7 +258,7 @@ async function invalidateUserSessions(
 
   // If sid is present, log for debugging (could implement IdP-sid based lookup in future)
   if (claims.sid) {
-    console.warn(`IdP session ID received: ${claims.sid} (not yet used for targeted logout)`);
+    log.debug('IdP session ID received (not yet used for targeted logout)', { sid: claims.sid });
   }
 
   return { identitiesAffected, sessionsTerminated };

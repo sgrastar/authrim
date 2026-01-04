@@ -17,6 +17,9 @@
  */
 
 import { createHash } from 'node:crypto';
+import { createLogger } from './logger';
+
+const log = createLogger().module('SETTINGS_MANAGER');
 
 // ============================================================================
 // Types
@@ -624,7 +627,7 @@ export class SettingsManager {
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
           data = sanitizeObject(parsed);
         } else {
-          console.warn(
+          log.warn(
             `Invalid KV data format for ${key}: expected object, got ${Array.isArray(parsed) ? 'array' : typeof parsed}`
           );
         }
@@ -638,10 +641,7 @@ export class SettingsManager {
 
       return data;
     } catch (error) {
-      console.warn(
-        `Failed to load settings from KV:`,
-        error instanceof Error ? error.message : 'Unknown error'
-      );
+      log.warn('Failed to load settings from KV');
       return {};
     }
   }

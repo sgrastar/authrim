@@ -15,8 +15,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
-import { LogoutKVHelpers } from '@authrim/ar-lib-core';
+import { LogoutKVHelpers, getLogger, type Env } from '@authrim/ar-lib-core';
 
 /**
  * GET /api/admin/settings/logout/failures
@@ -26,6 +25,7 @@ import { LogoutKVHelpers } from '@authrim/ar-lib-core';
  * - limit: Max number of results (default: 100, max: 1000)
  */
 export async function listLogoutFailures(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LogoutFailuresAPI');
   // Get KV namespace
   const kv = c.env.SETTINGS || c.env.STATE_STORE;
   if (!kv) {
@@ -65,7 +65,7 @@ export async function listLogoutFailures(c: Context<{ Bindings: Env }>) {
       failures,
     });
   } catch (error) {
-    console.error('[Logout Failures API] Error listing failures:', error);
+    log.error('Error listing failures', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -81,6 +81,7 @@ export async function listLogoutFailures(c: Context<{ Bindings: Env }>) {
  * Get failure details for a specific client
  */
 export async function getLogoutFailure(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LogoutFailuresAPI');
   const clientId = c.req.param('clientId');
 
   if (!clientId) {
@@ -123,7 +124,7 @@ export async function getLogoutFailure(c: Context<{ Bindings: Env }>) {
       ...failure,
     });
   } catch (error) {
-    console.error(`[Logout Failures API] Error getting failure for ${clientId}:`, error);
+    log.error('Error getting failure', { clientId }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -139,6 +140,7 @@ export async function getLogoutFailure(c: Context<{ Bindings: Env }>) {
  * Clear failure record for a specific client
  */
 export async function clearLogoutFailure(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LogoutFailuresAPI');
   const clientId = c.req.param('clientId');
 
   if (!clientId) {
@@ -172,7 +174,7 @@ export async function clearLogoutFailure(c: Context<{ Bindings: Env }>) {
       note: 'Failure record cleared.',
     });
   } catch (error) {
-    console.error(`[Logout Failures API] Error clearing failure for ${clientId}:`, error);
+    log.error('Error clearing failure', { clientId }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -191,6 +193,7 @@ export async function clearLogoutFailure(c: Context<{ Bindings: Env }>) {
  * for very large numbers of records.
  */
 export async function clearAllLogoutFailures(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LogoutFailuresAPI');
   // Get KV namespace
   const kv = c.env.SETTINGS || c.env.STATE_STORE;
   if (!kv) {
@@ -216,7 +219,7 @@ export async function clearAllLogoutFailures(c: Context<{ Bindings: Env }>) {
       note: 'All failure records cleared.',
     });
   } catch (error) {
-    console.error('[Logout Failures API] Error clearing all failures:', error);
+    log.error('Error clearing all failures', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

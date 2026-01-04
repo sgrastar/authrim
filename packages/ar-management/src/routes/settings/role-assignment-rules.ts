@@ -15,6 +15,7 @@
 import type { Context } from 'hono';
 import {
   D1Adapter,
+  getLogger,
   type DatabaseAdapter,
   type RoleAssignmentRule,
   type RoleAssignmentRuleRow,
@@ -94,6 +95,7 @@ function validateRuleInput(input: RoleAssignmentRuleInput): string[] {
  * Create a new role assignment rule
  */
 export async function createRoleAssignmentRule(c: Context) {
+  const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const body = await c.req.json<RoleAssignmentRuleInput>();
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -190,7 +192,7 @@ export async function createRoleAssignmentRule(c: Context) {
 
     return c.json(rule, 201);
   } catch (error) {
-    console.error('[Role Assignment Rules API] Create error:', error);
+    log.error('Create error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -206,6 +208,7 @@ export async function createRoleAssignmentRule(c: Context) {
  * List all role assignment rules
  */
 export async function listRoleAssignmentRules(c: Context) {
+  const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const tenantId = DEFAULT_TENANT_ID;
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_RULES_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
@@ -247,7 +250,7 @@ export async function listRoleAssignmentRules(c: Context) {
       offset,
     });
   } catch (error) {
-    console.error('[Role Assignment Rules API] List error:', error);
+    log.error('List error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -263,6 +266,7 @@ export async function listRoleAssignmentRules(c: Context) {
  * Get a single rule by ID
  */
 export async function getRoleAssignmentRule(c: Context) {
+  const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -286,7 +290,7 @@ export async function getRoleAssignmentRule(c: Context) {
 
     return c.json(rowToRule(row));
   } catch (error) {
-    console.error('[Role Assignment Rules API] Get error:', error);
+    log.error('Get error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -302,6 +306,7 @@ export async function getRoleAssignmentRule(c: Context) {
  * Update a rule
  */
 export async function updateRoleAssignmentRule(c: Context) {
+  const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
   const body = await c.req.json<Partial<RoleAssignmentRuleInput>>();
@@ -408,7 +413,7 @@ export async function updateRoleAssignmentRule(c: Context) {
 
     return c.json(rowToRule(updated!));
   } catch (error) {
-    console.error('[Role Assignment Rules API] Update error:', error);
+    log.error('Update error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -424,6 +429,7 @@ export async function updateRoleAssignmentRule(c: Context) {
  * Delete a rule
  */
 export async function deleteRoleAssignmentRule(c: Context) {
+  const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -456,7 +462,7 @@ export async function deleteRoleAssignmentRule(c: Context) {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error('[Role Assignment Rules API] Delete error:', error);
+    log.error('Delete error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -472,6 +478,7 @@ export async function deleteRoleAssignmentRule(c: Context) {
  * Test a single rule against a provided context
  */
 export async function testRoleAssignmentRule(c: Context) {
+  const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
   const body = await c.req.json<{
@@ -531,7 +538,7 @@ export async function testRoleAssignmentRule(c: Context) {
 
     return c.json(result);
   } catch (error) {
-    console.error('[Role Assignment Rules API] Test error:', error);
+    log.error('Test error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -547,6 +554,7 @@ export async function testRoleAssignmentRule(c: Context) {
  * Evaluate all rules against a provided context
  */
 export async function evaluateRoleAssignmentRules(c: Context) {
+  const log = getLogger(c).module('RoleAssignmentRulesAPI');
   const tenantId = DEFAULT_TENANT_ID;
   const body = await c.req.json<{
     context: {
@@ -594,7 +602,7 @@ export async function evaluateRoleAssignmentRules(c: Context) {
       deny_description: result.deny_description,
     });
   } catch (error) {
-    console.error('[Role Assignment Rules API] Evaluate error:', error);
+    log.error('Evaluate error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

@@ -13,6 +13,7 @@ import {
   createAuditLogFromContext,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import type {
   SigningKeysStatusResponse,
@@ -46,7 +47,8 @@ export async function adminSigningKeysStatusHandler(c: Context<{ Bindings: Env }
 
     return c.json(data);
   } catch (error) {
-    console.error('Failed to get signing keys status:', error);
+    const log = getLogger(c).module('SIGNING-KEYS');
+    log.error('Failed to get signing keys status', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -66,7 +68,8 @@ export async function adminSigningKeysRotateHandler(c: Context<{ Bindings: Env }
     const rotationResult = await keyManager.rotateKeysRpc();
 
     if (!rotationResult || !rotationResult.kid) {
-      console.error('Failed to perform key rotation: no key returned');
+      const log = getLogger(c).module('SIGNING-KEYS');
+      log.error('Failed to perform key rotation: no key returned', {});
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
@@ -79,7 +82,8 @@ export async function adminSigningKeysRotateHandler(c: Context<{ Bindings: Env }
     try {
       await c.env.JWKS_CACHE?.delete('jwks');
     } catch (error) {
-      console.warn('Failed to invalidate JWKS cache:', error);
+      const log = getLogger(c).module('SIGNING-KEYS');
+      log.warn('Failed to invalidate JWKS cache', { error: (error as Error).message });
       // Non-blocking - continue even if cache invalidation fails
     }
 
@@ -103,7 +107,8 @@ export async function adminSigningKeysRotateHandler(c: Context<{ Bindings: Env }
 
     return c.json(result);
   } catch (error) {
-    console.error('Failed to perform key rotation:', error);
+    const log = getLogger(c).module('SIGNING-KEYS');
+    log.error('Failed to perform key rotation', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -140,16 +145,18 @@ export async function adminSigningKeysEmergencyRotateHandler(c: Context<{ Bindin
     try {
       result = await keyManager.emergencyRotateKeysRpc(body.reason);
     } catch (error) {
-      console.error('Failed to perform emergency rotation:', error);
+      const log = getLogger(c).module('SIGNING-KEYS');
+      log.error('Failed to perform emergency rotation', {}, error as Error);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
     // Invalidate JWKS cache immediately to remove revoked key
+    const log = getLogger(c).module('SIGNING-KEYS');
     try {
       await c.env.JWKS_CACHE?.delete('jwks');
-      console.log('[Emergency Rotation] JWKS cache invalidated');
+      log.info('Emergency rotation: JWKS cache invalidated', {});
     } catch (error) {
-      console.error('Failed to invalidate JWKS cache:', error);
+      log.error('Failed to invalidate JWKS cache', {}, error as Error);
       // This is critical - log as error but don't fail the operation
     }
 
@@ -173,7 +180,8 @@ export async function adminSigningKeysEmergencyRotateHandler(c: Context<{ Bindin
 
     return c.json(response_data);
   } catch (error) {
-    console.error('Failed to perform emergency key rotation:', error);
+    const log = getLogger(c).module('SIGNING-KEYS');
+    log.error('Failed to perform emergency key rotation', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

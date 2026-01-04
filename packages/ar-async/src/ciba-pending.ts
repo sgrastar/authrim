@@ -13,6 +13,7 @@ import {
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -42,6 +43,7 @@ import {
  *   }
  */
 export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('CIBA');
   try {
     // TODO: In production, get user_id from session
     const loginHint = c.req.query('login_hint');
@@ -126,7 +128,7 @@ export async function cibaPendingHandler(c: Context<{ Bindings: Env }>) {
       requests: [request],
     });
   } catch (error) {
-    console.error('CIBA pending requests API error:', error);
+    log.error('CIBA pending requests API error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

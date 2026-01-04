@@ -7,7 +7,12 @@
 
 import type { Context } from 'hono';
 import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
-import { isMockAuthEnabled, createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import {
+  isMockAuthEnabled,
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+} from '@authrim/ar-lib-core';
 import { sendPingNotification } from '@authrim/ar-lib-core/notifications';
 
 /**
@@ -29,6 +34,7 @@ import { sendPingNotification } from '@authrim/ar-lib-core/notifications';
  *   }
  */
 export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('CIBA');
   try {
     // Get client IP for rate limiting
     const clientIp =
@@ -90,9 +96,7 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // DEVELOPMENT ONLY: Log warning about mock auth usage
-      console.warn(
-        '[CIBA] WARNING: Mock authentication is enabled. This should NEVER be used in production!'
-      );
+      log.warn('Mock authentication is enabled. This should NEVER be used in production!');
     }
 
     // Use provided credentials or fallback to mock (only if mock auth is enabled)
@@ -126,7 +130,7 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
           authReqId
         );
       } catch (error) {
-        console.error('Failed to send ping notification:', error);
+        log.error('Failed to send ping notification', {}, error as Error);
         // Continue even if notification fails - client can still poll
       }
     }
@@ -139,7 +143,7 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
       200
     );
   } catch (error) {
-    console.error('CIBA approval API error:', error);
+    log.error('CIBA approval API error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

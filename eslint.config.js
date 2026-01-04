@@ -59,7 +59,9 @@ export default [
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-non-null-assertion': 'warn',
       '@typescript-eslint/require-await': 'off',
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
+      // Disallow console.log - use structured logger instead
+      // See docs/logging.md for migration guide
+      'no-console': 'error',
 
       // Deprecation enforcement: Prevent use of createRFCErrorResponse
       // Use createErrorResponse() with AR_ERROR_CODES instead for security masking

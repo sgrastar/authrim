@@ -15,6 +15,7 @@
  */
 
 import type { Context } from 'hono';
+import { getLogger } from '@authrim/ar-lib-core';
 
 /**
  * Policy flag metadata
@@ -52,6 +53,7 @@ const POLICY_FLAG_NAMES = Object.keys(POLICY_FLAGS) as (keyof typeof POLICY_FLAG
  * Get all policy flag values with their sources
  */
 export async function getPolicyFlags(c: Context) {
+  const log = getLogger(c).module('PolicyFlagsAPI');
   if (!c.env.AUTHRIM_CONFIG) {
     return c.json(
       {
@@ -87,7 +89,7 @@ export async function getPolicyFlags(c: Context) {
 
     return c.json({ flags });
   } catch (error) {
-    console.error('[Policy Flags API] Error getting flags:', error);
+    log.error('Error getting flags', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -106,6 +108,7 @@ export async function getPolicyFlags(c: Context) {
  * { "value": boolean | number }
  */
 export async function updatePolicyFlag(c: Context) {
+  const log = getLogger(c).module('PolicyFlagsAPI');
   const name = c.req.param('name');
 
   // Validate flag name
@@ -199,7 +202,7 @@ export async function updatePolicyFlag(c: Context) {
       note: 'Flag updated. Cache will refresh within 5 minutes.',
     });
   } catch (error) {
-    console.error(`[Policy Flags API] Error updating ${name}:`, error);
+    log.error('Error updating flag', { flagName: name }, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
       {
@@ -216,6 +219,7 @@ export async function updatePolicyFlag(c: Context) {
  * Clear a specific policy flag override (revert to env/default)
  */
 export async function clearPolicyFlag(c: Context) {
+  const log = getLogger(c).module('PolicyFlagsAPI');
   const name = c.req.param('name');
 
   // Validate flag name
@@ -249,7 +253,7 @@ export async function clearPolicyFlag(c: Context) {
       note: 'Flag override cleared. Will use env/default value. Cache will refresh within 5 minutes.',
     });
   } catch (error) {
-    console.error(`[Policy Flags API] Error clearing ${name}:`, error);
+    log.error('Error clearing flag', { flagName: name }, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
       {

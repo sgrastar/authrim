@@ -4,6 +4,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Mock @authrim/ar-lib-core to avoid cloudflare:workers dependency
+vi.mock('@authrim/ar-lib-core', () => ({
+  createLogger: () => ({
+    module: () => ({
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    }),
+  }),
+}));
+
 import { OIDCRPClient } from '../clients/oidc-client';
 import type { UpstreamProvider } from '../types';
 

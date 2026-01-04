@@ -34,6 +34,7 @@ import {
   pluginContextMiddleware,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 // Import handlers (to be implemented)
@@ -195,7 +196,8 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-  console.error('SAML Worker Error:', err);
+  const log = getLogger(c).module('SAML');
+  log.error('SAML Worker Error', {}, err);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 

@@ -17,6 +17,9 @@ import {
   DEFAULT_DEPRECATION_CONTEXT,
   parseDeprecationEntry,
 } from '../types/deprecation';
+import { createLogger } from './logger';
+
+const log = createLogger().module('DEPRECATION');
 
 /** Default cache TTL: 3 minutes */
 const DEFAULT_CACHE_TTL_MS = 180 * 1000;
@@ -87,7 +90,7 @@ function getCacheTtlMs(env: Env): number {
   }
   // Overflow protection: cap at 24 hours to prevent integer overflow
   if (ttlSeconds > MAX_TTL_SECONDS) {
-    console.warn(`[Deprecation] TTL ${ttlSeconds}s exceeds max ${MAX_TTL_SECONDS}s, using max`);
+    log.warn(`TTL ${ttlSeconds}s exceeds max ${MAX_TTL_SECONDS}s, using max`);
     return MAX_TTL_SECONDS * 1000;
   }
   return ttlSeconds * 1000;
@@ -231,8 +234,7 @@ async function getCachedEntry(env: Env, kvKey: string): Promise<DeprecationEntry
   } catch (error) {
     // Fail-safe: log sanitized error and return null
     // Security: Only log error type/message, not full stack traces
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.warn('[Deprecation] Error reading KV:', errorMessage);
+    log.error('Error reading KV', {}, error as Error);
 
     // Cache null with shorter TTL on error (30 seconds instead of 3 minutes)
     // This prevents cascade failure when KV temporarily unavailable

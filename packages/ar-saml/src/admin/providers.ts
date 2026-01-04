@@ -29,6 +29,7 @@ import {
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -48,6 +49,7 @@ import { SAML_NAMESPACES, BINDING_URIS, NAMEID_FORMATS } from '../common/constan
  */
 export async function handleListProviders(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
+  const log = getLogger(c).module('SAML');
 
   try {
     // Check admin authorization
@@ -84,7 +86,7 @@ export async function handleListProviders(c: Context<{ Bindings: Env }>): Promis
 
     return c.json({ providers: response });
   } catch (error) {
-    console.error('List providers error:', error);
+    log.error('List providers error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -94,6 +96,7 @@ export async function handleListProviders(c: Context<{ Bindings: Env }>): Promis
  */
 export async function handleCreateProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
+  const log = getLogger(c).module('SAML');
 
   try {
     if (!isAuthorized(c, env)) {
@@ -161,7 +164,7 @@ export async function handleCreateProvider(c: Context<{ Bindings: Env }>): Promi
       201
     );
   } catch (error) {
-    console.error('Create provider error:', error);
+    log.error('Create provider error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -172,6 +175,7 @@ export async function handleCreateProvider(c: Context<{ Bindings: Env }>): Promi
 export async function handleGetProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const id = c.req.param('id');
+  const log = getLogger(c).module('SAML');
 
   try {
     if (!isAuthorized(c, env)) {
@@ -208,7 +212,7 @@ export async function handleGetProvider(c: Context<{ Bindings: Env }>): Promise<
       updatedAt: new Date(provider.updated_at).toISOString(),
     });
   } catch (error) {
-    console.error('Get provider error:', error);
+    log.error('Get provider error', { providerId: id }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -219,6 +223,7 @@ export async function handleGetProvider(c: Context<{ Bindings: Env }>): Promise<
 export async function handleUpdateProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const id = c.req.param('id');
+  const log = getLogger(c).module('SAML');
 
   try {
     if (!isAuthorized(c, env)) {
@@ -274,7 +279,7 @@ export async function handleUpdateProvider(c: Context<{ Bindings: Env }>): Promi
       updatedAt: new Date(now).toISOString(),
     });
   } catch (error) {
-    console.error('Update provider error:', error);
+    log.error('Update provider error', { providerId: id }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -285,6 +290,7 @@ export async function handleUpdateProvider(c: Context<{ Bindings: Env }>): Promi
 export async function handleDeleteProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const id = c.req.param('id');
+  const log = getLogger(c).module('SAML');
 
   try {
     if (!isAuthorized(c, env)) {
@@ -304,7 +310,7 @@ export async function handleDeleteProvider(c: Context<{ Bindings: Env }>): Promi
 
     return c.json({ success: true });
   } catch (error) {
-    console.error('Delete provider error:', error);
+    log.error('Delete provider error', { providerId: id }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -315,6 +321,7 @@ export async function handleDeleteProvider(c: Context<{ Bindings: Env }>): Promi
 export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const id = c.req.param('id');
+  const log = getLogger(c).module('SAML');
 
   try {
     if (!isAuthorized(c, env)) {
@@ -399,7 +406,7 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
       config: mergedConfig,
     });
   } catch (error) {
-    console.error('Import metadata error:', error);
+    log.error('Import metadata error', { providerId: id }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

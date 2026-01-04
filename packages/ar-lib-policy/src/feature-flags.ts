@@ -7,6 +7,10 @@
  *
  * Priority: KV override > Environment variable > Default value
  */
+import { createLogger } from '@authrim/ar-lib-core';
+
+// Module-level logger for feature flags
+const log = createLogger().module('FEATURE_FLAGS');
 
 /**
  * Available feature flags for the policy system
@@ -159,7 +163,7 @@ export class FeatureFlagsManager {
           return value;
         }
       } catch (error) {
-        console.warn(`Failed to read flag ${name} from KV:`, error);
+        log.warn('Failed to read flag from KV', { flagName: name }, error as Error);
         // Fall through to env value
       }
     }

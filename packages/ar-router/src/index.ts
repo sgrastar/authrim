@@ -2,6 +2,10 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
+import { createLogger } from '@authrim/ar-lib-core';
+
+// Module-level logger for router (no Hono context available in error handler)
+const log = createLogger().module('ROUTER');
 
 /**
  * Environment bindings for the Router Worker
@@ -426,7 +430,7 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-  console.error('Router Error:', err);
+  log.error('Router error occurred', { path: c.req.path, method: c.req.method }, err);
   return c.json(
     {
       error: 'server_error',

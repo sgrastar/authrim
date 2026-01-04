@@ -18,6 +18,7 @@
  */
 
 import type { Env } from '../types/env';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * Revoked token record
@@ -57,6 +58,7 @@ export class TokenRevocationStore {
   private revokedTokens: Map<string, RevokedTokenRecord> = new Map();
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
+  private readonly log: Logger = createLogger().module('TokenRevocationStore');
 
   // Configuration
   private readonly CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
@@ -80,12 +82,12 @@ export class TokenRevocationStore {
 
       if (stored) {
         this.revokedTokens = new Map(Object.entries(stored.revokedTokens));
-        console.log(
-          `TokenRevocationStore: Restored ${this.revokedTokens.size} revoked tokens from Durable Storage`
-        );
+        this.log.info('Restored revoked tokens from Durable Storage', {
+          count: this.revokedTokens.size,
+        });
       }
     } catch (error) {
-      console.error('TokenRevocationStore: Failed to initialize from Durable Storage:', error);
+      this.log.error('Failed to initialize from Durable Storage', {}, error as Error);
     }
 
     this.initialized = true;
@@ -104,7 +106,7 @@ export class TokenRevocationStore {
 
       await this.state.storage.put('state', stateToSave);
     } catch (error) {
-      console.error('TokenRevocationStore: Failed to save to Durable Storage:', error);
+      this.log.error('Failed to save to Durable Storage', {}, error as Error);
     }
   }
 
@@ -134,7 +136,7 @@ export class TokenRevocationStore {
     }
 
     if (cleaned > 0) {
-      console.log(`TokenRevocationStore: Cleaned up ${cleaned} expired tokens`);
+      this.log.info('Cleaned up expired tokens', { count: cleaned });
       await this.saveState();
     }
   }
@@ -205,7 +207,7 @@ export class TokenRevocationStore {
     }
 
     if (revoked > 0) {
-      console.log(`TokenRevocationStore: Bulk revoked ${revoked} tokens`);
+      this.log.info('Bulk revoked tokens', { count: revoked, reason });
       await this.saveState();
 
       // Trigger cleanup if too many entries
@@ -383,7 +385,7 @@ export class TokenRevocationStore {
       return new Response('Not Found', { status: 404 });
     } catch (error) {
       // Log full error for debugging but don't expose to client
-      console.error('TokenRevocationStore error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(
         JSON.stringify({

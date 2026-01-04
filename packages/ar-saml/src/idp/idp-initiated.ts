@@ -21,6 +21,7 @@ import {
   createConfigurationError,
   getTenantIdFromContext,
   buildIssuerUrl,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { generateSAMLId, nowAsDateTime, offsetDateTime } from '../common/xml-utils';
 import { NAMEID_FORMATS, AUTHN_CONTEXT, DEFAULTS, STATUS_CODES } from '../common/constants';
@@ -34,6 +35,7 @@ import { getSPConfig, listSPConfigs } from '../admin/providers';
  */
 export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
+  const log = getLogger(c).module('SAML-IDP');
 
   try {
     // Get SP entity ID from query parameter
@@ -93,7 +95,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     // Return auto-submit form
     return sendSAMLResponse(c, spConfig, responseXml);
   } catch (error) {
-    console.error('IdP-Initiated SSO Error:', error);
+    log.error('IdP-Initiated SSO Error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

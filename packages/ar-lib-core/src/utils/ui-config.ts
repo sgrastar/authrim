@@ -19,6 +19,9 @@
 
 import type { Env } from '../types/env';
 import { validateUIBaseUrl, parseAllowedOriginsEnv } from './ui-url-validator';
+import { createLogger } from './logger';
+
+const log = createLogger().module('UI_CONFIG');
 
 /**
  * UI path configuration for various screens
@@ -214,10 +217,10 @@ export async function getUIConfig(
       const allowedOrigins = parseAllowedOriginsEnv(env.ALLOWED_ORIGINS);
       const validation = validateUIBaseUrl(env.UI_URL, env.ISSUER_URL, allowedOrigins);
       if (!validation.valid) {
-        console.warn(
-          `[UI Config] WARNING: UI_URL environment variable may be misconfigured: ${validation.error}. ` +
-            `URL: ${env.UI_URL}. This is a warning only - the value will still be used.`
-        );
+        log.warn('UI_URL environment variable may be misconfigured - this is a warning only', {
+          error: validation.error,
+          url: env.UI_URL,
+        });
         uiUrlWarningLogged = true;
       }
     }

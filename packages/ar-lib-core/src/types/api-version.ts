@@ -5,6 +5,10 @@
  * @see https://docs.authrim.com/api-versioning
  */
 
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('ApiVersion');
+
 /**
  * API Version string format: YYYY-MM-DD (Stripe-style)
  * Only this format is accepted for KV key consistency.
@@ -148,7 +152,7 @@ function normalizePath(path: string): string {
 
     // Security: Re-check length after Unicode normalization (can expand or contract)
     if (decoded.length > MAX_PATH_LENGTH) {
-      console.warn('[ApiVersion] Path exceeded max length after normalization');
+      log.warn('Path exceeded max length after normalization');
       return path; // Return original (fail-safe)
     }
 
@@ -178,7 +182,7 @@ function normalizePath(path: string): string {
 
     // Security: Final length check after normalization (defense-in-depth)
     if (final.length > MAX_PATH_LENGTH) {
-      console.warn('[ApiVersion] Path exceeded max length after final normalization');
+      log.warn('Path exceeded max length after final normalization');
       return path; // Return original (fail-safe)
     }
 

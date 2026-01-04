@@ -21,9 +21,12 @@ import {
   verifyToken,
   importPublicKeyFromJWK,
   parseTokenHeader,
+  createLogger,
 } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import type { CheckApiKey, RateLimitTier, CheckApiOperation } from '@authrim/ar-lib-core';
+
+const log = createLogger().module('CHECK-AUTH');
 
 // =============================================================================
 // Types
@@ -262,7 +265,7 @@ async function validateApiKey(
 
     return { valid: false, error: 'invalid_api_key' };
   } catch (error) {
-    console.error('[Check Auth] API key validation error:', error);
+    log.error('API key validation error', { error: String(error) }, error as Error);
     return { valid: false, error: 'validation_error' };
   }
 }
@@ -301,10 +304,9 @@ async function validateAccessToken(
 
     // If JWKS is not configured, fall back to basic validation with warning
     if (!ctx.jwks || !ctx.issuerUrl) {
-      console.warn(
-        '[Check Auth] JWKS or issuerUrl not configured - falling back to expiration-only validation. ' +
-          'Configure JWKS for production security.'
-      );
+      log.warn('JWKS or issuerUrl not configured - falling back to expiration-only validation', {
+        hint: 'Configure JWKS for production security',
+      });
 
       // Decode payload for basic validation
       const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
@@ -338,7 +340,7 @@ async function validateAccessToken(
     }
 
     if (!publicKey) {
-      console.error('[Check Auth] No suitable public key found in JWKS');
+      log.error('No suitable public key found in JWKS', {});
       return { valid: false, error: 'no_suitable_key' };
     }
 
@@ -366,7 +368,7 @@ async function validateAccessToken(
         return { valid: false, error: 'token_expired' };
       }
       if (error.message.includes('signature')) {
-        console.error('[Check Auth] JWT signature verification failed');
+        log.error('JWT signature verification failed', {});
         return { valid: false, error: 'invalid_signature' };
       }
       if (error.message.includes('issuer')) {
@@ -376,7 +378,7 @@ async function validateAccessToken(
         return { valid: false, error: 'invalid_audience' };
       }
     }
-    console.error('[Check Auth] Access token validation error:', error);
+    log.error('Access token validation error', { error: String(error) }, error as Error);
     return { valid: false, error: 'invalid_token' };
   }
 }

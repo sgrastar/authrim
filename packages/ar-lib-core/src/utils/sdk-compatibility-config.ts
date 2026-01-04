@@ -22,6 +22,9 @@ import {
   parseSdkVersion,
   compareSemver,
 } from '../types/sdk-compatibility';
+import { createLogger } from './logger';
+
+const log = createLogger().module('SDK_COMPAT');
 
 /** Default cache TTL: 3 minutes */
 const DEFAULT_CACHE_TTL_MS = 180 * 1000;
@@ -53,9 +56,7 @@ function getCacheTtlMs(env: Env): number {
   }
   // Overflow protection: cap at 24 hours to prevent integer overflow
   if (ttlSeconds > MAX_TTL_SECONDS) {
-    console.warn(
-      `[SDK Compatibility] TTL ${ttlSeconds}s exceeds max ${MAX_TTL_SECONDS}s, using max`
-    );
+    log.warn(`TTL ${ttlSeconds}s exceeds max ${MAX_TTL_SECONDS}s, using max`);
     return MAX_TTL_SECONDS * 1000;
   }
   return ttlSeconds * 1000;
@@ -198,13 +199,12 @@ export async function getSdkCompatibilityConfig(env: Env): Promise<SdkCompatibil
         cacheConfig(config, env);
         return config;
       } else {
-        console.warn('[SDK Compatibility] Invalid config structure in KV');
+        log.warn('Invalid config structure in KV');
       }
     }
   } catch (error) {
     // Security: Only log error type/message, not full stack traces
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.warn('[SDK Compatibility] Error reading config from KV:', errorMessage);
+    log.warn('Error reading config from KV');
   }
 
   // Fallback to enabled config with no SDKs
@@ -252,7 +252,7 @@ export async function getSdkEntry(
         cacheSdkEntry(sdkName, parsed, env);
         return parsed;
       } else {
-        console.warn(`[SDK Compatibility] Invalid entry structure for ${sdkName}`);
+        log.warn('Invalid entry structure', { sdkName });
       }
     }
 
@@ -261,8 +261,7 @@ export async function getSdkEntry(
     return null;
   } catch (error) {
     // Security: Only log error type/message, not full stack traces
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.warn(`[SDK Compatibility] Error reading SDK entry for ${sdkName}:`, errorMessage);
+    log.warn('Error reading SDK entry', { sdkName });
 
     // Cache null with shorter TTL on error (30 seconds instead of 3 minutes)
     // This prevents cascade failure when KV temporarily unavailable

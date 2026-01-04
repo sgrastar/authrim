@@ -15,6 +15,10 @@
  * This follows the same pattern as custom-redirect.ts for consistency.
  */
 
+import { createLogger } from './logger';
+
+const log = createLogger().module('UIUrlValidator');
+
 /**
  * Result of UI URL validation
  */
@@ -118,7 +122,7 @@ export function validateUIBaseUrl(
       }
     } catch {
       // ISSUER_URL is invalid, continue to allowlist check
-      console.warn('[UI URL Validator] ISSUER_URL is invalid, skipping same-origin check');
+      log.warn('ISSUER_URL is invalid, skipping same-origin check');
     }
   }
 
@@ -210,19 +214,15 @@ export function logUIConfigChange(
     validationResult?: UIUrlValidationResult;
   }
 ): void {
-  const timestamp = new Date().toISOString();
-  const adminInfo = adminId ? `admin=${adminId}` : 'admin=unknown';
-
-  // Always log to console for audit trail
-  console.log(
-    `[AUDIT][UI Config] ${timestamp} ${action.toUpperCase()} ${adminInfo} ` +
-      `field=${details.field} ` +
-      `old=${details.oldValue ?? 'null'} ` +
-      `new=${details.newValue ?? 'null'}` +
-      (details.validationResult?.allowedReason
-        ? ` reason=${details.validationResult.allowedReason}`
-        : '')
-  );
+  // Always log to structured logger for audit trail
+  log.info('UI config change', {
+    action: action.toUpperCase(),
+    adminId: adminId ?? 'unknown',
+    field: details.field,
+    oldValue: details.oldValue ?? 'null',
+    newValue: details.newValue ?? 'null',
+    allowedReason: details.validationResult?.allowedReason,
+  });
 }
 
 /**
@@ -233,10 +233,10 @@ export function logUIConfigValidationFailure(
   url: string,
   error: string
 ): void {
-  const timestamp = new Date().toISOString();
-  const adminInfo = adminId ? `admin=${adminId}` : 'admin=unknown';
-
-  console.warn(
-    `[AUDIT][UI Config][REJECTED] ${timestamp} ${adminInfo} ` + `url=${url} error="${error}"`
-  );
+  log.warn('UI config validation rejected', {
+    action: 'REJECTED',
+    adminId: adminId ?? 'unknown',
+    url,
+    error,
+  });
 }

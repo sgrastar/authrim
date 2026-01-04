@@ -9,8 +9,10 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
-import { D1Adapter, type DatabaseAdapter } from '@authrim/ar-lib-core';
+import { D1Adapter, type DatabaseAdapter, createLogger } from '@authrim/ar-lib-core';
 import type { ExternalIdpAuthState } from '../types';
+
+const log = createLogger().module('EXTERNAL-IDP');
 
 const STATE_TTL_SECONDS = 600; // 10 minutes
 
@@ -117,7 +119,7 @@ export async function consumeAuthState(
 
   if (!result) {
     // This should not happen if Phase 1 succeeded, but handle defensively
-    console.error('State consumption anomaly: UPDATE succeeded but SELECT failed');
+    log.error('State consumption anomaly: UPDATE succeeded but SELECT failed');
     return null;
   }
 

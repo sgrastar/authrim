@@ -10,6 +10,7 @@ import {
   isNativeSSOEnabled,
   loadTenantProfile,
   filterGrantTypesByProfile,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import type { LogoutConfig, TenantProfile } from '@authrim/ar-lib-core';
 
@@ -21,7 +22,14 @@ interface OIDCConfig {
   /** RFC 9101: HTTPS request_uri support */
   httpsRequestUri?: { enabled: boolean };
   /** RFC 8693: Token Exchange */
-  tokenExchange?: { enabled: boolean };
+  tokenExchange?: {
+    enabled: boolean;
+    /** ID-JAG: Identity Assertion Authorization Grant */
+    idJag?: {
+      enabled: boolean;
+      allowedIssuers?: string[];
+    };
+  };
   /** RFC 6749 Section 4.4: Client Credentials */
   clientCredentials?: { enabled: boolean };
   /** RFC 9396: Rich Authorization Requests */
@@ -58,6 +66,8 @@ const metadataCache = new Map<string, OIDCProviderMetadata>();
  * Returns metadata about the OpenID Provider's configuration
  */
 export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('DISCOVERY');
+
   // Get tenant ID from request context (set by requestContextMiddleware)
   const tenantId = getTenantIdFromContext(c);
 
@@ -93,7 +103,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       };
     }
   } catch (error) {
-    console.error('Failed to load settings from KV:', error);
+    log.error('Failed to load settings from KV', { tenantId }, error as Error);
     // Continue with default values
   }
 
@@ -126,6 +136,13 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // Check SETTINGS KV first, then fall back to environment variable
   const aiScopesEnabled = oidcConfig.aiScopes?.enabled ?? c.env.ENABLE_AI_SCOPES === 'true';
 
+  // ID-JAG (Identity Assertion Authorization Grant) feature flag
+  // draft-ietf-oauth-identity-assertion-authz-grant: Identity chaining via Token Exchange
+  // Check SETTINGS KV first, then fall back to environment variable
+  const idJagEnabled =
+    (tokenExchangeEnabled && oidcConfig.tokenExchange?.idJag?.enabled) ??
+    c.env.ID_JAG_ENABLED === 'true';
+
   // Load TenantProfile for profile-based grant_types filtering
   // §16: Human Auth / AI Ephemeral Auth two-layer model
   const tenantProfile: TenantProfile = await loadTenantProfile(
@@ -137,7 +154,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // Check if cached metadata is still valid (include feature flags, profile, and tenant in cache key)
   const logoutHash = `bc=${logoutConfig.backchannel.enabled}:fc=${logoutConfig.frontchannel.enabled}:sm=${logoutConfig.session_management.enabled}`;
   const profileHash = `profile=${tenantProfile.type}`;
-  const settingsHash = `${currentSettingsJson}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:${profileHash}:${logoutHash}`;
+  const settingsHash = `${currentSettingsJson}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:${profileHash}:${logoutHash}`;
   const cacheKey = `${tenantId}:${settingsHash}`;
 
   const cachedMetadata = metadataCache.get(cacheKey);
@@ -328,6 +345,22 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       ? {
           native_sso_token_exchange_supported: true,
           native_sso_device_secret_supported: true,
+        }
+      : {}),
+    // ID-JAG (Identity Assertion Authorization Grant) - conditionally included when enabled
+    // draft-ietf-oauth-identity-assertion-authz-grant: Identity chaining via Token Exchange
+    ...(idJagEnabled
+      ? {
+          // Supported token types that can be requested via identity chaining
+          identity_chaining_requested_token_types_supported: [
+            'urn:ietf:params:oauth:token-type:id-jag',
+          ],
+          // Supported subject_token_type values for ID-JAG requests
+          id_jag_subject_token_types_supported: [
+            'urn:ietf:params:oauth:token-type:id_token',
+            'urn:ietf:params:oauth:token-type:jwt',
+            'urn:ietf:params:oauth:token-type:saml2',
+          ],
         }
       : {}),
   };

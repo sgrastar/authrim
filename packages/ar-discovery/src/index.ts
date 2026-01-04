@@ -11,6 +11,7 @@ import {
   pluginContextMiddleware,
   // Health Check
   createHealthCheckHandlers,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
@@ -108,7 +109,8 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-  console.error('Error:', err);
+  const log = getLogger(c).module('DISCOVERY');
+  log.error('Unhandled error in discovery service', { error: err.message }, err as Error);
   return c.json({ error: 'server_error', error_description: 'An unexpected error occurred' }, 500);
 });
 

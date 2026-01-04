@@ -16,6 +16,9 @@
  */
 
 import type { DatabaseAdapter, ExecuteResult, PIIStatus, PIIClass } from '../db/adapter';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('BaseRepository');
 
 /**
  * Base entity interface
@@ -279,9 +282,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
     // Filter and validate field names to prevent SQL injection
     const fields = Object.keys(entityData).filter((field) => {
       if (!this.isAllowedField(field)) {
-        console.warn(
-          `BaseRepository.create: Invalid field '${field}' ignored in ${this.tableName}`
-        );
+        log.warn('Invalid field ignored in create', { field, tableName: this.tableName });
         return false;
       }
       return true;
@@ -329,9 +330,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
       if (value === undefined) return false;
 
       if (!this.isAllowedField(field)) {
-        console.warn(
-          `BaseRepository.update: Invalid field '${field}' ignored in ${this.tableName}`
-        );
+        log.warn('Invalid field ignored in update', { field, tableName: this.tableName });
         return false;
       }
       return true;

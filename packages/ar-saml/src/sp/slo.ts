@@ -26,6 +26,8 @@ import {
   createConfigurationError,
   getTenantIdFromContext,
   buildIssuerUrl,
+  getLogger,
+  createLogger,
 } from '@authrim/ar-lib-core';
 import {
   parseLogoutRequestPost,
@@ -50,6 +52,7 @@ import { getIdPConfigByEntityId } from '../admin/providers';
 export async function handleSPSLO(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const method = c.req.method;
+  const log = getLogger(c).module('SAML-SP');
 
   try {
     if (method === 'GET') {
@@ -58,7 +61,7 @@ export async function handleSPSLO(c: Context<{ Bindings: Env }>): Promise<Respon
       return handlePostBinding(c, env);
     }
   } catch (error) {
-    console.error('SP SLO Error:', error);
+    log.error('SP SLO Error', { method }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -118,11 +121,13 @@ async function processLogoutRequest(
   binding: 'post' | 'redirect',
   samlBase64?: string
 ): Promise<Response> {
+  const log = getLogger(c).module('SAML-SP');
+
   // Get IdP configuration
   const idpConfig = await getIdPConfigByEntityId(env, logoutRequest.issuer);
 
   if (!idpConfig) {
-    console.error('Unknown IdP:', logoutRequest.issuer);
+    log.error('Unknown IdP', { issuer: logoutRequest.issuer });
     return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
   }
 
@@ -138,7 +143,7 @@ async function processLogoutRequest(
           strictXswProtection: true,
         });
       } catch (error) {
-        console.error('LogoutRequest signature verification failed:', error);
+        log.error('LogoutRequest signature verification failed', { binding }, error as Error);
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
     }
@@ -148,7 +153,7 @@ async function processLogoutRequest(
   validateLogoutRequest(logoutRequest, env);
 
   // Terminate session by NameID
-  await terminateSessionByNameId(env, logoutRequest.nameId, logoutRequest.sessionIndex);
+  await terminateSessionByNameId(c, env, logoutRequest.nameId, logoutRequest.sessionIndex);
 
   // Clear session cookie
   const cookieHeader = 'authrim_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
@@ -178,6 +183,8 @@ async function processLogoutResponse(
   relayState: string | null,
   samlBase64?: string
 ): Promise<Response> {
+  const log = getLogger(c).module('SAML-SP');
+
   // Get IdP configuration
   const idpConfig = await getIdPConfigByEntityId(env, logoutResponse.issuer);
 
@@ -193,7 +200,7 @@ async function processLogoutResponse(
           strictXswProtection: true,
         });
       } catch (error) {
-        console.error('LogoutResponse signature verification failed:', error);
+        log.error('LogoutResponse signature verification failed', {}, error as Error);
         // Log but continue - some IdPs may not sign LogoutResponses
       }
     }
@@ -201,11 +208,10 @@ async function processLogoutResponse(
 
   // Check status
   if (logoutResponse.statusCode !== STATUS_CODES.SUCCESS) {
-    console.warn(
-      'IdP returned logout error:',
-      logoutResponse.statusCode,
-      logoutResponse.statusMessage
-    );
+    log.warn('IdP returned logout error', {
+      statusCode: logoutResponse.statusCode,
+      statusMessage: logoutResponse.statusMessage,
+    });
   }
 
   // Clear session cookie and redirect to logout complete
@@ -263,10 +269,13 @@ function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, env: Env): vo
  * would require a userId -> sessionIds index which is not implemented.
  */
 async function terminateSessionByNameId(
+  c: Context<{ Bindings: Env }>,
   env: Env,
   nameId: string,
   sessionIndex?: string
 ): Promise<void> {
+  const log = getLogger(c).module('SAML-SP');
+
   try {
     // If sessionIndex is provided and is a valid sharded session ID, delete that specific session
     if (sessionIndex && isShardedSessionId(sessionIndex)) {
@@ -278,19 +287,16 @@ async function terminateSessionByNameId(
           })
         );
         if (response.ok) {
-          console.log('SAML SP SLO: Terminated session:', sessionIndex);
+          log.info('Terminated session', { sessionIndex });
           return;
         } else {
-          console.debug('SAML SP SLO: Session not found or already deleted:', sessionIndex);
+          log.debug('Session not found or already deleted', { sessionIndex });
         }
       } catch (error) {
-        console.warn('SAML SP SLO: Failed to delete session:', sessionIndex, error);
+        log.error('Failed to delete session', { sessionIndex }, error as Error);
       }
     } else if (sessionIndex) {
-      console.warn(
-        'SAML SP SLO: sessionIndex is not in sharded format, cannot delete:',
-        sessionIndex
-      );
+      log.warn('sessionIndex is not in sharded format, cannot delete', { sessionIndex });
     }
 
     // Without a valid sessionIndex, we cannot delete by userId in sharded SessionStore
@@ -320,16 +326,16 @@ async function terminateSessionByNameId(
     }
     if (user) {
       // PII Protection: Do not log NameID (may contain email/PII)
-      console.warn(
-        `SAML SP SLO: Cannot delete all sessions for user (sharded SessionStore requires sessionIndex). ` +
-          'Ensure the IdP includes sessionIndex in LogoutRequest.'
+      log.warn(
+        'Cannot delete all sessions for user (sharded SessionStore requires sessionIndex). Ensure the IdP includes sessionIndex in LogoutRequest.',
+        {}
       );
     } else {
       // PII Protection: Do not log NameID (may contain email/PII)
-      console.warn('SAML SP SLO: No user found for logout request');
+      log.warn('No user found for logout request', {});
     }
   } catch (error) {
-    console.error('Error terminating session:', error);
+    log.error('Error terminating session', {}, error as Error);
   }
 }
 
@@ -366,6 +372,8 @@ async function sendLogoutResponse(
     statusMessage,
   });
 
+  const log = getLogger(c).module('SAML-SP');
+
   // Sign the response
   try {
     const { privateKeyPem } = await getSigningKey(env);
@@ -379,7 +387,7 @@ async function sendLogoutResponse(
       includeKeyInfo: true,
     });
   } catch (error) {
-    console.error('Error signing LogoutResponse:', error);
+    log.error('Error signing LogoutResponse', {}, error as Error);
     // Continue without signature if signing fails
   }
 
@@ -479,7 +487,8 @@ export async function initiateSPLogout(
       includeKeyInfo: true,
     });
   } catch (error) {
-    console.error('Error signing LogoutRequest:', error);
+    const log = createLogger().module('SAML-SP-SLO');
+    log.error('Error signing LogoutRequest', { action: 'sign_logout_request' }, error as Error);
   }
 
   // Encode for POST binding

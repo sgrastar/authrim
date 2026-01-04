@@ -109,6 +109,9 @@ function createMockContext(overrides: {
     vi.mocked(getCookie).mockReturnValue(undefined);
   }
 
+  // Store context values (simulating Hono's context store)
+  const contextStore = new Map<string, unknown>([['tenantId', 'default']]);
+
   return {
     req: {
       json: vi.fn().mockResolvedValue(overrides.body ?? {}),
@@ -122,6 +125,8 @@ function createMockContext(overrides: {
         headers: { 'Content-Type': 'application/json' },
       });
     }),
+    get: vi.fn((key: string) => contextStore.get(key)),
+    set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
   } as unknown as Context<{ Bindings: Env }>;
 }
 

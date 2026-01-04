@@ -39,6 +39,9 @@
 
 import type { Context, Next, MiddlewareHandler } from 'hono';
 import type { Env } from '../types/env';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('VersionCheck');
 
 /**
  * In-memory cache for version data
@@ -139,12 +142,12 @@ async function getLatestVersion(env: Env, workerName: string): Promise<string | 
       }
       // Security: Log authentication failures as potential security events
       if (response.status === 401 || response.status === 403) {
-        console.error(
-          `[VersionCheck] SECURITY: Auth failure for VersionManager DO (status=${response.status}). ` +
-            `This may indicate misconfigured ADMIN_API_SECRET or an attack attempt.`
-        );
+        log.error('SECURITY: Auth failure for VersionManager DO', {
+          status: response.status,
+          action: 'security_auth_failure',
+        });
       } else {
-        console.error(`[VersionCheck] Failed to get version: ${response.status}`);
+        log.error('Failed to get version', { status: response.status });
       }
       // Fail-open for availability - allow request to proceed
       return null;
@@ -165,8 +168,7 @@ async function getLatestVersion(env: Env, workerName: string): Promise<string | 
   } catch (error) {
     // Fail-safe: log sanitized error and return null
     // Security: Only log error type/message, not full stack traces
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[VersionCheck] Error fetching version:', errorMessage);
+    log.error('Error fetching version', {}, error as Error);
     // On error, allow request to proceed (fail-open for availability)
     return null;
   }
@@ -231,11 +233,10 @@ export function versionCheckMiddleware(workerName: string): MiddlewareHandler<{ 
     if (myVersion !== latestVersion) {
       // Log for internal tracking (never exposed to clients)
       // Security: Sanitize workerName to prevent log injection
-      console.warn(`[VersionCheck] Outdated bundle detected`, {
+      log.warn('Outdated bundle detected', {
         workerName: sanitizeForLog(workerName),
         myVersion: myVersion.substring(0, 8) + '...', // Truncate for log safety
         latestVersion: latestVersion.substring(0, 8) + '...',
-        timestamp: new Date().toISOString(),
       });
 
       // Return 503 Service Unavailable with Retry-After header

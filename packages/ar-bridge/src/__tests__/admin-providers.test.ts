@@ -35,6 +35,14 @@ vi.mock('@authrim/ar-lib-core', () => {
     AR010002: { status: 400, rfcError: 'invalid_request' }, // VALIDATION_INVALID_VALUE
   };
 
+  // Mock logger
+  const mockLogger = {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  };
+
   return {
     timingSafeEqual: (a: string, b: string) => {
       if (a.length !== b.length) return false;
@@ -80,6 +88,12 @@ vi.mock('@authrim/ar-lib-core', () => {
         { status, headers: { 'Content-Type': 'application/json' } }
       );
     },
+    getLogger: () => ({
+      module: () => mockLogger,
+    }),
+    createLogger: () => ({
+      module: () => mockLogger,
+    }),
   };
 });
 

@@ -17,6 +17,7 @@ import {
   DeviceSecretRepository,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 // Input validation constants
@@ -118,6 +119,7 @@ function toAdminResponse(entity: {
  * - offset: number (default: 0)
  */
 export async function listUserDeviceSecrets(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('DeviceSecretsAPI');
   const userId = c.req.param('userId');
 
   if (!userId) {
@@ -168,7 +170,7 @@ export async function listUserDeviceSecrets(c: Context<{ Bindings: Env }>): Prom
       },
     });
   } catch (error) {
-    console.error('[DeviceSecrets] Error listing device secrets:', error);
+    log.error('Error listing device secrets', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -179,6 +181,7 @@ export async function listUserDeviceSecrets(c: Context<{ Bindings: Env }>): Prom
  * Get a specific device secret by ID.
  */
 export async function getDeviceSecret(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('DeviceSecretsAPI');
   const id = c.req.param('id');
 
   if (!id) {
@@ -199,7 +202,7 @@ export async function getDeviceSecret(c: Context<{ Bindings: Env }>): Promise<Re
 
     return c.json(toAdminResponse(secret));
   } catch (error) {
-    console.error('[DeviceSecrets] Error getting device secret:', error);
+    log.error('Error getting device secret', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -213,6 +216,7 @@ export async function getDeviceSecret(c: Context<{ Bindings: Env }>): Promise<Re
  * - reason: string - Reason for revocation (for audit purposes)
  */
 export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('DeviceSecretsAPI');
   const id = c.req.param('id');
 
   if (!id) {
@@ -255,9 +259,7 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    console.log(`[DeviceSecrets] Revoked device secret ${id} for user ${existing.user_id}`, {
-      reason,
-    });
+    log.info('Revoked device secret', { id, userId: existing.user_id, reason });
 
     return c.json({
       success: true,
@@ -266,7 +268,7 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
       reason,
     });
   } catch (error) {
-    console.error('[DeviceSecrets] Error revoking device secret:', error);
+    log.error('Error revoking device secret', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -281,6 +283,7 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
  * - reason: string - Reason for revocation (for audit purposes)
  */
 export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('DeviceSecretsAPI');
   const userId = c.req.param('userId');
 
   if (!userId) {
@@ -309,9 +312,7 @@ export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>):
 
     const revokedCount = await repo.revokeByUserId(userId, reason);
 
-    console.log(`[DeviceSecrets] Revoked ${revokedCount} device secrets for user ${userId}`, {
-      reason,
-    });
+    log.info('Revoked user device secrets', { userId, revokedCount, reason });
 
     return c.json({
       success: true,
@@ -321,7 +322,7 @@ export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>):
       reason,
     });
   } catch (error) {
-    console.error('[DeviceSecrets] Error revoking user device secrets:', error);
+    log.error('Error revoking user device secrets', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -335,13 +336,14 @@ export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>):
 export async function cleanupExpiredDeviceSecrets(
   c: Context<{ Bindings: Env }>
 ): Promise<Response> {
+  const log = getLogger(c).module('DeviceSecretsAPI');
   try {
     const adapter = new D1Adapter({ db: c.env.DB });
     const repo = new DeviceSecretRepository(adapter);
 
     const cleanedCount = await repo.cleanupExpired();
 
-    console.log(`[DeviceSecrets] Cleaned up ${cleanedCount} expired device secrets`);
+    log.info('Cleaned up expired device secrets', { cleanedCount });
 
     return c.json({
       success: true,
@@ -349,7 +351,7 @@ export async function cleanupExpiredDeviceSecrets(
       cleaned_at: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('[DeviceSecrets] Error cleaning up expired device secrets:', error);
+    log.error('Error cleaning up expired device secrets', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

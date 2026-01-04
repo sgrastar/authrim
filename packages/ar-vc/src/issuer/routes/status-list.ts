@@ -14,6 +14,7 @@
 import type { Context } from 'hono';
 import type { JWK } from 'jose';
 import type { Env } from '../../types';
+import { getLogger } from '@authrim/ar-lib-core';
 
 /**
  * Status List Credential response format
@@ -180,6 +181,8 @@ async function generateStatusListCredentialJWT(
  * Supports ETag-based caching for efficient status checks.
  */
 export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC-ISSUER');
   const listId = c.req.param('listId');
 
   if (!listId) {
@@ -222,7 +225,7 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
   // SECURITY: Never trust Host header - always use configured ISSUER_IDENTIFIER
   const issuerUrl = c.env.ISSUER_IDENTIFIER;
   if (!issuerUrl) {
-    console.error('[status-list] ISSUER_IDENTIFIER is not configured');
+    log.error('ISSUER_IDENTIFIER is not configured');
     return c.json(
       { error: 'temporarily_unavailable', error_description: 'Service temporarily unavailable' },
       503
@@ -239,7 +242,7 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
       ETag: etag,
     });
   } catch (err) {
-    console.error('[status-list] Error generating credential:', err);
+    log.error('Failed to generate status list credential', {}, err as Error);
     return c.json(
       {
         error: 'server_error',

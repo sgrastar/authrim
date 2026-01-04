@@ -81,6 +81,15 @@ function createMockContext(options: {
     headers: options.headers || {},
   });
 
+  // Create a mock logger
+  const mockLogger = {
+    module: () => mockLogger,
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+
   // Create a mock context
   const c = {
     req: {
@@ -91,6 +100,10 @@ function createMockContext(options: {
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
     header: vi.fn(),
     body: vi.fn((body, status = 200) => new Response(body, { status })),
+    get: vi.fn((key: string) => {
+      if (key === 'logger') return mockLogger;
+      return undefined;
+    }),
   } as any;
 
   return c;

@@ -19,6 +19,9 @@
  */
 
 import * as jose from 'jose';
+import { createLogger } from '@authrim/ar-lib-core';
+
+const log = createLogger().module('EXTERNAL-IDP');
 
 /**
  * Maximum validity period for Apple client_secret JWT (6 months in seconds)
@@ -198,7 +201,7 @@ export function parseAppleUserData(userJson: string | undefined | null): {
 
     return Object.keys(result).length > 0 ? result : null;
   } catch {
-    console.warn('Failed to parse Apple user data');
+    log.warn('Failed to parse Apple user data');
     return null;
   }
 }

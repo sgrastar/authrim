@@ -49,6 +49,8 @@ import {
   SESSION_EVENTS,
   type AuthEventData,
   type SessionEventData,
+  // Logging
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 const CHALLENGE_TTL = 5 * 60; // 5 minutes in seconds
@@ -89,6 +91,7 @@ async function constantTimeWrapper<T>(operation: () => Promise<T>): Promise<T> {
  * The challenge is stored in ChallengeStore with 5-minute TTL.
  */
 export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('ANON-LOGIN');
   return constantTimeWrapper(async () => {
     try {
       const tenantId = getTenantIdFromContext(c);
@@ -159,9 +162,9 @@ export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
       // DO NOT fallback to ISSUER_URL as it is publicly known
       const hmacSecret = c.env.DEVICE_HMAC_SECRET || c.env.OTP_HMAC_SECRET;
       if (!hmacSecret) {
-        console.error(
-          '[SECURITY] DEVICE_HMAC_SECRET or OTP_HMAC_SECRET must be configured for anonymous auth'
-        );
+        log.error('DEVICE_HMAC_SECRET or OTP_HMAC_SECRET must be configured for anonymous auth', {
+          action: 'security_config',
+        });
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
@@ -198,10 +201,7 @@ export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
         expires_at: challenge.expires_at,
       });
     } catch (error) {
-      console.error(
-        'Anon login challenge error:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.error('Anon login challenge error', { action: 'challenge' }, error as Error);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
   });
@@ -216,6 +216,7 @@ export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
  * - Creates new anonymous user and session
  */
 export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('ANON-LOGIN');
   return constantTimeWrapper(async () => {
     try {
       const tenantId = getTenantIdFromContext(c);
@@ -288,14 +289,15 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
             errorCode: 'challenge_error',
           } satisfies AuthEventData,
         }).catch((err) => {
-          console.error('[Event] Failed to publish auth.login.failed:', err);
+          log.error(
+            'Failed to publish auth.login.failed event',
+            { action: 'event_publish' },
+            err as Error
+          );
         });
 
         // Generic error for security
-        console.error(
-          'Challenge consume error:',
-          error instanceof Error ? error.name : 'Unknown error'
-        );
+        log.error('Challenge consume error', { action: 'challenge_consume' }, error as Error);
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
 
@@ -309,9 +311,9 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       // DO NOT fallback to ISSUER_URL as it is publicly known
       const hmacSecret = c.env.DEVICE_HMAC_SECRET || c.env.OTP_HMAC_SECRET;
       if (!hmacSecret) {
-        console.error(
-          '[SECURITY] DEVICE_HMAC_SECRET or OTP_HMAC_SECRET must be configured for anonymous auth'
-        );
+        log.error('DEVICE_HMAC_SECRET or OTP_HMAC_SECRET must be configured for anonymous auth', {
+          action: 'security_config',
+        });
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
@@ -334,7 +336,11 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
             errorCode: 'invalid_response',
           } satisfies AuthEventData,
         }).catch((err) => {
-          console.error('[Event] Failed to publish auth.login.failed:', err);
+          log.error(
+            'Failed to publish auth.login.failed event',
+            { action: 'event_publish' },
+            err as Error
+          );
         });
 
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
@@ -477,7 +483,11 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           authCtx.coreAdapter
             .execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [newUserId, tenantId])
             .catch((err) => {
-              console.error('[ANON-LOGIN] Failed to cleanup orphaned user:', err);
+              log.error(
+                'Failed to cleanup orphaned user',
+                { action: 'cleanup_user' },
+                err as Error
+              );
             });
 
           // Also delete our device record if it was inserted
@@ -487,7 +497,11 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
               tenantId,
             ])
             .catch((err) => {
-              console.error('[ANON-LOGIN] Failed to cleanup orphaned device:', err);
+              log.error(
+                'Failed to cleanup orphaned device',
+                { action: 'cleanup_device' },
+                err as Error
+              );
             });
         } else {
           // Our insert succeeded or we won the race
@@ -512,10 +526,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           client_id: clientId,
         });
       } catch (error) {
-        console.error(
-          'Failed to create session:',
-          error instanceof Error ? error.name : 'Unknown error'
-        );
+        log.error('Failed to create session', { action: 'session_create' }, error as Error);
         return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
       }
 
@@ -527,9 +538,10 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           userId,
         ])
         .catch((error) => {
-          console.error(
-            'Failed to update user login timestamp:',
-            error instanceof Error ? error.name : 'Unknown error'
+          log.error(
+            'Failed to update user login timestamp',
+            { action: 'user_update' },
+            error as Error
           );
         });
 
@@ -562,7 +574,11 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           sessionId,
         } satisfies AuthEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish auth.login.succeeded:', err);
+        log.error(
+          'Failed to publish auth.login.succeeded event',
+          { action: 'event_publish' },
+          err as Error
+        );
       });
 
       // Publish session.user.created event
@@ -575,7 +591,11 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           ttlSeconds: SESSION_TTL,
         } satisfies SessionEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish session.user.created:', err);
+        log.error(
+          'Failed to publish session.user.created event',
+          { action: 'event_publish' },
+          err as Error
+        );
       });
 
       return c.json({
@@ -590,10 +610,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         },
       });
     } catch (error) {
-      console.error(
-        'Anon login verify error:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.error('Anon login verify error', { action: 'verify' }, error as Error);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
   });

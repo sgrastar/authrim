@@ -17,6 +17,7 @@ import {
   type DatabaseAdapter,
   escapeLikePattern,
   createAuditLog,
+  createLogger,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -117,8 +118,8 @@ function safeJsonParse(jsonString: string | null, fallback: unknown = null): unk
   if (!jsonString) return fallback;
   try {
     return JSON.parse(jsonString);
-  } catch (error) {
-    console.error('Failed to parse JSON, returning fallback:', error);
+  } catch {
+    // JSON parsing failed, return fallback value
     return fallback;
   }
 }
@@ -210,7 +211,8 @@ export async function adminAIGrantsListHandler(c: Context<{ Bindings: Env }>) {
       },
     });
   } catch (error) {
-    console.error('Failed to list AI grants:', error);
+    const log = createLogger().module('AI-GRANTS');
+    log.error('Failed to list AI grants', {}, error as Error);
     return c.json({ error: 'Failed to list AI grants' }, 500);
   }
 }
@@ -236,7 +238,8 @@ export async function adminAIGrantGetHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json({ grant: formatGrant(grant) });
   } catch (error) {
-    console.error('Failed to get AI grant:', error);
+    const log = createLogger().module('AI-GRANTS');
+    log.error('Failed to get AI grant', {}, error as Error);
     return c.json({ error: 'Failed to get AI grant' }, 500);
   }
 }
@@ -362,7 +365,8 @@ export async function adminAIGrantCreateHandler(c: AdminContext) {
 
     return c.json({ grant: formatGrant(grant!) }, 201);
   } catch (error) {
-    console.error('Failed to create AI grant:', error);
+    const log = createLogger().module('AI-GRANTS');
+    log.error('Failed to create AI grant', {}, error as Error);
     return c.json({ error: 'Failed to create AI grant' }, 500);
   }
 }
@@ -459,7 +463,8 @@ export async function adminAIGrantUpdateHandler(c: AdminContext) {
 
     return c.json({ grant: formatGrant(grant!) });
   } catch (error) {
-    console.error('Failed to update AI grant:', error);
+    const log = createLogger().module('AI-GRANTS');
+    log.error('Failed to update AI grant', {}, error as Error);
     return c.json({ error: 'Failed to update AI grant' }, 500);
   }
 }
@@ -513,7 +518,8 @@ export async function adminAIGrantRevokeHandler(c: AdminContext) {
 
     return c.json({ message: 'AI grant revoked successfully' });
   } catch (error) {
-    console.error('Failed to revoke AI grant:', error);
+    const log = createLogger().module('AI-GRANTS');
+    log.error('Failed to revoke AI grant', {}, error as Error);
     return c.json({ error: 'Failed to revoke AI grant' }, 500);
   }
 }

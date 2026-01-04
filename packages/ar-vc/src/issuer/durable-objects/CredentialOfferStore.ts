@@ -4,6 +4,10 @@
  * Manages credential offer state for OpenID4VCI.
  */
 
+import { createLogger } from '@authrim/ar-lib-core';
+
+const log = createLogger().module('VCI-OFFER-STORE');
+
 interface CredentialOfferState {
   id: string;
   tenantId: string;
@@ -40,7 +44,7 @@ export class CredentialOfferStore {
           return new Response('Not found', { status: 404 });
       }
     } catch (error) {
-      console.error('[CredentialOfferStore] Error:', error);
+      log.error('Credential offer store operation failed', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(JSON.stringify({ error: 'Internal server error' }), {
         status: 500,

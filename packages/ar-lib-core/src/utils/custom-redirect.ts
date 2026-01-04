@@ -20,6 +20,10 @@
  * - Invalid URL format rejected
  */
 
+import { createLogger } from './logger';
+
+const log = createLogger().module('CustomRedirect');
+
 /**
  * Result of custom redirect URI validation
  */
@@ -230,13 +234,13 @@ export function parseClientAllowedOrigins(jsonString: string | null): string[] {
   try {
     const parsed = JSON.parse(jsonString);
     if (!Array.isArray(parsed)) {
-      console.warn('[Custom Redirect] allowed_redirect_origins is not an array, treating as empty');
+      log.warn('allowed_redirect_origins is not an array, treating as empty');
       return [];
     }
     return parsed.filter((o) => typeof o === 'string');
   } catch {
     // JSON parse failed → empty array (strict mode)
-    console.warn('[Custom Redirect] Failed to parse allowed_redirect_origins, treating as empty');
+    log.warn('Failed to parse allowed_redirect_origins, treating as empty');
     return [];
   }
 }

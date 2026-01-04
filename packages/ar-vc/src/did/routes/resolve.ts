@@ -23,7 +23,11 @@ import {
   D1Adapter,
   DIDDocumentCacheRepository,
   safeFetch,
+  getLogger,
+  createLogger,
 } from '@authrim/ar-lib-core';
+
+const standaloneLog = createLogger().module('VC-DID-RESOLVER');
 
 /**
  * Multicodec identifiers for supported key types
@@ -101,6 +105,8 @@ interface DIDResolutionResult {
  * Supports did:web and did:key methods.
  */
 export async function didResolveRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC');
   try {
     const did = c.req.param('did');
 
@@ -158,7 +164,7 @@ export async function didResolveRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
     return c.json(createSuccessResult(document));
   } catch (error) {
-    console.error('[didResolve] Error:', error);
+    log.error('DID resolution failed', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return c.json(
       createErrorResult('internalError', 'An error occurred while resolving the DID'),
@@ -186,7 +192,7 @@ async function resolveDidWeb(did: string): Promise<Record<string, unknown> | nul
     });
 
     if (!response.ok) {
-      console.warn(`[resolveDidWeb] HTTP ${response.status} for ${did}`);
+      standaloneLog.warn('DID web resolution HTTP error', { httpStatus: response.status });
       return null;
     }
 
@@ -197,18 +203,18 @@ async function resolveDidWeb(did: string): Promise<Record<string, unknown> | nul
     try {
       return JSON.parse(text) as Record<string, unknown>;
     } catch {
-      console.warn(`[resolveDidWeb] Invalid JSON in DID document: ${did}`);
+      standaloneLog.warn('Invalid JSON in DID document', {});
       return null;
     }
   } catch (error) {
     // Log detailed error for debugging
     if (error instanceof Error) {
       if (error.message.includes('SSRF protection')) {
-        console.warn(`[resolveDidWeb] SSRF blocked: ${did}`);
+        standaloneLog.warn('DID web SSRF blocked', {});
       } else if (error.message.includes('timeout')) {
-        console.warn(`[resolveDidWeb] Timeout: ${did}`);
+        standaloneLog.warn('DID web resolution timeout', {});
       } else {
-        console.error('[resolveDidWeb] Fetch error:', error.message);
+        standaloneLog.error('DID web fetch error', {}, error as Error);
       }
     }
     return null;
@@ -241,7 +247,7 @@ async function resolveDidKey(did: string): Promise<Record<string, unknown> | nul
 
   if (!multibaseKey.startsWith('z')) {
     // Only base58btc (z prefix) is commonly used
-    console.error('[resolveDidKey] Unsupported multibase prefix');
+    standaloneLog.error('Unsupported multibase prefix for did:key', {});
     return null;
   }
 
@@ -252,7 +258,7 @@ async function resolveDidKey(did: string): Promise<Record<string, unknown> | nul
     // Parse multicodec prefix and extract public key
     const keyInfo = parseMulticodecKey(decoded);
     if (!keyInfo) {
-      console.error('[resolveDidKey] Unsupported key type');
+      standaloneLog.error('Unsupported key type for did:key', {});
       return null;
     }
 
@@ -276,7 +282,7 @@ async function resolveDidKey(did: string): Promise<Record<string, unknown> | nul
       capabilityInvocation: [keyId],
     };
   } catch (e) {
-    console.error('[resolveDidKey] Decoding error:', e);
+    standaloneLog.error('did:key decoding error', {}, e as Error);
     return null;
   }
 }
@@ -418,20 +424,20 @@ function decompressECPoint(
 ): { x: Uint8Array; y: Uint8Array } | null {
   const params = CURVE_PARAMS[curve];
   if (!params) {
-    console.error(`[decompressECPoint] Unknown curve: ${curve}`);
+    standaloneLog.error('Unknown curve for EC point decompression', { curve });
     return null;
   }
 
   // SECURITY: Validate minimum length before accessing array elements
   // Compressed EC keys must have at least 1 byte (prefix) + coordSize bytes
   if (compressedKey.length < 2) {
-    console.error(`[decompressECPoint] Key too short: ${compressedKey.length} bytes`);
+    standaloneLog.error('EC key too short', { keyLength: compressedKey.length });
     return null;
   }
 
   const prefix = compressedKey[0];
   if (prefix !== 0x02 && prefix !== 0x03) {
-    console.error(`[decompressECPoint] Invalid prefix: ${prefix}`);
+    standaloneLog.error('Invalid EC key prefix', { prefix });
     return null;
   }
 
@@ -454,7 +460,7 @@ function decompressECPoint(
 
   // Verify the square root
   if (modPow(y, BigInt(2), p) !== y2) {
-    console.error('[decompressECPoint] Point not on curve');
+    standaloneLog.error('EC point not on curve', {});
     return null;
   }
 
@@ -491,9 +497,7 @@ function parseMulticodecKey(
     case MULTICODEC.ED25519_PUB: {
       // Ed25519: 32 bytes
       if (keyBytes.length !== 32) {
-        console.error(
-          `[parseMulticodecKey] Ed25519 key should be 32 bytes, got ${keyBytes.length}`
-        );
+        standaloneLog.error('Invalid Ed25519 key length', { keyLength: keyBytes.length });
         return null;
       }
       return {
@@ -527,7 +531,7 @@ function parseMulticodecKey(
     }
 
     default:
-      console.warn(`[parseMulticodecKey] Unknown multicodec: 0x${codec.toString(16)}`);
+      standaloneLog.warn('Unknown multicodec', { codec: `0x${codec.toString(16)}` });
       return null;
   }
 }
@@ -551,7 +555,7 @@ function parseECKey(
     // Compressed format (0x02 or 0x03 prefix)
     const decompressed = decompressECPoint(keyBytes, curve);
     if (!decompressed) {
-      console.error(`[parseECKey] Failed to decompress ${curve} key`);
+      standaloneLog.error('Failed to decompress EC key', { curve });
       return null;
     }
 
@@ -567,7 +571,7 @@ function parseECKey(
   } else if (keyBytes.length === uncompressedSize) {
     // Uncompressed format (0x04 prefix)
     if (keyBytes[0] !== 0x04) {
-      console.error(`[parseECKey] Invalid uncompressed key prefix: ${keyBytes[0]}`);
+      standaloneLog.error('Invalid uncompressed EC key prefix', { prefix: keyBytes[0] });
       return null;
     }
 
@@ -582,9 +586,12 @@ function parseECKey(
     };
   }
 
-  console.error(
-    `[parseECKey] Invalid ${curve} key size: ${keyBytes.length} (expected ${compressedSize} or ${uncompressedSize})`
-  );
+  standaloneLog.error('Invalid EC key size', {
+    curve,
+    keyLength: keyBytes.length,
+    expectedCompressed: compressedSize,
+    expectedUncompressed: uncompressedSize,
+  });
   return null;
 }
 

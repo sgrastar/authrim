@@ -21,6 +21,7 @@ import {
   getChallengeStoreByChallengeId,
   createPIIContextFromHono,
   getTenantIdFromContext,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -31,6 +32,8 @@ import {
  * bypassing ITP restrictions on third-party cookies.
  */
 export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('SESSION-MGMT');
+
   try {
     // Get session from cookie
     const sessionId = getCookie(c, 'authrim_session');
@@ -94,7 +97,7 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
       session_id: session.id,
     });
   } catch (error) {
-    console.error('Issue session token error:', error);
+    log.error('Issue session token error', { action: 'issue_token' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -112,6 +115,8 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
  * Validates a single-use token and creates a new session for the RP domain.
  */
 export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('SESSION-MGMT');
+
   try {
     const body = await c.req.json<{
       token: string;
@@ -203,7 +208,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
         )) as Session;
         rpSessionId = newSession.id;
       } catch (error) {
-        console.warn('Failed to create RP session:', error);
+        log.warn('Failed to create RP session', { action: 'create_rp_session' });
         // Fall back to original session ID
       }
     }
@@ -215,7 +220,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       verified: true,
     });
   } catch (error) {
-    console.error('Verify session token error:', error);
+    log.error('Verify session token error', { action: 'verify_token' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -234,6 +239,8 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
  * Alternative to iframe-based session checking for ITP compatibility.
  */
 export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('SESSION-MGMT');
+
   try {
     // Get session from cookie
     const sessionId = getCookie(c, 'authrim_session');
@@ -298,7 +305,7 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
           userName = userPII.name ?? undefined;
         }
       } catch (error) {
-        console.warn('Failed to fetch user PII for session status:', error);
+        log.warn('Failed to fetch user PII for session status', { action: 'fetch_user_pii' });
       }
     }
 
@@ -312,7 +319,7 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
       created_at: session.createdAt,
     });
   } catch (error) {
-    console.error('Session status error:', error);
+    log.error('Session status error', { action: 'status' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -331,6 +338,8 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
  * The session is extended each time the user is active.
  */
 export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('SESSION-MGMT');
+
   try {
     // Get session from cookie or body
     let sessionId = getCookie(c, 'authrim_session');
@@ -409,7 +418,7 @@ export async function refreshSessionHandler(c: Context<{ Bindings: Env }>) {
       message: 'Session extended successfully',
     });
   } catch (error) {
-    console.error('Refresh session error:', error);
+    log.error('Refresh session error', { action: 'refresh' }, error as Error);
     return c.json(
       {
         error: 'server_error',

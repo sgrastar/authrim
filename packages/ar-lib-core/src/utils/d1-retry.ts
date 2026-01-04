@@ -11,6 +11,10 @@
  * monitoring/alerting for persistent failures.
  */
 
+import { createLogger } from './logger';
+
+const log = createLogger().module('D1_RETRY');
+
 /**
  * Retry configuration
  */
@@ -81,15 +85,12 @@ export async function retryD1Operation<T>(
         cfg.maxDelayMs
       );
 
-      console.warn(
-        `${operationName}: Attempt ${attempt + 1}/${cfg.maxRetries + 1} failed, retrying in ${delay}ms...`,
-        {
-          error: lastError.message,
-          attempt: attempt + 1,
-          maxRetries: cfg.maxRetries + 1,
-          nextDelay: delay,
-        }
-      );
+      log.warn(`${operationName}: Attempt ${attempt + 1}/${cfg.maxRetries + 1} failed`, {
+        errorMessage: lastError.message,
+        attempt: attempt + 1,
+        maxRetries: cfg.maxRetries + 1,
+        nextDelay: delay,
+      });
 
       // Wait before retrying
       await sleep(delay);
@@ -97,10 +98,13 @@ export async function retryD1Operation<T>(
   }
 
   // All retries exhausted
-  console.error(`${operationName}: All ${cfg.maxRetries + 1} attempts failed`, {
-    error: lastError?.message,
-    operationName,
-  });
+  log.error(
+    `${operationName}: All ${cfg.maxRetries + 1} attempts failed`,
+    {
+      operationName,
+    },
+    lastError ?? undefined
+  );
 
   // CRITICAL: This should trigger monitoring/alerting in production
   // Consider integrating with error tracking service (Sentry, etc.)

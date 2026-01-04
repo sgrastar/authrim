@@ -16,8 +16,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger, type Env } from '@authrim/ar-lib-core';
 
 /**
  * Tombstone entity from database
@@ -163,6 +162,7 @@ export async function listTombstones(c: Context<{ Bindings: Env }>) {
  * Get a specific tombstone by ID.
  */
 export async function getTombstone(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('TombstonesAPI');
   const db = c.env.DB_PII;
   if (!db) {
     return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
@@ -205,7 +205,7 @@ export async function getTombstone(c: Context<{ Bindings: Env }>) {
       metadata: row.deletion_metadata ? safeJsonParse(row.deletion_metadata) : null,
     });
   } catch (error) {
-    console.error('[tombstones] getTombstone error:', error);
+    log.error('getTombstone error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -324,6 +324,7 @@ export async function getTombstoneStats(c: Context<{ Bindings: Env }>) {
  * - dry_run: If true, only return count without deleting (default: false)
  */
 export async function cleanupTombstones(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('TombstonesAPI');
   const db = c.env.DB_PII;
   if (!db) {
     return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
@@ -390,7 +391,7 @@ export async function cleanupTombstones(c: Context<{ Bindings: Env }>) {
       tenantId: tenantId ?? 'all',
     });
   } catch (error) {
-    console.error('[tombstones] cleanupTombstones error:', error);
+    log.error('cleanupTombstones error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -402,6 +403,7 @@ export async function cleanupTombstones(c: Context<{ Bindings: Env }>) {
  * Use with caution - this removes the deletion record.
  */
 export async function deleteTombstone(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('TombstonesAPI');
   const db = c.env.DB_PII;
   if (!db) {
     return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
@@ -434,7 +436,7 @@ export async function deleteTombstone(c: Context<{ Bindings: Env }>) {
       message: 'Tombstone deleted. Note: This removes the deletion audit trail.',
     });
   } catch (error) {
-    console.error('[tombstones] deleteTombstone error:', error);
+    log.error('deleteTombstone error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

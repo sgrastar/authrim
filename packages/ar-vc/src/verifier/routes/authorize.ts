@@ -14,7 +14,7 @@ import type { Context } from 'hono';
 import type { Env, VPRequestState } from '../../types';
 import { generateSecureNonce } from '../../utils/crypto';
 import { getVPRequestStoreForNewRequest } from '../../utils/vp-request-sharding';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 
 /** Supported client_id_scheme values per OID4VP */
 type ClientIdScheme = 'pre-registered' | 'did' | 'redirect_uri';
@@ -106,6 +106,8 @@ function validateClientIdScheme(clientId: string, scheme?: ClientIdScheme): stri
  * The wallet fetches this URI to get the presentation definition.
  */
 export async function vpAuthorizeRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC-VERIFIER');
   try {
     const body = await c.req.json<VPAuthorizeRequest>();
 
@@ -208,7 +210,7 @@ export async function vpAuthorizeRoute(c: Context<{ Bindings: Env }>): Promise<R
       authorization_request: authorizationRequest,
     });
   } catch (error) {
-    console.error('[vpAuthorize] Error:', error);
+    log.error('VP authorization failed', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

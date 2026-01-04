@@ -27,6 +27,7 @@ import type { Env } from '../types/env';
 import type { CIBARequestMetadata, CIBARequestRow } from '../types/oidc';
 import { isCIBARequestExpired } from '../utils/ciba';
 import { retryD1Operation } from '../utils/d1-retry';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * CIBA Request V2 - Enhanced state for V2 architecture
@@ -67,6 +68,7 @@ interface AuditLogEntry {
 export class CIBARequestStore {
   private state: DurableObjectState;
   private env: Env;
+  private readonly log: Logger = createLogger().module('CIBARequestStore');
 
   // In-memory storage for active CIBA requests
   private cibaRequests: Map<string, CIBARequestV2> = new Map();
@@ -120,11 +122,12 @@ export class CIBARequestStore {
         this.userCodeToAuthReqId.set(userCode, authReqId);
       }
 
-      console.log(
-        `CIBARequestStore: Loaded ${this.cibaRequests.size} requests, ${this.userCodeToAuthReqId.size} user mappings`
-      );
+      this.log.info('Loaded requests and user mappings', {
+        requestCount: this.cibaRequests.size,
+        userMappingCount: this.userCodeToAuthReqId.size,
+      });
     } catch (error) {
-      console.error('CIBARequestStore: Failed to initialize:', error);
+      this.log.error('Failed to initialize', {}, error as Error);
     }
 
     this.initialized = true;
@@ -142,9 +145,7 @@ export class CIBARequestStore {
     }
 
     // Safety fallback (should not happen with blockConcurrencyWhile)
-    console.warn(
-      'CIBARequestStore: initializeState called but not initialized - this should not happen'
-    );
+    this.log.warn('initializeState called but not initialized - this should not happen');
     await this.initializeStateBlocking();
   }
 
@@ -323,7 +324,7 @@ export class CIBARequestStore {
       return new Response('Not found', { status: 404 });
     } catch (error) {
       // Log full error for debugging but don't expose to client
-      console.error('CIBARequestStore error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(
         JSON.stringify({
@@ -911,7 +912,7 @@ export class CIBARequestStore {
 
       await this.env.DB.batch(statements);
     } catch (error) {
-      console.error('CIBARequestStore: Failed to flush audit logs:', error);
+      this.log.error('Failed to flush audit logs', {}, error as Error);
       // Re-queue (limited to prevent memory leak)
       if (this.pendingAuditLogs.length < 100) {
         this.pendingAuditLogs.push(...logsToFlush);
@@ -941,16 +942,15 @@ export class CIBARequestStore {
     const timeSinceLastCleanup = Date.now() - lastCleanup;
 
     if (timeSinceLastCleanup < CLEANUP_INTERVAL_MS - IDEMPOTENCY_BUFFER_MS) {
-      console.log(
-        `CIBARequestStore alarm: Skipping duplicate execution ` +
-          `(last cleanup ${Math.round(timeSinceLastCleanup / 1000)}s ago)`
-      );
+      this.log.info('Skipping duplicate alarm execution', {
+        secondsSinceLastCleanup: Math.round(timeSinceLastCleanup / 1000),
+      });
       // Reschedule to the correct time
       await this.state.storage.setAlarm(lastCleanup + CLEANUP_INTERVAL_MS);
       return;
     }
 
-    console.log('CIBARequestStore alarm: Cleaning up expired CIBA requests');
+    this.log.info('Cleaning up expired CIBA requests');
 
     const now = Date.now();
     const expiredRequests: string[] = [];
@@ -987,7 +987,7 @@ export class CIBARequestStore {
       );
     }
 
-    console.log(`CIBARequestStore: Cleaned up ${expiredRequests.length} expired CIBA requests`);
+    this.log.info('Cleaned up expired CIBA requests', { count: expiredRequests.length });
 
     // Record successful cleanup for idempotency
     await this.state.storage.put(lastCleanupKey, Date.now());

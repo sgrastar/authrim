@@ -6,6 +6,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '../../types';
+import { getLogger } from '@authrim/ar-lib-core';
 
 interface DIDDocument {
   '@context': string[];
@@ -35,6 +36,8 @@ interface Service {
  * Returns Authrim's DID document (did:web).
  */
 export async function didDocumentRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC');
   const issuerDid = c.env.ISSUER_IDENTIFIER || 'did:web:authrim.com';
   const baseUrl = new URL(c.req.url).origin;
 
@@ -52,7 +55,7 @@ export async function didDocumentRoute(c: Context<{ Bindings: Env }>): Promise<R
       publicKeyJwk = jwks.keys[0];
     }
   } catch (error) {
-    console.error('[didDocument] Failed to get public key:', error);
+    log.error('Failed to get public key for DID document', {}, error as Error);
   }
 
   const document: DIDDocument = {

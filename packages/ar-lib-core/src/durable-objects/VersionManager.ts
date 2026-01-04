@@ -42,6 +42,7 @@
 
 import type { Env } from '../types/env';
 import { timingSafeEqual } from '../utils/crypto';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * Version record for a single Worker
@@ -71,6 +72,7 @@ export class VersionManager {
   private state: DurableObjectState;
   private env: Env;
   private versionManagerState: VersionManagerState | null = null;
+  private readonly log: Logger = createLogger().module('VersionManager');
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -132,10 +134,10 @@ export class VersionManager {
 
     await this.saveState();
 
-    console.log(`[VersionManager] Registered version for ${workerName}`, {
+    this.log.info('Registered version', {
+      workerName,
       uuid,
       deployTime,
-      timestamp: new Date().toISOString(),
     });
   }
 
@@ -174,7 +176,7 @@ export class VersionManager {
 
     // If no secret is configured, deny all requests
     if (!secret) {
-      console.error('[VersionManager] ADMIN_API_SECRET is not configured');
+      this.log.error('ADMIN_API_SECRET is not configured');
       return false;
     }
 
@@ -305,7 +307,7 @@ export class VersionManager {
 
       return new Response('Not Found', { status: 404 });
     } catch (error) {
-      console.error('[VersionManager] Error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },

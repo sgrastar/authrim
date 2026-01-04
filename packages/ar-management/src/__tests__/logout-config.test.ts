@@ -12,6 +12,28 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Hoist mock logger
+const { mockLogger } = vi.hoisted(() => {
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    module: vi.fn().mockReturnThis(),
+  };
+  return { mockLogger: logger };
+});
+
+// Mock getLogger from ar-lib-core
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    getLogger: () => mockLogger,
+  };
+});
+
 import {
   getLogoutConfig,
   updateLogoutConfig,
@@ -58,6 +80,10 @@ function createMockContext(options: {
       json: vi.fn().mockResolvedValue(options.body || {}),
       query: (key: string) => options.query?.[key],
       param: (key: string) => options.params?.[key],
+    },
+    get: (key: string) => {
+      if (key === 'logger') return mockLogger;
+      return undefined;
     },
     json: vi.fn((data, status = 200) => ({ data, status })),
   } as any;

@@ -6,6 +6,7 @@
 
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  createLogger,
   D1Adapter,
   type DatabaseAdapter,
   type JITProvisioningConfig,
@@ -483,9 +484,11 @@ async function logAuditEvent(env: Env, params: AuditEventParams): Promise<void> 
   } catch (error) {
     // Don't fail the main operation if audit logging fails
     // PII Protection: Don't log full error (may contain DB details)
-    console.error(
-      'Failed to log audit event:',
-      error instanceof Error ? error.name : 'Unknown error'
+    const log = createLogger().module('IDENTITY-STITCHING');
+    log.error(
+      'Failed to log audit event',
+      { action: 'audit_log', errorName: error instanceof Error ? error.name : 'Unknown error' },
+      error as Error
     );
   }
 }
@@ -574,10 +577,11 @@ async function createUserWithJITProvisioning(
     } catch (error) {
       // If hash generation fails (no secret configured), continue without hash
       // PII Protection: Don't log full error (may contain email or config details)
-      console.warn(
-        'Failed to generate email_domain_hash:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      const log = createLogger().module('IDENTITY-STITCHING');
+      log.warn('Failed to generate email_domain_hash', {
+        action: 'generate_hash',
+        errorName: error instanceof Error ? error.name : 'Unknown error',
+      });
     }
   }
 
@@ -658,9 +662,14 @@ async function createUserWithJITProvisioning(
       await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [id]);
     } catch (cleanupError) {
       // PII Protection: Don't log full error (may contain DB details)
-      console.error(
-        'Failed to cleanup user after policy denial:',
-        cleanupError instanceof Error ? cleanupError.name : 'Unknown error'
+      const log = createLogger().module('IDENTITY-STITCHING');
+      log.error(
+        'Failed to cleanup user after policy denial',
+        {
+          action: 'cleanup_user',
+          errorName: cleanupError instanceof Error ? cleanupError.name : 'Unknown error',
+        },
+        cleanupError as Error
       );
     }
 
@@ -727,9 +736,14 @@ async function createUserWithJITProvisioning(
       await coreAdapter.execute('DELETE FROM users_core WHERE id = ?', [id]);
     } catch (cleanupError) {
       // PII Protection: Don't log full error (may contain DB details)
-      console.error(
-        'Failed to cleanup user after no-org denial:',
-        cleanupError instanceof Error ? cleanupError.name : 'Unknown error'
+      const log = createLogger().module('IDENTITY-STITCHING');
+      log.error(
+        'Failed to cleanup user after no-org denial',
+        {
+          action: 'cleanup_user',
+          errorName: cleanupError instanceof Error ? cleanupError.name : 'Unknown error',
+        },
+        cleanupError as Error
       );
     }
 
@@ -857,7 +871,12 @@ async function assignRoleToUserInternal(
 
     return { success: true, assignment_id: assignmentId };
   } catch (error) {
-    console.error('[assignRoleToUserInternal] Database error:', error);
+    const log = createLogger().module('IDENTITY-STITCHING');
+    log.error(
+      'Database error in assignRoleToUserInternal',
+      { action: 'assign_role' },
+      error as Error
+    );
     return {
       success: false,
       // SECURITY: Do not expose internal error details

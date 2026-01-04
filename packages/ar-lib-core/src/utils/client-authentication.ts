@@ -9,6 +9,9 @@ import type { ClientMetadata } from '../types/oidc';
 import { isInternalUrl } from './url-security';
 import { ALLOWED_ASYMMETRIC_ALGS } from '../constants';
 import { timingSafeEqual } from './crypto';
+import { createLogger } from './logger';
+
+const log = createLogger().module('CLIENT_AUTH');
 
 /**
  * Client Assertion Claims (RFC 7523 Section 3)
@@ -96,17 +99,17 @@ export async function validateClientAssertion(
     const kid = header.kid;
 
     // Debug logging for private_key_jwt investigation
-    console.log('[private_key_jwt] Client:', {
+    log.debug('private_key_jwt client info', {
       client_id: client.client_id,
       has_jwks: !!client.jwks,
       has_jwks_uri: !!client.jwks_uri,
       jwks_keys_count: client.jwks?.keys?.length,
     });
-    console.log('[private_key_jwt] JWT Header:', { kid, alg: header.alg });
+    log.debug('private_key_jwt JWT Header', { kid, alg: header.alg });
 
     // Reject 'none' algorithm
     if (header.alg === 'none' || !header.alg) {
-      console.warn('[SECURITY] Rejected unsigned client assertion (alg=none or missing)');
+      log.warn('SECURITY - Rejected unsigned client assertion (alg=none or missing)');
       return {
         valid: false,
         error: 'invalid_client',
@@ -237,7 +240,7 @@ export async function validateClientAssertion(
           };
         }
 
-        console.log(`[private_key_jwt] Fetching JWKS from: ${client.jwks_uri}`);
+        log.debug(`Fetching JWKS from: ${client.jwks_uri}`);
         const response = await fetch(client.jwks_uri, {
           headers: {
             Accept: 'application/json',
@@ -249,13 +252,13 @@ export async function validateClientAssertion(
         const jwks = (await response.json()) as { keys: JWK[] };
         if (jwks.keys && jwks.keys.length > 0) {
           jwksKeys = jwks.keys;
-          console.log(`[private_key_jwt] Fetched ${jwksKeys.length} keys from jwks_uri`);
+          log.debug(`Fetched ${jwksKeys.length} keys from jwks_uri`);
         }
       } catch (fetchError) {
-        console.error('[private_key_jwt] Failed to fetch JWKS from URI:', fetchError);
+        log.error('Failed to fetch JWKS from URI', {}, fetchError as Error);
         // If jwks_uri fetch fails but we have embedded jwks, fall back to it
         if (client.jwks?.keys && client.jwks.keys.length > 0) {
-          console.warn('[private_key_jwt] Falling back to embedded JWKS');
+          log.warn('Falling back to embedded JWKS');
           jwksKeys = client.jwks.keys as JWK[];
         } else {
           return {
@@ -267,28 +270,27 @@ export async function validateClientAssertion(
       }
     } else if (client.jwks?.keys && client.jwks.keys.length > 0) {
       // Use embedded JWKS only if jwks_uri is not provided
-      console.log('[private_key_jwt] Using embedded JWKS (no jwks_uri configured)');
+      log.debug('Using embedded JWKS (no jwks_uri configured)');
       jwksKeys = client.jwks.keys as JWK[];
     }
 
     // Find key by kid (or use first key if no kid specified)
     if (jwksKeys.length > 0) {
       // Debug: Log available keys
-      console.log(
-        '[private_key_jwt] JWKS Keys:',
-        jwksKeys.map((k) => ({
+      log.debug('JWKS Keys', {
+        keys: jwksKeys.map((k) => ({
           kid: k.kid,
           kty: k.kty,
           alg: k.alg,
-        }))
-      );
+        })),
+      });
 
       const foundKey = findKeyByKid(jwksKeys, kid);
       if (foundKey) {
         publicKey = foundKey;
-        console.log('[private_key_jwt] Selected key:', { kid: foundKey.kid, kty: foundKey.kty });
+        log.debug('Selected key', { kid: foundKey.kid, kty: foundKey.kty });
       } else {
-        console.log('[private_key_jwt] No matching key found for kid:', kid);
+        log.debug('No matching key found', { kid });
       }
     }
 
@@ -325,10 +327,7 @@ export async function validateClientAssertion(
     };
   } catch (error) {
     // PII Protection: Don't log full error object (may contain client info in stack)
-    console.error(
-      'Client assertion validation error:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Client assertion validation error', {}, error as Error);
     // SECURITY: Use generic error message to prevent information leakage
     // Internal library errors (jose) may contain implementation details
     return {

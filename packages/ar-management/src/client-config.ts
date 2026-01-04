@@ -23,6 +23,7 @@ import {
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
   // Audit logging
   createAuditLog,
   // Event publishing
@@ -346,21 +347,25 @@ export async function clientConfigGetHandler(c: Context<{ Bindings: Env }>): Pro
     // Build response (excludes sensitive fields)
     const response = buildClientResponse(client, c.env.ISSUER_URL);
 
+    const log = getLogger(c).module('RFC7592');
     // Publish event (non-blocking)
     publishEvent(c, {
       type: CLIENT_EVENTS.CONFIG_READ,
       tenantId: 'default',
       data: { clientId },
-    }).catch((err) => console.error('[RFC 7592] Failed to publish config read event:', err));
+    }).catch((err) =>
+      log.error('Failed to publish config read event', { action: 'config_read' }, err as Error)
+    );
 
-    console.log(`[RFC 7592] Client config read: ${clientId}`);
+    log.info('Client config read', { action: 'config_read', clientId });
 
     return c.json(response, 200, {
       'Cache-Control': 'no-store',
       Pragma: 'no-cache',
     });
   } catch (error) {
-    console.error('[RFC 7592] Client config GET error:', error);
+    const log = getLogger(c).module('RFC7592');
+    log.error('Client config GET error', { action: 'config_read' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -529,17 +534,16 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
         ]
       );
     } catch (updateError) {
-      console.error('[RFC 7592] D1 UPDATE error:', {
-        message: updateError instanceof Error ? updateError.message : 'Unknown',
-        name: updateError instanceof Error ? updateError.name : undefined,
-      });
+      const log = getLogger(c).module('RFC7592');
+      log.error('D1 UPDATE error', { action: 'config_update', clientId }, updateError as Error);
       throw updateError;
     }
 
+    const log = getLogger(c).module('RFC7592');
     // Invalidate cache (use same key format as kv.ts getClient)
     const cacheKey = buildKVKey('client', clientId);
     await c.env.CLIENTS_CACHE.delete(cacheKey).catch(() => {
-      console.warn('[RFC 7592] Failed to invalidate client cache');
+      log.warn('Failed to invalidate client cache', { action: 'config_update', clientId });
     });
 
     // Fetch updated client and return response
@@ -560,16 +564,20 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
       userAgent: c.req.header('User-Agent')?.substring(0, 256) || 'unknown',
       metadata: JSON.stringify({ method: 'PUT', endpoint: '/clients/:client_id' }),
       severity: 'info',
-    }).catch((err) => console.error('[RFC 7592] Failed to create audit log:', err));
+    }).catch((err) =>
+      log.error('Failed to create audit log', { action: 'config_update' }, err as Error)
+    );
 
     // Publish event (non-blocking)
     publishEvent(c, {
       type: CLIENT_EVENTS.CONFIG_UPDATED,
       tenantId: 'default',
       data: { clientId },
-    }).catch((err) => console.error('[RFC 7592] Failed to publish config updated event:', err));
+    }).catch((err) =>
+      log.error('Failed to publish config updated event', { action: 'config_update' }, err as Error)
+    );
 
-    console.log(`[RFC 7592] Client config updated: ${clientId}`);
+    log.info('Client config updated', { action: 'config_update', clientId });
 
     return c.json(response, 200, {
       'Cache-Control': 'no-store',
@@ -577,11 +585,8 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
     });
   } catch (error) {
     // Log detailed error for debugging
-    console.error('[RFC 7592] Client config PUT error:', {
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      name: error instanceof Error ? error.name : undefined,
-    });
+    const log = getLogger(c).module('RFC7592');
+    log.error('Client config PUT error', { action: 'config_update' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -612,10 +617,11 @@ export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): 
     const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
     await coreAdapter.execute('DELETE FROM oauth_clients WHERE client_id = ?', [clientId]);
 
+    const log = getLogger(c).module('RFC7592');
     // Invalidate cache (use same key format as kv.ts getClient)
     const cacheKey = buildKVKey('client', clientId);
     await c.env.CLIENTS_CACHE.delete(cacheKey).catch(() => {
-      console.warn('[RFC 7592] Failed to invalidate client cache');
+      log.warn('Failed to invalidate client cache', { action: 'config_delete', clientId });
     });
 
     // Audit log (non-blocking) - client deletion is security-critical
@@ -628,21 +634,26 @@ export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): 
       userAgent: c.req.header('User-Agent')?.substring(0, 256) || 'unknown',
       metadata: JSON.stringify({ method: 'DELETE', endpoint: '/clients/:client_id' }),
       severity: 'warning', // Deletion is a significant action
-    }).catch((err) => console.error('[RFC 7592] Failed to create audit log:', err));
+    }).catch((err) =>
+      log.error('Failed to create audit log', { action: 'config_delete' }, err as Error)
+    );
 
     // Publish event (non-blocking)
     publishEvent(c, {
       type: CLIENT_EVENTS.CONFIG_DELETED,
       tenantId: 'default',
       data: { clientId },
-    }).catch((err) => console.error('[RFC 7592] Failed to publish config deleted event:', err));
+    }).catch((err) =>
+      log.error('Failed to publish config deleted event', { action: 'config_delete' }, err as Error)
+    );
 
-    console.log(`[RFC 7592] Client deleted: ${clientId}`);
+    log.info('Client deleted', { action: 'config_delete', clientId });
 
     // RFC 7592: Return 204 No Content on successful deletion
     return c.body(null, 204);
   } catch (error) {
-    console.error('[RFC 7592] Client config DELETE error:', error);
+    const log = getLogger(c).module('RFC7592');
+    log.error('Client config DELETE error', { action: 'config_delete' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

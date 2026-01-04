@@ -18,6 +18,7 @@ import {
   getUIConfig,
   buildIssuerUrl,
   getTenantIdFromContext,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -27,6 +28,8 @@ import {
  * Issues device_code and user_code for device flow
  */
 export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('DEVICE');
+
   try {
     // Parse request body
     const body = await c.req.parseBody();
@@ -89,7 +92,11 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
 
     if (!storeResponse.ok) {
       const error = await storeResponse.json();
-      console.error('DeviceCodeStore error:', error);
+      log.error(
+        'DeviceCodeStore error',
+        { action: 'store_device_code' },
+        new Error(JSON.stringify(error))
+      );
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
@@ -131,7 +138,7 @@ export async function deviceAuthorizationHandler(c: Context<{ Bindings: Env }>) 
       200
     );
   } catch (error) {
-    console.error('Device authorization error:', error);
+    log.error('Device authorization error', { action: 'authorization' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

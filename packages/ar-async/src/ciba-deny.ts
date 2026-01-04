@@ -7,7 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 
 /**
  * POST /api/ciba/deny
@@ -26,6 +26,7 @@ import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
  *   }
  */
 export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('CIBA');
   try {
     // Parse JSON request body
     const body = await c.req.json();
@@ -91,7 +92,7 @@ export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
       200
     );
   } catch (error) {
-    console.error('CIBA denial API error:', error);
+    log.error('CIBA denial API error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

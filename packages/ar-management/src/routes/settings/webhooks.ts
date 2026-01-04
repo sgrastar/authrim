@@ -1,11 +1,14 @@
 /**
  * Webhook Configuration Admin API
  *
- * POST   /api/admin/webhooks        - Register a new webhook
- * GET    /api/admin/webhooks        - List all webhooks
- * GET    /api/admin/webhooks/:id    - Get a specific webhook
- * PUT    /api/admin/webhooks/:id    - Update a webhook
- * DELETE /api/admin/webhooks/:id    - Delete a webhook
+ * POST   /api/admin/webhooks              - Register a new webhook
+ * GET    /api/admin/webhooks              - List all webhooks
+ * GET    /api/admin/webhooks/:id          - Get a specific webhook
+ * PUT    /api/admin/webhooks/:id          - Update a webhook
+ * DELETE /api/admin/webhooks/:id          - Delete a webhook
+ * POST   /api/admin/webhooks/:id/test     - Send a test webhook
+ * GET    /api/admin/webhooks/:id/deliveries - List delivery logs (Phase 2)
+ * POST   /api/admin/webhooks/:id/replay   - Replay a failed delivery (Phase 3)
  *
  * Security:
  * - RBAC: tenant_admin or higher required
@@ -16,7 +19,6 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
 import {
   D1Adapter,
   createWebhookRegistry,
@@ -24,7 +26,10 @@ import {
   createAuditLogFromContext,
   getTenantIdFromContext,
   encryptValue,
+  decryptValue,
+  getLogger,
   type WebhookConfigWithScope,
+  type Env,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -129,6 +134,7 @@ interface ListWebhooksQuery {
  * Create WebhookRegistry from context
  */
 function createRegistry(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('WebhookAPI');
   const adapter = new D1Adapter({ db: c.env.DB });
   return createWebhookRegistry({
     adapter,
@@ -139,7 +145,7 @@ function createRegistry(c: Context<{ Bindings: Env }>) {
         return result.encrypted;
       }
       // Development fallback: base64 encoding (WARNING logged)
-      console.warn('[Webhook] PII_ENCRYPTION_KEY not set, using base64 fallback');
+      log.warn('PII_ENCRYPTION_KEY not set, using base64 fallback', {});
       return Buffer.from(plaintext).toString('base64');
     },
     allowLocalhostHttp: c.env.ENVIRONMENT === 'development',
@@ -225,6 +231,7 @@ function formatWebhookResponse(webhook: WebhookConfigWithScope) {
  * Register a new webhook
  */
 export async function createWebhook(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('WebhookAPI');
   const tenantId = getTenantIdFromContext(c);
 
   let body: CreateWebhookRequest;
@@ -285,7 +292,7 @@ export async function createWebhook(c: Context<{ Bindings: Env }>) {
       201
     );
   } catch (error) {
-    console.error('[Webhook API] Create error:', error);
+    log.error('Create error', {}, error as Error);
     const message = error instanceof Error ? error.message : 'Failed to create webhook';
     return c.json({ error: 'server_error', error_description: message }, 500);
   }
@@ -296,6 +303,7 @@ export async function createWebhook(c: Context<{ Bindings: Env }>) {
  * List all webhooks for tenant
  */
 export async function listWebhooks(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('WebhookAPI');
   const tenantId = getTenantIdFromContext(c);
   const query = c.req.query() as ListWebhooksQuery;
 
@@ -315,7 +323,7 @@ export async function listWebhooks(c: Context<{ Bindings: Env }>) {
       total: webhooks.length,
     });
   } catch (error) {
-    console.error('[Webhook API] List error:', error);
+    log.error('List error', {}, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to list webhooks' }, 500);
   }
 }
@@ -325,6 +333,7 @@ export async function listWebhooks(c: Context<{ Bindings: Env }>) {
  * Get a specific webhook
  */
 export async function getWebhook(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('WebhookAPI');
   const tenantId = getTenantIdFromContext(c);
   const webhookId = c.req.param('id');
 
@@ -338,7 +347,7 @@ export async function getWebhook(c: Context<{ Bindings: Env }>) {
 
     return c.json({ webhook: formatWebhookResponse(webhook) });
   } catch (error) {
-    console.error('[Webhook API] Get error:', error);
+    log.error('Get error', {}, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to get webhook' }, 500);
   }
 }
@@ -348,6 +357,7 @@ export async function getWebhook(c: Context<{ Bindings: Env }>) {
  * Update a webhook
  */
 export async function updateWebhook(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('WebhookAPI');
   const tenantId = getTenantIdFromContext(c);
   const webhookId = c.req.param('id');
 
@@ -418,7 +428,7 @@ export async function updateWebhook(c: Context<{ Bindings: Env }>) {
       webhook: webhook ? formatWebhookResponse(webhook) : null,
     });
   } catch (error) {
-    console.error('[Webhook API] Update error:', error);
+    log.error('Update error', {}, error as Error);
     const message = error instanceof Error ? error.message : 'Failed to update webhook';
     return c.json({ error: 'server_error', error_description: message }, 500);
   }
@@ -429,6 +439,7 @@ export async function updateWebhook(c: Context<{ Bindings: Env }>) {
  * Delete a webhook
  */
 export async function deleteWebhook(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('WebhookAPI');
   const tenantId = getTenantIdFromContext(c);
   const webhookId = c.req.param('id');
 
@@ -458,7 +469,619 @@ export async function deleteWebhook(c: Context<{ Bindings: Env }>) {
 
     return c.json({ success: true, deleted: webhookId });
   } catch (error) {
-    console.error('[Webhook API] Delete error:', error);
+    log.error('Delete error', {}, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to delete webhook' }, 500);
+  }
+}
+
+/**
+ * POST /api/admin/webhooks/:id/test
+ * Send a test webhook delivery
+ *
+ * Sends a test event to the webhook endpoint to verify connectivity.
+ * Returns detailed information about the delivery attempt.
+ */
+export async function testWebhook(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('WebhookAPI');
+  const tenantId = getTenantIdFromContext(c);
+  const webhookId = c.req.param('id');
+
+  if (!webhookId) {
+    return c.json({ error: 'invalid_request', error_description: 'Webhook ID is required' }, 400);
+  }
+
+  try {
+    const registry = createRegistry(c);
+
+    // Check if webhook exists
+    const webhook = await registry.get(tenantId, webhookId);
+    if (!webhook) {
+      return c.json({ error: 'not_found', error_description: 'Webhook not found' }, 404);
+    }
+
+    // Build test payload
+    const testPayload = {
+      event: 'webhook.test',
+      webhook_id: webhookId,
+      tenant_id: tenantId,
+      timestamp: new Date().toISOString(),
+      test: true,
+      data: {
+        message: 'This is a test webhook delivery',
+      },
+    };
+
+    // Build headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Webhook-Event': 'webhook.test',
+      'X-Webhook-ID': webhookId,
+      'X-Webhook-Timestamp': testPayload.timestamp,
+      ...(webhook.headers || {}),
+    };
+
+    // Generate signature if secret is configured
+    if (webhook.secretEncrypted && c.env.PII_ENCRYPTION_KEY) {
+      // Decrypt the secret for signing
+      const decryptResult = await decryptValue(webhook.secretEncrypted, c.env.PII_ENCRYPTION_KEY);
+      if (decryptResult.decrypted) {
+        const encoder = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+          'raw',
+          encoder.encode(decryptResult.decrypted),
+          { name: 'HMAC', hash: 'SHA-256' },
+          false,
+          ['sign']
+        );
+        const payloadBytes = encoder.encode(JSON.stringify(testPayload));
+        const signatureBytes = await crypto.subtle.sign('HMAC', key, payloadBytes);
+        const signature = Array.from(new Uint8Array(signatureBytes))
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
+        headers['X-Webhook-Signature'] = `sha256=${signature}`;
+      }
+    }
+
+    // Send test request
+    const startTime = Date.now();
+    let response: Response;
+    let error: string | null = null;
+    let responseBody: string | null = null;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), webhook.timeoutMs || 30000);
+
+      response = await fetch(webhook.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(testPayload),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      // Try to read response body (limited to first 1KB)
+      try {
+        const text = await response.text();
+        responseBody = text.slice(0, 1024);
+      } catch {
+        responseBody = null;
+      }
+    } catch (err) {
+      const endTime = Date.now();
+      error = err instanceof Error ? err.message : 'Unknown error';
+
+      // Audit log for failed test
+      await createAuditLogFromContext(c, 'webhook.test_failed', 'webhook', webhookId, {
+        error,
+        duration_ms: endTime - startTime,
+      });
+
+      return c.json({
+        success: false,
+        webhook_id: webhookId,
+        url: webhook.url,
+        error,
+        duration_ms: endTime - startTime,
+        timestamp: testPayload.timestamp,
+      });
+    }
+
+    const endTime = Date.now();
+    const durationMs = endTime - startTime;
+    const isSuccess = response.status >= 200 && response.status < 300;
+
+    // Audit log
+    await createAuditLogFromContext(c, 'webhook.test', 'webhook', webhookId, {
+      status_code: response.status,
+      duration_ms: durationMs,
+      success: isSuccess,
+    });
+
+    return c.json({
+      success: isSuccess,
+      webhook_id: webhookId,
+      url: webhook.url,
+      status_code: response.status,
+      response_body: responseBody,
+      duration_ms: durationMs,
+      timestamp: testPayload.timestamp,
+      headers_sent: Object.keys(headers),
+    });
+  } catch (error) {
+    log.error('Test error', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to test webhook' }, 500);
+  }
+}
+
+// =============================================================================
+// Phase 2: Webhook Deliveries
+// =============================================================================
+
+/**
+ * Webhook delivery database row
+ */
+interface WebhookDeliveryRow {
+  id: string;
+  webhook_id: string;
+  tenant_id: string;
+  event_type: string;
+  event_id: string;
+  status: 'pending' | 'success' | 'failed' | 'retrying';
+  status_code: number | null;
+  request_headers: string | null;
+  request_body: string | null;
+  response_body: string | null;
+  error_message: string | null;
+  attempts: number;
+  next_retry_at: number | null;
+  created_at: number;
+  completed_at: number | null;
+  duration_ms: number | null;
+}
+
+/**
+ * GET /api/admin/webhooks/:id/deliveries
+ * List delivery logs for a specific webhook with cursor-based pagination
+ *
+ * Query parameters:
+ * - limit: number (1-100, default 20)
+ * - cursor: string (opaque pagination cursor)
+ * - filter: string (status=success,status=failed)
+ * - from: ISO 8601 datetime (filter by created_at >= from)
+ * - to: ISO 8601 datetime (filter by created_at <= to)
+ */
+export async function listWebhookDeliveries(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('WebhookAPI');
+  const tenantId = getTenantIdFromContext(c);
+  const webhookId = c.req.param('id');
+
+  if (!webhookId) {
+    return c.json({ error: 'invalid_request', error_description: 'Webhook ID is required' }, 400);
+  }
+
+  // Reject page-based pagination
+  const page = c.req.query('page');
+  const pageSize = c.req.query('page_size');
+  if (page || pageSize) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Use cursor-based pagination. page/page_size not supported.',
+      },
+      400
+    );
+  }
+
+  try {
+    const registry = createRegistry(c);
+
+    // Check if webhook exists and belongs to tenant
+    const webhook = await registry.get(tenantId, webhookId);
+    if (!webhook) {
+      return c.json({ error: 'not_found', error_description: 'Webhook not found' }, 404);
+    }
+
+    // Parse query parameters
+    const limitParam = c.req.query('limit');
+    const cursor = c.req.query('cursor');
+    const filter = c.req.query('filter');
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+
+    const limit = Math.min(Math.max(parseInt(limitParam || '20', 10) || 20, 1), 100);
+
+    // Build query
+    const whereClauses: string[] = ['webhook_id = ?', 'tenant_id = ?'];
+    const bindings: unknown[] = [webhookId, tenantId];
+
+    // Apply cursor
+    if (cursor) {
+      try {
+        const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+        const parsed = JSON.parse(decoded) as { id: string; created_at: number };
+        if (parsed.id && typeof parsed.created_at === 'number') {
+          whereClauses.push('(created_at < ? OR (created_at = ? AND id > ?))');
+          bindings.push(parsed.created_at, parsed.created_at, parsed.id);
+        }
+      } catch {
+        return c.json(
+          { error: 'invalid_request', error_description: 'Invalid cursor format' },
+          400
+        );
+      }
+    }
+
+    // Apply status filter
+    if (filter) {
+      const statusMatch = filter.match(/status=(\w+)/);
+      if (statusMatch) {
+        const status = statusMatch[1];
+        if (['pending', 'success', 'failed', 'retrying'].includes(status)) {
+          whereClauses.push('status = ?');
+          bindings.push(status);
+        }
+      }
+    }
+
+    // Apply date range filter
+    if (from) {
+      const fromTs = Math.floor(new Date(from).getTime() / 1000);
+      if (!isNaN(fromTs)) {
+        whereClauses.push('created_at >= ?');
+        bindings.push(fromTs);
+      }
+    }
+    if (to) {
+      const toTs = Math.floor(new Date(to).getTime() / 1000);
+      if (!isNaN(toTs)) {
+        whereClauses.push('created_at <= ?');
+        bindings.push(toTs);
+      }
+    }
+
+    // Fetch data
+    const adapter = new D1Adapter({ db: c.env.DB });
+    const limitPlusOne = limit + 1;
+    const sql = `
+      SELECT id, webhook_id, tenant_id, event_type, event_id, status,
+             status_code, request_headers, request_body, response_body,
+             error_message, attempts, next_retry_at, created_at,
+             completed_at, duration_ms
+      FROM webhook_deliveries
+      WHERE ${whereClauses.join(' AND ')}
+      ORDER BY created_at DESC, id ASC
+      LIMIT ?
+    `;
+    bindings.push(limitPlusOne);
+
+    const rows = await adapter.query<WebhookDeliveryRow>(sql, bindings);
+
+    // Pagination
+    const hasMore = rows.length > limit;
+    const data = hasMore ? rows.slice(0, limit) : rows;
+
+    let nextCursor: string | undefined;
+    if (hasMore && data.length > 0) {
+      const lastRow = data[data.length - 1];
+      nextCursor = Buffer.from(
+        JSON.stringify({ id: lastRow.id, created_at: lastRow.created_at })
+      ).toString('base64url');
+    }
+
+    // Format response
+    const formattedData = data.map((row) => {
+      // Parse JSON fields safely
+      let requestHeaders: Record<string, string> | null = null;
+      if (row.request_headers) {
+        try {
+          requestHeaders = JSON.parse(row.request_headers) as Record<string, string>;
+        } catch {
+          // Invalid JSON
+        }
+      }
+
+      return {
+        delivery_id: row.id,
+        webhook_id: row.webhook_id,
+        event_type: row.event_type,
+        event_id: row.event_id,
+        status: row.status,
+        status_code: row.status_code,
+        request_headers: requestHeaders,
+        // Truncate bodies for list view (full body available in detail endpoint if needed)
+        request_body_preview: row.request_body ? row.request_body.slice(0, 200) : null,
+        response_body_preview: row.response_body ? row.response_body.slice(0, 200) : null,
+        error_message: row.error_message,
+        attempts: row.attempts,
+        next_retry_at: row.next_retry_at ? new Date(row.next_retry_at * 1000).toISOString() : null,
+        created_at: new Date(
+          row.created_at < 1e12 ? row.created_at * 1000 : row.created_at
+        ).toISOString(),
+        completed_at: row.completed_at
+          ? new Date(
+              row.completed_at < 1e12 ? row.completed_at * 1000 : row.completed_at
+            ).toISOString()
+          : null,
+        duration_ms: row.duration_ms,
+      };
+    });
+
+    return c.json({
+      data: formattedData,
+      pagination: {
+        has_more: hasMore,
+        ...(nextCursor && { next_cursor: nextCursor }),
+      },
+      webhook: {
+        id: webhookId,
+        name: webhook.name,
+        url: webhook.url,
+      },
+    });
+  } catch (error) {
+    log.error('List deliveries error', { webhookId }, error as Error);
+    return c.json(
+      { error: 'server_error', error_description: 'Failed to list webhook deliveries' },
+      500
+    );
+  }
+}
+
+// =============================================================================
+// Phase 3: Webhook Replay
+// =============================================================================
+
+/**
+ * POST /api/admin/webhooks/:id/replay
+ * Replay a failed webhook delivery
+ *
+ * Request body:
+ * - delivery_id: string - The delivery ID to replay
+ *
+ * This will fetch the original delivery, re-send it to the webhook URL,
+ * and create a new delivery record.
+ */
+export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('WebhookAPI');
+  const tenantId = getTenantIdFromContext(c);
+  const webhookId = c.req.param('id');
+
+  if (!webhookId) {
+    return c.json({ error: 'invalid_request', error_description: 'Webhook ID is required' }, 400);
+  }
+
+  // Parse request body
+  let body: { delivery_id?: string };
+  try {
+    body = await c.req.json<{ delivery_id?: string }>();
+  } catch {
+    return c.json({ error: 'invalid_request', error_description: 'Invalid JSON body' }, 400);
+  }
+
+  const deliveryId = body.delivery_id;
+  if (!deliveryId) {
+    return c.json({ error: 'invalid_request', error_description: 'delivery_id is required' }, 400);
+  }
+
+  try {
+    const registry = createRegistry(c);
+
+    // Check if webhook exists and belongs to tenant
+    const webhook = await registry.get(tenantId, webhookId);
+    if (!webhook) {
+      return c.json({ error: 'not_found', error_description: 'Webhook not found' }, 404);
+    }
+
+    // Fetch the original delivery
+    const adapter = new D1Adapter({ db: c.env.DB });
+    const delivery = await adapter.queryOne<WebhookDeliveryRow>(
+      `SELECT id, webhook_id, tenant_id, event_type, event_id, status,
+              request_headers, request_body, attempts
+       FROM webhook_deliveries
+       WHERE id = ? AND webhook_id = ? AND tenant_id = ?`,
+      [deliveryId, webhookId, tenantId]
+    );
+
+    if (!delivery) {
+      return c.json({ error: 'not_found', error_description: 'Delivery not found' }, 404);
+    }
+
+    // Only allow replay of failed or retrying deliveries
+    if (!['failed', 'retrying'].includes(delivery.status)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: `Cannot replay delivery with status '${delivery.status}'. Only 'failed' or 'retrying' deliveries can be replayed.`,
+        },
+        400
+      );
+    }
+
+    // Parse the original request body
+    let originalPayload: unknown;
+    if (delivery.request_body) {
+      try {
+        originalPayload = JSON.parse(delivery.request_body);
+      } catch {
+        return c.json(
+          { error: 'server_error', error_description: 'Failed to parse original request body' },
+          500
+        );
+      }
+    } else {
+      return c.json(
+        { error: 'server_error', error_description: 'Original request body not available' },
+        500
+      );
+    }
+
+    // Build replay payload with replay metadata
+    const replayPayload = {
+      ...(originalPayload as Record<string, unknown>),
+      replay: {
+        original_delivery_id: deliveryId,
+        replayed_at: new Date().toISOString(),
+      },
+    };
+
+    // Build headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Webhook-Event': delivery.event_type,
+      'X-Webhook-ID': webhookId,
+      'X-Webhook-Timestamp': new Date().toISOString(),
+      'X-Webhook-Replay': 'true',
+      'X-Webhook-Original-Delivery': deliveryId,
+      ...(webhook.headers || {}),
+    };
+
+    // Generate signature if secret is configured
+    if (webhook.secretEncrypted && c.env.PII_ENCRYPTION_KEY) {
+      const decryptResult = await decryptValue(webhook.secretEncrypted, c.env.PII_ENCRYPTION_KEY);
+      if (decryptResult.decrypted) {
+        const encoder = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+          'raw',
+          encoder.encode(decryptResult.decrypted),
+          { name: 'HMAC', hash: 'SHA-256' },
+          false,
+          ['sign']
+        );
+        const payloadBytes = encoder.encode(JSON.stringify(replayPayload));
+        const signatureBytes = await crypto.subtle.sign('HMAC', key, payloadBytes);
+        const signature = Array.from(new Uint8Array(signatureBytes))
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
+        headers['X-Webhook-Signature'] = `sha256=${signature}`;
+      }
+    }
+
+    // Send replay request
+    const startTime = Date.now();
+    let response: Response;
+    let error: string | null = null;
+    let responseBody: string | null = null;
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), webhook.timeoutMs || 30000);
+
+      response = await fetch(webhook.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(replayPayload),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      // Read response body (limited)
+      try {
+        const text = await response.text();
+        responseBody = text.slice(0, 1024);
+      } catch {
+        responseBody = null;
+      }
+    } catch (err) {
+      const endTime = Date.now();
+      error = err instanceof Error ? err.message : 'Unknown error';
+
+      // Create new delivery record for failed replay
+      const newDeliveryId = crypto.randomUUID();
+      const nowTs = Math.floor(Date.now() / 1000);
+
+      await adapter.execute(
+        `INSERT INTO webhook_deliveries (
+          id, webhook_id, tenant_id, event_type, event_id, status,
+          request_headers, request_body, error_message, attempts,
+          created_at, duration_ms
+        ) VALUES (?, ?, ?, ?, ?, 'failed', ?, ?, ?, 1, ?, ?)`,
+        [
+          newDeliveryId,
+          webhookId,
+          tenantId,
+          delivery.event_type,
+          `${delivery.event_id}_replay`,
+          JSON.stringify(headers),
+          JSON.stringify(replayPayload),
+          error,
+          nowTs,
+          endTime - startTime,
+        ]
+      );
+
+      // Audit log for failed replay
+      await createAuditLogFromContext(c, 'webhook.replay_failed', 'webhook', webhookId, {
+        original_delivery_id: deliveryId,
+        new_delivery_id: newDeliveryId,
+        error,
+        duration_ms: endTime - startTime,
+      });
+
+      return c.json({
+        success: false,
+        webhook_id: webhookId,
+        original_delivery_id: deliveryId,
+        new_delivery_id: newDeliveryId,
+        error,
+        duration_ms: endTime - startTime,
+      });
+    }
+
+    const endTime = Date.now();
+    const durationMs = endTime - startTime;
+    const isSuccess = response.status >= 200 && response.status < 300;
+
+    // Create new delivery record
+    const newDeliveryId = crypto.randomUUID();
+    const nowTs = Math.floor(Date.now() / 1000);
+
+    await adapter.execute(
+      `INSERT INTO webhook_deliveries (
+        id, webhook_id, tenant_id, event_type, event_id, status,
+        status_code, request_headers, request_body, response_body,
+        attempts, created_at, completed_at, duration_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+      [
+        newDeliveryId,
+        webhookId,
+        tenantId,
+        delivery.event_type,
+        `${delivery.event_id}_replay`,
+        isSuccess ? 'success' : 'failed',
+        response.status,
+        JSON.stringify(headers),
+        JSON.stringify(replayPayload),
+        responseBody,
+        nowTs,
+        nowTs,
+        durationMs,
+      ]
+    );
+
+    // Audit log
+    await createAuditLogFromContext(c, 'webhook.replay', 'webhook', webhookId, {
+      original_delivery_id: deliveryId,
+      new_delivery_id: newDeliveryId,
+      status_code: response.status,
+      success: isSuccess,
+      duration_ms: durationMs,
+    });
+
+    return c.json({
+      success: isSuccess,
+      webhook_id: webhookId,
+      original_delivery_id: deliveryId,
+      new_delivery_id: newDeliveryId,
+      status_code: response.status,
+      response_body: responseBody,
+      duration_ms: durationMs,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    log.error('Replay error', { webhookId, deliveryId }, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to replay webhook' }, 500);
   }
 }

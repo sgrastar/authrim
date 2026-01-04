@@ -30,6 +30,9 @@
 import type { Context, Next, MiddlewareHandler } from 'hono';
 import type { Env } from '../types/env';
 import type { ApiVersionContext, ApiVersionString } from '../types/api-version';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('ApiVersion');
 import {
   API_VERSION_REQUEST_HEADER,
   API_VERSION_RESPONSE_HEADER,
@@ -140,7 +143,7 @@ export function apiVersionMiddleware(): MiddlewareHandler<{ Bindings: Env }> {
       // Hono may return comma-separated string; we use the first value
       const versions = rawHeaderValue.split(',').map((v) => v.trim());
       if (versions.length > 1) {
-        console.warn(`[ApiVersion] Multiple version headers detected, using first: ${versions[0]}`);
+        log.warn('Multiple version headers detected, using first', { version: versions[0] });
       }
       requestedVersion = versions[0];
     }

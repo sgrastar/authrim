@@ -11,6 +11,9 @@ import type { Env } from '../types/env';
 import { getDPoPJTIStoreForNewJTI, parseDPoPJTIId } from './dpop-jti-sharding';
 import { ALLOWED_DPOP_ALGS } from '../constants';
 import { timingSafeEqual } from './crypto';
+import { createLogger } from './logger';
+
+const log = createLogger().module('DPOP');
 
 interface DPoPHeader {
   typ: string;
@@ -309,7 +312,7 @@ export async function validateDPoPProof(
     };
   } catch (error) {
     // PII Protection: Don't log full error object (may contain sensitive data in stack trace)
-    console.error('DPoP validation error:', error instanceof Error ? error.name : 'Unknown error');
+    log.error('DPoP validation error', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return {
       valid: false,

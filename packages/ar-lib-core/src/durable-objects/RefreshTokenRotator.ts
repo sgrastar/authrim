@@ -29,6 +29,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
 import { retryD1Operation } from '../utils/d1-retry';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * Token Family V2 - Minimal state for high-performance rotation
@@ -119,6 +120,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   private families: Map<string, TokenFamilyV2> = new Map(); // userId → family
   private initialized: boolean = false;
   private initializePromise: Promise<void> | null = null;
+  private readonly log: Logger = createLogger().module('RefreshTokenRotator');
 
   // Sharding metadata (set on first createFamily call with V3 request)
   private generation: number | null = null;
@@ -173,11 +175,13 @@ export class RefreshTokenRotator extends DurableObject<Env> {
         this.shardIndex = storedShardIndex;
       }
 
-      console.log(
-        `RefreshTokenRotator: Loaded ${this.families.size} families, gen=${this.generation}, shard=${this.shardIndex}`
-      );
+      this.log.info('Loaded families from Durable Storage', {
+        count: this.families.size,
+        generation: this.generation,
+        shardIndex: this.shardIndex,
+      });
     } catch (error) {
-      console.error('RefreshTokenRotator: Failed to initialize:', error);
+      this.log.error('Failed to initialize', {}, error as Error);
     }
 
     this.initialized = true;
@@ -297,9 +301,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     }
 
     // This should not happen with blockConcurrencyWhile(), but as a safety fallback:
-    console.warn(
-      'RefreshTokenRotator: initializeState called but not initialized - this should not happen'
-    );
+    this.log.warn('initializeState called but not initialized - this should not happen');
     await this.initializeStateBlocking();
   }
 
@@ -451,7 +453,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     // CRITICAL: Version mismatch detection (theft detection)
     if (request.incomingVersion < family.version) {
       // Token replay detected - incoming token has old version
-      console.error('SECURITY: Token theft detected!', {
+      this.log.error('SECURITY: Token theft detected', {
         userId: request.userId,
         clientId: request.clientId,
         incomingVersion: request.incomingVersion,
@@ -487,7 +489,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     // JTI must match (additional security check)
     if (request.incomingJti !== family.last_jti) {
       // JTI mismatch could indicate token tampering or theft
-      console.error('SECURITY: JTI mismatch detected!', {
+      this.log.error('SECURITY: JTI mismatch detected', {
         userId: request.userId,
         clientId: request.clientId,
         incomingJti: request.incomingJti,
@@ -790,7 +792,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
 
       await this.env.DB.batch(statements);
     } catch (error) {
-      console.error('RefreshTokenRotator: Failed to flush audit logs:', error);
+      this.log.error('Failed to flush audit logs', {}, error as Error);
       // Re-queue (limited to prevent memory leak)
       if (this.pendingAuditLogs.length < 100) {
         this.pendingAuditLogs.push(...logsToFlush);
@@ -889,7 +891,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
             headers: { 'Content-Type': 'application/json' },
           });
         } catch (error) {
-          console.error('[RefreshTokenRotator] rotateToken error:', error);
+          this.log.error('rotateToken error', {}, error as Error);
           const message = error instanceof Error ? error.message : '';
           const isTheft = message.includes('theft detected') || message.includes('theft');
 
@@ -1057,7 +1059,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       return new Response('Not Found', { status: 404 });
     } catch (error) {
       // Log full error for debugging but don't expose to client
-      console.error('RefreshTokenRotator error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(
         JSON.stringify({

@@ -18,10 +18,19 @@ const {
   mockRevokeToken,
   mockPublishEvent,
   mockCoreAdapter,
+  mockLogger,
+  mockGetLogger,
 } = vi.hoisted(() => {
   const coreAdapter = {
     query: vi.fn(),
     execute: vi.fn(),
+  };
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    module: vi.fn().mockReturnThis(),
   };
   return {
     mockIntrospectTokenFromContext: vi.fn(),
@@ -34,6 +43,8 @@ const {
     mockRevokeToken: vi.fn(),
     mockPublishEvent: vi.fn().mockResolvedValue(undefined),
     mockCoreAdapter: coreAdapter,
+    mockLogger: logger,
+    mockGetLogger: vi.fn().mockReturnValue(logger),
   };
 });
 
@@ -49,6 +60,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     invalidateConsentCache: mockInvalidateConsentCache,
     revokeToken: mockRevokeToken,
     publishEvent: mockPublishEvent,
+    getLogger: mockGetLogger,
   };
 });
 
@@ -89,6 +101,10 @@ function createMockContext(options: {
       json: vi.fn().mockResolvedValue(options.body || {}),
     },
     env: mockEnv as Env,
+    get: (key: string) => {
+      if (key === 'logger') return mockLogger;
+      return undefined;
+    },
     json: vi.fn((body, status = 200) => {
       const response = new Response(JSON.stringify(body), { status });
       return response;

@@ -34,6 +34,8 @@ import {
   // Event System
   publishEvent,
   type AuthEventData,
+  // Logger
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -93,6 +95,8 @@ async function getAnonymousSession(
  * The actual authentication (email OTP, passkey, etc.) is handled by existing endpoints.
  */
 export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('UPGRADE');
+
   try {
     const tenantId = getTenantIdFromContext(c);
 
@@ -170,7 +174,7 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
       instructions: methodInstructions[method],
     });
   } catch (error) {
-    console.error('Upgrade start error:', error instanceof Error ? error.name : 'Unknown error');
+    log.error('Upgrade start error', { action: 'start' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -183,6 +187,8 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
  * Updates user type and records upgrade history.
  */
 export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('UPGRADE');
+
   try {
     const tenantId = getTenantIdFromContext(c);
 
@@ -320,10 +326,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
           // Update pii_status to 'active'
           await authCtx.repositories.userCore.updatePIIStatus(anonymousUserId, 'active');
         } catch (piiError: unknown) {
-          console.error(
-            '[UPGRADE] Failed to create PII:',
-            piiError instanceof Error ? piiError.name : 'Unknown error'
-          );
+          log.warn('Failed to create PII', { action: 'create_pii' });
           await authCtx.repositories.userCore.updatePIIStatus(anonymousUserId, 'failed');
         }
       }
@@ -355,10 +358,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
           });
           await authCtx.repositories.userCore.updatePIIStatus(finalUserId, 'active');
         } catch (piiError: unknown) {
-          console.error(
-            '[UPGRADE] Failed to create PII for new user:',
-            piiError instanceof Error ? piiError.name : 'Unknown error'
-          );
+          log.warn('Failed to create PII for new user', { action: 'create_pii_new_user' });
           await authCtx.repositories.userCore.updatePIIStatus(finalUserId, 'failed');
         }
       }
@@ -420,10 +420,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
         .execute('DELETE FROM users_core WHERE id = ? AND tenant_id = ?', [otpUserId, tenantId])
         .catch((error) => {
           // Non-critical: orphaned user can be cleaned up later
-          console.error(
-            '[UPGRADE] Failed to cleanup OTP user:',
-            error instanceof Error ? error.name : 'Unknown error'
-          );
+          log.warn('Failed to cleanup OTP user', { action: 'cleanup_otp_user' });
         });
     }
 
@@ -449,7 +446,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
         preserveSub: boolean;
       },
     }).catch((err) => {
-      console.error('[Event] Failed to publish user.upgraded:', err);
+      log.warn('Failed to publish user.upgraded event', { action: 'event_publish' });
     });
 
     return c.json({
@@ -461,7 +458,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       upgraded_at: now,
     });
   } catch (error) {
-    console.error('Upgrade complete error:', error instanceof Error ? error.name : 'Unknown error');
+    log.error('Upgrade complete error', { action: 'complete' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -473,6 +470,8 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
  * Returns current upgrade eligibility and history for the session user.
  */
 export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('UPGRADE');
+
   try {
     const tenantId = getTenantIdFromContext(c);
 
@@ -521,7 +520,7 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
       })),
     });
   } catch (error) {
-    console.error('Upgrade status error:', error instanceof Error ? error.name : 'Unknown error');
+    log.error('Upgrade status error', { action: 'status' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

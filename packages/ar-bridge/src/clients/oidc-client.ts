@@ -12,6 +12,9 @@
 import * as jose from 'jose';
 import type { ProviderMetadata, TokenResponse, UserInfo, UpstreamProvider } from '../types';
 import { generateCodeChallenge } from '../utils/pkce';
+import { createLogger } from '@authrim/ar-lib-core';
+
+const log = createLogger().module('OIDC-CLIENT');
 
 export interface OIDCRPClientConfig {
   issuer: string;
@@ -356,7 +359,7 @@ export class OIDCRPClient {
     if (!response.ok) {
       // PII Protection: Do not log response body (may contain sensitive information from provider)
       // Only log HTTP status code for debugging
-      console.error(`Token exchange failed: HTTP ${response.status}`);
+      log.error('Token exchange failed', { status: response.status });
       throw new Error(`Token exchange failed: HTTP ${response.status}`);
     }
 
@@ -433,7 +436,7 @@ export class OIDCRPClient {
           error.message.includes('JWS') ||
           error.message.includes('key'))
       ) {
-        console.warn('ID token signature verification failed, refreshing JWKS and retrying...');
+        log.warn('ID token signature verification failed, refreshing JWKS and retrying...');
         this.clearJWKSCache();
         return await this.validateIdTokenInternal(idToken, options, true);
       }
@@ -576,7 +579,7 @@ export class OIDCRPClient {
 
     // If multiple audiences and no azp, log warning (SHOULD have azp per spec)
     if (isMultipleAudience && azp === undefined) {
-      console.warn(
+      log.warn(
         'ID token has multiple audiences but no azp claim. ' +
           'This is allowed but not recommended per OIDC Core 3.1.3.7 step 5.'
       );
@@ -642,7 +645,7 @@ export class OIDCRPClient {
     }
 
     // ACR is valid - log for audit purposes
-    console.warn(`ACR validation passed: returned=${returnedAcr}, requested=${requestedAcrValues}`);
+    log.info('ACR validation passed', { returnedAcr, requestedAcrValues });
   }
 
   /**
@@ -826,7 +829,7 @@ export class OIDCRPClient {
       // Consume body to properly close connection (body may contain sensitive data from provider)
       await response.text();
       // Security: Only log HTTP status code (safe), not response body
-      console.error('Token refresh failed with status:', response.status);
+      log.error('Token refresh failed', { status: response.status });
       throw new Error(`Token refresh failed: HTTP ${response.status}`);
     }
 

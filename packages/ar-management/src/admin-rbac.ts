@@ -17,6 +17,11 @@ import {
   D1Adapter,
   type DatabaseAdapter,
   escapeLikePattern,
+  getLogger,
+  createErrorResponse,
+  AR_ERROR_CODES,
+  generateId,
+  createAuditLogFromContext,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -145,7 +150,8 @@ export async function adminOrganizationsListHandler(c: Context<{ Bindings: Env }
       },
     });
   } catch (error) {
-    console.error('Admin organizations list error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error('Admin organizations list error', { action: 'list_organizations' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -201,7 +207,8 @@ export async function adminOrganizationGetHandler(c: Context<{ Bindings: Env }>)
       organization: formattedOrg,
     });
   } catch (error) {
-    console.error('Admin organization get error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error('Admin organization get error', { action: 'get_organization' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -290,7 +297,8 @@ export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env 
       201
     );
   } catch (error) {
-    console.error('Admin organization create error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error('Admin organization create error', { action: 'create_organization' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -420,7 +428,8 @@ export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env 
       },
     });
   } catch (error) {
-    console.error('Admin organization update error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error('Admin organization update error', { action: 'update_organization' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -468,7 +477,8 @@ export async function adminOrganizationDeleteHandler(c: Context<{ Bindings: Env 
       message: 'Organization deactivated successfully',
     });
   } catch (error) {
-    console.error('Admin organization delete error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error('Admin organization delete error', { action: 'delete_organization' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -573,7 +583,12 @@ export async function adminOrganizationMembersListHandler(c: Context<{ Bindings:
       },
     });
   } catch (error) {
-    console.error('Admin organization members list error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error(
+      'Admin organization members list error',
+      { action: 'list_org_members' },
+      error as Error
+    );
     return c.json(
       {
         error: 'server_error',
@@ -691,7 +706,8 @@ export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: E
       201
     );
   } catch (error) {
-    console.error('Admin organization member add error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error('Admin organization member add error', { action: 'add_org_member' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -738,7 +754,12 @@ export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings
       message: 'Member removed from organization',
     });
   } catch (error) {
-    console.error('Admin organization member remove error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error(
+      'Admin organization member remove error',
+      { action: 'remove_org_member' },
+      error as Error
+    );
     return c.json(
       {
         error: 'server_error',
@@ -778,7 +799,8 @@ export async function adminRolesListHandler(c: Context<{ Bindings: Env }>) {
       roles: formattedRoles,
     });
   } catch (error) {
-    console.error('Admin roles list error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error('Admin roles list error', { action: 'list_roles' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -829,7 +851,8 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
       },
     });
   } catch (error) {
-    console.error('Admin role get error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error('Admin role get error', { action: 'get_role' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -900,7 +923,8 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
       roles: formattedAssignments,
     });
   } catch (error) {
-    console.error('Admin user roles list error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error('Admin user roles list error', { action: 'list_user_roles' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -1062,7 +1086,8 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
       201
     );
   } catch (error) {
-    console.error('Admin user role assign error:', error);
+    const log = getLogger(c as unknown as Context<{ Bindings: Env }>).module('ADMIN-RBAC');
+    log.error('Admin user role assign error', { action: 'assign_user_role' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -1106,7 +1131,8 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
       message: 'Role assignment removed successfully',
     });
   } catch (error) {
-    console.error('Admin user role remove error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error('Admin user role remove error', { action: 'remove_user_role' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -1251,7 +1277,12 @@ export async function adminUserRelationshipsListHandler(c: Context<{ Bindings: E
       incoming_relationships: direction === 'outgoing' ? undefined : incoming,
     });
   } catch (error) {
-    console.error('Admin user relationships list error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error(
+      'Admin user relationships list error',
+      { action: 'list_user_relationships' },
+      error as Error
+    );
     return c.json(
       {
         error: 'server_error',
@@ -1395,7 +1426,12 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
       201
     );
   } catch (error) {
-    console.error('Admin user relationship create error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error(
+      'Admin user relationship create error',
+      { action: 'create_user_relationship' },
+      error as Error
+    );
     return c.json(
       {
         error: 'server_error',
@@ -1439,7 +1475,12 @@ export async function adminUserRelationshipDeleteHandler(c: Context<{ Bindings: 
       message: 'Relationship deleted successfully',
     });
   } catch (error) {
-    console.error('Admin user relationship delete error:', error);
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error(
+      'Admin user relationship delete error',
+      { action: 'delete_user_relationship' },
+      error as Error
+    );
     return c.json(
       {
         error: 'server_error',
@@ -1447,5 +1488,482 @@ export async function adminUserRelationshipDeleteHandler(c: Context<{ Bindings: 
       },
       500
     );
+  }
+}
+
+// =============================================================================
+// Organization Hierarchy and Effective Permissions
+// =============================================================================
+
+/**
+ * Organization hierarchy node
+ */
+interface OrganizationNode {
+  id: string;
+  name: string;
+  display_name: string | null;
+  parent_id: string | null;
+  depth: number;
+  is_active: boolean;
+  member_count: number;
+  children: OrganizationNode[];
+}
+
+/**
+ * GET /api/admin/organizations/:id/hierarchy
+ * Get organization hierarchy tree
+ *
+ * Returns the organization and all its descendants in a tree structure.
+ * For root organization (parent_id = null), returns the full tree.
+ */
+export async function adminOrganizationHierarchyHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
+    const orgId = c.req.param('id');
+    const maxDepth = parseInt(c.req.query('max_depth') || '10', 10);
+
+    if (!orgId) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'Organization ID is required' },
+        400
+      );
+    }
+
+    // Get the root organization
+    const rootOrg = await coreAdapter.queryOne<{
+      id: string;
+      name: string;
+      display_name: string | null;
+      parent_id: string | null;
+      is_active: number;
+    }>(
+      'SELECT id, name, display_name, parent_id, is_active FROM organizations WHERE id = ? AND tenant_id = ?',
+      [orgId, tenantId]
+    );
+
+    if (!rootOrg) {
+      return c.json({ error: 'not_found', error_description: 'Organization not found' }, 404);
+    }
+
+    // Get all descendant organizations using recursive CTE
+    // Note: SQLite supports recursive CTEs
+    const descendants = await coreAdapter.query<{
+      id: string;
+      name: string;
+      display_name: string | null;
+      parent_id: string | null;
+      is_active: number;
+      depth: number;
+    }>(
+      `WITH RECURSIVE org_tree AS (
+        -- Base case: start with the root organization
+        SELECT id, name, display_name, parent_id, is_active, 0 as depth
+        FROM organizations
+        WHERE id = ? AND tenant_id = ?
+
+        UNION ALL
+
+        -- Recursive case: get children
+        SELECT o.id, o.name, o.display_name, o.parent_id, o.is_active, ot.depth + 1
+        FROM organizations o
+        INNER JOIN org_tree ot ON o.parent_id = ot.id
+        WHERE o.tenant_id = ? AND ot.depth < ?
+      )
+      SELECT * FROM org_tree ORDER BY depth, name`,
+      [orgId, tenantId, tenantId, maxDepth]
+    );
+
+    // Get member counts for all organizations
+    const orgIds = descendants.map((o) => o.id);
+    const memberCounts: Record<string, number> = {};
+
+    if (orgIds.length > 0) {
+      const placeholders = orgIds.map(() => '?').join(',');
+      const counts = await coreAdapter.query<{ org_id: string; count: number }>(
+        `SELECT organization_id as org_id, COUNT(*) as count
+         FROM organization_members
+         WHERE organization_id IN (${placeholders})
+         GROUP BY organization_id`,
+        orgIds
+      );
+      for (const row of counts) {
+        memberCounts[row.org_id] = row.count;
+      }
+    }
+
+    // Build tree structure
+    const nodesById: Map<string, OrganizationNode> = new Map();
+
+    // Create all nodes first
+    for (const org of descendants) {
+      nodesById.set(org.id, {
+        id: org.id,
+        name: org.name,
+        display_name: org.display_name,
+        parent_id: org.parent_id,
+        depth: org.depth,
+        is_active: org.is_active === 1,
+        member_count: memberCounts[org.id] || 0,
+        children: [],
+      });
+    }
+
+    // Link children to parents
+    for (const node of nodesById.values()) {
+      if (node.parent_id && nodesById.has(node.parent_id)) {
+        nodesById.get(node.parent_id)!.children.push(node);
+      }
+    }
+
+    // Get the root node
+    const rootNode = nodesById.get(orgId);
+
+    if (!rootNode) {
+      return c.json({ error: 'server_error', error_description: 'Failed to build hierarchy' }, 500);
+    }
+
+    // Calculate totals
+    function countDescendants(node: OrganizationNode): { orgs: number; members: number } {
+      let totalOrgs = 1;
+      let totalMembers = node.member_count;
+      for (const child of node.children) {
+        const childTotals = countDescendants(child);
+        totalOrgs += childTotals.orgs;
+        totalMembers += childTotals.members;
+      }
+      return { orgs: totalOrgs, members: totalMembers };
+    }
+
+    const totals = countDescendants(rootNode);
+
+    return c.json({
+      organization: rootNode,
+      summary: {
+        total_organizations: totals.orgs,
+        total_members: totals.members,
+        max_depth: Math.max(...descendants.map((d) => d.depth)),
+      },
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error(
+      'Admin organization hierarchy error',
+      { action: 'get_org_hierarchy' },
+      error as Error
+    );
+    return c.json(
+      { error: 'server_error', error_description: 'Failed to get organization hierarchy' },
+      500
+    );
+  }
+}
+
+/**
+ * Effective permission with source information
+ */
+interface EffectivePermission {
+  permission: string;
+  source: 'direct' | 'role' | 'organization' | 'inherited';
+  source_id: string | null;
+  source_name: string | null;
+  granted_at: number | null;
+  expires_at: number | null;
+}
+
+/**
+ * GET /api/admin/users/:id/effective-permissions
+ * Get user's effective permissions from all sources
+ *
+ * Collects permissions from:
+ * - Direct user permissions
+ * - Role-based permissions
+ * - Organization-based permissions
+ * - Inherited permissions from parent organizations
+ */
+export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const { coreAdapter } = createAdaptersFromContext(c);
+    const tenantId = getTenantIdFromContext(c);
+    const userId = c.req.param('id');
+
+    if (!userId) {
+      return c.json({ error: 'invalid_request', error_description: 'User ID is required' }, 400);
+    }
+
+    // Check if user exists
+    const user = await coreAdapter.queryOne<{ id: string; email: string }>(
+      'SELECT id, email FROM users WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
+    );
+
+    if (!user) {
+      return c.json({ error: 'not_found', error_description: 'User not found' }, 404);
+    }
+
+    const permissions: EffectivePermission[] = [];
+    const seenPermissions = new Set<string>();
+
+    // 1. Get direct role assignments
+    const userRoles = await coreAdapter.query<{
+      role_id: string;
+      role_name: string;
+      granted_at: number | null;
+      expires_at: number | null;
+    }>(
+      `SELECT ur.role_id, r.name as role_name, ur.created_at as granted_at, ur.expires_at
+       FROM user_roles ur
+       INNER JOIN roles r ON ur.role_id = r.id
+       WHERE ur.user_id = ? AND (ur.expires_at IS NULL OR ur.expires_at > ?)`,
+      [userId, Math.floor(Date.now() / 1000)]
+    );
+
+    // Get permissions for each role
+    for (const role of userRoles) {
+      const rolePermissions = await coreAdapter.query<{ permission: string }>(
+        'SELECT permission FROM role_permissions WHERE role_id = ?',
+        [role.role_id]
+      );
+
+      for (const rp of rolePermissions) {
+        if (!seenPermissions.has(rp.permission)) {
+          seenPermissions.add(rp.permission);
+          permissions.push({
+            permission: rp.permission,
+            source: 'role',
+            source_id: role.role_id,
+            source_name: role.role_name,
+            granted_at: role.granted_at,
+            expires_at: role.expires_at,
+          });
+        }
+      }
+    }
+
+    // 2. Get organization memberships and their roles
+    const orgMemberships = await coreAdapter.query<{
+      org_id: string;
+      org_name: string;
+      role_id: string | null;
+      role_name: string | null;
+      joined_at: number | null;
+    }>(
+      `SELECT om.organization_id as org_id, o.name as org_name,
+              om.role_id, r.name as role_name, om.created_at as joined_at
+       FROM organization_members om
+       INNER JOIN organizations o ON om.organization_id = o.id
+       LEFT JOIN roles r ON om.role_id = r.id
+       WHERE om.user_id = ?`,
+      [userId]
+    );
+
+    for (const membership of orgMemberships) {
+      if (membership.role_id) {
+        const orgRolePermissions = await coreAdapter.query<{ permission: string }>(
+          'SELECT permission FROM role_permissions WHERE role_id = ?',
+          [membership.role_id]
+        );
+
+        for (const rp of orgRolePermissions) {
+          if (!seenPermissions.has(rp.permission)) {
+            seenPermissions.add(rp.permission);
+            permissions.push({
+              permission: rp.permission,
+              source: 'organization',
+              source_id: membership.org_id,
+              source_name: `${membership.org_name} (${membership.role_name})`,
+              granted_at: membership.joined_at,
+              expires_at: null,
+            });
+          }
+        }
+      }
+    }
+
+    // Group permissions by category
+    const permissionsByCategory: Record<string, EffectivePermission[]> = {};
+    for (const perm of permissions) {
+      const category = perm.permission.split(':')[0] || 'other';
+      if (!permissionsByCategory[category]) {
+        permissionsByCategory[category] = [];
+      }
+      permissionsByCategory[category].push(perm);
+    }
+
+    return c.json({
+      user_id: userId,
+      permissions,
+      by_category: permissionsByCategory,
+      summary: {
+        total_permissions: permissions.length,
+        from_roles: permissions.filter((p) => p.source === 'role').length,
+        from_organizations: permissions.filter((p) => p.source === 'organization').length,
+        from_inherited: permissions.filter((p) => p.source === 'inherited').length,
+      },
+      roles: userRoles.map((r) => ({
+        role_id: r.role_id,
+        role_name: r.role_name,
+        granted_at: toMilliseconds(r.granted_at),
+        expires_at: toMilliseconds(r.expires_at),
+      })),
+      organizations: orgMemberships.map((m) => ({
+        organization_id: m.org_id,
+        organization_name: m.org_name,
+        role_id: m.role_id,
+        role_name: m.role_name,
+        joined_at: toMilliseconds(m.joined_at),
+      })),
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error(
+      'Admin user effective permissions error',
+      { action: 'get_effective_permissions' },
+      error as Error
+    );
+    return c.json(
+      { error: 'server_error', error_description: 'Failed to get effective permissions' },
+      500
+    );
+  }
+}
+
+// =============================================================================
+// Phase 3: Custom Role Creation
+// =============================================================================
+
+/**
+ * POST /api/admin/roles
+ * Create a custom role with specified permissions
+ */
+export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const log = getLogger(c).module('ADMIN-RBAC');
+
+  try {
+    const body = await c.req.json<{
+      name: string;
+      description?: string;
+      permissions: string[];
+      inherits_from?: string;
+    }>();
+
+    // Validate name
+    if (!body.name || body.name.length < 2 || body.name.length > 50) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'name', reason: 'Name must be between 2 and 50 characters' },
+      });
+    }
+
+    // Validate name format (alphanumeric, underscore, dash)
+    if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(body.name)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'name',
+          reason:
+            'Name must start with a letter and contain only letters, numbers, underscores, and dashes',
+        },
+      });
+    }
+
+    // System roles cannot be created
+    const systemRoles = ['system_admin', 'distributor_admin', 'tenant_admin', 'user'];
+    if (systemRoles.includes(body.name.toLowerCase())) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'name', reason: 'Cannot create system roles' },
+      });
+    }
+
+    // Validate permissions
+    if (!body.permissions || !Array.isArray(body.permissions) || body.permissions.length === 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'permissions' },
+      });
+    }
+
+    // Validate permission format
+    const validPermissionPattern = /^[a-z]+:[a-z_]+$/;
+    const invalidPermissions = body.permissions.filter((p) => !validPermissionPattern.test(p));
+    if (invalidPermissions.length > 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'permissions',
+          reason: `Invalid permission format: ${invalidPermissions.slice(0, 3).join(', ')}`,
+        },
+      });
+    }
+
+    const adapter = new D1Adapter({ db: c.env.DB });
+
+    // Check if role name already exists
+    const existingRole = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM roles WHERE tenant_id = ? AND name = ?',
+      [tenantId, body.name]
+    );
+
+    if (existingRole) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'name', reason: 'A role with this name already exists' },
+      });
+    }
+
+    // Validate inherits_from if provided
+    if (body.inherits_from) {
+      const parentRole = await adapter.queryOne<{ id: string }>(
+        'SELECT id FROM roles WHERE tenant_id = ? AND id = ?',
+        [tenantId, body.inherits_from]
+      );
+
+      if (!parentRole) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+          variables: { resource: 'parent_role', id: body.inherits_from },
+        });
+      }
+    }
+
+    const roleId = generateId();
+    const nowTs = Date.now();
+
+    // Create the role
+    await adapter.execute(
+      `INSERT INTO roles (id, tenant_id, name, description, permissions, inherits_from, is_system, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        roleId,
+        tenantId,
+        body.name,
+        body.description ?? null,
+        JSON.stringify(body.permissions),
+        body.inherits_from ?? null,
+        0, // is_system = false for custom roles
+        nowTs,
+        nowTs,
+      ]
+    );
+
+    // Write audit log
+    await createAuditLogFromContext(c, 'role.created', 'role', roleId, {
+      name: body.name,
+      permission_count: body.permissions.length,
+      inherits_from: body.inherits_from,
+    });
+
+    log.info('Role created', { action: 'role_create', roleId, name: body.name });
+
+    return c.json(
+      {
+        role_id: roleId,
+        name: body.name,
+        description: body.description ?? null,
+        permissions: body.permissions,
+        inherits_from: body.inherits_from ?? null,
+        is_system: false,
+        created_at: new Date(nowTs).toISOString(),
+      },
+      201
+    );
+  } catch (error) {
+    log.error('Admin role create error', { action: 'role_create' }, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to create role' }, 500);
   }
 }

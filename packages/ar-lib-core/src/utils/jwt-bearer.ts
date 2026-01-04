@@ -8,6 +8,9 @@
 
 import { jwtVerify, importJWK, type JWK, type JWTPayload } from 'jose';
 import { ALLOWED_ASYMMETRIC_ALGS } from '../constants';
+import { createLogger } from './logger';
+
+const log = createLogger().module('JWT_BEARER');
 
 /**
  * JWT Bearer Assertion Claims
@@ -91,7 +94,7 @@ export async function validateJWTBearerAssertion(
 
     // Reject 'none' algorithm
     if (header.alg === 'none' || !header.alg) {
-      console.warn('[SECURITY] Rejected unsigned JWT Bearer assertion (alg=none or missing)');
+      log.warn('SECURITY - Rejected unsigned JWT Bearer assertion (alg=none or missing)');
       return {
         valid: false,
         error: 'invalid_grant',
@@ -231,7 +234,7 @@ export async function validateJWTBearerAssertion(
     };
   } catch (error) {
     // PII Protection: Don't log full error object (may contain assertion claims in stack)
-    console.error('JWT Bearer assertion validation error:', error);
+    log.error('JWT Bearer assertion validation error', {}, error as Error);
     return {
       valid: false,
       error: 'invalid_grant',

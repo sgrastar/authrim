@@ -15,6 +15,7 @@
 
 import type { Context, Next } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
+import { getLogger, createLogger, type Logger } from '@authrim/ar-lib-core';
 import { SCIM_SCHEMAS } from '../types/scim';
 import type { ScimError, ScimErrorType } from '../types/scim';
 
@@ -78,7 +79,8 @@ function getClientIP(c: Context): string {
 async function checkAuthRateLimit(
   env: Env,
   clientIP: string,
-  config: ReturnType<typeof getScimAuthRateLimitConfig>
+  config: ReturnType<typeof getScimAuthRateLimitConfig>,
+  log: Logger
 ): Promise<{ allowed: boolean; remaining: number; retryAfter: number }> {
   // Skip rate limiting if disabled (for testing)
   if (config.disabled) {
@@ -105,9 +107,9 @@ async function checkAuthRateLimit(
     }
 
     // Fallback to KV-based rate limiting
-    return await checkAuthRateLimitKV(env, clientIP, config);
+    return await checkAuthRateLimitKV(env, clientIP, config, log);
   } catch (error) {
-    console.error('[SCIM Auth] Rate limit check error:', error);
+    log.error('Rate limit check error', {}, error as Error);
     // Fail open - allow request on rate limit error
     return { allowed: true, remaining: config.maxFailedAttempts, retryAfter: 0 };
   }
@@ -119,7 +121,8 @@ async function checkAuthRateLimit(
 async function checkAuthRateLimitKV(
   env: Env,
   clientIP: string,
-  config: ReturnType<typeof getScimAuthRateLimitConfig>
+  config: ReturnType<typeof getScimAuthRateLimitConfig>,
+  log: Logger
 ): Promise<{ allowed: boolean; remaining: number; retryAfter: number }> {
   const now = Math.floor(Date.now() / 1000);
   const key = `scim-auth-fail:${clientIP}`;
@@ -146,7 +149,7 @@ async function checkAuthRateLimitKV(
     // No record or window expired - allowed
     return { allowed: true, remaining: config.maxFailedAttempts, retryAfter: 0 };
   } catch (error) {
-    console.error('[SCIM Auth] KV rate limit check error:', error);
+    log.error('KV rate limit check error', {}, error as Error);
     return { allowed: true, remaining: config.maxFailedAttempts, retryAfter: 0 };
   }
 }
@@ -157,7 +160,8 @@ async function checkAuthRateLimitKV(
 async function recordFailedAttempt(
   env: Env,
   clientIP: string,
-  config: ReturnType<typeof getScimAuthRateLimitConfig>
+  config: ReturnType<typeof getScimAuthRateLimitConfig>,
+  log: Logger
 ): Promise<void> {
   // Skip recording if rate limiting is disabled
   if (config.disabled) {
@@ -187,7 +191,7 @@ async function recordFailedAttempt(
       expirationTtl: config.windowSeconds + 60,
     });
   } catch (error) {
-    console.error('[SCIM Auth] Failed to record failed attempt:', error);
+    log.error('Failed to record failed attempt', {}, error as Error);
   }
 }
 
@@ -195,13 +199,13 @@ async function recordFailedAttempt(
  * Log authentication attempt for security monitoring
  */
 function logAuthAttempt(
+  log: Logger,
   clientIP: string,
   success: boolean,
   reason?: string,
   details?: Record<string, unknown>
 ): void {
   const logEntry = {
-    timestamp: new Date().toISOString(),
     event: 'scim_auth_attempt',
     clientIP,
     success,
@@ -210,9 +214,9 @@ function logAuthAttempt(
   };
 
   if (success) {
-    console.log('[SCIM Auth]', JSON.stringify(logEntry));
+    log.info('Auth attempt succeeded', logEntry);
   } else {
-    console.warn('[SCIM Auth] Failed:', JSON.stringify(logEntry));
+    log.warn('Auth attempt failed', logEntry);
   }
 }
 
@@ -256,6 +260,7 @@ async function applyFailureDelay(
  * - SCIM_AUTH_RATE_LIMIT_DISABLED: Set to "true" to disable rate limiting
  */
 export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Next) {
+  const log = getLogger(c).module('SCIM-AUTH');
   const clientIP = getClientIP(c);
   const authHeader = c.req.header('Authorization');
 
@@ -263,10 +268,10 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
   const rateLimitConfig = getScimAuthRateLimitConfig(c.env);
 
   // Check rate limit before processing
-  const rateLimit = await checkAuthRateLimit(c.env, clientIP, rateLimitConfig);
+  const rateLimit = await checkAuthRateLimit(c.env, clientIP, rateLimitConfig, log);
 
   if (!rateLimit.allowed) {
-    logAuthAttempt(clientIP, false, 'rate_limited', { retryAfter: rateLimit.retryAfter });
+    logAuthAttempt(log, clientIP, false, 'rate_limited', { retryAfter: rateLimit.retryAfter });
 
     c.header('Retry-After', rateLimit.retryAfter.toString());
 
@@ -278,8 +283,8 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
   }
 
   if (!authHeader) {
-    await recordFailedAttempt(c.env, clientIP, rateLimitConfig);
-    logAuthAttempt(clientIP, false, 'missing_auth_header');
+    await recordFailedAttempt(c.env, clientIP, rateLimitConfig, log);
+    logAuthAttempt(log, clientIP, false, 'missing_auth_header');
     await applyFailureDelay(
       rateLimitConfig.maxFailedAttempts - rateLimit.remaining + 1,
       rateLimitConfig
@@ -291,8 +296,8 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
 
   const parts = authHeader.split(' ');
   if (parts.length !== 2 || parts[0] !== 'Bearer') {
-    await recordFailedAttempt(c.env, clientIP, rateLimitConfig);
-    logAuthAttempt(clientIP, false, 'invalid_auth_format');
+    await recordFailedAttempt(c.env, clientIP, rateLimitConfig, log);
+    logAuthAttempt(log, clientIP, false, 'invalid_auth_format');
     await applyFailureDelay(
       rateLimitConfig.maxFailedAttempts - rateLimit.remaining + 1,
       rateLimitConfig
@@ -306,11 +311,11 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
 
   try {
     // Validate token against stored SCIM tokens
-    const isValid = await validateScimToken(c.env, token);
+    const isValid = await validateScimToken(c.env, token, log);
 
     if (!isValid) {
-      await recordFailedAttempt(c.env, clientIP, rateLimitConfig);
-      logAuthAttempt(clientIP, false, 'invalid_token');
+      await recordFailedAttempt(c.env, clientIP, rateLimitConfig, log);
+      logAuthAttempt(log, clientIP, false, 'invalid_token');
       await applyFailureDelay(
         rateLimitConfig.maxFailedAttempts - rateLimit.remaining + 1,
         rateLimitConfig
@@ -321,12 +326,12 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
     }
 
     // Token is valid
-    logAuthAttempt(clientIP, true);
+    logAuthAttempt(log, clientIP, true);
 
     // Token is valid, proceed to next middleware
     await next();
   } catch (error) {
-    console.error('[SCIM Auth] Validation error:', error);
+    log.error('Validation error', {}, error as Error);
     return scimErrorResponse(c, 500, 'Internal server error during authentication');
   }
 }
@@ -337,7 +342,7 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
  * This implementation checks against KV storage where SCIM tokens are stored.
  * You can customize this to use database or other storage.
  */
-async function validateScimToken(env: Env, token: string): Promise<boolean> {
+async function validateScimToken(env: Env, token: string, log: Logger): Promise<boolean> {
   try {
     // Hash the token to match stored format
     const tokenHash = await hashToken(token);
@@ -365,7 +370,7 @@ async function validateScimToken(env: Env, token: string): Promise<boolean> {
 
     return true;
   } catch (error) {
-    console.error('Token validation error:', error);
+    log.error('Token validation error', {}, error as Error);
     return false;
   }
 }
@@ -446,12 +451,13 @@ export async function generateScimToken(
 /**
  * Revoke a SCIM token
  */
-export async function revokeScimToken(env: Env, tokenHash: string): Promise<boolean> {
+export async function revokeScimToken(env: Env, tokenHash: string, log?: Logger): Promise<boolean> {
+  const logger = log ?? createLogger().module('SCIM-AUTH');
   try {
     await env.INITIAL_ACCESS_TOKENS?.delete(`scim:${tokenHash}`);
     return true;
   } catch (error) {
-    console.error('Token revocation error:', error);
+    logger.error('Token revocation error', {}, error as Error);
     return false;
   }
 }
@@ -459,7 +465,10 @@ export async function revokeScimToken(env: Env, tokenHash: string): Promise<bool
 /**
  * List all SCIM tokens (admin function)
  */
-export async function listScimTokens(env: Env): Promise<
+export async function listScimTokens(
+  env: Env,
+  log?: Logger
+): Promise<
   Array<{
     tokenHash: string;
     description: string;
@@ -468,6 +477,7 @@ export async function listScimTokens(env: Env): Promise<
     enabled: boolean;
   }>
 > {
+  const logger = log ?? createLogger().module('SCIM-AUTH');
   const tokens: Array<any> = [];
 
   try {
@@ -491,7 +501,7 @@ export async function listScimTokens(env: Env): Promise<
       }
     }
   } catch (error) {
-    console.error('List tokens error:', error);
+    logger.error('List tokens error', {}, error as Error);
   }
 
   return tokens;
@@ -503,7 +513,12 @@ export async function listScimTokens(env: Env): Promise<
  * If you prefer to store SCIM tokens in the database instead of KV,
  * you can create a `scim_tokens` table and use this function.
  */
-export async function validateScimTokenFromDB(db: D1Database, token: string): Promise<boolean> {
+export async function validateScimTokenFromDB(
+  db: D1Database,
+  token: string,
+  log?: Logger
+): Promise<boolean> {
+  const logger = log ?? createLogger().module('SCIM-AUTH');
   try {
     const tokenHash = await hashToken(token);
 
@@ -526,7 +541,7 @@ export async function validateScimTokenFromDB(db: D1Database, token: string): Pr
 
     return true;
   } catch (error) {
-    console.error('DB token validation error:', error);
+    logger.error('DB token validation error', {}, error as Error);
     return false;
   }
 }

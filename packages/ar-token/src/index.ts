@@ -113,7 +113,10 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-  console.error('Error:', err);
+  // Use structured logger for consistency across the codebase
+  const { getLogger } = require('@authrim/ar-lib-core');
+  const log = getLogger(c).module('AR-TOKEN');
+  log.error('Unhandled error', { action: 'error_handler' }, err);
   return c.json({ error: 'server_error', error_description: 'An unexpected error occurred' }, 500);
 });
 

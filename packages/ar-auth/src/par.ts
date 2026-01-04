@@ -33,6 +33,8 @@ import {
   parseToken,
   isInternalUrl,
   validateAuthorizationDetails,
+  // Logging
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { getClient, getPARRequestStoreForNewRequest } from '@authrim/ar-lib-core';
 import { jwtVerify, compactDecrypt, importJWK, createRemoteJWKSet } from 'jose';
@@ -118,6 +120,7 @@ function validatePARParams(formData: Record<string, unknown>): PARRequestParams 
  * POST /par
  */
 export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('PAR');
   try {
     // RFC 9126: PAR endpoint MUST only accept POST requests
     if (c.req.method !== 'POST') {
@@ -185,7 +188,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
         oidcConfig = settings.oidc || {};
       }
     } catch (error) {
-      console.error('Failed to load settings from KV:', error);
+      log.error('Failed to load settings from KV', { action: 'settings_load' }, error as Error);
       // Continue with default values
     }
 
@@ -313,7 +316,11 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               requestProcessed = true;
             }
           } catch (decryptError) {
-            console.error('[PAR] Failed to decrypt JWE request object:', decryptError);
+            log.error(
+              'Failed to decrypt JWE request object',
+              { action: 'jwe_decrypt' },
+              decryptError as Error
+            );
             return c.json(
               {
                 error: 'invalid_request_object',
@@ -337,9 +344,9 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             const isProduction = environment === 'production';
 
             if (isProduction) {
-              console.error(
-                '[PAR][SECURITY CRITICAL] Blocked unsigned request object (alg=none) in production'
-              );
+              log.error('Blocked unsigned request object (alg=none) in production', {
+                action: 'security_critical',
+              });
               return c.json(
                 {
                   error: 'invalid_request_object',
@@ -354,9 +361,9 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             const allowNoneAlgorithm = oidcConfig.allowNoneAlgorithm ?? false;
 
             if (!allowNoneAlgorithm) {
-              console.error(
-                '[PAR][SECURITY] Rejected unsigned request object (alg=none) - not allowed in settings'
-              );
+              log.error('Rejected unsigned request object (alg=none) - not allowed in settings', {
+                action: 'security_check',
+              });
               return c.json(
                 {
                   error: 'invalid_request_object',
@@ -367,9 +374,9 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               );
             }
 
-            console.log(
-              '[PAR][SECURITY] Using unsigned request object (alg=none) - dev/testing only'
-            );
+            log.warn('Using unsigned request object (alg=none) - dev/testing only', {
+              action: 'security_warning',
+            });
             requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
           } else {
             // Signed request object - verify using client's public key
@@ -444,7 +451,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               }
               requestObjectClaims = payload;
             } catch (verifyError) {
-              console.error('[PAR] JWT verification failed:', verifyError);
+              log.error('JWT verification failed', { action: 'jwt_verify' }, verifyError as Error);
               return c.json(
                 {
                   error: 'invalid_request_object',
@@ -508,10 +515,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             );
           }
 
-          console.log('[PAR] Request object processed successfully');
+          log.debug('Request object processed successfully', { action: 'request_object' });
         }
       } catch (error) {
-        console.error('[PAR] Failed to process request object:', error);
+        log.error('Failed to process request object', { action: 'request_object' }, error as Error);
         return c.json(
           {
             error: 'invalid_request_object',
@@ -642,7 +649,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
       // Store dpop_jkt for authorization code binding
       dpopJkt = dpopValidation.jkt;
-      console.log('[PAR] DPoP proof validated, jkt:', dpopJkt?.substring(0, 16) + '...');
+      log.debug('DPoP proof validated', {
+        action: 'dpop_validate',
+        jktPrefix: dpopJkt?.substring(0, 16),
+      });
     }
 
     // =========================================================================
@@ -715,7 +725,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
         ttl: requestUriExpiry,
       });
     } catch (error) {
-      console.error('PAR store error:', error);
+      log.error('PAR store error', { action: 'store' }, error as Error);
       return c.json(
         {
           error: 'server_error',
@@ -739,9 +749,13 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
     if (error instanceof RFCError) {
       if (isProduction) {
-        console.error('PAR error:', { error: error.rfcError, status: error.status });
+        log.error('PAR error', {
+          action: 'handler',
+          rfcError: error.rfcError,
+          status: error.status,
+        });
       } else {
-        console.error('PAR error:', error);
+        log.error('PAR error', { action: 'handler', rfcError: error.rfcError }, error);
       }
       return c.json(
         {
@@ -753,7 +767,11 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     }
 
     // Unexpected error - log for debugging
-    console.error('PAR unexpected error:', isProduction ? '[redacted]' : error);
+    log.error(
+      'PAR unexpected error',
+      { action: 'handler', redacted: isProduction },
+      error as Error
+    );
 
     return c.json(
       {

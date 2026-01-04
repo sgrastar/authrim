@@ -6,6 +6,9 @@
 
 import type { CIBARequestMetadata } from '../types/oidc';
 import type { JWK } from 'jose';
+import { createLogger } from './logger';
+
+const log = createLogger().module('CIBA');
 
 // =============================================================================
 // JWT Hint Validation Types
@@ -419,9 +422,8 @@ export function validateCIBAIdTokenHint(
   // TODO: Implement signature verification when JWKS is provided
   // For now, log warning if JWKS not configured
   if (!options.jwks) {
-    console.warn(
-      '[CIBA] id_token_hint signature verification skipped - JWKS not configured. ' +
-        'Configure JWKS for production security.'
+    log.warn(
+      'id_token_hint signature verification skipped - JWKS not configured. Configure JWKS for production security.'
     );
   }
 
@@ -519,9 +521,8 @@ export function validateCIBALoginHintToken(
   // TODO: Implement signature verification when JWKS is provided
   // For login_hint_token, the issuer could be a third party
   if (!options.jwks) {
-    console.warn(
-      '[CIBA] login_hint_token signature verification skipped - JWKS not configured. ' +
-        'Configure JWKS for production security.'
+    log.warn(
+      'login_hint_token signature verification skipped - JWKS not configured. Configure JWKS for production security.'
     );
   }
 

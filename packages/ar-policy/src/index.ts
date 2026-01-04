@@ -49,6 +49,7 @@ import {
   createPermissionChangeEvent,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
   type DatabaseAdapter,
   type ReBACService,
   type CheckRequest,
@@ -296,6 +297,9 @@ policyRoutes.delete('/flags/:name', async (c) => {
  * POST /policy/evaluate
  */
 policyRoutes.post('/evaluate', async (c) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('POLICY');
+
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
@@ -315,7 +319,7 @@ policyRoutes.post('/evaluate', async (c) => {
     const decision = policyEngine.evaluate(context);
     return c.json(decision);
   } catch (error) {
-    console.error('Policy evaluation error:', error);
+    log.error('Policy evaluation error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -325,6 +329,9 @@ policyRoutes.post('/evaluate', async (c) => {
  * POST /policy/check-role
  */
 policyRoutes.post('/check-role', async (c) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('POLICY');
+
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
@@ -380,7 +387,7 @@ policyRoutes.post('/check-role', async (c) => {
       activeRoles: [...new Set(activeRoles)],
     });
   } catch (error) {
-    console.error('Role check error:', error);
+    log.error('Role check error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -390,6 +397,9 @@ policyRoutes.post('/check-role', async (c) => {
  * POST /policy/check-access
  */
 policyRoutes.post('/check-access', async (c) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('POLICY');
+
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
@@ -448,7 +458,7 @@ policyRoutes.post('/check-access', async (c) => {
       reason: decision.reason,
     });
   } catch (error) {
-    console.error('Access check error:', error);
+    log.error('Access check error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -458,6 +468,9 @@ policyRoutes.post('/check-access', async (c) => {
  * POST /policy/is-admin
  */
 policyRoutes.post('/is-admin', async (c) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('POLICY');
+
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
@@ -485,7 +498,7 @@ policyRoutes.post('/is-admin', async (c) => {
       isAdmin: isAdmin(subject),
     });
   } catch (error) {
-    console.error('Admin check error:', error);
+    log.error('Admin check error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -611,6 +624,9 @@ rebacRoutes.get('/health', async (c) => {
  * }
  */
 rebacRoutes.post('/check', async (c) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('REBAC');
+
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
@@ -651,7 +667,7 @@ rebacRoutes.post('/check', async (c) => {
     const result = await rebacService.check(request);
     return c.json(result);
   } catch (error) {
-    console.error('ReBAC check error:', error);
+    log.error('ReBAC check error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -669,6 +685,9 @@ rebacRoutes.post('/check', async (c) => {
  * }
  */
 rebacRoutes.post('/batch-check', async (c) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('REBAC');
+
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
@@ -710,7 +729,7 @@ rebacRoutes.post('/batch-check', async (c) => {
     const result = await rebacService.batchCheck(request);
     return c.json(result);
   } catch (error) {
-    console.error('ReBAC batch check error:', error);
+    log.error('ReBAC batch check error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -730,6 +749,9 @@ rebacRoutes.post('/batch-check', async (c) => {
  * }
  */
 rebacRoutes.post('/list-objects', async (c) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('REBAC');
+
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
@@ -765,7 +787,7 @@ rebacRoutes.post('/list-objects', async (c) => {
     const result = await rebacService.listObjects(request);
     return c.json(result);
   } catch (error) {
-    console.error('ReBAC list objects error:', error);
+    log.error('ReBAC list objects error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -783,6 +805,9 @@ rebacRoutes.post('/list-objects', async (c) => {
  * }
  */
 rebacRoutes.post('/list-users', async (c) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('REBAC');
+
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
@@ -818,7 +843,7 @@ rebacRoutes.post('/list-users', async (c) => {
     const result = await rebacService.listUsers(request);
     return c.json(result);
   } catch (error) {
-    console.error('ReBAC list users error:', error);
+    log.error('ReBAC list users error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -839,6 +864,9 @@ rebacRoutes.post('/list-users', async (c) => {
  * }
  */
 rebacRoutes.post('/write', async (c) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('REBAC');
+
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
@@ -922,7 +950,7 @@ rebacRoutes.post('/write', async (c) => {
       );
     } catch (notifyError) {
       // Log but don't fail the request if notification fails
-      console.warn('[ReBAC write] Permission change notification failed:', notifyError);
+      log.warn('Permission change notification failed', { error: String(notifyError) });
     }
 
     return c.json({
@@ -940,7 +968,7 @@ rebacRoutes.post('/write', async (c) => {
       },
     });
   } catch (error) {
-    console.error('ReBAC write error:', error);
+    log.error('ReBAC write error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -960,6 +988,9 @@ rebacRoutes.post('/write', async (c) => {
  * }
  */
 rebacRoutes.delete('/tuples', async (c) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('REBAC');
+
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
@@ -1036,7 +1067,7 @@ rebacRoutes.delete('/tuples', async (c) => {
         );
       } catch (notifyError) {
         // Log but don't fail the request if notification fails
-        console.warn('[ReBAC delete] Permission change notification failed:', notifyError);
+        log.warn('Permission change notification failed', { error: String(notifyError) });
       }
     }
 
@@ -1045,7 +1076,7 @@ rebacRoutes.delete('/tuples', async (c) => {
       deleted,
     });
   } catch (error) {
-    console.error('ReBAC delete error:', error);
+    log.error('ReBAC delete error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -1064,6 +1095,9 @@ rebacRoutes.delete('/tuples', async (c) => {
  * }
  */
 rebacRoutes.post('/invalidate', async (c) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('REBAC');
+
   if (!authenticateRequest(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
   }
@@ -1102,7 +1136,7 @@ rebacRoutes.post('/invalidate', async (c) => {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error('ReBAC invalidate error:', error);
+    log.error('ReBAC invalidate error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -1139,7 +1173,9 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-  console.error('Error:', err);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('POLICY');
+  log.error('Unhandled error', { error: String(err) }, err);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 

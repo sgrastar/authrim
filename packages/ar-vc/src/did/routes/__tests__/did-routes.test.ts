@@ -14,6 +14,17 @@ import type { Env } from '../../../types';
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+// Mock logger (prefixed with underscore since currently unused but kept for future use)
+const _mockLogger = {
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+  child: vi.fn().mockReturnThis(),
+  module: vi.fn().mockReturnThis(),
+  startTimer: vi.fn().mockReturnValue(() => {}),
+};
+
 // Mock @authrim/ar-lib-core
 vi.mock('@authrim/ar-lib-core', () => {
   // Mock repository that returns null by default (no cache)
@@ -28,9 +39,23 @@ vi.mock('@authrim/ar-lib-core', () => {
     return globalThis.fetch(url);
   });
 
+  const mockLoggerInstance = {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+    module: vi.fn().mockReturnThis(),
+    startTimer: vi.fn().mockReturnValue(() => {}),
+  };
+
   return {
     // Include safeFetch in the mock
     safeFetch: mockSafeFetch,
+    // Include getLogger mock
+    getLogger: vi.fn(() => mockLoggerInstance),
+    // Include createLogger mock
+    createLogger: vi.fn(() => mockLoggerInstance),
     parseDID: vi.fn((did: string) => {
       if (!did.startsWith('did:')) return null;
       const parts = did.split(':');
@@ -129,6 +154,8 @@ const createMockContext = (
         headers: { 'Content-Type': 'application/json' },
       });
     }),
+    // Mock get method for getLogger
+    get: vi.fn().mockReturnValue(undefined),
   } as unknown as Context<{ Bindings: Env }>;
 };
 

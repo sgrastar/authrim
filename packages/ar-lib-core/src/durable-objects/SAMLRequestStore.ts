@@ -12,6 +12,7 @@
 
 import type { Env } from '../types/env';
 import type { SAMLRequestData, SAMLArtifactData } from '../types/saml';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * SAMLRequestStore Durable Object State
@@ -48,6 +49,7 @@ export class SAMLRequestStore {
   private state: DurableObjectState;
   private env: Env;
   private storeState: SAMLRequestStoreState | null = null;
+  private readonly log: Logger = createLogger().module('SAMLRequestStore');
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -146,7 +148,7 @@ export class SAMLRequestStore {
 
     // Check if already used
     if (request.used) {
-      console.warn(`SAML request replay detected: ${requestId}`);
+      this.log.warn('SAML request replay detected', { requestId });
       return null;
     }
 
@@ -209,7 +211,7 @@ export class SAMLRequestStore {
 
     // Check if already used
     if (artifact.used) {
-      console.warn(`SAML artifact replay detected: ${artifactValue}`);
+      this.log.warn('SAML artifact replay detected', { artifact: artifactValue });
       return null;
     }
 
@@ -239,7 +241,7 @@ export class SAMLRequestStore {
 
     // Check if already consumed (replay attack)
     if (state.consumedAssertionIds.has(assertionId)) {
-      console.warn(`SAML assertion replay detected: ${assertionId}`);
+      this.log.warn('SAML assertion replay detected', { assertionId });
       return false;
     }
 
@@ -376,7 +378,7 @@ export class SAMLRequestStore {
 
       return new Response('Not Found', { status: 404 });
     } catch (error) {
-      console.error('SAMLRequestStore error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },

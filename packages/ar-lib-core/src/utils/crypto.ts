@@ -5,6 +5,10 @@
  * and encoding them in base64url format.
  */
 
+import { createLogger } from './logger';
+
+const log = createLogger().module('CRYPTO');
+
 /**
  * Generate a cryptographically secure random string in base64url format
  *
@@ -231,7 +235,7 @@ async function verifyPbkdf2Password(password: string, hash: string): Promise<boo
 
   // Validate version
   if (version !== PASSWORD_HASH_CONFIG.VERSION) {
-    console.warn(`Unknown password hash version: ${version}`);
+    log.warn('Unknown password hash version', { version });
     return false;
   }
 

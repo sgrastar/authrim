@@ -44,6 +44,14 @@ const { mockExecute, mockQueryOne, MockD1Adapter } = vi.hoisted(() => {
 // Mock @authrim/ar-lib-core to prevent Cloudflare Workers imports
 vi.mock('@authrim/ar-lib-core', () => ({
   D1Adapter: MockD1Adapter,
+  createLogger: () => ({
+    module: () => ({
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    }),
+  }),
 }));
 
 import {

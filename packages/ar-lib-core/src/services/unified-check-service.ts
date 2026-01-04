@@ -31,6 +31,9 @@ import type {
 } from '../types/check-api';
 import type { ReBACService, CheckRequest as ReBACCheckRequest } from '../rebac';
 import { hasIdLevelPermission, getUserIdLevelPermissions } from '../utils/resource-permissions';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('UNIFIED-CHECK-SERVICE');
 
 // =============================================================================
 // Constants
@@ -317,7 +320,7 @@ export class UnifiedCheckService {
       return response;
     } catch (error) {
       // Handle parsing or evaluation errors
-      console.error('[UnifiedCheckService] Evaluation error:', error);
+      log.error('Evaluation error', { subjectId: request.subject_id }, error as Error);
       return {
         allowed: false,
         resolved_via: [],
@@ -465,7 +468,7 @@ export class UnifiedCheckService {
 
       return { allowed: hasPermission };
     } catch (error) {
-      console.error('[UnifiedCheckService] ID-level check error:', error);
+      log.error('ID-level check error', { subjectId: context.subjectId }, error as Error);
       return { allowed: false };
     }
   }
@@ -516,7 +519,7 @@ export class UnifiedCheckService {
 
       return { allowed: false };
     } catch (error) {
-      console.error('[UnifiedCheckService] RBAC check error:', error);
+      log.error('RBAC check error', { subjectId: context.subjectId }, error as Error);
       return { allowed: false };
     }
   }
@@ -546,7 +549,7 @@ export class UnifiedCheckService {
         path: result.path,
       };
     } catch (error) {
-      console.error('[UnifiedCheckService] ReBAC check error:', error);
+      log.error('ReBAC check error', { subjectId: context.subjectId }, error as Error);
       return { allowed: false };
     }
   }
@@ -586,7 +589,7 @@ export class UnifiedCheckService {
 
       return { allowed: false };
     } catch (error) {
-      console.error('[UnifiedCheckService] ABAC check error:', error);
+      log.error('ABAC check error', { subjectId: context.subjectId }, error as Error);
       return { allowed: false };
     }
   }
@@ -668,7 +671,7 @@ export class UnifiedCheckService {
     // Note: KV doesn't support prefix deletion, so we need to track keys
     // For now, we rely on TTL expiration
     // In production, consider using a secondary index or different cache strategy
-    console.log(`[UnifiedCheckService] Cache invalidation requested for ${tenantId}:${subjectId}`);
+    log.debug('Cache invalidation requested', { tenantId, subjectId });
   }
 }
 

@@ -9,6 +9,9 @@
  */
 
 import type { Env } from '../types/env';
+import { createLogger } from './logger';
+
+const log = createLogger().module('NATIVE_SSO_CONFIG');
 
 /**
  * Native SSO Settings interface
@@ -96,7 +99,7 @@ export async function getNativeSSOConfig(env: Env): Promise<NativeSSOSettings> {
         settings = mergeSettings(settings, kvSettings);
       }
     } catch (error) {
-      console.warn('[NativeSSOConfig] Error reading KV:', error);
+      log.error('Error reading KV', {}, error as Error);
       // Fall through to environment variable
     }
   }

@@ -12,6 +12,9 @@
  */
 
 import type { ConditionOperator } from '../types/policy-rules';
+import { createLogger } from './logger';
+
+const log = createLogger().module('CLAIM_NORMALIZER');
 
 // =============================================================================
 // Normalized Claim Value Types
@@ -370,7 +373,7 @@ function compareRegex(actual: NormalizedClaimValue, expected: unknown): boolean 
   // Validate pattern for security
   const validation = validateRegexPattern(expected);
   if (!validation.isValid) {
-    console.warn(`[ReDoS Protection] Rejected regex pattern: ${validation.error}`);
+    log.warn('ReDoS Protection - Rejected regex pattern', { error: validation.error });
     return false;
   }
 

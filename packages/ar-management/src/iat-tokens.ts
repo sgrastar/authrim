@@ -9,7 +9,12 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import { hashInitialAccessToken, createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import {
+  hashInitialAccessToken,
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+} from '@authrim/ar-lib-core';
 
 /**
  * Validation constraints for IAT creation
@@ -155,7 +160,8 @@ export async function adminIATListHandler(c: Context<{ Bindings: Env }>) {
       total: tokens.length,
     });
   } catch (error) {
-    console.error('List IAT tokens error:', error);
+    const log = getLogger(c).module('IAT-TOKENS');
+    log.error('Failed to list IAT tokens', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -216,7 +222,8 @@ export async function adminIATCreateHandler(c: Context<{ Bindings: Env }>) {
       201
     );
   } catch (error) {
-    console.error('Create IAT token error:', error);
+    const log = getLogger(c).module('IAT-TOKENS');
+    log.error('Failed to create IAT token', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -250,7 +257,8 @@ export async function adminIATRevokeHandler(c: Context<{ Bindings: Env }>) {
       message: 'Token revoked successfully',
     });
   } catch (error) {
-    console.error('Revoke IAT token error:', error);
+    const log = getLogger(c).module('IAT-TOKENS');
+    log.error('Failed to revoke IAT token', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

@@ -30,6 +30,7 @@ import {
   type ConsumeChallengeResponse,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
 
@@ -78,6 +79,8 @@ async function getAuthenticatedUserId(c: Context<{ Bindings: Env }>): Promise<st
 export async function didRegisterChallengeHandler(
   c: Context<{ Bindings: Env }>
 ): Promise<Response> {
+  const log = getLogger(c).module('DID-LINK');
+
   try {
     // Verify user is authenticated
     const userId = await getAuthenticatedUserId(c);
@@ -174,7 +177,7 @@ export async function didRegisterChallengeHandler(
       expires_in: 300,
     });
   } catch (error) {
-    console.error('[did-link] Register challenge error:', error);
+    log.error('DID register challenge error', { action: 'register_challenge' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -185,6 +188,8 @@ export async function didRegisterChallengeHandler(
  * Verify the DID registration proof and create the link.
  */
 export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('DID-LINK');
+
   try {
     const body = await c.req.json<{
       challenge_id: string;
@@ -283,7 +288,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
     const issuerUrl = c.env.ISSUER_URL;
     if (!issuerUrl) {
       // Log internally but return generic error to avoid revealing server configuration
-      console.error('[did-link] ISSUER_URL is not configured');
+      log.error('ISSUER_URL is not configured', { action: 'verify' });
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
@@ -354,7 +359,7 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
       message: 'DID successfully linked to your account',
     });
   } catch (error) {
-    console.error('[did-link] Register verify error:', error);
+    log.error('DID register verify error', { action: 'register_verify' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -365,6 +370,8 @@ export async function didRegisterVerifyHandler(c: Context<{ Bindings: Env }>): P
  * List all DIDs linked to the current user's account.
  */
 export async function didListHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('DID-LINK');
+
   try {
     const userId = await getAuthenticatedUserId(c);
     if (!userId) {
@@ -390,7 +397,7 @@ export async function didListHandler(c: Context<{ Bindings: Env }>): Promise<Res
       count: didLinks.length,
     });
   } catch (error) {
-    console.error('[did-link] List error:', error);
+    log.error('DID list error', { action: 'list' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -401,6 +408,8 @@ export async function didListHandler(c: Context<{ Bindings: Env }>): Promise<Res
  * Unlink a DID from the current user's account.
  */
 export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('DID-LINK');
+
   try {
     const userId = await getAuthenticatedUserId(c);
     if (!userId) {
@@ -445,7 +454,7 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
       message: deleted ? 'DID unlinked successfully' : 'Failed to unlink DID',
     });
   } catch (error) {
-    console.error('[did-link] Unlink error:', error);
+    log.error('DID unlink error', { action: 'unlink' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

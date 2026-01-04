@@ -13,6 +13,9 @@
  */
 
 import { safeFetch, isInternalUrl } from '../utils/url-security';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('CIBA_PING');
 
 /** Ping notification timeout (5 seconds) */
 const PING_NOTIFICATION_TIMEOUT_MS = 5000;
@@ -47,10 +50,7 @@ export async function sendPingNotification(
     if (isInternalUrl(clientNotificationEndpoint)) {
       // This should have been caught during client registration,
       // but double-check as defense in depth
-      console.error('[CIBA] SSRF blocked - internal address in notification endpoint:', {
-        authReqId,
-        // Don't log the full endpoint to avoid leaking internal URLs in logs
-      });
+      log.error('SSRF blocked - internal address in notification endpoint', { authReqId });
       throw new Error('SSRF protection: Cannot send notifications to internal addresses');
     }
 
@@ -73,22 +73,21 @@ export async function sendPingNotification(
     if (!response.ok) {
       // Read error response with size limit already applied by safeFetch
       const errorText = await response.text();
-      console.error('[CIBA] Ping notification failed:', {
+      log.error('Ping notification failed', {
         status: response.status,
         statusText: response.statusText,
-        error: errorText.substring(0, 200), // Truncate error for logging
+        errorPreview: errorText.substring(0, 200),
         authReqId,
       });
       throw new Error(`Ping notification failed: ${response.status} ${response.statusText}`);
     }
 
-    console.log('[CIBA] Ping notification sent successfully:', {
+    log.info('Ping notification sent successfully', {
       authReqId,
-      // Log sanitized endpoint info (host only)
       endpointHost: new URL(clientNotificationEndpoint).host,
     });
   } catch (error) {
-    console.error('[CIBA] Ping notification error:', error);
+    log.error('Ping notification error', { authReqId }, error as Error);
     throw error;
   }
 }

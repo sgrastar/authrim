@@ -27,6 +27,9 @@ import type {
   DeviceSecretValidationResult,
   CreateDeviceSecretInput,
 } from '../../types/oidc';
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger().module('DeviceSecret');
 
 /**
  * Database row type for device_secrets table
@@ -331,9 +334,11 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
     if (entity.use_count >= maxUseCount) {
       // Auto-revoke when limit exceeded
       await this.revoke(entity.id, 'use_count_exceeded');
-      console.warn(
-        `[DeviceSecret] Auto-revoked ${entity.id.substring(0, 8)}... due to use count limit (${entity.use_count}/${maxUseCount})`
-      );
+      log.warn('Auto-revoked device secret due to use count limit', {
+        secretIdPrefix: entity.id.substring(0, 8),
+        useCount: entity.use_count,
+        maxUseCount,
+      });
       return { ok: false, reason: 'limit_exceeded' };
     }
 

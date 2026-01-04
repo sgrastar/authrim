@@ -6,6 +6,28 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Hoist mock logger
+const { mockLogger } = vi.hoisted(() => {
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    module: vi.fn().mockReturnThis(),
+  };
+  return { mockLogger: logger };
+});
+
+// Mock getLogger from ar-lib-core - synchronous factory to avoid hoisting issues
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    getLogger: () => mockLogger,
+  };
+});
+
 import type { Env } from '@authrim/ar-lib-core';
 import {
   getIntrospectionCacheSettings,
@@ -31,6 +53,10 @@ function createMockContext(options: { body?: Record<string, unknown>; env?: Part
       json: vi.fn().mockResolvedValue(options.body || {}),
     },
     env: mockEnv as Env,
+    get: (key: string) => {
+      if (key === 'logger') return mockLogger;
+      return undefined;
+    },
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
   } as any;
 

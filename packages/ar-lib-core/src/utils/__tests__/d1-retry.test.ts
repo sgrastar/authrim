@@ -3,6 +3,22 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Mock logger - hoisted before other imports
+const mockLogger = vi.hoisted(() => ({
+  warn: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+  child: vi.fn().mockReturnThis(),
+  module: vi.fn().mockReturnThis(),
+  startTimer: vi.fn().mockReturnValue(() => {}),
+}));
+
+vi.mock('../logger', () => ({
+  createLogger: () => mockLogger,
+}));
+
 import {
   retryD1Operation,
   retryD1Batch,
@@ -11,14 +27,9 @@ import {
 } from '../d1-retry';
 
 describe('D1 Retry Utilities', () => {
-  // Mock console methods
-  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
-  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
-
   beforeEach(() => {
     vi.useFakeTimers();
-    consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -36,8 +47,8 @@ describe('D1 Retry Utilities', () => {
 
       expect(result).toBe('success');
       expect(operation).toHaveBeenCalledTimes(1);
-      expect(consoleWarnSpy).not.toHaveBeenCalled();
-      expect(consoleErrorSpy).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
+      expect(mockLogger.error).not.toHaveBeenCalled();
     });
 
     it('should retry and succeed on second attempt', async () => {
@@ -52,11 +63,11 @@ describe('D1 Retry Utilities', () => {
 
       expect(result).toBe('success');
       expect(operation).toHaveBeenCalledTimes(2);
-      expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        'test-operation: Attempt 1/4 failed, retrying in 100ms...',
+      expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'test-operation: Attempt 1/4 failed',
         expect.objectContaining({
-          error: 'Transient error',
+          errorMessage: 'Transient error',
           attempt: 1,
           maxRetries: 4,
           nextDelay: 100,
@@ -77,7 +88,7 @@ describe('D1 Retry Utilities', () => {
 
       expect(result).toBe('success');
       expect(operation).toHaveBeenCalledTimes(3);
-      expect(consoleWarnSpy).toHaveBeenCalledTimes(2);
+      expect(mockLogger.warn).toHaveBeenCalledTimes(2);
     });
 
     it('should return null after all retries exhausted', async () => {
@@ -89,14 +100,14 @@ describe('D1 Retry Utilities', () => {
 
       expect(result).toBeNull();
       expect(operation).toHaveBeenCalledTimes(3); // Initial + 2 retries
-      expect(consoleWarnSpy).toHaveBeenCalledTimes(2); // Warnings for retry attempts 1 and 2
-      expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect(mockLogger.warn).toHaveBeenCalledTimes(2); // Warnings for retry attempts 1 and 2
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledWith(
         'test-operation: All 3 attempts failed',
         expect.objectContaining({
-          error: 'Persistent error',
           operationName: 'test-operation',
-        })
+        }),
+        expect.any(Error)
       );
     });
 
@@ -116,17 +127,17 @@ describe('D1 Retry Utilities', () => {
       await promise;
 
       // Verify exponential backoff delays: 100ms, 200ms, 400ms
-      expect(consoleWarnSpy).toHaveBeenNthCalledWith(
+      expect(mockLogger.warn).toHaveBeenNthCalledWith(
         1,
         expect.any(String),
         expect.objectContaining({ nextDelay: 100 })
       );
-      expect(consoleWarnSpy).toHaveBeenNthCalledWith(
+      expect(mockLogger.warn).toHaveBeenNthCalledWith(
         2,
         expect.any(String),
         expect.objectContaining({ nextDelay: 200 })
       );
-      expect(consoleWarnSpy).toHaveBeenNthCalledWith(
+      expect(mockLogger.warn).toHaveBeenNthCalledWith(
         3,
         expect.any(String),
         expect.objectContaining({ nextDelay: 400 })
@@ -150,17 +161,17 @@ describe('D1 Retry Utilities', () => {
       await promise;
 
       // Verify delays are capped: 1000ms, 2000ms (capped), 2000ms (capped)
-      expect(consoleWarnSpy).toHaveBeenNthCalledWith(
+      expect(mockLogger.warn).toHaveBeenNthCalledWith(
         1,
         expect.any(String),
         expect.objectContaining({ nextDelay: 1000 })
       );
-      expect(consoleWarnSpy).toHaveBeenNthCalledWith(
+      expect(mockLogger.warn).toHaveBeenNthCalledWith(
         2,
         expect.any(String),
         expect.objectContaining({ nextDelay: 2000 })
       );
-      expect(consoleWarnSpy).toHaveBeenNthCalledWith(
+      expect(mockLogger.warn).toHaveBeenNthCalledWith(
         3,
         expect.any(String),
         expect.objectContaining({ nextDelay: 2000 })
@@ -178,10 +189,10 @@ describe('D1 Retry Utilities', () => {
       const result = await promise;
 
       expect(result).toBe('success');
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect(mockLogger.warn).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({
-          error: 'string error',
+          errorMessage: 'string error',
         })
       );
     });
@@ -198,9 +209,9 @@ describe('D1 Retry Utilities', () => {
 
       expect(result).toBeNull();
       expect(operation).toHaveBeenCalledTimes(2); // Initial + 1 retry
-      expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        'test-operation: Attempt 1/2 failed, retrying in 50ms...',
+      expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'test-operation: Attempt 1/2 failed',
         expect.objectContaining({
           nextDelay: 50,
         })
@@ -216,8 +227,8 @@ describe('D1 Retry Utilities', () => {
 
       expect(result).toBeNull();
       expect(operation).toHaveBeenCalledTimes(1);
-      expect(consoleWarnSpy).not.toHaveBeenCalled(); // No retry warnings
-      expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(mockLogger.warn).not.toHaveBeenCalled(); // No retry warnings
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -247,7 +258,7 @@ describe('D1 Retry Utilities', () => {
       expect(results).toEqual([mockResult1, mockResult2]);
       expect(stmt1.run).toHaveBeenCalledTimes(1);
       expect(stmt2.run).toHaveBeenCalledTimes(1);
-      expect(consoleWarnSpy).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should retry batch operations on failure', async () => {
@@ -273,7 +284,7 @@ describe('D1 Retry Utilities', () => {
 
       expect(results).toEqual([mockResult, mockResult]);
       expect(stmt1.run).toHaveBeenCalledTimes(2); // Failed once, succeeded on retry
-      expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
+      expect(mockLogger.warn).toHaveBeenCalledTimes(1);
     });
 
     it('should return null after all batch retries exhausted', async () => {
@@ -290,7 +301,7 @@ describe('D1 Retry Utilities', () => {
 
       expect(results).toBeNull();
       expect(stmt1.run).toHaveBeenCalledTimes(2); // Initial + 1 retry
-      expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
     });
 
     it('should handle empty batch array', async () => {
@@ -299,7 +310,7 @@ describe('D1 Retry Utilities', () => {
       const results = await promise;
 
       expect(results).toEqual([]);
-      expect(consoleWarnSpy).not.toHaveBeenCalled();
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should use custom retry configuration for batch operations', async () => {
@@ -318,8 +329,8 @@ describe('D1 Retry Utilities', () => {
       await promise;
 
       expect(stmt.run).toHaveBeenCalledTimes(3); // Initial + 2 retries
-      expect(consoleWarnSpy).toHaveBeenCalledWith(
-        'batch-operation: Attempt 1/3 failed, retrying in 200ms...',
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'batch-operation: Attempt 1/3 failed',
         expect.objectContaining({
           nextDelay: 200,
         })

@@ -303,6 +303,16 @@ export interface Env {
   ENVIRONMENT?: string; // "production", "staging", "development"
   NODE_ENV?: string; // "production", "development" (fallback for ENVIRONMENT)
 
+  // Logging Configuration
+  // Minimum log level to output (default: "info")
+  // Options: "debug", "info", "warn", "error"
+  LOG_LEVEL?: string;
+  // Log output format (default: "json")
+  // Options: "json" (structured), "pretty" (human-readable with colors)
+  LOG_FORMAT?: string;
+  // If "true", hash user IDs in logs for privacy (default: false)
+  LOG_HASH_USER_ID?: string;
+
   // OIDC ACR (Authentication Context Class Reference) Configuration
   // Comma-separated list of supported ACR values for authentication level negotiation
   // Default: SAML 2.0 standard ACR values + "0" (no context)
@@ -328,4 +338,25 @@ export interface Env {
 
   // Check API KV Cache
   CHECK_CACHE_KV?: KVNamespace; // Cache for permission check results
+
+  // Audit Logging (Queue and Archive)
+  AUDIT_QUEUE?: Queue; // Cloudflare Queue for async audit log processing
+  AUDIT_ARCHIVE?: R2Bucket; // R2 bucket for audit log archive and DLQ backup
+
+  // ID-JAG (Identity Assertion Authorization Grant) Feature Flag
+  // draft-ietf-oauth-identity-assertion-authz-grant
+  // When "true", enables ID-JAG token type in Token Exchange
+  ID_JAG_ENABLED?: string;
+  // Comma-separated list of trusted IdP issuers for ID-JAG subject tokens
+  ID_JAG_ALLOWED_ISSUERS?: string;
+  // Maximum token lifetime for ID-JAG tokens in seconds (default: 3600)
+  ID_JAG_MAX_TOKEN_LIFETIME?: string;
+
+  // NIST SP 800-63-4 Assurance Levels Feature Flag
+  // When "true", enables explicit AAL/FAL/IAL tracking and enforcement
+  NIST_ASSURANCE_LEVELS_ENABLED?: string;
+  // Default assurance levels (AAL1-3, FAL1-3, IAL1-3)
+  DEFAULT_AAL?: string;
+  DEFAULT_FAL?: string;
+  DEFAULT_IAL?: string;
 }

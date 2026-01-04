@@ -21,6 +21,9 @@
  */
 
 import type { Env } from '../types/env';
+import { createLogger } from './logger';
+
+const log = createLogger().module('OAUTH_CONFIG');
 
 /**
  * OAuth configuration values
@@ -342,10 +345,7 @@ export class OAuthConfigManager {
         }
       } catch (error) {
         // PII Protection: Don't log full error object
-        console.warn(
-          `Failed to read config ${name} from KV:`,
-          error instanceof Error ? error.name : 'Unknown error'
-        );
+        log.warn(`Failed to read config ${name} from KV`);
         // Fall through to env value
       }
     }
@@ -378,10 +378,7 @@ export class OAuthConfigManager {
         }
       } catch (error) {
         // PII Protection: Don't log full error object
-        console.warn(
-          `Failed to read config ${name} from KV:`,
-          error instanceof Error ? error.name : 'Unknown error'
-        );
+        log.warn(`Failed to read config ${name} from KV`);
         // Fall through to env value
       }
     }

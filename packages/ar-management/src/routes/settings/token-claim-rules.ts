@@ -15,6 +15,7 @@
 import type { Context } from 'hono';
 import {
   D1Adapter,
+  getLogger,
   type DatabaseAdapter,
   type TokenClaimRule,
   type TokenClaimRuleRow,
@@ -66,8 +67,12 @@ function rowToRule(row: TokenClaimRuleRow): TokenClaimRule {
   };
 }
 
-function validateRuleInput(input: TokenClaimRuleInput): string[] {
+function validateRuleInput(input: TokenClaimRuleInput): {
+  errors: string[];
+  warnings: string[];
+} {
   const errors: string[] = [];
+  const warnings: string[] = [];
 
   if (!input.name || input.name.trim().length === 0) {
     errors.push('name is required');
@@ -82,7 +87,6 @@ function validateRuleInput(input: TokenClaimRuleInput): string[] {
   }
 
   // Validate each action
-  const warnings: string[] = [];
   for (const action of input.actions || []) {
     if (!action.claim_name) {
       errors.push('Each action must have a claim_name');
@@ -106,12 +110,7 @@ function validateRuleInput(input: TokenClaimRuleInput): string[] {
     }
   }
 
-  // Log warnings but don't fail
-  if (warnings.length > 0) {
-    console.warn('[Token Claim Rules API] PII warnings:', warnings.join('; '));
-  }
-
-  return errors;
+  return { errors, warnings };
 }
 
 // =============================================================================
@@ -123,11 +122,12 @@ function validateRuleInput(input: TokenClaimRuleInput): string[] {
  * Create a new token claim rule
  */
 export async function createTokenClaimRule(c: Context) {
+  const log = getLogger(c).module('TokenClaimRulesAPI');
   const body = await c.req.json<TokenClaimRuleInput>();
   const tenantId = DEFAULT_TENANT_ID;
 
   // Validate input
-  const errors = validateRuleInput(body);
+  const { errors, warnings } = validateRuleInput(body);
   if (errors.length > 0) {
     return c.json(
       {
@@ -136,6 +136,11 @@ export async function createTokenClaimRule(c: Context) {
       },
       400
     );
+  }
+
+  // Log PII warnings
+  if (warnings.length > 0) {
+    log.warn('PII warnings', { warnings: warnings.join('; ') });
   }
 
   const id = `tcr_${crypto.randomUUID().replace(/-/g, '')}`;
@@ -216,7 +221,7 @@ export async function createTokenClaimRule(c: Context) {
 
     return c.json(rule, 201);
   } catch (error) {
-    console.error('[Token Claim Rules API] Create error:', error);
+    log.error('Create error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -232,6 +237,7 @@ export async function createTokenClaimRule(c: Context) {
  * List all token claim rules
  */
 export async function listTokenClaimRules(c: Context) {
+  const log = getLogger(c).module('TokenClaimRulesAPI');
   const tenantId = DEFAULT_TENANT_ID;
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_RULES_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
@@ -279,7 +285,7 @@ export async function listTokenClaimRules(c: Context) {
       offset,
     });
   } catch (error) {
-    console.error('[Token Claim Rules API] List error:', error);
+    log.error('List error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -295,6 +301,7 @@ export async function listTokenClaimRules(c: Context) {
  * Get a single rule by ID
  */
 export async function getTokenClaimRule(c: Context) {
+  const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -318,7 +325,7 @@ export async function getTokenClaimRule(c: Context) {
 
     return c.json(rowToRule(row));
   } catch (error) {
-    console.error('[Token Claim Rules API] Get error:', error);
+    log.error('Get error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -334,6 +341,7 @@ export async function getTokenClaimRule(c: Context) {
  * Update a rule
  */
 export async function updateTokenClaimRule(c: Context) {
+  const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
   const body = await c.req.json<Partial<TokenClaimRuleInput>>();
@@ -359,7 +367,7 @@ export async function updateTokenClaimRule(c: Context) {
 
     // Validate actions if provided
     if (body.actions) {
-      const validationErrors = validateRuleInput({
+      const { errors: validationErrors, warnings } = validateRuleInput({
         name: body.name || existing.name,
         condition: body.condition || JSON.parse(existing.conditions_json),
         actions: body.actions,
@@ -451,7 +459,7 @@ export async function updateTokenClaimRule(c: Context) {
 
     return c.json(rowToRule(updated!));
   } catch (error) {
-    console.error('[Token Claim Rules API] Update error:', error);
+    log.error('Update error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -467,6 +475,7 @@ export async function updateTokenClaimRule(c: Context) {
  * Delete a rule
  */
 export async function deleteTokenClaimRule(c: Context) {
+  const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -500,7 +509,7 @@ export async function deleteTokenClaimRule(c: Context) {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error('[Token Claim Rules API] Delete error:', error);
+    log.error('Delete error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -516,6 +525,7 @@ export async function deleteTokenClaimRule(c: Context) {
  * Test a single rule against a provided context
  */
 export async function testTokenClaimRuleHandler(c: Context) {
+  const log = getLogger(c).module('TokenClaimRulesAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
   const body = await c.req.json<{
@@ -572,7 +582,7 @@ export async function testTokenClaimRuleHandler(c: Context) {
 
     return c.json(result);
   } catch (error) {
-    console.error('[Token Claim Rules API] Test error:', error);
+    log.error('Test error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -588,6 +598,7 @@ export async function testTokenClaimRuleHandler(c: Context) {
  * Evaluate all rules against a provided context
  */
 export async function evaluateTokenClaimRules(c: Context) {
+  const log = getLogger(c).module('TokenClaimRulesAPI');
   const tenantId = DEFAULT_TENANT_ID;
   const body = await c.req.json<{
     token_type: 'access' | 'id';
@@ -631,7 +642,7 @@ export async function evaluateTokenClaimRules(c: Context) {
       truncation_reason: result.truncation_reason,
     });
   } catch (error) {
-    console.error('[Token Claim Rules API] Evaluate error:', error);
+    log.error('Evaluate error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

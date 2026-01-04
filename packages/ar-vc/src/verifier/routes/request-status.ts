@@ -12,7 +12,7 @@
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { getVPRequestStoreById } from '../../utils/vp-request-sharding';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 
 /**
  * GET /vp/request/:id
@@ -20,6 +20,8 @@ import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
  * Returns the current status of a VP request.
  */
 export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC-VERIFIER');
   try {
     const requestId = c.req.param('id');
 
@@ -87,7 +89,7 @@ export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promi
 
     return c.json(result);
   } catch (error) {
-    console.error('[vpRequestStatus] Error:', error);
+    log.error('VP request status check failed', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

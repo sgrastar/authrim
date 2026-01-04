@@ -27,6 +27,7 @@
  */
 
 import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import { createLogger } from './logger';
 import type {
   RBACTokenClaims,
   UserType,
@@ -41,6 +42,8 @@ import type {
 } from '../types/rbac';
 import { DEFAULT_ID_TOKEN_CLAIMS, DEFAULT_ACCESS_TOKEN_CLAIMS } from '../types/rbac';
 import type { Env } from '../types/env';
+
+const log = createLogger().module('RBAC_CLAIMS');
 
 // =============================================================================
 // RBAC Cache Configuration
@@ -250,10 +253,7 @@ export async function getCompositeRBACCache(
       }
     } catch (error) {
       // PII Protection: Don't log full error object
-      console.warn(
-        'Composite RBAC cache read error:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.warn('Composite RBAC cache read error');
     }
   }
 
@@ -297,10 +297,7 @@ export async function getCompositeRBACCache(
         await cache.put(cacheKey, JSON.stringify(compositeCache), { expirationTtl: ttl });
       } catch (err) {
         // PII Protection: Don't log full error object
-        console.warn(
-          'Composite RBAC cache write error:',
-          err instanceof Error ? err.name : 'Unknown error'
-        );
+        log.warn('Composite RBAC cache write error');
       }
     };
     void storeCacheAsync();
@@ -605,10 +602,7 @@ export async function getIDTokenRBACClaims(
       }
     } catch (error) {
       // PII Protection: Don't log full error object
-      console.warn(
-        'RBAC cache read error (ID token):',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.warn('RBAC cache read error (ID token)');
     }
   }
 
@@ -630,10 +624,7 @@ export async function getIDTokenRBACClaims(
         await cache.put(cacheKey, JSON.stringify(claims), { expirationTtl: ttl });
       } catch (err) {
         // PII Protection: Don't log full error object
-        console.warn(
-          'RBAC cache write error (ID token):',
-          err instanceof Error ? err.name : 'Unknown error'
-        );
+        log.warn('RBAC cache write error (ID token)');
       }
     };
     void storeCacheAsync();
@@ -683,10 +674,7 @@ export async function getAccessTokenRBACClaims(
       }
     } catch (error) {
       // PII Protection: Don't log full error object
-      console.warn(
-        'RBAC cache read error (access token):',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.warn('RBAC cache read error (access token)');
     }
   }
 
@@ -702,10 +690,7 @@ export async function getAccessTokenRBACClaims(
         await cache.put(cacheKey, JSON.stringify(claims), { expirationTtl: ttl });
       } catch (err) {
         // PII Protection: Don't log full error object
-        console.warn(
-          'RBAC cache write error (access token):',
-          err instanceof Error ? err.name : 'Unknown error'
-        );
+        log.warn('RBAC cache write error (access token)');
       }
     };
     void storeCacheAsync();

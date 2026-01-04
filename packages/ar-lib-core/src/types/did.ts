@@ -7,6 +7,10 @@
  * @see https://www.w3.org/TR/did-core/
  */
 
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('DID');
+
 /**
  * DID Document
  * The core data model for a DID
@@ -673,9 +677,9 @@ async function resolveDidKey(did: string): Promise<DIDDocument> {
 
   // Fallback: Return document with publicKeyMultibase only
   // This maintains backwards compatibility but logs a warning
-  console.warn(
-    `[resolveDidKey] Could not decode multibase key to JWK: ${multibaseKey.substring(0, 10)}...`
-  );
+  log.warn('Could not decode multibase key to JWK', {
+    keyPrefix: multibaseKey.substring(0, 10),
+  });
 
   return {
     '@context': ['https://www.w3.org/ns/did/v1'],

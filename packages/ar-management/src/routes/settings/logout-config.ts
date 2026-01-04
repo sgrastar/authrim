@@ -9,12 +9,13 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
 import {
   DEFAULT_LOGOUT_CONFIG,
   LOGOUT_SETTINGS_KEY,
+  getLogger,
   type LogoutConfig,
   type BackchannelLogoutConfig,
+  type Env,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -112,6 +113,7 @@ function validateBackchannelConfig(config: Partial<BackchannelLogoutConfig>): {
  * Get current logout configuration
  */
 export async function getLogoutConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LogoutConfigAPI');
   try {
     let currentConfig = DEFAULT_LOGOUT_CONFIG;
     let source = 'default';
@@ -143,7 +145,7 @@ export async function getLogoutConfig(c: Context<{ Bindings: Env }>) {
       defaults: DEFAULT_LOGOUT_CONFIG,
     });
   } catch (error) {
-    console.error('[Logout Config API] Error getting config:', error);
+    log.error('Error getting config', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -161,6 +163,7 @@ export async function getLogoutConfig(c: Context<{ Bindings: Env }>) {
  * Request body: Partial<LogoutConfig>
  */
 export async function updateLogoutConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LogoutConfigAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -242,7 +245,7 @@ export async function updateLogoutConfig(c: Context<{ Bindings: Env }>) {
       note: 'Logout configuration updated. Changes take effect immediately.',
     });
   } catch (error) {
-    console.error('[Logout Config API] Error updating config:', error);
+    log.error('Error updating config', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
       {
@@ -259,6 +262,7 @@ export async function updateLogoutConfig(c: Context<{ Bindings: Env }>) {
  * Reset logout configuration to defaults (clear KV override)
  */
 export async function resetLogoutConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LogoutConfigAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -279,7 +283,7 @@ export async function resetLogoutConfig(c: Context<{ Bindings: Env }>) {
       note: 'Logout configuration reset to defaults.',
     });
   } catch (error) {
-    console.error('[Logout Config API] Error resetting config:', error);
+    log.error('Error resetting config', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
       {

@@ -11,12 +11,13 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
 import {
   DEFAULT_LOGOUT_WEBHOOK_CONFIG,
   LOGOUT_WEBHOOK_SETTINGS_KEY,
+  getLogger,
   type LogoutWebhookConfig,
   type LogoutRetryConfig,
+  type Env,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -137,6 +138,7 @@ function validateRetryConfig(config: Partial<LogoutRetryConfig>): {
  * Get current logout webhook configuration
  */
 export async function getLogoutWebhookConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LogoutWebhookConfigAPI');
   try {
     let currentConfig = DEFAULT_LOGOUT_WEBHOOK_CONFIG;
     let source = 'default';
@@ -169,10 +171,7 @@ export async function getLogoutWebhookConfig(c: Context<{ Bindings: Env }>) {
     });
   } catch (error) {
     // SECURITY: Log only error type, not full details which may contain sensitive info
-    console.error(
-      '[Logout Webhook Config API] Error getting config:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Error getting config', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -190,6 +189,7 @@ export async function getLogoutWebhookConfig(c: Context<{ Bindings: Env }>) {
  * Request body: Partial<LogoutWebhookConfig>
  */
 export async function updateLogoutWebhookConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LogoutWebhookConfigAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -263,10 +263,7 @@ export async function updateLogoutWebhookConfig(c: Context<{ Bindings: Env }>) {
     });
   } catch (error) {
     // SECURITY: Log only error type, not full details which may contain sensitive info
-    console.error(
-      '[Logout Webhook Config API] Error updating config:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Error updating config', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -282,6 +279,7 @@ export async function updateLogoutWebhookConfig(c: Context<{ Bindings: Env }>) {
  * Reset logout webhook configuration to defaults (clear KV override)
  */
 export async function resetLogoutWebhookConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LogoutWebhookConfigAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -303,10 +301,7 @@ export async function resetLogoutWebhookConfig(c: Context<{ Bindings: Env }>) {
     });
   } catch (error) {
     // SECURITY: Log only error type, not full details which may contain sensitive info
-    console.error(
-      '[Logout Webhook Config API] Error resetting config:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Error resetting config', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

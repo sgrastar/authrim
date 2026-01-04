@@ -9,6 +9,7 @@ import {
   getClientPublicKey,
   validateJWEOptions,
   createOAuthConfigManager,
+  getLogger,
   type JWEAlgorithm,
   type JWEEncryption,
 } from '@authrim/ar-lib-core';
@@ -42,7 +43,6 @@ async function getSigningKeyFromKeyManager(
   const keyData = await keyManager.getActiveKeyWithPrivateRpc();
 
   if (!keyData || !keyData.privatePEM) {
-    console.error('Private key not available from KeyManager');
     throw new Error('Private key not available from KeyManager');
   }
 
@@ -64,6 +64,8 @@ async function getSigningKeyFromKeyManager(
  * Returns claims about the authenticated user
  */
 export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('USERINFO');
+
   // Perform comprehensive token validation (including DPoP if present)
   const introspection = await introspectTokenFromContext(c);
 
@@ -142,7 +144,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         }
       }
     } catch (error) {
-      console.error('Failed to parse claims parameter:', error);
+      log.warn('Failed to parse claims parameter', { error: String(error) });
       // Continue without claims parameter if parsing fails
     }
   }
@@ -174,7 +176,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     try {
       address = JSON.parse(user.address);
     } catch (error) {
-      console.error('Failed to parse address JSON:', error);
+      log.warn('Failed to parse address JSON', { error: String(error), sub });
     }
   }
 
@@ -325,7 +327,11 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       validateJWEOptions(alg, enc);
     } catch (validationError) {
       // Log full error details for debugging but don't expose to client
-      console.error('Invalid JWE options for UserInfo:', validationError);
+      log.error(
+        'Invalid JWE options for UserInfo',
+        { alg, enc, client_id },
+        validationError as Error
+      );
       // SECURITY: Do not expose validation error details in response
       return c.json(
         {
@@ -339,7 +345,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     // Get client's public key for encryption
     const publicKey = await getClientPublicKey(clientMetadata);
     if (!publicKey) {
-      console.error('Client requires UserInfo encryption but no public key available');
+      log.error('Client requires UserInfo encryption but no public key available', { client_id });
       return c.json(
         {
           error: 'invalid_client_metadata',
@@ -379,7 +385,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       c.header('Pragma', 'no-cache');
       return c.body(encryptedUserInfo);
     } catch (encryptError) {
-      console.error('Failed to encrypt UserInfo response:', encryptError);
+      log.error('Failed to encrypt UserInfo response', { client_id }, encryptError as Error);
       return c.json(
         {
           error: 'server_error',
@@ -414,7 +420,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       c.header('Pragma', 'no-cache');
       return c.body(signedUserInfo);
     } catch (signError) {
-      console.error('Failed to sign UserInfo response:', signError);
+      log.error('Failed to sign UserInfo response', { client_id }, signError as Error);
       return c.json(
         {
           error: 'server_error',

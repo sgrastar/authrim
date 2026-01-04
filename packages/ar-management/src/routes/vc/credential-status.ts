@@ -22,6 +22,7 @@ import {
   getTenantIdFromContext,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -31,6 +32,7 @@ import {
  * This is permanent and cannot be undone.
  */
 export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('CredentialStatusAPI');
   const credentialId = c.req.param('id');
 
   if (!credentialId) {
@@ -82,7 +84,7 @@ export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Pr
       revoked_at: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('[admin/vc] Revoke credential error:', error);
+    log.error('Revoke credential error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -94,6 +96,7 @@ export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Pr
  * Suspension uses a separate status list from revocation.
  */
 export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('CredentialStatusAPI');
   const credentialId = c.req.param('id');
 
   if (!credentialId) {
@@ -149,7 +152,7 @@ export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): P
       suspended_at: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('[admin/vc] Suspend credential error:', error);
+    log.error('Suspend credential error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -161,6 +164,7 @@ export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): P
  * Note: Revoked credentials cannot be reactivated.
  */
 export async function activateCredentialHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('CredentialStatusAPI');
   const credentialId = c.req.param('id');
 
   if (!credentialId) {
@@ -216,7 +220,7 @@ export async function activateCredentialHandler(c: Context<{ Bindings: Env }>): 
       activated_at: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('[admin/vc] Activate credential error:', error);
+    log.error('Activate credential error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -232,6 +236,7 @@ export async function activateCredentialHandler(c: Context<{ Bindings: Env }>): 
  * - state: Filter by state (active | sealed | archived)
  */
 export async function listStatusListsHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('CredentialStatusAPI');
   // SECURITY: Get tenant ID from authenticated context, not from query parameters
   const tenantId = getTenantIdFromContext(c);
   const purpose = c.req.query('purpose') as 'revocation' | 'suspension' | undefined;
@@ -259,7 +264,7 @@ export async function listStatusListsHandler(c: Context<{ Bindings: Env }>): Pro
       total: lists.length,
     });
   } catch (error) {
-    console.error('[admin/vc] List status lists error:', error);
+    log.error('List status lists error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -270,6 +275,7 @@ export async function listStatusListsHandler(c: Context<{ Bindings: Env }>): Pro
  * Get status list details including stats.
  */
 export async function getStatusListHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('CredentialStatusAPI');
   const listId = c.req.param('id');
 
   if (!listId) {
@@ -315,7 +321,7 @@ export async function getStatusListHandler(c: Context<{ Bindings: Env }>): Promi
       etag,
     });
   } catch (error) {
-    console.error('[admin/vc] Get status list error:', error);
+    log.error('Get status list error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -326,6 +332,7 @@ export async function getStatusListHandler(c: Context<{ Bindings: Env }>): Promi
  * Get aggregate statistics for status lists.
  */
 export async function getStatusListStatsHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('CredentialStatusAPI');
   // SECURITY: Get tenant ID from authenticated context, not from query parameters
   const tenantId = getTenantIdFromContext(c);
 
@@ -354,7 +361,7 @@ export async function getStatusListStatsHandler(c: Context<{ Bindings: Env }>): 
       },
     });
   } catch (error) {
-    console.error('[admin/vc] Get status list stats error:', error);
+    log.error('Get status list stats error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

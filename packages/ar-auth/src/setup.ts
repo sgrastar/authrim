@@ -32,6 +32,8 @@ import {
   getTenantIdFromContext,
   parseAllowedOrigins,
   isAllowedOrigin,
+  // Logger
+  createLogger,
 } from '@authrim/ar-lib-core';
 
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
@@ -87,6 +89,9 @@ const MAX_NAME_LENGTH = 200;
 const RATE_LIMIT_MAX_REQUESTS = 10;
 const RATE_LIMIT_WINDOW_SECONDS = 3600; // 1 hour
 const SETUP_LOCK_TTL_SECONDS = 60;
+
+// Module-level logger for setup functions
+const moduleLogger = createLogger().module('SETUP');
 
 // Create Hono app for setup routes
 export const setupApp = new Hono<{ Bindings: Env }>();
@@ -304,13 +309,13 @@ async function rollbackUserCreation(
       await piiCtx.piiRepositories.userPII.delete(userId);
     }
 
-    console.info('User rollback completed:', { userId: userId.substring(0, 8) + '...' });
+    moduleLogger.info('User rollback completed', {
+      action: 'rollback_completed',
+      userId: userId.substring(0, 8) + '...',
+    });
   } catch (error) {
     // Log but don't throw - rollback failure shouldn't block error response
-    console.error('User rollback failed:', {
-      errorType: error instanceof Error ? error.name : 'Unknown',
-      message: error instanceof Error ? error.message : 'Unknown error',
-    });
+    moduleLogger.error('User rollback failed', { action: 'rollback_failed' }, error as Error);
   }
 }
 
@@ -568,10 +573,7 @@ setupApp.post('/api/setup/initialize', async (c) => {
     }
 
     // Sanitized error logging - don't log full error object
-    console.error('Setup initialization failed:', {
-      errorType: error instanceof Error ? error.name : 'Unknown',
-      message: error instanceof Error ? error.message : 'Unknown error',
-    });
+    moduleLogger.error('Setup initialization failed', { action: 'initialize' }, error as Error);
 
     return c.json(
       {
@@ -677,10 +679,11 @@ setupApp.post('/api/setup/complete', async (c) => {
       });
     } catch (error) {
       // Sanitized error logging
-      console.error('Passkey verification failed:', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
-        message: error instanceof Error ? error.message : 'Unknown error',
-      });
+      moduleLogger.error(
+        'Passkey verification failed',
+        { action: 'verify_passkey' },
+        error as Error
+      );
 
       // Clean up challenge on error
       if (c.env.AUTHRIM_CONFIG) {
@@ -778,10 +781,7 @@ setupApp.post('/api/setup/complete', async (c) => {
     });
   } catch (error) {
     // Sanitized error logging - don't log full error object
-    console.error('Setup completion failed:', {
-      errorType: error instanceof Error ? error.name : 'Unknown',
-      message: error instanceof Error ? error.message : 'Unknown error',
-    });
+    moduleLogger.error('Setup completion failed', { action: 'complete' }, error as Error);
 
     return c.json(
       {

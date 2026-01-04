@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, Logger } from '@authrim/ar-lib-core';
+import { getLogger } from '@authrim/ar-lib-core';
 
 /**
  * JSON Web Key Set (JWKS) Endpoint Handler
@@ -16,6 +17,8 @@ import type { Env } from '@authrim/ar-lib-core';
  * - No environment variable dependency
  */
 export async function jwksHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('DISCOVERY');
+
   try {
     // Get KeyManager DO instance
     const keyManagerId = c.env.KEY_MANAGER.idFromName('default-v3');
@@ -26,8 +29,8 @@ export async function jwksHandler(c: Context<{ Bindings: Env }>) {
 
     // If KeyManager returns empty keys, fall back to environment variable
     if (!keys || keys.length === 0) {
-      console.warn('KeyManager returned empty keys, falling back to environment variable');
-      return fallbackToEnvKey(c);
+      log.warn('KeyManager returned empty keys, falling back to environment variable');
+      return fallbackToEnvKey(c, log);
     }
 
     // Add cache headers for better performance
@@ -37,9 +40,9 @@ export async function jwksHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json({ keys });
   } catch (error) {
-    console.error('Error fetching JWKS from KeyManager:', error);
+    log.error('Error fetching JWKS from KeyManager', {}, error as Error);
     // Fallback to environment variable if KeyManager is unavailable
-    return fallbackToEnvKey(c);
+    return fallbackToEnvKey(c, log);
   }
 }
 
@@ -47,7 +50,7 @@ export async function jwksHandler(c: Context<{ Bindings: Env }>) {
  * Fallback to environment variable-based JWKS
  * Used when KeyManager DO is unavailable
  */
-function fallbackToEnvKey(c: Context<{ Bindings: Env }>) {
+function fallbackToEnvKey(c: Context<{ Bindings: Env }>, log: Logger) {
   const publicJWKJson = c.env.PUBLIC_JWK_JSON;
 
   if (!publicJWKJson) {
@@ -66,7 +69,7 @@ function fallbackToEnvKey(c: Context<{ Bindings: Env }>) {
       keys: [publicJWK],
     });
   } catch (error) {
-    console.error('Error parsing public JWK from env:', error);
+    log.error('Error parsing public JWK from env', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

@@ -26,10 +26,22 @@ import {
 } from '../check-auth';
 import type { CheckApiKey, CheckApiOperation, RateLimitTier } from '@authrim/ar-lib-core';
 
-// Mock timingSafeEqual from shared
-vi.mock('@authrim/ar-lib-core', () => ({
-  timingSafeEqual: (a: string, b: string) => a === b,
-}));
+// Mock @authrim/ar-lib-core with timingSafeEqual and logger
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    timingSafeEqual: (a: string, b: string) => a === b,
+    createLogger: () => ({
+      module: () => ({
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      }),
+    }),
+  };
+});
 
 /**
  * Helper to create SHA-256 hash (same as in check-auth.ts)

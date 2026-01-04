@@ -3261,10 +3261,10 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       tenant_id: string;
       status: string;
       pii_status: string | null;
-    }>(
-      'SELECT id, tenant_id, status, pii_status FROM users_core WHERE id = ? AND tenant_id = ?',
-      [userId, tenantId]
-    );
+    }>('SELECT id, tenant_id, status, pii_status FROM users_core WHERE id = ? AND tenant_id = ?', [
+      userId,
+      tenantId,
+    ]);
 
     if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -4749,5 +4749,437 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
       },
       500
     );
+  }
+}
+
+// =============================================================================
+// Phase 2: Client Usage Statistics
+// =============================================================================
+
+/**
+ * GET /api/admin/clients/:id/usage
+ * Get usage statistics for a specific client (API calls, rate limits, bandwidth)
+ */
+export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const clientId = c.req.param('id');
+
+  if (!clientId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
+  }
+
+  // Parse date range (optional, defaults to last 30 days)
+  const fromParam = c.req.query('from');
+  const toParam = c.req.query('to');
+
+  const now = new Date();
+  const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
+
+  const from = fromParam ? new Date(fromParam) : defaultFrom;
+  const to = toParam ? new Date(toParam) : now;
+
+  if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+      variables: { field: 'date', reason: 'Invalid date format. Use ISO 8601.' },
+    });
+  }
+
+  const fromTs = Math.floor(from.getTime() / 1000);
+  const toTs = Math.floor(to.getTime() / 1000);
+
+  try {
+    const adapter = new D1Adapter({ db: c.env.DB });
+
+    // Verify client exists and belongs to tenant
+    const client = await adapter.queryOne<{
+      id: string;
+      name: string | null;
+      created_at: number;
+    }>('SELECT id, name, created_at FROM clients WHERE id = ? AND tenant_id = ?', [
+      clientId,
+      tenantId,
+    ]);
+
+    if (!client) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'client', id: clientId },
+      });
+    }
+
+    // Get today's and this month's boundaries
+    const todayStart = Math.floor(new Date().setUTCHours(0, 0, 0, 0) / 1000);
+    const monthStart = Math.floor(new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000);
+
+    // Query usage statistics from audit_log
+    const [apiStats, rateLimitStats, userStats, recentActivity] = await Promise.all([
+      // API call statistics
+      adapter.queryOne<{
+        total_calls: number;
+        calls_today: number;
+        calls_this_month: number;
+        token_requests: number;
+        userinfo_requests: number;
+        introspect_requests: number;
+      }>(
+        `SELECT
+          COUNT(*) as total_calls,
+          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as calls_today,
+          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as calls_this_month,
+          SUM(CASE WHEN action LIKE 'token.%' THEN 1 ELSE 0 END) as token_requests,
+          SUM(CASE WHEN action LIKE 'userinfo.%' THEN 1 ELSE 0 END) as userinfo_requests,
+          SUM(CASE WHEN action LIKE 'introspect.%' THEN 1 ELSE 0 END) as introspect_requests
+        FROM audit_log
+        WHERE tenant_id = ?
+          AND details LIKE ?
+          AND created_at >= ? AND created_at <= ?`,
+        [todayStart, monthStart, tenantId, `%"client_id":"${clientId}"%`, fromTs, toTs]
+      ),
+
+      // Rate limit statistics
+      adapter.queryOne<{
+        rate_limit_hits: number;
+        rate_limit_hits_today: number;
+      }>(
+        `SELECT
+          COUNT(*) as rate_limit_hits,
+          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as rate_limit_hits_today
+        FROM audit_log
+        WHERE tenant_id = ?
+          AND action = 'rate_limit.exceeded'
+          AND details LIKE ?
+          AND created_at >= ? AND created_at <= ?`,
+        [todayStart, tenantId, `%"client_id":"${clientId}"%`, fromTs, toTs]
+      ),
+
+      // Unique users
+      adapter.queryOne<{ unique_users: number }>(
+        `SELECT COUNT(DISTINCT json_extract(details, '$.user_id')) as unique_users
+        FROM audit_log
+        WHERE tenant_id = ?
+          AND details LIKE ?
+          AND json_extract(details, '$.user_id') IS NOT NULL
+          AND created_at >= ? AND created_at <= ?`,
+        [tenantId, `%"client_id":"${clientId}"%`, fromTs, toTs]
+      ),
+
+      // Recent activity
+      adapter.queryOne<{ last_activity: number | null }>(
+        `SELECT MAX(created_at) as last_activity
+        FROM audit_log
+        WHERE tenant_id = ?
+          AND details LIKE ?`,
+        [tenantId, `%"client_id":"${clientId}"%`]
+      ),
+    ]);
+
+    // Get daily breakdown for chart data
+    const dailyUsage = await adapter.query<{
+      day: string;
+      calls: number;
+    }>(
+      `SELECT
+        strftime('%Y-%m-%d', created_at, 'unixepoch') as day,
+        COUNT(*) as calls
+      FROM audit_log
+      WHERE tenant_id = ?
+        AND details LIKE ?
+        AND created_at >= ? AND created_at <= ?
+      GROUP BY day
+      ORDER BY day ASC`,
+      [tenantId, `%"client_id":"${clientId}"%`, fromTs, toTs]
+    );
+
+    return c.json({
+      client_id: clientId,
+      client_name: client.name,
+      usage: {
+        api_calls: {
+          total: apiStats?.total_calls ?? 0,
+          today: apiStats?.calls_today ?? 0,
+          this_month: apiStats?.calls_this_month ?? 0,
+        },
+        by_endpoint: {
+          token: apiStats?.token_requests ?? 0,
+          userinfo: apiStats?.userinfo_requests ?? 0,
+          introspect: apiStats?.introspect_requests ?? 0,
+        },
+        rate_limits: {
+          hits_total: rateLimitStats?.rate_limit_hits ?? 0,
+          hits_today: rateLimitStats?.rate_limit_hits_today ?? 0,
+        },
+        users: {
+          unique_users: userStats?.unique_users ?? 0,
+        },
+        last_activity: recentActivity?.last_activity
+          ? new Date(recentActivity.last_activity * 1000).toISOString()
+          : null,
+      },
+      daily_breakdown: dailyUsage.map((row) => ({
+        date: row.day,
+        api_calls: row.calls,
+      })),
+      period: {
+        from: from.toISOString(),
+        to: to.toISOString(),
+      },
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN');
+    log.error('Failed to get client usage statistics', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+// =============================================================================
+// Phase 3: User Activity Log
+// =============================================================================
+
+/**
+ * GET /api/admin/users/:id/activity-log
+ * Get user activity history from audit logs
+ */
+export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const userId = c.req.param('id');
+
+  if (!userId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
+  }
+
+  // Parse pagination
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '20', 10), 100);
+  const cursor = c.req.query('cursor');
+
+  // Parse filters
+  const actionFilter = c.req.query('action'); // e.g., 'auth.login', 'token.*'
+  const fromParam = c.req.query('from');
+  const toParam = c.req.query('to');
+
+  try {
+    const adapter = new D1Adapter({ db: c.env.DB });
+
+    // Verify user exists and belongs to tenant
+    const user = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM users_core WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
+    );
+
+    if (!user) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'user', id: userId },
+      });
+    }
+
+    // Build query
+    let query = `
+      SELECT id, action, details, created_at, ip_address, user_agent
+      FROM audit_log
+      WHERE tenant_id = ?
+        AND (subject_type = 'user' AND subject_id = ?)
+    `;
+    const bindings: (string | number)[] = [tenantId, userId];
+
+    // Apply action filter
+    if (actionFilter) {
+      if (actionFilter.includes('*')) {
+        query += ' AND action LIKE ?';
+        bindings.push(actionFilter.replace('*', '%'));
+      } else {
+        query += ' AND action = ?';
+        bindings.push(actionFilter);
+      }
+    }
+
+    // Apply date filters
+    if (fromParam) {
+      const fromTs = Math.floor(new Date(fromParam).getTime() / 1000);
+      if (!isNaN(fromTs)) {
+        query += ' AND created_at >= ?';
+        bindings.push(fromTs);
+      }
+    }
+    if (toParam) {
+      const toTs = Math.floor(new Date(toParam).getTime() / 1000);
+      if (!isNaN(toTs)) {
+        query += ' AND created_at <= ?';
+        bindings.push(toTs);
+      }
+    }
+
+    // Apply cursor (created_at based)
+    if (cursor) {
+      try {
+        const decoded = JSON.parse(atob(cursor)) as { created_at: number; id: string };
+        query += ' AND (created_at < ? OR (created_at = ? AND id < ?))';
+        bindings.push(decoded.created_at, decoded.created_at, decoded.id);
+      } catch {
+        // Invalid cursor, ignore
+      }
+    }
+
+    query += ' ORDER BY created_at DESC, id DESC LIMIT ?';
+    bindings.push(limit + 1);
+
+    const activities = await adapter.query<{
+      id: string;
+      action: string;
+      details: string | null;
+      created_at: number;
+      ip_address: string | null;
+      user_agent: string | null;
+    }>(query, bindings);
+
+    const hasMore = activities.length > limit;
+    const data = hasMore ? activities.slice(0, limit) : activities;
+
+    // Format response
+    const formattedData = data.map((row) => ({
+      id: row.id,
+      action: row.action,
+      details: row.details ? JSON.parse(row.details) : null,
+      timestamp: new Date(row.created_at * 1000).toISOString(),
+      ip_address: row.ip_address,
+      user_agent: row.user_agent,
+    }));
+
+    // Generate next cursor
+    let nextCursor: string | undefined;
+    if (hasMore && data.length > 0) {
+      const lastItem = data[data.length - 1];
+      nextCursor = btoa(JSON.stringify({ created_at: lastItem.created_at, id: lastItem.id }));
+    }
+
+    return c.json({
+      data: formattedData,
+      pagination: {
+        has_more: hasMore,
+        next_cursor: nextCursor,
+      },
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN');
+    log.error('Failed to get user activity log', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+// =============================================================================
+// Phase 3: Send Email to User
+// =============================================================================
+
+/**
+ * POST /api/admin/users/:id/send-email
+ * Send an email to a user (password reset, notification, etc.)
+ */
+export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = getTenantIdFromContext(c);
+  const userId = c.req.param('id');
+
+  if (!userId) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
+  }
+
+  try {
+    const body = await c.req.json<{
+      template: string;
+      subject?: string;
+      variables?: Record<string, string>;
+    }>();
+
+    // Validate template
+    const allowedTemplates = [
+      'password_reset',
+      'welcome',
+      'verification',
+      'notification',
+      'security_alert',
+      'account_locked',
+      'account_suspended',
+    ];
+
+    if (!body.template || !allowedTemplates.includes(body.template)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'template',
+          reason: `Must be one of: ${allowedTemplates.join(', ')}`,
+        },
+      });
+    }
+
+    const adapter = new D1Adapter({ db: c.env.DB });
+
+    // Get user with email from PII database
+    const userCore = await adapter.queryOne<{ id: string; status: string }>(
+      'SELECT id, status FROM users_core WHERE id = ? AND tenant_id = ?',
+      [userId, tenantId]
+    );
+
+    if (!userCore) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+        variables: { resource: 'user', id: userId },
+      });
+    }
+
+    // Get email from PII database
+    let userEmail: string | null = null;
+    if (c.env.DB_PII) {
+      const piiAdapter = new D1Adapter({ db: c.env.DB_PII });
+      const userPii = await piiAdapter.queryOne<{ email: string }>(
+        'SELECT email FROM users_pii WHERE user_id = ?',
+        [userId]
+      );
+      userEmail = userPii?.email ?? null;
+    }
+
+    if (!userEmail) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'user', reason: 'User does not have an email address' },
+      });
+    }
+
+    // Create email job (queued for async processing)
+    const emailJobId = crypto.randomUUID();
+    const nowTs = Math.floor(Date.now() / 1000);
+
+    await adapter.execute(
+      `INSERT INTO email_queue (
+        id, tenant_id, user_id, template, subject, variables, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        emailJobId,
+        tenantId,
+        userId,
+        body.template,
+        body.subject ?? null,
+        body.variables ? JSON.stringify(body.variables) : null,
+        'pending',
+        nowTs,
+      ]
+    );
+
+    // Write audit log
+    await createAuditLogFromContext(c, 'email.queued', 'user', userId, {
+      template: body.template,
+      email_job_id: emailJobId,
+    });
+
+    return c.json({
+      success: true,
+      email_job_id: emailJobId,
+      user_id: userId,
+      template: body.template,
+      status: 'queued',
+      created_at: new Date(nowTs * 1000).toISOString(),
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN');
+    log.error('Failed to queue email', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

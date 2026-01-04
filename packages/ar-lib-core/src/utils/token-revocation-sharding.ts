@@ -28,6 +28,9 @@
 
 import type { Env } from '../types/env';
 import { fnv1a32, DEFAULT_TENANT_ID } from './tenant-context';
+import { createLogger } from './logger';
+
+const log = createLogger().module('TOKEN_REVOCATION_SHARD');
 import {
   getRegionShardConfig,
   resolveShardForNewResource,
@@ -517,7 +520,7 @@ export async function getRevocationStoreByJti(
       shardIndex = parsed.shardIndex;
     } else {
       // Invalid shard index - fall back to hash-based routing
-      console.warn(
+      log.warn(
         `Invalid shard index ${parsed.shardIndex} for generation ${parsed.generation} (max: ${generationShardCount}). Falling back to hash.`
       );
       shardIndex = getRevocationShardIndex(parsed.randomPart, generationShardCount);

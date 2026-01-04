@@ -23,6 +23,7 @@ export {
   type UpdateUserCoreInput,
   type UserCoreFilterOptions,
   type CoreUserType,
+  type UserStatus,
 } from './user-core';
 
 export {

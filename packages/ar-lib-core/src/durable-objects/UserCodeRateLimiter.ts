@@ -11,6 +11,7 @@
 
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
+import { createLogger, type Logger } from '../utils/logger';
 
 interface FailedAttempt {
   ip: string;
@@ -24,6 +25,7 @@ export class UserCodeRateLimiter {
   private state: DurableObjectState;
   private env: Env;
   private attempts: Map<string, FailedAttempt> = new Map();
+  private readonly log: Logger = createLogger().module('UserCodeRateLimiter');
 
   // Rate limiting configuration
   private static readonly MAX_ATTEMPTS_PER_HOUR = 5;
@@ -80,7 +82,7 @@ export class UserCodeRateLimiter {
       return new Response('Not found', { status: 404 });
     } catch (error) {
       // Log full error for debugging but don't expose to client
-      console.error('UserCodeRateLimiter error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(
         JSON.stringify({
@@ -172,9 +174,11 @@ export class UserCodeRateLimiter {
         );
         attempt.blockedUntil = now + blockDuration;
 
-        console.log(
-          `[RATE_LIMIT] Blocking IP ${ip} for ${blockDuration / 1000}s after ${newCount} failed attempts`
-        );
+        this.log.warn('Blocking IP due to failed attempts', {
+          ip,
+          blockDurationSeconds: Math.round(blockDuration / 1000),
+          failedAttempts: newCount,
+        });
       }
 
       this.attempts.set(ip, attempt);
@@ -203,7 +207,7 @@ export class UserCodeRateLimiter {
     }
 
     if (cleaned > 0) {
-      console.log(`[RATE_LIMIT] Cleaned up ${cleaned} expired rate limit records`);
+      this.log.info('Cleaned up expired rate limit records', { count: cleaned });
     }
 
     // Schedule next cleanup

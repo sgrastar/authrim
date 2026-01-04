@@ -17,6 +17,9 @@ import { generateSecureRandomString } from './crypto';
 import { DEFAULT_TENANT_ID } from './tenant-context';
 import { D1Adapter } from '../db/adapters/d1-adapter';
 import type { DatabaseAdapter } from '../db/adapter';
+import { createLogger } from './logger';
+
+const log = createLogger().module('AUDIT_LOG');
 
 /**
  * Create an audit log entry in the database
@@ -60,7 +63,7 @@ export async function createAuditLog(
     // Log critical operations to console for immediate visibility
     // PII Protection: Only log safe fields (no metadata which may contain PII)
     if (entry.severity === 'critical') {
-      console.warn('[CRITICAL AUDIT]', {
+      log.warn('CRITICAL AUDIT', {
         tenantId,
         action: entry.action,
         resource: entry.resource,
@@ -71,10 +74,7 @@ export async function createAuditLog(
   } catch (error) {
     // Non-blocking: log error but don't fail the main operation
     // PII Protection: Don't log entry details (may contain PII in metadata)
-    console.error(
-      'Failed to create audit log:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Failed to create audit log', {}, error as Error);
   }
 }
 
@@ -104,7 +104,7 @@ export async function createAuditLogFromContext(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const adminAuth = (c as any).get('adminAuth') as { userId: string } | undefined;
   if (!adminAuth) {
-    console.error('Cannot create audit log: adminAuth context not found');
+    log.error('Cannot create audit log: adminAuth context not found');
     return;
   }
 

@@ -19,6 +19,7 @@ import {
   getClient,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -28,6 +29,8 @@ import {
  * Issues auth_req_id for CIBA flow
  */
 export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('CIBA');
+
   try {
     // Parse request body
     const body = await c.req.parseBody();
@@ -124,7 +127,10 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       }
 
       resolvedSubjectId = idTokenValidation.subjectId;
-      console.log('Validated id_token_hint, subject:', resolvedSubjectId);
+      log.debug('Validated id_token_hint', {
+        action: 'validate_id_token_hint',
+        subjectId: resolvedSubjectId,
+      });
     }
 
     // Validate login_hint_token if provided (JWT from third party)
@@ -139,13 +145,16 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       }
 
       resolvedSubjectId = loginHintTokenValidation.subjectId;
-      console.log('Validated login_hint_token, subject:', resolvedSubjectId);
+      log.debug('Validated login_hint_token', {
+        action: 'validate_login_hint_token',
+        subjectId: resolvedSubjectId,
+      });
     }
 
     // Parse login_hint if provided (fallback)
     if (login_hint && !resolvedSubjectId) {
       const parsed = parseLoginHint(login_hint);
-      console.log('Parsed login_hint:', parsed);
+      log.debug('Parsed login_hint', { action: 'parse_login_hint', hintType: parsed.type });
       // In production, use this to look up user in database
       // For now, we store the hint for resolution during approval
     }
@@ -199,7 +208,11 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
 
     if (!storeResponse.ok) {
       const error = await storeResponse.json();
-      console.error('CIBARequestStore error:', error);
+      log.error(
+        'CIBARequestStore error',
+        { action: 'store_request' },
+        new Error(JSON.stringify(error))
+      );
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
@@ -209,13 +222,14 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     // - Phone: Send SMS with approval link
     // - Push: Send push notification to mobile app
     // - For now, log the request for manual approval via UI
-    console.log('CIBA authentication request created:', {
-      auth_req_id: authReqId,
-      client_id,
-      login_hint,
-      binding_message,
-      user_code: generatedUserCode,
-      delivery_mode: deliveryMode,
+    log.info('CIBA authentication request created', {
+      action: 'request_created',
+      authReqId,
+      clientId: client_id,
+      hasLoginHint: !!login_hint,
+      hasBindingMessage: !!binding_message,
+      hasUserCode: !!generatedUserCode,
+      deliveryMode,
     });
 
     // Build response based on delivery mode
@@ -235,7 +249,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json(response, 200);
   } catch (error) {
-    console.error('CIBA authorization error:', error);
+    log.error('CIBA authorization error', { action: 'authorization' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

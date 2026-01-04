@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 import { listEnabledProviders } from '../services/provider-store';
 import type { ProviderListResponse } from '../types';
 
@@ -14,6 +14,7 @@ import type { ProviderListResponse } from '../types';
  * Returns only enabled providers with public information (no secrets)
  */
 export async function handleListProviders(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('EXTERNAL-IDP');
   try {
     const tenantId = c.req.query('tenant_id') || 'default';
     const providers = await listEnabledProviders(c.env, tenantId);
@@ -33,7 +34,7 @@ export async function handleListProviders(c: Context<{ Bindings: Env }>): Promis
 
     return c.json(response);
   } catch (error) {
-    console.error('Failed to list providers:', error);
+    log.error('Failed to list providers', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

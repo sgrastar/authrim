@@ -8,7 +8,10 @@
  */
 
 import type { Env } from '@authrim/ar-lib-core';
+import { createLogger } from '@authrim/ar-lib-core';
 import type { LinkedIdentity, ProviderMetadata, UpstreamProvider } from '../types';
+
+const log = createLogger().module('TOKEN-REVOCATION');
 import { getProvider } from './provider-store';
 import { decryptLinkedIdentityTokens } from './linked-identity-store';
 import { decrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
@@ -57,7 +60,7 @@ export async function revokeLinkedIdentityTokens(
     const revocationEndpoint = await getRevocationEndpoint(provider);
     if (!revocationEndpoint) {
       // Provider doesn't support token revocation - this is not an error
-      console.warn(`Provider ${provider.name} does not support token revocation`);
+      log.warn('Provider does not support token revocation', { provider: provider.name });
       result.success = true; // Consider it a success since we can't do anything
       return result;
     }
@@ -109,16 +112,18 @@ export async function revokeLinkedIdentityTokens(
 
     if (result.success) {
       // PII Protection: Don't log identity.id (can be used for user tracking)
-      console.warn(
-        `Token revocation completed: ` +
-          `access=${result.accessTokenRevoked}, refresh=${result.refreshTokenRevoked}`
-      );
+      log.info('Token revocation completed', {
+        accessTokenRevoked: result.accessTokenRevoked,
+        refreshTokenRevoked: result.refreshTokenRevoked,
+      });
     }
 
     return result;
   } catch (error) {
     // PII Protection: Don't log full error object
-    console.error('Token revocation error:', error instanceof Error ? error.name : 'Unknown error');
+    log.error('Token revocation error', {
+      errorName: error instanceof Error ? error.name : 'Unknown error',
+    });
     // SECURITY: Do not expose internal error details
     result.errors.push('Token revocation failed');
     return result;
@@ -202,7 +207,7 @@ async function revokeToken(
     // Handle error response - read body for parsing but don't log it (may contain sensitive data)
     const errorBody = await response.text();
     // Security: Only log HTTP status code (safe), not response body
-    console.warn('Token revocation failed with status:', response.status);
+    log.warn('Token revocation failed', { status: response.status });
 
     // Parse OAuth error if present (safe fields only)
     try {
@@ -218,7 +223,7 @@ async function revokeToken(
       return { success: false, error: `HTTP ${response.status}` };
     }
   } catch (error) {
-    console.error('[revokeToken] Request error:', error);
+    log.error('Token revocation request error', {}, error as Error);
     return {
       success: false,
       // SECURITY: Do not expose network error details (may contain URLs)

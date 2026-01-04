@@ -36,6 +36,9 @@ import {
   AR_ERROR_CODES,
   // Health Check
   createHealthCheckHandlers,
+  // Logger
+  getLogger,
+  createLogger,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
@@ -216,7 +219,8 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-  console.error('External IdP Worker Error:', err);
+  const log = getLogger(c).module('EXTERNAL-IDP');
+  log.error('External IdP Worker Error', { err: err.message }, err as Error);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 
@@ -235,18 +239,19 @@ async function scheduled(
   env: Env,
   _ctx: ExecutionContext
 ): Promise<void> {
-  console.log('Running scheduled maintenance tasks...');
+  const log = createLogger().module('EXTERNAL-IDP');
+  log.info('Running scheduled maintenance tasks...');
 
   try {
     // 1. Clean up expired and consumed auth states
     const statesDeleted = await cleanupExpiredStates(env);
-    console.log(`Cleaned up ${statesDeleted} expired/consumed auth states`);
+    log.info('Cleaned up expired/consumed auth states', { statesDeleted });
 
     // 2. Refresh tokens that are about to expire
     const tokensRefreshed = await refreshExpiringTokens(env);
-    console.log(`Refreshed ${tokensRefreshed} expiring tokens`);
+    log.info('Refreshed expiring tokens', { tokensRefreshed });
   } catch (error) {
-    console.error('Scheduled maintenance failed:', error);
+    log.error('Scheduled maintenance failed', {}, error as Error);
     // Don't throw - we don't want to fail the entire scheduled run
   }
 }

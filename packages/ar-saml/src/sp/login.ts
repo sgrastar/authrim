@@ -14,6 +14,7 @@ import {
   getUIConfig,
   getTenantIdFromContext,
   buildIssuerUrl,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
 import { SAML_NAMESPACES, BINDING_URIS, NAMEID_FORMATS } from '../common/constants';
@@ -38,6 +39,7 @@ import { getIdPConfig, listIdPConfigs } from '../admin/providers';
  */
 export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
+  const log = getLogger(c).module('SAML-SP');
 
   try {
     // Get IdP ID from query parameter
@@ -77,7 +79,7 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
       return postToIdP(c, idpConfig, authnRequestXml, returnUrl);
     }
   } catch (error) {
-    console.error('SP Login Error:', error);
+    log.error('SP Login Error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

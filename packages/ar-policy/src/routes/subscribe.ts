@@ -19,7 +19,7 @@
 import { Hono } from 'hono';
 import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { Env as SharedEnv } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 import {
   authenticateCheckApiRequest,
   isOperationAllowed,
@@ -154,7 +154,9 @@ subscribeRoutes.get('/subscribe', async (c) => {
       })
     );
   } catch (error) {
-    console.error('[Subscribe] WebSocket upgrade error:', error);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const log = getLogger(c as any).module('SUBSCRIBE');
+    log.error('WebSocket upgrade error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -208,7 +210,9 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
       ...stats,
     });
   } catch (error) {
-    console.error('[Subscribe] Stats error:', error);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const log = getLogger(c as any).module('SUBSCRIBE');
+    log.error('Stats error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });

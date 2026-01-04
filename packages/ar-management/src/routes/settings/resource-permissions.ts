@@ -16,6 +16,7 @@ import {
   D1Adapter,
   createPermissionChangeNotifier,
   createPermissionChangeEvent,
+  getLogger,
   type DatabaseAdapter,
   type ResourcePermission,
   type ResourcePermissionRow,
@@ -90,6 +91,7 @@ function validatePermissionInput(input: ResourcePermissionInput): string[] {
  * Grant a new resource permission
  */
 export async function createResourcePermission(c: Context) {
+  const log = getLogger(c).module('ResourcePermissionsAPI');
   const body = await c.req.json<ResourcePermissionInput>();
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -178,10 +180,7 @@ export async function createResourcePermission(c: Context) {
       );
     } catch (notifyError) {
       // Log but don't fail the request if notification fails
-      console.warn(
-        '[Resource Permissions API] Permission change notification failed:',
-        notifyError
-      );
+      log.warn('Permission change notification failed', {}, notifyError as Error);
     }
 
     // Return created permission
@@ -202,7 +201,7 @@ export async function createResourcePermission(c: Context) {
 
     return c.json(permission, 201);
   } catch (error) {
-    console.error('[Resource Permissions API] Create error:', error);
+    log.error('Create error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -218,6 +217,7 @@ export async function createResourcePermission(c: Context) {
  * List all resource permissions
  */
 export async function listResourcePermissions(c: Context) {
+  const log = getLogger(c).module('ResourcePermissionsAPI');
   const tenantId = DEFAULT_TENANT_ID;
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_PERMISSIONS_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
@@ -270,7 +270,7 @@ export async function listResourcePermissions(c: Context) {
       offset,
     });
   } catch (error) {
-    console.error('[Resource Permissions API] List error:', error);
+    log.error('List error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -286,6 +286,7 @@ export async function listResourcePermissions(c: Context) {
  * Revoke a permission
  */
 export async function deleteResourcePermission(c: Context) {
+  const log = getLogger(c).module('ResourcePermissionsAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -338,15 +339,12 @@ export async function deleteResourcePermission(c: Context) {
       );
     } catch (notifyError) {
       // Log but don't fail the request if notification fails
-      console.warn(
-        '[Resource Permissions API] Permission change notification failed:',
-        notifyError
-      );
+      log.warn('Permission change notification failed', {}, notifyError as Error);
     }
 
     return c.json({ success: true });
   } catch (error) {
-    console.error('[Resource Permissions API] Delete error:', error);
+    log.error('Delete error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -362,6 +360,7 @@ export async function deleteResourcePermission(c: Context) {
  * Get all permissions for a specific subject
  */
 export async function getPermissionsBySubject(c: Context) {
+  const log = getLogger(c).module('ResourcePermissionsAPI');
   const subjectId = c.req.param('id');
   const subjectType = (c.req.query('type') as ResourcePermissionSubjectType) || 'user';
   const tenantId = DEFAULT_TENANT_ID;
@@ -383,7 +382,7 @@ export async function getPermissionsBySubject(c: Context) {
       permissions,
     });
   } catch (error) {
-    console.error('[Resource Permissions API] Get by subject error:', error);
+    log.error('Get by subject error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -399,6 +398,7 @@ export async function getPermissionsBySubject(c: Context) {
  * Get all permissions for a specific resource
  */
 export async function getPermissionsByResource(c: Context) {
+  const log = getLogger(c).module('ResourcePermissionsAPI');
   const resourceType = c.req.param('type');
   const resourceId = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
@@ -420,7 +420,7 @@ export async function getPermissionsByResource(c: Context) {
       permissions,
     });
   } catch (error) {
-    console.error('[Resource Permissions API] Get by resource error:', error);
+    log.error('Get by resource error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -436,6 +436,7 @@ export async function getPermissionsByResource(c: Context) {
  * Check if a subject has permission for a specific resource and action
  */
 export async function checkResourcePermission(c: Context) {
+  const log = getLogger(c).module('ResourcePermissionsAPI');
   const body = await c.req.json<{
     subject_id: string;
     resource_type: string;
@@ -462,7 +463,7 @@ export async function checkResourcePermission(c: Context) {
       action: body.action,
     });
   } catch (error) {
-    console.error('[Resource Permissions API] Check error:', error);
+    log.error('Check error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

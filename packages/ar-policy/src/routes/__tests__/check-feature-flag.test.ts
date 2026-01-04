@@ -167,6 +167,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
       } as unknown as KVNamespace;
       const mockD1 = createMockD1();
 
+      // Suppress structured logger error output during test
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       const env = {
@@ -182,10 +183,8 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       expect(res.status).toBe(200);
       expect(body.enabled).toBe(true);
-      expect(consoleSpy).toHaveBeenCalledWith(
-        '[Check API] Failed to read KV flag:',
-        expect.any(Error)
-      );
+      // Logger was called (structured logger outputs JSON)
+      expect(consoleSpy).toHaveBeenCalled();
 
       consoleSpy.mockRestore();
     });
@@ -598,6 +597,7 @@ describe('Batch Size Limit Configuration', () => {
       } as unknown as KVNamespace;
       const mockD1 = createMockD1();
 
+      // Suppress structured logger error output during test
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       const env = {
@@ -612,10 +612,8 @@ describe('Batch Size Limit Configuration', () => {
 
       expect(res.status).toBe(200);
       expect(body.batch_size_limit).toBe(100);
-      expect(consoleSpy).toHaveBeenCalledWith(
-        '[Check API] Failed to read batch size limit from KV:',
-        expect.any(Error)
-      );
+      // Logger was called (structured logger outputs JSON)
+      expect(consoleSpy).toHaveBeenCalled();
 
       consoleSpy.mockRestore();
     });

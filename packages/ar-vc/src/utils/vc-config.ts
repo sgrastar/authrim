@@ -11,6 +11,9 @@
  */
 
 import type { Env } from '../types';
+import { createLogger } from '@authrim/ar-lib-core';
+
+const log = createLogger().module('VC-CONFIG');
 
 /**
  * VC configuration values
@@ -259,10 +262,10 @@ export class VCConfigManager {
           return kvValue;
         }
       } catch (error) {
-        console.warn(
-          `[VCConfigManager] Failed to read ${name} from KV:`,
-          error instanceof Error ? error.name : 'Unknown error'
-        );
+        log.warn('Failed to read config from KV', {
+          configName: name,
+          errorName: error instanceof Error ? error.name : 'Unknown',
+        });
       }
     }
 
@@ -302,10 +305,10 @@ export class VCConfigManager {
           }
         }
       } catch (error) {
-        console.warn(
-          `[VCConfigManager] Failed to read ${name} from KV:`,
-          error instanceof Error ? error.name : 'Unknown error'
-        );
+        log.warn('Failed to read numeric config from KV', {
+          configName: name,
+          errorName: error instanceof Error ? error.name : 'Unknown',
+        });
       }
     }
 
@@ -341,10 +344,10 @@ export class VCConfigManager {
           return value;
         }
       } catch (error) {
-        console.warn(
-          `[VCConfigManager] Failed to read ${name} from KV:`,
-          error instanceof Error ? error.name : 'Unknown error'
-        );
+        log.warn('Failed to read boolean config from KV', {
+          configName: name,
+          errorName: error instanceof Error ? error.name : 'Unknown',
+        });
       }
     }
 

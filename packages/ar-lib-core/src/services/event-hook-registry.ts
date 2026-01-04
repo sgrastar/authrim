@@ -25,6 +25,9 @@ import type {
 import type { EventHandlerContext } from '../types/events/handler';
 import type { UnifiedEvent } from '../types/events/unified-event';
 import { matchEventPattern } from '../types/events/unified-event';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('EVENT-HOOK-REGISTRY');
 
 // =============================================================================
 // Default Values
@@ -465,7 +468,7 @@ export async function executeBeforeHooks(
 
       // Other errors: log and continue (or rethrow based on config)
       // For now, we treat other errors as non-blocking
-      console.error(`[Before Hook] ${hook.name} failed:`, error);
+      log.error('Before hook failed', { hookId: hook.id, hookName: hook.name }, error as Error);
     }
   }
 

@@ -21,6 +21,7 @@ import {
   introspectTokenFromContext,
   getSessionStoreBySessionId,
   type ExtendedConsentEventData,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { getCookie } from 'hono/cookie';
 
@@ -59,7 +60,8 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
         }
       }
     } catch (error) {
-      console.error('[UserConsents] Session validation error:', error);
+      const log = getLogger(c).module('USER-CONSENTS');
+      log.error('Session validation error', {}, error as Error);
     }
   }
 
@@ -136,7 +138,8 @@ export async function userConsentsListHandler(c: Context<{ Bindings: Env }>) {
       total: consents.length,
     });
   } catch (error) {
-    console.error('[UserConsents] List error:', error);
+    const log = getLogger(c).module('USER-CONSENTS');
+    log.error('Failed to list consents', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -257,11 +260,13 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
         // Estimate - actual count would require querying token stores
         refreshTokensRevoked = 1;
       } catch (error) {
-        console.warn('[UserConsents] Token revocation warning:', error);
+        const log = getLogger(c).module('USER-CONSENTS');
+        log.warn('Token revocation warning', { error: (error as Error).message });
       }
     }
 
     // Publish consent.revoked event
+    const log = getLogger(c).module('USER-CONSENTS');
     publishEvent(c, {
       type: CONSENT_EVENTS.REVOKED,
       tenantId,
@@ -274,7 +279,7 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
         initiatedBy: 'user',
       } satisfies ExtendedConsentEventData,
     }).catch((err) => {
-      console.error('[Event] Failed to publish consent.revoked:', err);
+      log.error('Failed to publish consent.revoked event', { clientId }, err as Error);
     });
 
     const result: ConsentRevokeResult = {
@@ -286,7 +291,8 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json(result);
   } catch (error) {
-    console.error('[UserConsents] Revoke error:', error);
+    const log = getLogger(c).module('USER-CONSENTS');
+    log.error('Failed to revoke consent', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

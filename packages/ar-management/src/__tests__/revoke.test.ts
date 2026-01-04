@@ -125,6 +125,8 @@ function createMockContext(options: {
     env: mockEnv as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
     body: vi.fn((body, status = 200) => new Response(body, { status })),
+    // Add get method for context variables (required by getLogger)
+    get: vi.fn().mockReturnValue(undefined),
   } as any;
 
   return c;

@@ -18,6 +18,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * Rate limit configuration
@@ -78,6 +79,7 @@ export class RateLimiterCounter extends DurableObject<Env> {
   private counts: Map<string, RateLimitRecord> = new Map();
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
+  private readonly log: Logger = createLogger().module('RateLimiterCounter');
 
   // Configuration
   private readonly CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
@@ -159,12 +161,10 @@ export class RateLimiterCounter extends DurableObject<Env> {
 
       if (stored) {
         this.counts = new Map(Object.entries(stored.records));
-        console.log(
-          `RateLimiterCounter: Restored ${this.counts.size} records from Durable Storage`
-        );
+        this.log.info('Restored records from Durable Storage', { count: this.counts.size });
       }
     } catch (error) {
-      console.error('RateLimiterCounter: Failed to initialize from Durable Storage:', error);
+      this.log.error('Failed to initialize from Durable Storage', {}, error as Error);
     }
 
     this.initialized = true;
@@ -183,7 +183,7 @@ export class RateLimiterCounter extends DurableObject<Env> {
 
       await this.ctx.storage.put('state', stateToSave);
     } catch (error) {
-      console.error('RateLimiterCounter: Failed to save to Durable Storage:', error);
+      this.log.error('Failed to save to Durable Storage', {}, error as Error);
     }
   }
 
@@ -214,7 +214,7 @@ export class RateLimiterCounter extends DurableObject<Env> {
     }
 
     if (cleaned > 0) {
-      console.log(`RateLimiterCounter: Cleaned up ${cleaned} expired entries`);
+      this.log.info('Cleaned up expired entries', { count: cleaned });
       await this.saveState();
     }
   }
@@ -411,7 +411,7 @@ export class RateLimiterCounter extends DurableObject<Env> {
       return new Response('Not Found', { status: 404 });
     } catch (error) {
       // Log full error for debugging but don't expose to client
-      console.error('RateLimiterCounter error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(
         JSON.stringify({

@@ -24,6 +24,9 @@ import type {
 import type { IRelationParser, RelationEvaluationContext } from './interfaces';
 import type { IStorageAdapter } from '../storage/interfaces';
 import { DEFAULT_MAX_DEPTH } from './types';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('REBAC');
 
 /**
  * RelationParser - Parses and evaluates relation expressions
@@ -208,9 +211,11 @@ export class RelationParser implements IRelationParser {
   ): Promise<boolean> {
     // Check depth limit
     if (context.depth > context.max_depth) {
-      console.warn(
-        `ReBAC: Maximum depth (${context.max_depth}) exceeded for ${context.user_id} -> ${context.object_type}:${context.object_id}`
-      );
+      log.warn(`Maximum depth (${context.max_depth}) exceeded`, {
+        userId: context.user_id,
+        objectType: context.object_type,
+        objectId: context.object_id,
+      });
       return false;
     }
 

@@ -26,6 +26,9 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import { getTenantIdFromContext } from './request-context';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('PluginContext');
 
 // =============================================================================
 // Types
@@ -242,7 +245,7 @@ export function pluginContextMiddleware(options: PluginContextMiddlewareOptions 
         registry = emptyRegistry;
       }
     } catch (error) {
-      console.error('[PluginContext] Failed to initialize plugins:', error);
+      log.error('Failed to initialize plugins', {}, error as Error);
       registryInitPromise = null;
 
       if (required) {
@@ -553,16 +556,16 @@ export function createPluginLoader(
         // Check if plugin is enabled
         const enabled = await isPluginEnabledInKV(env, plugin.id, tenantId);
         if (!enabled) {
-          console.log(`[PluginLoader] Plugin ${plugin.id} is disabled, skipping`);
+          log.info('Plugin is disabled, skipping', { pluginId: plugin.id });
           continue;
         }
 
         // Register the plugin
         plugin.register(registry, parsedConfig);
 
-        console.log(`[PluginLoader] Loaded plugin: ${plugin.id} v${plugin.version}`);
+        log.info('Loaded plugin', { pluginId: plugin.id, version: plugin.version });
       } catch (error) {
-        console.error(`[PluginLoader] Failed to load plugin ${plugin.id}:`, error);
+        log.error('Failed to load plugin', { pluginId: plugin.id }, error as Error);
         if (required) {
           throw error;
         }

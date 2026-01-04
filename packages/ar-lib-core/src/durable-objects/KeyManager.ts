@@ -23,6 +23,9 @@ import { generateECKeySet, type ECAlgorithm, type ECCurve } from '../utils/ec-ke
 import { timingSafeEqual } from '../utils/crypto';
 import type { Env } from '../types/env';
 import type { KeyStatus } from '../types/admin';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('DO-KEY-MANAGER');
 
 /**
  * Stored key metadata (RSA)
@@ -376,7 +379,7 @@ export class KeyManager extends DurableObject<Env> {
     }
 
     // Safety fallback (should not happen with blockConcurrencyWhile)
-    console.warn('KeyManager: initializeState called but not initialized - this should not happen');
+    log.warn('initializeState called but not initialized - this should not happen');
     await this.initializeStateBlocking();
   }
 
@@ -399,7 +402,7 @@ export class KeyManager extends DurableObject<Env> {
     }
 
     if (needsMigration) {
-      console.log('[KeyManager] Migrated isActive to status field');
+      log.info('Migrated isActive to status field');
       await this.saveState();
     }
   }
@@ -441,9 +444,7 @@ export class KeyManager extends DurableObject<Env> {
     }
 
     // Safety fallback (should not happen with blockConcurrencyWhile)
-    console.warn(
-      'KeyManager: initializeECState called but not initialized - this should not happen'
-    );
+    log.warn('initializeECState called but not initialized - this should not happen');
     const storedECState = await this.ctx.storage.get<ECKeyManagerState>('ecState');
 
     if (storedECState) {
@@ -485,11 +486,10 @@ export class KeyManager extends DurableObject<Env> {
     const kid = this.generateKeyId();
     const keySet = await generateKeySet(kid, 2048);
 
-    console.log('KeyManager generateNewKey - keySet:', {
+    log.debug('generateNewKey - keySet', {
       kid,
       hasPEM: !!keySet.privatePEM,
       pemLength: keySet.privatePEM?.length,
-      pemStart: keySet.privatePEM?.substring(0, 50),
     });
 
     const newKey: StoredKey = {
@@ -500,11 +500,10 @@ export class KeyManager extends DurableObject<Env> {
       status: 'overlap', // New keys start as overlap until set as active
     };
 
-    console.log('KeyManager generateNewKey - newKey:', {
+    log.debug('generateNewKey - newKey', {
       kid: newKey.kid,
       hasPEM: !!newKey.privatePEM,
       pemLength: newKey.privatePEM?.length,
-      keys: Object.keys(newKey),
     });
 
     const state = this.getState();
@@ -604,11 +603,10 @@ export class KeyManager extends DurableObject<Env> {
       throw new Error('Rotated key not found in state after rotation');
     }
 
-    console.log('KeyManager rotateKeys - returning key:', {
+    log.debug('rotateKeys - returning key', {
       kid: rotatedKey.kid,
       hasPEM: !!rotatedKey.privatePEM,
       pemLength: rotatedKey.privatePEM?.length,
-      keys: Object.keys(rotatedKey),
     });
 
     // Explicitly reconstruct the object to ensure all properties are enumerable and serializable
@@ -623,19 +621,10 @@ export class KeyManager extends DurableObject<Env> {
       revokedReason: rotatedKey.revokedReason,
     };
 
-    console.log('KeyManager rotateKeys - reconstructed result:', {
+    log.debug('rotateKeys - reconstructed result', {
       kid: result.kid,
       hasPEM: !!result.privatePEM,
       pemLength: result.privatePEM?.length,
-      keys: Object.keys(result),
-      ownPropertyNames: Object.getOwnPropertyNames(result),
-    });
-
-    // Verify JSON serialization works
-    const testJson = JSON.stringify(result);
-    console.log('KeyManager rotateKeys - test JSON serialization:', {
-      jsonLength: testJson.length,
-      hasPrivatePEM: testJson.includes('privatePEM'),
     });
 
     return result;
@@ -674,7 +663,7 @@ export class KeyManager extends DurableObject<Env> {
     state.lastRotation = now;
     await this.saveState();
 
-    console.warn('[KeyManager] Emergency rotation executed', {
+    log.warn('Emergency rotation executed', {
       oldKid: currentActiveKey.kid,
       newKid: newKey.kid,
       reason,
@@ -785,7 +774,7 @@ export class KeyManager extends DurableObject<Env> {
     const kid = this.generateECKeyId(algorithm);
     const keySet = await generateECKeySet(kid, algorithm);
 
-    console.log('KeyManager generateNewECKey - keySet:', {
+    log.debug('generateNewECKey - keySet', {
       kid,
       algorithm,
       curve: keySet.curve,
@@ -896,7 +885,7 @@ export class KeyManager extends DurableObject<Env> {
       throw new Error('Rotated EC key not found in state after rotation');
     }
 
-    console.log('KeyManager rotateECKeys - returning key:', {
+    log.debug('rotateECKeys - returning key', {
       kid: rotatedKey.kid,
       algorithm: rotatedKey.algorithm,
       hasPEM: !!rotatedKey.privatePEM,
@@ -963,7 +952,7 @@ export class KeyManager extends DurableObject<Env> {
     state.lastRotation = now;
     await this.saveECState();
 
-    console.warn('[KeyManager] Emergency EC rotation executed', {
+    log.warn('Emergency EC rotation executed', {
       algorithm,
       oldKid: currentActiveKey.kid,
       newKid: newKey.kid,
@@ -1047,7 +1036,7 @@ export class KeyManager extends DurableObject<Env> {
 
     // If no secret is configured, deny all requests
     if (!secret) {
-      console.error('KEY_MANAGER_SECRET is not configured');
+      log.error('KEY_MANAGER_SECRET is not configured');
       return false;
     }
 
@@ -1173,23 +1162,15 @@ export class KeyManager extends DurableObject<Env> {
       if (path === '/internal/rotate' && request.method === 'POST') {
         const newKey = await this.rotateKeys();
 
-        console.log('KeyManager /internal/rotate - newKey:', {
+        log.debug('/internal/rotate - newKey', {
           kid: newKey.kid,
           hasPEM: !!newKey.privatePEM,
           pemLength: newKey.privatePEM?.length,
-          pemStart: newKey.privatePEM?.substring(0, 50),
-          keys: Object.keys(newKey),
         });
 
         // Already reconstructed in rotateKeys(), so newKey should be serializable
         const responseBody = { success: true, key: newKey };
         const jsonString = JSON.stringify(responseBody);
-
-        console.log('KeyManager /internal/rotate - response JSON:', {
-          jsonLength: jsonString.length,
-          hasPrivatePEM: jsonString.includes('privatePEM'),
-          jsonStart: jsonString.substring(0, 200),
-        });
 
         // Return full key data including privatePEM for internal use
         return new Response(jsonString, {
@@ -1416,7 +1397,7 @@ export class KeyManager extends DurableObject<Env> {
 
         const newKey = await this.rotateECKeys(algorithm);
 
-        console.log('KeyManager /internal/ec/rotate - newKey:', {
+        log.debug('/internal/ec/rotate - newKey', {
           kid: newKey.kid,
           algorithm: newKey.algorithm,
           hasPEM: !!newKey.privatePEM,
@@ -1498,7 +1479,7 @@ export class KeyManager extends DurableObject<Env> {
 
       return new Response('Not Found', { status: 404 });
     } catch (error) {
-      console.error('KeyManager error:', error);
+      log.error('Request error', {}, error as Error);
       return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },

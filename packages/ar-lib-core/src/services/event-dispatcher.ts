@@ -35,6 +35,9 @@ import type { EventHookRegistryImpl } from './event-hook-registry';
 import type { WebhookRegistryImpl, WebhookConfigWithScope } from './webhook-registry';
 import { executeBeforeHooks } from './event-hook-registry';
 import { generateWebhookSignature, sendWebhook } from './webhook-sender';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('EVENT-DISPATCHER');
 
 // =============================================================================
 // Types
@@ -303,7 +306,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
           await this.recordAuditLog(event, execContext);
           delivery.auditLog = true;
         } catch (error) {
-          console.error('[EventDispatcher] Audit log error:', error);
+          log.error('Audit log error', { eventId }, error as Error);
           // Non-blocking - don't add to errors
         }
       }
@@ -320,13 +323,13 @@ export class EventDispatcherImpl implements IEventDispatcher {
 
       // 9. Execute After Hooks (fire-and-forget for async hooks)
       this.executeAfterHooks(event, execContext, publishResult).catch((error) => {
-        console.error('[EventDispatcher] After hook error:', error);
+        log.error('After hook error', { eventId }, error as Error);
       });
 
       // 10. Return result
       return publishResult;
     } catch (error) {
-      console.error('[EventDispatcher] Publish error:', error);
+      log.error('Publish error', { eventId }, error as Error);
       return {
         eventId,
         success: false,
@@ -386,7 +389,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
     try {
       await this.kv.put(key, Date.now().toString(), { expirationTtl: ttlSeconds });
     } catch (error) {
-      console.error('[EventDispatcher] Dedup set error:', error);
+      log.error('Dedup set error', { key }, error as Error);
       // Non-fatal - continue processing
     }
   }
@@ -415,7 +418,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
       } catch (error) {
         failed++;
         const errorMessage = error instanceof Error ? error.message : 'Handler failed';
-        console.error(`[EventDispatcher] Handler ${handler.id} failed:`, error);
+        log.error('Handler failed', { handlerId: handler.id }, error as Error);
 
         // Only add to errors if handler doesn't just log
         if (handler.onError !== 'log') {
@@ -546,7 +549,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
         statusCode: result.statusCode,
       };
     } catch (error) {
-      console.error(`[EventDispatcher] Webhook ${webhook.id} error:`, error);
+      log.error('Webhook error', { webhookId: webhook.id }, error as Error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -581,7 +584,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
           hook.timeoutMs ?? 30000
         );
       } catch (error) {
-        console.error(`[EventDispatcher] After hook ${hook.id} failed:`, error);
+        log.error('After hook failed', { hookId: hook.id }, error as Error);
         if (!hook.continueOnError) {
           throw error;
         }
@@ -591,7 +594,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
     // Fire async hooks without waiting
     for (const hook of asyncHooks) {
       hook.handler(event, result, context).catch((error) => {
-        console.error(`[EventDispatcher] Async after hook ${hook.id} failed:`, error);
+        log.error('Async after hook failed', { hookId: hook.id }, error as Error);
       });
     }
   }

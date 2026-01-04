@@ -10,7 +10,7 @@
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import type { VCITokenResponse } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger, type Logger } from '@authrim/ar-lib-core';
 import { getCredentialOfferStoreById } from '../../utils/credential-offer-sharding';
 import { generateSecureNonce } from '../../utils/crypto';
 import { SignJWT, importJWK } from 'jose';
@@ -27,6 +27,8 @@ const PRE_AUTHORIZED_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:pre-authoriz
  * Exchanges pre-authorized_code for access token.
  */
 export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC-ISSUER');
   try {
     // Parse form-urlencoded body
     const contentType = c.req.header('Content-Type') || '';
@@ -49,9 +51,13 @@ export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Resp
     }
 
     // Handle pre-authorized code grant
-    return await handlePreAuthorizedCodeGrant(c, formData as unknown as Record<string, string>);
+    return await handlePreAuthorizedCodeGrant(
+      c,
+      log,
+      formData as unknown as Record<string, string>
+    );
   } catch (error) {
-    console.error('[vciToken] Error:', error);
+    log.error('VCI token request failed', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -63,6 +69,7 @@ export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Resp
  */
 async function handlePreAuthorizedCodeGrant(
   c: Context<{ Bindings: Env }>,
+  log: Logger,
   formData: Record<string, string>
 ): Promise<Response> {
   // Extract pre-authorized_code (required)
@@ -78,7 +85,7 @@ async function handlePreAuthorizedCodeGrant(
 
   // Look up the credential offer by pre-authorized code
   // The pre-authorized code contains the offer ID for routing
-  const offerInfo = await lookupOfferByCode(c.env, preAuthorizedCode);
+  const offerInfo = await lookupOfferByCode(c.env, log, preAuthorizedCode);
   if (!offerInfo) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
@@ -111,7 +118,7 @@ async function handlePreAuthorizedCodeGrant(
   });
 
   // Mark offer as accepted
-  await updateOfferStatus(c.env, offerInfo.offerId, 'accepted');
+  await updateOfferStatus(c.env, log, offerInfo.offerId, 'accepted');
 
   // Build response per OpenID4VCI spec
   const response: VCITokenResponse = {
@@ -139,6 +146,7 @@ async function handlePreAuthorizedCodeGrant(
  */
 async function lookupOfferByCode(
   env: Env,
+  log: Logger,
   preAuthorizedCode: string
 ): Promise<{
   offerId: string;
@@ -155,7 +163,7 @@ async function lookupOfferByCode(
     // Extract offer ID from the code
     const parts = preAuthorizedCode.split(':');
     if (parts.length < 2) {
-      console.error('[lookupOfferByCode] Invalid pre-authorized code format');
+      log.error('Invalid pre-authorized code format');
       return null;
     }
 
@@ -184,7 +192,7 @@ async function lookupOfferByCode(
 
     // Verify the pre-authorized code matches
     if (offer.preAuthorizedCode !== preAuthorizedCode) {
-      console.error('[lookupOfferByCode] Pre-authorized code mismatch');
+      log.error('Pre-authorized code mismatch');
       return null;
     }
 
@@ -199,7 +207,7 @@ async function lookupOfferByCode(
       expiresAt: offer.expiresAt,
     };
   } catch (error) {
-    console.error('[lookupOfferByCode] Error:', error);
+    log.error('Failed to lookup offer by code', {}, error as Error);
     return null;
   }
 }
@@ -207,7 +215,12 @@ async function lookupOfferByCode(
 /**
  * Update credential offer status
  */
-async function updateOfferStatus(env: Env, offerId: string, status: string): Promise<void> {
+async function updateOfferStatus(
+  env: Env,
+  log: Logger,
+  offerId: string,
+  status: string
+): Promise<void> {
   try {
     const { stub } = getCredentialOfferStoreById(env, offerId);
     await stub.fetch(
@@ -218,7 +231,7 @@ async function updateOfferStatus(env: Env, offerId: string, status: string): Pro
       })
     );
   } catch (error) {
-    console.error('[updateOfferStatus] Error:', error);
+    log.error('Failed to update offer status', { status }, error as Error);
   }
 }
 

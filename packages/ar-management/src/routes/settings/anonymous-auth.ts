@@ -19,11 +19,12 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
   getTenantIdFromContext,
   isAnonymousAuthEnabled,
+  getLogger,
+  type Env,
 } from '@authrim/ar-lib-core';
 
 // ============================================================================
@@ -35,6 +36,7 @@ import {
  * Get anonymous authentication configuration
  */
 export async function getAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('AnonymousAuthConfigAPI');
   try {
     const enabled = await isAnonymousAuthEnabled(c.env);
 
@@ -65,7 +67,7 @@ export async function getAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
       source: c.env.ENABLE_ANONYMOUS_AUTH ? 'env' : 'default',
     });
   } catch (error) {
-    console.error('[Anonymous Auth Config API] Error getting config:', error);
+    log.error('Error getting config', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -88,6 +90,7 @@ export async function getAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
  * }
  */
 export async function updateAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('AnonymousAuthConfigAPI');
   if (!c.env.AUTHRIM_CONFIG) {
     return c.json(
       {
@@ -163,7 +166,7 @@ export async function updateAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
       note: 'Config updated. Cache will refresh within 10 seconds.',
     });
   } catch (error) {
-    console.error('[Anonymous Auth Config API] Error updating config:', error);
+    log.error('Error updating config', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -188,6 +191,7 @@ export async function updateAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
  * - include_expired: boolean (default: false)
  */
 export async function listAnonymousUsers(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('AnonymousUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -257,7 +261,7 @@ export async function listAnonymousUsers(c: Context<{ Bindings: Env }>) {
       })),
     });
   } catch (error) {
-    console.error('[Anonymous Users API] Error listing users:', error);
+    log.error('Error listing users', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -273,6 +277,7 @@ export async function listAnonymousUsers(c: Context<{ Bindings: Env }>) {
  * Get specific anonymous user details
  */
 export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('AnonymousUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -371,7 +376,7 @@ export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
         : null,
     });
   } catch (error) {
-    console.error('[Anonymous Users API] Error getting user:', error);
+    log.error('Error getting user', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -387,6 +392,7 @@ export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
  * Get upgrade history for an anonymous user (audit trail)
  */
 export async function getAnonymousUserUpgrades(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('AnonymousUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -435,7 +441,7 @@ export async function getAnonymousUserUpgrades(c: Context<{ Bindings: Env }>) {
       })),
     });
   } catch (error) {
-    console.error('[Anonymous Users API] Error getting upgrades:', error);
+    log.error('Error getting upgrades', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -451,6 +457,7 @@ export async function getAnonymousUserUpgrades(c: Context<{ Bindings: Env }>) {
  * Delete an anonymous user and their devices
  */
 export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('AnonymousUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -504,7 +511,7 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
       note: 'Upgrade history preserved for audit purposes.',
     });
   } catch (error) {
-    console.error('[Anonymous Users API] Error deleting user:', error);
+    log.error('Error deleting user', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -526,6 +533,7 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
  * }
  */
 export async function cleanupExpiredAnonymousUsers(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('AnonymousUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -615,7 +623,7 @@ export async function cleanupExpiredAnonymousUsers(c: Context<{ Bindings: Env }>
       deactivated_only: deletedDevices - (userIds.length === deletedUsers ? deletedDevices : 0),
     });
   } catch (error) {
-    console.error('[Anonymous Users API] Error during cleanup:', error);
+    log.error('Error during cleanup', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

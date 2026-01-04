@@ -14,7 +14,10 @@ import {
   D1Adapter,
   TrustedIssuerRepository,
   decodeBase64Url,
+  createLogger,
 } from '@authrim/ar-lib-core';
+
+const log = createLogger().module('VC-VP-VERIFIER');
 import type { StatusListKeyResolver } from '@authrim/ar-lib-core';
 import type { Env, VPVerificationResult } from '../../types';
 import { checkIssuerTrust, getIssuerPublicKey } from './issuer-trust';
@@ -206,7 +209,7 @@ export async function verifyVPToken(
       haipCompliant: haipResult.haipCompliant,
     };
   } catch (error) {
-    console.error('[verifyVPToken] Verification error:', error);
+    log.error('VP token verification failed', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return {
       verified: false,

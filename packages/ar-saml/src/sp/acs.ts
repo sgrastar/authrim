@@ -17,6 +17,8 @@ import {
   getUIConfig,
   getTenantIdFromContext,
   buildIssuerUrl,
+  getLogger,
+  createLogger,
   // Event System
   publishEvent,
   AUTH_EVENTS,
@@ -41,6 +43,7 @@ import { getIdPConfigByEntityId } from '../admin/providers';
  */
 export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
+  const log = getLogger(c).module('SAML-SP');
 
   try {
     // Parse POST data
@@ -93,15 +96,15 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
 
         // If assertion is not directly signed, ensure Response is signed (which covers the assertion)
         if (!assertionHasSignature && !responseId) {
-          console.warn('Neither Assertion nor Response has verifiable signature coverage');
+          log.warn('Neither Assertion nor Response has verifiable signature coverage', {});
         }
       } catch (error) {
-        console.error('Signature verification failed:', error);
+        log.error('Signature verification failed', {}, error as Error);
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
     } else if (idpConfig.certificate) {
       // IdP is expected to sign, but no signature found
-      console.warn('Expected signed response but none found');
+      log.warn('Expected signed response but none found', {});
       // Depending on security requirements, you might want to reject unsigned responses
     }
 
@@ -111,10 +114,10 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       if (!isValidRequest) {
         const strictMode = await getStrictInResponseToSetting(env);
         if (strictMode) {
-          console.error('InResponseTo validation failed (strict mode):', inResponseTo);
+          log.error('InResponseTo validation failed (strict mode)', { inResponseTo });
           return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
         }
-        console.warn('InResponseTo validation failed:', inResponseTo);
+        log.warn('InResponseTo validation failed', { inResponseTo });
         // Continue anyway for IdP-initiated SSO compatibility (non-strict mode)
       }
     }
@@ -152,7 +155,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         sessionId,
       } satisfies AuthEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish auth.saml.succeeded:', err);
+      log.error('Failed to publish auth.saml.succeeded event', {}, err as Error);
     });
 
     // Publish session created event (non-blocking)
@@ -165,7 +168,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         ttlSeconds: 3600,
       } satisfies SessionEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish session.user.created:', err);
+      log.error('Failed to publish session.user.created event', {}, err as Error);
     });
 
     // Determine redirect URL
@@ -185,7 +188,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       },
     });
   } catch (error) {
-    console.error('ACS Error:', error);
+    log.error('ACS Error', {}, error as Error);
 
     // Publish SAML authentication failure event (non-blocking)
     const failureTenantId = getTenantIdFromContext(c);
@@ -198,7 +201,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         errorCode: error instanceof Error ? error.message : 'unknown_error',
       } satisfies AuthEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish auth.saml.failed:', err);
+      log.error('Failed to publish auth.saml.failed event', {}, err as Error);
     });
 
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -558,9 +561,10 @@ function validateSubjectConfirmation(
     // If no expectedInResponseTo provided (IdP-initiated), any value is a mismatch
     // since there was no AuthnRequest to match against
     if (!expectedInResponseTo) {
-      console.warn(
-        'SubjectConfirmationData contains InResponseTo but this appears to be IdP-initiated SSO:',
-        subjectConfirmationInResponseTo
+      const log = createLogger().module('SAML-SP-ACS');
+      log.warn(
+        'SubjectConfirmationData contains InResponseTo but this appears to be IdP-initiated SSO',
+        { inResponseTo: subjectConfirmationInResponseTo }
       );
       // For compatibility, we log a warning but don't reject
       // Strict mode can be enabled via SAML_STRICT_INRESPONSETO
@@ -584,7 +588,8 @@ async function checkAndRecordOneTimeUse(
   // Check if assertion ID has been used
   const existingEntry = await kvStore.get(key);
   if (existingEntry) {
-    console.warn('OneTimeUse assertion already used:', assertionId);
+    const log = createLogger().module('SAML-SP-ACS');
+    log.warn('OneTimeUse assertion already used', { assertionId });
     return false;
   }
 

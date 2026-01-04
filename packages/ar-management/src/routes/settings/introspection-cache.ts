@@ -30,7 +30,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import { getLogger, type Env } from '@authrim/ar-lib-core';
 
 // Default settings (default ON = optimized for production)
 const DEFAULT_SETTINGS = {
@@ -127,6 +127,7 @@ export async function getIntrospectionCacheConfig(env: Env): Promise<Introspecti
  * Get Introspection Cache settings with their sources
  */
 export async function getIntrospectionCacheConfigHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('IntrospectionCacheSettingsAPI');
   try {
     const { settings, sources } = await getIntrospectionCacheSettings(c.env);
 
@@ -149,7 +150,7 @@ export async function getIntrospectionCacheConfigHandler(c: Context<{ Bindings: 
       note: 'Cache only stores active=true responses. Revocation checks bypass cache for security.',
     });
   } catch (error) {
-    console.error('[Introspection Cache Settings API] Error getting settings:', error);
+    log.error('Error getting settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -171,6 +172,7 @@ export async function getIntrospectionCacheConfigHandler(c: Context<{ Bindings: 
  * }
  */
 export async function updateIntrospectionCacheConfigHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('IntrospectionCacheSettingsAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -265,7 +267,7 @@ export async function updateIntrospectionCacheConfigHandler(c: Context<{ Binding
       note: 'Introspection cache settings updated successfully.',
     });
   } catch (error) {
-    console.error('[Introspection Cache Settings API] Error updating settings:', error);
+    log.error('Error updating settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -282,6 +284,7 @@ export async function updateIntrospectionCacheConfigHandler(c: Context<{ Binding
  * Clear Introspection Cache settings override (revert to env/default)
  */
 export async function clearIntrospectionCacheConfigHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('IntrospectionCacheSettingsAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -318,7 +321,7 @@ export async function clearIntrospectionCacheConfigHandler(c: Context<{ Bindings
       note: 'Introspection cache settings cleared. Using env/default values.',
     });
   } catch (error) {
-    console.error('[Introspection Cache Settings API] Error clearing settings:', error);
+    log.error('Error clearing settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

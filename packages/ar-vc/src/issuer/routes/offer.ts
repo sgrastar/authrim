@@ -12,7 +12,7 @@
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { getCredentialOfferStoreById } from '../../utils/credential-offer-sharding';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
 
 interface CredentialOffer {
   credential_issuer: string;
@@ -38,6 +38,8 @@ interface CredentialOffer {
  * Returns the credential offer details for wallet.
  */
 export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC-ISSUER');
   try {
     const offerId = c.req.param('id');
 
@@ -98,7 +100,7 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
 
     return c.json(credentialOffer);
   } catch (error) {
-    console.error('[credentialOffer] Error:', error);
+    log.error('Credential offer retrieval failed', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

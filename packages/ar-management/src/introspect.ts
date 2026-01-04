@@ -13,6 +13,7 @@ import {
   validateClientAssertion,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
   // Event System
   publishEvent,
   TOKEN_EVENTS,
@@ -20,6 +21,8 @@ import {
   // Shared utilities
   parseBasicAuth,
   getKeyByKid,
+  // Database adapter for user status check
+  D1Adapter,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
 import { getIntrospectionValidationSettings } from './routes/settings/introspection-validation';
@@ -257,16 +260,17 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Get matching key with hierarchical caching (memory → KV → DO → env)
+  const log = getLogger(c).module('INTROSPECT');
   const matchingKey = await getKeyByKid(c.env, tokenKid);
   if (matchingKey) {
     try {
       publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;
     } catch (err) {
-      console.error('Failed to import public key:', err);
+      log.error('Failed to import public key', { action: 'introspect' }, err as Error);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
   } else {
-    console.error('No matching key found for token verification');
+    log.error('No matching key found for token verification', { action: 'introspect' });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
@@ -281,12 +285,12 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     // This prevents accepting tokens from other issuers even if signed with the same key
     const expectedIssuer = c.env.ISSUER_URL;
     if (!expectedIssuer) {
-      console.error('ISSUER_URL not configured');
+      log.error('ISSUER_URL not configured', { action: 'introspect' });
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
     await verifyToken(token, publicKey, expectedIssuer, { audience: expectedAud });
   } catch (error) {
-    console.error('Token verification failed:', error);
+    log.error('Token verification failed', { action: 'introspect' }, error as Error);
     // Token signature verification failed, return inactive
     return c.json<IntrospectionResponse>({
       active: false,
@@ -374,6 +378,30 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   }
   // ========== Token Revocation/Existence Check END ==========
 
+  // ========== User Status Check (suspended/locked users) ==========
+  // RFC 7009: Tokens for suspended/locked users should be inactive
+  // This ensures access tokens are immediately invalidated when a user is suspended
+  // Note: Using users_core for PII-separated architecture
+  if (sub) {
+    try {
+      const adapter = new D1Adapter({ db: c.env.DB });
+      const user = await adapter.queryOne<{ status: string }>(
+        'SELECT status FROM users_core WHERE id = ? AND tenant_id = ?',
+        [sub, tenantId]
+      );
+      // Return inactive if user is suspended or locked
+      if (user && (user.status === 'suspended' || user.status === 'locked')) {
+        return c.json<IntrospectionResponse>({
+          active: false,
+        });
+      }
+    } catch {
+      // Non-blocking: If status check fails, continue with token validation
+      // This ensures introspection doesn't fail if DB is temporarily unavailable
+    }
+  }
+  // ========== User Status Check END ==========
+
   // Token is active, return introspection response
   // P1: Determine token_type based on cnf claim presence (RFC 9449)
   const tokenType: 'Bearer' | 'DPoP' = cnf ? 'DPoP' : 'Bearer';
@@ -429,7 +457,11 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
       scopes: scope ? scope.split(' ') : undefined,
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.access.introspected:', err);
+    log.error(
+      'Failed to publish token.access.introspected event',
+      { action: 'publish_event' },
+      err as Error
+    );
   });
 
   return c.json(response);

@@ -21,7 +21,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import { getLogger, type Env } from '@authrim/ar-lib-core';
 
 // Default ACR values per OIDC Core / SAML 2.0 specification
 const DEFAULT_SUPPORTED_ACR_VALUES = [
@@ -159,6 +159,7 @@ export async function getStrictDPoPSetting(env: Env): Promise<boolean> {
  * Get FAPI/Security settings with their sources
  */
 export async function getFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('FapiSecurityAPI');
   try {
     const { settings, sources } = await getFapiSecuritySettings(c.env);
 
@@ -198,7 +199,7 @@ export async function getFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
       note: 'FAPI 2.0 enforces PAR, PKCE S256, and confidential clients. strictDPoP rejects invalid DPoP proofs when enabled.',
     });
   } catch (error) {
-    console.error('[FAPI Security Settings API] Error getting settings:', error);
+    log.error('Error getting settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -226,6 +227,7 @@ export async function getFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
  * }
  */
 export async function updateFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('FapiSecurityAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -371,7 +373,7 @@ export async function updateFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
       note: 'FAPI/Security settings updated successfully.',
     });
   } catch (error) {
-    console.error('[FAPI Security Settings API] Error updating settings:', error);
+    log.error('Error updating settings', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
       {
@@ -388,6 +390,7 @@ export async function updateFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
  * Clear FAPI/Security settings override (revert to env/default)
  */
 export async function clearFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('FapiSecurityAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -429,7 +432,7 @@ export async function clearFapiSecurityConfig(c: Context<{ Bindings: Env }>) {
       note: 'FAPI/Security settings cleared. Using env/default values.',
     });
   } catch (error) {
-    console.error('[FAPI Security Settings API] Error clearing settings:', error);
+    log.error('Error clearing settings', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
       {

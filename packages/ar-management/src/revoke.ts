@@ -14,6 +14,7 @@ import {
   createOAuthConfigManager,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
   // Event System
   publishEvent,
   TOKEN_EVENTS,
@@ -144,6 +145,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   const isPublicClient = !clientMetadata.client_secret;
 
   // Parse token to extract claims (without verification yet)
+  const log = getLogger(c).module('REVOKE');
   let tokenPayload;
   try {
     tokenPayload = parseToken(token);
@@ -151,7 +153,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
     // Per RFC 7009 Section 2.2: The authorization server responds with HTTP status code 200
     // if the token has been revoked successfully or if the client submitted an invalid token.
     // This is to prevent token scanning attacks.
-    console.warn('Failed to parse token for revocation:', error);
+    log.warn('Failed to parse token for revocation', { action: 'revoke' });
     return c.body(null, 200);
   }
 
@@ -183,7 +185,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
     tokenKid = header.kid;
   } catch {
     // If we can't decode the header, token is invalid
-    console.warn('Failed to decode token header for revocation');
+    log.warn('Failed to decode token header for revocation', { action: 'revoke' });
     return c.body(null, 200);
   }
 
@@ -193,11 +195,11 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
     try {
       publicKey = (await importJWK(matchingKey, 'RS256')) as CryptoKey;
     } catch (err) {
-      console.error('Failed to import public key for revocation:', err);
+      log.error('Failed to import public key for revocation', { action: 'revoke' }, err as Error);
       return c.body(null, 200);
     }
   } else {
-    console.error('No matching key found for revocation');
+    log.error('No matching key found for revocation', { action: 'revoke' });
     return c.body(null, 200);
   }
 
@@ -205,14 +207,14 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   try {
     const expectedIssuer = c.env.ISSUER_URL;
     if (!expectedIssuer) {
-      console.error('ISSUER_URL not configured for revocation');
+      log.error('ISSUER_URL not configured for revocation', { action: 'revoke' });
       return c.body(null, 200);
     }
     // Use aud from token for audience verification
     await verifyToken(token, publicKey, expectedIssuer, { audience: aud });
   } catch (error) {
     // Token signature verification failed - could be forged token
-    console.warn('Token signature verification failed for revocation:', error);
+    log.warn('Token signature verification failed for revocation', { action: 'revoke' });
     return c.body(null, 200);
   }
   // ========== Signature Verification END ==========
@@ -220,7 +222,11 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   // Verify that the token belongs to the requesting client
   // This prevents clients from revoking each other's tokens
   if (tokenClientId !== client_id) {
-    console.warn(`Client ${client_id} attempted to revoke token belonging to ${tokenClientId}`);
+    log.warn('Client attempted to revoke token belonging to another client', {
+      action: 'revoke',
+      clientId: client_id,
+      tokenClientId,
+    });
     // Per RFC 7009: Return success even if client doesn't own the token
     return c.body(null, 200);
   }
@@ -244,13 +250,16 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
       await revokeToken(c.env, refreshTokenJti, expiresIn);
 
       // Log cascade revocation for audit
-      console.log(
-        `[REVOKE] Cascade revocation triggered: refresh_token=${refreshTokenJti}, ` +
-          `client=${tokenClientId}, user=${userId || 'unknown'}, family=${familyId || 'unknown'}`
-      );
+      log.info('Cascade revocation triggered', {
+        action: 'cascade_revoke',
+        refreshTokenJti,
+        clientId: tokenClientId,
+        userId: userId || 'unknown',
+        familyId: familyId || 'unknown',
+      });
     } catch (error) {
       // Don't fail the main revocation if cascade fails
-      console.error('[REVOKE] Cascade revocation failed:', error);
+      log.error('Cascade revocation failed', { action: 'cascade_revoke' }, error as Error);
     }
   };
 
@@ -302,14 +311,22 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
       grantType: 'revocation', // RFC 7009 revocation
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error(`[Event] Failed to publish ${eventType}:`, err);
+    log.error(
+      'Failed to publish token revocation event',
+      { action: 'publish_event', eventType },
+      err as Error
+    );
   });
 
   // Audit log for security monitoring
-  console.log(
-    `[REVOKE] Token revoked: jti=${jti}, type=${token_type_hint || 'auto'}, ` +
-      `client=${client_id}, user=${userId || 'unknown'}, isPublicClient=${isPublicClient}`
-  );
+  log.info('Token revoked', {
+    action: 'revoke',
+    jti,
+    type: token_type_hint || 'auto',
+    clientId: client_id,
+    userId: userId || 'unknown',
+    isPublicClient,
+  });
 
   // Per RFC 7009 Section 2.2: The authorization server responds with HTTP status code 200
   // The content of the response body is ignored by the client
@@ -553,7 +570,8 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
 
         return { token_hint: tokenHint, status: 'revoked' };
       } catch (error) {
-        console.warn(`[BATCH_REVOKE] Failed to process token: ${error}`);
+        const log = getLogger(c).module('REVOKE');
+        log.warn('Failed to process token in batch revocation', { action: 'batch_revoke' });
         return { token_hint: tokenHint, status: 'invalid' };
       }
     })
@@ -580,6 +598,7 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
     },
   };
 
+  const log = getLogger(c).module('REVOKE');
   // Publish batch revocation event
   publishEvent(c, {
     type: TOKEN_EVENTS.BATCH_REVOKED,
@@ -591,14 +610,21 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
       invalid: invalidCount,
     } satisfies BatchRevokeEventData,
   }).catch((err: unknown) => {
-    console.error(`[Event] Failed to publish ${TOKEN_EVENTS.BATCH_REVOKED}:`, err);
+    log.error(
+      'Failed to publish batch revocation event',
+      { action: 'publish_event' },
+      err as Error
+    );
   });
 
   // Audit log
-  console.log(
-    `[BATCH_REVOKE] Batch revocation completed: client=${client_id}, ` +
-      `total=${body.tokens.length}, revoked=${revokedCount}, invalid=${invalidCount}`
-  );
+  log.info('Batch revocation completed', {
+    action: 'batch_revoke',
+    clientId: client_id,
+    total: body.tokens.length,
+    revoked: revokedCount,
+    invalid: invalidCount,
+  });
 
   return c.json(response, 200);
 }

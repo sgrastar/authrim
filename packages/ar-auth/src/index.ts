@@ -19,6 +19,8 @@ import {
   createConfigurationError,
   // Plugin Context (Phase 9 - Plugin Architecture)
   pluginContextMiddleware,
+  // Logger
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
@@ -491,7 +493,8 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-  console.error('Error:', err);
+  const log = getLogger(c).module('AR-AUTH');
+  log.error('Unhandled error', { action: 'error_handler' }, err);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 

@@ -5,8 +5,10 @@
  */
 
 import type { Env } from '../../types';
-import { decodeBase64Url, safeFetch } from '@authrim/ar-lib-core';
+import { decodeBase64Url, safeFetch, createLogger } from '@authrim/ar-lib-core';
 import { createVCConfigManager } from '../../utils/vc-config';
+
+const log = createLogger().module('VCI-TOKEN');
 
 export interface TokenValidationResult {
   valid: boolean;
@@ -122,7 +124,7 @@ export async function validateVCIAccessToken(
       holderBinding,
     };
   } catch (error) {
-    console.error('[validateVCIAccessToken] Error:', error);
+    log.error('VCI access token validation failed', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return {
       valid: false,
@@ -151,7 +153,7 @@ async function verifyTokenSignature(
 
       const jwksResponse = await stub.fetch(new Request('https://internal/ec/jwks'));
       if (!jwksResponse.ok) {
-        console.error('[verifyTokenSignature] Failed to get JWKS');
+        log.error('Failed to get JWKS from KeyManager', {});
         return false;
       }
 
@@ -163,7 +165,7 @@ async function verifyTokenSignature(
         : jwks.keys.find((k) => k.kty === 'EC');
 
       if (!key) {
-        console.error('[verifyTokenSignature] Key not found');
+        log.error('Signing key not found in JWKS', {});
         return false;
       }
 
@@ -183,7 +185,7 @@ async function verifyTokenSignature(
       maxResponseSize: 256 * 1024, // 256 KB max for JWKS
     });
     if (!jwksResponse.ok) {
-      console.error('[verifyTokenSignature] Failed to fetch external JWKS');
+      log.error('Failed to fetch external JWKS', {});
       return false;
     }
 
@@ -198,7 +200,7 @@ async function verifyTokenSignature(
     const cryptoKey = await importJWKForVerify(key, header.alg);
     return await verifyJWTSignature(token, cryptoKey, header.alg);
   } catch (error) {
-    console.error('[verifyTokenSignature] Error:', error);
+    log.error('Token signature verification failed', {}, error as Error);
     return false;
   }
 }
@@ -288,7 +290,7 @@ export async function validateProofOfPossession(
       holderPublicKey,
     };
   } catch (error) {
-    console.error('[validateProofOfPossession] Error:', error);
+    log.error('Proof of possession validation failed', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return {
       valid: false,

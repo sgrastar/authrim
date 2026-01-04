@@ -5,7 +5,12 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { timingSafeEqual, createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import {
+  timingSafeEqual,
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getLogger,
+} from '@authrim/ar-lib-core';
 import {
   listAllProviders,
   getProvider,
@@ -64,6 +69,7 @@ function verifyAdmin(c: Context<{ Bindings: Env }>): boolean {
  * GET /external-idp/admin/providers
  */
 export async function handleAdminListProviders(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('ADMIN-PROVIDERS');
   if (!verifyAdmin(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
   }
@@ -81,7 +87,7 @@ export async function handleAdminListProviders(c: Context<{ Bindings: Env }>): P
 
     return c.json({ providers: sanitized });
   } catch (error) {
-    console.error('Failed to list providers:', error);
+    log.error('Failed to list providers', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -91,6 +97,7 @@ export async function handleAdminListProviders(c: Context<{ Bindings: Env }>): P
  * POST /external-idp/admin/providers
  */
 export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('ADMIN-PROVIDERS');
   if (!verifyAdmin(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
   }
@@ -330,7 +337,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
 
     return c.json(response, 201);
   } catch (error) {
-    console.error('Failed to create provider:', error);
+    log.error('Failed to create provider', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -340,6 +347,7 @@ export async function handleAdminCreateProvider(c: Context<{ Bindings: Env }>): 
  * GET /external-idp/admin/providers/:id
  */
 export async function handleAdminGetProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('ADMIN-PROVIDERS');
   if (!verifyAdmin(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
   }
@@ -361,7 +369,7 @@ export async function handleAdminGetProvider(c: Context<{ Bindings: Env }>): Pro
 
     return c.json(response);
   } catch (error) {
-    console.error('Failed to get provider:', error);
+    log.error('Failed to get provider', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -371,6 +379,7 @@ export async function handleAdminGetProvider(c: Context<{ Bindings: Env }>): Pro
  * PUT /external-idp/admin/providers/:id
  */
 export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('ADMIN-PROVIDERS');
   if (!verifyAdmin(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
   }
@@ -487,7 +496,7 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
 
     return c.json(response);
   } catch (error) {
-    console.error('Failed to update provider:', error);
+    log.error('Failed to update provider', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -497,6 +506,7 @@ export async function handleAdminUpdateProvider(c: Context<{ Bindings: Env }>): 
  * DELETE /external-idp/admin/providers/:id
  */
 export async function handleAdminDeleteProvider(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('ADMIN-PROVIDERS');
   if (!verifyAdmin(c)) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
   }
@@ -511,7 +521,7 @@ export async function handleAdminDeleteProvider(c: Context<{ Bindings: Env }>): 
 
     return c.json({ success: true });
   } catch (error) {
-    console.error('Failed to delete provider:', error);
+    log.error('Failed to delete provider', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

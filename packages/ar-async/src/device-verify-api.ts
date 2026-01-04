@@ -7,7 +7,12 @@
 
 import type { Context } from 'hono';
 import type { Env, DeviceCodeMetadata } from '@authrim/ar-lib-core';
-import { normalizeUserCode, validateUserCodeFormat, isMockAuthEnabled } from '@authrim/ar-lib-core';
+import {
+  normalizeUserCode,
+  validateUserCodeFormat,
+  isMockAuthEnabled,
+  getLogger,
+} from '@authrim/ar-lib-core';
 
 /**
  * POST /api/device/verify
@@ -39,6 +44,7 @@ import { normalizeUserCode, validateUserCodeFormat, isMockAuthEnabled } from '@a
  *   }
  */
 export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('DEVICE');
   try {
     // Get client IP for rate limiting
     const clientIp =
@@ -209,9 +215,7 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
         }
 
         // DEVELOPMENT ONLY: Log warning about mock auth usage
-        console.warn(
-          '[Device API] WARNING: Mock authentication is enabled. This should NEVER be used in production!'
-        );
+        log.warn('Mock authentication is enabled. This should NEVER be used in production!');
       }
 
       // Use provided credentials or fallback to mock (only if mock auth is enabled)
@@ -297,7 +301,7 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
   } catch (error) {
-    console.error('Device verification API error:', error);
+    log.error('Device verification API error', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return c.json(
       {

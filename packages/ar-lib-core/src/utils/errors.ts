@@ -7,6 +7,9 @@
 
 import type { Context } from 'hono';
 import { ERROR_CODES, HTTP_STATUS } from '../constants';
+import { createLogger } from './logger';
+
+const log = createLogger().module('OIDC_ERROR');
 
 /**
  * OIDC Error class
@@ -73,13 +76,10 @@ export function handleOIDCError(_c: Context, error: OIDCError): Response {
   // SECURITY: error_description may contain user input or sensitive details
   const isProduction = process.env.NODE_ENV === 'production';
   if (isProduction) {
-    console.error(`OIDC Error [${error.statusCode}]:`, {
-      error: error.error,
-      // description is intentionally omitted in production for PII protection
-    });
+    log.error(`OIDC Error [${error.statusCode}]`, { errorCode: error.error });
   } else {
-    console.error(`OIDC Error [${error.statusCode}]:`, {
-      error: error.error,
+    log.error(`OIDC Error [${error.statusCode}]`, {
+      errorCode: error.error,
       description: error.error_description,
     });
   }
@@ -102,12 +102,10 @@ export function handleTokenError(_c: Context, error: OIDCError): Response {
   // SECURITY: error_description may contain user input or sensitive details
   const isProduction = process.env.NODE_ENV === 'production';
   if (isProduction) {
-    console.error(`OIDC Error [${error.statusCode}]:`, {
-      error: error.error,
-    });
+    log.error(`OIDC Error [${error.statusCode}]`, { errorCode: error.error });
   } else {
-    console.error(`OIDC Error [${error.statusCode}]:`, {
-      error: error.error,
+    log.error(`OIDC Error [${error.statusCode}]`, {
+      errorCode: error.error,
       description: error.error_description,
     });
   }
@@ -131,12 +129,10 @@ export function handleUserInfoError(_c: Context, error: OIDCError): Response {
   // SECURITY: error_description may contain user input or sensitive details
   const isProduction = process.env.NODE_ENV === 'production';
   if (isProduction) {
-    console.error(`OIDC Error [${error.statusCode}]:`, {
-      error: error.error,
-    });
+    log.error(`OIDC Error [${error.statusCode}]`, { errorCode: error.error });
   } else {
-    console.error(`OIDC Error [${error.statusCode}]:`, {
-      error: error.error,
+    log.error(`OIDC Error [${error.statusCode}]`, {
+      errorCode: error.error,
       description: error.error_description,
     });
   }
@@ -587,7 +583,7 @@ export function withErrorHandling<T extends Context>(
 
       // Convert unknown errors to server errors
       // PII Protection: Don't log full error object (may contain user data in stack)
-      console.error('Unexpected error:', error);
+      log.error('Unexpected error', {}, error as Error);
       return errorHandler(
         c,
         // SECURITY: Do not expose internal error details in response

@@ -15,6 +15,10 @@
  * ```
  */
 
+import { createLogger } from './logger';
+
+const log = createLogger().module('DO_RETRY');
+
 /**
  * Options for DO retry operation
  */
@@ -127,17 +131,18 @@ export async function callDOWithRetry<T>(
       const jitter = Math.random() * baseDelay * 0.1; // 10% jitter
       const delay = Math.min(baseDelay + jitter, maxDelayMs);
 
-      console.warn(
-        `${operationName}: ${isOverloaded ? 'DO Overloaded' : 'Retryable error'} ` +
-          `(attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${Math.round(delay)}ms`
-      );
+      log.warn(`${operationName}: ${isOverloaded ? 'DO Overloaded' : 'Retryable error'}`, {
+        attempt: attempt + 1,
+        maxAttempts: maxRetries + 1,
+        retryDelayMs: Math.round(delay),
+      });
 
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 
   // All retries exhausted
-  console.error(`${operationName}: All ${maxRetries + 1} attempts failed`);
+  log.error(`${operationName}: All ${maxRetries + 1} attempts failed`);
 
   // Wrap in DOOverloadedError for OIDC-compliant handling
   throw new DOOverloadedError(`Service temporarily unavailable: ${operationName}`, lastError);
@@ -164,7 +169,7 @@ export function getOIDCErrorForDOError(error: unknown): {
   }
 
   // SECURITY: Do not expose internal error details in response
-  console.error('[getDOErrorResponse] Internal error:', error);
+  log.error('getDOErrorResponse - Internal error', {}, error as Error);
   return {
     error: 'server_error',
     errorDescription: 'Internal server error',

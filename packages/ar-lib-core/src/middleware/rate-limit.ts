@@ -16,6 +16,9 @@ import type { Env } from '../types/env';
 import { publishEvent } from '../utils/event-dispatcher-factory';
 import { SECURITY_EVENTS, type SecurityEventData } from '../types/events';
 import { getTenantIdFromContext } from './request-context';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('RATE-LIMIT');
 
 /**
  * Rate limit configuration
@@ -244,12 +247,9 @@ function getClientIP(c: Context, provider: CloudProvider): string {
       // Security: Log warning because this may indicate misconfiguration or bypass attempt
       const fallbackIP = getFallbackIP(c);
       if (fallbackIP !== 'unknown') {
-        console.warn(
-          '[Rate Limit] CF-Connecting-IP header missing, falling back to X-Forwarded-For. ' +
-            'This may indicate the request is not going through Cloudflare. IP: ' +
-            fallbackIP.substring(0, 10) +
-            '...'
-        );
+        log.warn('CF-Connecting-IP header missing, falling back to X-Forwarded-For', {
+          ip: fallbackIP.substring(0, 10) + '...',
+        });
       }
       return fallbackIP;
     }
@@ -342,7 +342,7 @@ async function checkRateLimit(
       };
     }
   } catch (error) {
-    console.error('Rate limiting DO error, falling back to KV:', error);
+    log.error('Rate limiting DO error, falling back to KV', {}, error as Error);
   }
 
   // Fallback to KV-based rate limiting
@@ -462,7 +462,7 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
             },
           } satisfies SecurityEventData,
         }).catch((err: unknown) => {
-          console.error('[Event] Failed to publish security.rate_limit.exceeded:', err);
+          log.error('Failed to publish security.rate_limit.exceeded event', {}, err as Error);
         });
 
         return c.json(
@@ -477,7 +477,7 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
 
       return await next();
     } catch (error) {
-      console.error('Rate limiting error:', error);
+      log.error('Rate limiting error', {}, error as Error);
       // Security: Fail-close - deny request on error to prevent bypass attacks
       // RFC 6749 5.2: Use 'temporarily_unavailable' for 503 responses
       // RFC 6749: All error responses MUST include Cache-Control: no-store
@@ -631,7 +631,7 @@ async function getRateLimitConfigFromKV(
         }
       }
     } catch (error) {
-      console.error('Failed to read rate limit config from KV:', error);
+      log.error('Failed to read rate limit config from KV', {}, error as Error);
       // Fall through to use defaults
     }
   }

@@ -22,6 +22,9 @@ import {
   SESSION_EVENTS,
   type AuthEventData,
   type SessionEventData,
+  // Logger
+  getLogger,
+  createLogger,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
@@ -95,13 +98,14 @@ async function getCallbackParams(c: Context<{ Bindings: Env }>): Promise<{
  * - user: (Apple only) JSON with user name, only on first authorization
  */
 export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('CALLBACK');
   const providerIdOrSlug = c.req.param('provider');
   const { code, state, error, errorDescription, tenantId, user } = await getCallbackParams(c);
 
   // Handle provider errors
   if (error) {
     // PII Protection: Do not log errorDescription (may contain user info from provider)
-    console.error('External IdP returned error:', error);
+    log.error('External IdP returned error', { error });
     return redirectWithError(c, error, errorDescription);
   }
 
@@ -180,7 +184,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           userInfo = { ...userInfo, ...userinfoData };
         } catch {
           // Userinfo fetch failure is not fatal - we already have claims from id_token
-          console.warn('Userinfo fetch failed, using id_token claims only');
+          log.warn('Userinfo fetch failed, using id_token claims only');
         }
       }
     } else {
@@ -286,7 +290,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         sessionId,
       } satisfies AuthEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish auth.external_idp.succeeded:', err);
+      log.error('Failed to publish auth.external_idp.succeeded', {}, err as Error);
     });
 
     publishEvent(c, {
@@ -298,7 +302,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         ttlSeconds: 3600,
       } satisfies SessionEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish session.user.created:', err);
+      log.error('Failed to publish session.user.created', {}, err as Error);
     });
 
     // 10. Build redirect URL with success
@@ -322,7 +326,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       },
     });
   } catch (error) {
-    console.error('Callback error:', error);
+    log.error('Callback error', {}, error as Error);
 
     // Determine error code for event
     let errorCode: string = ExternalIdPErrorCode.CALLBACK_FAILED;
@@ -343,7 +347,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         errorCode,
       } satisfies AuthEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish auth.external_idp.failed:', err);
+      log.error('Failed to publish auth.external_idp.failed', {}, err as Error);
     });
 
     // Handle specific ExternalIdPError with appropriate error codes
@@ -365,7 +369,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       }
 
       // Log for debugging but return a generic message
-      console.error('Unexpected error in callback:', error.stack);
+      log.error('Unexpected error in callback', { stack: error.stack });
       return redirectWithError(
         c,
         ExternalIdPErrorCode.CALLBACK_FAILED,
@@ -486,12 +490,14 @@ async function createSession(env: Env, options: CreateSessionOptions): Promise<s
     } catch (dbError) {
       // Log but don't fail session creation if D1 insert fails
       // Session is still valid in DO, just backchannel logout may not work
-      console.warn('Failed to record session in D1 for backchannel logout:', dbError);
+      const log = createLogger().module('CALLBACK');
+      log.warn('Failed to record session in D1 for backchannel logout');
     }
 
     return sessionId;
   } catch (error) {
-    console.error('Failed to create session:', error);
+    const log = createLogger().module('CALLBACK');
+    log.error('Failed to create session', {}, error as Error);
     throw new Error('session_creation_failed');
   }
 }
@@ -656,7 +662,8 @@ async function fetchGitHubPrimaryEmail(
 
     if (!response.ok) {
       // Security: Only log HTTP status code (safe), not response body (may contain user data)
-      console.warn('GitHub /user/emails failed with status:', response.status);
+      const log = createLogger().module('CALLBACK');
+      log.warn('GitHub /user/emails failed', { status: response.status });
       return null;
     }
 
@@ -666,13 +673,15 @@ async function fetchGitHubPrimaryEmail(
     const primaryEmail = emails.find((e) => e.primary);
 
     if (!primaryEmail) {
-      console.warn('GitHub: No primary email found');
+      const log = createLogger().module('CALLBACK');
+      log.warn('GitHub: No primary email found');
       return null;
     }
 
     // Check if email is verified (security requirement)
     if (!primaryEmail.verified && !allowUnverified) {
-      console.warn('GitHub: Primary email is not verified');
+      const log = createLogger().module('CALLBACK');
+      log.warn('GitHub: Primary email is not verified');
       return null;
     }
 
@@ -681,7 +690,8 @@ async function fetchGitHubPrimaryEmail(
       verified: primaryEmail.verified,
     };
   } catch (error) {
-    console.error('Failed to fetch GitHub emails:', error);
+    const log = createLogger().module('CALLBACK');
+    log.error('Failed to fetch GitHub emails', {}, error as Error);
     return null;
   }
 }
@@ -739,14 +749,16 @@ async function fetchFacebookUserInfo(
     const response = await fetch(url.toString());
 
     if (!response.ok) {
-      console.warn('Facebook /me failed with status:', response.status);
+      const log = createLogger().module('CALLBACK');
+      log.warn('Facebook /me failed', { status: response.status });
       return null;
     }
 
     const data: Record<string, unknown> = await response.json();
     return data;
   } catch (error) {
-    console.error('Failed to fetch Facebook user info:', error);
+    const log = createLogger().module('CALLBACK');
+    log.error('Failed to fetch Facebook user info', {}, error as Error);
     return null;
   }
 }
@@ -808,14 +820,16 @@ async function fetchTwitterUserInfo(
     });
 
     if (!response.ok) {
-      console.warn('Twitter /users/me failed with status:', response.status);
+      const log = createLogger().module('CALLBACK');
+      log.warn('Twitter /users/me failed', { status: response.status });
       return null;
     }
 
     const data: Record<string, unknown> = await response.json();
     return data;
   } catch (error) {
-    console.error('Failed to fetch Twitter user info:', error);
+    const log = createLogger().module('CALLBACK');
+    log.error('Failed to fetch Twitter user info', {}, error as Error);
     return null;
   }
 }

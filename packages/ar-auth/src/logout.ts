@@ -50,6 +50,9 @@ import {
   SESSION_EVENTS,
   type SessionEventData,
   type UserEventData,
+  // Logging
+  getLogger,
+  createLogger,
 } from '@authrim/ar-lib-core';
 import type {
   BackchannelLogoutConfig,
@@ -75,6 +78,9 @@ interface BackchannelLogoutEvents {
 interface LogoutTokenPayload extends JWTPayload {
   events?: BackchannelLogoutEvents;
 }
+
+// ===== Module-level Logger for Helper Functions =====
+const moduleLogger = createLogger().module('LOGOUT');
 
 /**
  * Import a PEM-encoded RSA private key for JWT signing
@@ -142,6 +148,7 @@ async function getLogoutConfig(env: Env): Promise<LogoutConfig> {
  * - state: Opaque value to maintain state
  */
 export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LOGOUT');
   try {
     // Get query parameters
     const idTokenHint = c.req.query('id_token_hint');
@@ -214,7 +221,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         sid = idTokenResult.sid;
         idTokenValid = true;
       } else {
-        console.warn('id_token_hint validation failed:', idTokenResult.error);
+        log.warn('id_token_hint validation failed', { error: idTokenResult.error });
       }
     }
 
@@ -264,29 +271,35 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           }
         } catch {
           // Session not in D1, use fallback userId from id_token_hint
-          console.debug(`[LOGOUT] Session ${sessId} not in D1, using fallback userId`);
+          log.debug('Session not in D1, using fallback userId', { sessionId: sessId });
         }
 
         // Get clients from session_clients table (this works regardless of D1 session)
         const [backchannelClients, frontchannelClients, webhookClients] = await Promise.all([
           authCtx.repositories.sessionClient.findBackchannelLogoutClients(sessId).catch((error) => {
-            console.warn(
-              `[BACKCHANNEL_LOGOUT] Failed to load backchannel clients for ${sessId}:`,
-              error
-            );
+            log.warn('Failed to load backchannel clients', {
+              sessionId: sessId,
+              error: (error as Error).message,
+              action: 'BackchannelLogout',
+            });
             return [];
           }),
           authCtx.repositories.sessionClient
             .findFrontchannelLogoutClients(sessId)
             .catch((error) => {
-              console.warn(
-                `[FRONTCHANNEL_LOGOUT] Failed to load frontchannel clients for ${sessId}:`,
-                error
-              );
+              log.warn('Failed to load frontchannel clients', {
+                sessionId: sessId,
+                error: (error as Error).message,
+                action: 'FrontchannelLogout',
+              });
               return [];
             }),
           authCtx.repositories.sessionClient.findWebhookClients(sessId).catch((error) => {
-            console.warn(`[LOGOUT_WEBHOOK] Failed to load webhook clients for ${sessId}:`, error);
+            log.warn('Failed to load webhook clients', {
+              sessionId: sessId,
+              error: (error as Error).message,
+              action: 'LogoutWebhook',
+            });
             return [];
           }),
         ]);
@@ -297,9 +310,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           frontchannelClients.length > 0 ||
           webhookClients.length > 0
         ) {
-          console.log(
-            `[LOGOUT] Collected ${backchannelClients.length} backchannel + ${frontchannelClients.length} frontchannel + ${webhookClients.length} webhook clients for session ${sessId}`
-          );
+          log.info('Collected logout clients for session', {
+            backchannelCount: backchannelClients.length,
+            frontchannelCount: frontchannelClients.length,
+            webhookCount: webhookClients.length,
+            sessionId: sessId,
+          });
           sessionsToNotify.push({
             sessionId: sessId,
             userId: effectiveUserId,
@@ -308,17 +324,22 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             webhookClients,
           });
         } else {
-          console.debug(`[LOGOUT] No logout clients found for session ${sessId}`);
+          log.debug('No logout clients found for session', { sessionId: sessId });
         }
       } catch (error) {
-        console.warn(`Failed to load session data for ${sessId}:`, error);
+        log.warn('Failed to load session data', {
+          sessionId: sessId,
+          error: (error as Error).message,
+        });
       }
     };
 
     // Delete session from cookie if present (only sharded format)
-    console.log(
-      `[LOGOUT] Processing: cookieSession=${sessionId?.substring(0, 30) || 'none'}, sid=${sid?.substring(0, 30) || 'none'}, idTokenValid=${idTokenValid}`
-    );
+    log.info('Processing logout', {
+      cookieSession: sessionId?.substring(0, 30) || 'none',
+      sid: sid?.substring(0, 30) || 'none',
+      idTokenValid,
+    });
 
     if (sessionId && isShardedSessionId(sessionId)) {
       try {
@@ -330,12 +351,15 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
         if (deleted) {
           deletedSessions.push(sessionId);
-          console.log(`[LOGOUT] Cookie session deleted: ${sessionId.substring(0, 30)}...`);
+          log.info('Cookie session deleted', { sessionId: sessionId.substring(0, 30) });
         } else {
-          console.warn('Failed to delete cookie session:', sessionId);
+          log.warn('Failed to delete cookie session', { sessionId });
         }
       } catch (error) {
-        console.warn('Failed to route to session store for:', sessionId, error);
+        log.warn('Failed to route to session store', {
+          sessionId,
+          error: (error as Error).message,
+        });
       }
     }
 
@@ -352,7 +376,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       try {
         // Collect session info before deletion (pass userId from id_token_hint as fallback)
         if (!sessionsToNotify.some((s) => s.sessionId === sid)) {
-          console.log(`[LOGOUT] Collecting session data for sid: ${sid.substring(0, 30)}...`);
+          log.info('Collecting session data for sid', { sid: sid.substring(0, 30) });
           await collectSessionData(sid, userId);
         }
 
@@ -361,19 +385,23 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
         if (deleted) {
           deletedSessions.push(sid);
-          console.log(`[LOGOUT] Session from sid deleted: ${sid.substring(0, 30)}...`);
+          log.info('Session from sid deleted', { sid: sid.substring(0, 30) });
         } else {
           // Session might not exist or already deleted - this is OK
-          console.debug('Session from id_token_hint not found or already deleted:', sid);
+          log.debug('Session from id_token_hint not found or already deleted', { sid });
         }
       } catch (error) {
-        console.warn('Failed to route to session store for sid:', sid, error);
+        log.warn('Failed to route to session store for sid', {
+          sid,
+          error: (error as Error).message,
+        });
       }
     }
 
-    console.log(
-      `[LOGOUT] After processing: deletedSessions=${deletedSessions.length}, sessionsToNotify=${sessionsToNotify.length}`
-    );
+    log.info('After processing logout', {
+      deletedSessionsCount: deletedSessions.length,
+      sessionsToNotifyCount: sessionsToNotify.length,
+    });
 
     // ========================================
     // Step 2.4: Revoke Native SSO device_secrets for deleted sessions
@@ -394,13 +422,15 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           }
 
           if (totalRevoked > 0) {
-            console.log(
-              `[LOGOUT] Revoked ${totalRevoked} device secrets for ${deletedSessions.length} sessions`
-            );
+            log.info('Revoked device secrets', {
+              revokedCount: totalRevoked,
+              sessionCount: deletedSessions.length,
+              action: 'NativeSSO',
+            });
           }
         } catch (error) {
           // Log but don't fail logout if device_secret revocation fails
-          console.error('[LOGOUT] Failed to revoke device secrets:', error);
+          log.error('Failed to revoke device secrets', {}, error as Error);
         }
       }
     }
@@ -423,7 +453,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           reason: 'logout',
         } satisfies UserEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish user.logout:', err);
+        log.error('Failed to publish user.logout event', { action: 'Event' }, err as Error);
       });
 
       // Publish session.user.destroyed event
@@ -436,7 +466,11 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           reason: 'logout',
         } satisfies SessionEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish session.user.destroyed:', err);
+        log.error(
+          'Failed to publish session.user.destroyed event',
+          { action: 'Event' },
+          err as Error
+        );
       });
     }
 
@@ -452,7 +486,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         (async () => {
           try {
             if (!logoutConfig.backchannel.enabled) {
-              console.debug('[BACKCHANNEL_LOGOUT] Backchannel logout is disabled');
+              log.debug('Backchannel logout is disabled', { action: 'BackchannelLogout' });
               return;
             }
 
@@ -462,7 +496,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             const keys = await keyManager.getAllPublicKeysRpc();
 
             if (!keys || keys.length === 0) {
-              console.error('[BACKCHANNEL_LOGOUT] No signing keys available');
+              log.error('No signing keys available', { action: 'BackchannelLogout' });
               return;
             }
 
@@ -470,7 +504,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             const activeKey = await keyManager.getActiveKeyWithPrivateRpc();
 
             if (!activeKey || !activeKey.privatePEM) {
-              console.error('[BACKCHANNEL_LOGOUT] No private key available');
+              log.error('No private key available', { action: 'BackchannelLogout' });
               return;
             }
 
@@ -492,13 +526,18 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
               backchannelClients,
             } of sessionsToNotify) {
               if (backchannelClients.length === 0) {
-                console.debug(`[BACKCHANNEL_LOGOUT] No clients to notify for session ${sessId}`);
+                log.debug('No clients to notify for session', {
+                  sessionId: sessId,
+                  action: 'BackchannelLogout',
+                });
                 continue;
               }
 
-              console.log(
-                `[BACKCHANNEL_LOGOUT] Sending logout notifications for session ${sessId} to ${backchannelClients.length} clients`
-              );
+              log.info('Sending logout notifications', {
+                sessionId: sessId,
+                clientCount: backchannelClients.length,
+                action: 'BackchannelLogout',
+              });
 
               const results = await orchestrator.sendToAll(
                 backchannelClients,
@@ -518,9 +557,17 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             // Log summary
             const succeeded = allResults.filter((r) => r.success).length;
             const failed = allResults.filter((r) => !r.success).length;
-            console.log(`[BACKCHANNEL_LOGOUT] Completed: ${succeeded} succeeded, ${failed} failed`);
+            log.info('Backchannel logout completed', {
+              succeeded,
+              failed,
+              action: 'BackchannelLogout',
+            });
           } catch (error) {
-            console.error('[BACKCHANNEL_LOGOUT] Error sending notifications:', error);
+            log.error(
+              'Error sending notifications',
+              { action: 'BackchannelLogout' },
+              error as Error
+            );
           }
         })()
       );
@@ -539,21 +586,23 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             const webhookConfig = await getLogoutWebhookConfig(c.env.SETTINGS);
 
             if (!webhookConfig.enabled) {
-              console.debug('[LOGOUT_WEBHOOK] Logout webhook is disabled');
+              log.debug('Logout webhook is disabled', { action: 'LogoutWebhook' });
               return;
             }
 
             // Check if we have any webhook clients to notify
             const hasWebhookClients = sessionsToNotify.some((s) => s.webhookClients.length > 0);
             if (!hasWebhookClients) {
-              console.debug('[LOGOUT_WEBHOOK] No webhook clients to notify');
+              log.debug('No webhook clients to notify', { action: 'LogoutWebhook' });
               return;
             }
 
             // Get encryption key for decrypting webhook secrets
             const encryptionKey = c.env.RP_TOKEN_ENCRYPTION_KEY || c.env.PII_ENCRYPTION_KEY;
             if (!encryptionKey) {
-              console.error('[LOGOUT_WEBHOOK] No encryption key for decrypting webhook secrets');
+              log.error('No encryption key for decrypting webhook secrets', {
+                action: 'LogoutWebhook',
+              });
               return;
             }
 
@@ -565,7 +614,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
                 return result.decrypted;
               } catch {
                 // SECURITY: Do not expose decryption error details
-                console.error('[LOGOUT_WEBHOOK] Failed to decrypt webhook secret');
+                log.error('Failed to decrypt webhook secret', { action: 'LogoutWebhook' });
                 throw new Error('Decryption failed');
               }
             };
@@ -586,9 +635,11 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
                 continue;
               }
 
-              console.log(
-                `[LOGOUT_WEBHOOK] Sending webhook notifications for session ${sessId} to ${webhookClients.length} clients`
-              );
+              log.info('Sending webhook notifications', {
+                sessionId: sessId,
+                clientCount: webhookClients.length,
+                action: 'LogoutWebhook',
+              });
 
               const results = await orchestrator.sendToAll(
                 webhookClients,
@@ -607,9 +658,9 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             // Log summary
             const succeeded = allResults.filter((r) => r.success).length;
             const failed = allResults.filter((r) => !r.success).length;
-            console.log(`[LOGOUT_WEBHOOK] Completed: ${succeeded} succeeded, ${failed} failed`);
+            log.info('Logout webhook completed', { succeeded, failed, action: 'LogoutWebhook' });
           } catch (error) {
-            console.error('[LOGOUT_WEBHOOK] Error sending notifications:', error);
+            log.error('Error sending notifications', { action: 'LogoutWebhook' }, error as Error);
           }
         })()
       );
@@ -644,7 +695,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // If post_logout_redirect_uri is provided, id_token_hint is required
     const paramValidation = validateLogoutParameters(postLogoutRedirectUri, idTokenHint, true);
     if (!paramValidation.valid) {
-      console.warn('Logout parameter validation failed:', paramValidation.error);
+      log.warn('Logout parameter validation failed', { error: paramValidation.error });
       canRedirectToRequestedUri = false;
       validationError = 'id_token_hint_required';
     }
@@ -661,7 +712,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Step 4c: Validate post_logout_redirect_uri if provided
     if (canRedirectToRequestedUri && postLogoutRedirectUri) {
       if (!clientId) {
-        console.warn('Cannot validate post_logout_redirect_uri without valid id_token_hint');
+        log.warn('Cannot validate post_logout_redirect_uri without valid id_token_hint');
         canRedirectToRequestedUri = false;
         validationError = 'invalid_id_token_hint';
       } else {
@@ -669,7 +720,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         const client = await authCtx.repositories.client.findByClientId(clientId);
 
         if (!client) {
-          console.warn('Client not found for logout:', clientId);
+          log.warn('Client not found for logout', { clientId });
           canRedirectToRequestedUri = false;
           validationError = 'invalid_client';
         } else {
@@ -683,7 +734,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           }
 
           if (registeredUris.length === 0) {
-            console.warn('No post_logout_redirect_uris registered for client:', clientId);
+            log.warn('No post_logout_redirect_uris registered for client', { clientId });
             canRedirectToRequestedUri = false;
             validationError = 'unregistered_post_logout_redirect_uri';
           } else {
@@ -692,7 +743,9 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
               registeredUris
             );
             if (!uriValidation.valid) {
-              console.warn('post_logout_redirect_uri validation failed:', uriValidation.error);
+              log.warn('post_logout_redirect_uri validation failed', {
+                error: uriValidation.error,
+              });
               canRedirectToRequestedUri = false;
               validationError = 'unregistered_post_logout_redirect_uri';
             }
@@ -702,12 +755,15 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Log the logout event
-    console.log(
-      `[LOGOUT] User ${userId || 'unknown'} logged out from client ${clientId || 'unknown'}, ` +
-        `cookieSessionId=${sessionId || 'none'}, sidFromToken=${sid || 'none'}, ` +
-        `deletedSessions=[${deletedSessions.join(', ') || 'none'}], ` +
-        `idTokenValid=${idTokenValid}, validationError=${validationError || 'none'}`
-    );
+    log.info('User logged out', {
+      userId: userId || 'unknown',
+      clientId: clientId || 'unknown',
+      cookieSessionId: sessionId || 'none',
+      sidFromToken: sid || 'none',
+      deletedSessionsCount: deletedSessions.length,
+      idTokenValid,
+      validationError: validationError || 'none',
+    });
 
     // ========================================
     // Step 5: Build redirect URL
@@ -752,15 +808,19 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
 
       if (frontchannelClients.length > 0) {
-        console.log(
-          `[FRONTCHANNEL_LOGOUT] Showing iframe page for ${frontchannelClients.length} clients`
-        );
+        log.info('Showing iframe page for frontchannel clients', {
+          clientCount: frontchannelClients.length,
+          action: 'FrontchannelLogout',
+        });
 
         // Log client details for debugging
         for (const client of frontchannelClients) {
-          console.log(
-            `[FRONTCHANNEL_LOGOUT] Client: ${client.client_id}, URI: ${client.frontchannel_logout_uri}, sessionRequired: ${client.frontchannel_logout_session_required}`
-          );
+          log.debug('Frontchannel client', {
+            clientId: client.client_id,
+            uri: client.frontchannel_logout_uri,
+            sessionRequired: client.frontchannel_logout_session_required,
+            action: 'FrontchannelLogout',
+          });
         }
 
         // Build iframe configurations
@@ -772,7 +832,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
         // Log generated iframe URLs for debugging
         for (const iframe of iframes) {
-          console.log(`[FRONTCHANNEL_LOGOUT] Iframe URL: ${iframe.logoutUri}`);
+          log.debug('Iframe URL', { logoutUri: iframe.logoutUri, action: 'FrontchannelLogout' });
         }
 
         // Generate HTML page with iframes
@@ -826,7 +886,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       headers,
     });
   } catch (error) {
-    console.error('Front-channel logout error:', error);
+    log.error('Front-channel logout error', {}, error as Error);
     // Even on error, try to clear session cookies
     setCookie(c, 'authrim_session', '', {
       path: '/',
@@ -871,6 +931,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
  * - sid: Session ID (optional)
  */
 export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LOGOUT');
   try {
     // Parse form data
     const body = await c.req.parseBody();
@@ -943,7 +1004,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     } else {
       // For now, allow unauthenticated back-channel logout for testing
       // In production, this should require proper client authentication
-      console.warn('Back-channel logout called without client authentication');
+      log.warn('Back-channel logout called without client authentication');
     }
 
     // Verify logout token
@@ -996,7 +1057,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
       logoutClaims = payload as LogoutTokenPayload;
     } catch (error) {
-      console.error('Logout token validation error:', error);
+      log.error('Logout token validation error', {}, error as Error);
       return c.json(
         {
           error: 'invalid_request',
@@ -1055,21 +1116,25 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         if (deleted) {
           sessionDeleted = true;
         } else {
-          console.warn(`Failed to delete session ${sessionId}`);
+          log.warn('Failed to delete session', { sessionId, action: 'BackchannelLogout' });
         }
       } catch (error) {
-        console.warn(`Failed to route to session store for back-channel logout:`, sessionId, error);
+        log.warn('Failed to route to session store for back-channel logout', {
+          sessionId,
+          error: (error as Error).message,
+          action: 'BackchannelLogout',
+        });
       }
     } else if (sessionId) {
       // Legacy non-sharded session ID - cannot route
-      console.warn(`Back-channel logout: Cannot delete legacy session format: ${sessionId}`);
+      log.warn('Cannot delete legacy session format', { sessionId, action: 'BackchannelLogout' });
     } else {
       // No sessionId provided - "delete all user sessions" is not supported with sharding
       // This would require maintaining a userId -> sessionIds index across all shards
-      console.warn(
-        `Back-channel logout: Cannot invalidate all sessions for user ${userId} - ` +
-          `sessionId (sid claim) is required with sharded SessionStore`
-      );
+      log.warn('Cannot invalidate all sessions without sessionId', {
+        userId,
+        action: 'BackchannelLogout',
+      });
     }
 
     // Revoke Native SSO device_secrets for the deleted session
@@ -1084,12 +1149,18 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             'backchannel_logout'
           );
           if (revokedCount > 0) {
-            console.log(
-              `[BACKCHANNEL_LOGOUT] Revoked ${revokedCount} device secrets for session ${sessionId}`
-            );
+            log.info('Revoked device secrets', {
+              revokedCount,
+              sessionId,
+              action: 'BackchannelLogout',
+            });
           }
         } catch (error) {
-          console.error('[BACKCHANNEL_LOGOUT] Failed to revoke device secrets:', error);
+          log.error(
+            'Failed to revoke device secrets',
+            { action: 'BackchannelLogout' },
+            error as Error
+          );
         }
       }
     }
@@ -1108,7 +1179,11 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           reason: 'logout',
         } satisfies UserEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish user.logout (backchannel):', err);
+        log.error(
+          'Failed to publish user.logout event (backchannel)',
+          { action: 'Event' },
+          err as Error
+        );
       });
 
       // Publish session.user.destroyed event
@@ -1121,19 +1196,26 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           reason: 'logout',
         } satisfies SessionEventData,
       }).catch((err) => {
-        console.error('[Event] Failed to publish session.user.destroyed (backchannel):', err);
+        log.error(
+          'Failed to publish session.user.destroyed event (backchannel)',
+          { action: 'Event' },
+          err as Error
+        );
       });
     }
 
     // Log the logout event
-    console.log(
-      `Back-channel logout: user=${userId}, session=${sessionId || 'all'}, client=${clientId || 'unknown'}`
-    );
+    log.info('Back-channel logout completed', {
+      userId,
+      sessionId: sessionId || 'all',
+      clientId: clientId || 'unknown',
+      action: 'BackchannelLogout',
+    });
 
     // Return 200 OK (no content)
     return c.body(null, 200);
   } catch (error) {
-    console.error('Back-channel logout error:', error);
+    log.error('Back-channel logout error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

@@ -18,6 +18,9 @@
 
 import type { EncryptionAlgorithm, EncryptablePIIField } from './encryption-config';
 import { EncryptionConfigManager } from './encryption-config';
+import { createLogger } from './logger';
+
+const log = createLogger().module('PII_ENCRYPTION');
 
 const IV_LENGTH_GCM = 12; // 96 bits for GCM (NIST recommended)
 const IV_LENGTH_CBC = 16; // 128 bits for CBC
@@ -300,7 +303,7 @@ export class PIIEncryptionService {
     if (!shouldEncrypt) return value;
 
     if (!this.encryptionKey) {
-      console.warn(`Encryption enabled but PII_ENCRYPTION_KEY not configured`);
+      log.warn('Encryption enabled but PII_ENCRYPTION_KEY not configured');
       return value;
     }
 

@@ -14,6 +14,7 @@
 import type { Context } from 'hono';
 import {
   D1Adapter,
+  getLogger,
   type DatabaseAdapter,
   type OrgDomainMapping,
   type OrgDomainMappingRow,
@@ -111,6 +112,7 @@ function validateDomainFormat(domain: string): { valid: boolean; error?: string 
  * Create a new domain mapping
  */
 export async function createOrgDomainMapping(c: Context) {
+  const log = getLogger(c).module('OrgDomainMappingsAPI');
   const body = await c.req.json<OrgDomainMappingInput>();
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -203,7 +205,7 @@ export async function createOrgDomainMapping(c: Context) {
       201
     );
   } catch (error) {
-    console.error('[Org Domain Mappings API] Create error:', error);
+    log.error('Create error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -219,6 +221,7 @@ export async function createOrgDomainMapping(c: Context) {
  * List all domain mappings
  */
 export async function listOrgDomainMappings(c: Context) {
+  const log = getLogger(c).module('OrgDomainMappingsAPI');
   const tenantId = DEFAULT_TENANT_ID;
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_MAPPINGS_PER_PAGE);
   const offset = parseInt(c.req.query('offset') || '0', 10);
@@ -242,7 +245,7 @@ export async function listOrgDomainMappings(c: Context) {
       offset,
     });
   } catch (error) {
-    console.error('[Org Domain Mappings API] List error:', error);
+    log.error('List error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -258,6 +261,7 @@ export async function listOrgDomainMappings(c: Context) {
  * Get a single mapping by ID
  */
 export async function getOrgDomainMapping(c: Context) {
+  const log = getLogger(c).module('OrgDomainMappingsAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -276,7 +280,7 @@ export async function getOrgDomainMapping(c: Context) {
 
     return c.json(mapping);
   } catch (error) {
-    console.error('[Org Domain Mappings API] Get error:', error);
+    log.error('Get error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -292,6 +296,7 @@ export async function getOrgDomainMapping(c: Context) {
  * Update a mapping
  */
 export async function updateOrgDomainMapping(c: Context) {
+  const log = getLogger(c).module('OrgDomainMappingsAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
   const body = await c.req.json<Partial<OrgDomainMappingInput>>();
@@ -319,7 +324,7 @@ export async function updateOrgDomainMapping(c: Context) {
 
     return c.json(updated);
   } catch (error) {
-    console.error('[Org Domain Mappings API] Update error:', error);
+    log.error('Update error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -335,6 +340,7 @@ export async function updateOrgDomainMapping(c: Context) {
  * Delete a mapping
  */
 export async function deleteOrgDomainMapping(c: Context) {
+  const log = getLogger(c).module('OrgDomainMappingsAPI');
   const id = c.req.param('id');
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -353,7 +359,7 @@ export async function deleteOrgDomainMapping(c: Context) {
 
     return c.json({ success: true });
   } catch (error) {
-    console.error('[Org Domain Mappings API] Delete error:', error);
+    log.error('Delete error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -369,6 +375,7 @@ export async function deleteOrgDomainMapping(c: Context) {
  * List domain mappings for a specific organization
  */
 export async function listOrgDomainMappingsByOrg(c: Context) {
+  const log = getLogger(c).module('OrgDomainMappingsAPI');
   const orgId = c.req.param('org_id');
   const tenantId = DEFAULT_TENANT_ID;
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), MAX_MAPPINGS_PER_PAGE);
@@ -405,7 +412,7 @@ export async function listOrgDomainMappingsByOrg(c: Context) {
       offset,
     });
   } catch (error) {
-    console.error('[Org Domain Mappings API] List by org error:', error);
+    log.error('List by org error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -436,6 +443,7 @@ export async function listOrgDomainMappingsByOrg(c: Context) {
  * }
  */
 export async function verifyDomainOwnership(c: Context) {
+  const log = getLogger(c).module('OrgDomainMappingsAPI');
   const body = await c.req.json<{
     mapping_id: string;
     domain: string;
@@ -534,7 +542,11 @@ export async function verifyDomainOwnership(c: Context) {
         verificationMethod: method,
       } satisfies DomainEventData,
     }).catch((err: unknown) => {
-      console.error(`[Event] Failed to publish ${DOMAIN_EVENTS.VERIFICATION_STARTED}:`, err);
+      log.warn(
+        'Failed to publish event',
+        { event: DOMAIN_EVENTS.VERIFICATION_STARTED },
+        err as Error
+      );
     });
 
     return c.json({
@@ -546,7 +558,7 @@ export async function verifyDomainOwnership(c: Context) {
       instructions: `Add a TXT record to your DNS configuration:\n\nName: ${recordName}\nValue: ${recordValue}\n\nAfter adding the record, call POST /api/admin/org-domain-mappings/verify/confirm with mapping_id to complete verification.`,
     });
   } catch (error) {
-    console.error('[Org Domain Mappings API] Verify initiate error:', error);
+    log.error('Verify initiate error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -574,6 +586,7 @@ export async function verifyDomainOwnership(c: Context) {
  * }
  */
 export async function confirmDomainVerification(c: Context) {
+  const log = getLogger(c).module('OrgDomainMappingsAPI');
   const body = await c.req.json<{ mapping_id: string; domain: string }>();
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -676,7 +689,11 @@ export async function confirmDomainVerification(c: Context) {
           errorMessage: 'Verification token has expired',
         } satisfies DomainEventData,
       }).catch((err: unknown) => {
-        console.error(`[Event] Failed to publish ${DOMAIN_EVENTS.VERIFICATION_FAILED}:`, err);
+        log.warn(
+          'Failed to publish event',
+          { event: DOMAIN_EVENTS.VERIFICATION_FAILED },
+          err as Error
+        );
       });
 
       return c.json(
@@ -714,12 +731,14 @@ export async function confirmDomainVerification(c: Context) {
           verificationMethod: row.verification_method || 'dns_txt',
         } satisfies DomainEventData,
       }).catch((err: unknown) => {
-        console.error(`[Event] Failed to publish ${DOMAIN_EVENTS.VERIFICATION_SUCCEEDED}:`, err);
+        log.warn(
+          'Failed to publish event',
+          { event: DOMAIN_EVENTS.VERIFICATION_SUCCEEDED },
+          err as Error
+        );
       });
 
-      console.log(
-        `[Domain Verification] Domain verified: mapping=${body.mapping_id}, domain=${domain}`
-      );
+      log.info('Domain verified', { mappingId: body.mapping_id });
 
       return c.json({
         verified: true,
@@ -740,7 +759,11 @@ export async function confirmDomainVerification(c: Context) {
           errorMessage,
         } satisfies DomainEventData,
       }).catch((err: unknown) => {
-        console.error(`[Event] Failed to publish ${DOMAIN_EVENTS.VERIFICATION_FAILED}:`, err);
+        log.warn(
+          'Failed to publish event',
+          { event: DOMAIN_EVENTS.VERIFICATION_FAILED },
+          err as Error
+        );
       });
 
       return c.json(
@@ -756,7 +779,7 @@ export async function confirmDomainVerification(c: Context) {
       );
     }
   } catch (error) {
-    console.error('[Org Domain Mappings API] Verify confirm error:', error);
+    log.error('Verify confirm error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

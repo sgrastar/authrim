@@ -17,6 +17,7 @@ import {
   getShardCount,
   buildAuthCodeShardInstanceName,
   timingSafeEqual,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -50,6 +51,8 @@ interface WarmupResult {
  * @returns JSON response with warmup results
  */
 export async function handleWarmup(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('WARMUP');
+
   // 1. Admin authentication check
   const authHeader = c.req.header('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
@@ -112,7 +115,10 @@ export async function handleWarmup(c: Context<{ Bindings: Env }>): Promise<Respo
               shardsUpdated++;
             })
             .catch((error) => {
-              console.error(`Failed to reload config for shard ${j}:`, error);
+              log.warn('Failed to reload config for shard', {
+                action: 'reload_config',
+                shardIndex: j,
+              });
             })
         );
       }
@@ -133,9 +139,12 @@ export async function handleWarmup(c: Context<{ Bindings: Env }>): Promise<Respo
     };
     result.duration_ms = Date.now() - startTime;
 
-    console.log(
-      `[CONFIG-RELOAD] Completed: ${shardsUpdated}/${shardCount} shards updated in ${result.duration_ms}ms`
-    );
+    log.info('Config reload completed', {
+      action: 'reload_config_complete',
+      shardsUpdated,
+      totalShards: shardCount,
+      durationMs: result.duration_ms,
+    });
 
     return c.json(result);
   }
@@ -181,9 +190,11 @@ export async function handleWarmup(c: Context<{ Bindings: Env }>): Promise<Respo
 
   result.duration_ms = Date.now() - startTime;
 
-  console.log(
-    `[WARMUP] Completed: ${result.warmed_up.auth_code_shards} auth-code shards in ${result.duration_ms}ms`
-  );
+  log.info('Warmup completed', {
+    action: 'warmup_complete',
+    authCodeShards: result.warmed_up.auth_code_shards,
+    durationMs: result.duration_ms,
+  });
 
   return c.json(result);
 }

@@ -38,6 +38,9 @@ import type { Env } from '../../types/env';
 import type { D1Result } from '../../utils/d1-retry';
 import { buildDOInstanceName } from '../../utils/tenant-context';
 import type { SessionResponse } from '../../durable-objects/SessionStore';
+import { createLogger } from '../../utils/logger';
+
+const log = createLogger().module('CloudflareStorageAdapter');
 
 /**
  * CloudflareStorageAdapter
@@ -218,7 +221,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
       } catch (error) {
         // Cache deletion failure should not block D1 write
         // D1 is the source of truth
-        console.warn(`KV cache delete failed for ${key}, proceeding with D1 write`, error);
+        log.warn('KV cache delete failed, proceeding with D1 write', { key }, error as Error);
       }
     }
 
@@ -243,7 +246,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
       } catch (error) {
         // Cache deletion failure should not block D1 delete
         // D1 is the source of truth
-        console.warn(`KV cache delete failed for ${key}, proceeding with D1 delete`, error);
+        log.warn('KV cache delete failed, proceeding with D1 delete', { key }, error as Error);
       }
     }
 
@@ -332,10 +335,10 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    * Key format: refreshtoken:{familyId} - lacks JTI/clientId for sharding.
    */
   private async getFromRefreshTokenRotator(key: string): Promise<string | null> {
-    console.warn(
-      '[DEPRECATED] getFromRefreshTokenRotator uses legacy routing. ' +
-        'Use getRefreshToken() from @authrim/ar-lib-core/utils/kv for V3 sharding support.'
-    );
+    log.warn('DEPRECATED: getFromRefreshTokenRotator uses legacy routing', {
+      recommendation:
+        'Use getRefreshToken() from @authrim/ar-lib-core/utils/kv for V3 sharding support.',
+    });
     const familyId = key.substring(13); // Remove 'refreshtoken:' prefix (familyId = userId in legacy)
     const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
@@ -376,10 +379,9 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
       doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
     } else {
       // Legacy: Use non-sharded routing
-      console.warn(
-        '[DEPRECATED] setToRefreshTokenRotator using legacy routing. ' +
-          'Include jti and clientId in familyData for V3 sharding support.'
-      );
+      log.warn('DEPRECATED: setToRefreshTokenRotator using legacy routing', {
+        recommendation: 'Include jti and clientId in familyData for V3 sharding support.',
+      });
       doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
     }
 
@@ -399,10 +401,10 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    * Key format: refreshtoken:{familyId} - lacks JTI/clientId for sharding.
    */
   private async deleteFromRefreshTokenRotator(key: string): Promise<void> {
-    console.warn(
-      '[DEPRECATED] deleteFromRefreshTokenRotator uses legacy routing. ' +
-        'Use deleteRefreshToken() from @authrim/ar-lib-core/utils/kv for V3 sharding support.'
-    );
+    log.warn('DEPRECATED: deleteFromRefreshTokenRotator uses legacy routing', {
+      recommendation:
+        'Use deleteRefreshToken() from @authrim/ar-lib-core/utils/kv for V3 sharding support.',
+    });
     const familyId = key.substring(13); // Remove 'refreshtoken:' prefix (familyId = userId in legacy)
     const doId = this.env.REFRESH_TOKEN_ROTATOR.idFromName(buildDOInstanceName('refresh-token'));
     const doStub = this.env.REFRESH_TOKEN_ROTATOR.get(doId);
@@ -1122,9 +1124,11 @@ export class PasskeyStore implements IPasskeyStore {
 
       // Update failed - another request modified the counter
       // Retry the operation
-      console.warn(
-        `Passkey counter CAS conflict for ${passkeyId}, attempt ${attempt + 1}/${MAX_RETRIES}`
-      );
+      log.warn('Passkey counter CAS conflict', {
+        passkeyId,
+        attempt: attempt + 1,
+        maxRetries: MAX_RETRIES,
+      });
 
       // Small delay before retry to reduce contention
       if (attempt < MAX_RETRIES - 1) {

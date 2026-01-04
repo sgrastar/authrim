@@ -14,6 +14,9 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { OrgDomainMapping, OrgDomainMappingRow } from '../types/policy-rules';
 import type { JITProvisioningConfig, EmailDomainHashConfig } from '../types/jit-config';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('ORG-DOMAIN-RESOLVER');
 
 // =============================================================================
 // Types
@@ -264,7 +267,7 @@ export async function joinOrganization(
       membership_id: membershipId,
     };
   } catch (error) {
-    console.error('[joinOrganization] Database error:', error);
+    log.error('Database error in joinOrganization', { orgId, userId }, error as Error);
     return {
       success: false,
       org_id: orgId,
@@ -365,7 +368,7 @@ export async function assignRoleToUser(
       assignment_id: assignmentId,
     };
   } catch (error) {
-    console.error('[assignRoleToUser] Database error:', error);
+    log.error('Database error in assignRoleToUser', { roleId, userId, orgId }, error as Error);
     return {
       success: false,
       // SECURITY: Do not expose internal error details

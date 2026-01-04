@@ -29,6 +29,7 @@ import {
   publishEvent,
   SETTINGS_EVENTS,
   type SettingsEventData,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -167,6 +168,7 @@ async function applySnapshot(
  * List version history for a settings category
  */
 export async function listSettingsHistory(c: SettingsContext) {
+  const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
   const category = c.req.param('category');
 
   if (!isValidCategory(category)) {
@@ -194,7 +196,7 @@ export async function listSettingsHistory(c: SettingsContext) {
       offset,
     });
   } catch (error) {
-    console.error('[Settings History API] List error:', error);
+    log.error('List error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -210,6 +212,7 @@ export async function listSettingsHistory(c: SettingsContext) {
  * Get a specific version's snapshot
  */
 export async function getSettingsVersion(c: SettingsContext) {
+  const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
   const category = c.req.param('category');
   const versionStr = c.req.param('version');
 
@@ -262,7 +265,7 @@ export async function getSettingsVersion(c: SettingsContext) {
       createdAt: entry.createdAt,
     });
   } catch (error) {
-    console.error('[Settings History API] Get version error:', error);
+    log.error('Get version error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -284,6 +287,7 @@ export async function getSettingsVersion(c: SettingsContext) {
  * }
  */
 export async function rollbackSettings(c: SettingsContext) {
+  const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
   const category = c.req.param('category');
   const tenantId = DEFAULT_TENANT_ID;
 
@@ -337,7 +341,11 @@ export async function rollbackSettings(c: SettingsContext) {
         changeSource: 'admin_api',
       } satisfies SettingsEventData,
     }).catch((err: unknown) => {
-      console.error(`[Event] Failed to publish ${SETTINGS_EVENTS.ROLLBACK_STARTED}:`, err);
+      log.warn(
+        'Failed to publish event',
+        { event: SETTINGS_EVENTS.ROLLBACK_STARTED },
+        err as Error
+      );
     });
 
     const result = await historyManager.rollback(
@@ -364,12 +372,19 @@ export async function rollbackSettings(c: SettingsContext) {
         changeSource: 'admin_api',
       } satisfies SettingsEventData,
     }).catch((err: unknown) => {
-      console.error(`[Event] Failed to publish ${SETTINGS_EVENTS.ROLLBACK_COMPLETED}:`, err);
+      log.warn(
+        'Failed to publish event',
+        { event: SETTINGS_EVENTS.ROLLBACK_COMPLETED },
+        err as Error
+      );
     });
 
-    console.log(
-      `[Settings Rollback] Rolled back ${category} from v${result.previousVersion} to v${body.targetVersion} (new version: v${result.currentVersion})`
-    );
+    log.info('Settings rolled back', {
+      category,
+      previousVersion: result.previousVersion,
+      targetVersion: body.targetVersion,
+      currentVersion: result.currentVersion,
+    });
 
     return c.json({
       success: true,
@@ -391,10 +406,10 @@ export async function rollbackSettings(c: SettingsContext) {
         errorMessage: error instanceof Error ? error.message : 'Unknown error',
       } satisfies SettingsEventData,
     }).catch((err: unknown) => {
-      console.error(`[Event] Failed to publish ${SETTINGS_EVENTS.ROLLBACK_FAILED}:`, err);
+      log.warn('Failed to publish event', { event: SETTINGS_EVENTS.ROLLBACK_FAILED }, err as Error);
     });
 
-    console.error('[Settings History API] Rollback error:', error);
+    log.error('Rollback error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -410,6 +425,7 @@ export async function rollbackSettings(c: SettingsContext) {
  * Get current settings for a category (for comparison with history)
  */
 export async function getCurrentSettings(c: SettingsContext) {
+  const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
   const category = c.req.param('category');
 
   if (!isValidCategory(category)) {
@@ -435,7 +451,7 @@ export async function getCurrentSettings(c: SettingsContext) {
       lastModifiedBy: latestEntry?.actorId,
     });
   } catch (error) {
-    console.error('[Settings History API] Get current error:', error);
+    log.error('Get current error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -452,6 +468,7 @@ export async function getCurrentSettings(c: SettingsContext) {
  * GET /api/admin/settings/:category/compare?from=5&to=10
  */
 export async function compareSettingsVersions(c: SettingsContext) {
+  const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
   const category = c.req.param('category');
   const fromStr = c.req.query('from');
   const toStr = c.req.query('to');
@@ -532,7 +549,7 @@ export async function compareSettingsVersions(c: SettingsContext) {
       diff,
     });
   } catch (error) {
-    console.error('[Settings History API] Compare error:', error);
+    log.error('Compare error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

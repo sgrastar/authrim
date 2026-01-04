@@ -25,6 +25,7 @@ import type { Env } from '../types/env';
 import type { DeviceCodeMetadata } from '../types/oidc';
 import { isDeviceCodeExpired } from '../utils/device-flow';
 import { retryD1Operation } from '../utils/d1-retry';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * Device Code V2 - Enhanced state for V2 architecture
@@ -73,6 +74,7 @@ interface AuditLogEntry {
 export class DeviceCodeStore {
   private state: DurableObjectState;
   private env: Env;
+  private readonly log: Logger = createLogger().module('DeviceCodeStore');
 
   // In-memory storage for active device codes
   private deviceCodes: Map<string, DeviceCodeV2> = new Map();
@@ -126,11 +128,12 @@ export class DeviceCodeStore {
         this.userCodeToDeviceCode.set(userCode, deviceCode);
       }
 
-      console.log(
-        `DeviceCodeStore: Loaded ${this.deviceCodes.size} device codes, ${this.userCodeToDeviceCode.size} user mappings`
-      );
+      this.log.info('Loaded device codes and user mappings', {
+        deviceCodeCount: this.deviceCodes.size,
+        userMappingCount: this.userCodeToDeviceCode.size,
+      });
     } catch (error) {
-      console.error('DeviceCodeStore: Failed to initialize:', error);
+      this.log.error('Failed to initialize', {}, error as Error);
     }
 
     this.initialized = true;
@@ -148,9 +151,7 @@ export class DeviceCodeStore {
     }
 
     // Safety fallback (should not happen with blockConcurrencyWhile)
-    console.warn(
-      'DeviceCodeStore: initializeState called but not initialized - this should not happen'
-    );
+    this.log.warn('initializeState called but not initialized - this should not happen');
     await this.initializeStateBlocking();
   }
 
@@ -310,7 +311,7 @@ export class DeviceCodeStore {
       return new Response('Not found', { status: 404 });
     } catch (error) {
       // Log full error for debugging but don't expose to client
-      console.error('DeviceCodeStore error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(
         JSON.stringify({
@@ -811,7 +812,7 @@ export class DeviceCodeStore {
 
       await this.env.DB.batch(statements);
     } catch (error) {
-      console.error('DeviceCodeStore: Failed to flush audit logs:', error);
+      this.log.error('Failed to flush audit logs', {}, error as Error);
       // Re-queue (limited to prevent memory leak)
       if (this.pendingAuditLogs.length < 100) {
         this.pendingAuditLogs.push(...logsToFlush);
@@ -838,13 +839,13 @@ export class DeviceCodeStore {
     const now = Date.now();
 
     if (now - lastCleanup < CLEANUP_INTERVAL_MS - IDEMPOTENCY_BUFFER_MS) {
-      console.log('DeviceCodeStore alarm: Skipping duplicate execution');
+      this.log.info('Skipping duplicate alarm execution');
       // Reschedule from last cleanup time
       await this.state.storage.setAlarm(lastCleanup + CLEANUP_INTERVAL_MS);
       return;
     }
 
-    console.log('DeviceCodeStore alarm: Cleaning up expired device codes');
+    this.log.info('Cleaning up expired device codes');
 
     const expiredCodes: string[] = [];
 
@@ -883,7 +884,7 @@ export class DeviceCodeStore {
     // Record last cleanup time
     await this.state.storage.put(lastCleanupKey, now);
 
-    console.log(`DeviceCodeStore: Cleaned up ${expiredCodes.length} expired device codes`);
+    this.log.info('Cleaned up expired device codes', { count: expiredCodes.length });
 
     // Schedule next cleanup
     await this.state.storage.setAlarm(now + CLEANUP_INTERVAL_MS);

@@ -16,6 +16,9 @@ import { createOAuthConfigManager } from './oauth-config';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
 import { D1Adapter } from '../db/adapters/d1-adapter';
 import type { DatabaseAdapter } from '../db/adapter';
+import { createLogger } from './logger';
+
+const log = createLogger().module('KV');
 
 // ===== User Cache =====
 // Read-Through Cache for user metadata with invalidation hook support
@@ -77,9 +80,9 @@ export async function getCachedUser(env: Env, userId: string): Promise<CachedUse
     } catch (error) {
       // Cache is corrupted - delete it and fetch from D1
       // PII Protection: Don't log full error (may contain cached data)
-      console.error('Failed to parse cached user data');
+      log.error('Failed to parse cached user data', {}, error as Error);
       await env.USER_CACHE.delete(cacheKey).catch(() => {
-        console.warn('Failed to delete corrupted user cache');
+        log.warn('Failed to delete corrupted user cache');
       });
     }
   }
@@ -101,7 +104,7 @@ export async function getCachedUser(env: Env, userId: string): Promise<CachedUse
   } catch (error) {
     // Cache write failure should not block the response
     // PII Protection: Don't log userId (can be used for tracking)
-    console.warn('Failed to cache user data');
+    log.warn('Failed to cache user data');
   }
 
   return user;
@@ -246,7 +249,7 @@ export async function invalidateUserCache(env: Env, userId: string): Promise<voi
   } catch (error) {
     // Log but don't throw - cache invalidation failure is not critical
     // PII Protection: Don't log userId
-    console.warn('Failed to invalidate user cache');
+    log.warn('Failed to invalidate user cache');
   }
 }
 
@@ -357,9 +360,9 @@ export async function getCachedConsent(
     } catch (error) {
       // Cache is corrupted - delete it and fetch from D1
       // PII Protection: Don't log full error (may contain cached data)
-      console.error('Failed to parse cached consent data');
+      log.error('Failed to parse cached consent data', {}, error as Error);
       await env.CONSENT_CACHE.delete(cacheKey).catch(() => {
-        console.warn('Failed to delete corrupted consent cache');
+        log.warn('Failed to delete corrupted consent cache');
       });
     }
   }
@@ -381,7 +384,7 @@ export async function getCachedConsent(
   } catch (error) {
     // Cache write failure should not block the response
     // PII Protection: Don't log userId/clientId
-    console.warn('Failed to cache consent data');
+    log.warn('Failed to cache consent data');
   }
 
   return consent;
@@ -440,14 +443,14 @@ export async function invalidateConsentCache(
       await env.CONSENT_CACHE.delete(cacheKey);
     } catch (error) {
       // PII Protection: Don't log userId/clientId
-      console.warn('Failed to invalidate consent cache');
+      log.warn('Failed to invalidate consent cache');
     }
   } else {
     // Note: KV doesn't support prefix deletion efficiently
     // For user-wide consent invalidation, we rely on TTL expiration
     // This is acceptable because consent revocation at user level is rare
     // PII Protection: Don't log userId
-    console.warn('Cannot bulk invalidate consent cache. Individual caches will expire naturally.');
+    log.warn('Cannot bulk invalidate consent cache. Individual caches will expire naturally.');
   }
 }
 
@@ -561,9 +564,9 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     } catch (error) {
       // Cache is corrupted - delete it and fetch from D1
       // PII Protection: Don't log full error (may contain cached data)
-      console.error('Failed to parse cached client data');
+      log.error('Failed to parse cached client data', {}, error as Error);
       await env.CLIENTS_CACHE.delete(cacheKey).catch(() => {
-        console.warn('Failed to delete corrupted cache');
+        log.warn('Failed to delete corrupted cache');
       });
     }
   }
@@ -694,7 +697,7 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     // Cache write failure should not block the response
     // D1 is the source of truth
     // PII Protection: Don't log clientId
-    console.warn('Failed to cache client data');
+    log.warn('Failed to cache client data');
   }
 
   return clientData;
@@ -750,7 +753,7 @@ export async function revokeToken(
  */
 export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
   if (!env.TOKEN_REVOCATION_STORE) {
-    console.warn('TOKEN_REVOCATION_STORE binding is not configured; skipping revocation check');
+    log.warn('TOKEN_REVOCATION_STORE binding is not configured; skipping revocation check');
     return false;
   }
 
@@ -770,10 +773,7 @@ export async function isTokenRevoked(env: Env, jti: string): Promise<boolean> {
     return data.revoked;
   } catch (error) {
     // PII Protection: Don't log full error (may contain token details)
-    console.error(
-      'Failed to check token revocation:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Failed to check token revocation', {}, error as Error);
     return false;
   }
 }
@@ -892,10 +892,7 @@ export async function getRefreshToken(
     };
   } catch (error) {
     // PII Protection: Don't log full error (may contain token details)
-    console.error(
-      'Failed to get refresh token:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Failed to get refresh token', {}, error as Error);
     return null;
   }
 }
@@ -933,6 +930,6 @@ export async function deleteRefreshToken(env: Env, jti: string, client_id: strin
     await stub.revokeByJtiRpc(jti, 'Token revocation requested');
   } catch (error) {
     // Token doesn't exist or already revoked - that's OK for delete operations
-    console.log('Token revocation completed (may already be revoked):', error);
+    log.debug('Token revocation completed (may already be revoked)');
   }
 }

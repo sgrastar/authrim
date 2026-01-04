@@ -11,6 +11,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   createAuditLogFromContext,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -106,7 +107,8 @@ export async function adminScimTokensListHandler(c: Context<{ Bindings: Env }>) 
       total: tokens.length,
     });
   } catch (error) {
-    console.error('List SCIM tokens error:', error);
+    const log = getLogger(c).module('SCIM-TOKENS');
+    log.error('Failed to list SCIM tokens', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -158,7 +160,8 @@ export async function adminScimTokenCreateHandler(c: Context<{ Bindings: Env }>)
       201
     );
   } catch (error) {
-    console.error('Create SCIM token error:', error);
+    const log = getLogger(c).module('SCIM-TOKENS');
+    log.error('Failed to create SCIM token', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -196,7 +199,8 @@ export async function adminScimTokenRevokeHandler(c: Context<{ Bindings: Env }>)
       message: 'Token revoked successfully',
     });
   } catch (error) {
-    console.error('Revoke SCIM token error:', error);
+    const log = getLogger(c).module('SCIM-TOKENS');
+    log.error('Failed to revoke SCIM token', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

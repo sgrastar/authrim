@@ -23,6 +23,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * PAR request data
@@ -93,6 +94,7 @@ export class PARRequestStore extends DurableObject<Env> {
   private requests: Map<string, PARRequestData> = new Map();
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
+  private readonly log: Logger = createLogger().module('PARRequestStore');
 
   // Configuration
   private readonly CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
@@ -181,12 +183,10 @@ export class PARRequestStore extends DurableObject<Env> {
 
       if (stored) {
         this.requests = new Map(Object.entries(stored.requests));
-        console.log(
-          `PARRequestStore: Restored ${this.requests.size} requests from Durable Storage`
-        );
+        this.log.info('Restored requests from Durable Storage', { count: this.requests.size });
       }
     } catch (error) {
-      console.error('PARRequestStore: Failed to initialize from Durable Storage:', error);
+      this.log.error('Failed to initialize from Durable Storage', {}, error as Error);
     }
 
     this.initialized = true;
@@ -205,7 +205,7 @@ export class PARRequestStore extends DurableObject<Env> {
 
       await this.ctx.storage.put('state', stateToSave);
     } catch (error) {
-      console.error('PARRequestStore: Failed to save to Durable Storage:', error);
+      this.log.error('Failed to save to Durable Storage', {}, error as Error);
     }
   }
 
@@ -235,7 +235,7 @@ export class PARRequestStore extends DurableObject<Env> {
     }
 
     if (cleaned > 0) {
-      console.log(`PARRequestStore: Cleaned up ${cleaned} expired/consumed requests`);
+      this.log.info('Cleaned up expired/consumed requests', { count: cleaned });
       await this.saveState();
     }
   }
@@ -413,7 +413,7 @@ export class PARRequestStore extends DurableObject<Env> {
             headers: { 'Content-Type': 'application/json' },
           });
         } catch (error) {
-          console.error('[PARRequestStore] consumeRequest error:', error);
+          this.log.warn('consumeRequest error', {}, error as Error);
           const message = error instanceof Error ? error.message : '';
 
           // SECURITY: Use generic error descriptions, only allow safe predefined messages
@@ -518,7 +518,7 @@ export class PARRequestStore extends DurableObject<Env> {
       return new Response('Not Found', { status: 404 });
     } catch (error) {
       // Log full error for debugging but don't expose to client
-      console.error('PARRequestStore error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(
         JSON.stringify({

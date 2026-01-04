@@ -15,13 +15,23 @@ import { cibaAuthorizationHandler } from '../ciba-authorization';
 import { cibaApproveHandler } from '../ciba-approve';
 import { cibaDenyHandler } from '../ciba-deny';
 
-// Mock getClient at module level
+// Mock getClient and logger at module level
 const mockGetClient = vi.hoisted(() => vi.fn());
+const mockLogger = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+  child: vi.fn().mockReturnThis(),
+  module: vi.fn().mockReturnThis(),
+  startTimer: vi.fn().mockReturnValue(() => {}),
+}));
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
     getClient: mockGetClient,
+    getLogger: () => mockLogger,
     sendPingNotification: vi.fn().mockResolvedValue(undefined),
   };
 });

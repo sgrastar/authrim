@@ -12,6 +12,7 @@ import {
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -37,6 +38,7 @@ import {
  *   }
  */
 export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('CIBA');
   try {
     const authReqId = c.req.param('auth_req_id');
 
@@ -101,7 +103,7 @@ export async function cibaDetailsHandler(c: Context<{ Bindings: Env }>) {
       status: metadata.status,
     });
   } catch (error) {
-    console.error('CIBA request details API error:', error);
+    log.error('CIBA request details API error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

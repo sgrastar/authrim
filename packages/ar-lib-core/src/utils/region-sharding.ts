@@ -20,6 +20,9 @@
 
 import type { Env } from '../types/env';
 import { fnv1a32, DEFAULT_TENANT_ID } from './tenant-context';
+import { createLogger } from './logger';
+
+const log = createLogger().module('REGION_SHARD');
 
 // =============================================================================
 // Types
@@ -750,7 +753,7 @@ function buildConfigFromEnv(env: Env, now: number): RegionShardConfigV2 | null {
   // Validate percentages sum to 100
   const sum = apacPercent + enamPercent + weurPercent;
   if (sum !== 100) {
-    console.warn(`Region distribution percentages sum to ${sum}, not 100. Using defaults.`);
+    log.warn(`Region distribution percentages sum to ${sum}, not 100. Using defaults.`);
     return null;
   }
 
@@ -760,7 +763,7 @@ function buildConfigFromEnv(env: Env, now: number): RegionShardConfigV2 | null {
     try {
       groups = JSON.parse(env.REGION_SHARD_GROUPS_JSON);
     } catch (e) {
-      console.warn('Failed to parse REGION_SHARD_GROUPS_JSON, using defaults:', e);
+      log.warn('Failed to parse REGION_SHARD_GROUPS_JSON, using defaults');
     }
   }
 
@@ -1189,7 +1192,7 @@ export function validateColocationGroupsStrict(
 
   if (!result.valid) {
     const errorMessage = result.errors.join('\n');
-    console.error('Shard configuration validation failed:', errorMessage);
+    log.error('Shard configuration validation failed', { errors: errorMessage });
 
     if (failClosed) {
       throw new Error(`Shard configuration invalid: ${errorMessage}`);
@@ -1198,7 +1201,7 @@ export function validateColocationGroupsStrict(
 
   // Log warnings
   for (const warning of result.warnings) {
-    console.warn('Shard configuration warning:', warning);
+    log.warn('Shard configuration warning', { warning });
   }
 }
 

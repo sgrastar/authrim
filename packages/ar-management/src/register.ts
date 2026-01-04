@@ -27,6 +27,8 @@ import {
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
+  createLogger,
   // Custom Redirect URIs (Authrim Extension)
   validateAllowedOrigins,
   // Simple Logout Webhook (Authrim Extension)
@@ -100,7 +102,8 @@ async function validateSectorIdentifierContent(
 
     return { valid: true };
   } catch (error) {
-    console.error('[DCR] sector_identifier_uri validation error:', error);
+    const log = createLogger().module('DCR');
+    log.error('sector_identifier_uri validation error', { sectorUri }, error as Error);
     return {
       valid: false,
       error: {
@@ -925,7 +928,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
 
     const isTrusted = redirectDomain === issuerDomain || trustedDomains.includes(redirectDomain);
 
-    console.log(`[DCR] Client registration: domain=${redirectDomain}, trusted=${isTrusted}`);
+    const log = getLogger(c).module('DCR');
+    log.info('Client registration', {
+      action: 'register',
+      domain: redirectDomain,
+      trusted: isTrusted,
+    });
 
     // Build response
     const response: ClientRegistrationResponse = {
@@ -1031,9 +1039,9 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
         webhookSecretEncrypted = encrypted.encrypted;
       } else {
         // SECURITY: If no encryption key, fail-close (reject registration)
-        console.error(
-          '[DCR] logout_webhook_secret requires RP_TOKEN_ENCRYPTION_KEY or PII_ENCRYPTION_KEY'
-        );
+        log.error('logout_webhook_secret requires RP_TOKEN_ENCRYPTION_KEY or PII_ENCRYPTION_KEY', {
+          action: 'register',
+        });
         return c.json(
           {
             error: 'server_error',
@@ -1049,7 +1057,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
         response as ClientRegistrationResponse & { logout_webhook_secret?: string }
       ).logout_webhook_secret = webhookSecretPlain;
 
-      console.log(`[DCR] Logout webhook configured for client: ${clientId}`);
+      log.info('Logout webhook configured for client', { action: 'register', clientId });
     }
 
     // OIDC Conformance Test: Detect certification.openid.net
@@ -1088,11 +1096,10 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     await storeClient(c.env, clientId, metadata);
 
     // Log client registration for debugging/auditing
-    // eslint-disable-next-line no-console
-    console.log(`Client registered: ${clientId}`);
+    log.info('Client registered', { action: 'register', clientId });
 
     if (isCertificationTest) {
-      console.log('[DCR] OIDC Conformance Test detected, creating test user');
+      log.info('OIDC Conformance Test detected, creating test user', { action: 'register' });
 
       const testUserId = 'user-oidc-conformance-test';
       const testAddress = {
@@ -1169,7 +1176,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
         );
       }
 
-      console.log('[DCR] Test user created/verified: user-oidc-conformance-test');
+      log.info('Test user created/verified: user-oidc-conformance-test', { action: 'register' });
     }
 
     return c.json(response, 201, {
@@ -1177,7 +1184,8 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       Pragma: 'no-cache',
     });
   } catch (error) {
-    console.error('Registration error:', error);
+    const errorLog = getLogger(c).module('DCR');
+    errorLog.error('Registration error', { action: 'register' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

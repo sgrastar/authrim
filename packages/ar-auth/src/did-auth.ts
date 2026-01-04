@@ -34,6 +34,8 @@ import {
   SESSION_EVENTS,
   type AuthEventData,
   type SessionEventData,
+  // Logger
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
 
@@ -54,6 +56,8 @@ const DEFAULT_SESSION_TTL = 86400;
  * Returns the challenge and allowed verification methods from the DID document.
  */
 export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('DID-AUTH');
+
   try {
     const body = await c.req.json<{ did: string }>();
     const { did } = body;
@@ -135,7 +139,7 @@ export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Pr
       expires_in: 300,
     });
   } catch (error) {
-    console.error('[did-auth] Challenge error:', error);
+    log.error('DID challenge generation error', { action: 'challenge' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -147,6 +151,8 @@ export async function didAuthChallengeHandler(c: Context<{ Bindings: Env }>): Pr
  * Creates a session on success.
  */
 export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('DID-AUTH');
+
   try {
     const body = await c.req.json<{
       challenge_id: string;
@@ -237,7 +243,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
     const issuerUrl = c.env.ISSUER_URL;
     if (!issuerUrl) {
       // Log internally but return generic error to avoid revealing server configuration
-      console.error('[did-auth] ISSUER_URL is not configured');
+      log.error('ISSUER_URL is not configured', { action: 'verify' });
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
@@ -259,7 +265,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
           errorCode: 'signature_verification_failed',
         } satisfies AuthEventData,
       }).catch((err: unknown) => {
-        console.error('[Event] Failed to publish auth.did.failed:', err);
+        log.warn('Failed to publish auth.did.failed event', { action: 'event_publish' });
       });
 
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
@@ -290,7 +296,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
           errorCode: 'identity_not_linked',
         } satisfies AuthEventData,
       }).catch((err: unknown) => {
-        console.error('[Event] Failed to publish auth.did.failed:', err);
+        log.warn('Failed to publish auth.did.failed event', { action: 'event_publish' });
       });
 
       return createErrorResponse(c, AR_ERROR_CODES.BRIDGE_LINK_REQUIRED);
@@ -319,7 +325,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
         sessionId,
       } satisfies AuthEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish auth.did.succeeded:', err);
+      log.warn('Failed to publish auth.did.succeeded event', { action: 'event_publish' });
     });
 
     // Publish session created event (non-blocking)
@@ -332,7 +338,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
         ttlSeconds: sessionTtl,
       } satisfies SessionEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish session.user.created:', err);
+      log.warn('Failed to publish session.user.created event', { action: 'event_publish' });
     });
 
     return c.json({
@@ -341,7 +347,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       expires_in: sessionTtl,
     });
   } catch (error) {
-    console.error('[did-auth] Verify error:', error);
+    log.error('DID verification error', { action: 'verify' }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

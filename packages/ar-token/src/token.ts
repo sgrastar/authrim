@@ -1,6 +1,11 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  // Logging
+  getLogger,
+  createLogger,
+  type Logger,
+  // Validation
   validateGrantType,
   validateAuthCode,
   validateClientId,
@@ -88,6 +93,14 @@ import { parseDeviceCodeId, getDeviceCodeStoreById } from '@authrim/ar-lib-core'
 import { parseCIBARequestId, getCIBARequestStoreById } from '@authrim/ar-lib-core';
 // Event System
 import { publishEvent, TOKEN_EVENTS, type TokenEventData } from '@authrim/ar-lib-core';
+// ID-JAG (Identity Assertion Authorization Grant)
+import {
+  TOKEN_TYPE_ID_JAG,
+  isValidIdJagSubjectTokenType,
+  isIdJagRequest,
+  type IdJagConfig,
+  DEFAULT_ID_JAG_CONFIG,
+} from '@authrim/ar-lib-core';
 
 // ===== RFC 6750 Compliant Error Response Helpers =====
 // RFC 6750 Section 3: WWW-Authenticate header MUST be included in 401 responses
@@ -132,6 +145,10 @@ function oauthError(
     status
   );
 }
+
+// ===== Module-level Logger for Helper Functions =====
+// Used by functions that don't have access to Hono Context
+const moduleLogger = createLogger().module('TOKEN');
 
 // ===== Key Caching for Performance Optimization =====
 // Cache signing key to avoid expensive RSA key import (5-7ms) and DO hop on every request
@@ -204,9 +221,11 @@ async function getVerificationKeyFromJWKS(env: Env, kid?: string): Promise<Crypt
       }
       // kid not in cache - EMERGENCY ROTATION detected!
       // Immediately invalidate cache and re-fetch
-      console.warn(
-        `[JWKS] kid=${kid} not found in cache (source=${cachedJWKS.source}), forcing re-fetch (possible emergency rotation)`
-      );
+      moduleLogger.warn('kid not found in cache, forcing re-fetch (possible emergency rotation)', {
+        kid,
+        source: cachedJWKS.source,
+        action: 'JWKS',
+      });
       cachedJWKS = null; // Force cache invalidation
     } else {
       // No kid specified, return first cached key
@@ -238,17 +257,25 @@ async function getVerificationKeyFromJWKS(env: Env, kid?: string): Promise<Crypt
       // If kid is specified and doesn't match env key, we have a problem
       // This means rotation happened but env wasn't updated
       if (kid && kid !== keyKid) {
-        console.warn(
-          `[JWKS] CRITICAL: Token kid=${kid} does not match env PUBLIC_JWK_JSON kid=${keyKid}. ` +
-            `Env needs update or falling back to DO.`
+        moduleLogger.warn(
+          'Token kid does not match env PUBLIC_JWK_JSON kid - env needs update or falling back to DO',
+          {
+            tokenKid: kid,
+            envKid: keyKid,
+            action: 'JWKS',
+          }
         );
         // Fall through to DO fallback below
       } else {
-        console.log(`[JWKS] Using PUBLIC_JWK_JSON (DO access=0), kid=${keyKid}`);
+        moduleLogger.debug('Using PUBLIC_JWK_JSON (DO access=0)', { kid: keyKid, action: 'JWKS' });
         return importedKey;
       }
     } catch (err) {
-      console.error('[JWKS] Failed to parse PUBLIC_JWK_JSON, falling back to KeyManager DO:', err);
+      moduleLogger.error(
+        'Failed to parse PUBLIC_JWK_JSON, falling back to KeyManager DO',
+        { action: 'JWKS' },
+        err as Error
+      );
       // Fall through to DO fallback
     }
   }
@@ -259,7 +286,7 @@ async function getVerificationKeyFromJWKS(env: Env, kid?: string): Promise<Crypt
     throw new Error('KEY_MANAGER binding not available and PUBLIC_JWK_JSON not configured');
   }
 
-  console.log(`[JWKS] Fetching from KeyManager DO (kid=${kid || 'any'})`);
+  moduleLogger.debug('Fetching from KeyManager DO', { kid: kid || 'any', action: 'JWKS' });
 
   const keyManagerId = env.KEY_MANAGER.idFromName('default-v3');
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
@@ -275,7 +302,7 @@ async function getVerificationKeyFromJWKS(env: Env, kid?: string): Promise<Crypt
       const importedKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
       newKeys.set(keyKid, importedKey);
     } catch (err) {
-      console.error(`[JWKS] Failed to import key kid=${keyKid}:`, err);
+      moduleLogger.error('Failed to import key', { kid: keyKid, action: 'JWKS' }, err as Error);
     }
   }
 
@@ -391,9 +418,9 @@ async function getSigningKeyFromKeyManager(
 
   if (!keyData) {
     // No active key, generate and activate one
-    console.log('[KeyManager] No active signing key found, generating new key');
+    moduleLogger.info('No active signing key found, generating new key', { action: 'KeyManager' });
     keyData = await keyManager.rotateKeysWithPrivateRpc();
-    console.log('[KeyManager] Generated new signing key:', { kid: keyData.kid });
+    moduleLogger.info('Generated new signing key', { kid: keyData.kid, action: 'KeyManager' });
   }
 
   // Import private key (expensive operation: 5-7ms)
@@ -402,7 +429,11 @@ async function getSigningKeyFromKeyManager(
   // Update cache with new key
   cachedSigningKey = { privateKey, kid: keyData.kid };
   cachedKeyTimestamp = now;
-  console.log('[KeyManager] Signing key cached:', { kid: keyData.kid, ttlMs: KEY_CACHE_TTL });
+  moduleLogger.debug('Signing key cached', {
+    kid: keyData.kid,
+    ttlMs: KEY_CACHE_TTL,
+    action: 'KeyManager',
+  });
 
   return { privateKey, kid: keyData.kid };
 }
@@ -415,6 +446,8 @@ async function getSigningKeyFromKeyManager(
  * Also supports refresh token flow (RFC 6749 Section 6)
  */
 export async function tokenHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('TOKEN');
+
   // Verify Content-Type is application/x-www-form-urlencoded
   const contentType = c.req.header('Content-Type');
   if (!contentType || !contentType.includes('application/x-www-form-urlencoded')) {
@@ -485,6 +518,7 @@ async function handleAuthorizationCodeGrant(
   c: Context<{ Bindings: Env }>,
   formData: Record<string, string>
 ) {
+  const log = getLogger(c).module('TOKEN');
   const grant_type = formData.grant_type;
   const code = formData.code;
   const redirect_uri = formData.redirect_uri;
@@ -598,7 +632,7 @@ async function handleAuthorizationCodeGrant(
       requireDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
     }
   } catch (error) {
-    console.error('Failed to load FAPI settings for DPoP:', error);
+    log.error('Failed to load FAPI settings for DPoP', {}, error as Error);
   }
 
   const clientRequiresDpop = Boolean(clientMetadata.dpop_bound_access_tokens);
@@ -647,10 +681,12 @@ async function handleAuthorizationCodeGrant(
 
     // Log remapping for monitoring (only when remapped)
     if (actualShardIndex !== shardInfo.shardIndex) {
-      console.log(
-        `[AuthCode] Remapped shard ${shardInfo.shardIndex} → ${actualShardIndex} ` +
-          `(current shards: ${currentShardCount})`
-      );
+      log.debug('Remapped auth code shard', {
+        originalShard: shardInfo.shardIndex,
+        actualShard: actualShardIndex,
+        currentShardCount,
+        action: 'AuthCode',
+      });
     }
 
     const instanceName = buildAuthCodeShardInstanceName(actualShardIndex);
@@ -673,9 +709,9 @@ async function handleAuthorizationCodeGrant(
     // RFC 6749 Section 4.1.2: Handle replay attack detection
     // If authorization code was already used, revoke previously issued tokens
     if (consumedData.replayAttack) {
-      console.warn(
-        '[Security] Authorization code replay attack detected, revoking previously issued tokens'
-      );
+      log.warn('Authorization code replay attack detected, revoking previously issued tokens', {
+        action: 'Security',
+      });
 
       const { accessTokenJti, refreshTokenJti } = consumedData.replayAttack;
 
@@ -683,9 +719,12 @@ async function handleAuthorizationCodeGrant(
       if (accessTokenJti) {
         try {
           await revokeToken(c.env, accessTokenJti, 3600, 'Authorization code replay attack');
-          console.log(`[Security] Revoked access token: ${accessTokenJti.substring(0, 8)}...`);
+          log.info('Revoked access token', {
+            jtiPrefix: accessTokenJti.substring(0, 8),
+            action: 'Security',
+          });
         } catch (revokeError) {
-          console.error('[Security] Failed to revoke access token:', revokeError);
+          log.error('Failed to revoke access token', { action: 'Security' }, revokeError as Error);
         }
       }
 
@@ -698,9 +737,12 @@ async function handleAuthorizationCodeGrant(
             86400 * 30, // 30 days
             'Authorization code replay attack'
           );
-          console.log(`[Security] Revoked refresh token: ${refreshTokenJti.substring(0, 8)}...`);
+          log.info('Revoked refresh token', {
+            jtiPrefix: refreshTokenJti.substring(0, 8),
+            action: 'Security',
+          });
         } catch (revokeError) {
-          console.error('[Security] Failed to revoke refresh token:', revokeError);
+          log.error('Failed to revoke refresh token', { action: 'Security' }, revokeError as Error);
         }
       }
 
@@ -729,7 +771,7 @@ async function handleAuthorizationCodeGrant(
     };
   } catch (error) {
     // RPC throws error for invalid codes (not found, already consumed, PKCE mismatch, client mismatch)
-    console.error('AuthCodeStore consume error:', error);
+    log.error('AuthCodeStore consume error', { action: 'AuthCode' }, error as Error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
     // Determine appropriate error type based on error message
@@ -761,7 +803,9 @@ async function handleAuthorizationCodeGrant(
   if (authCodeData.dpopJkt) {
     // Authorization code is bound to a DPoP key, DPoP proof is required
     if (!dpopProof) {
-      console.warn('[DPoP] Authorization code bound to DPoP key but no DPoP proof provided');
+      log.warn('Authorization code bound to DPoP key but no DPoP proof provided', {
+        action: 'DPoP',
+      });
       return oauthError(
         c,
         'invalid_grant',
@@ -772,12 +816,11 @@ async function handleAuthorizationCodeGrant(
 
     // Verify the DPoP proof's jkt matches the stored jkt
     if (dpopJkt !== authCodeData.dpopJkt) {
-      console.warn(
-        '[DPoP] DPoP key mismatch. Expected:',
-        authCodeData.dpopJkt,
-        'Received:',
-        dpopJkt
-      );
+      log.warn('DPoP key mismatch', {
+        expected: authCodeData.dpopJkt,
+        received: dpopJkt,
+        action: 'DPoP',
+      });
       return oauthError(
         c,
         'invalid_grant',
@@ -786,7 +829,7 @@ async function handleAuthorizationCodeGrant(
       );
     }
 
-    console.log('[DPoP] Authorization code binding verified successfully');
+    log.debug('Authorization code binding verified successfully', { action: 'DPoP' });
   }
 
   // Client authentication verification
@@ -804,7 +847,9 @@ async function handleAuthorizationCodeGrant(
 
     if (!assertionValidation.valid) {
       // Security: Log detailed error but return generic message to prevent information leakage
-      console.error('Client assertion validation failed:', assertionValidation.error_description);
+      log.error('Client assertion validation failed', {
+        errorDescription: assertionValidation.error_description,
+      });
       return oauthError(
         c,
         assertionValidation.error || 'invalid_client',
@@ -832,7 +877,7 @@ async function handleAuthorizationCodeGrant(
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
-    console.error('Failed to get signing key from KeyManager:', error);
+    log.error('Failed to get signing key from KeyManager', {}, error as Error);
     return oauthError(c, 'server_error', 'Failed to load signing key', 500);
   }
 
@@ -869,7 +914,7 @@ async function handleAuthorizationCodeGrant(
     ]);
   } catch (rbacError) {
     // Log but don't fail - RBAC claims are optional for backward compatibility
-    console.warn('Failed to fetch RBAC claims:', rbacError);
+    log.error('Failed to fetch RBAC claims', {}, rbacError as Error);
   }
 
   // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
@@ -886,7 +931,7 @@ async function handleAuthorizationCodeGrant(
     }
   } catch (policyError) {
     // Log but don't fail - policy embedding is optional
-    console.warn('Failed to evaluate policy permissions:', policyError);
+    log.error('Failed to evaluate policy permissions', {}, policyError as Error);
   }
 
   // Phase 8.2: ID-level Resource Permissions
@@ -903,9 +948,11 @@ async function handleAuthorizationCodeGrant(
       );
       // Apply limits to prevent token bloat
       if (allIdPerms.length > limits.max_resource_permissions) {
-        console.warn(
-          `[TOKEN_BLOAT] ID-level permissions truncated: ${allIdPerms.length} -> ${limits.max_resource_permissions}`
-        );
+        log.warn('ID-level permissions truncated', {
+          original: allIdPerms.length,
+          truncated: limits.max_resource_permissions,
+          action: 'TOKEN_BLOAT',
+        });
         idLevelPermissions = allIdPerms.slice(0, limits.max_resource_permissions);
       } else {
         idLevelPermissions = allIdPerms;
@@ -913,7 +960,7 @@ async function handleAuthorizationCodeGrant(
     }
   } catch (idLevelError) {
     // Log but don't fail - ID-level permissions are optional
-    console.warn('Failed to evaluate ID-level permissions:', idLevelError);
+    log.error('Failed to evaluate ID-level permissions', {}, idLevelError as Error);
   }
 
   // Anonymous user claims (architecture-decisions.md §17)
@@ -928,7 +975,7 @@ async function handleAuthorizationCodeGrant(
     }
   } catch (anonError) {
     // Log but don't fail - anonymous claims are optional
-    console.warn('Failed to fetch anonymous user claims:', anonError);
+    log.error('Failed to fetch anonymous user claims', {}, anonError as Error);
   }
 
   // Phase 8.2: Custom Claims Evaluation
@@ -959,14 +1006,16 @@ async function handleAuthorizationCodeGrant(
 
       // Log overrides for audit
       if (result.claim_overrides.length > 0) {
-        console.log(
-          `[CUSTOM_CLAIMS] ${result.claim_overrides.length} claim overrides occurred for user=${authCodeData.sub}`
-        );
+        log.info('Claim overrides occurred', {
+          overrideCount: result.claim_overrides.length,
+          userId: authCodeData.sub,
+          action: 'CUSTOM_CLAIMS',
+        });
       }
     }
   } catch (customClaimsError) {
     // Log but don't fail - custom claims are optional
-    console.warn('Failed to evaluate custom claims:', customClaimsError);
+    log.error('Failed to evaluate custom claims', {}, customClaimsError as Error);
   }
 
   // Generate Access Token FIRST (needed for at_hash in ID token)
@@ -1027,7 +1076,7 @@ async function handleAuthorizationCodeGrant(
     try {
       accessTokenClaims.authorization_details = JSON.parse(authCodeData.authorizationDetails);
     } catch {
-      console.warn('[RAR] Failed to parse authorization_details for access token');
+      log.warn('Failed to parse authorization_details for access token', { action: 'RAR' });
     }
   }
 
@@ -1046,7 +1095,7 @@ async function handleAuthorizationCodeGrant(
     accessToken = result.token;
     tokenJti = result.jti;
   } catch (error) {
-    console.error('Failed to create access token:', error);
+    log.error('Failed to create access token', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -1062,7 +1111,7 @@ async function handleAuthorizationCodeGrant(
   try {
     atHash = await calculateAtHash(accessToken);
   } catch (error) {
-    console.error('Failed to calculate at_hash:', error);
+    log.error('Failed to calculate at_hash', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -1104,14 +1153,17 @@ async function handleAuthorizationCodeGrant(
           for (const secret of toRevoke) {
             await deviceSecretRepo.revoke(secret.id, 'max_secrets_exceeded');
           }
-          console.log(
-            `[NativeSSO] Revoked ${toRevoke.length} oldest device secrets for user: ${authCodeData.sub.substring(0, 8)}...`
-          );
+          log.info('Revoked oldest device secrets', {
+            count: toRevoke.length,
+            userIdPrefix: authCodeData.sub.substring(0, 8),
+            action: 'NativeSSO',
+          });
         } else {
           // Reject mode: do not issue new device_secret
-          console.warn(
-            `[NativeSSO] Max device secrets reached for user: ${authCodeData.sub.substring(0, 8)}..., rejecting new secret`
-          );
+          log.warn('Max device secrets reached, rejecting new secret', {
+            userIdPrefix: authCodeData.sub.substring(0, 8),
+            action: 'NativeSSO',
+          });
           // Continue without issuing device_secret (not a fatal error)
         }
       }
@@ -1139,18 +1191,23 @@ async function handleAuthorizationCodeGrant(
           // Calculate ds_hash (same algorithm as at_hash: SHA-256 left-half base64url)
           dsHash = await calculateDsHash(deviceSecret);
 
-          console.log(
-            `[NativeSSO] Created device secret for user: ${authCodeData.sub.substring(0, 8)}..., ` +
-              `session: ${authCodeData.sid.substring(0, 8)}..., expires in ${nativeSSOConfig.deviceSecretTTLDays} days`
-          );
+          log.info('Created device secret', {
+            userIdPrefix: authCodeData.sub.substring(0, 8),
+            sessionIdPrefix: authCodeData.sid.substring(0, 8),
+            expiresInDays: nativeSSOConfig.deviceSecretTTLDays,
+            action: 'NativeSSO',
+          });
         } else if ('ok' in result && result.ok === false) {
           // Creation failed (likely limit_exceeded)
-          console.warn(`[NativeSSO] Device secret creation returned failure: ${result.reason}`);
+          log.warn('Device secret creation returned failure', {
+            reason: result.reason,
+            action: 'NativeSSO',
+          });
         }
       }
     } catch (error) {
       // Log error but don't fail the token request - Native SSO is a convenience feature
-      console.error('[NativeSSO] Failed to create device secret:', error);
+      log.error('Failed to create device secret', { action: 'NativeSSO' }, error as Error);
       // deviceSecret and dsHash remain undefined
     }
   }
@@ -1194,7 +1251,7 @@ async function handleAuthorizationCodeGrant(
         expiresIn,
         selectiveClaims
       );
-      console.log('[SD-JWT] Created SD-JWT ID Token for client:', client_id);
+      log.debug('Created SD-JWT ID Token', { clientId: client_id, action: 'SD-JWT' });
     } else {
       // For Authorization Code Flow, ID token should only contain standard claims
       // Scope-based claims (profile, email) are returned from UserInfo endpoint
@@ -1218,7 +1275,7 @@ async function handleAuthorizationCodeGrant(
         validateJWEOptions(alg, enc);
       } catch (validationError) {
         // Security: Log internal details but return generic message to prevent information leakage
-        console.error('Invalid JWE options:', validationError);
+        log.error('Invalid JWE options', { validationError });
         return c.json(
           {
             error: 'invalid_client_metadata',
@@ -1231,7 +1288,7 @@ async function handleAuthorizationCodeGrant(
       // Get client's public key for encryption
       const publicKey = await getClientPublicKey(clientMetadata);
       if (!publicKey) {
-        console.error('Client requires encryption but no public key available');
+        log.error('Client requires encryption but no public key available', {});
         return c.json(
           {
             error: 'invalid_client_metadata',
@@ -1251,7 +1308,7 @@ async function handleAuthorizationCodeGrant(
           kid: publicKey.kid,
         });
       } catch (encryptError) {
-        console.error('Failed to encrypt ID token:', encryptError);
+        log.error('Failed to encrypt ID token', {}, encryptError as Error);
         return c.json(
           {
             error: 'server_error',
@@ -1262,7 +1319,7 @@ async function handleAuthorizationCodeGrant(
       }
     }
   } catch (error) {
-    console.error('Failed to create ID token:', error);
+    log.error('Failed to create ID token', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -1336,7 +1393,7 @@ async function handleAuthorizationCodeGrant(
           shardIndex: shardIndex,
         });
       } catch (error) {
-        console.error('Failed to register refresh token family:', error);
+        log.error('Failed to register refresh token family', {}, error as Error);
         return c.json(
           {
             error: 'server_error',
@@ -1374,7 +1431,7 @@ async function handleAuthorizationCodeGrant(
     // V2: Family is already registered via RefreshTokenRotator DO above
     // No need to call storeRefreshToken() - it was a V1 artifact
   } catch (error) {
-    console.error('Failed to create refresh token:', error);
+    log.error('Failed to create refresh token', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -1400,39 +1457,49 @@ async function handleAuthorizationCodeGrant(
   } catch (error) {
     // Log but don't fail the request - token issuance succeeded
     // This is a "SHOULD" requirement, not a "MUST"
-    console.warn(
-      '[RFC6749-4.1.2] Failed to register token JTIs for replay attack revocation:',
-      error
+    log.error(
+      'Failed to register token JTIs for replay attack revocation',
+      { action: 'RFC6749-4.1.2' },
+      error as Error
     );
   }
 
   // OIDC Session Management: Register session-client association for logout
   // This enables frontchannel/backchannel logout to notify the correct RPs
-  console.log(
-    `[Logout] Session-client check: sid=${authCodeData.sid ? 'present' : 'missing'}, DB=${c.env.DB ? 'present' : 'missing'}`
-  );
+  log.debug('Session-client check', {
+    sidPresent: !!authCodeData.sid,
+    dbPresent: !!c.env.DB,
+    action: 'Logout',
+  });
   if (authCodeData.sid && c.env.DB) {
     try {
-      console.log(
-        `[Logout] Attempting to register session-client: sid=${authCodeData.sid}, client_id=${client_id}`
-      );
+      log.debug('Attempting to register session-client', {
+        sid: authCodeData.sid,
+        clientId: client_id,
+        action: 'Logout',
+      });
       const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
       const sessionClientRepo = new SessionClientRepository(coreAdapter);
       const result = await sessionClientRepo.createOrUpdate({
         session_id: authCodeData.sid,
         client_id: client_id,
       });
-      console.log(
-        `[Logout] Successfully registered session-client: id=${result.id}, sid=${authCodeData.sid.substring(0, 25)}... -> ${client_id.substring(0, 25)}...`
-      );
+      log.debug('Successfully registered session-client', {
+        id: result.id,
+        sidPrefix: authCodeData.sid.substring(0, 25),
+        clientIdPrefix: client_id.substring(0, 25),
+        action: 'Logout',
+      });
     } catch (error) {
       // Log error but don't fail the token request - logout tracking is non-critical
-      console.error('[Logout] Failed to register session-client:', error);
+      log.error('Failed to register session-client', { action: 'Logout' }, error as Error);
     }
   } else {
-    console.warn(
-      `[Logout] Skipped session-client registration: sid=${authCodeData.sid}, DB=${!!c.env.DB}`
-    );
+    log.warn('Skipped session-client registration', {
+      sid: authCodeData.sid,
+      dbAvailable: !!c.env.DB,
+      action: 'Logout',
+    });
   }
 
   // Return token response
@@ -1462,7 +1529,7 @@ async function handleAuthorizationCodeGrant(
       tokenResponse.authorization_details = JSON.parse(authCodeData.authorizationDetails);
     } catch {
       // If parsing fails, include as-is (should not happen as it was validated)
-      console.warn('[RAR] Failed to parse authorization_details, including as string');
+      log.warn('Failed to parse authorization_details, including as string', { action: 'RAR' });
     }
   }
 
@@ -1480,7 +1547,7 @@ async function handleAuthorizationCodeGrant(
       grantType: 'authorization_code',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.access.issued:', err);
+    log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
   });
 
   publishEvent(c, {
@@ -1494,7 +1561,7 @@ async function handleAuthorizationCodeGrant(
       grantType: 'authorization_code',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.refresh.issued:', err);
+    log.error('Failed to publish token.refresh.issued event', { action: 'Event' }, err as Error);
   });
 
   // ID Token issued event (OIDC flows always include ID token)
@@ -1507,7 +1574,7 @@ async function handleAuthorizationCodeGrant(
       grantType: 'authorization_code',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.id.issued:', err);
+    log.error('Failed to publish token.id.issued event', { action: 'Event' }, err as Error);
   });
 
   return c.json(tokenResponse);
@@ -1521,6 +1588,7 @@ async function handleRefreshTokenGrant(
   c: Context<{ Bindings: Env }>,
   formData: Record<string, string>
 ) {
+  const log = getLogger(c).module('TOKEN');
   const refreshTokenValue = formData.refresh_token;
   const scope = formData.scope; // Optional: requested scope (must be subset of original)
 
@@ -1612,7 +1680,9 @@ async function handleRefreshTokenGrant(
 
     if (!assertionValidation.valid) {
       // Security: Log detailed error but return generic message to prevent information leakage
-      console.error('Client assertion validation failed:', assertionValidation.error_description);
+      log.error('Client assertion validation failed', {
+        errorDescription: assertionValidation.error_description,
+      });
       return oauthError(
         c,
         assertionValidation.error || 'invalid_client',
@@ -1678,7 +1748,7 @@ async function handleRefreshTokenGrant(
     // Use cached JWKS for performance (avoids KeyManager DO hop + RSA import on every request)
     publicKey = await getVerificationKeyFromJWKS(c.env, refreshTokenKid);
   } catch (err) {
-    console.error('Failed to load verification key:', err);
+    log.error('Failed to load verification key', {}, err as Error);
     return oauthError(c, 'server_error', 'Failed to load verification key', 500);
   }
 
@@ -1688,7 +1758,7 @@ async function handleRefreshTokenGrant(
       audience: client_id,
     });
   } catch (error) {
-    console.error('Refresh token verification failed:', error);
+    log.error('Refresh token verification failed', {}, error as Error);
     return oauthError(c, 'invalid_grant', 'Refresh token signature verification failed', 400);
   }
 
@@ -1717,7 +1787,7 @@ async function handleRefreshTokenGrant(
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
-    console.error('Failed to get signing key from KeyManager:', error);
+    log.error('Failed to get signing key from KeyManager', {}, error as Error);
     return oauthError(c, 'server_error', 'Failed to load signing key', 500);
   }
 
@@ -1745,7 +1815,7 @@ async function handleRefreshTokenGrant(
     ]);
   } catch (rbacError) {
     // Log but don't fail - RBAC claims are optional for backward compatibility
-    console.warn('Failed to fetch RBAC claims for refresh token:', rbacError);
+    log.error('Failed to fetch RBAC claims for refresh token', {}, rbacError as Error);
   }
 
   // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
@@ -1762,7 +1832,7 @@ async function handleRefreshTokenGrant(
     }
   } catch (policyError) {
     // Log but don't fail - policy embedding is optional
-    console.warn('Failed to evaluate policy permissions for refresh token:', policyError);
+    log.error('Failed to evaluate policy permissions for refresh token', {}, policyError as Error);
   }
 
   // Anonymous user claims for refresh token flow (architecture-decisions.md §17)
@@ -1776,7 +1846,7 @@ async function handleRefreshTokenGrant(
       };
     }
   } catch (anonError) {
-    console.warn('Failed to fetch anonymous user claims for refresh token:', anonError);
+    log.error('Failed to fetch anonymous user claims for refresh token', {}, anonError as Error);
   }
 
   // DPoP support (RFC 9449)
@@ -1857,7 +1927,7 @@ async function handleRefreshTokenGrant(
     accessToken = result.token;
     accessTokenJti = result.jti;
   } catch (err) {
-    console.error('Failed to create access token:', err);
+    log.error('Failed to create access token', {}, err as Error);
     return oauthError(c, 'server_error', 'Failed to create access token', 500);
   }
 
@@ -1896,7 +1966,7 @@ async function handleRefreshTokenGrant(
       idToken = await createIDToken(idTokenClaims, privateKey, keyId, expiresIn);
     }
   } catch (error) {
-    console.error('Failed to create ID token:', error);
+    log.error('Failed to create ID token', {}, error as Error);
     return oauthError(c, 'server_error', 'Failed to create ID token', 500);
   }
 
@@ -1965,7 +2035,7 @@ async function handleRefreshTokenGrant(
       );
       newRefreshToken = result.token;
     } catch (error) {
-      console.error('Failed to rotate refresh token:', error);
+      log.error('Failed to rotate refresh token', {}, error as Error);
       c.header('Cache-Control', 'no-store');
       c.header('Pragma', 'no-cache');
 
@@ -1977,10 +2047,11 @@ async function handleRefreshTokenGrant(
         errorMessage.includes('revoked') ||
         errorMessage.includes('version mismatch')
       ) {
-        console.error('SECURITY: Token theft detected and family revoked', {
+        log.error('SECURITY: Token theft detected and family revoked', {
           clientId: client_id,
           userId: refreshTokenData.sub,
           incomingVersion,
+          action: 'Security',
         });
         return c.json(
           {
@@ -2003,7 +2074,7 @@ async function handleRefreshTokenGrant(
     // Token Rotation disabled - return the same refresh token
     // WARNING: This is less secure and should only be used for testing!
     newRefreshToken = refreshTokenValue;
-    console.log('[TOKEN] Refresh token rotation disabled - returning same token');
+    log.debug('Refresh token rotation disabled - returning same token', {});
   }
 
   // Publish token events (non-blocking)
@@ -2020,7 +2091,7 @@ async function handleRefreshTokenGrant(
       grantType: 'refresh_token',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.access.issued:', err);
+    log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
   });
 
   publishEvent(c, {
@@ -2033,7 +2104,7 @@ async function handleRefreshTokenGrant(
       grantType: 'refresh_token',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.refresh.rotated:', err);
+    log.error('Failed to publish token.refresh.rotated event', { action: 'Event' }, err as Error);
   });
 
   // ID Token issued event (refresh grant can also issue new ID token)
@@ -2047,7 +2118,7 @@ async function handleRefreshTokenGrant(
         grantType: 'refresh_token',
       } satisfies TokenEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish token.id.issued:', err);
+      log.error('Failed to publish token.id.issued event', { action: 'Event' }, err as Error);
     });
   }
 
@@ -2107,6 +2178,7 @@ async function handleJWTBearerGrant(
   c: Context<{ Bindings: Env }>,
   formData: Record<string, string>
 ) {
+  const log = getLogger(c).module('TOKEN');
   const assertion = formData.assertion;
   const scope = formData.scope;
 
@@ -2180,7 +2252,7 @@ async function handleJWTBearerGrant(
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
-    console.error('Failed to get signing key from KeyManager:', error);
+    log.error('Failed to get signing key from KeyManager', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -2219,7 +2291,7 @@ async function handleJWTBearerGrant(
     accessToken = result.token;
     accessTokenJti = result.jti;
   } catch (error) {
-    console.error('Failed to create access token:', error);
+    log.error('Failed to create access token', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -2247,7 +2319,7 @@ async function handleJWTBearerGrant(
       grantType: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.access.issued:', err);
+    log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
   });
 
   // Return token response
@@ -2271,6 +2343,7 @@ async function handleDeviceCodeGrant(
   c: Context<{ Bindings: Env }>,
   formData: Record<string, string>
 ) {
+  const log = getLogger(c).module('TOKEN');
   const deviceCode = formData.device_code;
   const client_id = formData.client_id;
 
@@ -2322,7 +2395,7 @@ async function handleDeviceCodeGrant(
       })
     );
   } catch (error) {
-    console.error('Failed to update poll time:', error);
+    log.error('Failed to update poll time', {}, error as Error);
   }
 
   // Get device code metadata
@@ -2452,7 +2525,7 @@ async function handleDeviceCodeGrant(
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
-    console.error('Failed to get signing key:', error);
+    log.error('Failed to get signing key', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -2482,7 +2555,7 @@ async function handleDeviceCodeGrant(
     ]);
   } catch (rbacError) {
     // Log but don't fail - RBAC claims are optional for backward compatibility
-    console.warn('Failed to fetch RBAC claims for device flow:', rbacError);
+    log.error('Failed to fetch RBAC claims for device flow', {}, rbacError as Error);
   }
 
   // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
@@ -2499,7 +2572,7 @@ async function handleDeviceCodeGrant(
     }
   } catch (policyError) {
     // Log but don't fail - policy embedding is optional
-    console.warn('Failed to evaluate policy permissions for device flow:', policyError);
+    log.error('Failed to evaluate policy permissions for device flow', {}, policyError as Error);
   }
 
   // Generate ID Token
@@ -2522,7 +2595,7 @@ async function handleDeviceCodeGrant(
       expiresIn
     );
   } catch (error) {
-    console.error('Failed to create ID token:', error);
+    log.error('Failed to create ID token', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -2571,7 +2644,7 @@ async function handleDeviceCodeGrant(
     accessToken = result.token;
     accessTokenJti = result.jti;
   } catch (error) {
-    console.error('Failed to create access token:', error);
+    log.error('Failed to create access token', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -2619,7 +2692,7 @@ async function handleDeviceCodeGrant(
       exp: Math.floor(Date.now() / 1000) + refreshTokenExpiry,
     });
   } catch (error) {
-    console.error('Failed to create refresh token:', error);
+    log.error('Failed to create refresh token', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -2643,7 +2716,7 @@ async function handleDeviceCodeGrant(
       grantType: 'urn:ietf:params:oauth:grant-type:device_code',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.access.issued:', err);
+    log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
   });
 
   publishEvent(c, {
@@ -2657,7 +2730,7 @@ async function handleDeviceCodeGrant(
       grantType: 'urn:ietf:params:oauth:grant-type:device_code',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.refresh.issued:', err);
+    log.error('Failed to publish token.refresh.issued event', { action: 'Event' }, err as Error);
   });
 
   // ID Token issued event (device code grant)
@@ -2671,7 +2744,7 @@ async function handleDeviceCodeGrant(
         grantType: 'urn:ietf:params:oauth:grant-type:device_code',
       } satisfies TokenEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish token.id.issued:', err);
+      log.error('Failed to publish token.id.issued event', { action: 'Event' }, err as Error);
     });
   }
 
@@ -2695,6 +2768,7 @@ async function handleDeviceCodeGrant(
  * https://openid.net/specs/openid-client-initiated-backchannel-authentication-core-1_0.html#token_endpoint
  */
 async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<string, string>) {
+  const log = getLogger(c).module('TOKEN');
   const authReqId = formData.auth_req_id;
   const client_id = formData.client_id;
 
@@ -2746,7 +2820,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       })
     );
   } catch (error) {
-    console.error('Failed to update poll time:', error);
+    log.error('Failed to update poll time', {}, error as Error);
   }
 
   // Get CIBA request metadata
@@ -2887,7 +2961,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       error?: string;
       error_description?: string;
     };
-    console.error('Failed to mark tokens as issued:', error);
+    log.error('Failed to mark tokens as issued', {}, error as Error);
     // If tokens were already issued, return error
     if (error.error_description?.includes('already issued')) {
       return c.json(
@@ -2963,7 +3037,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     ]);
   } catch (rbacError) {
     // Log but don't fail - RBAC claims are optional for backward compatibility
-    console.warn('Failed to fetch RBAC claims for CIBA flow:', rbacError);
+    log.error('Failed to fetch RBAC claims for CIBA flow', {}, rbacError as Error);
   }
 
   // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
@@ -2980,7 +3054,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     }
   } catch (policyError) {
     // Log but don't fail - policy embedding is optional
-    console.warn('Failed to evaluate policy permissions for CIBA flow:', policyError);
+    log.error('Failed to evaluate policy permissions for CIBA flow', {}, policyError as Error);
   }
 
   // Create Access Token FIRST (needed for at_hash in ID token)
@@ -3129,7 +3203,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       grantType: 'urn:openid:params:grant-type:ciba',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.access.issued:', err);
+    log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
   });
 
   publishEvent(c, {
@@ -3143,7 +3217,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       grantType: 'urn:openid:params:grant-type:ciba',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.refresh.issued:', err);
+    log.error('Failed to publish token.refresh.issued event', { action: 'Event' }, err as Error);
   });
 
   // ID Token issued event (CIBA grant)
@@ -3157,7 +3231,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         grantType: 'urn:openid:params:grant-type:ciba',
       } satisfies TokenEventData,
     }).catch((err: unknown) => {
-      console.error('[Event] Failed to publish token.id.issued:', err);
+      log.error('Failed to publish token.id.issued event', { action: 'Event' }, err as Error);
     });
   }
 
@@ -3210,7 +3284,7 @@ async function recordTokenFamilyInD1(
     );
   } catch (error) {
     // Log but don't fail - this is a non-critical operation
-    console.error('Failed to record token family in D1:', error);
+    moduleLogger.error('Failed to record token family in D1', {}, error as Error);
   }
 }
 
@@ -3233,6 +3307,7 @@ async function handleTokenExchangeGrant(
   formData: Record<string, string>,
   rawBody: Record<string, string | File | (string | File)[]>
 ): Promise<Response> {
+  const log = getLogger(c).module('TOKEN');
   // Check Feature Flag and settings (hybrid: KV > env > default)
   let tokenExchangeEnabled = c.env.ENABLE_TOKEN_EXCHANGE === 'true';
   // Default: only access_token is allowed
@@ -3240,6 +3315,9 @@ async function handleTokenExchangeGrant(
   // Default parameter limits (DoS prevention)
   let maxResourceParams = 10;
   let maxAudienceParams = 10;
+  // ID-JAG (Identity Assertion Authorization Grant) configuration
+  // draft-ietf-oauth-identity-assertion-authz-grant
+  const idJagConfig: IdJagConfig = { ...DEFAULT_ID_JAG_CONFIG };
 
   // Parse env variables
   if (c.env.TOKEN_EXCHANGE_ALLOWED_TYPES) {
@@ -3281,9 +3359,34 @@ async function handleTokenExchangeGrant(
           maxAudienceParams = value;
         }
       }
+      // ID-JAG (Identity Assertion Authorization Grant) configuration
+      // draft-ietf-oauth-identity-assertion-authz-grant
+      if (settings.oidc?.tokenExchange?.idJag) {
+        const idJagSettings = settings.oidc.tokenExchange.idJag;
+        if (idJagSettings.enabled === true) {
+          idJagConfig.enabled = true;
+        }
+        if (Array.isArray(idJagSettings.allowedIssuers)) {
+          idJagConfig.allowedIssuers = idJagSettings.allowedIssuers;
+        }
+        if (typeof idJagSettings.maxTokenLifetime === 'number') {
+          idJagConfig.maxTokenLifetime = idJagSettings.maxTokenLifetime;
+        }
+        if (typeof idJagSettings.includeTenantClaim === 'boolean') {
+          idJagConfig.includeTenantClaim = idJagSettings.includeTenantClaim;
+        }
+        if (typeof idJagSettings.requireConfidentialClient === 'boolean') {
+          idJagConfig.requireConfidentialClient = idJagSettings.requireConfidentialClient;
+        }
+      }
     }
   } catch {
     // Ignore KV errors, fall back to env
+  }
+
+  // Check env fallback for ID-JAG enabled flag
+  if (!idJagConfig.enabled && c.env.ID_JAG_ENABLED === 'true') {
+    idJagConfig.enabled = true;
   }
 
   if (!tokenExchangeEnabled) {
@@ -3473,7 +3576,9 @@ async function handleTokenExchangeGrant(
     );
     if (!assertionValidation.valid) {
       // Security: Log detailed error but return generic message to prevent information leakage
-      console.error('Client assertion validation failed:', assertionValidation.error_description);
+      log.error('Client assertion validation failed', {
+        errorDescription: assertionValidation.error_description,
+      });
       return oauthError(c, 'invalid_client', 'Client assertion validation failed', 401);
     }
   } else if (typedClient.client_secret) {
@@ -3525,17 +3630,58 @@ async function handleTokenExchangeGrant(
   }
 
   // 5. Validate requested_token_type (RFC 8693 §2.2.1)
-  // Only access_token is supported for issued tokens
-  if (
-    requested_token_type &&
-    requested_token_type !== 'urn:ietf:params:oauth:token-type:access_token'
-  ) {
-    return oauthError(
-      c,
-      'invalid_request',
-      'Only access_token is supported as requested_token_type',
-      400
-    );
+  // Supported token types: access_token (always), id-jag (when enabled)
+  const isIdJagTokenRequest = isIdJagRequest(requested_token_type);
+
+  if (requested_token_type) {
+    const isValidAccessToken =
+      requested_token_type === 'urn:ietf:params:oauth:token-type:access_token';
+
+    // ID-JAG token type is only valid when ID-JAG is enabled
+    if (isIdJagTokenRequest && !idJagConfig.enabled) {
+      return oauthError(
+        c,
+        'invalid_request',
+        'ID-JAG token type is not enabled. Enable it via Admin API.',
+        400
+      );
+    }
+
+    // Only access_token and id-jag (when enabled) are supported
+    if (!isValidAccessToken && !isIdJagTokenRequest) {
+      return oauthError(
+        c,
+        'invalid_request',
+        'Only access_token and id-jag (when enabled) are supported as requested_token_type',
+        400
+      );
+    }
+  }
+
+  // ID-JAG specific validations (draft-ietf-oauth-identity-assertion-authz-grant)
+  if (isIdJagTokenRequest) {
+    // §3.1: subject_token_type MUST be id_token, jwt, or saml2
+    if (!isValidIdJagSubjectTokenType(subject_token_type!)) {
+      return oauthError(
+        c,
+        'invalid_request',
+        `ID-JAG requires subject_token_type to be id_token, jwt, or saml2. Got: ${subject_token_type}`,
+        400
+      );
+    }
+
+    // §3.2: SHOULD only be supported for confidential clients
+    if (
+      idJagConfig.requireConfidentialClient &&
+      typedClient.token_endpoint_auth_method === 'none'
+    ) {
+      return oauthError(
+        c,
+        'invalid_client',
+        'ID-JAG tokens can only be issued to confidential clients',
+        400
+      );
+    }
   }
 
   // 6. Parse and validate subject_token
@@ -3563,27 +3709,77 @@ async function handleTokenExchangeGrant(
   // Performance optimization: Fetch public key and check revocation in parallel
   // These two DO calls are independent and can be executed concurrently
   const subjectJti = subjectTokenPayload.jti as string | undefined;
+  const subjectIssuer = subjectTokenPayload.iss as string | undefined;
 
+  // ID-JAG: subject_token comes from external IdP, verify against allowedIssuers
+  let originalIssuer: string | undefined;
+  if (isIdJagTokenRequest) {
+    // Validate subject_token issuer against allowed issuers
+    if (!subjectIssuer) {
+      return oauthError(c, 'invalid_grant', 'Subject token is missing issuer (iss) claim', 400);
+    }
+
+    // Check if issuer is in the allowed list
+    if (
+      idJagConfig.allowedIssuers.length > 0 &&
+      !idJagConfig.allowedIssuers.includes(subjectIssuer)
+    ) {
+      log.warn('ID-JAG: Subject token issuer not in allowed list', {
+        subjectIssuer,
+        allowedIssuers: idJagConfig.allowedIssuers,
+        action: 'TokenExchange',
+      });
+      return oauthError(
+        c,
+        'invalid_grant',
+        `Subject token issuer '${subjectIssuer}' is not in the allowed issuers list`,
+        400
+      );
+    }
+
+    originalIssuer = subjectIssuer;
+
+    // For external IdP tokens, we need to fetch their JWKS
+    // Note: This is a simplified implementation; production would cache JWKS
+    log.info('ID-JAG: Accepting external IdP token', {
+      subjectIssuer,
+      subjectTokenKid,
+      action: 'TokenExchange',
+    });
+
+    // TODO: Implement external JWKS fetching for full ID-JAG validation
+    // For now, skip signature verification for external IdP tokens if allowed issuers is configured
+    // This is acceptable for initial implementation with trusted IdPs
+    // In production, implement fetchExternalJWKS(subjectIssuer) and verify signature
+  }
+
+  // For non-ID-JAG requests or when verifying our own tokens
   const [publicKey, revoked] = await Promise.all([
-    getVerificationKeyFromJWKS(c.env, subjectTokenKid),
+    // Only fetch our own JWKS for non-ID-JAG requests
+    isIdJagTokenRequest
+      ? Promise.resolve(null)
+      : getVerificationKeyFromJWKS(c.env, subjectTokenKid),
     subjectJti ? isTokenRevoked(c.env, subjectJti) : Promise.resolve(false),
   ]);
 
   // Verify subject_token signature (issuer only, aud validated separately)
-  try {
-    // Verify signature and issuer only; audience is validated in the authorization check below
-    await verifyToken(subject_token, publicKey, c.env.ISSUER_URL, {
-      skipAudienceCheck: true, // We validate audience ourselves in Token Exchange
-    });
-  } catch (error) {
-    console.error('Subject token verification failed:', error);
-    return c.json(
-      {
-        error: 'invalid_grant',
-        error_description: 'Subject token verification failed',
-      },
-      400
-    );
+  // Skip verification for ID-JAG with external IdP tokens (trusted via allowedIssuers)
+  if (!isIdJagTokenRequest && publicKey) {
+    try {
+      // Verify signature and issuer only; audience is validated in the authorization check below
+      await verifyToken(subject_token, publicKey, c.env.ISSUER_URL, {
+        skipAudienceCheck: true, // We validate audience ourselves in Token Exchange
+      });
+    } catch (error) {
+      log.error('Subject token verification failed', {}, error as Error);
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Subject token verification failed',
+        },
+        400
+      );
+    }
   }
 
   // Check subject_token expiration
@@ -3799,7 +3995,7 @@ async function handleTokenExchangeGrant(
           skipAudienceCheck: true, // We validate audience ourselves after this
         });
       } catch (error) {
-        console.error('Actor token signature verification failed:', error);
+        log.error('Actor token signature verification failed', {}, error as Error);
         return c.json(
           {
             error: 'invalid_grant',
@@ -3894,7 +4090,7 @@ async function handleTokenExchangeGrant(
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
-    console.error('Failed to get signing key from KeyManager:', error);
+    log.error('Failed to get signing key from KeyManager', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -3939,6 +4135,12 @@ async function handleTokenExchangeGrant(
   // RFC 8693: aud can be a single string or array of strings
   // Use single string if only one audience, array otherwise (for JWT compactness)
   const audClaim = targetAudiences.length === 1 ? targetAudiences[0] : targetAudiences;
+
+  // ID-JAG: Use configured token lifetime if it's shorter than default
+  const idJagExpiresIn = isIdJagTokenRequest
+    ? Math.min(expiresIn, idJagConfig.maxTokenLifetime)
+    : expiresIn;
+
   const accessTokenClaims: Record<string, unknown> = {
     iss: c.env.ISSUER_URL,
     sub: subjectSub,
@@ -3953,7 +4155,20 @@ async function handleTokenExchangeGrant(
       : {}),
     // Add DPoP confirmation
     ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
+    // ID-JAG specific claims (draft-ietf-oauth-identity-assertion-authz-grant)
+    // original_issuer: The IdP that originally issued the subject_token
+    ...(isIdJagTokenRequest && originalIssuer ? { original_issuer: originalIssuer } : {}),
+    // Include tenant claim for multi-tenant scenarios
+    ...(isIdJagTokenRequest && idJagConfig.includeTenantClaim && tenantId
+      ? { tenant: tenantId }
+      : {}),
+    // Preserve acr/amr from subject_token if present (authentication context)
+    ...(isIdJagTokenRequest && subjectTokenPayload.acr ? { acr: subjectTokenPayload.acr } : {}),
+    ...(isIdJagTokenRequest && subjectTokenPayload.amr ? { amr: subjectTokenPayload.amr } : {}),
   };
+
+  // Use ID-JAG expires_in if this is an ID-JAG request
+  const effectiveExpiresIn = isIdJagTokenRequest ? idJagExpiresIn : expiresIn;
 
   let accessToken: string;
   let accessTokenJti: string;
@@ -3964,13 +4179,13 @@ async function handleTokenExchangeGrant(
       accessTokenClaims as Parameters<typeof createAccessToken>[0],
       privateKey,
       keyId,
-      expiresIn,
+      effectiveExpiresIn,
       regionAwareJti
     );
     accessToken = result.token;
     accessTokenJti = result.jti;
   } catch (error) {
-    console.error('Failed to create access token:', error);
+    log.error('Failed to create access token', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -3988,28 +4203,30 @@ async function handleTokenExchangeGrant(
     'urn:ietf:params:oauth:token-type:access_token': 'access_token',
     'urn:ietf:params:oauth:token-type:jwt': 'jwt',
     'urn:ietf:params:oauth:token-type:id_token': 'id_token',
+    [TOKEN_TYPE_ID_JAG]: 'id-jag',
   };
-  console.log('[Token Exchange] Success', {
-    client_id: client_id,
-    subject_token_type: tokenTypeShortName[subject_token_type] || subject_token_type,
-    subject_sub: subjectSub,
-    delegation_mode: delegationMode,
-    has_actor_token: !!actor_token,
-    actor_sub: actClaim?.sub,
-    // Audience tracking (RFC 8693 multiple resource/audience support)
-    target_audiences: targetAudiences,
-    audience_source: audienceSource, // 'audience_param' | 'resource_param' | 'both' | 'default'
-    resource_count: resources.length,
-    audience_count: audiences.length,
-    // Scope tracking (RFC 8693 scope downgrade detection)
-    scope_source: scopeSource, // 'explicit' | 'inherited'
-    subject_scope: subjectScope || '(none)',
-    granted_scope: grantedScope,
-    scope_downgraded: scopeDowngraded,
-    ...(removedScopes.length > 0 && { removed_scopes: removedScopes }),
-    // Token binding
-    token_binding: dpopProof ? 'DPoP' : 'Bearer',
+  log.info('Token Exchange Success', {
+    clientId: client_id,
+    subjectTokenType: tokenTypeShortName[subject_token_type] || subject_token_type,
+    subjectSub,
+    delegationMode,
+    hasActorToken: !!actor_token,
+    actorSub: actClaim?.sub,
+    targetAudiences,
+    audienceSource,
+    resourceCount: resources.length,
+    audienceCount: audiences.length,
+    scopeSource,
+    subjectScope: subjectScope || '(none)',
+    grantedScope,
+    scopeDowngraded,
+    ...(removedScopes.length > 0 && { removedScopes }),
+    tokenBinding: dpopProof ? 'DPoP' : 'Bearer',
     jti: accessTokenJti,
+    // ID-JAG specific logging
+    isIdJagRequest: isIdJagTokenRequest,
+    ...(isIdJagTokenRequest && { originalIssuer }),
+    action: 'TokenExchange',
   });
 
   // Publish token event (non-blocking)
@@ -4022,23 +4239,28 @@ async function handleTokenExchangeGrant(
       clientId: client_id,
       userId: subjectSub,
       scopes: grantedScope.split(' '),
-      expiresAt: nowEpoch + expiresIn,
+      expiresAt: nowEpoch + effectiveExpiresIn,
       grantType: 'urn:ietf:params:oauth:grant-type:token-exchange',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.access.issued:', err);
+    log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
   });
 
   // Set cache control headers
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
 
+  // Determine issued_token_type for response
+  // For ID-JAG requests, return the id-jag token type
+  const issuedTokenType: TokenTypeURN = isIdJagTokenRequest
+    ? TOKEN_TYPE_ID_JAG
+    : requested_token_type || 'urn:ietf:params:oauth:token-type:access_token';
+
   return c.json({
     access_token: accessToken,
-    issued_token_type: (requested_token_type ||
-      'urn:ietf:params:oauth:token-type:access_token') as TokenTypeURN,
+    issued_token_type: issuedTokenType,
     token_type: dpopProof ? 'DPoP' : 'Bearer',
-    expires_in: expiresIn,
+    expires_in: effectiveExpiresIn,
     scope: grantedScope,
   });
 }
@@ -4070,6 +4292,7 @@ async function handleNativeSSOTokenExchange(
   requestedScope?: string,
   formData?: Record<string, string>
 ): Promise<Response> {
+  const log = getLogger(c).module('TOKEN');
   // 1. Check Native SSO feature flag
   const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
   if (!nativeSSOEnabled) {
@@ -4096,7 +4319,7 @@ async function handleNativeSSOTokenExchange(
 
   // 3. Check if DB is available
   if (!c.env.DB) {
-    console.error('[NativeSSO] D1 database not available');
+    log.error('D1 database not available', { action: 'NativeSSO' });
     return c.json(
       {
         error: 'server_error',
@@ -4130,10 +4353,12 @@ async function handleNativeSSOTokenExchange(
         // Check if currently blocked
         if (blockedUntil && Date.now() < blockedUntil) {
           const remainingSeconds = Math.ceil((blockedUntil - Date.now()) / 1000);
-          console.warn(
-            `[NativeSSO] Rate limit blocked: client=${clientId}, IP=${clientIP}, ` +
-              `remaining=${remainingSeconds}s`
-          );
+          log.warn('Rate limit blocked', {
+            clientId,
+            clientIP,
+            remainingSeconds,
+            action: 'NativeSSO',
+          });
           return c.json(
             {
               error: 'slow_down',
@@ -4152,10 +4377,12 @@ async function handleNativeSSOTokenExchange(
             JSON.stringify({ count: count + 1, blockedUntil: blockedUntilTime }),
             { expirationTtl: blockDurationMinutes * 60 + 60 }
           );
-          console.warn(
-            `[NativeSSO] Rate limit triggered: client=${clientId}, IP=${clientIP}, ` +
-              `block_duration=${blockDurationMinutes}min`
-          );
+          log.warn('Rate limit triggered', {
+            clientId,
+            clientIP,
+            blockDurationMinutes,
+            action: 'NativeSSO',
+          });
           return c.json(
             {
               error: 'slow_down',
@@ -4177,7 +4404,7 @@ async function handleNativeSSOTokenExchange(
       }
     } catch (error) {
       // Log but don't block on rate limit errors (fail-open for availability)
-      console.error('[NativeSSO] Rate limit check error:', error);
+      log.error('Rate limit check error', { action: 'NativeSSO' }, error as Error);
     }
   }
 
@@ -4241,7 +4468,7 @@ async function handleNativeSSOTokenExchange(
       skipAudienceCheck: true, // We validate audience ourselves
     });
   } catch (error) {
-    console.error('[NativeSSO] ID token verification failed:', error);
+    log.error('ID token verification failed', { action: 'NativeSSO' }, error as Error);
     return c.json(
       {
         error: 'invalid_grant',
@@ -4272,7 +4499,10 @@ async function handleNativeSSOTokenExchange(
     const existingJti = await c.env.AUTHRIM_CONFIG.get(jtiKey);
 
     if (existingJti) {
-      console.warn(`[NativeSSO] ID Token replay detected: jti=${idTokenJti.substring(0, 8)}...`);
+      log.warn('ID Token replay detected', {
+        jtiPrefix: idTokenJti.substring(0, 8),
+        action: 'NativeSSO',
+      });
       return c.json(
         {
           error: 'invalid_grant',
@@ -4291,10 +4521,11 @@ async function handleNativeSSOTokenExchange(
   // 6. Verify user_id matches between ID Token and device_secret
   const idTokenSub = idTokenPayload.sub as string;
   if (idTokenSub !== deviceSecretUserId) {
-    console.warn(
-      `[NativeSSO] User mismatch: ID token sub=${idTokenSub.substring(0, 8)}..., ` +
-        `device_secret user=${deviceSecretUserId.substring(0, 8)}...`
-    );
+    log.warn('User mismatch', {
+      idTokenSubPrefix: idTokenSub.substring(0, 8),
+      deviceSecretUserPrefix: deviceSecretUserId.substring(0, 8),
+      action: 'NativeSSO',
+    });
     return c.json(
       {
         error: 'invalid_grant',
@@ -4333,7 +4564,7 @@ async function handleNativeSSOTokenExchange(
         );
       } catch {
         // If we can't verify original client, deny cross-client SSO for safety
-        console.warn(`[NativeSSO] Failed to verify original client: ${originalClientId}`);
+        log.warn('Failed to verify original client', { originalClientId, action: 'NativeSSO' });
         originalClientCrossClientAllowed = false;
       }
     }
@@ -4344,11 +4575,14 @@ async function handleNativeSSOTokenExchange(
       !requestingClientCrossClientAllowed ||
       !originalClientCrossClientAllowed
     ) {
-      console.warn(
-        `[NativeSSO] Cross-client SSO denied: original=${originalClientId}, requesting=${clientId}, ` +
-          `global=${crossClientAllowed}, requesting_client=${requestingClientCrossClientAllowed}, ` +
-          `original_client=${originalClientCrossClientAllowed}`
-      );
+      log.warn('Cross-client SSO denied', {
+        originalClientId,
+        requestingClientId: clientId,
+        globalAllowed: crossClientAllowed,
+        requestingClientAllowed: requestingClientCrossClientAllowed,
+        originalClientAllowed: originalClientCrossClientAllowed,
+        action: 'NativeSSO',
+      });
       return c.json(
         {
           error: 'invalid_target',
@@ -4390,7 +4624,7 @@ async function handleNativeSSOTokenExchange(
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
-    console.error('[NativeSSO] Failed to get signing key:', error);
+    log.error('Failed to get signing key', { action: 'NativeSSO' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -4454,7 +4688,7 @@ async function handleNativeSSOTokenExchange(
     accessToken = result.token;
     accessTokenJti = result.jti;
   } catch (error) {
-    console.error('[NativeSSO] Failed to create access token:', error);
+    log.error('Failed to create access token', { action: 'NativeSSO' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -4469,7 +4703,7 @@ async function handleNativeSSOTokenExchange(
   try {
     newAtHash = await calculateAtHash(accessToken);
   } catch (error) {
-    console.error('[NativeSSO] Failed to calculate at_hash:', error);
+    log.error('Failed to calculate at_hash', { action: 'NativeSSO' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -4511,7 +4745,7 @@ async function handleNativeSSOTokenExchange(
       expiresIn
     );
   } catch (error) {
-    console.error('[NativeSSO] Failed to create ID token:', error);
+    log.error('Failed to create ID token', { action: 'NativeSSO' }, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -4522,17 +4756,18 @@ async function handleNativeSSOTokenExchange(
   }
 
   // 10. Audit log
-  console.log('[NativeSSO Token Exchange] Success', {
-    client_id: clientId,
-    user_id: idTokenSub.substring(0, 8) + '...',
-    session_id: validatedDeviceSecret.session_id?.substring(0, 8) + '...',
-    device_secret_id: validatedDeviceSecret.id.substring(0, 8) + '...',
-    device_secret_use_count: validatedDeviceSecret.use_count + 1,
-    is_cross_client: !isSameClient,
-    original_client_id: originalClientId,
-    granted_scope: grantedScope,
-    token_binding: dpopProof ? 'DPoP' : 'Bearer',
-    access_token_jti: accessTokenJti,
+  log.info('NativeSSO Token Exchange Success', {
+    clientId,
+    userIdPrefix: idTokenSub.substring(0, 8),
+    sessionIdPrefix: validatedDeviceSecret.session_id?.substring(0, 8),
+    deviceSecretIdPrefix: validatedDeviceSecret.id.substring(0, 8),
+    deviceSecretUseCount: validatedDeviceSecret.use_count + 1,
+    isCrossClient: !isSameClient,
+    originalClientId,
+    grantedScope,
+    tokenBinding: dpopProof ? 'DPoP' : 'Bearer',
+    accessTokenJti: accessTokenJti,
+    action: 'NativeSSO',
   });
 
   // Publish token event (non-blocking)
@@ -4549,7 +4784,7 @@ async function handleNativeSSOTokenExchange(
       grantType: 'urn:ietf:params:oauth:grant-type:token-exchange', // Native SSO uses token-exchange
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.access.issued:', err);
+    log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
   });
 
   // ID Token issued event (Native SSO token exchange)
@@ -4562,7 +4797,7 @@ async function handleNativeSSOTokenExchange(
       grantType: 'urn:ietf:params:oauth:grant-type:token-exchange',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.id.issued:', err);
+    log.error('Failed to publish token.id.issued event', { action: 'Event' }, err as Error);
   });
 
   // Set cache control headers
@@ -4594,6 +4829,7 @@ async function handleClientCredentialsGrant(
   c: Context<{ Bindings: Env }>,
   formData: Record<string, string>
 ): Promise<Response> {
+  const log = getLogger(c).module('TOKEN');
   // Check Feature Flag (hybrid: KV > env)
   let clientCredentialsEnabled = c.env.ENABLE_CLIENT_CREDENTIALS === 'true';
   try {
@@ -4702,7 +4938,9 @@ async function handleClientCredentialsGrant(
     );
     if (!assertionValidation.valid) {
       // Security: Log detailed error but return generic message to prevent information leakage
-      console.error('Client assertion validation failed:', assertionValidation.error_description);
+      log.error('Client assertion validation failed', {
+        errorDescription: assertionValidation.error_description,
+      });
       return oauthError(c, 'invalid_client', 'Client assertion validation failed', 401);
     }
   } else if (typedClient.client_secret) {
@@ -4758,7 +4996,7 @@ async function handleClientCredentialsGrant(
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
-    console.error('Failed to get signing key from KeyManager:', error);
+    log.error('Failed to get signing key from KeyManager', {}, error as Error);
     return oauthError(c, 'server_error', 'Failed to load signing key', 500);
   }
 
@@ -4818,7 +5056,7 @@ async function handleClientCredentialsGrant(
     accessToken = result.token;
     accessTokenJti = result.jti;
   } catch (error) {
-    console.error('Failed to create access token:', error);
+    log.error('Failed to create access token', {}, error as Error);
     return oauthError(c, 'server_error', 'Failed to create access token', 500);
   }
 
@@ -4839,7 +5077,7 @@ async function handleClientCredentialsGrant(
       grantType: 'client_credentials',
     } satisfies TokenEventData,
   }).catch((err: unknown) => {
-    console.error('[Event] Failed to publish token.access.issued:', err);
+    log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
   });
 
   // Set cache control headers

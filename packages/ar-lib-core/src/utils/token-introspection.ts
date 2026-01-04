@@ -19,6 +19,9 @@ import { importJWK } from 'jose';
 import { verifyToken } from './jwt';
 import { isTokenRevoked } from './kv';
 import { extractDPoPProof, validateDPoPProof, isDPoPBoundToken, extractDPoPToken } from './dpop';
+import { createLogger } from './logger';
+
+const log = createLogger().module('TOKEN_INTROSPECTION');
 
 /**
  * Token introspection result
@@ -153,10 +156,7 @@ async function getKeysFromKeyManager(
     return null;
   } catch (error) {
     // PII Protection: Don't log full error object
-    console.warn(
-      'Failed to fetch keys from KeyManager DO:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.warn('Failed to fetch keys from KeyManager DO');
     return null;
   }
 }
@@ -318,10 +318,7 @@ export async function introspectToken(
     }
   } catch (error) {
     // PII Protection: Don't log full error object
-    console.warn(
-      'Failed to extract kid from JWT header:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.warn('Failed to extract kid from JWT header');
   }
 
   let publicKey: CryptoKey | null = null;
@@ -348,10 +345,7 @@ export async function introspectToken(
         publicKey = (await importJWK(jwk, 'RS256')) as CryptoKey;
       } catch (importError) {
         // PII Protection: Don't log full error object
-        console.warn(
-          'Failed to import JWK from KeyManager:',
-          importError instanceof Error ? importError.name : 'Unknown error'
-        );
+        log.warn('Failed to import JWK from KeyManager');
       }
     }
   }
@@ -377,10 +371,7 @@ export async function introspectToken(
       publicKey = await getPublicKey(publicJWKJson, keyId);
     } catch (error) {
       // PII Protection: Don't log full error object
-      console.error(
-        'Failed to load verification key:',
-        error instanceof Error ? error.name : 'Unknown error'
-      );
+      log.error('Failed to load verification key');
       return {
         valid: false,
         error: {
@@ -427,10 +418,7 @@ export async function introspectToken(
     });
   } catch (error) {
     // Log full error for debugging but don't expose to client
-    console.error(
-      'Token introspection error:',
-      error instanceof Error ? error.name : 'Unknown error'
-    );
+    log.error('Token introspection error', {}, error as Error);
     const wwwAuth = isDPoP ? 'DPoP error="invalid_token"' : 'Bearer error="invalid_token"';
     // SECURITY: Do not expose internal error details in response
     return {
@@ -589,10 +577,7 @@ export async function introspectTokenFromContext(
         }
       } catch (error) {
         // PII Protection: Don't log full error object (may contain request body data)
-        console.warn(
-          'Failed to parse request body:',
-          error instanceof Error ? error.name : 'Unknown error'
-        );
+        log.warn('Failed to parse request body');
       }
     }
   }

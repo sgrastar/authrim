@@ -9,6 +9,7 @@
 import type { Context } from 'hono';
 import {
   createOAuthConfigManager,
+  getLogger,
   CONFIG_NAMES,
   CONFIG_METADATA,
   DEFAULT_CONFIG,
@@ -20,6 +21,7 @@ import {
  * Get all OAuth configuration values with their sources
  */
 export async function getOAuthConfig(c: Context) {
+  const log = getLogger(c).module('OAuthConfigAPI');
   const configManager = createOAuthConfigManager(c.env);
 
   try {
@@ -40,7 +42,7 @@ export async function getOAuthConfig(c: Context) {
       ),
     });
   } catch (error) {
-    console.error('[OAuth Config API] Error getting config:', error);
+    log.error('Error getting config', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -59,6 +61,7 @@ export async function getOAuthConfig(c: Context) {
  * { "value": number | boolean }
  */
 export async function updateOAuthConfig(c: Context) {
+  const log = getLogger(c).module('OAuthConfigAPI');
   const name = c.req.param('name') as ConfigName;
 
   // Validate config name
@@ -152,7 +155,7 @@ export async function updateOAuthConfig(c: Context) {
       note: 'Config updated. Cache will refresh within 10 seconds.',
     });
   } catch (error) {
-    console.error(`[OAuth Config API] Error updating ${name}:`, error);
+    log.error('Error updating config', { configName: name }, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
       {
@@ -169,6 +172,7 @@ export async function updateOAuthConfig(c: Context) {
  * Clear a specific OAuth configuration override (revert to env/default)
  */
 export async function clearOAuthConfig(c: Context) {
+  const log = getLogger(c).module('OAuthConfigAPI');
   const name = c.req.param('name') as ConfigName;
 
   // Validate config name
@@ -203,7 +207,7 @@ export async function clearOAuthConfig(c: Context) {
       note: 'Config override cleared. Will use env/default value. Cache will refresh within 10 seconds.',
     });
   } catch (error) {
-    console.error(`[OAuth Config API] Error clearing ${name}:`, error);
+    log.error('Error clearing config', { configName: name }, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
       {
@@ -220,6 +224,7 @@ export async function clearOAuthConfig(c: Context) {
  * Clear all OAuth configuration overrides (revert all to env/default)
  */
 export async function clearAllOAuthConfig(c: Context) {
+  const log = getLogger(c).module('OAuthConfigAPI');
   // Check if KV is available
   if (!c.env.AUTHRIM_CONFIG) {
     return c.json(
@@ -240,7 +245,7 @@ export async function clearAllOAuthConfig(c: Context) {
       note: 'All config overrides cleared. Will use env/default values. Cache will refresh within 10 seconds.',
     });
   } catch (error) {
-    console.error('[OAuth Config API] Error clearing all config:', error);
+    log.error('Error clearing all config', {}, error as Error);
     // SECURITY: Do not expose internal error details
     return c.json(
       {

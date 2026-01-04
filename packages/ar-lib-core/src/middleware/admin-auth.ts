@@ -16,6 +16,9 @@ import type { Env } from '../types/env';
 import type { AdminAuthContext } from '../types/admin';
 import { D1Adapter } from '../db/adapters/d1-adapter';
 import type { DatabaseAdapter } from '../db/adapter';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('ADMIN-AUTH');
 
 /**
  * Constant-time string comparison to prevent timing attacks
@@ -58,20 +61,22 @@ async function authenticateBearer(
   const env = c.env;
 
   // Check against ADMIN_API_SECRET first
+  // ADMIN_API_SECRET grants system_admin role (highest privilege)
   if (env.ADMIN_API_SECRET && constantTimeCompare(token, env.ADMIN_API_SECRET)) {
     return {
       userId: 'system',
       authMethod: 'bearer',
-      roles: ['admin', 'system'],
+      roles: ['system_admin', 'admin', 'system'],
     };
   }
 
   // Fallback to KEY_MANAGER_SECRET for backward compatibility
+  // KEY_MANAGER_SECRET also grants system_admin role
   if (env.KEY_MANAGER_SECRET && constantTimeCompare(token, env.KEY_MANAGER_SECRET)) {
     return {
       userId: 'system',
       authMethod: 'bearer',
-      roles: ['admin', 'system'],
+      roles: ['system_admin', 'admin', 'system'],
     };
   }
 
@@ -159,7 +164,7 @@ async function authenticateSession(
       org_id: userInfo?.org_id || undefined,
     };
   } catch (error) {
-    console.error('Session authentication failed:', error);
+    log.error('Session authentication failed', {}, error as Error);
     return null;
   }
 }

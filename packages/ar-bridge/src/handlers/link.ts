@@ -12,6 +12,7 @@ import {
   isShardedSessionId,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import {
   getLinkedIdentityById,
@@ -30,6 +31,7 @@ import type { LinkedIdentityListResponse } from '../types';
  * GET /auth/external/link
  */
 export async function handleListLinkedIdentities(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('EXTERNAL-IDP');
   const session = await verifySession(c);
   if (!session) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
@@ -59,7 +61,7 @@ export async function handleListLinkedIdentities(c: Context<{ Bindings: Env }>):
 
     return c.json(response);
   } catch (error) {
-    console.error('Failed to list linked identities:', error);
+    log.error('Failed to list linked identities', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -73,6 +75,7 @@ export async function handleListLinkedIdentities(c: Context<{ Bindings: Env }>):
  * - redirect_uri: Optional redirect URI after linking
  */
 export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('EXTERNAL-IDP');
   const session = await verifySession(c);
   if (!session) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
@@ -115,7 +118,7 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
 
     return c.json({ authorization_url: startUrl.toString() });
   } catch (error) {
-    console.error('Failed to start linking:', error);
+    log.error('Failed to start linking', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -125,6 +128,7 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
  * DELETE /auth/external/link/:id
  */
 export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const log = getLogger(c).module('EXTERNAL-IDP');
   const session = await verifySession(c);
   if (!session) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
@@ -151,9 +155,10 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
     // This is done before deletion to ensure we have the tokens to revoke
     const revocationResult = await revokeLinkedIdentityTokens(c.env, identity);
     if (!revocationResult.success && revocationResult.errors.length > 0) {
-      console.warn(
-        `Token revocation failed for identity ${linkedIdentityId}: ${revocationResult.errors.join(', ')}`
-      );
+      log.warn('Token revocation failed for identity', {
+        linkedIdentityId,
+        errors: revocationResult.errors,
+      });
     }
 
     // Delete linked identity (always proceed even if revocation failed)
@@ -170,7 +175,7 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
       },
     });
   } catch (error) {
-    console.error('Failed to unlink identity:', error);
+    log.error('Failed to unlink identity', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

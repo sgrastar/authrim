@@ -5,10 +5,12 @@
  */
 
 import type { Env } from '../../types';
-import { importECPublicKey, safeFetch, resolveDID } from '@authrim/ar-lib-core';
+import { importECPublicKey, safeFetch, resolveDID, createLogger } from '@authrim/ar-lib-core';
 import type { TrustedIssuerRepository, TrustedIssuerRecord } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import { importJWK } from 'jose';
+
+const log = createLogger().module('VC-ISSUER-TRUST');
 
 export interface IssuerTrustResult {
   trusted: boolean;
@@ -76,7 +78,7 @@ export async function checkIssuerTrust(
       jwksUri: issuer?.jwksUri,
     };
   } catch (error) {
-    console.error('[checkIssuerTrust] Error:', error);
+    log.error('Issuer trust verification failed', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return {
       trusted: false,
@@ -204,7 +206,7 @@ export async function checkSelfIssuance(
   const authrimDid = env.VERIFIER_IDENTIFIER || 'did:web:authrim.com';
 
   if (issuerDid === authrimDid) {
-    console.warn('[checkSelfIssuance] Rejected self-issued credential');
+    log.warn('Rejected self-issued credential', {});
     return false; // Self-issued - reject
   }
 

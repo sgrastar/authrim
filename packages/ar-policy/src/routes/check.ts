@@ -22,11 +22,14 @@ import {
   parsePermission,
   createErrorResponse,
   AR_ERROR_CODES,
+  createLogger,
   type CheckApiRequest,
   type UnifiedCheckService,
   type ReBACConfig,
   type IStorageAdapter,
 } from '@authrim/ar-lib-core';
+
+const log = createLogger().module('CHECK-API');
 import {
   authenticateCheckApiRequest,
   isOperationAllowed,
@@ -165,7 +168,11 @@ async function getBatchSizeLimit(env: Env): Promise<number> {
         }
       }
     } catch (error) {
-      console.error('[Check API] Failed to read batch size limit from KV:', error);
+      log.error(
+        'Failed to read batch size limit from KV',
+        { error: String(error) },
+        error as Error
+      );
     }
   }
 
@@ -197,7 +204,7 @@ async function isCheckApiEnabled(env: Env): Promise<boolean> {
       }
     } catch (error) {
       // KV error: log and fall through to env var check
-      console.error('[Check API] Failed to read KV flag:', error);
+      log.error('Failed to read KV flag', { error: String(error) }, error as Error);
     }
   }
 
@@ -371,7 +378,7 @@ checkRoutes.post('/', async (c) => {
     try {
       parsePermission(body.permission);
     } catch (error) {
-      console.error('[Check API] Permission parse error:', error);
+      log.debug('Permission parse error', { error: String(error) });
       // SECURITY: Do not expose internal parser error details
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
@@ -396,7 +403,7 @@ checkRoutes.post('/', async (c) => {
       headers: Object.fromEntries(responseHeaders.entries()),
     });
   } catch (error) {
-    console.error('[Check API] Check error:', error);
+    log.error('Check error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -489,7 +496,7 @@ checkRoutes.post('/batch', async (c) => {
       try {
         parsePermission(check.permission);
       } catch (error) {
-        console.error('[Check API] Batch permission parse error:', error);
+        log.debug('Batch permission parse error', { error: String(error) });
         // SECURITY: Do not expose internal parser error details
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
@@ -515,7 +522,7 @@ checkRoutes.post('/batch', async (c) => {
       headers: Object.fromEntries(responseHeaders.entries()),
     });
   } catch (error) {
-    console.error('[Check API] Batch check error:', error);
+    log.error('Batch check error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });

@@ -17,6 +17,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
+import { createLogger, type Logger } from '../utils/logger';
 import type {
   WSClientMessage,
   WSSubscribeMessage,
@@ -55,6 +56,8 @@ export class PermissionChangeHub extends DurableObject<Env> {
 
   /** Tenant ID for this hub instance */
   private tenantId: string = 'default';
+
+  private readonly log: Logger = createLogger().module('PermissionChangeHub');
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -188,7 +191,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
           this.sendError(ws, 'unknown_message_type', 'Unknown message type');
       }
     } catch (error) {
-      console.error('[PermissionChangeHub] Message handling error:', error);
+      this.log.error('Message handling error', {}, error as Error);
       this.sendError(ws, 'parse_error', 'Failed to parse message');
     }
   }
@@ -214,7 +217,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
    * Handle WebSocket error
    */
   async webSocketError(ws: WebSocket, error: Error): Promise<void> {
-    console.error('[PermissionChangeHub] WebSocket error:', error);
+    this.log.error('WebSocket error', {}, error);
     const attachment = this.getAttachment(ws);
     if (attachment) {
       this.subscriptions.delete(attachment.subscriptionId);
@@ -329,7 +332,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
             ws.send(JSON.stringify(message));
             notifiedCount++;
           } catch (error) {
-            console.error('[PermissionChangeHub] Failed to send to WebSocket:', error);
+            this.log.warn('Failed to send to WebSocket', {}, error as Error);
           }
         }
       }
@@ -345,7 +348,7 @@ export class PermissionChangeHub extends DurableObject<Env> {
         }
       );
     } catch (error) {
-      console.error('[PermissionChangeHub] Broadcast error:', error);
+      this.log.error('Broadcast error', {}, error as Error);
       return new Response(JSON.stringify({ error: 'Broadcast failed' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },

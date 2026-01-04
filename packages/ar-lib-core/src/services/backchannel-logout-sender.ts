@@ -28,6 +28,9 @@ import type {
   LogoutPendingLock,
 } from '../types/logout';
 import type { SessionClientWithDetails } from '../repositories/core/session-client';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('BACKCHANNEL-LOGOUT');
 
 /**
  * Parameters for creating a Logout Token
@@ -161,7 +164,7 @@ export async function sendLogoutToken(
       error: `HTTP ${response.status}`,
     };
   } catch (error) {
-    console.error('[sendLogoutToken] Request error:', error);
+    log.error('Request error in sendLogoutToken', {}, error as Error);
     return {
       success: false,
       // SECURITY: Do not expose network error details
@@ -475,7 +478,7 @@ export function createBackchannelLogoutOrchestrator(
               };
             } catch (error) {
               const duration_ms = Date.now() - startTime;
-              console.error('[broadcastLogout] Client logout error:', error);
+              log.error('Client logout error', { clientId: client.client_id }, error as Error);
 
               // Record failure with generic message
               await LogoutKVHelpers.recordFailure(kv, client.client_id, {
@@ -536,9 +539,10 @@ export async function processRetry(params: ProcessRetryParams): Promise<LogoutSe
     // Final failure
     if (params.config.on_final_failure === 'alert') {
       // TODO: Implement alerting mechanism
-      console.error(
-        `Backchannel logout final failure for client ${params.clientId} after ${params.attempt} attempts`
-      );
+      log.error('Backchannel logout final failure', {
+        clientId: params.clientId,
+        attempts: params.attempt,
+      });
     }
 
     // Clear pending lock
@@ -643,7 +647,11 @@ export async function processRetry(params: ProcessRetryParams): Promise<LogoutSe
     };
   } catch (error) {
     const duration_ms = Date.now() - startTime;
-    console.error('[retryLogout] Retry error:', error);
+    log.error(
+      'Retry error',
+      { clientId: params.clientId, attempt: params.attempt },
+      error as Error
+    );
 
     // Record failure with generic message
     await LogoutKVHelpers.recordFailure(params.kv, params.clientId, {

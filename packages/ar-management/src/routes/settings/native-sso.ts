@@ -11,11 +11,12 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
 import {
   getNativeSSOConfig,
   clearNativeSSOConfigCache,
+  getLogger,
   type NativeSSOSettings,
+  type Env,
 } from '@authrim/ar-lib-core';
 
 // Valid max secrets behaviors
@@ -164,6 +165,7 @@ async function getNativeSSOSettingsWithSources(env: Env): Promise<{
  * Get Native SSO settings with their sources
  */
 export async function getNativeSSOSettingsConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('NativeSSOSettingsAPI');
   try {
     const { settings, sources } = await getNativeSSOSettingsWithSources(c.env);
 
@@ -234,7 +236,7 @@ export async function getNativeSSOSettingsConfig(c: Context<{ Bindings: Env }>) 
       note: 'Native SSO enables seamless SSO between mobile/desktop apps sharing a Keychain/Keystore.',
     });
   } catch (error) {
-    console.error('[Native SSO Settings API] Error getting settings:', error);
+    log.error('Error getting settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -250,6 +252,7 @@ export async function getNativeSSOSettingsConfig(c: Context<{ Bindings: Env }>) 
  * Update Native SSO settings (stored in KV)
  */
 export async function updateNativeSSOConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('NativeSSOSettingsAPI');
   // Check if KV is available
   if (!c.env.AUTHRIM_CONFIG) {
     return c.json(
@@ -516,7 +519,7 @@ export async function updateNativeSSOConfig(c: Context<{ Bindings: Env }>) {
       note: 'Native SSO settings updated successfully.',
     });
   } catch (error) {
-    console.error('[Native SSO Settings API] Error updating settings:', error);
+    log.error('Error updating settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -532,6 +535,7 @@ export async function updateNativeSSOConfig(c: Context<{ Bindings: Env }>) {
  * Clear Native SSO settings override (revert to env/default)
  */
 export async function clearNativeSSOConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('NativeSSOSettingsAPI');
   // Check if KV is available
   if (!c.env.AUTHRIM_CONFIG) {
     return c.json(
@@ -560,7 +564,7 @@ export async function clearNativeSSOConfig(c: Context<{ Bindings: Env }>) {
       note: 'Native SSO settings cleared. Using env/default values.',
     });
   } catch (error) {
-    console.error('[Native SSO Settings API] Error clearing settings:', error);
+    log.error('Error clearing settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

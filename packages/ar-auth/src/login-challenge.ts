@@ -16,7 +16,7 @@
 
 import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { getChallengeStoreByChallengeId } from '@authrim/ar-lib-core';
+import { getChallengeStoreByChallengeId, getLogger } from '@authrim/ar-lib-core';
 
 /**
  * Login challenge metadata stored in ChallengeStore
@@ -61,6 +61,8 @@ export interface LoginChallengeData {
  * Returns client metadata for login page display
  */
 export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('LOGIN-CHALLENGE');
+
   try {
     const challenge_id = c.req.query('challenge_id');
 
@@ -139,7 +141,7 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json(responseData);
   } catch (error) {
-    console.error('Login challenge get error:', error);
+    log.error('Login challenge get error', { action: 'get_challenge' }, error as Error);
     return c.json(
       {
         error: 'server_error',

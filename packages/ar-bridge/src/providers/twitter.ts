@@ -21,6 +21,9 @@
  */
 
 import type { UpstreamProvider } from '../types';
+import { createLogger } from '@authrim/ar-lib-core';
+
+const log = createLogger().module('TWITTER');
 
 // =============================================================================
 // Twitter Constants
@@ -163,7 +166,7 @@ export function getTwitterUserInfoUrl(quirks?: TwitterProviderQuirks): string {
   if (quirks?.includeEmail) {
     // Twitter doesn't actually return email in user.fields
     // Email requires additional API access
-    console.warn('Twitter email access requires elevated API permissions');
+    log.warn('Twitter email access requires elevated API permissions');
   }
 
   url.searchParams.set('user.fields', userFields);
@@ -220,7 +223,7 @@ export function validateTwitterConfig(provider: Partial<UpstreamProvider>): stri
   // Note: tweet.read is technically required but some apps may not need it
   // We just warn if missing
   if (!scopes.includes('tweet.read')) {
-    console.warn('Twitter: tweet.read scope is typically required for OAuth 2.0');
+    log.warn('Twitter: tweet.read scope is typically required for OAuth 2.0');
   }
 
   // Validate user.fields format if provided

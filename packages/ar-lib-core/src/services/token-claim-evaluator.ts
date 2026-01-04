@@ -34,6 +34,9 @@ import type {
 import type { RuleCondition, CompoundCondition, ConditionOperator } from '../types/policy-rules';
 import { normalizeClaimValue, compareNormalized, getNestedValue } from '../utils/claim-normalizer';
 import { getEmbeddingLimits } from '../utils/resource-permissions';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('TOKEN-CLAIM-EVALUATOR');
 
 // =============================================================================
 // Constants
@@ -153,10 +156,11 @@ export class TokenClaimEvaluator {
           if (claimCount >= this.maxCustomClaims) {
             result.truncated = true;
             result.truncation_reason = `Exceeded max_custom_claims limit (${this.maxCustomClaims})`;
-            console.warn(
-              `[TOKEN_BLOAT] Exceeded max_custom_claims for tenant=${context.tenant_id}, ` +
-                `user=${context.subject_id}, limit=${this.maxCustomClaims}`
-            );
+            log.warn('Exceeded max_custom_claims limit', {
+              tenantId: context.tenant_id,
+              subjectId: context.subject_id,
+              limit: this.maxCustomClaims,
+            });
             break;
           }
 
@@ -394,19 +398,21 @@ export class TokenClaimEvaluator {
 
       // Check reserved claims
       if (RESERVED_CLAIM_NAMES.has(claimName)) {
-        console.error(
-          `[TOKEN_CLAIM_RULE] Rejected attempt to override reserved claim: ${claimName}, ` +
-            `rule=${rule.id}, tenant=${context.tenant_id}`
-        );
+        log.error('Rejected attempt to override reserved claim', {
+          claimName,
+          ruleId: rule.id,
+          tenantId: context.tenant_id,
+        });
         continue;
       }
 
       // Warn about PII patterns
       if (this.isPiiClaimName(claimName)) {
-        console.warn(
-          `[PII_WARNING] Token claim rule may embed PII: claim=${claimName}, ` +
-            `rule=${rule.id}, tenant=${context.tenant_id}`
-        );
+        log.warn('Token claim rule may embed PII', {
+          claimName,
+          ruleId: rule.id,
+          tenantId: context.tenant_id,
+        });
       }
 
       let claimValue: unknown;
@@ -445,10 +451,12 @@ export class TokenClaimEvaluator {
           new_value: claimValue,
           rule_id: rule.id,
         });
-        console.log(
-          `[CLAIM_OVERRIDE] claim=${claimName}, old=${JSON.stringify(oldValue)}, ` +
-            `new=${JSON.stringify(claimValue)}, rule=${rule.id}`
-        );
+        log.debug('Claim override', {
+          claimName,
+          oldValue: JSON.stringify(oldValue),
+          newValue: JSON.stringify(claimValue),
+          ruleId: rule.id,
+        });
       }
 
       newClaims[claimName] = claimValue;

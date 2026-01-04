@@ -12,6 +12,9 @@
 
 import type { Context, MiddlewareHandler } from 'hono';
 import type { Env } from '../types/env';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('INITIAL-ACCESS-TOKEN');
 
 /**
  * Token metadata stored in context
@@ -80,7 +83,7 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
 
     if (openRegistration) {
       // Open registration enabled - no token required
-      console.log('Open registration enabled - skipping Initial Access Token validation');
+      log.debug('Open registration enabled - skipping Initial Access Token validation');
       return next();
     }
 
@@ -107,7 +110,7 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
           });
 
           if (hasTrustedRedirect) {
-            console.log(
+            log.debug(
               'Trusted domain detected in redirect_uris - skipping Initial Access Token validation'
             );
             return next();
@@ -115,7 +118,7 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
         }
       } catch (error) {
         // If body parsing fails, continue to normal token validation
-        console.log('Failed to parse request body for trusted domain check:', error);
+        log.debug('Failed to parse request body for trusted domain check');
       }
     }
 
@@ -139,7 +142,7 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
 
     // Validate token against KV store
     if (!env.INITIAL_ACCESS_TOKENS) {
-      console.error('INITIAL_ACCESS_TOKENS KV namespace not configured');
+      log.error('INITIAL_ACCESS_TOKENS KV namespace not configured');
       return c.json(
         {
           error: 'server_error',
@@ -175,9 +178,13 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
       if (metadata.single_use) {
         // Delete single-use token immediately using the hashed key
         await env.INITIAL_ACCESS_TOKENS.delete(kvKey);
-        console.log(`Single-use Initial Access Token consumed: ${tokenHash.substring(0, 10)}...`);
+        log.info('Single-use Initial Access Token consumed', {
+          tokenHash: tokenHash.substring(0, 10) + '...',
+        });
       } else {
-        console.log(`Reusable Initial Access Token used: ${tokenHash.substring(0, 10)}...`);
+        log.debug('Reusable Initial Access Token used', {
+          tokenHash: tokenHash.substring(0, 10) + '...',
+        });
       }
 
       // Store token metadata in context for use by handlers
@@ -185,7 +192,7 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
 
       return next();
     } catch (error) {
-      console.error('Error validating Initial Access Token:', error);
+      log.error('Error validating Initial Access Token', {}, error as Error);
       return c.json(
         {
           error: 'server_error',

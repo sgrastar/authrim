@@ -78,6 +78,7 @@ import {
   type AuditSubject,
   type AuditActor,
   createAuditLogEntry,
+  createLogger,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -224,7 +225,8 @@ async function writeAuditLog(
     });
   } catch (err) {
     // Log error but don't fail the request
-    console.error('Failed to write audit log:', err);
+    const log = createLogger().module('POLICY');
+    log.error('Failed to write audit log', {}, err as Error);
   }
 }
 

@@ -25,6 +25,7 @@ import type { Env } from '../types/env';
 import { createOAuthConfigManager, type OAuthConfigManager } from '../utils/oauth-config';
 import type { ActorContext } from '../actor';
 import { CloudflareActorContext } from '../actor';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * Authorization code metadata
@@ -142,6 +143,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   private initialized: boolean = false;
   private configManager: OAuthConfigManager;
   private actorCtx: ActorContext;
+  private readonly log: Logger = createLogger().module('AuthorizationCodeStore');
 
   // User code counter for O(1) DDoS protection check (instead of O(n) scan)
   // Maps userId to count of active (non-expired) codes
@@ -197,14 +199,12 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     try {
       this.CODE_TTL = await this.configManager.getAuthCodeTTL();
       this.MAX_CODES_PER_USER = await this.configManager.getMaxCodesPerUser();
-      console.log(
-        `AuthCodeStore: Loaded config from KV - CODE_TTL: ${this.CODE_TTL}s, MAX_CODES_PER_USER: ${this.MAX_CODES_PER_USER}`
-      );
+      this.log.info('Loaded config from KV', {
+        codeTTL: this.CODE_TTL,
+        maxCodesPerUser: this.MAX_CODES_PER_USER,
+      });
     } catch (error) {
-      console.warn(
-        'AuthCodeStore: Failed to load config from KV, using env/default values:',
-        error
-      );
+      this.log.warn('Failed to load config from KV, using env/default values', {}, error as Error);
       // Keep constructor-initialized values (from env)
     }
 
@@ -227,12 +227,12 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       }
 
       if (this.codes.size > 0) {
-        console.log(
-          `AuthCodeStore: Restored ${this.codes.size} authorization codes from Durable Storage`
-        );
+        this.log.info('Restored authorization codes from Durable Storage', {
+          count: this.codes.size,
+        });
       }
     } catch (error) {
-      console.error('AuthCodeStore: Failed to initialize from Durable Storage:', error);
+      this.log.error('Failed to initialize from Durable Storage', {}, error as Error);
       // Continue with empty state
     }
 
@@ -341,10 +341,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     this.CODE_TTL = await this.configManager.getAuthCodeTTL();
     this.MAX_CODES_PER_USER = await this.configManager.getMaxCodesPerUser();
 
-    console.log(
-      `AuthCodeStore: Config reloaded - CODE_TTL: ${previousTTL}s → ${this.CODE_TTL}s, ` +
-        `MAX_CODES_PER_USER: ${previousMaxCodes} → ${this.MAX_CODES_PER_USER}`
-    );
+    this.log.info('Config reloaded', {
+      codeTTL: { previous: previousTTL, current: this.CODE_TTL },
+      maxCodesPerUser: { previous: previousMaxCodes, current: this.MAX_CODES_PER_USER },
+    });
 
     return {
       status: 'ok',
@@ -374,9 +374,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     }
 
     // This should not happen with blockConcurrencyWhile(), but as a safety fallback:
-    console.warn(
-      'AuthCodeStore: initializeState called but not initialized - this should not happen'
-    );
+    this.log.warn('initializeState called but not initialized - this should not happen');
     await this.initializeStateBlocking();
   }
 
@@ -419,7 +417,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     if (expiredCodes.length > 0) {
       const deleteKeys = expiredCodes.map((c) => this.buildCodeKey(c));
       await this.actorCtx.storage.deleteMany(deleteKeys);
-      console.log(`AuthCodeStore: Cleaned up ${expiredCodes.length} expired codes`);
+      this.log.info('Cleaned up expired codes', { count: expiredCodes.length });
     }
   }
 
@@ -576,9 +574,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
     // CRITICAL: Check if already used (replay attack detection)
     if (stored.used) {
-      console.warn(
-        `SECURITY: Replay attack detected! Code ${request.code} already used by user ${stored.userId}`
-      );
+      this.log.error('SECURITY: Replay attack detected', {
+        code: request.code.substring(0, 8) + '...',
+        userId: stored.userId,
+      });
 
       // OAuth 2.0 Security BCP (RFC 6749 Section 4.1.2):
       // "If an authorization code is used more than once, the authorization server
@@ -588,9 +587,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       // Return replayAttack field with token JTIs for the caller to revoke
       // This allows the token endpoint to revoke tokens before returning the error
       if (stored.issuedAccessTokenJti || stored.issuedRefreshTokenJti) {
-        console.warn(
-          `SECURITY: Tokens to revoke - AccessToken JTI: ${stored.issuedAccessTokenJti}, RefreshToken JTI: ${stored.issuedRefreshTokenJti}`
-        );
+        this.log.error('SECURITY: Tokens to revoke', {
+          accessTokenJti: stored.issuedAccessTokenJti,
+          refreshTokenJti: stored.issuedRefreshTokenJti,
+        });
       }
 
       // Return response with replayAttack field containing JTIs to revoke
@@ -711,7 +711,9 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     await this.initializeState();
     const stored = this.codes.get(code);
     if (!stored) {
-      console.warn(`AuthCodeStore: Cannot register tokens for unknown code ${code}`);
+      this.log.warn('Cannot register tokens for unknown code', {
+        code: code.substring(0, 8) + '...',
+      });
       return false;
     }
 
@@ -724,7 +726,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     // Persist to Durable Storage - O(1) individual key
     await this.actorCtx.storage.put(this.buildCodeKey(code), stored);
 
-    console.log(`AuthCodeStore: Registered token JTIs for code ${code.substring(0, 8)}...`);
+    this.log.info('Registered token JTIs for code', { code: code.substring(0, 8) + '...' });
     return true;
   }
 
@@ -787,10 +789,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
           // The replayAttack field contains JTIs for caller to revoke tokens
           // HTTP handler returns error; RPC callers handle revocation themselves
           if (result.replayAttack) {
-            console.warn(
-              '[AuthorizationCodeStore] Replay attack detected, returning error. ' +
-                `JTIs to revoke: AT=${result.replayAttack.accessTokenJti}, RT=${result.replayAttack.refreshTokenJti}`
-            );
+            this.log.warn('Replay attack detected, returning error', {
+              accessTokenJti: result.replayAttack.accessTokenJti,
+              refreshTokenJti: result.replayAttack.refreshTokenJti,
+            });
             return new Response(
               JSON.stringify({
                 error: 'invalid_grant',
@@ -810,7 +812,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
             headers: { 'Content-Type': 'application/json' },
           });
         } catch (error) {
-          console.error('[AuthorizationCodeStore] consumeCode error:', error);
+          this.log.warn('consumeCode error', {}, error as Error);
           const message = error instanceof Error ? error.message : 'Unknown error';
 
           // SECURITY: Use generic error descriptions to prevent information leakage
@@ -947,10 +949,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
           this.CODE_TTL = await this.configManager.getAuthCodeTTL();
           this.MAX_CODES_PER_USER = await this.configManager.getMaxCodesPerUser();
 
-          console.log(
-            `AuthCodeStore: Config reloaded - CODE_TTL: ${previousTTL}s → ${this.CODE_TTL}s, ` +
-              `MAX_CODES_PER_USER: ${previousMaxCodes} → ${this.MAX_CODES_PER_USER}`
-          );
+          this.log.info('Config reloaded via fetch', {
+            codeTTL: { previous: previousTTL, current: this.CODE_TTL },
+            maxCodesPerUser: { previous: previousMaxCodes, current: this.MAX_CODES_PER_USER },
+          });
 
           return new Response(
             JSON.stringify({
@@ -966,7 +968,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
             }
           );
         } catch (error) {
-          console.error('AuthCodeStore: Failed to reload config:', error);
+          this.log.error('Failed to reload config', {}, error as Error);
           return new Response(
             JSON.stringify({
               status: 'error',
@@ -984,7 +986,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       return new Response('Not Found', { status: 404 });
     } catch (error) {
       // Log full error for debugging but don't expose to client
-      console.error('AuthCodeStore error:', error);
+      this.log.error('Request handling error', {}, error as Error);
       // SECURITY: Do not expose internal error details in response
       return new Response(
         JSON.stringify({

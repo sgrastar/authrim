@@ -17,6 +17,7 @@ import {
   AttributeVerificationRepository,
   createErrorResponse,
   AR_ERROR_CODES,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { verifyVPToken } from '../services/vp-verifier';
 import { getVPRequestStoreById } from '../../utils/vp-request-sharding';
@@ -39,6 +40,8 @@ interface VPResponseRequest {
  * Verifies the SD-JWT VC and Key Binding JWT.
  */
 export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC-VERIFIER');
   try {
     // Parse form data or JSON
     let body: VPResponseRequest;
@@ -161,7 +164,7 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
   } catch (error) {
-    console.error('[vpResponse] Error:', error);
+    log.error('VP response processing failed', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

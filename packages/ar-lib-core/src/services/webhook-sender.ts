@@ -18,6 +18,9 @@
  */
 
 import type { KVNamespace } from '@cloudflare/workers-types';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('WEBHOOK-SENDER');
 
 // =============================================================================
 // Types
@@ -259,7 +262,7 @@ export async function sendWebhook(params: SendWebhookParams): Promise<WebhookSen
     };
   } catch (error) {
     // SECURITY: Do not expose network error details
-    console.error('[sendWebhook] Request error:', error);
+    log.error('Request error', { url: params.url }, error as Error);
     return {
       success: false,
       error: 'Request failed',
@@ -574,7 +577,7 @@ export async function sendWebhookBatch(
             durationMs: Date.now() - startTime,
           };
         } catch (error) {
-          console.error('[sendWebhookBatch] Error:', error);
+          log.error('Batch send error', { identifier }, error as Error);
           return {
             identifier,
             result: {

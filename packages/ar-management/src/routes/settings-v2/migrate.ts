@@ -14,8 +14,14 @@
  * - GET /api/admin/settings/migrate/status - Get migration status
  */
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
+import { getLogger } from '@authrim/ar-lib-core';
+
+/**
+ * Base context type for getLogger compatibility
+ */
+type BaseContext = Context<{ Bindings: Env }>;
 
 // =============================================================================
 // Security Utilities
@@ -483,7 +489,8 @@ migrateRouter.post('/migrate', async (c) => {
         }
       } catch {
         // Invalid migration status data - treat as not migrated and continue
-        console.warn('Invalid migration status JSON, treating as not migrated');
+        const log = getLogger(c as unknown as BaseContext).module('SettingsMigrationAPI');
+        log.warn('Invalid migration status JSON, treating as not migrated', {});
       }
     }
   }
@@ -565,7 +572,8 @@ migrateRouter.get('/migrate/status', async (c) => {
       return c.json(parsed);
     }
     // Invalid structure - return default state
-    console.warn('Invalid migration status structure, returning default state');
+    const log = getLogger(c as unknown as BaseContext).module('SettingsMigrationAPI');
+    log.warn('Invalid migration status structure, returning default state', {});
     return c.json({
       migrated: false,
       migratedAt: null,
@@ -574,7 +582,8 @@ migrateRouter.get('/migrate/status', async (c) => {
     });
   } catch {
     // Invalid JSON in status - return default state
-    console.warn('Invalid migration status JSON, returning default state');
+    const log = getLogger(c as unknown as BaseContext).module('SettingsMigrationAPI');
+    log.warn('Invalid migration status JSON, returning default state', {});
     return c.json({
       migrated: false,
       migratedAt: null,
@@ -606,13 +615,11 @@ migrateRouter.delete('/migrate/lock', async (c) => {
   const actor = c.get('adminUser')?.id ?? 'unknown';
 
   // Audit log before deletion
-  console.log(
-    `[MIGRATION_AUDIT] ${JSON.stringify({
-      event: 'migration.lock_cleared',
-      actor,
-      timestamp: new Date().toISOString(),
-    })}`
-  );
+  const log = getLogger(c as unknown as BaseContext).module('SettingsMigrationAPI');
+  log.info('Migration lock cleared', {
+    event: 'migration.lock_cleared',
+    actor,
+  });
 
   await kv.delete('settings:migration:status');
 

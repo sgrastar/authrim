@@ -20,7 +20,11 @@ import {
   D1Adapter,
   AttributeVerificationRepository,
   UserVerifiedAttributeRepository,
+  getLogger,
+  createLogger,
 } from '@authrim/ar-lib-core';
+
+const standaloneLog = createLogger().module('VC-ATTR-VERIFY');
 import { verifyVPToken } from '../services/vp-verifier';
 import { linkVerificationToUser, getUserVerifiedAttributes } from '../services/attribute-mapper';
 
@@ -57,6 +61,8 @@ interface InitiateVerificationRequest {
 export async function initiateAttributeVerification(
   c: Context<{ Bindings: Env }>
 ): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC-VERIFIER');
   try {
     // Extract user info from access token
     const authHeader = c.req.header('Authorization');
@@ -130,7 +136,7 @@ export async function initiateAttributeVerification(
       state: requestId, // Use request ID as state
     });
   } catch (error) {
-    console.error('[initiateAttributeVerification] Error:', error);
+    log.error('Failed to initiate attribute verification', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return c.json(
       {
@@ -149,6 +155,8 @@ export async function initiateAttributeVerification(
  * Links verified attributes to the user's account.
  */
 export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC-VERIFIER');
   try {
     // Parse form data or JSON
     let body: AttributeVerifyRequest;
@@ -279,7 +287,7 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
       haip_compliant: verificationResult.haipCompliant,
     });
   } catch (error) {
-    console.error('[attributeVerifyResponse] Error:', error);
+    log.error('Attribute verification response processing failed', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return c.json(
       {
@@ -299,6 +307,8 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
  * Requires: Authorization header with valid access token
  */
 export async function getAttributes(c: Context<{ Bindings: Env }>): Promise<Response> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC-VERIFIER');
   try {
     const authHeader = c.req.header('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
@@ -323,7 +333,7 @@ export async function getAttributes(c: Context<{ Bindings: Env }>): Promise<Resp
       attributes,
     });
   } catch (error) {
-    console.error('[getAttributes] Error:', error);
+    log.error('Failed to get verified attributes', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return c.json(
       {
@@ -371,14 +381,14 @@ async function validateAccessToken(
     // Expiration check (RFC 7519)
     const now = Math.floor(Date.now() / 1000);
     if (payload.exp && payload.exp < now) {
-      console.warn('[validateAccessToken] Token expired');
+      standaloneLog.warn('Access token expired', {});
       return null;
     }
 
     // Not-before check (if iat is in the future, token is invalid)
     if (payload.iat && payload.iat > now + 60) {
       // 60 seconds clock skew tolerance
-      console.warn('[validateAccessToken] Token issued in the future');
+      standaloneLog.warn('Access token issued in the future', {});
       return null;
     }
 
@@ -387,7 +397,7 @@ async function validateAccessToken(
     if (payload.aud) {
       const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
       if (!audiences.includes(expectedAudience) && !audiences.includes('authrim')) {
-        console.warn('[validateAccessToken] Audience mismatch');
+        standaloneLog.warn('Access token audience mismatch', {});
         return null;
       }
     }
@@ -397,7 +407,7 @@ async function validateAccessToken(
       tenantId: payload.tenant_id,
     };
   } catch (e) {
-    console.error('[validateAccessToken] Error:', e);
+    standaloneLog.error('Access token validation failed', {}, e as Error);
     return null;
   }
 }

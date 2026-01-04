@@ -13,6 +13,9 @@
  */
 
 import { safeFetch, isInternalUrl } from '../utils/url-security';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger().module('CIBA_PUSH');
 
 /** Push notification timeout (5 seconds) */
 const PUSH_NOTIFICATION_TIMEOUT_MS = 5000;
@@ -53,9 +56,7 @@ export async function sendPushModeTokens(
   try {
     // Defense in depth: double-check SSRF protection
     if (isInternalUrl(clientNotificationEndpoint)) {
-      console.error('[CIBA] SSRF blocked - internal address in notification endpoint:', {
-        authReqId,
-      });
+      log.error('SSRF blocked - internal address in notification endpoint', { authReqId });
       throw new Error('SSRF protection: Cannot send tokens to internal addresses');
     }
 
@@ -87,22 +88,21 @@ export async function sendPushModeTokens(
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('[CIBA] Push mode token delivery failed:', {
+      log.error('Push mode token delivery failed', {
         status: response.status,
         statusText: response.statusText,
-        error: errorText.substring(0, 200), // Truncate for logging
+        errorPreview: errorText.substring(0, 200),
         authReqId,
       });
       throw new Error(`Push token delivery failed: ${response.status} ${response.statusText}`);
     }
 
-    console.log('[CIBA] Push mode tokens delivered successfully:', {
+    log.info('Push mode tokens delivered successfully', {
       authReqId,
-      // Log sanitized endpoint info (host only)
       endpointHost: new URL(clientNotificationEndpoint).host,
     });
   } catch (error) {
-    console.error('[CIBA] Push mode token delivery error:', error);
+    log.error('Push mode token delivery error', { authReqId }, error as Error);
     throw error;
   }
 }

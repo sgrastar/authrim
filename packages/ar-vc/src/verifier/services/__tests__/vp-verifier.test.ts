@@ -13,32 +13,45 @@ vi.mock('../issuer-trust', () => ({
   getIssuerPublicKey: vi.fn(),
 }));
 
-vi.mock('@authrim/ar-lib-core', () => ({
-  parseSDJWTVC: vi.fn(),
-  verifySDJWTVC: vi.fn(),
-  HaipPolicyEvaluator: class {
-    validateVerificationResult() {
-      return {
-        valid: true,
-        haipCompliant: true,
-        errors: [],
-        warnings: [],
-      };
-    }
-  },
-  getHaipPolicy: vi.fn().mockReturnValue({
-    requireHolderBinding: true,
-    requireIssuerTrust: true,
-    requireStatusCheck: false,
-    allowedAlgorithms: ['ES256', 'ES384', 'ES512'],
-  }),
-  D1Adapter: class {
-    constructor() {}
-  },
-  TrustedIssuerRepository: class {
-    constructor() {}
-  },
-}));
+vi.mock('@authrim/ar-lib-core', () => {
+  const mockLoggerInstance = {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+    module: vi.fn().mockReturnThis(),
+    startTimer: vi.fn().mockReturnValue(() => {}),
+  };
+  return {
+    parseSDJWTVC: vi.fn(),
+    verifySDJWTVC: vi.fn(),
+    HaipPolicyEvaluator: class {
+      validateVerificationResult() {
+        return {
+          valid: true,
+          haipCompliant: true,
+          errors: [],
+          warnings: [],
+        };
+      }
+    },
+    getHaipPolicy: vi.fn().mockReturnValue({
+      requireHolderBinding: true,
+      requireIssuerTrust: true,
+      requireStatusCheck: false,
+      allowedAlgorithms: ['ES256', 'ES384', 'ES512'],
+    }),
+    D1Adapter: class {
+      constructor() {}
+    },
+    TrustedIssuerRepository: class {
+      constructor() {}
+    },
+    getLogger: vi.fn(() => mockLoggerInstance),
+    createLogger: vi.fn(() => mockLoggerInstance),
+  };
+});
 
 // Import after mocks are set up
 import { verifyVPToken } from '../vp-verifier';

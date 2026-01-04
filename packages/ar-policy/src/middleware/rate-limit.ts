@@ -16,7 +16,10 @@
 
 import type { KVNamespace } from '@cloudflare/workers-types';
 import type { RateLimitTier } from '@authrim/ar-lib-core';
+import { createLogger } from '@authrim/ar-lib-core';
 import type { CheckAuthResult } from './check-auth';
+
+const log = createLogger().module('RATE-LIMIT');
 
 // =============================================================================
 // Types
@@ -190,7 +193,7 @@ export async function checkRateLimit(
 
   // If no cache available, allow but log warning
   if (!ctx.cache) {
-    console.warn('[Rate Limit] KV cache not available - rate limiting disabled');
+    log.warn('KV cache not available - rate limiting disabled', {});
     return {
       allowed: true,
       current: 0,
@@ -240,7 +243,7 @@ export async function checkRateLimit(
     };
   } catch (error) {
     // On error, allow the request but log
-    console.error('[Rate Limit] Error checking rate limit:', error);
+    log.error('Error checking rate limit', { error: String(error) }, error as Error);
     return {
       allowed: true,
       current: 0,

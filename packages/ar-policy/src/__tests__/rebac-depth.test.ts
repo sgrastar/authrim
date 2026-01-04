@@ -881,8 +881,9 @@ describe('ReBAC Depth Limit Tests', () => {
 
       await parser.evaluate(expression, ctx, adapter);
 
+      // Logger now outputs JSON format with structured context
       expect(consoleWarnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Maximum depth (5) exceeded for attacker -> secret_doc:doc_999')
+        expect.stringContaining('"message":"Maximum depth (5) exceeded"')
       );
     });
   });

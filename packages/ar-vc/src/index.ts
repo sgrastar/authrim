@@ -27,6 +27,7 @@ import {
   AR_ERROR_CODES,
   // Health Check
   createHealthCheckHandlers,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import type { Env } from './types';
 
@@ -137,7 +138,9 @@ app.get('/did/resolve/:did', didResolveRoute);
 // =============================================================================
 
 app.onError((err, c) => {
-  console.error('[vc] Error:', err);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const log = getLogger(c as any).module('VC');
+  log.error('Unhandled error in VC worker', {}, err as Error);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 

@@ -13,6 +13,7 @@ import {
   isCustomClaimsEnabled,
   isIdLevelPermissionsEnabled,
   getEmbeddingLimits,
+  getLogger,
   type TokenEmbeddingLimits,
 } from '@authrim/ar-lib-core';
 
@@ -65,6 +66,7 @@ const KV_KEYS = {
  * Get current token embedding settings
  */
 export async function getTokenEmbeddingSettings(c: Context) {
+  const log = getLogger(c).module('TokenEmbeddingAPI');
   try {
     // Get current feature flag states
     const [policyEmbeddingEnabled, customClaimsEnabled, idLevelPermissionsEnabled, limits] =
@@ -95,7 +97,7 @@ export async function getTokenEmbeddingSettings(c: Context) {
 
     return c.json(settings);
   } catch (error) {
-    console.error('[Token Embedding Settings API] Get error:', error);
+    log.error('Get error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -111,6 +113,7 @@ export async function getTokenEmbeddingSettings(c: Context) {
  * Update token embedding settings
  */
 export async function updateTokenEmbeddingSettings(c: Context) {
+  const log = getLogger(c).module('TokenEmbeddingAPI');
   const body = await c.req.json<TokenEmbeddingSettingsUpdate>();
 
   if (!c.env.SETTINGS) {
@@ -215,7 +218,7 @@ export async function updateTokenEmbeddingSettings(c: Context) {
     await c.env.SETTINGS.put(KV_KEYS.LAST_UPDATED, lastUpdated);
 
     // Log audit
-    console.log(`[Token Embedding Settings] Updated: ${updates.join(', ')}`);
+    log.info('Settings updated', { updates: updates.join(', ') });
 
     // Return updated settings
     const [policyEmbeddingEnabled, customClaimsEnabled, idLevelPermissionsEnabled, limits] =
@@ -236,7 +239,7 @@ export async function updateTokenEmbeddingSettings(c: Context) {
 
     return c.json(settings);
   } catch (error) {
-    console.error('[Token Embedding Settings API] Update error:', error);
+    log.error('Update error', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

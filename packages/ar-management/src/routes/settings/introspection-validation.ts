@@ -24,7 +24,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import { getLogger, type Env } from '@authrim/ar-lib-core';
 
 // Default settings (for security, default is OFF = RFC 7662 standard behavior)
 const DEFAULT_SETTINGS = {
@@ -123,6 +123,7 @@ export async function getIntrospectionExpectedAudience(env: Env): Promise<string
  * Get Introspection Validation settings with their sources
  */
 export async function getIntrospectionValidationConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('IntrospectionValidationAPI');
   try {
     const { settings, sources } = await getIntrospectionValidationSettings(c.env);
 
@@ -145,7 +146,7 @@ export async function getIntrospectionValidationConfig(c: Context<{ Bindings: En
       note: 'RFC 7662 does not require aud/client_id validation. Enable strictValidation for additional security checks.',
     });
   } catch (error) {
-    console.error('[Introspection Validation Settings API] Error getting settings:', error);
+    log.error('Error getting settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -167,6 +168,7 @@ export async function getIntrospectionValidationConfig(c: Context<{ Bindings: En
  * }
  */
 export async function updateIntrospectionValidationConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('IntrospectionValidationAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -267,7 +269,7 @@ export async function updateIntrospectionValidationConfig(c: Context<{ Bindings:
     });
   } catch (error) {
     // Log full error details for debugging but don't expose to client
-    console.error('[Introspection Validation Settings API] Error updating settings:', error);
+    log.error('Error updating settings', {}, error as Error);
     // SECURITY: Do not expose internal error details in response
     return c.json(
       {
@@ -284,6 +286,7 @@ export async function updateIntrospectionValidationConfig(c: Context<{ Bindings:
  * Clear Introspection Validation settings override (revert to env/default)
  */
 export async function clearIntrospectionValidationConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('IntrospectionValidationAPI');
   // Check if KV is available
   if (!c.env.SETTINGS) {
     return c.json(
@@ -320,7 +323,7 @@ export async function clearIntrospectionValidationConfig(c: Context<{ Bindings: 
       note: 'Introspection validation settings cleared. Using env/default values.',
     });
   } catch (error) {
-    console.error('[Introspection Validation Settings API] Error clearing settings:', error);
+    log.error('Error clearing settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

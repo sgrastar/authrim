@@ -19,13 +19,14 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
 import {
   getCloudProviderKVKey,
   getDefaultCloudProvider,
   VALID_CLOUD_PROVIDERS,
   clearCloudProviderCache,
+  getLogger,
   type CloudProvider,
+  type Env,
 } from '@authrim/ar-lib-core';
 
 type SettingSource = 'kv' | 'default';
@@ -124,6 +125,7 @@ export async function getIpSecuritySettings(env: Env): Promise<{
  * Get IP security settings with their sources
  */
 export async function getIpSecurityConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('IpSecurityAPI');
   try {
     const { settings, sources } = await getIpSecuritySettings(c.env);
     const providerInfo = CLOUD_PROVIDER_INFO[settings.cloudProvider];
@@ -148,7 +150,7 @@ export async function getIpSecurityConfig(c: Context<{ Bindings: Env }>) {
       kv_key: getCloudProviderKVKey(),
     });
   } catch (error) {
-    console.error('[IP Security Settings API] Error getting settings:', error);
+    log.error('Error getting settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -169,6 +171,7 @@ export async function getIpSecurityConfig(c: Context<{ Bindings: Env }>) {
  * }
  */
 export async function updateIpSecurityConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('IpSecurityAPI');
   // Check if KV is available
   if (!c.env.AUTHRIM_CONFIG) {
     return c.json(
@@ -245,7 +248,7 @@ export async function updateIpSecurityConfig(c: Context<{ Bindings: Env }>) {
 
     return c.json(response);
   } catch (error) {
-    console.error('[IP Security Settings API] Error updating settings:', error);
+    log.error('Error updating settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
@@ -261,6 +264,7 @@ export async function updateIpSecurityConfig(c: Context<{ Bindings: Env }>) {
  * Clear IP security settings override (revert to default: cloudflare)
  */
 export async function clearIpSecurityConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('IpSecurityAPI');
   // Check if KV is available
   if (!c.env.AUTHRIM_CONFIG) {
     return c.json(
@@ -289,7 +293,7 @@ export async function clearIpSecurityConfig(c: Context<{ Bindings: Env }>) {
       note: `IP security settings cleared. Using default provider: ${getDefaultCloudProvider()}`,
     });
   } catch (error) {
-    console.error('[IP Security Settings API] Error clearing settings:', error);
+    log.error('Error clearing settings', {}, error as Error);
     return c.json(
       {
         error: 'server_error',

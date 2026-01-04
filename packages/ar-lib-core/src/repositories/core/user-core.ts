@@ -45,6 +45,11 @@ export type CoreUserType = 'end_user' | 'admin' | 'm2m' | 'anonymous';
 /**
  * User Core entity (Non-PII)
  */
+/**
+ * User account status for suspend/lock functionality (Admin SDK Phase 1)
+ */
+export type UserStatus = 'active' | 'suspended' | 'locked';
+
 export interface UserCore extends BaseEntity {
   tenant_id: string;
   email_verified: boolean;
@@ -56,6 +61,12 @@ export interface UserCore extends BaseEntity {
   pii_partition: string;
   pii_status: PIIStatus;
   last_login_at: number | null;
+  // Status fields for suspend/lock (Admin SDK Phase 1)
+  status: UserStatus;
+  suspended_at: number | null;
+  suspended_until: number | null;
+  locked_at: number | null;
+  locked_until: number | null;
 }
 
 /**
@@ -87,6 +98,12 @@ export interface UpdateUserCoreInput {
   pii_partition?: string;
   pii_status?: PIIStatus;
   last_login_at?: number | null;
+  // Status fields for suspend/lock (Admin SDK Phase 1)
+  status?: UserStatus;
+  suspended_at?: number | null;
+  suspended_until?: number | null;
+  locked_at?: number | null;
+  locked_until?: number | null;
 }
 
 /**
@@ -150,6 +167,12 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
       created_at: now,
       updated_at: now,
       last_login_at: null,
+      // Status fields for suspend/lock (Admin SDK Phase 1)
+      status: 'active',
+      suspended_at: null,
+      suspended_until: null,
+      locked_at: null,
+      locked_until: null,
     };
 
     const sql = `
@@ -428,6 +451,12 @@ export class UserCoreRepository extends BaseRepository<UserCore> {
       created_at: row.created_at as number,
       updated_at: row.updated_at as number,
       last_login_at: row.last_login_at as number | null,
+      // Status fields for suspend/lock (Admin SDK Phase 1)
+      status: (row.status as UserStatus) ?? 'active',
+      suspended_at: row.suspended_at as number | null,
+      suspended_until: row.suspended_until as number | null,
+      locked_at: row.locked_at as number | null,
+      locked_until: row.locked_until as number | null,
     };
   }
 }

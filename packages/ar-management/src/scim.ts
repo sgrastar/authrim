@@ -28,6 +28,7 @@ import {
   getTenantIdFromContext,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  getLogger,
 } from '@authrim/ar-lib-core';
 import { D1Adapter, type DatabaseAdapter, generateId, hashPassword } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
@@ -1097,7 +1098,8 @@ app.get('/Users', async (c) => {
         }
       } catch (error) {
         // Log full error for debugging but don't expose to client
-        console.error('[SCIM] Invalid filter:', error);
+        const log = getLogger(c).module('SCIM');
+        log.error('Invalid filter syntax', { action: 'list_users' }, error as Error);
         // SECURITY: Do not expose filter parsing error details
         return scimError(c, 400, 'Invalid filter syntax', 'invalidFilter');
       }
@@ -1151,7 +1153,8 @@ app.get('/Users', async (c) => {
 
     return c.json(response);
   } catch (error) {
-    console.error('SCIM list users error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM list users error', { action: 'list_users' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -1189,7 +1192,8 @@ app.get('/Users/:id', async (c) => {
 
     return c.json(scimUser);
   } catch (error) {
-    console.error('SCIM get user error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM get user error', { action: 'get_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -1343,7 +1347,8 @@ app.post('/Users', async (c) => {
 
     return c.json(responseUser, 201);
   } catch (error) {
-    console.error('SCIM create user error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM create user error', { action: 'create_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -1470,7 +1475,8 @@ app.put('/Users/:id', async (c) => {
 
     return c.json(responseUser);
   } catch (error) {
-    console.error('SCIM replace user error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM replace user error', { action: 'replace_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -1604,7 +1610,8 @@ app.patch('/Users/:id', async (c) => {
 
     return c.json(responseUser);
   } catch (error) {
-    console.error('SCIM patch user error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM patch user error', { action: 'patch_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -1680,7 +1687,8 @@ app.delete('/Users/:id', async (c) => {
 
     return c.body(null, 204); // No Content
   } catch (error) {
-    console.error('SCIM delete user error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM delete user error', { action: 'delete_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -1721,7 +1729,8 @@ app.get('/Groups', async (c) => {
         );
       } catch (error) {
         // Log full error for debugging but don't expose to client
-        console.error('[SCIM] Invalid filter:', error);
+        const log = getLogger(c).module('SCIM');
+        log.error('Invalid filter syntax', { action: 'list_groups' }, error as Error);
         // SECURITY: Do not expose filter parsing error details
         return scimError(c, 400, 'Invalid filter syntax', 'invalidFilter');
       }
@@ -1775,7 +1784,8 @@ app.get('/Groups', async (c) => {
 
     return c.json(response);
   } catch (error) {
-    console.error('SCIM list groups error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM list groups error', { action: 'list_groups' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -1816,7 +1826,8 @@ app.get('/Groups/:id', async (c) => {
 
     return c.json(scimGroup);
   } catch (error) {
-    console.error('SCIM get group error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM get group error', { action: 'get_group' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -1906,7 +1917,8 @@ app.post('/Groups', async (c) => {
 
     return c.json(responseGroup, 201);
   } catch (error) {
-    console.error('SCIM create group error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM create group error', { action: 'create_group' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -1996,7 +2008,8 @@ app.put('/Groups/:id', async (c) => {
 
     return c.json(responseGroup);
   } catch (error) {
-    console.error('SCIM replace group error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM replace group error', { action: 'replace_group' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -2099,7 +2112,8 @@ app.patch('/Groups/:id', async (c) => {
 
     return c.json(responseGroup);
   } catch (error) {
-    console.error('SCIM patch group error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM patch group error', { action: 'patch_group' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -2150,7 +2164,8 @@ app.delete('/Groups/:id', async (c) => {
 
     return c.body(null, 204); // No Content
   } catch (error) {
-    console.error('SCIM delete group error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM delete group error', { action: 'delete_group' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -2346,7 +2361,8 @@ app.post('/Bulk', async (c) => {
 
     return c.json(response, 200);
   } catch (error) {
-    console.error('SCIM bulk operation error:', error);
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM bulk operation error', { action: 'bulk' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -2456,7 +2472,12 @@ async function processOperation(
       );
     }
   } catch (error) {
-    console.error(`SCIM bulk operation error (${method} ${path}):`, error);
+    const log = getLogger(c).module('SCIM');
+    log.error(
+      'SCIM bulk operation error',
+      { action: 'bulk_operation', method, path },
+      error as Error
+    );
     return {
       method,
       bulkId,
