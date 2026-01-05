@@ -24,13 +24,31 @@ Evaluate thoroughly before production use.
 Built for edge deployment with <50ms latency worldwide.
 
 ```bash
-# Coming in 2026-Q1
-npx create-authrim my-identity-provider
+npx @authrim/setup
 ```
 
 [Read the full vision](./docs/VISION.md)
 
 ## Quick Start
+
+### Option 1: Using @authrim/setup (Recommended)
+
+```bash
+# Interactive setup with Web UI
+npx @authrim/setup
+
+# Or CLI mode for terminal-based setup
+npx @authrim/setup --cli
+```
+
+The setup wizard will guide you through:
+- Cloudflare authentication
+- Resource provisioning (D1, KV, Queues)
+- Key generation
+- Worker deployment
+- Initial admin creation
+
+### Option 2: Manual Setup (Development)
 
 ```bash
 # 1. Clone and install
@@ -48,7 +66,7 @@ pnpm run dev
 # → http://localhost:8787/.well-known/openid-configuration
 ```
 
-📚 **Full guides:** [Development](./docs/getting-started/development.md) | [Deployment](./docs/getting-started/deployment.md) | [Testing](./docs/getting-started/testing.md)
+📚 **Full guides:** [Development](./docs/getting-started/development.md) | [Deployment](./docs/getting-started/deployment.md) | [Testing](./docs/getting-started/testing.md) | [Setup CLI](./packages/setup/README.md)
 
 ## Performance
 
@@ -229,9 +247,10 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 | SAML 2.0 IdP/SP | ✅ Done | |
 | Admin Dashboard | ✅ Done | |
 | Multi-language (EN/JA) | ✅ Done | |
+| **Tooling** | | |
+| Setup CLI (`@authrim/setup`) | ✅ Done | [Documentation](./packages/setup/README.md) |
 | **Roadmap** | | |
 | WebSDK | Planned | |
-| CLI (`create-authrim`) | Planned | |
 | **Not Supported** | | |
 | MTLS (RFC 8705) | — | |
 | AD / LDAP | — | |
@@ -271,6 +290,10 @@ See [LICENSE](./LICENSE) for details.
 
 > **Authrim** — _Identity & Access at the edge of everywhere_
 >
-> **Status:** Phase 6 ✅ | Phase 7 ✅ | Phase 8 ✅ | Phase 9 ✅ | Phase 11 ~30%
+> **Status:** Phase 6 ✅ | Phase 7 ✅ | Phase 8 ✅ | Phase 9 ✅ | Phase 10 🚧 | Phase 11 ~30%
 >
-> _From zero to production-ready Identity & Access Platform in under 5 minutes._ (Goal: 2026-Q1)
+> _From zero to production-ready Identity & Access Platform in under 5 minutes._
+>
+> ```bash
+> npx @authrim/setup
+> ```

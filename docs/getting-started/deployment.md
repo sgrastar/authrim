@@ -7,6 +7,8 @@ This guide covers deploying Authrim to Cloudflare Workers for a production-ready
 - [Prerequisites](#prerequisites)
 - [Environment Types](#environment-types)
 - [Quick Deployment](#quick-deployment)
+  - [Using @authrim/setup (Recommended)](#using-authrimsetup-recommended)
+  - [Manual Deployment](#manual-deployment)
 - [Step-by-Step Deployment](#step-by-step-deployment)
 - [UI Deployment](#ui-deployment)
 - [Verification](#verification)
@@ -62,7 +64,30 @@ Authrim supports environment-specific deployments with naming conventions:
 
 ## Quick Deployment
 
-For experienced users:
+### Using @authrim/setup (Recommended)
+
+The easiest way to deploy Authrim is using the interactive setup CLI:
+
+```bash
+# Interactive Web UI
+npx @authrim/setup
+
+# Or CLI mode
+npx @authrim/setup --cli
+```
+
+This handles all the steps below automatically:
+- Key generation
+- Resource provisioning (D1, KV, Queues)
+- Wrangler configuration
+- Worker deployment
+- Initial admin setup
+
+See [@authrim/setup documentation](../../packages/setup/README.md) for details.
+
+### Manual Deployment
+
+For experienced users who prefer manual control:
 
 ```bash
 # 1. Setup infrastructure
