@@ -16,6 +16,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@authrim/ar-lib-core': path.resolve(__dirname, '../ar-lib-core/src'),
+      // Mock cloudflare:workers for Node.js test environment
+      'cloudflare:workers': path.resolve(__dirname, '../../test/mocks/cloudflare-workers.ts'),
     },
   },
 });
