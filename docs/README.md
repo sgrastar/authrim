@@ -10,6 +10,7 @@ Documentation for the Authrim OpenID Connect Provider project.
 | :------- | :---------- |
 | [Vision](./VISION.md) | Long-term vision and strategic goals |
 | [Roadmap](./ROADMAP.md) | Product roadmap and feature status |
+| [Access Control](./access-control.md) | RBAC, ABAC, and ReBAC architecture and usage |
 
 ---
 
