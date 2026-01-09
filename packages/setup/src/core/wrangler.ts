@@ -305,12 +305,15 @@ export function generateWranglerConfig(
       { binding: 'OP_TOKEN', service: `${env}-ar-token` },
       { binding: 'OP_USERINFO', service: `${env}-ar-userinfo` },
       { binding: 'OP_MANAGEMENT', service: `${env}-ar-management` },
-      // Standard components (always included)
-      { binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` },
-      { binding: 'POLICY_SERVICE', service: `${env}-ar-policy` },
     ];
 
     // Optional services (only if enabled in config)
+    if (config.components.bridge) {
+      services.push({ binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` });
+    }
+    if (config.components.policy) {
+      services.push({ binding: 'POLICY_SERVICE', service: `${env}-ar-policy` });
+    }
     if (config.components.async) {
       services.push({ binding: 'OP_ASYNC', service: `${env}-ar-async` });
     }

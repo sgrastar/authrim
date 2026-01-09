@@ -1000,7 +1000,19 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
 
       <div id="config-preview-section" class="hidden">
         <h3 style="font-size: 1rem; margin-bottom: 0.5rem;">Configuration Preview</h3>
-        <div class="config-preview" id="config-preview"></div>
+        <div class="config-preview" id="config-preview-content"></div>
+      </div>
+
+      <div id="config-validation-error" class="hidden" style="margin-top: 1rem; padding: 1rem; background: #fee2e2; border: 1px solid #fca5a5; border-radius: 8px;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+          <span style="font-size: 1.25rem;">⚠️</span>
+          <strong style="color: #b91c1c;">Configuration Validation Failed</strong>
+        </div>
+        <ul id="config-validation-errors" style="margin: 0; padding-left: 1.5rem; color: #991b1b; font-size: 0.875rem;"></ul>
+      </div>
+
+      <div id="config-validation-success" class="hidden" style="margin-top: 1rem; padding: 0.75rem 1rem; background: #d1fae5; border: 1px solid #6ee7b7; border-radius: 8px;">
+        <span style="color: #065f46;">✓ Configuration is valid</span>
       </div>
 
       <div class="button-group">
@@ -1957,23 +1969,76 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
     });
 
     // Load config handlers
-    document.getElementById('config-file').addEventListener('change', (e) => {
+    document.getElementById('config-file').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
 
       document.getElementById('config-file-name').textContent = file.name;
 
+      // Reset validation display
+      document.getElementById('config-validation-error').classList.add('hidden');
+      document.getElementById('config-validation-success').classList.add('hidden');
+      document.getElementById('config-preview-section').classList.add('hidden');
+      document.getElementById('btn-load-config').disabled = true;
+
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
+        let rawConfig;
         try {
-          loadedConfig = JSON.parse(event.target.result);
-          document.getElementById('config-preview').textContent = JSON.stringify(loadedConfig, null, 2);
-          document.getElementById('config-preview-section').classList.remove('hidden');
-          document.getElementById('btn-load-config').disabled = false;
+          rawConfig = JSON.parse(event.target.result);
         } catch (err) {
-          alert('Invalid JSON file: ' + err.message);
+          document.getElementById('config-validation-error').classList.remove('hidden');
+          const errorList = document.getElementById('config-validation-errors');
+          while (errorList.firstChild) errorList.removeChild(errorList.firstChild);
+          const li = document.createElement('li');
+          li.textContent = 'Invalid JSON: ' + err.message;
+          errorList.appendChild(li);
           loadedConfig = null;
-          document.getElementById('btn-load-config').disabled = true;
+          return;
+        }
+
+        // Show preview
+        document.getElementById('config-preview-content').textContent = JSON.stringify(rawConfig, null, 2);
+        document.getElementById('config-preview-section').classList.remove('hidden');
+
+        // Validate via API
+        try {
+          const response = await api('/config/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(rawConfig),
+          });
+
+          if (response.valid) {
+            loadedConfig = response.config;
+            document.getElementById('config-validation-success').classList.remove('hidden');
+            document.getElementById('btn-load-config').disabled = false;
+          } else {
+            document.getElementById('config-validation-error').classList.remove('hidden');
+            const errorList = document.getElementById('config-validation-errors');
+            while (errorList.firstChild) errorList.removeChild(errorList.firstChild);
+
+            if (response.errors) {
+              for (const err of response.errors) {
+                const li = document.createElement('li');
+                li.textContent = (err.path ? err.path + ': ' : '') + err.message;
+                errorList.appendChild(li);
+              }
+            } else if (response.error) {
+              const li = document.createElement('li');
+              li.textContent = response.error;
+              errorList.appendChild(li);
+            }
+            loadedConfig = null;
+          }
+        } catch (err) {
+          document.getElementById('config-validation-error').classList.remove('hidden');
+          const errorList = document.getElementById('config-validation-errors');
+          while (errorList.firstChild) errorList.removeChild(errorList.firstChild);
+          const li = document.createElement('li');
+          li.textContent = 'Validation request failed: ' + err.message;
+          errorList.appendChild(li);
+          loadedConfig = null;
         }
       };
       reader.readAsText(file);
@@ -2058,14 +2123,13 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
       // Trigger env input to update preview/default labels
       document.getElementById('env').dispatchEvent(new Event('input'));
 
-      // Skip to provisioning if resources already exist
-      if (loadedConfig.resources) {
-        setStep(4);
-        showSection('deploy');
-      } else {
-        setStep(3);
-        showSection('provision');
-      }
+      // Show configuration screen for review/editing
+      // User can modify settings before proceeding to provision
+      setupMode = 'custom'; // Enable all options for editing
+      document.getElementById('advanced-options').classList.remove('hidden');
+      setStep(2);
+      showSection('config');
+      updatePreview();
     });
 
     // Configuration handlers

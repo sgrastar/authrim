@@ -201,11 +201,54 @@ export function createApiRoutes(): Hono {
 
     try {
       const content = await readFile(configPath, 'utf-8');
-      const config = JSON.parse(content);
-      state.config = config;
-      return c.json({ exists: true, config });
+      const rawConfig = JSON.parse(content);
+
+      // Validate with Zod schema
+      const parseResult = AuthrimConfigSchema.safeParse(rawConfig);
+      if (!parseResult.success) {
+        return c.json({
+          exists: true,
+          config: rawConfig,
+          valid: false,
+          errors: parseResult.error.errors.map((e) => ({
+            path: e.path.join('.'),
+            message: e.message,
+          })),
+        });
+      }
+
+      state.config = parseResult.data;
+      return c.json({ exists: true, config: parseResult.data, valid: true });
     } catch (error) {
+      if (error instanceof SyntaxError) {
+        return c.json({ exists: true, valid: false, error: 'Invalid JSON syntax' }, 400);
+      }
       return c.json({ exists: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
+  // Validate config (POST - accepts config in body)
+  api.post('/config/validate', async (c) => {
+    try {
+      const body = await c.req.json();
+
+      const parseResult = AuthrimConfigSchema.safeParse(body);
+      if (!parseResult.success) {
+        return c.json({
+          valid: false,
+          errors: parseResult.error.errors.map((e) => ({
+            path: e.path.join('.'),
+            message: e.message,
+          })),
+        });
+      }
+
+      return c.json({ valid: true, config: parseResult.data });
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        return c.json({ valid: false, error: 'Invalid JSON syntax' }, 400);
+      }
+      return c.json({ valid: false, error: sanitizeError(error) }, 500);
     }
   });
 
