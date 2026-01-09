@@ -3,12 +3,21 @@
  *
  * Generates RSA key pairs for JWT signing and other cryptographic secrets.
  * Based on the existing setup-keys.sh script functionality.
+ *
+ * Supports both legacy (.keys/{env}/) and new (.authrim/{env}/keys/) structures.
  */
 
 import { randomBytes, generateKeyPairSync, createPublicKey, createPrivateKey } from 'node:crypto';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import {
+  getEnvironmentPaths,
+  getLegacyPaths,
+  resolvePaths,
+  type EnvironmentPaths,
+  type LegacyPaths,
+} from './paths.js';
 
 // =============================================================================
 // Types
@@ -210,32 +219,113 @@ function validateKeysDirectory(keysDir: string): void {
   }
 }
 
+export interface KeysDirectoryOptions {
+  /** Use legacy .keys/{env}/ structure instead of .authrim/{env}/keys/ */
+  legacy?: boolean;
+}
+
 /**
  * Get environment-specific keys directory path
+ *
+ * @param baseDir - Base directory (usually cwd)
+ * @param env - Environment name
+ * @param options - Options for path resolution
+ * @returns Path to the keys directory
  */
-export function getKeysDirectory(baseDir: string, env: string): string {
-  return join(baseDir, '.keys', env);
+export function getKeysDirectory(baseDir: string, env: string, options?: KeysDirectoryOptions): string {
+  if (options?.legacy) {
+    return getLegacyPaths(baseDir, env).keys;
+  }
+
+  // Check if existing structure should be used
+  const resolved = resolvePaths({ baseDir, env });
+  if (resolved.type === 'legacy') {
+    return (resolved.paths as LegacyPaths).keys;
+  }
+
+  return (resolved.paths as EnvironmentPaths).keys;
+}
+
+/**
+ * Get keys directory path using the new structure
+ */
+export function getNewKeysDirectory(baseDir: string, env: string): string {
+  return getEnvironmentPaths({ baseDir, env }).keys;
+}
+
+/**
+ * Get keys directory path using the legacy structure
+ * @deprecated Use getKeysDirectory with legacy option instead
+ */
+export function getLegacyKeysDirectory(baseDir: string, env: string): string {
+  return getLegacyPaths(baseDir, env).keys;
 }
 
 /**
  * Check if keys already exist for an environment
+ * Checks both new and legacy structures
  */
 export function keysExistForEnvironment(baseDir: string, env: string): boolean {
-  const keysDir = getKeysDirectory(baseDir, env);
-  const metadataPath = join(keysDir, 'metadata.json');
-  return existsSync(metadataPath);
+  // Check new structure
+  const newPaths = getEnvironmentPaths({ baseDir, env });
+  const newMetadataPath = join(newPaths.keys, 'metadata.json');
+  if (existsSync(newMetadataPath)) {
+    return true;
+  }
+
+  // Check legacy structure
+  const legacyPaths = getLegacyPaths(baseDir, env);
+  const legacyMetadataPath = join(legacyPaths.keys, 'metadata.json');
+  return existsSync(legacyMetadataPath);
+}
+
+export interface SaveKeysOptions {
+  /** Base directory (defaults to cwd) */
+  baseDir?: string;
+  /** Environment name */
+  env?: string;
+  /** Use legacy .keys/{env}/ structure */
+  legacy?: boolean;
+  /** Direct path to keys directory (overrides baseDir/env/legacy) */
+  targetDir?: string;
 }
 
 /**
- * Save keys and secrets to the .keys/{env} directory
+ * Save keys and secrets to the keys directory
+ *
+ * Supports both:
+ * - New structure: .authrim/{env}/keys/
+ * - Legacy structure: .keys/{env}/
+ *
+ * @param secrets - Generated secrets to save
+ * @param options - Options for path resolution
  */
 export async function saveKeysToDirectory(
   secrets: GeneratedSecrets,
-  keysDir: string = '.keys',
-  env?: string
+  options: SaveKeysOptions | string = {},
+  legacyEnv?: string
 ): Promise<void> {
-  // If env is provided, use environment-specific subdirectory
-  const targetDir = env ? join(keysDir, env) : keysDir;
+  let targetDir: string;
+
+  // Support legacy function signature: saveKeysToDirectory(secrets, keysDir, env)
+  if (typeof options === 'string') {
+    // Legacy call: saveKeysToDirectory(secrets, '.keys', 'dev')
+    targetDir = legacyEnv ? join(options, legacyEnv) : options;
+  } else {
+    const { baseDir = process.cwd(), env, legacy, targetDir: explicitDir } = options;
+
+    if (explicitDir) {
+      targetDir = explicitDir;
+    } else if (env) {
+      if (legacy) {
+        targetDir = getLegacyPaths(baseDir, env).keys;
+      } else {
+        targetDir = getEnvironmentPaths({ baseDir, env }).keys;
+      }
+    } else {
+      throw new Error('Either env or targetDir must be provided');
+    }
+  }
 
   // Security: Validate directory path to prevent path traversal
   validateKeysDirectory(targetDir);
@@ -286,18 +376,53 @@ export async function saveKeysToDirectory(
   await writeFile(paths.metadata, JSON.stringify(metadata, null, 2), 'utf-8');
 }
 
+export interface LoadKeysOptions {
+  /** Base directory (defaults to cwd) */
+  baseDir?: string;
+  /** Environment name */
+  env?: string;
+  /** Direct path to keys directory (overrides baseDir/env) */
+  targetDir?: string;
+}
+
 /**
  * Load existing keys from directory
+ *
+ * Automatically detects and uses the correct structure (new or legacy)
+ *
+ * @param options - Options for path resolution, or legacy keysDir string
+ * @param legacyEnv - Environment name (legacy signature)
  */
 export async function loadKeysFromDirectory(
-  keysDir: string = '.keys',
-  env?: string
+  options: LoadKeysOptions | string = {},
+  legacyEnv?: string
 ): Promise<{
   keyPair?: Partial<KeyPair>;
   metadata?: KeyMetadata;
 }> {
-  // If env is provided, use environment-specific subdirectory
-  const targetDir = env ? join(keysDir, env) : keysDir;
+  let targetDir: string;
+
+  // Support legacy function signature: loadKeysFromDirectory('.keys', 'dev')
+  if (typeof options === 'string') {
+    targetDir = legacyEnv ? join(options, legacyEnv) : options;
+  } else {
+    const { baseDir = process.cwd(), env, targetDir: explicitDir } = options;
+
+    if (explicitDir) {
+      targetDir = explicitDir;
+    } else if (env) {
+      // Auto-detect which structure to use
+      const resolved = resolvePaths({ baseDir, env });
+      if (resolved.type === 'legacy') {
+        targetDir = (resolved.paths as LegacyPaths).keys;
+      } else {
+        targetDir = (resolved.paths as EnvironmentPaths).keys;
+      }
+    } else {
+      throw new Error('Either env or targetDir must be provided');
+    }
+  }
+
   const metadataPath = join(targetDir, 'metadata.json');
 
   if (!existsSync(metadataPath)) {

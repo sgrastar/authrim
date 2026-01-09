@@ -2874,8 +2874,8 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
         output.textContent += '\\n';
         scrollToBottom(log);
 
-        // Show keys saved location (full path with environment)
-        keysPath.textContent = workingDirectory ? workingDirectory + '/.keys/' + config.env + '/' : './.keys/' + config.env + '/';
+        // Show keys saved location (new structure: .authrim/{env}/keys/)
+        keysPath.textContent = workingDirectory ? workingDirectory + '/.authrim/' + config.env + '/keys/' : './.authrim/' + config.env + '/keys/';
 
         // Provision resources
         output.textContent += '☁️ Provisioning Cloudflare resources...\\n';
@@ -3051,7 +3051,7 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
 
           output.textContent += '  API URL: ' + apiUrl + '\\n';
           output.textContent += '  Login UI URL: ' + loginUiUrl + '\\n';
-          output.textContent += '  Keys Dir: .keys/' + config.env + '\\n';
+          output.textContent += '  Keys Dir: .authrim/' + config.env + '/keys/\\n';
           scrollToBottom(log);
 
           let adminSetupResult;
@@ -3061,7 +3061,7 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
               body: {
                 env: config.env,
                 baseUrl: apiUrl,  // Setup page is served by ar-auth worker (API)
-                keysDir: '.keys',
+                // keysDir is auto-detected by API using paths.ts
               },
             });
             output.textContent += '  API Response: ' + JSON.stringify(adminSetupResult) + '\\n';
@@ -3182,8 +3182,8 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
 
     // Resource naming functions
     function getResourceNames(env) {
-      // Keys are stored in environment-specific subdirectory: .keys/{env}/
-      const keysDir = workingDirectory ? workingDirectory + '/.keys/' + env : '.keys/' + env;
+      // Keys are stored in environment-specific subdirectory: .authrim/{env}/keys/
+      const keysDir = workingDirectory ? workingDirectory + '/.authrim/' + env + '/keys' : '.authrim/' + env + '/keys';
       return {
         d1: [
           env + '-authrim-core-db',
@@ -3350,7 +3350,7 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
           policy: true,
         },
         keys: {
-          secretsPath: './.keys/',
+          secretsPath: './keys/',  // Relative path within .authrim/{env}/ structure
         },
         database: config.database || {
           core: { location: 'auto', jurisdiction: 'none' },

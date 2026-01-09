@@ -8,8 +8,15 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { AuthrimConfigSchema, safeParseConfig, type AuthrimConfig } from '../../core/config.js';
-import { loadLockFile, getLockFileSummary } from '../../core/lock.js';
+import { AuthrimConfigSchema, safeParseConfig } from '../../core/config.js';
+import { loadLockFileAuto } from '../../core/lock.js';
+import {
+  getEnvironmentPaths,
+  resolvePaths,
+  listEnvironments,
+  type EnvironmentPaths,
+  type LegacyPaths,
+} from '../../core/paths.js';
 
 // =============================================================================
 // Types
@@ -20,6 +27,7 @@ export interface ConfigCommandOptions {
   validate?: boolean;
   json?: boolean;
   config?: string;
+  env?: string;
 }
 
 // =============================================================================
@@ -27,7 +35,35 @@ export interface ConfigCommandOptions {
 // =============================================================================
 
 export async function configCommand(options: ConfigCommandOptions): Promise<void> {
-  const configPath = options.config || 'authrim-config.json';
+  // Resolve config path (support both new and legacy structures)
+  const baseDir = process.cwd();
+  let configPath: string;
+
+  if (options.config) {
+    // Explicit config path
+    configPath = options.config;
+  } else if (options.env) {
+    // Environment specified - resolve path
+    const resolved = resolvePaths({ baseDir, env: options.env });
+    if (resolved.type === 'new') {
+      configPath = (resolved.paths as EnvironmentPaths).config;
+    } else {
+      configPath = (resolved.paths as LegacyPaths).config;
+    }
+  } else {
+    // Auto-detect
+    const environments = listEnvironments(baseDir);
+    if (environments.length > 0) {
+      const envPaths = getEnvironmentPaths({ baseDir, env: environments[0] });
+      if (existsSync(envPaths.config)) {
+        configPath = envPaths.config;
+      } else {
+        configPath = 'authrim-config.json';
+      }
+    } else {
+      configPath = 'authrim-config.json';
+    }
+  }
 
   // Default to --show if no options provided
   if (!options.show && !options.validate) {
@@ -37,7 +73,7 @@ export async function configCommand(options: ConfigCommandOptions): Promise<void
   if (options.validate) {
     await validateConfig(configPath, options.json);
   } else if (options.show) {
-    await showConfig(configPath, options.json);
+    await showConfig(configPath, options.json, options.env);
   }
 }
 
@@ -45,7 +81,7 @@ export async function configCommand(options: ConfigCommandOptions): Promise<void
 // Show Config
 // =============================================================================
 
-async function showConfig(configPath: string, jsonOutput?: boolean): Promise<void> {
+async function showConfig(configPath: string, jsonOutput?: boolean, env?: string): Promise<void> {
   if (!existsSync(configPath)) {
     console.error(chalk.red(`Configuration file not found: ${configPath}`));
     console.log(chalk.yellow('\nRun "authrim-setup init" first to create a configuration.'));
@@ -147,9 +183,10 @@ async function showConfig(configPath: string, jsonOutput?: boolean): Promise<voi
       console.log(`  Account ID:  ${chalk.cyan(config.cloudflare.accountId.slice(0, 8) + '...')}`);
     }
 
-    // Lock file summary
-    const lockPath = configPath.replace('authrim-config.json', 'authrim-lock.json');
-    const lock = await loadLockFile(lockPath);
+    // Lock file summary (support both structures)
+    const baseDir = process.cwd();
+    const envName = env || config.environment.prefix;
+    const { lock } = await loadLockFileAuto(baseDir, envName);
     if (lock) {
       console.log(chalk.bold('\n📦 Provisioned Resources'));
       console.log(`  D1 Databases:     ${chalk.cyan(Object.keys(lock.d1).length)}`);

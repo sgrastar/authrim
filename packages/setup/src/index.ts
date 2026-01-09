@@ -15,6 +15,7 @@ import { deployCommand, statusCommand } from './cli/commands/deploy.js';
 import { configCommand } from './cli/commands/config.js';
 import { deleteCommand } from './cli/commands/delete.js';
 import { infoCommand } from './cli/commands/info.js';
+import { migrateCommand, migrateStatusCommand } from './cli/commands/migrate.js';
 
 // Read version from package.json
 const require = createRequire(import.meta.url);
@@ -71,7 +72,8 @@ program
   .option('--show', 'Show current configuration')
   .option('--validate', 'Validate configuration file')
   .option('--json', 'Output in JSON format for scripting')
-  .option('--config <path>', 'Configuration file path', 'authrim-config.json')
+  .option('--config <path>', 'Configuration file path')
+  .option('--env <name>', 'Environment name (auto-detects config path)')
   .action(configCommand);
 
 program
@@ -204,5 +206,20 @@ program
   .option('--d1', 'Show only D1 database information')
   .option('--workers', 'Show only Worker information')
   .action(infoCommand);
+
+program
+  .command('migrate')
+  .description('Migrate from legacy flat file structure to new .authrim/{env}/ structure')
+  .option('--env <name>', 'Migrate specific environment only')
+  .option('--dry-run', 'Show what would be done without making changes')
+  .option('--no-backup', 'Skip backup creation')
+  .option('--delete-legacy', 'Delete legacy files after successful migration')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(migrateCommand);
+
+program
+  .command('migrate-status')
+  .description('Show current directory structure status and migration recommendation')
+  .action(migrateStatusCommand);
 
 program.parse();

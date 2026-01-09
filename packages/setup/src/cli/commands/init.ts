@@ -19,35 +19,22 @@ import {
   generateKeyId,
   keysExistForEnvironment,
 } from '../../core/keys.js';
-import { generateWranglerConfig, toToml } from '../../core/wrangler.js';
-import {
-  getEnabledComponents,
-  CORE_WORKER_COMPONENTS,
-  type WorkerComponent,
-} from '../../core/naming.js';
 import {
   isWranglerInstalled,
   checkAuth,
   provisionResources,
   toResourceIds,
-  uploadSecret,
   getAccountId,
   detectEnvironments,
   getWorkersSubdomain,
 } from '../../core/cloudflare.js';
+import { createLockFile, saveLockFile, loadLockFile } from '../../core/lock.js';
 import {
-  createLockFile,
-  saveLockFile,
-  loadLockFile,
-  lockToResourceIds,
-  getLockFileSummary,
-} from '../../core/lock.js';
-import {
-  downloadSource,
-  verifySourceStructure,
-  checkForUpdate,
-  getLocalVersion,
-} from '../../core/source.js';
+  getEnvironmentPaths,
+  getRelativeKeysPath,
+  AUTHRIM_DIR,
+} from '../../core/paths.js';
+import { downloadSource, verifySourceStructure, checkForUpdate } from '../../core/source.js';
 
 // =============================================================================
 // Types
@@ -384,16 +371,13 @@ async function updateExistingSource(sourceDir: string, gitRef: string): Promise<
 
   try {
     // Backup existing configuration files
-    const configFiles = ['authrim-config.json', 'authrim-lock.json', '.keys'];
+    // Support both legacy (authrim-*.json, .keys/) and new (.authrim/) structures
+    const configFiles = ['authrim-config.json', 'authrim-lock.json'];
     const backups: { file: string; content?: string }[] = [];
 
     for (const file of configFiles) {
       const filePath = join(sourceDir, file);
       if (existsSync(filePath)) {
-        if (file === '.keys') {
-          // Skip backing up .keys - will be preserved
-          continue;
-        }
         const { readFile: rf } = await import('node:fs/promises');
         const content = await rf(filePath, 'utf-8');
         backups.push({ file, content });
@@ -414,7 +398,14 @@ async function updateExistingSource(sourceDir: string, gitRef: string): Promise<
       },
     });
 
-    // Preserve .keys directory if it exists
+    // Preserve .authrim directory if it exists (new structure)
+    const authrimDir = join(sourceDir, AUTHRIM_DIR);
+    const tempAuthrimDir = join(tempDir, AUTHRIM_DIR);
+    if (existsSync(authrimDir)) {
+      await cp(authrimDir, tempAuthrimDir, { recursive: true });
+    }
+
+    // Preserve .keys directory if it exists (legacy structure)
     const keysDir = join(sourceDir, '.keys');
     const tempKeysDir = join(tempDir, '.keys');
     if (existsSync(keysDir)) {
@@ -713,44 +704,188 @@ async function runLoadConfig(): Promise<boolean> {
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log('');
 
-  // Check for config file in current directory
-  const defaultConfigPath = './authrim-config.json';
-  const configExists = existsSync(defaultConfigPath);
+  // Check for config files in both new and legacy structures
+  const baseDir = process.cwd();
 
-  let configPath = defaultConfigPath;
+  // Detect existing environments
+  const { listEnvironments } = await import('../../core/paths.js');
+  const environments = listEnvironments(baseDir);
 
-  if (configExists) {
-    console.log(chalk.green(`✓ Found: ${defaultConfigPath}`));
+  // Build list of found configs
+  const foundConfigs: { path: string; env: string; type: 'new' | 'legacy' }[] = [];
+
+  // Check new structure (.authrim/{env}/config.json)
+  for (const env of environments) {
+    const newPaths = getEnvironmentPaths({ baseDir, env });
+    if (existsSync(newPaths.config)) {
+      foundConfigs.push({ path: newPaths.config, env, type: 'new' });
+    }
+  }
+
+  // Check legacy structure (authrim-config.json)
+  const legacyConfigPath = './authrim-config.json';
+  if (existsSync(legacyConfigPath) && !foundConfigs.some((c) => c.type === 'legacy')) {
+    // Try to read env from legacy config
+    try {
+      const legacyContent = await readFile(legacyConfigPath, 'utf-8');
+      const legacyConfig = JSON.parse(legacyContent);
+      const legacyEnv = legacyConfig.environment?.prefix || 'unknown';
+      foundConfigs.push({ path: legacyConfigPath, env: legacyEnv, type: 'legacy' });
+    } catch {
+      foundConfigs.push({ path: legacyConfigPath, env: 'unknown', type: 'legacy' });
+    }
+  }
+
+  let configPath: string;
+
+  if (foundConfigs.length > 0) {
+    console.log(chalk.green(`✓ Found ${foundConfigs.length} configuration(s):`));
+    for (const cfg of foundConfigs) {
+      const typeLabel = cfg.type === 'new' ? chalk.blue('(new)') : chalk.yellow('(legacy)');
+      console.log(`  • ${cfg.path} ${typeLabel} - env: ${cfg.env}`);
+    }
     console.log('');
 
-    const action = await select({
-      message: 'What would you like to do?',
-      choices: [
-        { value: 'load', name: '📂 Load this configuration' },
-        { value: 'other', name: '📁 Specify different file' },
-        { value: 'back', name: '← Back to Main Menu' },
-      ],
-    });
+    // Check if there are legacy configs that could be migrated
+    const legacyConfigs = foundConfigs.filter((c) => c.type === 'legacy');
+    if (legacyConfigs.length > 0) {
+      console.log(chalk.yellow('━━━ Legacy Structure Detected ━━━'));
+      console.log(chalk.gray('Legacy files:'));
+      console.log(chalk.gray('  • authrim-config.json'));
+      console.log(chalk.gray('  • authrim-lock.json'));
+      console.log(chalk.gray('  • .keys/{env}/'));
+      console.log('');
+      console.log(chalk.gray('New structure benefits:'));
+      console.log(chalk.gray('  • Environment portability (zip .authrim/prod/)'));
+      console.log(chalk.gray('  • Version tracking per environment'));
+      console.log(chalk.gray('  • Cleaner project structure'));
+      console.log('');
 
-    if (action === 'back') {
-      return false; // Return to main menu
+      const migrateAction = await select({
+        message: 'Would you like to migrate to the new structure?',
+        choices: [
+          { value: 'migrate', name: '🔄 Migrate to new structure (.authrim/{env}/)' },
+          { value: 'continue', name: '📂 Continue with legacy structure' },
+          { value: 'back', name: '← Back to Main Menu' },
+        ],
+      });
+
+      if (migrateAction === 'back') {
+        return false;
+      }
+
+      if (migrateAction === 'migrate') {
+        const { migrateToNewStructure, validateMigration } = await import('../../core/migrate.js');
+
+        console.log('');
+        const envToMigrate = legacyConfigs[0].env;
+
+        const result = await migrateToNewStructure({
+          baseDir,
+          env: envToMigrate,
+          onProgress: (msg) => console.log(msg),
+        });
+
+        if (result.success) {
+          console.log('');
+          console.log(chalk.green('✓ Migration completed successfully!'));
+
+          // Validate
+          const validation = await validateMigration(baseDir, envToMigrate);
+          if (validation.valid) {
+            console.log(chalk.green('✓ Validation passed'));
+          } else {
+            console.log(chalk.yellow('⚠ Validation issues:'));
+            for (const issue of validation.issues) {
+              console.log(chalk.yellow(`  • ${issue}`));
+            }
+          }
+
+          console.log('');
+          console.log(chalk.cyan('New configuration location:'));
+          console.log(chalk.cyan(`  .authrim/${envToMigrate}/config.json`));
+          console.log('');
+
+          // Update foundConfigs to use new path
+          const newPaths = getEnvironmentPaths({ baseDir, env: envToMigrate });
+          foundConfigs.length = 0;
+          foundConfigs.push({ path: newPaths.config, env: envToMigrate, type: 'new' });
+        } else {
+          console.log('');
+          console.log(chalk.red('✗ Migration failed:'));
+          for (const error of result.errors) {
+            console.log(chalk.red(`  • ${error}`));
+          }
+          console.log('');
+          console.log(chalk.yellow('Continuing with legacy structure...'));
+        }
+      }
     }
 
-    if (action === 'other') {
-      configPath = await input({
-        message: 'Enter configuration file path',
-        validate: (value) => {
-          if (!value) return 'Please enter a path';
-          if (!existsSync(value)) return `File not found: ${value}`;
-          return true;
-        },
+    if (foundConfigs.length === 1) {
+      configPath = foundConfigs[0].path;
+
+      const action = await select({
+        message: 'What would you like to do?',
+        choices: [
+          { value: 'load', name: '📂 Load this configuration' },
+          { value: 'other', name: '📁 Specify different file' },
+          { value: 'back', name: '← Back to Main Menu' },
+        ],
       });
+
+      if (action === 'back') {
+        return false; // Return to main menu
+      }
+
+      if (action === 'other') {
+        configPath = await input({
+          message: 'Enter configuration file path',
+          validate: (value) => {
+            if (!value) return 'Please enter a path';
+            if (!existsSync(value)) return `File not found: ${value}`;
+            return true;
+          },
+        });
+      }
+    } else {
+      // Multiple configs found - let user select
+      const choices = [
+        ...foundConfigs.map((cfg) => ({
+          value: cfg.path,
+          name: `📂 ${cfg.env} (${cfg.path}) ${cfg.type === 'legacy' ? chalk.yellow('legacy') : ''}`,
+        })),
+        { value: '__other__', name: '📁 Specify different file' },
+        { value: '__back__', name: '← Back to Main Menu' },
+      ];
+
+      const selected = await select({
+        message: 'Select configuration to load',
+        choices,
+      });
+
+      if (selected === '__back__') {
+        return false;
+      }
+
+      if (selected === '__other__') {
+        configPath = await input({
+          message: 'Enter configuration file path',
+          validate: (value) => {
+            if (!value) return 'Please enter a path';
+            if (!existsSync(value)) return `File not found: ${value}`;
+            return true;
+          },
+        });
+      } else {
+        configPath = selected;
+      }
     }
   } else {
-    console.log(chalk.yellow('No authrim-config.json found in current directory.'));
+    console.log(chalk.yellow('No configuration found in current directory.'));
     console.log('');
     console.log(chalk.gray('💡 Tip: You can specify a config file with:'));
-    console.log(chalk.cyan('   npx @authrim/setup --config /path/to/authrim-config.json'));
+    console.log(chalk.cyan('   npx @authrim/setup --config /path/to/.authrim/{env}/config.json'));
     console.log('');
 
     const action = await select({
@@ -1065,11 +1200,13 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
 
   // Save email secrets if configured
   if (emailConfig.provider === 'resend' && emailConfig.apiKey) {
-    const keysDir = `.keys/${envPrefix}`;
+    // Use new structure for fresh setups
+    const paths = getEnvironmentPaths({ baseDir: process.cwd(), env: envPrefix });
+    const keysDir = paths.keys;
     await import('node:fs/promises').then(async (fs) => {
       await fs.mkdir(keysDir, { recursive: true });
-      await fs.writeFile(`${keysDir}/resend_api_key.txt`, emailConfig.apiKey!.trim());
-      await fs.writeFile(`${keysDir}/email_from.txt`, emailConfig.fromAddress!.trim());
+      await fs.writeFile(paths.keyFiles.resendApiKey, emailConfig.apiKey!.trim());
+      await fs.writeFile(paths.keyFiles.emailFrom, emailConfig.fromAddress!.trim());
       if (emailConfig.fromName) {
         await fs.writeFile(`${keysDir}/email_from_name.txt`, emailConfig.fromName.trim());
       }
@@ -1720,11 +1857,13 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
   // Save email secrets if configured
   if (emailConfigNormal.provider === 'resend' && emailConfigNormal.apiKey) {
-    const keysDir = `.keys/${envPrefix}`;
+    // Use new structure for fresh setups
+    const paths = getEnvironmentPaths({ baseDir: process.cwd(), env: envPrefix });
+    const keysDir = paths.keys;
     await import('node:fs/promises').then(async (fs) => {
       await fs.mkdir(keysDir, { recursive: true });
-      await fs.writeFile(`${keysDir}/resend_api_key.txt`, emailConfigNormal.apiKey!.trim());
-      await fs.writeFile(`${keysDir}/email_from.txt`, emailConfigNormal.fromAddress!.trim());
+      await fs.writeFile(paths.keyFiles.resendApiKey, emailConfigNormal.apiKey!.trim());
+      await fs.writeFile(paths.keyFiles.emailFrom, emailConfigNormal.fromAddress!.trim());
       if (emailConfigNormal.fromName) {
         await fs.writeFile(`${keysDir}/email_from_name.txt`, emailConfigNormal.fromName.trim());
       }
@@ -1807,19 +1946,19 @@ async function executeSetup(
   try {
     const keyId = generateKeyId(env);
     secrets = generateAllSecrets(keyId);
-    // Save to environment-specific subdirectory: .keys/{env}/
-    const keysBaseDir = join(outputDir, '.keys');
-    await saveKeysToDirectory(secrets, keysBaseDir, env);
 
-    const keysDir = join(keysBaseDir, env);
+    // Save to new structure: .authrim/{env}/keys/
+    const envPaths = getEnvironmentPaths({ baseDir: outputDir, env });
+    await saveKeysToDirectory(secrets, { baseDir: outputDir, env });
+
     config.keys = {
       keyId: secrets.keyPair.keyId,
       publicKeyJwk: secrets.keyPair.publicKeyJwk as Record<string, unknown>,
-      secretsPath: `./.keys/${env}/`,
+      secretsPath: getRelativeKeysPath(), // './keys/' (relative from config location)
       includeSecrets: false,
     };
 
-    keysSpinner.succeed(`Keys generated (${keysDir})`);
+    keysSpinner.succeed(`Keys generated (${envPaths.keys})`);
   } catch (error) {
     keysSpinner.fail('Failed to generate keys');
     throw error;
@@ -1859,54 +1998,96 @@ async function executeSetup(
     provisionedResources = { d1: [], kv: [], queues: [], r2: [] };
   }
 
-  // Step 3: Create lock file
-  const lockSpinner = ora('authrim-lock.json generating...').start();
+  // Step 3: Create lock file (save to new structure: .authrim/{env}/lock.json)
+  const envPaths = getEnvironmentPaths({ baseDir: outputDir, env });
+  const lockSpinner = ora('Generating lock file...').start();
   try {
     const lockFile = createLockFile(env, provisionedResources);
-    const lockPath = join(outputDir, 'authrim-lock.json');
-    await saveLockFile(lockFile, lockPath);
-    lockSpinner.succeed(`authrim-lock.json saved (${lockPath})`);
+    await saveLockFile(lockFile, { baseDir: outputDir, env });
+    lockSpinner.succeed(`Lock file saved (${envPaths.lock})`);
   } catch (error) {
-    lockSpinner.fail('authrim-lock.json save failed');
+    lockSpinner.fail('Lock file save failed');
     console.error(error);
   }
 
-  // Step 4: Save configuration
+  // Step 4: Save configuration (save to new structure: .authrim/{env}/config.json)
   const configSpinner = ora('Saving configuration...').start();
   try {
-    const configPath = join(outputDir, 'authrim-config.json');
+    // Ensure environment directory exists
+    await mkdir(envPaths.root, { recursive: true });
+
+    const configPath = envPaths.config;
     config.updatedAt = new Date().toISOString();
     await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+
+    // Also save version.txt
+    const setupVersion = getVersion();
+    await writeFile(envPaths.version, setupVersion, 'utf-8');
+
     configSpinner.succeed(`Configuration saved (${configPath})`);
   } catch (error) {
     configSpinner.fail('Configuration save failed');
     throw error;
   }
 
-  // Step 5: Generate wrangler.toml files (if keeping source or in existing repo)
+  // Step 5: Generate wrangler.toml files
   const resourceIds = toResourceIds(provisionedResources);
   const packagesDir = join(outputDir, 'packages');
+  const baseDir = process.cwd();
 
-  if (existsSync(packagesDir)) {
-    const wranglerSpinner = ora('Generating wrangler.toml files...').start();
-    try {
-      for (const component of CORE_WORKER_COMPONENTS) {
-        const componentDir = join(packagesDir, component);
-        if (!existsSync(componentDir)) {
-          continue; // Skip if component directory doesn't exist
-        }
+  // Step 5a: Save master wrangler configs to .authrim/{env}/wrangler/
+  const wranglerSpinner = ora('Saving wrangler.toml master configs...').start();
+  try {
+    const { saveMasterWranglerConfigs, syncWranglerConfigs } = await import('../../core/wrangler-sync.js');
 
-        const wranglerConfig = generateWranglerConfig(component, config, resourceIds);
-        const tomlContent = toToml(wranglerConfig);
-        const tomlPath = join(componentDir, `wrangler.${env}.toml`);
-        await writeFile(tomlPath, tomlContent, 'utf-8');
+    const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
+      baseDir,
+      env,
+      dryRun: false,
+      onProgress: (msg) => {
+        wranglerSpinner.text = msg;
+      },
+    });
+
+    if (masterResult.success) {
+      wranglerSpinner.succeed(`Saved ${masterResult.files.length} wrangler.toml master configs`);
+    } else {
+      wranglerSpinner.warn('Some wrangler configs failed to save');
+      for (const error of masterResult.errors) {
+        console.log(chalk.yellow(`  • ${error}`));
       }
-
-      wranglerSpinner.succeed('wrangler.toml files generated');
-    } catch (error) {
-      wranglerSpinner.fail('wrangler.toml generation failed');
-      console.error(error);
     }
+
+    // Step 5b: Sync to deployment locations (if packages directory exists)
+    if (existsSync(packagesDir)) {
+      const syncSpinner = ora('Syncing wrangler configs to packages...').start();
+
+      const syncResult = await syncWranglerConfigs(
+        {
+          baseDir,
+          env,
+          packagesDir,
+          force: true, // First time setup, always overwrite
+          dryRun: false,
+          onProgress: (msg) => {
+            syncSpinner.text = msg;
+          },
+        },
+        undefined // No manual edit callback for init
+      );
+
+      if (syncResult.success) {
+        syncSpinner.succeed(`Synced wrangler configs to ${syncResult.synced.length} components`);
+      } else {
+        syncSpinner.fail('wrangler config sync failed');
+        for (const error of syncResult.errors) {
+          console.log(chalk.red(`  • ${error}`));
+        }
+      }
+    }
+  } catch (error) {
+    wranglerSpinner.fail('wrangler.toml generation failed');
+    console.error(error);
   }
 
   // Summary
@@ -1939,10 +2120,11 @@ async function executeSetup(
   }
 
   console.log(chalk.bold('📁 Generated Files:'));
-  console.log(`  - ${join(outputDir, 'authrim-config.json')}`);
-  console.log(`  - ${join(outputDir, 'authrim-lock.json')}`);
+  console.log(`  - ${envPaths.config}`);
+  console.log(`  - ${envPaths.lock}`);
+  console.log(`  - ${envPaths.version}`);
   console.log(
-    `  - ${join(outputDir, '.keys/')} ${chalk.gray('(private keys - add to .gitignore)')}`
+    `  - ${envPaths.keys}/ ${chalk.gray('(private keys - add .authrim/ to .gitignore)')}`
   );
   console.log('');
 
@@ -2030,7 +2212,17 @@ async function handleExistingConfig(configPath: string): Promise<void> {
 
 async function handleRedeploy(config: AuthrimConfig, configPath: string): Promise<void> {
   const env = config.environment.prefix;
-  const lockPath = configPath.replace('authrim-config.json', 'authrim-lock.json');
+
+  // Determine lock file path based on config file structure
+  // New structure: .authrim/{env}/config.json -> .authrim/{env}/lock.json
+  // Legacy structure: authrim-config.json -> authrim-lock.json
+  let lockPath: string;
+  const isNewStructure = configPath.includes(`${AUTHRIM_DIR}/`) && configPath.endsWith('/config.json');
+  if (isNewStructure) {
+    lockPath = configPath.replace('/config.json', '/lock.json');
+  } else {
+    lockPath = configPath.replace('authrim-config.json', 'authrim-lock.json');
+  }
 
   console.log('');
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
@@ -2078,7 +2270,7 @@ async function handleRedeploy(config: AuthrimConfig, configPath: string): Promis
   const hasLock = lock !== null;
 
   if (!hasLock) {
-    console.log(chalk.yellow('\n⚠️  authrim-lock.json not found'));
+    console.log(chalk.yellow(`\n⚠️  Lock file not found (${lockPath})`));
     const createResources = await confirm({
       message: 'Create new Cloudflare resources?',
       default: true,
@@ -2108,7 +2300,7 @@ async function handleRedeploy(config: AuthrimConfig, configPath: string): Promis
       // Create and save lock file
       const newLock = createLockFile(env, provisionedResources);
       await saveLockFile(newLock, lockPath);
-      console.log(chalk.green(`\n✓ authrim-lock.json saved`));
+      console.log(chalk.green(`\n✓ Lock file saved (${lockPath})`));
     } catch (error) {
       console.log(chalk.red('  ✗ Failed to create resources'));
       console.error(error);

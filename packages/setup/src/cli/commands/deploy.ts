@@ -11,10 +11,17 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
-import { loadLockFile, saveLockFile } from '../../core/lock.js';
+import { saveLockFile, loadLockFileAuto } from '../../core/lock.js';
+import {
+  getEnvironmentPaths,
+  getLegacyPaths,
+  resolvePaths,
+  listEnvironments,
+  type EnvironmentPaths,
+  type LegacyPaths,
+} from '../../core/paths.js';
 import {
   deployAll,
-  deployWorker,
   uploadSecrets,
   deployPages,
   updateLockWithDeployments,
@@ -24,6 +31,7 @@ import {
 import { isWranglerInstalled, checkAuth } from '../../core/cloudflare.js';
 import { type WorkerComponent } from '../../core/naming.js';
 import { completeInitialSetup, displaySetupInstructions } from '../../core/admin.js';
+import type { SyncAction } from '../../core/wrangler-sync.js';
 
 // =============================================================================
 // Types
@@ -108,12 +116,44 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   spinner.succeed(`Logged in as ${auth.email || 'unknown'}`);
 
-  // Find config file
-  const configPath = options.config || 'authrim-config.json';
-  const config = await loadConfig(configPath);
+  // Find config file (support both new and legacy structures)
+  const baseDir = process.cwd();
+  let configPath: string = 'authrim-config.json';
+  let config: AuthrimConfig | null = null;
+
+  if (options.config) {
+    // Explicit config path provided
+    configPath = options.config;
+    config = await loadConfig(configPath);
+  } else if (options.env) {
+    // Environment specified - try new structure first, then legacy
+    const resolved = resolvePaths({ baseDir, env: options.env });
+    if (resolved.type === 'new') {
+      configPath = (resolved.paths as EnvironmentPaths).config;
+    } else {
+      configPath = (resolved.paths as LegacyPaths).config;
+    }
+    config = await loadConfig(configPath);
+  } else {
+    // No options - auto-detect
+    const environments = listEnvironments(baseDir);
+    if (environments.length > 0) {
+      // Try first environment in new structure
+      const envPaths = getEnvironmentPaths({ baseDir, env: environments[0] });
+      if (existsSync(envPaths.config)) {
+        configPath = envPaths.config;
+        config = await loadConfig(configPath);
+      }
+    }
+    // Fall back to legacy
+    if (!config) {
+      configPath = 'authrim-config.json';
+      config = await loadConfig(configPath);
+    }
+  }
 
   if (!config) {
-    console.error(chalk.red(`\nConfig file not found: ${configPath}`));
+    console.error(chalk.red(`\nConfig file not found: ${configPath!}`));
     console.log(chalk.yellow('Run "authrim-setup init" first to create a config.'));
     process.exit(1);
   }
@@ -124,15 +164,15 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   console.log(chalk.cyan(`\nEnvironment: ${env}`));
   console.log(chalk.cyan(`Config: ${configPath}`));
 
-  // Load lock file
-  const lockPath = 'authrim-lock.json';
-  const lock = await loadLockFile(lockPath);
+  // Load lock file (support both structures)
+  const { lock, path: lockPath, type: structureType } = await loadLockFileAuto(baseDir, env);
 
   if (!lock) {
-    console.error(chalk.red(`\nLock file not found: ${lockPath}`));
+    console.error(chalk.red(`\nLock file not found`));
     console.log(chalk.yellow('Run "authrim-setup init" first to provision resources.'));
     process.exit(1);
   }
+  console.log(chalk.cyan(`Lock: ${lockPath}`));
 
   // Determine what to deploy
   let componentsToDeply: WorkerComponent[] | undefined;
@@ -181,6 +221,94 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   console.log('');
 
+  // Check wrangler.toml sync status (only for new structure)
+  if (structureType === 'new' && !options.component) {
+    const packagesDir = join(rootDir, 'packages');
+
+    if (existsSync(packagesDir)) {
+      const syncSpinner = ora('Checking wrangler.toml sync status...').start();
+
+      try {
+        const { checkWranglerStatus, syncWranglerConfigs } = await import(
+          '../../core/wrangler-sync.js'
+        );
+
+        const status = await checkWranglerStatus({ baseDir, env, packagesDir });
+        const outOfSync = status.filter((s) => !s.inSync && s.masterExists && s.deployExists);
+
+        if (outOfSync.length > 0) {
+          syncSpinner.warn(`${outOfSync.length} component(s) have modified wrangler.toml`);
+          console.log('');
+          console.log(chalk.yellow('The following wrangler configs have been manually modified:'));
+          for (const s of outOfSync) {
+            console.log(chalk.gray(`  • ${s.component}/wrangler.${env}.toml`));
+          }
+          console.log('');
+
+          const action = await select({
+            message: 'How do you want to handle these changes?',
+            choices: [
+              { value: 'keep', name: '📝 Keep manual changes (deploy as-is)' },
+              { value: 'backup', name: '💾 Backup and overwrite with master' },
+              { value: 'overwrite', name: '⚠️  Overwrite with master (lose changes)' },
+            ],
+          });
+
+          if (action === 'backup' || action === 'overwrite') {
+            const resyncSpinner = ora('Syncing wrangler configs...').start();
+            const syncResult = await syncWranglerConfigs(
+              {
+                baseDir,
+                env,
+                packagesDir,
+                force: true,
+                dryRun: options.dryRun,
+                onProgress: (msg) => {
+                  resyncSpinner.text = msg;
+                },
+              },
+              async () => action as SyncAction
+            );
+
+            if (syncResult.success) {
+              resyncSpinner.succeed('Wrangler configs synced');
+            } else {
+              resyncSpinner.fail('Sync failed');
+              for (const error of syncResult.errors) {
+                console.log(chalk.red(`  • ${error}`));
+              }
+            }
+          } else {
+            console.log(chalk.gray('  Keeping manual changes'));
+          }
+          console.log('');
+        } else {
+          // Check if any need to be created
+          const needsSync = status.filter((s) => s.masterExists && !s.deployExists);
+          if (needsSync.length > 0) {
+            syncSpinner.text = 'Syncing wrangler configs to packages...';
+            const syncResult = await syncWranglerConfigs(
+              {
+                baseDir,
+                env,
+                packagesDir,
+                force: true,
+                dryRun: options.dryRun,
+              },
+              undefined
+            );
+            syncSpinner.succeed(`Synced ${syncResult.synced.length} wrangler configs`);
+          } else {
+            syncSpinner.succeed('Wrangler configs in sync');
+          }
+        }
+      } catch (error) {
+        syncSpinner.warn('Could not check wrangler sync status');
+        console.log(chalk.gray(`  ${error instanceof Error ? error.message : String(error)}`));
+      }
+    }
+  }
+
   // Build packages first (unless skipped or dry-run)
   if (!options.skipBuild && !options.dryRun) {
     const buildSpinner = ora('Building packages...').start();
@@ -208,7 +336,15 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   // Upload secrets first (if not skipped)
   if (!options.skipSecrets && !options.component) {
-    const keysDir = config.keys.secretsPath || '.keys';
+    // Determine keys directory based on structure
+    let keysDir: string;
+    if (structureType === 'new') {
+      const envPaths = getEnvironmentPaths({ baseDir, env });
+      keysDir = envPaths.keys;
+    } else {
+      // Legacy: use secretsPath from config or default
+      keysDir = config.keys.secretsPath || getLegacyPaths(baseDir, env).keys;
+    }
 
     if (existsSync(keysDir)) {
       console.log(chalk.bold('📦 Uploading secrets...\n'));
@@ -230,7 +366,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
         }
       } else {
-        console.log(chalk.yellow('No secrets found in .keys directory'));
+        console.log(chalk.yellow(`No secrets found in ${keysDir}`));
       }
 
       console.log('');
@@ -315,14 +451,21 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       const setupSpinner = ora('Setting up initial admin...').start();
 
       try {
-        const setupResult = await completeInitialSetup({
+        // Use appropriate keys directory based on structure
+        const setupOptions: Parameters<typeof completeInitialSetup>[0] = {
           env,
           baseUrl,
-          keysDir: options.keysDir || '.keys',
+          baseDir,
+          legacy: structureType === 'legacy',
           onProgress: (msg) => {
             setupSpinner.text = msg;
           },
-        });
+        };
+        // Support legacy keysDir option
+        if (options.keysDir) {
+          setupOptions.keysDir = options.keysDir;
+        }
+        const setupResult = await completeInitialSetup(setupOptions);
 
         if (setupResult.alreadyCompleted) {
           setupSpinner.succeed('Initial admin setup already completed');
@@ -351,22 +494,55 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 // Status Command
 // =============================================================================
 
-export async function statusCommand(options: { config?: string }): Promise<void> {
+export async function statusCommand(options: { config?: string; env?: string }): Promise<void> {
   console.log(chalk.bold('\n📊 Authrim Deployment Status\n'));
 
-  const configPath = options.config || 'authrim-config.json';
-  const config = await loadConfig(configPath);
+  const baseDir = process.cwd();
+  let configPath: string;
+  let config: AuthrimConfig | null = null;
+  let env: string | undefined = options.env;
+
+  // Find config (support both structures)
+  if (options.config) {
+    configPath = options.config;
+    config = await loadConfig(configPath);
+  } else if (env) {
+    const resolved = resolvePaths({ baseDir, env });
+    if (resolved.type === 'new') {
+      configPath = (resolved.paths as EnvironmentPaths).config;
+    } else {
+      configPath = (resolved.paths as LegacyPaths).config;
+    }
+    config = await loadConfig(configPath);
+  } else {
+    // Auto-detect
+    const environments = listEnvironments(baseDir);
+    if (environments.length > 0) {
+      env = environments[0];
+      const envPaths = getEnvironmentPaths({ baseDir, env });
+      if (existsSync(envPaths.config)) {
+        configPath = envPaths.config;
+        config = await loadConfig(configPath);
+      }
+    }
+    if (!config) {
+      configPath = 'authrim-config.json';
+      config = await loadConfig(configPath);
+    }
+  }
 
   if (!config) {
-    console.log(chalk.yellow(`Config not found: ${configPath}`));
+    console.log(chalk.yellow(`Config not found: ${configPath!}`));
     return;
   }
 
-  const lockPath = 'authrim-lock.json';
-  const lock = await loadLockFile(lockPath);
+  env = env || config.environment.prefix;
+
+  // Load lock file with auto-detection
+  const { lock } = await loadLockFileAuto(baseDir, env);
 
   if (!lock) {
-    console.log(chalk.yellow('No deployment found (authrim-lock.json not found)'));
+    console.log(chalk.yellow(`No deployment found (lock file not found for env: ${env})`));
     return;
   }
 

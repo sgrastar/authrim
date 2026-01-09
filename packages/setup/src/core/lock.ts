@@ -1,14 +1,24 @@
 /**
  * Authrim Lock File Module
  *
- * Manages authrim-lock.json which records created resource IDs.
+ * Manages lock files which record created resource IDs.
  * This file allows re-deployment and resource management.
+ *
+ * Supports both legacy (authrim-lock.json) and new (.authrim/{env}/lock.json) structures.
  */
 
-import { writeFile, readFile } from 'node:fs/promises';
+import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { z } from 'zod';
 import type { ProvisionedResources } from './cloudflare.js';
+import {
+  getEnvironmentPaths,
+  getLegacyPaths,
+  resolvePaths,
+  type EnvironmentPaths,
+  type LegacyPaths,
+} from './paths.js';
 
 // =============================================================================
 // Schema
@@ -107,13 +117,119 @@ export function createLockFile(env: string, resources: ProvisionedResources): Au
   return lock;
 }
 
+// =============================================================================
+// Path Resolution for Lock Files
+// =============================================================================
+
+export interface LockFileOptions {
+  /** Base directory (defaults to cwd) */
+  baseDir?: string;
+  /** Environment name */
+  env?: string;
+  /** Use legacy structure (authrim-lock.json) */
+  legacy?: boolean;
+  /** Direct path to lock file (overrides baseDir/env/legacy) */
+  path?: string;
+}
+
+/**
+ * Resolve lock file path based on options
+ *
+ * Priority:
+ * 1. Explicit path
+ * 2. Legacy structure if legacy=true
+ * 3. Auto-detect existing structure
+ * 4. Default to new structure
+ */
+export function resolveLockFilePath(options: LockFileOptions | string = {}): string {
+  // Support legacy call with just a path string
+  if (typeof options === 'string') {
+    return options;
+  }
+
+  const { baseDir = process.cwd(), env, legacy, path: explicitPath } = options;
+
+  // Explicit path takes priority
+  if (explicitPath) {
+    return explicitPath;
+  }
+
+  // Environment is required when not using explicit path
+  if (!env) {
+    // For backward compatibility, default to legacy path
+    return getLegacyPaths(baseDir, 'default').lock;
+  }
+
+  // Force legacy structure
+  if (legacy) {
+    return getLegacyPaths(baseDir, env).lock;
+  }
+
+  // Auto-detect structure
+  const resolved = resolvePaths({ baseDir, env });
+  if (resolved.type === 'legacy') {
+    return (resolved.paths as LegacyPaths).lock;
+  }
+
+  return (resolved.paths as EnvironmentPaths).lock;
+}
+
+/**
+ * Get lock file path for new structure
+ */
+export function getNewLockFilePath(baseDir: string, env: string): string {
+  return getEnvironmentPaths({ baseDir, env }).lock;
+}
+
+/**
+ * Get lock file path for legacy structure
+ */
+export function getLegacyLockFilePath(baseDir: string): string {
+  return getLegacyPaths(baseDir, 'default').lock;
+}
+
+/**
+ * Check if lock file exists for an environment
+ * Checks both new and legacy structures
+ */
+export function lockFileExists(baseDir: string, env: string): boolean {
+  // Check new structure
+  const newPath = getEnvironmentPaths({ baseDir, env }).lock;
+  if (existsSync(newPath)) {
+    return true;
+  }
+
+  // Check legacy structure
+  const legacyPath = getLegacyPaths(baseDir, env).lock;
+  return existsSync(legacyPath);
+}
+
+// =============================================================================
+// Lock File Operations
+// =============================================================================
+
 /**
  * Save lock file to disk
+ *
+ * Supports both:
+ * - New structure: .authrim/{env}/lock.json
+ * - Legacy structure: authrim-lock.json
+ *
+ * @param lock - Lock data to save
+ * @param options - Options for path resolution, or direct path string (legacy)
  */
 export async function saveLockFile(
   lock: AuthrimLock,
-  path: string = 'authrim-lock.json'
+  options: LockFileOptions | string = {}
 ): Promise<void> {
+  const path = resolveLockFilePath(options);
+
+  // Ensure parent directory exists
+  const dir = dirname(path);
+  if (!existsSync(dir)) {
+    await mkdir(dir, { recursive: true });
+  }
+
   lock.updatedAt = new Date().toISOString();
   await writeFile(path, JSON.stringify(lock, null, 2), 'utf-8');
 }
@@ -131,11 +247,19 @@ export class LockFileError extends Error {
 
 /**
  * Load lock file from disk
+ *
+ * Supports both:
+ * - New structure: .authrim/{env}/lock.json
+ * - Legacy structure: authrim-lock.json
+ *
+ * @param options - Options for path resolution, or direct path string (legacy)
  * @throws LockFileError if file exists but cannot be parsed
  */
 export async function loadLockFile(
-  path: string = 'authrim-lock.json'
+  options: LockFileOptions | string = {}
 ): Promise<AuthrimLock | null> {
+  const path = resolveLockFilePath(options);
+
   if (!existsSync(path)) {
     return null;
   }
@@ -157,6 +281,27 @@ export async function loadLockFile(
     }
     throw new LockFileError('Failed to read lock file', error instanceof Error ? error : undefined);
   }
+}
+
+/**
+ * Load lock file with automatic structure detection
+ * Tries new structure first, then legacy
+ */
+export async function loadLockFileAuto(
+  baseDir: string,
+  env: string
+): Promise<{ lock: AuthrimLock | null; path: string; type: 'new' | 'legacy' }> {
+  // Try new structure first
+  const newPath = getEnvironmentPaths({ baseDir, env }).lock;
+  if (existsSync(newPath)) {
+    const lock = await loadLockFile({ path: newPath });
+    return { lock, path: newPath, type: 'new' };
+  }
+
+  // Try legacy structure
+  const legacyPath = getLegacyPaths(baseDir, env).lock;
+  const lock = await loadLockFile({ path: legacyPath });
+  return { lock, path: legacyPath, type: 'legacy' };
 }
 
 /**

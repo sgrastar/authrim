@@ -170,8 +170,12 @@ export const KeysConfigSchema = z.object({
   keyId: z.string().optional(),
   /** Public key in JWK format */
   publicKeyJwk: z.record(z.unknown()).optional(),
-  /** Path to secrets directory */
-  secretsPath: z.string().default('./.keys/'),
+  /**
+   * Path to secrets directory (relative from config file location)
+   * - New structure (.authrim/{env}/): './keys/'
+   * - Legacy structure: './.keys/{env}/'
+   */
+  secretsPath: z.string().default('./keys/'),
   /** Whether to include secrets in config (not recommended) */
   includeSecrets: z.boolean().default(false),
 });
