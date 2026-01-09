@@ -22,6 +22,8 @@ import {
   detectEnvironments,
   deleteEnvironment,
   getWorkersSubdomain,
+  checkAdminSetupStatus,
+  generateAndStoreSetupToken,
   type CloudflareAuth,
 } from '../core/cloudflare.js';
 import {
@@ -773,6 +775,72 @@ export function createApiRoutes(): Hono {
         return c.json({ success: false, error: result.error }, 500);
       } catch (error) {
         addProgress(`Admin setup exception: ${sanitizeError(error)}`);
+        return c.json({ success: false, error: sanitizeError(error) }, 500);
+      }
+    });
+  });
+
+  // Check admin setup status for an environment (no auth required - read-only)
+  api.get('/admin/status/:kvNamespaceId', async (c) => {
+    try {
+      const kvNamespaceId = c.req.param('kvNamespaceId');
+      if (!kvNamespaceId || !/^[a-f0-9]{32}$/i.test(kvNamespaceId)) {
+        return c.json({ success: false, error: 'Invalid KV namespace ID' }, 400);
+      }
+
+      const status = await checkAdminSetupStatus(kvNamespaceId);
+      return c.json({
+        success: true,
+        adminSetupCompleted: status.completed,
+        error: status.error,
+      });
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
+  // Generate and store a new setup token (requires session validation)
+  api.use('/admin/generate-token', validateSession);
+  api.post('/admin/generate-token', async (c) => {
+    return withLock(async () => {
+      try {
+        const body = await c.req.json();
+        const { kvNamespaceId, baseUrl } = body;
+
+        if (!kvNamespaceId || !/^[a-f0-9]{32}$/i.test(kvNamespaceId)) {
+          return c.json({ success: false, error: 'Invalid KV namespace ID' }, 400);
+        }
+
+        if (!baseUrl) {
+          return c.json({ success: false, error: 'baseUrl is required' }, 400);
+        }
+
+        // Check if admin setup is already completed
+        const status = await checkAdminSetupStatus(kvNamespaceId);
+        if (status.completed) {
+          return c.json({
+            success: false,
+            error: 'Admin setup has already been completed for this environment',
+            alreadyCompleted: true,
+          }, 400);
+        }
+
+        // Generate and store new token
+        const result = await generateAndStoreSetupToken(kvNamespaceId);
+        if (!result.success || !result.token) {
+          return c.json({ success: false, error: result.error || 'Failed to generate token' }, 500);
+        }
+
+        // Construct setup URL
+        const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
+        const setupUrl = `${cleanBaseUrl}/admin-init-setup?token=${result.token}`;
+
+        return c.json({
+          success: true,
+          setupUrl,
+          message: 'Setup token generated. Visit the URL to create the initial administrator.',
+        });
+      } catch (error) {
         return c.json({ success: false, error: sanitizeError(error) }, 500);
       }
     });

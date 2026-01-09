@@ -506,6 +506,70 @@ export async function kvNamespaceExists(title: string): Promise<{ exists: boolea
 }
 
 /**
+ * Check if admin setup is completed for an environment
+ * Uses the KV namespace ID to read the setup:completed flag directly
+ */
+export async function checkAdminSetupStatus(
+  kvNamespaceId: string
+): Promise<{ completed: boolean; error?: string }> {
+  try {
+    const { stdout } = await wrangler([
+      'kv',
+      'key',
+      'get',
+      'setup:completed',
+      '--namespace-id',
+      kvNamespaceId,
+      '--remote',
+    ]);
+
+    return { completed: stdout.trim() === 'true' };
+  } catch (error) {
+    // Key not found or other error - assume not completed
+    const message = error instanceof Error ? error.message : String(error);
+    // "key not found" is expected when setup hasn't been completed
+    if (message.includes('key') && message.includes('not found')) {
+      return { completed: false };
+    }
+    return { completed: false, error: message };
+  }
+}
+
+/**
+ * Generate and store a setup token directly to KV namespace
+ * Returns the token for constructing the setup URL
+ */
+export async function generateAndStoreSetupToken(
+  kvNamespaceId: string,
+  ttlSeconds: number = 3600
+): Promise<{ success: boolean; token?: string; error?: string }> {
+  try {
+    // Generate URL-safe token (32 bytes = 43 characters in base64url)
+    const { randomBytes } = await import('node:crypto');
+    const token = randomBytes(32).toString('base64url');
+
+    // Store token in KV with TTL
+    await wrangler([
+      'kv',
+      'key',
+      'put',
+      'setup:token',
+      token,
+      '--namespace-id',
+      kvNamespaceId,
+      '--ttl',
+      ttlSeconds.toString(),
+      '--remote',
+    ]);
+
+    return { success: true, token };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, error: message };
+  }
+}
+
+/**
  * Create a KV namespace
  */
 export async function createKVNamespace(

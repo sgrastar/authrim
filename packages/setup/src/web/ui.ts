@@ -93,6 +93,7 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
     .status-running { background: #dbeafe; color: var(--primary); }
     .status-success { background: #d1fae5; color: var(--success); }
     .status-error { background: #fee2e2; color: var(--error); }
+    .status-warning { background: #fef3c7; color: #b45309; }
 
     /* Mode selection cards */
     .mode-cards {
@@ -1555,6 +1556,31 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
             📄 Pages Projects <span class="count" id="detail-pages-count">(0)</span>
           </div>
           <div class="resource-list" id="detail-pages-list"></div>
+        </div>
+      </div>
+
+      <!-- Admin Setup Section -->
+      <div id="admin-setup-section" class="resource-section hidden" style="margin-top: 1.5rem; padding: 1rem; background: #fef3c7; border-radius: 8px; border: 1px solid #fcd34d;">
+        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
+          <span style="font-size: 1.5rem;">⚠️</span>
+          <div>
+            <div style="font-weight: 600; color: #92400e;">Admin Account Not Configured</div>
+            <div style="font-size: 0.875rem; color: #a16207;">Initial administrator has not been set up for this environment.</div>
+          </div>
+        </div>
+        <button class="btn-primary" id="btn-start-admin-setup" style="margin-top: 0.5rem;">
+          🔐 Start Admin Account Setup with Passkey
+        </button>
+        <div id="admin-setup-result" class="hidden" style="margin-top: 1rem; padding: 0.75rem; background: white; border-radius: 6px;">
+          <div style="font-weight: 500; margin-bottom: 0.5rem;">Setup URL Generated:</div>
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <input type="text" id="admin-setup-url" readonly style="flex: 1; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; font-family: monospace; font-size: 0.875rem;">
+            <button class="btn-secondary" id="btn-copy-setup-url" style="white-space: nowrap;">📋 Copy</button>
+            <a id="btn-open-setup-url" href="#" target="_blank" class="btn-primary" style="text-decoration: none; white-space: nowrap;">🔗 Open</a>
+          </div>
+          <div style="font-size: 0.75rem; color: #6b7280; margin-top: 0.5rem;">
+            This URL is valid for 1 hour. Open it in a browser to register the first admin account.
+          </div>
         </div>
       </div>
 
@@ -3099,7 +3125,10 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
       const container = document.getElementById('env-cards');
       const noEnvsMessage = document.getElementById('no-envs-message');
 
-      container.innerHTML = '';
+      // Clear existing cards using safe method
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
 
       if (detectedEnvironments.length === 0) {
         noEnvsMessage.classList.remove('hidden');
@@ -3111,14 +3140,25 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
       for (const env of detectedEnvironments) {
         const card = document.createElement('div');
         card.className = 'env-card';
+        card.id = 'env-card-' + env.env.replace(/[^a-zA-Z0-9-]/g, '_');
 
         const info = document.createElement('div');
         info.className = 'env-card-info';
 
+        const nameRow = document.createElement('div');
+        nameRow.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;';
+
         const name = document.createElement('div');
         name.className = 'env-card-name';
         name.textContent = env.env;
-        info.appendChild(name);
+        nameRow.appendChild(name);
+
+        // Badge placeholder for admin status (will be populated async)
+        const badgeContainer = document.createElement('span');
+        badgeContainer.id = 'admin-badge-' + env.env.replace(/[^a-zA-Z0-9-]/g, '_');
+        nameRow.appendChild(badgeContainer);
+
+        info.appendChild(nameRow);
 
         const stats = document.createElement('div');
         stats.className = 'env-card-stats';
@@ -3146,6 +3186,35 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
         // Make entire card clickable
         card.addEventListener('click', () => showEnvDetail(env));
         container.appendChild(card);
+
+        // Check admin status and add badge if needed
+        checkAndAddAdminBadge(env);
+      }
+    }
+
+    // Check admin status and add badge to environment card
+    async function checkAndAddAdminBadge(env) {
+      const configKv = env.kv.find(kv =>
+        kv.name.toUpperCase().includes('AUTHRIM_CONFIG') ||
+        kv.name.toUpperCase().includes('AUTHRIM-CONFIG')
+      );
+
+      if (!configKv || !configKv.id) return;
+
+      try {
+        const response = await api('/admin/status/' + encodeURIComponent(configKv.id));
+        if (response.success && !response.adminSetupCompleted) {
+          const badgeContainer = document.getElementById('admin-badge-' + env.env.replace(/[^a-zA-Z0-9-]/g, '_'));
+          if (badgeContainer) {
+            const badge = document.createElement('span');
+            badge.className = 'status-badge status-warning';
+            badge.style.cssText = 'font-size: 0.75rem; padding: 0.125rem 0.5rem;';
+            badge.textContent = 'Admin未設定';
+            badgeContainer.appendChild(badge);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to check admin status for ' + env.env + ':', error);
       }
     }
 
@@ -3168,10 +3237,44 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
       document.getElementById('detail-r2-section').style.display = env.r2.length === 0 ? 'none' : 'block';
       document.getElementById('detail-pages-section').style.display = (env.pages || []).length === 0 ? 'none' : 'block';
 
+      // Check and show/hide admin setup section
+      const adminSetupSection = document.getElementById('admin-setup-section');
+      const resultDiv = document.getElementById('admin-setup-result');
+      const btn = document.getElementById('btn-start-admin-setup');
+
+      // Reset state
+      adminSetupSection.classList.add('hidden');
+      resultDiv.classList.add('hidden');
+      btn.disabled = false;
+      btn.textContent = '🔐 Start Admin Account Setup with Passkey';
+
+      // Find AUTHRIM_CONFIG KV namespace
+      const configKv = env.kv.find(kv =>
+        kv.name.toUpperCase().includes('AUTHRIM_CONFIG') ||
+        kv.name.toUpperCase().includes('AUTHRIM-CONFIG')
+      );
+
+      if (configKv && configKv.id) {
+        // Check admin setup status asynchronously
+        checkAndShowAdminSetup(configKv.id);
+      }
+
       showSection('envDetail');
 
       // Load details asynchronously
       loadResourceDetails(env);
+    }
+
+    // Check admin setup status and show section if needed
+    async function checkAndShowAdminSetup(kvNamespaceId) {
+      try {
+        const response = await api('/admin/status/' + encodeURIComponent(kvNamespaceId));
+        if (response.success && !response.adminSetupCompleted) {
+          document.getElementById('admin-setup-section').classList.remove('hidden');
+        }
+      } catch (error) {
+        console.error('Failed to check admin status:', error);
+      }
     }
 
     // Helper to render resource list
@@ -3370,6 +3473,88 @@ export function getHtmlTemplate(sessionToken?: string, manageOnly?: boolean): st
       if (selectedEnvForDetail) {
         showDeleteConfirmation(selectedEnvForDetail);
       }
+    });
+
+    // Admin setup button
+    document.getElementById('btn-start-admin-setup').addEventListener('click', async () => {
+      if (!selectedEnvForDetail) return;
+
+      const btn = document.getElementById('btn-start-admin-setup');
+      const resultDiv = document.getElementById('admin-setup-result');
+      const urlInput = document.getElementById('admin-setup-url');
+      const openLink = document.getElementById('btn-open-setup-url');
+
+      btn.disabled = true;
+      btn.textContent = '⏳ Generating token...';
+
+      try {
+        // Find AUTHRIM_CONFIG KV namespace
+        const configKv = selectedEnvForDetail.kv.find(kv =>
+          kv.name.toUpperCase().includes('AUTHRIM_CONFIG') ||
+          kv.name.toUpperCase().includes('AUTHRIM-CONFIG')
+        );
+
+        if (!configKv) {
+          alert('Could not find AUTHRIM_CONFIG KV namespace for this environment');
+          btn.disabled = false;
+          btn.textContent = '🔐 Start Admin Account Setup with Passkey';
+          return;
+        }
+
+        // Find router worker to construct base URL
+        const router = selectedEnvForDetail.workers.find(w =>
+          w.name.toLowerCase().includes('router')
+        );
+
+        let baseUrl = '';
+        if (router && router.name) {
+          // Construct URL from worker name
+          baseUrl = 'https://' + router.name + '.workers.dev';
+        } else {
+          // Fallback - ask for URL
+          baseUrl = prompt('Enter the base URL for the router (e.g., https://myenv-ar-router.workers.dev):');
+          if (!baseUrl) {
+            btn.disabled = false;
+            btn.textContent = '🔐 Start Admin Account Setup with Passkey';
+            return;
+          }
+        }
+
+        const response = await api('/admin/generate-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kvNamespaceId: configKv.id,
+            baseUrl: baseUrl,
+          }),
+        });
+
+        if (response.success && response.setupUrl) {
+          urlInput.value = response.setupUrl;
+          openLink.href = response.setupUrl;
+          resultDiv.classList.remove('hidden');
+          btn.textContent = '✓ Token Generated';
+        } else {
+          alert('Failed to generate token: ' + (response.error || 'Unknown error'));
+          btn.disabled = false;
+          btn.textContent = '🔐 Start Admin Account Setup with Passkey';
+        }
+      } catch (error) {
+        alert('Error: ' + error.message);
+        btn.disabled = false;
+        btn.textContent = '🔐 Start Admin Account Setup with Passkey';
+      }
+    });
+
+    // Copy setup URL button
+    document.getElementById('btn-copy-setup-url').addEventListener('click', () => {
+      const urlInput = document.getElementById('admin-setup-url');
+      urlInput.select();
+      document.execCommand('copy');
+      const btn = document.getElementById('btn-copy-setup-url');
+      const originalText = btn.textContent;
+      btn.textContent = '✓ Copied!';
+      setTimeout(() => { btn.textContent = originalText; }, 2000);
     });
 
     document.getElementById('btn-back-env-delete').addEventListener('click', () => {
