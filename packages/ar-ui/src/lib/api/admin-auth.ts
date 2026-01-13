@@ -80,7 +80,10 @@ export const adminAuthAPI = {
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new AuthError(error.error || 'login_options_failed', error.error_description || 'Failed to get login options');
+			throw new AuthError(
+				error.error || 'login_options_failed',
+				error.error_description || 'Failed to get login options'
+			);
 		}
 
 		return response.json();
@@ -103,7 +106,10 @@ export const adminAuthAPI = {
 
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new AuthError(error.error || 'login_failed', error.error_description || 'Login verification failed');
+			throw new AuthError(
+				error.error || 'login_failed',
+				error.error_description || 'Login verification failed'
+			);
 		}
 
 		return response.json();
@@ -131,7 +137,10 @@ export const adminAuthAPI = {
 		if (response.status === 403) {
 			// Authenticated but no admin role
 			const error = await response.json().catch(() => ({ error: 'forbidden' }));
-			throw new AuthError('forbidden', error.error_description || 'You do not have admin permissions');
+			throw new AuthError(
+				'forbidden',
+				error.error_description || 'You do not have admin permissions'
+			);
 		}
 
 		if (!response.ok) {
