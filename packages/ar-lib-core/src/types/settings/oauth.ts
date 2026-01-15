@@ -29,12 +29,9 @@ export interface OAuthSettings {
   'oauth.refresh_token_absolute_expiry': number;
   'oauth.refresh_token_remaining_expiry_inherit': boolean;
 
-  // Security Settings
+  // Security Settings (note: pkce_required, pkce_s256_required, nonce_required moved to security.ts)
   'oauth.state_required': boolean;
   'oauth.scope_required': boolean;
-  'oauth.pkce_required': boolean;
-  'oauth.pkce_s256_required': boolean;
-  'oauth.nonce_required': boolean;
 
   // UserInfo Settings
   'oauth.userinfo_require_openid': boolean;
@@ -51,16 +48,14 @@ export interface OAuthSettings {
   // DDoS Protection
   'oauth.max_codes_per_user': number;
 
-  // PAR Settings
-  'oauth.par_required': boolean;
+  // PAR Settings (note: par_required moved to security.ts)
   'oauth.par_default_ttl': number;
   'oauth.par_fapi_ttl': number;
 
   // JARM Settings
   'oauth.jarm_enabled': boolean;
 
-  // Loopback Settings
-  'oauth.loopback_flexible_port': boolean;
+  // Loopback Settings moved to security.ts
 
   // HTTP Request URI Settings
   'oauth.https_request_uri_enabled': boolean;
@@ -73,6 +68,17 @@ export interface OAuthSettings {
   // Error Response Format Settings
   'oauth.error_response_format': 'oauth' | 'problem_details';
   'oauth.error_id_mode': 'all' | '5xx' | 'security_only' | 'none';
+
+  // Response Mode Settings
+  'oauth.default_response_mode': 'query' | 'fragment' | 'form_post';
+  'oauth.response_modes_supported': string;
+
+  // Backchannel Token Delivery Settings
+  'oauth.backchannel_token_delivery_mode': 'poll' | 'ping' | 'push';
+  'oauth.backchannel_token_delivery_modes_supported': string;
+
+  // HTTPS Request URI Allowed Domains
+  'oauth.https_request_uri_allowed_domains': string;
 }
 
 /**
@@ -240,33 +246,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     description: 'Require scope parameter in authorization requests',
     visibility: 'public',
   },
-  'oauth.pkce_required': {
-    key: 'oauth.pkce_required',
-    type: 'boolean',
-    default: false,
-    envKey: 'PKCE_REQUIRED',
-    label: 'PKCE Required',
-    description: 'Require PKCE for all authorization requests',
-    visibility: 'public',
-  },
-  'oauth.pkce_s256_required': {
-    key: 'oauth.pkce_s256_required',
-    type: 'boolean',
-    default: true,
-    envKey: 'PKCE_S256_REQUIRED',
-    label: 'PKCE S256 Required',
-    description: 'Require S256 code challenge method (plain not allowed)',
-    visibility: 'public',
-  },
-  'oauth.nonce_required': {
-    key: 'oauth.nonce_required',
-    type: 'boolean',
-    default: false,
-    envKey: 'NONCE_REQUIRED',
-    label: 'Nonce Required',
-    description: 'Require nonce for implicit and hybrid flows',
-    visibility: 'public',
-  },
+  // Note: pkce_required, pkce_s256_required, nonce_required moved to security.ts
 
   // UserInfo Settings
   'oauth.userinfo_require_openid': {
@@ -342,16 +322,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     visibility: 'admin',
   },
 
-  // PAR Settings
-  'oauth.par_required': {
-    key: 'oauth.par_required',
-    type: 'boolean',
-    default: false,
-    envKey: 'PAR_REQUIRED',
-    label: 'PAR Required',
-    description: 'Require Pushed Authorization Requests',
-    visibility: 'public',
-  },
+  // PAR Settings (note: par_required moved to security.ts)
   'oauth.par_default_ttl': {
     key: 'oauth.par_default_ttl',
     type: 'duration',
@@ -388,16 +359,7 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     visibility: 'public',
   },
 
-  // Loopback Settings
-  'oauth.loopback_flexible_port': {
-    key: 'oauth.loopback_flexible_port',
-    type: 'boolean',
-    default: true,
-    envKey: 'LOOPBACK_REDIRECT_FLEXIBLE_PORT',
-    label: 'Loopback Flexible Port',
-    description: 'Allow any port for loopback redirect URIs (native apps)',
-    visibility: 'public',
-  },
+  // Loopback Settings moved to security.ts
 
   // HTTP Request URI Settings
   'oauth.https_request_uri_enabled': {
@@ -467,6 +429,59 @@ export const OAUTH_SETTINGS_META: Record<keyof OAuthSettings, SettingMeta> = {
     enum: ['all', '5xx', 'security_only', 'none'],
     visibility: 'admin',
   },
+
+  // Response Mode Settings
+  'oauth.default_response_mode': {
+    key: 'oauth.default_response_mode',
+    type: 'enum',
+    default: 'query',
+    envKey: 'DEFAULT_RESPONSE_MODE',
+    label: 'Default Response Mode',
+    description: 'Default response mode for authorization requests',
+    enum: ['query', 'fragment', 'form_post'],
+    visibility: 'admin',
+  },
+  'oauth.response_modes_supported': {
+    key: 'oauth.response_modes_supported',
+    type: 'string',
+    default: 'query,fragment,form_post',
+    envKey: 'RESPONSE_MODES_SUPPORTED',
+    label: 'Supported Response Modes',
+    description: 'Comma-separated list of supported response modes',
+    visibility: 'admin',
+  },
+
+  // Backchannel Token Delivery Settings
+  'oauth.backchannel_token_delivery_mode': {
+    key: 'oauth.backchannel_token_delivery_mode',
+    type: 'enum',
+    default: 'poll',
+    envKey: 'BACKCHANNEL_TOKEN_DELIVERY_MODE',
+    label: 'Backchannel Token Delivery Mode',
+    description: 'Default token delivery mode for CIBA',
+    enum: ['poll', 'ping', 'push'],
+    visibility: 'admin',
+  },
+  'oauth.backchannel_token_delivery_modes_supported': {
+    key: 'oauth.backchannel_token_delivery_modes_supported',
+    type: 'string',
+    default: 'poll,ping',
+    envKey: 'BACKCHANNEL_TOKEN_DELIVERY_MODES_SUPPORTED',
+    label: 'Supported Token Delivery Modes',
+    description: 'Comma-separated list of supported CIBA token delivery modes',
+    visibility: 'admin',
+  },
+
+  // HTTPS Request URI Allowed Domains
+  'oauth.https_request_uri_allowed_domains': {
+    key: 'oauth.https_request_uri_allowed_domains',
+    type: 'string',
+    default: '',
+    envKey: 'HTTPS_REQUEST_URI_ALLOWED_DOMAINS',
+    label: 'Allowed Request URI Domains',
+    description: 'Comma-separated list of allowed domains for HTTPS request_uri (empty for any)',
+    visibility: 'admin',
+  },
 };
 
 /**
@@ -498,9 +513,7 @@ export const OAUTH_DEFAULTS: OAuthSettings = {
   'oauth.refresh_token_remaining_expiry_inherit': false,
   'oauth.state_required': false,
   'oauth.scope_required': false,
-  'oauth.pkce_required': false,
-  'oauth.pkce_s256_required': true,
-  'oauth.nonce_required': false,
+  // Note: pkce_required, pkce_s256_required, nonce_required moved to security.ts
   'oauth.userinfo_require_openid': true,
   'oauth.error_description': true,
   'oauth.error_uri': false,
@@ -508,15 +521,20 @@ export const OAUTH_DEFAULTS: OAuthSettings = {
   'oauth.id_token_aud_format': 'array',
   'oauth.id_token_signing_alg': 'RS256',
   'oauth.max_codes_per_user': 100,
-  'oauth.par_required': false,
+  // Note: par_required moved to security.ts
   'oauth.par_default_ttl': 60,
   'oauth.par_fapi_ttl': 60,
   'oauth.jarm_enabled': false,
-  'oauth.loopback_flexible_port': true,
+  // Note: loopback_flexible_port moved to security.ts
   'oauth.https_request_uri_enabled': false,
   'oauth.https_request_uri_max_size': 51200,
   'oauth.https_request_uri_timeout_ms': 5000,
   'oauth.prompt_none_behavior': 'error',
   'oauth.error_response_format': 'oauth',
   'oauth.error_id_mode': 'security_only',
+  'oauth.default_response_mode': 'query',
+  'oauth.response_modes_supported': 'query,fragment,form_post',
+  'oauth.backchannel_token_delivery_mode': 'poll',
+  'oauth.backchannel_token_delivery_modes_supported': 'poll,ping',
+  'oauth.https_request_uri_allowed_domains': '',
 };

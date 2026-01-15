@@ -44,6 +44,12 @@ export interface InfrastructureSettings {
   // Supported Algorithms (platform-level, read-only)
   'infra.supported_signing_algs': string;
   'infra.dpop_signing_alg_values_supported': string;
+
+  // Durable Objects Configuration
+  'infra.do_cleanup_interval': number;
+  'infra.do_audit_flush_delay': number;
+  'infra.do_saml_request_expiry': number;
+  'infra.do_saml_artifact_expiry': number;
 }
 
 /**
@@ -194,9 +200,10 @@ export const INFRASTRUCTURE_SETTINGS_META: Record<keyof InfrastructureSettings, 
     key: 'infra.jwks_cache_ttl',
     type: 'duration',
     default: 86400,
-    envKey: 'JWKS_CACHE_TTL',
-    label: 'JWKS Cache TTL',
-    description: 'Cache TTL for JWKS (external IdP) in seconds',
+    envKey: 'PLATFORM_JWKS_CACHE_TTL',
+    label: 'Platform JWKS Cache TTL',
+    description:
+      'Cache TTL for platform signing keys JWKS endpoint in seconds (see external-idp.jwks_cache_ttl for external IdP keys)',
     min: 300,
     max: 604800,
     unit: 'seconds',
@@ -296,6 +303,56 @@ export const INFRASTRUCTURE_SETTINGS_META: Record<keyof InfrastructureSettings, 
     description: 'Supported algorithms for DPoP proofs (comma-separated)',
     visibility: 'internal',
   },
+
+  // Durable Objects Configuration
+  'infra.do_cleanup_interval': {
+    key: 'infra.do_cleanup_interval',
+    type: 'duration',
+    default: 60000,
+    envKey: 'DO_CLEANUP_INTERVAL',
+    label: 'DO Cleanup Interval',
+    description: 'Durable Objects cleanup interval in milliseconds',
+    min: 10000,
+    max: 600000,
+    unit: 'ms',
+    visibility: 'admin',
+  },
+  'infra.do_audit_flush_delay': {
+    key: 'infra.do_audit_flush_delay',
+    type: 'duration',
+    default: 5000,
+    envKey: 'DO_AUDIT_FLUSH_DELAY',
+    label: 'DO Audit Flush Delay',
+    description: 'Delay before flushing audit logs in Durable Objects',
+    min: 1000,
+    max: 60000,
+    unit: 'ms',
+    visibility: 'admin',
+  },
+  'infra.do_saml_request_expiry': {
+    key: 'infra.do_saml_request_expiry',
+    type: 'duration',
+    default: 300,
+    envKey: 'DO_SAML_REQUEST_EXPIRY',
+    label: 'SAML Request Expiry',
+    description: 'SAML authentication request expiry in seconds',
+    min: 60,
+    max: 600,
+    unit: 'seconds',
+    visibility: 'admin',
+  },
+  'infra.do_saml_artifact_expiry': {
+    key: 'infra.do_saml_artifact_expiry',
+    type: 'duration',
+    default: 120,
+    envKey: 'DO_SAML_ARTIFACT_EXPIRY',
+    label: 'SAML Artifact Expiry',
+    description: 'SAML artifact expiry in seconds',
+    min: 30,
+    max: 300,
+    unit: 'seconds',
+    visibility: 'admin',
+  },
 };
 
 /**
@@ -333,4 +390,8 @@ export const INFRASTRUCTURE_DEFAULTS: InfrastructureSettings = {
   'infra.default_fetch_timeout_ms': 5000,
   'infra.supported_signing_algs': 'RS256,RS384,RS512,ES256,ES384,ES512,PS256,PS384,PS512,EdDSA',
   'infra.dpop_signing_alg_values_supported': 'RS256,ES256,ES384,EdDSA',
+  'infra.do_cleanup_interval': 60000,
+  'infra.do_audit_flush_delay': 5000,
+  'infra.do_saml_request_expiry': 300,
+  'infra.do_saml_artifact_expiry': 120,
 };

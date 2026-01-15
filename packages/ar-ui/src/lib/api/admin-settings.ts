@@ -266,9 +266,14 @@ export const adminSettingsAPI = {
 
 			// Handle conflict (409)
 			if (response.status === 409) {
+				// If currentVersion is not available, throw a generic error
+				// instructing the user to refresh and retry
+				if (!error.currentVersion) {
+					throw new Error('Version conflict detected. Please refresh the page and try again.');
+				}
 				throw new SettingsConflictError(
 					error.message || 'Settings were updated by someone else',
-					error.currentVersion || ''
+					error.currentVersion
 				);
 			}
 
@@ -317,6 +322,12 @@ export const CATEGORY_NAMES = [
 	'tenant',
 	// Verifiable Credentials
 	'vc',
+	// Discovery
+	'discovery',
+	// Plugin
+	'plugin',
+	// Assurance Levels (NIST SP 800-63-4)
+	'assurance',
 	// Platform settings (read-only)
 	'infrastructure',
 	'encryption'
@@ -326,15 +337,14 @@ export type CategoryName = (typeof CATEGORY_NAMES)[number];
 
 /**
  * Platform (read-only) categories
- * Note: Individual settings may have visibility: 'internal' which locks them
- * But the category itself is not completely read-only
+ * These categories contain infrastructure-level settings that should not be
+ * modified via tenant settings API. They are managed at the platform level.
  */
-export const PLATFORM_CATEGORIES: CategoryName[] = [];
+export const PLATFORM_CATEGORIES: CategoryName[] = ['infrastructure', 'encryption'];
 
 /**
  * Check if a category is platform-level (read-only)
- * Note: This now returns false for all categories.
- * Individual setting locking is handled by visibility: 'internal'
+ * Platform categories should use getPlatformSettings() instead of getSettings()
  */
 export function isPlatformCategory(category: string): boolean {
 	return PLATFORM_CATEGORIES.includes(category as CategoryName);
