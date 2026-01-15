@@ -1,11 +1,82 @@
 /**
- * Admin Organization Domain Mappings API Client
+ * Admin Organizations API Client
  *
- * Provides methods for managing organization domain mappings used in JIT Provisioning.
- * These mappings allow automatic organization assignment based on email domains.
+ * Provides methods for:
+ * - Managing organizations and viewing hierarchy
+ * - Managing organization domain mappings for JIT Provisioning
  */
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+
+// =============================================================================
+// Organization Types
+// =============================================================================
+
+/**
+ * Basic organization information
+ */
+export interface Organization {
+	id: string;
+	tenant_id: string;
+	name: string;
+	display_name: string | null;
+	parent_org_id: string | null;
+	is_active: boolean;
+	member_count?: number;
+	created_at: number;
+	updated_at: number;
+}
+
+/**
+ * Organization node in hierarchy tree
+ */
+export interface OrganizationNode {
+	id: string;
+	name: string;
+	display_name: string | null;
+	parent_id: string | null;
+	depth: number;
+	is_active: boolean;
+	member_count: number;
+	children: OrganizationNode[];
+}
+
+/**
+ * Organization hierarchy response
+ */
+export interface OrganizationHierarchyResponse {
+	organization: OrganizationNode;
+	summary: {
+		total_organizations: number;
+		total_members: number;
+		max_depth: number;
+	};
+}
+
+/**
+ * Organization list response with pagination
+ */
+export interface OrganizationListResponse {
+	organizations: Organization[];
+	total: number;
+	limit: number;
+	offset: number;
+}
+
+/**
+ * Organization list filter params
+ */
+export interface ListOrganizationsParams {
+	limit?: number;
+	offset?: number;
+	search?: string;
+	parent_id?: string;
+	is_active?: boolean;
+}
+
+// =============================================================================
+// Domain Mapping Types
+// =============================================================================
 
 /**
  * Organization Domain Mapping
@@ -96,6 +167,78 @@ export interface ListOrgDomainMappingsParams {
 }
 
 export const adminOrganizationsAPI = {
+	// =========================================================================
+	// Organization Methods
+	// =========================================================================
+
+	/**
+	 * List organizations with optional filtering
+	 */
+	async listOrganizations(
+		params: ListOrganizationsParams = {}
+	): Promise<OrganizationListResponse> {
+		const searchParams = new URLSearchParams();
+		if (params.limit !== undefined) searchParams.set('limit', params.limit.toString());
+		if (params.offset !== undefined) searchParams.set('offset', params.offset.toString());
+		if (params.search) searchParams.set('search', params.search);
+		if (params.parent_id) searchParams.set('parent_id', params.parent_id);
+		if (params.is_active !== undefined) searchParams.set('is_active', params.is_active.toString());
+
+		const query = searchParams.toString();
+		const response = await fetch(
+			`${API_BASE_URL}/api/admin/organizations${query ? '?' + query : ''}`,
+			{ credentials: 'include' }
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || error.message || 'Failed to fetch organizations');
+		}
+		return response.json();
+	},
+
+	/**
+	 * Get organization details by ID
+	 */
+	async getOrganization(id: string): Promise<Organization> {
+		const response = await fetch(
+			`${API_BASE_URL}/api/admin/organizations/${encodeURIComponent(id)}`,
+			{ credentials: 'include' }
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || error.message || 'Failed to fetch organization');
+		}
+		return response.json();
+	},
+
+	/**
+	 * Get organization hierarchy tree
+	 * Returns the organization and all its descendants in a tree structure.
+	 *
+	 * @param orgId - Root organization ID
+	 * @param maxDepth - Maximum depth to traverse (default: 10)
+	 */
+	async getHierarchy(orgId: string, maxDepth: number = 10): Promise<OrganizationHierarchyResponse> {
+		const response = await fetch(
+			`${API_BASE_URL}/api/admin/organizations/${encodeURIComponent(orgId)}/hierarchy?max_depth=${maxDepth}`,
+			{ credentials: 'include' }
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to fetch organization hierarchy'
+			);
+		}
+		return response.json();
+	},
+
+	// =========================================================================
+	// Domain Mapping Methods
+	// =========================================================================
+
 	/**
 	 * List all domain mappings with optional filtering
 	 */

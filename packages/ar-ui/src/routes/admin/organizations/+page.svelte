@@ -1,7 +1,28 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminOrganizationsAPI, type OrgDomainMapping } from '$lib/api/admin-organizations';
+	import {
+		adminOrganizationsAPI,
+		type OrgDomainMapping,
+		type Organization,
+		type OrganizationNode,
+		type OrganizationHierarchyResponse
+	} from '$lib/api/admin-organizations';
+	import OrganizationTree from '$lib/components/OrganizationTree.svelte';
 
+	// Tab state
+	let activeTab = $state<'hierarchy' | 'mappings'>('hierarchy');
+
+	// Hierarchy view state
+	let organizations: Organization[] = $state([]);
+	let selectedRootOrg: Organization | null = $state(null);
+	let hierarchyData: OrganizationHierarchyResponse | null = $state(null);
+	let hierarchyLoading = $state(false);
+	let hierarchyError = $state('');
+	let expandedNodes = $state(new Set<string>());
+	let searchQuery = $state('');
+	let highlightedIds = $state(new Set<string>());
+
+	// Domain mappings state
 	let mappings: OrgDomainMapping[] = $state([]);
 	let loading = $state(true);
 	let error = $state('');
@@ -30,6 +51,116 @@
 	let verifyRecordName = $state('');
 	let verifyExpectedValue = $state('');
 
+	// ==========================================================================
+	// Organization Hierarchy Functions
+	// ==========================================================================
+
+	async function loadOrganizations() {
+		hierarchyLoading = true;
+		hierarchyError = '';
+
+		try {
+			const response = await adminOrganizationsAPI.listOrganizations({
+				limit: 100,
+				search: searchQuery || undefined
+			});
+			organizations = response.organizations;
+
+			// If we have organizations and no root selected, select the first one with no parent
+			if (organizations.length > 0 && !selectedRootOrg) {
+				const rootOrgs = organizations.filter((o) => !o.parent_org_id);
+				if (rootOrgs.length > 0) {
+					await selectRootOrg(rootOrgs[0]);
+				}
+			}
+		} catch (err) {
+			console.error('Failed to load organizations:', err);
+			hierarchyError = err instanceof Error ? err.message : 'Failed to load organizations';
+		} finally {
+			hierarchyLoading = false;
+		}
+	}
+
+	async function selectRootOrg(org: Organization) {
+		selectedRootOrg = org;
+		hierarchyData = null;
+		hierarchyLoading = true;
+		hierarchyError = '';
+
+		try {
+			hierarchyData = await adminOrganizationsAPI.getHierarchy(org.id);
+			// Expand root by default
+			expandedNodes = new Set([org.id]);
+		} catch (err) {
+			console.error('Failed to load hierarchy:', err);
+			hierarchyError = err instanceof Error ? err.message : 'Failed to load hierarchy';
+		} finally {
+			hierarchyLoading = false;
+		}
+	}
+
+	function handleToggleNode(nodeId: string, expanded: boolean) {
+		const newSet = new Set(expandedNodes);
+		if (expanded) {
+			newSet.add(nodeId);
+		} else {
+			newSet.delete(nodeId);
+		}
+		expandedNodes = newSet;
+	}
+
+	function expandAll() {
+		if (!hierarchyData) return;
+		const allIds = new Set<string>();
+		function collectIds(node: OrganizationNode) {
+			allIds.add(node.id);
+			node.children.forEach(collectIds);
+		}
+		collectIds(hierarchyData.organization);
+		expandedNodes = allIds;
+	}
+
+	function collapseAll() {
+		if (!hierarchyData) return;
+		expandedNodes = new Set([hierarchyData.organization.id]);
+	}
+
+	async function handleSearch() {
+		if (!searchQuery.trim()) {
+			highlightedIds = new Set();
+			await loadOrganizations();
+			return;
+		}
+
+		// Search in the current hierarchy
+		if (hierarchyData) {
+			const matchingIds = new Set<string>();
+			const query = searchQuery.toLowerCase();
+
+			function searchNode(node: OrganizationNode) {
+				if (
+					node.name.toLowerCase().includes(query) ||
+					(node.display_name && node.display_name.toLowerCase().includes(query))
+				) {
+					matchingIds.add(node.id);
+				}
+				node.children.forEach(searchNode);
+			}
+
+			searchNode(hierarchyData.organization);
+			highlightedIds = matchingIds;
+
+			// Expand all to show matches
+			if (matchingIds.size > 0) {
+				expandAll();
+			}
+		}
+	}
+
+	// ==========================================================================
+	// Domain Mapping Functions
+	// ==========================================================================
+
 	async function loadMappings() {
 		loading = true;
 		error = '';
@@ -47,8 +178,16 @@
 	}
 
 	onMount(() => {
-		loadMappings();
+		// Load hierarchy by default
+		loadOrganizations();
 	});
+
+	function handleTabChange(tab: 'hierarchy' | 'mappings') {
+		activeTab = tab;
+		if (tab === 'mappings' && mappings.length === 0) {
+			loadMappings();
+		}
+	}
 
 	function openCreateDialog() {
 		newDomain = '';
@@ -213,36 +352,117 @@
 	}
 </script>
 
-<div>
-	<div
-		style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;"
-	>
-		<h1 style="font-size: 24px; font-weight: bold; margin: 0; color: #1f2937;">
-			Organization Domain Mappings
-		</h1>
+<div class="organizations-page">
+	<div class="page-header">
+		<h1>Organizations</h1>
+		<p class="description">
+			Manage organization hierarchy and domain mappings for JIT provisioning.
+		</p>
+	</div>
+
+	<!-- Tabs -->
+	<div class="tabs">
 		<button
-			onclick={openCreateDialog}
-			style="
-				padding: 10px 20px;
-				background-color: #3b82f6;
-				color: white;
-				border: none;
-				border-radius: 6px;
-				cursor: pointer;
-				font-size: 14px;
-			"
+			class="tab"
+			class:active={activeTab === 'hierarchy'}
+			onclick={() => handleTabChange('hierarchy')}
 		>
-			Add Mapping
+			Hierarchy
+		</button>
+		<button
+			class="tab"
+			class:active={activeTab === 'mappings'}
+			onclick={() => handleTabChange('mappings')}
+		>
+			Domain Mappings
 		</button>
 	</div>
 
-	<p style="color: #6b7280; margin-bottom: 24px;">
-		Configure domain-to-organization mappings for automatic user provisioning via JIT (Just-In-Time)
-		provisioning. Users with email addresses matching a verified domain will be automatically added
-		to the mapped organization.
-	</p>
+	<!-- Hierarchy Tab -->
+	{#if activeTab === 'hierarchy'}
+		<div class="hierarchy-section">
+			<!-- Search and Actions -->
+			<div class="hierarchy-toolbar">
+				<div class="search-box">
+					<input
+						type="text"
+						bind:value={searchQuery}
+						placeholder="Search organizations..."
+						onkeydown={(e) => e.key === 'Enter' && handleSearch()}
+					/>
+					<button onclick={handleSearch}>Search</button>
+				</div>
+				<div class="toolbar-actions">
+					<button class="btn-secondary" onclick={expandAll} disabled={!hierarchyData}>
+						Expand All
+					</button>
+					<button class="btn-secondary" onclick={collapseAll} disabled={!hierarchyData}>
+						Collapse All
+					</button>
+				</div>
+			</div>
 
-	{#if error}
+			{#if hierarchyError}
+				<div class="error-banner">
+					{hierarchyError}
+					<button onclick={loadOrganizations}>Retry</button>
+				</div>
+			{/if}
+
+			{#if hierarchyLoading}
+				<div class="loading-state">Loading organizations...</div>
+			{:else if hierarchyData}
+				<!-- Summary -->
+				<div class="hierarchy-summary">
+					<span>
+						{hierarchyData.summary.total_organizations} organizations
+					</span>
+					<span class="separator">|</span>
+					<span>
+						{hierarchyData.summary.total_members} total members
+					</span>
+					<span class="separator">|</span>
+					<span>
+						Max depth: {hierarchyData.summary.max_depth}
+					</span>
+					{#if highlightedIds.size > 0}
+						<span class="separator">|</span>
+						<span class="highlight-count">
+							{highlightedIds.size} matches
+						</span>
+					{/if}
+				</div>
+
+				<!-- Tree View -->
+				<div class="tree-container">
+					<OrganizationTree
+						node={hierarchyData.organization}
+						{expandedNodes}
+						onToggle={handleToggleNode}
+						highlightIds={highlightedIds}
+					/>
+				</div>
+			{:else if organizations.length === 0}
+				<div class="empty-state">
+					<p>No organizations found.</p>
+				</div>
+			{/if}
+		</div>
+	{/if}
+
+	<!-- Domain Mappings Tab -->
+	{#if activeTab === 'mappings'}
+		<div class="mappings-section">
+			<div class="section-header">
+				<p class="section-description">
+					Configure domain-to-organization mappings for automatic user provisioning via JIT
+					(Just-In-Time) provisioning. Users with email addresses matching a verified domain will be
+					automatically added to the mapped organization.
+				</p>
+				<button class="btn-primary" onclick={openCreateDialog}>Add Mapping</button>
+			</div>
+
+			{#if error}
 		<div
 			style="padding: 12px 16px; background-color: #fee2e2; color: #b91c1c; border-radius: 6px; margin-bottom: 16px;"
 		>
@@ -422,6 +642,8 @@
 					{/each}
 				</tbody>
 			</table>
+		</div>
+	{/if}
 		</div>
 	{/if}
 </div>
@@ -777,3 +999,209 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	.organizations-page {
+		padding: 24px;
+		max-width: 1400px;
+		margin: 0 auto;
+	}
+
+	.page-header {
+		margin-bottom: 24px;
+	}
+
+	.page-header h1 {
+		font-size: 24px;
+		font-weight: bold;
+		margin: 0 0 8px 0;
+		color: #1f2937;
+	}
+
+	.page-header .description {
+		color: #6b7280;
+		margin: 0;
+	}
+
+	.tabs {
+		display: flex;
+		gap: 0;
+		border-bottom: 1px solid #e5e7eb;
+		margin-bottom: 24px;
+	}
+
+	.tab {
+		padding: 12px 24px;
+		background: none;
+		border: none;
+		border-bottom: 2px solid transparent;
+		font-size: 14px;
+		font-weight: 500;
+		color: #6b7280;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.tab:hover {
+		color: #374151;
+	}
+
+	.tab.active {
+		color: #2563eb;
+		border-bottom-color: #2563eb;
+	}
+
+	.hierarchy-section,
+	.mappings-section {
+		background: white;
+		border-radius: 8px;
+		border: 1px solid #e5e7eb;
+		padding: 24px;
+	}
+
+	.hierarchy-toolbar {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 16px;
+		margin-bottom: 16px;
+		flex-wrap: wrap;
+	}
+
+	.search-box {
+		display: flex;
+		gap: 8px;
+	}
+
+	.search-box input {
+		padding: 8px 12px;
+		border: 1px solid #d1d5db;
+		border-radius: 6px;
+		font-size: 14px;
+		width: 250px;
+	}
+
+	.search-box button {
+		padding: 8px 16px;
+		background-color: #3b82f6;
+		color: white;
+		border: none;
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 14px;
+	}
+
+	.toolbar-actions {
+		display: flex;
+		gap: 8px;
+	}
+
+	.btn-secondary {
+		padding: 8px 16px;
+		background-color: #f3f4f6;
+		color: #374151;
+		border: none;
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 14px;
+	}
+
+	.btn-secondary:hover:not(:disabled) {
+		background-color: #e5e7eb;
+	}
+
+	.btn-secondary:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.btn-primary {
+		padding: 10px 20px;
+		background-color: #3b82f6;
+		color: white;
+		border: none;
+		border-radius: 6px;
+		cursor: pointer;
+		font-size: 14px;
+	}
+
+	.btn-primary:hover {
+		background-color: #2563eb;
+	}
+
+	.error-banner {
+		background-color: #fef2f2;
+		border: 1px solid #fecaca;
+		color: #b91c1c;
+		padding: 12px 16px;
+		border-radius: 6px;
+		margin-bottom: 16px;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.error-banner button {
+		padding: 6px 12px;
+		background-color: #b91c1c;
+		color: white;
+		border: none;
+		border-radius: 4px;
+		cursor: pointer;
+	}
+
+	.loading-state {
+		text-align: center;
+		padding: 48px;
+		color: #6b7280;
+	}
+
+	.empty-state {
+		text-align: center;
+		padding: 48px;
+		color: #6b7280;
+	}
+
+	.hierarchy-summary {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 12px 16px;
+		background-color: #f9fafb;
+		border-radius: 6px;
+		margin-bottom: 16px;
+		font-size: 14px;
+		color: #374151;
+	}
+
+	.hierarchy-summary .separator {
+		color: #d1d5db;
+	}
+
+	.hierarchy-summary .highlight-count {
+		color: #d97706;
+		font-weight: 500;
+	}
+
+	.tree-container {
+		border: 1px solid #e5e7eb;
+		border-radius: 6px;
+		padding: 16px;
+		max-height: 600px;
+		overflow-y: auto;
+	}
+
+	.section-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: 16px;
+		margin-bottom: 24px;
+	}
+
+	.section-description {
+		color: #6b7280;
+		margin: 0;
+		flex: 1;
+	}
+</style>

@@ -11,6 +11,7 @@
 		type DataRetentionStatus,
 		type AccessReviewScope
 	} from '$lib/api/admin-compliance';
+	import { getCategoryDisplayName, getCategoryDescription } from '$lib/api/admin-data-retention';
 	import { formatDate, isValidDownloadUrl, SMALL_PAGE_SIZE, sanitizeText } from '$lib/utils';
 
 	// State
@@ -593,9 +594,9 @@
 			<!-- Status Card -->
 			<div style="background: white; border-radius: 8px; border: 1px solid #e5e7eb; padding: 24px;">
 				<h2 style="font-size: 18px; font-weight: 600; margin: 0 0 16px 0; color: #1f2937;">
-					Data Retention Status
+					Data Retention Policy
 				</h2>
-				<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
+				<div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
 					<div>
 						<div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">Status</div>
 						<div
@@ -617,9 +618,17 @@
 						</div>
 					</div>
 					<div>
+						<div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">Last Cleanup</div>
+						<div style="font-size: 16px; font-weight: 600; color: #374151;">
+							{dataRetention.last_cleanup ? formatDate(dataRetention.last_cleanup) : '-'}
+						</div>
+					</div>
+					<div>
 						<div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">Next Cleanup</div>
 						<div style="font-size: 16px; font-weight: 600; color: #374151;">
-							{formatDate(dataRetention.next_scheduled_cleanup)}
+							{dataRetention.next_scheduled_cleanup
+								? formatDate(dataRetention.next_scheduled_cleanup)
+								: '-'}
 						</div>
 					</div>
 				</div>
@@ -630,10 +639,17 @@
 				<div
 					style="background: white; border-radius: 8px; border: 1px solid #e5e7eb; overflow: hidden;"
 				>
-					<div style="padding: 16px 20px; border-bottom: 1px solid #e5e7eb;">
-						<h3 style="font-size: 16px; font-weight: 600; margin: 0; color: #1f2937;">
-							Retention Categories
-						</h3>
+					<div
+						style="padding: 16px 20px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;"
+					>
+						<div>
+							<h3 style="font-size: 16px; font-weight: 600; margin: 0 0 4px 0; color: #1f2937;">
+								Retention Categories
+							</h3>
+							<p style="font-size: 13px; color: #6b7280; margin: 0;">
+								Configure how long data is retained before automatic deletion
+							</p>
+						</div>
 					</div>
 					<table style="width: 100%; border-collapse: collapse;">
 						<thead>
@@ -643,12 +659,16 @@
 									>Category</th
 								>
 								<th
-									style="padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase;"
+									style="padding: 12px 16px; text-align: center; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase;"
 									>Retention</th
 								>
 								<th
-									style="padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase;"
+									style="padding: 12px 16px; text-align: right; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase;"
 									>Records</th
+								>
+								<th
+									style="padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase;"
+									>Oldest Record</th
 								>
 								<th
 									style="padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600; color: #6b7280; text-transform: uppercase;"
@@ -659,14 +679,34 @@
 						<tbody>
 							{#each dataRetention.categories as category (category.category)}
 								<tr style="border-top: 1px solid #e5e7eb;">
-									<td style="padding: 12px 16px; font-weight: 500; color: #1f2937;">
-										{category.category}
+									<td style="padding: 12px 16px;">
+										<div style="font-weight: 500; color: #1f2937;">
+											{getCategoryDisplayName(category.category)}
+										</div>
+										<div style="font-size: 12px; color: #6b7280; margin-top: 2px;">
+											{getCategoryDescription(category.category)}
+										</div>
 									</td>
-									<td style="padding: 12px 16px; font-size: 14px; color: #374151;">
-										{category.retention_days} days
+									<td style="padding: 12px 16px; text-align: center;">
+										<span
+											style="
+												display: inline-block;
+												padding: 4px 12px;
+												border-radius: 9999px;
+												font-size: 13px;
+												font-weight: 500;
+												background-color: #f3f4f6;
+												color: #374151;
+											"
+										>
+											{category.retention_days} days
+										</span>
 									</td>
-									<td style="padding: 12px 16px; font-size: 14px; color: #374151;">
+									<td style="padding: 12px 16px; text-align: right; font-size: 14px; color: #374151;">
 										{category.records_count.toLocaleString()}
+									</td>
+									<td style="padding: 12px 16px; font-size: 13px; color: #6b7280;">
+										{category.oldest_record ? formatDate(category.oldest_record) : '-'}
 									</td>
 									<td style="padding: 12px 16px; font-size: 13px; color: #6b7280;">
 										{category.next_cleanup ? formatDate(category.next_cleanup) : '-'}
@@ -675,6 +715,23 @@
 							{/each}
 						</tbody>
 					</table>
+				</div>
+
+				<!-- Information Notice -->
+				<div
+					style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 16px; display: flex; gap: 12px; align-items: flex-start;"
+				>
+					<span style="font-size: 20px;">ℹ️</span>
+					<div>
+						<div style="font-weight: 500; color: #1e40af; margin-bottom: 4px;">
+							About Data Retention
+						</div>
+						<p style="font-size: 13px; color: #1e40af; margin: 0;">
+							Data retention policies help maintain GDPR compliance by automatically removing old
+							data. Tombstones (deletion records) are kept longer to provide proof of deletion for
+							regulatory purposes. Contact your administrator to modify retention periods.
+						</p>
+					</div>
 				</div>
 			{/if}
 		</div>
