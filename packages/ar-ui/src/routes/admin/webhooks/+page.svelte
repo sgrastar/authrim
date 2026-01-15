@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import {
 		adminWebhooksAPI,
 		type Webhook,
@@ -207,6 +208,11 @@
 			return url;
 		}
 	}
+
+	function navigateToDeliveries(webhook: Webhook, event: Event) {
+		event.stopPropagation();
+		goto(`/admin/webhooks/${webhook.id}/deliveries`);
+	}
 </script>
 
 <div>
@@ -377,6 +383,20 @@
 							</td>
 							<td style="padding: 12px 16px; text-align: right;">
 								<div style="display: flex; justify-content: flex-end; gap: 8px;">
+									<button
+										onclick={(e) => navigateToDeliveries(webhook, e)}
+										style="
+											padding: 6px 12px;
+											background-color: #fef3c7;
+											color: #92400e;
+											border: none;
+											border-radius: 4px;
+											cursor: pointer;
+											font-size: 13px;
+										"
+									>
+										History
+									</button>
 									<button
 										onclick={(e) => openTestDialog(webhook, e)}
 										style="

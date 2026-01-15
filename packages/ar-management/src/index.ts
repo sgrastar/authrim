@@ -112,6 +112,7 @@ import {
   adminOrganizationMemberRemoveHandler,
   adminRolesListHandler,
   adminRoleGetHandler,
+  adminRoleAssignmentsListHandler,
   adminUserRolesListHandler,
   adminUserRoleAssignHandler,
   adminUserRoleRemoveHandler,
@@ -381,6 +382,7 @@ import {
   disablePluginHandler,
   getPluginHealthHandler,
   getPluginSchemaHandler,
+  ensureBuiltinPluginsRegistered,
 } from './routes/settings/plugins';
 import {
   getNativeSSOSettingsConfig,
@@ -1049,6 +1051,7 @@ app.get('/api/admin/organizations/:id/hierarchy', adminOrganizationHierarchyHand
 // Role management (read-only for system roles, custom roles can be created)
 app.get('/api/admin/roles', adminRolesListHandler);
 app.get('/api/admin/roles/:id', adminRoleGetHandler);
+app.get('/api/admin/roles/:id/assignments', adminRoleAssignmentsListHandler);
 app.post('/api/admin/roles', adminRoleCreateHandler);
 
 // User role assignment management
@@ -1804,6 +1807,20 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const now = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
   const log = createLogger().module('SCHEDULED');
   log.info('D1 cleanup job started', { timestamp: new Date().toISOString() });
+
+  // Register builtin plugins (idempotent - skips if already registered)
+  try {
+    if (env.SETTINGS) {
+      const pluginResult = await ensureBuiltinPluginsRegistered(env.SETTINGS);
+      if (pluginResult && pluginResult.registered > 0) {
+        log.info('Builtin plugins registered during scheduled job', {
+          registered: pluginResult.registered,
+        });
+      }
+    }
+  } catch (pluginError) {
+    log.warn('Builtin plugin registration failed', { error: (pluginError as Error).message });
+  }
 
   try {
     const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });

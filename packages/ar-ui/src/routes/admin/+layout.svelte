@@ -26,6 +26,7 @@
 		{ path: '/admin/settings', label: 'Settings', exact: false },
 		// Phase 6-B: Enterprise Features
 		{ path: '/admin/organizations', label: 'Organizations', exact: false },
+		{ path: '/admin/roles', label: 'Roles', exact: false },
 		{ path: '/admin/role-rules', label: 'Role Rules', exact: false },
 		{ path: '/admin/webhooks', label: 'Webhooks', exact: false },
 		{ path: '/admin/plugins', label: 'Plugins', exact: false },

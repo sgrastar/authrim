@@ -911,7 +911,7 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
       role_name: a.role_name,
       role_display_name: a.role_display_name,
       is_system_role: Boolean(a.is_system),
-      scope: a.scope,
+      scope: a.scope_type,
       scope_target: a.scope_target,
       granted_by: a.granted_by,
       expires_at: a.expires_at ? toMilliseconds(a.expires_at as number) : null,
@@ -1010,7 +1010,7 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
     const assignmentScopeTarget = scope_target || '';
 
     // Validate scope
-    const validScopes = ['global', 'organization', 'resource'];
+    const validScopes = ['global', 'org', 'resource'];
     if (!validScopes.includes(assignmentScope)) {
       return c.json(
         {
@@ -1022,11 +1022,11 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
     }
 
     // If scope is org or resource, scope_target is required
-    if ((assignmentScope === 'organization' || assignmentScope === 'resource') && !scope_target) {
+    if ((assignmentScope === 'org' || assignmentScope === 'resource') && !scope_target) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: 'scope_target is required for organization or resource scope',
+          error_description: 'scope_target is required for org or resource scope',
         },
         400
       );
@@ -1035,7 +1035,7 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
     // Check for duplicate assignment
     const existing = await coreAdapter.queryOne<{ id: string }>(
       `SELECT id FROM role_assignments
-       WHERE subject_id = ? AND role_id = ? AND scope = ? AND scope_target = ?`,
+       WHERE subject_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ?`,
       [userId, role.id, assignmentScope, assignmentScopeTarget]
     );
 
@@ -1053,8 +1053,8 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
     const expiresAtSeconds = expires_at ? Math.floor(expires_at / 1000) : null;
 
     await coreAdapter.execute(
-      `INSERT INTO role_assignments (id, tenant_id, subject_id, role_id, scope, scope_target, granted_by, expires_at, created_at)
-       VALUES (?, '', ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO role_assignments (id, tenant_id, subject_id, role_id, scope_type, scope_target, granted_by, expires_at, created_at, updated_at)
+       VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         assignmentId,
         userId,
@@ -1063,6 +1063,7 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
         assignmentScopeTarget,
         adminAuth?.userId || 'system',
         expiresAtSeconds,
+        now,
         now,
       ]
     );
@@ -1823,6 +1824,121 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
     );
     return c.json(
       { error: 'server_error', error_description: 'Failed to get effective permissions' },
+      500
+    );
+  }
+}
+
+// =============================================================================
+// Role Assignment Listing (by Role)
+// =============================================================================
+
+/**
+ * GET /api/admin/roles/:id/assignments
+ * Get users assigned to a specific role
+ */
+export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const roleId = c.req.param('id');
+    const page = parseInt(c.req.query('page') || '1');
+    const limit = parseInt(c.req.query('limit') || '20');
+    const offset = (page - 1) * limit;
+
+    // Check if role exists
+    const role = await coreAdapter.queryOne<{ id: string; name: string }>(
+      'SELECT id, name FROM roles WHERE id = ?',
+      [roleId]
+    );
+
+    if (!role) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'The requested resource was not found',
+        },
+        404
+      );
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+
+    // Get total count
+    const totalResult = await coreAdapter.queryOne<{ count: number }>(
+      `SELECT COUNT(DISTINCT subject_id) as count FROM role_assignments
+       WHERE role_id = ? AND (expires_at IS NULL OR expires_at > ?)`,
+      [roleId, now]
+    );
+
+    const total = totalResult?.count || 0;
+    const totalPages = Math.ceil(total / limit);
+
+    // Get assignments with pagination
+    const assignments = await coreAdapter.query<Record<string, unknown>>(
+      `SELECT DISTINCT ra.id, ra.subject_id, ra.scope_type, ra.scope_target, ra.granted_by, ra.expires_at, ra.created_at
+       FROM role_assignments ra
+       WHERE ra.role_id = ? AND (ra.expires_at IS NULL OR ra.expires_at > ?)
+       ORDER BY ra.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [roleId, now, limit, offset]
+    );
+
+    // Fetch PII for users from PII DB
+    const userIds = [...new Set(assignments.map((a) => a.subject_id as string))];
+    const userPIIMap = new Map<string, { email: string | null; name: string | null }>();
+
+    if (piiAdapter && userIds.length > 0) {
+      const placeholders = userIds.map(() => '?').join(',');
+      const piiResult = await piiAdapter.query<{
+        id: string;
+        email: string | null;
+        name: string | null;
+      }>(`SELECT id, email, name FROM users_pii WHERE id IN (${placeholders})`, userIds);
+
+      for (const pii of piiResult) {
+        userPIIMap.set(pii.id, {
+          email: pii.email || null,
+          name: pii.name || null,
+        });
+      }
+    }
+
+    const formattedAssignments = assignments.map((a: Record<string, unknown>) => {
+      const pii = userPIIMap.get(a.subject_id as string);
+      return {
+        assignment_id: a.id,
+        user_id: a.subject_id,
+        user_email: pii?.email || null,
+        user_name: pii?.name || null,
+        scope: a.scope_type,
+        scope_target: a.scope_target,
+        granted_by: a.granted_by,
+        expires_at: a.expires_at ? toMilliseconds(a.expires_at as number) : null,
+        assigned_at: toMilliseconds(a.created_at as number),
+      };
+    });
+
+    return c.json({
+      role_id: roleId,
+      role_name: role.name,
+      assignments: formattedAssignments,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error('Admin role assignments list error', { action: 'list_role_assignments' }, error as Error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to retrieve role assignments',
+      },
       500
     );
   }
