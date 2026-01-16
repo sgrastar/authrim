@@ -26,6 +26,7 @@
  */
 
 import { Hono, type Context } from 'hono';
+import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '@authrim/ar-lib-core';
 import migrateRouter from './migrate';
 import {
@@ -43,6 +44,11 @@ import {
   type CategoryMeta,
   ConflictError,
   ALL_CATEGORY_META,
+  CATEGORY_SCOPE_CONFIG,
+  type CategoryName,
+  type SettingScopeLevel,
+  getScopedCategoryMeta,
+  DEFAULT_SCOPE_PERMISSIONS,
   // Rate limiting
   rateLimitMiddleware,
   getRateLimitProfileAsync,
@@ -62,6 +68,100 @@ interface AdminUser {
   id: string;
   email?: string;
   role?: string;
+  tenantId?: string; // For org_admin, the tenant they belong to
+}
+
+// =============================================================================
+// Authorization Helper Functions
+// =============================================================================
+
+/**
+ * Check if user has permission for a category at a given scope level
+ */
+function checkRolePermission(
+  userRoles: string[],
+  category: CategoryName,
+  scopeLevel: SettingScopeLevel,
+  action: 'view' | 'edit'
+): boolean {
+  // system_admin always has access
+  if (userRoles.includes('system_admin')) {
+    return true;
+  }
+
+  const scopedMeta = getScopedCategoryMeta(category);
+  const perms = scopedMeta.scopePermissions[scopeLevel];
+
+  if (action === 'edit') {
+    return perms.editRoles.some((role) => userRoles.includes(role));
+  }
+  return perms.viewRoles.some((role) => userRoles.includes(role));
+}
+
+/**
+ * Check if a category is available at a given scope level
+ */
+function isCategoryAllowedAtScope(category: CategoryName, scopeLevel: SettingScopeLevel): boolean {
+  const scopeConfig = CATEGORY_SCOPE_CONFIG[category];
+  return scopeConfig?.allowedScopes.includes(scopeLevel) ?? false;
+}
+
+/**
+ * Get the tenant ID that owns a client
+ * Returns null if client not found
+ */
+async function getClientTenantId(env: Env, clientId: string): Promise<string | null> {
+  try {
+    // Try to get client metadata from KV
+    const clientKey = `client:${clientId}:metadata`;
+    const clientData = await env.AUTHRIM_CONFIG?.get(clientKey, 'json') as { tenant_id?: string } | null;
+    if (clientData?.tenant_id) {
+      return clientData.tenant_id;
+    }
+
+    // Fallback: Try to get from D1 database if available
+    const db = env.DB as D1Database | undefined;
+    if (db) {
+      const result = await db.prepare(
+        'SELECT tenant_id FROM clients WHERE client_id = ?'
+      ).bind(clientId).first<{ tenant_id: string }>();
+      return result?.tenant_id ?? null;
+    }
+
+    return null;
+  } catch {
+    log.warn('Failed to get client tenant ID', { clientId });
+    return null;
+  }
+}
+
+/**
+ * Check if user can access a specific tenant's data
+ * system_admin and distributor_admin can access any tenant
+ * org_admin can only access their own tenant
+ */
+function canAccessTenant(adminUser: AdminUser | undefined, tenantId: string): boolean {
+  if (!adminUser) return false;
+
+  const userRoles = adminUser.role ? [adminUser.role] : [];
+
+  // system_admin and distributor_admin can access any tenant
+  if (userRoles.includes('system_admin') || userRoles.includes('distributor_admin')) {
+    return true;
+  }
+
+  // org_admin can only access their own tenant
+  if (userRoles.includes('org_admin')) {
+    return adminUser.tenantId === tenantId;
+  }
+
+  // viewer with tenant association
+  if (userRoles.includes('viewer')) {
+    // Viewers can view if they have tenant association or are system-wide
+    return !adminUser.tenantId || adminUser.tenantId === tenantId;
+  }
+
+  return false;
 }
 
 /**
@@ -201,7 +301,35 @@ settingsV2.use('/settings/meta/:category', async (c, next) => {
  */
 settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
   const tenantId = c.req.param('tenantId');
-  const category = c.req.param('category');
+  const category = c.req.param('category') as CategoryName;
+
+  // Security Check 1: Validate category exists
+  if (!ALL_CATEGORY_META[category]) {
+    return errorResponse(c, 'not_found', `Category '${category}' not found`, 404);
+  }
+
+  // Security Check 2: Validate category is available at tenant scope
+  if (!isCategoryAllowedAtScope(category, 'tenant')) {
+    return errorResponse(
+      c,
+      'bad_request',
+      `Category '${category}' is not available at tenant scope`,
+      400
+    );
+  }
+
+  // Security Check 3: Validate user has permission for this category at tenant scope
+  const adminUser = c.get('adminUser');
+  const userRoles = adminUser?.role ? [adminUser.role] : [];
+
+  if (!checkRolePermission(userRoles, category, 'tenant', 'view')) {
+    return errorResponse(c, 'forbidden', 'Insufficient permissions to view tenant settings', 403);
+  }
+
+  // Security Check 4: Validate user can access this specific tenant
+  if (!canAccessTenant(adminUser, tenantId)) {
+    return errorResponse(c, 'forbidden', 'Cannot access settings for this tenant', 403);
+  }
 
   const manager = getSettingsManager(c.env);
   const scope: SettingScope = { type: 'tenant', id: tenantId };
@@ -223,7 +351,35 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
  */
 settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
   const tenantId = c.req.param('tenantId');
-  const category = c.req.param('category');
+  const category = c.req.param('category') as CategoryName;
+
+  // Security Check 1: Validate category exists
+  if (!ALL_CATEGORY_META[category]) {
+    return errorResponse(c, 'not_found', `Category '${category}' not found`, 404);
+  }
+
+  // Security Check 2: Validate category is available at tenant scope
+  if (!isCategoryAllowedAtScope(category, 'tenant')) {
+    return errorResponse(
+      c,
+      'bad_request',
+      `Category '${category}' is not available at tenant scope`,
+      400
+    );
+  }
+
+  // Security Check 3: Validate user has EDIT permission for this category at tenant scope
+  const adminUser = c.get('adminUser');
+  const userRoles = adminUser?.role ? [adminUser.role] : [];
+
+  if (!checkRolePermission(userRoles, category, 'tenant', 'edit')) {
+    return errorResponse(c, 'forbidden', 'Insufficient permissions to edit tenant settings', 403);
+  }
+
+  // Security Check 4: Validate user can access this specific tenant
+  if (!canAccessTenant(adminUser, tenantId)) {
+    return errorResponse(c, 'forbidden', 'Cannot modify settings for this tenant', 403);
+  }
 
   const manager = getSettingsManager(c.env);
   const scope: SettingScope = { type: 'tenant', id: tenantId };
@@ -239,7 +395,7 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
     }
 
     // Get actor from context (set by auth middleware)
-    const actor = c.get('adminUser')?.id ?? 'unknown';
+    const actor = adminUser?.id ?? 'unknown';
 
     const result = await manager.patch(category, scope, body, actor);
 
@@ -296,10 +452,30 @@ settingsV2.patch('/tenants/:tenantId/settings/:category', async (c) => {
 
 /**
  * GET /api/admin/clients/:clientId/settings
- * Get all settings for a client
+ * Get all settings for a client (default 'client' category)
  */
 settingsV2.get('/clients/:clientId/settings', async (c) => {
   const clientId = c.req.param('clientId');
+  const category: CategoryName = 'client';
+
+  // Security Check 1: Validate user has permission for client settings
+  const adminUser = c.get('adminUser');
+  const userRoles = adminUser?.role ? [adminUser.role] : [];
+
+  if (!checkRolePermission(userRoles, category, 'client', 'view')) {
+    return errorResponse(c, 'forbidden', 'Insufficient permissions to view client settings', 403);
+  }
+
+  // Security Check 2: Get client's tenant and verify access
+  const clientTenantId = await getClientTenantId(c.env, clientId);
+  if (!clientTenantId) {
+    return errorResponse(c, 'not_found', `Client '${clientId}' not found`, 404);
+  }
+
+  // Security Check 3: Validate user can access this client's tenant
+  if (!canAccessTenant(adminUser, clientTenantId)) {
+    return errorResponse(c, 'forbidden', 'Cannot access settings for clients in other tenants', 403);
+  }
 
   const manager = getSettingsManager(c.env);
   const scope: SettingScope = { type: 'client', id: clientId };
@@ -317,11 +493,87 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
 });
 
 /**
+ * GET /api/admin/clients/:clientId/settings/:category
+ * Get category-specific settings for a client (for categories that allow client-level override)
+ */
+settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
+  const clientId = c.req.param('clientId');
+  const category = c.req.param('category') as CategoryName;
+
+  // Security Check 1: Check if category exists
+  if (!ALL_CATEGORY_META[category]) {
+    return errorResponse(c, 'not_found', `Category '${category}' not found`, 404);
+  }
+
+  // Security Check 2: Check if category allows client-level settings
+  if (!isCategoryAllowedAtScope(category, 'client')) {
+    return errorResponse(
+      c,
+      'bad_request',
+      `Category '${category}' does not support client-level settings`,
+      400
+    );
+  }
+
+  // Security Check 3: Validate user has permission for this category at client scope
+  const adminUser = c.get('adminUser');
+  const userRoles = adminUser?.role ? [adminUser.role] : [];
+
+  if (!checkRolePermission(userRoles, category, 'client', 'view')) {
+    return errorResponse(c, 'forbidden', 'Insufficient permissions to view client settings', 403);
+  }
+
+  // Security Check 4: Get client's tenant and verify access
+  const clientTenantId = await getClientTenantId(c.env, clientId);
+  if (!clientTenantId) {
+    return errorResponse(c, 'not_found', `Client '${clientId}' not found`, 404);
+  }
+
+  // Security Check 5: Validate user can access this client's tenant
+  if (!canAccessTenant(adminUser, clientTenantId)) {
+    return errorResponse(c, 'forbidden', 'Cannot access settings for clients in other tenants', 403);
+  }
+
+  const manager = getSettingsManager(c.env);
+  const scope: SettingScope = { type: 'client', id: clientId };
+
+  try {
+    const result = await manager.getAll(category, scope);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('Unknown category')) {
+      return errorResponse(c, 'not_found', `Category '${category}' not found`, 404);
+    }
+    throw error;
+  }
+});
+
+/**
  * PATCH /api/admin/clients/:clientId/settings
- * Partial update settings for a client
+ * Partial update settings for a client (default 'client' category)
  */
 settingsV2.patch('/clients/:clientId/settings', async (c) => {
   const clientId = c.req.param('clientId');
+  const category: CategoryName = 'client';
+
+  // Security Check 1: Validate user has EDIT permission for client settings
+  const adminUser = c.get('adminUser');
+  const userRoles = adminUser?.role ? [adminUser.role] : [];
+
+  if (!checkRolePermission(userRoles, category, 'client', 'edit')) {
+    return errorResponse(c, 'forbidden', 'Insufficient permissions to edit client settings', 403);
+  }
+
+  // Security Check 2: Get client's tenant and verify access
+  const clientTenantId = await getClientTenantId(c.env, clientId);
+  if (!clientTenantId) {
+    return errorResponse(c, 'not_found', `Client '${clientId}' not found`, 404);
+  }
+
+  // Security Check 3: Validate user can access this client's tenant
+  if (!canAccessTenant(adminUser, clientTenantId)) {
+    return errorResponse(c, 'forbidden', 'Cannot modify settings for clients in other tenants', 403);
+  }
 
   const manager = getSettingsManager(c.env);
   const scope: SettingScope = { type: 'client', id: clientId };
@@ -335,7 +587,7 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
     }
 
-    const actor = c.get('adminUser')?.id ?? 'unknown';
+    const actor = adminUser?.id ?? 'unknown';
     const result = await manager.patch('client', scope, body, actor);
 
     const hasRejections = Object.keys(result.rejected).length > 0;
@@ -368,6 +620,99 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
         },
         409
       );
+    }
+    throw error;
+  }
+});
+
+/**
+ * PATCH /api/admin/clients/:clientId/settings/:category
+ * Partial update category-specific settings for a client
+ */
+settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
+  const clientId = c.req.param('clientId');
+  const category = c.req.param('category') as CategoryName;
+
+  // Security Check 1: Check if category exists
+  if (!ALL_CATEGORY_META[category]) {
+    return errorResponse(c, 'not_found', `Category '${category}' not found`, 404);
+  }
+
+  // Security Check 2: Check if category allows client-level settings
+  if (!isCategoryAllowedAtScope(category, 'client')) {
+    return errorResponse(
+      c,
+      'bad_request',
+      `Category '${category}' does not support client-level settings`,
+      400
+    );
+  }
+
+  // Security Check 3: Validate user has EDIT permission for this category at client scope
+  const adminUser = c.get('adminUser');
+  const userRoles = adminUser?.role ? [adminUser.role] : [];
+
+  if (!checkRolePermission(userRoles, category, 'client', 'edit')) {
+    return errorResponse(c, 'forbidden', 'Insufficient permissions to edit client settings', 403);
+  }
+
+  // Security Check 4: Get client's tenant and verify access
+  const clientTenantId = await getClientTenantId(c.env, clientId);
+  if (!clientTenantId) {
+    return errorResponse(c, 'not_found', `Client '${clientId}' not found`, 404);
+  }
+
+  // Security Check 5: Validate user can access this client's tenant
+  if (!canAccessTenant(adminUser, clientTenantId)) {
+    return errorResponse(c, 'forbidden', 'Cannot modify settings for clients in other tenants', 403);
+  }
+
+  const manager = getSettingsManager(c.env);
+  const scope: SettingScope = { type: 'client', id: clientId };
+
+  try {
+    const rawBody = await c.req.json();
+    const body = parsePatchRequest(rawBody);
+
+    if (!body.ifMatch) {
+      return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+    }
+
+    const actor = adminUser?.id ?? 'unknown';
+    const result = await manager.patch(category, scope, body, actor);
+
+    const hasRejections = Object.keys(result.rejected).length > 0;
+    const hasApplied =
+      result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+
+    if (!hasApplied && hasRejections) {
+      return c.json(
+        {
+          error: 'validation_failed',
+          message: 'All changes were rejected',
+          ...result,
+        },
+        400
+      );
+    }
+
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+    }
+    if (error instanceof ConflictError) {
+      return c.json(
+        {
+          error: 'conflict',
+          message: error.message,
+          currentVersion: error.currentVersion,
+        },
+        409
+      );
+    }
+    if (error instanceof Error && error.message.includes('Unknown category')) {
+      return errorResponse(c, 'not_found', `Category '${category}' not found`, 404);
     }
     throw error;
   }
@@ -455,6 +800,66 @@ settingsV2.get('/settings/meta', (c) => {
   }));
 
   return c.json({ categories });
+});
+
+/**
+ * GET /api/admin/settings/meta/:category/scope
+ * Get scope information for a category (allowed scopes and user permissions)
+ *
+ * Security: Only returns scopes the user has access to (view or edit)
+ * to prevent information disclosure about the permission structure.
+ */
+settingsV2.get('/settings/meta/:category/scope', async (c) => {
+  const category = c.req.param('category') as CategoryName;
+
+  // Check if category exists
+  if (!ALL_CATEGORY_META[category]) {
+    return errorResponse(c, 'not_found', `Category '${category}' not found`, 404);
+  }
+
+  const scopeConfig = CATEGORY_SCOPE_CONFIG[category];
+  if (!scopeConfig) {
+    return errorResponse(c, 'not_found', `Scope configuration for '${category}' not found`, 404);
+  }
+
+  // Get user from context
+  const adminUser = c.get('adminUser');
+  const userRoles = adminUser?.role ? [adminUser.role] : [];
+
+  // Get scoped metadata for permissions
+  const scopedMeta = getScopedCategoryMeta(category);
+
+  // Compute user permissions and filter to only accessible scopes
+  const accessibleScopes: SettingScopeLevel[] = [];
+  const userPermissions: Partial<Record<SettingScopeLevel, 'view' | 'edit'>> = {};
+
+  for (const scope of scopeConfig.allowedScopes) {
+    const perms = scopedMeta.scopePermissions[scope];
+    let permission: 'view' | 'edit' | 'none' = 'none';
+
+    // Check edit permission first
+    if (perms.editRoles.some((role) => userRoles.includes(role))) {
+      permission = 'edit';
+    } else if (perms.viewRoles.some((role) => userRoles.includes(role))) {
+      permission = 'view';
+    } else if (userRoles.includes('system_admin')) {
+      // system_admin always has access
+      permission = perms.editRoles.length > 0 ? 'edit' : 'view';
+    }
+
+    // Only include scopes the user can access
+    if (permission !== 'none') {
+      accessibleScopes.push(scope);
+      userPermissions[scope] = permission;
+    }
+  }
+
+  // Return only accessible scopes and their permissions
+  // (Does not reveal scopes the user cannot access)
+  return c.json({
+    allowedScopes: accessibleScopes,
+    userPermissions,
+  });
 });
 
 // =============================================================================

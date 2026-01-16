@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import {
 		adminSettingsAPI,
+		scopedSettingsAPI,
 		isInternalSetting,
 		SettingsConflictError,
 		convertPatchesToAPIRequest,
@@ -10,8 +11,11 @@
 		type SettingMetaItem,
 		type UIPatch,
 		type SettingSource,
-		type CategoryName
+		type CategoryName,
+		type ScopeContext
 	} from '$lib/api/admin-settings';
+	import { InheritanceIndicator } from '$lib/components/admin';
+	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	interface PageData {
 		category: CategoryName;
@@ -30,12 +34,38 @@
 	// Track pending changes
 	let pendingPatches = $state<UIPatch[]>([]);
 
+	// Get current scope context from store
+	let scopeContext = $derived(settingsContext.scopeContext as ScopeContext);
+	let canEdit = $derived(settingsContext.canEditAtCurrentScope());
+	let currentLevel = $derived(settingsContext.currentLevel);
+
 	// Derived: Check if there are unsaved changes
 	const hasChanges = $derived(pendingPatches.length > 0);
 
 	// Load data on mount
 	onMount(async () => {
+		await settingsContext.initialize();
 		await loadData();
+	});
+
+	// Track previous scope context to detect changes
+	let prevScopeKey = $state<string | null>(null);
+
+	// Reload when scope changes
+	$effect(() => {
+		// Build a key from all scope context values to detect any change
+		const scopeKey = `${scopeContext.level}:${scopeContext.tenantId}:${scopeContext.clientId}`;
+
+		// Skip if same scope (no change) or initial load
+		if (scopeKey === prevScopeKey) return;
+
+		// Update previous scope key
+		prevScopeKey = scopeKey;
+
+		// Only reload if meta is already loaded (not initial load)
+		if (meta) {
+			loadData();
+		}
 	});
 
 	async function loadData() {
@@ -44,13 +74,19 @@
 		pendingPatches = [];
 
 		try {
-			// Fetch meta and settings in parallel
-			const [metaResult, settingsResult] = await Promise.all([
-				adminSettingsAPI.getMeta(data.category),
-				adminSettingsAPI.getSettings(data.category)
-			]);
-
+			// Fetch meta
+			const metaResult = await adminSettingsAPI.getMeta(data.category);
 			meta = metaResult;
+
+			// Fetch settings based on current scope
+			let settingsResult: CategorySettings;
+			try {
+				settingsResult = await scopedSettingsAPI.getSettingsForScope(data.category, scopeContext);
+			} catch {
+				// Fall back to tenant settings if scope-specific fails
+				settingsResult = await adminSettingsAPI.getSettings(data.category);
+			}
+
 			settings = settingsResult;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load settings';
@@ -76,26 +112,15 @@
 		return settings?.sources[key] === 'env';
 	}
 
-	// Check if a setting is locked (by env OR by internal visibility)
+	// Check if a setting is locked (by env OR by internal visibility OR no edit permission)
 	function isSettingLocked(key: string, settingMeta: SettingMetaItem): boolean {
+		// Locked if no edit permission at current scope
+		if (!canEdit) return true;
 		// Locked if set by environment variable
 		if (isLockedByEnv(key)) return true;
 		// Locked if visibility is 'internal' (setup-time only settings)
 		if (isInternalSetting(settingMeta)) return true;
 		return false;
-	}
-
-	// Get source badge text and style
-	function getSourceBadge(key: string): { text: string; bg: string; color: string } {
-		const source = settings?.sources[key] as SettingSource;
-		switch (source) {
-			case 'env':
-				return { text: 'env', bg: '#fef3c7', color: '#92400e' };
-			case 'kv':
-				return { text: 'kv', bg: '#dbeafe', color: '#1e40af' };
-			default:
-				return { text: 'default', bg: '#f3f4f6', color: '#6b7280' };
-		}
 	}
 
 	// Handle value change
@@ -119,13 +144,21 @@
 	async function saveChanges() {
 		if (!settings || pendingPatches.length === 0) return;
 
+		// Check if editing is allowed at current scope
+		if (!canEdit) {
+			error = 'You do not have permission to edit settings at this scope level';
+			return;
+		}
+
 		saving = true;
 		error = '';
 		successMessage = '';
 
 		try {
 			const patchData = convertPatchesToAPIRequest(pendingPatches);
-			const result = await adminSettingsAPI.updateSettings(data.category, {
+
+			// Use scope-aware API for updates
+			const result = await scopedSettingsAPI.updateSettingsForScope(data.category, scopeContext, {
 				ifMatch: settings.version,
 				...patchData
 			});
@@ -179,9 +212,53 @@
 			← Back to Settings
 		</a>
 		{#if meta}
-			<h1 style="font-size: 24px; font-weight: bold; color: #111827; margin: 8px 0 4px 0;">
-				{meta.label}
-			</h1>
+			<div style="display: flex; align-items: center; gap: 12px; margin: 8px 0 4px 0;">
+				<h1 style="font-size: 24px; font-weight: bold; color: #111827; margin: 0;">
+					{meta.label}
+				</h1>
+				<!-- Scope Badge -->
+				<span
+					style="
+						display: inline-flex;
+						align-items: center;
+						gap: 4px;
+						padding: 4px 10px;
+						background-color: {currentLevel === 'platform'
+						? '#dbeafe'
+						: currentLevel === 'tenant'
+							? '#d1fae5'
+							: '#fef3c7'};
+						color: {currentLevel === 'platform'
+						? '#1d4ed8'
+						: currentLevel === 'tenant'
+							? '#065f46'
+							: '#92400e'};
+						border-radius: 9999px;
+						font-size: 12px;
+						font-weight: 500;
+					"
+				>
+					{currentLevel === 'platform' ? '🏗️' : currentLevel === 'tenant' ? '🏢' : '📦'}
+					{currentLevel.charAt(0).toUpperCase() + currentLevel.slice(1)}
+				</span>
+				{#if !canEdit}
+					<span
+						style="
+							display: inline-flex;
+							align-items: center;
+							gap: 4px;
+							padding: 4px 10px;
+							background-color: #fef3c7;
+							color: #92400e;
+							border-radius: 9999px;
+							font-size: 12px;
+							font-weight: 500;
+						"
+					>
+						🔒 Read-only
+					</span>
+				{/if}
+			</div>
 			<p style="color: #6b7280; margin: 0;">
 				{meta.description}
 			</p>
@@ -226,7 +303,6 @@
 			{#each Object.entries(meta.settings) as [key, settingMeta], index (key)}
 				{@const value = getCurrentValue(key)}
 				{@const locked = isSettingLocked(key, settingMeta)}
-				{@const sourceBadge = getSourceBadge(key)}
 				{@const hasPendingChange = pendingPatches.some((p) => p.key === key)}
 				<div
 					style="
@@ -243,12 +319,13 @@
 								<label for={key} style="font-weight: 500; color: #111827; font-size: 14px;">
 									{settingMeta.label}
 								</label>
-								<span
-									style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background-color: {sourceBadge.bg}; color: {sourceBadge.color};"
-								>
-									{sourceBadge.text}
-								</span>
-								{#if locked}
+								<InheritanceIndicator
+									source={settings?.sources[key] as SettingSource || 'default'}
+									currentScope={currentLevel}
+									canEdit={canEdit}
+									compact={true}
+								/>
+								{#if locked && !isLockedByEnv(key)}
 									<span style="font-size: 12px; color: #92400e;">🔒 Locked</span>
 								{/if}
 								{#if hasPendingChange}

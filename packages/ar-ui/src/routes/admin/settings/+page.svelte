@@ -5,11 +5,48 @@
 		type CategoryMeta,
 		PLATFORM_CATEGORIES
 	} from '$lib/api/admin-settings';
+	import { SettingsScopeSelector } from '$lib/components/admin';
+	import { settingsContext, type SettingScopeLevel } from '$lib/stores/settings-context.svelte';
+
+	// Category scope configuration (which categories are available at which scope)
+	const CATEGORY_SCOPES: Record<string, SettingScopeLevel[]> = {
+		// Platform-only categories
+		infrastructure: ['platform'],
+		encryption: ['platform'],
+		cache: ['platform'],
+		// Platform + Tenant
+		'rate-limit': ['platform', 'tenant'],
+		'feature-flags': ['platform', 'tenant'],
+		limits: ['platform', 'tenant'],
+		'check-api-audit': ['platform', 'tenant'],
+		// Tenant + Client (can be overridden at client level)
+		oauth: ['tenant', 'client'],
+		security: ['tenant', 'client'],
+		consent: ['tenant', 'client'],
+		'device-flow': ['tenant', 'client'],
+		// Tenant-only
+		session: ['tenant'],
+		ciba: ['tenant'],
+		tokens: ['tenant'],
+		'external-idp': ['tenant'],
+		credentials: ['tenant'],
+		federation: ['tenant'],
+		tenant: ['tenant'],
+		vc: ['tenant'],
+		discovery: ['tenant'],
+		plugin: ['tenant'],
+		assurance: ['tenant'],
+		// Client-only
+		client: ['client']
+	};
 
 	// State
 	let categories = $state<CategoryMeta[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+
+	// Get current scope from context
+	let currentScope = $derived(settingsContext.currentLevel);
 
 	// Category icons and colors for visual distinction
 	const categoryStyles: Record<string, { icon: string; color: string }> = {
@@ -44,6 +81,22 @@
 		return PLATFORM_CATEGORIES.includes(category as (typeof PLATFORM_CATEGORIES)[number]);
 	}
 
+	// Check if a category is available at the current scope
+	function isCategoryAvailableAtScope(category: string, scope: SettingScopeLevel): boolean {
+		const allowedScopes = CATEGORY_SCOPES[category];
+		if (!allowedScopes) return true; // If not defined, show by default
+		return allowedScopes.includes(scope);
+	}
+
+	// Filter categories based on current scope
+	let filteredCategories = $derived(
+		categories.filter((cat) => isCategoryAvailableAtScope(cat.category, currentScope))
+	);
+
+	// Check if special cards should be shown
+	let showSigningKeys = $derived(currentScope === 'tenant');
+	let showSharding = $derived(currentScope === 'platform');
+
 	// Get style for category
 	function getStyle(category: string) {
 		return categoryStyles[category] || { icon: '⚙️', color: '#6b7280' };
@@ -51,6 +104,9 @@
 
 	onMount(async () => {
 		try {
+			// Initialize settings context (for scope)
+			await settingsContext.initialize();
+
 			const result = await adminSettingsAPI.getCategories();
 			categories = result.categories;
 		} catch (err) {
@@ -70,6 +126,11 @@
 		</p>
 	</div>
 
+	<!-- Scope Selector -->
+	<div style="margin-bottom: 24px;">
+		<SettingsScopeSelector />
+	</div>
+
 	{#if error}
 		<div
 			style="background-color: #fee2e2; border: 1px solid #ef4444; color: #b91c1c; padding: 12px; border-radius: 6px; margin-bottom: 16px;"
@@ -87,7 +148,8 @@
 		<div
 			style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;"
 		>
-			<!-- Signing Keys (special card) -->
+			<!-- Signing Keys (special card) - Tenant scope only -->
+			{#if showSigningKeys}
 			<a
 				href="/admin/settings/signing-keys"
 				style="
@@ -125,8 +187,10 @@
 					Manage JWT signing keys for token issuance and rotation
 				</p>
 			</a>
+			{/if}
 
-			<!-- DO Sharding Configuration (special card) -->
+			<!-- Sharding Configuration (special card) - Platform scope only -->
+			{#if showSharding}
 			<a
 				href="/admin/settings/sharding"
 				style="
@@ -151,7 +215,7 @@
 					<span style="font-size: 24px;">🗂️</span>
 					<div>
 						<h2 style="font-size: 16px; font-weight: 600; color: #111827; margin: 0;">
-							DO Sharding
+							Sharding
 						</h2>
 						<span
 							style="font-size: 12px; background-color: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px;"
@@ -161,12 +225,13 @@
 					</div>
 				</div>
 				<p style="font-size: 14px; color: #6b7280; margin: 0;">
-					Configure Durable Object shard counts for load distribution
+					Configure shard counts for load distribution
 				</p>
 			</a>
+			{/if}
 
-			<!-- Category Cards -->
-			{#each categories as category (category.category)}
+			<!-- Category Cards (filtered by scope) -->
+			{#each filteredCategories as category (category.category)}
 				{@const style = getStyle(category.category)}
 				{@const isReadOnly = isPlatformCategory(category.category)}
 				<a

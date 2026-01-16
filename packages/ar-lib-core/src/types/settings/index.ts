@@ -46,6 +46,10 @@ export type {
   SettingsAuditEvent,
 } from '../../utils/settings-manager';
 
+// Re-export scope types
+export type { SettingScopeLevel, ScopePermission, ScopedCategoryMeta } from './common';
+export { DEFAULT_SCOPE_PERMISSIONS, defineScopedCategory } from './common';
+
 export {
   DISABLED_MARKER,
   isDisabled,
@@ -125,3 +129,167 @@ export const ALL_CATEGORY_META = {
  * Category names (for type safety)
  */
 export type CategoryName = keyof typeof ALL_CATEGORY_META;
+
+import type { SettingScopeLevel, ScopePermission, ScopedCategoryMeta } from './common';
+import { DEFAULT_SCOPE_PERMISSIONS } from './common';
+
+/**
+ * Category scope configuration
+ * Defines which scopes each category is available at and role-based permissions
+ */
+export const CATEGORY_SCOPE_CONFIG: Record<
+  CategoryName,
+  {
+    allowedScopes: SettingScopeLevel[];
+    scopePermissions?: Partial<Record<SettingScopeLevel, Partial<ScopePermission>>>;
+  }
+> = {
+  // Platform-only categories (infrastructure settings)
+  infrastructure: {
+    allowedScopes: ['platform'],
+    scopePermissions: {
+      platform: { viewRoles: ['system_admin', 'viewer'], editRoles: [] }, // read-only
+    },
+  },
+  encryption: {
+    allowedScopes: ['platform'],
+    scopePermissions: {
+      platform: { viewRoles: ['system_admin'], editRoles: [] }, // read-only, restricted view
+    },
+  },
+  cache: {
+    allowedScopes: ['platform'],
+  },
+
+  // Platform + Tenant categories
+  'rate-limit': {
+    allowedScopes: ['platform', 'tenant'],
+  },
+  'feature-flags': {
+    allowedScopes: ['platform', 'tenant'],
+  },
+  limits: {
+    allowedScopes: ['platform', 'tenant'],
+  },
+  'check-api-audit': {
+    allowedScopes: ['platform', 'tenant'],
+  },
+
+  // Tenant + Client categories (can be overridden at client level)
+  oauth: {
+    allowedScopes: ['tenant', 'client'],
+  },
+  security: {
+    allowedScopes: ['tenant', 'client'],
+  },
+  consent: {
+    allowedScopes: ['tenant', 'client'],
+  },
+  'device-flow': {
+    allowedScopes: ['tenant', 'client'],
+  },
+
+  // Tenant-only categories
+  session: {
+    allowedScopes: ['tenant'],
+  },
+  ciba: {
+    allowedScopes: ['tenant'],
+  },
+  tokens: {
+    allowedScopes: ['tenant'],
+  },
+  'external-idp': {
+    allowedScopes: ['tenant'],
+  },
+  credentials: {
+    allowedScopes: ['tenant'],
+  },
+  federation: {
+    allowedScopes: ['tenant'],
+  },
+  tenant: {
+    allowedScopes: ['tenant'],
+  },
+  vc: {
+    allowedScopes: ['tenant'],
+  },
+  discovery: {
+    allowedScopes: ['tenant'],
+  },
+  plugin: {
+    allowedScopes: ['tenant'],
+  },
+  assurance: {
+    allowedScopes: ['tenant'],
+  },
+
+  // Client-only category
+  client: {
+    allowedScopes: ['client'],
+  },
+};
+
+/**
+ * Get scoped category metadata for a category
+ */
+export function getScopedCategoryMeta(categoryName: CategoryName): ScopedCategoryMeta {
+  const baseMeta = ALL_CATEGORY_META[categoryName];
+  const scopeConfig = CATEGORY_SCOPE_CONFIG[categoryName];
+
+  // Merge default permissions with category-specific overrides
+  const scopePermissions: Record<SettingScopeLevel, ScopePermission> = {
+    platform: { ...DEFAULT_SCOPE_PERMISSIONS.platform },
+    tenant: { ...DEFAULT_SCOPE_PERMISSIONS.tenant },
+    client: { ...DEFAULT_SCOPE_PERMISSIONS.client },
+  };
+
+  if (scopeConfig.scopePermissions) {
+    for (const [scope, perms] of Object.entries(scopeConfig.scopePermissions)) {
+      const scopeLevel = scope as SettingScopeLevel;
+      // Use !== undefined to properly handle empty arrays (e.g., editRoles: [] for read-only)
+      if (perms.viewRoles !== undefined) {
+        scopePermissions[scopeLevel].viewRoles = perms.viewRoles;
+      }
+      if (perms.editRoles !== undefined) {
+        scopePermissions[scopeLevel].editRoles = perms.editRoles;
+      }
+    }
+  }
+
+  return {
+    ...baseMeta,
+    allowedScopes: scopeConfig.allowedScopes,
+    scopePermissions,
+  };
+}
+
+/**
+ * Get all scoped category metadata
+ */
+export function getAllScopedCategoryMeta(): Record<CategoryName, ScopedCategoryMeta> {
+  const result = {} as Record<CategoryName, ScopedCategoryMeta>;
+  for (const categoryName of Object.keys(ALL_CATEGORY_META) as CategoryName[]) {
+    result[categoryName] = getScopedCategoryMeta(categoryName);
+  }
+  return result;
+}
+
+/**
+ * Get categories available at a specific scope level
+ */
+export function getCategoriesForScope(scope: SettingScopeLevel): CategoryName[] {
+  return (Object.keys(CATEGORY_SCOPE_CONFIG) as CategoryName[]).filter((category) =>
+    CATEGORY_SCOPE_CONFIG[category].allowedScopes.includes(scope)
+  );
+}
+
+/**
+ * Check if a category is available at a specific scope level
+ */
+export function isCategoryAvailableAtScope(
+  category: CategoryName,
+  scope: SettingScopeLevel
+): boolean {
+  return CATEGORY_SCOPE_CONFIG[category]?.allowedScopes.includes(scope) ?? false;
+}

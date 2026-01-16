@@ -10,22 +10,12 @@ import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 
 /**
  * Infrastructure Settings Interface
+ *
+ * Note: Sharding settings (code_shards, session_shards, challenge_shards,
+ * revocation_shards, flow_state_shards, region_*) are managed in the
+ * dedicated Sharding Configuration page (/admin/settings/sharding).
  */
 export interface InfrastructureSettings {
-  // Sharding Configuration
-  'infra.code_shards': number;
-  'infra.session_shards': number;
-  'infra.challenge_shards': number;
-  'infra.revocation_shards': number;
-  'infra.flow_state_shards': number;
-
-  // Region Sharding
-  'infra.region_total_shards': number;
-  'infra.region_enam_percent': number;
-  'infra.region_weur_percent': number;
-  'infra.region_apac_percent': number;
-  'infra.region_generation': number;
-
   // Cache Configuration
   'infra.config_cache_ttl': number;
   'infra.tenant_context_cache_ttl': number;
@@ -55,122 +45,10 @@ export interface InfrastructureSettings {
 
 /**
  * Infrastructure Settings Metadata
+ *
+ * Note: Sharding settings are managed in the dedicated Sharding Configuration page.
  */
 export const INFRASTRUCTURE_SETTINGS_META: Record<keyof InfrastructureSettings, SettingMeta> = {
-  // Sharding Configuration
-  'infra.code_shards': {
-    key: 'infra.code_shards',
-    type: 'number',
-    default: 64,
-    envKey: 'AUTHRIM_CODE_SHARDS',
-    label: 'Auth Code Shards',
-    description: 'Number of Durable Object shards for authorization codes',
-    min: 1,
-    max: 256,
-    visibility: 'admin',
-  },
-  'infra.session_shards': {
-    key: 'infra.session_shards',
-    type: 'number',
-    default: 64,
-    envKey: 'AUTHRIM_SESSION_SHARDS',
-    label: 'Session Shards',
-    description: 'Number of Durable Object shards for sessions',
-    min: 1,
-    max: 256,
-    visibility: 'admin',
-  },
-  'infra.challenge_shards': {
-    key: 'infra.challenge_shards',
-    type: 'number',
-    default: 64,
-    envKey: 'AUTHRIM_CHALLENGE_SHARDS',
-    label: 'Challenge Shards',
-    description: 'Number of Durable Object shards for challenges',
-    min: 1,
-    max: 256,
-    visibility: 'admin',
-  },
-  'infra.revocation_shards': {
-    key: 'infra.revocation_shards',
-    type: 'number',
-    default: 64,
-    envKey: 'AUTHRIM_REVOCATION_SHARDS',
-    label: 'Revocation Shards',
-    description: 'Number of Durable Object shards for token revocation',
-    min: 1,
-    max: 256,
-    visibility: 'admin',
-  },
-  'infra.flow_state_shards': {
-    key: 'infra.flow_state_shards',
-    type: 'number',
-    default: 32,
-    envKey: 'AUTHRIM_FLOW_STATE_SHARDS',
-    label: 'Flow State Shards',
-    description: 'Number of Durable Object shards for Flow Engine state',
-    min: 1,
-    max: 256,
-    visibility: 'admin',
-  },
-
-  // Region Sharding
-  'infra.region_total_shards': {
-    key: 'infra.region_total_shards',
-    type: 'number',
-    default: 100,
-    envKey: 'REGION_SHARD_TOTAL_SHARDS',
-    label: 'Total Region Shards',
-    description: 'Total number of shards for region-based distribution',
-    min: 10,
-    max: 1000,
-    visibility: 'admin',
-  },
-  'infra.region_enam_percent': {
-    key: 'infra.region_enam_percent',
-    type: 'number',
-    default: 40,
-    envKey: 'REGION_SHARD_ENAM_PERCENT',
-    label: 'ENAM Region Percent',
-    description: 'Percentage of shards for Eastern North America',
-    min: 0,
-    max: 100,
-    visibility: 'admin',
-  },
-  'infra.region_weur_percent': {
-    key: 'infra.region_weur_percent',
-    type: 'number',
-    default: 35,
-    envKey: 'REGION_SHARD_WEUR_PERCENT',
-    label: 'WEUR Region Percent',
-    description: 'Percentage of shards for Western Europe',
-    min: 0,
-    max: 100,
-    visibility: 'admin',
-  },
-  'infra.region_apac_percent': {
-    key: 'infra.region_apac_percent',
-    type: 'number',
-    default: 25,
-    envKey: 'REGION_SHARD_APAC_PERCENT',
-    label: 'APAC Region Percent',
-    description: 'Percentage of shards for Asia Pacific',
-    min: 0,
-    max: 100,
-    visibility: 'admin',
-  },
-  'infra.region_generation': {
-    key: 'infra.region_generation',
-    type: 'number',
-    default: 1,
-    envKey: 'REGION_SHARD_GENERATION',
-    label: 'Shard Generation',
-    description: 'Generation number for shard migration',
-    min: 1,
-    max: 100,
-    visibility: 'admin',
-  },
-
   // Cache Configuration
   'infra.config_cache_ttl': {
     key: 'infra.config_cache_ttl',
@@ -379,18 +257,10 @@ export const INFRASTRUCTURE_CATEGORY_META: CategoryMeta = {
 
 /**
  * Default Infrastructure settings values
+ *
+ * Note: Sharding defaults are managed in the Sharding Configuration page.
  */
 export const INFRASTRUCTURE_DEFAULTS: InfrastructureSettings = {
-  'infra.code_shards': 64,
-  'infra.session_shards': 64,
-  'infra.challenge_shards': 64,
-  'infra.revocation_shards': 64,
-  'infra.flow_state_shards': 32,
-  'infra.region_total_shards': 100,
-  'infra.region_enam_percent': 40,
-  'infra.region_weur_percent': 35,
-  'infra.region_apac_percent': 25,
-  'infra.region_generation': 1,
   'infra.config_cache_ttl': 180,
   'infra.tenant_context_cache_ttl': 300,
   'infra.key_cache_ttl': 3600,

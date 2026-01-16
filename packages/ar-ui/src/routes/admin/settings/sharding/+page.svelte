@@ -162,10 +162,10 @@
 			&larr; Back to Settings
 		</a>
 		<h1 style="font-size: 24px; font-weight: bold; color: #111827; margin: 8px 0 4px 0;">
-			DO Sharding Configuration
+			Sharding Configuration
 		</h1>
 		<p style="color: #6b7280; margin: 0;">
-			Configure Durable Object shard counts for load distribution. Changes take effect for new sessions only.
+			Configure shard counts for load distribution. Changes take effect for new sessions only.
 		</p>
 	</div>
 
@@ -397,10 +397,10 @@
 		style="margin-top: 24px; padding: 16px; background-color: #f0f9ff; border: 1px solid #0ea5e9; border-radius: 8px;"
 	>
 		<h4 style="margin: 0 0 8px 0; color: #0c4a6e; font-size: 14px; font-weight: 600;">
-			About DO Sharding
+			About Sharding
 		</h4>
 		<p style="margin: 0; font-size: 13px; color: #0369a1; line-height: 1.5;">
-			Durable Object sharding distributes state across multiple instances using consistent hashing.
+			Sharding distributes state across multiple instances using consistent hashing.
 			Higher shard counts improve parallelism but increase complexity. Changes only affect new sessions;
 			existing sessions continue using their original shard routing until expiration.
 		</p>

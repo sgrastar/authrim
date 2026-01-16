@@ -357,3 +357,249 @@ export function isPlatformCategory(category: string): boolean {
 export function isInternalSetting(settingMeta: SettingMetaItem): boolean {
 	return settingMeta.visibility === 'internal';
 }
+
+// ============================================================================
+// Scope-Aware Settings API Extensions
+// ============================================================================
+
+/**
+ * Scope context for API calls
+ */
+export interface ScopeContext {
+	level: 'platform' | 'tenant' | 'client';
+	tenantId?: string;
+	clientId?: string;
+}
+
+/**
+ * Inherited setting value information
+ */
+export interface InheritedValue {
+	value: unknown;
+	source: SettingSource;
+	scope: 'platform' | 'tenant' | 'client';
+}
+
+/**
+ * Category settings with inheritance information
+ */
+export interface CategorySettingsWithInheritance extends CategorySettings {
+	/** Inheritance chain for each setting */
+	inheritance: Record<
+		string,
+		{
+			effectiveValue: unknown;
+			effectiveSource: SettingSource;
+			platformValue?: InheritedValue;
+			tenantValue?: InheritedValue;
+			isOverridden: boolean;
+		}
+	>;
+}
+
+/**
+ * Category scope information with user permissions
+ */
+export interface CategoryScopeInfo {
+	allowedScopes: Array<'platform' | 'tenant' | 'client'>;
+	userPermissions: Record<'platform' | 'tenant' | 'client', 'view' | 'edit' | 'none'>;
+}
+
+/**
+ * Scope-aware Settings API extensions
+ */
+export const scopedSettingsAPI = {
+	/**
+	 * Get settings with inheritance information
+	 * Returns settings with full inheritance chain for each value
+	 */
+	async getSettingsWithInheritance(
+		category: string,
+		scope: ScopeContext
+	): Promise<CategorySettingsWithInheritance> {
+		// Build query params for inheritance info
+		const params = new URLSearchParams();
+		params.set('includeInheritance', 'true');
+
+		let url: string;
+		switch (scope.level) {
+			case 'platform':
+				url = `${API_BASE_URL}/api/admin/platform/settings/${category}`;
+				break;
+			case 'tenant':
+				url = `${API_BASE_URL}/api/admin/tenants/${scope.tenantId || DEFAULT_TENANT_ID}/settings/${category}`;
+				break;
+			case 'client':
+				if (!scope.clientId) {
+					throw new Error('Client ID is required for client scope');
+				}
+				url = `${API_BASE_URL}/api/admin/clients/${scope.clientId}/settings/${category}`;
+				break;
+		}
+
+		const response = await fetch(`${url}?${params}`, {
+			credentials: 'include'
+		});
+
+		if (!response.ok) {
+			if (response.status === 404) {
+				throw new Error(`Category '${category}' not found`);
+			}
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.message || error.error || 'Failed to fetch settings');
+		}
+
+		const data = await response.json();
+
+		// If inheritance data not included, build it from available info
+		if (!data.inheritance) {
+			data.inheritance = {};
+			for (const [key, value] of Object.entries(data.values)) {
+				const source = data.sources[key] || 'default';
+				data.inheritance[key] = {
+					effectiveValue: value,
+					effectiveSource: source,
+					// Without parent value info, we cannot accurately determine override status
+					// Set to false to avoid false positives in the UI
+					isOverridden: false
+				};
+			}
+		}
+
+		return data;
+	},
+
+	/**
+	 * Get category scope information with user permissions
+	 */
+	async getCategoryScopeInfo(category: string): Promise<CategoryScopeInfo> {
+		const response = await fetch(`${API_BASE_URL}/api/admin/settings/meta/${category}/scope`, {
+			credentials: 'include'
+		});
+
+		if (!response.ok) {
+			if (response.status === 404) {
+				throw new Error(`Category '${category}' not found`);
+			}
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.message || error.error || 'Failed to fetch scope info');
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Get client settings
+	 * GET /api/admin/clients/:clientId/settings/:category
+	 */
+	async getClientSettings(clientId: string, category: string): Promise<CategorySettings> {
+		const response = await fetch(
+			`${API_BASE_URL}/api/admin/clients/${clientId}/settings/${category}`,
+			{
+				credentials: 'include'
+			}
+		);
+
+		if (!response.ok) {
+			if (response.status === 404) {
+				throw new Error(`Settings not found for client '${clientId}'`);
+			}
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.message || error.error || 'Failed to fetch client settings');
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Update client settings (optimistic locking)
+	 * PATCH /api/admin/clients/:clientId/settings/:category
+	 */
+	async updateClientSettings(
+		clientId: string,
+		category: string,
+		request: SettingsPatchRequest
+	): Promise<SettingsPatchResult> {
+		const response = await fetch(
+			`${API_BASE_URL}/api/admin/clients/${clientId}/settings/${category}`,
+			{
+				method: 'PATCH',
+				headers: {
+					'Content-Type': 'application/json'
+				},
+				credentials: 'include',
+				body: JSON.stringify(request)
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+
+			if (response.status === 409) {
+				if (!error.currentVersion) {
+					throw new Error('Version conflict detected. Please refresh the page and try again.');
+				}
+				throw new SettingsConflictError(
+					error.message || 'Settings were updated by someone else',
+					error.currentVersion
+				);
+			}
+
+			if (response.status === 400) {
+				throw new Error(error.message || 'Validation failed');
+			}
+
+			if (response.status === 403) {
+				throw new Error(error.message || 'Settings are read-only');
+			}
+
+			throw new Error(error.message || error.error || 'Failed to update client settings');
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Get settings based on scope context
+	 * Unified method that routes to appropriate endpoint
+	 */
+	async getSettingsForScope(category: string, scope: ScopeContext): Promise<CategorySettings> {
+		switch (scope.level) {
+			case 'platform':
+				return adminSettingsAPI.getPlatformSettings(category);
+			case 'tenant':
+				return adminSettingsAPI.getSettings(category, scope.tenantId || DEFAULT_TENANT_ID);
+			case 'client':
+				if (!scope.clientId) {
+					throw new Error('Client ID is required for client scope');
+				}
+				return this.getClientSettings(scope.clientId, category);
+		}
+	},
+
+	/**
+	 * Update settings based on scope context
+	 * Unified method that routes to appropriate endpoint
+	 */
+	async updateSettingsForScope(
+		category: string,
+		scope: ScopeContext,
+		request: SettingsPatchRequest
+	): Promise<SettingsPatchResult> {
+		switch (scope.level) {
+			case 'platform':
+				throw new Error('Platform settings are read-only');
+			case 'tenant':
+				return adminSettingsAPI.updateSettings(
+					category,
+					request,
+					scope.tenantId || DEFAULT_TENANT_ID
+				);
+			case 'client':
+				if (!scope.clientId) {
+					throw new Error('Client ID is required for client scope');
+				}
+				return this.updateClientSettings(scope.clientId, category, request);
+		}
+	}
+};
