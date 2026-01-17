@@ -13,10 +13,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@authrim/ar-lib-scim": "workspace:*",
+    "@authrim/ar-auth": "workspace:^",
     "@authrim/ar-lib-core": "workspace:*",
     "@authrim/ar-lib-plugin": "workspace:*",
     "@authrim/ar-lib-policy": "workspace:*",
+    "@authrim/ar-lib-scim": "workspace:*",
     "hono": "^4.10.6",
     "jose": "^6.1.2"
   },

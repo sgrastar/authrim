@@ -90,16 +90,315 @@ export interface GraphNodeData {
 
 /**
  * ノードタイプ
+ *
+ * 設計原則:
+ * - 選択 = UIノード（ユーザーが選ぶ）
+ * - 判断 = Check/Resolveノード（システムが判定）
+ * - 実行 = Actionノード（副作用を起こす）
+ * - 制御 = Controlノード（フロー制御）
  */
 export type GraphNodeType =
-  | 'start' // 開始ノード
-  | 'identifier' // ID入力（email, phone等）
-  | 'auth_method' // 認証方法選択
-  | 'mfa' // 多要素認証
-  | 'consent' // 同意画面
-  | 'condition' // 条件分岐
-  | 'end' // 完了ノード
-  | 'error'; // エラーノード
+  // === 1. Control Nodes（制御系）===
+  | 'start' // フロー開始
+  | 'end' // フロー終了
+  | 'goto' // Flow内ジャンプ（ループ・共通処理用）
+
+  // === 2. State/Check Nodes（状態判定系）===
+  | 'check_session' // セッション有無確認
+  | 'check_auth_level' // ACR/強度チェック
+  | 'check_first_login' // 初回ログインか
+  | 'check_user_attribute' // ユーザー属性チェック
+  | 'check_context' // client/locale/ip/country
+  | 'check_risk' // リスクスコア
+
+  // === 3. Selection/UI Nodes（選択・入力系）===
+  | 'auth_method_select' // 認証方法選択（email or social等）
+  | 'login_method_select' // ログイン方法選択（passkey or OTP等）
+  | 'identifier' // 識別子入力（email/phone/username）
+  | 'profile_input' // プロフィール入力（name/birthdate等）
+  | 'custom_form' // 管理者定義フォーム
+  | 'information' // 説明のみ（読み取り専用）
+  | 'challenge' // CAPTCHA/Botチャレンジ
+
+  // === 4. Authentication Nodes（認証実行系）===
+  | 'login' // 認証実行（passkey/otp/password/social）
+  | 'mfa' // 追加認証（TOTP/SMS/WebAuthn）
+  | 'register' // 新規登録
+
+  // === 5. Consent/Profile Nodes（同意・プロフィール）===
+  | 'consent' // 利用規約・同意
+  | 'check_consent_status' // 同意済みか確認
+  | 'record_consent' // 同意記録（監査用）
+
+  // === 6. Resolve Nodes（解決系 - 重要）===
+  | 'resolve_tenant' // テナント解決（email domain等から）
+  | 'resolve_org' // 組織解決
+  | 'resolve_policy' // ポリシー解決
+
+  // === 7. Session/Token Nodes（セッション・トークン）===
+  | 'issue_tokens' // トークン発行
+  | 'refresh_session' // セッション更新
+  | 'revoke_session' // 強制ログアウト
+  | 'bind_device' // デバイス紐付け
+  | 'link_account' // ソーシャル連携・ID統合
+
+  // === 8. Side Effect Nodes（外部連携・副作用）===
+  | 'redirect' // 意味ベースリダイレクト
+  | 'webhook' // 外部通知
+  | 'event_emit' // 内部イベント発火（audit/analytics）
+  | 'email_send' // メール送信
+  | 'sms_send' // SMS送信
+  | 'push_notify' // Push通知
+
+  // === 9. Logic/Decision Nodes（条件・分岐）===
+  | 'decision' // 複合条件分岐
+  | 'switch' // enum分岐（locale/client_type）
+
+  // === 10. Policy Nodes（ポリシー判定）===
+  | 'policy_check' // RBAC/ABAC/ReBAC判定
+
+  // === 11. Error/Debug Nodes ===
+  | 'error' // エラー表示（retry/support）
+  | 'log' // ログ出力（開発用）
+
+  // === Legacy (deprecated, kept for migration) ===
+  | 'auth_method' // → auth_method_select に移行
+  | 'user_input' // → profile_input/custom_form に移行
+  | 'condition' // → decision に移行
+  | 'check_user' // → check_user_attribute に移行
+  | 'set_variable' // → 内部処理へ
+  | 'call_api' // → webhook に統合
+  | 'send_notification' // → email_send/sms_send/push_notify に分割
+  | 'risk_check' // → check_risk に移行
+  | 'wait_input'; // → custom_form に移行
+
+// =============================================================================
+// Condition Types - 条件評価用
+// =============================================================================
+
+/**
+ * 条件キー - 評価対象のデータパス
+ * Descope dynamic keysを参考に設計
+ */
+export type ConditionKey =
+  // === User Attributes ===
+  | 'user.id'
+  | 'user.email'
+  | 'user.emailDomain'
+  | 'user.phone'
+  | 'user.verifiedEmail'
+  | 'user.verifiedPhone'
+  | 'user.status'
+  | 'user.tenantIds'
+  | 'user.roles'
+  | 'user.permissions'
+  | `user.customAttributes.${string}`
+
+  // === Authentication State ===
+  | 'user.isLoggedIn'
+  | 'user.hasPassword'
+  | 'user.hasTotp'
+  | 'user.hasWebAuthn'
+  | 'user.hasSocialLogin'
+  | 'user.mfaEnabled'
+
+  // === Authentication History ===
+  | 'lastAuth.time'
+  | 'lastAuth.method'
+  | 'lastAuth.country'
+  | 'lastAuth.city'
+  | 'lastAuth.ip'
+
+  // === Device & Context ===
+  | 'device.type'
+  | 'device.os'
+  | 'device.browser'
+  | 'device.webAuthnSupport'
+  | 'device.trustedDevice'
+
+  // === Location & IP ===
+  | 'request.country'
+  | 'request.city'
+  | 'request.ip'
+  | 'request.isVPN'
+  | 'request.isTor'
+
+  // === Risk Assessment ===
+  | 'risk.score'
+  | 'risk.botDetected'
+  | 'risk.impossibleTravel'
+  | 'risk.newDevice'
+  | 'risk.newLocation'
+
+  // === Tenant & Client Context ===
+  | 'tenant.id'
+  | 'tenant.name'
+  | 'tenant.enforceSSO'
+  | 'tenant.allowedAuthMethods'
+  | 'client.id'
+  | 'client.type'
+
+  // === Form Input ===
+  | 'form.email'
+  | 'form.phone'
+  | 'form.identifier'
+  | `form.${string}`
+
+  // === Previous Node Results ===
+  | 'prevNode.success'
+  | 'prevNode.result'
+  | 'prevNode.error'
+  | 'prevNode.errorCode'
+
+  // === Flow Variables ===
+  | `var.${string}`;
+
+/**
+ * 条件演算子
+ */
+export type ConditionOperator =
+  | 'equals' // ==
+  | 'notEquals' // !=
+  | 'contains' // string/array contains
+  | 'notContains' // string/array not contains
+  | 'startsWith' // string starts with
+  | 'endsWith' // string ends with
+  | 'greaterThan' // >
+  | 'lessThan' // <
+  | 'greaterOrEqual' // >=
+  | 'lessOrEqual' // <=
+  | 'in' // value in array
+  | 'notIn' // value not in array
+  | 'exists' // not null/undefined
+  | 'notExists' // null/undefined
+  | 'matches' // regex match
+  | 'isTrue' // boolean true (no value needed)
+  | 'isFalse'; // boolean false (no value needed)
+
+/**
+ * 単一条件
+ */
+export interface FlowCondition {
+  /** 条件キー */
+  key: ConditionKey | string; // stringでカスタムキーも許可
+
+  /** 演算子 */
+  operator: ConditionOperator;
+
+  /** 比較値（isTrue/isFalseでは不要） */
+  value?: unknown;
+}
+
+/**
+ * 条件グループ（複数条件の組み合わせ）
+ */
+export interface ConditionGroup {
+  /** 論理演算子 */
+  logic: 'and' | 'or';
+
+  /** 条件リスト */
+  conditions: (FlowCondition | ConditionGroup)[];
+}
+
+/**
+ * ノード出力 - 直前ノードの結果
+ */
+export interface NodeOutput {
+  /** 成功/失敗 */
+  success: boolean;
+
+  /** 結果値（文字列、数値、真偽値、オブジェクト） */
+  result?: string | number | boolean | Record<string, unknown>;
+
+  /** エラー情報 */
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
+/**
+ * フローランタイムコンテキスト - 条件評価時に利用
+ */
+export interface FlowRuntimeContext {
+  // === User ===
+  user?: {
+    id?: string;
+    email?: string;
+    emailDomain?: string;
+    phone?: string;
+    verifiedEmail?: boolean;
+    verifiedPhone?: boolean;
+    status?: 'active' | 'disabled' | 'invited';
+    tenantIds?: string[];
+    roles?: string[];
+    permissions?: string[];
+    customAttributes?: Record<string, unknown>;
+    isLoggedIn?: boolean;
+    hasPassword?: boolean;
+    hasTotp?: boolean;
+    hasWebAuthn?: boolean;
+    hasSocialLogin?: boolean;
+    mfaEnabled?: boolean;
+  };
+
+  // === Last Auth ===
+  lastAuth?: {
+    time?: number;
+    method?: string;
+    country?: string;
+    city?: string;
+    ip?: string;
+  };
+
+  // === Device ===
+  device?: {
+    type?: 'mobile' | 'desktop' | 'tablet';
+    os?: string;
+    browser?: string;
+    webAuthnSupport?: boolean;
+    trustedDevice?: boolean;
+  };
+
+  // === Request ===
+  request?: {
+    country?: string;
+    city?: string;
+    ip?: string;
+    isVPN?: boolean;
+    isTor?: boolean;
+  };
+
+  // === Risk ===
+  risk?: {
+    score?: number;
+    botDetected?: boolean;
+    impossibleTravel?: boolean;
+    newDevice?: boolean;
+    newLocation?: boolean;
+  };
+
+  // === Tenant & Client ===
+  tenant?: {
+    id?: string;
+    name?: string;
+    enforceSSO?: boolean;
+    allowedAuthMethods?: string[];
+  };
+  client?: {
+    id?: string;
+    type?: 'public' | 'confidential';
+  };
+
+  // === Form Input ===
+  form?: Record<string, unknown>;
+
+  // === Previous Node ===
+  prevNode?: NodeOutput;
+
+  // === Flow Variables ===
+  variables?: Record<string, unknown>;
+}
 
 /**
  * グラフエッジ - ノード間の遷移

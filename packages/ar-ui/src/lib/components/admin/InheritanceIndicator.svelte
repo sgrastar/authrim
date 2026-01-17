@@ -45,7 +45,6 @@
 		default: { label: 'Default', icon: '📋', color: '#6b7280' }
 	};
 
-
 	// Format value for display
 	function formatValue(value: unknown): string {
 		if (value === null || value === undefined) return 'null';

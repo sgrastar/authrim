@@ -320,9 +320,9 @@
 									{settingMeta.label}
 								</label>
 								<InheritanceIndicator
-									source={settings?.sources[key] as SettingSource || 'default'}
+									source={(settings?.sources[key] as SettingSource) || 'default'}
 									currentScope={currentLevel}
-									canEdit={canEdit}
+									{canEdit}
 									compact={true}
 								/>
 								{#if locked && !isLockedByEnv(key)}

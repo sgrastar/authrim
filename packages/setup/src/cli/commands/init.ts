@@ -12,6 +12,7 @@ import {
   t,
   getAvailableLocales,
   detectSystemLocale,
+  getLocale,
   type Locale,
 } from '../../i18n/index.js';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -629,7 +630,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     console.log('');
 
     const { startWebServer } = await import('../../web/server.js');
-    await startWebServer({ openBrowser: true });
+    await startWebServer({ openBrowser: true, lang: getLocale() });
   }
 }
 

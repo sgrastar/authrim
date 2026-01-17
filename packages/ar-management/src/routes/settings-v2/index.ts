@@ -114,7 +114,9 @@ async function getClientTenantId(env: Env, clientId: string): Promise<string | n
   try {
     // Try to get client metadata from KV
     const clientKey = `client:${clientId}:metadata`;
-    const clientData = await env.AUTHRIM_CONFIG?.get(clientKey, 'json') as { tenant_id?: string } | null;
+    const clientData = (await env.AUTHRIM_CONFIG?.get(clientKey, 'json')) as {
+      tenant_id?: string;
+    } | null;
     if (clientData?.tenant_id) {
       return clientData.tenant_id;
     }
@@ -122,9 +124,10 @@ async function getClientTenantId(env: Env, clientId: string): Promise<string | n
     // Fallback: Try to get from D1 database if available
     const db = env.DB as D1Database | undefined;
     if (db) {
-      const result = await db.prepare(
-        'SELECT tenant_id FROM clients WHERE client_id = ?'
-      ).bind(clientId).first<{ tenant_id: string }>();
+      const result = await db
+        .prepare('SELECT tenant_id FROM clients WHERE client_id = ?')
+        .bind(clientId)
+        .first<{ tenant_id: string }>();
       return result?.tenant_id ?? null;
     }
 
@@ -474,7 +477,12 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
 
   // Security Check 3: Validate user can access this client's tenant
   if (!canAccessTenant(adminUser, clientTenantId)) {
-    return errorResponse(c, 'forbidden', 'Cannot access settings for clients in other tenants', 403);
+    return errorResponse(
+      c,
+      'forbidden',
+      'Cannot access settings for clients in other tenants',
+      403
+    );
   }
 
   const manager = getSettingsManager(c.env);
@@ -531,7 +539,12 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
 
   // Security Check 5: Validate user can access this client's tenant
   if (!canAccessTenant(adminUser, clientTenantId)) {
-    return errorResponse(c, 'forbidden', 'Cannot access settings for clients in other tenants', 403);
+    return errorResponse(
+      c,
+      'forbidden',
+      'Cannot access settings for clients in other tenants',
+      403
+    );
   }
 
   const manager = getSettingsManager(c.env);
@@ -572,7 +585,12 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
 
   // Security Check 3: Validate user can access this client's tenant
   if (!canAccessTenant(adminUser, clientTenantId)) {
-    return errorResponse(c, 'forbidden', 'Cannot modify settings for clients in other tenants', 403);
+    return errorResponse(
+      c,
+      'forbidden',
+      'Cannot modify settings for clients in other tenants',
+      403
+    );
   }
 
   const manager = getSettingsManager(c.env);
@@ -664,7 +682,12 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
 
   // Security Check 5: Validate user can access this client's tenant
   if (!canAccessTenant(adminUser, clientTenantId)) {
-    return errorResponse(c, 'forbidden', 'Cannot modify settings for clients in other tenants', 403);
+    return errorResponse(
+      c,
+      'forbidden',
+      'Cannot modify settings for clients in other tenants',
+      403
+    );
   }
 
   const manager = getSettingsManager(c.env);

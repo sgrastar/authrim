@@ -3,6 +3,10 @@
   "version": "0.1.5",
   "type": "module",
   "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./flow-engine": "./src/flow-engine/index.ts"
+  },
   "scripts": {
     "dev": "wrangler dev --config wrangler.dev.toml 2>/dev/null || wrangler dev",
     "deploy": "[ -n \"$DEPLOY_ENV\" ] && wrangler deploy --config wrangler.$DEPLOY_ENV.toml || wrangler deploy",

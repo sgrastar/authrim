@@ -30,6 +30,7 @@
 		{ path: '/admin/role-rules', label: 'Role Rules', exact: false },
 		{ path: '/admin/webhooks', label: 'Webhooks', exact: false },
 		{ path: '/admin/plugins', label: 'Plugins', exact: false },
+		{ path: '/admin/flows', label: 'Flows', exact: false },
 		// Phase 7: Compliance & Security & Jobs
 		{ path: '/admin/compliance', label: 'Compliance', exact: false },
 		{ path: '/admin/security', label: 'Security', exact: false },

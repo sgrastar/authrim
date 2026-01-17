@@ -159,6 +159,17 @@ import {
   adminConditionTypesHandler,
 } from './admin-policies';
 import {
+  adminFlowsListHandler,
+  adminFlowGetHandler,
+  adminFlowCreateHandler,
+  adminFlowUpdateHandler,
+  adminFlowDeleteHandler,
+  adminFlowCopyHandler,
+  adminFlowValidateHandler,
+  adminFlowCompileHandler,
+  adminFlowNodeTypesHandler,
+} from './admin-flows';
+import {
   adminAccessTraceListHandler,
   adminAccessTraceGetHandler,
   adminAccessTraceStatsHandler,
@@ -1212,6 +1223,30 @@ app.post('/api/admin/policies/simulate', adminPolicySimulateHandler);
 app.get('/api/admin/policies/:id', adminPolicyGetHandler);
 app.put('/api/admin/policies/:id', adminPolicyUpdateHandler);
 app.delete('/api/admin/policies/:id', adminPolicyDeleteHandler);
+
+// =============================================================================
+// Flow Management (Flow Engine Admin UI)
+// =============================================================================
+// Manages authentication/authorization flows per tenant/client.
+// Flows define the steps and capabilities required for different auth scenarios.
+// RBAC: Requires tenant_admin or higher role.
+
+app.use('/api/admin/flows', requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin']));
+app.use(
+  '/api/admin/flows/*',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+
+// Flow CRUD endpoints
+app.get('/api/admin/flows', adminFlowsListHandler);
+app.post('/api/admin/flows', adminFlowCreateHandler);
+app.get('/api/admin/flows/node-types', adminFlowNodeTypesHandler);
+app.get('/api/admin/flows/:id', adminFlowGetHandler);
+app.put('/api/admin/flows/:id', adminFlowUpdateHandler);
+app.delete('/api/admin/flows/:id', adminFlowDeleteHandler);
+app.post('/api/admin/flows/:id/copy', adminFlowCopyHandler);
+app.post('/api/admin/flows/:id/validate', adminFlowValidateHandler);
+app.post('/api/admin/flows/:id/compile', adminFlowCompileHandler);
 
 // =============================================================================
 // Access Trace (Permission Check Audit Logs)

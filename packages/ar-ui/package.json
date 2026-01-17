@@ -57,6 +57,7 @@
 	},
 	"dependencies": {
 		"@simplewebauthn/browser": "^13.2.2",
+		"@xyflow/svelte": "^1.5.0",
 		"qrcode": "^1.5.4"
 	}
 }

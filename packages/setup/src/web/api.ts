@@ -44,6 +44,7 @@ import {
   type LegacyPaths,
 } from '../core/paths.js';
 import { generateWranglerConfig, toToml } from '../core/wrangler.js';
+import { syncWranglerConfigs } from '../core/wrangler-sync.js';
 import {
   deployAll,
   uploadSecrets,
@@ -1232,6 +1233,26 @@ export function createApiRoutes(): Hono {
         }
 
         addProgress(`${componentsToUpdate.length} worker(s) need updating`);
+
+        // Sync wrangler configs before building (copies from .authrim/{env}/wrangler/ to packages/)
+        addProgress('Syncing wrangler configs...');
+        const syncResult = await syncWranglerConfigs({
+          baseDir: rootDir,
+          env,
+          packagesDir: join(rootDir, 'packages'),
+          force: true, // Overwrite any changes in packages/
+          dryRun: false,
+          onProgress: addProgress,
+        });
+
+        if (!syncResult.success && syncResult.errors.length > 0) {
+          // If master wrangler configs don't exist, we can't proceed
+          state.status = 'error';
+          state.error = `Wrangler config sync failed: ${syncResult.errors.join(', ')}`;
+          return c.json({ success: false, error: state.error }, 500);
+        }
+
+        addProgress(`Synced ${syncResult.synced.length} wrangler config(s)`);
 
         // Build packages
         addProgress('Building packages...');

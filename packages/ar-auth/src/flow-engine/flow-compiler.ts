@@ -89,10 +89,13 @@ export class FlowCompilerService implements FlowCompiler {
    * GraphNodeをCompiledNodeにコンパイル
    */
   private compileNode(node: GraphNode): CompiledNode {
+    // Derive intent from node type if not specified
+    const intent = node.data.intent ?? this.deriveIntentFromType(node.type);
+
     return {
       id: node.id,
       type: node.type,
-      intent: node.data.intent,
+      intent,
       capabilities: this.resolveCapabilities(node.data.capabilities, node.id),
       nextOnSuccess: null, // 後で遷移マップから設定
       nextOnError: null, // 後で遷移マップから設定
@@ -100,12 +103,37 @@ export class FlowCompilerService implements FlowCompiler {
   }
 
   /**
+   * Derive intent from node type for nodes without explicit intent
+   */
+  private deriveIntentFromType(type: string): string {
+    const intentMap: Record<string, string> = {
+      start: 'flow_start',
+      end: 'flow_end',
+      login: 'authenticate',
+      register: 'register',
+      mfa: 'mfa_verify',
+      consent: 'consent',
+      identifier: 'identifier_input',
+      auth_method_select: 'auth_method_select',
+      check_session: 'check_session',
+      redirect: 'redirect',
+      error: 'error',
+      decision: 'decision',
+      condition: 'condition',
+    };
+    return intentMap[type] ?? type;
+  }
+
+  /**
    * CapabilityTemplateをResolvedCapabilityに解決
    */
   private resolveCapabilities(
-    templates: CapabilityTemplate[],
+    templates: CapabilityTemplate[] | undefined,
     nodeId: string
   ): ResolvedCapability[] {
+    if (!templates || templates.length === 0) {
+      return [];
+    }
     return templates.map((template) => this.resolveCapability(template, nodeId));
   }
 

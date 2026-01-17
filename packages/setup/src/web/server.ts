@@ -30,6 +30,8 @@ export interface WebServerOptions {
   openBrowser?: boolean;
   /** Start in manage-only mode (skip to environment management) */
   manageOnly?: boolean;
+  /** Initial language (passed from CLI selection) */
+  lang?: string;
 }
 
 // =============================================================================
@@ -113,7 +115,9 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
   });
 
   // Start server
-  const url = `http://${host}:${port}`;
+  const baseUrl = `http://${host}:${port}`;
+  // Add language parameter if specified (from CLI selection)
+  const url = options.lang ? `${baseUrl}?lang=${options.lang}` : baseUrl;
 
   console.log(chalk.bold('\n🌐 Authrim Setup Web UI\n'));
 
@@ -122,7 +126,7 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
   }
 
   console.log(`Open at:`);
-  console.log(chalk.cyan(`  ${url}\n`));
+  console.log(chalk.cyan(`  ${baseUrl}\n`));
 
   // Open browser if requested - wait for ENTER first
   if (options.openBrowser !== false) {

@@ -1,9 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import {
-		adminInfrastructureAPI,
-		type ShardConfig
-	} from '$lib/api/admin-infrastructure';
+	import { adminInfrastructureAPI, type ShardConfig } from '$lib/api/admin-infrastructure';
 
 	// State for each shard type
 	interface ShardState {
@@ -42,11 +39,7 @@
 
 	// Load all shard configurations
 	onMount(async () => {
-		await Promise.all([
-			loadFlowStateShards(),
-			loadCodeShards(),
-			loadRevocationShards()
-		]);
+		await Promise.all([loadFlowStateShards(), loadCodeShards(), loadRevocationShards()]);
 	});
 
 	async function loadFlowStateShards() {
@@ -97,7 +90,9 @@
 			await adminInfrastructureAPI.updateFlowStateShards(flowState.editValue);
 			successMessage = 'Flow State Shards updated successfully';
 			await loadFlowStateShards();
-			setTimeout(() => { successMessage = ''; }, 3000);
+			setTimeout(() => {
+				successMessage = '';
+			}, 3000);
 		} catch (err) {
 			flowState.error = err instanceof Error ? err.message : 'Failed to save';
 		} finally {
@@ -106,7 +101,8 @@
 	}
 
 	async function saveCodeShards() {
-		if (codeShards.editValue === null || codeShards.editValue === codeShards.config?.current) return;
+		if (codeShards.editValue === null || codeShards.editValue === codeShards.config?.current)
+			return;
 
 		codeShards.saving = true;
 		codeShards.error = '';
@@ -114,7 +110,9 @@
 			await adminInfrastructureAPI.updateCodeShards(codeShards.editValue);
 			successMessage = 'Code Shards updated successfully';
 			await loadCodeShards();
-			setTimeout(() => { successMessage = ''; }, 3000);
+			setTimeout(() => {
+				successMessage = '';
+			}, 3000);
 		} catch (err) {
 			codeShards.error = err instanceof Error ? err.message : 'Failed to save';
 		} finally {
@@ -123,7 +121,11 @@
 	}
 
 	async function saveRevocationShards() {
-		if (revocationShards.editValue === null || revocationShards.editValue === revocationShards.config?.current) return;
+		if (
+			revocationShards.editValue === null ||
+			revocationShards.editValue === revocationShards.config?.current
+		)
+			return;
 
 		revocationShards.saving = true;
 		revocationShards.error = '';
@@ -131,7 +133,9 @@
 			await adminInfrastructureAPI.updateRevocationShards(revocationShards.editValue);
 			successMessage = 'Revocation Shards updated successfully';
 			await loadRevocationShards();
-			setTimeout(() => { successMessage = ''; }, 3000);
+			setTimeout(() => {
+				successMessage = '';
+			}, 3000);
 		} catch (err) {
 			revocationShards.error = err instanceof Error ? err.message : 'Failed to save';
 		} finally {
@@ -180,10 +184,13 @@
 
 	<!-- Shard Configuration Cards -->
 	<div style="display: flex; flex-direction: column; gap: 16px;">
-
 		<!-- Flow State Shards -->
-		<div style="background-color: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
-			<div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
+		<div
+			style="background-color: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;"
+		>
+			<div
+				style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;"
+			>
 				<div style="flex: 1;">
 					<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
 						<h3 style="font-weight: 600; color: #111827; margin: 0; font-size: 16px;">
@@ -228,15 +235,22 @@
 						/>
 						<button
 							onclick={saveFlowStateShards}
-							disabled={flowState.saving || flowState.editValue === flowState.config?.current || flowState.config?.source === 'env'}
+							disabled={flowState.saving ||
+								flowState.editValue === flowState.config?.current ||
+								flowState.config?.source === 'env'}
 							style="
 								padding: 8px 16px;
-								background-color: {flowState.editValue !== flowState.config?.current && flowState.config?.source !== 'env' ? '#3b82f6' : '#9ca3af'};
+								background-color: {flowState.editValue !== flowState.config?.current &&
+							flowState.config?.source !== 'env'
+								? '#3b82f6'
+								: '#9ca3af'};
 								color: white;
 								border: none;
 								border-radius: 6px;
 								font-size: 14px;
-								cursor: {flowState.editValue !== flowState.config?.current && flowState.config?.source !== 'env' ? 'pointer' : 'not-allowed'};
+								cursor: {flowState.editValue !== flowState.config?.current && flowState.config?.source !== 'env'
+								? 'pointer'
+								: 'not-allowed'};
 							"
 						>
 							{flowState.saving ? 'Saving...' : 'Save'}
@@ -252,8 +266,12 @@
 		</div>
 
 		<!-- Code Shards -->
-		<div style="background-color: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
-			<div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
+		<div
+			style="background-color: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;"
+		>
+			<div
+				style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;"
+			>
 				<div style="flex: 1;">
 					<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
 						<h3 style="font-weight: 600; color: #111827; margin: 0; font-size: 16px;">
@@ -298,15 +316,22 @@
 						/>
 						<button
 							onclick={saveCodeShards}
-							disabled={codeShards.saving || codeShards.editValue === codeShards.config?.current || codeShards.config?.source === 'env'}
+							disabled={codeShards.saving ||
+								codeShards.editValue === codeShards.config?.current ||
+								codeShards.config?.source === 'env'}
 							style="
 								padding: 8px 16px;
-								background-color: {codeShards.editValue !== codeShards.config?.current && codeShards.config?.source !== 'env' ? '#3b82f6' : '#9ca3af'};
+								background-color: {codeShards.editValue !== codeShards.config?.current &&
+							codeShards.config?.source !== 'env'
+								? '#3b82f6'
+								: '#9ca3af'};
 								color: white;
 								border: none;
 								border-radius: 6px;
 								font-size: 14px;
-								cursor: {codeShards.editValue !== codeShards.config?.current && codeShards.config?.source !== 'env' ? 'pointer' : 'not-allowed'};
+								cursor: {codeShards.editValue !== codeShards.config?.current && codeShards.config?.source !== 'env'
+								? 'pointer'
+								: 'not-allowed'};
 							"
 						>
 							{codeShards.saving ? 'Saving...' : 'Save'}
@@ -322,8 +347,12 @@
 		</div>
 
 		<!-- Revocation Shards -->
-		<div style="background-color: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;">
-			<div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;">
+		<div
+			style="background-color: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px;"
+		>
+			<div
+				style="display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;"
+			>
 				<div style="flex: 1;">
 					<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
 						<h3 style="font-weight: 600; color: #111827; margin: 0; font-size: 16px;">
@@ -368,15 +397,23 @@
 						/>
 						<button
 							onclick={saveRevocationShards}
-							disabled={revocationShards.saving || revocationShards.editValue === revocationShards.config?.current || revocationShards.config?.source === 'env'}
+							disabled={revocationShards.saving ||
+								revocationShards.editValue === revocationShards.config?.current ||
+								revocationShards.config?.source === 'env'}
 							style="
 								padding: 8px 16px;
-								background-color: {revocationShards.editValue !== revocationShards.config?.current && revocationShards.config?.source !== 'env' ? '#3b82f6' : '#9ca3af'};
+								background-color: {revocationShards.editValue !== revocationShards.config?.current &&
+							revocationShards.config?.source !== 'env'
+								? '#3b82f6'
+								: '#9ca3af'};
 								color: white;
 								border: none;
 								border-radius: 6px;
 								font-size: 14px;
-								cursor: {revocationShards.editValue !== revocationShards.config?.current && revocationShards.config?.source !== 'env' ? 'pointer' : 'not-allowed'};
+								cursor: {revocationShards.editValue !== revocationShards.config?.current &&
+							revocationShards.config?.source !== 'env'
+								? 'pointer'
+								: 'not-allowed'};
 							"
 						>
 							{revocationShards.saving ? 'Saving...' : 'Save'}
@@ -400,9 +437,9 @@
 			About Sharding
 		</h4>
 		<p style="margin: 0; font-size: 13px; color: #0369a1; line-height: 1.5;">
-			Sharding distributes state across multiple instances using consistent hashing.
-			Higher shard counts improve parallelism but increase complexity. Changes only affect new sessions;
-			existing sessions continue using their original shard routing until expiration.
+			Sharding distributes state across multiple instances using consistent hashing. Higher shard
+			counts improve parallelism but increase complexity. Changes only affect new sessions; existing
+			sessions continue using their original shard routing until expiration.
 		</p>
 	</div>
 </div>

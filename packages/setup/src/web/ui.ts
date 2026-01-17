@@ -1804,15 +1804,20 @@ export function getHtmlTemplate(
     (function() {
       const savedLang = localStorage.getItem('authrim_setup_lang');
       const url = new URL(window.location.href);
+      const urlLang = url.searchParams.get('lang');
 
-      // If there's a saved language preference and no query param, switch to it
-      if (savedLang && savedLang !== _currentLocale && !url.searchParams.has('lang')) {
+      // If URL has lang parameter, use it and save to localStorage (CLI passed language)
+      if (urlLang && _availableLocales.some(l => l.code === urlLang)) {
+        localStorage.setItem('authrim_setup_lang', urlLang);
+        // Apply translations for the current locale immediately
+        updateAllTranslations();
+      } else if (savedLang && savedLang !== _currentLocale) {
+        // If there's a saved language preference and no query param, switch to it
         url.searchParams.set('lang', savedLang);
         window.history.replaceState({}, '', url.toString());
         changeLanguage(savedLang);
       } else {
         // Apply translations for the current locale immediately
-        // This ensures ?lang=ja works on initial page load
         updateAllTranslations();
       }
 
