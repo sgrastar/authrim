@@ -206,7 +206,9 @@ export class FlowRegistry {
 
       return null;
     } catch (error) {
-      console.error('Failed to get flow from D1:', error);
+      // セキュリティ対策（High 9）: error オブジェクトをそのまま出力せず、メッセージのみ
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`Failed to get flow from D1: ${errorMsg}`);
       return null;
     }
   }

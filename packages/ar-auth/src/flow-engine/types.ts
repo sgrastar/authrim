@@ -400,6 +400,68 @@ export interface FlowRuntimeContext {
   variables?: Record<string, unknown>;
 }
 
+// =============================================================================
+// Decision/Switch Node Configurations
+// =============================================================================
+
+/**
+ * Decision Node Configuration - N分岐条件ノード
+ * 各ブランチの条件を評価し、最初にマッチした分岐に遷移
+ */
+export interface DecisionNodeConfig {
+  /** 分岐リスト（priority順に評価） */
+  branches: DecisionBranch[];
+
+  /** デフォルト分岐（全条件不一致時） */
+  defaultBranch?: string;
+}
+
+/**
+ * Decision Branch - 単一分岐の定義
+ */
+export interface DecisionBranch {
+  /** ブランチID（sourceHandle ID） */
+  id: string;
+
+  /** 表示ラベル */
+  label: string;
+
+  /** 分岐条件 */
+  condition: FlowCondition | ConditionGroup;
+
+  /** 優先度（小さい方が先に評価、同一優先度は定義順） */
+  priority: number;
+}
+
+/**
+ * Switch Node Configuration - enum値による分岐
+ * 特定のキーの値に基づいて分岐先を決定
+ */
+export interface SwitchNodeConfig {
+  /** 評価対象のキー */
+  switchKey: ConditionKey | string;
+
+  /** case 分岐リスト */
+  cases: SwitchCase[];
+
+  /** デフォルトcase（どのcaseにもマッチしない時） */
+  defaultCase?: string;
+}
+
+/**
+ * Switch Case - 単一caseの定義
+ */
+export interface SwitchCase {
+  /** caseID（sourceHandle ID） */
+  id: string;
+
+  /** 表示ラベル */
+  label: string;
+
+  /** マッチする値のリスト */
+  values: (string | number | boolean)[];
+}
+
 /**
  * グラフエッジ - ノード間の遷移
  */
@@ -543,6 +605,9 @@ export interface CompiledNode {
 
   /** エラー時の次ノードID（nullはデフォルトエラーハンドリング） */
   nextOnError: string | null;
+
+  /** Decision/Switch設定（該当ノードのみ） */
+  decisionConfig?: DecisionNodeConfig | SwitchNodeConfig;
 }
 
 /**
@@ -557,6 +622,12 @@ export interface CompiledTransition {
 
   /** コンパイル済み条件（conditionalタイプ用） */
   condition?: CompiledCondition;
+
+  /** 始点ハンドル（Decision/Switchノード用） */
+  sourceHandle?: string;
+
+  /** 優先度（Decision分岐評価順） */
+  priority?: number;
 }
 
 /**

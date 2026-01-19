@@ -22,6 +22,8 @@ import type {
   ResolvedCapability,
   FlowCompiler,
   EvaluationContext,
+  DecisionNodeConfig,
+  SwitchNodeConfig,
 } from './types';
 import type { CapabilityHints, ValidationRule, StabilityLevel } from '@authrim/ar-lib-core';
 
@@ -53,10 +55,13 @@ export class FlowCompilerService implements FlowCompiler {
     // 2. 遷移マップを構築
     const transitions = this.buildTransitionMap(graph.edges);
 
-    // 3. 各ノードのnextOnSuccess/nextOnErrorを設定
+    // 3. Decision/Switchノードの遷移にpriorityを設定してソート
+    this.enrichTransitionsWithPriority(nodes, transitions);
+
+    // 4. 各ノードのnextOnSuccess/nextOnErrorを設定
     this.resolveNodeTransitions(nodes, transitions);
 
-    // 4. エントリーポイントを特定
+    // 5. エントリーポイントを特定
     const entryNodeId = this.findEntryNode(graph.nodes);
 
     return {
@@ -92,7 +97,7 @@ export class FlowCompilerService implements FlowCompiler {
     // Derive intent from node type if not specified
     const intent = node.data.intent ?? this.deriveIntentFromType(node.type);
 
-    return {
+    const compiledNode: CompiledNode = {
       id: node.id,
       type: node.type,
       intent,
@@ -100,6 +105,61 @@ export class FlowCompilerService implements FlowCompiler {
       nextOnSuccess: null, // 後で遷移マップから設定
       nextOnError: null, // 後で遷移マップから設定
     };
+
+    // Decision/Switchノードの場合は設定を保持
+    if (node.type === 'decision' || node.type === 'switch') {
+      compiledNode.decisionConfig = this.compileDecisionConfig(node);
+    }
+
+    return compiledNode;
+  }
+
+  /**
+   * Decision/Switchノードの設定をコンパイル
+   *
+   * セキュリティ対策:
+   * - DoS攻撃防止のため、分岐数に制限を設ける
+   * - Decision: 最大50分岐
+   * - Switch: 最大100ケース
+   */
+  private compileDecisionConfig(
+    node: GraphNode
+  ): DecisionNodeConfig | SwitchNodeConfig | undefined {
+    const config = node.data.config;
+
+    // セキュリティ制限定数
+    const MAX_DECISION_BRANCHES = 50;
+    const MAX_SWITCH_CASES = 100;
+
+    if (node.type === 'decision') {
+      // DecisionNodeConfig として解釈
+      const decisionConfig = config as unknown as DecisionNodeConfig | undefined;
+
+      // DoS攻撃対策: 分岐数制限
+      if (decisionConfig && decisionConfig.branches.length > MAX_DECISION_BRANCHES) {
+        throw new Error(
+          `[Security] Decision node "${node.id}" has too many branches: ${decisionConfig.branches.length} (max: ${MAX_DECISION_BRANCHES})`
+        );
+      }
+
+      return decisionConfig;
+    }
+
+    if (node.type === 'switch') {
+      // SwitchNodeConfig として解釈
+      const switchConfig = config as unknown as SwitchNodeConfig | undefined;
+
+      // DoS攻撃対策: ケース数制限
+      if (switchConfig && switchConfig.cases.length > MAX_SWITCH_CASES) {
+        throw new Error(
+          `[Security] Switch node "${node.id}" has too many cases: ${switchConfig.cases.length} (max: ${MAX_SWITCH_CASES})`
+        );
+      }
+
+      return switchConfig;
+    }
+
+    return undefined;
   }
 
   /**
@@ -240,6 +300,11 @@ export class FlowCompilerService implements FlowCompiler {
       type: edge.type,
     };
 
+    // sourceHandleを保持（Decision/Switchノード用）
+    if (edge.sourceHandle) {
+      transition.sourceHandle = edge.sourceHandle;
+    }
+
     // 条件付き遷移の場合、条件をコンパイル
     if (edge.type === 'conditional' && edge.data?.condition) {
       transition.condition = this.compileCondition(edge.data.condition);
@@ -298,6 +363,53 @@ export class FlowCompilerService implements FlowCompiler {
 
       default:
         return () => true;
+    }
+  }
+
+  /**
+   * Decision/Switchノードの遷移にpriorityを設定してソート
+   */
+  private enrichTransitionsWithPriority(
+    nodes: Map<string, CompiledNode>,
+    transitions: Map<string, CompiledTransition[]>
+  ): void {
+    for (const [nodeId, node] of nodes) {
+      // Decision/Switchノード以外はスキップ
+      if (node.type !== 'decision' && node.type !== 'switch') {
+        continue;
+      }
+
+      const nodeTransitions = transitions.get(nodeId);
+      if (!nodeTransitions || !node.decisionConfig) {
+        continue;
+      }
+
+      if (node.type === 'decision') {
+        // DecisionNodeConfig の branches から priority を設定
+        const config = node.decisionConfig as DecisionNodeConfig;
+
+        for (const transition of nodeTransitions) {
+          if (!transition.sourceHandle) continue;
+
+          // sourceHandle に対応する branch を検索
+          const branch = config.branches.find((b) => b.id === transition.sourceHandle);
+          if (branch) {
+            transition.priority = branch.priority;
+          }
+        }
+
+        // priority順にソート（小さい方が先）
+        nodeTransitions.sort((a, b) => {
+          const priorityA = a.priority ?? Number.MAX_SAFE_INTEGER;
+          const priorityB = b.priority ?? Number.MAX_SAFE_INTEGER;
+          return priorityA - priorityB;
+        });
+      }
+
+      if (node.type === 'switch') {
+        // Switchノードは priority を設定しない（定義順を維持）
+        // 必要に応じて将来的に priority を追加可能
+      }
     }
   }
 
