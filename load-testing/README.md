@@ -184,7 +184,14 @@ k6 run \
 
 ### Passkey Full Login
 
-Requires custom K6 binary with [xk6-passkeys](https://github.com/corbado/xk6-passkeys) extension.
+> **⚠️ Note (Jan 2026)**: The xk6-passkeys extension previously located at `extensions/xk6-passkeys/` has been removed due to 66 security vulnerabilities in its Go dependencies (go@1.23.0) with no available fixes. The extension was a fork of [corbado/xk6-passkeys](https://github.com/corbado/xk6-passkeys) with added `ImportCredential` support for credential serialization in k6's setup/teardown phases.
+>
+> **For future passkey load testing**:
+> - Use the upstream [corbado/xk6-passkeys](https://github.com/corbado/xk6-passkeys) extension directly
+> - Or rebuild from the [descope/virtualwebauthn](https://github.com/descope/virtualwebauthn) library
+> - Original implementation: `passkeys.go` with iCloud Keychain AAGUID (`fbfc3007-154e-4ecc-8c0b-6e020557d7bd`)
+
+**Previous setup** (for reference):
 
 ```bash
 # 1. Build custom K6 (requires Go 1.23+)

@@ -1052,10 +1052,10 @@ export async function adminFlowCompileHandler(c: AdminContext) {
 
     // Get flow from database
     const db = new D1Adapter({ db: c.env.DB });
-    const row = await db.queryOne<FlowRow>(
-      'SELECT * FROM flows WHERE id = ? AND tenant_id = ?',
-      [flowId, tenantId]
-    );
+    const row = await db.queryOne<FlowRow>('SELECT * FROM flows WHERE id = ? AND tenant_id = ?', [
+      flowId,
+      tenantId,
+    ]);
 
     if (!row) {
       return c.json(
