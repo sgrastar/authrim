@@ -3,7 +3,6 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
-	import { adminAuthAPI } from '$lib/api/admin-auth';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import FloatingNav from '$lib/components/admin/FloatingNav.svelte';
 	import NavSection from '$lib/components/admin/NavSection.svelte';
@@ -19,6 +18,15 @@
 
 	// Mobile menu state
 	let mobileMenuOpen = $state(false);
+
+	// Close mobile menu on navigation
+	$effect(() => {
+		// Track pathname changes - assign to unused variable to satisfy linter
+		const _currentPath = $page.url.pathname;
+		void _currentPath;
+		// Close menu when path changes
+		mobileMenuOpen = false;
+	});
 
 	// Navigation structure - Tenant scope (managed by tenant admins)
 	const tenantNavItems = {
@@ -132,11 +140,6 @@
 		}
 	});
 
-	async function handleLogout() {
-		adminAuth.clearAuth();
-		await adminAuthAPI.logout();
-	}
-
 	function toggleMobileMenu() {
 		mobileMenuOpen = !mobileMenuOpen;
 	}
@@ -156,7 +159,12 @@
 {:else if adminAuth.isAuthenticated}
 	<!-- Authenticated - layout with floating sidebar -->
 	<div class="app-layout">
-		<FloatingNav userName={adminAuth.user?.email?.split('@')[0] || 'Admin'} userRole="Super Admin">
+		<FloatingNav
+			userName={adminAuth.user?.email?.split('@')[0] || 'Admin'}
+			userRole="Super Admin"
+			mobileOpen={mobileMenuOpen}
+			onMobileClose={() => (mobileMenuOpen = false)}
+		>
 			<!-- Tenant Section -->
 			<NavSection level="tenant" tenantName="Default">
 				<!-- Dashboard -->
@@ -271,15 +279,15 @@
 			</NavSection>
 
 			{#snippet footer()}
-				<div class="nav-user">
+				<a href="/admin/account-settings" class="nav-user nav-user-link">
 					<div class="nav-user-avatar">
 						{(adminAuth.user?.email?.charAt(0) || 'A').toUpperCase()}
 					</div>
 					<div class="nav-user-info">
 						<div class="nav-user-name">{adminAuth.user?.email?.split('@')[0] || 'Admin'}</div>
-						<button class="nav-logout-btn" onclick={handleLogout}> Logout </button>
+						<span class="nav-user-role">Preferences</span>
 					</div>
-				</div>
+				</a>
 			{/snippet}
 		</FloatingNav>
 
@@ -287,11 +295,6 @@
 		<main class="main-content">
 			<AdminHeader
 				breadcrumbs={currentBreadcrumb()}
-				tenants={[
-					{ id: 'default', name: 'Default' },
-					{ id: 'acme', name: 'Acme Corporation' }
-				]}
-				selectedTenantId="default"
 				onMobileMenuClick={toggleMobileMenu}
 			/>
 
@@ -368,28 +371,33 @@
 	:global(.nav-user-info) {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: 2px;
+		min-width: 0;
 	}
 
 	:global(.nav-user-name) {
 		color: var(--text-inverse);
 		font-weight: 600;
 		font-size: 0.875rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
-	.nav-logout-btn {
-		background: transparent;
-		border: none;
+	:global(.nav-user-role) {
 		color: var(--text-muted);
 		font-size: 0.75rem;
-		cursor: pointer;
-		padding: 0;
-		text-align: left;
-		transition: color var(--transition-fast);
 	}
 
-	.nav-logout-btn:hover {
-		color: var(--text-inverse);
+	:global(.nav-user-link) {
+		text-decoration: none;
+		border-radius: var(--radius-md);
+		padding: 8px;
+		margin: -8px;
+		transition: background var(--transition-fast);
+	}
+
+	:global(.nav-user-link:hover) {
+		background: rgba(255, 255, 255, 0.08);
 	}
 
 	/* Responsive */

@@ -1,6 +1,4 @@
 <script lang="ts">
-	import ThemeSwitcher from './ThemeSwitcher.svelte';
-
 	interface Breadcrumb {
 		label: string;
 		href?: string;
@@ -79,8 +77,6 @@
 		{/if}
 
 		<div class="header-actions">
-			<ThemeSwitcher />
-
 			<button class="header-icon-btn" aria-label="Notifications">
 				<i class="i-ph-bell"></i>
 				<span class="notification-dot"></span>

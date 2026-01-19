@@ -33,14 +33,5 @@
 	:global(.nav-floating.expanded) .nav-group-label,
 	:global(.nav-floating.open) .nav-group-label {
 		opacity: 1;
-		white-space: normal;
-		word-wrap: break-word;
-		line-height: 1.3;
-	}
-
-	/* Korean: Break only at word boundaries */
-	:global([lang='ko']) :global(.nav-floating.expanded) .nav-group-label,
-	:global([lang='ko']) :global(.nav-floating.open) .nav-group-label {
-		word-break: keep-all;
 	}
 </style>

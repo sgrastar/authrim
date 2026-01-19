@@ -4,15 +4,23 @@
 	interface Props {
 		userName?: string;
 		userRole?: string;
+		mobileOpen?: boolean;
+		onMobileClose?: () => void;
 		children: Snippet;
 		footer?: Snippet;
 	}
 
-	let { userName = 'Admin', userRole = 'Super Admin', children, footer }: Props = $props();
+	let {
+		userName = 'Admin',
+		userRole = 'Super Admin',
+		mobileOpen = false,
+		onMobileClose,
+		children,
+		footer
+	}: Props = $props();
 
 	// Navigation expansion state
 	let isExpanded = $state(false);
-	let isMobileOpen = $state(false);
 	let closeTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// Handle mouse enter - expand immediately
@@ -51,10 +59,15 @@
 	});
 </script>
 
+<!-- Mobile overlay -->
+{#if mobileOpen}
+	<button class="mobile-overlay" onclick={onMobileClose} aria-label="Close menu"></button>
+{/if}
+
 <nav
 	class="nav-floating"
 	class:expanded={isExpanded}
-	class:open={isMobileOpen}
+	class:open={mobileOpen}
 	onmouseenter={handleMouseEnter}
 	onmouseleave={handleMouseLeave}
 	role="navigation"
@@ -66,6 +79,11 @@
 			<i class="i-ph-stack w-5 h-5 text-white"></i>
 		</div>
 		<span class="nav-logo-text">Authrim</span>
+		{#if mobileOpen}
+			<button class="mobile-close-btn" onclick={onMobileClose} aria-label="Close menu">
+				<i class="i-ph-x"></i>
+			</button>
+		{/if}
 	</div>
 
 	<!-- Navigation body -->
@@ -135,7 +153,7 @@
 		font-family: var(--font-display);
 		font-weight: 800;
 		font-size: 1.25rem;
-		color: var(--text-inverse);
+		color: #ffffff;
 		white-space: nowrap;
 		opacity: 0;
 		transition: opacity var(--transition-base);
@@ -211,13 +229,15 @@
 		flex-shrink: 0;
 	}
 
-	.nav-user-info {
+	/* Use :global for nav-user-info to apply to snippet content */
+	:global(.nav-user-info) {
 		opacity: 0;
 		transition: opacity var(--transition-base);
 		white-space: nowrap;
+		overflow: hidden;
 	}
 
-	.nav-floating.expanded .nav-user-info {
+	.nav-floating.expanded :global(.nav-user-info) {
 		opacity: 1;
 	}
 
@@ -232,6 +252,42 @@
 		font-size: 0.75rem;
 	}
 
+	/* === Mobile Overlay === */
+	.mobile-overlay {
+		display: none;
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.5);
+		z-index: calc(var(--z-nav) - 1);
+		border: none;
+		cursor: pointer;
+	}
+
+	/* === Mobile Close Button === */
+	.mobile-close-btn {
+		display: none;
+		width: 32px;
+		height: 32px;
+		border: none;
+		background: rgba(255, 255, 255, 0.1);
+		border-radius: var(--radius-sm);
+		color: var(--text-inverse);
+		cursor: pointer;
+		align-items: center;
+		justify-content: center;
+		margin-left: auto;
+		transition: background var(--transition-fast);
+	}
+
+	.mobile-close-btn:hover {
+		background: rgba(255, 255, 255, 0.2);
+	}
+
+	.mobile-close-btn :global(i) {
+		width: 20px;
+		height: 20px;
+	}
+
 	/* === Responsive === */
 	@media (max-width: 1024px) {
 		.nav-floating {
@@ -242,9 +298,18 @@
 	}
 
 	@media (max-width: 768px) {
+		.mobile-overlay {
+			display: block;
+		}
+
+		.mobile-close-btn {
+			display: flex;
+		}
+
 		.nav-floating {
 			transform: translateX(-100%);
 			width: var(--nav-width-expanded);
+			transition: transform var(--transition-base);
 		}
 
 		.nav-floating.open {
@@ -252,7 +317,7 @@
 		}
 
 		.nav-floating.open .nav-logo-text,
-		.nav-floating.open .nav-user-info {
+		.nav-floating.open :global(.nav-user-info) {
 			opacity: 1;
 		}
 	}

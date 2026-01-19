@@ -80,11 +80,13 @@
 	.current-tenant-name {
 		font-size: 0.875rem;
 		font-weight: 700;
-		color: var(--text-inverse);
+		color: #ffffff;
 		text-transform: none;
 		letter-spacing: 0;
 		white-space: nowrap;
 		overflow: hidden;
+		text-overflow: ellipsis;
+		min-width: 0;
 	}
 
 	/* Global visibility control - handled by parent */
@@ -95,18 +97,5 @@
 	:global(.nav-floating.expanded) .nav-section-header,
 	:global(.nav-floating.open) .nav-section-header {
 		opacity: 1;
-	}
-
-	:global(.nav-floating.expanded) .current-tenant-name,
-	:global(.nav-floating.open) .current-tenant-name {
-		white-space: normal;
-		word-wrap: break-word;
-		line-height: 1.3;
-	}
-
-	/* Korean text handling */
-	:global([lang='ko']) :global(.nav-floating.expanded) .current-tenant-name,
-	:global([lang='ko']) :global(.nav-floating.open) .current-tenant-name {
-		word-break: keep-all;
 	}
 </style>

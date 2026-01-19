@@ -158,15 +158,15 @@
 	--accent: #d4c4b4;
 	--accent-light: rgba(212, 196, 180, 0.15);
 
-	/* Hierarchy Colors (Dark Mode) */
+	/* Hierarchy Colors (Dark Mode) - increased opacity for better visibility */
 	--system-color: #94a3b8;
-	--system-bg: rgba(148, 163, 184, 0.15);
-	--tenant-color: #e5e7eb;
-	--tenant-bg: rgba(229, 231, 235, 0.12);
+	--system-bg: rgba(148, 163, 184, 0.25);
+	--tenant-color: #f5f5f5;
+	--tenant-bg: rgba(245, 245, 245, 0.15);
 	--client-color: #fbbf24;
-	--client-bg: rgba(251, 191, 36, 0.15);
+	--client-bg: rgba(251, 191, 36, 0.2);
 	--compliance-color: #34d399;
-	--compliance-bg: rgba(52, 211, 153, 0.15);
+	--compliance-bg: rgba(52, 211, 153, 0.2);
 }
 
 /* === Dark Theme - Navy Variant === */

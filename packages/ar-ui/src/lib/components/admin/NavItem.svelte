@@ -59,22 +59,15 @@
 		transition: opacity var(--transition-base);
 		white-space: nowrap;
 		overflow: hidden;
+		text-overflow: ellipsis;
 		flex: 1;
+		min-width: 0;
 	}
 
-	/* Expanded state - allow text wrapping */
+	/* Expanded state - show text but keep it single line to avoid layout shift */
 	:global(.nav-floating.expanded) .nav-item-text,
 	:global(.nav-floating.open) .nav-item-text {
 		opacity: 1;
-		white-space: normal;
-		word-wrap: break-word;
-		line-height: 1.4;
-	}
-
-	/* Korean: Break only at word boundaries */
-	:global([lang='ko']) :global(.nav-floating.expanded) .nav-item-text,
-	:global([lang='ko']) :global(.nav-floating.open) .nav-item-text {
-		word-break: keep-all;
 	}
 
 	/* Hover state */
