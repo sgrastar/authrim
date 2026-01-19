@@ -12,3 +12,15 @@
 
   # Referrer Policy - send origin only for cross-origin requests
   Referrer-Policy: strict-origin-when-cross-origin
+
+# Disable caching for Admin pages (HTML)
+/admin/*
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Disable caching for all HTML pages
+/*.html
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Allow caching for static assets (JS, CSS, images) with revalidation
+/_app/*
+  Cache-Control: public, max-age=31536000, immutable

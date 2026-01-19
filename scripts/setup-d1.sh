@@ -341,11 +341,8 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "🚀 Running migrations..."
     echo ""
 
-    # Run migrations using migrate.sh
-    if [ -f "migrations/migrate.sh" ]; then
-        bash migrations/migrate.sh "$DEPLOY_ENV" up
-    elif [ -f "scripts/apply-migrations.sh" ]; then
-        # Use the apply-migrations.sh script
+    # Run migrations using apply-migrations.sh
+    if [ -f "scripts/apply-migrations.sh" ]; then
         echo "📝 Using apply-migrations.sh script..."
         bash scripts/apply-migrations.sh --env="$DEPLOY_ENV"
     else
@@ -435,7 +432,7 @@ echo ""
 echo "Useful commands:"
 echo "  • List tables:    wrangler d1 execute $DB_NAME --remote --command=\"SELECT name FROM sqlite_master WHERE type='table';\""
 echo "  • Query data:     wrangler d1 execute $DB_NAME --remote --command=\"SELECT * FROM users LIMIT 5;\""
-echo "  • Run migrations: bash migrations/migrate.sh $DEPLOY_ENV up"
-echo "  • Check status:   bash migrations/migrate.sh $DEPLOY_ENV status"
+echo "  • Run migrations: bash scripts/apply-migrations.sh --env=$DEPLOY_ENV"
+echo "  • Check status:   bash scripts/apply-migrations.sh --env=$DEPLOY_ENV --status"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

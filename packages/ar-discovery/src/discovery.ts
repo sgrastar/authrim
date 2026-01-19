@@ -11,6 +11,7 @@ import {
   loadTenantProfile,
   filterGrantTypesByProfile,
   getLogger,
+  getFeatureFlag,
 } from '@authrim/ar-lib-core';
 import type { LogoutConfig, TenantProfile } from '@authrim/ar-lib-core';
 
@@ -143,6 +144,30 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     (tokenExchangeEnabled && oidcConfig.tokenExchange?.idJag?.enabled) ??
     c.env.ENABLE_ID_JAG === 'true';
 
+  // Flow Engine (UI Contract) feature flag
+  // When enabled, server-driven UI flows are available
+  // Check Settings Manager KV format first (settings:tenant:<tenantId>:feature-flags)
+  // then fall back to legacy flag format (flag:ENABLE_FLOW_ENGINE)
+  let flowEngineEnabled = false;
+  if (c.env.AUTHRIM_CONFIG) {
+    try {
+      const settingsKey = `settings:tenant:${tenantId}:feature-flags`;
+      const settingsJson = await c.env.AUTHRIM_CONFIG.get(settingsKey);
+      if (settingsJson) {
+        const settings = JSON.parse(settingsJson);
+        if (typeof settings === 'object' && settings !== null) {
+          flowEngineEnabled = settings['feature.enable_flow_engine'] === true;
+        }
+      }
+    } catch {
+      // Fall through to legacy check
+    }
+  }
+  // Legacy fallback: check flag:ENABLE_FLOW_ENGINE or env variable
+  if (!flowEngineEnabled) {
+    flowEngineEnabled = await getFeatureFlag('ENABLE_FLOW_ENGINE', c.env, false);
+  }
+
   // Load TenantProfile for profile-based grant_types filtering
   // §16: Human Auth / AI Ephemeral Auth two-layer model
   const tenantProfile: TenantProfile = await loadTenantProfile(
@@ -154,7 +179,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // Check if cached metadata is still valid (include feature flags, profile, and tenant in cache key)
   const logoutHash = `bc=${logoutConfig.backchannel.enabled}:fc=${logoutConfig.frontchannel.enabled}:sm=${logoutConfig.session_management.enabled}`;
   const profileHash = `profile=${tenantProfile.type}`;
-  const settingsHash = `${currentSettingsJson}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:${profileHash}:${logoutHash}`;
+  const settingsHash = `${currentSettingsJson}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}`;
   const cacheKey = `${tenantId}:${settingsHash}`;
 
   const cachedMetadata = metadataCache.get(cacheKey);
@@ -361,6 +386,13 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
             'urn:ietf:params:oauth:token-type:jwt',
             'urn:ietf:params:oauth:token-type:saml2',
           ],
+        }
+      : {}),
+    // Flow Engine (UI Contract) - conditionally included when enabled
+    // Authrim-specific extension for server-driven UI flows
+    ...(flowEngineEnabled
+      ? {
+          flow_engine_supported: true,
         }
       : {}),
   };

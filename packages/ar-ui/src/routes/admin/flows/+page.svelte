@@ -9,10 +9,18 @@
 		getProfileBadgeClass,
 		canDeleteFlow
 	} from '$lib/api/admin-flows';
+	import { adminSettingsAPI } from '$lib/api/admin-settings';
 
 	let flows: Flow[] = $state([]);
 	let loading = $state(true);
 	let error = $state('');
+
+	// Flow Engine Feature Flag state
+	let flowEngineEnabled = $state(false);
+	let flowEngineLoading = $state(true);
+	let flowEngineError = $state('');
+	let flowEngineSaving = $state(false);
+	let featureFlagsVersion = $state('');
 
 	// Pagination
 	let page = $state(1);
@@ -30,6 +38,53 @@
 	let flowToDelete: Flow | null = $state(null);
 	let deleting = $state(false);
 	let deleteError = $state('');
+
+	async function loadFlowEngineStatus() {
+		flowEngineLoading = true;
+		flowEngineError = '';
+
+		try {
+			const settings = await adminSettingsAPI.getSettings('feature-flags');
+			flowEngineEnabled = settings.values['feature.enable_flow_engine'] === true;
+			featureFlagsVersion = settings.version;
+		} catch (err) {
+			console.error('Failed to load Flow Engine status:', err);
+			flowEngineError = 'Failed to load Flow Engine status';
+		} finally {
+			flowEngineLoading = false;
+		}
+	}
+
+	async function toggleFlowEngine() {
+		if (flowEngineSaving) return;
+
+		flowEngineSaving = true;
+		flowEngineError = '';
+
+		try {
+			// Ensure we have a valid version before updating
+			if (!featureFlagsVersion) {
+				const settings = await adminSettingsAPI.getSettings('feature-flags');
+				featureFlagsVersion = settings.version;
+				flowEngineEnabled = settings.values['feature.enable_flow_engine'] === true;
+			}
+
+			const newValue = !flowEngineEnabled;
+			const result = await adminSettingsAPI.updateSettings('feature-flags', {
+				ifMatch: featureFlagsVersion,
+				set: { 'feature.enable_flow_engine': newValue }
+			});
+			flowEngineEnabled = newValue;
+			featureFlagsVersion = result.newVersion;
+		} catch (err) {
+			console.error('Failed to update Flow Engine status:', err);
+			flowEngineError = err instanceof Error ? err.message : 'Failed to update Flow Engine status';
+			// Reload to get current state
+			await loadFlowEngineStatus();
+		} finally {
+			flowEngineSaving = false;
+		}
+	}
 
 	async function loadFlows() {
 		loading = true;
@@ -55,6 +110,7 @@
 	}
 
 	onMount(() => {
+		loadFlowEngineStatus();
 		loadFlows();
 	});
 
@@ -137,12 +193,54 @@
 			<p class="page-description">Manage authentication and authorization flows.</p>
 		</div>
 		<div class="page-actions">
-			<button class="btn btn-primary" onclick={navigateToCreate}>
+			<button class="btn btn-primary" onclick={navigateToCreate} disabled={!flowEngineEnabled}>
 				<i class="i-ph-plus"></i>
 				Create Flow
 			</button>
 		</div>
 	</div>
+
+	<!-- Flow Engine Feature Flag Toggle -->
+	<div class="panel flow-engine-toggle-panel">
+		<div class="flow-engine-toggle-row">
+			<div class="flow-engine-info">
+				<h3 class="flow-engine-title">Flow Engine</h3>
+				<p class="flow-engine-description">
+					Enable server-driven UI flows (UI Contract). When disabled, standard OIDC flows will be used.
+				</p>
+			</div>
+			<div class="flow-engine-control">
+				{#if flowEngineLoading}
+					<span class="loading-text">Loading...</span>
+				{:else}
+					<label class="toggle-switch">
+						<input
+							type="checkbox"
+							checked={flowEngineEnabled}
+							onchange={toggleFlowEngine}
+							disabled={flowEngineSaving}
+						/>
+						<span class="toggle-slider"></span>
+					</label>
+					<span class={flowEngineEnabled ? 'status-enabled' : 'status-disabled'}>
+						{flowEngineEnabled ? 'Enabled' : 'Disabled'}
+					</span>
+				{/if}
+			</div>
+		</div>
+		{#if flowEngineError}
+			<div class="alert alert-error alert-sm">{flowEngineError}</div>
+		{/if}
+		{#if flowEngineSaving}
+			<div class="saving-indicator">Saving...</div>
+		{/if}
+	</div>
+
+	{#if !flowEngineEnabled && !flowEngineLoading}
+		<div class="alert alert-warning">
+			<strong>Flow Engine is disabled.</strong> Enable it above to manage flows. When disabled, standard OIDC flows will be used instead.
+		</div>
+	{/if}
 
 	{#if error}
 		<div class="alert alert-error">
@@ -352,3 +450,131 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	/* Flow Engine Toggle Panel Styles */
+	.flow-engine-toggle-panel {
+		margin-bottom: 1.5rem;
+		padding: 1rem 1.25rem;
+	}
+
+	.flow-engine-toggle-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+	}
+
+	.flow-engine-info {
+		flex: 1;
+	}
+
+	.flow-engine-title {
+		margin: 0;
+		font-size: 1rem;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+
+	.flow-engine-description {
+		margin: 0.25rem 0 0;
+		font-size: 0.875rem;
+		color: var(--text-secondary);
+	}
+
+	.flow-engine-control {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.loading-text {
+		font-size: 0.875rem;
+		color: var(--text-secondary);
+	}
+
+	/* Toggle Switch */
+	.toggle-switch {
+		position: relative;
+		display: inline-block;
+		width: 48px;
+		height: 24px;
+	}
+
+	.toggle-switch input {
+		opacity: 0;
+		width: 0;
+		height: 0;
+	}
+
+	.toggle-slider {
+		position: absolute;
+		cursor: pointer;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: #ccc;
+		border-radius: 24px;
+		transition: 0.2s;
+		box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+	}
+
+	.toggle-slider:before {
+		position: absolute;
+		content: '';
+		height: 18px;
+		width: 18px;
+		left: 3px;
+		bottom: 3px;
+		background-color: white;
+		border-radius: 50%;
+		transition: 0.2s;
+	}
+
+	.toggle-switch input:checked + .toggle-slider {
+		background-color: var(--success);
+	}
+
+	.toggle-switch input:checked + .toggle-slider:before {
+		transform: translateX(24px);
+	}
+
+	.toggle-switch input:disabled + .toggle-slider {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.status-enabled {
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: var(--success);
+	}
+
+	.status-disabled {
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: var(--text-secondary);
+	}
+
+	.saving-indicator {
+		margin-top: 0.5rem;
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+	}
+
+	.alert-sm {
+		margin-top: 0.75rem;
+		padding: 0.5rem 0.75rem;
+		font-size: 0.875rem;
+	}
+
+	.alert-warning {
+		background-color: rgba(234, 179, 8, 0.1);
+		border: 1px solid rgba(234, 179, 8, 0.3);
+		border-radius: 0.375rem;
+		padding: 0.75rem 1rem;
+		color: var(--text-primary);
+		margin-bottom: 1rem;
+	}
+</style>

@@ -38,6 +38,9 @@ export interface FeatureFlagsSettings {
   // Conformance Testing
   'feature.conformance_enabled': boolean;
   'feature.conformance_use_builtin_forms': boolean;
+
+  // UI Contract / Flow Engine
+  'feature.enable_flow_engine': boolean;
 }
 
 /**
@@ -206,6 +209,18 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     description: 'Use built-in login/consent forms in conformance mode',
     visibility: 'admin',
   },
+
+  // UI Contract / Flow Engine
+  'feature.enable_flow_engine': {
+    key: 'feature.enable_flow_engine',
+    type: 'boolean',
+    default: false,
+    envKey: 'ENABLE_FLOW_ENGINE',
+    label: 'Enable Flow Engine',
+    description:
+      'Enable server-driven UI flows (UI Contract). When disabled, standard OIDC flows will be used.',
+    visibility: 'admin',
+  },
 };
 
 /**
@@ -248,4 +263,7 @@ export const FEATURE_FLAGS_DEFAULTS: FeatureFlagsSettings = {
   // Conformance Testing
   'feature.conformance_enabled': false,
   'feature.conformance_use_builtin_forms': true,
+
+  // UI Contract / Flow Engine
+  'feature.enable_flow_engine': false,
 };
