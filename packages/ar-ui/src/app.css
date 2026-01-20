@@ -2143,6 +2143,18 @@ button {
 	color: #6366f1;
 }
 
+.preset-badge {
+	display: inline-block;
+	padding: 1px 6px;
+	margin-left: 6px;
+	border-radius: var(--radius-full);
+	font-size: 0.625rem;
+	font-weight: 600;
+	background: var(--success);
+	color: white;
+	vertical-align: middle;
+}
+
 /* === Settings Summary Box === */
 .settings-summary {
 	padding: 16px;

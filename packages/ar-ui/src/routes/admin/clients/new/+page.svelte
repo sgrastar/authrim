@@ -12,9 +12,21 @@
 		requiresRedirectUri: boolean;
 		defaultGrantTypes: string[];
 		pkceRequired: boolean;
+		badge?: string; // Optional badge (e.g., "WebSDK")
 	}
 
 	const PRESET_CONFIGS: PresetConfig[] = [
+		{
+			id: 'authrim-websdk',
+			name: 'Authrim WebSDK',
+			description: 'Best practice config for @authrim/web SDK',
+			icon: '⚡',
+			clientType: 'public',
+			requiresRedirectUri: true,
+			defaultGrantTypes: ['authorization_code', 'refresh_token'],
+			pkceRequired: true,
+			badge: 'Recommended'
+		},
 		{
 			id: 'spa-public',
 			name: 'SPA',
@@ -213,7 +225,12 @@
 				{#each PRESET_CONFIGS as preset (preset.id)}
 					<button class="preset-card" onclick={() => selectPreset(preset)}>
 						<div class="preset-icon">{preset.icon}</div>
-						<div class="preset-name">{preset.name}</div>
+						<div class="preset-name">
+							{preset.name}
+							{#if preset.badge}
+								<span class="preset-badge">{preset.badge}</span>
+							{/if}
+						</div>
 						<div class="preset-description">{preset.description}</div>
 						<span
 							class="preset-type-badge {preset.clientType === 'confidential'
