@@ -7,6 +7,7 @@
 		type ExternalIdPProvider,
 		type UpdateProviderRequest
 	} from '$lib/api/admin-external-providers';
+	import { ToggleSwitch } from '$lib/components';
 
 	let provider: ExternalIdPProvider | null = $state(null);
 	let loading = $state(true);
@@ -205,10 +206,11 @@
 				</div>
 
 				<div class="form-group">
-					<label class="form-checkbox-label">
-						<input type="checkbox" bind:checked={enabled} />
-						<span>Enabled</span>
-					</label>
+					<ToggleSwitch
+						bind:checked={enabled}
+						label="Enabled"
+						description="Enable this identity provider for user authentication"
+					/>
 				</div>
 			</div>
 
@@ -304,37 +306,29 @@
 				<h2 class="panel-title">Behavior Settings</h2>
 
 				<div class="behavior-settings-list">
-					<label class="behavior-setting-item">
-						<input type="checkbox" bind:checked={autoLinkEmail} />
-						<div class="behavior-setting-content">
-							<strong>Auto Link Email</strong>
-							<p>Automatically link accounts with matching email addresses</p>
-						</div>
-					</label>
+					<ToggleSwitch
+						bind:checked={autoLinkEmail}
+						label="Auto Link Email"
+						description="Automatically link accounts with matching email addresses"
+					/>
 
-					<label class="behavior-setting-item">
-						<input type="checkbox" bind:checked={jitProvisioning} />
-						<div class="behavior-setting-content">
-							<strong>JIT Provisioning</strong>
-							<p>Create new user accounts on first login</p>
-						</div>
-					</label>
+					<ToggleSwitch
+						bind:checked={jitProvisioning}
+						label="JIT Provisioning"
+						description="Create new user accounts on first login"
+					/>
 
-					<label class="behavior-setting-item">
-						<input type="checkbox" bind:checked={requireEmailVerified} />
-						<div class="behavior-setting-content">
-							<strong>Require Email Verified</strong>
-							<p>Only allow users with verified email addresses</p>
-						</div>
-					</label>
+					<ToggleSwitch
+						bind:checked={requireEmailVerified}
+						label="Require Email Verified"
+						description="Only allow users with verified email addresses"
+					/>
 
-					<label class="behavior-setting-item">
-						<input type="checkbox" bind:checked={alwaysFetchUserinfo} />
-						<div class="behavior-setting-content">
-							<strong>Always Fetch Userinfo</strong>
-							<p>Fetch userinfo endpoint even if claims are in ID token</p>
-						</div>
-					</label>
+					<ToggleSwitch
+						bind:checked={alwaysFetchUserinfo}
+						label="Always Fetch Userinfo"
+						description="Fetch userinfo endpoint even if claims are in ID token"
+					/>
 				</div>
 			</div>
 

@@ -47,7 +47,15 @@ export type ChallengeType =
   | 'consent'
   | 'did_authentication' // DID-based authentication
   | 'did_registration' // DID linking to existing account
-  | 'anon_login'; // Anonymous device-based login (§17)
+  | 'anon_login' // Anonymous device-based login (§17)
+  // Direct Auth API types
+  | 'direct_auth_code' // Authorization code for Direct Auth token exchange
+  | 'direct_passkey_login' // Direct Auth passkey login challenge
+  | 'direct_passkey_signup' // Direct Auth passkey signup challenge
+  | 'direct_passkey_signup_map' // Challenge ID to userId mapping for signup
+  | 'direct_passkey_register' // Direct Auth passkey register (authenticated user)
+  | 'direct_passkey_register_map' // Challenge ID to userId mapping for register
+  | 'direct_email_code'; // Direct Auth email code challenge
 
 /**
  * Challenge metadata

@@ -275,6 +275,41 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 
 ---
 
+## SDK Feature Matrix
+
+`@authrim/core` is a platform-agnostic TypeScript library. `@authrim/web` provides browser-specific implementations.
+
+| Feature | Server | Core SDK | Web SDK | Note |
+|---------|:------:|:--------:|:-------:|------|
+| **P0 - Critical** | | | | |
+| PAR (RFC 9126) | ✅ | ✅ | — | FAPI 2.0 security baseline |
+| Device Flow (RFC 8628) | ✅ | ✅ | ✅ | CLI/TV/IoT + DeviceFlowUI |
+| Client Credentials (RFC 6749 §4.4) | ✅ | ✅ | — | M2M auth (Node SDK only) |
+| **P1 - Important** | | | | |
+| DPoP (RFC 9449) | ✅ | ✅ | — | Token binding/proof of possession |
+| JAR (RFC 9101) | ✅ | ✅ | — | Signed authorization requests |
+| JARM | ✅ | ✅ | — | Signed authorization responses |
+| **P2 - Session Management** | | | | |
+| Session State Calculator | ✅ | ✅ | — | session_state hash calculation |
+| Check Session Iframe | ✅ | — | ✅ | postMessage session check |
+| Session Monitor | ✅ | — | ✅ | Periodic session polling |
+| **P2 - Logout** | | | | |
+| RP-Initiated Logout | ✅ | ✅ | — | LogoutHandler |
+| Front-Channel Logout | ✅ | ✅ | ✅ | URL builder + handler |
+| Back-Channel Logout | ✅ | ✅ | — | logout_token JWT validation |
+| **Deferred** | | | | |
+| JWE | ✅ | — | — | Signing sufficient for most cases |
+| CIBA | ✅ | — | — | Specialized use case (PSD2/banking) |
+| VC (OpenID4VP/VCI/DID) | ✅ | — | — | Specs still maturing |
+
+> **Design Principles:**
+> - Core returns "facts" only — UX events are handled by upper SDKs (web/react/svelte)
+> - Fail safe — Insecure options require explicit `dangerouslyAllowInsecure` opt-in
+> - Respect Discovery — Enforces `require_pushed_authorization_requests` and `require_signed_request_object` flags
+> - Security first — Timing-safe comparison, input length validation, JTI replay guidance
+
+---
+
 ## Contributing
 
 Authrim is open source under Apache 2.0, currently maintained by a single author.

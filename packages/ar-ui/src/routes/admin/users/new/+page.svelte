@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { adminUsersAPI, type CreateUserInput } from '$lib/api/admin-users';
+	import { ToggleSwitch } from '$lib/components';
 
 	let saving = $state(false);
 	let error = $state('');
@@ -174,19 +175,11 @@
 
 				<!-- Email Verified -->
 				<div>
-					<label
-						style="display: flex; align-items: center; gap: 8px; font-size: 14px; color: #374151; cursor: pointer;"
-					>
-						<input
-							type="checkbox"
-							bind:checked={form.email_verified}
-							style="width: 16px; height: 16px;"
-						/>
-						Email Verified
-					</label>
-					<p style="font-size: 12px; color: #6b7280; margin: 4px 0 0 24px;">
-						Mark the email as verified (skip email verification)
-					</p>
+					<ToggleSwitch
+						bind:checked={form.email_verified}
+						label="Email Verified"
+						description="Mark the email as verified (skip email verification)"
+					/>
 				</div>
 			</div>
 

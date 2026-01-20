@@ -221,6 +221,24 @@ app.post('/userinfo', async (c) => {
 });
 
 /**
+ * Direct Authentication API v1 - Route to OP_AUTH worker
+ * BetterAuth-style API for custom login pages
+ * - /api/v1/auth/direct/passkey/login/start - Start passkey login
+ * - /api/v1/auth/direct/passkey/login/finish - Finish passkey login
+ * - /api/v1/auth/direct/passkey/signup/start - Start passkey signup
+ * - /api/v1/auth/direct/passkey/signup/finish - Finish passkey signup
+ * - /api/v1/auth/direct/passkey/register/start - Start passkey registration (requires auth)
+ * - /api/v1/auth/direct/passkey/register/finish - Finish passkey registration (requires auth)
+ * - /api/v1/auth/direct/email-code/send - Send email verification code
+ * - /api/v1/auth/direct/email-code/verify - Verify email code
+ * - /api/v1/auth/direct/token - Exchange auth_code for session/tokens
+ */
+app.all('/api/v1/auth/direct/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+/**
  * Authentication endpoints - Route to OP_AUTH worker
  * - /api/auth/passkey/* - WebAuthn/Passkey authentication
  * - /api/auth/email-code/* - Email code (OTP) authentication

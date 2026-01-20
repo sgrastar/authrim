@@ -15,6 +15,7 @@
 		type ScopeContext
 	} from '$lib/api/admin-settings';
 	import { InheritanceIndicator } from '$lib/components/admin';
+	import { ToggleSwitch } from '$lib/components';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	interface PageData {
@@ -278,19 +279,12 @@
 
 						<div class="setting-control">
 							{#if settingMeta.type === 'boolean'}
-								<label class="settings-checkbox-label" class:disabled={locked}>
-									<input
-										type="checkbox"
-										id={key}
-										checked={Boolean(value)}
-										disabled={locked}
-										onchange={(e) => handleChange(key, e.currentTarget.checked)}
-										class="settings-checkbox"
-									/>
-									<span class="settings-checkbox-text">
-										{value ? 'Enabled' : 'Disabled'}
-									</span>
-								</label>
+								<ToggleSwitch
+									checked={Boolean(value)}
+									disabled={locked}
+									id={key}
+									onchange={(newValue) => handleChange(key, newValue)}
+								/>
 							{:else if settingMeta.type === 'enum' && settingMeta.enum}
 								<select
 									id={key}

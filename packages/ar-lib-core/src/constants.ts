@@ -211,6 +211,7 @@ export const RESPONSE_TYPES = {
   CODE_TOKEN: 'code token',
   ID_TOKEN_TOKEN: 'id_token token',
   CODE_ID_TOKEN_TOKEN: 'code id_token token',
+  NONE: 'none',
 } as const;
 
 /**

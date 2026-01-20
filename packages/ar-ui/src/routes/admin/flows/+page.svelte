@@ -10,6 +10,7 @@
 		canDeleteFlow
 	} from '$lib/api/admin-flows';
 	import { adminSettingsAPI } from '$lib/api/admin-settings';
+	import { ToggleSwitch } from '$lib/components';
 
 	let flows: Flow[] = $state([]);
 	let loading = $state(true);
@@ -206,25 +207,19 @@
 			<div class="flow-engine-info">
 				<h3 class="flow-engine-title">Flow Engine</h3>
 				<p class="flow-engine-description">
-					Enable server-driven UI flows (UI Contract). When disabled, standard OIDC flows will be used.
+					Enable server-driven UI flows (UI Contract). When disabled, standard OIDC flows will be
+					used.
 				</p>
 			</div>
 			<div class="flow-engine-control">
 				{#if flowEngineLoading}
 					<span class="loading-text">Loading...</span>
 				{:else}
-					<label class="toggle-switch">
-						<input
-							type="checkbox"
-							checked={flowEngineEnabled}
-							onchange={toggleFlowEngine}
-							disabled={flowEngineSaving}
-						/>
-						<span class="toggle-slider"></span>
-					</label>
-					<span class={flowEngineEnabled ? 'status-enabled' : 'status-disabled'}>
-						{flowEngineEnabled ? 'Enabled' : 'Disabled'}
-					</span>
+					<ToggleSwitch
+						checked={flowEngineEnabled}
+						disabled={flowEngineSaving}
+						onchange={toggleFlowEngine}
+					/>
 				{/if}
 			</div>
 		</div>
@@ -238,7 +233,8 @@
 
 	{#if !flowEngineEnabled && !flowEngineLoading}
 		<div class="alert alert-warning">
-			<strong>Flow Engine is disabled.</strong> Enable it above to manage flows. When disabled, standard OIDC flows will be used instead.
+			<strong>Flow Engine is disabled.</strong> Enable it above to manage flows. When disabled, standard
+			OIDC flows will be used instead.
 		</div>
 	{/if}
 
@@ -490,70 +486,6 @@
 
 	.loading-text {
 		font-size: 0.875rem;
-		color: var(--text-secondary);
-	}
-
-	/* Toggle Switch */
-	.toggle-switch {
-		position: relative;
-		display: inline-block;
-		width: 48px;
-		height: 24px;
-	}
-
-	.toggle-switch input {
-		opacity: 0;
-		width: 0;
-		height: 0;
-	}
-
-	.toggle-slider {
-		position: absolute;
-		cursor: pointer;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		background-color: #ccc;
-		border-radius: 24px;
-		transition: 0.2s;
-		box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
-	}
-
-	.toggle-slider:before {
-		position: absolute;
-		content: '';
-		height: 18px;
-		width: 18px;
-		left: 3px;
-		bottom: 3px;
-		background-color: white;
-		border-radius: 50%;
-		transition: 0.2s;
-	}
-
-	.toggle-switch input:checked + .toggle-slider {
-		background-color: var(--success);
-	}
-
-	.toggle-switch input:checked + .toggle-slider:before {
-		transform: translateX(24px);
-	}
-
-	.toggle-switch input:disabled + .toggle-slider {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.status-enabled {
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: var(--success);
-	}
-
-	.status-disabled {
-		font-size: 0.875rem;
-		font-weight: 500;
 		color: var(--text-secondary);
 	}
 

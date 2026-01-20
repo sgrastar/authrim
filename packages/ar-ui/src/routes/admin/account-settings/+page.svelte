@@ -162,7 +162,9 @@
 				<div class="setting-row">
 					<div class="setting-info">
 						<h3 class="setting-label">Interface Language</h3>
-						<p class="setting-description">Select your preferred language for the admin interface</p>
+						<p class="setting-description">
+							Select your preferred language for the admin interface
+						</p>
 					</div>
 					<select class="language-select" value={selectedLanguage} onchange={handleLanguageChange}>
 						{#each LANGUAGES as lang (lang.id)}

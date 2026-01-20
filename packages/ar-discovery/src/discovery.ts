@@ -224,6 +224,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'code id_token',
       'code token',
       'code id_token token',
+      'none',
     ],
     // Grant types filtered by TenantProfile capabilities (§16: Two-layer model)
     // RFC 8414 §2: Discovery metadata SHOULD reflect actual capabilities

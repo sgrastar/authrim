@@ -5,6 +5,7 @@
 		type IatToken,
 		type CreateIatTokenResponse
 	} from '$lib/api/admin-iat-tokens';
+	import { ToggleSwitch } from '$lib/components';
 
 	let tokens: IatToken[] = $state([]);
 	let loading = $state(true);
@@ -286,13 +287,11 @@
 				</div>
 
 				<div class="form-group">
-					<label class="checkbox-label">
-						<input type="checkbox" bind:checked={newTokenSingleUse} />
-						<span>
-							<strong>Single Use</strong>
-							<span class="muted"> - Token can only be used once for registration</span>
-						</span>
-					</label>
+					<ToggleSwitch
+						bind:checked={newTokenSingleUse}
+						label="Single Use"
+						description="Token can only be used once for registration"
+					/>
 				</div>
 			</div>
 

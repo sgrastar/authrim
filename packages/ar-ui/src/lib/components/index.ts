@@ -7,3 +7,4 @@ export { default as Spinner } from './Spinner.svelte';
 export { default as Dialog } from './Dialog.svelte';
 export { default as LanguageSwitcher } from './LanguageSwitcher.svelte';
 export { default as TestDialog } from './TestDialog.svelte';
+export { default as ToggleSwitch } from './ToggleSwitch.svelte';

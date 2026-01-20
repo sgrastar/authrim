@@ -1,6 +1,6 @@
 {
   "name": "authrim",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "A lightweight OpenID Connect Provider built on Cloudflare Workers - Monorepo",
   "private": true,
   "type": "module",

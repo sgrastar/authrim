@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { adminReBACAPI, type RelationshipTuple, formatTupleString } from '$lib/api/admin-rebac';
+	import { ToggleSwitch } from '$lib/components';
 
 	// State
 	let tuples: RelationshipTuple[] = $state([]);
@@ -428,10 +429,11 @@
 					</div>
 
 					<div class="form-group">
-						<label class="checkbox-label">
-							<input type="checkbox" bind:checked={createForm.has_expiry} />
-							<span>Set expiration</span>
-						</label>
+						<ToggleSwitch
+							bind:checked={createForm.has_expiry}
+							label="Set expiration"
+							description="Set an expiration date for this relationship"
+						/>
 					</div>
 
 					{#if createForm.has_expiry}

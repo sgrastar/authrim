@@ -1236,7 +1236,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // FAPI 2.0 SHALL require PKCE with S256
-    if (!code_challenge || code_challenge_method !== 'S256') {
+    // Exception: response_type=none does not issue authorization code, so PKCE is not required
+    if (response_type !== 'none' && (!code_challenge || code_challenge_method !== 'S256')) {
       return c.json(
         {
           error: 'invalid_request',
@@ -1648,7 +1649,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const stateRequired = await configManager.isStateRequired();
 
   // Validate state (conditionally required based on configuration)
-  if (stateRequired && (!state || state.trim().length === 0)) {
+  // SECURITY: response_type=none ALWAYS requires state for CSRF protection
+  // (used for session checks, state prevents cross-site request forgery)
+  const isNoneResponseTypeForState = response_type === 'none';
+  if ((stateRequired || isNoneResponseTypeForState) && (!state || state.trim().length === 0)) {
     return sendError('invalid_request', 'state parameter is required (CSRF protection)');
   }
   const stateValidation = validateState(state);
@@ -2400,10 +2404,24 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Parse response_type to determine what to return
   // Per OIDC Core 3.3: Hybrid Flow supports combinations of code, id_token, and token
+  // Per OAuth 2.0 Multiple Response Types 1.0 §5: response_type=none returns no tokens
   const responseTypes = validResponseType.split(' ');
-  const includesCode = responseTypes.includes('code');
-  const includesIdToken = responseTypes.includes('id_token');
-  const includesToken = responseTypes.includes('token');
+  const isNoneResponseType = validResponseType === 'none';
+
+  // SECURITY: response_type=none cannot be combined with other response types
+  // (OAuth 2.0 Multiple Response Types 1.0 §5: "none" is mutually exclusive)
+  if (responseTypes.includes('none') && responseTypes.length > 1) {
+    return sendError(
+      'invalid_request',
+      'response_type=none cannot be combined with other response types'
+    );
+  }
+
+  // For response_type=none: skip code/token/id_token generation
+  // Redirect with state and iss only (session check without token issuance)
+  const includesCode = responseTypes.includes('code') && !isNoneResponseType;
+  const includesIdToken = responseTypes.includes('id_token') && !isNoneResponseType;
+  const includesToken = responseTypes.includes('token') && !isNoneResponseType;
 
   // Extract and validate DPoP proof (if present) for authorization code binding
   // FAPI 2.0: DPoP validation is strict when DPoP header is provided
@@ -2854,6 +2872,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Check if JARM (JWT-secured Authorization Response Mode) is requested
+  // SECURITY AUDIT: Log response_type=none requests for monitoring
+  // This helps detect session oracle attacks and abuse patterns
+  if (isNoneResponseType) {
+    log.info('response_type=none session check', {
+      action: 'authorize_none',
+      clientId: validClientId,
+      hasSession: !!sessionId,
+      prompt: prompt || 'not_specified',
+      referer: c.req.header('referer')?.substring(0, 200) || 'none',
+    });
+  }
+
   const isJARM = effectiveResponseMode.includes('.jwt') || effectiveResponseMode === 'jwt';
 
   if (isJARM) {
@@ -3013,6 +3043,8 @@ async function redirectWithError(
   if (state) {
     params.state = state;
   }
+  // RFC 9207: Add iss parameter to prevent mix-up attacks (including error responses)
+  params.iss = c.env.ISSUER_URL;
 
   const parsedResponseType = options?.responseType?.split(' ') ?? [];
   const isImplicitOrHybrid = parsedResponseType.some((t) => t === 'id_token' || t === 'token');

@@ -9,6 +9,7 @@
 		createEqualsCondition,
 		createAssignRoleAction
 	} from '$lib/api/admin-role-rules';
+	import { ToggleSwitch } from '$lib/components';
 
 	let rules: RoleAssignmentRule[] = $state([]);
 	let loading = $state(true);
@@ -413,10 +414,11 @@
 				</div>
 
 				<div class="form-group">
-					<label class="checkbox-label">
-						<input type="checkbox" bind:checked={newStopProcessing} />
-						<span>Stop processing subsequent rules if matched</span>
-					</label>
+					<ToggleSwitch
+						bind:checked={newStopProcessing}
+						label="Stop Processing"
+						description="Stop processing subsequent rules if this rule matches"
+					/>
 				</div>
 			</div>
 

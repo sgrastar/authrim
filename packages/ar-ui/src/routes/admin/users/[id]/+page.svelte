@@ -11,6 +11,7 @@
 		type ScopeType
 	} from '$lib/api/admin-roles';
 	import OrganizationSelectDialog from '$lib/components/OrganizationSelectDialog.svelte';
+	import { ToggleSwitch } from '$lib/components';
 	import type { OrganizationNode } from '$lib/api/admin-organizations';
 	import { sanitizeText, isValidUUID } from '$lib/utils';
 
@@ -465,15 +466,19 @@
 								bind:value={editForm.phone_number}
 							/>
 						</div>
-						<div class="form-checkbox-group">
-							<label class="form-checkbox-label">
-								<input type="checkbox" bind:checked={editForm.email_verified} />
-								Email Verified
-							</label>
-							<label class="form-checkbox-label">
-								<input type="checkbox" bind:checked={editForm.phone_number_verified} />
-								Phone Verified
-							</label>
+						<div class="form-group form-group-full">
+							<ToggleSwitch
+								bind:checked={editForm.email_verified}
+								label="Email Verified"
+								description="Mark the user's email address as verified"
+							/>
+						</div>
+						<div class="form-group form-group-full">
+							<ToggleSwitch
+								bind:checked={editForm.phone_number_verified}
+								label="Phone Verified"
+								description="Mark the user's phone number as verified"
+							/>
 						</div>
 					</div>
 					<div class="action-buttons" style="margin-top: 20px;">

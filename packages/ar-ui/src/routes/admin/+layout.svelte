@@ -293,10 +293,7 @@
 
 		<!-- Main Content -->
 		<main class="main-content">
-			<AdminHeader
-				breadcrumbs={currentBreadcrumb()}
-				onMobileMenuClick={toggleMobileMenu}
-			/>
+			<AdminHeader breadcrumbs={currentBreadcrumb()} onMobileMenuClick={toggleMobileMenu} />
 
 			<div class="page-content">
 				{@render children()}

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { adminClientsAPI, type Client, type CreateClientInput } from '$lib/api/admin-clients';
+	import { ToggleSwitch } from '$lib/components';
 
 	// Preset configuration
 	interface PresetConfig {
@@ -400,13 +401,11 @@
 							<!-- PKCE -->
 							{#if grantTypes.includes('authorization_code')}
 								<div class="form-group">
-									<label class="checkbox-list-item">
-										<input type="checkbox" bind:checked={requirePkce} />
-										Require PKCE
-									</label>
-									<p class="form-hint" style="margin-left: 24px;">
-										Proof Key for Code Exchange - recommended for all clients
-									</p>
+									<ToggleSwitch
+										bind:checked={requirePkce}
+										label="Require PKCE"
+										description="Proof Key for Code Exchange - recommended for all clients"
+									/>
 								</div>
 							{/if}
 

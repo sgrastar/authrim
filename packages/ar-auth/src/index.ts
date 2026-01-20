@@ -55,6 +55,19 @@ import { anonLoginChallengeHandler, anonLoginVerifyHandler } from './anon-login'
 import { upgradeHandler, upgradeCompleteHandler, upgradeStatusHandler } from './upgrade';
 import { setupApp } from './setup';
 import { flowApi } from './flow-engine';
+import {
+  directPasskeyLoginStartHandler,
+  directPasskeyLoginFinishHandler,
+  directPasskeySignupStartHandler,
+  directPasskeySignupFinishHandler,
+  directPasskeyRegisterStartHandler,
+  directPasskeyRegisterFinishHandler,
+  directEmailCodeSendHandler,
+  directEmailCodeVerifyHandler,
+  directTokenHandler,
+  directSessionHandler,
+  directLogoutHandler,
+} from './direct-auth';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -361,6 +374,58 @@ app.get('/logged-out', async (c) => {
   // No UI configured and conformance mode disabled
   return c.json(createConfigurationError(), 500);
 });
+
+// ===== Direct Authentication API v1 =====
+// BetterAuth-style API for custom login pages
+// Uses Authorization Code + PKCE pattern for security
+
+// Rate limiting for Direct Auth endpoints
+// Strict profile for send endpoints (prevent abuse)
+app.use('/api/v1/auth/direct/email-code/send', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/v1/auth/direct/email-code/send'],
+  })(c, next);
+});
+
+// Moderate profile for other Direct Auth endpoints
+app.use('/api/v1/auth/direct/*', async (c, next) => {
+  // Skip if already handled by strict profile
+  if (c.req.path === '/api/v1/auth/direct/email-code/send') {
+    return next();
+  }
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/v1/auth/direct'],
+  })(c, next);
+});
+
+// Passkey Login endpoints
+app.post('/api/v1/auth/direct/passkey/login/start', directPasskeyLoginStartHandler);
+app.post('/api/v1/auth/direct/passkey/login/finish', directPasskeyLoginFinishHandler);
+
+// Passkey Signup endpoints
+app.post('/api/v1/auth/direct/passkey/signup/start', directPasskeySignupStartHandler);
+app.post('/api/v1/auth/direct/passkey/signup/finish', directPasskeySignupFinishHandler);
+
+// Passkey Register endpoints (authenticated user adds additional passkey)
+app.post('/api/v1/auth/direct/passkey/register/start', directPasskeyRegisterStartHandler);
+app.post('/api/v1/auth/direct/passkey/register/finish', directPasskeyRegisterFinishHandler);
+
+// Email Code endpoints
+app.post('/api/v1/auth/direct/email-code/send', directEmailCodeSendHandler);
+app.post('/api/v1/auth/direct/email-code/verify', directEmailCodeVerifyHandler);
+
+// Token Exchange endpoint
+app.post('/api/v1/auth/direct/token', directTokenHandler);
+
+// Session endpoint
+app.get('/api/v1/auth/direct/session', directSessionHandler);
+
+// Logout endpoint
+app.post('/api/v1/auth/direct/logout', directLogoutHandler);
 
 // Flow Engine API
 // Track C: Flow-based authentication with UIContract

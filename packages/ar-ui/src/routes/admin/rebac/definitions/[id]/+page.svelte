@@ -8,6 +8,7 @@
 		formatRelationExpression,
 		getExpressionTypeLabel
 	} from '$lib/api/admin-rebac';
+	import { ToggleSwitch } from '$lib/components';
 
 	// State
 	let definition: RelationDefinition | null = $state(null);
@@ -284,10 +285,11 @@
 					</div>
 
 					<div class="form-group">
-						<label class="checkbox-label">
-							<input type="checkbox" bind:checked={editForm.is_active} />
-							<span>Active</span>
-						</label>
+						<ToggleSwitch
+							bind:checked={editForm.is_active}
+							label="Active"
+							description="Enable this relation definition"
+						/>
 					</div>
 
 					<div class="form-actions">

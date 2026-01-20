@@ -717,6 +717,7 @@ export function validateResponseType(responseType: string | undefined): Validati
     'code id_token', // Hybrid Flow 1
     'code token', // Hybrid Flow 2
     'code id_token token', // Hybrid Flow 3
+    'none', // OAuth 2.0 Multiple Response Types 1.0 §5
   ];
 
   if (!supportedResponseTypes.includes(responseType)) {

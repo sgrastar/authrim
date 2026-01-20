@@ -9,6 +9,7 @@
 		type OrganizationHierarchyResponse
 	} from '$lib/api/admin-organizations';
 	import OrganizationTree from '$lib/components/OrganizationTree.svelte';
+	import { ToggleSwitch } from '$lib/components';
 
 	// Tab state
 	let activeTab = $state<'hierarchy' | 'mappings'>('hierarchy');
@@ -592,10 +593,11 @@
 				</div>
 
 				<div class="form-group">
-					<label class="checkbox-label">
-						<input type="checkbox" class="checkbox" bind:checked={newAutoJoin} />
-						<span>Enable auto-join for new users</span>
-					</label>
+					<ToggleSwitch
+						bind:checked={newAutoJoin}
+						label="Auto Join"
+						description="Enable auto-join for new users with this domain"
+					/>
 				</div>
 
 				<div class="form-group">

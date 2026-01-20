@@ -14,6 +14,7 @@
 		getCategoryIcon,
 		createEmptyContext
 	} from '$lib/api/admin-policies';
+	import { ToggleSwitch } from '$lib/components';
 
 	// State
 	let rules: PolicyRule[] = $state([]);
@@ -582,10 +583,11 @@
 						</select>
 					</div>
 					<div class="form-group">
-						<label class="checkbox-label">
-							<input type="checkbox" bind:checked={ruleForm.enabled} />
-							Enabled
-						</label>
+						<ToggleSwitch
+							bind:checked={ruleForm.enabled}
+							label="Enabled"
+							description="Activate this policy rule"
+						/>
 					</div>
 				</div>
 

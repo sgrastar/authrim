@@ -8,6 +8,7 @@
 		type ClientUsage,
 		type UpdateClientInput
 	} from '$lib/api/admin-clients';
+	import { ToggleSwitch } from '$lib/components';
 
 	const clientId = $derived($page.params.id ?? '');
 
@@ -342,13 +343,14 @@
 
 					<!-- PKCE Required -->
 					<div class="form-group">
-						<label class="form-label">PKCE Required</label>
 						{#if isEditing}
-							<label class="checkbox-list-item" style="padding-top: 8px;">
-								<input type="checkbox" bind:checked={editForm.require_pkce} />
-								Require PKCE for authorization requests
-							</label>
+							<ToggleSwitch
+								bind:checked={editForm.require_pkce}
+								label="PKCE Required"
+								description="Require PKCE for authorization requests"
+							/>
 						{:else}
+							<label class="form-label">PKCE Required</label>
 							<p class="display-text">{client.require_pkce ? 'Yes' : 'No'}</p>
 						{/if}
 					</div>

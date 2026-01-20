@@ -9,6 +9,7 @@
 		isAttributeExpired,
 		formatExpirationStatus
 	} from '$lib/api/admin-attributes';
+	import { ToggleSwitch } from '$lib/components';
 
 	// State
 	let attributes: UserAttribute[] = $state([]);
@@ -335,11 +336,8 @@
 					<option value="manual">Manual</option>
 				</select>
 			</div>
-			<div class="form-group">
-				<label class="checkbox-label">
-					<input type="checkbox" bind:checked={includeExpired} onchange={applyFilters} />
-					<span>Include expired</span>
-				</label>
+			<div class="form-group" style="min-width: 180px;">
+				<ToggleSwitch bind:checked={includeExpired} label="Include expired" size="sm" />
 			</div>
 			<div class="form-group">
 				<button class="btn btn-primary" onclick={applyFilters}>Apply</button>
@@ -508,10 +506,11 @@
 				</div>
 
 				<div class="form-group">
-					<label class="checkbox-label">
-						<input type="checkbox" bind:checked={createForm.has_expiry} />
-						<span>Set expiration</span>
-					</label>
+					<ToggleSwitch
+						bind:checked={createForm.has_expiry}
+						label="Set expiration"
+						description="Set an expiration date for this attribute"
+					/>
 				</div>
 
 				{#if createForm.has_expiry}
