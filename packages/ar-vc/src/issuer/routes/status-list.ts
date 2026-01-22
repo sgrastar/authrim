@@ -151,11 +151,11 @@ async function generateStatusListCredentialJWT(
   const encodedHeader = btoa(JSON.stringify(header))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
-    .replace(/=/g, '');
+    .replace(/[=]/g, '');
   const encodedPayload = btoa(JSON.stringify(payload))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
-    .replace(/=/g, '');
+    .replace(/[=]/g, '');
   const signingInput = `${encodedHeader}.${encodedPayload}`;
 
   const signature = await crypto.subtle.sign(
@@ -169,7 +169,7 @@ async function generateStatusListCredentialJWT(
   const signatureBase64url = btoa(String.fromCharCode(...signatureArray))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
-    .replace(/=/g, '');
+    .replace(/[=]/g, '');
 
   return `${signingInput}.${signatureBase64url}`;
 }

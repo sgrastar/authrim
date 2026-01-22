@@ -47,7 +47,7 @@ export function arrayBufferToBase64Url(buffer: ArrayBuffer | Uint8Array): string
   }
 
   // Convert to base64 and make it URL-safe (base64url)
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, ''); // Remove padding
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, ''); // Remove padding
 }
 
 /**

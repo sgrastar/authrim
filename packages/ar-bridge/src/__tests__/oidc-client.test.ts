@@ -1139,7 +1139,7 @@ describe('OIDCRPClient', () => {
 
         // Base64url encode
         const base64 = btoa(String.fromCharCode(...leftHalf));
-        return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]+$/, '');
       }
 
       describe('at_hash validation (OIDC Core 3.3.2.11)', () => {

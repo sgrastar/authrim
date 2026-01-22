@@ -408,5 +408,5 @@ export function encodeForRedirectBinding(xml: string): string {
   return btoa(String.fromCharCode(...deflated))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
-    .replace(/=+$/, '');
+    .replace(/[=]+$/, '');
 }

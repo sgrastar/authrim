@@ -177,7 +177,7 @@ describe('Client Authentication', () => {
       const header = btoa(JSON.stringify({ alg: 'none', typ: 'JWT' }))
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
       const payload = btoa(
         JSON.stringify({
           iss: clientId,
@@ -188,7 +188,7 @@ describe('Client Authentication', () => {
       )
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
 
       const unsignedJwt = `${header}.${payload}.`;
 
@@ -205,7 +205,7 @@ describe('Client Authentication', () => {
       const header = btoa(JSON.stringify({ typ: 'JWT' })) // No alg
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
       const payload = btoa(
         JSON.stringify({
           iss: clientId,
@@ -216,7 +216,7 @@ describe('Client Authentication', () => {
       )
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
 
       const result = await validateClientAssertion(
         `${header}.${payload}.signature`,
@@ -239,7 +239,7 @@ describe('Client Authentication', () => {
       const header = btoa(JSON.stringify({ alg: 'RS256' }))
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
       const payload = btoa(
         JSON.stringify({
           // Missing iss
@@ -250,7 +250,7 @@ describe('Client Authentication', () => {
       )
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
 
       const result = await validateClientAssertion(
         `${header}.${payload}.signature`,
@@ -268,7 +268,7 @@ describe('Client Authentication', () => {
       const header = btoa(JSON.stringify({ alg: 'RS256' }))
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
       const payload = btoa(
         JSON.stringify({
           iss: clientId,
@@ -279,7 +279,7 @@ describe('Client Authentication', () => {
       )
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
 
       const result = await validateClientAssertion(
         `${header}.${payload}.signature`,
@@ -297,7 +297,7 @@ describe('Client Authentication', () => {
       const header = btoa(JSON.stringify({ alg: 'RS256' }))
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
       const payload = btoa(
         JSON.stringify({
           iss: clientId,
@@ -308,7 +308,7 @@ describe('Client Authentication', () => {
       )
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
 
       const result = await validateClientAssertion(
         `${header}.${payload}.signature`,
@@ -326,7 +326,7 @@ describe('Client Authentication', () => {
       const header = btoa(JSON.stringify({ alg: 'RS256' }))
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
       const payload = btoa(
         JSON.stringify({
           iss: clientId,
@@ -337,7 +337,7 @@ describe('Client Authentication', () => {
       )
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
 
       const result = await validateClientAssertion(
         `${header}.${payload}.signature`,
@@ -413,7 +413,7 @@ describe('Client Authentication', () => {
       const header = btoa(JSON.stringify({ alg: 'RS256' }))
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
       const payload = btoa(
         JSON.stringify({
           iss: clientId,
@@ -424,7 +424,7 @@ describe('Client Authentication', () => {
       )
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
 
       const result = await validateClientAssertion(
         `${header}.${payload}.signature`,
@@ -731,7 +731,7 @@ describe('Client Authentication', () => {
       )
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
 
       const result = await validateClientAssertion(
         `${invalidHeader}.${payload}.signature`,
@@ -749,11 +749,11 @@ describe('Client Authentication', () => {
       const header = btoa(JSON.stringify({ alg: 'RS256' }))
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
       const invalidPayload = btoa('not valid json')
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
 
       const result = await validateClientAssertion(
         `${header}.${invalidPayload}.signature`,

@@ -374,7 +374,7 @@ describe('Status List 2021', () => {
       const header = btoa(JSON.stringify({ alg: 'ES256', typ: 'statuslist+jwt' }))
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
       const payload = btoa(
         JSON.stringify({
           iss: 'https://issuer.example.com',
@@ -387,7 +387,7 @@ describe('Status List 2021', () => {
       )
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
       const fakeJwt = `${header}.${payload}.INVALID_SIGNATURE`;
 
       mockSafeFetch.mockResolvedValueOnce({
@@ -443,7 +443,7 @@ describe('Status List 2021', () => {
       const encodedList = btoa(String.fromCharCode(...bitstring))
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
 
       // Create JWT with IETF format (status_list.lst)
       const jwt = await new SignJWT({

@@ -17,7 +17,7 @@ function createTestJWT(header: object, payload: object): string {
   const encodeBase64Url = (obj: object) => {
     const json = JSON.stringify(obj);
     const base64 = Buffer.from(json).toString('base64');
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, '');
   };
 
   const headerB64 = encodeBase64Url(header);

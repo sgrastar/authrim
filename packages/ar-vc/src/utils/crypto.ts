@@ -24,7 +24,7 @@ export function generateRandomString(length: number = 32): string {
   return btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
-    .replace(/=+$/, '');
+    .replace(/[=]+$/, '');
 }
 
 /**
@@ -37,5 +37,5 @@ export async function sha256Base64url(data: string): Promise<string> {
   return btoa(String.fromCharCode(...hashArray))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
-    .replace(/=+$/, '');
+    .replace(/[=]+$/, '');
 }

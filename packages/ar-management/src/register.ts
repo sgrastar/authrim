@@ -779,7 +779,7 @@ function generateClientSecret(): string {
 
   // Convert to base64url
   const base64 = btoa(String.fromCharCode(...array));
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, '');
 }
 
 /**

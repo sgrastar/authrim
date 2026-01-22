@@ -155,7 +155,7 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
    */
   private base64UrlEncode(bytes: Uint8Array): string {
     const base64 = btoa(String.fromCharCode(...bytes));
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, '');
   }
 
   /**

@@ -372,5 +372,5 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
   return btoa(String.fromCharCode.apply(null, bytes))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
-    .replace(/=/g, '');
+    .replace(/[=]/g, '');
 }

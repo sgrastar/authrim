@@ -2175,7 +2175,7 @@ async function verifyPKCE(codeVerifier: string, codeChallenge: string): Promise<
   // Convert to base64url
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const base64 = btoa(String.fromCharCode(...hashArray));
-  const base64url = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  const base64url = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, '');
 
   // Compare with code_challenge
   // SECURITY: Use timing-safe comparison to prevent timing attacks

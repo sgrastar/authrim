@@ -295,7 +295,7 @@ export function base64Decode(str: string): string {
  * Base64 URL encode (for HTTP-Redirect binding)
  */
 export function base64UrlEncode(str: string): string {
-  return base64Encode(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return base64Encode(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]+$/, '');
 }
 
 /**

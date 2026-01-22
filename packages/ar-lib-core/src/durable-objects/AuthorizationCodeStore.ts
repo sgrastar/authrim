@@ -447,7 +447,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
     // Convert to base64url
     let base64 = btoa(String.fromCharCode(...hashArray));
-    base64 = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    base64 = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]+$/, '');
 
     return base64;
   }

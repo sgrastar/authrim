@@ -532,7 +532,7 @@ export class MockWallet {
     return btoa(String.fromCharCode(...hashArray))
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
-      .replace(/=+$/, '');
+      .replace(/[=]+$/, '');
   }
 
   /**

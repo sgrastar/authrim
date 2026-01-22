@@ -38,7 +38,7 @@ export function arrayBufferToBase64Url(buffer) {
     binary += String.fromCharCode(bytes[i]);
   }
   // Convert to base64 and make it URL-safe (base64url)
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, ''); // Remove padding
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, ''); // Remove padding
 }
 /**
  * Convert base64url string to Uint8Array

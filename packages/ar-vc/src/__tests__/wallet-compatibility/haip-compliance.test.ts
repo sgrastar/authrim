@@ -100,7 +100,7 @@ async function createMockSDJWTVC(options: {
   const disclosure = btoa(JSON.stringify(['salt1', 'age_over_18', claims.age_over_18]))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
-    .replace(/=+$/, '');
+    .replace(/[=]+$/, '');
 
   if (!includeKeyBinding) {
     // Return without KB-JWT

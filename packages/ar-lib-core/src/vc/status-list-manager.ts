@@ -162,7 +162,7 @@ async function createEmptyBitstring(capacity: number): Promise<string> {
   return btoa(String.fromCharCode(...compressed))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
-    .replace(/=/g, '');
+    .replace(/[=]/g, '');
 }
 
 /**
@@ -245,7 +245,7 @@ async function encodeBitstring(bitstring: Uint8Array): Promise<string> {
   return btoa(String.fromCharCode(...compressed))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
-    .replace(/=/g, '');
+    .replace(/[=]/g, '');
 }
 
 /**

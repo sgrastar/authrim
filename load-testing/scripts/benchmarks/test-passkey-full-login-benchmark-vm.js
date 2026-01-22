@@ -276,7 +276,7 @@ function generateCodeVerifier() {
     binary += String.fromCharCode(bytes[i]);
   }
   const base64 = encoding.b64encode(binary, 'std');
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]+$/, '');
 }
 
 function generateCodeChallenge(verifier) {

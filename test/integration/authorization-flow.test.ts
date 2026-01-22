@@ -682,7 +682,7 @@ describe('Authorization Code Flow', () => {
       )
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
-        .replace(/=/g, '');
+        .replace(/[=]/g, '');
       const tamperedToken = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
 
       // Get the public key

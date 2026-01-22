@@ -15,7 +15,7 @@ function createTestJWT(header: object, payload: object): string {
     const json = JSON.stringify(obj);
     // Use Buffer in Node.js test environment
     const base64 = Buffer.from(json).toString('base64');
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, '');
   };
 
   const headerB64 = encodeBase64Url(header);

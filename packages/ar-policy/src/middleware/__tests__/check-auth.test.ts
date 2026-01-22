@@ -146,8 +146,8 @@ function createJwt(payload: Record<string, unknown>, expiry?: number): string {
     ...payload,
   };
 
-  const headerB64 = btoa(JSON.stringify(header)).replace(/=/g, '');
-  const payloadB64 = btoa(JSON.stringify(fullPayload)).replace(/=/g, '');
+  const headerB64 = btoa(JSON.stringify(header)).replace(/[=]/g, '');
+  const payloadB64 = btoa(JSON.stringify(fullPayload)).replace(/[=]/g, '');
   const signature = 'fake_signature_for_testing';
 
   return `${headerB64}.${payloadB64}.${signature}`;

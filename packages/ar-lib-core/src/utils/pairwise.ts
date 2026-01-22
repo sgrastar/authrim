@@ -34,7 +34,7 @@ export async function generatePairwiseSubject(
   // Convert to base64url encoding (URL-safe base64 without padding)
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const base64 = btoa(String.fromCharCode(...hashArray));
-  const base64url = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  const base64url = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, '');
 
   return base64url;
 }

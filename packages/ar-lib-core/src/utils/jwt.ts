@@ -290,7 +290,7 @@ export async function calculateAtHash(
   // Convert to base64url
   const hashArray = Array.from(new Uint8Array(leftHalf));
   const base64 = btoa(String.fromCharCode(...hashArray));
-  const base64url = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  const base64url = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/[=]/g, '');
 
   return base64url;
 }
