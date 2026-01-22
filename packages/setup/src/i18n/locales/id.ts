@@ -84,6 +84,18 @@ const id: Translations = {
   'source.downloadFailed': 'Unduhan gagal',
   'source.verificationWarnings': 'Peringatan verifikasi struktur sumber:',
 
+  // WSL Environment
+  'wsl.detected': 'Lingkungan WSL terdeteksi',
+  'wsl.explanation': 'Untuk mengakses Web UI dari browser Windows, server perlu',
+  'wsl.explanationCont': 'terikat ke 0.0.0.0 bukan localhost.',
+  'wsl.securityNote': 'Catatan keamanan:',
+  'wsl.securityWarning':
+    'Ini akan membuat server dapat diakses dari perangkat lain di jaringan Anda.',
+  'wsl.trustedNetworkOnly': 'Gunakan hanya di jaringan tepercaya.',
+  'wsl.bindPrompt': 'Ikat ke 0.0.0.0 untuk akses Windows? (y/N):',
+  'wsl.bindingToAll': 'Mengikat ke 0.0.0.0',
+  'wsl.usingLocalhost': 'Menggunakan localhost (hanya internal WSL)',
+
   // Prerequisites
   'prereq.checking': 'Memeriksa status wrangler...',
   'prereq.wranglerNotInstalled': 'wrangler tidak terinstal',

@@ -1,3 +1,4 @@
+#!/usr/bin/env npx tsx
 /**
  * Integration Test: Suspend/Lock → Introspect Flow
  *

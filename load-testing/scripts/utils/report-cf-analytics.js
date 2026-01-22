@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Cloudflare Workers Analytics Fetcher (Enhanced)
  *

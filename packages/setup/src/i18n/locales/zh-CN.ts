@@ -84,6 +84,17 @@ const zhCN: Translations = {
   'source.downloadFailed': '下载失败',
   'source.verificationWarnings': '源代码结构验证警告：',
 
+  // WSL Environment
+  'wsl.detected': '检测到 WSL 环境',
+  'wsl.explanation': '要从 Windows 浏览器访问 Web UI，服务器需要',
+  'wsl.explanationCont': '绑定到 0.0.0.0 而不是 localhost。',
+  'wsl.securityNote': '安全注意：',
+  'wsl.securityWarning': '这将使服务器可以从网络上的其他设备访问。',
+  'wsl.trustedNetworkOnly': '请仅在受信任的网络中使用。',
+  'wsl.bindPrompt': '绑定到 0.0.0.0 以便从 Windows 访问？(y/N):',
+  'wsl.bindingToAll': '绑定到 0.0.0.0',
+  'wsl.usingLocalhost': '使用 localhost（仅限 WSL 内部）',
+
   // Prerequisites
   'prereq.checking': '检查 wrangler 状态...',
   'prereq.wranglerNotInstalled': 'wrangler 未安装',

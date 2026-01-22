@@ -16,6 +16,7 @@ import {
   getTranslationsForWeb,
   getAvailableLocales,
   loadTranslations,
+  t,
   type Locale,
   DEFAULT_LOCALE,
 } from '../i18n/index.js';
@@ -39,7 +40,17 @@ export interface WebServerOptions {
 // =============================================================================
 
 export async function startWebServer(options: WebServerOptions = {}): Promise<void> {
-  const { port: preferredPort = 3456, host = 'localhost', manageOnly = false } = options;
+  const { port: preferredPort = 3456, manageOnly = false } = options;
+
+  // Initialize i18n early (for WSL prompt messages)
+  const initialLocale = (options.lang as Locale) || DEFAULT_LOCALE;
+  await initI18n(initialLocale);
+
+  // Determine host - check for WSL environment
+  let host = options.host || 'localhost';
+  if (!options.host && (await isWSLEnvironment())) {
+    host = await promptWSLHostBinding();
+  }
 
   // Try to find an available port
   const port = await findAvailablePort(preferredPort, host);
@@ -47,16 +58,28 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
   // Generate session token for this server instance
   generateSessionToken();
 
-  // Initialize i18n with default locale (will be overridden per request)
-  await initI18n(DEFAULT_LOCALE);
-
   const app = new Hono();
 
-  // CORS for API requests (localhost only)
+  // CORS for API requests
+  // When binding to 0.0.0.0 (WSL), allow requests from any origin on the same port
+  // Security is maintained through session token validation
+  const corsOrigins =
+    host === '0.0.0.0'
+      ? (origin: string): string | null => {
+          // Allow localhost variants and any IP on the same port
+          try {
+            const url = new URL(origin);
+            return url.port === String(port) ? origin : null;
+          } catch {
+            return null;
+          }
+        }
+      : [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
+
   app.use(
     '/api/*',
     cors({
-      origin: [`http://localhost:${port}`, `http://127.0.0.1:${port}`],
+      origin: corsOrigins,
       allowMethods: ['GET', 'POST', 'PUT', 'DELETE'],
       allowHeaders: ['Content-Type', 'X-Session-Token'],
     })
@@ -281,4 +304,58 @@ async function openBrowser(url: string): Promise<void> {
     console.log(chalk.yellow('\nCould not open browser automatically.'));
     console.log(`Please open ${chalk.cyan(url)} in your browser.\n`);
   }
+}
+
+// =============================================================================
+// WSL Environment Detection
+// =============================================================================
+
+/**
+ * Detect if running in WSL (Windows Subsystem for Linux) environment
+ */
+async function isWSLEnvironment(): Promise<boolean> {
+  try {
+    const fs = await import('node:fs/promises');
+    const procVersion = await fs.readFile('/proc/version', 'utf-8');
+    return /microsoft|wsl/i.test(procVersion);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Prompt user to choose host binding in WSL environment
+ */
+async function promptWSLHostBinding(): Promise<string> {
+  const readline = await import('node:readline');
+
+  console.log('');
+  console.log(chalk.yellow(`⚠️  ${t('wsl.detected')}`));
+  console.log('');
+  console.log(chalk.gray(t('wsl.explanation')));
+  console.log(chalk.gray(t('wsl.explanationCont')));
+  console.log('');
+  console.log(chalk.yellow(t('wsl.securityNote')));
+  console.log(chalk.gray(`  ${t('wsl.securityWarning')}`));
+  console.log(chalk.gray(`  ${t('wsl.trustedNetworkOnly')}`));
+  console.log('');
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise<string>((resolve) => {
+    rl.question(t('wsl.bindPrompt') + ' ', (answer) => {
+      rl.close();
+      const yes = answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
+      if (yes) {
+        console.log(chalk.green(`✓ ${t('wsl.bindingToAll')}`));
+        resolve('0.0.0.0');
+      } else {
+        console.log(chalk.gray(t('wsl.usingLocalhost')));
+        resolve('localhost');
+      }
+    });
+  });
 }

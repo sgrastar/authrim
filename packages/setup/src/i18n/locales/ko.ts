@@ -84,6 +84,17 @@ const ko: Translations = {
   'source.downloadFailed': '다운로드 실패',
   'source.verificationWarnings': '소스 구조 검증 경고:',
 
+  // WSL Environment
+  'wsl.detected': 'WSL 환경 감지됨',
+  'wsl.explanation': 'Windows 브라우저에서 Web UI에 접근하려면 서버를',
+  'wsl.explanationCont': 'localhost 대신 0.0.0.0에 바인딩해야 합니다.',
+  'wsl.securityNote': '보안 참고:',
+  'wsl.securityWarning': '이렇게 하면 네트워크의 다른 장치에서도 서버에 접근할 수 있습니다.',
+  'wsl.trustedNetworkOnly': '신뢰할 수 있는 네트워크에서만 사용하세요.',
+  'wsl.bindPrompt': 'Windows 접근을 위해 0.0.0.0에 바인딩할까요? (y/N):',
+  'wsl.bindingToAll': '0.0.0.0에 바인딩',
+  'wsl.usingLocalhost': 'localhost 사용 (WSL 내부 전용)',
+
   // Prerequisites
   'prereq.checking': 'wrangler 상태 확인 중...',
   'prereq.wranglerNotInstalled': 'wrangler가 설치되지 않았습니다',

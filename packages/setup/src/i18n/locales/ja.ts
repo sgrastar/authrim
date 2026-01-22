@@ -85,6 +85,17 @@ const ja: Translations = {
   'source.downloadFailed': 'ダウンロードに失敗しました',
   'source.verificationWarnings': 'ソース構造の検証で警告があります:',
 
+  // WSL Environment
+  'wsl.detected': 'WSL環境を検出しました',
+  'wsl.explanation': 'WindowsブラウザからWeb UIにアクセスするには、サーバーを',
+  'wsl.explanationCont': 'localhostではなく0.0.0.0にバインドする必要があります。',
+  'wsl.securityNote': 'セキュリティに関する注意:',
+  'wsl.securityWarning': 'これにより、ネットワーク上の他のデバイスからもアクセス可能になります。',
+  'wsl.trustedNetworkOnly': '信頼できるネットワークでのみ使用してください。',
+  'wsl.bindPrompt': '0.0.0.0にバインドしてWindowsからアクセス可能にしますか？ (y/N):',
+  'wsl.bindingToAll': '0.0.0.0にバインドします',
+  'wsl.usingLocalhost': 'localhostを使用します（WSL内部のみ）',
+
   // Prerequisites
   'prereq.checking': 'wranglerのステータスを確認中...',
   'prereq.wranglerNotInstalled': 'wranglerがインストールされていません',

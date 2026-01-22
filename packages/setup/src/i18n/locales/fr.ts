@@ -85,6 +85,18 @@ const fr: Translations = {
   'source.downloadFailed': 'Échec du téléchargement',
   'source.verificationWarnings': 'Avertissements de vérification de la structure du code :',
 
+  // WSL Environment
+  'wsl.detected': 'Environnement WSL détecté',
+  'wsl.explanation': "Pour accéder à l'interface Web depuis le navigateur Windows, le serveur doit",
+  'wsl.explanationCont': 'se lier à 0.0.0.0 au lieu de localhost.',
+  'wsl.securityNote': 'Note de sécurité :',
+  'wsl.securityWarning':
+    "Cela rendra le serveur accessible depuis d'autres appareils sur votre réseau.",
+  'wsl.trustedNetworkOnly': 'Utilisez uniquement sur des réseaux de confiance.',
+  'wsl.bindPrompt': "Lier à 0.0.0.0 pour l'accès Windows ? (y/N) :",
+  'wsl.bindingToAll': 'Liaison à 0.0.0.0',
+  'wsl.usingLocalhost': 'Utilisation de localhost (interne WSL uniquement)',
+
   // Prerequisites
   'prereq.checking': 'Vérification du statut de wrangler...',
   'prereq.wranglerNotInstalled': "wrangler n'est pas installé",

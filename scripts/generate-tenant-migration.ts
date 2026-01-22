@@ -1,3 +1,4 @@
+#!/usr/bin/env tsx
 /**
  * Generate Tenant ID Migration Script
  *

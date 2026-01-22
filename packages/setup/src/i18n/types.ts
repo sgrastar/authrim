@@ -84,6 +84,17 @@ export interface Translations {
   'source.exitOption': string;
   'source.exitOptionDesc': string;
 
+  // WSL Environment
+  'wsl.detected': string;
+  'wsl.explanation': string;
+  'wsl.explanationCont': string;
+  'wsl.securityNote': string;
+  'wsl.securityWarning': string;
+  'wsl.trustedNetworkOnly': string;
+  'wsl.bindPrompt': string;
+  'wsl.bindingToAll': string;
+  'wsl.usingLocalhost': string;
+
   // Prerequisites
   'prereq.checking': string;
   'prereq.wranglerNotInstalled': string;

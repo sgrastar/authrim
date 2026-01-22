@@ -85,6 +85,17 @@ const pt: Translations = {
   'source.downloadFailed': 'Falha no download',
   'source.verificationWarnings': 'Avisos de verificação da estrutura do código:',
 
+  // WSL Environment
+  'wsl.detected': 'Ambiente WSL detectado',
+  'wsl.explanation': 'Para acessar a Web UI pelo navegador do Windows, o servidor precisa',
+  'wsl.explanationCont': 'vincular-se a 0.0.0.0 em vez de localhost.',
+  'wsl.securityNote': 'Nota de segurança:',
+  'wsl.securityWarning': 'Isso tornará o servidor acessível de outros dispositivos na sua rede.',
+  'wsl.trustedNetworkOnly': 'Use apenas em redes confiáveis.',
+  'wsl.bindPrompt': 'Vincular a 0.0.0.0 para acesso do Windows? (y/N):',
+  'wsl.bindingToAll': 'Vinculando a 0.0.0.0',
+  'wsl.usingLocalhost': 'Usando localhost (apenas interno do WSL)',
+
   // Prerequisites
   'prereq.checking': 'Verificando status do wrangler...',
   'prereq.wranglerNotInstalled': 'wrangler não está instalado',

@@ -85,6 +85,17 @@ const ru: Translations = {
   'source.downloadFailed': 'Загрузка не удалась',
   'source.verificationWarnings': 'Предупреждения проверки структуры исходного кода:',
 
+  // WSL Environment
+  'wsl.detected': 'Обнаружена среда WSL',
+  'wsl.explanation': 'Для доступа к Web UI из браузера Windows сервер должен',
+  'wsl.explanationCont': 'привязаться к 0.0.0.0 вместо localhost.',
+  'wsl.securityNote': 'Примечание по безопасности:',
+  'wsl.securityWarning': 'Это сделает сервер доступным с других устройств в вашей сети.',
+  'wsl.trustedNetworkOnly': 'Используйте только в доверенных сетях.',
+  'wsl.bindPrompt': 'Привязать к 0.0.0.0 для доступа из Windows? (y/N):',
+  'wsl.bindingToAll': 'Привязка к 0.0.0.0',
+  'wsl.usingLocalhost': 'Использование localhost (только внутри WSL)',
+
   // Prerequisites
   'prereq.checking': 'Проверка состояния wrangler...',
   'prereq.wranglerNotInstalled': 'wrangler не установлен',

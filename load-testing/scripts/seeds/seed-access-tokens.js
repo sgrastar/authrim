@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 
 /**
  * Token Introspection Control Plane Test - Seed Generation Script

@@ -84,6 +84,17 @@ const zhTW: Translations = {
   'source.downloadFailed': '下載失敗',
   'source.verificationWarnings': '原始碼結構驗證警告：',
 
+  // WSL Environment
+  'wsl.detected': '偵測到 WSL 環境',
+  'wsl.explanation': '要從 Windows 瀏覽器存取 Web UI，伺服器需要',
+  'wsl.explanationCont': '綁定到 0.0.0.0 而不是 localhost。',
+  'wsl.securityNote': '安全注意：',
+  'wsl.securityWarning': '這將使伺服器可以從網路上的其他裝置存取。',
+  'wsl.trustedNetworkOnly': '請僅在受信任的網路中使用。',
+  'wsl.bindPrompt': '綁定到 0.0.0.0 以便從 Windows 存取？(y/N):',
+  'wsl.bindingToAll': '綁定到 0.0.0.0',
+  'wsl.usingLocalhost': '使用 localhost（僅限 WSL 內部）',
+
   // Prerequisites
   'prereq.checking': '正在檢查 wrangler 狀態...',
   'prereq.wranglerNotInstalled': 'wrangler 未安裝',

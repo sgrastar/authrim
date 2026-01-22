@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * @authrim/setup - CLI tool for setting up Authrim OIDC Provider
  *
