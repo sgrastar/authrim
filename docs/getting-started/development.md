@@ -146,16 +146,16 @@ authrim/
 
 ### Worker Overview
 
-| Worker            | Purpose           | Endpoints                                |
-| ----------------- | ----------------- | ---------------------------------------- |
-| **ar-discovery**  | OIDC Discovery    | `/.well-known/*`                         |
-| **ar-auth**       | Authorization     | `/authorize`, `/consent`, `/setup`       |
-| **ar-token**      | Token issuance    | `/token`                                 |
-| **ar-userinfo**   | User info         | `/userinfo`                              |
-| **ar-management** | Admin API         | `/api/admin/*`, `/register`, `/introspect`, `/revoke` |
-| **ar-async**      | Async flows       | `/device_authorization`, `/bc-authorize` |
-| **ar-policy**     | Policy (ReBAC)    | `/api/policy/*`                          |
-| **ar-router**     | Request routing   | All (test mode only)                     |
+| Worker            | Purpose         | Endpoints                                             |
+| ----------------- | --------------- | ----------------------------------------------------- |
+| **ar-discovery**  | OIDC Discovery  | `/.well-known/*`                                      |
+| **ar-auth**       | Authorization   | `/authorize`, `/consent`, `/setup`                    |
+| **ar-token**      | Token issuance  | `/token`                                              |
+| **ar-userinfo**   | User info       | `/userinfo`                                           |
+| **ar-management** | Admin API       | `/api/admin/*`, `/register`, `/introspect`, `/revoke` |
+| **ar-async**      | Async flows     | `/device_authorization`, `/bc-authorize`              |
+| **ar-policy**     | Policy (ReBAC)  | `/api/policy/*`                                       |
+| **ar-router**     | Request routing | All (test mode only)                                  |
 
 ## Available Scripts
 

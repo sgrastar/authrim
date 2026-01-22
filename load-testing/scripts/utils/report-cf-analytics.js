@@ -583,27 +583,27 @@ function formatReport(metrics) {
   output += `  Errors:                ${metrics.worker.worker_errors.toLocaleString()}\n`;
   output += `  Error Rate:            ${metrics.worker.total_requests > 0 ? ((metrics.worker.worker_errors / metrics.worker.total_requests) * 100).toFixed(4) : 0}%\n\n`;
 
-  output += "  Duration (Worker execution time):\n";
+  output += '  Duration (Worker execution time):\n';
   output += `    p50:  ${metrics.worker.duration.p50.toFixed(2)} ms\n`;
   output += `    p75:  ${metrics.worker.duration.p75.toFixed(2)} ms\n`;
   output += `    p90:  ${metrics.worker.duration.p90.toFixed(2)} ms\n`;
   output += `    p99:  ${metrics.worker.duration.p99.toFixed(2)} ms\n`;
   output += `    p999: ${metrics.worker.duration.p999.toFixed(2)} ms\n\n`;
 
-  output += "  CPU Time:\n";
+  output += '  CPU Time:\n';
   output += `    p50:  ${metrics.worker.cpu_time.p50.toFixed(2)} ms\n`;
   output += `    p75:  ${metrics.worker.cpu_time.p75.toFixed(2)} ms\n`;
   output += `    p90:  ${metrics.worker.cpu_time.p90.toFixed(2)} ms\n`;
   output += `    p99:  ${metrics.worker.cpu_time.p99.toFixed(2)} ms\n`;
   output += `    p999: ${metrics.worker.cpu_time.p999.toFixed(2)} ms\n\n`;
 
-  output += "  Requests by Status:\n";
+  output += '  Requests by Status:\n';
   for (const [status, count] of Object.entries(metrics.worker.requests_by_status).sort()) {
     output += `    ${status}: ${count.toLocaleString()}\n`;
   }
   output += '\n';
 
-  output += "  Requests by Worker:\n";
+  output += '  Requests by Worker:\n';
   for (const [script, stats] of Object.entries(metrics.worker.requests_by_script)) {
     const shortName = script.replace('conformance-authrim-', '');
     output += `    ${shortName}: ${stats.requests.toLocaleString()} (errors: ${stats.errors}, subreqs: ${stats.subrequests.toLocaleString()})\n`;
@@ -619,7 +619,7 @@ function formatReport(metrics) {
   output += `  Total Wall Time:       ${(metrics.durable_objects.total_wall_time / 1000 / 1000).toFixed(2)} s\n`;
   output += `  Storage:               ${(metrics.durable_objects.storage_bytes / 1024).toFixed(2)} KB\n\n`;
 
-  output += "  Wall Time (DO execution time):\n";
+  output += '  Wall Time (DO execution time):\n';
   output += `    p50:  ${metrics.durable_objects.wall_time.p50.toFixed(2)} ms\n`;
   output += `    p75:  ${metrics.durable_objects.wall_time.p75.toFixed(2)} ms\n`;
   output += `    p90:  ${metrics.durable_objects.wall_time.p90.toFixed(2)} ms\n`;
@@ -627,7 +627,7 @@ function formatReport(metrics) {
   output += `    p999: ${metrics.durable_objects.wall_time.p999.toFixed(2)} ms\n\n`;
 
   if (Object.keys(metrics.durable_objects.by_script).length > 0) {
-    output += "  By Script:\n";
+    output += '  By Script:\n';
     for (const [ns, stats] of Object.entries(metrics.durable_objects.by_script)) {
       const shortName = ns.replace('conformance-authrim-', '');
       output += `    ${shortName}: ${stats.requests.toLocaleString()} requests (errors: ${stats.errors})\n`;
@@ -644,7 +644,7 @@ function formatReport(metrics) {
   output += `  Rows Written:          ${metrics.d1.rows.written.toLocaleString()}\n\n`;
 
   if (Object.keys(metrics.d1.by_database).length > 0) {
-    output += "  By Database:\n";
+    output += '  By Database:\n';
     for (const [dbId, stats] of Object.entries(metrics.d1.by_database)) {
       const shortId = dbId.substring(0, 8) + '...';
       output += `    ${shortId}: reads=${stats.reads}, writes=${stats.writes}, rows_r=${stats.rows_read}, rows_w=${stats.rows_written}\n`;
@@ -655,7 +655,7 @@ function formatReport(metrics) {
   // KV Metrics (currently limited)
   output += '📒 KV Metrics\n';
   output += '─────────────────────────────────────────────────────────────────────────────\n';
-  output += "  (Detailed KV metrics are available in the Dashboard)\n\n";
+  output += '  (Detailed KV metrics are available in the Dashboard)\n\n';
 
   output += '═══════════════════════════════════════════════════════════════════════════════\n';
 
@@ -678,7 +678,7 @@ async function main() {
   }
 
   if (!args.json) {
-    console.log("\n🔍 Fetching Cloudflare Analytics...");
+    console.log('\n🔍 Fetching Cloudflare Analytics...');
     console.log(`   Period: ${startTime} ~ ${endTime}`);
     console.log(`   Account: ${ACCOUNT_ID}`);
     console.log(`   Workers: ${WORKER_SCRIPTS.join(', ')}\n`);

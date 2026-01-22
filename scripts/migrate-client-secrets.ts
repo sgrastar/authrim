@@ -91,7 +91,7 @@ async function migrateClientSecrets(db: D1Database): Promise<void> {
     }
   }
 
-  console.log("\nMigration complete!");
+  console.log('\nMigration complete!');
   console.log(`  Success: ${successCount}`);
   console.log(`  Errors: ${errorCount}`);
 

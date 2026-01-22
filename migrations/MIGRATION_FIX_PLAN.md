@@ -9,9 +9,11 @@
 ### 1. `users` vs `users_core` (Core DB)
 
 **現在のマイグレーション (`users`):**
+
 - id, email, name, address, ... (PII含む)
 
 **コードが期待する (`users_core`):**
+
 - id
 - tenant_id
 - email_verified (boolean)
@@ -33,24 +35,24 @@
 
 ### 3. 完全に欠落しているテーブル
 
-| テーブル名 | 参照数 | 必要なDB |
-|-----------|--------|----------|
-| session_clients | 20 | Core |
-| device_secrets | 26 | Core |
-| settings_history | 10 | Core |
-| org_domain_mappings | 12 | Core |
-| status_lists | 9 | Core |
-| trusted_issuers | 5 | Core |
-| operational_logs | 6 | Core |
-| webhook_configs | 9 | Core |
-| issued_credentials | 9 | Core |
-| did_document_cache | 9 | Core |
-| event_log | 18 | Core |
-| consent_policy_versions | 6 | Core |
-| attribute_verifications | 7 | Core |
-| pii_log | 19 | PII |
-| user_anonymization_map | 6 | PII |
-| user_verified_attributes | 9 | Core |
+| テーブル名               | 参照数 | 必要なDB |
+| ------------------------ | ------ | -------- |
+| session_clients          | 20     | Core     |
+| device_secrets           | 26     | Core     |
+| settings_history         | 10     | Core     |
+| org_domain_mappings      | 12     | Core     |
+| status_lists             | 9      | Core     |
+| trusted_issuers          | 5      | Core     |
+| operational_logs         | 6      | Core     |
+| webhook_configs          | 9      | Core     |
+| issued_credentials       | 9      | Core     |
+| did_document_cache       | 9      | Core     |
+| event_log                | 18     | Core     |
+| consent_policy_versions  | 6      | Core     |
+| attribute_verifications  | 7      | Core     |
+| pii_log                  | 19     | PII      |
+| user_anonymization_map   | 6      | PII      |
+| user_verified_attributes | 9      | Core     |
 
 ## 修正手順
 
@@ -66,12 +68,14 @@
 ### Step 2: 統合マイグレーションを更新
 
 `001_consolidated_schema.sql` を新規環境向けに更新:
+
 - `users` → `users_core` (正しいスキーマ)
 - 欠落テーブルを追加
 
 ### Step 3: PII マイグレーションを更新
 
 `pii/001_pii_initial.sql` に追加:
+
 - `pii_log` テーブル
 - `user_anonymization_map` テーブル
 

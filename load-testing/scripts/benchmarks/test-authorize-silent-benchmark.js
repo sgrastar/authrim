@@ -307,12 +307,12 @@ function createTestSession(userId) {
 
 // Setup (runs once before test starts)
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`🔑 Client: ${CLIENT_ID}`);
-  console.log("");
+  console.log('');
 
   if (!ADMIN_API_SECRET) {
     throw new Error('ADMIN_API_SECRET is required for creating test sessions');
@@ -377,10 +377,10 @@ export function setup() {
   }
 
   console.log(`✅ Created ${sessions.length} test sessions`);
-  console.log("");
+  console.log('');
 
   // Warmup
-  console.log("🔥 Warming up...");
+  console.log('🔥 Warming up...');
   for (let i = 0; i < Math.min(10, sessions.length); i++) {
     const session = sessions[i];
     const codeVerifier = generateCodeVerifier();
@@ -389,14 +389,14 @@ export function setup() {
 
     const url =
       `${BASE_URL}/authorize?` +
-      "response_type=code&" +
+      'response_type=code&' +
       `client_id=${encodeURIComponent(CLIENT_ID)}&` +
       `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
-      "scope=openid&" +
+      'scope=openid&' +
       `state=${state}&` +
-      "prompt=none&" +
+      'prompt=none&' +
       `code_challenge=${codeChallenge}&` +
-      "code_challenge_method=S256";
+      'code_challenge_method=S256';
 
     http.get(url, {
       headers: { Cookie: session.cookie },
@@ -404,8 +404,8 @@ export function setup() {
       tags: { name: 'Warmup' },
     });
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     sessions,
@@ -434,15 +434,15 @@ export default function (data) {
   // /authorize request (prompt=none)
   const url =
     `${baseUrl}/authorize?` +
-    "response_type=code&" +
+    'response_type=code&' +
     `client_id=${encodeURIComponent(clientId)}&` +
     `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-    "scope=openid&" +
+    'scope=openid&' +
     `state=${state}&` +
     `nonce=${nonce}&` +
-    "prompt=none&" +
+    'prompt=none&' +
     `code_challenge=${codeChallenge}&` +
-    "code_challenge_method=S256";
+    'code_challenge_method=S256';
 
   const params = {
     headers: {
@@ -515,7 +515,7 @@ export default function (data) {
 
 // Teardown (runs once after test ends)
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);

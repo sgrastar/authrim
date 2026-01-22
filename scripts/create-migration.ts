@@ -90,14 +90,14 @@ function main() {
   try {
     writeFileSync(filepath, template, 'utf-8');
     console.log(`✅ Created migration: ${filename}\n`);
-    console.log("📝 Next steps:");
+    console.log('📝 Next steps:');
     console.log(`   1. Edit: ${filepath}`);
     console.log('   2. Add SQL statements in "Up Migration" section');
     console.log('   3. Document rollback in "Down Migration" section');
-    console.log("   4. Test: pnpm migrate:dry-run");
-    console.log("   5. Apply: pnpm migrate:up\n");
+    console.log('   4. Test: pnpm migrate:dry-run');
+    console.log('   5. Apply: pnpm migrate:up\n');
   } catch (error) {
-    console.error("❌ Failed to create migration:", error);
+    console.error('❌ Failed to create migration:', error);
     process.exit(1);
   }
 }

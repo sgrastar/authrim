@@ -371,11 +371,11 @@ export function setup() {
   console.log(`📝 Description: ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`📦 Refresh Token pool: ${refreshTokens.length}`);
-  console.log("");
-  console.log("✨ Production-like design:");
-  console.log("   - Token Rotation enabled");
-  console.log("   - Independent token family per VU");
-  console.log("   - All normal rotation paths (no error cases)");
+  console.log('');
+  console.log('✨ Production-like design:');
+  console.log('   - Token Rotation enabled');
+  console.log('   - Independent token family per VU');
+  console.log('   - All normal rotation paths (no error cases)');
   console.log(
     `   - Token pool: ${refreshTokens.length} (requires >= ${selectedPreset.maxVUs} for 1 token/VU)`
   );
@@ -516,7 +516,7 @@ export default function (data) {
 
 // Teardown
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);

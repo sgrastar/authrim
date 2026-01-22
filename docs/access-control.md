@@ -25,11 +25,11 @@ Comprehensive documentation for Authrim's access control system, covering RBAC, 
 
 Authrim implements a **three-tier unified access control system** that combines:
 
-| Model | Primary Use Case | Complexity | Performance |
-|-------|-----------------|------------|-------------|
-| **RBAC** | Team structures, administrative hierarchies | Low | O(1) role lookup |
-| **ABAC** | Compliance rules, attribute-based policies | Medium | O(n) attribute scan |
-| **ReBAC** | Resource hierarchies, sharing models | High | O(d) depth traversal |
+| Model     | Primary Use Case                            | Complexity | Performance          |
+| --------- | ------------------------------------------- | ---------- | -------------------- |
+| **RBAC**  | Team structures, administrative hierarchies | Low        | O(1) role lookup     |
+| **ABAC**  | Compliance rules, attribute-based policies  | Medium     | O(n) attribute scan  |
+| **ReBAC** | Resource hierarchies, sharing models        | High       | O(d) depth traversal |
 
 All three models are evaluated through a **Unified Check Service** in priority order:
 
@@ -71,16 +71,16 @@ ID-Level → RBAC → ReBAC → ABAC/Computed
 
 ### Key Files
 
-| Component | Location |
-|-----------|----------|
-| Policy Types | `packages/ar-lib-policy/src/types.ts` |
-| Policy Engine | `packages/ar-lib-policy/src/engine.ts` |
-| Role Checker | `packages/ar-lib-policy/src/role-checker.ts` |
-| Feature Flags | `packages/ar-lib-policy/src/feature-flags.ts` |
-| ReBAC Types | `packages/ar-lib-core/src/rebac/types.ts` |
-| ReBAC Service | `packages/ar-lib-core/src/rebac/rebac-service.ts` |
+| Component     | Location                                                     |
+| ------------- | ------------------------------------------------------------ |
+| Policy Types  | `packages/ar-lib-policy/src/types.ts`                        |
+| Policy Engine | `packages/ar-lib-policy/src/engine.ts`                       |
+| Role Checker  | `packages/ar-lib-policy/src/role-checker.ts`                 |
+| Feature Flags | `packages/ar-lib-policy/src/feature-flags.ts`                |
+| ReBAC Types   | `packages/ar-lib-core/src/rebac/types.ts`                    |
+| ReBAC Service | `packages/ar-lib-core/src/rebac/rebac-service.ts`            |
 | Unified Check | `packages/ar-lib-core/src/services/unified-check-service.ts` |
-| Check API | `packages/ar-policy/src/routes/check.ts` |
+| Check API     | `packages/ar-policy/src/routes/check.ts`                     |
 
 ---
 
@@ -92,12 +92,12 @@ RBAC provides hierarchical role-based access decisions with scoped role support.
 
 #### Role Hierarchy (Default)
 
-| Role | Priority | Scope | Description |
-|------|----------|-------|-------------|
-| `system_admin` | 1000 | Global | Full system access |
-| `distributor_admin` | 900 | Global | Distributor-level access |
-| `org_admin` | 800 | Org | Organization-level access |
-| `end_user` | - | Varies | Standard user role |
+| Role                | Priority | Scope  | Description               |
+| ------------------- | -------- | ------ | ------------------------- |
+| `system_admin`      | 1000     | Global | Full system access        |
+| `distributor_admin` | 900      | Global | Distributor-level access  |
+| `org_admin`         | 800      | Org    | Organization-level access |
+| `end_user`          | -        | Varies | Standard user role        |
 
 ### Type Definitions
 
@@ -150,29 +150,30 @@ interface SubjectRole {
 
 Roles support three scope levels:
 
-| Scope | Description | Example |
-|-------|-------------|---------|
-| `global` | Applies everywhere | System administrator |
-| `org` | Limited to specific organization | `scopeTarget: "org:org_123"` |
-| `resource` | Limited to specific resource | `scopeTarget: "resource:doc_456"` |
+| Scope      | Description                      | Example                           |
+| ---------- | -------------------------------- | --------------------------------- |
+| `global`   | Applies everywhere               | System administrator              |
+| `org`      | Limited to specific organization | `scopeTarget: "org:org_123"`      |
+| `resource` | Limited to specific resource     | `scopeTarget: "resource:doc_456"` |
 
 **Scope Resolution:**
+
 - Global scope matches all scope requirements
 - Org scope only matches within the same organization
 - Resource scope only matches the specific resource
 
 ### RBAC Condition Types
 
-| Condition | Description | Parameters |
-|-----------|-------------|------------|
-| `has_role` | Subject has specific role | `{ role, scope?, scopeTarget? }` |
-| `has_any_role` | Subject has any of roles (OR) | `{ roles[], scope?, scopeTarget? }` |
-| `has_all_roles` | Subject has all roles (AND) | `{ roles[], scope?, scopeTarget? }` |
-| `is_resource_owner` | Subject owns the resource | `{}` |
-| `same_organization` | Subject and resource in same org | `{}` |
-| `has_relationship` | Subject has relationship with owner | `{ types[] }` |
-| `user_type_is` | Subject's user type matches | `{ types[] }` |
-| `plan_allows` | Organization plan allows action | `{ plans[] }` |
+| Condition           | Description                         | Parameters                          |
+| ------------------- | ----------------------------------- | ----------------------------------- |
+| `has_role`          | Subject has specific role           | `{ role, scope?, scopeTarget? }`    |
+| `has_any_role`      | Subject has any of roles (OR)       | `{ roles[], scope?, scopeTarget? }` |
+| `has_all_roles`     | Subject has all roles (AND)         | `{ roles[], scope?, scopeTarget? }` |
+| `is_resource_owner` | Subject owns the resource           | `{}`                                |
+| `same_organization` | Subject and resource in same org    | `{}`                                |
+| `has_relationship`  | Subject has relationship with owner | `{ types[] }`                       |
+| `user_type_is`      | Subject's user type matches         | `{ types[] }`                       |
+| `plan_allows`       | Organization plan allows action     | `{ plans[] }`                       |
 
 ### Role Checker Utilities
 
@@ -187,7 +188,7 @@ import {
   isSystemAdmin,
   isOrgAdmin,
   getActiveRoles,
-  subjectFromClaims
+  subjectFromClaims,
 } from '@authrim/ar-lib-policy';
 
 // Check single role
@@ -206,8 +207,12 @@ if (hasAllRoles(subject, ['viewer', 'commenter'])) {
 }
 
 // Quick admin checks
-if (isSystemAdmin(subject)) { /* ... */ }
-if (isOrgAdmin(subject, 'org_123')) { /* ... */ }
+if (isSystemAdmin(subject)) {
+  /* ... */
+}
+if (isOrgAdmin(subject, 'org_123')) {
+  /* ... */
+}
 
 // Get active roles
 const activeRoles = getActiveRoles(subject, { scope: 'org', scopeTarget: 'org:123' });
@@ -217,7 +222,7 @@ const subject = subjectFromClaims({
   sub: 'user_123',
   authrim_roles: ['end_user', 'org_admin'],
   authrim_org_id: 'org_456',
-  authrim_plan: 'professional'
+  authrim_plan: 'professional',
 });
 ```
 
@@ -232,14 +237,14 @@ const defaultRules = [
     name: 'System Admin Full Access',
     priority: 1000,
     effect: 'allow',
-    conditions: [{ type: 'has_role', params: { role: 'system_admin' } }]
+    conditions: [{ type: 'has_role', params: { role: 'system_admin' } }],
   },
   {
     id: 'distributor_admin_access',
     name: 'Distributor Admin Access',
     priority: 900,
     effect: 'allow',
-    conditions: [{ type: 'has_role', params: { role: 'distributor_admin' } }]
+    conditions: [{ type: 'has_role', params: { role: 'distributor_admin' } }],
   },
   {
     id: 'org_admin_same_org',
@@ -248,23 +253,23 @@ const defaultRules = [
     effect: 'allow',
     conditions: [
       { type: 'has_role', params: { role: 'org_admin' } },
-      { type: 'same_organization', params: {} }
-    ]
+      { type: 'same_organization', params: {} },
+    ],
   },
   {
     id: 'owner_full_access',
     name: 'Resource Owner Access',
     priority: 700,
     effect: 'allow',
-    conditions: [{ type: 'is_resource_owner', params: {} }]
+    conditions: [{ type: 'is_resource_owner', params: {} }],
   },
   {
     id: 'guardian_access',
     name: 'Guardian Access',
     priority: 600,
     effect: 'allow',
-    conditions: [{ type: 'has_relationship', params: { types: ['parent_of', 'guardian_of'] } }]
-  }
+    conditions: [{ type: 'has_relationship', params: { types: ['parent_of', 'guardian_of'] } }],
+  },
 ];
 ```
 
@@ -310,47 +315,47 @@ interface PolicySubjectWithAttributes extends PolicySubject {
 
 ### Attribute Sources
 
-| Source | Description | Use Case |
-|--------|-------------|----------|
-| `manual` | Manually assigned by admin | Internal policies |
-| `vc` | Verifiable Credential | External identity verification |
-| `jwt_sd` | SD-JWT (Selective Disclosure) | Privacy-preserving claims |
-| `kyc_provider` | KYC service verification | Age/identity verification |
+| Source         | Description                   | Use Case                       |
+| -------------- | ----------------------------- | ------------------------------ |
+| `manual`       | Manually assigned by admin    | Internal policies              |
+| `vc`           | Verifiable Credential         | External identity verification |
+| `jwt_sd`       | SD-JWT (Selective Disclosure) | Privacy-preserving claims      |
+| `kyc_provider` | KYC service verification      | Age/identity verification      |
 
 ### ABAC Condition Types
 
-| Condition | Description | Parameters |
-|-----------|-------------|------------|
-| `attribute_equals` | Attribute matches specific value | `{ name, value, checkExpiry? }` |
-| `attribute_exists` | Attribute exists (any value) | `{ name, checkExpiry? }` |
-| `attribute_in` | Attribute value in allowed list | `{ name, values[], checkExpiry? }` |
+| Condition          | Description                      | Parameters                         |
+| ------------------ | -------------------------------- | ---------------------------------- |
+| `attribute_equals` | Attribute matches specific value | `{ name, value, checkExpiry? }`    |
+| `attribute_exists` | Attribute exists (any value)     | `{ name, checkExpiry? }`           |
+| `attribute_in`     | Attribute value in allowed list  | `{ name, values[], checkExpiry? }` |
 
 ### Time-Based Conditions (Phase 4+)
 
-| Condition | Description | Parameters |
-|-----------|-------------|------------|
-| `time_in_range` | Check if current time is within hours | `{ startHour, endHour, timezone? }` |
-| `day_of_week` | Check if current day matches allowed days | `{ allowedDays: number[], timezone? }` |
-| `valid_during` | Check if current time is within period | `{ from?: unixSeconds, to?: unixSeconds }` |
+| Condition       | Description                               | Parameters                                 |
+| --------------- | ----------------------------------------- | ------------------------------------------ |
+| `time_in_range` | Check if current time is within hours     | `{ startHour, endHour, timezone? }`        |
+| `day_of_week`   | Check if current day matches allowed days | `{ allowedDays: number[], timezone? }`     |
+| `valid_during`  | Check if current time is within period    | `{ from?: unixSeconds, to?: unixSeconds }` |
 
 ### Numeric Conditions (Phase 4+)
 
-| Condition | Description | Parameters |
-|-----------|-------------|------------|
-| `numeric_gt` | Attribute value > threshold | `{ name, value }` |
-| `numeric_gte` | Attribute value >= threshold | `{ name, value }` |
-| `numeric_lt` | Attribute value < threshold | `{ name, value }` |
-| `numeric_lte` | Attribute value <= threshold | `{ name, value }` |
-| `numeric_eq` | Attribute value == threshold | `{ name, value }` |
+| Condition         | Description                  | Parameters           |
+| ----------------- | ---------------------------- | -------------------- |
+| `numeric_gt`      | Attribute value > threshold  | `{ name, value }`    |
+| `numeric_gte`     | Attribute value >= threshold | `{ name, value }`    |
+| `numeric_lt`      | Attribute value < threshold  | `{ name, value }`    |
+| `numeric_lte`     | Attribute value <= threshold | `{ name, value }`    |
+| `numeric_eq`      | Attribute value == threshold | `{ name, value }`    |
 | `numeric_between` | Attribute value within range | `{ name, min, max }` |
 
 ### Geographic Conditions (Phase 4+)
 
-| Condition | Description | Parameters |
-|-----------|-------------|------------|
-| `country_in` | Request from allowed countries | `{ countries: string[] }` |
+| Condition        | Description                        | Parameters                |
+| ---------------- | ---------------------------------- | ------------------------- |
+| `country_in`     | Request from allowed countries     | `{ countries: string[] }` |
 | `country_not_in` | Request not from blocked countries | `{ countries: string[] }` |
-| `ip_in_range` | Client IP in CIDR ranges | `{ ranges: string[] }` |
+| `ip_in_range`    | Client IP in CIDR ranges           | `{ ranges: string[] }`    |
 
 ### ABAC Condition Examples
 
@@ -457,9 +462,9 @@ const premiumFeatureRule: PolicyRule = {
   conditions: [
     {
       type: 'attribute_equals',
-      params: { name: 'subscription_tier', value: 'premium' }
-    }
-  ]
+      params: { name: 'subscription_tier', value: 'premium' },
+    },
+  ],
 };
 ```
 
@@ -554,11 +559,13 @@ interface CheckResponse {
 Contextual tuples allow passing temporary relationships in a check request. These are evaluated **before** cache lookup and provide request-specific permission grants without persisting to the database.
 
 **Use Cases:**
+
 - Preview mode: "What if user X had access to resource Y?"
 - Temporary grants: Short-lived permissions for specific operations
 - Testing: Simulating relationships in development/testing
 
 **Example:**
+
 ```typescript
 const checkRequest: CheckRequest = {
   tenant_id: 'tenant_1',
@@ -571,13 +578,14 @@ const checkRequest: CheckRequest = {
         user_id: 'user_123',
         relation: 'viewer',
         object: 'document:doc_456',
-      }
-    ]
-  }
+      },
+    ],
+  },
 };
 ```
 
 **Behavior:**
+
 1. Contextual tuples are checked **first** (before cache/DB)
 2. If a match is found, `resolved_via: 'context'` is returned
 3. Contextual tuples are NOT cached (request-scoped only)
@@ -594,11 +602,12 @@ Matches a specific relation tuple directly.
 ```typescript
 interface DirectRelation {
   type: 'direct';
-  relation: string;  // e.g., "viewer"
+  relation: string; // e.g., "viewer"
 }
 ```
 
 **Example:**
+
 ```json
 { "type": "direct", "relation": "viewer" }
 ```
@@ -615,6 +624,7 @@ interface UnionRelation {
 ```
 
 **Example:**
+
 ```json
 {
   "type": "union",
@@ -634,10 +644,10 @@ Inherit permissions from related objects (transitive).
 interface TupleToUsersetRelation {
   type: 'tuple_to_userset';
   tupleset: {
-    relation: string;  // Relation to traverse (e.g., "parent")
+    relation: string; // Relation to traverse (e.g., "parent")
   };
   computed_userset: {
-    relation: string;  // Relation to check on related object (e.g., "viewer")
+    relation: string; // Relation to check on related object (e.g., "viewer")
   };
 }
 ```
@@ -732,12 +742,12 @@ interface ReBACConfig {
 
 ### Safety Features
 
-| Feature | Implementation |
-|---------|----------------|
-| Cycle detection | `visited` Set tracking |
-| Depth limiting | `DEFAULT_MAX_DEPTH = 5` |
-| Cache invalidation | TTL-based + manual invalidation |
-| Multi-tenant isolation | `tenant_id` on all queries |
+| Feature                | Implementation                  |
+| ---------------------- | ------------------------------- |
+| Cycle detection        | `visited` Set tracking          |
+| Depth limiting         | `DEFAULT_MAX_DEPTH = 5`         |
+| Cache invalidation     | TTL-based + manual invalidation |
+| Multi-tenant isolation | `tenant_id` on all queries      |
 
 ### List Operations
 
@@ -777,12 +787,12 @@ object#relation@user
 
 ```typescript
 interface RelationshipTuple {
-  object_type: string;     // "document"
-  object_id: string;       // "doc_123"
-  relation: string;        // "viewer"
-  subject_type: string;    // "user"
-  subject_id: string;      // "user_456"
-  subject_relation?: string;  // For userset subjects
+  object_type: string; // "document"
+  object_id: string; // "doc_123"
+  relation: string; // "viewer"
+  subject_type: string; // "user"
+  subject_id: string; // "user_456"
+  subject_relation?: string; // For userset subjects
 }
 ```
 
@@ -794,12 +804,12 @@ interface RelationshipTuple {
 
 The Unified Check Service evaluates permissions in this order (first match wins):
 
-| Priority | Check Type | Description |
-|----------|------------|-------------|
-| 1 | ID-Level | `resource:id:action` format (most specific) |
-| 2 | RBAC | Role-based conditions |
-| 3 | ReBAC | Relationship evaluation |
-| 4 | ABAC/Computed | Attribute-based conditions |
+| Priority | Check Type    | Description                                 |
+| -------- | ------------- | ------------------------------------------- |
+| 1        | ID-Level      | `resource:id:action` format (most specific) |
+| 2        | RBAC          | Role-based conditions                       |
+| 3        | ReBAC         | Relationship evaluation                     |
+| 4        | ABAC/Computed | Attribute-based conditions                  |
 
 ### Permission Formats
 
@@ -881,7 +891,7 @@ interface CheckApiResponse {
 // Request
 interface BatchCheckRequest {
   checks: CheckApiRequest[];
-  stop_on_deny?: boolean;  // Stop processing on first deny
+  stop_on_deny?: boolean; // Stop processing on first deny
 }
 
 // Response
@@ -902,15 +912,15 @@ interface BatchCheckResponse {
 
 ### Available Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `ENABLE_ABAC` | `false` | Enable Attribute-Based Access Control |
-| `ENABLE_REBAC` | `false` | Enable Relationship-Based Access Control |
-| `ENABLE_POLICY_LOGGING` | `false` | Enable detailed policy evaluation logging |
-| `ENABLE_VERIFIED_ATTRIBUTES` | `false` | Enable verified attributes checking |
-| `ENABLE_CUSTOM_RULES` | `true` | Enable custom policy rules |
-| `ENABLE_SD_JWT` | `false` | Enable SD-JWT for ID Token issuance |
-| `ENABLE_POLICY_EMBEDDING` | `false` | Enable permission embedding in tokens |
+| Flag                         | Default | Description                               |
+| ---------------------------- | ------- | ----------------------------------------- |
+| `ENABLE_ABAC`                | `false` | Enable Attribute-Based Access Control     |
+| `ENABLE_REBAC`               | `false` | Enable Relationship-Based Access Control  |
+| `ENABLE_POLICY_LOGGING`      | `false` | Enable detailed policy evaluation logging |
+| `ENABLE_VERIFIED_ATTRIBUTES` | `false` | Enable verified attributes checking       |
+| `ENABLE_CUSTOM_RULES`        | `true`  | Enable custom policy rules                |
+| `ENABLE_SD_JWT`              | `false` | Enable SD-JWT for ID Token issuance       |
+| `ENABLE_POLICY_EMBEDDING`    | `false` | Enable permission embedding in tokens     |
 
 ### Resolution Priority
 
@@ -950,6 +960,7 @@ await flagsManager.clearFlag('ENABLE_ABAC');
 Single permission check.
 
 **Request:**
+
 ```json
 {
   "subject_id": "user_123",
@@ -959,6 +970,7 @@ Single permission check.
 ```
 
 **Response:**
+
 ```json
 {
   "allowed": true,
@@ -973,6 +985,7 @@ Single permission check.
 Batch permission checks.
 
 **Request:**
+
 ```json
 {
   "checks": [
@@ -984,11 +997,17 @@ Batch permission checks.
 ```
 
 **Response:**
+
 ```json
 {
   "results": [
     { "allowed": true, "resolved_via": ["role"], "final_decision": "allow" },
-    { "allowed": false, "resolved_via": [], "final_decision": "deny", "reason": "no_matching_permission" }
+    {
+      "allowed": false,
+      "resolved_via": [],
+      "final_decision": "deny",
+      "reason": "no_matching_permission"
+    }
   ],
   "summary": {
     "total": 2,
@@ -1001,23 +1020,24 @@ Batch permission checks.
 
 ### Authentication
 
-| Method | Header Format |
-|--------|---------------|
-| API Key | `Authorization: Bearer chk_xxx` |
+| Method       | Header Format                     |
+| ------------ | --------------------------------- |
+| API Key      | `Authorization: Bearer chk_xxx`   |
 | Access Token | `Authorization: Bearer eyJhbG...` |
 
 ### Rate Limiting
 
 Response headers:
+
 - `X-RateLimit-Limit`: Maximum requests per window
 - `X-RateLimit-Remaining`: Remaining requests
 - `X-RateLimit-Reset`: Window reset timestamp
 
 ### Batch Size Limits
 
-| Setting | Default | Max |
-|---------|---------|-----|
-| `CHECK_API_BATCH_SIZE_LIMIT` | 100 | 1000 |
+| Setting                      | Default | Max  |
+| ---------------------------- | ------- | ---- |
+| `CHECK_API_BATCH_SIZE_LIMIT` | 100     | 1000 |
 
 ---
 
@@ -1121,8 +1141,8 @@ engine.addRule({
   effect: 'allow',
   conditions: [
     { type: 'has_role', params: { role: 'project_manager' } },
-    { type: 'same_organization', params: {} }
-  ]
+    { type: 'same_organization', params: {} },
+  ],
 });
 
 // Evaluate
@@ -1130,15 +1150,15 @@ const context: PolicyContext = {
   subject: {
     id: 'user_123',
     roles: [{ name: 'project_manager', scope: 'global' }],
-    orgId: 'org_456'
+    orgId: 'org_456',
   },
   resource: {
     type: 'project',
     id: 'proj_789',
-    orgId: 'org_456'
+    orgId: 'org_456',
   },
   action: { name: 'edit' },
-  timestamp: Date.now()
+  timestamp: Date.now(),
 };
 
 const decision = engine.evaluate(context);
@@ -1159,22 +1179,20 @@ engine.addRule({
   conditions: [
     {
       type: 'attribute_equals',
-      params: { name: 'subscription_tier', value: 'premium' }
-    }
-  ]
+      params: { name: 'subscription_tier', value: 'premium' },
+    },
+  ],
 });
 
 const context: PolicyContext = {
   subject: {
     id: 'user_123',
     roles: [],
-    verifiedAttributes: [
-      { name: 'subscription_tier', value: 'premium', source: 'manual' }
-    ]
+    verifiedAttributes: [{ name: 'subscription_tier', value: 'premium', source: 'manual' }],
   } as PolicySubjectWithAttributes,
   resource: { type: 'feature', id: 'advanced_analytics' },
   action: { name: 'access' },
-  timestamp: Date.now()
+  timestamp: Date.now(),
 };
 
 const decision = engine.evaluate(context);
@@ -1189,7 +1207,7 @@ const rebacService = createReBACService({
   db: D1_DATABASE,
   cache_namespace: KV_NAMESPACE,
   cache_ttl: 60,
-  max_depth: 5
+  max_depth: 5,
 });
 
 // Check if user can view document
@@ -1197,7 +1215,7 @@ const result = await rebacService.check({
   tenant_id: 'tenant_123',
   user_id: 'user_456',
   relation: 'viewer',
-  object: 'document:doc_789'
+  object: 'document:doc_789',
 });
 
 if (result.allowed) {
@@ -1216,7 +1234,7 @@ const checkService = createUnifiedCheckService({
   cache: KV_NAMESPACE,
   rebacService: rebacService,
   cacheTTL: 60,
-  debugMode: true
+  debugMode: true,
 });
 
 // Single check
@@ -1226,12 +1244,12 @@ const result = await checkService.check({
   tenant_id: 'tenant_abc',
   rebac: {
     relation: 'viewer',
-    object: 'document:doc_456'
+    object: 'document:doc_456',
   },
   resource_context: {
     owner_id: 'user_789',
-    org_id: 'org_abc'
-  }
+    org_id: 'org_abc',
+  },
 });
 
 // Batch check
@@ -1239,9 +1257,9 @@ const batchResult = await checkService.batchCheck({
   checks: [
     { subject_id: 'user_123', permission: 'documents:read' },
     { subject_id: 'user_123', permission: 'documents:write' },
-    { subject_id: 'user_123', permission: 'documents:delete' }
+    { subject_id: 'user_123', permission: 'documents:delete' },
   ],
-  stop_on_deny: true
+  stop_on_deny: true,
 });
 ```
 
@@ -1251,14 +1269,14 @@ const batchResult = await checkService.batchCheck({
 
 ### 1. Choose the Right Model
 
-| Scenario | Recommended Model |
-|----------|-------------------|
-| Fixed organizational hierarchy | RBAC |
-| Compliance/regulatory requirements | ABAC |
-| Resource sharing/collaboration | ReBAC |
-| Simple admin vs user distinction | RBAC |
-| Age-gated content | ABAC |
-| File/folder inheritance | ReBAC |
+| Scenario                           | Recommended Model |
+| ---------------------------------- | ----------------- |
+| Fixed organizational hierarchy     | RBAC              |
+| Compliance/regulatory requirements | ABAC              |
+| Resource sharing/collaboration     | ReBAC             |
+| Simple admin vs user distinction   | RBAC              |
+| Age-gated content                  | ABAC              |
+| File/folder inheritance            | ReBAC             |
 
 ### 2. Performance Optimization
 
@@ -1292,43 +1310,44 @@ const batchResult = await checkService.batchCheck({
 
 ### Feature Support
 
-| Feature | RBAC | ABAC | ReBAC |
-|---------|:----:|:----:|:-----:|
-| Role hierarchy | ✅ | ❌ | ❌ |
-| Scoped roles | ✅ | ❌ | ❌ |
-| Role expiration | ✅ | ❌ | ❌ |
-| Attribute matching | ❌ | ✅ | ❌ |
-| Attribute expiration | ❌ | ✅ | ❌ |
-| VC integration | ❌ | ✅ | ❌ |
-| Direct relationships | ❌ | ❌ | ✅ |
-| Transitive relationships | ❌ | ❌ | ✅ |
-| Union (OR) expressions | ❌ | ❌ | ✅ |
-| Intersection (AND) | ❌ | ❌ | ⏳ |
-| Exclusion (NOT) | ❌ | ❌ | ⏳ |
+| Feature                  | RBAC | ABAC | ReBAC |
+| ------------------------ | :--: | :--: | :---: |
+| Role hierarchy           |  ✅  |  ❌  |  ❌   |
+| Scoped roles             |  ✅  |  ❌  |  ❌   |
+| Role expiration          |  ✅  |  ❌  |  ❌   |
+| Attribute matching       |  ❌  |  ✅  |  ❌   |
+| Attribute expiration     |  ❌  |  ✅  |  ❌   |
+| VC integration           |  ❌  |  ✅  |  ❌   |
+| Direct relationships     |  ❌  |  ❌  |  ✅   |
+| Transitive relationships |  ❌  |  ❌  |  ✅   |
+| Union (OR) expressions   |  ❌  |  ❌  |  ✅   |
+| Intersection (AND)       |  ❌  |  ❌  |  ⏳   |
+| Exclusion (NOT)          |  ❌  |  ❌  |  ⏳   |
 
 ### Condition Types
 
-| RBAC (7) | ABAC (3) | ReBAC DSL |
-|----------|----------|-----------|
-| `has_role` | `attribute_equals` | `direct` |
-| `has_any_role` | `attribute_exists` | `union` |
-| `has_all_roles` | `attribute_in` | `tuple_to_userset` |
-| `is_resource_owner` | | `intersection` ⏳ |
-| `same_organization` | | `exclusion` ⏳ |
-| `has_relationship` | | |
-| `user_type_is` | | |
-| `plan_allows` | | |
+| RBAC (7)            | ABAC (3)           | ReBAC DSL          |
+| ------------------- | ------------------ | ------------------ |
+| `has_role`          | `attribute_equals` | `direct`           |
+| `has_any_role`      | `attribute_exists` | `union`            |
+| `has_all_roles`     | `attribute_in`     | `tuple_to_userset` |
+| `is_resource_owner` |                    | `intersection` ⏳  |
+| `same_organization` |                    | `exclusion` ⏳     |
+| `has_relationship`  |                    |                    |
+| `user_type_is`      |                    |                    |
+| `plan_allows`       |                    |                    |
 
 ### Performance Characteristics
 
-| Metric | RBAC | ABAC | ReBAC |
-|--------|------|------|-------|
-| Time Complexity | O(1) | O(n) | O(d) |
-| Space Complexity | O(r) | O(a) | O(e) |
-| Cache Strategy | Token embedding | Attribute cache | KV + closure |
-| Batch Efficiency | High | Medium | Low |
+| Metric           | RBAC            | ABAC            | ReBAC        |
+| ---------------- | --------------- | --------------- | ------------ |
+| Time Complexity  | O(1)            | O(n)            | O(d)         |
+| Space Complexity | O(r)            | O(a)            | O(e)         |
+| Cache Strategy   | Token embedding | Attribute cache | KV + closure |
+| Batch Efficiency | High            | Medium          | Low          |
 
 Where:
+
 - `r` = number of roles
 - `a` = number of attributes
 - `n` = attributes to evaluate
@@ -1341,19 +1360,19 @@ Where:
 
 ### Current Status (as of 2026-01-16)
 
-| Feature | Model | Status | Test Coverage |
-|---------|-------|--------|---------------|
-| RBAC Core | RBAC | ✅ Complete | 53 tests |
-| Scoped Roles | RBAC | ✅ Complete | Included |
-| Role Hierarchy | RBAC | ✅ Complete | Included |
-| ABAC Core | ABAC | ✅ Complete | 44 tests |
-| Verified Attributes | ABAC | ✅ Complete | Included |
-| Attribute Expiration | ABAC | ✅ Complete | Included |
-| Time-based conditions | Phase 4 | ✅ Complete | 13 tests |
-| Numeric comparisons | Phase 4 | ✅ Complete | 18 tests |
-| Geographic conditions | Phase 4 | ✅ Complete | 17 tests |
-| Unified Check Service | Integration | ✅ Complete | 38 tests |
-| Feature Flags | Configuration | ✅ Complete | 25 tests |
+| Feature               | Model         | Status      | Test Coverage |
+| --------------------- | ------------- | ----------- | ------------- |
+| RBAC Core             | RBAC          | ✅ Complete | 53 tests      |
+| Scoped Roles          | RBAC          | ✅ Complete | Included      |
+| Role Hierarchy        | RBAC          | ✅ Complete | Included      |
+| ABAC Core             | ABAC          | ✅ Complete | 44 tests      |
+| Verified Attributes   | ABAC          | ✅ Complete | Included      |
+| Attribute Expiration  | ABAC          | ✅ Complete | Included      |
+| Time-based conditions | Phase 4       | ✅ Complete | 13 tests      |
+| Numeric comparisons   | Phase 4       | ✅ Complete | 18 tests      |
+| Geographic conditions | Phase 4       | ✅ Complete | 17 tests      |
+| Unified Check Service | Integration   | ✅ Complete | 38 tests      |
+| Feature Flags         | Configuration | ✅ Complete | 25 tests      |
 
 **Total Test Count:** 186+ tests across ar-lib-policy
 
@@ -1363,13 +1382,13 @@ Where:
 
 ### Phase 5+ Planned Features
 
-| Feature | Model | Status |
-|---------|-------|--------|
-| Intersection relations | ReBAC | Planned |
-| Exclusion relations | ReBAC | Planned |
-| Contextual tuples | ReBAC | Planned |
-| IPv6 support | Geographic | Planned |
-| Rate-based conditions | Advanced | Under consideration |
+| Feature                | Model      | Status              |
+| ---------------------- | ---------- | ------------------- |
+| Intersection relations | ReBAC      | Planned             |
+| Exclusion relations    | ReBAC      | Planned             |
+| Contextual tuples      | ReBAC      | Planned             |
+| IPv6 support           | Geographic | Planned             |
+| Rate-based conditions  | Advanced   | Under consideration |
 
 ---
 

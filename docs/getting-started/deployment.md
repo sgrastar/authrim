@@ -77,6 +77,7 @@ npx @authrim/setup --cli
 ```
 
 This handles all the steps below automatically:
+
 - Key generation
 - Resource provisioning (D1, KV, Queues)
 - Wrangler configuration
@@ -437,11 +438,11 @@ wrangler kv:key put "setup:token" "$(cat .keys/setup_token.txt)" \
 
 ### API Endpoints (for automation)
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/setup/status` | GET | Check if setup is available |
-| `/api/setup/initialize` | POST | Create user and get Passkey options |
-| `/api/setup/complete` | POST | Complete Passkey registration |
+| Endpoint                | Method | Description                         |
+| ----------------------- | ------ | ----------------------------------- |
+| `/api/setup/status`     | GET    | Check if setup is available         |
+| `/api/setup/initialize` | POST   | Create user and get Passkey options |
+| `/api/setup/complete`   | POST   | Complete Passkey registration       |
 
 ### Troubleshooting
 

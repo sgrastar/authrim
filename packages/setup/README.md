@@ -22,19 +22,19 @@ npx @authrim/setup manage
 
 The setup tool supports the following 11 languages:
 
-| Code | Language | Native Name |
-|------|----------|-------------|
-| `en` | English | English |
-| `ja` | Japanese | 日本語 |
-| `zh-CN` | Chinese (Simplified) | 简体中文 |
-| `zh-TW` | Chinese (Traditional) | 繁體中文 |
-| `es` | Spanish | Español |
-| `pt` | Portuguese | Português |
-| `fr` | French | Français |
-| `de` | German | Deutsch |
-| `ko` | Korean | 한국어 |
-| `ru` | Russian | Русский |
-| `id` | Indonesian | Bahasa Indonesia |
+| Code    | Language              | Native Name      |
+| ------- | --------------------- | ---------------- |
+| `en`    | English               | English          |
+| `ja`    | Japanese              | 日本語           |
+| `zh-CN` | Chinese (Simplified)  | 简体中文         |
+| `zh-TW` | Chinese (Traditional) | 繁體中文         |
+| `es`    | Spanish               | Español          |
+| `pt`    | Portuguese            | Português        |
+| `fr`    | French                | Français         |
+| `de`    | German                | Deutsch          |
+| `ko`    | Korean                | 한국어           |
+| `ru`    | Russian               | Русский          |
+| `id`    | Indonesian            | Bahasa Indonesia |
 
 Language is automatically detected from your system locale or browser settings. You can also specify a language manually:
 
@@ -141,32 +141,32 @@ project/
 
 ### Configuration Files
 
-| File | Description |
-|------|-------------|
-| `.authrim/{env}/config.json` | Environment settings |
-| `.authrim/{env}/lock.json` | Provisioned resource IDs |
-| `.authrim/{env}/keys/` | Cryptographic keys (gitignored) |
+| File                         | Description                     |
+| ---------------------------- | ------------------------------- |
+| `.authrim/{env}/config.json` | Environment settings            |
+| `.authrim/{env}/lock.json`   | Provisioned resource IDs        |
+| `.authrim/{env}/keys/`       | Cryptographic keys (gitignored) |
 
 ### Components
 
-| Component | Description |
-|-----------|-------------|
-| `api` | Core OIDC API (required) |
-| `loginUi` | Login/consent UI |
-| `adminUi` | Admin dashboard |
-| `saml` | SAML 2.0 IdP |
-| `async` | Email, webhooks |
-| `vc` | Verifiable Credentials |
-| `bridge` | Social login (Google, GitHub, etc.) |
-| `policy` | ReBAC Policy Engine |
+| Component | Description                         |
+| --------- | ----------------------------------- |
+| `api`     | Core OIDC API (required)            |
+| `loginUi` | Login/consent UI                    |
+| `adminUi` | Admin dashboard                     |
+| `saml`    | SAML 2.0 IdP                        |
+| `async`   | Email, webhooks                     |
+| `vc`      | Verifiable Credentials              |
+| `bridge`  | Social login (Google, GitHub, etc.) |
+| `policy`  | ReBAC Policy Engine                 |
 
 ## Resource Naming
 
-| Type | Pattern | Example |
-|------|---------|---------|
-| Workers | `{env}-ar-{component}` | `prod-ar-auth` |
-| D1 | `{env}-authrim-{type}-db` | `prod-authrim-core-db` |
-| KV | `{env}-{NAME}` | `prod-CLIENTS_CACHE` |
+| Type    | Pattern                   | Example                |
+| ------- | ------------------------- | ---------------------- |
+| Workers | `{env}-ar-{component}`    | `prod-ar-auth`         |
+| D1      | `{env}-authrim-{type}-db` | `prod-authrim-core-db` |
+| KV      | `{env}-{NAME}`            | `prod-CLIENTS_CACHE`   |
 
 ## CI/CD
 
@@ -182,6 +182,7 @@ npx @authrim/setup info --env prod --json | jq '.d1[0].databaseSize'
 ```
 
 Environment variables:
+
 - `CLOUDFLARE_API_TOKEN` - API token
 - `CLOUDFLARE_ACCOUNT_ID` - Account ID
 - `AUTHRIM_LANG` - Default language (e.g., `ja`, `en`)
@@ -189,12 +190,14 @@ Environment variables:
 ## Troubleshooting
 
 **Wrangler not installed**
+
 ```bash
 npm install -g wrangler
 wrangler login
 ```
 
 **Lock file not found**
+
 ```bash
 npx @authrim/setup init --env prod
 ```

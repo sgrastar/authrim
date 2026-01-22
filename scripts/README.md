@@ -26,12 +26,12 @@ Generate RSA key pair for JWT signing and initial admin setup token.
 
 **Options:**
 
-| Option | Description |
-|--------|-------------|
-| `--kid=KEY_ID` | Custom key ID for RSA key pair |
-| `--skip-setup-token` | Skip setup token generation |
-| `--setup-url=URL` | Base URL for setup page (e.g., `https://auth.example.com`) |
-| `--kv-namespace-id=ID` | AUTHRIM_CONFIG KV namespace ID to store token |
+| Option                 | Description                                                |
+| ---------------------- | ---------------------------------------------------------- |
+| `--kid=KEY_ID`         | Custom key ID for RSA key pair                             |
+| `--skip-setup-token`   | Skip setup token generation                                |
+| `--setup-url=URL`      | Base URL for setup page (e.g., `https://auth.example.com`) |
+| `--kv-namespace-id=ID` | AUTHRIM_CONFIG KV namespace ID to store token              |
 
 **What it does:**
 

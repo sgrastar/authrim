@@ -342,7 +342,7 @@ if (!TOKEN_URL) {
       wrong_client: allTokens.filter((t) => t.type === 'wrong_client').length,
     };
 
-    console.log("📂 Loaded tokens from local file:");
+    console.log('📂 Loaded tokens from local file:');
     console.log(`   Valid:           ${counts.valid}`);
     console.log(`   Valid (TE/act):  ${counts.valid_exchanged}`);
     console.log(`   Expired:         ${counts.expired}`);
@@ -403,12 +403,12 @@ function selectTokenByType(tokens, type, vuId) {
 
 // Setup (runs once before test starts)
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`🔐 Client: ${CLIENT_ID}`);
-  console.log("");
+  console.log('');
 
   let tokens = [];
 
@@ -441,7 +441,7 @@ export function setup() {
     wrong_audience: tokens.filter((t) => t.type === 'wrong_audience').length,
     wrong_client: tokens.filter((t) => t.type === 'wrong_client').length,
   };
-  console.log("📊 Token distribution:");
+  console.log('📊 Token distribution:');
   console.log(
     `   Valid:           ${counts.valid} (${((counts.valid / tokens.length) * 100).toFixed(1)}%)`
   );
@@ -460,10 +460,10 @@ export function setup() {
   console.log(
     `   Wrong client:    ${counts.wrong_client} (${((counts.wrong_client / tokens.length) * 100).toFixed(1)}%)`
   );
-  console.log("");
+  console.log('');
 
   // Warmup
-  console.log("🔥 Warming up...");
+  console.log('🔥 Warming up...');
   const validToken = tokens.find((t) => t.type === 'valid');
   if (validToken) {
     for (let i = 0; i < 5; i++) {
@@ -476,8 +476,8 @@ export function setup() {
       });
     }
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     tokens: useRemoteData ? tokens : null,
@@ -606,7 +606,7 @@ export default function (data) {
 
 // Teardown (runs once after test ends)
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);

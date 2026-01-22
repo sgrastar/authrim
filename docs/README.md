@@ -6,10 +6,10 @@ Documentation for the Authrim OpenID Connect Provider project.
 
 ## 📋 Overview
 
-| Document | Description |
-| :------- | :---------- |
-| [Vision](./VISION.md) | Long-term vision and strategic goals |
-| [Roadmap](./ROADMAP.md) | Product roadmap and feature status |
+| Document                              | Description                                  |
+| :------------------------------------ | :------------------------------------------- |
+| [Vision](./VISION.md)                 | Long-term vision and strategic goals         |
+| [Roadmap](./ROADMAP.md)               | Product roadmap and feature status           |
 | [Access Control](./access-control.md) | RBAC, ABAC, and ReBAC architecture and usage |
 
 ---
@@ -18,11 +18,11 @@ Documentation for the Authrim OpenID Connect Provider project.
 
 Guides for development and deployment.
 
-| Document | Description |
-| :------- | :---------- |
+| Document                                              | Description                                |
+| :---------------------------------------------------- | :----------------------------------------- |
 | [Development Guide](./getting-started/development.md) | Development environment setup and workflow |
-| [Deployment Guide](./getting-started/deployment.md) | Deploying to Cloudflare Workers |
-| [Testing Guide](./getting-started/testing.md) | Testing strategy and test execution |
+| [Deployment Guide](./getting-started/deployment.md)   | Deploying to Cloudflare Workers            |
+| [Testing Guide](./getting-started/testing.md)         | Testing strategy and test execution        |
 
 ---
 

@@ -180,7 +180,7 @@ describe('Authorization Code Flow', () => {
     // Register test clients in DB
     for (const client of Object.values(testClients)) {
       await env.DB.prepare(
-        "INSERT INTO oauth_clients (client_id, client_secret, redirect_uris, grant_types, response_types, scope, allow_claims_without_scope) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        'INSERT INTO oauth_clients (client_id, client_secret, redirect_uris, grant_types, response_types, scope, allow_claims_without_scope) VALUES (?, ?, ?, ?, ?, ?, ?)'
       )
         .bind(
           client.client_id,

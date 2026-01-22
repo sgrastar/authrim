@@ -275,12 +275,12 @@ export const options = {
 
 // Setup (runs once before test starts)
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
-  console.log("☁️  K6 Cloud Mode: Fetching tokens from R2");
-  console.log("");
+  console.log('☁️  K6 Cloud Mode: Fetching tokens from R2');
+  console.log('');
 
   // K6 Cloud: Fetch tokens from R2
   // Format: Array of token strings (K6 setup() 4MB limit compliant)
@@ -298,7 +298,7 @@ export function setup() {
   }
 
   // Warmup: Initialize DO with first few requests
-  console.log("🔥 Warming up...");
+  console.log('🔥 Warming up...');
   for (let i = 0; i < Math.min(10, tokens.length); i++) {
     const token = tokens[i];
     http.get(`${BASE_URL}/userinfo`, {
@@ -308,8 +308,8 @@ export function setup() {
       tags: { name: 'Warmup' },
     });
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     tokens: tokens,
@@ -405,7 +405,7 @@ export default function () {
 
 // Teardown (runs once after test ends)
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test Complete`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);

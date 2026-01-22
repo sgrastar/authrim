@@ -109,20 +109,20 @@ timeline
 
 ## Milestones
 
-| Milestone                  | Date       | Status      | Description                                                           |
-| -------------------------- | ---------- | ----------- | --------------------------------------------------------------------- |
-| **M1: Foundation**         | 2025-12-15 | ✅ Complete | Project setup, tooling, basic structure                               |
-| **M2: Core API**           | 2026-01-31 | ✅ Complete | All OIDC endpoints functional                                         |
-| **M3: Conformance**        | 2025-11-12 | ✅ Complete | Basic OP 78.95%, Config OP 100%, Form Post 84.21%                     |
-| **M4: Extensions**         | 2025-11-12 | ✅ Complete | PAR, DPoP, Pairwise, Token Management                                 |
-| **M5: UI/UX**              | 2025-11-18 | ✅ Complete | SvelteKit Frontend, Admin Dashboard, 15+ pages                        |
-| **M6: Enterprise**         | 2025-12-02 | ✅ Complete | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer, SAML 2.0 |
-| **M7: Identity Hub**       | 2025-12-20 | ✅ Complete | RP Module, Social Login (7 providers), PII Separation                 |
-| **M8: Policy Integration** | 2025-12-19 | ✅ Complete | Unified AuthN + AuthZ, Token embedding, Check API                     |
-| **M9: Advanced Identity**  | 2025-12-20 | ✅ Complete | OpenID4VP/CI, DID Resolver, DID Auth, 227 tests                       |
-| **M10: SDK & API**         | 2025-Q4    | 🔜 Planned  | WebSDK, CLI, API Documentation                                        |
+| Milestone                  | Date       | Status      | Description                                                              |
+| -------------------------- | ---------- | ----------- | ------------------------------------------------------------------------ |
+| **M1: Foundation**         | 2025-12-15 | ✅ Complete | Project setup, tooling, basic structure                                  |
+| **M2: Core API**           | 2026-01-31 | ✅ Complete | All OIDC endpoints functional                                            |
+| **M3: Conformance**        | 2025-11-12 | ✅ Complete | Basic OP 78.95%, Config OP 100%, Form Post 84.21%                        |
+| **M4: Extensions**         | 2025-11-12 | ✅ Complete | PAR, DPoP, Pairwise, Token Management                                    |
+| **M5: UI/UX**              | 2025-11-18 | ✅ Complete | SvelteKit Frontend, Admin Dashboard, 15+ pages                           |
+| **M6: Enterprise**         | 2025-12-02 | ✅ Complete | Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer, SAML 2.0    |
+| **M7: Identity Hub**       | 2025-12-20 | ✅ Complete | RP Module, Social Login (7 providers), PII Separation                    |
+| **M8: Policy Integration** | 2025-12-19 | ✅ Complete | Unified AuthN + AuthZ, Token embedding, Check API                        |
+| **M9: Advanced Identity**  | 2025-12-20 | ✅ Complete | OpenID4VP/CI, DID Resolver, DID Auth, 227 tests                          |
+| **M10: SDK & API**         | 2025-Q4    | 🔜 Planned  | WebSDK, CLI, API Documentation                                           |
 | **M11: Security & QA**     | 2025-Q4    | ⏳ ~30%     | Load Testing ✅, Client Credentials ✅, Security Tests ✅, Audit pending |
-| **M12: Release**           | 2026-Q1    | 🔜 Final    | OpenID Certification, Public Release                                  |
+| **M12: Release**           | 2026-Q1    | 🔜 Final    | OpenID Certification, Public Release                                     |
 
 ---
 
@@ -403,17 +403,17 @@ Data separation architecture for GDPR/CCPA compliance:
 
 ### Key Features
 
-| Feature               | Description                               | Status     |
-| --------------------- | ----------------------------------------- | ---------- |
-| @authrim/sdk-core     | Headless OIDC/PKCE client                 | 🔜 Planned |
-| @authrim/sdk-web      | Web Components (Lit/Stencil)              | 🔜 Planned |
-| @authrim/sdk-react    | React hooks and components                | 🔜 Planned |
-| CDN Bundle            | `authrim-sdk.min.js` for `<script>` usage | 🔜 Planned |
-| OpenAPI Spec          | Complete API specification                | 🔜 Planned |
-| API Portal            | Interactive documentation                 | 🔜 Planned |
-| Login Flow Designer   | Visual login page configuration           | 🔜 Planned |
-| Policy Admin Console  | Role Editor, Policy Editor, ReBAC Graph   | 🔜 Planned |
-| **Error Code Guide**  | SDK error handling documentation          | 🔜 Planned |
+| Feature              | Description                               | Status     |
+| -------------------- | ----------------------------------------- | ---------- |
+| @authrim/sdk-core    | Headless OIDC/PKCE client                 | 🔜 Planned |
+| @authrim/sdk-web     | Web Components (Lit/Stencil)              | 🔜 Planned |
+| @authrim/sdk-react   | React hooks and components                | 🔜 Planned |
+| CDN Bundle           | `authrim-sdk.min.js` for `<script>` usage | 🔜 Planned |
+| OpenAPI Spec         | Complete API specification                | 🔜 Planned |
+| API Portal           | Interactive documentation                 | 🔜 Planned |
+| Login Flow Designer  | Visual login page configuration           | 🔜 Planned |
+| Policy Admin Console | Role Editor, Policy Editor, ReBAC Graph   | 🔜 Planned |
+| **Error Code Guide** | SDK error handling documentation          | 🔜 Planned |
 
 ### 10.1 SDK Error Handling Documentation 📌 REQUIRED
 
@@ -421,13 +421,14 @@ Data separation architecture for GDPR/CCPA compliance:
 
 Error code implementation completed (2024-12-23). The following documentation must be included in the SDK:
 
-| Document | Content | Reference |
-|----------|---------|-----------|
-| Error Code Reference | RFC standard error codes list | `private/docs/error-codes-inventory.md` Section 1 |
-| Error Handling Guide | Error handling best practices | `private/docs/error-codes-inventory.md` Section 9 |
+| Document                | Content                                              | Reference                                         |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------------- |
+| Error Code Reference    | RFC standard error codes list                        | `private/docs/error-codes-inventory.md` Section 1 |
+| Error Handling Guide    | Error handling best practices                        | `private/docs/error-codes-inventory.md` Section 9 |
 | Security Considerations | Security levels (public/masked/internal) explanation | `private/docs/error-codes-inventory.md` Section 8 |
 
 **Implemented Changes**:
+
 - ErrorFactory: Extended to 28 functions (RFC 6749/6750/8628/9449/7591/8693 compliant)
 - error_description: Unified to RFC-compliant English messages
 - Error code consolidation: `internal_server_error`→`server_error`, `unauthorized`→`invalid_token`, etc.
@@ -442,32 +443,34 @@ Error code implementation completed (2024-12-23). The following documentation mu
 
 ### Key Features
 
-| Feature               | Description                        | Status      |
-| --------------------- | ---------------------------------- | ----------- |
-| Client Credentials    | RFC 6749 §4.4 server-to-server     | ✅ Complete |
-| Load Testing          | Performance benchmarks             | ✅ Complete |
-| Security Audit        | External security review           | 🔜 Planned  |
-| Penetration Testing   | Third-party security assessment    | 🔜 Planned  |
-| Conformance Tests     | Hybrid OP, Dynamic OP, RP profiles | 🔜 Planned  |
+| Feature             | Description                        | Status      |
+| ------------------- | ---------------------------------- | ----------- |
+| Client Credentials  | RFC 6749 §4.4 server-to-server     | ✅ Complete |
+| Load Testing        | Performance benchmarks             | ✅ Complete |
+| Security Audit      | External security review           | 🔜 Planned  |
+| Penetration Testing | Third-party security assessment    | 🔜 Planned  |
+| Conformance Tests   | Hybrid OP, Dynamic OP, RP profiles | 🔜 Planned  |
 
 ### API Deprecation Plan
 
 With the introduction of **Contract-based Presets** (FAPI 2.0, regulated-finance, etc.), the following legacy APIs will be deprecated:
 
-| Legacy API/Feature | Replacement | Timeline | Status |
-| ------------------ | ----------- | -------- | ------ |
+| Legacy API/Feature                          | Replacement                                                          | Timeline | Status     |
+| ------------------------------------------- | -------------------------------------------------------------------- | -------- | ---------- |
 | `GET/PUT /api/admin/settings/fapi-security` | Contract Presets (`fapi2-security-profile`, `fapi2-message-signing`) | Phase 12 | 🔜 Planned |
-| `fapi.enabled` system flag | `TenantContract.preset` per tenant | Phase 12 | 🔜 Planned |
-| Global FAPI mode toggle | Per-tenant preset selection | Phase 12 | 🔜 Planned |
-| Certification Profiles API | Contract Presets (for production) | Phase 12 | 🔜 Planned |
+| `fapi.enabled` system flag                  | `TenantContract.preset` per tenant                                   | Phase 12 | 🔜 Planned |
+| Global FAPI mode toggle                     | Per-tenant preset selection                                          | Phase 12 | 🔜 Planned |
+| Certification Profiles API                  | Contract Presets (for production)                                    | Phase 12 | 🔜 Planned |
 
 **Migration Path:**
+
 1. New tenants use Contract Presets from creation
 2. Existing tenants assigned appropriate preset based on current `fapi.enabled` setting
 3. Legacy APIs return deprecation warning headers
 4. Legacy APIs removed in v1.0 release
 
 **Benefits of Contract-based Approach:**
+
 - Multi-tenant support with different security levels (e.g., Tenant A: FAPI 2.0, Tenant B: B2C standard)
 - No environment variables or API calls needed for FAPI compliance
 - Preset selection at tenant creation time
@@ -588,14 +591,14 @@ By 2026-Q1, Authrim will be:
 | 2025-12-18 | **PII/Non-PII Database Separation ✅ Complete**: DatabaseAdapter, Repository pattern, PIIPartitionRouter, AuthContext/PIIContext, 47 files migrated                                                        |
 | 2025-12-18 | **Phase 7 ~95% Complete**: GDPR/CCPA compliant architecture complete, ready for Phase 8                                                                                                                    |
 | 2025-12-18 | **8.4 Policy Admin Console → Moved to Phase 10**: Develop alongside SDK for consistent developer experience                                                                                                |
-| 2025-12-18 | **8.1 Policy ↔ Identity Integration ✅ Complete**: Rule Evaluator, JIT Provisioning with dynamic role assignment, org auto-join, email domain hash with key rotation, Admin APIs                          |
+| 2025-12-18 | **8.1 Policy ↔ Identity Integration ✅ Complete**: Rule Evaluator, JIT Provisioning with dynamic role assignment, org auto-join, email domain hash with key rotation, Admin APIs                           |
 | 2025-12-19 | **Phase 8 ✅ Complete**: Token Embedding Model (8.2), Real-time Check API (8.3) with UnifiedCheckService, Permission Parser, WebSocket Push via PermissionChangeHub DO, Check API Keys Admin API           |
 | 2025-12-20 | **Phase 7 ✅ Complete**: All 7 social login providers (Google, Microsoft, GitHub, Apple, LinkedIn, Facebook, Twitter/X)                                                                                    |
 | 2025-12-20 | **Phase 9 ✅ Complete**: OpenID4VP/VCI, DID Support (did:web, did:key, DID Auth), 227 tests                                                                                                                |
 | 2025-12-21 | **Phase 11 Security Hardening**: DPoP `ath` timing-safe comparison (RFC 9449), JWT algorithm consistency (`ALLOWED_ASYMMETRIC_ALGS`), Policy Flags Admin API (CLAUDE.md compliant)                         |
-| 2025-12-26 | **FAPI 2.0 Contract Presets**: Added `fapi2-security-profile` and `fapi2-message-signing` presets based on OIDF FAPI 2.0 Final specs. Deprecation plan for legacy `fapi-security` API added to roadmap. |
-| 2026-01-01 | **Client Credentials Flow ✅ Complete** (RFC 6749 §4.4): `client_secret_basic`, `client_secret_post`, `private_key_jwt` authentication methods implemented with 382 lines of tests. |
-| 2026-01-01 | **Documentation Alignment**: Updated PII Separation (✅ Complete), RAR Phase 1 (✅ Complete), Flow×UI Types (✅ Complete) documentation to reflect actual implementation status. |
+| 2025-12-26 | **FAPI 2.0 Contract Presets**: Added `fapi2-security-profile` and `fapi2-message-signing` presets based on OIDF FAPI 2.0 Final specs. Deprecation plan for legacy `fapi-security` API added to roadmap.    |
+| 2026-01-01 | **Client Credentials Flow ✅ Complete** (RFC 6749 §4.4): `client_secret_basic`, `client_secret_post`, `private_key_jwt` authentication methods implemented with 382 lines of tests.                        |
+| 2026-01-01 | **Documentation Alignment**: Updated PII Separation (✅ Complete), RAR Phase 1 (✅ Complete), Flow×UI Types (✅ Complete) documentation to reflect actual implementation status.                           |
 
 ---
 

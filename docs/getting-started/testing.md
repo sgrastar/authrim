@@ -199,12 +199,12 @@ Authrim supports running against the OpenID Foundation certification tests.
 
 ### Test Plans
 
-| Plan         | Description                 | Status |
-| ------------ | --------------------------- | ------ |
-| Basic OP     | Standard OIDC Provider      | ✓      |
-| Config OP    | Configuration endpoint      | ✓      |
-| Dynamic OP   | Dynamic client registration | ✓      |
-| FAPI 2.0     | Financial-grade API 2.0     | Testing |
+| Plan       | Description                 | Status  |
+| ---------- | --------------------------- | ------- |
+| Basic OP   | Standard OIDC Provider      | ✓       |
+| Config OP  | Configuration endpoint      | ✓       |
+| Dynamic OP | Dynamic client registration | ✓       |
+| FAPI 2.0   | Financial-grade API 2.0     | Testing |
 
 ### Running Conformance Tests
 

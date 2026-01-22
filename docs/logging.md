@@ -96,11 +96,11 @@ log.info('Job started');
 
 ### 環境変数
 
-| 変数名 | 説明 | デフォルト値 | 有効な値 |
-|--------|------|-------------|---------|
-| `LOG_LEVEL` | 最小ログレベル | `info` | `debug`, `info`, `warn`, `error` |
-| `LOG_FORMAT` | 出力形式 | `json` | `json`, `pretty` |
-| `LOG_HASH_USER_ID` | ユーザーID匿名化 | `false` | `true`, `false` |
+| 変数名             | 説明             | デフォルト値 | 有効な値                         |
+| ------------------ | ---------------- | ------------ | -------------------------------- |
+| `LOG_LEVEL`        | 最小ログレベル   | `info`       | `debug`, `info`, `warn`, `error` |
+| `LOG_FORMAT`       | 出力形式         | `json`       | `json`, `pretty`                 |
+| `LOG_HASH_USER_ID` | ユーザーID匿名化 | `false`      | `true`, `false`                  |
 
 ### wrangler.toml での設定例
 
@@ -136,12 +136,12 @@ setLoggerConfig({
 
 ## ログレベル
 
-| レベル | 値 | 用途 |
-|--------|---|------|
-| `debug` | 0 | 開発時のデバッグ情報、詳細なトレース |
-| `info` | 1 | 通常の操作ログ、重要なイベント |
-| `warn` | 2 | 警告（処理は継続するが注意が必要） |
-| `error` | 3 | エラー（処理失敗、要対応） |
+| レベル  | 値  | 用途                                 |
+| ------- | --- | ------------------------------------ |
+| `debug` | 0   | 開発時のデバッグ情報、詳細なトレース |
+| `info`  | 1   | 通常の操作ログ、重要なイベント       |
+| `warn`  | 2   | 警告（処理は継続するが注意が必要）   |
+| `error` | 3   | エラー（処理失敗、要対応）           |
 
 **フィルタリング**: 設定されたレベル以上のログのみ出力されます。
 例: `LOG_LEVEL=warn` の場合、`warn`と`error`のみ出力
@@ -152,19 +152,20 @@ setLoggerConfig({
 
 ログに含めることができる標準フィールド:
 
-| フィールド | 型 | 説明 |
-|-----------|---|------|
-| `tenantId` | `string` | テナント識別子（自動設定） |
-| `requestId` | `string` | リクエスト識別子（自動設定） |
-| `userId` | `string` | ユーザー識別子 |
-| `userIdHash` | `string` | ハッシュ化されたユーザーID |
-| `clientId` | `string` | OAuthクライアント識別子 |
-| `sessionId` | `string` | セッション識別子 |
-| `module` | `string` | モジュール/コンポーネント名 |
-| `action` | `string` | 実行中のアクション |
-| `durationMs` | `number` | 処理時間（ミリ秒） |
+| フィールド   | 型       | 説明                         |
+| ------------ | -------- | ---------------------------- |
+| `tenantId`   | `string` | テナント識別子（自動設定）   |
+| `requestId`  | `string` | リクエスト識別子（自動設定） |
+| `userId`     | `string` | ユーザー識別子               |
+| `userIdHash` | `string` | ハッシュ化されたユーザーID   |
+| `clientId`   | `string` | OAuthクライアント識別子      |
+| `sessionId`  | `string` | セッション識別子             |
+| `module`     | `string` | モジュール/コンポーネント名  |
+| `action`     | `string` | 実行中のアクション           |
+| `durationMs` | `number` | 処理時間（ミリ秒）           |
 
 カスタムフィールドも追加可能:
+
 ```typescript
 log.info('Custom event', {
   customField: 'value',
@@ -198,9 +199,13 @@ try {
   await riskyOperation();
 } catch (error) {
   // PIIを含まないエラー（内部エラーなど）
-  log.error('Database connection failed', {
-    action: 'db_connect',
-  }, error as Error);
+  log.error(
+    'Database connection failed',
+    {
+      action: 'db_connect',
+    },
+    error as Error
+  );
 
   // PIIを含む可能性のあるエラー
   log.error('User authentication failed', {
@@ -363,11 +368,11 @@ A: ターミナルがANSIカラーコードをサポートしている必要が�
 
 ## 関連ファイル
 
-| ファイル | 説明 |
-|---------|------|
-| `packages/ar-lib-core/src/utils/logger.ts` | ロガーのコア実装 |
+| ファイル                                                 | 説明                      |
+| -------------------------------------------------------- | ------------------------- |
+| `packages/ar-lib-core/src/utils/logger.ts`               | ロガーのコア実装          |
 | `packages/ar-lib-core/src/middleware/request-context.ts` | ミドルウェアと`getLogger` |
-| `packages/ar-lib-core/src/index.ts` | エクスポート定義 |
+| `packages/ar-lib-core/src/index.ts`                      | エクスポート定義          |
 
 ---
 

@@ -191,7 +191,7 @@ try {
   console.log(`📂 Loaded ${userList.length} users from ${USER_LIST_PATH}`);
 } catch (e) {
   console.warn(`⚠️  Could not load user list: ${e.message}`);
-  console.warn("   Will generate random email addresses");
+  console.warn('   Will generate random email addresses');
 }
 
 /**
@@ -237,12 +237,12 @@ function generateRandomEmail() {
 
 // Setup
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`🔑 Client: ${CLIENT_ID}`);
-  console.log("");
+  console.log('');
 
   if (!CLIENT_ID || !CLIENT_SECRET) {
     throw new Error('CLIENT_ID and CLIENT_SECRET are required');
@@ -267,10 +267,10 @@ export function setup() {
     }
     console.log(`📦 Generated ${users.length} random email addresses`);
   }
-  console.log("");
+  console.log('');
 
   // Warmup
-  console.log("🔥 Warming up...");
+  console.log('🔥 Warming up...');
   for (let i = 0; i < Math.min(5, users.length); i++) {
     const user = users[i];
     // Warmup authorize endpoint
@@ -287,8 +287,8 @@ export function setup() {
       tags: { name: 'Warmup' },
     });
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     users,
@@ -326,14 +326,14 @@ export default function (data) {
   // ===============================
   const authorizeInitUrl =
     `${baseUrl}/authorize?` +
-    "response_type=code&" +
+    'response_type=code&' +
     `client_id=${encodeURIComponent(clientId)}&` +
     `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-    "scope=openid&" +
+    'scope=openid&' +
     `state=${state}&` +
     `nonce=${nonce}&` +
     `code_challenge=${codeChallenge}&` +
-    "code_challenge_method=S256";
+    'code_challenge_method=S256';
 
   const step1Response = http.get(authorizeInitUrl, {
     headers: { Accept: 'text/html', Connection: 'keep-alive' },
@@ -433,7 +433,7 @@ export default function (data) {
       if (!sessionCookie) {
         success = false;
         sessionErrors.add(1);
-        console.error("❌ No session ID returned from verify endpoint");
+        console.error('❌ No session ID returned from verify endpoint');
       }
     }
   }
@@ -446,15 +446,15 @@ export default function (data) {
   if (success && sessionCookie) {
     const authorizeCodeUrl =
       `${baseUrl}/authorize?` +
-      "response_type=code&" +
+      'response_type=code&' +
       `client_id=${encodeURIComponent(clientId)}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-      "scope=openid&" +
+      'scope=openid&' +
       `state=${state}&` +
       `nonce=${nonce}&` +
       `code_challenge=${codeChallenge}&` +
-      "code_challenge_method=S256&" +
-      "prompt=none";
+      'code_challenge_method=S256&' +
+      'prompt=none';
 
     const step4Response = http.get(authorizeCodeUrl, {
       headers: {
@@ -496,7 +496,7 @@ export default function (data) {
 
     const step5Response = http.post(
       `${baseUrl}/token`,
-      "grant_type=authorization_code" +
+      'grant_type=authorization_code' +
         `&code=${encodeURIComponent(authCode)}` +
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&code_verifier=${codeVerifier}`,
@@ -537,7 +537,7 @@ export default function (data) {
 
 // Teardown
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);

@@ -14,14 +14,15 @@ Authrim follows consistent naming conventions for environment variables to impro
 
 ### Time-Related Variables
 
-| Category | Pattern | Unit | Example |
-|----------|---------|------|---------|
-| Token/Auth Expiry | `*_EXPIRY` | Seconds | `ACCESS_TOKEN_EXPIRY`, `AUTH_CODE_EXPIRY` |
-| Cache TTL | `*_CACHE_TTL` | Seconds | `INTROSPECTION_CACHE_TTL`, `SETTINGS_CACHE_TTL` |
-| Timeouts | `*_TIMEOUT_MS` | Milliseconds | `HTTPS_REQUEST_URI_TIMEOUT_MS` |
-| Windows | `*_WINDOW_SECONDS` | Seconds | `LOCKOUT_WINDOW_SECONDS` |
+| Category          | Pattern            | Unit         | Example                                         |
+| ----------------- | ------------------ | ------------ | ----------------------------------------------- |
+| Token/Auth Expiry | `*_EXPIRY`         | Seconds      | `ACCESS_TOKEN_EXPIRY`, `AUTH_CODE_EXPIRY`       |
+| Cache TTL         | `*_CACHE_TTL`      | Seconds      | `INTROSPECTION_CACHE_TTL`, `SETTINGS_CACHE_TTL` |
+| Timeouts          | `*_TIMEOUT_MS`     | Milliseconds | `HTTPS_REQUEST_URI_TIMEOUT_MS`                  |
+| Windows           | `*_WINDOW_SECONDS` | Seconds      | `LOCKOUT_WINDOW_SECONDS`                        |
 
 **Rationale:**
+
 - `*_EXPIRY` aligns with OAuth/OIDC RFC terminology (`expires_in`)
 - `*_CACHE_TTL` follows Redis/caching industry standards
 - `*_TIMEOUT_MS` explicitly indicates milliseconds for operation timeouts
@@ -39,21 +40,22 @@ ENABLE_CLIENT_CREDENTIALS
 ```
 
 **Rationale:**
+
 - Consistent prefix makes flags easy to identify
 - `ENABLE_` clearly indicates an on/off toggle
 - Avoids confusion with `*_ENABLED` suffix (deprecated)
 
 ### Prefix Categories
 
-| Prefix | Purpose | Example |
-|--------|---------|---------|
-| (none) | Core settings | `ISSUER_URL`, `BASE_DOMAIN` |
-| `AUTHRIM_` | Authrim-specific settings | `AUTHRIM_CODE_SHARDS` |
-| `SCIM_` | SCIM provisioning | `SCIM_AUTH_FAILURE_DELAY_MS` |
-| `RBAC_` | Role-based access control | `RBAC_ID_TOKEN_CLAIMS` |
-| `API_` | API configuration | `API_VERSIONING_SUNSET_SECONDS` |
-| `PII_` | PII encryption settings | `PII_ENCRYPTION_KEY` |
-| `ENABLE_` | Feature flags | `ENABLE_CONFORMANCE_MODE` |
+| Prefix     | Purpose                   | Example                         |
+| ---------- | ------------------------- | ------------------------------- |
+| (none)     | Core settings             | `ISSUER_URL`, `BASE_DOMAIN`     |
+| `AUTHRIM_` | Authrim-specific settings | `AUTHRIM_CODE_SHARDS`           |
+| `SCIM_`    | SCIM provisioning         | `SCIM_AUTH_FAILURE_DELAY_MS`    |
+| `RBAC_`    | Role-based access control | `RBAC_ID_TOKEN_CLAIMS`          |
+| `API_`     | API configuration         | `API_VERSIONING_SUNSET_SECONDS` |
+| `PII_`     | PII encryption settings   | `PII_ENCRYPTION_KEY`            |
+| `ENABLE_`  | Feature flags             | `ENABLE_CONFORMANCE_MODE`       |
 
 ---
 
@@ -61,123 +63,123 @@ ENABLE_CLIENT_CREDENTIALS
 
 ### Core Configuration
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `ISSUER_URL` | string | - | OAuth/OIDC issuer URL (e.g., `https://auth.example.com`) |
-| `UI_URL` | string | - | Login/consent UI URL |
-| `BASE_DOMAIN` | string | - | Base domain for multi-tenant deployment |
-| `TRUSTED_DOMAINS` | string | - | Comma-separated list of trusted redirect domains |
-| `ALLOWED_ORIGINS` | string | - | CORS allowed origins |
+| Variable          | Type   | Default | Description                                              |
+| ----------------- | ------ | ------- | -------------------------------------------------------- |
+| `ISSUER_URL`      | string | -       | OAuth/OIDC issuer URL (e.g., `https://auth.example.com`) |
+| `UI_URL`          | string | -       | Login/consent UI URL                                     |
+| `BASE_DOMAIN`     | string | -       | Base domain for multi-tenant deployment                  |
+| `TRUSTED_DOMAINS` | string | -       | Comma-separated list of trusted redirect domains         |
+| `ALLOWED_ORIGINS` | string | -       | CORS allowed origins                                     |
 
 ### Token Configuration
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `ACCESS_TOKEN_EXPIRY` | number | `3600` | Access token lifetime in seconds |
-| `AUTH_CODE_EXPIRY` | number | `120` | Authorization code lifetime in seconds |
-| `STATE_EXPIRY` | number | `600` | State parameter lifetime in seconds |
-| `NONCE_EXPIRY` | number | `600` | Nonce parameter lifetime in seconds |
+| Variable               | Type   | Default   | Description                                 |
+| ---------------------- | ------ | --------- | ------------------------------------------- |
+| `ACCESS_TOKEN_EXPIRY`  | number | `3600`    | Access token lifetime in seconds            |
+| `AUTH_CODE_EXPIRY`     | number | `120`     | Authorization code lifetime in seconds      |
+| `STATE_EXPIRY`         | number | `600`     | State parameter lifetime in seconds         |
+| `NONCE_EXPIRY`         | number | `600`     | Nonce parameter lifetime in seconds         |
 | `REFRESH_TOKEN_EXPIRY` | number | `2592000` | Refresh token lifetime in seconds (30 days) |
 
 ### Feature Flags
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `ENABLE_CONFORMANCE_MODE` | boolean | `false` | Enable built-in login/consent forms for conformance testing |
-| `ENABLE_HTTP_REDIRECT` | boolean | `false` | Allow HTTP redirect URIs (insecure, for development only) |
-| `ENABLE_OPEN_REGISTRATION` | boolean | `false` | Allow public client registration without IAT |
-| `ENABLE_REFRESH_TOKEN_ROTATION` | boolean | `false` | Enable refresh token rotation on use |
-| `ENABLE_TOKEN_EXCHANGE` | boolean | `false` | Enable RFC 8693 Token Exchange |
-| `ENABLE_CLIENT_CREDENTIALS` | boolean | `false` | Enable RFC 6749 Client Credentials grant |
-| `ENABLE_RATE_LIMIT` | boolean | `true` | Enable rate limiting |
-| `ENABLE_HTTPS_REQUEST_URI` | boolean | `false` | Enable HTTPS request_uri support (JAR) |
-| `ENABLE_RAR` | boolean | `false` | Enable RFC 9396 Rich Authorization Requests |
-| `ENABLE_AI_SCOPES` | boolean | `false` | Enable AI Ephemeral Auth scopes |
-| `ENABLE_NATIVE_SSO` | boolean | `false` | Enable OIDC Native SSO 1.0 |
-| `ENABLE_ID_JAG` | boolean | `false` | Enable ID-JAG identity assertion grant |
+| Variable                        | Type    | Default | Description                                                 |
+| ------------------------------- | ------- | ------- | ----------------------------------------------------------- |
+| `ENABLE_CONFORMANCE_MODE`       | boolean | `false` | Enable built-in login/consent forms for conformance testing |
+| `ENABLE_HTTP_REDIRECT`          | boolean | `false` | Allow HTTP redirect URIs (insecure, for development only)   |
+| `ENABLE_OPEN_REGISTRATION`      | boolean | `false` | Allow public client registration without IAT                |
+| `ENABLE_REFRESH_TOKEN_ROTATION` | boolean | `false` | Enable refresh token rotation on use                        |
+| `ENABLE_TOKEN_EXCHANGE`         | boolean | `false` | Enable RFC 8693 Token Exchange                              |
+| `ENABLE_CLIENT_CREDENTIALS`     | boolean | `false` | Enable RFC 6749 Client Credentials grant                    |
+| `ENABLE_RATE_LIMIT`             | boolean | `true`  | Enable rate limiting                                        |
+| `ENABLE_HTTPS_REQUEST_URI`      | boolean | `false` | Enable HTTPS request_uri support (JAR)                      |
+| `ENABLE_RAR`                    | boolean | `false` | Enable RFC 9396 Rich Authorization Requests                 |
+| `ENABLE_AI_SCOPES`              | boolean | `false` | Enable AI Ephemeral Auth scopes                             |
+| `ENABLE_NATIVE_SSO`             | boolean | `false` | Enable OIDC Native SSO 1.0                                  |
+| `ENABLE_ID_JAG`                 | boolean | `false` | Enable ID-JAG identity assertion grant                      |
 
 ### Security Configuration
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `KEY_MANAGER_SECRET` | string | - | Secret for KeyManager DO encryption |
-| `ADMIN_API_SECRET` | string | - | Secret for Admin API authentication |
-| `POLICY_API_SECRET` | string | - | Secret for Policy service communication |
-| `KEY_ID` | string | - | Current signing key ID |
-| `PRIVATE_KEY_PEM` | string | - | RSA private key (PEM format) |
-| `PUBLIC_JWK_JSON` | string | - | Public JWK for verification |
+| Variable             | Type   | Default | Description                             |
+| -------------------- | ------ | ------- | --------------------------------------- |
+| `KEY_MANAGER_SECRET` | string | -       | Secret for KeyManager DO encryption     |
+| `ADMIN_API_SECRET`   | string | -       | Secret for Admin API authentication     |
+| `POLICY_API_SECRET`  | string | -       | Secret for Policy service communication |
+| `KEY_ID`             | string | -       | Current signing key ID                  |
+| `PRIVATE_KEY_PEM`    | string | -       | RSA private key (PEM format)            |
+| `PUBLIC_JWK_JSON`    | string | -       | Public JWK for verification             |
 
 ### Identity Stitching
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `ENABLE_IDENTITY_STITCHING` | boolean | `false` | Enable automatic identity linking |
-| `ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL` | boolean | `true` | Require verified email for identity stitching |
+| Variable                                           | Type    | Default | Description                                   |
+| -------------------------------------------------- | ------- | ------- | --------------------------------------------- |
+| `ENABLE_IDENTITY_STITCHING`                        | boolean | `false` | Enable automatic identity linking             |
+| `ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL` | boolean | `true`  | Require verified email for identity stitching |
 
 ### Introspection Settings
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `ENABLE_INTROSPECTION_CACHE` | boolean | `false` | Enable introspection response caching |
-| `INTROSPECTION_CACHE_TTL` | number | `60` | Cache TTL in seconds |
-| `ENABLE_INTROSPECTION_STRICT_VALIDATION` | boolean | `false` | Enable strict token validation |
-| `INTROSPECTION_EXPECTED_AUDIENCE` | string | - | Expected audience for introspection |
+| Variable                                 | Type    | Default | Description                           |
+| ---------------------------------------- | ------- | ------- | ------------------------------------- |
+| `ENABLE_INTROSPECTION_CACHE`             | boolean | `false` | Enable introspection response caching |
+| `INTROSPECTION_CACHE_TTL`                | number  | `60`    | Cache TTL in seconds                  |
+| `ENABLE_INTROSPECTION_STRICT_VALIDATION` | boolean | `false` | Enable strict token validation        |
+| `INTROSPECTION_EXPECTED_AUDIENCE`        | string  | -       | Expected audience for introspection   |
 
 ### NIST Assurance Levels
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `ENABLE_NIST_ASSURANCE_LEVELS` | boolean | `false` | Enable NIST AAL/FAL/IAL claims |
-| `DEFAULT_AAL` | string | `aal1` | Default Authentication Assurance Level |
-| `DEFAULT_FAL` | string | `fal1` | Default Federation Assurance Level |
-| `DEFAULT_IAL` | string | `ial1` | Default Identity Assurance Level |
+| Variable                       | Type    | Default | Description                            |
+| ------------------------------ | ------- | ------- | -------------------------------------- |
+| `ENABLE_NIST_ASSURANCE_LEVELS` | boolean | `false` | Enable NIST AAL/FAL/IAL claims         |
+| `DEFAULT_AAL`                  | string  | `aal1`  | Default Authentication Assurance Level |
+| `DEFAULT_FAL`                  | string  | `fal1`  | Default Federation Assurance Level     |
+| `DEFAULT_IAL`                  | string  | `ial1`  | Default Identity Assurance Level       |
 
 ### Sharding Configuration
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `AUTHRIM_CODE_SHARDS` | number | `1` | Authorization code DO shards (for high load) |
-| `AUTHRIM_SESSION_SHARDS` | number | `1` | Session DO shards (for high load) |
-| `AUTHRIM_CHALLENGE_SHARDS` | number | `1` | Challenge DO shards (for high load) |
+| Variable                   | Type   | Default | Description                                  |
+| -------------------------- | ------ | ------- | -------------------------------------------- |
+| `AUTHRIM_CODE_SHARDS`      | number | `1`     | Authorization code DO shards (for high load) |
+| `AUTHRIM_SESSION_SHARDS`   | number | `1`     | Session DO shards (for high load)            |
+| `AUTHRIM_CHALLENGE_SHARDS` | number | `1`     | Challenge DO shards (for high load)          |
 
 ### Rate Limiting
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `ENABLE_RATE_LIMIT` | boolean | `true` | Enable rate limiting |
-| `RATE_LIMIT_PROFILE` | string | `standard` | Rate limit profile (`standard`, `strict`, `loadTest`) |
+| Variable             | Type    | Default    | Description                                           |
+| -------------------- | ------- | ---------- | ----------------------------------------------------- |
+| `ENABLE_RATE_LIMIT`  | boolean | `true`     | Enable rate limiting                                  |
+| `RATE_LIMIT_PROFILE` | string  | `standard` | Rate limit profile (`standard`, `strict`, `loadTest`) |
 
 ### SCIM Configuration
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `ENABLE_SCIM_AUTH_RATE_LIMIT` | boolean | `true` | Enable SCIM auth rate limiting |
-| `SCIM_AUTH_FAILURE_DELAY_MS` | number | `1000` | Delay after auth failure in milliseconds |
+| Variable                      | Type    | Default | Description                              |
+| ----------------------------- | ------- | ------- | ---------------------------------------- |
+| `ENABLE_SCIM_AUTH_RATE_LIMIT` | boolean | `true`  | Enable SCIM auth rate limiting           |
+| `SCIM_AUTH_FAILURE_DELAY_MS`  | number  | `1000`  | Delay after auth failure in milliseconds |
 
 ### Logging Configuration
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `LOG_LEVEL` | string | `info` | Log level (`debug`, `info`, `warn`, `error`) |
-| `LOG_FORMAT` | string | `json` | Log format (`json`, `pretty`) |
-| `ENABLE_LOG_HASH_USER_ID` | boolean | `false` | Hash user IDs in logs for privacy |
+| Variable                  | Type    | Default | Description                                  |
+| ------------------------- | ------- | ------- | -------------------------------------------- |
+| `LOG_LEVEL`               | string  | `info`  | Log level (`debug`, `info`, `warn`, `error`) |
+| `LOG_FORMAT`              | string  | `json`  | Log format (`json`, `pretty`)                |
+| `ENABLE_LOG_HASH_USER_ID` | boolean | `false` | Hash user IDs in logs for privacy            |
 
 ### Check API (Policy Service)
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `ENABLE_CHECK_API` | boolean | `false` | Enable Check API endpoints |
+| Variable                     | Type    | Default | Description                                  |
+| ---------------------------- | ------- | ------- | -------------------------------------------- |
+| `ENABLE_CHECK_API`           | boolean | `false` | Enable Check API endpoints                   |
 | `ENABLE_CHECK_API_WEBSOCKET` | boolean | `false` | Enable WebSocket push for permission changes |
-| `ENABLE_CHECK_API_DEBUG` | boolean | `false` | Enable debug mode for Check API |
+| `ENABLE_CHECK_API_DEBUG`     | boolean | `false` | Enable debug mode for Check API              |
 
 ### RBAC Claims
 
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `RBAC_ID_TOKEN_CLAIMS` | string | `roles` | Claims to include in ID token (`none`, `roles`, `permissions`) |
-| `RBAC_ACCESS_TOKEN_CLAIMS` | string | `roles` | Claims to include in access token |
-| `ENABLE_RBAC_CONSENT_SCOPES` | boolean | `false` | Show RBAC scopes in consent screen |
-| `ENABLE_RBAC_CONSENT_PERMISSIONS` | boolean | `false` | Show RBAC permissions in consent screen |
+| Variable                          | Type    | Default | Description                                                    |
+| --------------------------------- | ------- | ------- | -------------------------------------------------------------- |
+| `RBAC_ID_TOKEN_CLAIMS`            | string  | `roles` | Claims to include in ID token (`none`, `roles`, `permissions`) |
+| `RBAC_ACCESS_TOKEN_CLAIMS`        | string  | `roles` | Claims to include in access token                              |
+| `ENABLE_RBAC_CONSENT_SCOPES`      | boolean | `false` | Show RBAC scopes in consent screen                             |
+| `ENABLE_RBAC_CONSENT_PERMISSIONS` | boolean | `false` | Show RBAC permissions in consent screen                        |
 
 ---
 
@@ -195,6 +197,7 @@ Cache → KV (SETTINGS) → Environment Variables → Default Values
 4. **Default Values**: Secure defaults defined in code
 
 This allows:
+
 - Dynamic configuration changes without redeployment
 - Safe fallback to environment variables if KV fails
 - Secure defaults when neither KV nor env vars are set
@@ -205,27 +208,27 @@ This allows:
 
 The following environment variable names have been deprecated:
 
-| Legacy Name | New Name |
-|-------------|----------|
-| `TOKEN_EXPIRY` | `ACCESS_TOKEN_EXPIRY` |
-| `CODE_EXPIRY` | `AUTH_CODE_EXPIRY` |
-| `AUTH_CODE_TTL` | `AUTH_CODE_EXPIRY` |
-| `CONFORMANCE_MODE` | `ENABLE_CONFORMANCE_MODE` |
-| `ALLOW_HTTP_REDIRECT` | `ENABLE_HTTP_REDIRECT` |
-| `OPEN_REGISTRATION` | `ENABLE_OPEN_REGISTRATION` |
-| `REFRESH_TOKEN_ROTATION_ENABLED` | `ENABLE_REFRESH_TOKEN_ROTATION` |
-| `RATE_LIMIT_DISABLED` | `ENABLE_RATE_LIMIT` (logic inverted) |
-| `SCIM_AUTH_RATE_LIMIT_DISABLED` | `ENABLE_SCIM_AUTH_RATE_LIMIT` (logic inverted) |
-| `IDENTITY_STITCHING_ENABLED` | `ENABLE_IDENTITY_STITCHING` |
-| `NIST_ASSURANCE_LEVELS_ENABLED` | `ENABLE_NIST_ASSURANCE_LEVELS` |
-| `INTROSPECTION_CACHE_ENABLED` | `ENABLE_INTROSPECTION_CACHE` |
-| `INTROSPECTION_CACHE_TTL_SECONDS` | `INTROSPECTION_CACHE_TTL` |
-| `INTROSPECTION_STRICT_VALIDATION` | `ENABLE_INTROSPECTION_STRICT_VALIDATION` |
-| `LOG_HASH_USER_ID` | `ENABLE_LOG_HASH_USER_ID` |
-| `CHECK_API_WEBSOCKET_ENABLED` | `ENABLE_CHECK_API_WEBSOCKET` |
-| `CHECK_API_DEBUG_MODE` | `ENABLE_CHECK_API_DEBUG` |
-| `ID_JAG_ENABLED` | `ENABLE_ID_JAG` |
-| `VERSION_CHECK_ENABLED` | (deprecated - use Cloudflare Versions Deploy) |
+| Legacy Name                       | New Name                                       |
+| --------------------------------- | ---------------------------------------------- |
+| `TOKEN_EXPIRY`                    | `ACCESS_TOKEN_EXPIRY`                          |
+| `CODE_EXPIRY`                     | `AUTH_CODE_EXPIRY`                             |
+| `AUTH_CODE_TTL`                   | `AUTH_CODE_EXPIRY`                             |
+| `CONFORMANCE_MODE`                | `ENABLE_CONFORMANCE_MODE`                      |
+| `ALLOW_HTTP_REDIRECT`             | `ENABLE_HTTP_REDIRECT`                         |
+| `OPEN_REGISTRATION`               | `ENABLE_OPEN_REGISTRATION`                     |
+| `REFRESH_TOKEN_ROTATION_ENABLED`  | `ENABLE_REFRESH_TOKEN_ROTATION`                |
+| `RATE_LIMIT_DISABLED`             | `ENABLE_RATE_LIMIT` (logic inverted)           |
+| `SCIM_AUTH_RATE_LIMIT_DISABLED`   | `ENABLE_SCIM_AUTH_RATE_LIMIT` (logic inverted) |
+| `IDENTITY_STITCHING_ENABLED`      | `ENABLE_IDENTITY_STITCHING`                    |
+| `NIST_ASSURANCE_LEVELS_ENABLED`   | `ENABLE_NIST_ASSURANCE_LEVELS`                 |
+| `INTROSPECTION_CACHE_ENABLED`     | `ENABLE_INTROSPECTION_CACHE`                   |
+| `INTROSPECTION_CACHE_TTL_SECONDS` | `INTROSPECTION_CACHE_TTL`                      |
+| `INTROSPECTION_STRICT_VALIDATION` | `ENABLE_INTROSPECTION_STRICT_VALIDATION`       |
+| `LOG_HASH_USER_ID`                | `ENABLE_LOG_HASH_USER_ID`                      |
+| `CHECK_API_WEBSOCKET_ENABLED`     | `ENABLE_CHECK_API_WEBSOCKET`                   |
+| `CHECK_API_DEBUG_MODE`            | `ENABLE_CHECK_API_DEBUG`                       |
+| `ID_JAG_ENABLED`                  | `ENABLE_ID_JAG`                                |
+| `VERSION_CHECK_ENABLED`           | (deprecated - use Cloudflare Versions Deploy)  |
 
 ---
 

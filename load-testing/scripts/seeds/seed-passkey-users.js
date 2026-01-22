@@ -1,4 +1,3 @@
-
 /**
  * Passkey User Seed Generation Script
  *
@@ -350,7 +349,7 @@ async function registerBatch(startIndex, batchSize) {
 }
 
 async function main() {
-  console.log("🚀 Passkey User Seed Generator");
+  console.log('🚀 Passkey User Seed Generator');
   console.log(`   BASE_URL           : ${BASE_URL}`);
   console.log(`   RP_ID              : ${RP_ID}`);
   console.log(`   PASSKEY_USER_COUNT : ${PASSKEY_USER_COUNT}`);
