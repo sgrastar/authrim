@@ -40,6 +40,7 @@ function createMockEnv(options?: { db?: D1Database }): Env {
     PRIVATE_KEY_PEM: 'mock-private-key',
     PUBLIC_JWK_JSON: '{"kty":"RSA"}',
     KEY_ID: 'test-key-id',
+    DCR_ENABLED: 'true', // Enable DCR for tests
     STATE_STORE: {} as KVNamespace,
     NONCE_STORE: {} as KVNamespace,
     CLIENTS_CACHE: {} as KVNamespace,

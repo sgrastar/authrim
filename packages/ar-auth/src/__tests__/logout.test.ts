@@ -35,6 +35,10 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     timingSafeEqual: vi.fn((a: string, b: string) => a === b),
+    verifyClientSecretHash: vi.fn(async (secret: string, hash: string) => {
+      // Simple mock: check if hash equals 'hash_' + secret
+      return hash === 'hash_' + secret;
+    }),
     validateIdTokenHint: vi.fn(),
     validatePostLogoutRedirectUri: vi.fn(),
     validateLogoutParameters: vi.fn(),
@@ -49,6 +53,7 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { jwtVerify, importJWK } from 'jose';
 import {
   timingSafeEqual,
+  verifyClientSecretHash,
   validateIdTokenHint,
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
@@ -560,7 +565,7 @@ describe('Back-channel Logout', () => {
         bind: vi.fn().mockReturnValue({
           first: vi.fn().mockResolvedValue({
             client_id: 'client-123',
-            client_secret: 'client-secret',
+            client_secret_hash: 'hash_client-secret',
           }),
         }),
       });
@@ -713,12 +718,12 @@ describe('Back-channel Logout', () => {
         protectedHeader: { alg: 'RS256' },
       } as any);
 
-      // Mock DB for client lookup with correct secret
+      // Mock DB for client lookup with correct secret hash
       c.env.DB.prepare = vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnValue({
           first: vi.fn().mockResolvedValue({
             client_id: 'client-123',
-            client_secret: 'client-secret',
+            client_secret_hash: 'hash_client-secret',
           }),
         }),
       });
@@ -739,12 +744,12 @@ describe('Back-channel Logout', () => {
         },
       });
 
-      // Mock DB for client lookup with different secret
+      // Mock DB for client lookup with different secret hash
       c.env.DB.prepare = vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnValue({
           first: vi.fn().mockResolvedValue({
             client_id: 'client-123',
-            client_secret: 'correct-secret',
+            client_secret_hash: 'hash_correct-secret',
           }),
         }),
       });
@@ -760,7 +765,7 @@ describe('Back-channel Logout', () => {
       );
     });
 
-    it('should use timing-safe comparison for client secret', async () => {
+    it('should use hash verification for client secret', async () => {
       const { c } = createMockContext({
         method: 'POST',
         body: {
@@ -771,12 +776,12 @@ describe('Back-channel Logout', () => {
         },
       });
 
-      // Mock DB for client lookup
+      // Mock DB for client lookup with secret hash
       c.env.DB.prepare = vi.fn().mockReturnValue({
         bind: vi.fn().mockReturnValue({
           first: vi.fn().mockResolvedValue({
             client_id: 'client-123',
-            client_secret: 'client-secret',
+            client_secret_hash: 'hash_client-secret',
           }),
         }),
       });
@@ -795,7 +800,7 @@ describe('Back-channel Logout', () => {
 
       await backChannelLogoutHandler(c);
 
-      expect(timingSafeEqual).toHaveBeenCalled();
+      expect(verifyClientSecretHash).toHaveBeenCalled();
     });
 
     it('should reject non-existent client', async () => {

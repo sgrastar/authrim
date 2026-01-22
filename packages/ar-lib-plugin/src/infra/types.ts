@@ -323,7 +323,7 @@ export interface IClientStore extends NonPIIStore {
 
 export interface OAuthClient {
   client_id: string;
-  client_secret?: string;
+  client_secret_hash?: string;
   client_name?: string;
   redirect_uris: string[];
   grant_types: string[];

@@ -29,6 +29,8 @@ import {
   createLogger,
   // Audit Log
   createAuditLog,
+  // Cookie Configuration
+  getAdminCookieSameSite,
 } from '@authrim/ar-lib-core';
 
 // ===== Module-level Logger for Helper Functions =====
@@ -894,11 +896,15 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
     // Set session cookie for Admin UI
     // This enables session-based authentication via adminAuthMiddleware
-    setCookie(c, 'authrim_session', sessionData.id, {
+    // Note: Uses 'authrim_admin_session' to avoid conflict with regular user sessions (authrim_session)
+    // SameSite is determined dynamically based on origin configuration:
+    // - Same origin (ISSUER_URL == ADMIN_UI_URL): 'Lax' (more secure)
+    // - Cross origin: 'None' (required for cross-origin)
+    setCookie(c, 'authrim_admin_session', sessionData.id, {
       path: '/',
       httpOnly: true,
       secure: true,
-      sameSite: 'None', // Required for cross-origin requests
+      sameSite: getAdminCookieSameSite(c.env),
       maxAge: 7 * 24 * 60 * 60, // 7 days (shorter for admin sessions)
     });
 

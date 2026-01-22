@@ -372,3 +372,55 @@ export async function generateCodeChallenge(codeVerifier: string): Promise<strin
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   return arrayBufferToBase64Url(hashBuffer);
 }
+
+/**
+ * Hash a client secret using SHA-256
+ *
+ * Client secrets are high-entropy values (128+ bits), making them resistant
+ * to dictionary attacks. SHA-256 provides fast verification (~1-5μs) which
+ * is appropriate for machine-to-machine authentication.
+ *
+ * @param secret - Plain text client secret
+ * @returns SHA-256 hash as hexadecimal string (64 characters)
+ *
+ * @example
+ * ```ts
+ * const hash = await hashClientSecret('my-super-secret-value');
+ * // Store hash in database instead of plain text
+ * ```
+ *
+ * @see RFC 6749 - OAuth 2.0 Authorization Framework
+ */
+export async function hashClientSecret(secret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(secret);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Verify a client secret against its hash using timing-safe comparison
+ *
+ * Computes the SHA-256 hash of the provided secret and compares it
+ * to the stored hash using constant-time comparison to prevent timing attacks.
+ *
+ * @param providedSecret - Plain text secret provided by client
+ * @param storedHash - SHA-256 hash stored in database (64-char hex string)
+ * @returns true if the secret matches the hash
+ *
+ * @example
+ * ```ts
+ * const isValid = await verifyClientSecretHash(clientSecret, storedHash);
+ * if (!isValid) {
+ *   return c.json({ error: 'invalid_client' }, 401);
+ * }
+ * ```
+ */
+export async function verifyClientSecretHash(
+  providedSecret: string,
+  storedHash: string
+): Promise<boolean> {
+  const computedHash = await hashClientSecret(providedSecret);
+  return timingSafeEqual(computedHash, storedHash);
+}

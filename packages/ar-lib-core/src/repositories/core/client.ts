@@ -8,7 +8,7 @@
  * uses client_id as primary key instead of id.
  *
  * OAuth 2.0 / OIDC client fields:
- * - client_id, client_secret: Client credentials
+ * - client_id, client_secret_hash: Client credentials (secret stored as SHA-256 hash)
  * - client_name, logo_uri, etc.: Client metadata
  * - redirect_uris, grant_types, response_types: OAuth configuration
  * - token_endpoint_auth_method: Authentication method
@@ -56,7 +56,8 @@ export type CIBADeliveryMode = 'poll' | 'ping' | 'push';
 export interface OAuthClient {
   /** Client ID (primary key) */
   client_id: string;
-  client_secret: string | null;
+  /** SHA-256 hash of the client secret (null for public clients) */
+  client_secret_hash: string | null;
   client_name: string;
   tenant_id: string;
 
@@ -130,6 +131,11 @@ export interface OAuthClient {
    */
   allowed_redirect_origins: string | null;
 
+  // RFC 7591: Dynamic Client Registration
+  software_id: string | null;
+  software_version: string | null;
+  requestable_scopes: string | null; // JSON array
+
   // Timestamps
   created_at: number;
   updated_at: number;
@@ -140,7 +146,8 @@ export interface OAuthClient {
  */
 export interface CreateClientInput {
   client_id?: string;
-  client_secret?: string | null;
+  /** SHA-256 hash of the client secret (null for public clients) */
+  client_secret_hash?: string | null;
   client_name: string;
   tenant_id?: string;
   redirect_uris: string[];
@@ -181,6 +188,10 @@ export interface CreateClientInput {
   frontchannel_logout_session_required?: boolean;
   // Custom Redirect URIs (Authrim Extension)
   allowed_redirect_origins?: string[] | null;
+  // RFC 7591: Dynamic Client Registration
+  software_id?: string | null;
+  software_version?: string | null;
+  requestable_scopes?: string[] | null;
 }
 
 /**
@@ -188,7 +199,8 @@ export interface CreateClientInput {
  */
 export interface UpdateClientInput {
   client_name?: string;
-  client_secret?: string | null;
+  /** SHA-256 hash of the client secret (null for public clients) */
+  client_secret_hash?: string | null;
   redirect_uris?: string[];
   grant_types?: string[];
   response_types?: string[];
@@ -227,6 +239,10 @@ export interface UpdateClientInput {
   frontchannel_logout_session_required?: boolean;
   // Custom Redirect URIs (Authrim Extension)
   allowed_redirect_origins?: string[] | null;
+  // RFC 7591: Dynamic Client Registration
+  software_id?: string | null;
+  software_version?: string | null;
+  requestable_scopes?: string[] | null;
 }
 
 /**
@@ -266,7 +282,7 @@ export class ClientRepository {
 
     const client: OAuthClient = {
       client_id: clientId,
-      client_secret: input.client_secret ?? null,
+      client_secret_hash: input.client_secret_hash ?? null,
       client_name: input.client_name,
       tenant_id: input.tenant_id || 'default',
       redirect_uris: JSON.stringify(input.redirect_uris),
@@ -317,13 +333,19 @@ export class ClientRepository {
       allowed_redirect_origins: input.allowed_redirect_origins
         ? JSON.stringify(input.allowed_redirect_origins)
         : null,
+      // RFC 7591: Dynamic Client Registration
+      software_id: input.software_id ?? null,
+      software_version: input.software_version ?? null,
+      requestable_scopes: input.requestable_scopes
+        ? JSON.stringify(input.requestable_scopes)
+        : null,
       created_at: now,
       updated_at: now,
     };
 
     await this.adapter.execute(
       `INSERT INTO oauth_clients (
-        client_id, client_secret, client_name, tenant_id,
+        client_id, client_secret_hash, client_name, tenant_id,
         redirect_uris, grant_types, response_types, scope,
         logo_uri, client_uri, policy_uri, tos_uri, contacts,
         post_logout_redirect_uris, subject_type, sector_identifier_uri,
@@ -338,11 +360,12 @@ export class ClientRepository {
         backchannel_logout_uri, backchannel_logout_session_required,
         frontchannel_logout_uri, frontchannel_logout_session_required,
         allowed_redirect_origins,
+        software_id, software_version, requestable_scopes,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
-        client.client_secret,
+        client.client_secret_hash,
         client.client_name,
         client.tenant_id,
         client.redirect_uris,
@@ -381,6 +404,9 @@ export class ClientRepository {
         client.frontchannel_logout_uri,
         client.frontchannel_logout_session_required ? 1 : 0,
         client.allowed_redirect_origins,
+        client.software_id,
+        client.software_version,
+        client.requestable_scopes,
         client.created_at,
         client.updated_at,
       ]
@@ -418,9 +444,9 @@ export class ClientRepository {
       updates.push('client_name = ?');
       params.push(input.client_name);
     }
-    if (input.client_secret !== undefined) {
-      updates.push('client_secret = ?');
-      params.push(input.client_secret);
+    if (input.client_secret_hash !== undefined) {
+      updates.push('client_secret_hash = ?');
+      params.push(input.client_secret_hash);
     }
     if (input.redirect_uris !== undefined) {
       updates.push('redirect_uris = ?');
@@ -579,6 +605,19 @@ export class ClientRepository {
       params.push(
         input.allowed_redirect_origins ? JSON.stringify(input.allowed_redirect_origins) : null
       );
+    }
+    // RFC 7591: Dynamic Client Registration
+    if (input.software_id !== undefined) {
+      updates.push('software_id = ?');
+      params.push(input.software_id);
+    }
+    if (input.software_version !== undefined) {
+      updates.push('software_version = ?');
+      params.push(input.software_version);
+    }
+    if (input.requestable_scopes !== undefined) {
+      updates.push('requestable_scopes = ?');
+      params.push(input.requestable_scopes ? JSON.stringify(input.requestable_scopes) : null);
     }
 
     params.push(clientId);

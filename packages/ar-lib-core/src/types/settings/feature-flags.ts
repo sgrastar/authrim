@@ -55,7 +55,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     envKey: 'ENABLE_ABAC',
     label: 'Enable ABAC',
     description: 'Enable Attribute-Based Access Control',
-    visibility: 'admin',
+    visibility: 'page', // Managed on Attributes page
   },
   'feature.enable_rebac': {
     key: 'feature.enable_rebac',
@@ -64,7 +64,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     envKey: 'ENABLE_REBAC',
     label: 'Enable ReBAC',
     description: 'Enable Relationship-Based Access Control',
-    visibility: 'admin',
+    visibility: 'page', // Managed on ReBAC page
   },
   'feature.enable_policy_logging': {
     key: 'feature.enable_policy_logging',
@@ -91,7 +91,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     envKey: 'ENABLE_CUSTOM_RULES',
     label: 'Enable Custom Rules',
     description: 'Allow custom policy rules',
-    visibility: 'admin',
+    visibility: 'page', // Managed on Policies page
   },
   'feature.enable_policy_embedding': {
     key: 'feature.enable_policy_embedding',

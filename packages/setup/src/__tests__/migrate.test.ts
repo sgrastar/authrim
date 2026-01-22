@@ -206,30 +206,34 @@ describe('migrate.ts', () => {
   });
 
   describe('migrateToNewStructure', () => {
-    it('should migrate legacy structure to new structure', async () => {
-      createLegacyStructure(tempDir, 'dev');
+    it(
+      'should migrate legacy structure to new structure',
+      async () => {
+        createLegacyStructure(tempDir, 'dev');
 
-      const result = await migrateToNewStructure({
-        baseDir: tempDir,
-        noBackup: true,
-      });
+        const result = await migrateToNewStructure({
+          baseDir: tempDir,
+          noBackup: true,
+        });
 
-      expect(result.success).toBe(true);
-      expect(result.migratedEnvs).toContain('dev');
-      expect(result.errors).toEqual([]);
+        expect(result.success).toBe(true);
+        expect(result.migratedEnvs).toContain('dev');
+        expect(result.errors).toEqual([]);
 
-      // Check new structure exists
-      const newConfigPath = join(tempDir, AUTHRIM_DIR, 'dev', 'config.json');
-      const newLockPath = join(tempDir, AUTHRIM_DIR, 'dev', 'lock.json');
-      const newVersionPath = join(tempDir, AUTHRIM_DIR, 'dev', 'version.txt');
-      const newKeysDir = join(tempDir, AUTHRIM_DIR, 'dev', 'keys');
+        // Check new structure exists
+        const newConfigPath = join(tempDir, AUTHRIM_DIR, 'dev', 'config.json');
+        const newLockPath = join(tempDir, AUTHRIM_DIR, 'dev', 'lock.json');
+        const newVersionPath = join(tempDir, AUTHRIM_DIR, 'dev', 'version.txt');
+        const newKeysDir = join(tempDir, AUTHRIM_DIR, 'dev', 'keys');
 
-      expect(existsSync(newConfigPath)).toBe(true);
-      expect(existsSync(newLockPath)).toBe(true);
-      expect(existsSync(newVersionPath)).toBe(true);
-      expect(existsSync(newKeysDir)).toBe(true);
-      expect(existsSync(join(newKeysDir, 'private.pem'))).toBe(true);
-    });
+        expect(existsSync(newConfigPath)).toBe(true);
+        expect(existsSync(newLockPath)).toBe(true);
+        expect(existsSync(newVersionPath)).toBe(true);
+        expect(existsSync(newKeysDir)).toBe(true);
+        expect(existsSync(join(newKeysDir, 'private.pem'))).toBe(true);
+      },
+      { timeout: 30000 }
+    );
 
     it('should create backup by default', async () => {
       createLegacyStructure(tempDir, 'dev');

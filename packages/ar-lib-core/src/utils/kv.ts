@@ -575,7 +575,7 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.queryOne<{
     client_id: string;
-    client_secret: string | null;
+    client_secret_hash: string | null;
     client_name: string | null;
     redirect_uris: string;
     grant_types: string;
@@ -617,6 +617,10 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     backchannel_logout_session_required: number | null;
     frontchannel_logout_uri: string | null;
     frontchannel_logout_session_required: number | null;
+    // RFC 7591: Dynamic Client Registration
+    software_id: string | null;
+    software_version: string | null;
+    requestable_scopes: string | null;
     // Multi-tenant support
     tenant_id: string;
     created_at: number;
@@ -631,7 +635,7 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
   // Note: ClientMetadata has many optional properties; we construct the subset stored in D1
   const clientData: ClientMetadata = {
     client_id: result.client_id,
-    client_secret: result.client_secret ?? undefined,
+    client_secret_hash: result.client_secret_hash ?? undefined,
     client_name: result.client_name ?? undefined,
     redirect_uris: JSON.parse(result.redirect_uris) as string[],
     grant_types: JSON.parse(result.grant_types) as string[],
@@ -682,6 +686,12 @@ export async function getClient(env: Env, clientId: string): Promise<ClientMetad
     backchannel_logout_session_required: result.backchannel_logout_session_required === 1,
     frontchannel_logout_uri: result.frontchannel_logout_uri ?? undefined,
     frontchannel_logout_session_required: result.frontchannel_logout_session_required === 1,
+    // RFC 7591: Dynamic Client Registration
+    software_id: result.software_id ?? undefined,
+    software_version: result.software_version ?? undefined,
+    requestable_scopes: result.requestable_scopes
+      ? (JSON.parse(result.requestable_scopes) as string[])
+      : undefined,
     // Multi-tenant support
     tenant_id: result.tenant_id || 'default',
     created_at: result.created_at,
@@ -799,9 +809,8 @@ export async function storeRefreshToken(
   }
 
   // V3: Parse JTI to extract generation/shard info for proper routing
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } = await import(
-    './refresh-token-sharding'
-  );
+  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
+    await import('./refresh-token-sharding');
   const parsedJti = parseRefreshTokenJti(jti);
   const instanceName = buildRefreshTokenRotatorInstanceName(
     data.client_id,
@@ -858,9 +867,8 @@ export async function getRefreshToken(
   }
 
   // V3: Parse JTI to extract generation/shard info for proper routing
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } = await import(
-    './refresh-token-sharding'
-  );
+  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
+    await import('./refresh-token-sharding');
   const parsedJti = parseRefreshTokenJti(jti);
   const instanceName = buildRefreshTokenRotatorInstanceName(
     clientId,
@@ -912,9 +920,8 @@ export async function deleteRefreshToken(env: Env, jti: string, client_id: strin
   }
 
   // V3: Parse JTI to extract generation/shard info for proper routing
-  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } = await import(
-    './refresh-token-sharding'
-  );
+  const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
+    await import('./refresh-token-sharding');
   const parsedJti = parseRefreshTokenJti(jti);
   const instanceName = buildRefreshTokenRotatorInstanceName(
     client_id,

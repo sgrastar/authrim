@@ -315,7 +315,8 @@ describe('ReBAC Depth Limit Tests', () => {
       };
 
       // Pre-populate visited set with the same visit key
-      const visitKey = 'subject:user_123:direct:document:doc_456';
+      // Format: {user_type}:{user_id}:{expr_type}:{relation}:{object_type}:{object_id}
+      const visitKey = 'subject:user_123:direct:viewer:document:doc_456';
       const ctx: RelationEvaluationContext = {
         tenant_id: 'tenant_1',
         user_id: 'user_123',
@@ -390,8 +391,9 @@ describe('ReBAC Depth Limit Tests', () => {
       await parser.evaluate(expression, ctx, adapter);
 
       // Visited set should now contain the visit key
+      // Format: {user_type}:{user_id}:{expr_type}:{relation}:{object_type}:{object_id}
       expect(ctx.visited.size).toBe(1);
-      expect(ctx.visited.has('subject:user_123:direct:document:doc_456')).toBe(true);
+      expect(ctx.visited.has('subject:user_123:direct:viewer:document:doc_456')).toBe(true);
     });
 
     it('should use correct visit key format', async () => {
@@ -414,8 +416,8 @@ describe('ReBAC Depth Limit Tests', () => {
 
       await parser.evaluate(expression, ctx, adapter);
 
-      // Visit key format: {user_type}:{user_id}:{expression_type}:{object_type}:{object_id}
-      const expectedKey = 'group:alice:direct:folder:shared_docs';
+      // Visit key format: {user_type}:{user_id}:{expr_type}:{relation}:{object_type}:{object_id}
+      const expectedKey = 'group:alice:direct:editor:folder:shared_docs';
       expect(ctx.visited.has(expectedKey)).toBe(true);
     });
 

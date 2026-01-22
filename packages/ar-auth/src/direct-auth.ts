@@ -46,6 +46,8 @@ import {
   createAuditLog,
   // Timing-safe comparison
   timingSafeEqual,
+  // Cookie Configuration
+  getSessionCookieSameSite,
 } from '@authrim/ar-lib-core';
 
 import {
@@ -1468,12 +1470,12 @@ export async function directTokenHandler(c: Context<{ Bindings: Env }>) {
     const accessToken = sessionId; // Session ID acts as access token for now
     const expiresIn = sessionTTL;
 
-    // Set session cookie for web
+    // Set session cookie for web (SameSite determined dynamically based on origin configuration)
     setCookie(c, 'authrim_session', sessionId, {
       path: '/',
       httpOnly: true,
       secure: true,
-      sameSite: 'None',
+      sameSite: getSessionCookieSameSite(c.env),
       maxAge: sessionTTL,
     });
 
@@ -2014,11 +2016,11 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    // Clear session cookie
+    // Clear session cookie (SameSite must match when setting)
     deleteCookie(c, 'authrim_session', {
       path: '/',
       secure: true,
-      sameSite: 'None',
+      sameSite: getSessionCookieSameSite(c.env),
     });
 
     return c.json({

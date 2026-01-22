@@ -79,6 +79,7 @@ export * from './utils/resource-permissions';
 export * from './utils/consent-rbac';
 export * from './utils/refresh-token-sharding';
 export * from './utils/oauth-config';
+export * from './utils/dcr-config';
 export * from './utils/encryption-config';
 export * from './utils/settings-manager';
 export * from './utils/pii-encryption';
@@ -125,6 +126,7 @@ export * from './utils/contract-loader';
 export * from './utils/health-check';
 export * from './utils/dns-verification';
 export * from './utils/security';
+export * from './utils/cookie-config';
 
 // Settings History (Configuration Rollback)
 export * from './services/settings-history';

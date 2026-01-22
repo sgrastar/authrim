@@ -28,6 +28,8 @@ import {
   createAuditLogFromContext,
   scheduleAuditLogFromContext,
   getLogger,
+  // Crypto utilities
+  hashClientSecret,
   // Event System
   publishEvent,
   USER_EVENTS,
@@ -1628,14 +1630,15 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Generate client_secret
+    // Generate client_secret and hash it for secure storage
     const clientSecret =
       crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
+    const clientSecretHash = await hashClientSecret(clientSecret);
 
-    // Create client via Repository
+    // Create client via Repository (storing hash, not plain text)
     const client = await authCtx.repositories.client.create({
       client_name: body.client_name,
-      client_secret: clientSecret,
+      client_secret_hash: clientSecretHash,
       tenant_id: tenantId,
       redirect_uris: body.redirect_uris,
       grant_types: body.grant_types || ['authorization_code'],
@@ -1747,15 +1750,19 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // Format clients with millisecond timestamps and parse JSON fields
-    const formattedClients = result.items.map((client) => ({
-      ...client,
-      redirect_uris: JSON.parse(client.redirect_uris),
-      grant_types: JSON.parse(client.grant_types),
-      response_types: JSON.parse(client.response_types),
-      contacts: client.contacts ? JSON.parse(client.contacts) : [],
-      created_at: toMilliseconds(client.created_at),
-      updated_at: toMilliseconds(client.updated_at),
-    }));
+    // SECURITY: Exclude client_secret_hash from response - never expose credential hashes
+    const formattedClients = result.items.map((client) => {
+      const { client_secret_hash: _excluded, ...clientWithoutHash } = client;
+      return {
+        ...clientWithoutHash,
+        redirect_uris: JSON.parse(client.redirect_uris),
+        grant_types: JSON.parse(client.grant_types),
+        response_types: JSON.parse(client.response_types),
+        contacts: client.contacts ? JSON.parse(client.contacts) : [],
+        created_at: toMilliseconds(client.created_at),
+        updated_at: toMilliseconds(client.updated_at),
+      };
+    });
 
     return c.json({
       clients: formattedClients,
@@ -1804,8 +1811,10 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
 
     // Parse JSON fields for response
     // Note: Repository handles boolean conversion, but JSON fields are stored as strings
+    // SECURITY: Exclude client_secret_hash from response - never expose credential hashes
+    const { client_secret_hash: _excluded, ...clientWithoutHash } = client;
     const formattedClient = {
-      ...client,
+      ...clientWithoutHash,
       redirect_uris: client.redirect_uris ? JSON.parse(client.redirect_uris as string) : [],
       grant_types: client.grant_types ? JSON.parse(client.grant_types as string) : [],
       response_types: client.response_types ? JSON.parse(client.response_types as string) : [],
@@ -1973,6 +1982,15 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
     scheduleAuditLogFromContext(c, 'client.updated', 'client', clientId, {
       client_name: updatedClient?.client_name,
     });
+
+    // SECURITY: Exclude client_secret_hash from response - never expose credential hashes
+    if (updatedClient) {
+      const { client_secret_hash: _excluded, ...clientWithoutHash } = updatedClient;
+      return c.json({
+        success: true,
+        client: clientWithoutHash,
+      });
+    }
 
     return c.json({
       success: true,
@@ -2180,12 +2198,11 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
 
     // Get current client state (verify tenant ownership)
     const client = await adapter.queryOne<{
-      id: string;
-      tenant_id: string;
       client_id: string;
-      client_secret_hash: string;
+      tenant_id: string;
+      client_secret_hash: string | null;
     }>(
-      'SELECT id, tenant_id, client_id, client_secret_hash FROM clients WHERE client_id = ? AND tenant_id = ?',
+      'SELECT client_id, tenant_id, client_secret_hash FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
       [clientId, tenantId]
     );
 
@@ -2200,41 +2217,29 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
 
-    // Hash new secret for storage
-    const encoder = new TextEncoder();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(newSecret));
-    const newSecretHash = Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
+    // Hash the new secret for secure storage
+    const newSecretHash = await hashClientSecret(newSecret);
 
     const nowTs = Math.floor(Date.now() / 1000);
-    let oldSecretValidUntil: number | null = null;
 
-    // Handle grace period
+    // Note: grace_period is not supported in current schema (no old_secret_hash column)
+    // The new secret replaces the old one immediately
     if (gracePeriodHours) {
-      oldSecretValidUntil = nowTs + gracePeriodHours * 3600;
-      // Store old secret hash with expiry for dual validation during grace period
-      await adapter.execute(
-        `UPDATE clients SET
-          client_secret_hash = ?,
-          old_secret_hash = client_secret_hash,
-          old_secret_valid_until = ?,
-          updated_at = ?
-         WHERE client_id = ? AND tenant_id = ?`,
-        [newSecretHash, oldSecretValidUntil, nowTs, clientId, tenantId]
-      );
-    } else {
-      // Immediate replacement
-      await adapter.execute(
-        `UPDATE clients SET
-          client_secret_hash = ?,
-          old_secret_hash = NULL,
-          old_secret_valid_until = NULL,
-          updated_at = ?
-         WHERE client_id = ? AND tenant_id = ?`,
-        [newSecretHash, nowTs, clientId, tenantId]
-      );
+      log.warn('Grace period requested but not supported in current schema', {
+        action: 'regenerate_secret',
+        clientId,
+        gracePeriodHours,
+      });
     }
+
+    // Update client secret hash (immediate replacement)
+    await adapter.execute(
+      `UPDATE oauth_clients SET
+        client_secret_hash = ?,
+        updated_at = ?
+       WHERE client_id = ? AND tenant_id = ?`,
+      [newSecretHash, nowTs, clientId, tenantId]
+    );
 
     // Revoke tokens if requested
     let revokedTokens = 0;
@@ -2276,9 +2281,6 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
       client_id: clientId,
       client_secret: newSecret, // Only shown once
       created_at: new Date(nowTs * 1000).toISOString(),
-      ...(oldSecretValidUntil && {
-        old_secret_valid_until: new Date(oldSecretValidUntil * 1000).toISOString(),
-      }),
       revoked_tokens: revokedTokens,
     });
   } catch (error) {
@@ -4990,13 +4992,13 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
 
     // Verify client exists and belongs to tenant
     const client = await adapter.queryOne<{
-      id: string;
-      name: string | null;
+      client_id: string;
+      client_name: string | null;
       created_at: number;
-    }>('SELECT id, name, created_at FROM clients WHERE id = ? AND tenant_id = ?', [
-      clientId,
-      tenantId,
-    ]);
+    }>(
+      'SELECT client_id, client_name, created_at FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
+      [clientId, tenantId]
+    );
 
     if (!client) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
@@ -5004,122 +5006,64 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // Get today's and this month's boundaries
-    const todayStart = Math.floor(new Date().setUTCHours(0, 0, 0, 0) / 1000);
-    const monthStart = Math.floor(new Date(now.getFullYear(), now.getMonth(), 1).getTime() / 1000);
+    // Calculate time boundaries for 24h, 7d, 30d
+    const nowTs = Math.floor(now.getTime() / 1000);
+    const ts24h = nowTs - 24 * 60 * 60;
+    const ts7d = nowTs - 7 * 24 * 60 * 60;
+    const ts30d = nowTs - 30 * 24 * 60 * 60;
 
-    // Query usage statistics from audit_log
-    const [apiStats, rateLimitStats, userStats, recentActivity] = await Promise.all([
-      // API call statistics
+    // Query token issuance statistics from audit_log
+    // Frontend expects: tokens_issued_24h, tokens_issued_7d, tokens_issued_30d, active_sessions, last_token_issued_at
+    const [tokenStats, activeSessionsResult, lastTokenResult] = await Promise.all([
+      // Token issuance counts for 24h, 7d, 30d
       adapter.queryOne<{
-        total_calls: number;
-        calls_today: number;
-        calls_this_month: number;
-        token_requests: number;
-        userinfo_requests: number;
-        introspect_requests: number;
+        tokens_24h: number;
+        tokens_7d: number;
+        tokens_30d: number;
       }>(
         `SELECT
-          COUNT(*) as total_calls,
-          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as calls_today,
-          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as calls_this_month,
-          SUM(CASE WHEN action LIKE 'token.%' THEN 1 ELSE 0 END) as token_requests,
-          SUM(CASE WHEN action LIKE 'userinfo.%' THEN 1 ELSE 0 END) as userinfo_requests,
-          SUM(CASE WHEN action LIKE 'introspect.%' THEN 1 ELSE 0 END) as introspect_requests
+          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as tokens_24h,
+          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as tokens_7d,
+          COUNT(*) as tokens_30d
         FROM audit_log
         WHERE tenant_id = ?
-          AND details LIKE ?
-          AND created_at >= ? AND created_at <= ?`,
-        [todayStart, monthStart, tenantId, `%"client_id":"${clientId}"%`, fromTs, toTs]
+          AND action LIKE 'token.%'
+          AND (resource_type = 'client' AND resource_id = ? OR json_extract(metadata_json, '$.client_id') = ?)
+          AND created_at >= ?`,
+        [ts24h, ts7d, tenantId, clientId, clientId, ts30d]
       ),
 
-      // Rate limit statistics
-      adapter.queryOne<{
-        rate_limit_hits: number;
-        rate_limit_hits_today: number;
-      }>(
-        `SELECT
-          COUNT(*) as rate_limit_hits,
-          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as rate_limit_hits_today
+      // Active sessions count (sessions that haven't expired)
+      adapter.queryOne<{ active_sessions: number }>(
+        `SELECT COUNT(DISTINCT user_id) as active_sessions
         FROM audit_log
         WHERE tenant_id = ?
-          AND action = 'rate_limit.exceeded'
-          AND details LIKE ?
-          AND created_at >= ? AND created_at <= ?`,
-        [todayStart, tenantId, `%"client_id":"${clientId}"%`, fromTs, toTs]
+          AND action IN ('session.created', 'token.issued')
+          AND (resource_type = 'client' AND resource_id = ? OR json_extract(metadata_json, '$.client_id') = ?)
+          AND created_at >= ?`,
+        [tenantId, clientId, clientId, ts24h]
       ),
 
-      // Unique users
-      adapter.queryOne<{ unique_users: number }>(
-        `SELECT COUNT(DISTINCT json_extract(details, '$.user_id')) as unique_users
+      // Last token issued timestamp
+      adapter.queryOne<{ last_token_at: number | null }>(
+        `SELECT MAX(created_at) as last_token_at
         FROM audit_log
         WHERE tenant_id = ?
-          AND details LIKE ?
-          AND json_extract(details, '$.user_id') IS NOT NULL
-          AND created_at >= ? AND created_at <= ?`,
-        [tenantId, `%"client_id":"${clientId}"%`, fromTs, toTs]
-      ),
-
-      // Recent activity
-      adapter.queryOne<{ last_activity: number | null }>(
-        `SELECT MAX(created_at) as last_activity
-        FROM audit_log
-        WHERE tenant_id = ?
-          AND details LIKE ?`,
-        [tenantId, `%"client_id":"${clientId}"%`]
+          AND action LIKE 'token.%'
+          AND (resource_type = 'client' AND resource_id = ? OR json_extract(metadata_json, '$.client_id') = ?)`,
+        [tenantId, clientId, clientId]
       ),
     ]);
 
-    // Get daily breakdown for chart data
-    const dailyUsage = await adapter.query<{
-      day: string;
-      calls: number;
-    }>(
-      `SELECT
-        strftime('%Y-%m-%d', created_at, 'unixepoch') as day,
-        COUNT(*) as calls
-      FROM audit_log
-      WHERE tenant_id = ?
-        AND details LIKE ?
-        AND created_at >= ? AND created_at <= ?
-      GROUP BY day
-      ORDER BY day ASC`,
-      [tenantId, `%"client_id":"${clientId}"%`, fromTs, toTs]
-    );
-
+    // Return in the format expected by frontend (ClientUsage interface)
     return c.json({
-      client_id: clientId,
-      client_name: client.name,
-      usage: {
-        api_calls: {
-          total: apiStats?.total_calls ?? 0,
-          today: apiStats?.calls_today ?? 0,
-          this_month: apiStats?.calls_this_month ?? 0,
-        },
-        by_endpoint: {
-          token: apiStats?.token_requests ?? 0,
-          userinfo: apiStats?.userinfo_requests ?? 0,
-          introspect: apiStats?.introspect_requests ?? 0,
-        },
-        rate_limits: {
-          hits_total: rateLimitStats?.rate_limit_hits ?? 0,
-          hits_today: rateLimitStats?.rate_limit_hits_today ?? 0,
-        },
-        users: {
-          unique_users: userStats?.unique_users ?? 0,
-        },
-        last_activity: recentActivity?.last_activity
-          ? new Date(recentActivity.last_activity * 1000).toISOString()
-          : null,
-      },
-      daily_breakdown: dailyUsage.map((row) => ({
-        date: row.day,
-        api_calls: row.calls,
-      })),
-      period: {
-        from: from.toISOString(),
-        to: to.toISOString(),
-      },
+      tokens_issued_24h: tokenStats?.tokens_24h ?? 0,
+      tokens_issued_7d: tokenStats?.tokens_7d ?? 0,
+      tokens_issued_30d: tokenStats?.tokens_30d ?? 0,
+      active_sessions: activeSessionsResult?.active_sessions ?? 0,
+      last_token_issued_at: lastTokenResult?.last_token_at
+        ? lastTokenResult.last_token_at * 1000
+        : null,
     });
   } catch (error) {
     const log = getLogger(c).module('ADMIN');

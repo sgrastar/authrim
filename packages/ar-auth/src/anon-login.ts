@@ -53,6 +53,9 @@ import {
   getLogger,
   // Audit Log
   createAuditLog,
+  // Cookie Configuration
+  getSessionCookieSameSite,
+  getBrowserStateCookieSameSite,
 } from '@authrim/ar-lib-core';
 
 const CHALLENGE_TTL = 5 * 60; // 5 minutes in seconds
@@ -547,12 +550,12 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           );
         });
 
-      // Set session cookie
+      // Set session cookie (SameSite determined dynamically based on origin configuration)
       setCookie(c, 'authrim_session', sessionId, {
         path: '/',
         httpOnly: true,
         secure: true,
-        sameSite: 'None',
+        sameSite: getSessionCookieSameSite(c.env),
         maxAge: SESSION_TTL,
       });
 
@@ -561,7 +564,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       setCookie(c, BROWSER_STATE_COOKIE_NAME, browserState, {
         path: '/',
         secure: true,
-        sameSite: 'None',
+        sameSite: getBrowserStateCookieSameSite(c.env),
         maxAge: SESSION_TTL,
       });
 

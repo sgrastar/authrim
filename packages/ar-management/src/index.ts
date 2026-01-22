@@ -99,6 +99,7 @@ import {
   adminExternalProvidersGetHandler,
   adminExternalProvidersUpdateHandler,
   adminExternalProvidersDeleteHandler,
+  adminExternalProvidersDiscoverOidcHandler,
 } from './external-providers';
 import { adminSessionStatusHandler, adminLogoutHandler } from './admin-session';
 import {
@@ -175,6 +176,7 @@ import {
   adminAccessTraceStatsHandler,
   adminAccessTraceTimelineHandler,
 } from './admin-access-trace';
+import { adminAccessControlStatsHandler } from './admin-access-control-stats';
 import {
   adminAIGrantsListHandler,
   adminAIGrantGetHandler,
@@ -750,9 +752,6 @@ app.delete('/api/admin/users/:id/pii', adminUserDeletePiiHandler);
 app.get('/api/admin/clients', adminClientsListHandler);
 app.post('/api/admin/clients', adminClientCreateHandler);
 app.delete('/api/admin/clients/bulk', adminClientsBulkDeleteHandler); // Must be before :id route
-app.get('/api/admin/clients/:id', adminClientGetHandler);
-app.put('/api/admin/clients/:id', adminClientUpdateHandler);
-app.delete('/api/admin/clients/:id', adminClientDeleteHandler);
 
 // Rate limiting for sensitive client operations (strict profile)
 // regenerate-secret: Credential regeneration is a sensitive operation
@@ -767,6 +766,10 @@ app.use('/api/admin/clients/:id/regenerate-secret', async (c, next) => {
 app.use('/api/admin/clients/:id/regenerate-secret', idempotencyMiddleware());
 app.post('/api/admin/clients/:id/regenerate-secret', adminClientRegenerateSecretHandler);
 app.get('/api/admin/clients/:id/usage', adminClientUsageHandler);
+// Note: Routes with additional path segments (e.g., /usage, /regenerate-secret) must be before :id routes
+app.get('/api/admin/clients/:id', adminClientGetHandler);
+app.put('/api/admin/clients/:id', adminClientUpdateHandler);
+app.delete('/api/admin/clients/:id', adminClientDeleteHandler);
 
 // Admin UI Session endpoints (Phase 1 - Authentication)
 // - GET /api/admin/sessions/me - Check current session status with role validation (401/403/200)
@@ -1112,6 +1115,19 @@ app.delete('/api/admin/iat-tokens/:tokenHash', adminIATRevokeHandler);
 // Enables Admin UI to manage external identity providers (Google, GitHub, etc.)
 app.get('/api/admin/external-providers', adminExternalProvidersListHandler);
 app.post('/api/admin/external-providers', adminExternalProvidersCreateHandler);
+
+// Rate limiting for OIDC discovery proxy (strict profile)
+// This endpoint fetches external URLs, so strict rate limiting prevents abuse as DDoS amplifier
+app.use('/api/admin/external-providers/discover-oidc', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/external-providers/discover-oidc'],
+  })(c, next);
+});
+
+// OIDC Discovery proxy (must be before :id route to avoid conflict)
+app.post('/api/admin/external-providers/discover-oidc', adminExternalProvidersDiscoverOidcHandler);
 app.get('/api/admin/external-providers/:id', adminExternalProvidersGetHandler);
 app.put('/api/admin/external-providers/:id', adminExternalProvidersUpdateHandler);
 app.delete('/api/admin/external-providers/:id', adminExternalProvidersDeleteHandler);
@@ -1269,6 +1285,30 @@ app.get('/api/admin/access-trace', adminAccessTraceListHandler);
 app.get('/api/admin/access-trace/stats', adminAccessTraceStatsHandler);
 app.get('/api/admin/access-trace/timeline', adminAccessTraceTimelineHandler);
 app.get('/api/admin/access-trace/:id', adminAccessTraceGetHandler);
+
+// =============================================================================
+// Access Control Hub (Aggregated Statistics)
+// =============================================================================
+// Provides aggregated statistics for RBAC, ABAC, ReBAC, and Policies.
+// Used by the Access Control Hub dashboard.
+
+// Rate limiting for Access Control stats
+app.use('/api/admin/access-control/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/admin/access-control'],
+  })(c, next);
+});
+
+// RBAC: Require admin role for access control stats
+app.use(
+  '/api/admin/access-control/*',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+
+// Access Control Hub endpoints
+app.get('/api/admin/access-control/stats', adminAccessControlStatsHandler);
 
 // =============================================================================
 // AI Grants (Human Auth / AI Ephemeral Auth Two-Layer Model)

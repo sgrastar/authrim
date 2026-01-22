@@ -22,6 +22,7 @@ import { getCookie, setCookie } from 'hono/cookie';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   timingSafeEqual,
+  verifyClientSecretHash,
   validateIdTokenHint,
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
@@ -55,6 +56,9 @@ import {
   createLogger,
   // Audit Log
   createAuditLog,
+  // Cookie Configuration
+  getSessionCookieSameSite,
+  getBrowserStateCookieSameSite,
 } from '@authrim/ar-lib-core';
 import type {
   BackchannelLogoutConfig,
@@ -693,17 +697,18 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Step 3: Clear session cookies immediately (both session and browser state)
+    // SameSite must match the original cookie setting for proper deletion
     setCookie(c, 'authrim_session', '', {
       path: '/',
       httpOnly: true,
       secure: true,
-      sameSite: 'None',
+      sameSite: getSessionCookieSameSite(c.env),
       maxAge: 0,
     });
     setCookie(c, BROWSER_STATE_COOKIE_NAME, '', {
       path: '/',
       secure: true,
-      sameSite: 'None',
+      sameSite: getBrowserStateCookieSameSite(c.env),
       maxAge: 0,
     });
 
@@ -870,6 +875,9 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         );
 
         // Return HTML response with Set-Cookie headers to clear session and browser state
+        // SameSite is determined dynamically based on origin configuration
+        const sessionSameSite = getSessionCookieSameSite(c.env);
+        const browserStateSameSite = getBrowserStateCookieSameSite(c.env);
         const responseHeaders = new Headers({
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store',
@@ -877,11 +885,11 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         // Clear both cookies - need append() for multiple Set-Cookie headers
         responseHeaders.append(
           'Set-Cookie',
-          'authrim_session=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0'
+          `authrim_session=; Path=/; HttpOnly; Secure; SameSite=${sessionSameSite}; Max-Age=0`
         );
         responseHeaders.append(
           'Set-Cookie',
-          `${BROWSER_STATE_COOKIE_NAME}=; Path=/; Secure; SameSite=None; Max-Age=0`
+          `${BROWSER_STATE_COOKIE_NAME}=; Path=/; Secure; SameSite=${browserStateSameSite}; Max-Age=0`
         );
         return new Response(html, {
           status: 200,
@@ -897,14 +905,17 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     const response = c.redirect(redirectUrl, 302);
 
     // Clone the response and add the Set-Cookie headers (need append for multiple cookies)
+    // SameSite is determined dynamically based on origin configuration
+    const sessionSameSiteRedirect = getSessionCookieSameSite(c.env);
+    const browserStateSameSiteRedirect = getBrowserStateCookieSameSite(c.env);
     const headers = new Headers(response.headers);
     headers.append(
       'Set-Cookie',
-      'authrim_session=; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=0'
+      `authrim_session=; Path=/; HttpOnly; Secure; SameSite=${sessionSameSiteRedirect}; Max-Age=0`
     );
     headers.append(
       'Set-Cookie',
-      `${BROWSER_STATE_COOKIE_NAME}=; Path=/; Secure; SameSite=None; Max-Age=0`
+      `${BROWSER_STATE_COOKIE_NAME}=; Path=/; Secure; SameSite=${browserStateSameSiteRedirect}; Max-Age=0`
     );
 
     return new Response(response.body, {
@@ -918,13 +929,13 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       path: '/',
       httpOnly: true,
       secure: true,
-      sameSite: 'None',
+      sameSite: getSessionCookieSameSite(c.env),
       maxAge: 0,
     });
     setCookie(c, BROWSER_STATE_COOKIE_NAME, '', {
       path: '/',
       secure: true,
-      sameSite: 'None',
+      sameSite: getBrowserStateCookieSameSite(c.env),
       maxAge: 0,
     });
     return c.json(
@@ -1015,8 +1026,12 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       const authCtx = createAuthContextFromHono(c, tenantId);
       const client = await authCtx.repositories.client.findByClientId(id);
 
-      // Use timing-safe comparison to prevent timing attacks
-      if (!client || !client.client_secret || !timingSafeEqual(client.client_secret, secret)) {
+      // Verify client secret against stored SHA-256 hash
+      if (
+        !client ||
+        !client.client_secret_hash ||
+        !(await verifyClientSecretHash(secret, client.client_secret_hash))
+      ) {
         return c.json(
           {
             error: 'invalid_client',

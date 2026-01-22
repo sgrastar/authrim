@@ -117,7 +117,7 @@ async function getClientTenantId(env: Env, clientId: string): Promise<string | n
     const db = env.DB as D1Database | undefined;
     if (db) {
       const result = await db
-        .prepare('SELECT tenant_id FROM clients WHERE client_id = ?')
+        .prepare('SELECT tenant_id FROM oauth_clients WHERE client_id = ?')
         .bind(clientId)
         .first<{ tenant_id: string }>();
       return result?.tenant_id ?? null;

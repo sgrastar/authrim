@@ -7,7 +7,9 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "build": "turbo run build",
-    "build:api": "turbo run build --filter=!@authrim/ar-ui",
+    "build:api": "turbo run build --filter=!@authrim/ar-ui --filter=!@authrim/ar-admin-ui --filter=!@authrim/ar-login-ui",
+    "build:admin-ui": "turbo run build --filter=@authrim/ar-admin-ui",
+    "build:login-ui": "turbo run build --filter=@authrim/ar-login-ui",
     "dev": "turbo run dev --parallel",
     "deploy": "./scripts/deploy-with-retry.sh",
     "deploy:with-router": "./scripts/deploy-with-retry.sh",
@@ -76,7 +78,7 @@
     "turbo": "^2.6.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.13",
-    "wrangler": "^4.53.0"
+    "wrangler": "^4.59.3"
   },
   "optionalDependencies": {
     "@esbuild/linux-x64": "^0.25.12"

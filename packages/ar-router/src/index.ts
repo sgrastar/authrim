@@ -25,6 +25,46 @@ interface Env {
   // Comma-separated list of allowed origins, e.g., "https://app.example.com,https://admin.example.com"
   // If not set, defaults to '*' with credentials disabled for security
   ALLOWED_ORIGINS?: string;
+
+  // UI Proxy configuration (optional)
+  // When enabled, routes UI paths through the router for same-domain deployment
+  /** Login UI Pages URL (e.g., https://dev-ar-login-ui.pages.dev) */
+  AR_LOGIN_UI_URL?: string;
+  /** Admin UI Pages URL (e.g., https://dev-ar-admin-ui.pages.dev) */
+  AR_ADMIN_UI_URL?: string;
+  /** Enable Login UI proxy (true/false) */
+  ENABLE_LOGIN_UI_PROXY?: string;
+  /** Enable Admin UI proxy (true/false) */
+  ENABLE_ADMIN_UI_PROXY?: string;
+}
+
+// Login UI paths that should be proxied when ENABLE_LOGIN_UI_PROXY is true
+const LOGIN_UI_PATHS = [
+  '/login',
+  '/signup',
+  '/consent',
+  '/device',
+  '/ciba',
+  '/reauth',
+  '/verify-email-code',
+  '/error',
+];
+
+/**
+ * Proxy request to Cloudflare Pages
+ * Maintains all headers, query params, and body
+ */
+async function proxyToPages(request: Request, baseUrl: string, path: string): Promise<Response> {
+  const targetUrl = new URL(path, baseUrl);
+  targetUrl.search = new URL(request.url).search;
+
+  const proxyRequest = new Request(targetUrl.toString(), {
+    method: request.method,
+    headers: request.headers,
+    body: request.body,
+  });
+
+  return fetch(proxyRequest);
 }
 
 // Create Hono app with Cloudflare Workers types
@@ -42,13 +82,27 @@ app.use('*', async (c, next) => {
   // Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)
   // Skip for /logout endpoint (OIDC Front-Channel Logout needs to embed iframes)
   // Skip for /admin-init-setup (needs unpkg.com CDN for WebAuthn library)
+  // Skip for UI proxy paths (SvelteKit uses inline styles/scripts and CDN fonts)
+  const path = c.req.path;
   if (
-    c.req.path === '/authorize' ||
-    c.req.path.startsWith('/authorize/') ||
-    c.req.path.startsWith('/flow/') ||
-    c.req.path === '/session/check' ||
-    c.req.path === '/logout' ||
-    c.req.path.startsWith('/admin-init-setup')
+    path === '/authorize' ||
+    path.startsWith('/authorize/') ||
+    path.startsWith('/flow/') ||
+    path === '/session/check' ||
+    path === '/logout' ||
+    path.startsWith('/admin-init-setup') ||
+    // UI proxy paths - Pages handles its own headers
+    path.startsWith('/admin') ||
+    path.startsWith('/login') ||
+    path.startsWith('/signup') ||
+    path.startsWith('/consent') ||
+    path.startsWith('/device') ||
+    path.startsWith('/ciba') ||
+    path.startsWith('/reauth') ||
+    path.startsWith('/verify-email-code') ||
+    path.startsWith('/error') ||
+    path.startsWith('/_app') || // SvelteKit static assets
+    path === '/' // Root path for Login UI (external auth callbacks)
   ) {
     return next();
   }
@@ -451,6 +505,124 @@ app.all('/api/admin-init-setup/*', async (c) => {
   return c.env.OP_AUTH.fetch(request);
 });
 
+/**
+ * UI Proxy endpoints - Proxy to Cloudflare Pages
+ * When enabled, serves UI from the same domain as the API
+ *
+ * Admin UI Proxy (ENABLE_ADMIN_UI_PROXY=true):
+ * - /admin/* - Admin dashboard pages
+ *
+ * Login UI Proxy (ENABLE_LOGIN_UI_PROXY=true):
+ * - /login, /signup, /consent, /device, /ciba, /reauth, /verify-email-code, /error
+ */
+
+// Admin UI proxy - /admin/*
+app.all('/admin/*', async (c) => {
+  if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
+    const path = c.req.path;
+    return proxyToPages(c.req.raw, c.env.AR_ADMIN_UI_URL, path);
+  }
+  // If proxy not enabled, return 404
+  return c.json(
+    {
+      error: 'not_found',
+      message: 'Admin UI proxy is not enabled',
+      hint: 'Set ENABLE_ADMIN_UI_PROXY=true and AR_ADMIN_UI_URL to enable the admin UI proxy.',
+    },
+    404
+  );
+});
+
+// Admin UI proxy - exact /admin path (redirect to /admin/)
+app.get('/admin', async (c) => {
+  if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
+    return proxyToPages(c.req.raw, c.env.AR_ADMIN_UI_URL, '/admin');
+  }
+  return c.json(
+    {
+      error: 'not_found',
+      message: 'Admin UI proxy is not enabled',
+    },
+    404
+  );
+});
+
+// Login UI proxy routes
+for (const uiPath of LOGIN_UI_PATHS) {
+  // Handle exact path
+  app.all(uiPath, async (c) => {
+    if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+      return proxyToPages(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
+    }
+    return c.json(
+      {
+        error: 'not_found',
+        message: 'Login UI proxy is not enabled',
+        hint: 'Set ENABLE_LOGIN_UI_PROXY=true and AR_LOGIN_UI_URL to enable the login UI proxy.',
+      },
+      404
+    );
+  });
+
+  // Handle paths with trailing content (e.g., /login/*, /signup/*)
+  app.all(`${uiPath}/*`, async (c) => {
+    if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+      return proxyToPages(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
+    }
+    return c.json(
+      {
+        error: 'not_found',
+        message: 'Login UI proxy is not enabled',
+      },
+      404
+    );
+  });
+}
+
+// Static assets proxy for UI (when either proxy is enabled)
+// This handles /_app/* paths for SvelteKit static assets
+app.all('/_app/*', async (c) => {
+  // Determine which UI to serve static assets from based on Referer
+  // Each UI has different chunk names, so we need to route to the correct one
+  const referer = c.req.header('Referer');
+  let isAdminRequest = false;
+
+  try {
+    if (referer) {
+      const refererUrl = new URL(referer);
+      isAdminRequest = refererUrl.pathname.startsWith('/admin');
+    }
+  } catch {
+    // Invalid referer URL, will try both UIs
+  }
+
+  // Try primary UI first (based on referer), then fallback to the other
+  const adminEnabled = c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL;
+  const loginEnabled = c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL;
+
+  // Determine order to try UIs
+  const uisToTry: Array<{ url: string; name: string }> = [];
+  if (isAdminRequest && adminEnabled) {
+    uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
+    if (loginEnabled) uisToTry.push({ url: c.env.AR_LOGIN_UI_URL!, name: 'login' });
+  } else if (loginEnabled) {
+    uisToTry.push({ url: c.env.AR_LOGIN_UI_URL!, name: 'login' });
+    if (adminEnabled) uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
+  } else if (adminEnabled) {
+    uisToTry.push({ url: c.env.AR_ADMIN_UI_URL!, name: 'admin' });
+  }
+
+  // Try each UI in order, return first successful response
+  for (const ui of uisToTry) {
+    const response = await proxyToPages(c.req.raw.clone(), ui.url, c.req.path);
+    if (response.ok) {
+      return response;
+    }
+  }
+
+  return c.json({ error: 'not_found', message: 'Static asset not found in any UI' }, 404);
+});
+
 // 404 handler
 app.notFound((c) => {
   return c.json(
@@ -473,6 +645,25 @@ app.onError((err, c) => {
     },
     500
   );
+});
+
+// Root path proxy for Login UI (handles external auth callbacks like /?external_auth=success)
+// This must be registered after all API routes to avoid conflicts
+app.get('/', async (c) => {
+  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    return proxyToPages(c.req.raw, c.env.AR_LOGIN_UI_URL, '/');
+  }
+  // Return basic API info when Login UI proxy is not enabled
+  return c.json({
+    name: 'Authrim OIDC Provider',
+    version: '1.0.0',
+    endpoints: {
+      discovery: '/.well-known/openid-configuration',
+      authorize: '/authorize',
+      token: '/token',
+      userinfo: '/userinfo',
+    },
+  });
 });
 
 // Export for Cloudflare Workers

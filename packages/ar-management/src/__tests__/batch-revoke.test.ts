@@ -308,9 +308,8 @@ describe('Batch Revocation Handler', () => {
   });
 
   it('should handle refresh token with cascade revocation', async () => {
-    const { deleteRefreshToken, revokeToken, getRefreshToken, parseToken } = await import(
-      '@authrim/ar-lib-core'
-    );
+    const { deleteRefreshToken, revokeToken, getRefreshToken, parseToken } =
+      await import('@authrim/ar-lib-core');
 
     // Reset parseToken to return correct client_id
     (parseToken as Mock).mockReturnValue({

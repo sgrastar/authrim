@@ -21,7 +21,19 @@ type ApiResponse = Record<string, JsonValue>;
 function createMockKV(data: Record<string, string> = {}): KVNamespace {
   const store = new Map<string, string>(Object.entries(data));
   return {
-    get: vi.fn(async (key: string) => store.get(key) ?? null),
+    get: vi.fn(async (key: string, options?: 'text' | 'json' | 'arrayBuffer' | 'stream') => {
+      const value = store.get(key);
+      if (value === undefined) return null;
+      // Handle JSON option
+      if (options === 'json') {
+        try {
+          return JSON.parse(value);
+        } catch {
+          return null;
+        }
+      }
+      return value;
+    }),
     put: vi.fn(async (key: string, value: string) => {
       store.set(key, value);
     }),
@@ -39,12 +51,16 @@ function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string>
 
   const app = new Hono<{
     Bindings: Env;
-    Variables: { adminUser?: { id: string } };
+    Variables: { adminAuth?: { userId: string; authMethod: 'bearer' | 'session'; roles: string[]; org_id?: string } };
   }>();
 
-  // Mock admin auth middleware
+  // Mock admin auth middleware - set adminAuth with system_admin role
   app.use('*', async (c, next) => {
-    c.set('adminUser', { id: 'test_admin' });
+    c.set('adminAuth', {
+      userId: 'test_admin',
+      authMethod: 'bearer',
+      roles: ['system_admin'], // system_admin has access to all settings
+    });
     await next();
   });
 
@@ -267,7 +283,7 @@ describe('Settings API v2', () => {
         );
         const getData = (await getRes.json()) as SettingsGetResult;
 
-        // Clear and disable
+        // Clear and disable (using a boolean setting that exists in oauth category)
         const res = await app.request(
           '/api/admin/tenants/tenant_123/settings/oauth',
           {
@@ -276,7 +292,7 @@ describe('Settings API v2', () => {
             body: JSON.stringify({
               ifMatch: getData.version,
               clear: ['oauth.access_token_expiry'],
-              disable: ['oauth.pkce_required'],
+              disable: ['oauth.state_required'], // Use a boolean setting that exists in oauth category
             }),
           },
           mockEnv
@@ -285,7 +301,7 @@ describe('Settings API v2', () => {
         expect(res.status).toBe(200);
         const body = (await res.json()) as SettingsPatchResult;
         expect(body.cleared).toContain('oauth.access_token_expiry');
-        expect(body.disabled).toContain('oauth.pkce_required');
+        expect(body.disabled).toContain('oauth.state_required');
       });
     });
   });
@@ -293,7 +309,11 @@ describe('Settings API v2', () => {
   describe('Client Settings', () => {
     describe('GET /clients/:clientId/settings', () => {
       it('should return client settings', async () => {
-        const { app, mockEnv } = createTestApp();
+        // Create KV with client metadata (required for tenant lookup)
+        const mockKV = createMockKV({
+          'client:client_abc:metadata': JSON.stringify({ tenant_id: 'test_tenant' }),
+        });
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
 
         const res = await app.request(
           '/api/admin/clients/client_abc/settings',
@@ -312,7 +332,10 @@ describe('Settings API v2', () => {
 
     describe('PATCH /clients/:clientId/settings', () => {
       it('should update client settings', async () => {
-        const mockKV = createMockKV();
+        // Create KV with client metadata (required for tenant lookup)
+        const mockKV = createMockKV({
+          'client:client_abc:metadata': JSON.stringify({ tenant_id: 'test_tenant' }),
+        });
         const { app, mockEnv } = createTestApp({ kv: mockKV });
 
         // Get current version
@@ -478,7 +501,8 @@ describe('Settings API v2', () => {
   });
 
   describe('All Category Types', () => {
-    const categories = [
+    // Tenant-level categories
+    const tenantCategories = [
       'oauth',
       'session',
       'security',
@@ -490,11 +514,12 @@ describe('Settings API v2', () => {
       'external-idp',
       'credentials',
       'federation',
-      'infrastructure',
-      'encryption',
     ];
 
-    it.each(categories)('should handle GET for category: %s', async (category) => {
+    // Platform-only categories (not available at tenant scope)
+    const platformOnlyCategories = ['infrastructure', 'encryption'];
+
+    it.each(tenantCategories)('should handle GET for tenant category: %s', async (category) => {
       const { app, mockEnv } = createTestApp();
 
       const res = await app.request(
@@ -507,5 +532,40 @@ describe('Settings API v2', () => {
       const body = (await res.json()) as SettingsGetResult;
       expect(body.category).toBe(category);
     });
+
+    it.each(platformOnlyCategories)(
+      'should return 400 for platform-only category at tenant scope: %s',
+      async (category) => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          `/api/admin/tenants/test_tenant/settings/${category}`,
+          { method: 'GET' },
+          mockEnv
+        );
+
+        // Platform-only categories should return 400 at tenant scope
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('bad_request');
+      }
+    );
+
+    it.each(platformOnlyCategories)(
+      'should handle GET for platform category: %s',
+      async (category) => {
+        const { app, mockEnv } = createTestApp();
+
+        const res = await app.request(
+          `/api/admin/platform/settings/${category}`,
+          { method: 'GET' },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsGetResult;
+        expect(body.category).toBe(category);
+      }
+    );
   });
 });

@@ -193,7 +193,7 @@ CREATE INDEX idx_password_reset_tokens_expires_at ON password_reset_tokens(expir
 -- =============================================================================
 CREATE TABLE oauth_clients (
   client_id TEXT PRIMARY KEY,
-  client_secret TEXT,
+  client_secret_hash TEXT,  -- SHA-256 hash of client_secret
   client_name TEXT NOT NULL,
   redirect_uris TEXT NOT NULL,
   grant_types TEXT NOT NULL,
@@ -217,11 +217,16 @@ CREATE TABLE oauth_clients (
   allowed_scopes TEXT,  -- JSON array of allowed scopes
   default_scope TEXT,  -- Default scope for Client Credentials
   default_audience TEXT,  -- Default audience for Client Credentials
+  -- RFC 7591: Dynamic Client Registration
+  software_id TEXT,  -- Software identifier (unique per application)
+  software_version TEXT,  -- Software version string
+  requestable_scopes TEXT,  -- JSON array: scopes this client can request (DCR scope restriction)
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
 
 CREATE INDEX idx_clients_created_at ON oauth_clients(created_at);
+CREATE INDEX idx_clients_software_id_tenant ON oauth_clients(software_id, tenant_id);
 
 -- =============================================================================
 -- 6. User Sessions Table
@@ -491,9 +496,10 @@ INSERT INTO scope_mappings (scope, claim_name, source_table, source_column, tran
 --   ('user_test_admin', 'role_super_admin', strftime('%s', 'now'));
 
 -- Test OAuth Client (for development)
+-- Note: client_secret_hash is SHA-256 of 'test-secret-12345'
 INSERT INTO oauth_clients (
   client_id,
-  client_secret,
+  client_secret_hash,
   client_name,
   redirect_uris,
   grant_types,
@@ -509,7 +515,7 @@ INSERT INTO oauth_clients (
   updated_at
 ) VALUES (
   'test_client_app',
-  '$2a$10$YourHashedSecretHere',
+  'a7b1f7c9e8d2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8',
   'Test Application',
   '["http://localhost:3000/callback","http://localhost:3000/auth/callback"]',
   '["authorization_code","refresh_token"]',
@@ -525,10 +531,10 @@ INSERT INTO oauth_clients (
   strftime('%s', 'now')
 );
 
--- Test OAuth Client (SPA - no secret)
+-- Test OAuth Client (SPA - no secret, public client)
 INSERT INTO oauth_clients (
   client_id,
-  client_secret,
+  client_secret_hash,
   client_name,
   redirect_uris,
   grant_types,

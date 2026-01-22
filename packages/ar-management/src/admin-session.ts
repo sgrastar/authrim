@@ -29,6 +29,8 @@ import {
   SESSION_EVENTS,
   type SessionEventData,
   type UserEventData,
+  // Cookie Configuration
+  getAdminCookieSameSite,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -44,8 +46,8 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-SESSION');
 
   try {
-    // Get session from cookie
-    const sessionId = getCookie(c, 'authrim_session');
+    // Get session from admin-specific cookie (separate from regular user sessions)
+    const sessionId = getCookie(c, 'authrim_admin_session');
 
     if (!sessionId) {
       return c.json(
@@ -198,8 +200,8 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Get session from cookie
-    const sessionId = getCookie(c, 'authrim_session');
+    // Get session from admin-specific cookie (separate from regular user sessions)
+    const sessionId = getCookie(c, 'authrim_admin_session');
 
     if (sessionId && isShardedSessionId(sessionId)) {
       try {
@@ -260,12 +262,12 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    // Clear session cookie
-    setCookie(c, 'authrim_session', '', {
+    // Clear session cookie (SameSite must match original setting)
+    setCookie(c, 'authrim_admin_session', '', {
       path: '/',
       httpOnly: true,
       secure: true,
-      sameSite: 'None',
+      sameSite: getAdminCookieSameSite(c.env),
       maxAge: 0,
     });
 
@@ -277,11 +279,11 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
     log.error('Admin logout error', { action: 'logout' }, error as Error);
 
     // Still try to clear cookie on error
-    setCookie(c, 'authrim_session', '', {
+    setCookie(c, 'authrim_admin_session', '', {
       path: '/',
       httpOnly: true,
       secure: true,
-      sameSite: 'None',
+      sameSite: getAdminCookieSameSite(c.env),
       maxAge: 0,
     });
 

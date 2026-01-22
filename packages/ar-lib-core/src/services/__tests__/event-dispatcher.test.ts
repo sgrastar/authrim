@@ -490,7 +490,7 @@ describe('EventDispatcher', () => {
 
       expect(adapter.execute).toHaveBeenCalled();
       const calls = (adapter.execute as any).mock.calls;
-      const auditLogCall = calls.find((c: any) => c[0].includes('audit_logs'));
+      const auditLogCall = calls.find((c: any) => c[0].includes('audit_log'));
       expect(auditLogCall).toBeDefined();
       expect(result.delivery.auditLog).toBe(true);
     });
@@ -502,7 +502,7 @@ describe('EventDispatcher', () => {
       );
 
       const calls = (adapter.execute as any).mock.calls;
-      const auditLogCall = calls.find((c: any) => c[0].includes('audit_logs'));
+      const auditLogCall = calls.find((c: any) => c[0].includes('audit_log'));
       expect(auditLogCall).toBeUndefined();
       expect(result.delivery.auditLog).toBe(false);
     });

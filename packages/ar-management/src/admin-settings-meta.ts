@@ -885,7 +885,7 @@ interface SettingValidationResult {
  */
 const SettingsValidateRequestSchema = z.object({
   category: z.string().optional(),
-  settings: z.record(z.unknown()),
+  settings: z.record(z.string(), z.unknown()),
 });
 
 /**
@@ -1205,14 +1205,14 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
         settings: string;
       }>(
         `SELECT id, name, client_type, redirect_uris, grant_types, scopes, settings
-         FROM clients WHERE tenant_id = ?`,
+         FROM oauth_clients WHERE tenant_id = ?`,
         [sourceTenantId]
       );
 
       for (const client of clients) {
         const newClientId = crypto.randomUUID();
         await adapter.execute(
-          `INSERT INTO clients (id, tenant_id, name, client_type, redirect_uris, grant_types, scopes, settings, created_at, updated_at)
+          `INSERT INTO oauth_clients (id, tenant_id, name, client_type, redirect_uris, grant_types, scopes, settings, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             newClientId,

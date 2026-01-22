@@ -225,7 +225,7 @@ describe('adminAuthMiddleware', () => {
 
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
-          Cookie: 'authrim_session=g1:apac:0:session_test123',
+          Cookie: 'authrim_admin_session=g1:apac:0:session_test123',
         },
       });
 
@@ -260,7 +260,7 @@ describe('adminAuthMiddleware', () => {
 
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
-          Cookie: 'authrim_session=g1:apac:0:session_expired',
+          Cookie: 'authrim_admin_session=g1:apac:0:session_expired',
         },
       });
 
@@ -310,7 +310,7 @@ describe('adminAuthMiddleware', () => {
 
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
-          Cookie: 'authrim_session=g1:apac:0:session_nonadmin',
+          Cookie: 'authrim_admin_session=g1:apac:0:session_nonadmin',
         },
       });
 
@@ -335,7 +335,7 @@ describe('adminAuthMiddleware', () => {
 
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
-          Cookie: 'authrim_session=g1:apac:0:session_invalid',
+          Cookie: 'authrim_admin_session=g1:apac:0:session_invalid',
         },
       });
 
@@ -374,7 +374,7 @@ describe('adminAuthMiddleware', () => {
 
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
-          Cookie: 'authrim_session=g1:apac:0:session_test',
+          Cookie: 'authrim_admin_session=g1:apac:0:session_test',
         },
       });
 
@@ -437,7 +437,7 @@ describe('adminAuthMiddleware', () => {
       // Send URL-encoded session ID (as Safari would)
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
-          Cookie: `authrim_session=${encodedSessionId}`,
+          Cookie: `authrim_admin_session=${encodedSessionId}`,
         },
       });
 
@@ -464,7 +464,7 @@ describe('adminAuthMiddleware', () => {
 
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
-          Cookie: `authrim_session=${malformedSessionId}`,
+          Cookie: `authrim_admin_session=${malformedSessionId}`,
         },
       });
 
@@ -530,7 +530,7 @@ describe('adminAuthMiddleware', () => {
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
           Authorization: 'Bearer invalid-token',
-          Cookie: 'authrim_session=g1:apac:0:session_fallback',
+          Cookie: 'authrim_admin_session=g1:apac:0:session_fallback',
         },
       });
 
@@ -548,7 +548,7 @@ describe('adminAuthMiddleware', () => {
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
           Authorization: 'Bearer test-admin-secret',
-          Cookie: 'authrim_session=g1:apac:0:session_test',
+          Cookie: 'authrim_admin_session=g1:apac:0:session_test',
         },
       });
 
@@ -610,7 +610,7 @@ describe('adminAuthMiddleware', () => {
   });
 
   describe('Cookie Parsing', () => {
-    it('should parse authrim_session from cookie string correctly', async () => {
+    it('should parse authrim_admin_session from cookie string correctly', async () => {
       // Mock SessionStore to return valid session
       const mockSessionStore = {
         getSessionRpc: vi.fn().mockResolvedValue({
@@ -662,7 +662,7 @@ describe('adminAuthMiddleware', () => {
       // Cookie with multiple values
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
-          Cookie: 'other_cookie=value; authrim_session=g1:apac:0:session_cookie123; another=thing',
+          Cookie: 'other_cookie=value; authrim_admin_session=g1:apac:0:session_cookie123; another=thing',
         },
       });
 
@@ -670,7 +670,7 @@ describe('adminAuthMiddleware', () => {
       expect(response.status).toBe(200);
     });
 
-    it('should handle cookie without authrim_session', async () => {
+    it('should handle cookie without authrim_admin_session', async () => {
       const app = createTestApp(mockEnv);
 
       const request = new Request('http://localhost/api/admin/test', {

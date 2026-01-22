@@ -419,7 +419,12 @@ function generateEnvVars(
 
   // Issuer URL (single-tenant mode uses this directly)
   // In multi-tenant mode, issuer is dynamically built from subdomain + BASE_DOMAIN
-  if (component === 'ar-auth' || component === 'ar-token' || component === 'ar-discovery') {
+  if (
+    component === 'ar-auth' ||
+    component === 'ar-token' ||
+    component === 'ar-discovery' ||
+    component === 'ar-management'
+  ) {
     vars['ISSUER_URL'] = issuerUrl;
   }
 
@@ -440,6 +445,29 @@ function generateEnvVars(
   if (component === 'ar-auth') {
     vars['UI_URL'] = uiUrl;
     vars['ENABLE_CONFORMANCE_MODE'] = 'false';
+
+    // Cookie SameSite configuration based on origin relationship
+    // If UI is served from same domain as API (via proxy), use 'Lax' (more secure)
+    // If UI is on different domain, use 'None' (required for cross-origin)
+    const loginUiSameOrigin = config.urls?.loginUi?.sameAsApi === true;
+    vars['COOKIE_SAME_SITE'] = loginUiSameOrigin ? 'Lax' : 'None';
+
+    // Admin UI URL and cookie configuration
+    const adminUiUrl =
+      config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
+    vars['ADMIN_UI_URL'] = adminUiUrl;
+    const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
+    vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';
+  }
+
+  // ar-management also needs cookie configuration for admin sessions
+  if (component === 'ar-management') {
+    // Admin UI URL and cookie configuration (same logic as ar-auth)
+    const adminUiUrl =
+      config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
+    vars['ADMIN_UI_URL'] = adminUiUrl;
+    const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
+    vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';
   }
 
   // OIDC settings

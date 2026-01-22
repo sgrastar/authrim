@@ -36,6 +36,10 @@ import {
   encryptValue,
   // RFC 7592: Token hashing for registration_access_token
   arrayBufferToBase64Url,
+  // Client secret hashing
+  hashClientSecret,
+  // DCR Configuration
+  getDCRSetting,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -790,7 +794,7 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
   await coreAdapter.execute(
     `
     INSERT OR REPLACE INTO oauth_clients (
-      client_id, client_secret, client_name, redirect_uris,
+      client_id, client_secret_hash, client_name, redirect_uris,
       grant_types, response_types, scope, logo_uri,
       client_uri, policy_uri, tos_uri, contacts,
       subject_type, sector_identifier_uri,
@@ -806,12 +810,13 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       allowed_redirect_origins,
       logout_webhook_uri, logout_webhook_secret_encrypted,
       initiate_login_uri, registration_access_token_hash,
-      created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      software_id, software_version, requestable_scopes,
+      tenant_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     [
       clientId,
-      metadata.client_secret || null,
+      metadata.client_secret_hash || null,
       metadata.client_name || null,
       JSON.stringify(metadata.redirect_uris),
       JSON.stringify(metadata.grant_types || ['authorization_code']),
@@ -848,6 +853,12 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
       metadata.initiate_login_uri || null,
       // RFC 7592: Client Configuration Endpoint
       metadata.registration_access_token_hash || null,
+      // RFC 7591: Dynamic Client Registration
+      metadata.software_id || null,
+      metadata.software_version || null,
+      metadata.requestable_scopes ? JSON.stringify(metadata.requestable_scopes) : null,
+      // Tenant ID
+      metadata.tenant_id || 'default',
       metadata.created_at || now,
       metadata.updated_at || now,
     ]
@@ -861,6 +872,22 @@ async function storeClient(env: Env, clientId: string, metadata: ClientMetadata)
  */
 export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
+    // ==========================================================================
+    // DCR Master Switch Check
+    // If dcr.enabled is false, reject all registration requests
+    // ==========================================================================
+    const tenantId = getTenantIdFromContext(c);
+    const dcrEnabled = await getDCRSetting('dcr.enabled', c.env, tenantId);
+    if (!dcrEnabled) {
+      return c.json(
+        {
+          error: 'access_denied',
+          error_description: 'Dynamic Client Registration is disabled for this tenant',
+        },
+        403
+      );
+    }
+
     // Parse request body
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
 
@@ -906,6 +933,36 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       );
       if (!sectorValidation.valid) {
         return c.json(sectorValidation.error, 400);
+      }
+    }
+
+    // ==========================================================================
+    // RFC 7591: software_id Duplicate Check
+    // Prevent multiple clients from registering with the same software_id
+    // unless dcr.allow_duplicate_software_id is enabled
+    // ==========================================================================
+    if (request.software_id) {
+      const allowDuplicateSoftwareId = await getDCRSetting(
+        'dcr.allow_duplicate_software_id',
+        c.env,
+        tenantId
+      );
+      if (!allowDuplicateSoftwareId) {
+        const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
+        const existingClient = await coreAdapter.queryOne<{ client_id: string }>(
+          'SELECT client_id FROM oauth_clients WHERE software_id = ? AND tenant_id = ?',
+          [request.software_id, tenantId]
+        );
+        if (existingClient) {
+          return c.json(
+            {
+              error: 'invalid_client_metadata',
+              error_description:
+                'A client with this software_id is already registered. Each software instance should have a unique software_id.',
+            },
+            400
+          );
+        }
       }
     }
 
@@ -1065,6 +1122,9 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       uri.includes('certification.openid.net')
     );
 
+    // Hash client secret for secure storage
+    const clientSecretHash = await hashClientSecret(clientSecret);
+
     // Store client metadata
     // Note: We store the encrypted webhook secret, not the plaintext
     const metadata: ClientMetadata & {
@@ -1077,7 +1137,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       is_trusted: isTrusted,
       skip_consent: isTrusted, // Trusted clients skip consent by default
       allow_claims_without_scope: isCertificationTest, // OIDC conformance tests need flexible claims parameter handling
+      // Store hashed client secret, not plaintext
+      client_secret_hash: clientSecretHash,
     };
+
+    // Remove plaintext client_secret from metadata (only hash is stored)
+    delete (metadata as unknown as Record<string, unknown>).client_secret;
 
     // Add webhook fields to metadata (store encrypted secret, not plaintext)
     if (request.logout_webhook_uri) {
@@ -1092,6 +1157,32 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // Remove fields that should not be stored (they are derived/sensitive)
     delete (metadata as unknown as Record<string, unknown>).registration_access_token;
     delete (metadata as unknown as Record<string, unknown>).registration_client_uri;
+
+    // ==========================================================================
+    // RFC 7591: DCR Scope Restriction
+    // When dcr.scope_restriction_enabled is true, store the scope parameter as
+    // requestable_scopes whitelist. Client can only request scopes from this list.
+    // ==========================================================================
+    const scopeRestrictionEnabled = await getDCRSetting(
+      'dcr.scope_restriction_enabled',
+      c.env,
+      tenantId
+    );
+    if (scopeRestrictionEnabled && request.scope) {
+      // Parse space-separated scope string into array
+      const scopeArray = request.scope.split(' ').filter((s) => s.length > 0);
+      if (scopeArray.length > 0) {
+        metadata.requestable_scopes = scopeArray;
+        log.info('Scope restriction applied', {
+          action: 'register',
+          clientId,
+          requestableScopes: scopeArray,
+        });
+      }
+    }
+
+    // Store tenant_id in metadata
+    metadata.tenant_id = tenantId;
 
     await storeClient(c.env, clientId, metadata);
 

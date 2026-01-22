@@ -1254,11 +1254,13 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     },
     loginUi: {
       custom: loginUiDomain || null,
-      auto: getPagesDevUrl(envPrefix + '-ar-ui'),
+      auto: getPagesDevUrl(envPrefix + '-ar-login-ui'),
+      sameAsApi: false,
     },
     adminUi: {
       custom: adminUiDomain || null,
-      auto: getPagesDevUrl(envPrefix + '-ar-ui') + '/admin',
+      auto: getPagesDevUrl(envPrefix + '-ar-admin-ui'),
+      sameAsApi: false,
     },
   };
 
@@ -1876,11 +1878,13 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     },
     loginUi: {
       custom: loginUiDomain || null,
-      auto: getPagesDevUrl(envPrefix + '-ar-ui'),
+      auto: getPagesDevUrl(envPrefix + '-ar-login-ui'),
+      sameAsApi: false,
     },
     adminUi: {
       custom: adminUiDomain || null,
-      auto: getPagesDevUrl(envPrefix + '-ar-ui') + '/admin',
+      auto: getPagesDevUrl(envPrefix + '-ar-admin-ui'),
+      sameAsApi: false,
     },
   };
   config.oidc = {
@@ -2200,9 +2204,8 @@ async function executeSetup(
   // Step 5a: Save master wrangler configs to .authrim/{env}/wrangler/
   const wranglerSpinner = ora('Saving wrangler.toml master configs...').start();
   try {
-    const { saveMasterWranglerConfigs, syncWranglerConfigs } = await import(
-      '../../core/wrangler-sync.js'
-    );
+    const { saveMasterWranglerConfigs, syncWranglerConfigs } =
+      await import('../../core/wrangler-sync.js');
 
     const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
       baseDir,
@@ -2610,8 +2613,8 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
   if (!config.urls) {
     config.urls = {
       api: { custom: null, auto: getWorkersDevUrl(env + '-ar-router') },
-      loginUi: { custom: null, auto: getPagesDevUrl(env + '-ar-ui') },
-      adminUi: { custom: null, auto: getPagesDevUrl(env + '-ar-ui') + '/admin' },
+      loginUi: { custom: null, auto: getPagesDevUrl(env + '-ar-login-ui'), sameAsApi: false },
+      adminUi: { custom: null, auto: getPagesDevUrl(env + '-ar-admin-ui'), sameAsApi: false },
     };
   }
 
@@ -2655,11 +2658,13 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
   };
   config.urls.loginUi = {
     custom: loginUiDomain || null,
-    auto: config.urls.loginUi?.auto || getPagesDevUrl(env + '-ar-ui'),
+    auto: config.urls.loginUi?.auto || getPagesDevUrl(env + '-ar-login-ui'),
+    sameAsApi: config.urls.loginUi?.sameAsApi ?? false,
   };
   config.urls.adminUi = {
     custom: adminUiDomain || null,
-    auto: config.urls.adminUi?.auto || getPagesDevUrl(env + '-ar-ui') + '/admin',
+    auto: config.urls.adminUi?.auto || getPagesDevUrl(env + '-ar-admin-ui'),
+    sameAsApi: config.urls.adminUi?.sameAsApi ?? false,
   };
 
   return true;

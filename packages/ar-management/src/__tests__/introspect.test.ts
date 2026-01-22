@@ -14,6 +14,7 @@ const {
   mockClientRepository,
   mockValidateClientId,
   mockTimingSafeEqual,
+  mockVerifyClientSecretHash,
   mockGetRefreshToken,
   mockIsTokenRevoked,
   mockParseToken,
@@ -30,6 +31,10 @@ const {
     mockClientRepository: clientRepo,
     mockValidateClientId: vi.fn(),
     mockTimingSafeEqual: vi.fn((a: string, b: string) => a === b),
+    mockVerifyClientSecretHash: vi.fn(async (secret: string, hash: string) => {
+      // Simple mock: check if hash equals 'hash_' + secret
+      return hash === 'hash_' + secret;
+    }),
     mockGetRefreshToken: vi.fn(),
     mockIsTokenRevoked: vi.fn(),
     mockParseToken: vi.fn(),
@@ -58,6 +63,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     validateClientId: mockValidateClientId,
     timingSafeEqual: mockTimingSafeEqual,
+    verifyClientSecretHash: mockVerifyClientSecretHash,
     getRefreshToken: mockGetRefreshToken,
     isTokenRevoked: mockIsTokenRevoked,
     parseToken: mockParseToken,
@@ -88,6 +94,7 @@ import { getIntrospectionCacheConfig } from '../routes/settings/introspection-ca
 // Use the hoisted mocks directly (already defined above vi.mock)
 const validateClientId = mockValidateClientId;
 const timingSafeEqual = mockTimingSafeEqual;
+const verifyClientSecretHash = mockVerifyClientSecretHash;
 const getRefreshToken = mockGetRefreshToken;
 const isTokenRevoked = mockIsTokenRevoked;
 const parseToken = mockParseToken;
@@ -212,7 +219,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -241,7 +248,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       const response = await introspectHandler(c);
@@ -274,7 +281,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -305,7 +312,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -380,11 +387,11 @@ describe('Token Introspection Endpoint', () => {
       });
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(timingSafeEqual).mockReturnValue(false);
+      // verifyClientSecretHash mock will return false for 'wrong-secret' vs 'hash_correct-secret'
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'correct-secret',
+        client_secret_hash: 'hash_correct-secret',
       });
 
       const response = await introspectHandler(c);
@@ -395,7 +402,7 @@ describe('Token Introspection Endpoint', () => {
       expect(body.error).toBe('invalid_client');
     });
 
-    it('should use timing-safe comparison for client_secret', async () => {
+    it('should use hash verification for client_secret', async () => {
       const c = createMockContext({
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -408,19 +415,18 @@ describe('Token Introspection Endpoint', () => {
       });
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(timingSafeEqual).mockReturnValue(true);
       vi.mocked(parseToken).mockReturnValue(sampleTokenPayload);
       vi.mocked(verifyToken).mockResolvedValue(sampleTokenPayload);
       vi.mocked(isTokenRevoked).mockResolvedValue(false);
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
 
-      expect(timingSafeEqual).toHaveBeenCalledWith('client-secret', 'client-secret');
+      expect(verifyClientSecretHash).toHaveBeenCalledWith('client-secret', 'hash_client-secret');
     });
 
     it('should return 401 for invalid Basic auth header format', async () => {
@@ -463,7 +469,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -500,7 +506,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -529,7 +535,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -556,7 +562,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -582,7 +588,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -615,7 +621,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -655,7 +661,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -683,7 +689,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -720,7 +726,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       const response = await introspectHandler(c);
@@ -759,7 +765,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       const response = await introspectHandler(c);
@@ -813,7 +819,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -868,7 +874,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -918,7 +924,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -965,7 +971,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -1008,7 +1014,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -1054,7 +1060,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -1095,7 +1101,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -1143,7 +1149,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -1179,7 +1185,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -1241,7 +1247,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -1301,7 +1307,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -1346,7 +1352,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -1404,7 +1410,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -1449,7 +1455,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);
@@ -1496,7 +1502,7 @@ describe('Token Introspection Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await introspectHandler(c);

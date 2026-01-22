@@ -13,6 +13,8 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import type { Env } from '../types/env';
 import { createLogger } from '../utils/logger';
+import { getDCRSetting } from '../utils/dcr-config';
+import { getTenantIdFromContext } from './request-context';
 
 const log = createLogger().module('INITIAL-ACCESS-TOKEN');
 
@@ -78,12 +80,25 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
   return async (c: Context<{ Bindings: Env; Variables: ContextVariables }>, next) => {
     const env = c.env;
 
-    // Check if open registration is enabled
-    const openRegistration = env.ENABLE_OPEN_REGISTRATION?.toLowerCase() === 'true';
+    // ==========================================================================
+    // DCR Initial Access Token Requirement Check
+    // Priority: dcr.require_initial_access_token (KV/env) > ENABLE_OPEN_REGISTRATION (legacy)
+    // ==========================================================================
+    const tenantId = getTenantIdFromContext(c as unknown as Context<{ Bindings: Env }>);
+    const requireIAT = await getDCRSetting('dcr.require_initial_access_token', env, tenantId);
 
-    if (openRegistration) {
-      // Open registration enabled - no token required
-      log.debug('Open registration enabled - skipping Initial Access Token validation');
+    // Legacy support: ENABLE_OPEN_REGISTRATION is inverse of require_initial_access_token
+    // New setting takes precedence if explicitly set in KV
+    const legacyOpenRegistration = env.ENABLE_OPEN_REGISTRATION?.toLowerCase() === 'true';
+
+    // If IAT is not required (or legacy open registration is enabled), skip validation
+    // Note: The new setting dcr.require_initial_access_token defaults to true (secure default)
+    // ENABLE_OPEN_REGISTRATION=true is equivalent to dcr.require_initial_access_token=false
+    if (!requireIAT || legacyOpenRegistration) {
+      log.debug('Initial Access Token not required - open registration mode', {
+        requireIAT,
+        legacyOpenRegistration,
+      });
       return next();
     }
 

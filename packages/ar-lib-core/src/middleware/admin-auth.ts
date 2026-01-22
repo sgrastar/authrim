@@ -192,7 +192,7 @@ async function authenticateSession(
  *
  * Supports dual authentication:
  * - Bearer Token: Authorization: Bearer <token>
- * - Session Cookie: authrim_session=<id>
+ * - Session Cookie: authrim_admin_session=<id>
  *
  * Sets adminAuth context on successful authentication:
  * - c.get('adminAuth') => { userId, authMethod, roles }
@@ -223,10 +223,10 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
     }
 
     // Try session-based authentication as fallback
-    // Cookie name: authrim_session (consistent with ar-auth session management)
+    // Cookie name: authrim_admin_session (separate from regular user sessions)
     const cookieHeader = c.req.header('Cookie');
     if (cookieHeader) {
-      const sessionMatch = cookieHeader.match(/authrim_session=([^;]+)/);
+      const sessionMatch = cookieHeader.match(/authrim_admin_session=([^;]+)/);
       if (sessionMatch) {
         // URL decode the session ID (Safari and some browsers encode special characters like ':')
         // Use try-catch to handle malformed URL-encoded strings gracefully

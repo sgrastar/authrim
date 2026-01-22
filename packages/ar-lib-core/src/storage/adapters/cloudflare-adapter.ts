@@ -367,9 +367,8 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
 
     if (jti && clientId) {
       // V3: Parse JTI and route to sharded DO
-      const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } = await import(
-        '../../utils/refresh-token-sharding'
-      );
+      const { parseRefreshTokenJti, buildRefreshTokenRotatorInstanceName } =
+        await import('../../utils/refresh-token-sharding');
       const parsedJti = parseRefreshTokenJti(jti);
       const instanceName = buildRefreshTokenRotatorInstanceName(
         clientId,
@@ -869,7 +868,7 @@ export class ClientStore implements IClientStore {
 
     const newClient: ClientData = {
       client_id: client.client_id!,
-      client_secret: client.client_secret,
+      client_secret_hash: client.client_secret_hash,
       client_name: client.client_name,
       redirect_uris: client.redirect_uris || [],
       grant_types: client.grant_types || [],
@@ -883,13 +882,13 @@ export class ClientStore implements IClientStore {
 
     await this.adapter.execute(
       `INSERT INTO oauth_clients (
-        client_id, client_secret, client_name, redirect_uris, grant_types,
+        client_id, client_secret_hash, client_name, redirect_uris, grant_types,
         response_types, scope, subject_type, sector_identifier_uri,
         created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newClient.client_id,
-        newClient.client_secret,
+        newClient.client_secret_hash,
         newClient.client_name,
         JSON.stringify(newClient.redirect_uris),
         JSON.stringify(newClient.grant_types),
@@ -920,12 +919,12 @@ export class ClientStore implements IClientStore {
 
     await this.adapter.execute(
       `UPDATE oauth_clients SET
-        client_secret = ?, client_name = ?, redirect_uris = ?, grant_types = ?,
+        client_secret_hash = ?, client_name = ?, redirect_uris = ?, grant_types = ?,
         response_types = ?, scope = ?, subject_type = ?, sector_identifier_uri = ?,
         updated_at = ?
       WHERE client_id = ?`,
       [
-        updated.client_secret,
+        updated.client_secret_hash,
         updated.client_name,
         JSON.stringify(updated.redirect_uris),
         JSON.stringify(updated.grant_types),

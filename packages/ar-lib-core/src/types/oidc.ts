@@ -389,6 +389,8 @@ export interface ClientRegistrationResponse {
 export interface ClientMetadata extends ClientRegistrationResponse {
   created_at: number;
   updated_at: number;
+  // SHA-256 hash of client_secret (used instead of plain text for secure storage)
+  client_secret_hash?: string;
   // Multi-tenant support
   tenant_id?: string;
   // OIDC Core 8: Subject Identifier Types
@@ -487,6 +489,16 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   // ==========================================================================
   /** SHA-256 hash of registration_access_token (never store plaintext) */
   registration_access_token_hash?: string;
+
+  // ==========================================================================
+  // RFC 7591: DCR Scope Restriction
+  // ==========================================================================
+  /**
+   * Requestable scopes whitelist (DCR scope restriction feature).
+   * When set, this client can only request scopes from this list.
+   * Set during DCR registration when dcr.scope_restriction_enabled is true.
+   */
+  requestable_scopes?: string[];
 }
 
 /**

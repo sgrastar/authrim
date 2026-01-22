@@ -510,8 +510,8 @@ for pkg_dir in packages/*/; do
             continue
         fi
 
-        # Skip UI package
-        if [ "$package_name" = "ar-ui" ]; then
+        # Skip UI packages (deployed via Cloudflare Pages, not Workers)
+        if [ "$package_name" = "ar-ui" ] || [ "$package_name" = "ar-admin-ui" ] || [ "$package_name" = "ar-login-ui" ]; then
             continue
         fi
 

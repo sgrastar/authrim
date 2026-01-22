@@ -3,6 +3,7 @@ import type { Env, ClientMetadata } from '@authrim/ar-lib-core';
 import {
   validateClientId,
   timingSafeEqual,
+  verifyClientSecretHash,
   deleteRefreshToken,
   getRefreshToken,
   revokeToken,
@@ -122,17 +123,17 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
     clientAuthenticated = true;
   }
   // client_secret_basic or client_secret_post authentication
-  else if (clientMetadata.client_secret && client_secret) {
-    // Verify client_secret using timing-safe comparison to prevent timing attacks
-    if (timingSafeEqual(clientMetadata.client_secret, client_secret)) {
+  else if (clientMetadata.client_secret_hash && client_secret) {
+    // Verify client_secret against stored SHA-256 hash
+    if (await verifyClientSecretHash(client_secret, clientMetadata.client_secret_hash)) {
       clientAuthenticated = true;
     } else {
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
     }
   }
-  // P2: Public client - no client_secret required
+  // P2: Public client - no client_secret_hash required
   // RFC 7009: Public clients can revoke their own tokens
-  else if (!clientMetadata.client_secret) {
+  else if (!clientMetadata.client_secret_hash) {
     // Public client - will verify token ownership later
     clientAuthenticated = true;
   }
@@ -142,7 +143,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Track if this is a public client for token ownership verification
-  const isPublicClient = !clientMetadata.client_secret;
+  const isPublicClient = !clientMetadata.client_secret_hash;
 
   // Parse token to extract claims (without verification yet)
   const log = getLogger(c).module('REVOKE');
@@ -473,8 +474,11 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
   const clientMetadata = clientRecord as unknown as ClientMetadata;
 
   // Verify client_secret for confidential clients
-  if (clientMetadata.client_secret) {
-    if (!client_secret || !timingSafeEqual(clientMetadata.client_secret, client_secret)) {
+  if (clientMetadata.client_secret_hash) {
+    if (
+      !client_secret ||
+      !(await verifyClientSecretHash(client_secret, clientMetadata.client_secret_hash))
+    ) {
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
     }
   }

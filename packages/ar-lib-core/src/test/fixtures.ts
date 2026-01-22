@@ -13,7 +13,7 @@ import { generateSecureRandomString, generateCodeChallenge } from '../utils/cryp
  */
 export interface MockClient {
   client_id: string;
-  client_secret?: string;
+  client_secret_hash?: string;
   redirect_uris: string[];
   grant_types: string[];
   response_types: string[];
@@ -34,10 +34,18 @@ export interface MockUser {
 /**
  * Test clients
  */
+/**
+ * Test secret: 'test-secret-123'
+ * SHA-256 hash: 33e29618af5c636e782cfadefb698192ef7b2d8e5567d3c8cf560f61697cc6f5
+ */
+export const TEST_CLIENT_SECRET = 'test-secret-123';
+export const TEST_CLIENT_SECRET_HASH =
+  '33e29618af5c636e782cfadefb698192ef7b2d8e5567d3c8cf560f61697cc6f5';
+
 export const testClients: Record<string, MockClient> = {
   confidential: {
     client_id: 'test-client-confidential',
-    client_secret: 'test-secret-123',
+    client_secret_hash: TEST_CLIENT_SECRET_HASH,
     redirect_uris: ['https://example.com/callback', 'http://localhost:3000/callback'],
     grant_types: ['authorization_code'],
     response_types: ['code'],
@@ -446,21 +454,21 @@ export async function createMockEnv(): Promise<Env> {
         },
         run: async () => {
           if (sql.includes('INSERT INTO oauth_clients')) {
-            const hasSecret = sql.includes('client_secret');
+            const hasSecretHash = sql.includes('client_secret_hash');
             const hasDpopFlag = sql.includes('dpop_bound_access_tokens');
             const client_id = boundParams[0];
-            const client_secret = hasSecret ? boundParams[1] : undefined;
-            const redirect_uris = hasSecret ? boundParams[2] : boundParams[1];
-            const grant_types = hasSecret ? boundParams[3] : boundParams[2];
-            const response_types = hasSecret ? boundParams[4] : boundParams[3];
-            const scope = hasSecret ? boundParams[5] : boundParams[4];
+            const client_secret_hash = hasSecretHash ? boundParams[1] : undefined;
+            const redirect_uris = hasSecretHash ? boundParams[2] : boundParams[1];
+            const grant_types = hasSecretHash ? boundParams[3] : boundParams[2];
+            const response_types = hasSecretHash ? boundParams[4] : boundParams[3];
+            const scope = hasSecretHash ? boundParams[5] : boundParams[4];
             const dpop_bound_access_tokens = hasDpopFlag
-              ? boundParams[hasSecret ? 6 : 5]
+              ? boundParams[hasSecretHash ? 6 : 5]
               : undefined;
 
             const clientData = {
               client_id,
-              client_secret,
+              client_secret_hash,
               redirect_uris: JSON.parse(redirect_uris || '[]'),
               grant_types: JSON.parse(grant_types || '[]'),
               response_types: JSON.parse(response_types || '[]'),

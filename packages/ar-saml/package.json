@@ -26,6 +26,6 @@
     "@vitest/ui": "^4.0.13",
     "typescript": "^5.9.3",
     "vitest": "^4.0.13",
-    "wrangler": "^4.53.0"
+    "wrangler": "^4.59.3"
   }
 }

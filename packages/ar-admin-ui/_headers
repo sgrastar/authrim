@@ -1,0 +1,26 @@
+# Security Headers for ar-admin-ui
+# https://developers.cloudflare.com/pages/configuration/headers/
+
+/*
+  # Content Security Policy
+  # - img-src: Allow same-origin, all HTTPS, and data URIs for QR codes/dynamic images
+  # - frame-ancestors: Prevent clickjacking by disallowing embedding
+  Content-Security-Policy: img-src 'self' https: data:; frame-ancestors 'self';
+
+  # Prevent MIME type sniffing
+  X-Content-Type-Options: nosniff
+
+  # Referrer Policy - send origin only for cross-origin requests
+  Referrer-Policy: strict-origin-when-cross-origin
+
+# Disable caching for Admin pages (HTML)
+/admin/*
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Disable caching for all HTML pages
+/*.html
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Allow caching for static assets (JS, CSS, images) with revalidation
+/_app/*
+  Cache-Control: public, max-age=31536000, immutable

@@ -281,26 +281,62 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 
 | Feature | Server | Core SDK | Web SDK | Note |
 |---------|:------:|:--------:|:-------:|------|
-| **P0 - Critical** | | | | |
+| **Basic OAuth/OIDC** | | | | |
+| OIDC Discovery | ✅ | ✅ | ✅ | Auto-discovery from issuer |
+| Authorization Code Flow + PKCE | ✅ | ✅ | ✅ | Standard secure flow |
+| Silent Auth (iframe) | ✅ | ✅ | ✅ | Session renewal |
+| Popup Auth | ✅ | — | ✅ | Browser popup flow |
+| Redirect Auth | ✅ | ✅ | ✅ | Standard redirect flow |
+| State/Nonce Management | ✅ | ✅ | ✅ | CSRF protection |
+| **Direct Auth (Passwordless)** | | | | |
+| Passkey (WebAuthn) | ✅ | — | ✅ | Login, SignUp, Register |
+| Passkey Conditional UI | ✅ | — | ✅ | Autofill integration |
+| Email Code (OTP) | ✅ | — | ✅ | Send, Verify |
+| Social Login | ✅ | — | ✅ | Popup + Redirect |
+| **Token Management** | | | | |
+| Token Storage | ✅ | ✅ | ✅ | Secure storage |
+| Token Refresh | ✅ | ✅ | ✅ | Auto-refresh |
+| Token Introspection (RFC 7662) | ✅ | ✅ | — | Server-side validation |
+| Token Revocation (RFC 7009) | ✅ | ✅ | — | Explicit invalidation |
+| Token Exchange (RFC 8693) | ✅ | ✅ | — | Cross-service tokens |
+| **Advanced Security** | | | | |
 | PAR (RFC 9126) | ✅ | ✅ | — | FAPI 2.0 security baseline |
-| Device Flow (RFC 8628) | ✅ | ✅ | ✅ | CLI/TV/IoT + DeviceFlowUI |
-| Client Credentials (RFC 6749 §4.4) | ✅ | ✅ | — | M2M auth (Node SDK only) |
-| **P1 - Important** | | | | |
 | DPoP (RFC 9449) | ✅ | ✅ | — | Token binding/proof of possession |
 | JAR (RFC 9101) | ✅ | ✅ | — | Signed authorization requests |
 | JARM | ✅ | ✅ | — | Signed authorization responses |
-| **P2 - Session Management** | | | | |
+| **Client Authentication** | | | | |
+| Client Credentials (RFC 6749 §4.4) | ✅ | ✅ | — | M2M auth (Node SDK only) |
+| Private Key JWT | ✅ | ✅ | — | client_assertion |
+| **Device Flow** | | | | |
+| Device Flow (RFC 8628) | ✅ | ✅ | ✅ | CLI/TV/IoT |
+| DeviceFlowUI Helper | — | — | ✅ | Events, countdown, QR |
+| **Session Management** | | | | |
 | Session State Calculator | ✅ | ✅ | — | session_state hash calculation |
 | Check Session Iframe | ✅ | — | ✅ | postMessage session check |
 | Session Monitor | ✅ | — | ✅ | Periodic session polling |
-| **P2 - Logout** | | | | |
-| RP-Initiated Logout | ✅ | ✅ | — | LogoutHandler |
+| **Logout** | | | | |
+| RP-Initiated Logout | ✅ | ✅ | ✅ | LogoutHandler / signOut |
 | Front-Channel Logout | ✅ | ✅ | ✅ | URL builder + handler |
 | Back-Channel Logout | ✅ | ✅ | — | logout_token JWT validation |
-| **Deferred** | | | | |
+| **Utilities** | | | | |
+| PKCE Helper | — | ✅ | — | Code verifier/challenge |
+| JWT Decode/Validate | — | ✅ | — | Without signature verification |
+| Base64url Encode/Decode | — | ✅ | — | Standard encoding |
+| Timing-safe Comparison | — | ✅ | — | Security utility |
+| **Event System** | | | | |
+| Auth Lifecycle Events | — | ✅ | ✅ | Login, logout, token refresh |
+| Session Events | — | — | ✅ | Changed, expired |
+| **Deferred (Not Implemented)** | | | | |
 | JWE | ✅ | — | — | Signing sufficient for most cases |
 | CIBA | ✅ | — | — | Specialized use case (PSD2/banking) |
 | VC (OpenID4VP/VCI/DID) | ✅ | — | — | Specs still maturing |
+
+### Summary
+
+| SDK | Features Implemented | Primary Use Case |
+|-----|---------------------|------------------|
+| **@authrim/core** | 26 features | Platform-agnostic (Node.js, Deno, Workers, etc.) |
+| **@authrim/web** | 22 features | Browser SPA/PWA with Direct Auth focus |
 
 > **Design Principles:**
 > - Core returns "facts" only — UX events are handled by upper SDKs (web/react/svelte)

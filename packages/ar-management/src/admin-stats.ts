@@ -568,8 +568,8 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
     const adapter = createAdapter(c);
 
     // Verify client exists and belongs to tenant
-    const client = await adapter.queryOne<{ id: string; name: string | null }>(
-      'SELECT id, name FROM clients WHERE id = ? AND tenant_id = ?',
+    const client = await adapter.queryOne<{ client_id: string; client_name: string | null }>(
+      'SELECT client_id, client_name FROM oauth_clients WHERE client_id = ? AND tenant_id = ?',
       [clientId, tenantId]
     );
 
@@ -670,7 +670,7 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
 
     const stats: ClientStats = {
       client_id: clientId,
-      client_name: client.name,
+      client_name: client.client_name,
       tokens: {
         active_access_tokens: tokenStats?.active_access ?? 0,
         active_refresh_tokens: tokenStats?.active_refresh ?? 0,

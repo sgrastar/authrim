@@ -189,8 +189,10 @@ export interface RoleAssignmentRule {
  * Role assignment rule row from D1 database
  * JSON fields are stored as strings
  */
-export interface RoleAssignmentRuleRow
-  extends Omit<RoleAssignmentRule, 'condition' | 'actions' | 'is_active' | 'stop_processing'> {
+export interface RoleAssignmentRuleRow extends Omit<
+  RoleAssignmentRule,
+  'condition' | 'actions' | 'is_active' | 'stop_processing'
+> {
   conditions_json: string;
   actions_json: string;
   is_active: number;
@@ -242,11 +244,10 @@ export interface OrgDomainMapping {
 /**
  * Organization domain mapping row from D1 database
  */
-export interface OrgDomainMappingRow
-  extends Omit<
-    OrgDomainMapping,
-    'auto_join_enabled' | 'verified' | 'is_active' | 'auto_assign_role_id'
-  > {
+export interface OrgDomainMappingRow extends Omit<
+  OrgDomainMapping,
+  'auto_join_enabled' | 'verified' | 'is_active' | 'auto_assign_role_id'
+> {
   auto_join_enabled: number;
   verified: number;
   is_active: number;

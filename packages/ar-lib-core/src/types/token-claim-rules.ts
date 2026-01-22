@@ -250,8 +250,10 @@ export interface TokenClaimRule {
 /**
  * Token claim rule row from D1 database
  */
-export interface TokenClaimRuleRow
-  extends Omit<TokenClaimRule, 'condition' | 'actions' | 'is_active' | 'stop_processing'> {
+export interface TokenClaimRuleRow extends Omit<
+  TokenClaimRule,
+  'condition' | 'actions' | 'is_active' | 'stop_processing'
+> {
   conditions_json: string;
   actions_json: string;
   is_active: number;
@@ -320,8 +322,10 @@ export interface ResourcePermission {
 /**
  * Resource permission row from D1 database
  */
-export interface ResourcePermissionRow
-  extends Omit<ResourcePermission, 'actions' | 'condition' | 'is_active' | 'expires_at'> {
+export interface ResourcePermissionRow extends Omit<
+  ResourcePermission,
+  'actions' | 'condition' | 'is_active' | 'expires_at'
+> {
   actions_json: string;
   condition_json: string | null;
   is_active: number;

@@ -262,8 +262,10 @@ export interface Relationship {
 /**
  * Relationship row from D1 database
  */
-export interface RelationshipRow
-  extends Omit<Relationship, 'expires_at' | 'is_bidirectional' | 'metadata_json'> {
+export interface RelationshipRow extends Omit<
+  Relationship,
+  'expires_at' | 'is_bidirectional' | 'metadata_json'
+> {
   expires_at: number | null;
   is_bidirectional: number;
   metadata_json: string | null;

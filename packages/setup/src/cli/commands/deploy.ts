@@ -24,7 +24,7 @@ import {
 import {
   deployAll,
   uploadSecrets,
-  deployPages,
+  deployAllPages,
   updateLockWithDeployments,
   buildApiPackages,
   type DeployOptions,
@@ -235,9 +235,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       const syncSpinner = ora('Checking wrangler.toml sync status...').start();
 
       try {
-        const { checkWranglerStatus, syncWranglerConfigs } = await import(
-          '../../core/wrangler-sync.js'
-        );
+        const { checkWranglerStatus, syncWranglerConfigs } =
+          await import('../../core/wrangler-sync.js');
 
         const status = await checkWranglerStatus({ baseDir, env, packagesDir });
         const outOfSync = status.filter((s) => !s.inSync && s.masterExists && s.deployExists);
@@ -411,15 +410,29 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   ) {
     console.log(chalk.bold('\n📱 Deploying UI to Cloudflare Pages...\n'));
 
-    const pagesResult = await deployPages({
-      ...deployOptions,
-      projectName: `${env}-ar-ui`,
+    const pagesResult = await deployAllPages(deployOptions, {
+      loginUi: config.components.loginUi ?? true,
+      adminUi: config.components.adminUi ?? true,
     });
 
-    if (pagesResult.success) {
-      console.log(chalk.green(`\n✓ UI deployed: ${pagesResult.projectName}`));
+    if (pagesResult.failedCount === 0) {
+      console.log(chalk.green(`\n✓ All UI packages deployed successfully`));
+      for (const result of pagesResult.results) {
+        console.log(chalk.cyan(`  • ${result.component}: ${result.projectName}`));
+      }
     } else {
-      console.log(chalk.yellow(`\n⚠️  UI deployment failed: ${pagesResult.error}`));
+      console.log(
+        chalk.yellow(
+          `\n⚠️  ${pagesResult.successCount}/${pagesResult.results.length} UI packages deployed`
+        )
+      );
+      for (const result of pagesResult.results) {
+        if (result.success) {
+          console.log(chalk.green(`  ✓ ${result.component}: ${result.projectName}`));
+        } else {
+          console.log(chalk.red(`  ✗ ${result.component}: ${result.error}`));
+        }
+      }
     }
   }
 

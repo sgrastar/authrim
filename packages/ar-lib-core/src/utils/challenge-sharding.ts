@@ -33,9 +33,12 @@ import {
 } from './region-sharding';
 
 /**
- * Type alias for ChallengeStore stub
+ * Type alias for ChallengeStore stub.
+ * Using Awaited<ReturnType> pattern to avoid "Type instantiation is excessively deep" errors
+ * with Cloudflare Worker's recursive generic types.
  */
-type ChallengeStoreStub = DurableObjectStub<ChallengeStore>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ChallengeStoreStub = any;
 
 /**
  * Default shard count for challenge store sharding.
@@ -172,13 +175,13 @@ export function buildChallengeShardInstanceName(shardIndex: number): string {
 export async function getChallengeStoreByEmail(
   env: Env,
   email: string
-): Promise<DurableObjectStub<ChallengeStore>> {
+): Promise<ChallengeStoreStub> {
   const shardCount = await getChallengeShardCount(env);
   const shardIndex = getChallengeShardIndexByEmail(email, shardCount);
   const instanceName = buildChallengeShardInstanceName(shardIndex);
 
   const id = env.CHALLENGE_STORE.idFromName(instanceName);
-  return env.CHALLENGE_STORE.get(id);
+  return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
 }
 
 /**
@@ -198,13 +201,13 @@ export async function getChallengeStoreByEmail(
 export async function getChallengeStoreByUserId(
   env: Env,
   userId: string
-): Promise<DurableObjectStub<ChallengeStore>> {
+): Promise<ChallengeStoreStub> {
   const shardCount = await getChallengeShardCount(env);
   const shardIndex = getChallengeShardIndexByUserId(userId, shardCount);
   const instanceName = buildChallengeShardInstanceName(shardIndex);
 
   const id = env.CHALLENGE_STORE.idFromName(instanceName);
-  return env.CHALLENGE_STORE.get(id);
+  return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
 }
 
 /**
@@ -218,9 +221,9 @@ export async function getChallengeStoreByUserId(
  * @param env - Environment object with DO bindings
  * @returns DurableObjectStub<ChallengeStore> for the global (singleton) instance
  */
-export function getChallengeStoreGlobal(env: Env): DurableObjectStub<ChallengeStore> {
+export function getChallengeStoreGlobal(env: Env): ChallengeStoreStub {
   const id = env.CHALLENGE_STORE.idFromName('global');
-  return env.CHALLENGE_STORE.get(id);
+  return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
 }
 
 /**
@@ -255,13 +258,13 @@ export function getChallengeShardIndexByChallengeId(
 export async function getChallengeStoreByChallengeId(
   env: Env,
   challengeId: string
-): Promise<DurableObjectStub<ChallengeStore>> {
+): Promise<ChallengeStoreStub> {
   const shardCount = await getChallengeShardCount(env);
   const shardIndex = getChallengeShardIndexByChallengeId(challengeId, shardCount);
   const instanceName = buildChallengeShardInstanceName(shardIndex);
 
   const id = env.CHALLENGE_STORE.idFromName(instanceName);
-  return env.CHALLENGE_STORE.get(id);
+  return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
 }
 
 /**
@@ -298,14 +301,14 @@ export function getChallengeShardIndexByDID(did: string, shardCount: number): nu
  * const challengeStore = getChallengeStoreByDID(env, 'did:web:example.com');
  * await challengeStore.storeChallengeRpc({ ... });
  */
-export function getChallengeStoreByDID(env: Env, did: string): DurableObjectStub<ChallengeStore> {
+export function getChallengeStoreByDID(env: Env, did: string): ChallengeStoreStub {
   // Use a synchronous version for DID - simpler since it's just for sharding
   const shardCount = cachedChallengeShardCount || DEFAULT_CHALLENGE_SHARD_COUNT;
   const shardIndex = getChallengeShardIndexByDID(did, shardCount);
   const instanceName = buildChallengeShardInstanceName(shardIndex);
 
   const id = env.CHALLENGE_STORE.idFromName(instanceName);
-  return env.CHALLENGE_STORE.get(id);
+  return env.CHALLENGE_STORE.get(id) as ChallengeStoreStub;
 }
 
 // =============================================================================

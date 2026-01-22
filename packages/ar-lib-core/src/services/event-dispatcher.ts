@@ -605,24 +605,41 @@ export class EventDispatcherImpl implements IEventDispatcher {
 
   /**
    * Record audit log entry.
+   * Maps to the audit_log table schema used by admin APIs.
    */
   private async recordAuditLog(event: UnifiedEvent, _context: ExecutionContext): Promise<void> {
-    // Basic audit log insert
-    // Production should use a dedicated audit log service
+    // Extract resource info from event data if available
+    const eventData = event.data as Record<string, unknown> | undefined;
+    const resourceType = this.extractResourceType(event.type);
+    const resourceId = (eventData?.clientId as string) ?? (eventData?.userId as string) ?? null;
+    const auditId = `audit_${crypto.randomUUID().replace(/-/g, '')}`;
+    const createdAt = Math.floor(new Date(event.timestamp).getTime() / 1000);
+
+    // Map event to audit_log table schema
     await this.adapter.execute(
-      `INSERT INTO audit_logs (id, tenant_id, event_type, event_id, actor_type, actor_id, timestamp, data)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO audit_log (id, tenant_id, user_id, action, resource_type, resource_id, metadata_json, created_at, severity)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        `al_${crypto.randomUUID().replace(/-/g, '')}`,
+        auditId,
         event.tenantId,
-        event.type,
-        event.id,
-        event.metadata?.actor?.type ?? null,
         event.metadata?.actor?.id ?? null,
-        event.timestamp,
+        event.type, // action = event type (e.g., 'token.refresh.issued')
+        resourceType,
+        resourceId,
         JSON.stringify(event.data),
+        createdAt,
+        'info',
       ]
     );
+  }
+
+  /**
+   * Extract resource type from event type.
+   * e.g., 'token.refresh.issued' -> 'token', 'user.created' -> 'user'
+   */
+  private extractResourceType(eventType: string): string {
+    const parts = eventType.split('.');
+    return parts[0] || 'unknown';
   }
 
   // ===========================================================================

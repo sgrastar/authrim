@@ -29,6 +29,7 @@ import {
   validateClientAssertion,
   validateDPoPProof,
   timingSafeEqual,
+  verifyClientSecretHash,
   getTokenFormat,
   parseToken,
   isInternalUrl,
@@ -217,10 +218,13 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           401
         );
       }
-    } else if (clientMetadata.client_secret) {
+    } else if (clientMetadata.client_secret_hash) {
       // client_secret_basic or client_secret_post authentication
-      // SV-015: Use timing-safe comparison to prevent timing attacks
-      if (!client_secret || !timingSafeEqual(clientMetadata.client_secret, client_secret)) {
+      // SV-015: Verify client secret against stored SHA-256 hash
+      if (
+        !client_secret ||
+        !(await verifyClientSecretHash(client_secret, clientMetadata.client_secret_hash))
+      ) {
         return c.json(
           {
             error: 'invalid_client',
@@ -230,7 +234,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
         );
       }
     }
-    // Public clients (no client_secret and no client_assertion) are allowed for non-FAPI mode
+    // Public clients (no client_secret_hash and no client_assertion) are allowed for non-FAPI mode
 
     // =========================================================================
     // P3: FAPI 2.0 Specific Requirements

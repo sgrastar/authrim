@@ -470,7 +470,10 @@ export async function uploadSecrets(
 // =============================================================================
 
 /** Pages component type (separate from Worker components) */
-export type PagesComponent = 'ar-ui';
+export type PagesComponent = 'ar-admin-ui' | 'ar-login-ui';
+
+/** All Pages components */
+export const PAGES_COMPONENTS: PagesComponent[] = ['ar-admin-ui', 'ar-login-ui'];
 
 /** Result for Pages deployment */
 export interface PagesDeployResult {
@@ -482,43 +485,50 @@ export interface PagesDeployResult {
   duration?: number;
 }
 
+/** Options for deploying a single Pages component */
+export interface PagesDeployOptions extends DeployOptions {
+  /** Cloudflare Pages project name (defaults to {env}-{component}) */
+  projectName?: string;
+}
+
 /**
- * Deploy UI to Cloudflare Pages
+ * Deploy a single UI package to Cloudflare Pages
  */
-export async function deployPages(
-  options: DeployOptions & { projectName?: string }
+export async function deployPagesComponent(
+  component: PagesComponent,
+  options: PagesDeployOptions
 ): Promise<PagesDeployResult> {
   const { env, rootDir, projectName, onProgress, dryRun } = options;
 
   // Security: Validate environment name
   if (!isValidEnv(env)) {
     return {
-      component: 'ar-ui',
-      projectName: projectName || `${env}-ar-ui`,
+      component,
+      projectName: projectName || `${env}-${component}`,
       success: false,
       error: 'Invalid environment name',
       duration: 0,
     };
   }
 
-  const uiDir = join(rootDir, 'packages', 'ar-ui');
+  const uiDir = join(rootDir, 'packages', component);
   // SvelteKit with adapter-cloudflare outputs to .svelte-kit/cloudflare
   const distDir = join(uiDir, '.svelte-kit', 'cloudflare');
   const startTime = Date.now();
 
   if (!existsSync(uiDir)) {
     return {
-      component: 'ar-ui',
-      projectName: projectName || `${env}-ar-ui`,
+      component,
+      projectName: projectName || `${env}-${component}`,
       success: false,
-      error: 'ar-ui package not found',
+      error: `${component} package not found`,
       duration: Date.now() - startTime,
     };
   }
 
   try {
     // Build the UI first
-    onProgress?.('Building ar-ui...');
+    onProgress?.(`Building ${component}...`);
 
     if (!dryRun) {
       await execa('pnpm', ['run', 'build'], {
@@ -529,17 +539,17 @@ export async function deployPages(
     onProgress?.('Deploying to Cloudflare Pages...');
 
     if (dryRun) {
-      onProgress?.('[DRY RUN] Would deploy ar-ui to Pages');
+      onProgress?.(`[DRY RUN] Would deploy ${component} to Pages`);
       return {
-        component: 'ar-ui',
-        projectName: projectName || `${env}-ar-ui`,
+        component,
+        projectName: projectName || `${env}-${component}`,
         success: true,
         deployedAt: new Date().toISOString(),
         duration: Date.now() - startTime,
       };
     }
 
-    const pagesProjectName = projectName || `${env}-ar-ui`;
+    const pagesProjectName = projectName || `${env}-${component}`;
 
     // First, try to create the project (will fail silently if already exists)
     onProgress?.(`Ensuring Pages project exists: ${pagesProjectName}...`);
@@ -567,7 +577,7 @@ export async function deployPages(
       const errorOutput = result.stderr || result.stdout || 'Unknown error';
       onProgress?.(`Pages deploy error: ${errorOutput}`);
       return {
-        component: 'ar-ui',
+        component,
         projectName: pagesProjectName,
         success: false,
         error: errorOutput,
@@ -575,10 +585,10 @@ export async function deployPages(
       };
     }
 
-    onProgress?.(`✓ ar-ui deployed to Pages: ${pagesProjectName}`);
+    onProgress?.(`✓ ${component} deployed to Pages: ${pagesProjectName}`);
 
     return {
-      component: 'ar-ui',
+      component,
       projectName: pagesProjectName,
       success: true,
       deployedAt: new Date().toISOString(),
@@ -589,11 +599,54 @@ export async function deployPages(
     const errorMsg = error instanceof Error ? error.message : String(error);
     const sanitizedError = errorMsg.replace(/\/[^\s:]+/g, '[path]').replace(/\\[^\s:]+/g, '[path]');
     return {
-      component: 'ar-ui',
-      projectName: projectName || `${env}-ar-ui`,
+      component,
+      projectName: projectName || `${env}-${component}`,
       success: false,
       error: sanitizedError,
       duration: Date.now() - startTime,
     };
   }
+}
+
+/** Summary for all Pages deployments */
+export interface PagesDeploymentSummary {
+  results: PagesDeployResult[];
+  successCount: number;
+  failedCount: number;
+}
+
+/**
+ * Deploy all enabled UI packages to Cloudflare Pages
+ */
+export async function deployAllPages(
+  options: DeployOptions,
+  enabledComponents: { loginUi: boolean; adminUi: boolean }
+): Promise<PagesDeploymentSummary> {
+  const results: PagesDeployResult[] = [];
+
+  if (enabledComponents.loginUi) {
+    const loginResult = await deployPagesComponent('ar-login-ui', options);
+    results.push(loginResult);
+  }
+
+  if (enabledComponents.adminUi) {
+    const adminResult = await deployPagesComponent('ar-admin-ui', options);
+    results.push(adminResult);
+  }
+
+  return {
+    results,
+    successCount: results.filter((r) => r.success).length,
+    failedCount: results.filter((r) => !r.success).length,
+  };
+}
+
+/**
+ * @deprecated Use deployPagesComponent instead for new code
+ * Deploy UI to Cloudflare Pages (legacy - deploys ar-login-ui)
+ */
+export async function deployPages(
+  options: DeployOptions & { projectName?: string }
+): Promise<PagesDeployResult> {
+  return deployPagesComponent('ar-login-ui', options);
 }

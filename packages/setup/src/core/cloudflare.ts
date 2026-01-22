@@ -1057,8 +1057,8 @@ const AUTHRIM_PATTERNS = {
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue: /^([a-z][a-z0-9-]*)-audit-queue$/,
   r2: /^([a-z][a-z0-9-]*)-authrim-avatars$/,
-  // Pages projects: {env}-ar-ui
-  pages: /^([a-z][a-z0-9-]*)-ar-ui$/,
+  // Pages projects: {env}-ar-admin-ui, {env}-ar-login-ui
+  pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };
 
 export interface EnvironmentInfo {

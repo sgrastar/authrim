@@ -3,7 +3,6 @@ import type { Env, ClientMetadata } from '@authrim/ar-lib-core';
 import type { IntrospectionResponse } from '@authrim/ar-lib-core';
 import {
   validateClientId,
-  timingSafeEqual,
   getRefreshToken,
   isTokenRevoked,
   parseToken,
@@ -21,6 +20,7 @@ import {
   // Shared utilities
   parseBasicAuth,
   getKeyByKid,
+  verifyClientSecretHash,
   // Database adapter for user status check
   D1Adapter,
 } from '@authrim/ar-lib-core';
@@ -143,8 +143,11 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   }
   // client_secret_basic or client_secret_post authentication
   else if (client_secret) {
-    // Verify client_secret using timing-safe comparison to prevent timing attacks
-    if (!timingSafeEqual(clientMetadata.client_secret ?? '', client_secret)) {
+    // Verify client_secret using timing-safe hash comparison to prevent timing attacks
+    if (
+      !clientMetadata.client_secret_hash ||
+      !(await verifyClientSecretHash(client_secret, clientMetadata.client_secret_hash))
+    ) {
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
     }
     // Authentication successful via client_secret

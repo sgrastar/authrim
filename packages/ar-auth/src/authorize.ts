@@ -74,6 +74,9 @@ import {
   publishEvent,
   CONSENT_EVENTS,
   type ConsentEventData,
+  // Cookie Configuration
+  getSessionCookieSameSite,
+  getBrowserStateCookieSameSite,
 } from '@authrim/ar-lib-core';
 import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 'jose';
 // NIST SP 800-63-4 Assurance Levels
@@ -1223,7 +1226,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     // FAPI 2.0 SHALL only support confidential clients (unless explicitly allowed)
     const allowPublicClients = fapiConfig.allowPublicClients !== false;
-    const isPublicClient = !clientMetadata.client_secret;
+    const isPublicClient = !clientMetadata.client_secret_hash;
 
     if (!allowPublicClients && isPublicClient) {
       return c.json(
@@ -1611,6 +1614,29 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const scopeValidation = validateScope(scope);
   if (!scopeValidation.valid) {
     return sendError('invalid_scope', scopeValidation.error);
+  }
+
+  // ==========================================================================
+  // DCR Scope Restriction Check (RFC 7591 extension)
+  // If client has requestable_scopes whitelist, verify all requested scopes
+  // are in that list. This prevents clients from requesting unauthorized scopes.
+  // ==========================================================================
+  if (
+    clientMetadata.requestable_scopes &&
+    clientMetadata.requestable_scopes.length > 0 &&
+    scope
+  ) {
+    const requestableSet = new Set(clientMetadata.requestable_scopes);
+    const requestedScopes = scope.split(' ').filter((s) => s.length > 0);
+    const disallowedScopes = requestedScopes.filter((s) => !requestableSet.has(s));
+
+    if (disallowedScopes.length > 0) {
+      return sendError(
+        'invalid_scope',
+        `Client is not authorized to request scope(s): ${disallowedScopes.join(', ')}. ` +
+          `Allowed scopes: ${clientMetadata.requestable_scopes.join(', ')}`
+      );
+    }
   }
 
   // RFC 9396: Rich Authorization Requests (RAR) validation
@@ -2856,9 +2882,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         // CRITICAL: Set browser_state cookie for check_session_iframe
         // This is needed when user has existing session but no browser_state cookie
         // (e.g., session created before browser_state feature was deployed)
+        // SameSite is determined dynamically based on origin configuration
+        const browserStateSameSite = getBrowserStateCookieSameSite(c.env);
         c.res.headers.append(
           'Set-Cookie',
-          `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=None; Secure; Max-Age=3600`
+          `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=${browserStateSameSite}; Secure; Max-Age=3600`
         );
       }
     } catch (error) {
@@ -3832,17 +3860,20 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
       );
 
       // Set session cookie with the pre-generated sharded session ID (HttpOnly for security)
+      // SameSite is determined dynamically based on origin configuration
+      const sessionSameSiteValue = getSessionCookieSameSite(c.env);
       c.header(
         'Set-Cookie',
-        `authrim_session=${newSessionId}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=3600`
+        `authrim_session=${newSessionId}; Path=/; HttpOnly; SameSite=${sessionSameSiteValue}; Secure; Max-Age=3600`
       );
 
       // Generate and set browser state cookie for OIDC Session Management
       // This cookie is NOT HttpOnly so check_session_iframe can read it via JavaScript
       const browserState = await generateBrowserState(newSessionId);
+      const browserStateSameSiteValue = getBrowserStateCookieSameSite(c.env);
       c.res.headers.append(
         'Set-Cookie',
-        `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=None; Secure; Max-Age=3600`
+        `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=${browserStateSameSiteValue}; Secure; Max-Age=3600`
       );
     } catch (error) {
       log.error('Failed to create session', { action: 'session_create' }, error as Error);

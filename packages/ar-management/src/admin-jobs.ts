@@ -563,8 +563,8 @@ const ImportOptionsSchema = z.object({
  */
 const BulkUpdateOptionsSchema = z.object({
   fields: z.array(z.string()).min(1),
-  filter: z.record(z.unknown()).optional(),
-  values: z.record(z.unknown()),
+  filter: z.record(z.string(), z.unknown()).optional(),
+  values: z.record(z.string(), z.unknown()),
   dry_run: z.boolean().default(false),
 });
 
@@ -576,7 +576,7 @@ const ReportOptionsSchema = z.object({
   from_date: z.string().datetime(),
   to_date: z.string().datetime(),
   format: z.enum(['json', 'csv', 'pdf']).default('json'),
-  filters: z.record(z.unknown()).optional(),
+  filters: z.record(z.string(), z.unknown()).optional(),
 });
 
 /**

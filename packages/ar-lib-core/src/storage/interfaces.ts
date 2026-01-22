@@ -282,7 +282,7 @@ export interface IClientRepository {
  */
 export interface ClientData {
   client_id: string;
-  client_secret?: string; // Hashed
+  client_secret_hash?: string; // SHA-256 hash of client_secret
   client_name?: string;
   redirect_uris: string[];
   grant_types: string[];

@@ -73,8 +73,14 @@ export interface SettingMeta {
   restartRequired?: boolean;
   /** Dependency on other settings */
   dependsOn?: Array<{ key: string; value: unknown }>;
-  /** Visibility level */
-  visibility?: 'public' | 'admin' | 'internal';
+  /**
+   * Visibility level
+   * - 'public': visible to all users
+   * - 'admin': visible to admin users
+   * - 'internal': setup-time only, locked in UI
+   * - 'page': managed on a dedicated page, hidden from settings list
+   */
+  visibility?: 'public' | 'admin' | 'internal' | 'page';
 }
 
 /**

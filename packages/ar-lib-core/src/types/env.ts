@@ -260,9 +260,20 @@ export interface Env {
   // URL Configuration
   // ============================================================
   DEFAULT_REDIRECT_URL?: string; // Default redirect URL for magic link verification
-  UI_URL?: string; // URL of the UI deployment (e.g., https://login.example.com)
+  UI_URL?: string; // URL of the Login UI deployment (e.g., https://login.example.com)
+  ADMIN_UI_URL?: string; // URL of the Admin UI deployment (e.g., https://admin.example.com)
   TRUSTED_JWT_ISSUERS?: string; // Comma-separated list of trusted issuers for JWT Bearer flow
   TRUSTED_DOMAINS?: string; // Comma-separated trusted client domains
+
+  // ============================================================
+  // Cookie Security Configuration
+  // ============================================================
+  // SameSite attribute for cookies. Auto-detected if not set:
+  // - Same origin (ISSUER_URL == UI_URL) -> 'Lax' (more secure)
+  // - Cross origin -> 'None' (required for cross-origin)
+  COOKIE_SAME_SITE?: string; // 'Strict', 'Lax', or 'None' (general override)
+  ADMIN_COOKIE_SAME_SITE?: string; // Override for admin session cookies
+  BROWSER_STATE_COOKIE_SAME_SITE?: string; // Override for OIDC browser state cookies
 
   // ============================================================
   // Logging Configuration

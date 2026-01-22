@@ -49,7 +49,7 @@ import {
   deployAll,
   uploadSecrets,
   buildApiPackages,
-  deployPages,
+  deployAllPages,
   type DeployResult,
 } from '../core/deploy.js';
 import { getEnabledComponents, type WorkerComponent } from '../core/naming.js';
@@ -371,11 +371,13 @@ export function createApiRoutes(): Hono {
           },
           loginUi: {
             custom: loginUiDomain || null,
-            auto: `https://${env}-ar-ui.pages.dev`,
+            auto: `https://${env}-ar-login-ui.pages.dev`,
+            sameAsApi: false,
           },
           adminUi: {
             custom: adminUiDomain || null,
-            auto: `https://${env}-ar-ui.pages.dev/admin`,
+            auto: `https://${env}-ar-admin-ui.pages.dev`,
+            sameAsApi: false,
           },
         };
 
@@ -806,28 +808,43 @@ export function createApiRoutes(): Hono {
 
         state.deployResults = summary.results;
 
-        // Deploy Pages (ar-ui) if loginUi or adminUi is enabled
-        let pagesDeployResult = null;
+        // Deploy Pages (ar-login-ui, ar-admin-ui) if loginUi or adminUi is enabled
+        let pagesSummary = null;
         const cfg = state.config;
         if (cfg?.components?.loginUi || cfg?.components?.adminUi) {
           addProgress('Deploying Login/Admin UI to Cloudflare Pages...');
-          pagesDeployResult = await deployPages({
-            env,
-            rootDir: resolve(rootDir),
-            dryRun,
-            onProgress: addProgress,
-            projectName: `${env}-ar-ui`,
-          });
+          pagesSummary = await deployAllPages(
+            {
+              env,
+              rootDir: resolve(rootDir),
+              dryRun,
+              onProgress: addProgress,
+            },
+            {
+              loginUi: cfg?.components?.loginUi ?? true,
+              adminUi: cfg?.components?.adminUi ?? true,
+            }
+          );
 
-          if (pagesDeployResult.success) {
-            addProgress(`✓ UI deployed to Pages: ${pagesDeployResult.projectName}`);
+          if (pagesSummary.failedCount === 0) {
+            addProgress(`✓ All UI packages deployed to Pages`);
+            for (const result of pagesSummary.results) {
+              addProgress(`  • ${result.component}: ${result.projectName}`);
+            }
           } else {
-            addProgress(`✗ Pages deployment failed: ${pagesDeployResult.error}`);
+            addProgress(
+              `✗ Pages deployment: ${pagesSummary.successCount}/${pagesSummary.results.length} succeeded`
+            );
+            for (const result of pagesSummary.results) {
+              if (!result.success) {
+                addProgress(`  ✗ ${result.component}: ${result.error}`);
+              }
+            }
           }
         }
 
         const workersSuccess = summary.failedCount === 0;
-        const pagesSuccess = pagesDeployResult ? pagesDeployResult.success : true;
+        const pagesSuccess = pagesSummary ? pagesSummary.failedCount === 0 : true;
 
         // Run D1 migrations after deployment (if enabled and not dry-run)
         let migrationsResult = null;
@@ -854,7 +871,8 @@ export function createApiRoutes(): Hono {
           if (!workersSuccess) {
             state.error = `${summary.failedCount} components failed to deploy`;
           } else if (!pagesSuccess) {
-            state.error = `Pages deployment failed: ${pagesDeployResult?.error}`;
+            const failedPages = pagesSummary?.results.filter((r) => !r.success) ?? [];
+            state.error = `Pages deployment failed: ${failedPages.map((r) => `${r.component}: ${r.error}`).join(', ')}`;
           } else if (!migrationsSuccess) {
             state.error = `Migrations failed: ${migrationsResult?.core.error || migrationsResult?.pii.error}`;
           }
@@ -863,7 +881,7 @@ export function createApiRoutes(): Hono {
         return c.json({
           success: workersSuccess && pagesSuccess && migrationsSuccess,
           summary,
-          pagesResult: pagesDeployResult,
+          pagesResult: pagesSummary,
           migrationsResult,
         });
       } catch (error) {

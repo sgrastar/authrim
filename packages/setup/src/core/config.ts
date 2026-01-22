@@ -18,13 +18,26 @@ export const UrlConfigSchema = z.object({
   auto: z.string().url().optional(),
 });
 
+export const UiUrlConfigSchema = z.object({
+  /** Custom domain (null = use auto-generated URL) */
+  custom: z.string().url().nullable().optional(),
+  /** Auto-generated URL (workers.dev or pages.dev) */
+  auto: z.string().url().optional(),
+  /**
+   * Whether to serve this UI from the same domain as the API via proxy
+   * - true: UI is proxied through ar-router (e.g., https://api.example.com/admin)
+   * - false: UI is served from its own Pages URL (e.g., https://admin.pages.dev)
+   */
+  sameAsApi: z.boolean().default(false),
+});
+
 export const UrlsConfigSchema = z.object({
   /** API / OIDC issuer URL */
   api: UrlConfigSchema,
   /** Login UI URL */
-  loginUi: UrlConfigSchema,
+  loginUi: UiUrlConfigSchema,
   /** Admin UI URL */
-  adminUi: UrlConfigSchema,
+  adminUi: UiUrlConfigSchema,
 });
 
 // =============================================================================
@@ -317,6 +330,7 @@ export const AuthrimConfigSchema = z.object({
 
 export type AuthrimConfig = z.infer<typeof AuthrimConfigSchema>;
 export type UrlConfig = z.infer<typeof UrlConfigSchema>;
+export type UiUrlConfig = z.infer<typeof UiUrlConfigSchema>;
 export type UrlsConfig = z.infer<typeof UrlsConfigSchema>;
 export type SourceInfo = z.infer<typeof SourceInfoSchema>;
 export type EnvironmentConfig = z.infer<typeof EnvironmentConfigSchema>;

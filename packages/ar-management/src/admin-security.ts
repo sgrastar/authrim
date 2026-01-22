@@ -1014,8 +1014,12 @@ export async function adminSecurityThreatsHandler(c: Context<{ Bindings: Env }>)
 /**
  * IP reputation check request schema
  */
+// IP address regex pattern (IPv4 and IPv6)
+const ipAddressPattern =
+  /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){1,7}:$|^(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}$/;
+
 const IpReputationRequestSchema = z.object({
-  ip_addresses: z.array(z.string().ip()).min(1).max(100),
+  ip_addresses: z.array(z.string().regex(ipAddressPattern, 'Invalid IP address')).min(1).max(100),
 });
 
 /**

@@ -39,6 +39,9 @@ import {
   getLogger,
   // Audit Log
   createAuditLog,
+  // Cookie Configuration
+  getSessionCookieSameSite,
+  getBrowserStateCookieSameSite,
 } from '@authrim/ar-lib-core';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import {
@@ -621,12 +624,13 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       });
 
       // Set authentication session cookie (only for new sessions, not anonymous upgrade)
+      // SameSite is determined dynamically based on origin configuration
       if (!isAnonymousUpgrade) {
         setCookie(c, 'authrim_session', sessionId, {
           path: '/',
           httpOnly: true,
           secure: true,
-          sameSite: 'None', // Needs None for OIDC Session Management cross-site iframe
+          sameSite: getSessionCookieSameSite(c.env),
           maxAge: 24 * 60 * 60, // 24 hours (matches session TTL)
         });
 
@@ -635,7 +639,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         setCookie(c, BROWSER_STATE_COOKIE_NAME, browserState, {
           path: '/',
           secure: true,
-          sameSite: 'None', // Needs None for OIDC Session Management cross-site iframe
+          sameSite: getBrowserStateCookieSameSite(c.env),
           maxAge: 24 * 60 * 60, // 24 hours (matches session TTL)
         });
       }

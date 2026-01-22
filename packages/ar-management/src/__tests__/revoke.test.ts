@@ -14,6 +14,7 @@ const {
   mockClientRepository,
   mockValidateClientId,
   mockTimingSafeEqual,
+  mockVerifyClientSecretHash,
   mockDeleteRefreshToken,
   mockGetRefreshToken,
   mockRevokeToken,
@@ -37,6 +38,9 @@ const {
     mockClientRepository: clientRepo,
     mockValidateClientId: vi.fn(),
     mockTimingSafeEqual: vi.fn((a: string, b: string) => a === b),
+    mockVerifyClientSecretHash: vi.fn(async (secret: string, hash: string) => {
+      return hash === 'hash_' + secret;
+    }),
     mockDeleteRefreshToken: vi.fn(),
     mockGetRefreshToken: vi.fn(),
     mockRevokeToken: vi.fn(),
@@ -60,6 +64,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     validateClientId: mockValidateClientId,
     timingSafeEqual: mockTimingSafeEqual,
+    verifyClientSecretHash: mockVerifyClientSecretHash,
     deleteRefreshToken: mockDeleteRefreshToken,
     getRefreshToken: mockGetRefreshToken,
     revokeToken: mockRevokeToken,
@@ -84,6 +89,7 @@ import { importJWK, decodeProtectedHeader } from 'jose';
 // Use the hoisted mocks directly (already defined above vi.mock)
 const validateClientId = mockValidateClientId;
 const timingSafeEqual = mockTimingSafeEqual;
+const verifyClientSecretHash = mockVerifyClientSecretHash;
 const deleteRefreshToken = mockDeleteRefreshToken;
 const getRefreshToken = mockGetRefreshToken;
 const revokeToken = mockRevokeToken;
@@ -198,7 +204,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
@@ -223,7 +229,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       const response = await revokeHandler(c);
@@ -257,7 +263,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
@@ -285,7 +291,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
@@ -356,11 +362,10 @@ describe('Token Revocation Endpoint', () => {
       });
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(timingSafeEqual).mockReturnValue(false);
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'correct-secret',
+        client_secret_hash: 'hash_correct-secret', // won't match 'wrong-secret'
       });
 
       const response = await revokeHandler(c);
@@ -371,7 +376,7 @@ describe('Token Revocation Endpoint', () => {
       expect(body.error).toBe('invalid_client');
     });
 
-    it('should use timing-safe comparison for client_secret', async () => {
+    it('should use hash verification for client_secret', async () => {
       const c = createMockContext({
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -384,7 +389,6 @@ describe('Token Revocation Endpoint', () => {
       });
 
       vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      vi.mocked(timingSafeEqual).mockReturnValue(true);
       vi.mocked(parseToken).mockReturnValue({
         jti: 'token-jti-123',
         client_id: 'client-123',
@@ -392,12 +396,12 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
 
-      expect(timingSafeEqual).toHaveBeenCalledWith('client-secret', 'client-secret');
+      expect(verifyClientSecretHash).toHaveBeenCalledWith('client-secret', 'hash_client-secret');
     });
 
     it('should return 401 for invalid Basic auth header format', async () => {
@@ -441,7 +445,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
@@ -469,7 +473,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
@@ -498,7 +502,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
@@ -527,7 +531,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
@@ -560,7 +564,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
@@ -590,7 +594,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
@@ -626,7 +630,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
@@ -662,7 +666,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
@@ -713,7 +717,7 @@ describe('Token Revocation Endpoint', () => {
       // Both contexts use the same mock repository
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(validTokenContext);
@@ -744,7 +748,7 @@ describe('Token Revocation Endpoint', () => {
 
       mockClientRepository.findByClientId.mockResolvedValue({
         client_id: 'client-123',
-        client_secret: 'client-secret',
+        client_secret_hash: 'hash_client-secret',
       });
 
       await revokeHandler(c);
