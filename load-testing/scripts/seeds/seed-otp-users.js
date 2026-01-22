@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 
 /**
  * OTP User Seed Generation Script

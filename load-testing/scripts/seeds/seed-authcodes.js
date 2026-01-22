@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 
 /**
  * Parallel Seed Data Generation Script (Pre-created Users Version)

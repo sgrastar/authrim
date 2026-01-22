@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 
 /**
  * Passkey User Seed Generation Script
