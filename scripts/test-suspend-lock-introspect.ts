@@ -142,7 +142,9 @@ async function testSuspendUserAndIntrospect() {
   }
 
   // Note: Response format is { users: [...], pagination: {...} }
-  const usersData = (await usersResponse.json()) as { users: Array<{ id: string; email: string; status: string }> };
+  const usersData = (await usersResponse.json()) as {
+    users: Array<{ id: string; email: string; status: string }>;
+  };
 
   let testUser: { id: string; email: string; status: string };
 
@@ -256,7 +258,9 @@ async function testLockUserFlow() {
   }
 
   // Note: Response format is { users: [...], pagination: {...} }
-  const usersData = (await usersResponse.json()) as { users?: Array<{ id: string; status: string }> };
+  const usersData = (await usersResponse.json()) as {
+    users?: Array<{ id: string; status: string }>;
+  };
 
   if (!usersData.users) {
     log('No users data in response, skipping lock test...');

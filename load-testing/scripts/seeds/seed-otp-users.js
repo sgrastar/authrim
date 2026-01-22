@@ -149,13 +149,13 @@ async function createUsersBatch(startIndex, batchSize) {
  * Main process
  */
 async function main() {
-  console.log("🚀 OTP User Seed Generator");
+  console.log('🚀 OTP User Seed Generator');
   console.log(`   BASE_URL       : ${BASE_URL}`);
   console.log(`   OTP_USER_COUNT : ${OTP_USER_COUNT}`);
   console.log(`   CONCURRENCY    : ${CONCURRENCY}`);
   console.log(`   USER_PREFIX    : ${USER_PREFIX}`);
   console.log(`   OUTPUT_DIR     : ${OUTPUT_DIR}`);
-  console.log("");
+  console.log('');
 
   const users = [];
   let createdCount = 0;
@@ -166,7 +166,7 @@ async function main() {
   const totalBatches = Math.ceil(OTP_USER_COUNT / CONCURRENCY);
 
   console.log(`📋 Creating ${OTP_USER_COUNT} users in ${totalBatches} batches...`);
-  console.log("");
+  console.log('');
 
   for (let batch = 0; batch < totalBatches; batch++) {
     const startIndex = batch * CONCURRENCY;
@@ -201,8 +201,8 @@ async function main() {
   }
 
   const totalTime = (Date.now() - startTime) / 1000;
-  console.log("");
-  console.log("✅ Seed generation complete:");
+  console.log('');
+  console.log('✅ Seed generation complete:');
   console.log(`   Total users: ${users.length}`);
   console.log(`   New created: ${createdCount}`);
   console.log(`   Already existing: ${existingCount}`);
@@ -211,7 +211,7 @@ async function main() {
   console.log(`   Rate: ${(users.length / totalTime).toFixed(1)} users/sec`);
 
   if (users.length === 0) {
-    console.error("❌ No users created. Aborting.");
+    console.error('❌ No users created. Aborting.');
     process.exit(1);
   }
 
@@ -230,11 +230,11 @@ async function main() {
   fs.writeFileSync(txtPath, users.map((u) => u.email).join('\n') + '\n');
   console.log(`📁 Saved email list to ${txtPath}`);
 
-  console.log("");
-  console.log("💡 Usage with k6 benchmark:");
-  console.log("   k6 run -e USER_LIST_PATH=../seeds/otp_user_list.txt \\");
-  console.log("     -e PRESET=rps30 \\");
-  console.log("     scripts/test-mail-otp-full-login-benchmark.js");
+  console.log('');
+  console.log('💡 Usage with k6 benchmark:');
+  console.log('   k6 run -e USER_LIST_PATH=../seeds/otp_user_list.txt \\');
+  console.log('     -e PRESET=rps30 \\');
+  console.log('     scripts/test-mail-otp-full-login-benchmark.js');
 }
 
 main().catch((err) => {

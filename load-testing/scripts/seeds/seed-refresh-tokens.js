@@ -289,7 +289,7 @@ async function generateBatch(privateKey, kid, issuer, scope, batchSize, startInd
 }
 
 async function main() {
-  console.log("🚀 Parallel Refresh Token Generator (V3 - Sharding)");
+  console.log('🚀 Parallel Refresh Token Generator (V3 - Sharding)');
   console.log(`   BASE_URL       : ${BASE_URL}`);
   console.log(`   CLIENT_ID      : ${CLIENT_ID}`);
   console.log(`   USER_ID_PREFIX : ${USER_ID_PREFIX}`);

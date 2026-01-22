@@ -371,7 +371,7 @@ async function generateBatch(batchSize) {
 async function main() {
   setupSignalHandlers();
 
-  console.log("🚀 Parallel seed generator (pre-created users)");
+  console.log('🚀 Parallel seed generator (pre-created users)');
   console.log(`  BASE_URL        : ${BASE_URL}`);
   console.log(`  AUTH_CODE_COUNT : ${AUTH_CODE_COUNT} (new codes to generate)`);
   console.log(`  USER_COUNT      : ${USER_COUNT === 0 ? 'all' : USER_COUNT} (users to use)`);
@@ -443,7 +443,7 @@ async function main() {
   // Final save
   const totalTime = (Date.now() - startTime) / 1000;
   console.log('');
-  console.log("✅ Generation complete:");
+  console.log('✅ Generation complete:');
   console.log(`   New codes: ${newCodesCount}`);
   console.log(`   Total codes: ${allCodes.length}`);
   console.log(`   Errors: ${errorCount}`);

@@ -737,7 +737,7 @@ async function revokeTokensBatch(tokens) {
 }
 
 async function main() {
-  console.log("🚀 Token Introspection Control Plane Test - Seed Generator");
+  console.log('🚀 Token Introspection Control Plane Test - Seed Generator');
   console.log(`   BASE_URL       : ${BASE_URL}`);
   console.log(`   CLIENT_ID      : ${CLIENT_ID}`);
   if (testUsers) {
@@ -754,10 +754,10 @@ async function main() {
       `   TARGET_REGION  : ${TARGET_REGION} (shards ${range.start}-${range.end}, ${range.end - range.start + 1} shards)`
     );
   } else {
-    console.log("   TARGET_REGION  : all (shards 0-19, 20 shards)");
+    console.log('   TARGET_REGION  : all (shards 0-19, 20 shards)');
   }
   console.log('');
-  console.log("📊 Token Distribution (RFC 7662 + Keycloak/Auth0 benchmark):");
+  console.log('📊 Token Distribution (RFC 7662 + Keycloak/Auth0 benchmark):');
   console.log(
     `   Valid (standard): ${Math.floor(TOKEN_COUNT * TOKEN_MIX.valid)} (${TOKEN_MIX.valid * 100}%)`
   );
@@ -910,7 +910,7 @@ async function main() {
   console.log(`   Rate:             ${(tokens.length / totalTime).toFixed(1)} tokens/sec`);
   console.log(`   Errors:           ${errorCount}`);
   console.log('');
-  console.log("🔍 Verification Summary:");
+  console.log('🔍 Verification Summary:');
   console.log(`   Total verified:   ${totalVerified} samples`);
   console.log(`   Incorrect:        ${totalIncorrect}`);
   console.log(`   Status:           ${allCorrect ? '✅ All correct' : '❌ Some incorrect'}`);
