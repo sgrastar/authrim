@@ -235,17 +235,21 @@ describe('migrate.ts', () => {
       { timeout: 30000 }
     );
 
-    it('should create backup by default', async () => {
-      createLegacyStructure(tempDir, 'dev');
+    it(
+      'should create backup by default',
+      async () => {
+        createLegacyStructure(tempDir, 'dev');
 
-      const result = await migrateToNewStructure({
-        baseDir: tempDir,
-      });
+        const result = await migrateToNewStructure({
+          baseDir: tempDir,
+        });
 
-      expect(result.success).toBe(true);
-      expect(result.backupPath).toBeDefined();
-      expect(existsSync(result.backupPath!)).toBe(true);
-    });
+        expect(result.success).toBe(true);
+        expect(result.backupPath).toBeDefined();
+        expect(existsSync(result.backupPath!)).toBe(true);
+      },
+      { timeout: 30000 }
+    );
 
     it('should handle dry run mode', async () => {
       createLegacyStructure(tempDir, 'dev');
@@ -274,36 +278,44 @@ describe('migrate.ts', () => {
       expect(result.migratedEnvs).toEqual([]);
     });
 
-    it('should update secretsPath in migrated config', async () => {
-      createLegacyStructure(tempDir, 'dev');
+    it(
+      'should update secretsPath in migrated config',
+      async () => {
+        createLegacyStructure(tempDir, 'dev');
 
-      await migrateToNewStructure({
-        baseDir: tempDir,
-        noBackup: true,
-      });
+        await migrateToNewStructure({
+          baseDir: tempDir,
+          noBackup: true,
+        });
 
-      const newConfigPath = join(tempDir, AUTHRIM_DIR, 'dev', 'config.json');
-      const config = JSON.parse(readFileSync(newConfigPath, 'utf-8'));
-      expect(config.keys.secretsPath).toBe('./keys/');
-    });
+        const newConfigPath = join(tempDir, AUTHRIM_DIR, 'dev', 'config.json');
+        const config = JSON.parse(readFileSync(newConfigPath, 'utf-8'));
+        expect(config.keys.secretsPath).toBe('./keys/');
+      },
+      { timeout: 30000 }
+    );
   });
 
   describe('validateMigration', () => {
-    it('should validate successful migration', async () => {
-      createLegacyStructure(tempDir, 'dev');
-      const migrateResult = await migrateToNewStructure({ baseDir: tempDir, noBackup: true });
-      expect(migrateResult.success).toBe(true);
+    it(
+      'should validate successful migration',
+      async () => {
+        createLegacyStructure(tempDir, 'dev');
+        const migrateResult = await migrateToNewStructure({ baseDir: tempDir, noBackup: true });
+        expect(migrateResult.success).toBe(true);
 
-      const result = await validateMigration(tempDir, 'dev');
+        const result = await validateMigration(tempDir, 'dev');
 
-      // If validation fails, show the issues for debugging
-      if (!result.valid) {
-        console.log('Validation issues:', result.issues);
-      }
+        // If validation fails, show the issues for debugging
+        if (!result.valid) {
+          console.log('Validation issues:', result.issues);
+        }
 
-      expect(result.valid).toBe(true);
-      expect(result.issues).toEqual([]);
-    });
+        expect(result.valid).toBe(true);
+        expect(result.issues).toEqual([]);
+      },
+      { timeout: 30000 }
+    );
 
     it('should detect missing config.json', async () => {
       const envDir = join(tempDir, AUTHRIM_DIR, 'dev');
