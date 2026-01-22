@@ -453,8 +453,7 @@ function generateEnvVars(
     vars['COOKIE_SAME_SITE'] = loginUiSameOrigin ? 'Lax' : 'None';
 
     // Admin UI URL and cookie configuration
-    const adminUiUrl =
-      config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
+    const adminUiUrl = config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
     vars['ADMIN_UI_URL'] = adminUiUrl;
     const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
     vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';
@@ -463,8 +462,7 @@ function generateEnvVars(
   // ar-management also needs cookie configuration for admin sessions
   if (component === 'ar-management') {
     // Admin UI URL and cookie configuration (same logic as ar-auth)
-    const adminUiUrl =
-      config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
+    const adminUiUrl = config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
     vars['ADMIN_UI_URL'] = adminUiUrl;
     const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
     vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';

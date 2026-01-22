@@ -159,23 +159,12 @@ const MAX_DISCOVERY_RESPONSE_SIZE = 100 * 1024;
 /**
  * Blocked hostnames for SSRF protection
  */
-const BLOCKED_HOSTNAMES = [
-  'localhost',
-  '127.0.0.1',
-  '0.0.0.0',
-  '::1',
-  '[::1]',
-];
+const BLOCKED_HOSTNAMES = ['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'];
 
 /**
  * Blocked hostname suffixes for SSRF protection
  */
-const BLOCKED_HOSTNAME_SUFFIXES = [
-  '.local',
-  '.localhost',
-  '.internal',
-  '.lan',
-];
+const BLOCKED_HOSTNAME_SUFFIXES = ['.local', '.localhost', '.internal', '.lan'];
 
 /**
  * Check if an IP address is private/internal

@@ -207,14 +207,12 @@
 		}
 	}
 
-	// eslint-disable-next-line @typescript-eslint/no-unused-vars
-	function getEdgeStyle(edgeType: string): string {
+	function getEdgeStyle(_edgeType: string): string {
 		// All edges use standard gray color - hover/selection handled by CSS
 		return 'stroke: #b1b1b7; stroke-width: 1.5px;';
 	}
 
-	// eslint-disable-next-line @typescript-eslint/no-unused-vars
-	function getEdgeLabelStyle(edgeType: string): string {
+	function getEdgeLabelStyle(_edgeType: string): string {
 		// All labels use standard gray color
 		return 'fill: #6b7280; font-size: 10px; font-weight: 500;';
 	}
@@ -276,7 +274,6 @@
 	});
 
 	// Handle node drag stop
-	// eslint-disable-next-line @typescript-eslint/no-unused-vars
 	function handleNodeDragStop(_args: {
 		targetNode: Node | null;
 		nodes: Node[];
@@ -320,7 +317,6 @@
 	};
 
 	// Handle edge click to allow deletion
-	// eslint-disable-next-line @typescript-eslint/no-unused-vars
 	function handleEdgeClick(_args: { edge: Edge; event: MouseEvent }) {
 		if (readonly) return;
 		// Edge can be deleted by pressing delete key after clicking

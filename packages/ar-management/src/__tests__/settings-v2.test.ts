@@ -51,7 +51,14 @@ function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string>
 
   const app = new Hono<{
     Bindings: Env;
-    Variables: { adminAuth?: { userId: string; authMethod: 'bearer' | 'session'; roles: string[]; org_id?: string } };
+    Variables: {
+      adminAuth?: {
+        userId: string;
+        authMethod: 'bearer' | 'session';
+        roles: string[];
+        org_id?: string;
+      };
+    };
   }>();
 
   // Mock admin auth middleware - set adminAuth with system_admin role

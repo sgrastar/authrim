@@ -1621,11 +1621,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // If client has requestable_scopes whitelist, verify all requested scopes
   // are in that list. This prevents clients from requesting unauthorized scopes.
   // ==========================================================================
-  if (
-    clientMetadata.requestable_scopes &&
-    clientMetadata.requestable_scopes.length > 0 &&
-    scope
-  ) {
+  if (clientMetadata.requestable_scopes && clientMetadata.requestable_scopes.length > 0 && scope) {
     const requestableSet = new Set(clientMetadata.requestable_scopes);
     const requestedScopes = scope.split(' ').filter((s) => s.length > 0);
     const disallowedScopes = requestedScopes.filter((s) => !requestableSet.has(s));

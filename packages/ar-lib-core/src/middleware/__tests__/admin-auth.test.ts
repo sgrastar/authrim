@@ -662,7 +662,8 @@ describe('adminAuthMiddleware', () => {
       // Cookie with multiple values
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
-          Cookie: 'other_cookie=value; authrim_admin_session=g1:apac:0:session_cookie123; another=thing',
+          Cookie:
+            'other_cookie=value; authrim_admin_session=g1:apac:0:session_cookie123; another=thing',
         },
       });
 

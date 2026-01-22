@@ -171,7 +171,7 @@ export function getCookieOptions(
 
   return {
     path: overrides.path ?? '/',
-    httpOnly: overrides.httpOnly ?? (type !== 'browserState'), // browserState needs JS access
+    httpOnly: overrides.httpOnly ?? type !== 'browserState', // browserState needs JS access
     secure: true, // Always true - SameSite=None requires Secure
     sameSite,
     ...(overrides.maxAge !== undefined && { maxAge: overrides.maxAge }),
