@@ -117,7 +117,7 @@ export class D1Adapter implements DatabaseAdapter {
           partition: this.partition,
           sql: this.truncateSql(sql),
         });
-        throw new Error("D1Adapter.query failed after retries exhausted");
+        throw new Error('D1Adapter.query failed after retries exhausted');
       }
 
       if (this.debug) {
@@ -203,7 +203,7 @@ export class D1Adapter implements DatabaseAdapter {
           partition: this.partition,
           sql: this.truncateSql(sql),
         });
-        throw new Error("D1Adapter.execute failed after retries exhausted");
+        throw new Error('D1Adapter.execute failed after retries exhausted');
       }
 
       const executeResult: ExecuteResult = {
@@ -396,7 +396,7 @@ export class D1Adapter implements DatabaseAdapter {
           partition: this.partition,
           statementCount: statements.length,
         });
-        throw new Error("D1Adapter.batch failed after retries exhausted");
+        throw new Error('D1Adapter.batch failed after retries exhausted');
       }
 
       const executeResults: ExecuteResult[] = results.map((result) => ({

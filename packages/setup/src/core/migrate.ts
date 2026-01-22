@@ -411,9 +411,9 @@ async function migrateEnvironment(
 
       if (!dryRun) {
         await writeFile(newPaths.config, JSON.stringify(config, null, 2));
-        onProgress?.("  Migrated config.json");
+        onProgress?.('  Migrated config.json');
       } else {
-        onProgress?.("  Would migrate config.json");
+        onProgress?.('  Would migrate config.json');
       }
       files.push(newPaths.config);
     } catch (error) {
@@ -431,9 +431,9 @@ async function migrateEnvironment(
 
       if (!dryRun) {
         await writeFile(newPaths.lock, JSON.stringify(lock, null, 2));
-        onProgress?.("  Migrated lock.json");
+        onProgress?.('  Migrated lock.json');
       } else {
-        onProgress?.("  Would migrate lock.json");
+        onProgress?.('  Would migrate lock.json');
       }
       files.push(newPaths.lock);
     } catch (error) {
@@ -562,7 +562,7 @@ async function migrateEnvironment(
           }
         }
       } else {
-        onProgress?.("  Would generate wrangler configs");
+        onProgress?.('  Would generate wrangler configs');
       }
     } catch (error) {
       // Non-fatal: wrangler generation failure doesn't fail the migration

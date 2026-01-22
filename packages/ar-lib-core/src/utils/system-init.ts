@@ -100,7 +100,7 @@ export async function assignSystemAdminRole(env: Env, userId: string): Promise<v
 
   // Check if assignment already exists
   const existing = await coreAdapter.queryOne<{ id: string }>(
-    "SELECT id FROM role_assignments WHERE subject_id = ? AND role_id = ? LIMIT 1",
+    'SELECT id FROM role_assignments WHERE subject_id = ? AND role_id = ? LIMIT 1',
     [userId, role.id]
   );
 

@@ -2245,7 +2245,7 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
     let revokedTokens = 0;
     if (body.revoke_existing_tokens) {
       const tokenResult = await adapter.execute(
-        "UPDATE refresh_tokens SET revoked = 1, revoked_at = ? WHERE client_id = ? AND tenant_id = ? AND revoked = 0",
+        'UPDATE refresh_tokens SET revoked = 1, revoked_at = ? WHERE client_id = ? AND tenant_id = ? AND revoked = 0',
         [nowTs, clientId, tenantId]
       );
       revokedTokens = tokenResult.rowsAffected;
@@ -2986,7 +2986,7 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
 
     // Update user status in users_core (PII-separated architecture)
     await adapter.execute(
-      "UPDATE users_core SET status = ?, suspended_at = ?, suspended_until = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+      'UPDATE users_core SET status = ?, suspended_at = ?, suspended_until = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
       ['suspended', nowTs, expiresAt, nowTs, userId, tenantId]
     );
 
@@ -3144,7 +3144,7 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
 
     // Update user status in users_core (PII-separated architecture)
     await adapter.execute(
-      "UPDATE users_core SET status = ?, locked_at = ?, locked_until = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+      'UPDATE users_core SET status = ?, locked_at = ?, locked_until = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
       ['locked', nowTs, unlockAtTs, nowTs, userId, tenantId]
     );
 
@@ -4885,7 +4885,7 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
 
     // Delete consent
     await authCtx.coreAdapter.execute(
-      "DELETE FROM oauth_client_consents WHERE user_id = ? AND client_id = ? AND tenant_id = ?",
+      'DELETE FROM oauth_client_consents WHERE user_id = ? AND client_id = ? AND tenant_id = ?',
       [userId, clientId, tenantId]
     );
 

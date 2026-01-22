@@ -603,7 +603,7 @@ export async function adminFlowCreateHandler(c: AdminContext) {
       return c.json(
         {
           error: 'conflict',
-          error_description: "A flow already exists for this tenant/client/profile combination",
+          error_description: 'A flow already exists for this tenant/client/profile combination',
         },
         409
       );

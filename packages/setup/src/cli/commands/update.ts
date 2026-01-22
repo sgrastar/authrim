@@ -200,7 +200,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
   // Confirm update
   if (!options.yes) {
     const confirmed = await confirm({
-      message: options.dryRun ? "Show what would be updated?" : `Update ${updateCount} worker(s)?`,
+      message: options.dryRun ? 'Show what would be updated?' : `Update ${updateCount} worker(s)?`,
       default: true,
     });
 

@@ -109,7 +109,7 @@ export async function resolveAllOrgsByDomainHash(
 
   // Require verified mappings unless explicitly allowed
   if (config && !config.allow_unverified_domain_mappings) {
-    query += " AND verified = 1";
+    query += ' AND verified = 1';
   }
 
   query += `
@@ -149,7 +149,7 @@ export async function resolveOrgsByDomainHashMultiVersion(
   const values: unknown[] = [tenantId];
 
   for (const { hash, version } of hashes) {
-    conditions.push("(domain_hash = ? AND domain_hash_version = ?)");
+    conditions.push('(domain_hash = ? AND domain_hash_version = ?)');
     values.push(hash, version);
   }
 
@@ -167,7 +167,7 @@ export async function resolveOrgsByDomainHashMultiVersion(
   `;
 
   if (config && !config.allow_unverified_domain_mappings) {
-    query += " AND verified = 1";
+    query += ' AND verified = 1';
   }
 
   query += `
@@ -224,7 +224,7 @@ export async function joinOrganization(
   try {
     // Check if organization exists
     const orgCheck = await db
-      .prepare("SELECT id FROM organizations WHERE id = ? AND tenant_id = ?")
+      .prepare('SELECT id FROM organizations WHERE id = ? AND tenant_id = ?')
       .bind(orgId, tenantId)
       .first<{ id: string }>();
 
@@ -239,7 +239,7 @@ export async function joinOrganization(
 
     // Check if already a member
     const existingMember = await db
-      .prepare("SELECT id FROM org_memberships WHERE user_id = ? AND org_id = ? AND tenant_id = ?")
+      .prepare('SELECT id FROM org_memberships WHERE user_id = ? AND org_id = ? AND tenant_id = ?')
       .bind(userId, orgId, tenantId)
       .first<{ id: string }>();
 
@@ -325,7 +325,7 @@ export async function assignRoleToUser(
   try {
     // Check if role exists
     const roleCheck = await db
-      .prepare("SELECT id FROM roles WHERE id = ? AND tenant_id = ?")
+      .prepare('SELECT id FROM roles WHERE id = ? AND tenant_id = ?')
       .bind(roleId, tenantId)
       .first<{ id: string }>();
 
@@ -390,7 +390,7 @@ export async function getDomainMappingById(
   tenantId: string
 ): Promise<OrgDomainMapping | null> {
   const row = await db
-    .prepare("SELECT * FROM org_domain_mappings WHERE id = ? AND tenant_id = ?")
+    .prepare('SELECT * FROM org_domain_mappings WHERE id = ? AND tenant_id = ?')
     .bind(id, tenantId)
     .first<OrgDomainMappingRow>();
 
@@ -597,7 +597,7 @@ export async function deleteDomainMapping(
   tenantId: string
 ): Promise<boolean> {
   const result = await db
-    .prepare("DELETE FROM org_domain_mappings WHERE id = ? AND tenant_id = ?")
+    .prepare('DELETE FROM org_domain_mappings WHERE id = ? AND tenant_id = ?')
     .bind(id, tenantId)
     .run();
 

@@ -270,7 +270,7 @@ export class MigrationRunner {
           `❌ Checksum mismatch for migration ${appliedMig.version} (${appliedMig.name}):\n` +
             `   Database: ${appliedMig.checksum}\n` +
             `   File:     ${fileMig.checksum}\n` +
-            "   This indicates the migration file was modified after being applied!"
+            '   This indicates the migration file was modified after being applied!'
         );
         isValid = false;
       } else {

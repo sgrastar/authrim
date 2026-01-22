@@ -229,7 +229,7 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
 
     // Delete consent
     await authCtx.coreAdapter.execute(
-      "DELETE FROM oauth_client_consents WHERE user_id = ? AND client_id = ? AND tenant_id = ?",
+      'DELETE FROM oauth_client_consents WHERE user_id = ? AND client_id = ? AND tenant_id = ?',
       [userId, clientId, tenantId]
     );
 

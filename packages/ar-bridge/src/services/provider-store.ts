@@ -13,7 +13,7 @@ import type { UpstreamProvider, TokenEndpointAuthMethod } from '../types';
 export async function getProvider(env: Env, id: string): Promise<UpstreamProvider | null> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.queryOne<DbUpstreamProvider>(
-    "SELECT * FROM upstream_providers WHERE id = ?",
+    'SELECT * FROM upstream_providers WHERE id = ?',
     [id]
   );
 
@@ -34,14 +34,14 @@ export async function getProviderByIdOrSlug(
 
   // First try by slug (case-insensitive)
   let result = await coreAdapter.queryOne<DbUpstreamProvider>(
-    "SELECT * FROM upstream_providers WHERE LOWER(slug) = LOWER(?) AND tenant_id = ?",
+    'SELECT * FROM upstream_providers WHERE LOWER(slug) = LOWER(?) AND tenant_id = ?',
     [idOrSlug, tenantId]
   );
 
   // If not found by slug, try by ID
   if (!result) {
     result = await coreAdapter.queryOne<DbUpstreamProvider>(
-      "SELECT * FROM upstream_providers WHERE id = ?",
+      'SELECT * FROM upstream_providers WHERE id = ?',
       [idOrSlug]
     );
   }
@@ -60,7 +60,7 @@ export async function getProviderByName(
 ): Promise<UpstreamProvider | null> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.queryOne<DbUpstreamProvider>(
-    "SELECT * FROM upstream_providers WHERE name = ? AND tenant_id = ? AND enabled = 1",
+    'SELECT * FROM upstream_providers WHERE name = ? AND tenant_id = ? AND enabled = 1',
     [name, tenantId]
   );
 
@@ -77,7 +77,7 @@ export async function listEnabledProviders(
 ): Promise<UpstreamProvider[]> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.query<DbUpstreamProvider>(
-    "SELECT * FROM upstream_providers WHERE tenant_id = ? AND enabled = 1 ORDER BY priority ASC, name ASC",
+    'SELECT * FROM upstream_providers WHERE tenant_id = ? AND enabled = 1 ORDER BY priority ASC, name ASC',
     [tenantId]
   );
 
@@ -93,7 +93,7 @@ export async function listAllProviders(
 ): Promise<UpstreamProvider[]> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.query<DbUpstreamProvider>(
-    "SELECT * FROM upstream_providers WHERE tenant_id = ? ORDER BY priority ASC, name ASC",
+    'SELECT * FROM upstream_providers WHERE tenant_id = ? ORDER BY priority ASC, name ASC',
     [tenantId]
   );
 
@@ -231,7 +231,7 @@ export async function updateProvider(
  */
 export async function deleteProvider(env: Env, id: string): Promise<boolean> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.execute("DELETE FROM upstream_providers WHERE id = ?", [id]);
+  const result = await coreAdapter.execute('DELETE FROM upstream_providers WHERE id = ?', [id]);
   return result.rowsAffected > 0;
 }
 

@@ -258,8 +258,8 @@ export async function cleanupExpiredEventLogs(
   const now = Date.now();
 
   const sql = tenantId
-    ? "DELETE FROM event_log WHERE retention_until < ? AND tenant_id = ? LIMIT ?"
-    : "DELETE FROM event_log WHERE retention_until < ? LIMIT ?";
+    ? 'DELETE FROM event_log WHERE retention_until < ? AND tenant_id = ? LIMIT ?'
+    : 'DELETE FROM event_log WHERE retention_until < ? LIMIT ?';
 
   const params = tenantId ? [now, tenantId, batchSize] : [now, batchSize];
 
@@ -287,8 +287,8 @@ export async function cleanupExpiredPIILogs(
   const now = Date.now();
 
   const sql = tenantId
-    ? "DELETE FROM pii_log WHERE retention_until < ? AND tenant_id = ? LIMIT ?"
-    : "DELETE FROM pii_log WHERE retention_until < ? LIMIT ?";
+    ? 'DELETE FROM pii_log WHERE retention_until < ? AND tenant_id = ? LIMIT ?'
+    : 'DELETE FROM pii_log WHERE retention_until < ? LIMIT ?';
 
   const params = tenantId ? [now, tenantId, batchSize] : [now, batchSize];
 

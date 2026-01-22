@@ -898,7 +898,7 @@ function validateSettingValue(
 ): SettingValidationResult {
   // Check required
   if (definition.required && (value === undefined || value === null)) {
-    return { path, valid: false, error: "Required field is missing" };
+    return { path, valid: false, error: 'Required field is missing' };
   }
 
   // Skip validation if not provided and not required

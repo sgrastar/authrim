@@ -499,7 +499,7 @@ async function logAuditEvent(env: Env, params: AuditEventParams): Promise<void> 
 export async function hasPasskeyCredential(env: Env, userId: string): Promise<boolean> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.queryOne<{ count: number }>(
-    "SELECT COUNT(*) as count FROM passkeys WHERE user_id = ?",
+    'SELECT COUNT(*) as count FROM passkeys WHERE user_id = ?',
     [userId]
   );
 
@@ -842,7 +842,7 @@ async function assignRoleToUserInternal(
 
     // Check if role exists
     const roleCheck = await coreAdapter.queryOne<{ id: string }>(
-      "SELECT id FROM roles WHERE id = ? AND tenant_id = ?",
+      'SELECT id FROM roles WHERE id = ? AND tenant_id = ?',
       [roleId, tenantId]
     );
 

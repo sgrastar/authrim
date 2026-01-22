@@ -214,7 +214,7 @@ function validateKeysDirectory(keysDir: string): void {
   const windowsDangerous = ['C:\\Windows', 'C:\\Program Files', 'C:\\System32'];
   for (const dangerous of windowsDangerous) {
     if (absolutePath.toLowerCase().startsWith(dangerous.toLowerCase())) {
-      throw new Error("Invalid keys directory: writing to system directories is not allowed");
+      throw new Error('Invalid keys directory: writing to system directories is not allowed');
     }
   }
 }
@@ -482,7 +482,7 @@ function validatePath(path: string, paramName: string): void {
  */
 function validateEnvName(env: string): void {
   if (!/^[a-z][a-z0-9-]*$/.test(env)) {
-    throw new Error("Invalid environment name: must be lowercase alphanumeric with hyphens");
+    throw new Error('Invalid environment name: must be lowercase alphanumeric with hyphens');
   }
 }
 

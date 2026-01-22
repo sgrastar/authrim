@@ -240,7 +240,7 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
     // 6. Get signing key status for encryption info
     const keyStats = await adapter.queryOne<{
       last_rotation: number | null;
-    }>("SELECT MAX(created_at) as last_rotation FROM signing_keys WHERE tenant_id = ?", [tenantId]);
+    }>('SELECT MAX(created_at) as last_rotation FROM signing_keys WHERE tenant_id = ?', [tenantId]);
 
     // Calculate MFA coverage
     const totalUsers = (mfaStats?.users_with_mfa || 0) + (mfaStats?.users_without_mfa || 0);

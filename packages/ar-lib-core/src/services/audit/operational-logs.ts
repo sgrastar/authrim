@@ -123,7 +123,7 @@ export async function getOperationalLog(
   (Omit<OperationalLogEntry, 'reason_detail_encrypted'> & { reason_detail: string }) | null
 > {
   const entry = await adapter.queryOne<OperationalLogEntry>(
-    "SELECT * FROM operational_logs WHERE id = ? AND tenant_id = ? AND expires_at > ?",
+    'SELECT * FROM operational_logs WHERE id = ? AND tenant_id = ? AND expires_at > ?',
     [logId, tenantId, Math.floor(Date.now() / 1000)]
   );
 

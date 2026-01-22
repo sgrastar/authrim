@@ -2308,10 +2308,10 @@ async function executeSetup(
   // Next steps
   console.log(chalk.bold('📋 Next Steps:'));
   console.log('');
-  console.log("  1. Upload secrets to Cloudflare:");
+  console.log('  1. Upload secrets to Cloudflare:');
   console.log(chalk.cyan(`     npx @authrim/setup secrets --env=${env}`));
   console.log('');
-  console.log("  2. Deploy Workers:");
+  console.log('  2. Deploy Workers:');
   console.log(chalk.cyan(`     pnpm deploy --env=${env}`));
   console.log('');
 }

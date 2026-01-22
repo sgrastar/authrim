@@ -252,7 +252,7 @@ export class EncryptionKeyInvalidError extends Error {
     super(
       `PII_ENCRYPTION_KEY format is invalid: ${reason}. ` +
         `Key must be exactly ${PII_ENCRYPTION_KEY_LENGTH} hex characters (256-bit key). ` +
-        "Generate a valid key with: openssl rand -hex 32"
+        'Generate a valid key with: openssl rand -hex 32'
     );
     this.name = 'EncryptionKeyInvalidError';
   }

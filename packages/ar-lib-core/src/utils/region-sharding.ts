@@ -1147,8 +1147,8 @@ export function validateColocationGroups(
         .map(([count, members]) => `${members.join(', ')}: ${count} shards`)
         .join('; ');
       errors.push(
-        "CRITICAL: user-client group has mismatched shard counts! " +
-          "AuthCode and RefreshToken MUST have identical shard counts. " +
+        'CRITICAL: user-client group has mismatched shard counts! ' +
+          'AuthCode and RefreshToken MUST have identical shard counts. ' +
           `Current: ${details}`
       );
     }

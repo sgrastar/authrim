@@ -174,7 +174,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   const { lock, path: lockPath, type: structureType } = await loadLockFileAuto(baseDir, env);
 
   if (!lock) {
-    console.error(chalk.red("\nLock file not found"));
+    console.error(chalk.red('\nLock file not found'));
     console.log(chalk.yellow('Run "authrim-setup init" first to provision resources.'));
     process.exit(1);
   }
@@ -416,7 +416,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     });
 
     if (pagesResult.failedCount === 0) {
-      console.log(chalk.green("\n✓ All UI packages deployed successfully"));
+      console.log(chalk.green('\n✓ All UI packages deployed successfully'));
       for (const result of pagesResult.results) {
         console.log(chalk.cyan(`  • ${result.component}: ${result.projectName}`));
       }

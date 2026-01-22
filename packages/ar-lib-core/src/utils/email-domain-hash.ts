@@ -35,7 +35,7 @@ export function normalizeDomain(email: string): string {
     .toLowerCase()
     .trim();
   if (domain.length === 0) {
-    throw new Error("Invalid email format: empty domain");
+    throw new Error('Invalid email format: empty domain');
   }
   return domain;
 }

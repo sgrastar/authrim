@@ -397,7 +397,7 @@ export async function handleImportMetadata(c: Context<{ Bindings: Env }>): Promi
     const now = Date.now();
 
     await coreAdapter.execute(
-      "UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ?",
+      'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ?',
       [JSON.stringify(mergedConfig), now, id]
     );
 

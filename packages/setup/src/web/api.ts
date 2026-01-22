@@ -827,7 +827,7 @@ export function createApiRoutes(): Hono {
           );
 
           if (pagesSummary.failedCount === 0) {
-            addProgress("✓ All UI packages deployed to Pages");
+            addProgress('✓ All UI packages deployed to Pages');
             for (const result of pagesSummary.results) {
               addProgress(`  • ${result.component}: ${result.projectName}`);
             }

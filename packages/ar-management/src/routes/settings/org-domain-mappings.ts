@@ -174,7 +174,7 @@ export async function createOrgDomainMapping(c: Context) {
       return c.json(
         {
           error: 'conflict',
-          error_description: "Domain mapping already exists for this org",
+          error_description: 'Domain mapping already exists for this org',
         },
         409
       );
@@ -674,7 +674,7 @@ export async function confirmDomainVerification(c: Context) {
     if (isVerificationExpired(row.verification_expires_at)) {
       // Update status to expired
       await coreAdapter.execute(
-        "UPDATE org_domain_mappings SET verification_status = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+        'UPDATE org_domain_mappings SET verification_status = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
         ['expired' as VerificationStatus, Math.floor(Date.now() / 1000), body.mapping_id, tenantId]
       );
 
@@ -716,7 +716,7 @@ export async function confirmDomainVerification(c: Context) {
 
       // Also update verification_status
       await coreAdapter.execute(
-        "UPDATE org_domain_mappings SET verification_status = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+        'UPDATE org_domain_mappings SET verification_status = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
         ['verified' as VerificationStatus, Math.floor(Date.now() / 1000), body.mapping_id, tenantId]
       );
 

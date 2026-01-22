@@ -125,7 +125,7 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
     console.log(chalk.gray(`(Port ${preferredPort} was in use, using ${port} instead)\n`));
   }
 
-  console.log("Open at:");
+  console.log('Open at:');
   console.log(chalk.cyan(`  ${baseUrl}\n`));
 
   // Open browser if requested - wait for ENTER first
@@ -191,7 +191,7 @@ async function findAvailablePort(preferredPort: number, host: string): Promise<n
   console.log(chalk.gray('  To free up the port, you can:'));
   console.log('');
   console.log(chalk.cyan(`    lsof -i :${preferredPort}      # Find process using the port`));
-  console.log(chalk.cyan("    kill <PID>                # Kill the process"));
+  console.log(chalk.cyan('    kill <PID>                # Kill the process'));
   console.log('');
   process.exit(1);
 }
@@ -278,7 +278,7 @@ async function openBrowser(url: string): Promise<void> {
         break;
     }
   } catch {
-    console.log(chalk.yellow("\nCould not open browser automatically."));
+    console.log(chalk.yellow('\nCould not open browser automatically.'));
     console.log(`Please open ${chalk.cyan(url)} in your browser.\n`);
   }
 }

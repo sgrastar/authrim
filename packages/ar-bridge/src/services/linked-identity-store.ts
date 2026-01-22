@@ -14,7 +14,7 @@ import { encrypt, decrypt, getEncryptionKey } from '../utils/crypto';
 export async function getLinkedIdentityById(env: Env, id: string): Promise<LinkedIdentity | null> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.queryOne<DbLinkedIdentity>(
-    "SELECT * FROM linked_identities WHERE id = ?",
+    'SELECT * FROM linked_identities WHERE id = ?',
     [id]
   );
 
@@ -32,7 +32,7 @@ export async function findLinkedIdentity(
 ): Promise<LinkedIdentity | null> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.queryOne<DbLinkedIdentity>(
-    "SELECT * FROM linked_identities WHERE provider_id = ? AND provider_user_id = ?",
+    'SELECT * FROM linked_identities WHERE provider_id = ? AND provider_user_id = ?',
     [providerId, providerUserId]
   );
 
@@ -51,7 +51,7 @@ export async function findLinkedIdentitiesByProviderSub(
 ): Promise<LinkedIdentity[]> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.query<DbLinkedIdentity>(
-    "SELECT * FROM linked_identities WHERE provider_id = ? AND provider_user_id = ?",
+    'SELECT * FROM linked_identities WHERE provider_id = ? AND provider_user_id = ?',
     [providerId, providerUserId]
   );
 
@@ -64,7 +64,7 @@ export async function findLinkedIdentitiesByProviderSub(
 export async function listLinkedIdentities(env: Env, userId: string): Promise<LinkedIdentity[]> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.query<DbLinkedIdentity>(
-    "SELECT * FROM linked_identities WHERE user_id = ? ORDER BY linked_at DESC",
+    'SELECT * FROM linked_identities WHERE user_id = ? ORDER BY linked_at DESC',
     [userId]
   );
 
@@ -81,7 +81,7 @@ export async function getLinkedIdentityForUserAndProvider(
 ): Promise<LinkedIdentity | null> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.queryOne<DbLinkedIdentity>(
-    "SELECT * FROM linked_identities WHERE user_id = ? AND provider_id = ?",
+    'SELECT * FROM linked_identities WHERE user_id = ? AND provider_id = ?',
     [userId, providerId]
   );
 
@@ -215,7 +215,7 @@ export async function updateLinkedIdentity(
  */
 export async function deleteLinkedIdentity(env: Env, id: string): Promise<boolean> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
-  const result = await coreAdapter.execute("DELETE FROM linked_identities WHERE id = ?", [id]);
+  const result = await coreAdapter.execute('DELETE FROM linked_identities WHERE id = ?', [id]);
   return result.rowsAffected > 0;
 }
 
@@ -225,7 +225,7 @@ export async function deleteLinkedIdentity(env: Env, id: string): Promise<boolea
 export async function countLinkedIdentities(env: Env, userId: string): Promise<number> {
   const coreAdapter: DatabaseAdapter = new D1Adapter({ db: env.DB });
   const result = await coreAdapter.queryOne<{ count: number }>(
-    "SELECT COUNT(*) as count FROM linked_identities WHERE user_id = ?",
+    'SELECT COUNT(*) as count FROM linked_identities WHERE user_id = ?',
     [userId]
   );
 

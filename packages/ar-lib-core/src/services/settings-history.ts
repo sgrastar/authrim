@@ -424,7 +424,7 @@ export class SettingsHistoryManager {
    */
   private async deleteVersion(category: string, version: number): Promise<void> {
     await this.adapter.execute(
-      "DELETE FROM settings_history WHERE tenant_id = ? AND category = ? AND version = ?",
+      'DELETE FROM settings_history WHERE tenant_id = ? AND category = ? AND version = ?',
       [this.tenantId, category, version]
     );
   }

@@ -113,7 +113,7 @@ export async function consumeAuthState(
   // Phase 2: Retrieve the state we just consumed
   // This is safe because we only reach here if we successfully marked it as consumed
   const result = await coreAdapter.queryOne<DbAuthState>(
-    "SELECT * FROM external_idp_auth_states WHERE state = ? AND consumed_at = ?",
+    'SELECT * FROM external_idp_auth_states WHERE state = ? AND consumed_at = ?',
     [state, now]
   );
 

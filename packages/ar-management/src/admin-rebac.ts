@@ -165,7 +165,7 @@ export async function adminRelationDefinitionGetHandler(c: AdminContext) {
       is_active: number;
       created_at: number;
       updated_at: number;
-    }>("SELECT * FROM relation_definitions WHERE id = ? AND tenant_id IN (?, ?)", [
+    }>('SELECT * FROM relation_definitions WHERE id = ? AND tenant_id IN (?, ?)', [
       id,
       tenantId,
       'default',
@@ -299,7 +299,7 @@ export async function adminRelationDefinitionUpdateHandler(c: AdminContext) {
 
     // Check if exists and belongs to tenant (not default)
     const existing = await adapter.query<{ tenant_id: string }>(
-      "SELECT tenant_id FROM relation_definitions WHERE id = ?",
+      'SELECT tenant_id FROM relation_definitions WHERE id = ?',
       [id]
     );
 
@@ -366,7 +366,7 @@ export async function adminRelationDefinitionDeleteHandler(c: AdminContext) {
 
     // Check if exists and belongs to tenant (not default)
     const existing = await adapter.query<{ tenant_id: string }>(
-      "SELECT tenant_id FROM relation_definitions WHERE id = ?",
+      'SELECT tenant_id FROM relation_definitions WHERE id = ?',
       [id]
     );
 
@@ -382,7 +382,7 @@ export async function adminRelationDefinitionDeleteHandler(c: AdminContext) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
-    await adapter.execute("DELETE FROM relation_definitions WHERE id = ?", [id]);
+    await adapter.execute('DELETE FROM relation_definitions WHERE id = ?', [id]);
 
     // Audit log
     await createAuditLogFromContext(asBaseContext(c), 'delete', 'relation_definition', id, {});
@@ -597,7 +597,7 @@ export async function adminRelationshipTupleDeleteHandler(c: AdminContext) {
 
     // Check if exists
     const existing = await adapter.query<{ tenant_id: string }>(
-      "SELECT tenant_id FROM relationships WHERE id = ?",
+      'SELECT tenant_id FROM relationships WHERE id = ?',
       [id]
     );
 
@@ -609,7 +609,7 @@ export async function adminRelationshipTupleDeleteHandler(c: AdminContext) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
-    await adapter.execute("DELETE FROM relationships WHERE id = ?", [id]);
+    await adapter.execute('DELETE FROM relationships WHERE id = ?', [id]);
 
     // Audit log
     await createAuditLogFromContext(asBaseContext(c), 'delete', 'relationship_tuple', id, {});

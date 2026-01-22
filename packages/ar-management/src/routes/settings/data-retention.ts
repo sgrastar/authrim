@@ -118,7 +118,7 @@ export async function getDataRetentionEstimate(c: Context<{ Bindings: Env }>) {
     // Get tenant-specific retention settings
     const tenantSettings = await adapter.queryOne<{
       settings: string | null;
-    }>("SELECT settings FROM tenants WHERE id = ?", [tenantId]);
+    }>('SELECT settings FROM tenants WHERE id = ?', [tenantId]);
 
     const settings = tenantSettings?.settings
       ? (JSON.parse(tenantSettings.settings) as Record<string, unknown>)
@@ -218,7 +218,7 @@ export async function updateCategoryRetention(c: Context<{ Bindings: Env }>) {
 
     // Get current settings
     const tenant = await adapter.queryOne<{ settings: string | null }>(
-      "SELECT settings FROM tenants WHERE id = ?",
+      'SELECT settings FROM tenants WHERE id = ?',
       [tenantId]
     );
 
@@ -241,7 +241,7 @@ export async function updateCategoryRetention(c: Context<{ Bindings: Env }>) {
     settings.data_retention = dataRetention;
 
     // Save updated settings
-    await adapter.execute("UPDATE tenants SET settings = ?, updated_at = ? WHERE id = ?", [
+    await adapter.execute('UPDATE tenants SET settings = ?, updated_at = ? WHERE id = ?', [
       JSON.stringify(settings),
       nowTs,
       tenantId,
@@ -318,7 +318,7 @@ export async function runDataRetentionCleanup(c: Context<{ Bindings: Env }>) {
 
     // Get tenant retention settings
     const tenantSettings = await adapter.queryOne<{ settings: string | null }>(
-      "SELECT settings FROM tenants WHERE id = ?",
+      'SELECT settings FROM tenants WHERE id = ?',
       [tenantId]
     );
 
@@ -364,7 +364,7 @@ export async function runDataRetentionCleanup(c: Context<{ Bindings: Env }>) {
     dataRetention.last_cleanup_at = nowTs;
     settings.data_retention = dataRetention;
 
-    await adapter.execute("UPDATE tenants SET settings = ?, updated_at = ? WHERE id = ?", [
+    await adapter.execute('UPDATE tenants SET settings = ?, updated_at = ? WHERE id = ?', [
       JSON.stringify(settings),
       nowTs,
       tenantId,
@@ -446,7 +446,7 @@ export async function listRetentionCategories(c: Context<{ Bindings: Env }>) {
 
     // Get tenant settings
     const tenantSettings = await adapter.queryOne<{ settings: string | null }>(
-      "SELECT settings FROM tenants WHERE id = ?",
+      'SELECT settings FROM tenants WHERE id = ?',
       [tenantId]
     );
 

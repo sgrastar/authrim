@@ -413,7 +413,7 @@ export async function executeD1Migration(
     const message = error instanceof Error ? error.message : String(error);
     // Ignore "already exists" errors - migration may have been partially applied
     if (message.includes('already exists') || message.includes('UNIQUE constraint')) {
-      onProgress?.("  ⚠️ Migration already applied (skipped)");
+      onProgress?.('  ⚠️ Migration already applied (skipped)');
       return { success: true };
     }
     return { success: false, error: message };
@@ -995,7 +995,7 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
 
   // Summary
   onProgress('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  onProgress("✅ Provisioning complete!");
+  onProgress('✅ Provisioning complete!');
   onProgress(
     `   D1: ${resources.d1.length}, KV: ${resources.kv.length}, Queues: ${resources.queues.length}, R2: ${resources.r2.length}`
   );

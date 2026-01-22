@@ -216,7 +216,7 @@ export async function infoCommand(options: InfoCommandOptions): Promise<void> {
               console.log(chalk.gray(`    Author: ${info.author}`));
             }
           } else {
-            console.log(chalk.yellow("    Status: Not deployed"));
+            console.log(chalk.yellow('    Status: Not deployed'));
           }
         }
       } catch {

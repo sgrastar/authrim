@@ -233,7 +233,7 @@ export function idempotencyMiddleware(
     try {
       // Check for existing idempotency key
       const existingEntry = await adapter.queryOne<IdempotencyKeyEntry>(
-        "SELECT * FROM idempotency_keys WHERE id = ? AND expires_at > ?",
+        'SELECT * FROM idempotency_keys WHERE id = ? AND expires_at > ?',
         [keyId, Math.floor(Date.now() / 1000)]
       );
 
@@ -355,7 +355,7 @@ export function idempotencyMiddleware(
 export async function cleanupExpiredIdempotencyKeys(adapter: DatabaseAdapter): Promise<number> {
   const nowTs = Math.floor(Date.now() / 1000);
   const result: ExecuteResult = await adapter.execute(
-    "DELETE FROM idempotency_keys WHERE expires_at < ?",
+    'DELETE FROM idempotency_keys WHERE expires_at < ?',
     [nowTs]
   );
   return result.rowsAffected;
