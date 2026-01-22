@@ -87,6 +87,7 @@ const fr: Translations = {
 
   // WSL Environment
   'wsl.detected': 'Environnement WSL détecté',
+  'wsl.cliOnly': "L'interface Web n'est pas disponible sous WSL. Utilisation du mode CLI.",
   'wsl.explanation': "Pour accéder à l'interface Web depuis le navigateur Windows, le serveur doit",
   'wsl.explanationCont': 'se lier à 0.0.0.0 au lieu de localhost.',
   'wsl.securityNote': 'Note de sécurité :',

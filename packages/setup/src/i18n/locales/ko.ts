@@ -86,6 +86,7 @@ const ko: Translations = {
 
   // WSL Environment
   'wsl.detected': 'WSL 환경 감지됨',
+  'wsl.cliOnly': 'WSL 환경에서는 Web UI를 사용할 수 없습니다. CLI 모드로 진행합니다.',
   'wsl.explanation': 'Windows 브라우저에서 Web UI에 접근하려면 서버를',
   'wsl.explanationCont': 'localhost 대신 0.0.0.0에 바인딩해야 합니다.',
   'wsl.securityNote': '보안 참고:',

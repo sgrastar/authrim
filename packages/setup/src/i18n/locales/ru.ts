@@ -87,6 +87,7 @@ const ru: Translations = {
 
   // WSL Environment
   'wsl.detected': 'Обнаружена среда WSL',
+  'wsl.cliOnly': 'Web UI недоступен в WSL. Используется режим CLI.',
   'wsl.explanation': 'Для доступа к Web UI из браузера Windows сервер должен',
   'wsl.explanationCont': 'привязаться к 0.0.0.0 вместо localhost.',
   'wsl.securityNote': 'Примечание по безопасности:',

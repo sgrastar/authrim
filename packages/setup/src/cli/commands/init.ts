@@ -41,6 +41,23 @@ import { getEnvironmentPaths, getRelativeKeysPath, AUTHRIM_DIR } from '../../cor
 import { downloadSource, verifySourceStructure, checkForUpdate } from '../../core/source.js';
 
 // =============================================================================
+// WSL Detection
+// =============================================================================
+
+/**
+ * Detect if running in WSL (Windows Subsystem for Linux) environment
+ */
+async function isWSLEnvironment(): Promise<boolean> {
+  try {
+    const fs = await import('node:fs/promises');
+    const procVersion = await fs.readFile('/proc/version', 'utf-8');
+    return /microsoft|wsl/i.test(procVersion);
+  } catch {
+    return false;
+  }
+}
+
+// =============================================================================
 // Types
 // =============================================================================
 
@@ -578,7 +595,22 @@ export async function initCommand(options: InitOptions): Promise<void> {
     return;
   }
 
-  // Show startup menu
+  // Check for WSL environment - Web UI not supported due to networking limitations
+  const isWSL = await isWSLEnvironment();
+
+  if (isWSL) {
+    // WSL detected - skip Web UI option, go directly to CLI
+    console.log(chalk.yellow(`⚠️  ${t('wsl.detected')}`));
+    console.log(chalk.gray(`   ${t('wsl.cliOnly')}`));
+    console.log('');
+
+    const sourceDir = await ensureAuthrimSource(options);
+    process.chdir(sourceDir);
+    await runCliSetup(options);
+    return;
+  }
+
+  // Show startup menu (non-WSL environments)
   console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log('');
   console.log(`  ${t('startup.description')}`);

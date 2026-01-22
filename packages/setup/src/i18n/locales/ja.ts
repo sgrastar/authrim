@@ -87,6 +87,7 @@ const ja: Translations = {
 
   // WSL Environment
   'wsl.detected': 'WSL環境を検出しました',
+  'wsl.cliOnly': 'WSL環境ではWeb UIは利用できません。CLIモードで続行します。',
   'wsl.explanation': 'WindowsブラウザからWeb UIにアクセスするには、サーバーを',
   'wsl.explanationCont': 'localhostではなく0.0.0.0にバインドする必要があります。',
   'wsl.securityNote': 'セキュリティに関する注意:',

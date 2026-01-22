@@ -86,6 +86,7 @@ export interface Translations {
 
   // WSL Environment
   'wsl.detected': string;
+  'wsl.cliOnly': string;
   'wsl.explanation': string;
   'wsl.explanationCont': string;
   'wsl.securityNote': string;

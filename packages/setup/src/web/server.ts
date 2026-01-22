@@ -138,7 +138,9 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
   });
 
   // Start server
-  const baseUrl = `http://${host}:${port}`;
+  // When binding to 0.0.0.0, use localhost for browser URL (0.0.0.0 is not a valid browser address)
+  const browserHost = host === '0.0.0.0' ? 'localhost' : host;
+  const baseUrl = `http://${browserHost}:${port}`;
   // Add language parameter if specified (from CLI selection)
   const url = options.lang ? `${baseUrl}?lang=${options.lang}` : baseUrl;
 
@@ -150,6 +152,11 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
 
   console.log('Open at:');
   console.log(chalk.cyan(`  ${baseUrl}\n`));
+
+  // Show additional hint for WSL users accessing from Windows
+  if (host === '0.0.0.0') {
+    console.log(chalk.gray(`  (From Windows browser, also try: http://localhost:${port})\n`));
+  }
 
   // Open browser if requested - wait for ENTER first
   if (options.openBrowser !== false) {

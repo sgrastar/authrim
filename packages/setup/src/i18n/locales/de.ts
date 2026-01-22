@@ -87,6 +87,7 @@ const de: Translations = {
 
   // WSL Environment
   'wsl.detected': 'WSL-Umgebung erkannt',
+  'wsl.cliOnly': 'Web-UI ist unter WSL nicht verfügbar. CLI-Modus wird verwendet.',
   'wsl.explanation': 'Um über den Windows-Browser auf die Web-UI zuzugreifen, muss der Server',
   'wsl.explanationCont': 'an 0.0.0.0 statt an localhost gebunden werden.',
   'wsl.securityNote': 'Sicherheitshinweis:',

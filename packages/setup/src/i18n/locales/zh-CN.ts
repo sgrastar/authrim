@@ -86,6 +86,7 @@ const zhCN: Translations = {
 
   // WSL Environment
   'wsl.detected': '检测到 WSL 环境',
+  'wsl.cliOnly': 'WSL 环境不支持 Web UI。将使用 CLI 模式。',
   'wsl.explanation': '要从 Windows 浏览器访问 Web UI，服务器需要',
   'wsl.explanationCont': '绑定到 0.0.0.0 而不是 localhost。',
   'wsl.securityNote': '安全注意：',

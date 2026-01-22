@@ -87,6 +87,7 @@ const es: Translations = {
 
   // WSL Environment
   'wsl.detected': 'Entorno WSL detectado',
+  'wsl.cliOnly': 'La Web UI no está disponible en WSL. Usando modo CLI.',
   'wsl.explanation': 'Para acceder a la Web UI desde el navegador de Windows, el servidor necesita',
   'wsl.explanationCont': 'vincularse a 0.0.0.0 en lugar de localhost.',
   'wsl.securityNote': 'Nota de seguridad:',

@@ -86,6 +86,7 @@ const id: Translations = {
 
   // WSL Environment
   'wsl.detected': 'Lingkungan WSL terdeteksi',
+  'wsl.cliOnly': 'Web UI tidak tersedia di WSL. Menggunakan mode CLI.',
   'wsl.explanation': 'Untuk mengakses Web UI dari browser Windows, server perlu',
   'wsl.explanationCont': 'terikat ke 0.0.0.0 bukan localhost.',
   'wsl.securityNote': 'Catatan keamanan:',
