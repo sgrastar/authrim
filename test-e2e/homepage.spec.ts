@@ -35,7 +35,7 @@ test.describe('Homepage', () => {
     // Look for language switcher (Globe icon or select element)
     const languageSwitcher = page
       .locator('select')
-      .filter({ hasText: /English|Japanese|日本語/ })
+      .filter({ hasText: /English|Japanese|日本語/u })
       .first();
 
     if (await languageSwitcher.isVisible()) {

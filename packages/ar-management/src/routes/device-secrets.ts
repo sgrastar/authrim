@@ -22,7 +22,7 @@ import {
 
 // Input validation constants
 const MAX_REASON_LENGTH = 500;
-const REASON_SANITIZE_PATTERN = /[\x00-\x1f\x7f]/g; // Remove control characters
+const REASON_SANITIZE_PATTERN = /[\x00-\x1f\x7f]/gu; // Remove control characters
 
 /**
  * Validate and sanitize the reason field

@@ -57,7 +57,7 @@ function sanitizeUrlForHeader(url: string): string | null {
 
   // Remove control characters (ASCII 0-31) including \r and \n
   // eslint-disable-next-line no-control-regex
-  const sanitized = url.replace(/[\x00-\x1f]/g, '');
+  const sanitized = url.replace(/[\x00-\x1f]/gu, '');
 
   // Validate URL format and scheme
   try {

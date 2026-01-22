@@ -90,7 +90,7 @@ function validateIATInput(body: {
           `description must not exceed ${IAT_VALIDATION.DESCRIPTION_MAX_LENGTH} characters`
         );
       } else {
-        description = trimmed.replace(/[\x00-\x1F\x7F]/g, '');
+        description = trimmed.replace(/[\x00-\x1F\x7F]/gu, '');
       }
     }
   }

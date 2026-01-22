@@ -10,12 +10,12 @@ test.describe('Language Switching', () => {
       const languageSwitcher =
         page
           .locator('select')
-          .filter({ hasText: /English|Japanese|日本語|EN|JA/i })
+          .filter({ hasText: /English|Japanese|日本語|EN|JA/iu })
           .first() ||
         page.locator('[data-testid="language-switcher"]').first() ||
         page
           .locator('button')
-          .filter({ hasText: /🌐|globe/i })
+          .filter({ hasText: /🌐|globe/iu })
           .first();
 
       // Language switcher should exist (may be in different forms)
@@ -60,7 +60,7 @@ test.describe('Language Switching', () => {
       // Find language switcher
       const selectSwitcher = page
         .locator('select')
-        .filter({ hasText: /English|Japanese|日本語|EN|JA/i })
+        .filter({ hasText: /English|Japanese|日本語|EN|JA/iu })
         .first();
 
       if (await selectSwitcher.isVisible()) {
@@ -93,7 +93,7 @@ test.describe('Language Switching', () => {
       // Find and use language switcher
       const selectSwitcher = page
         .locator('select')
-        .filter({ hasText: /English|Japanese|日本語|EN|JA/i })
+        .filter({ hasText: /English|Japanese|日本語|EN|JA/iu })
         .first();
 
       if (await selectSwitcher.isVisible()) {

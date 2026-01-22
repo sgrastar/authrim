@@ -374,10 +374,10 @@ export async function getD1Info(name: string): Promise<D1Info> {
     const { stdout } = await wrangler(['d1', 'info', name]);
 
     // Parse the table output
-    const createdAtMatch = stdout.match(/created_at\s*│\s*(\S+)/);
-    const sizeMatch = stdout.match(/database_size\s*│\s*([^\n│]+)/);
-    const tablesMatch = stdout.match(/num_tables\s*│\s*(\d+)/);
-    const regionMatch = stdout.match(/running_in_region\s*│\s*(\S+)/);
+    const createdAtMatch = stdout.match(/created_at\s*│\s*(\S+)/u);
+    const sizeMatch = stdout.match(/database_size\s*│\s*([^\n│]+)/u);
+    const tablesMatch = stdout.match(/num_tables\s*│\s*(\d+)/u);
+    const regionMatch = stdout.match(/running_in_region\s*│\s*(\S+)/u);
 
     return {
       name,

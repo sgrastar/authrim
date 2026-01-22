@@ -83,7 +83,7 @@ function validateScimTokenInput(body: { description?: unknown; expiresInDays?: u
         );
       } else {
         // Sanitize: remove control characters but allow Unicode
-        description = trimmed.replace(/[\x00-\x1F\x7F]/g, '');
+        description = trimmed.replace(/[\x00-\x1F\x7F]/gu, '');
       }
     }
   }

@@ -65,7 +65,7 @@ function sanitizeHeaderValue(value: string): string {
     value.length > MAX_HEADER_VALUE_LENGTH ? value.substring(0, MAX_HEADER_VALUE_LENGTH) : value;
   // Then remove control characters (ASCII 0-31) including \r and \n
   // eslint-disable-next-line no-control-regex
-  return limited.replace(/[\x00-\x1f]/g, '');
+  return limited.replace(/[\x00-\x1f]/gu, '');
 }
 
 /** Context key for API version */
