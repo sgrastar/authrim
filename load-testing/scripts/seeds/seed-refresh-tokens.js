@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 
 /**
  * Refresh Token Parallel Generation Script (V3)

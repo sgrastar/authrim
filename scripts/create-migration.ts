@@ -1,4 +1,3 @@
-#!/usr/bin/env tsx
 /**
  * Create New Migration Script
  * Issue #14: Schema version management
