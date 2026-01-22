@@ -18,25 +18,20 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 // Base screenshot directory
-const SCREENSHOT_BASE_DIR = path.join(process.cwd(), '..', 'authrim-website', 'public', 'images', 'setup');
+const SCREENSHOT_BASE_DIR = path.join(
+  process.cwd(),
+  '..',
+  'authrim-website',
+  'public',
+  'images',
+  'setup'
+);
 const VIEWPORT = { width: 1280, height: 800 };
 const SERVER_PORT = 3456;
 const BASE_URL = `http://localhost:${SERVER_PORT}`;
 
 // All supported languages
-const LANGUAGES = [
-  'en',
-  'ja',
-  'zh-CN',
-  'zh-TW',
-  'es',
-  'pt',
-  'fr',
-  'de',
-  'ko',
-  'ru',
-  'id',
-];
+const LANGUAGES = ['en', 'ja', 'zh-CN', 'zh-TW', 'es', 'pt', 'fr', 'de', 'ko', 'ru', 'id'];
 
 // Wait for animation to complete
 const ANIMATION_DELAY = 600;
@@ -283,7 +278,8 @@ async function setupMocks(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({
         success: true,
-        setupUrl: 'https://prod-ar-router.demo-account.workers.dev/admin-init-setup?token=demo-token',
+        setupUrl:
+          'https://prod-ar-router.demo-account.workers.dev/admin-init-setup?token=demo-token',
         message: 'Visit the setup URL to create the initial administrator',
       }),
     });
@@ -521,7 +517,6 @@ async function captureScreenshots(): Promise<void> {
 
     console.log('\n✅ Screenshot capture complete for all languages!\n');
     console.log(`Screenshots saved to: ${SCREENSHOT_BASE_DIR}/{lang}/`);
-
   } catch (error) {
     console.error('Error during screenshot capture:', error);
     try {
