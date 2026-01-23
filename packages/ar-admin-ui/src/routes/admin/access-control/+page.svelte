@@ -92,11 +92,7 @@
 		<!-- Top Row: 3 Cards -->
 		<div class="hub-cards-grid">
 			{#each hubCards as card (card.id)}
-				<button
-					class="hub-card {card.color}"
-					onclick={() => navigateTo(card.href)}
-					type="button"
-				>
+				<button class="hub-card {card.color}" onclick={() => navigateTo(card.href)} type="button">
 					<div class="hub-card-header">
 						<div class="hub-card-icon {card.color}">
 							<i class={card.icon}></i>

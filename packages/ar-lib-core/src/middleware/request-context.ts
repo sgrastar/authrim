@@ -186,10 +186,10 @@ export function getLogger(c: Context<{ Bindings: Env }>): Logger {
 /**
  * Get the tenant ID from Hono context.
  *
- * @param c - Hono context
+ * @param c - Hono context (accepts any context with Env bindings)
  * @returns Tenant ID string
  */
-export function getTenantIdFromContext(c: Context<{ Bindings: Env }>): string {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (c as any).get('tenantId') || DEFAULT_TENANT_ID;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getTenantIdFromContext(c: Context<any, any, any>): string {
+  return c.get('tenantId') || DEFAULT_TENANT_ID;
 }

@@ -8,6 +8,7 @@
 		type ClientUsage,
 		type UpdateClientInput
 	} from '$lib/api/admin-clients';
+	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
 	import { ToggleSwitch } from '$lib/components';
 
 	const clientId = $derived($page.params.id ?? '');
@@ -36,6 +37,107 @@
 	// Copy feedback
 	let copiedField = $state<string | null>(null);
 
+	// CORS settings
+	let tenantSettings = $state<CategorySettings | null>(null);
+	let allowedOrigins = $derived.by(() => {
+		const originsStr = tenantSettings?.values['tenant.allowed_origins'] as string | undefined;
+		if (!originsStr) return [] as string[];
+		return originsStr
+			.split(',')
+			.map((o) => o.trim())
+			.filter((o) => o.length > 0);
+	});
+	let addingToCors = $state<string | null>(null);
+
+	/**
+	 * Extract origin from a URL (e.g., "https://example.com/callback" -> "https://example.com")
+	 */
+	function extractOrigin(url: string): string {
+		try {
+			const parsed = new URL(url);
+			return parsed.origin;
+		} catch {
+			return '';
+		}
+	}
+
+	/**
+	 * Check if an origin is in the CORS allowlist (with wildcard support)
+	 */
+	function isOriginInCors(redirectUri: string): boolean {
+		const origin = extractOrigin(redirectUri);
+		if (!origin) return false;
+
+		for (const pattern of allowedOrigins) {
+			const normalizedPattern = pattern.trim();
+			const normalizedOrigin = origin.replace(/\/$/, '');
+
+			// Exact match
+			if (normalizedOrigin === normalizedPattern.replace(/\/$/, '')) {
+				return true;
+			}
+
+			// Wildcard match (e.g., https://*.pages.dev)
+			if (normalizedPattern.includes('*')) {
+				const escaped = normalizedPattern
+					.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+					.replace(/\*/g, '[a-z0-9]([a-z0-9-]*[a-z0-9])?');
+				const regex = new RegExp(`^${escaped}$`, 'i');
+				if (regex.test(normalizedOrigin)) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Add an origin to the CORS allowlist
+	 */
+	async function addToCors(redirectUri: string) {
+		const origin = extractOrigin(redirectUri);
+		if (!origin || !tenantSettings) return;
+
+		addingToCors = redirectUri;
+		try {
+			// Get current allowed_origins
+			const current = (tenantSettings.values['tenant.allowed_origins'] as string) || '';
+			const origins = current
+				? current
+						.split(',')
+						.map((o) => o.trim())
+						.filter((o) => o.length > 0)
+				: [];
+
+			// Add if not already present
+			if (!origins.includes(origin)) {
+				origins.push(origin);
+				await adminSettingsAPI.updateSettings('tenant', {
+					ifMatch: tenantSettings.version,
+					set: { 'tenant.allowed_origins': origins.join(',') }
+				});
+				// Reload tenant settings
+				tenantSettings = await adminSettingsAPI.getSettings('tenant');
+			}
+		} catch (err) {
+			console.error('Failed to add to CORS:', err);
+			error = err instanceof Error ? err.message : 'Failed to add to CORS';
+		} finally {
+			addingToCors = null;
+		}
+	}
+
+	async function loadTenantSettings() {
+		try {
+			tenantSettings = await adminSettingsAPI.getSettings('tenant');
+		} catch (err) {
+			// Tenant settings may not be available, continue without CORS check
+			console.warn('Failed to load tenant settings for CORS check:', err);
+			tenantSettings = null;
+		}
+	}
+
 	async function loadClient() {
 		loading = true;
 		error = '';
@@ -59,6 +161,7 @@
 
 	onMount(() => {
 		loadClient();
+		loadTenantSettings();
 	});
 
 	function startEditing() {
@@ -403,9 +506,30 @@
 				{:else if client.redirect_uris.length > 0}
 					<ul class="uri-list">
 						{#each client.redirect_uris as uri (uri)}
-							<li class="uri-item">{uri}</li>
+							<li class="uri-item uri-item-with-cors">
+								<span class="uri-text">{uri}</span>
+								{#if tenantSettings}
+									{#if isOriginInCors(uri)}
+										<span class="badge badge-success">CORS OK</span>
+									{:else}
+										<button
+											class="btn btn-secondary btn-sm"
+											onclick={() => addToCors(uri)}
+											disabled={addingToCors === uri}
+										>
+											{addingToCors === uri ? 'Adding...' : 'Add to CORS'}
+										</button>
+									{/if}
+								{/if}
+							</li>
 						{/each}
 					</ul>
+					{#if tenantSettings && client.redirect_uris.some((uri) => !isOriginInCors(uri))}
+						<p class="form-hint cors-hint">
+							Some redirect URIs are not in the CORS allowlist. Direct Auth API calls from these
+							origins may fail.
+						</p>
+					{/if}
 				{:else}
 					<p class="display-text muted">No redirect URIs configured</p>
 				{/if}
@@ -592,3 +716,32 @@
 		</div>
 	</div>
 {/if}
+
+<style>
+	.uri-item-with-cors {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.uri-text {
+		flex: 1;
+		word-break: break-all;
+	}
+
+	.badge-success {
+		background-color: var(--success, #10b981);
+		color: white;
+		padding: 2px 8px;
+		border-radius: 4px;
+		font-size: 0.75rem;
+		font-weight: 500;
+		white-space: nowrap;
+	}
+
+	.cors-hint {
+		margin-top: 8px;
+		color: var(--warning, #f59e0b);
+	}
+</style>

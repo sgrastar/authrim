@@ -392,8 +392,7 @@
 		{#if roleType === 'custom' && role.assignment_count > 0}
 			<div class="warning-box">
 				<p>
-					⚠️ This role is assigned to {role.assignment_count} user(s). Remove all assignments before
-					deleting.
+					⚠️ This role is assigned to {role.assignment_count} user(s). Remove all assignments before deleting.
 				</p>
 			</div>
 		{/if}

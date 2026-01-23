@@ -214,6 +214,12 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   },
   tenant: {
     allowedScopes: ['tenant'],
+    scopePermissions: {
+      tenant: {
+        viewRoles: ['system_admin', 'distributor_admin', 'org_admin', 'admin', 'viewer'],
+        editRoles: ['system_admin', 'distributor_admin', 'org_admin', 'admin'],
+      },
+    },
   },
   vc: {
     allowedScopes: ['tenant'],

@@ -36,6 +36,27 @@ interface RBACErrorResponse {
 }
 
 /**
+ * Super admin roles that have all privileges
+ *
+ * These roles bypass all role checks - they are the highest privilege level.
+ * Used for Admin/EndUser separation where super_admin is the Admin-side
+ * equivalent of system_admin.
+ */
+const SUPER_ADMIN_ROLES = ['super_admin', 'system_admin'] as const;
+
+/**
+ * Check if the user has super admin privileges
+ *
+ * Super admins (super_admin, system_admin) bypass all role checks.
+ *
+ * @param roles - User's roles
+ * @returns true if user has super admin privileges
+ */
+function hasSuperAdminPrivileges(roles: string[]): boolean {
+  return roles.some((role) => SUPER_ADMIN_ROLES.includes(role as (typeof SUPER_ADMIN_ROLES)[number]));
+}
+
+/**
  * Get admin auth context from request
  *
  * @param c - Hono context
@@ -88,6 +109,11 @@ export function requireRole(roleName: string) {
       );
     }
 
+    // Super admins bypass all role checks
+    if (hasSuperAdminPrivileges(authContext.roles)) {
+      return next();
+    }
+
     if (!authContext.roles.includes(roleName)) {
       return c.json(createAccessDeniedResponse([roleName]), 403);
     }
@@ -122,6 +148,11 @@ export function requireAnyRole(roleNames: string[]) {
         },
         401
       );
+    }
+
+    // Super admins bypass all role checks
+    if (hasSuperAdminPrivileges(authContext.roles)) {
+      return next();
     }
 
     const hasRequiredRole = roleNames.some((role) => authContext.roles.includes(role));
@@ -160,6 +191,11 @@ export function requireAllRoles(roleNames: string[]) {
         },
         401
       );
+    }
+
+    // Super admins bypass all role checks
+    if (hasSuperAdminPrivileges(authContext.roles)) {
+      return next();
     }
 
     const hasAllRoles = roleNames.every((role) => authContext.roles.includes(role));
@@ -219,10 +255,13 @@ export function requireSystemAdmin() {
  * Predefined role names for Phase 1 RBAC
  *
  * These match the DEFAULT_ROLES in types/rbac.ts
+ * Note: super_admin is the Admin-side equivalent of system_admin (from Admin/EndUser separation)
  */
 export const RBAC_ROLES = {
+  SUPER_ADMIN: 'super_admin',
   SYSTEM_ADMIN: 'system_admin',
   DISTRIBUTOR_ADMIN: 'distributor_admin',
   ORG_ADMIN: 'org_admin',
+  TENANT_ADMIN: 'tenant_admin',
   END_USER: 'end_user',
 } as const;

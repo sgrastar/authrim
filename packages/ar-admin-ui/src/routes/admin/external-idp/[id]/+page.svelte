@@ -62,7 +62,8 @@
 	// Compute redirect URL (use current slug value for preview)
 	const redirectUrl = $derived(() => {
 		if (!provider) return null;
-		const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com';
+		const baseUrl =
+			typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com';
 		// Show URL with current slug input (for preview), fallback to provider ID
 		const identifier = slug || provider.id;
 		if (slugError) return null; // Don't show if invalid
@@ -259,7 +260,8 @@
 					<div class="feature-toggle-info">
 						<h3 class="feature-toggle-title">Provider Status</h3>
 						<p class="feature-toggle-description">
-							Enable or disable this identity provider. When disabled, users cannot sign in using this provider.
+							Enable or disable this identity provider. When disabled, users cannot sign in using
+							this provider.
 						</p>
 					</div>
 					<div class="feature-toggle-control">
@@ -293,7 +295,10 @@
 						{#if slugError}
 							<p class="form-error">{slugError}</p>
 						{:else}
-							<p class="form-hint">Used in redirect URL. Changing this will require updating your external IdP configuration.</p>
+							<p class="form-hint">
+								Used in redirect URL. Changing this will require updating your external IdP
+								configuration.
+							</p>
 						{/if}
 					</div>
 
@@ -318,11 +323,26 @@
 						<label class="form-label">Redirect URL (for external IdP configuration)</label>
 						<div class="redirect-url-box">
 							<code class="redirect-url-text">{redirectUrl()}</code>
-							<button type="button" class="copy-btn" onclick={copyRedirectUrl} title="Copy to clipboard">
+							<button
+								type="button"
+								class="copy-btn"
+								onclick={copyRedirectUrl}
+								title="Copy to clipboard"
+							>
 								{#if copySuccess}
 									<span class="copy-success">✓</span>
 								{:else}
-									<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										width="16"
+										height="16"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									>
 										<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
 										<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
 									</svg>
@@ -340,7 +360,9 @@
 				<!-- OIDC Discovery -->
 				{#if providerType === 'oidc'}
 					<div class="discovery-section">
-						<label for="discoveryUrl" class="form-label">Auto-discover from OpenID Configuration</label>
+						<label for="discoveryUrl" class="form-label"
+							>Auto-discover from OpenID Configuration</label
+						>
 						<div class="discovery-input-row">
 							<input
 								id="discoveryUrl"
@@ -359,7 +381,17 @@
 									<span class="spinner-small"></span>
 									Discovering...
 								{:else}
-									<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										width="16"
+										height="16"
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									>
 										<circle cx="11" cy="11" r="8"></circle>
 										<path d="m21 21-4.3-4.3"></path>
 									</svg>
@@ -370,7 +402,9 @@
 						{#if discoveryError}
 							<p class="form-error">{discoveryError}</p>
 						{:else}
-							<p class="form-hint">Enter the issuer URL or full discovery URL to auto-fill endpoints.</p>
+							<p class="form-hint">
+								Enter the issuer URL or full discovery URL to auto-fill endpoints.
+							</p>
 						{/if}
 					</div>
 				{/if}

@@ -42,6 +42,9 @@ import {
   storeOperationalLog,
   // PII Configuration
   getOperationalLogRetentionDays,
+  // Admin Audit Log
+  AdminAuditLogRepository,
+  type AdminAuthContext,
 } from '@authrim/ar-lib-core';
 import type { UserCore, UserPII } from '@authrim/ar-lib-core';
 
@@ -100,6 +103,84 @@ function detectImageType(data: Uint8Array): ImageTypeInfo | null {
   }
 
   return null;
+}
+
+// =============================================================================
+// Admin Audit Log Helper
+// =============================================================================
+
+/**
+ * Get DB_ADMIN adapter for admin audit logging
+ */
+function getAdminAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
+  const db = c.env.DB_ADMIN ?? c.env.DB;
+  return new D1Adapter({ db });
+}
+
+/**
+ * Create an admin audit log entry (non-blocking)
+ *
+ * Records Admin UI operations to admin_audit_log table in DB_ADMIN.
+ * This is in addition to the existing audit_log in DB_CORE.
+ */
+async function createAdminAuditLog(
+  c: Context<{ Bindings: Env }>,
+  action: string,
+  resourceId: string | null,
+  result: 'success' | 'failure',
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  try {
+    const adminAdapter = getAdminAdapter(c);
+    const auditRepo = new AdminAuditLogRepository(adminAdapter);
+    const tenantId = getTenantIdFromContext(c);
+
+    // Get admin auth context if available
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adminAuth = (c as any).get?.('adminAuth') as AdminAuthContext | undefined;
+
+    const ipAddress =
+      c.req.header('CF-Connecting-IP') ||
+      c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+      'unknown';
+    const userAgent = c.req.header('User-Agent') || 'unknown';
+
+    // Determine resource type from action
+    const resourceType = action.startsWith('client.') ? 'client' : 'user';
+
+    await auditRepo.createAuditLog({
+      tenant_id: tenantId,
+      admin_user_id: adminAuth?.userId || 'system',
+      admin_email: adminAuth?.email ?? undefined,
+      action,
+      resource_type: resourceType,
+      resource_id: resourceId ?? undefined,
+      result,
+      severity: result === 'failure' ? 'warn' : 'info',
+      ip_address: ipAddress,
+      user_agent: userAgent,
+      session_id: adminAuth?.sessionId ?? undefined,
+      metadata: metadata ?? undefined,
+    });
+  } catch (error) {
+    // Non-blocking: log error but don't fail the main operation
+    const log = getLogger(c).module('ADMIN');
+    log.error('Failed to create admin audit log', { action }, error as Error);
+  }
+}
+
+/**
+ * Schedule admin audit log creation with waitUntil (non-blocking)
+ */
+function scheduleAdminAuditLog(
+  c: Context<{ Bindings: Env }>,
+  action: string,
+  resourceId: string | null,
+  result: 'success' | 'failure',
+  metadata?: Record<string, unknown>
+): void {
+  const promise = createAdminAuditLog(c, action, resourceId, result, metadata);
+  c.executionCtx?.waitUntil(promise);
 }
 
 // =============================================================================
@@ -939,6 +1020,11 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       user_type: userCore?.user_type,
     });
 
+    // Admin Audit Log (PII excluded)
+    scheduleAdminAuditLog(c, 'user.created', userId, 'success', {
+      user_type: userCore?.user_type,
+    });
+
     return c.json(
       {
         user: createdUser,
@@ -1113,6 +1199,11 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       user_type: updatedCore?.user_type,
     });
 
+    // Admin Audit Log (PII excluded)
+    scheduleAdminAuditLog(c, 'user.updated', userId, 'success', {
+      user_type: updatedCore?.user_type,
+    });
+
     return c.json({
       user: updatedUser,
     });
@@ -1210,6 +1301,9 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
 
     // Write audit log (non-blocking, critical severity for deletion) - uses waitUntil for reliable completion
     scheduleAuditLogFromContext(c, 'user.deleted', 'user', userId, {});
+
+    // Admin Audit Log
+    scheduleAdminAuditLog(c, 'user.deleted', userId, 'success');
 
     return c.json({
       success: true,
@@ -1513,6 +1607,16 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
     // Invalidate user cache
     await invalidateUserCache(c.env, userId);
 
+    // Write audit logs (non-blocking)
+    scheduleAuditLogFromContext(c, 'user.pii_deleted', 'user', userId, {
+      reason: deletionReason,
+      retention_days: retentionDays,
+    });
+    scheduleAdminAuditLog(c, 'user.pii_deleted', userId, 'success', {
+      reason: deletionReason,
+      retention_days: retentionDays,
+    });
+
     return c.json({
       success: true,
       message: 'User PII deleted successfully. User account remains active.',
@@ -1685,6 +1789,11 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
     scheduleAuditLogFromContext(c, 'client.created', 'client', client.client_id, {
       client_name: client.client_name,
       grant_types: client.grant_types,
+    });
+
+    // Write admin audit log (DB_ADMIN) - tracks Admin UI operations
+    scheduleAdminAuditLog(c, 'client.created', client.client_id, 'success', {
+      client_name: client.client_name,
     });
 
     // Return the created client (including client_secret only on creation)
@@ -1983,6 +2092,11 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       client_name: updatedClient?.client_name,
     });
 
+    // Write admin audit log (DB_ADMIN) - tracks Admin UI operations
+    scheduleAdminAuditLog(c, 'client.updated', clientId, 'success', {
+      client_name: updatedClient?.client_name,
+    });
+
     // SECURITY: Exclude client_secret_hash from response - never expose credential hashes
     if (updatedClient) {
       const { client_secret_hash: _excluded, ...clientWithoutHash } = updatedClient;
@@ -2061,6 +2175,9 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
     // Write audit log (non-blocking, critical severity for deletion) - uses waitUntil for reliable completion
     scheduleAuditLogFromContext(c, 'client.deleted', 'client', clientId, {});
 
+    // Write admin audit log (DB_ADMIN) - tracks Admin UI operations
+    scheduleAdminAuditLog(c, 'client.deleted', clientId, 'success');
+
     return c.json({
       success: true,
       message: 'Client deleted successfully',
@@ -2131,6 +2248,15 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
       result.failed.length > 0
         ? result.failed.map((id) => `Failed to delete ${id}: client not found or delete failed`)
         : undefined;
+
+    // Admin Audit Log for bulk delete
+    scheduleAdminAuditLog(c, 'client.bulk_deleted', null, 'success', {
+      deleted_count: result.deleted,
+      requested_count: client_ids.length,
+      failed_count: result.failed.length,
+      deleted_ids: successfullyDeletedIds,
+      failed_ids: result.failed.length > 0 ? result.failed : undefined,
+    });
 
     return c.json({
       success: true,
@@ -2263,6 +2389,12 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
 
     // Write audit log (secret value NOT logged)
     await createAuditLogFromContext(c, 'client.secret_regenerate', 'client', clientId, {
+      grace_period_hours: gracePeriodHours,
+      revoked_tokens: revokedTokens,
+    });
+
+    // Admin Audit Log (secret value NOT logged)
+    scheduleAdminAuditLog(c, 'client.secret_regenerated', clientId, 'success', {
       grace_period_hours: gracePeriodHours,
       revoked_tokens: revokedTokens,
     });
@@ -2859,6 +2991,14 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
       revokedCount: dbRevokedCount,
     });
 
+    // Write audit logs (non-blocking)
+    scheduleAuditLogFromContext(c, 'user.sessions_revoked', 'user', userId, {
+      revoked_count: dbRevokedCount,
+    });
+    scheduleAdminAuditLog(c, 'user.sessions_revoked', userId, 'success', {
+      revoked_count: dbRevokedCount,
+    });
+
     return c.json({
       success: true,
       message:
@@ -3051,6 +3191,13 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
       revokedSessions,
     });
 
+    // Admin Audit Log (non-blocking)
+    scheduleAdminAuditLog(c, 'user.suspended', userId, 'success', {
+      reason_code: body.reason_code,
+      previous_status: previousStatus,
+      duration_hours: body.duration_hours,
+    });
+
     return c.json({
       user_id: userId,
       status: 'suspended',
@@ -3197,6 +3344,12 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
       previousStatus,
       revokedTokens,
       revokedSessions,
+    });
+
+    // Admin Audit Log (non-blocking)
+    scheduleAdminAuditLog(c, 'user.locked', userId, 'success', {
+      reason_code: body.reason_code,
+      previous_status: previousStatus,
     });
 
     return c.json({
@@ -3370,6 +3523,12 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
       userId,
       reasonCode: body.reason_code,
       previousStatus,
+    });
+
+    // Admin Audit Log (non-blocking)
+    scheduleAdminAuditLog(c, 'user.activated', userId, 'success', {
+      reason_code: body.reason_code,
+      previous_status: previousStatus,
     });
 
     return c.json({
@@ -3566,6 +3725,12 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       userIdHash,
       reasonCode: body.reason_code,
       tombstoneId,
+    });
+
+    // Admin Audit Log (use user_id_hash to preserve anonymization)
+    scheduleAdminAuditLog(c, 'user.anonymized', userIdHash, 'success', {
+      reason_code: body.reason_code,
+      tombstone_id: tombstoneId,
     });
 
     return c.json({
@@ -4931,6 +5096,16 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
     });
 
     log.info('Revoked consent', { action: 'consent_revoke', userId, clientId });
+
+    // Write audit logs (non-blocking)
+    scheduleAuditLogFromContext(c, 'consent.revoked', 'user', userId, {
+      client_id: clientId,
+      scopes: previousScopes,
+    });
+    scheduleAdminAuditLog(c, 'user.consent_revoked', userId, 'success', {
+      client_id: clientId,
+      scopes: previousScopes,
+    });
 
     return c.json({
       success: true,

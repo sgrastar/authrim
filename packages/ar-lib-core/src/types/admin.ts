@@ -12,16 +12,36 @@ import type { UserType } from './rbac';
 /**
  * Admin authentication context
  * Contains authenticated user information and authentication method
+ *
+ * For Admin/EndUser separation, this context is populated from DB_ADMIN:
+ * - admin_users table
+ * - admin_sessions table (for session auth)
+ * - admin_role_assignments + admin_roles (for permissions)
  */
 export interface AdminAuthContext {
-  /** User ID of the authenticated admin */
+  /** Admin user ID (from admin_users table) */
   userId: string;
   /** Authentication method used (Bearer token or session) */
   authMethod: 'bearer' | 'session';
-  /** User roles (e.g., ['admin', 'superadmin']) */
+  /** User roles (e.g., ['admin', 'super_admin']) */
   roles: string[];
   // ==========================================================================
-  // RBAC Extensions (Phase 1)
+  // Admin/EndUser Separation Extensions
+  // ==========================================================================
+  /** Tenant ID for multi-tenant support */
+  tenantId?: string;
+  /** Admin user email (for audit logging) */
+  email?: string;
+  /** Aggregated permissions from all assigned roles */
+  permissions?: string[];
+  /** Highest hierarchy level among assigned roles */
+  hierarchyLevel?: number;
+  /** Whether MFA has been verified for this session */
+  mfaVerified?: boolean;
+  /** Admin session ID (for session auth) */
+  sessionId?: string;
+  // ==========================================================================
+  // RBAC Extensions (Phase 1) - Legacy, kept for backward compatibility
   // ==========================================================================
   /** User type classification (for UI/logging purposes) */
   user_type?: UserType;

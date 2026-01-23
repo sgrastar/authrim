@@ -37,6 +37,7 @@ export interface Env {
   // D1 Databases
   DB: D1Database; // Core DB (non-PII data: users_core, sessions, passkeys, clients, roles)
   DB_PII: D1Database; // PII DB (personal information: users_pii, linked_identities, subject_identifiers)
+  DB_ADMIN: D1Database; // Admin DB (admin_users, admin_roles, admin_sessions, admin_audit_log, admin_ip_allowlist)
 
   // R2 Buckets
   AVATARS: R2Bucket;

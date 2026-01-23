@@ -152,19 +152,11 @@
 
 	<!-- Tab Navigation -->
 	<div class="tab-nav">
-		<button
-			class="tab-btn"
-			class:active={activeTab === 'roles'}
-			onclick={() => switchTab('roles')}
-		>
+		<button class="tab-btn" class:active={activeTab === 'roles'} onclick={() => switchTab('roles')}>
 			<i class="i-ph-shield-check"></i>
 			Roles
 		</button>
-		<button
-			class="tab-btn"
-			class:active={activeTab === 'rules'}
-			onclick={() => switchTab('rules')}
-		>
+		<button class="tab-btn" class:active={activeTab === 'rules'} onclick={() => switchTab('rules')}>
 			<i class="i-ph-git-branch"></i>
 			Assignment Rules
 		</button>

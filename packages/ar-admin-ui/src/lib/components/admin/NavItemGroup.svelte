@@ -48,7 +48,7 @@
 			class:active={isChildActive(child.href)}
 			aria-current={isChildActive(child.href) ? 'page' : undefined}
 		>
-	{#if child.icon}
+			{#if child.icon}
 				<i class="{child.icon} nav-icon nav-icon-small"></i>
 			{/if}
 			<span class="nav-item-text">{child.label}</span>

@@ -285,11 +285,16 @@
 		<div>
 			<h1 class="page-title">Attribute-Based Access Control</h1>
 			<p class="page-description">
-				Control access based on user attributes like subscription tier, location, or verified credentials.
+				Control access based on user attributes like subscription tier, location, or verified
+				credentials.
 			</p>
 		</div>
 		<div class="page-actions">
-			<button class="btn btn-secondary" onclick={() => (showCleanupDialog = true)} disabled={!abacEnabled}>
+			<button
+				class="btn btn-secondary"
+				onclick={() => (showCleanupDialog = true)}
+				disabled={!abacEnabled}
+			>
 				<i class="i-ph-trash"></i>
 				Cleanup Expired
 			</button>
@@ -306,18 +311,15 @@
 			<div class="feature-toggle-info">
 				<h3 class="feature-toggle-title">ABAC Engine</h3>
 				<p class="feature-toggle-description">
-					Enable Attribute-Based Access Control. When enabled, user attributes can be used in policy conditions.
+					Enable Attribute-Based Access Control. When enabled, user attributes can be used in policy
+					conditions.
 				</p>
 			</div>
 			<div class="feature-toggle-control">
 				{#if abacLoading}
 					<span class="loading-text">Loading...</span>
 				{:else}
-					<ToggleSwitch
-						checked={abacEnabled}
-						disabled={abacSaving}
-						onchange={toggleAbac}
-					/>
+					<ToggleSwitch checked={abacEnabled} disabled={abacSaving} onchange={toggleAbac} />
 				{/if}
 			</div>
 		</div>
@@ -331,7 +333,8 @@
 
 	{#if !abacEnabled && !abacLoading}
 		<div class="alert alert-warning">
-			<strong>ABAC is disabled.</strong> Enable it above to manage user attributes. When disabled, attribute-based conditions in policies will not be evaluated.
+			<strong>ABAC is disabled.</strong> Enable it above to manage user attributes. When disabled, attribute-based
+			conditions in policies will not be evaluated.
 		</div>
 	{/if}
 

@@ -34,6 +34,11 @@ import {
   isAllowedOrigin,
   // Logger
   createLogger,
+  // Admin repositories (for DB_ADMIN)
+  AdminUserRepository,
+  AdminPasskeyRepository,
+  // Database adapter
+  D1Adapter,
 } from '@authrim/ar-lib-core';
 
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
@@ -290,7 +295,7 @@ async function releaseSetupLock(env: Env): Promise<void> {
 
 /**
  * Rollback user creation on Passkey registration failure
- * Deletes the user from both Core and PII databases
+ * Deletes the Admin user from DB_ADMIN (or legacy DB if DB_ADMIN unavailable)
  */
 async function rollbackUserCreation(
   c: Context<{ Bindings: Env }>,
@@ -298,6 +303,27 @@ async function rollbackUserCreation(
   tenantId: string
 ): Promise<void> {
   try {
+    // Use DB_ADMIN when available (new architecture)
+    if (c.env.DB_ADMIN) {
+      const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+      const adminUserRepo = new AdminUserRepository(adminAdapter);
+      const adminPasskeyRepo = new AdminPasskeyRepository(adminAdapter);
+
+      // Delete any passkeys first (foreign key constraint)
+      await adminPasskeyRepo.deleteAllByUser(userId);
+
+      // Delete from admin_users
+      await adminAdapter.execute('DELETE FROM admin_users WHERE id = ?', [userId]);
+
+      moduleLogger.info('Admin user rollback completed', {
+        action: 'rollback_completed',
+        userId: userId.substring(0, 8) + '...',
+        database: 'DB_ADMIN',
+      });
+      return;
+    }
+
+    // Fallback to legacy DB
     const authCtx = createAuthContextFromHono(c, tenantId);
 
     // Delete from users_core
@@ -309,9 +335,10 @@ async function rollbackUserCreation(
       await piiCtx.piiRepositories.userPII.delete(userId);
     }
 
-    moduleLogger.info('User rollback completed', {
+    moduleLogger.info('User rollback completed (legacy)', {
       action: 'rollback_completed',
       userId: userId.substring(0, 8) + '...',
+      database: 'DB_CORE',
     });
   } catch (error) {
     // Log but don't throw - rollback failure shouldn't block error response
@@ -490,31 +517,52 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
 
     // Create user in database
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
     const userId = generateId();
 
-    // Create user in users_core (non-PII)
-    // Note: user_type is 'end_user' | 'admin' | 'm2m' - admin for initial setup
-    await authCtx.repositories.userCore.createUser({
-      id: userId,
-      tenant_id: tenantId,
-      email_verified: true, // Admin email is trusted
-      user_type: 'admin',
-      pii_partition: 'default',
-      pii_status: 'pending',
-    });
+    // Use DB_ADMIN when available (new Admin/EndUser separation architecture)
+    if (c.env.DB_ADMIN) {
+      const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+      const adminUserRepo = new AdminUserRepository(adminAdapter);
 
-    // Create user in users_pii if PII DB is available
-    if (c.env.DB_PII) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const preferredUsername = email.split('@')[0];
-      await piiCtx.piiRepositories.userPII.createPII({
+      // Create Admin user in admin_users (no PII separation needed for Admin)
+      await adminUserRepo.createAdminUser({
         id: userId,
         tenant_id: tenantId,
         email: email.toLowerCase(),
-        name: name || null,
-        preferred_username: preferredUsername,
+        name: name || undefined,
+        // email_verified is set to true during setup
+        // MFA can be configured later
       });
+
+      // Set email as verified for initial admin
+      await adminUserRepo.setEmailVerified(userId);
+    } else {
+      // Fallback to legacy DB (users_core + users_pii)
+      const authCtx = createAuthContextFromHono(c, tenantId);
+
+      // Create user in users_core (non-PII)
+      // Note: user_type is 'end_user' | 'admin' | 'm2m' - admin for initial setup
+      await authCtx.repositories.userCore.createUser({
+        id: userId,
+        tenant_id: tenantId,
+        email_verified: true, // Admin email is trusted
+        user_type: 'admin',
+        pii_partition: 'default',
+        pii_status: 'pending',
+      });
+
+      // Create user in users_pii if PII DB is available
+      if (c.env.DB_PII) {
+        const piiCtx = createPIIContextFromHono(c, tenantId);
+        const preferredUsername = email.split('@')[0];
+        await piiCtx.piiRepositories.userPII.createPII({
+          id: userId,
+          tenant_id: tenantId,
+          email: email.toLowerCase(),
+          name: name || null,
+          preferred_username: preferredUsername,
+        });
+      }
     }
 
     // Generate Passkey registration options
@@ -722,9 +770,6 @@ setupApp.post('/api/admin-init-setup/complete', async (c) => {
       );
     }
 
-    // Store the Passkey credential
-    const authCtx = createAuthContextFromHono(c, tenantId);
-
     // Handle both old and new SimpleWebAuthn API shapes
     const registrationInfoAny = verification.registrationInfo as any;
     const credentialID = registrationInfoAny.credentialID || registrationInfoAny.credential?.id;
@@ -751,17 +796,35 @@ setupApp.post('/api/admin-init-setup/complete', async (c) => {
       (t): t is AuthenticatorTransport => validTransports.includes(t as AuthenticatorTransport)
     );
 
-    await authCtx.repositories.passkey.create({
-      id: generateId(),
-      user_id: userId,
-      credential_id: credentialId,
-      public_key: publicKey,
-      counter,
-      transports,
-    });
+    // Store the Passkey credential
+    // Use admin_passkeys when DB_ADMIN is available, otherwise use legacy passkeys table
+    if (c.env.DB_ADMIN) {
+      const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+      const adminPasskeyRepo = new AdminPasskeyRepository(adminAdapter);
 
-    // Assign system_admin role
-    await assignSystemAdminRole(c.env, userId);
+      await adminPasskeyRepo.createPasskey({
+        admin_user_id: userId,
+        credential_id: credentialId,
+        public_key: publicKey,
+        counter,
+        transports,
+        device_name: 'Initial Setup Passkey',
+      });
+    } else {
+      // Fallback to legacy passkeys table
+      const authCtx = createAuthContextFromHono(c, tenantId);
+      await authCtx.repositories.passkey.create({
+        id: generateId(),
+        user_id: userId,
+        credential_id: credentialId,
+        public_key: publicKey,
+        counter,
+        transports,
+      });
+    }
+
+    // Assign super_admin (or system_admin for legacy) role
+    await assignSystemAdminRole(c.env, userId, tenantId);
 
     // Complete setup (permanently disable setup feature)
     await completeSetup(c.env);

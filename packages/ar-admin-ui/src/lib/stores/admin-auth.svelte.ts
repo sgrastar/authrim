@@ -16,6 +16,7 @@ export interface AdminUser {
 	email: string;
 	name?: string;
 	roles: string[];
+	lastLoginAt?: number | null;
 }
 
 /**
@@ -94,7 +95,8 @@ function createAdminAuthStore() {
 						userId: session.user_id,
 						email: session.email || '',
 						name: session.name,
-						roles: session.roles
+						roles: session.roles,
+						lastLoginAt: session.last_login_at
 					};
 				} else {
 					state.isAuthenticated = false;

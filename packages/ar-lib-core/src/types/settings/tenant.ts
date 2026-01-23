@@ -17,6 +17,9 @@ export interface TenantSettings {
   'tenant.default_id': string;
   'tenant.isolation_enabled': boolean;
 
+  // CORS Settings
+  'tenant.allowed_origins': string;
+
   // Branding
   'tenant.name': string;
   'tenant.logo_uri': string;
@@ -61,6 +64,18 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     envKey: 'TENANT_ISOLATION_ENABLED',
     label: 'Tenant Isolation',
     description: 'Enable strict tenant isolation',
+    visibility: 'admin',
+  },
+
+  // CORS Settings
+  'tenant.allowed_origins': {
+    key: 'tenant.allowed_origins',
+    type: 'string',
+    default: '',
+    envKey: 'ALLOWED_ORIGINS',
+    label: 'Allowed Origins (CORS)',
+    description:
+      'Comma-separated list of allowed origins for Direct Auth API. Supports wildcards (e.g., https://*.pages.dev). If not set, all origins are allowed without credentials.',
     visibility: 'admin',
   },
 
@@ -167,6 +182,9 @@ export const TENANT_DEFAULTS: TenantSettings = {
   'tenant.base_domain': '',
   'tenant.default_id': 'default',
   'tenant.isolation_enabled': false,
+  // CORS Settings
+  'tenant.allowed_origins': '',
+  // Branding
   'tenant.name': '',
   'tenant.logo_uri': '',
   'tenant.tos_uri': '',

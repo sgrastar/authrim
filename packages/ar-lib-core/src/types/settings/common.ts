@@ -41,16 +41,16 @@ export interface ScopedCategoryMeta extends CategoryMeta {
  */
 export const DEFAULT_SCOPE_PERMISSIONS: Record<SettingScopeLevel, ScopePermission> = {
   platform: {
-    viewRoles: ['system_admin', 'viewer'],
+    viewRoles: ['system_admin', 'admin', 'viewer'],
     editRoles: ['system_admin'],
   },
   tenant: {
-    viewRoles: ['system_admin', 'distributor_admin', 'org_admin', 'viewer'],
-    editRoles: ['system_admin', 'distributor_admin'],
+    viewRoles: ['system_admin', 'distributor_admin', 'org_admin', 'admin', 'viewer'],
+    editRoles: ['system_admin', 'distributor_admin', 'admin'],
   },
   client: {
-    viewRoles: ['system_admin', 'distributor_admin', 'org_admin', 'viewer'],
-    editRoles: ['system_admin', 'distributor_admin', 'org_admin'],
+    viewRoles: ['system_admin', 'distributor_admin', 'org_admin', 'admin', 'viewer'],
+    editRoles: ['system_admin', 'distributor_admin', 'org_admin', 'admin'],
   },
 };
 

@@ -152,5 +152,35 @@ export {
   D1StatusListRepository,
 } from './vc';
 
+// Admin repositories (Admin/EndUser separation - DB_ADMIN)
+export {
+  // Core Admin Management
+  AdminUserRepository,
+  type AdminUserFilterOptions,
+  AdminRoleRepository,
+  AdminRoleAssignmentRepository,
+  AdminSessionRepository,
+  AdminPasskeyRepository,
+  AdminAuditLogRepository,
+  type AdminAuditLogFilterOptions,
+  AdminIpAllowlistRepository,
+  // Admin ABAC (Attribute-Based Access Control)
+  AdminAttributeRepository,
+  type AdminAttribute,
+  type AdminAttributeCreateInput,
+  AdminAttributeValueRepository,
+  type AdminAttributeValue,
+  type AdminAttributeValueCreateInput,
+  // Admin ReBAC (Relationship-Based Access Control)
+  AdminRelationshipRepository,
+  type AdminRelationship,
+  type AdminRelationshipCreateInput,
+  // Admin Policies (Combined RBAC/ABAC/ReBAC)
+  AdminPolicyRepository,
+  type AdminPolicy,
+  type AdminPolicyCreateInput,
+  type AdminPolicyConditions,
+} from './admin';
+
 // Re-export database types for convenience
 export type { DatabaseAdapter, ExecuteResult, PIIStatus, PIIClass } from '../db/adapter';

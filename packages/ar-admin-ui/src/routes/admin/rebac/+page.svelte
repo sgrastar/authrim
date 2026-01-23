@@ -138,18 +138,15 @@
 			<div class="feature-toggle-info">
 				<h3 class="feature-toggle-title">ReBAC Engine</h3>
 				<p class="feature-toggle-description">
-					Enable Relationship-Based Access Control. When enabled, permission checks will evaluate relationship tuples.
+					Enable Relationship-Based Access Control. When enabled, permission checks will evaluate
+					relationship tuples.
 				</p>
 			</div>
 			<div class="feature-toggle-control">
 				{#if rebacLoading}
 					<span class="loading-text">Loading...</span>
 				{:else}
-					<ToggleSwitch
-						checked={rebacEnabled}
-						disabled={rebacSaving}
-						onchange={toggleRebac}
-					/>
+					<ToggleSwitch checked={rebacEnabled} disabled={rebacSaving} onchange={toggleRebac} />
 				{/if}
 			</div>
 		</div>
@@ -163,7 +160,8 @@
 
 	{#if !rebacEnabled && !rebacLoading}
 		<div class="alert alert-warning">
-			<strong>ReBAC is disabled.</strong> Enable it above to use relationship-based permission checks. When disabled, relationship tuples will not be evaluated.
+			<strong>ReBAC is disabled.</strong> Enable it above to use relationship-based permission checks.
+			When disabled, relationship tuples will not be evaluated.
 		</div>
 	{/if}
 

@@ -31,6 +31,9 @@ import {
   createAuditLog,
   // Cookie Configuration
   getAdminCookieSameSite,
+  // Admin Session Repository
+  AdminSessionRepository,
+  D1Adapter,
 } from '@authrim/ar-lib-core';
 
 // ===== Module-level Logger for Helper Functions =====
@@ -827,6 +830,40 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           email: piiResult.email,
           name: piiResult.name || null,
         };
+      }
+    }
+
+    // Admin/EndUser Separation: Create session in admin_sessions table for admin users
+    // This is required because admin-auth middleware reads from admin_sessions (DB_ADMIN)
+    if (userCore?.user_type === 'admin' && c.env.DB_ADMIN) {
+      try {
+        const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+        const adminSessionRepo = new AdminSessionRepository(adminAdapter);
+
+        // Get client IP from Cloudflare header
+        const clientIp = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || null;
+        const userAgent = c.req.header('User-Agent') || null;
+
+        await adminSessionRepo.createSession({
+          id: sessionData.id, // Use same session ID as SessionStore DO
+          tenant_id: tenantId,
+          admin_user_id: passkey.user_id,
+          ip_address: clientIp || undefined,
+          user_agent: userAgent || undefined,
+          expires_at: now + 7 * 24 * 60 * 60 * 1000, // 7 days in milliseconds
+          mfa_verified: true, // Passkey is MFA
+        });
+
+        log.info('Admin session created in admin_sessions table', {
+          action: 'admin_session_create',
+          sessionId: sessionData.id,
+        });
+      } catch (error) {
+        // Log but don't fail - SessionStore DO session is already created
+        log.error('Failed to create admin session in DB_ADMIN', {
+          action: 'admin_session_create',
+          errorType: error instanceof Error ? error.name : 'Unknown',
+        });
       }
     }
 

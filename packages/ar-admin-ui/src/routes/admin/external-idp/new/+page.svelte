@@ -88,7 +88,8 @@
 
 	// Compute redirect URL based on slug
 	const redirectUrl = $derived(() => {
-		const baseUrl = typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com';
+		const baseUrl =
+			typeof window !== 'undefined' ? window.location.origin : 'https://your-domain.com';
 		if (slug && !slugError) {
 			return `${baseUrl}/auth/external/${slug}/callback`;
 		}
@@ -363,11 +364,26 @@
 				{#if redirectUrl()}
 					<div class="redirect-url-box">
 						<code class="redirect-url-text">{redirectUrl()}</code>
-						<button type="button" class="copy-btn" onclick={copyRedirectUrl} title="Copy to clipboard">
+						<button
+							type="button"
+							class="copy-btn"
+							onclick={copyRedirectUrl}
+							title="Copy to clipboard"
+						>
 							{#if copySuccess}
 								<span class="copy-success">✓</span>
 							{:else}
-								<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
 									<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
 									<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
 								</svg>
@@ -375,7 +391,10 @@
 						</button>
 					</div>
 				{:else}
-					<p class="form-hint">Enter a slug above to see the redirect URL, or it will be generated using the Provider ID after saving.</p>
+					<p class="form-hint">
+						Enter a slug above to see the redirect URL, or it will be generated using the Provider
+						ID after saving.
+					</p>
 				{/if}
 			</div>
 		</div>
@@ -386,7 +405,8 @@
 				<div class="feature-toggle-info">
 					<h3 class="feature-toggle-title">Provider Status</h3>
 					<p class="feature-toggle-description">
-						Enable or disable this identity provider. When disabled, users cannot sign in using this provider.
+						Enable or disable this identity provider. When disabled, users cannot sign in using this
+						provider.
 					</p>
 				</div>
 				<div class="feature-toggle-control">
@@ -402,7 +422,9 @@
 			<!-- OIDC Discovery -->
 			{#if providerType === 'oidc'}
 				<div class="discovery-section">
-					<label for="discoveryUrl" class="form-label">Auto-discover from OpenID Configuration</label>
+					<label for="discoveryUrl" class="form-label"
+						>Auto-discover from OpenID Configuration</label
+					>
 					<div class="discovery-input-row">
 						<input
 							id="discoveryUrl"
@@ -421,7 +443,17 @@
 								<span class="spinner-small"></span>
 								Discovering...
 							{:else}
-								<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
 									<circle cx="11" cy="11" r="8"></circle>
 									<path d="m21 21-4.3-4.3"></path>
 								</svg>
@@ -432,7 +464,9 @@
 					{#if discoveryError}
 						<p class="form-error">{discoveryError}</p>
 					{:else}
-						<p class="form-hint">Enter the issuer URL or full discovery URL. Endpoints will be auto-filled.</p>
+						<p class="form-hint">
+							Enter the issuer URL or full discovery URL. Endpoints will be auto-filled.
+						</p>
 					{/if}
 				</div>
 			{/if}

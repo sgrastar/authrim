@@ -76,8 +76,8 @@ function checkRolePermission(
   scopeLevel: SettingScopeLevel,
   action: 'view' | 'edit'
 ): boolean {
-  // system_admin always has access
-  if (userRoles.includes('system_admin')) {
+  // super_admin and system_admin always have access
+  if (userRoles.includes('super_admin') || userRoles.includes('system_admin')) {
     return true;
   }
 

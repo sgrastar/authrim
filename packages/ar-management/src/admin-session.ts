@@ -144,6 +144,24 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
+    // Fetch last_login_at from admin_users table (DB_ADMIN)
+    let lastLoginAt: number | null = null;
+
+    if (c.env.DB_ADMIN) {
+      try {
+        const adminAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+        const adminUser = await adminAdapter.queryOne<{ last_login_at: number | null }>(
+          'SELECT last_login_at FROM admin_users WHERE id = ? AND is_active = 1',
+          [session.userId]
+        );
+        if (adminUser) {
+          lastLoginAt = adminUser.last_login_at;
+        }
+      } catch (error) {
+        log.warn('Failed to fetch last_login_at from admin_users', { action: 'fetch_admin_user' });
+      }
+    }
+
     return c.json({
       active: true,
       session_id: session.id,
@@ -153,6 +171,7 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       roles,
       expires_at: session.expiresAt,
       created_at: session.createdAt,
+      last_login_at: lastLoginAt,
     });
   } catch (error) {
     log.error('Admin session status error', { action: 'status' }, error as Error);

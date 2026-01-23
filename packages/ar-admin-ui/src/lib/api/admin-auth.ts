@@ -42,6 +42,7 @@ export interface SessionStatus {
 	roles: string[];
 	expires_at: number;
 	created_at: number;
+	last_login_at?: number | null;
 }
 
 /**

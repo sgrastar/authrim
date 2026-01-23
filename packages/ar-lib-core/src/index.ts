@@ -3,6 +3,7 @@ export * from './constants';
 export * from './types/env';
 export * from './types/oidc';
 export * from './types/admin';
+export * from './types/admin-user';
 export * from './types/rbac';
 export * from './types/consent';
 export * from './types/saml';

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { adminAuthAPI } from '$lib/api/admin-auth';
+
 	interface Breadcrumb {
 		label: string;
 		href?: string;
@@ -12,6 +14,9 @@
 		selectedTenantId?: string;
 		onTenantChange?: (tenantId: string) => void;
 		onMobileMenuClick?: () => void;
+		userEmail?: string;
+		userName?: string;
+		lastLoginAt?: number | null;
 	}
 
 	let {
@@ -19,8 +24,57 @@
 		tenants = [],
 		selectedTenantId,
 		onTenantChange,
-		onMobileMenuClick
+		onMobileMenuClick,
+		userEmail,
+		userName,
+		lastLoginAt
 	}: Props = $props();
+
+	// User dropdown state
+	let showUserMenu = $state(false);
+
+	function toggleUserMenu() {
+		showUserMenu = !showUserMenu;
+	}
+
+	function closeUserMenu() {
+		showUserMenu = false;
+	}
+
+	function getInitials(email: string | undefined, name: string | undefined): string {
+		if (name) {
+			return name
+				.split(' ')
+				.map((n) => n[0])
+				.join('')
+				.slice(0, 2)
+				.toUpperCase();
+		}
+		if (email) {
+			return email.charAt(0).toUpperCase();
+		}
+		return 'A';
+	}
+
+	function formatLastLogin(timestamp: number | null | undefined): string {
+		if (!timestamp) return 'Never';
+		const date = new Date(timestamp);
+		const now = new Date();
+		const diffMs = now.getTime() - date.getTime();
+		const diffMins = Math.floor(diffMs / (1000 * 60));
+		const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+		const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+		if (diffMins < 1) return 'Just now';
+		if (diffMins < 60) return `${diffMins}m ago`;
+		if (diffHours < 24) return `${diffHours}h ago`;
+		if (diffDays < 7) return `${diffDays}d ago`;
+		return date.toLocaleDateString();
+	}
+
+	async function handleLogout() {
+		await adminAuthAPI.logout();
+	}
 
 	function handleTenantChange(event: Event) {
 		const select = event.target as HTMLSelectElement;
@@ -76,11 +130,44 @@
 			</div>
 		{/if}
 
-		<div class="header-actions">
-			<button class="header-icon-btn" aria-label="Notifications">
-				<i class="i-ph-bell"></i>
-				<span class="notification-dot"></span>
+		<!-- User Info -->
+		<div class="header-user">
+			<button class="user-button" onclick={toggleUserMenu} aria-expanded={showUserMenu}>
+				<div class="user-avatar">{getInitials(userEmail, userName)}</div>
+				<div class="user-info">
+					<span class="user-email">{userEmail || 'Admin'}</span>
+					{#if lastLoginAt}
+						<span class="user-last-login">Last login: {formatLastLogin(lastLoginAt)}</span>
+					{/if}
+				</div>
+				<i class="i-ph-caret-down user-caret" class:open={showUserMenu}></i>
 			</button>
+
+			{#if showUserMenu}
+				<div class="user-menu">
+					<div class="user-menu-header">
+						<div class="user-avatar-lg">{getInitials(userEmail, userName)}</div>
+						<div class="user-menu-info">
+							<span class="user-menu-email">{userEmail || 'Admin'}</span>
+							{#if lastLoginAt}
+								<span class="user-menu-last-login">
+									Last login: {new Date(lastLoginAt).toLocaleString()}
+								</span>
+							{/if}
+						</div>
+					</div>
+					<div class="user-menu-divider"></div>
+					<a href="/admin/account-settings" class="user-menu-item" onclick={closeUserMenu}>
+						<i class="i-ph-user-circle"></i>
+						Account Settings
+					</a>
+					<button class="user-menu-item danger" onclick={handleLogout}>
+						<i class="i-ph-sign-out"></i>
+						Logout
+					</button>
+				</div>
+				<button class="user-menu-overlay" onclick={closeUserMenu} aria-label="Close menu"></button>
+			{/if}
 		</div>
 	</div>
 </header>
@@ -235,49 +322,173 @@
 		color: var(--text-primary);
 	}
 
-	/* Header actions */
-	.header-actions {
-		display: flex;
-		align-items: center;
-		gap: 8px;
+	/* Header User */
+	.header-user {
+		position: relative;
 	}
 
-	.header-icon-btn {
-		width: 44px;
-		height: 44px;
-		border: none;
+	.user-button {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 8px 12px;
 		background: transparent;
+		border: none;
 		border-radius: var(--radius-md);
-		color: var(--text-secondary);
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+
+	.user-button:hover {
+		background: var(--bg-subtle);
+	}
+
+	.user-avatar {
+		width: 36px;
+		height: 36px;
+		border-radius: var(--radius-full);
+		background: var(--gradient-accent);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		transition: all var(--transition-fast);
-		position: relative;
-		cursor: pointer;
+		color: white;
+		font-family: var(--font-display);
+		font-weight: 700;
+		font-size: 0.875rem;
+		flex-shrink: 0;
 	}
 
-	.header-icon-btn:hover {
-		background: var(--primary-light);
-		color: var(--primary);
-		transform: translateY(-2px);
+	.user-info {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 2px;
 	}
 
-	.header-icon-btn :global(i) {
-		width: 22px;
-		height: 22px;
-		font-size: 22px;
+	.user-email {
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: var(--text-primary);
 	}
 
-	.notification-dot {
+	.user-last-login {
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+	}
+
+	.user-caret {
+		width: 16px;
+		height: 16px;
+		color: var(--text-secondary);
+		transition: transform var(--transition-fast);
+	}
+
+	.user-caret.open {
+		transform: rotate(180deg);
+	}
+
+	/* User Menu Dropdown */
+	.user-menu {
 		position: absolute;
-		top: 10px;
-		right: 10px;
-		width: 10px;
-		height: 10px;
-		background: var(--accent);
-		border-radius: 50%;
-		border: 2px solid var(--bg-page);
+		top: calc(100% + 8px);
+		right: 0;
+		width: 280px;
+		background: var(--bg-card);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-lg);
+		z-index: 100;
+		overflow: hidden;
+	}
+
+	.user-menu-header {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 16px;
+		background: var(--bg-subtle);
+	}
+
+	.user-avatar-lg {
+		width: 48px;
+		height: 48px;
+		border-radius: var(--radius-full);
+		background: var(--gradient-accent);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: white;
+		font-family: var(--font-display);
+		font-weight: 700;
+		font-size: 1rem;
+		flex-shrink: 0;
+	}
+
+	.user-menu-info {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		min-width: 0;
+	}
+
+	.user-menu-email {
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.user-menu-last-login {
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+	}
+
+	.user-menu-divider {
+		height: 1px;
+		background: var(--border);
+	}
+
+	.user-menu-item {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		width: 100%;
+		padding: 12px 16px;
+		background: transparent;
+		border: none;
+		font-size: 0.875rem;
+		color: var(--text-primary);
+		cursor: pointer;
+		transition: background var(--transition-fast);
+		text-decoration: none;
+	}
+
+	.user-menu-item:hover {
+		background: var(--bg-subtle);
+	}
+
+	.user-menu-item.danger {
+		color: var(--danger);
+	}
+
+	.user-menu-item.danger:hover {
+		background: var(--danger-subtle);
+	}
+
+	.user-menu-item :global(i) {
+		width: 18px;
+		height: 18px;
+	}
+
+	.user-menu-overlay {
+		position: fixed;
+		inset: 0;
+		background: transparent;
+		z-index: 99;
+		border: none;
+		cursor: default;
 	}
 
 	/* Responsive */

@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
-import { createLogger } from '@authrim/ar-lib-core';
+import { createLogger, isAllowedOrigin, parseAllowedOrigins } from '@authrim/ar-lib-core';
 
 // Module-level logger for router (no Hono context available in error handler)
 const log = createLogger().module('ROUTER');
@@ -21,7 +21,10 @@ interface Env {
   OP_ASYNC: Fetcher;
   OP_SAML: Fetcher;
   EXTERNAL_IDP: Fetcher; // External IdP (social login, enterprise IdP)
-  // CORS configuration (optional)
+  // KV Namespace for configuration (optional)
+  // Used for dynamic configuration from Admin UI without redeployment
+  AUTHRIM_CONFIG?: KVNamespace;
+  // CORS configuration (optional, fallback if KV not set)
   // Comma-separated list of allowed origins, e.g., "https://app.example.com,https://admin.example.com"
   // If not set, defaults to '*' with credentials disabled for security
   ALLOWED_ORIGINS?: string;
@@ -129,31 +132,57 @@ app.use('*', async (c, next) => {
 /**
  * CORS configuration with dynamic origin validation
  *
+ * Configuration priority:
+ * 1. KV (tenant.allowed_origins) - Dynamic configuration from Admin UI
+ * 2. Environment variable (ALLOWED_ORIGINS) - Deploy-time fallback
+ * 3. Default (empty) - Allow all without credentials
+ *
  * Security considerations:
  * - Per CORS spec, when credentials: true, origin cannot be '*'
  * - If ALLOWED_ORIGINS is set, validates against whitelist with credentials enabled
  * - If not set, uses '*' with credentials disabled (safe default for public APIs)
+ * - Supports wildcards (e.g., https://*.pages.dev)
  */
 app.use('*', async (c, next) => {
-  const allowedOriginsEnv = c.env.ALLOWED_ORIGINS;
+  let allowedOriginsStr: string | null = null;
 
-  // Parse allowed origins from environment (comma-separated)
-  const allowedOrigins = allowedOriginsEnv
-    ? allowedOriginsEnv.split(',').map((o) => o.trim())
-    : null;
+  // 1. Try to get from KV (tenant settings)
+  if (c.env.AUTHRIM_CONFIG) {
+    try {
+      const kvData = await c.env.AUTHRIM_CONFIG.get('settings:tenant:default:tenant');
+      if (kvData) {
+        const parsed = JSON.parse(kvData) as Record<string, unknown>;
+        const kvValue = parsed['tenant.allowed_origins'];
+        if (typeof kvValue === 'string' && kvValue.length > 0) {
+          allowedOriginsStr = kvValue;
+        }
+      }
+    } catch {
+      // KV read error - continue with env fallback
+      // Fail-safe: don't block requests due to KV issues
+    }
+  }
+
+  // 2. Fallback to environment variable
+  if (!allowedOriginsStr && c.env.ALLOWED_ORIGINS) {
+    allowedOriginsStr = c.env.ALLOWED_ORIGINS;
+  }
+
+  // 3. Parse allowed origins (supports wildcards)
+  const allowedOrigins = allowedOriginsStr ? parseAllowedOrigins(allowedOriginsStr) : null;
 
   // Determine if credentials should be allowed
   // Only allow credentials when specific origins are configured
-  const allowCredentials = !!allowedOrigins;
+  const allowCredentials = !!allowedOrigins && allowedOrigins.length > 0;
 
-  // Origin validation function
+  // Origin validation function (supports wildcards)
   const validateOrigin = (origin: string): string | undefined | null => {
-    if (!allowedOrigins) {
+    if (!allowedOrigins || allowedOrigins.length === 0) {
       // No whitelist configured: allow all origins but without credentials
       return origin;
     }
-    // Check against whitelist
-    if (allowedOrigins.includes(origin)) {
+    // Check against whitelist with wildcard support
+    if (isAllowedOrigin(origin, allowedOrigins)) {
       return origin;
     }
     // Origin not in whitelist

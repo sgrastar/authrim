@@ -425,6 +425,7 @@ import {
 import { getEncryptionStatus } from './routes/settings/encryption-config';
 import settingsV2 from './routes/settings-v2';
 import policyRouter from './routes/policy';
+import adminManagementRouter from './routes/admin-management';
 import {
   revokeCredentialHandler,
   suspendCredentialHandler,
@@ -889,6 +890,21 @@ app.route('/api/admin', settingsV2);
 // - GET /api/admin/effective-policy?client_id=xxx
 // - GET /api/admin/effective-policy/options?client_id=xxx
 app.route('/api/admin', policyRouter);
+
+// =============================================================================
+// Admin Management API (Admin/EndUser Separation - DB_ADMIN)
+// =============================================================================
+// Routes:
+// - GET/POST /api/admin/admins - Admin user list/create
+// - GET/PATCH/DELETE /api/admin/admins/:id - Admin user CRUD
+// - POST /api/admin/admins/:id/suspend|activate|unlock
+// - POST/DELETE /api/admin/admins/:id/roles - Role assignment
+// - GET/POST /api/admin/admin-roles - Admin role list/create
+// - GET/PATCH/DELETE /api/admin/admin-roles/:id - Admin role CRUD
+// - GET/POST /api/admin/ip-allowlist - IP restriction list/create
+// - GET/PATCH/DELETE /api/admin/ip-allowlist/:id - IP entry CRUD
+// - GET /api/admin/admin-audit-log - Admin audit log viewing
+app.route('/api/admin', adminManagementRouter);
 
 // Admin Certification Profile endpoints (OpenID Certification)
 // NOTE: Profiles apply predefined settings - kept for certification testing

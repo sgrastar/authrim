@@ -380,7 +380,8 @@
 			featureFlagsVersion = result.newVersion;
 		} catch (err) {
 			console.error('Failed to update Custom Rules status:', err);
-			customRulesError = err instanceof Error ? err.message : 'Failed to update Custom Rules status';
+			customRulesError =
+				err instanceof Error ? err.message : 'Failed to update Custom Rules status';
 			await loadCustomRulesStatus();
 		} finally {
 			customRulesSaving = false;
@@ -402,7 +403,9 @@
 	<div class="page-header">
 		<div>
 			<h1 class="page-title">Policy Rules</h1>
-			<p class="page-description">Combine RBAC, ABAC, and ReBAC conditions to create fine-grained access control rules.</p>
+			<p class="page-description">
+				Combine RBAC, ABAC, and ReBAC conditions to create fine-grained access control rules.
+			</p>
 		</div>
 		<div class="page-actions">
 			<button class="btn btn-secondary" onclick={openSimulateDialog} disabled={!customRulesEnabled}>
@@ -422,7 +425,8 @@
 			<div class="feature-toggle-info">
 				<h3 class="feature-toggle-title">Custom Policy Rules</h3>
 				<p class="feature-toggle-description">
-					Enable custom policy rules that combine RBAC roles, ABAC attributes, and ReBAC relationships for fine-grained access control.
+					Enable custom policy rules that combine RBAC roles, ABAC attributes, and ReBAC
+					relationships for fine-grained access control.
 				</p>
 			</div>
 			<div class="feature-toggle-control">
@@ -447,7 +451,8 @@
 
 	{#if !customRulesEnabled && !customRulesLoading}
 		<div class="alert alert-warning">
-			<strong>Custom Rules are disabled.</strong> Enable above to create custom policy rules. Default policies based on roles will still apply.
+			<strong>Custom Rules are disabled.</strong> Enable above to create custom policy rules. Default
+			policies based on roles will still apply.
 		</div>
 	{/if}
 
