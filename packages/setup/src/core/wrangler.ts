@@ -582,137 +582,292 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
 
 /**
  * Convert WranglerConfig to TOML string
+ *
+ * When envName is provided, generates the new Cloudflare [env.xxx] section format:
+ * - Top-level: main, compatibility_date, compatibility_flags, migrations
+ * - [env.{envName}]: name, workers_dev, placement, kv, d1, do, vars, services, routes
+ *
+ * When envName is not provided, generates the legacy flat format (for backward compatibility).
+ *
+ * @param config - Wrangler configuration object
+ * @param envName - Optional environment name (e.g., "conformance", "prod")
  */
-export function toToml(config: WranglerConfig): string {
+export function toToml(config: WranglerConfig, envName?: string): string {
   const lines: string[] = [];
 
-  // Basic fields
-  lines.push(`name = "${config.name}"`);
-  lines.push(`main = "${config.main}"`);
-  lines.push(`compatibility_date = "${config.compatibility_date}"`);
-  lines.push(
-    `compatibility_flags = [${config.compatibility_flags.map((f) => `"${f}"`).join(', ')}]`
-  );
-  lines.push(`workers_dev = ${config.workers_dev}`);
-  lines.push('');
+  if (envName) {
+    // =========================================================================
+    // New format: [env.xxx] sections
+    // =========================================================================
 
-  // Placement
-  if (config.placement) {
-    lines.push('[placement]');
-    lines.push(`mode = "${config.placement.mode}"`);
+    // Top-level: shared settings (main, compatibility)
+    lines.push(`main = "${config.main}"`);
+    lines.push(`compatibility_date = "${config.compatibility_date}"`);
+    lines.push(
+      `compatibility_flags = [${config.compatibility_flags.map((f) => `"${f}"`).join(', ')}]`
+    );
     lines.push('');
-  }
 
-  // KV Namespaces
-  if (config.kv_namespaces && config.kv_namespaces.length > 0) {
-    lines.push('# KV Namespaces');
-    for (const kv of config.kv_namespaces) {
-      lines.push('[[kv_namespaces]]');
-      lines.push(`binding = "${kv.binding}"`);
-      lines.push(`id = "${kv.id}"`);
-      if (kv.preview_id) {
-        lines.push(`preview_id = "${kv.preview_id}"`);
-      }
-      lines.push('');
-    }
-  }
-
-  // D1 Databases
-  if (config.d1_databases && config.d1_databases.length > 0) {
-    lines.push('# D1 Databases');
-    for (const db of config.d1_databases) {
-      lines.push('[[d1_databases]]');
-      lines.push(`binding = "${db.binding}"`);
-      lines.push(`database_name = "${db.database_name}"`);
-      lines.push(`database_id = "${db.database_id}"`);
-      lines.push('');
-    }
-  }
-
-  // R2 Buckets
-  if (config.r2_buckets && config.r2_buckets.length > 0) {
-    lines.push('# R2 Buckets');
-    for (const r2 of config.r2_buckets) {
-      lines.push('[[r2_buckets]]');
-      lines.push(`binding = "${r2.binding}"`);
-      lines.push(`bucket_name = "${r2.bucket_name}"`);
-      lines.push('');
-    }
-  }
-
-  // Queues
-  if (config.queues?.producers && config.queues.producers.length > 0) {
-    lines.push('# Cloudflare Queues');
-    for (const producer of config.queues.producers) {
-      lines.push('[[queues.producers]]');
-      lines.push(`queue = "${producer.queue}"`);
-      lines.push(`binding = "${producer.binding}"`);
-      lines.push('');
-    }
-  }
-
-  // Durable Objects
-  if (config.durable_objects?.bindings && config.durable_objects.bindings.length > 0) {
-    lines.push('# Durable Objects Bindings');
-    for (const dob of config.durable_objects.bindings) {
-      lines.push('[[durable_objects.bindings]]');
-      lines.push(`name = "${dob.name}"`);
-      lines.push(`class_name = "${dob.class_name}"`);
-      if (dob.script_name) {
-        lines.push(`script_name = "${dob.script_name}"`);
-      }
-      lines.push('');
-    }
-  }
-
-  // Migrations
-  if (config.migrations && config.migrations.length > 0) {
-    lines.push('# Durable Objects Migrations');
-    for (const migration of config.migrations) {
-      lines.push('[[migrations]]');
-      lines.push(`tag = "${migration.tag}"`);
-      if (migration.new_sqlite_classes && migration.new_sqlite_classes.length > 0) {
-        lines.push('new_sqlite_classes = [');
-        for (const cls of migration.new_sqlite_classes) {
-          lines.push(`  "${cls}",`);
+    // Migrations at top level (for Durable Objects definitions - applies to all envs)
+    if (config.migrations && config.migrations.length > 0) {
+      lines.push('# Durable Objects Migrations');
+      for (const migration of config.migrations) {
+        lines.push('[[migrations]]');
+        lines.push(`tag = "${migration.tag}"`);
+        if (migration.new_sqlite_classes && migration.new_sqlite_classes.length > 0) {
+          lines.push('new_sqlite_classes = [');
+          for (const cls of migration.new_sqlite_classes) {
+            lines.push(`  "${cls}",`);
+          }
+          lines.push(']');
         }
-        lines.push(']');
+        lines.push('');
       }
-      lines.push('');
     }
-  }
 
-  // Environment variables
-  if (Object.keys(config.vars).length > 0) {
-    lines.push('# Environment Variables');
-    lines.push('[vars]');
-    for (const [key, value] of Object.entries(config.vars)) {
-      if (value) {
-        lines.push(`${key} = "${value}"`);
-      }
-    }
+    // Environment-specific section
+    lines.push(`# Environment: ${envName}`);
+    lines.push(`[env.${envName}]`);
+    // Explicitly set worker name to maintain current naming convention ({env}-{component})
+    lines.push(`name = "${config.name}"`);
+    lines.push(`workers_dev = ${config.workers_dev}`);
     lines.push('');
-  }
 
-  // Service Bindings
-  if (config.services && config.services.length > 0) {
-    lines.push('# Service Bindings');
-    for (const svc of config.services) {
-      lines.push('[[services]]');
-      lines.push(`binding = "${svc.binding}"`);
-      lines.push(`service = "${svc.service}"`);
+    // Placement
+    if (config.placement) {
+      lines.push(`[env.${envName}.placement]`);
+      lines.push(`mode = "${config.placement.mode}"`);
       lines.push('');
     }
-  }
 
-  // Routes
-  if (config.routes && config.routes.length > 0) {
-    lines.push('# Routes');
-    for (const route of config.routes) {
-      lines.push('[[routes]]');
-      lines.push(`pattern = "${route.pattern}"`);
-      lines.push(`zone_name = "${route.zone_name}"`);
+    // KV Namespaces
+    if (config.kv_namespaces && config.kv_namespaces.length > 0) {
+      lines.push('# KV Namespaces');
+      for (const kv of config.kv_namespaces) {
+        lines.push(`[[env.${envName}.kv_namespaces]]`);
+        lines.push(`binding = "${kv.binding}"`);
+        lines.push(`id = "${kv.id}"`);
+        if (kv.preview_id) {
+          lines.push(`preview_id = "${kv.preview_id}"`);
+        }
+        lines.push('');
+      }
+    }
+
+    // D1 Databases
+    if (config.d1_databases && config.d1_databases.length > 0) {
+      lines.push('# D1 Databases');
+      for (const db of config.d1_databases) {
+        lines.push(`[[env.${envName}.d1_databases]]`);
+        lines.push(`binding = "${db.binding}"`);
+        lines.push(`database_name = "${db.database_name}"`);
+        lines.push(`database_id = "${db.database_id}"`);
+        lines.push('');
+      }
+    }
+
+    // R2 Buckets
+    if (config.r2_buckets && config.r2_buckets.length > 0) {
+      lines.push('# R2 Buckets');
+      for (const r2 of config.r2_buckets) {
+        lines.push(`[[env.${envName}.r2_buckets]]`);
+        lines.push(`binding = "${r2.binding}"`);
+        lines.push(`bucket_name = "${r2.bucket_name}"`);
+        lines.push('');
+      }
+    }
+
+    // Queues
+    if (config.queues?.producers && config.queues.producers.length > 0) {
+      lines.push('# Cloudflare Queues');
+      for (const producer of config.queues.producers) {
+        lines.push(`[[env.${envName}.queues.producers]]`);
+        lines.push(`queue = "${producer.queue}"`);
+        lines.push(`binding = "${producer.binding}"`);
+        lines.push('');
+      }
+    }
+
+    // Durable Objects
+    if (config.durable_objects?.bindings && config.durable_objects.bindings.length > 0) {
+      lines.push('# Durable Objects Bindings');
+      for (const dob of config.durable_objects.bindings) {
+        lines.push(`[[env.${envName}.durable_objects.bindings]]`);
+        lines.push(`name = "${dob.name}"`);
+        lines.push(`class_name = "${dob.class_name}"`);
+        if (dob.script_name) {
+          lines.push(`script_name = "${dob.script_name}"`);
+        }
+        lines.push('');
+      }
+    }
+
+    // Environment variables
+    if (Object.keys(config.vars).length > 0) {
+      lines.push('# Environment Variables');
+      lines.push(`[env.${envName}.vars]`);
+      for (const [key, value] of Object.entries(config.vars)) {
+        if (value) {
+          lines.push(`${key} = "${value}"`);
+        }
+      }
       lines.push('');
+    }
+
+    // Service Bindings
+    if (config.services && config.services.length > 0) {
+      lines.push('# Service Bindings');
+      for (const svc of config.services) {
+        lines.push(`[[env.${envName}.services]]`);
+        lines.push(`binding = "${svc.binding}"`);
+        lines.push(`service = "${svc.service}"`);
+        lines.push('');
+      }
+    }
+
+    // Routes
+    if (config.routes && config.routes.length > 0) {
+      lines.push('# Routes');
+      for (const route of config.routes) {
+        lines.push(`[[env.${envName}.routes]]`);
+        lines.push(`pattern = "${route.pattern}"`);
+        lines.push(`zone_name = "${route.zone_name}"`);
+        lines.push('');
+      }
+    }
+  } else {
+    // =========================================================================
+    // Legacy format: flat structure (backward compatibility)
+    // =========================================================================
+
+    // Basic fields
+    lines.push(`name = "${config.name}"`);
+    lines.push(`main = "${config.main}"`);
+    lines.push(`compatibility_date = "${config.compatibility_date}"`);
+    lines.push(
+      `compatibility_flags = [${config.compatibility_flags.map((f) => `"${f}"`).join(', ')}]`
+    );
+    lines.push(`workers_dev = ${config.workers_dev}`);
+    lines.push('');
+
+    // Placement
+    if (config.placement) {
+      lines.push('[placement]');
+      lines.push(`mode = "${config.placement.mode}"`);
+      lines.push('');
+    }
+
+    // KV Namespaces
+    if (config.kv_namespaces && config.kv_namespaces.length > 0) {
+      lines.push('# KV Namespaces');
+      for (const kv of config.kv_namespaces) {
+        lines.push('[[kv_namespaces]]');
+        lines.push(`binding = "${kv.binding}"`);
+        lines.push(`id = "${kv.id}"`);
+        if (kv.preview_id) {
+          lines.push(`preview_id = "${kv.preview_id}"`);
+        }
+        lines.push('');
+      }
+    }
+
+    // D1 Databases
+    if (config.d1_databases && config.d1_databases.length > 0) {
+      lines.push('# D1 Databases');
+      for (const db of config.d1_databases) {
+        lines.push('[[d1_databases]]');
+        lines.push(`binding = "${db.binding}"`);
+        lines.push(`database_name = "${db.database_name}"`);
+        lines.push(`database_id = "${db.database_id}"`);
+        lines.push('');
+      }
+    }
+
+    // R2 Buckets
+    if (config.r2_buckets && config.r2_buckets.length > 0) {
+      lines.push('# R2 Buckets');
+      for (const r2 of config.r2_buckets) {
+        lines.push('[[r2_buckets]]');
+        lines.push(`binding = "${r2.binding}"`);
+        lines.push(`bucket_name = "${r2.bucket_name}"`);
+        lines.push('');
+      }
+    }
+
+    // Queues
+    if (config.queues?.producers && config.queues.producers.length > 0) {
+      lines.push('# Cloudflare Queues');
+      for (const producer of config.queues.producers) {
+        lines.push('[[queues.producers]]');
+        lines.push(`queue = "${producer.queue}"`);
+        lines.push(`binding = "${producer.binding}"`);
+        lines.push('');
+      }
+    }
+
+    // Durable Objects
+    if (config.durable_objects?.bindings && config.durable_objects.bindings.length > 0) {
+      lines.push('# Durable Objects Bindings');
+      for (const dob of config.durable_objects.bindings) {
+        lines.push('[[durable_objects.bindings]]');
+        lines.push(`name = "${dob.name}"`);
+        lines.push(`class_name = "${dob.class_name}"`);
+        if (dob.script_name) {
+          lines.push(`script_name = "${dob.script_name}"`);
+        }
+        lines.push('');
+      }
+    }
+
+    // Migrations
+    if (config.migrations && config.migrations.length > 0) {
+      lines.push('# Durable Objects Migrations');
+      for (const migration of config.migrations) {
+        lines.push('[[migrations]]');
+        lines.push(`tag = "${migration.tag}"`);
+        if (migration.new_sqlite_classes && migration.new_sqlite_classes.length > 0) {
+          lines.push('new_sqlite_classes = [');
+          for (const cls of migration.new_sqlite_classes) {
+            lines.push(`  "${cls}",`);
+          }
+          lines.push(']');
+        }
+        lines.push('');
+      }
+    }
+
+    // Environment variables
+    if (Object.keys(config.vars).length > 0) {
+      lines.push('# Environment Variables');
+      lines.push('[vars]');
+      for (const [key, value] of Object.entries(config.vars)) {
+        if (value) {
+          lines.push(`${key} = "${value}"`);
+        }
+      }
+      lines.push('');
+    }
+
+    // Service Bindings
+    if (config.services && config.services.length > 0) {
+      lines.push('# Service Bindings');
+      for (const svc of config.services) {
+        lines.push('[[services]]');
+        lines.push(`binding = "${svc.binding}"`);
+        lines.push(`service = "${svc.service}"`);
+        lines.push('');
+      }
+    }
+
+    // Routes
+    if (config.routes && config.routes.length > 0) {
+      lines.push('# Routes');
+      for (const route of config.routes) {
+        lines.push('[[routes]]');
+        lines.push(`pattern = "${route.pattern}"`);
+        lines.push(`zone_name = "${route.zone_name}"`);
+        lines.push('');
+      }
     }
   }
 

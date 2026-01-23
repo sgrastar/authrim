@@ -152,17 +152,6 @@ export function getQueueName(env: string, queueName: string): string {
 }
 
 /**
- * Generate wrangler.toml filename for an environment
- *
- * @example
- * getWranglerConfigFilename('prod') => 'wrangler.prod.toml'
- * getWranglerConfigFilename('conformance') => 'wrangler.conformance.toml'
- */
-export function getWranglerConfigFilename(env: string): string {
-  return `wrangler.${env}.toml`;
-}
-
-/**
  * Get the script_name for Durable Object bindings
  * All DOs are defined in ar-lib-core
  *

@@ -217,7 +217,8 @@ perform_rollback() {
 
     echo "   🔄 Rolling back ${worker_name}..."
 
-    if (cd "$package_path" && pnpm exec wrangler rollback --config "wrangler.${DEPLOY_ENV}.toml" 2>/dev/null); then
+    # Use --env to target the [env.xxx] section in wrangler.toml
+    if (cd "$package_path" && pnpm exec wrangler rollback --env "${DEPLOY_ENV}" 2>/dev/null); then
         echo "   ✅ Rollback successful for ${worker_name}"
         return 0
     else
@@ -235,8 +236,8 @@ deploy_gradual_stage() {
 
     echo "   📊 Deploying to ${percentage}% of traffic..."
 
-    # Build the deploy command
-    local deploy_cmd="pnpm exec wrangler deploy --config wrangler.${DEPLOY_ENV}.toml"
+    # Build the deploy command - use --env to target [env.xxx] section
+    local deploy_cmd="pnpm exec wrangler deploy --env ${DEPLOY_ENV}"
 
     # Add version vars for non-shared packages
     if [ "$package_name" != "ar-lib-core" ] && [ "$package_name" != "ar-router" ]; then
@@ -249,7 +250,7 @@ deploy_gradual_stage() {
             # Use wrangler versions deploy to set percentage
             # Note: This requires the version to be created first
             echo "   📈 Setting traffic split to ${percentage}%..."
-            if (cd "$package_path" && pnpm exec wrangler versions deploy --percentage "${percentage}" --config "wrangler.${DEPLOY_ENV}.toml" 2>/dev/null); then
+            if (cd "$package_path" && pnpm exec wrangler versions deploy --percentage "${percentage}" --env "${DEPLOY_ENV}" 2>/dev/null); then
                 echo "   ✅ Traffic split set to ${percentage}%"
                 return 0
             else
@@ -326,7 +327,8 @@ deploy_package() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     # Build the pnpm exec wrangler deploy command with version vars
-    local deploy_cmd="pnpm exec wrangler deploy --config wrangler.${DEPLOY_ENV}.toml"
+    # Use --env to target [env.xxx] section in wrangler.toml
+    local deploy_cmd="pnpm exec wrangler deploy --env ${DEPLOY_ENV}"
 
     # Add version vars for non-shared packages (workers that use version check)
     if [ "$package_name" != "ar-lib-core" ] && [ "$package_name" != "ar-router" ]; then
@@ -495,15 +497,16 @@ verify_versions_registered() {
 echo "🚀 Starting deployment for environment: $DEPLOY_ENV"
 echo ""
 
-# Validation: Check for environment-specific wrangler config files
+# Validation: Check for wrangler.toml with [env.xxx] sections
 echo "🔍 Validating configuration..."
 MISSING_CONFIG=false
+MISSING_ENV_SECTION=false
 PLACEHOLDER_FOUND=false
 
 for pkg_dir in packages/*/; do
     if [ -d "$pkg_dir" ]; then
         package_name=$(basename "$pkg_dir")
-        toml_file="${pkg_dir}wrangler.${DEPLOY_ENV}.toml"
+        toml_file="${pkg_dir}wrangler.toml"
 
         # Skip router if not needed
         if [ "$package_name" = "ar-router" ]; then
@@ -526,22 +529,29 @@ for pkg_dir in packages/*/; do
             continue
         fi
 
-        # Check if environment-specific config exists
+        # Check if wrangler.toml exists
         if [ ! -f "$toml_file" ]; then
-            echo "  ⚠️  Missing: $package_name/wrangler.${DEPLOY_ENV}.toml"
+            echo "  ⚠️  Missing: $package_name/wrangler.toml"
             MISSING_CONFIG=true
+            continue
+        fi
+
+        # Check if [env.xxx] section exists for the target environment
+        if ! grep -q "\\[env\\.${DEPLOY_ENV}\\]" "$toml_file" 2>/dev/null; then
+            echo "  ⚠️  Missing [env.${DEPLOY_ENV}] section in $package_name/wrangler.toml"
+            MISSING_ENV_SECTION=true
             continue
         fi
 
         # Check for placeholder in KV namespaces
         if grep -q 'id = "placeholder"' "$toml_file" 2>/dev/null; then
-            echo "  ❌ Found placeholder KV namespace ID in $package_name/wrangler.${DEPLOY_ENV}.toml"
+            echo "  ❌ Found placeholder KV namespace ID in $package_name/wrangler.toml"
             PLACEHOLDER_FOUND=true
         fi
 
         # Check for placeholder in D1 databases
         if grep -q 'database_id = "placeholder"' "$toml_file" 2>/dev/null; then
-            echo "  ❌ Found placeholder D1 database ID in $package_name/wrangler.${DEPLOY_ENV}.toml"
+            echo "  ❌ Found placeholder D1 database ID in $package_name/wrangler.toml"
             PLACEHOLDER_FOUND=true
         fi
     fi
@@ -549,9 +559,19 @@ done
 
 if [ "$MISSING_CONFIG" = true ]; then
     echo ""
-    echo "❌ Deployment aborted: Missing environment-specific configuration files"
+    echo "❌ Deployment aborted: Missing wrangler.toml configuration files"
     echo ""
     echo "Please run the setup script first:"
+    echo "  ./scripts/setup-remote-wrangler.sh --env=$DEPLOY_ENV --domain=<your-domain>"
+    echo ""
+    exit 1
+fi
+
+if [ "$MISSING_ENV_SECTION" = true ]; then
+    echo ""
+    echo "❌ Deployment aborted: Missing [env.${DEPLOY_ENV}] sections in wrangler.toml"
+    echo ""
+    echo "Please run the setup script to generate the environment configuration:"
     echo "  ./scripts/setup-remote-wrangler.sh --env=$DEPLOY_ENV --domain=<your-domain>"
     echo ""
     exit 1
@@ -605,9 +625,11 @@ PACKAGES=(
 )
 
 # Get ISSUER_URL early for health checks during gradual rollout
+# Extract from [env.xxx.vars] section in wrangler.toml
 ISSUER_URL=""
-if [ -f "packages/ar-discovery/wrangler.${DEPLOY_ENV}.toml" ]; then
-    ISSUER_URL=$(grep 'ISSUER_URL = ' "packages/ar-discovery/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
+if [ -f "packages/ar-discovery/wrangler.toml" ]; then
+    # Extract ISSUER_URL from the environment-specific vars section
+    ISSUER_URL=$(grep -A 100 "\\[env\\.${DEPLOY_ENV}\\.vars\\]" "packages/ar-discovery/wrangler.toml" 2>/dev/null | grep 'ISSUER_URL = ' | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
     # Validate URL before use (security: prevent command injection)
     if [ -n "$ISSUER_URL" ] && ! validate_url "$ISSUER_URL"; then
         echo "⚠️  ISSUER_URL validation failed. Health checks will be skipped."
@@ -635,11 +657,13 @@ FIRST_DEPLOY=true
 for pkg in "${PACKAGES[@]}"; do
     IFS=':' read -r name path <<< "$pkg"
 
-    # Skip router if environment-specific wrangler config doesn't exist
-    if [ "$name" = "ar-router" ] && [ ! -f "$path/wrangler.${DEPLOY_ENV}.toml" ]; then
-        echo "⊗ Skipping ar-router (wrangler.${DEPLOY_ENV}.toml not found - not needed when using custom domains)"
-        echo ""
-        continue
+    # Skip router if wrangler.toml doesn't exist or doesn't have environment section
+    if [ "$name" = "ar-router" ]; then
+        if [ ! -f "$path/wrangler.toml" ] || ! grep -q "\\[env\\.${DEPLOY_ENV}\\]" "$path/wrangler.toml" 2>/dev/null; then
+            echo "⊗ Skipping ar-router (no [env.${DEPLOY_ENV}] section - not needed when using custom domains)"
+            echo ""
+            continue
+        fi
     fi
 
     # Add delay between deployments to avoid rate limits (except for first deployment)
@@ -679,22 +703,22 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     echo "✅ All packages deployed successfully!"
     echo ""
 
-    # Extract ISSUER_URL and ADMIN_API_SECRET from environment-specific wrangler.toml
+    # Extract ISSUER_URL and ADMIN_API_SECRET from wrangler.toml [env.xxx.vars] section
     ISSUER_URL=""
     ADMIN_API_SECRET=""
-    if [ -f "packages/ar-discovery/wrangler.${DEPLOY_ENV}.toml" ]; then
-        ISSUER_URL=$(grep 'ISSUER_URL = ' "packages/ar-discovery/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
+    if [ -f "packages/ar-discovery/wrangler.toml" ]; then
+        ISSUER_URL=$(grep -A 100 "\\[env\\.${DEPLOY_ENV}\\.vars\\]" "packages/ar-discovery/wrangler.toml" 2>/dev/null | grep 'ISSUER_URL = ' | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
         # Validate URL before use (security: prevent command injection)
         if [ -n "$ISSUER_URL" ] && ! validate_url "$ISSUER_URL"; then
             echo "⚠️  ISSUER_URL validation failed. Skipping version registration and endpoint display."
             ISSUER_URL=""
         fi
     fi
-    if [ -f "packages/ar-management/wrangler.${DEPLOY_ENV}.toml" ]; then
-        ADMIN_API_SECRET=$(grep 'ADMIN_API_SECRET = ' "packages/ar-management/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*ADMIN_API_SECRET = "\(.*\)"/\1/')
+    if [ -f "packages/ar-management/wrangler.toml" ]; then
+        ADMIN_API_SECRET=$(grep -A 100 "\\[env\\.${DEPLOY_ENV}\\.vars\\]" "packages/ar-management/wrangler.toml" 2>/dev/null | grep 'ADMIN_API_SECRET = ' | head -1 | sed 's/.*ADMIN_API_SECRET = "\(.*\)"/\1/')
         # Fallback to KEY_MANAGER_SECRET if ADMIN_API_SECRET not found
         if [ -z "$ADMIN_API_SECRET" ]; then
-            ADMIN_API_SECRET=$(grep 'KEY_MANAGER_SECRET = ' "packages/ar-management/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*KEY_MANAGER_SECRET = "\(.*\)"/\1/')
+            ADMIN_API_SECRET=$(grep -A 100 "\\[env\\.${DEPLOY_ENV}\\.vars\\]" "packages/ar-management/wrangler.toml" 2>/dev/null | grep 'KEY_MANAGER_SECRET = ' | head -1 | sed 's/.*KEY_MANAGER_SECRET = "\(.*\)"/\1/')
         fi
     fi
 

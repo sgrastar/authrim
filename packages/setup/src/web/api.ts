@@ -667,8 +667,9 @@ export function createApiRoutes(): Hono {
             resourceIds,
             workersSubdomain ?? undefined
           );
-          const tomlContent = toToml(wranglerConfig);
-          const tomlPath = join(componentDir, `wrangler.${env}.toml`);
+          // Generate TOML with [env.{env}] section format
+          const tomlContent = toToml(wranglerConfig, env);
+          const tomlPath = join(componentDir, 'wrangler.toml');
           await writeFile(tomlPath, tomlContent, 'utf-8');
           generatedComponents.push(component);
         }

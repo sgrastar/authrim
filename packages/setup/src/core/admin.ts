@@ -97,13 +97,14 @@ export async function isSetupCompleted(env: string, configPath: string = '.'): P
   try {
     // Check if setup:completed flag exists in KV
     const workerDir = join(configPath, 'packages', 'ar-auth');
-    const wranglerConfig = `wrangler.${env}.toml`;
+    const wranglerConfigPath = join(workerDir, 'wrangler.toml');
 
-    if (!existsSync(join(workerDir, wranglerConfig))) {
+    if (!existsSync(wranglerConfigPath)) {
       // Config doesn't exist, setup not completed
       return false;
     }
 
+    // Use --env to target the [env.{env}] section in wrangler.toml
     const result = await execa(
       'wrangler',
       [
@@ -111,8 +112,8 @@ export async function isSetupCompleted(env: string, configPath: string = '.'): P
         'key',
         'get',
         'setup:completed',
-        '--config',
-        wranglerConfig,
+        '--env',
+        env,
         '--binding',
         'AUTHRIM_CONFIG',
       ],
@@ -227,10 +228,10 @@ export async function storeSetupToken(options: SetupTokenOptions): Promise<Setup
   ];
 
   let workerDir: string | null = null;
-  const wranglerConfig = `wrangler.${env}.toml`;
+  const wranglerConfigFile = 'wrangler.toml';
 
   for (const dir of packageDirs) {
-    const configPath = join(dir, wranglerConfig);
+    const configPath = join(dir, wranglerConfigFile);
     onProgress?.(`Checking for ar-auth at: ${configPath}`);
     if (existsSync(configPath)) {
       workerDir = dir;
@@ -240,15 +241,16 @@ export async function storeSetupToken(options: SetupTokenOptions): Promise<Setup
   }
 
   if (!workerDir) {
-    const searchedPaths = packageDirs.map((d) => join(d, wranglerConfig)).join(', ');
+    const searchedPaths = packageDirs.map((d) => join(d, wranglerConfigFile)).join(', ');
     return {
       success: false,
-      error: `Cannot find ar-auth package with ${wranglerConfig}. Searched: ${searchedPaths}. Deploy workers first.`,
+      error: `Cannot find ar-auth package with ${wranglerConfigFile}. Searched: ${searchedPaths}. Deploy workers first.`,
     };
   }
 
   // Check if setup is already completed
   try {
+    // Use --env to target the [env.{env}] section in wrangler.toml
     const checkResult = await execa(
       'wrangler',
       [
@@ -256,8 +258,8 @@ export async function storeSetupToken(options: SetupTokenOptions): Promise<Setup
         'key',
         'get',
         'setup:completed',
-        '--config',
-        wranglerConfig,
+        '--env',
+        env,
         '--binding',
         'AUTHRIM_CONFIG',
         '--remote',
@@ -283,6 +285,7 @@ export async function storeSetupToken(options: SetupTokenOptions): Promise<Setup
 
   try {
     // Store the setup token with TTL (--remote ensures it goes to Cloudflare KV, not local)
+    // Use --env to target the [env.{env}] section in wrangler.toml
     await execa(
       'wrangler',
       [
@@ -291,8 +294,8 @@ export async function storeSetupToken(options: SetupTokenOptions): Promise<Setup
         'put',
         'setup:token',
         setupToken,
-        '--config',
-        wranglerConfig,
+        '--env',
+        env,
         '--binding',
         'AUTHRIM_CONFIG',
         '--ttl',

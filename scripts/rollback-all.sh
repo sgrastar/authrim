@@ -107,15 +107,21 @@ rollback_package() {
     local package_name=$1
     local package_path="packages/$package_name"
 
-    # Check if wrangler config exists
-    if [ ! -f "$package_path/wrangler.${DEPLOY_ENV}.toml" ]; then
-        echo "  ⏭️  Skipping $package_name (no wrangler.${DEPLOY_ENV}.toml)"
+    # Check if wrangler.toml exists with [env.xxx] section
+    if [ ! -f "$package_path/wrangler.toml" ]; then
+        echo "  ⏭️  Skipping $package_name (no wrangler.toml)"
+        return 0
+    fi
+
+    if ! grep -q "\\[env\\.${DEPLOY_ENV}\\]" "$package_path/wrangler.toml" 2>/dev/null; then
+        echo "  ⏭️  Skipping $package_name (no [env.${DEPLOY_ENV}] section)"
         return 0
     fi
 
     echo "  🔄 Rolling back $package_name..."
 
-    if (cd "$package_path" && pnpm exec wrangler rollback --config "wrangler.${DEPLOY_ENV}.toml" 2>/dev/null); then
+    # Use --env to target [env.xxx] section in wrangler.toml
+    if (cd "$package_path" && pnpm exec wrangler rollback --env "${DEPLOY_ENV}" 2>/dev/null); then
         echo "  ✅ Rolled back: $package_name"
         return 0
     else
@@ -172,8 +178,8 @@ echo "Please verify the following:"
 echo ""
 echo "1. Check OIDC Discovery endpoint:"
 ISSUER_URL=""
-if [ -f "packages/ar-discovery/wrangler.${DEPLOY_ENV}.toml" ]; then
-    ISSUER_URL=$(grep 'ISSUER_URL = ' "packages/ar-discovery/wrangler.${DEPLOY_ENV}.toml" | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
+if [ -f "packages/ar-discovery/wrangler.toml" ]; then
+    ISSUER_URL=$(grep -A 100 "\\[env\\.${DEPLOY_ENV}\\.vars\\]" "packages/ar-discovery/wrangler.toml" 2>/dev/null | grep 'ISSUER_URL = ' | head -1 | sed 's/.*ISSUER_URL = "\(.*\)"/\1/')
 fi
 if [ -n "$ISSUER_URL" ]; then
     echo "   curl ${ISSUER_URL}/.well-known/openid-configuration | jq"
@@ -189,7 +195,7 @@ else
 fi
 echo ""
 echo "3. Check deployment status:"
-echo "   cd packages/ar-token && pnpm exec wrangler deployments list --config wrangler.${DEPLOY_ENV}.toml"
+echo "   cd packages/ar-token && pnpm exec wrangler deployments list --env ${DEPLOY_ENV}"
 echo ""
 
 if [ $FAIL_COUNT -eq 0 ]; then

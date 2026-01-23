@@ -189,8 +189,7 @@ export async function deployWorker(
 
   const workerName = getWorkerName(env, component);
   const packageDir = join(rootDir, 'packages', component);
-  const wranglerConfig = options.configFile || `wrangler.${env}.toml`;
-  const wranglerConfigPath = join(packageDir, wranglerConfig);
+  const wranglerConfigPath = join(packageDir, 'wrangler.toml');
 
   // Check if package directory exists
   if (!existsSync(packageDir)) {
@@ -221,7 +220,7 @@ export async function deployWorker(
       onProgress?.(`[${attempt}/${maxRetries}] Deploying ${workerName}...`);
 
       if (options.dryRun) {
-        onProgress?.(`  [DRY RUN] Would deploy ${component} with config ${wranglerConfig}`);
+        onProgress?.(`  [DRY RUN] Would deploy ${component} with --env ${env}`);
         return {
           component,
           workerName,
@@ -231,9 +230,8 @@ export async function deployWorker(
         };
       }
 
-      // Use wrangler deploy directly
-      // Note: deploy-with-retry.sh is for full deployments, not individual components
-      const result = await execa('wrangler', ['deploy', '--config', wranglerConfig], {
+      // Use wrangler deploy with --env to target [env.{env}] section in wrangler.toml
+      const result = await execa('wrangler', ['deploy', '--env', env], {
         cwd: packageDir,
         reject: true,
       });
@@ -408,6 +406,8 @@ export function updateLockWithDeployments(lock: AuthrimLock, results: DeployResu
 
 /**
  * Upload secrets to all workers that need them
+ *
+ * Uses --env flag to target the correct environment section in wrangler.toml
  */
 export async function uploadSecrets(
   secrets: Record<string, string>,
@@ -426,8 +426,6 @@ export async function uploadSecrets(
     'ar-lib-core',
   ];
 
-  const wranglerConfig = options.configFile || `wrangler.${env}.toml`;
-
   for (const component of targetWorkers) {
     const workerName = getWorkerName(env, component);
     const packageDir = join(rootDir, 'packages', component);
@@ -445,7 +443,8 @@ export async function uploadSecrets(
           continue;
         }
 
-        await execa('wrangler', ['secret', 'put', secretName, '--config', wranglerConfig], {
+        // Use --env to target the environment section in wrangler.toml
+        await execa('wrangler', ['secret', 'put', secretName, '--env', env], {
           cwd: packageDir,
           input: secretValue,
         });

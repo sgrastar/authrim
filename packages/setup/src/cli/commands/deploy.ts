@@ -246,7 +246,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           console.log('');
           console.log(chalk.yellow('The following wrangler configs have been manually modified:'));
           for (const s of outOfSync) {
-            console.log(chalk.gray(`  • ${s.component}/wrangler.${env}.toml`));
+            console.log(chalk.gray(`  • ${s.component}/wrangler.toml`));
           }
           console.log('');
 

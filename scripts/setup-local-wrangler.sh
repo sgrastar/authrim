@@ -3,6 +3,11 @@
 # Authrim Local wrangler.toml Generation Script
 # Generates wrangler.toml files for local development with localhost ISSUER_URL
 #
+# ⚠️  DEPRECATED: This script generates the old wrangler.{env}.toml format.
+#     For new setups, use the @authrim/setup tool which generates the official
+#     [env.xxx] section format in a single wrangler.toml file:
+#       pnpm --filter=@authrim/setup setup init
+#
 # Usage:
 #   ./setup-local-wrangler.sh --env=dev
 #   ./setup-local-wrangler.sh --env=staging
@@ -298,10 +303,20 @@ binding = "CLIENTS_CACHE"
 id = "placeholder"
 preview_id = "placeholder"
 
-# D1 Database
+# D1 Databases
 [[d1_databases]]
 binding = "DB"
 database_name = "authrim-users-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_PII"
+database_name = "authrim-pii-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_ADMIN"
+database_name = "authrim-admin-db"
 database_id = "placeholder"
 
 # R2 Bucket
@@ -363,10 +378,15 @@ binding = "SETTINGS"
 id = "placeholder"
 preview_id = "placeholder"
 
-# D1 Database
+# D1 Databases
 [[d1_databases]]
 binding = "DB"
 database_name = "authrim-users-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_PII"
+database_name = "authrim-pii-db"
 database_id = "placeholder"
 
 # Durable Objects Bindings' '[[durable_objects.bindings]]
@@ -409,10 +429,20 @@ binding = "CLIENTS_CACHE"
 id = "placeholder"
 preview_id = "placeholder"
 
-# D1 Database
+# D1 Databases
 [[d1_databases]]
 binding = "DB"
 database_name = "authrim-users-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_PII"
+database_name = "authrim-pii-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_ADMIN"
+database_name = "authrim-admin-db"
 database_id = "placeholder"' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
@@ -453,10 +483,20 @@ binding = "SETTINGS"
 id = "placeholder"
 preview_id = "placeholder"
 
-# D1 Database
+# D1 Databases
 [[d1_databases]]
 binding = "DB"
 database_name = "authrim-users-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_PII"
+database_name = "authrim-pii-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_ADMIN"
+database_name = "authrim-admin-db"
 database_id = "placeholder"
 
 # Durable Objects Bindings' '[[durable_objects.bindings]]
@@ -485,10 +525,15 @@ binding = "REBAC_CACHE"
 id = "placeholder"
 preview_id = "placeholder"
 
-# D1 Database
+# D1 Databases
 [[d1_databases]]
 binding = "DB"
 database_name = "authrim-users-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_PII"
+database_name = "authrim-pii-db"
 database_id = "placeholder"' '[[durable_objects.bindings]]
 name = "VERSION_MANAGER"
 class_name = "VersionManager"
@@ -542,10 +587,15 @@ binding = "STATE_STORE"
 id = "placeholder"
 preview_id = "placeholder"
 
-# D1 Database
+# D1 Databases
 [[d1_databases]]
 binding = "DB"
 database_name = "authrim-users-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_PII"
+database_name = "authrim-pii-db"
 database_id = "placeholder"' '[[durable_objects.bindings]]
 name = "SESSION_STORE"
 class_name = "SessionStore"
@@ -599,10 +649,15 @@ workers_dev = true
 [placement]
 mode = "smart"
 
-# D1 Database
+# D1 Databases
 [[d1_databases]]
 binding = "DB"
 database_name = "authrim-users-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_PII"
+database_name = "authrim-pii-db"
 database_id = "placeholder"
 
 # KV Namespace (shared with other packages for region sharding config)
@@ -673,10 +728,15 @@ workers_dev = true
 [placement]
 mode = "smart"
 
-# D1 Database
+# D1 Databases
 [[d1_databases]]
 binding = "DB"
 database_name = "authrim-users-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_PII"
+database_name = "authrim-pii-db"
 database_id = "placeholder"
 
 # KV Namespace (shared with other packages for region sharding config)

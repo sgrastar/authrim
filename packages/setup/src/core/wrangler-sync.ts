@@ -2,12 +2,13 @@
  * Wrangler Configuration Sync Utility
  *
  * Manages synchronization between master wrangler.toml files in .authrim/{env}/wrangler/
- * and the deployment copies in packages/ar-star/wrangler.{env}.toml.
+ * and the deployment copies in packages/ar-star/wrangler.toml (with [env.xxx] sections).
  *
  * Features:
  * - Detects manual modifications to deployment configs
  * - Protects user edits from being overwritten
  * - Maintains portable master copies in environment directory
+ * - Generates [env.xxx] format for Cloudflare's official environment support
  */
 
 import { existsSync } from 'node:fs';
@@ -93,9 +94,12 @@ export function getMasterWranglerPath(
 
 /**
  * Get the deploy wrangler.toml path for a component
+ *
+ * Returns the unified wrangler.toml path (not environment-specific).
+ * Environment-specific settings are defined within [env.xxx] sections.
  */
-export function getDeployWranglerPath(packagesDir: string, component: string, env: string): string {
-  return join(packagesDir, component, `wrangler.${env}.toml`);
+export function getDeployWranglerPath(packagesDir: string, component: string): string {
+  return join(packagesDir, component, 'wrangler.toml');
 }
 
 // =============================================================================
@@ -104,6 +108,9 @@ export function getDeployWranglerPath(packagesDir: string, component: string, en
 
 /**
  * Check the sync status of all wrangler configs
+ *
+ * Note: With the new [env.xxx] format, comparison checks if the environment section
+ * in the deploy file matches the master config content.
  */
 export async function checkWranglerStatus(
   options: Pick<WranglerSyncOptions, 'baseDir' | 'env' | 'packagesDir'>
@@ -114,7 +121,7 @@ export async function checkWranglerStatus(
 
   for (const component of CORE_WORKER_COMPONENTS) {
     const masterPath = getMasterWranglerPath(envPaths, component);
-    const deployPath = getDeployWranglerPath(packagesDir, component, env);
+    const deployPath = getDeployWranglerPath(packagesDir, component);
 
     const masterExists = existsSync(masterPath);
     const deployExists = existsSync(deployPath);
@@ -123,6 +130,7 @@ export async function checkWranglerStatus(
     if (masterExists && deployExists) {
       const masterContent = await readFile(masterPath, 'utf-8');
       const deployContent = await readFile(deployPath, 'utf-8');
+      // Compare the relevant [env.xxx] section content
       inSync = normalizeToml(masterContent) === normalizeToml(deployContent);
     } else if (masterExists !== deployExists) {
       inSync = false;
@@ -175,7 +183,8 @@ export async function saveMasterWranglerConfigs(
         resourceIds,
         workersSubdomain ?? undefined
       );
-      const tomlContent = toToml(wranglerConfig);
+      // Generate TOML with [env.{env}] section format
+      const tomlContent = toToml(wranglerConfig, env);
       const masterPath = getMasterWranglerPath(envPaths, component);
 
       if (!dryRun) {
@@ -200,8 +209,11 @@ export async function saveMasterWranglerConfigs(
 /**
  * Sync master wrangler configs to deployment locations
  *
- * This copies from .authrim/{env}/wrangler/ to packages/ar-star/wrangler.{env}.toml
+ * This copies from .authrim/{env}/wrangler/ to packages/ar-star/wrangler.toml
  * while detecting and protecting manual edits.
+ *
+ * With the new [env.xxx] format, each deploy file contains environment-specific
+ * sections, allowing multiple environments to coexist in a single wrangler.toml.
  */
 export async function syncWranglerConfigs(
   options: WranglerSyncOptions,
@@ -227,7 +239,7 @@ export async function syncWranglerConfigs(
 
   for (const component of CORE_WORKER_COMPONENTS) {
     const masterPath = getMasterWranglerPath(envPaths, component);
-    const deployPath = getDeployWranglerPath(packagesDir, component, env);
+    const deployPath = getDeployWranglerPath(packagesDir, component);
     const componentDir = join(packagesDir, component);
 
     // Skip if component directory doesn't exist
@@ -287,9 +299,9 @@ export async function syncWranglerConfigs(
       // Write master content to deploy location
       if (!dryRun) {
         await writeFile(deployPath, masterContent, 'utf-8');
-        onProgress?.(`  ${component}: Synced`);
+        onProgress?.(`  ${component}: Synced to wrangler.toml`);
       } else {
-        onProgress?.(`  ${component}: Would sync`);
+        onProgress?.(`  ${component}: Would sync to wrangler.toml`);
       }
       result.synced.push(component);
     } catch (error) {
@@ -311,18 +323,18 @@ export async function syncWranglerConfigs(
 export async function backupDeployConfigs(
   options: Pick<WranglerSyncOptions, 'env' | 'packagesDir' | 'onProgress'>
 ): Promise<string[]> {
-  const { env, packagesDir, onProgress } = options;
+  const { packagesDir, onProgress } = options;
   const backedUp: string[] = [];
 
   for (const component of CORE_WORKER_COMPONENTS) {
-    const deployPath = getDeployWranglerPath(packagesDir, component, env);
+    const deployPath = getDeployWranglerPath(packagesDir, component);
 
     if (existsSync(deployPath)) {
       const content = await readFile(deployPath, 'utf-8');
       const backupPath = deployPath + '.backup';
       await writeFile(backupPath, content, 'utf-8');
       backedUp.push(component);
-      onProgress?.(`  Backed up ${component}/wrangler.${env}.toml`);
+      onProgress?.(`  Backed up ${component}/wrangler.toml`);
     }
   }
 
@@ -335,18 +347,18 @@ export async function backupDeployConfigs(
 export async function restoreDeployConfigs(
   options: Pick<WranglerSyncOptions, 'env' | 'packagesDir' | 'onProgress'>
 ): Promise<string[]> {
-  const { env, packagesDir, onProgress } = options;
+  const { packagesDir, onProgress } = options;
   const restored: string[] = [];
 
   for (const component of CORE_WORKER_COMPONENTS) {
-    const deployPath = getDeployWranglerPath(packagesDir, component, env);
+    const deployPath = getDeployWranglerPath(packagesDir, component);
     const backupPath = deployPath + '.backup';
 
     if (existsSync(backupPath)) {
       const content = await readFile(backupPath, 'utf-8');
       await writeFile(deployPath, content, 'utf-8');
       restored.push(component);
-      onProgress?.(`  Restored ${component}/wrangler.${env}.toml`);
+      onProgress?.(`  Restored ${component}/wrangler.toml`);
     }
   }
 

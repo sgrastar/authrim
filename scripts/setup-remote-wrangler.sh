@@ -3,6 +3,11 @@
 # Authrim Remote wrangler.toml Generation Script
 # Generates wrangler.toml files for remote Cloudflare Workers deployment
 #
+# ⚠️  DEPRECATED: This script generates the old wrangler.{env}.toml format.
+#     For new setups, use the @authrim/setup tool which generates the official
+#     [env.xxx] section format in a single wrangler.toml file:
+#       pnpm --filter=@authrim/setup setup init
+#
 # Supports two deployment modes:
 #   1) Test Environment (workers.dev + Router Worker)
 #   2) Production Environment (Custom Domain + Cloudflare Routes)
@@ -791,6 +796,16 @@ binding = \"DB\"
 database_name = \"${DEPLOY_ENV}-authrim-users-db\"
 database_id = \"placeholder\"
 
+[[d1_databases]]
+binding = \"DB_PII\"
+database_name = \"${DEPLOY_ENV}-authrim-pii-db\"
+database_id = \"placeholder\"
+
+[[d1_databases]]
+binding = \"DB_ADMIN\"
+database_name = \"${DEPLOY_ENV}-authrim-admin-db\"
+database_id = \"placeholder\"
+
 " "[[r2_buckets]]
 binding = \"AVATARS\"
 bucket_name = \"${DEPLOY_ENV}-authrim-avatars\"
@@ -869,6 +884,11 @@ binding = \"DB\"
 database_name = \"${DEPLOY_ENV}-authrim-users-db\"
 database_id = \"placeholder\"
 
+[[d1_databases]]
+binding = \"DB_PII\"
+database_name = \"${DEPLOY_ENV}-authrim-pii-db\"
+database_id = \"placeholder\"
+
 " "" "[[durable_objects.bindings]]
 name = \"KEY_MANAGER\"
 class_name = \"KeyManager\"
@@ -923,6 +943,16 @@ binding = \"DB\"
 database_name = \"${DEPLOY_ENV}-authrim-users-db\"
 database_id = \"placeholder\"
 
+[[d1_databases]]
+binding = \"DB_PII\"
+database_name = \"${DEPLOY_ENV}-authrim-pii-db\"
+database_id = \"placeholder\"
+
+[[d1_databases]]
+binding = \"DB_ADMIN\"
+database_name = \"${DEPLOY_ENV}-authrim-admin-db\"
+database_id = \"placeholder\"
+
 " "" "[[durable_objects.bindings]]
 name = \"KEY_MANAGER\"
 class_name = \"KeyManager\"
@@ -960,6 +990,11 @@ if [ ! -f "packages/ar-async/wrangler.${DEPLOY_ENV}.toml" ]; then
     generate_base_wrangler "ar-async" "" "[[d1_databases]]
 binding = \"DB\"
 database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+[[d1_databases]]
+binding = \"DB_PII\"
+database_name = \"${DEPLOY_ENV}-authrim-pii-db\"
 database_id = \"placeholder\"
 
 " "" "[[durable_objects.bindings]]
@@ -1011,6 +1046,16 @@ binding = \"DB\"
 database_name = \"${DEPLOY_ENV}-authrim-users-db\"
 database_id = \"placeholder\"
 
+[[d1_databases]]
+binding = \"DB_PII\"
+database_name = \"${DEPLOY_ENV}-authrim-pii-db\"
+database_id = \"placeholder\"
+
+[[d1_databases]]
+binding = \"DB_ADMIN\"
+database_name = \"${DEPLOY_ENV}-authrim-admin-db\"
+database_id = \"placeholder\"
+
 " "" "[[durable_objects.bindings]]
 name = \"KEY_MANAGER\"
 class_name = \"KeyManager\"
@@ -1055,6 +1100,11 @@ binding = \"DB\"
 database_name = \"${DEPLOY_ENV}-authrim-users-db\"
 database_id = \"placeholder\"
 
+[[d1_databases]]
+binding = \"DB_PII\"
+database_name = \"${DEPLOY_ENV}-authrim-pii-db\"
+database_id = \"placeholder\"
+
 " "" "[[durable_objects.bindings]]
 name = \"VERSION_MANAGER\"
 class_name = \"VersionManager\"
@@ -1072,6 +1122,11 @@ if [ ! -f "packages/ar-saml/wrangler.${DEPLOY_ENV}.toml" ]; then
     generate_base_wrangler "ar-saml" "" "[[d1_databases]]
 binding = \"DB\"
 database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+[[d1_databases]]
+binding = \"DB_PII\"
+database_name = \"${DEPLOY_ENV}-authrim-pii-db\"
 database_id = \"placeholder\"
 
 " "" "[[durable_objects.bindings]]
@@ -1111,6 +1166,11 @@ preview_id = \"placeholder\"
 " "[[d1_databases]]
 binding = \"DB\"
 database_name = \"${DEPLOY_ENV}-authrim-users-db\"
+database_id = \"placeholder\"
+
+[[d1_databases]]
+binding = \"DB_PII\"
+database_name = \"${DEPLOY_ENV}-authrim-pii-db\"
 database_id = \"placeholder\"
 
 " "" "[[durable_objects.bindings]]
@@ -1163,10 +1223,15 @@ workers_dev = false
 [placement]
 mode = "smart"
 
-# D1 Database
+# D1 Databases
 [[d1_databases]]
 binding = "DB"
 database_name = "${DEPLOY_ENV}-authrim-users-db"
+database_id = "placeholder"
+
+[[d1_databases]]
+binding = "DB_PII"
+database_name = "${DEPLOY_ENV}-authrim-pii-db"
 database_id = "placeholder"
 
 # KV Namespace (shared with other packages for region sharding config)
