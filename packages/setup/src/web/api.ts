@@ -780,9 +780,8 @@ export function createApiRoutes(): Hono {
           const { lock } = await loadLockFileAuto(rootDir, env);
 
           if (lock) {
-            const { validateWranglerConfigs, generateWranglerConfig, toToml } = await import(
-              '../core/wrangler.js'
-            );
+            const { validateWranglerConfigs, generateWranglerConfig, toToml } =
+              await import('../core/wrangler.js');
             const { getEnabledComponents } = await import('../core/naming.js');
             const { getWorkersSubdomain } = await import('../core/cloudflare.js');
 
@@ -969,7 +968,8 @@ export function createApiRoutes(): Hono {
             const errors = [];
             if (migrationsResult?.core.error) errors.push(`core: ${migrationsResult.core.error}`);
             if (migrationsResult?.pii.error) errors.push(`pii: ${migrationsResult.pii.error}`);
-            if (migrationsResult?.admin.error) errors.push(`admin: ${migrationsResult.admin.error}`);
+            if (migrationsResult?.admin.error)
+              errors.push(`admin: ${migrationsResult.admin.error}`);
             state.error = `Migrations failed: ${errors.join(', ')}`;
           }
         }

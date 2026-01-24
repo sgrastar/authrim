@@ -412,9 +412,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
     // Determine the API base URL for the UI to connect to
     const apiBaseUrl =
-      config.urls?.api?.custom ||
-      config.urls?.api?.auto ||
-      `https://${env}-ar-router.workers.dev`;
+      config.urls?.api?.custom || config.urls?.api?.auto || `https://${env}-ar-router.workers.dev`;
 
     const pagesResult = await deployAllPages(
       { ...deployOptions, apiBaseUrl },

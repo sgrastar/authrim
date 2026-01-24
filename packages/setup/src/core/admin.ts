@@ -109,16 +109,7 @@ export async function isSetupCompleted(env: string, configPath: string = '.'): P
     // Use --env to target the [env.{env}] section in wrangler.toml
     const result = await execa(
       'wrangler',
-      [
-        'kv',
-        'key',
-        'get',
-        'setup:completed',
-        '--env',
-        env,
-        '--binding',
-        'AUTHRIM_CONFIG',
-      ],
+      ['kv', 'key', 'get', 'setup:completed', '--env', env, '--binding', 'AUTHRIM_CONFIG'],
       {
         cwd: workerDir,
         reject: false,
