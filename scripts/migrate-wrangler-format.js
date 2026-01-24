@@ -114,7 +114,11 @@ function convertToEnvFormat(content, env) {
       } else {
         migrationLines.push(line);
         // Continue until next section
-        if (trimmed === '' && lines[i + 1]?.trim().startsWith('[[') && !lines[i + 1]?.trim().startsWith('[[migrations]]')) {
+        if (
+          trimmed === '' &&
+          lines[i + 1]?.trim().startsWith('[[') &&
+          !lines[i + 1]?.trim().startsWith('[[migrations]]')
+        ) {
           inMigrations = false;
         }
       }
@@ -159,9 +163,17 @@ function convertToEnvFormat(content, env) {
     // Skip migrations (already handled)
     if (trimmed === '[[migrations]]') {
       // Skip until next non-migration section
-      while (i + 1 < lines.length && !lines[i + 1].trim().startsWith('[[') && !lines[i + 1].trim().startsWith('[')) {
+      while (
+        i + 1 < lines.length &&
+        !lines[i + 1].trim().startsWith('[[') &&
+        !lines[i + 1].trim().startsWith('[')
+      ) {
         i++;
-        if (lines[i].trim() === '' && lines[i + 1]?.trim().startsWith('[[') && !lines[i + 1]?.trim().startsWith('[[migrations]]')) {
+        if (
+          lines[i].trim() === '' &&
+          lines[i + 1]?.trim().startsWith('[[') &&
+          !lines[i + 1]?.trim().startsWith('[[migrations]]')
+        ) {
           break;
         }
       }

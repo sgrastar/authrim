@@ -257,10 +257,7 @@ export class AdminLoginAttemptRepository extends BaseRepository<AdminLoginAttemp
    * @param email - Email address
    * @returns Last successful attempt or null
    */
-  async getLastSuccessfulLogin(
-    tenantId: string,
-    email: string
-  ): Promise<AdminLoginAttempt | null> {
+  async getLastSuccessfulLogin(tenantId: string, email: string): Promise<AdminLoginAttempt | null> {
     const row = await this.adapter.queryOne<Record<string, unknown>>(
       `SELECT * FROM admin_login_attempts
        WHERE tenant_id = ? AND email = ? AND success = 1

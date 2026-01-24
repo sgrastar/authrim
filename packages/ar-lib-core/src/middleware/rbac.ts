@@ -53,7 +53,9 @@ const SUPER_ADMIN_ROLES = ['super_admin', 'system_admin'] as const;
  * @returns true if user has super admin privileges
  */
 function hasSuperAdminPrivileges(roles: string[]): boolean {
-  return roles.some((role) => SUPER_ADMIN_ROLES.includes(role as (typeof SUPER_ADMIN_ROLES)[number]));
+  return roles.some((role) =>
+    SUPER_ADMIN_ROLES.includes(role as (typeof SUPER_ADMIN_ROLES)[number])
+  );
 }
 
 /**
