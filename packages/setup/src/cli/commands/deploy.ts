@@ -412,12 +412,27 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
     // Determine the API base URL for the UI to connect to
     const apiBaseUrl =
-      config.urls?.api?.custom ||
-      config.urls?.api?.auto ||
-      `https://${env}-ar-router.workers.dev`;
+      config.urls?.api?.custom || config.urls?.api?.auto || `https://${env}-ar-router.workers.dev`;
+
+    // Get ui.env path for new structure (preferred method for Vite builds)
+    // Always regenerate ui.env from config to ensure sync
+    let uiEnvPath: string | undefined;
+    if (structureType === 'new') {
+      const envPaths = getEnvironmentPaths({ baseDir, env });
+      uiEnvPath = envPaths.uiEnv;
+
+      // Regenerate ui.env from config.json to ensure they are in sync
+      const { saveUiEnv } = await import('../../core/ui-env.js');
+      try {
+        await saveUiEnv(uiEnvPath, { PUBLIC_API_BASE_URL: apiBaseUrl });
+        console.log(chalk.gray(`  ui.env synced with config (${apiBaseUrl})`));
+      } catch (syncError) {
+        console.log(chalk.yellow(`  ⚠️  Could not sync ui.env: ${syncError}`));
+      }
+    }
 
     const pagesResult = await deployAllPages(
-      { ...deployOptions, apiBaseUrl },
+      { ...deployOptions, apiBaseUrl, uiEnvPath },
       {
         loginUi: config.components.loginUi ?? true,
         adminUi: config.components.adminUi ?? true,

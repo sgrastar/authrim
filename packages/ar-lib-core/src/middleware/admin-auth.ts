@@ -267,7 +267,8 @@ async function authenticateSession(
 async function isIpAllowed(c: Context<{ Bindings: Env }>, tenantId: string): Promise<boolean> {
   try {
     // Get client IP from Cloudflare header
-    const clientIp = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim();
+    const clientIp =
+      c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim();
 
     if (!clientIp) {
       log.warn('Could not determine client IP for allowlist check');
@@ -282,10 +283,9 @@ async function isIpAllowed(c: Context<{ Bindings: Env }>, tenantId: string): Pro
     const entries = await adminAdapter.query<{
       ip_range: string;
       ip_version: number;
-    }>(
-      'SELECT ip_range, ip_version FROM admin_ip_allowlist WHERE tenant_id = ? AND enabled = 1',
-      [tenantId]
-    );
+    }>('SELECT ip_range, ip_version FROM admin_ip_allowlist WHERE tenant_id = ? AND enabled = 1', [
+      tenantId,
+    ]);
 
     // If no entries, allow all IPs (default behavior)
     if (entries.length === 0) {

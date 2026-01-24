@@ -47,6 +47,8 @@ export interface EnvironmentPaths {
   keys: string;
   /** Wrangler configs directory: .authrim/{env}/wrangler/ */
   wrangler: string;
+  /** UI environment variables file: .authrim/{env}/ui.env */
+  uiEnv: string;
   /** Specific key file paths */
   keyFiles: KeyFilePaths;
 }
@@ -115,6 +117,9 @@ export const KEYS_DIR = 'keys';
 /** Wrangler configs subdirectory name */
 export const WRANGLER_DIR = 'wrangler';
 
+/** UI environment file name */
+export const UI_ENV_FILE = 'ui.env';
+
 // =============================================================================
 // Path Resolution Functions
 // =============================================================================
@@ -152,6 +157,7 @@ export function getEnvironmentPaths(config: PathConfig): EnvironmentPaths {
     version: join(root, VERSION_FILE),
     keys: keysDir,
     wrangler: wranglerDir,
+    uiEnv: join(root, UI_ENV_FILE),
     keyFiles: getKeyFilePaths(keysDir),
   };
 }

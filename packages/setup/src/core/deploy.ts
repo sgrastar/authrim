@@ -16,6 +16,7 @@ import {
   type WorkerComponent,
 } from './naming.js';
 import type { AuthrimLock, WorkerEntry } from './lock.js';
+import { copyUiEnvToPackage, cleanupPackageEnv, uiEnvExists } from './ui-env.js';
 
 // =============================================================================
 // Validation Helpers
@@ -490,6 +491,8 @@ export interface PagesDeployOptions extends DeployOptions {
   projectName?: string;
   /** API base URL for the UI to connect to (e.g., https://prod-ar-router.workers.dev) */
   apiBaseUrl?: string;
+  /** Path to ui.env file (.authrim/{env}/ui.env) - preferred over apiBaseUrl */
+  uiEnvPath?: string;
 }
 
 /**
@@ -499,7 +502,7 @@ export async function deployPagesComponent(
   component: PagesComponent,
   options: PagesDeployOptions
 ): Promise<PagesDeployResult> {
-  const { env, rootDir, projectName, onProgress, dryRun, apiBaseUrl } = options;
+  const { env, rootDir, projectName, onProgress, dryRun, apiBaseUrl, uiEnvPath } = options;
 
   // Security: Validate environment name
   if (!isValidEnv(env)) {
@@ -527,22 +530,52 @@ export async function deployPagesComponent(
     };
   }
 
+  // Track if we copied ui.env so we know to clean up
+  let copiedUiEnv = false;
+
   try {
     // Build the UI first
     onProgress?.(`Building ${component}...`);
 
     if (!dryRun) {
-      // Set PUBLIC_API_BASE_URL for the build so the UI knows where to send API requests
-      const buildEnv: NodeJS.ProcessEnv = { ...process.env };
-      if (apiBaseUrl) {
-        buildEnv.PUBLIC_API_BASE_URL = apiBaseUrl;
-        onProgress?.(`  API URL: ${apiBaseUrl}`);
+      // Copy ui.env to package's .env for Vite to read during build
+      // Priority: uiEnvPath (file) > apiBaseUrl (legacy env var approach)
+      if (uiEnvPath && (await uiEnvExists(uiEnvPath))) {
+        try {
+          await copyUiEnvToPackage(uiEnvPath, uiDir);
+          copiedUiEnv = true;
+          onProgress?.(`  Using env from: ${uiEnvPath}`);
+        } catch (copyError) {
+          onProgress?.(`  ⚠️  Warning: Could not copy ui.env: ${copyError}`);
+          onProgress?.(`  Falling back to environment variable approach`);
+        }
+      } else if (uiEnvPath) {
+        // ui.env path specified but file doesn't exist
+        onProgress?.(`  ⚠️  ui.env not found at: ${uiEnvPath}`);
+        onProgress?.(`  Tip: Run 'authrim-setup deploy' to regenerate ui.env from config`);
+        if (apiBaseUrl) {
+          onProgress?.(`  Falling back to environment variable: ${apiBaseUrl}`);
+        }
+      } else if (apiBaseUrl) {
+        // Legacy structure: pass via environment variable (may not work with Vite)
+        onProgress?.(`  API URL (env): ${apiBaseUrl}`);
+      } else {
+        onProgress?.(`  ⚠️  No API URL configured - UI may not connect to backend`);
       }
 
-      await execa('pnpm', ['run', 'build'], {
-        cwd: uiDir,
-        env: buildEnv,
-      });
+      try {
+        await execa('pnpm', ['run', 'build'], {
+          cwd: uiDir,
+          // Note: We still pass apiBaseUrl as env var for backwards compatibility,
+          // but Vite will primarily read from .env file
+          env: apiBaseUrl ? { ...process.env, PUBLIC_API_BASE_URL: apiBaseUrl } : process.env,
+        });
+      } finally {
+        // Always clean up .env after build (success or failure)
+        if (copiedUiEnv) {
+          await cleanupPackageEnv(uiDir);
+        }
+      }
     }
 
     onProgress?.('Deploying to Cloudflare Pages...');
@@ -628,7 +661,7 @@ export interface PagesDeploymentSummary {
  * Deploy all enabled UI packages to Cloudflare Pages
  */
 export async function deployAllPages(
-  options: DeployOptions & { apiBaseUrl?: string },
+  options: DeployOptions & { apiBaseUrl?: string; uiEnvPath?: string },
   enabledComponents: { loginUi: boolean; adminUi: boolean }
 ): Promise<PagesDeploymentSummary> {
   const results: PagesDeployResult[] = [];

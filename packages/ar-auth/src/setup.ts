@@ -604,7 +604,8 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
       authenticatorSelection: {
         residentKey: 'preferred',
         userVerification: 'preferred',
-        authenticatorAttachment: 'platform',
+        // Note: authenticatorAttachment is intentionally omitted to allow
+        // both platform (Touch ID, etc.) and cross-platform (1Password, etc.) authenticators
       },
       timeout: 60000,
     });

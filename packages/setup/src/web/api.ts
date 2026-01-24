@@ -780,9 +780,8 @@ export function createApiRoutes(): Hono {
           const { lock } = await loadLockFileAuto(rootDir, env);
 
           if (lock) {
-            const { validateWranglerConfigs, generateWranglerConfig, toToml } = await import(
-              '../core/wrangler.js'
-            );
+            const { validateWranglerConfigs, generateWranglerConfig, toToml } =
+              await import('../core/wrangler.js');
             const { getEnabledComponents } = await import('../core/naming.js');
             const { getWorkersSubdomain } = await import('../core/cloudflare.js');
 
@@ -904,6 +903,22 @@ export function createApiRoutes(): Hono {
             cfg?.urls?.api?.auto ||
             `https://${env}-ar-router.workers.dev`;
 
+          // Get ui.env path for Vite builds (new structure only)
+          // Always regenerate ui.env from config to ensure sync
+          let uiEnvPath: string | undefined;
+          if (resolved.type === 'new') {
+            uiEnvPath = (resolved.paths as EnvironmentPaths).uiEnv;
+
+            // Regenerate ui.env from config.json to ensure they are in sync
+            const { saveUiEnv } = await import('../core/ui-env.js');
+            try {
+              await saveUiEnv(uiEnvPath, { PUBLIC_API_BASE_URL: apiBaseUrl });
+              addProgress(`ui.env synced with config (${apiBaseUrl})`);
+            } catch (syncError) {
+              addProgress(`⚠️  Could not sync ui.env: ${syncError}`);
+            }
+          }
+
           pagesSummary = await deployAllPages(
             {
               env,
@@ -911,6 +926,7 @@ export function createApiRoutes(): Hono {
               dryRun,
               onProgress: addProgress,
               apiBaseUrl,
+              uiEnvPath,
             },
             {
               loginUi: cfg?.components?.loginUi ?? true,
@@ -969,7 +985,8 @@ export function createApiRoutes(): Hono {
             const errors = [];
             if (migrationsResult?.core.error) errors.push(`core: ${migrationsResult.core.error}`);
             if (migrationsResult?.pii.error) errors.push(`pii: ${migrationsResult.pii.error}`);
-            if (migrationsResult?.admin.error) errors.push(`admin: ${migrationsResult.admin.error}`);
+            if (migrationsResult?.admin.error)
+              errors.push(`admin: ${migrationsResult.admin.error}`);
             state.error = `Migrations failed: ${errors.join(', ')}`;
           }
         }

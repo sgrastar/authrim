@@ -42,9 +42,18 @@ describe('paths module', () => {
       expect(paths.lock).toBe('/project/.authrim/dev/lock.json');
       expect(paths.version).toBe('/project/.authrim/dev/version.txt');
       expect(paths.keys).toBe('/project/.authrim/dev/keys');
+      expect(paths.uiEnv).toBe('/project/.authrim/dev/ui.env');
       expect(paths.keyFiles.privateKey).toBe('/project/.authrim/dev/keys/private.pem');
       expect(paths.keyFiles.publicKey).toBe('/project/.authrim/dev/keys/public.jwk.json');
       expect(paths.keyFiles.setupToken).toBe('/project/.authrim/dev/keys/setup_token.txt');
+    });
+
+    it('should generate uiEnv path for different environments', () => {
+      const devPaths = getEnvironmentPaths({ baseDir: '/project', env: 'dev' });
+      const prodPaths = getEnvironmentPaths({ baseDir: '/project', env: 'prod' });
+
+      expect(devPaths.uiEnv).toBe('/project/.authrim/dev/ui.env');
+      expect(prodPaths.uiEnv).toBe('/project/.authrim/prod/ui.env');
     });
 
     it('should handle environment names with hyphens', () => {

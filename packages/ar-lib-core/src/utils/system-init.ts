@@ -148,7 +148,9 @@ export async function assignSystemAdminRole(
     );
 
     if (!role) {
-      throw new Error('super_admin role not found in DB_ADMIN. Database may not be properly initialized.');
+      throw new Error(
+        'super_admin role not found in DB_ADMIN. Database may not be properly initialized.'
+      );
     }
 
     // Check if assignment already exists

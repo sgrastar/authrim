@@ -415,11 +415,17 @@ export async function rollbackSettings(c: SettingsContext) {
   const userRoles = adminAuth?.roles || [];
 
   if (!checkRolePermission(userRoles, category as CategoryName, 'tenant', 'edit')) {
-    return c.json({ error: 'forbidden', error_description: 'Insufficient permissions to rollback settings' }, 403);
+    return c.json(
+      { error: 'forbidden', error_description: 'Insufficient permissions to rollback settings' },
+      403
+    );
   }
 
   if (!canAccessTenant(adminAuth, tenantId)) {
-    return c.json({ error: 'forbidden', error_description: 'Cannot modify settings for this tenant' }, 403);
+    return c.json(
+      { error: 'forbidden', error_description: 'Cannot modify settings for this tenant' },
+      403
+    );
   }
 
   let body: { targetVersion: number; reason?: string };

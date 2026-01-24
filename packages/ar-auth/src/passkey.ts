@@ -862,7 +862,8 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         const adminSessionRepo = new AdminSessionRepository(adminAdapter);
 
         // Get client IP from Cloudflare header
-        const clientIp = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || null;
+        const clientIp =
+          c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || null;
         const userAgent = c.req.header('User-Agent') || null;
 
         await adminSessionRepo.createSession({

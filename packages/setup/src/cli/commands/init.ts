@@ -39,6 +39,7 @@ import {
 import { createLockFile, saveLockFile, loadLockFile } from '../../core/lock.js';
 import { getEnvironmentPaths, getRelativeKeysPath, AUTHRIM_DIR } from '../../core/paths.js';
 import { downloadSource, verifySourceStructure, checkForUpdate } from '../../core/source.js';
+import { saveUiEnv } from '../../core/ui-env.js';
 
 // =============================================================================
 // WSL Detection
@@ -2226,6 +2227,25 @@ async function executeSetup(
   } catch (error) {
     configSpinner.fail('Configuration save failed');
     throw error;
+  }
+
+  // Step 4.5: Generate ui.env for UI builds
+  const uiEnvSpinner = ora('Generating UI environment file...').start();
+  try {
+    const apiBaseUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
+    if (apiBaseUrl) {
+      await saveUiEnv(envPaths.uiEnv, {
+        PUBLIC_API_BASE_URL: apiBaseUrl,
+      });
+      uiEnvSpinner.succeed(`UI env saved (${envPaths.uiEnv})`);
+    } else {
+      uiEnvSpinner.warn('Skipped ui.env generation (no API URL configured)');
+      console.log(chalk.gray('  Tip: ui.env will be created when API URL is configured'));
+    }
+  } catch (error) {
+    uiEnvSpinner.fail('UI env generation failed');
+    console.error(error);
+    // Non-fatal: continue with setup
   }
 
   // Step 5: Generate wrangler.toml files

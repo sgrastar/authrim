@@ -7,6 +7,8 @@
 
 import chalk from 'chalk';
 import ora from 'ora';
+import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { t } from '../../i18n/index.js';
 import {
   isWranglerInstalled,
@@ -16,6 +18,8 @@ import {
   getWorkerDeployments,
   type EnvironmentInfo,
 } from '../../core/cloudflare.js';
+import { resolvePaths, type EnvironmentPaths } from '../../core/paths.js';
+import { AuthrimConfigSchema } from '../../core/config.js';
 
 // =============================================================================
 // Types
@@ -28,8 +32,16 @@ export interface InfoCommandOptions {
   workers?: boolean;
 }
 
+interface UiEnvInfo {
+  exists: boolean;
+  apiUrl?: string;
+  configApiUrl?: string;
+  inSync: boolean;
+}
+
 interface InfoOutput {
   environment: string;
+  uiEnv?: UiEnvInfo;
   d1?: Array<{
     name: string;
     id: string;
@@ -135,6 +147,86 @@ export async function infoCommand(options: InfoCommandOptions): Promise<void> {
   // Determine what to show (default: both)
   const showD1 = options.d1 || (!options.d1 && !options.workers);
   const showWorkers = options.workers || (!options.d1 && !options.workers);
+
+  // UI Environment Information (always show if new structure)
+  const baseDir = process.cwd();
+  const resolved = resolvePaths({ baseDir, env });
+
+  if (resolved.type === 'new') {
+    const envPaths = resolved.paths as EnvironmentPaths;
+    const uiEnvPath = envPaths.uiEnv;
+    const configPath = envPaths.config;
+
+    let uiEnvInfo: UiEnvInfo = { exists: false, inSync: false };
+
+    // Read ui.env
+    let uiEnvApiUrl: string | undefined;
+    if (existsSync(uiEnvPath)) {
+      try {
+        const uiEnvContent = await readFile(uiEnvPath, 'utf-8');
+        // Handle both quoted and unquoted values:
+        // - Double-quoted: PUBLIC_API_BASE_URL="value"
+        // - Single-quoted: PUBLIC_API_BASE_URL='value'
+        // - Unquoted: PUBLIC_API_BASE_URL=value
+        const match = uiEnvContent.match(
+          /PUBLIC_API_BASE_URL=(?:"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^\s\n#]+))/
+        );
+        uiEnvApiUrl = match?.[1] ?? match?.[2] ?? match?.[3];
+        // Unescape if needed (handle \" and \\)
+        if (uiEnvApiUrl) {
+          uiEnvApiUrl = uiEnvApiUrl.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        }
+        uiEnvInfo.exists = true;
+        uiEnvInfo.apiUrl = uiEnvApiUrl;
+      } catch {
+        // Ignore read errors
+      }
+    }
+
+    // Read config.json API URL
+    let configApiUrl: string | undefined;
+    if (existsSync(configPath)) {
+      try {
+        const configContent = await readFile(configPath, 'utf-8');
+        const configData = JSON.parse(configContent);
+        const config = AuthrimConfigSchema.parse(configData);
+        configApiUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+        uiEnvInfo.configApiUrl = configApiUrl;
+      } catch {
+        // Ignore read/parse errors
+      }
+    }
+
+    // Check if in sync (both must have values and match)
+    uiEnvInfo.inSync = !!(uiEnvApiUrl && configApiUrl && uiEnvApiUrl === configApiUrl);
+    output.uiEnv = uiEnvInfo;
+
+    if (!options.json) {
+      console.log(chalk.bold(`\n🔧 UI Environment`));
+
+      if (uiEnvInfo.exists) {
+        console.log(chalk.green(`  ✓ ui.env exists`));
+        console.log(chalk.gray(`    API URL: ${uiEnvInfo.apiUrl || 'not set'}`));
+
+        if (uiEnvInfo.inSync) {
+          console.log(chalk.green(`    ✓ In sync with config.json`));
+        } else {
+          console.log(chalk.yellow(`    ⚠️  Out of sync with config.json`));
+          console.log(
+            chalk.gray(`    config.json API URL: ${uiEnvInfo.configApiUrl || 'not set'}`)
+          );
+          console.log(chalk.yellow(`    Tip: Run 'authrim-setup deploy' to sync`));
+        }
+      } else {
+        console.log(chalk.yellow(`  ⚠️  ui.env not found`));
+        console.log(chalk.gray(`    Expected at: ${uiEnvPath}`));
+        if (configApiUrl) {
+          console.log(chalk.gray(`    config.json API URL: ${configApiUrl}`));
+        }
+        console.log(chalk.yellow(`    Tip: Run 'authrim-setup deploy' to generate`));
+      }
+    }
+  }
 
   // D1 Information
   if (showD1 && envInfo && envInfo.d1.length > 0) {

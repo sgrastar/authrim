@@ -1,0 +1,27 @@
+# Environment variables (auto-copied by setup tool during build)
+.env
+.env.local
+.env.*.local
+
+# SvelteKit build output
+.svelte-kit
+build
+
+# Dependencies (managed by pnpm workspace)
+node_modules
+
+# Generated types
+.svelte-kit/types
+
+# Vitest
+coverage
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
