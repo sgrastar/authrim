@@ -25,6 +25,8 @@ export interface SetupSessionData {
   email: string;
   /** Optional display name */
   name?: string;
+  /** Setup token ID for Admin UI passkey registration */
+  setupTokenId?: string;
   /** Timestamp when the session was created */
   createdAt: number;
   /** Purpose of the session (always 'passkey_registration' for now) */

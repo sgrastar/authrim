@@ -192,7 +192,14 @@ app.use('*', async (c, next) => {
   return cors({
     origin: validateOrigin,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'DPoP', 'If-Match', 'If-None-Match'],
+    allowHeaders: [
+      'Content-Type',
+      'Authorization',
+      'DPoP',
+      'If-Match',
+      'If-None-Match',
+      'X-Session-Id',
+    ],
     exposeHeaders: [
       'X-RateLimit-Limit',
       'X-RateLimit-Remaining',
@@ -450,6 +457,26 @@ app.post('/revoke', async (c) => {
 app.post('/revoke/batch', async (c) => {
   const request = new Request(c.req.url, c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+/**
+ * Admin UI Setup Token endpoints - Route to OP_AUTH worker
+ * These endpoints are used by Admin UI for passkey registration after initial setup.
+ * Must be registered BEFORE /api/admin/* to avoid being routed to OP_MANAGEMENT.
+ */
+app.all('/api/admin/setup-token/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+/**
+ * Admin UI Authentication endpoints - Route to OP_AUTH worker
+ * These endpoints handle admin passkey login (separate from end-user passkeys).
+ * Must be registered BEFORE /api/admin/* to avoid being routed to OP_MANAGEMENT.
+ */
+app.all('/api/admin/auth/*', async (c) => {
+  const request = new Request(c.req.url, c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
 });
 
 app.all('/api/admin/*', async (c) => {

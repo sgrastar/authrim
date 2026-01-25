@@ -607,6 +607,13 @@ export async function passkeyLoginOptionsHandler(c: Context<{ Bindings: Env }>) 
       allowCredentials: allowCredentials.length > 0 ? allowCredentials : [],
     });
 
+    // WebAuthn Level 3: Add hints to influence browser UI
+    // 'hybrid' suggests cross-device authentication (1Password, phone as authenticator)
+    // 'client-device' suggests platform authenticators (Touch ID, etc.)
+    // 'security-key' suggests roaming authenticators (YubiKey, etc.)
+    // Order indicates preference - hybrid first for password managers like 1Password
+    options.hints = ['hybrid', 'client-device', 'security-key'];
+
     // Store challenge in ChallengeStore DO for verification (TTL: 5 minutes) (RPC)
     // Use challengeId-based sharding for discoverable credentials (email may not be provided)
     const challengeId = crypto.randomUUID();

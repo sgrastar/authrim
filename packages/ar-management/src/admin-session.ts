@@ -11,18 +11,15 @@
 
 import type { Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import type { Env, Session } from '@authrim/ar-lib-core';
+import type { Env } from '@authrim/ar-lib-core';
 import {
-  getSessionStoreBySessionId,
-  isShardedSessionId,
-  createPIIContextFromHono,
   getTenantIdFromContext,
-  createAuthContextFromHono,
   parseAllowedOrigins,
   isAllowedOrigin,
   getLogger,
   D1Adapter,
   type DatabaseAdapter,
+  AdminSessionRepository,
   // Event System
   publishEvent,
   USER_EVENTS,
@@ -59,20 +56,22 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Check session format
-    if (!isShardedSessionId(sessionId)) {
+    // DB_ADMIN is required for admin sessions
+    if (!c.env.DB_ADMIN) {
+      log.error('DB_ADMIN not configured', { action: 'status' });
       return c.json(
         {
-          error: 'session_expired',
-          error_description: 'Session has expired or is invalid',
+          error: 'server_error',
+          error_description: 'Admin database not configured',
         },
-        401
+        500
       );
     }
 
-    // Get session from SessionStore
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
-    const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
+    // Get session from D1 admin_sessions table
+    const adminAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+    const adminSessionRepo = new AdminSessionRepository(adminAdapter);
+    const session = await adminSessionRepo.getSession(sessionId);
 
     if (!session) {
       return c.json(
@@ -84,35 +83,23 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Check if session is expired
-    if (session.expiresAt <= Date.now()) {
-      return c.json(
-        {
-          error: 'session_expired',
-          error_description: 'Session has expired',
-        },
-        401
-      );
-    }
+    // Check admin role from admin_role_assignments (DB_ADMIN)
+    const now = Date.now();
 
-    // Check admin role from role_assignments
-    const coreAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB });
-    const now = Math.floor(Date.now() / 1000); // UNIX seconds for role_assignments
-
-    const rolesResult = await coreAdapter.query<{ name: string }>(
+    const rolesResult = await adminAdapter.query<{ name: string }>(
       `SELECT DISTINCT r.name
-       FROM role_assignments ra
-       JOIN roles r ON ra.role_id = r.id
-       WHERE ra.subject_id = ?
+       FROM admin_role_assignments ra
+       JOIN admin_roles r ON ra.admin_role_id = r.id
+       WHERE ra.admin_user_id = ?
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
        ORDER BY r.name ASC`,
-      [session.userId, now]
+      [session.admin_user_id, now]
     );
 
     const roles = rolesResult.map((r) => r.name);
 
     // Check if user has any admin role
-    const adminRoles = ['system_admin', 'distributor_admin', 'org_admin', 'admin'];
+    const adminRoles = ['super_admin', 'admin', 'operator', 'viewer'];
     const hasAdminRole = roles.some((role) => adminRoles.includes(role));
 
     if (!hasAdminRole) {
@@ -125,52 +112,37 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Fetch user PII
+    // Fetch admin user info (email, name, last_login_at) from admin_users table
     let userEmail: string | undefined;
     let userName: string | undefined;
-
-    if (c.env.DB_PII) {
-      try {
-        const tenantId = getTenantIdFromContext(c);
-        const piiCtx = createPIIContextFromHono(c, tenantId);
-        const userPII = await piiCtx.piiRepositories.userPII.findById(session.userId);
-
-        if (userPII) {
-          userEmail = userPII.email;
-          userName = userPII.name ?? undefined;
-        }
-      } catch (error) {
-        log.warn('Failed to fetch user PII for admin session status', { action: 'fetch_user_pii' });
-      }
-    }
-
-    // Fetch last_login_at from admin_users table (DB_ADMIN)
     let lastLoginAt: number | null = null;
 
-    if (c.env.DB_ADMIN) {
-      try {
-        const adminAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
-        const adminUser = await adminAdapter.queryOne<{ last_login_at: number | null }>(
-          'SELECT last_login_at FROM admin_users WHERE id = ? AND is_active = 1',
-          [session.userId]
-        );
-        if (adminUser) {
-          lastLoginAt = adminUser.last_login_at;
-        }
-      } catch (error) {
-        log.warn('Failed to fetch last_login_at from admin_users', { action: 'fetch_admin_user' });
+    try {
+      const adminUser = await adminAdapter.queryOne<{
+        email: string;
+        name: string | null;
+        last_login_at: number | null;
+      }>('SELECT email, name, last_login_at FROM admin_users WHERE id = ? AND is_active = 1', [
+        session.admin_user_id,
+      ]);
+      if (adminUser) {
+        userEmail = adminUser.email;
+        userName = adminUser.name ?? undefined;
+        lastLoginAt = adminUser.last_login_at;
       }
+    } catch (error) {
+      log.warn('Failed to fetch admin user info', { action: 'fetch_admin_user' });
     }
 
     return c.json({
       active: true,
       session_id: session.id,
-      user_id: session.userId,
+      user_id: session.admin_user_id,
       email: userEmail,
       name: userName,
       roles,
-      expires_at: session.expiresAt,
-      created_at: session.createdAt,
+      expires_at: session.expires_at,
+      created_at: session.created_at,
       last_login_at: lastLoginAt,
     });
   } catch (error) {
@@ -222,18 +194,16 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
     // Get session from admin-specific cookie (separate from regular user sessions)
     const sessionId = getCookie(c, 'authrim_admin_session');
 
-    if (sessionId && isShardedSessionId(sessionId)) {
+    if (sessionId && c.env.DB_ADMIN) {
       try {
-        // Get user_id for event publishing before deletion
-        let userId: string | undefined;
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId);
-        const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
-        if (session) {
-          userId = session.userId;
-        }
+        // Get session from D1 admin_sessions for event publishing before deletion
+        const adminAdapter: DatabaseAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+        const adminSessionRepo = new AdminSessionRepository(adminAdapter);
+        const session = await adminSessionRepo.getSessionIncludingExpired(sessionId);
+        const userId = session?.admin_user_id;
 
-        // Invalidate session
-        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
+        // Delete session from D1
+        const deleted = await adminSessionRepo.deleteSession(sessionId);
 
         if (deleted && userId) {
           const tenantId = getTenantIdFromContext(c);
@@ -270,12 +240,12 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
         }
 
         log.info('Admin logout completed', {
-          sessionId: sessionId.substring(0, 30),
+          sessionId: sessionId.substring(0, 8) + '...',
           deleted,
         });
       } catch (error) {
         log.warn('Failed to invalidate session', {
-          sessionId,
+          sessionId: sessionId.substring(0, 8) + '...',
           error: (error as Error).message,
         });
       }

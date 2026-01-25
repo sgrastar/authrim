@@ -422,26 +422,40 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
     }
 
     // Try session-based authentication as fallback
+    // Supports both Cookie and X-Session-Id header (for Safari ITP compatibility)
     if (!authContext) {
-      const cookieHeader = c.req.header('Cookie');
-      if (cookieHeader) {
-        const sessionMatch = cookieHeader.match(/authrim_admin_session=([^;]+)/);
-        if (sessionMatch) {
-          let sessionId: string;
-          try {
-            sessionId = decodeURIComponent(sessionMatch[1]);
-          } catch {
-            return c.json(
-              {
-                error: 'invalid_token',
-                error_description:
-                  'Admin authentication required. Use Bearer token or valid session.',
-              },
-              401
-            );
+      let sessionId: string | undefined;
+
+      // First, try X-Session-Id header (for Safari/cross-site requests)
+      const sessionIdHeader = c.req.header('X-Session-Id');
+      if (sessionIdHeader) {
+        sessionId = sessionIdHeader;
+      }
+
+      // Then, try Cookie (for same-site requests)
+      if (!sessionId) {
+        const cookieHeader = c.req.header('Cookie');
+        if (cookieHeader) {
+          const sessionMatch = cookieHeader.match(/authrim_admin_session=([^;]+)/);
+          if (sessionMatch) {
+            try {
+              sessionId = decodeURIComponent(sessionMatch[1]);
+            } catch {
+              return c.json(
+                {
+                  error: 'invalid_token',
+                  error_description:
+                    'Admin authentication required. Use Bearer token or valid session.',
+                },
+                401
+              );
+            }
           }
-          authContext = await authenticateSession(c, sessionId, requiredRoles);
         }
+      }
+
+      if (sessionId) {
+        authContext = await authenticateSession(c, sessionId, requiredRoles);
       }
     }
 
@@ -508,6 +522,9 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
     // Set authenticated context
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (c as any).set('adminAuth', authContext);
+    // Set tenantId for downstream handlers (required for X-Session-Id header auth in Safari ITP)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (c as any).set('tenantId', authContext.tenantId);
     return next();
   };
 }

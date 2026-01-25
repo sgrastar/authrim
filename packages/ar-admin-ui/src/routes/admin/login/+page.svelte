@@ -21,7 +21,19 @@
 			// Step 3: Verify credential with server
 			const result = await adminAuthAPI.verifyLogin(challengeId, credential);
 
-			// Step 4: Update auth store with user info
+			// Step 4: Store sessionId in localStorage for Safari ITP compatibility
+			if (result.sessionId) {
+				localStorage.setItem('sessionId', result.sessionId);
+				localStorage.setItem('userId', result.userId);
+				if (result.user.email) {
+					localStorage.setItem('userEmail', result.user.email);
+				}
+				if (result.user.name) {
+					localStorage.setItem('userName', result.user.name);
+				}
+			}
+
+			// Step 5: Update auth store with user info
 			adminAuth.setAuthenticated({
 				userId: result.userId,
 				email: result.user.email || '',
@@ -29,7 +41,7 @@
 				roles: ['admin'] // Roles will be fetched on next session check
 			});
 
-			// Step 5: Redirect to admin dashboard
+			// Step 6: Redirect to admin dashboard
 			goto('/admin');
 		} catch (err) {
 			console.error('Login error:', err);

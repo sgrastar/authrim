@@ -270,3 +270,84 @@ ENABLE_HTTPS_REQUEST_URI = "true"
 HTTPS_REQUEST_URI_ALLOWED_DOMAINS = "www.certification.openid.net"
 TRUSTED_DOMAINS = "www.certification.openid.net"
 ```
+
+---
+
+## Admin UI Configuration (Safari ITP Proxy)
+
+### Background
+
+Safari's Intelligent Tracking Prevention (ITP) blocks cross-site cookies. When Admin UI and API are on different domains (e.g., `ar-admin-ui.pages.dev` and `ar-router.workers.dev`), Safari won't send cookies, breaking authentication.
+
+### Solution: SvelteKit Server Proxy
+
+The Admin UI uses a server-side proxy in `hooks.server.ts` to forward `/api/*` requests to the backend. This makes requests appear same-origin to the browser, bypassing ITP restrictions.
+
+```
+Browser → pages.dev/api/* → (SvelteKit Server Proxy) → workers.dev/api/*
+```
+
+### UI Environment Variables
+
+These are configured in `.authrim/{env}/ui.env` and set in Cloudflare Pages:
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `PUBLIC_API_BASE_URL` | string | Frontend API base URL (empty for proxy mode) |
+| `API_BACKEND_URL` | string | Backend URL for server-side proxy |
+
+### Configuration Modes
+
+#### Proxy Mode (Default - Cross-Domain)
+
+Used when Admin UI and API are on different registrable domains (e.g., `pages.dev` vs `workers.dev`):
+
+```env
+# .authrim/{env}/ui.env
+PUBLIC_API_BASE_URL=
+API_BACKEND_URL=https://xxx-ar-router.workers.dev
+```
+
+- Frontend sends requests to same-origin `/api/*`
+- Server proxy forwards to `API_BACKEND_URL`
+- Safari ITP compatible
+
+#### Direct Mode (Custom Domain - Same Domain)
+
+Used when Admin UI and API share the same registrable domain (e.g., `admin.example.com` and `api.example.com`):
+
+```env
+# .authrim/{env}/ui.env
+PUBLIC_API_BASE_URL=https://api.example.com
+API_BACKEND_URL=
+```
+
+- Frontend sends requests directly to backend
+- Proxy disabled (lower latency)
+- Works because same registrable domain
+
+### Setup Tool Behavior
+
+The `authrim-setup deploy` command automatically detects the configuration:
+
+- **Custom domain set for both Admin UI and API**: Direct mode (proxy disabled)
+- **Default workers.dev/pages.dev URLs**: Proxy mode (enabled)
+
+### Manual Configuration
+
+To switch modes after deployment:
+
+```bash
+# Enable proxy mode
+wrangler pages secret put API_BACKEND_URL --project-name {env}-ar-admin-ui
+# Enter: https://xxx-ar-router.workers.dev
+
+# Disable proxy mode (custom domain)
+wrangler pages secret delete API_BACKEND_URL --project-name {env}-ar-admin-ui
+```
+
+Or edit `.authrim/{env}/ui.env` and redeploy:
+
+```bash
+authrim-setup deploy --env {env}
+```

@@ -3,8 +3,6 @@
  * Handles communication with the backend API
  */
 
-import { browser } from '$app/environment';
-
 // Type definitions
 interface User {
 	id: string;
@@ -92,33 +90,25 @@ interface APIError {
 	error_description: string;
 }
 
-// Get API base URL from environment variable or use default
-// In production (Cloudflare Pages), set PUBLIC_API_BASE_URL in .env file
-// In development, it defaults to localhost:8786
-// If browser is available, use window.location.origin, otherwise use localhost
-function getApiBaseUrl(): string {
-	// Try to get from environment variable (if set during build)
-	try {
-		// Use dynamic import to avoid build-time errors
-		const envUrl = import.meta.env.PUBLIC_API_BASE_URL;
-		if (envUrl) return envUrl;
-	} catch {
-		// Environment variable not set
-	}
+// API Base URL - empty string for same-origin requests (Safari ITP compatible)
+// In production, requests are proxied through SvelteKit's hooks.server.ts
+// The proxy handles forwarding /api/* requests to the actual backend
+export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
-	// In browser, use current origin as fallback
-	if (browser && typeof window !== 'undefined') {
-		return window.location.origin;
+/**
+ * Get session ID from localStorage for authentication
+ * Used for Safari ITP compatibility (cross-site cookies blocked)
+ */
+function getSessionId(): string | null {
+	if (typeof localStorage !== 'undefined') {
+		return localStorage.getItem('sessionId');
 	}
-
-	// Default for SSR/build time
-	return 'http://localhost:8786';
+	return null;
 }
-
-export const API_BASE_URL = getApiBaseUrl();
 
 /**
  * Generic fetch wrapper with error handling
+ * Includes X-Session-Id header for Safari ITP compatibility
  */
 async function apiFetch<T>(
 	endpoint: string,
@@ -126,12 +116,22 @@ async function apiFetch<T>(
 ): Promise<{ data?: T; error?: APIError }> {
 	try {
 		const url = `${API_BASE_URL}${endpoint}`;
+
+		// Build headers with session ID for Safari ITP compatibility
+		const headers: Record<string, string> = {
+			'Content-Type': 'application/json',
+			...(options.headers as Record<string, string>)
+		};
+
+		// Add session ID header if available (for cross-site requests)
+		const sessionId = getSessionId();
+		if (sessionId && sessionId !== 'session-from-cookie') {
+			headers['X-Session-Id'] = sessionId;
+		}
+
 		const response = await fetch(url, {
 			...options,
-			headers: {
-				'Content-Type': 'application/json',
-				...options.headers
-			}
+			headers
 		});
 
 		const data = await response.json();

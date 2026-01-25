@@ -41,11 +41,8 @@ import {
   D1Adapter,
 } from '@authrim/ar-lib-core';
 
-import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
-import type {
-  RegistrationResponseJSON,
-  PublicKeyCredentialCreationOptionsJSON,
-} from '@simplewebauthn/server';
+// Note: Passkey registration is now handled by Admin UI, not Router
+// See admin-setup-api.ts for the passkey registration endpoints
 
 // RP (Relying Party) configuration
 const RP_NAME = 'Authrim';
@@ -591,56 +588,57 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
       }
     }
 
-    // Generate Passkey registration options
-    const encoder = new TextEncoder();
-    const options = await generateRegistrationOptions({
-      rpName: RP_NAME,
-      rpID,
-      userName: email,
-      userDisplayName: name || email,
-      // @ts-ignore - TextEncoder.encode() returns compatible Uint8Array
-      userID: encoder.encode(userId),
-      attestationType: 'none',
-      authenticatorSelection: {
-        residentKey: 'preferred',
-        userVerification: 'preferred',
-        // Note: authenticatorAttachment is intentionally omitted to allow
-        // both platform (Touch ID, etc.) and cross-platform (1Password, etc.) authenticators
-      },
-      timeout: 60000,
-    });
+    // Assign super_admin role
+    await assignSystemAdminRole(c.env, userId, tenantId);
 
-    // Store challenge in setup session
+    // Create setup token for Admin UI passkey registration
+    const setupTokenId = generateId();
+    const now = Date.now();
+    const tokenExpiresAt = now + 24 * 60 * 60 * 1000; // 24 hours
+
+    if (c.env.DB_ADMIN) {
+      const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
+      await adminAdapter.execute(
+        `INSERT INTO admin_setup_tokens (id, tenant_id, admin_user_id, status, expires_at, created_at, created_by)
+         VALUES (?, ?, ?, 'pending', ?, ?, 'initial_setup')`,
+        [setupTokenId, tenantId, userId, tokenExpiresAt, now]
+      );
+    }
+
+    // Store temporary session for the /complete endpoint
     const tempSessionToken = await createSetupSession(c.env, {
       userId,
       email,
       name,
+      setupTokenId, // Store setup token ID for reference
     });
 
-    // Store the challenge for verification
-    if (c.env.AUTHRIM_CONFIG) {
+    // Store CSRF token reference for cleanup
+    if (c.env.AUTHRIM_CONFIG && csrf_token) {
       await c.env.AUTHRIM_CONFIG.put(
-        `setup:challenge:${tempSessionToken}`,
-        JSON.stringify({
-          challenge: options.challenge,
-          rpID,
-          origin: originHeader,
-          userId,
-          csrfToken: csrf_token, // Store for cleanup in /complete
-        }),
-        { expirationTtl: 300 } // 5 minutes
+        `setup:csrf:${tempSessionToken}`,
+        csrf_token,
+        { expirationTtl: 3600 } // 1 hour
       );
     }
 
-    // Release lock - user creation successful, now waiting for Passkey registration
+    // Release lock - user creation successful
     await releaseSetupLock(c.env);
     lockAcquired = false;
+
+    // Get Admin UI URL from environment
+    const adminUiUrl = (c.env as unknown as Record<string, string>).ADMIN_UI_URL || null;
+    const adminUiSetupUrl = adminUiUrl
+      ? `${adminUiUrl}/setup/complete?token=${setupTokenId}`
+      : null;
 
     return c.json({
       success: true,
       user_id: userId,
       temp_session_token: tempSessionToken,
-      passkey_options: options,
+      setup_token: setupTokenId,
+      admin_ui_url: adminUiUrl,
+      admin_ui_setup_url: adminUiSetupUrl,
     });
   } catch (error) {
     // Release lock on error
@@ -664,21 +662,18 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
 /**
  * POST /api/admin-init-setup/complete
  *
- * Completes the setup by verifying Passkey registration and assigning system_admin role.
+ * Completes the initial setup on Router.
+ * Passkey registration will happen separately on Admin UI.
  *
  * Headers:
  *   X-Setup-Session: <temp_session_token>
- *
- * Request:
- * {
- *   passkey_response: RegistrationResponseJSON
- * }
  *
  * Response:
  * {
  *   success: true,
  *   user: { id, email, role },
- *   redirect_url: string
+ *   admin_ui_setup_url: string,
+ *   cli_fallback: string
  * }
  */
 setupApp.post('/api/admin-init-setup/complete', async (c) => {
@@ -703,169 +698,38 @@ setupApp.post('/api/admin-init-setup/complete', async (c) => {
       );
     }
 
-    const { userId, email, name } = sessionValidation.data;
-
-    // Get tenant ID early for potential rollback
-    const tenantId = getTenantIdFromContext(c);
-
-    const body = await c.req.json<{
-      passkey_response: RegistrationResponseJSON;
-    }>();
-
-    const { passkey_response } = body;
-    if (!passkey_response) {
-      return c.json(
-        { error: 'invalid_request', error_description: 'passkey_response is required' },
-        400
-      );
-    }
-
-    // Get stored challenge
-    if (!c.env.AUTHRIM_CONFIG) {
-      return c.json(
-        { error: 'server_error', error_description: 'Configuration not available' },
-        500
-      );
-    }
-
-    const challengeData = await c.env.AUTHRIM_CONFIG.get(`setup:challenge:${tempSessionToken}`);
-    if (!challengeData) {
-      return c.json(
-        { error: 'invalid_request', error_description: 'Challenge expired or not found' },
-        400
-      );
-    }
-
-    const { challenge, rpID, origin, csrfToken } = JSON.parse(challengeData) as {
-      challenge: string;
-      rpID: string;
-      origin: string;
+    const { userId, email, name, setupTokenId } = sessionValidation.data as {
       userId: string;
-      csrfToken?: string;
+      email: string;
+      name?: string;
+      setupTokenId?: string;
     };
-
-    // Verify Passkey registration
-    let verification;
-    try {
-      verification = await verifyRegistrationResponse({
-        response: passkey_response,
-        expectedChallenge: challenge,
-        expectedOrigin: origin,
-        expectedRPID: rpID,
-        requireUserVerification: false,
-      });
-    } catch (error) {
-      // Sanitized error logging
-      moduleLogger.error(
-        'Passkey verification failed',
-        { action: 'verify_passkey' },
-        error as Error
-      );
-
-      // Clean up challenge on error
-      if (c.env.AUTHRIM_CONFIG) {
-        await c.env.AUTHRIM_CONFIG.delete(`setup:challenge:${tempSessionToken}`);
-      }
-
-      // Rollback user creation to prevent zombie users
-      await rollbackUserCreation(c, userId, tenantId);
-
-      return c.json(
-        {
-          error: 'verification_failed',
-          error_description: 'Passkey registration verification failed',
-        },
-        400
-      );
-    }
-
-    if (!verification.verified || !verification.registrationInfo) {
-      // Clean up challenge on verification failure
-      if (c.env.AUTHRIM_CONFIG) {
-        await c.env.AUTHRIM_CONFIG.delete(`setup:challenge:${tempSessionToken}`);
-      }
-
-      // Rollback user creation to prevent zombie users
-      await rollbackUserCreation(c, userId, tenantId);
-
-      return c.json(
-        {
-          error: 'verification_failed',
-          error_description: 'Passkey registration was not verified',
-        },
-        400
-      );
-    }
-
-    // Handle both old and new SimpleWebAuthn API shapes
-    const registrationInfoAny = verification.registrationInfo as any;
-    const credentialID = registrationInfoAny.credentialID || registrationInfoAny.credential?.id;
-    const credentialPublicKey =
-      registrationInfoAny.credentialPublicKey || registrationInfoAny.credential?.publicKey;
-    const counter = registrationInfoAny.counter || registrationInfoAny.credential?.counter || 0;
-
-    if (!credentialID || !credentialPublicKey) {
-      // Rollback user creation to prevent zombie users
-      await rollbackUserCreation(c, userId, tenantId);
-
-      return c.json({ error: 'server_error', error_description: 'Missing credential data' }, 500);
-    }
-
-    // Convert to storage format (base64url for ID, base64 for public key)
-    const credentialId = toBase64URLString(credentialID as CredentialIDLike);
-    const publicKey = Buffer.from(credentialPublicKey).toString('base64');
-
-    // Filter transports to only valid AuthenticatorTransport values
-    const validTransports = ['usb', 'nfc', 'ble', 'internal', 'hybrid'] as const;
-    type AuthenticatorTransport = (typeof validTransports)[number];
-    const rawTransports = passkey_response.response.transports || [];
-    const transports: AuthenticatorTransport[] = rawTransports.filter(
-      (t): t is AuthenticatorTransport => validTransports.includes(t as AuthenticatorTransport)
-    );
-
-    // Store the Passkey credential
-    // Use admin_passkeys when DB_ADMIN is available, otherwise use legacy passkeys table
-    if (c.env.DB_ADMIN) {
-      const adminAdapter = new D1Adapter({ db: c.env.DB_ADMIN });
-      const adminPasskeyRepo = new AdminPasskeyRepository(adminAdapter);
-
-      await adminPasskeyRepo.createPasskey({
-        admin_user_id: userId,
-        credential_id: credentialId,
-        public_key: publicKey,
-        counter,
-        transports,
-        device_name: 'Initial Setup Passkey',
-      });
-    } else {
-      // Fallback to legacy passkeys table
-      const authCtx = createAuthContextFromHono(c, tenantId);
-      await authCtx.repositories.passkey.create({
-        id: generateId(),
-        user_id: userId,
-        credential_id: credentialId,
-        public_key: publicKey,
-        counter,
-        transports,
-      });
-    }
-
-    // Assign super_admin (or system_admin for legacy) role
-    await assignSystemAdminRole(c.env, userId, tenantId);
 
     // Complete setup (permanently disable setup feature)
     await completeSetup(c.env);
 
     // Clean up temporary data
     await deleteSetupSession(c.env, tempSessionToken);
-    await c.env.AUTHRIM_CONFIG.delete(`setup:challenge:${tempSessionToken}`);
-    // Delete CSRF token after successful completion
-    if (csrfToken) {
-      await c.env.AUTHRIM_CONFIG.delete(`csrf:${csrfToken}`);
+
+    // Clean up CSRF token
+    if (c.env.AUTHRIM_CONFIG) {
+      const csrfToken = await c.env.AUTHRIM_CONFIG.get(`setup:csrf:${tempSessionToken}`);
+      if (csrfToken) {
+        await c.env.AUTHRIM_CONFIG.delete(`csrf:${csrfToken}`);
+        await c.env.AUTHRIM_CONFIG.delete(`setup:csrf:${tempSessionToken}`);
+      }
     }
 
-    // Get Admin UI URL from environment if available
+    // Get Admin UI URL from environment
     const adminUiUrl = (c.env as unknown as Record<string, string>).ADMIN_UI_URL || null;
+    const adminUiSetupUrl =
+      adminUiUrl && setupTokenId ? `${adminUiUrl}/setup/complete?token=${setupTokenId}` : null;
+
+    moduleLogger.info('Initial setup completed on Router', {
+      action: 'setup_completed',
+      userId: userId.substring(0, 8) + '...',
+      hasAdminUiUrl: !!adminUiSetupUrl,
+    });
 
     return c.json({
       success: true,
@@ -875,11 +739,14 @@ setupApp.post('/api/admin-init-setup/complete', async (c) => {
         name: name || null,
         role: 'system_admin',
       },
-      message: 'Initial administrator created successfully.',
+      message: 'Administrator account created. Please complete passkey registration on Admin UI.',
       admin_ui_url: adminUiUrl,
+      admin_ui_setup_url: adminUiSetupUrl,
+      setup_token: setupTokenId,
+      cli_fallback:
+        'If the Admin UI setup URL does not work, run: npx @authrim/setup admin-passkey --env <env>',
     });
   } catch (error) {
-    // Sanitized error logging - don't log full error object
     moduleLogger.error('Setup completion failed', { action: 'complete' }, error as Error);
 
     return c.json(
@@ -943,7 +810,6 @@ function setupFormHtml(token: string, csrfToken: string): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Initial Admin Setup - Authrim</title>
-  <script src="https://unpkg.com/@simplewebauthn/browser@13/dist/bundle/index.umd.min.js"></script>
   <style>
     * {
       box-sizing: border-box;
@@ -1135,11 +1001,12 @@ function setupFormHtml(token: string, csrfToken: string): string {
 
       <button type="submit" class="btn" id="submit-btn">
         <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-          <circle cx="12" cy="16" r="1"/>
-          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
         </svg>
-        Register Passkey
+        Create Admin Account
       </button>
     </form>
 
@@ -1152,15 +1019,63 @@ function setupFormHtml(token: string, csrfToken: string): string {
     const form = document.getElementById('setup-form');
     const statusEl = document.getElementById('status');
     const submitBtn = document.getElementById('submit-btn');
-    const { startRegistration } = SimpleWebAuthnBrowser;
 
     function showStatus(type, message) {
       statusEl.className = 'status ' + type;
+      // Clear existing content
+      while (statusEl.firstChild) statusEl.removeChild(statusEl.firstChild);
       if (type === 'loading') {
-        statusEl.innerHTML = '<div class="spinner"></div>' + message;
+        const spinner = document.createElement('div');
+        spinner.className = 'spinner';
+        statusEl.appendChild(spinner);
+        const text = document.createTextNode(message);
+        statusEl.appendChild(text);
       } else {
         statusEl.textContent = message;
       }
+    }
+
+    // Create SVG element using DOM API (for security)
+    function createCheckmarkSvg() {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 100 100');
+      svg.setAttribute('fill', 'none');
+
+      const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      const gradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
+      gradient.setAttribute('id', 'grad2');
+      gradient.setAttribute('x1', '0%');
+      gradient.setAttribute('y1', '0%');
+      gradient.setAttribute('x2', '100%');
+      gradient.setAttribute('y2', '100%');
+      const stop1 = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+      stop1.setAttribute('offset', '0%');
+      stop1.setAttribute('style', 'stop-color:#667eea');
+      const stop2 = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
+      stop2.setAttribute('offset', '100%');
+      stop2.setAttribute('style', 'stop-color:#764ba2');
+      gradient.appendChild(stop1);
+      gradient.appendChild(stop2);
+      defs.appendChild(gradient);
+      svg.appendChild(defs);
+
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('cx', '50');
+      circle.setAttribute('cy', '50');
+      circle.setAttribute('r', '45');
+      circle.setAttribute('fill', 'url(#grad2)');
+      svg.appendChild(circle);
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M30 50 L45 65 L70 35');
+      path.setAttribute('stroke', 'white');
+      path.setAttribute('stroke-width', '8');
+      path.setAttribute('stroke-linecap', 'round');
+      path.setAttribute('stroke-linejoin', 'round');
+      path.setAttribute('fill', 'none');
+      svg.appendChild(path);
+
+      return svg;
     }
 
     form.addEventListener('submit', async (e) => {
@@ -1173,8 +1088,8 @@ function setupFormHtml(token: string, csrfToken: string): string {
       const name = document.getElementById('name').value;
 
       try {
-        // Step 1: Initialize setup
-        showStatus('loading', 'Initializing setup...');
+        // Step 1: Initialize setup (create admin user)
+        showStatus('loading', 'Creating administrator account...');
 
         const initResponse = await fetch('/api/admin-init-setup/initialize', {
           method: 'POST',
@@ -1188,13 +1103,8 @@ function setupFormHtml(token: string, csrfToken: string): string {
           throw new Error(initData.error_description || 'Initialization failed');
         }
 
-        // Step 2: Start Passkey registration
-        showStatus('loading', 'Registering Passkey... Follow your browser prompts.');
-
-        const attResp = await startRegistration({ optionsJSON: initData.passkey_options });
-
-        // Step 3: Complete setup
-        showStatus('loading', 'Completing setup...');
+        // Step 2: Complete setup on Router
+        showStatus('loading', 'Finalizing setup...');
 
         const completeResponse = await fetch('/api/admin-init-setup/complete', {
           method: 'POST',
@@ -1202,7 +1112,6 @@ function setupFormHtml(token: string, csrfToken: string): string {
             'Content-Type': 'application/json',
             'X-Setup-Session': initData.temp_session_token,
           },
-          body: JSON.stringify({ passkey_response: attResp }),
         });
 
         const completeData = await completeResponse.json();
@@ -1211,8 +1120,8 @@ function setupFormHtml(token: string, csrfToken: string): string {
           throw new Error(completeData.error_description || 'Setup completion failed');
         }
 
-        // Success! Show completion page
-        document.body.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)';
+        // Success! Show completion page with Admin UI redirect
+        document.body.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
         const container = document.querySelector('.container');
         // Clear existing content
         while (container.firstChild) container.removeChild(container.firstChild);
@@ -1220,17 +1129,17 @@ function setupFormHtml(token: string, csrfToken: string): string {
         // Build completion page using DOM methods for security
         const logo = document.createElement('div');
         logo.className = 'logo';
-        logo.innerHTML = '<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="45" fill="url(#grad2)"/><path d="M30 50 L45 65 L70 35" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><defs><linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#10b981"/><stop offset="100%" style="stop-color:#059669"/></linearGradient></defs></svg>';
+        logo.appendChild(createCheckmarkSvg());
         container.appendChild(logo);
 
         const h1 = document.createElement('h1');
-        h1.style.color = '#059669';
-        h1.textContent = 'Setup Complete!';
+        h1.style.color = '#667eea';
+        h1.textContent = 'Account Created!';
         container.appendChild(h1);
 
         const subtitle = document.createElement('p');
         subtitle.className = 'subtitle';
-        subtitle.textContent = 'Your administrator account has been created successfully.';
+        subtitle.textContent = 'Your administrator account has been created. Please complete Passkey registration on Admin UI.';
         container.appendChild(subtitle);
 
         // Info card
@@ -1239,7 +1148,7 @@ function setupFormHtml(token: string, csrfToken: string): string {
         const items = [
           ['Email', completeData.user.email],
           ['Role', 'System Administrator'],
-          ['Authentication', 'Passkey (WebAuthn)']
+          ['Status', 'Passkey registration required']
         ];
         items.forEach(([label, value]) => {
           const item = document.createElement('div');
@@ -1256,33 +1165,51 @@ function setupFormHtml(token: string, csrfToken: string): string {
         });
         container.appendChild(infoCard);
 
-        // Admin UI link if available
-        if (completeData.admin_ui_url) {
+        // Admin UI setup link (primary action)
+        if (completeData.admin_ui_setup_url) {
+          const setupNote = document.createElement('div');
+          setupNote.className = 'setup-note';
+          const noteStrong = document.createElement('strong');
+          noteStrong.textContent = 'Next Step:';
+          setupNote.appendChild(noteStrong);
+          const noteText = document.createTextNode(' Register your Passkey on Admin UI to enable login.');
+          setupNote.appendChild(noteText);
+          container.appendChild(setupNote);
+
           const adminLink = document.createElement('a');
-          adminLink.href = completeData.admin_ui_url;
+          adminLink.href = completeData.admin_ui_setup_url;
           adminLink.className = 'btn';
-          adminLink.style.marginBottom = '1rem';
-          adminLink.textContent = 'Open Admin Dashboard';
+          adminLink.textContent = 'Register Passkey on Admin UI';
           container.appendChild(adminLink);
+        } else {
+          // No Admin UI URL - show CLI fallback
+          const noAdminNote = document.createElement('div');
+          noAdminNote.className = 'setup-note warning';
+          const noteTitle = document.createElement('strong');
+          noteTitle.textContent = 'Admin UI not configured';
+          noAdminNote.appendChild(noteTitle);
+          noAdminNote.appendChild(document.createElement('br'));
+          const noteDesc = document.createTextNode('Run the following command to generate a setup token later:');
+          noAdminNote.appendChild(noteDesc);
+          noAdminNote.appendChild(document.createElement('br'));
+          const cliCode = document.createElement('code');
+          cliCode.textContent = 'npx @authrim/setup admin-passkey --env <env>';
+          noAdminNote.appendChild(cliCode);
+          container.appendChild(noAdminNote);
         }
 
-        // Next steps
-        const nextSteps = document.createElement('div');
-        nextSteps.className = 'next-steps';
-        const h3 = document.createElement('h3');
-        h3.textContent = "What's Next?";
-        nextSteps.appendChild(h3);
-        const ul = document.createElement('ul');
-        ['Your Passkey is now registered and ready to use',
-         'You can create OAuth clients to enable application authentication',
-         'Configure identity providers for social login'
-        ].forEach(text => {
-          const li = document.createElement('li');
-          li.textContent = text;
-          ul.appendChild(li);
-        });
-        nextSteps.appendChild(ul);
-        container.appendChild(nextSteps);
+        // CLI Fallback info
+        const fallbackInfo = document.createElement('div');
+        fallbackInfo.className = 'fallback-info';
+        const fallbackTitle = document.createElement('p');
+        fallbackTitle.className = 'fallback-title';
+        fallbackTitle.textContent = 'Setup link expired or not working?';
+        fallbackInfo.appendChild(fallbackTitle);
+        const fallbackCommand = document.createElement('code');
+        fallbackCommand.className = 'fallback-command';
+        fallbackCommand.textContent = completeData.cli_fallback || 'npx @authrim/setup admin-passkey --env <env>';
+        fallbackInfo.appendChild(fallbackCommand);
+        container.appendChild(fallbackInfo);
 
         const footer = document.createElement('div');
         footer.className = 'footer';
@@ -1291,7 +1218,7 @@ function setupFormHtml(token: string, csrfToken: string): string {
 
         // Add completion styles
         const style = document.createElement('style');
-        style.textContent = '.info-card{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:1.5rem;margin:1.5rem 0}.info-item{display:flex;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid #dcfce7}.info-item:last-child{border-bottom:none}.info-label{color:#166534;font-weight:500}.info-value{color:#15803d}.next-steps{background:#f8fafc;border-radius:12px;padding:1.5rem;margin-top:1.5rem;text-align:left}.next-steps h3{color:#334155;margin:0 0 1rem 0;font-size:1rem}.next-steps ul{margin:0;padding-left:1.5rem;color:#64748b}.next-steps li{margin-bottom:0.5rem}';
+        style.textContent = '.info-card{background:#f0f4ff;border:1px solid #c7d2fe;border-radius:12px;padding:1.5rem;margin:1.5rem 0}.info-item{display:flex;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid #e0e7ff}.info-item:last-child{border-bottom:none}.info-label{color:#4338ca;font-weight:500}.info-value{color:#6366f1}.setup-note{background:#fef3c7;border:1px solid #fcd34d;color:#92400e;padding:1rem;border-radius:8px;margin:1rem 0;font-size:0.9rem}.setup-note.warning{background:#fef2f2;border-color:#fecaca;color:#b91c1c}.setup-note strong{display:block;margin-bottom:0.25rem}.setup-note code{display:block;margin-top:0.5rem;background:rgba(0,0,0,0.05);padding:0.5rem;border-radius:4px;font-size:0.85rem}.fallback-info{margin-top:1.5rem;padding:1rem;background:#f8fafc;border-radius:8px;text-align:center}.fallback-title{color:#64748b;margin:0 0 0.5rem 0;font-size:0.85rem}.fallback-command{display:block;background:#1e293b;color:#94a3b8;padding:0.75rem 1rem;border-radius:6px;font-size:0.8rem;word-break:break-all}';
         document.head.appendChild(style);
 
       } catch (error) {

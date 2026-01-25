@@ -9,7 +9,7 @@ import ora from 'ora';
 import { confirm, select } from '@inquirer/prompts';
 import { t } from '../../i18n/index.js';
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
 import { saveLockFile, loadLockFileAuto } from '../../core/lock.js';
@@ -18,6 +18,7 @@ import {
   getLegacyPaths,
   resolvePaths,
   listEnvironments,
+  AUTHRIM_DIR,
   type EnvironmentPaths,
   type LegacyPaths,
 } from '../../core/paths.js';
@@ -33,6 +34,7 @@ import {
   isWranglerInstalled,
   checkAuth,
   runMigrationsForEnvironment,
+  getWorkersSubdomain,
 } from '../../core/cloudflare.js';
 import { type WorkerComponent } from '../../core/naming.js';
 import { completeInitialSetup, displaySetupInstructions } from '../../core/admin.js';
@@ -45,6 +47,7 @@ import type { SyncAction } from '../../core/wrangler-sync.js';
 export interface DeployCommandOptions {
   config?: string;
   env?: string;
+  source?: string;
   component?: string;
   dryRun?: boolean;
   skipSecrets?: boolean;
@@ -123,51 +126,205 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   spinner.succeed(`Logged in as ${auth.email || 'unknown'}`);
 
   // Find config file (support both new and legacy structures)
-  const baseDir = process.cwd();
+  // Also search in common subdirectories (authrim/) for cases where setup was run from parent dir
+  let baseDir = process.cwd();
   let configPath: string = 'authrim-config.json';
   let config: AuthrimConfig | null = null;
+  // rootDir is where the authrim source code is (containing packages/)
+  // If --source is provided, use that; otherwise will be determined during search
+  let rootDir: string = options.source ? resolve(options.source) : resolve('.');
 
-  if (options.config) {
+  // Helper function to find authrim source directory
+  // Searches in multiple common locations
+  const findAuthrimSource = (searchDir: string): string | null => {
+    const checkDir = (dir: string): boolean => {
+      const packagesDir = join(dir, 'packages');
+      return existsSync(packagesDir) && existsSync(join(packagesDir, 'ar-auth'));
+    };
+
+    // Check provided directory first
+    if (checkDir(searchDir)) {
+      return searchDir;
+    }
+
+    // Check common subdirectory names
+    const commonNames = ['authrim', 'source', 'src'];
+    for (const name of commonNames) {
+      const subDir = join(searchDir, name);
+      if (existsSync(subDir) && checkDir(subDir)) {
+        return subDir;
+      }
+    }
+
+    // Check parent directory (in case we're in .authrim/{env}/)
+    const parentDir = dirname(searchDir);
+    if (checkDir(parentDir)) {
+      return parentDir;
+    }
+
+    return null;
+  };
+
+  if (options.env) {
+    // Environment specified - try new structure first, then legacy
+    // Also search in common subdirectories
+    const searchDirs = [baseDir, join(baseDir, 'authrim')];
+
+    for (const searchDir of searchDirs) {
+      if (!existsSync(searchDir)) {
+        continue;
+      }
+
+      const resolved = resolvePaths({ baseDir: searchDir, env: options.env });
+      let envLockPath: string;
+
+      if (resolved.type === 'new') {
+        const envPaths = resolved.paths as EnvironmentPaths;
+        configPath = envPaths.config;
+        envLockPath = envPaths.lock;
+      } else {
+        const legacyPaths = resolved.paths as LegacyPaths;
+        configPath = legacyPaths.config;
+        envLockPath = legacyPaths.lock;
+      }
+
+      // Check for config.json first, then fall back to lock.json
+      if (existsSync(configPath)) {
+        config = await loadConfig(configPath);
+        if (config) {
+          baseDir = searchDir;
+          if (!options.source) {
+            rootDir = findAuthrimSource(searchDir) || searchDir;
+          }
+          break;
+        }
+      } else if (existsSync(envLockPath)) {
+        // config.json missing but lock.json exists - create minimal config
+        console.log(
+          chalk.yellow(`\n⚠️  config.json not found for env "${options.env}", using lock.json`)
+        );
+        const { loadLockFile } = await import('../../core/lock.js');
+        const lock = await loadLockFile(envLockPath);
+        if (lock) {
+          config = {
+            version: '1.0.0',
+            environment: { prefix: lock.env },
+            components: { api: true, loginUi: true, adminUi: true },
+          } as AuthrimConfig;
+          baseDir = searchDir;
+          if (!options.source) {
+            rootDir = findAuthrimSource(searchDir) || searchDir;
+          }
+          break;
+        }
+      }
+    }
+  } else if (options.config) {
     // Explicit config path provided
     configPath = options.config;
     config = await loadConfig(configPath);
-  } else if (options.env) {
-    // Environment specified - try new structure first, then legacy
-    const resolved = resolvePaths({ baseDir, env: options.env });
-    if (resolved.type === 'new') {
-      configPath = (resolved.paths as EnvironmentPaths).config;
+    // Derive baseDir from config path
+    const configDir = dirname(resolve(configPath));
+    // If config is in .authrim/{env}/, baseDir should be 2 levels up
+    if (configDir.includes(`${AUTHRIM_DIR}/`)) {
+      baseDir = resolve(configDir, '..', '..');
+      if (!options.source) {
+        rootDir = findAuthrimSource(baseDir) || baseDir;
+      }
     } else {
-      configPath = (resolved.paths as LegacyPaths).config;
-    }
-    config = await loadConfig(configPath);
-  } else {
-    // No options - auto-detect
-    const environments = listEnvironments(baseDir);
-    if (environments.length > 0) {
-      // Try first environment in new structure
-      const envPaths = getEnvironmentPaths({ baseDir, env: environments[0] });
-      if (existsSync(envPaths.config)) {
-        configPath = envPaths.config;
-        config = await loadConfig(configPath);
+      if (!options.source) {
+        rootDir = findAuthrimSource(configDir) || configDir;
       }
     }
-    // Fall back to legacy
-    if (!config) {
-      configPath = 'authrim-config.json';
-      config = await loadConfig(configPath);
+  } else {
+    // No options - auto-detect
+    // Search current directory and common subdirectories
+    const searchDirs = [baseDir, join(baseDir, 'authrim')];
+
+    for (const searchDir of searchDirs) {
+      if (!existsSync(searchDir)) continue;
+
+      const environments = listEnvironments(searchDir);
+      if (environments.length > 0) {
+        // Try first environment in new structure
+        const envPaths = getEnvironmentPaths({ baseDir: searchDir, env: environments[0] });
+        // Check for lock.json since config.json might be missing
+        if (existsSync(envPaths.config) || existsSync(envPaths.lock)) {
+          if (existsSync(envPaths.config)) {
+            configPath = envPaths.config;
+            config = await loadConfig(configPath);
+          }
+          if (config || existsSync(envPaths.lock)) {
+            baseDir = searchDir;
+            if (!options.source) {
+              rootDir = findAuthrimSource(searchDir) || searchDir;
+            }
+            // If config is missing but lock exists, we can still proceed with defaults
+            if (!config && existsSync(envPaths.lock)) {
+              console.log(
+                chalk.yellow(
+                  '\n⚠️  config.json not found, using lock.json to determine environment'
+                )
+              );
+              const { loadLockFile } = await import('../../core/lock.js');
+              const lock = await loadLockFile(envPaths.lock);
+              if (lock) {
+                // Create minimal config from lock file
+                config = {
+                  version: '1.0.0',
+                  environment: { prefix: lock.env },
+                  components: { api: true, loginUi: true, adminUi: true },
+                } as AuthrimConfig;
+              }
+            }
+            break;
+          }
+        }
+      }
+      // Fall back to legacy
+      if (!config) {
+        configPath = join(searchDir, 'authrim-config.json');
+        if (existsSync(configPath)) {
+          config = await loadConfig(configPath);
+          if (config) {
+            baseDir = searchDir;
+            if (!options.source) {
+              rootDir = findAuthrimSource(searchDir) || searchDir;
+            }
+            break;
+          }
+        }
+      }
     }
   }
 
   if (!config) {
-    console.error(chalk.red(`\nConfig file not found: ${configPath!}`));
-    console.log(chalk.yellow('Run "authrim-setup init" first to create a config.'));
+    console.error(chalk.red(`\nConfig file not found`));
+    console.log(chalk.yellow('Searched in:'));
+    console.log(chalk.gray('  • ' + process.cwd()));
+    console.log(chalk.gray('  • ' + join(process.cwd(), 'authrim')));
+    console.log(chalk.yellow('\nRun "authrim-setup init" first to create a config,'));
+    console.log(chalk.yellow('or run deploy from the authrim source directory.'));
     process.exit(1);
   }
 
   const env = options.env || config.environment.prefix;
-  const rootDir = resolve('.');
+
+  // Validate source directory
+  const packagesDir = join(rootDir, 'packages');
+  if (!existsSync(packagesDir) || !existsSync(join(packagesDir, 'ar-auth'))) {
+    console.error(chalk.red('\n❌ Authrim source not found'));
+    console.log(chalk.yellow('\nThe deploy command needs access to the Authrim source code.'));
+    console.log(chalk.gray(`  Searched in: ${rootDir}`));
+    console.log(chalk.yellow('\nSolutions:'));
+    console.log(chalk.gray('  1. Run deploy from the authrim source directory'));
+    console.log(chalk.gray('  2. Specify the source directory with --source <path>'));
+    console.log(chalk.gray('     Example: deploy --env ' + env + ' --source ./path/to/authrim'));
+    process.exit(1);
+  }
 
   console.log(chalk.cyan(`\nEnvironment: ${env}`));
+  console.log(chalk.cyan(`Source: ${rootDir}`));
   console.log(chalk.cyan(`Config: ${configPath}`));
 
   // Load lock file (support both structures)
@@ -411,8 +568,22 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     console.log(chalk.bold('\n📱 Deploying UI to Cloudflare Pages...\n'));
 
     // Determine the API base URL for the UI to connect to
-    const apiBaseUrl =
-      config.urls?.api?.custom || config.urls?.api?.auto || `https://${env}-ar-router.workers.dev`;
+    let apiBaseUrl = config.urls?.api?.custom || config.urls?.api?.auto;
+
+    // If no URL in config, construct it with correct workers.dev subdomain
+    if (!apiBaseUrl) {
+      const subdomain = await getWorkersSubdomain();
+      if (subdomain) {
+        apiBaseUrl = `https://${env}-ar-router.${subdomain}.workers.dev`;
+      } else {
+        // Fallback without subdomain (may not work correctly)
+        apiBaseUrl = `https://${env}-ar-router.workers.dev`;
+        console.log(
+          chalk.yellow(`  ⚠️  Could not determine workers.dev subdomain, using fallback URL`)
+        );
+        console.log(chalk.gray(`     If API calls fail, set the correct URL in config or ui.env`));
+      }
+    }
 
     // Get ui.env path for new structure (preferred method for Vite builds)
     // Always regenerate ui.env from config to ensure sync
@@ -422,10 +593,33 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       uiEnvPath = envPaths.uiEnv;
 
       // Regenerate ui.env from config.json to ensure they are in sync
+      // Detect if custom domains are used (same registrable domain = no need for proxy)
+      const apiHasCustomDomain = !!config.urls?.api?.custom;
+      const adminUiHasCustomDomain = !!config.urls?.adminUi?.custom;
+      const useDirectMode = apiHasCustomDomain && adminUiHasCustomDomain;
+
+      // Safari ITP Proxy Mode (default for workers.dev/pages.dev):
+      //   - PUBLIC_API_BASE_URL is empty (frontend sends to same-origin /api/*)
+      //   - API_BACKEND_URL is set (server-side proxy forwards to backend)
+      // Direct Mode (for custom domains on same registrable domain):
+      //   - PUBLIC_API_BASE_URL is set (frontend sends directly to backend)
+      //   - API_BACKEND_URL is empty (proxy disabled)
       const { saveUiEnv } = await import('../../core/ui-env.js');
       try {
-        await saveUiEnv(uiEnvPath, { PUBLIC_API_BASE_URL: apiBaseUrl });
-        console.log(chalk.gray(`  ui.env synced with config (${apiBaseUrl})`));
+        if (useDirectMode) {
+          await saveUiEnv(uiEnvPath, {
+            PUBLIC_API_BASE_URL: apiBaseUrl, // Frontend sends directly to backend
+            API_BACKEND_URL: '', // Proxy disabled
+          });
+          console.log(chalk.gray(`  ui.env synced (direct mode: ${apiBaseUrl})`));
+          console.log(chalk.gray(`  Custom domains detected - Safari ITP proxy disabled`));
+        } else {
+          await saveUiEnv(uiEnvPath, {
+            PUBLIC_API_BASE_URL: '', // Empty for proxy mode (same-origin)
+            API_BACKEND_URL: apiBaseUrl, // Server-side proxy target
+          });
+          console.log(chalk.gray(`  ui.env synced (proxy mode: ${apiBaseUrl})`));
+        }
       } catch (syncError) {
         console.log(chalk.yellow(`  ⚠️  Could not sync ui.env: ${syncError}`));
       }

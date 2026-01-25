@@ -54,6 +54,7 @@ import {
 import { anonLoginChallengeHandler, anonLoginVerifyHandler } from './anon-login';
 import { upgradeHandler, upgradeCompleteHandler, upgradeStatusHandler } from './upgrade';
 import { setupApp } from './setup';
+import { adminSetupApiApp } from './admin-setup-api';
 import { flowApi } from './flow-engine';
 import {
   directPasskeyLoginStartHandler,
@@ -162,7 +163,7 @@ app.use('*', async (c, next) => {
       return '';
     },
     allowMethods: ['GET', 'POST', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Session-Id'],
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
     maxAge: 86400,
     credentials: true,
@@ -454,6 +455,11 @@ app.route('/api/flow', flowApi);
 // Mounted at /setup and /api/setup/*
 // Permanently disabled after first admin account is created
 app.route('/', setupApp);
+
+// Admin UI Setup API routes
+// Used by Admin UI for passkey registration after initial setup
+// Endpoints: /api/admin/setup-token/*
+app.route('/', adminSetupApiApp);
 
 // Logout error page - displayed when logout validation fails
 // Per OIDC RP-Initiated Logout spec, OP SHOULD display an error page when:

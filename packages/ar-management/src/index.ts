@@ -571,7 +571,14 @@ app.use('*', async (c, next) => {
   return cors({
     origin: validateOrigin,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'DPoP', 'If-Match', 'If-None-Match'],
+    allowHeaders: [
+      'Content-Type',
+      'Authorization',
+      'DPoP',
+      'If-Match',
+      'If-None-Match',
+      'X-Session-Id',
+    ],
     exposeHeaders: [
       'X-RateLimit-Limit',
       'X-RateLimit-Remaining',

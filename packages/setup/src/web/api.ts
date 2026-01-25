@@ -910,10 +910,27 @@ export function createApiRoutes(): Hono {
             uiEnvPath = (resolved.paths as EnvironmentPaths).uiEnv;
 
             // Regenerate ui.env from config.json to ensure they are in sync
+            // Detect if custom domains are used (same registrable domain = no need for proxy)
+            const apiHasCustomDomain = !!cfg?.urls?.api?.custom;
+            const adminUiHasCustomDomain = !!cfg?.urls?.adminUi?.custom;
+            const useDirectMode = apiHasCustomDomain && adminUiHasCustomDomain;
+
             const { saveUiEnv } = await import('../core/ui-env.js');
             try {
-              await saveUiEnv(uiEnvPath, { PUBLIC_API_BASE_URL: apiBaseUrl });
-              addProgress(`ui.env synced with config (${apiBaseUrl})`);
+              if (useDirectMode) {
+                await saveUiEnv(uiEnvPath, {
+                  PUBLIC_API_BASE_URL: apiBaseUrl, // Frontend sends directly to backend
+                  API_BACKEND_URL: '', // Proxy disabled
+                });
+                addProgress(`ui.env synced (direct mode: ${apiBaseUrl})`);
+                addProgress(`Custom domains detected - Safari ITP proxy disabled`);
+              } else {
+                await saveUiEnv(uiEnvPath, {
+                  PUBLIC_API_BASE_URL: '', // Empty for proxy mode (same-origin)
+                  API_BACKEND_URL: apiBaseUrl, // Server-side proxy target
+                });
+                addProgress(`ui.env synced (proxy mode: ${apiBaseUrl})`);
+              }
             } catch (syncError) {
               addProgress(`⚠️  Could not sync ui.env: ${syncError}`);
             }

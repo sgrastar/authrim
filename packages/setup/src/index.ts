@@ -43,7 +43,8 @@ program
   .command('deploy')
   .description('Deploy Authrim to Cloudflare')
   .option('--env <name>', 'Environment name')
-  .option('--config <path>', 'Configuration file path', 'authrim-config.json')
+  .option('--config <path>', 'Configuration file path')
+  .option('--source <path>', 'Authrim source directory (containing packages/)')
   .option('--component <name>', 'Deploy a single component')
   .option('--dry-run', 'Show what would be deployed without actually deploying')
   .option('--skip-secrets', 'Skip uploading secrets')
@@ -66,15 +67,16 @@ program
 program
   .command('status')
   .description('Show deployment status')
-  .option('--config <path>', 'Configuration file path', 'authrim-config.json')
+  .option('--config <path>', 'Configuration file path')
+  .option('--env <name>', 'Environment name')
   .action(statusCommand);
 
 program
   .command('secrets')
   .description('Upload secrets to Cloudflare')
   .option('--env <name>', 'Environment name')
-  .option('--config <path>', 'Configuration file path', 'authrim-config.json')
-  .option('--keys-dir <path>', 'Keys directory', '.keys')
+  .option('--config <path>', 'Configuration file path')
+  .option('--keys-dir <path>', 'Keys directory')
   .action(async (options) => {
     const { deployCommand: deploy } = await import('./cli/commands/deploy.js');
     await deploy({ ...options, skipUi: true });

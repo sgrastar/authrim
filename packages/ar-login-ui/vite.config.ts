@@ -4,6 +4,9 @@ import UnoCSS from 'unocss/vite';
 
 export default defineConfig({
 	plugins: [UnoCSS(), sveltekit()],
+	// Expose both VITE_ and PUBLIC_ prefixed environment variables to import.meta.env
+	// This allows SvelteKit apps to use PUBLIC_API_BASE_URL etc.
+	envPrefix: ['VITE_', 'PUBLIC_'],
 	build: {
 		target: 'esnext',
 		minify: 'esbuild',

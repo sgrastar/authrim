@@ -6,7 +6,7 @@
  * - Session status check
  * - Logout
  *
- * All endpoints use credentials: 'include' for cookie-based authentication.
+ * Uses both Cookie and X-Session-Id header for Safari ITP compatibility.
  */
 
 import type {
@@ -16,6 +16,33 @@ import type {
 
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+
+/**
+ * Get session ID from localStorage for Safari ITP compatibility
+ */
+function getSessionId(): string | null {
+	if (typeof localStorage !== 'undefined') {
+		return localStorage.getItem('sessionId');
+	}
+	return null;
+}
+
+/**
+ * Build headers with optional session ID for Safari ITP compatibility
+ */
+function buildHeaders(additionalHeaders?: Record<string, string>): Record<string, string> {
+	const headers: Record<string, string> = {
+		'Content-Type': 'application/json',
+		...additionalHeaders
+	};
+
+	const sessionId = getSessionId();
+	if (sessionId && sessionId !== 'session-from-cookie') {
+		headers['X-Session-Id'] = sessionId;
+	}
+
+	return headers;
+}
 
 /**
  * Error class for authentication errors
@@ -65,14 +92,16 @@ export interface LoginResult {
  */
 export const adminAuthAPI = {
 	/**
-	 * Get Passkey login options (WebAuthn challenge)
-	 * POST /api/auth/passkeys/login/options
+	 * Get Admin Passkey login options (WebAuthn challenge)
+	 * POST /api/admin/auth/passkey/options
+	 *
+	 * Uses admin-specific endpoint that searches admin_passkeys table.
 	 */
 	async getLoginOptions(): Promise<{
 		options: PublicKeyCredentialRequestOptionsJSON;
 		challengeId: string;
 	}> {
-		const response = await fetch(`${API_BASE_URL}/api/auth/passkeys/login/options`, {
+		const response = await fetch(`${API_BASE_URL}/api/admin/auth/passkey/options`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -91,14 +120,17 @@ export const adminAuthAPI = {
 	},
 
 	/**
-	 * Verify Passkey login
-	 * POST /api/auth/passkeys/login/verify
+	 * Verify Admin Passkey login
+	 * POST /api/admin/auth/passkey/verify
+	 *
+	 * Uses admin-specific endpoint that verifies against admin_passkeys table
+	 * and creates an admin session.
 	 */
 	async verifyLogin(
 		challengeId: string,
 		credential: AuthenticationResponseJSON
 	): Promise<LoginResult> {
-		const response = await fetch(`${API_BASE_URL}/api/auth/passkeys/login/verify`, {
+		const response = await fetch(`${API_BASE_URL}/api/admin/auth/passkey/verify`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			credentials: 'include',
@@ -127,7 +159,8 @@ export const adminAuthAPI = {
 	 */
 	async checkSession(): Promise<SessionStatus | null> {
 		const response = await fetch(`${API_BASE_URL}/api/admin/sessions/me`, {
-			credentials: 'include'
+			credentials: 'include',
+			headers: buildHeaders()
 		});
 
 		if (response.status === 401) {
@@ -159,8 +192,16 @@ export const adminAuthAPI = {
 	async logout(): Promise<void> {
 		await fetch(`${API_BASE_URL}/api/admin/logout`, {
 			method: 'POST',
-			credentials: 'include'
+			credentials: 'include',
+			headers: buildHeaders()
 		});
+		// Clear localStorage
+		if (typeof localStorage !== 'undefined') {
+			localStorage.removeItem('sessionId');
+			localStorage.removeItem('userId');
+			localStorage.removeItem('userEmail');
+			localStorage.removeItem('userName');
+		}
 		// Redirect to login page after logout
 		window.location.href = '/admin/login';
 	}

@@ -22,6 +22,12 @@ import { constants } from 'node:fs';
 export interface UiEnvConfig {
   /** API base URL for UI to connect to (e.g., https://prod-ar-router.workers.dev) */
   PUBLIC_API_BASE_URL: string;
+  /**
+   * Backend API URL for server-side proxy (Safari ITP compatibility)
+   * Used by SvelteKit hooks.server.ts to proxy /api/* requests
+   * If not set, defaults to PUBLIC_API_BASE_URL
+   */
+  API_BACKEND_URL?: string;
 }
 
 // =============================================================================
