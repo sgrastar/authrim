@@ -1077,8 +1077,10 @@ export function createApiRoutes(): Hono {
             const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
 
             if (currentLock && lockPath) {
-              const workers: Record<string, { name: string; deployedAt?: string; version?: string }> =
-                { ...currentLock.workers };
+              const workers: Record<
+                string,
+                { name: string; deployedAt?: string; version?: string }
+              > = { ...currentLock.workers };
 
               for (const result of summary.results) {
                 if (result.success && result.deployedAt) {
@@ -1879,7 +1881,10 @@ export function createApiRoutes(): Hono {
                 addProgress('Generating wrangler config from lock file...');
 
                 // Build resource IDs from lock file
-                const resourceIds: { d1: Record<string, { id: string; name: string }>; kv: Record<string, { id: string; name: string }> } = {
+                const resourceIds: {
+                  d1: Record<string, { id: string; name: string }>;
+                  kv: Record<string, { id: string; name: string }>;
+                } = {
                   d1: {},
                   kv: {},
                 };
@@ -1913,7 +1918,9 @@ export function createApiRoutes(): Hono {
                   addProgress(`Generated wrangler.toml for ${componentName}`);
                 }
               } else {
-                addProgress('Warning: No lock file or config found, wrangler config may be missing');
+                addProgress(
+                  'Warning: No lock file or config found, wrangler config may be missing'
+                );
               }
             }
           } catch (syncError) {
