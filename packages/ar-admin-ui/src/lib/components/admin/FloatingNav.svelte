@@ -1,8 +1,11 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import Avatar from '$lib/components/Avatar.svelte';
 
 	interface Props {
 		userName?: string;
+		userEmail?: string;
+		userPicture?: string | null;
 		userRole?: string;
 		mobileOpen?: boolean;
 		onMobileClose?: () => void;
@@ -12,6 +15,8 @@
 
 	let {
 		userName = 'Admin',
+		userEmail,
+		userPicture,
 		userRole = 'Super Admin',
 		mobileOpen = false,
 		onMobileClose,
@@ -37,16 +42,6 @@
 		closeTimeout = setTimeout(() => {
 			isExpanded = false;
 		}, 1000); // 1 second delay
-	}
-
-	// Get user initials
-	function getInitials(name: string): string {
-		return name
-			.split(' ')
-			.map((n) => n[0])
-			.join('')
-			.slice(0, 2)
-			.toUpperCase();
 	}
 
 	// Cleanup on destroy
@@ -97,7 +92,7 @@
 			{@render footer()}
 		{:else}
 			<div class="nav-user">
-				<div class="nav-user-avatar">{getInitials(userName)}</div>
+				<Avatar email={userEmail} name={userName} picture={userPicture} size="md" />
 				<div class="nav-user-info">
 					<div class="nav-user-name">{userName}</div>
 					<div class="nav-user-role">{userRole}</div>

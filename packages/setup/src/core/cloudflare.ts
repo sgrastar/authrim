@@ -6,6 +6,8 @@
  */
 
 import { execa, type ExecaError } from 'execa';
+import { fileURLToPath } from 'node:url';
+import { dirname, join as pathJoin } from 'node:path';
 import {
   getD1DatabaseName,
   getKVNamespaceName,
@@ -14,6 +16,11 @@ import {
   KV_NAMESPACES,
 } from './naming.js';
 import type { D1Location, D1Jurisdiction } from './config.js';
+
+// Package directory (for bundled migrations)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const PACKAGE_MIGRATIONS_DIR = pathJoin(__dirname, '..', '..', 'migrations');
 
 // =============================================================================
 // Types
@@ -537,11 +544,14 @@ export async function runMigrationsForEnvironment(
   const adminDbName = getD1DatabaseName(env, 'admin-db');
 
   // Search for migrations directory in multiple locations
+  // Priority: local project > authrim subdir > cwd > package bundled
   const searchPaths = [
     resolve(rootDir, 'migrations'),
     resolve(rootDir, 'authrim', 'migrations'),
     resolve(process.cwd(), 'migrations'),
     resolve(process.cwd(), 'authrim', 'migrations'),
+    // Bundled migrations in npm package (fallback for npx users)
+    PACKAGE_MIGRATIONS_DIR,
   ];
 
   let migrationsRoot: string | null = null;

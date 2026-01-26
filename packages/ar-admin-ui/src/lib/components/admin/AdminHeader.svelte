@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { adminAuthAPI } from '$lib/api/admin-auth';
+	import Avatar from '$lib/components/Avatar.svelte';
 
 	interface Breadcrumb {
 		label: string;
@@ -16,6 +17,7 @@
 		onMobileMenuClick?: () => void;
 		userEmail?: string;
 		userName?: string;
+		userPicture?: string | null;
 		lastLoginAt?: number | null;
 	}
 
@@ -27,6 +29,7 @@
 		onMobileMenuClick,
 		userEmail,
 		userName,
+		userPicture,
 		lastLoginAt
 	}: Props = $props();
 
@@ -39,21 +42,6 @@
 
 	function closeUserMenu() {
 		showUserMenu = false;
-	}
-
-	function getInitials(email: string | undefined, name: string | undefined): string {
-		if (name) {
-			return name
-				.split(' ')
-				.map((n) => n[0])
-				.join('')
-				.slice(0, 2)
-				.toUpperCase();
-		}
-		if (email) {
-			return email.charAt(0).toUpperCase();
-		}
-		return 'A';
 	}
 
 	function formatLastLogin(timestamp: number | null | undefined): string {
@@ -133,7 +121,7 @@
 		<!-- User Info -->
 		<div class="header-user">
 			<button class="user-button" onclick={toggleUserMenu} aria-expanded={showUserMenu}>
-				<div class="user-avatar">{getInitials(userEmail, userName)}</div>
+				<Avatar email={userEmail} name={userName} picture={userPicture} size="sm" />
 				<div class="user-info">
 					<span class="user-email">{userEmail || 'Admin'}</span>
 					{#if lastLoginAt}
@@ -146,7 +134,7 @@
 			{#if showUserMenu}
 				<div class="user-menu">
 					<div class="user-menu-header">
-						<div class="user-avatar-lg">{getInitials(userEmail, userName)}</div>
+						<Avatar email={userEmail} name={userName} picture={userPicture} size="lg" />
 						<div class="user-menu-info">
 							<span class="user-menu-email">{userEmail || 'Admin'}</span>
 							{#if lastLoginAt}
