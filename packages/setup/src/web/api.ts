@@ -928,9 +928,30 @@ export function createApiRoutes(): Hono {
         addProgress('Deploying workers...');
 
         // Determine enabled components from config (same logic as CLI)
+        // Load config from file if state.config is not set (e.g., after page reload)
         let enabledComponents: WorkerComponent[] | undefined = components;
-        if (!enabledComponents && state.config) {
-          const cfg = state.config;
+        let cfg = state.config;
+
+        if (!enabledComponents && !cfg) {
+          // Try to load config.json from disk
+          try {
+            const configPath =
+              resolved.type === 'new'
+                ? (resolved.paths as EnvironmentPaths).config
+                : (resolved.paths as LegacyPaths).config;
+
+            if (existsSync(configPath)) {
+              const configContent = await readFile(configPath, 'utf-8');
+              cfg = JSON.parse(configContent);
+              state.config = cfg; // Cache for later use
+              addProgress(`Loaded config from ${configPath}`);
+            }
+          } catch (configErr) {
+            addProgress(`Warning: Could not load config.json: ${sanitizeError(configErr)}`);
+          }
+        }
+
+        if (!enabledComponents && cfg) {
           enabledComponents = [
             'ar-lib-core',
             'ar-discovery',
@@ -966,7 +987,7 @@ export function createApiRoutes(): Hono {
 
         // Deploy Pages (ar-login-ui, ar-admin-ui) if loginUi or adminUi is enabled
         let pagesSummary = null;
-        const cfg = state.config;
+        // Note: cfg is already loaded above (from state.config or config.json file)
         if (cfg?.components?.loginUi || cfg?.components?.adminUi) {
           addProgress('Deploying Login/Admin UI to Cloudflare Pages...');
 
