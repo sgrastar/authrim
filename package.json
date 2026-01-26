@@ -1,6 +1,6 @@
 {
   "name": "authrim",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "A scalable Edge Identity Provider built on Cloudflare Workers - OIDC, OAuth 2.0, SAML",
   "private": true,
   "type": "module",
