@@ -87,10 +87,7 @@ export const myPasskeysAPI = {
 	 * Get registration options (WebAuthn challenge)
 	 * POST /api/admin/me/passkeys/options
 	 */
-	async getRegistrationOptions(
-		rpId: string,
-		deviceName?: string
-	): Promise<PasskeyOptionsResponse> {
+	async getRegistrationOptions(rpId: string, deviceName?: string): Promise<PasskeyOptionsResponse> {
 		const response = await fetch(`${API_BASE_URL}/api/admin/me/passkeys/options`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },

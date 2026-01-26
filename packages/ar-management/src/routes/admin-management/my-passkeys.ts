@@ -25,11 +25,11 @@ import {
   adminAuthMiddleware,
   generateId,
 } from '@authrim/ar-lib-core';
-import {
-  generateRegistrationOptions,
-  verifyRegistrationResponse,
+import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
+import type {
+  RegistrationResponseJSON,
+  AuthenticatorTransportFuture,
 } from '@simplewebauthn/server';
-import type { RegistrationResponseJSON, AuthenticatorTransportFuture } from '@simplewebauthn/server';
 
 // Context type with adminAuth variable
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -337,8 +337,7 @@ myPasskeysRouter.post('/complete', async (c) => {
     );
 
     // Use device name from completion request, fallback to options request, or generate default
-    const deviceName =
-      body.device_name || storedChallenge.deviceName || `Passkey ${Date.now()}`;
+    const deviceName = body.device_name || storedChallenge.deviceName || `Passkey ${Date.now()}`;
 
     // Create passkey
     const passkey = await passkeyRepo.createPasskey({
@@ -360,10 +359,13 @@ myPasskeysRouter.post('/complete', async (c) => {
       device_name: deviceName,
     });
 
-    return c.json({
-      success: true,
-      passkey: sanitizePasskey(passkey),
-    }, 201);
+    return c.json(
+      {
+        success: true,
+        passkey: sanitizePasskey(passkey),
+      },
+      201
+    );
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
