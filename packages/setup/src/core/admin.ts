@@ -110,7 +110,17 @@ export async function isSetupCompleted(env: string, configPath: string = '.'): P
     // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
     const result = await execa(
       'npx',
-      ['wrangler', 'kv', 'key', 'get', 'setup:completed', '--env', env, '--binding', 'AUTHRIM_CONFIG'],
+      [
+        'wrangler',
+        'kv',
+        'key',
+        'get',
+        'setup:completed',
+        '--env',
+        env,
+        '--binding',
+        'AUTHRIM_CONFIG',
+      ],
       {
         cwd: workerDir,
         reject: false,

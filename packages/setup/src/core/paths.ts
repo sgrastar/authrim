@@ -214,14 +214,20 @@ export function findAuthrimBaseDir(startDir: string): string {
   }
 
   // Check for legacy structure in startDir
-  if (existsSync(join(startDir, LEGACY_CONFIG_FILE)) || existsSync(join(startDir, LEGACY_LOCK_FILE))) {
+  if (
+    existsSync(join(startDir, LEGACY_CONFIG_FILE)) ||
+    existsSync(join(startDir, LEGACY_LOCK_FILE))
+  ) {
     return startDir;
   }
 
   // Check legacy structure in subdirectories
   for (const subdir of COMMON_SUBDIRS) {
     const subdirPath = join(startDir, subdir);
-    if (existsSync(join(subdirPath, LEGACY_CONFIG_FILE)) || existsSync(join(subdirPath, LEGACY_LOCK_FILE))) {
+    if (
+      existsSync(join(subdirPath, LEGACY_CONFIG_FILE)) ||
+      existsSync(join(subdirPath, LEGACY_LOCK_FILE))
+    ) {
       return subdirPath;
     }
   }

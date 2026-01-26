@@ -548,7 +548,10 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
 
     if (!isOriginAllowed) {
       await releaseSetupLock(c.env);
-      moduleLogger.warn('Initial setup rejected: Origin not allowed', { origin: originHeader, allowedOrigins });
+      moduleLogger.warn('Initial setup rejected: Origin not allowed', {
+        origin: originHeader,
+        allowedOrigins,
+      });
       return c.json(
         {
           error: 'invalid_origin',
