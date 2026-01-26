@@ -113,9 +113,18 @@
 	// Derived Values
 	// =========================================================================
 
-	// LPS estimation (based on load test results: 32 shards ≈ 400 LPS)
+	// LPS estimation for full login flow (based on load test: 32 shards ≈ 150 LPS)
+	// See: load-testing/reports/Dec2025/full-login-otp.md
 	function estimateLPS(shards: number): number {
-		return Math.round(shards * 12.5);
+		return Math.round(shards * 4.7);
+	}
+
+	// RPS estimation for individual components (based on endpoint load tests)
+	// Refresh Token: 48 shards = 3,000 RPS (62.5/shard)
+	// Token Exchange: 8 shards = 2,500 RPS (312/shard)
+	// Using conservative estimate: ~28 RPS/shard (6x login flow)
+	function estimateComponentRPS(shards: number): number {
+		return Math.round(shards * 28);
 	}
 
 	// Total LPS (all shards use same scale now)
@@ -360,44 +369,28 @@
 			successMessage = '';
 		}, 5000);
 	}
-
-	function getSourceLabel(source: string): string {
-		switch (source) {
-			case 'kv':
-				return 'kv';
-			case 'env':
-				return 'env';
-			default:
-				return 'default';
-		}
-	}
 </script>
 
 <div class="scale-page">
-	<!-- Section 0: Executive Summary -->
-	<div class="summary-banner">
-		<div class="summary-content">
-			<div class="summary-label">Current Scale Profile:</div>
-			<div class="summary-value">
-				{#if loading}
-					<span class="loading-text">Loading...</span>
-				{:else}
-					<span class="lps-value">~{estimatedTotalLPS} Login/sec</span>
-					<span class="lps-qualifier">(Estimated)</span>
-					<span class="region-info"
-						>across {activeRegionCount} active region{activeRegionCount !== 1 ? 's' : ''}</span
-					>
-				{/if}
-			</div>
-		</div>
-	</div>
-
 	<!-- Header -->
 	<div class="page-header">
 		<h1 class="page-title">Scale Configuration</h1>
 		<p class="page-description">
 			Configure system capacity and geographic distribution. Changes affect new sessions only.
 		</p>
+	</div>
+
+	<!-- Current Scale Summary (Compact) -->
+	<div class="summary-inline">
+		<span class="summary-label">Current:</span>
+		{#if loading}
+			<span class="loading-text">Loading...</span>
+		{:else}
+			<span class="lps-value">~{estimatedTotalLPS} Login/sec</span>
+			<span class="lps-qualifier">(Est.)</span>
+			<span class="summary-divider">·</span>
+			<span class="region-info">{activeRegionCount} region{activeRegionCount !== 1 ? 's' : ''}</span>
+		{/if}
 	</div>
 
 	<!-- Success/Error Messages -->
@@ -420,61 +413,53 @@
 			<span>Loading configuration...</span>
 		</div>
 	{:else}
-		<!-- Section 1: Active Regions -->
+		<!-- Section 1: Region Distribution -->
 		<section class="config-section">
-			<h2 class="section-title">Active Regions</h2>
-			<p class="section-description">Select geographic regions for request distribution.</p>
+			<h2 class="section-title">Region Distribution</h2>
+			<p class="section-description">
+				<i class="i-ph-info info-icon"></i>
+				Select regions and configure <strong>request routing ratio</strong>.
+			</p>
 
-			<div class="region-checkboxes">
+			<div class="region-distribution-list">
 				{#each ALL_REGIONS as region (region.key)}
-					<label class="region-checkbox" class:selected={selectedRegions.includes(region.key)}>
-						<input
-							type="checkbox"
-							checked={selectedRegions.includes(region.key)}
-							onchange={() => toggleRegion(region.key)}
-							disabled={selectedRegions.length === 1 && selectedRegions.includes(region.key)}
-						/>
-						<span class="checkbox-label">{region.label}</span>
-					</label>
-				{/each}
-			</div>
-		</section>
-
-		<!-- Section 2: Region Distribution -->
-		{#if selectedRegions.length > 1}
-			<section class="config-section">
-				<h2 class="section-title">Region Distribution</h2>
-				<p class="section-description">
-					<i class="i-ph-info info-icon"></i>
-					Region distribution controls <strong>request routing ratio</strong>.
-				</p>
-
-				<div class="distribution-sliders">
-					{#each selectedRegions as regionKey (regionKey)}
-						{@const regionInfo = ALL_REGIONS.find((r) => r.key === regionKey)}
-						<div class="slider-row">
-							<span class="slider-label">{regionInfo?.label || regionKey}</span>
+					{@const isSelected = selectedRegions.includes(region.key)}
+					{@const isLastSelected = selectedRegions.length === 1 && isSelected}
+					<div class="region-row" class:selected={isSelected}>
+						<label class="region-checkbox-inline">
+							<input
+								type="checkbox"
+								checked={isSelected}
+								onchange={() => toggleRegion(region.key)}
+								disabled={isLastSelected}
+							/>
+						</label>
+						<span class="region-label">{region.label}</span>
+						{#if isSelected && selectedRegions.length > 1}
 							<input
 								type="range"
 								min="0"
 								max="100"
-								value={regionDistribution[regionKey] || 0}
+								value={regionDistribution[region.key] || 0}
 								oninput={(e) =>
-									adjustDistribution(regionKey, parseInt((e.target as HTMLInputElement).value))}
-								class="distribution-slider"
+									adjustDistribution(region.key, parseInt((e.target as HTMLInputElement).value))}
+								class="region-slider"
 							/>
-							<span class="slider-value">{regionDistribution[regionKey] || 0}%</span>
-							<span class="source-tag"
-								>{getSourceLabel(
-									currentConfig.regionShards?.currentRegions?.[regionKey] ? 'kv' : 'default'
-								)}</span
-							>
-						</div>
-					{/each}
-				</div>
+							<span class="region-percent">{regionDistribution[region.key] || 0}%</span>
+						{:else if isSelected}
+							<span class="region-slider-placeholder"></span>
+							<span class="region-percent">100%</span>
+						{:else}
+							<span class="region-slider-placeholder"></span>
+							<span class="region-percent inactive">-</span>
+						{/if}
+					</div>
+				{/each}
+			</div>
+			{#if selectedRegions.length > 1}
 				<p class="slider-note">Note: Adjusting one slider will auto-balance others.</p>
-			</section>
-		{/if}
+			{/if}
+		</section>
 
 		<!-- Section 3: Scale Configuration (Unified) -->
 		<section class="config-section">
@@ -488,15 +473,12 @@
 				<div class="scale-group">
 					<div class="scale-header">
 						<h3>System Scale</h3>
-						<span class="source-tag"
-							>{getSourceLabel(currentConfig.codeShards?.source || 'default')}</span
-						>
 					</div>
 					<div class="slider-container">
 						<input
 							type="range"
 							min="4"
-							max="64"
+							max="128"
 							step="4"
 							bind:value={scaleState.unifiedScale}
 							class="scale-slider"
@@ -504,8 +486,18 @@
 						<span class="scale-value">{scaleState.unifiedScale} shards</span>
 					</div>
 					<div class="scale-info">
-						<span class="lps-estimate">Estimated ~{estimateLPS(scaleState.unifiedScale)} Login/sec</span>
+						<span class="lps-estimate"
+							>Estimated ~{estimateLPS(scaleState.unifiedScale)} Login/sec</span
+						>
 					</div>
+					{#if scaleState.unifiedScale >= 32}
+						<div class="scale-warning">
+							<i class="i-ph-info"></i>
+							<span>
+								Optimal shard count varies by environment. Please conduct load testing based on your actual usage patterns.
+							</span>
+						</div>
+					{/if}
 				</div>
 			</div>
 
@@ -515,27 +507,27 @@
 				<div class="rps-grid">
 					<div class="rps-item">
 						<span class="rps-label">AuthCode</span>
-						<span class="rps-value">~{estimateLPS(calculatedShards.authCode)} RPS</span>
+						<span class="rps-value">~{estimateComponentRPS(calculatedShards.authCode)} RPS</span>
 					</div>
 					<div class="rps-item">
 						<span class="rps-label">RefreshToken</span>
-						<span class="rps-value">~{estimateLPS(calculatedShards.refreshToken)} RPS</span>
+						<span class="rps-value">~{estimateComponentRPS(calculatedShards.refreshToken)} RPS</span>
 					</div>
 					<div class="rps-item">
 						<span class="rps-label">Session</span>
-						<span class="rps-value">~{estimateLPS(calculatedShards.session)} RPS</span>
+						<span class="rps-value">~{estimateComponentRPS(calculatedShards.session)} RPS</span>
 					</div>
 					<div class="rps-item">
 						<span class="rps-label">Challenge</span>
-						<span class="rps-value">~{estimateLPS(calculatedShards.challenge)} RPS</span>
+						<span class="rps-value">~{estimateComponentRPS(calculatedShards.challenge)} RPS</span>
 					</div>
 					<div class="rps-item">
 						<span class="rps-label">Revocation</span>
-						<span class="rps-value">~{estimateLPS(calculatedShards.revocation)} RPS</span>
+						<span class="rps-value">~{estimateComponentRPS(calculatedShards.revocation)} RPS</span>
 					</div>
 					<div class="rps-item">
 						<span class="rps-label">FlowState</span>
-						<span class="rps-value">~{estimateLPS(calculatedShards.flowState)} RPS</span>
+						<span class="rps-value">~{estimateComponentRPS(calculatedShards.flowState)} RPS</span>
 					</div>
 				</div>
 			</div>
@@ -563,10 +555,11 @@
 					<div class="advanced-group">
 						<h4>Estimation Model</h4>
 						<p class="advanced-description">
-							Based on internal load tests (Full Login Flow).<br />
-							Formula: shards × 12.5 ≈ Login/sec<br />
-							Actual results vary by authentication flow (Passkey, OTP), token TTL, and concurrent
-							refresh patterns.
+							Based on load tests (Dec 2025).<br />
+							Login/sec: shards × 4.7 (Full Login Flow)<br />
+							Component RPS: shards × 28 (individual endpoints)<br />
+							Reference: 32 shards ≈ 150 LPS, ~900 RPS per component<br />
+							Actual results vary by authentication flow, token TTL, and usage patterns.
 						</p>
 					</div>
 
@@ -583,7 +576,7 @@
 							Current: {Math.max(
 								4,
 								Math.floor(scaleState.unifiedScale * scaleState.clientBasedCoeff)
-							)} shards (~{estimateLPS(
+							)} shards (~{estimateComponentRPS(
 								Math.max(4, Math.floor(scaleState.unifiedScale * scaleState.clientBasedCoeff))
 							)} RPS)
 						</p>
@@ -696,52 +689,44 @@
 		max-width: 900px;
 	}
 
-	/* Executive Summary Banner */
-	.summary-banner {
-		background: var(--gradient-accent);
-		border-radius: var(--radius-lg);
-		padding: 20px 24px;
-		margin-bottom: 32px;
-		color: white;
-	}
-
-	.summary-content {
-		text-align: center;
+	/* Current Scale Summary (Compact Inline) */
+	.summary-inline {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 12px 16px;
+		background: var(--bg-tertiary);
+		border-radius: var(--radius-md);
+		margin-bottom: 24px;
+		font-size: 0.9375rem;
 	}
 
 	.summary-label {
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		opacity: 0.9;
-		margin-bottom: 4px;
-	}
-
-	.summary-value {
-		font-size: 1.5rem;
-		font-weight: 700;
-		margin-bottom: 8px;
+		font-weight: 600;
+		color: var(--text-secondary);
 	}
 
 	.lps-value {
-		font-size: 1.75rem;
+		font-weight: 700;
+		color: var(--primary);
 	}
 
 	.lps-qualifier {
-		font-size: 0.875rem;
-		opacity: 0.8;
-		margin-left: 4px;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+	}
+
+	.summary-divider {
+		color: var(--text-muted);
 	}
 
 	.region-info {
-		display: block;
 		font-size: 0.875rem;
-		opacity: 0.9;
-		margin-top: 4px;
+		color: var(--text-secondary);
 	}
 
 	.loading-text {
-		opacity: 0.7;
+		color: var(--text-muted);
 	}
 
 	/* Page Header */
@@ -823,72 +808,66 @@
 		color: var(--info);
 	}
 
-	/* Region Checkboxes */
-	.region-checkboxes {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-		gap: 12px;
+	/* Region Distribution List (Combined Checkbox + Slider) */
+	.region-distribution-list {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
 	}
 
-	.region-checkbox {
+	.region-row {
 		display: flex;
 		align-items: center;
-		gap: 10px;
-		padding: 12px 16px;
+		gap: 12px;
+		padding: 10px 14px;
 		background: var(--bg-tertiary);
 		border: 1px solid var(--border-secondary);
 		border-radius: var(--radius-md);
-		cursor: pointer;
 		transition: all var(--transition-fast);
 	}
 
-	.region-checkbox:hover {
-		border-color: var(--primary);
+	.region-row:hover {
+		border-color: var(--border-primary);
 	}
 
-	.region-checkbox.selected {
+	.region-row.selected {
 		background: var(--primary-bg);
 		border-color: var(--primary);
 	}
 
-	.region-checkbox input {
+	.region-checkbox-inline {
+		display: flex;
+		align-items: center;
+		cursor: pointer;
+	}
+
+	.region-checkbox-inline input {
 		accent-color: var(--primary);
 		width: 18px;
 		height: 18px;
+		cursor: pointer;
 	}
 
-	.checkbox-label {
-		font-size: 0.875rem;
-		color: var(--text-primary);
-	}
-
-	/* Distribution Sliders */
-	.distribution-sliders {
-		display: flex;
-		flex-direction: column;
-		gap: 16px;
-	}
-
-	.slider-row {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-	}
-
-	.slider-label {
-		width: 200px;
+	.region-label {
+		width: 220px;
 		font-size: 0.875rem;
 		color: var(--text-primary);
 		font-weight: 500;
 	}
 
-	.distribution-slider {
+	.region-slider {
 		flex: 1;
 		height: 6px;
 		accent-color: var(--primary);
+		min-width: 100px;
 	}
 
-	.slider-value {
+	.region-slider-placeholder {
+		flex: 1;
+		min-width: 100px;
+	}
+
+	.region-percent {
 		width: 48px;
 		text-align: right;
 		font-size: 0.875rem;
@@ -896,13 +875,9 @@
 		color: var(--text-primary);
 	}
 
-	.source-tag {
-		font-size: 0.6875rem;
-		padding: 2px 6px;
-		border-radius: var(--radius-sm);
-		background: var(--bg-tertiary);
+	.region-percent.inactive {
 		color: var(--text-muted);
-		text-transform: uppercase;
+		font-weight: 400;
 	}
 
 	.slider-note {
@@ -972,6 +947,18 @@
 		color: var(--success);
 	}
 
+	.scale-warning {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+		padding: 10px 12px;
+		background: var(--info-bg, rgba(59, 130, 246, 0.1));
+		border-radius: var(--radius-sm);
+		margin-top: 12px;
+		font-size: 0.8125rem;
+		color: var(--info, #3b82f6);
+	}
+
 	/* RPS Breakdown */
 	.rps-breakdown {
 		margin-top: 24px;
@@ -990,7 +977,7 @@
 
 	.rps-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+		grid-template-columns: repeat(3, 1fr);
 		gap: 8px;
 	}
 
@@ -1283,17 +1270,27 @@
 			font-size: 1.5rem;
 		}
 
-		.region-checkboxes {
-			grid-template-columns: 1fr;
-		}
-
-		.slider-row {
+		.region-row {
 			flex-wrap: wrap;
 		}
 
-		.slider-label {
+		.region-label {
+			width: auto;
+			flex: 1;
+		}
+
+		.region-slider {
+			order: 3;
 			width: 100%;
-			margin-bottom: 4px;
+			margin-top: 8px;
+		}
+
+		.region-slider-placeholder {
+			display: none;
+		}
+
+		.region-percent {
+			order: 2;
 		}
 
 		.shard-grid {
