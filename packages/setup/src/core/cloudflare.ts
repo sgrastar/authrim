@@ -100,14 +100,16 @@ export interface ProvisionOptions {
  */
 async function wrangler(
   args: string[],
-  options: { cwd?: string; env?: Record<string, string> } = {}
+  options: { cwd?: string; env?: Record<string, string>; timeout?: number } = {}
 ): Promise<{ stdout: string; stderr: string }> {
   try {
     // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
+    // Default timeout: 30 seconds (wrangler API calls can be slow)
     const result = await execa('npx', ['wrangler', ...args], {
       cwd: options.cwd,
       env: { ...process.env, ...options.env },
       reject: false,
+      timeout: options.timeout ?? 30000,
     });
 
     return {
@@ -116,6 +118,10 @@ async function wrangler(
     };
   } catch (error) {
     const execaError = error as ExecaError;
+    // Handle timeout specifically
+    if (execaError.timedOut) {
+      throw new Error(`Wrangler command timed out: ${args.join(' ')}`);
+    }
     throw new Error(`Wrangler command failed: ${execaError.message}`);
   }
 }

@@ -1045,6 +1045,41 @@ export function createApiRoutes(): Hono {
         const workersSuccess = summary.failedCount === 0;
         const pagesSuccess = pagesSummary ? pagesSummary.failedCount === 0 : true;
 
+        // Update lock file with deployed workers information
+        if (workersSuccess && !dryRun && summary.successCount > 0) {
+          try {
+            const { loadLockFileAuto, saveLockFile: saveLock } = await import('../core/lock.js');
+            const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
+
+            if (currentLock && lockPath) {
+              const workers: Record<string, { name: string; deployedAt?: string; version?: string }> =
+                { ...currentLock.workers };
+
+              for (const result of summary.results) {
+                if (result.success && result.deployedAt) {
+                  workers[result.component] = {
+                    name: result.workerName,
+                    deployedAt: result.deployedAt,
+                    version: result.version,
+                  };
+                }
+              }
+
+              const updatedLock = {
+                ...currentLock,
+                workers,
+                updatedAt: new Date().toISOString(),
+              };
+
+              await saveLock(updatedLock, lockPath);
+              addProgress('Lock file updated with deployment info');
+            }
+          } catch (lockError) {
+            // Non-fatal: log but continue
+            addProgress(`Warning: Could not update lock file: ${sanitizeError(lockError)}`);
+          }
+        }
+
         // Run D1 migrations after deployment (if enabled and not dry-run)
         let migrationsResult = null;
         if (runMigrations && !dryRun && workersSuccess) {
@@ -1368,44 +1403,49 @@ export function createApiRoutes(): Hono {
       const localVersions = await getLocalPackageVersions(rootDir);
 
       // If no lock file or no workers in lock, check wrangler for deployment status
+      // Use parallel requests with timeout to avoid slow sequential API calls
       if (!hasLockWorkers) {
         const { WORKER_COMPONENTS } = await import('../core/naming.js');
-        // Check a subset of core workers to determine deployment status
+        // Check core workers first (in parallel) to determine if environment is deployed
         const coreWorkers: WorkerComponent[] = ['ar-lib-core', 'ar-router', 'ar-auth'];
 
-        for (const component of coreWorkers) {
-          const workerName = `${env}-${component}`;
-          try {
+        const coreResults = await Promise.allSettled(
+          coreWorkers.map(async (component) => {
+            const workerName = `${env}-${component}`;
             const deployInfo = await getWorkerDeployments(workerName);
-            if (deployInfo.exists) {
-              // Worker exists on Cloudflare but version unknown
-              deployedVersions[component] = {
-                version: undefined, // Version unknown without lock file
-                deployedAt: deployInfo.lastDeployedAt || undefined,
-              };
-            }
-          } catch {
-            // Ignore errors, worker likely doesn't exist
+            return { component, deployInfo };
+          })
+        );
+
+        for (const result of coreResults) {
+          if (result.status === 'fulfilled' && result.value.deployInfo.exists) {
+            deployedVersions[result.value.component] = {
+              version: undefined,
+              deployedAt: result.value.deployInfo.lastDeployedAt || undefined,
+            };
           }
         }
 
-        // If core workers are deployed, assume all enabled workers are deployed
+        // If core workers are deployed, check remaining workers in parallel
         if (Object.keys(deployedVersions).length > 0) {
-          for (const component of WORKER_COMPONENTS) {
-            if (!deployedVersions[component]) {
-              // Mark as potentially deployed (will show as "deployed, version unknown")
+          const remainingComponents = WORKER_COMPONENTS.filter(
+            (c) => !deployedVersions[c] && !coreWorkers.includes(c)
+          );
+
+          const remainingResults = await Promise.allSettled(
+            remainingComponents.map(async (component) => {
               const workerName = `${env}-${component}`;
-              try {
-                const deployInfo = await getWorkerDeployments(workerName);
-                if (deployInfo.exists) {
-                  deployedVersions[component] = {
-                    version: undefined,
-                    deployedAt: deployInfo.lastDeployedAt || undefined,
-                  };
-                }
-              } catch {
-                // Worker doesn't exist or check failed
-              }
+              const deployInfo = await getWorkerDeployments(workerName);
+              return { component, deployInfo };
+            })
+          );
+
+          for (const result of remainingResults) {
+            if (result.status === 'fulfilled' && result.value.deployInfo.exists) {
+              deployedVersions[result.value.component] = {
+                version: undefined,
+                deployedAt: result.value.deployInfo.lastDeployedAt || undefined,
+              };
             }
           }
         }

@@ -1,6 +1,6 @@
 {
   "name": "@authrim/setup",
-  "version": "0.1.135",
+  "version": "0.1.136",
   "description": "CLI tool for setting up Authrim OIDC Provider on Cloudflare Workers",
   "type": "module",
   "bin": {
