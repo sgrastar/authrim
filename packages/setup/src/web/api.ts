@@ -1077,8 +1077,10 @@ export function createApiRoutes(): Hono {
             const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
 
             if (currentLock && lockPath) {
-              const workers: Record<string, { name: string; deployedAt?: string; version?: string }> =
-                { ...currentLock.workers };
+              const workers: Record<
+                string,
+                { name: string; deployedAt?: string; version?: string }
+              > = { ...currentLock.workers };
 
               for (const result of summary.results) {
                 if (result.success && result.deployedAt) {
