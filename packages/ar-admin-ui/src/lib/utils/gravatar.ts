@@ -252,8 +252,16 @@ export interface GravatarOptions {
  * // => "https://www.gravatar.com/avatar/abc123...?s=80&d=identicon&r=g"
  * ```
  */
-export function getGravatarUrl(email: string | null | undefined, options: GravatarOptions = {}): string {
-	const { size = 80, default: defaultImg = 'identicon', forceDefault = false, rating = 'g' } = options;
+export function getGravatarUrl(
+	email: string | null | undefined,
+	options: GravatarOptions = {}
+): string {
+	const {
+		size = 80,
+		default: defaultImg = 'identicon',
+		forceDefault = false,
+		rating = 'g'
+	} = options;
 
 	// Normalize email: lowercase, trim whitespace
 	const normalizedEmail = (email || '').toLowerCase().trim();
