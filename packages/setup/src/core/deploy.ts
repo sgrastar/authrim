@@ -609,6 +609,26 @@ export async function deployPagesComponent(
       }
     );
 
+    // Set API_BACKEND_URL secret for Admin UI (Safari ITP cookie proxy)
+    // This enables the server-side proxy in hooks.server.ts
+    if (component === 'ar-admin-ui' && apiBaseUrl) {
+      onProgress?.(`Setting API_BACKEND_URL secret for ${pagesProjectName}...`);
+      const secretResult = await execa(
+        'npx',
+        ['wrangler', 'pages', 'secret', 'put', 'API_BACKEND_URL', '--project-name', pagesProjectName],
+        {
+          cwd: uiDir,
+          input: apiBaseUrl,
+          reject: false,
+        }
+      );
+      if (secretResult.exitCode === 0) {
+        onProgress?.(`✓ API_BACKEND_URL secret set for Safari ITP compatibility`);
+      } else {
+        onProgress?.(`⚠️ Could not set API_BACKEND_URL secret: ${secretResult.stderr || 'Unknown error'}`);
+      }
+    }
+
     // Deploy to Pages
     const result = await execa(
       'npx',

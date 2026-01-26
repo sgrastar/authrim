@@ -532,9 +532,9 @@ export async function runMigrationsForEnvironment(
   const { join, resolve } = await import('node:path');
 
   // Database names for this environment
-  const coreDbName = getD1DatabaseName(env, 'core');
-  const piiDbName = getD1DatabaseName(env, 'pii');
-  const adminDbName = getD1DatabaseName(env, 'admin');
+  const coreDbName = getD1DatabaseName(env, 'core-db');
+  const piiDbName = getD1DatabaseName(env, 'pii-db');
+  const adminDbName = getD1DatabaseName(env, 'admin-db');
 
   // Search for migrations directory in multiple locations
   const searchPaths = [
