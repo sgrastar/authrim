@@ -84,7 +84,8 @@ export async function updateRefreshTokenShardingConfig(c: Context<{ Bindings: En
         return c.json(
           {
             error: 'validation_failed',
-            error_description: `AuthCode and RefreshToken must have identical shard counts. ` +
+            error_description:
+              `AuthCode and RefreshToken must have identical shard counts. ` +
               `Current AuthCode: ${codeShards}, Requested RefreshToken: ${body.shardCount}`,
             hint: 'Update both values together or use the Scale sliders',
             current_code_shards: codeShards,

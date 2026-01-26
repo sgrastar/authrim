@@ -1,6 +1,10 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getRefreshTokenShardConfig } from '@authrim/ar-lib-core';
+import {
+  createErrorResponse,
+  AR_ERROR_CODES,
+  getRefreshTokenShardConfig,
+} from '@authrim/ar-lib-core';
 
 /**
  * GET /api/admin/settings/code-shards
@@ -51,7 +55,8 @@ export async function updateCodeShards(c: Context<{ Bindings: Env }>) {
         return c.json(
           {
             error: 'validation_failed',
-            error_description: `AuthCode and RefreshToken must have identical shard counts. ` +
+            error_description:
+              `AuthCode and RefreshToken must have identical shard counts. ` +
               `Current RefreshToken: ${refreshTokenConfig.currentShardCount}, Requested AuthCode: ${shards}`,
             hint: 'Update both values together or use the Scale sliders',
             current_refresh_token_shards: refreshTokenConfig.currentShardCount,
