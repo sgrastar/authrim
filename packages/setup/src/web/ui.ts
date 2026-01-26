@@ -2578,10 +2578,11 @@ export function getHtmlTemplate(
                   <th style="text-align: left; padding: 0.5rem;" data-i18n="web.envDetail.deployedVersion">Deployed</th>
                   <th style="text-align: left; padding: 0.5rem;" data-i18n="web.envDetail.localVersion">Local</th>
                   <th style="text-align: center; padding: 0.5rem;" data-i18n="web.envDetail.updateStatus">Status</th>
+                  <th style="text-align: center; padding: 0.5rem;" data-i18n="web.envDetail.action">Action</th>
                 </tr>
               </thead>
               <tbody id="worker-version-tbody">
-                <tr><td colspan="4" style="text-align: center; padding: 1rem; color: var(--text-muted);" data-i18n="web.status.loading">Loading...</td></tr>
+                <tr><td colspan="5" style="text-align: center; padding: 1rem; color: var(--text-muted);" data-i18n="web.status.loading">Loading...</td></tr>
               </tbody>
             </table>
           </div>
@@ -2609,6 +2610,47 @@ export function getHtmlTemplate(
           <div id="worker-update-progress" class="hidden" style="margin-top: 1rem;">
             <div style="font-weight: 500; margin-bottom: 0.5rem;" data-i18n="web.envDetail.updateProgress">Update Progress:</div>
             <div id="worker-update-log" class="progress-log" style="max-height: 250px; overflow-y: auto; background: var(--bg); padding: 0.75rem; border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5;"></div>
+          </div>
+        </div>
+
+        <!-- UI Update Section (Admin UI, Login UI) -->
+        <div class="resource-section" id="ui-update-section" style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1.5rem;">
+          <div class="resource-section-title">
+            📱 <span data-i18n="web.envDetail.uiUpdate">Update UI (Pages)</span>
+          </div>
+          <p style="margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem;" data-i18n="web.envDetail.uiUpdateDesc">
+            Update Admin UI or Login UI individually. These are deployed to Cloudflare Pages.
+          </p>
+
+          <!-- UI Components -->
+          <div id="ui-components-list" style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.75rem;">
+            <!-- Admin UI -->
+            <div class="ui-component-card" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--bg); border-radius: 8px; border: 1px solid var(--border);">
+              <div>
+                <div style="font-weight: 600;">🖥️ Admin UI</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-admin-ui • Cloudflare Pages</div>
+              </div>
+              <button class="btn-primary btn-sm" id="btn-update-admin-ui" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+                🚀 <span data-i18n="web.envDetail.updateNow">Update</span>
+              </button>
+            </div>
+
+            <!-- Login UI -->
+            <div class="ui-component-card" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--bg); border-radius: 8px; border: 1px solid var(--border);">
+              <div>
+                <div style="font-weight: 600;">🔐 Login UI</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted);">ar-login-ui • Cloudflare Pages</div>
+              </div>
+              <button class="btn-primary btn-sm" id="btn-update-login-ui" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
+                🚀 <span data-i18n="web.envDetail.updateNow">Update</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- UI Update Progress -->
+          <div id="ui-update-progress" class="hidden" style="margin-top: 1rem;">
+            <div style="font-weight: 500; margin-bottom: 0.5rem;" data-i18n="web.envDetail.updateProgress">Update Progress:</div>
+            <div id="ui-update-log" class="progress-log" style="max-height: 200px; overflow-y: auto; background: var(--bg); padding: 0.75rem; border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5;"></div>
           </div>
         </div>
 
@@ -4723,7 +4765,7 @@ export function getHtmlTemplate(
       tbody.textContent = '';
       const loadingRow = document.createElement('tr');
       const loadingCell = document.createElement('td');
-      loadingCell.colSpan = 4;
+      loadingCell.colSpan = 5;
       loadingCell.style.cssText = 'text-align: center; padding: 1rem; color: var(--text-muted);';
       loadingCell.textContent = t('web.status.loading');
       loadingRow.appendChild(loadingCell);
@@ -4732,6 +4774,9 @@ export function getHtmlTemplate(
       document.getElementById('btn-update-workers').disabled = true;
       document.getElementById('worker-update-progress').classList.add('hidden');
       document.getElementById('worker-update-log').textContent = '';
+      // Also reset UI update progress
+      document.getElementById('ui-update-progress')?.classList.add('hidden');
+      document.getElementById('ui-update-log') && (document.getElementById('ui-update-log').textContent = '');
     }
 
     // Load and compare worker versions
@@ -4759,7 +4804,7 @@ export function getHtmlTemplate(
           tbody.textContent = '';
           const errorRow = document.createElement('tr');
           const errorCell = document.createElement('td');
-          errorCell.colSpan = 4;
+          errorCell.colSpan = 5;
           errorCell.style.cssText = 'color: var(--error); padding: 1rem;';
           errorCell.textContent = response.error || 'Failed to load versions';
           errorRow.appendChild(errorCell);
@@ -4770,7 +4815,7 @@ export function getHtmlTemplate(
         tbody.textContent = '';
         const errorRow = document.createElement('tr');
         const errorCell = document.createElement('td');
-        errorCell.colSpan = 4;
+        errorCell.colSpan = 5;
         errorCell.style.cssText = 'color: var(--error); padding: 1rem;';
         errorCell.textContent = error.message;
         errorRow.appendChild(errorCell);
@@ -4786,7 +4831,7 @@ export function getHtmlTemplate(
       if (comparison.length === 0) {
         const emptyRow = document.createElement('tr');
         const emptyCell = document.createElement('td');
-        emptyCell.colSpan = 4;
+        emptyCell.colSpan = 5;
         emptyCell.style.cssText = 'text-align: center; padding: 1rem; color: var(--text-muted);';
         emptyCell.textContent = t('web.status.none');
         emptyRow.appendChild(emptyCell);
@@ -4842,6 +4887,19 @@ export function getHtmlTemplate(
 
         tdStatus.appendChild(badge);
         tr.appendChild(tdStatus);
+
+        // Action column with individual update button
+        const tdAction = document.createElement('td');
+        tdAction.style.cssText = 'padding: 0.5rem; text-align: center;';
+
+        const updateBtn = document.createElement('button');
+        updateBtn.className = 'btn-sm';
+        updateBtn.style.cssText = 'padding: 0.25rem 0.5rem; font-size: 0.75rem; cursor: pointer; border: 1px solid var(--primary); background: transparent; color: var(--primary); border-radius: 4px;';
+        updateBtn.textContent = '⬆️';
+        updateBtn.title = t('web.envDetail.updateThis') || 'Update this component';
+        updateBtn.onclick = () => updateSingleComponent(item.component);
+        tdAction.appendChild(updateBtn);
+        tr.appendChild(tdAction);
 
         tbody.appendChild(tr);
       }
@@ -4905,6 +4963,113 @@ export function getHtmlTemplate(
       }
     }
 
+    // Update a single worker component
+    async function updateSingleComponent(componentName) {
+      if (!currentEnvForUpdate) {
+        alert('No environment selected');
+        return;
+      }
+
+      const progressDiv = document.getElementById('worker-update-progress');
+      const logDiv = document.getElementById('worker-update-log');
+
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (msg) => {
+        const line = document.createElement('div');
+        line.textContent = msg;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      addLog('Updating ' + componentName + ' for ' + currentEnvForUpdate + '...');
+
+      try {
+        const response = await api('/deploy/component/' + encodeURIComponent(componentName), {
+          method: 'POST',
+          body: JSON.stringify({
+            env: currentEnvForUpdate,
+            skipBuild: false,
+            dryRun: false
+          })
+        });
+
+        if (response.success) {
+          addLog('');
+          addLog('✅ ' + componentName + ' updated successfully!');
+          if (response.workerName) addLog('  Worker: ' + response.workerName);
+          if (response.version) addLog('  Version: ' + response.version);
+          if (response.deployedAt) addLog('  Deployed at: ' + response.deployedAt);
+
+          // Refresh version table
+          await loadWorkerVersionComparison(currentEnvForUpdate);
+        } else {
+          addLog('');
+          addLog('❌ Update failed: ' + (response.error || 'Unknown error'));
+        }
+      } catch (error) {
+        addLog('❌ Error: ' + error.message);
+      }
+    }
+
+    // Update UI component (Pages)
+    async function updateUIComponent(componentName) {
+      if (!currentEnvForUpdate) {
+        alert('No environment selected');
+        return;
+      }
+
+      const btn = componentName === 'ar-admin-ui'
+        ? document.getElementById('btn-update-admin-ui')
+        : document.getElementById('btn-update-login-ui');
+      const progressDiv = document.getElementById('ui-update-progress');
+      const logDiv = document.getElementById('ui-update-log');
+
+      // Disable button and show progress
+      btn.disabled = true;
+      const originalText = btn.querySelector('span').textContent;
+      btn.querySelector('span').textContent = t('web.status.deploying') || 'Updating...';
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (msg) => {
+        const line = document.createElement('div');
+        line.textContent = msg;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      addLog('Updating ' + componentName + ' for ' + currentEnvForUpdate + '...');
+      addLog('This may take a few minutes (building and deploying to Pages)...');
+
+      try {
+        const response = await api('/deploy/component/' + encodeURIComponent(componentName), {
+          method: 'POST',
+          body: JSON.stringify({
+            env: currentEnvForUpdate,
+            skipBuild: false,
+            dryRun: false
+          })
+        });
+
+        if (response.success) {
+          addLog('');
+          addLog('✅ ' + componentName + ' updated successfully!');
+          if (response.projectName) addLog('  Project: ' + response.projectName);
+          if (response.deployedAt) addLog('  Deployed at: ' + response.deployedAt);
+        } else {
+          addLog('');
+          addLog('❌ Update failed: ' + (response.error || 'Unknown error'));
+        }
+      } catch (error) {
+        addLog('❌ Error: ' + error.message);
+      } finally {
+        btn.disabled = false;
+        btn.querySelector('span').textContent = originalText;
+      }
+    }
+
     // Event listeners for Worker Update
     document.getElementById('btn-update-workers')?.addEventListener('click', startWorkerUpdate);
     document.getElementById('btn-refresh-versions')?.addEventListener('click', () => {
@@ -4913,6 +5078,10 @@ export function getHtmlTemplate(
         loadWorkerVersionComparison(currentEnvForUpdate);
       }
     });
+
+    // Event listeners for UI Update
+    document.getElementById('btn-update-admin-ui')?.addEventListener('click', () => updateUIComponent('ar-admin-ui'));
+    document.getElementById('btn-update-login-ui')?.addEventListener('click', () => updateUIComponent('ar-login-ui'));
 
     // ===========================================
     // Admin Setup Functions

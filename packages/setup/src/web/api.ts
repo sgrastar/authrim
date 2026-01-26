@@ -52,9 +52,13 @@ import {
   uploadSecrets,
   buildApiPackages,
   deployAllPages,
+  deployPagesComponent,
+  deployWorker,
+  PAGES_COMPONENTS,
   type DeployResult,
+  type PagesComponent,
 } from '../core/deploy.js';
-import { getEnabledComponents, type WorkerComponent } from '../core/naming.js';
+import { getEnabledComponents, WORKER_COMPONENTS, type WorkerComponent } from '../core/naming.js';
 import {
   getLocalPackageVersions,
   compareVersions,
@@ -1679,6 +1683,258 @@ export function createApiRoutes(): Hono {
     } catch (error) {
       return c.json({ success: false, error: sanitizeError(error) }, 500);
     }
+  });
+
+  // =============================================================================
+  // Individual Component Deployment
+  // =============================================================================
+
+  // Apply session validation to component deploy
+  api.use('/deploy/component/*', validateSession);
+
+  // Deploy a single component (worker or Pages UI)
+  api.post('/deploy/component/:name', async (c) => {
+    return withLock(async () => {
+      try {
+        const componentName = c.req.param('name');
+        const body = await c.req.json();
+        const { env: envParam, skipBuild = false, dryRun = false } = body;
+        const rootDir = process.cwd();
+
+        // Validate environment name
+        const parseResult = EnvNameSchema.safeParse(envParam);
+        if (!parseResult.success) {
+          return c.json({ success: false, error: 'Invalid environment name' }, 400);
+        }
+        const env = parseResult.data;
+
+        state.status = 'deploying';
+        clearProgress();
+        addProgress(`Deploying component: ${componentName}`);
+
+        // Check if it's a Pages component (UI) or Worker component
+        const isPagesComponent = PAGES_COMPONENTS.includes(componentName as PagesComponent);
+        const isWorkerComponent = WORKER_COMPONENTS.includes(componentName as WorkerComponent);
+
+        if (!isPagesComponent && !isWorkerComponent) {
+          state.status = 'error';
+          return c.json(
+            {
+              success: false,
+              error: `Unknown component: ${componentName}. Valid components: ${[...WORKER_COMPONENTS, ...PAGES_COMPONENTS].join(', ')}`,
+            },
+            400
+          );
+        }
+
+        // Load config for API URL (needed for Pages deployment)
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        const resolved = resolvePaths({ baseDir, env });
+        let cfg = state.config;
+        if (!cfg) {
+          try {
+            const configPath =
+              resolved.type === 'new'
+                ? (resolved.paths as EnvironmentPaths).config
+                : (resolved.paths as LegacyPaths).config;
+            if (existsSync(configPath)) {
+              const configContent = await readFile(configPath, 'utf-8');
+              cfg = JSON.parse(configContent);
+              state.config = cfg;
+            }
+          } catch {
+            // Config is optional for worker deployment
+          }
+        }
+
+        if (isPagesComponent) {
+          // Deploy Pages component (ar-admin-ui or ar-login-ui)
+          // deployPagesComponent is already imported at the top
+
+          // Build first (unless skipped)
+          if (!skipBuild && !dryRun) {
+            addProgress(`Building ${componentName}...`);
+            const { execa } = await import('execa');
+            const uiDir = join(rootDir, 'packages', componentName);
+
+            if (!existsSync(uiDir)) {
+              state.status = 'error';
+              return c.json({ success: false, error: `Package not found: ${componentName}` }, 404);
+            }
+
+            // Get API base URL
+            const apiBaseUrl =
+              cfg?.urls?.api?.custom ||
+              cfg?.urls?.api?.auto ||
+              `https://${env}-ar-router.workers.dev`;
+
+            // Get ui.env path for new structure
+            let uiEnvPath: string | undefined;
+            if (resolved.type === 'new') {
+              uiEnvPath = (resolved.paths as EnvironmentPaths).uiEnv;
+
+              // Sync ui.env before build
+              const apiHasCustomDomain = !!cfg?.urls?.api?.custom;
+              const adminUiHasCustomDomain = !!cfg?.urls?.adminUi?.custom;
+              const useDirectMode = apiHasCustomDomain && adminUiHasCustomDomain;
+
+              const { saveUiEnv } = await import('../core/ui-env.js');
+              try {
+                if (useDirectMode) {
+                  await saveUiEnv(uiEnvPath, {
+                    PUBLIC_API_BASE_URL: apiBaseUrl,
+                    API_BACKEND_URL: '',
+                  });
+                } else {
+                  await saveUiEnv(uiEnvPath, {
+                    PUBLIC_API_BASE_URL: '',
+                    API_BACKEND_URL: apiBaseUrl,
+                  });
+                }
+                addProgress(`ui.env synced for ${componentName}`);
+              } catch {
+                addProgress(`Warning: Could not sync ui.env`);
+              }
+            }
+
+            const result = await deployPagesComponent(componentName as PagesComponent, {
+              env,
+              rootDir,
+              dryRun,
+              apiBaseUrl,
+              uiEnvPath,
+              onProgress: addProgress,
+            });
+
+            if (result.success) {
+              state.status = 'complete';
+              addProgress(`✓ ${componentName} deployed successfully`);
+              return c.json({
+                success: true,
+                component: componentName,
+                type: 'pages',
+                projectName: result.projectName,
+                deployedAt: result.deployedAt,
+              });
+            } else {
+              state.status = 'error';
+              return c.json(
+                {
+                  success: false,
+                  component: componentName,
+                  type: 'pages',
+                  error: result.error,
+                },
+                500
+              );
+            }
+          }
+
+          // Dry run for Pages
+          state.status = 'complete';
+          return c.json({
+            success: true,
+            component: componentName,
+            type: 'pages',
+            dryRun: true,
+            message: `Would deploy ${componentName} to Pages`,
+          });
+        } else {
+          // Deploy Worker component
+          // deployWorker and buildApiPackages are already imported at the top
+
+          // Build first (unless skipped)
+          if (!skipBuild && !dryRun) {
+            addProgress('Building packages...');
+            const buildResult = await buildApiPackages({
+              rootDir,
+              onProgress: addProgress,
+            });
+
+            if (!buildResult.success) {
+              state.status = 'error';
+              return c.json({ success: false, error: `Build failed: ${buildResult.error}` }, 500);
+            }
+          }
+
+          // Deploy the worker
+          const result = await deployWorker(componentName as WorkerComponent, {
+            env,
+            rootDir,
+            dryRun,
+            onProgress: addProgress,
+          });
+
+          // Update lock file if successful
+          if (result.success && !dryRun) {
+            try {
+              const { loadLockFileAuto, saveLockFile: saveLock } = await import('../core/lock.js');
+              const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
+
+              if (currentLock && lockPath) {
+                const workers = { ...currentLock.workers };
+                workers[componentName] = {
+                  name: result.workerName,
+                  deployedAt: result.deployedAt,
+                  version: result.version,
+                };
+
+                const updatedLock = {
+                  ...currentLock,
+                  workers,
+                  updatedAt: new Date().toISOString(),
+                };
+
+                await saveLock(updatedLock, lockPath);
+                addProgress('Lock file updated');
+              }
+            } catch (lockError) {
+              addProgress(`Warning: Could not update lock file: ${sanitizeError(lockError)}`);
+            }
+          }
+
+          if (result.success) {
+            state.status = 'complete';
+            addProgress(`✓ ${componentName} deployed successfully`);
+            return c.json({
+              success: true,
+              component: componentName,
+              type: 'worker',
+              workerName: result.workerName,
+              deployedAt: result.deployedAt,
+              version: result.version,
+            });
+          } else {
+            state.status = 'error';
+            return c.json(
+              {
+                success: false,
+                component: componentName,
+                type: 'worker',
+                error: result.error,
+              },
+              500
+            );
+          }
+        }
+      } catch (error) {
+        state.status = 'error';
+        state.error = sanitizeError(error);
+        return c.json({ success: false, error: sanitizeError(error) }, 500);
+      }
+    });
+  });
+
+  // Get list of all deployable components
+  api.get('/components', async (c) => {
+    const { WORKER_COMPONENTS } = await import('../core/naming.js');
+    const { PAGES_COMPONENTS } = await import('../core/deploy.js');
+
+    return c.json({
+      workers: WORKER_COMPONENTS,
+      pages: PAGES_COMPONENTS,
+      all: [...WORKER_COMPONENTS, ...PAGES_COMPONENTS],
+    });
   });
 
   // =============================================================================

@@ -65,6 +65,268 @@ program
   .action(updateCommand);
 
 program
+  .command('upgrade')
+  .description('Upgrade individual component (worker or UI)')
+  .requiredOption('--env <name>', 'Environment name')
+  .requiredOption('--component <name>', 'Component name (e.g., ar-admin-ui, ar-login-ui, ar-auth)')
+  .option('--skip-build', 'Skip building packages')
+  .option('--dry-run', 'Show what would be upgraded without deploying')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(async (options) => {
+    const chalk = await import('chalk').then((m) => m.default);
+    const ora = await import('ora').then((m) => m.default);
+    const { confirm } = await import('@inquirer/prompts');
+    const { resolve, join } = await import('node:path');
+    const { existsSync } = await import('node:fs');
+    const { readFile } = await import('node:fs/promises');
+
+    const { isWranglerInstalled, checkAuth } = await import('./core/cloudflare.js');
+    const { WORKER_COMPONENTS } = await import('./core/naming.js');
+    const { deployWorker, deployPagesComponent, buildApiPackages, PAGES_COMPONENTS } =
+      await import('./core/deploy.js');
+    const { loadLockFileAuto, saveLockFile } = await import('./core/lock.js');
+    const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths } = await import(
+      './core/paths.js'
+    );
+
+    console.log(chalk.bold('\n🔧 Authrim Component Upgrade\n'));
+
+    const { env, component: componentName, skipBuild, dryRun, yes } = options;
+
+    // Validate component name
+    const isPagesComponent = (PAGES_COMPONENTS as readonly string[]).includes(componentName);
+    const isWorkerComponent = (WORKER_COMPONENTS as readonly string[]).includes(componentName);
+
+    if (!isPagesComponent && !isWorkerComponent) {
+      console.error(chalk.red(`Unknown component: ${componentName}`));
+      console.log(chalk.yellow('\nAvailable components:'));
+      console.log(chalk.cyan('\n  Workers:'));
+      for (const w of WORKER_COMPONENTS) {
+        console.log(chalk.gray(`    • ${w}`));
+      }
+      console.log(chalk.cyan('\n  UI (Pages):'));
+      for (const p of PAGES_COMPONENTS) {
+        console.log(chalk.gray(`    • ${p}`));
+      }
+      process.exit(1);
+    }
+
+    // Check prerequisites
+    const spinner = ora('Checking prerequisites...').start();
+
+    if (!(await isWranglerInstalled())) {
+      spinner.fail('Wrangler is not installed');
+      console.log(chalk.yellow('\nInstall wrangler: npm install -g wrangler'));
+      process.exit(1);
+    }
+
+    const auth = await checkAuth();
+    if (!auth.isLoggedIn) {
+      spinner.fail('Not logged in to Cloudflare');
+      console.log(chalk.yellow('\nLogin with: wrangler login'));
+      process.exit(1);
+    }
+
+    spinner.succeed(`Logged in as ${auth.email || 'unknown'}`);
+
+    const baseDir = findAuthrimBaseDir(process.cwd());
+    const componentType = isPagesComponent ? 'Pages UI' : 'Worker';
+
+    console.log(chalk.cyan(`\nComponent:   ${componentName}`));
+    console.log(chalk.cyan(`Type:        ${componentType}`));
+    console.log(chalk.cyan(`Environment: ${env}`));
+
+    // Confirm upgrade
+    if (!yes) {
+      const confirmed = await confirm({
+        message: dryRun
+          ? 'Show what would be upgraded?'
+          : `Upgrade ${componentName} to environment ${env}?`,
+        default: true,
+      });
+
+      if (!confirmed) {
+        console.log(chalk.yellow('\nUpgrade cancelled.'));
+        return;
+      }
+    }
+
+    // Load config for API URL (needed for Pages deployment)
+    const resolved = resolvePaths({ baseDir, env });
+    let cfg: Record<string, unknown> | null = null;
+    try {
+      const configPath =
+        resolved.type === 'new'
+          ? (resolved.paths as { config: string }).config
+          : (resolved.paths as { config: string }).config;
+      if (existsSync(configPath)) {
+        const configContent = await readFile(configPath, 'utf-8');
+        cfg = JSON.parse(configContent);
+      }
+    } catch {
+      // Config is optional for worker deployment
+    }
+
+    if (isPagesComponent) {
+      // Deploy Pages component
+      if (!skipBuild && !dryRun) {
+        const buildSpinner = ora(`Building ${componentName}...`).start();
+        const uiDir = join(baseDir, 'packages', componentName);
+
+        if (!existsSync(uiDir)) {
+          buildSpinner.fail(`Package not found: ${componentName}`);
+          process.exit(1);
+        }
+
+        // Get API base URL
+        const cfgUrls = (cfg as { urls?: { api?: { custom?: string; auto?: string } } })?.urls;
+        const apiBaseUrl =
+          cfgUrls?.api?.custom || cfgUrls?.api?.auto || `https://${env}-ar-router.workers.dev`;
+
+        // Get ui.env path for new structure
+        let uiEnvPath: string | undefined;
+        if (resolved.type === 'new') {
+          uiEnvPath = (resolved.paths as { uiEnv: string }).uiEnv;
+
+          // Sync ui.env before build
+          const cfgUrlsTyped = cfg as {
+            urls?: {
+              api?: { custom?: string };
+              adminUi?: { custom?: string };
+            };
+          };
+          const apiHasCustomDomain = !!cfgUrlsTyped?.urls?.api?.custom;
+          const adminUiHasCustomDomain = !!cfgUrlsTyped?.urls?.adminUi?.custom;
+          const useDirectMode = apiHasCustomDomain && adminUiHasCustomDomain;
+
+          const { saveUiEnv } = await import('./core/ui-env.js');
+          try {
+            if (useDirectMode) {
+              await saveUiEnv(uiEnvPath, {
+                PUBLIC_API_BASE_URL: apiBaseUrl,
+                API_BACKEND_URL: '',
+              });
+            } else {
+              await saveUiEnv(uiEnvPath, {
+                PUBLIC_API_BASE_URL: '',
+                API_BACKEND_URL: apiBaseUrl,
+              });
+            }
+          } catch {
+            console.log(chalk.yellow('  Warning: Could not sync ui.env'));
+          }
+        }
+
+        buildSpinner.succeed(`${componentName} ready for deployment`);
+
+        const deploySpinner = ora(`Deploying ${componentName}...`).start();
+
+        const result = await deployPagesComponent(componentName as 'ar-admin-ui' | 'ar-login-ui', {
+          env,
+          rootDir: resolve(baseDir),
+          dryRun: dryRun || false,
+          apiBaseUrl,
+          uiEnvPath,
+          onProgress: (msg) => {
+            deploySpinner.text = msg;
+          },
+        });
+
+        if (result.success) {
+          deploySpinner.succeed(`${componentName} deployed successfully`);
+          console.log(chalk.green(`\n✓ ${componentName} upgraded to ${env}`));
+          console.log(chalk.gray(`  Project: ${result.projectName}`));
+          console.log(chalk.gray(`  Deployed at: ${result.deployedAt}`));
+        } else {
+          deploySpinner.fail(`${componentName} deployment failed`);
+          console.error(chalk.red(`\nError: ${result.error}`));
+          process.exit(1);
+        }
+      } else if (dryRun) {
+        console.log(chalk.bold('\n[DRY RUN] Would upgrade:'));
+        console.log(`  • ${componentName} (${componentType})`);
+        console.log(chalk.gray('\nNo changes made.'));
+      }
+    } else {
+      // Deploy Worker component
+      if (!skipBuild && !dryRun) {
+        const buildSpinner = ora('Building packages...').start();
+
+        const buildResult = await buildApiPackages({
+          rootDir: resolve(baseDir),
+          onProgress: (msg) => {
+            buildSpinner.text = msg;
+          },
+        });
+
+        if (!buildResult.success) {
+          buildSpinner.fail('Build failed');
+          console.error(chalk.red(`\nError: ${buildResult.error}`));
+          process.exit(1);
+        }
+
+        buildSpinner.succeed('Build complete');
+      }
+
+      if (!dryRun) {
+        const deploySpinner = ora(`Deploying ${componentName}...`).start();
+
+        const result = await deployWorker(componentName as Parameters<typeof deployWorker>[0], {
+          env,
+          rootDir: resolve(baseDir),
+          dryRun: dryRun || false,
+          onProgress: (msg) => {
+            deploySpinner.text = msg;
+          },
+        });
+
+        if (result.success) {
+          deploySpinner.succeed(`${componentName} deployed successfully`);
+
+          // Update lock file
+          try {
+            const { lock: currentLock, path: lockPath } = await loadLockFileAuto(baseDir, env);
+            if (currentLock && lockPath) {
+              const workers = { ...currentLock.workers };
+              workers[componentName] = {
+                name: result.workerName,
+                deployedAt: result.deployedAt,
+                version: result.version,
+              };
+
+              const updatedLock = {
+                ...currentLock,
+                workers,
+                updatedAt: new Date().toISOString(),
+              };
+
+              await saveLockFile(updatedLock, lockPath);
+              console.log(chalk.gray(`  Lock file updated`));
+            }
+          } catch {
+            console.log(chalk.yellow('  Warning: Could not update lock file'));
+          }
+
+          console.log(chalk.green(`\n✓ ${componentName} upgraded to ${env}`));
+          console.log(chalk.gray(`  Worker: ${result.workerName}`));
+          console.log(chalk.gray(`  Version: ${result.version || 'unknown'}`));
+          console.log(chalk.gray(`  Deployed at: ${result.deployedAt}`));
+        } else {
+          deploySpinner.fail(`${componentName} deployment failed`);
+          console.error(chalk.red(`\nError: ${result.error}`));
+          process.exit(1);
+        }
+      } else {
+        console.log(chalk.bold('\n[DRY RUN] Would upgrade:'));
+        console.log(`  • ${componentName} (${componentType})`);
+        console.log(chalk.gray('\nNo changes made.'));
+      }
+    }
+
+    console.log('');
+  });
+
+program
   .command('status')
   .description('Show deployment status')
   .option('--config <path>', 'Configuration file path')
