@@ -522,10 +522,33 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
 
     // Validate Origin header for WebAuthn
     const originHeader = c.req.header('origin');
+    if (!originHeader) {
+      await releaseSetupLock(c.env);
+      return c.json(
+        {
+          error: 'invalid_origin',
+          error_description: 'Origin header is required for WebAuthn operations',
+        },
+        403
+      );
+    }
+
     const allowedOrigins = await getAllowedOriginsFromKV(c.env);
 
-    if (!originHeader || !isAllowedOrigin(originHeader, allowedOrigins)) {
+    // During initial setup, if no allowed origins are configured (ISSUER_URL not set),
+    // allow the current request's origin. This is safe because:
+    // 1. Setup token has already been validated above
+    // 2. This is a one-time setup operation
+    // 3. The origin is validated to be a proper HTTPS URL below
+    const isOriginAllowed =
+      allowedOrigins.length === 0 ||
+      isAllowedOrigin(originHeader, allowedOrigins) ||
+      // Also allow if the origin matches the current host (self-referential request)
+      originHeader === `https://${c.req.header('host')}`;
+
+    if (!isOriginAllowed) {
       await releaseSetupLock(c.env);
+      moduleLogger.warn('Initial setup rejected: Origin not allowed', { origin: originHeader, allowedOrigins });
       return c.json(
         {
           error: 'invalid_origin',

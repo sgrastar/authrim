@@ -41,6 +41,7 @@ import {
   getEnvironmentPaths,
   resolvePaths,
   listEnvironments,
+  findAuthrimBaseDir,
   type EnvironmentPaths,
   type LegacyPaths,
 } from '../core/paths.js';
@@ -210,7 +211,7 @@ export function createApiRoutes(): Hono {
   // Supports both new (.authrim/{env}/config.json) and legacy (authrim-config.json) structures
   api.get('/config', async (c) => {
     const envParam = c.req.query('env');
-    const baseDir = process.cwd();
+    const baseDir = findAuthrimBaseDir(process.cwd());
 
     // Find config file
     let configPath: string | null = null;
@@ -321,7 +322,7 @@ export function createApiRoutes(): Hono {
       try {
         const body = await c.req.json();
         const config = AuthrimConfigSchema.parse(body);
-        const baseDir = process.cwd();
+        const baseDir = findAuthrimBaseDir(process.cwd());
         const env = config.environment.prefix;
 
         // Use new structure for saving
@@ -417,7 +418,7 @@ export function createApiRoutes(): Hono {
       try {
         const body = await c.req.json();
         const { keyId, env } = body;
-        const baseDir = process.cwd();
+        const baseDir = findAuthrimBaseDir(process.cwd());
 
         addProgress('Generating cryptographic keys...');
         const secrets = generateAllSecrets(keyId);
@@ -479,7 +480,7 @@ export function createApiRoutes(): Hono {
         }
 
         // Save secrets to keys directory (use new structure)
-        const baseDir = process.cwd();
+        const baseDir = findAuthrimBaseDir(process.cwd());
         const envPaths = getEnvironmentPaths({ baseDir, env });
         const keysDir = envPaths.keys;
 
@@ -590,8 +591,70 @@ export function createApiRoutes(): Hono {
 
         addProgress('Creating lock file...');
         const lock = createLockFile(env, resources);
-        const rootDir = process.cwd();
+        const rootDir = findAuthrimBaseDir(process.cwd());
         await saveLockFile(lock, { env, baseDir: rootDir });
+
+        // Save config.json
+        addProgress('Saving config.json...');
+        const config = createDefaultConfig(env);
+        config.createdAt = new Date().toISOString();
+        config.updatedAt = new Date().toISOString();
+
+        // Get workers subdomain and set auto-detected URLs
+        const workersSubdomain = await getWorkersSubdomain();
+        // Always set URLs - use workersSubdomain if available, otherwise use default workers.dev pattern
+        const apiUrl = workersSubdomain
+          ? `https://${env}-ar-router.${workersSubdomain}.workers.dev`
+          : `https://${env}-ar-router.workers.dev`;
+        const loginUiUrl = `https://${env}-ar-login-ui.pages.dev`;
+        const adminUiUrl = `https://${env}-ar-admin-ui.pages.dev`;
+
+        config.urls = {
+          api: { auto: apiUrl },
+          loginUi: { sameAsApi: false, auto: loginUiUrl },
+          adminUi: { sameAsApi: false, auto: adminUiUrl },
+        };
+        addProgress(`Configured URLs: API=${apiUrl}`);
+
+        const envPaths = getEnvironmentPaths({ baseDir: rootDir, env });
+        await writeFile(envPaths.config, JSON.stringify(config, null, 2), 'utf-8');
+        state.config = config;
+
+        // Generate wrangler.toml files
+        addProgress('Generating wrangler.toml files...');
+        const resourceIds = {
+          d1: lock.d1,
+          kv: Object.fromEntries(
+            Object.entries(lock.kv).map(([k, v]) => [k, { id: v.id, name: v.name }])
+          ),
+          queues: lock.queues,
+          r2: lock.r2,
+        };
+
+        const enabledComponents = getEnabledComponents({
+          saml: config.components?.saml,
+          async: config.components?.async,
+          vc: config.components?.vc,
+          bridge: config.components?.bridge,
+          policy: config.components?.policy,
+        });
+
+        for (const component of enabledComponents) {
+          const componentDir = join(rootDir, 'packages', component);
+          if (!existsSync(componentDir)) {
+            continue;
+          }
+
+          const wranglerConfig = generateWranglerConfig(
+            component,
+            config,
+            resourceIds,
+            workersSubdomain ?? undefined
+          );
+          const tomlContent = toToml(wranglerConfig, env);
+          const tomlPath = join(componentDir, 'wrangler.toml');
+          await writeFile(tomlPath, tomlContent, 'utf-8');
+        }
 
         state.status = 'configuring';
         addProgress('Provisioning complete!');
@@ -600,6 +663,7 @@ export function createApiRoutes(): Hono {
           success: true,
           resources,
           lock,
+          config,
         });
       } catch (error) {
         state.status = 'error';
@@ -732,7 +796,7 @@ export function createApiRoutes(): Hono {
 
         // Upload secrets first (secrets are read but not stored in state)
         // Check both new (.authrim/{env}/keys/) and legacy (.keys/{env}/) structures
-        const baseDir = process.cwd();
+        const baseDir = findAuthrimBaseDir(process.cwd());
         const resolved = resolvePaths({ baseDir, env });
         let keysDir: string;
         if (resolved.type === 'new') {
@@ -1052,7 +1116,7 @@ export function createApiRoutes(): Hono {
       try {
         const body = await c.req.json();
         const { env, baseUrl } = body;
-        const baseDir = process.cwd();
+        const baseDir = findAuthrimBaseDir(process.cwd());
 
         // Determine structure type
         const resolved = resolvePaths({ baseDir, env });

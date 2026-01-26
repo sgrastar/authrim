@@ -18,7 +18,7 @@ import {
   getWorkerDeployments,
   type EnvironmentInfo,
 } from '../../core/cloudflare.js';
-import { resolvePaths, type EnvironmentPaths } from '../../core/paths.js';
+import { resolvePaths, findAuthrimBaseDir, type EnvironmentPaths } from '../../core/paths.js';
 import { AuthrimConfigSchema } from '../../core/config.js';
 
 // =============================================================================
@@ -149,7 +149,8 @@ export async function infoCommand(options: InfoCommandOptions): Promise<void> {
   const showWorkers = options.workers || (!options.d1 && !options.workers);
 
   // UI Environment Information (always show if new structure)
-  const baseDir = process.cwd();
+  // Find actual base directory (searches common subdirectories like authrim/)
+  const baseDir = findAuthrimBaseDir(process.cwd());
   const resolved = resolvePaths({ baseDir, env });
 
   if (resolved.type === 'new') {

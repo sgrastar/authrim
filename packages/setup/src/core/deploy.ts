@@ -17,6 +17,7 @@ import {
 } from './naming.js';
 import type { AuthrimLock, WorkerEntry } from './lock.js';
 import { copyUiEnvToPackage, cleanupPackageEnv, uiEnvExists } from './ui-env.js';
+import { getPackageVersion } from './version.js';
 
 // =============================================================================
 // Validation Helpers
@@ -214,6 +215,9 @@ export async function deployWorker(
     };
   }
 
+  // Read package version from package.json (for version tracking)
+  const packageVersion = await getPackageVersion(packageDir);
+
   let lastError: Error | undefined;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -227,18 +231,17 @@ export async function deployWorker(
           workerName,
           success: true,
           deployedAt: new Date().toISOString(),
+          version: packageVersion || undefined,
           duration: Date.now() - startTime,
         };
       }
 
       // Use wrangler deploy with --env to target [env.{env}] section in wrangler.toml
-      const result = await execa('wrangler', ['deploy', '--env', env], {
+      // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
+      await execa('npx', ['wrangler', 'deploy', '--env', env], {
         cwd: packageDir,
         reject: true,
       });
-
-      // Extract version from output if available
-      const versionMatch = result.stdout.match(/Deployed.*version[:\s]+([a-f0-9-]+)/i);
 
       onProgress?.(`  ✓ ${workerName} deployed successfully`);
 
@@ -247,7 +250,7 @@ export async function deployWorker(
         workerName,
         success: true,
         deployedAt: new Date().toISOString(),
-        version: versionMatch?.[1],
+        version: packageVersion || undefined,
         duration: Date.now() - startTime,
       };
     } catch (error) {
@@ -445,7 +448,8 @@ export async function uploadSecrets(
         }
 
         // Use --env to target the environment section in wrangler.toml
-        await execa('wrangler', ['secret', 'put', secretName, '--env', env], {
+        // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
+        await execa('npx', ['wrangler', 'secret', 'put', secretName, '--env', env], {
           cwd: packageDir,
           input: secretValue,
         });
@@ -594,10 +598,11 @@ export async function deployPagesComponent(
     const pagesProjectName = projectName || `${env}-${component}`;
 
     // First, try to create the project (will fail silently if already exists)
+    // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
     onProgress?.(`Ensuring Pages project exists: ${pagesProjectName}...`);
     await execa(
-      'wrangler',
-      ['pages', 'project', 'create', pagesProjectName, '--production-branch', 'main'],
+      'npx',
+      ['wrangler', 'pages', 'project', 'create', pagesProjectName, '--production-branch', 'main'],
       {
         cwd: uiDir,
         reject: false, // Ignore error if project already exists
@@ -606,8 +611,8 @@ export async function deployPagesComponent(
 
     // Deploy to Pages
     const result = await execa(
-      'wrangler',
-      ['pages', 'deploy', distDir, '--project-name', pagesProjectName],
+      'npx',
+      ['wrangler', 'pages', 'deploy', distDir, '--project-name', pagesProjectName],
       {
         cwd: uiDir,
         reject: false, // Don't throw on non-zero exit

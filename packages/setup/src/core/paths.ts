@@ -188,6 +188,49 @@ export function getAuthrimRoot(baseDir: string): string {
 // =============================================================================
 
 /**
+ * Common subdirectory names where authrim project might be located
+ */
+const COMMON_SUBDIRS = ['authrim', 'authrim-source', 'src'];
+
+/**
+ * Find the actual base directory containing .authrim/
+ * Searches current directory and common subdirectories
+ *
+ * @param startDir - Starting directory to search from
+ * @returns The directory containing .authrim/, or startDir if not found
+ */
+export function findAuthrimBaseDir(startDir: string): string {
+  // First, check if .authrim/ exists in startDir
+  if (existsSync(join(startDir, AUTHRIM_DIR))) {
+    return startDir;
+  }
+
+  // Check common subdirectories
+  for (const subdir of COMMON_SUBDIRS) {
+    const subdirPath = join(startDir, subdir);
+    if (existsSync(join(subdirPath, AUTHRIM_DIR))) {
+      return subdirPath;
+    }
+  }
+
+  // Check for legacy structure in startDir
+  if (existsSync(join(startDir, LEGACY_CONFIG_FILE)) || existsSync(join(startDir, LEGACY_LOCK_FILE))) {
+    return startDir;
+  }
+
+  // Check legacy structure in subdirectories
+  for (const subdir of COMMON_SUBDIRS) {
+    const subdirPath = join(startDir, subdir);
+    if (existsSync(join(subdirPath, LEGACY_CONFIG_FILE)) || existsSync(join(subdirPath, LEGACY_LOCK_FILE))) {
+      return subdirPath;
+    }
+  }
+
+  // Return original if nothing found
+  return startDir;
+}
+
+/**
  * Detect which structure is in use
  *
  * Returns:

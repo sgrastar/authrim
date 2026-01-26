@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs';
 import { AuthrimConfigSchema, safeParseConfig } from '../../core/config.js';
 import { loadLockFileAuto } from '../../core/lock.js';
 import {
+  findAuthrimBaseDir,
   getEnvironmentPaths,
   resolvePaths,
   listEnvironments,
@@ -36,7 +37,7 @@ export interface ConfigCommandOptions {
 
 export async function configCommand(options: ConfigCommandOptions): Promise<void> {
   // Resolve config path (support both new and legacy structures)
-  const baseDir = process.cwd();
+  const baseDir = findAuthrimBaseDir(process.cwd());
   let configPath: string;
 
   if (options.config) {
@@ -184,7 +185,7 @@ async function showConfig(configPath: string, jsonOutput?: boolean, env?: string
     }
 
     // Lock file summary (support both structures)
-    const baseDir = process.cwd();
+    const baseDir = findAuthrimBaseDir(process.cwd());
     const envName = env || config.environment.prefix;
     const { lock } = await loadLockFileAuto(baseDir, envName);
     if (lock) {

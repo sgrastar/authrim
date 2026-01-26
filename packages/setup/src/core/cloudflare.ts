@@ -96,7 +96,8 @@ async function wrangler(
   options: { cwd?: string; env?: Record<string, string> } = {}
 ): Promise<{ stdout: string; stderr: string }> {
   try {
-    const result = await execa('wrangler', args, {
+    // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
+    const result = await execa('npx', ['wrangler', ...args], {
       cwd: options.cwd,
       env: { ...process.env, ...options.env },
       reject: false,
@@ -117,7 +118,8 @@ async function wrangler(
  */
 export async function isWranglerInstalled(): Promise<boolean> {
   try {
-    await execa('wrangler', ['--version']);
+    // Use npx to check for wrangler availability
+    await execa('npx', ['wrangler', '--version']);
     return true;
   } catch {
     return false;
@@ -194,29 +196,69 @@ export async function getWorkersSubdomain(): Promise<string | null> {
 
     // Read OAuth token from wrangler config
     const { readFile } = await import('node:fs/promises');
-    const { homedir } = await import('node:os');
+    const { homedir, platform } = await import('node:os');
     const { join } = await import('node:path');
+    const { existsSync } = await import('node:fs');
 
-    const configPath = join(homedir(), 'Library/Preferences/.wrangler/config/default.toml');
+    // Build list of possible config paths based on platform
+    const home = homedir();
+    const configPaths: string[] = [];
+
+    if (platform() === 'darwin') {
+      // macOS: ~/Library/Preferences/.wrangler/config/default.toml (XDG-compliant)
+      configPaths.push(join(home, 'Library/Preferences/.wrangler/config/default.toml'));
+      // macOS legacy fallback
+      configPaths.push(join(home, '.wrangler/config/default.toml'));
+    } else if (platform() === 'win32') {
+      // Windows: Multiple possible locations
+      const appData = process.env.APPDATA;
+      if (appData) {
+        // 1. XDG-compliant: %APPDATA%\xdg.config\.wrangler\config\default.toml (CORRECT PATH)
+        configPaths.push(join(appData, 'xdg.config/.wrangler/config/default.toml'));
+        // Also try without xdg.config prefix
+        configPaths.push(join(appData, '.wrangler/config/default.toml'));
+      }
+      // 2. Legacy: %USERPROFILE%\.wrangler\config\default.toml
+      configPaths.push(join(home, '.wrangler/config/default.toml'));
+      // 3. %LOCALAPPDATA%
+      const localAppData = process.env.LOCALAPPDATA;
+      if (localAppData) {
+        configPaths.push(join(localAppData, 'xdg.config/.wrangler/config/default.toml'));
+        configPaths.push(join(localAppData, '.wrangler/config/default.toml'));
+      }
+    } else {
+      // Linux: XDG-compliant path
+      const xdgConfigHome = process.env.XDG_CONFIG_HOME || join(home, '.config');
+      configPaths.push(join(xdgConfigHome, '.wrangler/config/default.toml'));
+      // Linux legacy fallback
+      configPaths.push(join(home, '.wrangler/config/default.toml'));
+    }
+
     let oauthToken: string | null = null;
 
-    try {
-      const configContent = await readFile(configPath, 'utf-8');
-      const tokenMatch = configContent.match(/oauth_token\s*=\s*"([^"]+)"/);
-      oauthToken = tokenMatch?.[1] || null;
-    } catch {
-      // Try Linux/Windows path
-      const altConfigPath = join(homedir(), '.wrangler/config/default.toml');
+    for (const configPath of configPaths) {
+      if (!existsSync(configPath)) continue;
       try {
-        const configContent = await readFile(altConfigPath, 'utf-8');
+        const configContent = await readFile(configPath, 'utf-8');
         const tokenMatch = configContent.match(/oauth_token\s*=\s*"([^"]+)"/);
-        oauthToken = tokenMatch?.[1] || null;
+        if (tokenMatch?.[1]) {
+          oauthToken = tokenMatch[1];
+          break;
+        }
       } catch {
-        return null;
+        // Continue to next path
       }
     }
 
-    if (!oauthToken) return null;
+    if (!oauthToken) {
+      // Try using CLOUDFLARE_API_TOKEN environment variable as fallback
+      const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+      if (apiToken) {
+        oauthToken = apiToken;
+      } else {
+        return null;
+      }
+    }
 
     // Call Cloudflare API to get subdomain
     const response = await fetch(
@@ -816,7 +858,8 @@ export async function uploadSecret(
     }
 
     // Use stdin to pass the secret value
-    await execa('wrangler', args, {
+    // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
+    await execa('npx', ['wrangler', ...args], {
       input: secretValue,
     });
     return true;
@@ -1066,7 +1109,7 @@ export function toResourceIds(resources: ProvisionedResources): {
 const AUTHRIM_PATTERNS = {
   worker:
     /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|management|router|async|saml|bridge|vc|lib-core|policy)$/,
-  d1: /^([a-z][a-z0-9-]*)-authrim-(core|pii)-db$/,
+  d1: /^([a-z][a-z0-9-]*)-authrim-(core|pii|admin)-db$/,
   // KV can have either lowercase or uppercase env prefix (e.g., conformance-CLIENTS_CACHE or TESTENV-CLIENTS_CACHE)
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue: /^([a-z][a-z0-9-]*)-audit-queue$/,

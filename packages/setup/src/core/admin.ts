@@ -107,9 +107,10 @@ export async function isSetupCompleted(env: string, configPath: string = '.'): P
     }
 
     // Use --env to target the [env.{env}] section in wrangler.toml
+    // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
     const result = await execa(
-      'wrangler',
-      ['kv', 'key', 'get', 'setup:completed', '--env', env, '--binding', 'AUTHRIM_CONFIG'],
+      'npx',
+      ['wrangler', 'kv', 'key', 'get', 'setup:completed', '--env', env, '--binding', 'AUTHRIM_CONFIG'],
       {
         cwd: workerDir,
         reject: false,
@@ -244,9 +245,11 @@ export async function storeSetupToken(options: SetupTokenOptions): Promise<Setup
   // Check if setup is already completed
   try {
     // Use --env to target the [env.{env}] section in wrangler.toml
+    // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
     const checkResult = await execa(
-      'wrangler',
+      'npx',
       [
+        'wrangler',
         'kv',
         'key',
         'get',
@@ -279,9 +282,11 @@ export async function storeSetupToken(options: SetupTokenOptions): Promise<Setup
   try {
     // Store the setup token with TTL (--remote ensures it goes to Cloudflare KV, not local)
     // Use --env to target the [env.{env}] section in wrangler.toml
+    // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
     await execa(
-      'wrangler',
+      'npx',
       [
+        'wrangler',
         'kv',
         'key',
         'put',

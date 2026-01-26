@@ -8,7 +8,9 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { confirm } from '@inquirer/prompts';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 
 import { loadLockFileAuto, saveLockFile, type AuthrimLock } from '../../core/lock.js';
 import {
@@ -17,14 +19,19 @@ import {
   type DeployOptions,
   type DeployResult,
 } from '../../core/deploy.js';
-import { isWranglerInstalled, checkAuth } from '../../core/cloudflare.js';
-import type { WorkerComponent } from '../../core/naming.js';
+import { isWranglerInstalled, checkAuth, getWorkersSubdomain } from '../../core/cloudflare.js';
+import { CORE_WORKER_COMPONENTS, type WorkerComponent } from '../../core/naming.js';
 import {
   getLocalPackageVersions,
   compareVersions,
   getComponentsToUpdate,
   type VersionComparison,
 } from '../../core/version.js';
+import { findAuthrimBaseDir, getEnvironmentPaths } from '../../core/paths.js';
+import { syncWranglerConfigs } from '../../core/wrangler-sync.js';
+import { generateWranglerConfig, toToml, type ResourceIds } from '../../core/wrangler.js';
+import { AuthrimConfigSchema } from '../../core/config.js';
+import { readFile } from 'node:fs/promises';
 
 // =============================================================================
 // Types
@@ -113,7 +120,7 @@ function updateLockWithDeploymentsAndVersions(
 export async function updateCommand(options: UpdateCommandOptions): Promise<void> {
   console.log(chalk.bold('\n🔄 Authrim Worker Update\n'));
 
-  const baseDir = process.cwd();
+  const baseDir = findAuthrimBaseDir(process.cwd());
   const env = options.env;
 
   // Validate required options
@@ -222,6 +229,98 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     }
     console.log(chalk.gray('\nNo changes made.'));
     return;
+  }
+
+  // Sync wrangler configs before building (if master configs exist)
+  const envPaths = getEnvironmentPaths({ baseDir, env });
+  if (existsSync(envPaths.wrangler)) {
+    const syncSpinner = ora('Syncing wrangler configs...').start();
+    const syncResult = await syncWranglerConfigs({
+      baseDir,
+      env,
+      packagesDir: join(baseDir, 'packages'),
+      force: true,
+      dryRun: options.dryRun,
+      onProgress: (msg) => {
+        syncSpinner.text = msg;
+      },
+    });
+
+    if (!syncResult.success && syncResult.errors.length > 0) {
+      syncSpinner.fail('Wrangler config sync failed');
+      console.error(chalk.red(`\nErrors: ${syncResult.errors.join(', ')}`));
+      process.exit(1);
+    }
+
+    syncSpinner.succeed(`Synced ${syncResult.synced.length} wrangler config(s)`);
+  } else {
+    // Check if wrangler.toml exists in packages, if not generate them
+    const sampleWranglerPath = join(baseDir, 'packages', 'ar-lib-core', 'wrangler.toml');
+    if (!existsSync(sampleWranglerPath)) {
+      // Generate wrangler configs from lock file and config
+      const genSpinner = ora('Generating wrangler configs from lock file...').start();
+
+      try {
+        // Load config
+        const configPath = envPaths.config;
+        if (!existsSync(configPath)) {
+          genSpinner.fail('Config file not found');
+          console.error(chalk.red(`\nConfig file not found: ${configPath}`));
+          console.log(chalk.yellow('Run "authrim-setup deploy" instead to regenerate configs.'));
+          process.exit(1);
+        }
+
+        const configContent = await readFile(configPath, 'utf-8');
+        const config = AuthrimConfigSchema.parse(JSON.parse(configContent));
+
+        // Build resource IDs from lock file
+        const resourceIds: ResourceIds = {
+          d1: {},
+          kv: {},
+        };
+
+        for (const [key, value] of Object.entries(lock.d1)) {
+          resourceIds.d1[key] = { id: value.id, name: value.name };
+        }
+        for (const [key, value] of Object.entries(lock.kv)) {
+          resourceIds.kv[key] = { id: value.id, name: value.name };
+        }
+
+        // Get workers subdomain
+        const workersSubdomain = await getWorkersSubdomain();
+
+        // Generate wrangler.toml for each component
+        let generatedCount = 0;
+        for (const component of CORE_WORKER_COMPONENTS) {
+          const componentDir = join(baseDir, 'packages', component);
+          if (!existsSync(componentDir)) {
+            continue;
+          }
+
+          const wranglerConfig = generateWranglerConfig(
+            component,
+            config,
+            resourceIds,
+            workersSubdomain ?? undefined
+          );
+          const tomlContent = toToml(wranglerConfig, env);
+          const tomlPath = join(componentDir, 'wrangler.toml');
+
+          if (!options.dryRun) {
+            await writeFile(tomlPath, tomlContent, 'utf-8');
+          }
+          generatedCount++;
+        }
+
+        genSpinner.succeed(`Generated ${generatedCount} wrangler config(s)`);
+      } catch (error) {
+        genSpinner.fail('Failed to generate wrangler configs');
+        console.error(chalk.red(`\nError: ${error}`));
+        process.exit(1);
+      }
+    } else {
+      console.log(chalk.gray('  Using existing wrangler configs in packages/'));
+    }
   }
 
   // Build packages (unless skipped)

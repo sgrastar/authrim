@@ -557,6 +557,13 @@ async function updateExistingSource(sourceDir: string, gitRef: string): Promise<
 // =============================================================================
 
 export async function initCommand(options: InitOptions): Promise<void> {
+  // Immediately show startup message to indicate the tool is running
+  const version = getVersion();
+  console.log('');
+  console.log(chalk.cyan(`  @authrim/setup v${version}`));
+  console.log(chalk.gray('  Starting...'));
+  console.log('');
+
   // Step 0: Language selection (before banner)
   // Priority: --lang option > env var > system locale > interactive selection
   let locale: Locale;

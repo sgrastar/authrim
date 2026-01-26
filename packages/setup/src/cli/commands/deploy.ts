@@ -10,7 +10,7 @@ import { confirm, select } from '@inquirer/prompts';
 import { t } from '../../i18n/index.js';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
 import { saveLockFile, loadLockFileAuto } from '../../core/lock.js';
 import {
@@ -18,6 +18,7 @@ import {
   getLegacyPaths,
   resolvePaths,
   listEnvironments,
+  findAuthrimBaseDir,
   AUTHRIM_DIR,
   type EnvironmentPaths,
   type LegacyPaths,
@@ -36,7 +37,8 @@ import {
   runMigrationsForEnvironment,
   getWorkersSubdomain,
 } from '../../core/cloudflare.js';
-import { type WorkerComponent } from '../../core/naming.js';
+import { type WorkerComponent, CORE_WORKER_COMPONENTS } from '../../core/naming.js';
+import { generateWranglerConfig, toToml, type ResourceIds } from '../../core/wrangler.js';
 import { completeInitialSetup, displaySetupInstructions } from '../../core/admin.js';
 import type { SyncAction } from '../../core/wrangler-sync.js';
 
@@ -127,7 +129,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
   // Find config file (support both new and legacy structures)
   // Also search in common subdirectories (authrim/) for cases where setup was run from parent dir
-  let baseDir = process.cwd();
+  let baseDir = findAuthrimBaseDir(process.cwd());
   let configPath: string = 'authrim-config.json';
   let config: AuthrimConfig | null = null;
   // rootDir is where the authrim source code is (containing packages/)
@@ -471,6 +473,59 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     }
   }
 
+  // Check if wrangler.toml files exist at all, if not generate them from lock file
+  const sampleWranglerPath = join(rootDir, 'packages', 'ar-lib-core', 'wrangler.toml');
+  if (!existsSync(sampleWranglerPath) && lock) {
+    const genSpinner = ora('Generating wrangler configs from lock file...').start();
+
+    try {
+      // Build resource IDs from lock file
+      const resourceIds: ResourceIds = {
+        d1: {},
+        kv: {},
+      };
+
+      for (const [key, value] of Object.entries(lock.d1)) {
+        resourceIds.d1[key] = { id: value.id, name: value.name };
+      }
+      for (const [key, value] of Object.entries(lock.kv)) {
+        resourceIds.kv[key] = { id: value.id, name: value.name };
+      }
+
+      // Get workers subdomain
+      const workersSubdomain = await getWorkersSubdomain();
+
+      // Generate wrangler.toml for each component
+      let generatedCount = 0;
+      for (const component of CORE_WORKER_COMPONENTS) {
+        const componentDir = join(rootDir, 'packages', component);
+        if (!existsSync(componentDir)) {
+          continue;
+        }
+
+        const wranglerConfig = generateWranglerConfig(
+          component,
+          config,
+          resourceIds,
+          workersSubdomain ?? undefined
+        );
+        const tomlContent = toToml(wranglerConfig, env);
+        const tomlPath = join(componentDir, 'wrangler.toml');
+
+        if (!options.dryRun) {
+          await writeFile(tomlPath, tomlContent, 'utf-8');
+        }
+        generatedCount++;
+      }
+
+      genSpinner.succeed(`Generated ${generatedCount} wrangler config(s)`);
+    } catch (error) {
+      genSpinner.fail('Failed to generate wrangler configs');
+      console.error(chalk.red(`\nError: ${error}`));
+      process.exit(1);
+    }
+  }
+
   // Build packages first (unless skipped or dry-run)
   if (!options.skipBuild && !options.dryRun) {
     const buildSpinner = ora('Building packages...').start();
@@ -777,7 +832,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 export async function statusCommand(options: { config?: string; env?: string }): Promise<void> {
   console.log(chalk.bold('\n📊 Authrim Deployment Status\n'));
 
-  const baseDir = process.cwd();
+  const baseDir = findAuthrimBaseDir(process.cwd());
   let configPath: string;
   let config: AuthrimConfig | null = null;
   let env: string | undefined = options.env;
