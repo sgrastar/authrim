@@ -615,7 +615,15 @@ export async function deployPagesComponent(
       onProgress?.(`Setting API_BACKEND_URL secret for ${pagesProjectName}...`);
       const secretResult = await execa(
         'npx',
-        ['wrangler', 'pages', 'secret', 'put', 'API_BACKEND_URL', '--project-name', pagesProjectName],
+        [
+          'wrangler',
+          'pages',
+          'secret',
+          'put',
+          'API_BACKEND_URL',
+          '--project-name',
+          pagesProjectName,
+        ],
         {
           cwd: uiDir,
           input: apiBaseUrl,
@@ -625,7 +633,9 @@ export async function deployPagesComponent(
       if (secretResult.exitCode === 0) {
         onProgress?.(`✓ API_BACKEND_URL secret set for Safari ITP compatibility`);
       } else {
-        onProgress?.(`⚠️ Could not set API_BACKEND_URL secret: ${secretResult.stderr || 'Unknown error'}`);
+        onProgress?.(
+          `⚠️ Could not set API_BACKEND_URL secret: ${secretResult.stderr || 'Unknown error'}`
+        );
       }
     }
 
