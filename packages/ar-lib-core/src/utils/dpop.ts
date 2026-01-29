@@ -409,8 +409,7 @@ export function isDPoPCriticalPath(path: string): boolean {
   const normalizedPath = path.replace(/\/$/, '').toLowerCase();
 
   return DPOP_CRITICAL_PATHS.some(
-    (criticalPath) =>
-      normalizedPath === criticalPath || normalizedPath.endsWith(criticalPath)
+    (criticalPath) => normalizedPath === criticalPath || normalizedPath.endsWith(criticalPath)
   );
 }
 
