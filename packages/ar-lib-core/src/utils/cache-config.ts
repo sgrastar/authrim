@@ -205,10 +205,7 @@ export async function getCacheTTL(
  * @param clientId - Optional client ID for client-specific mode lookup
  * @returns Full TTL configuration object
  */
-export async function getCacheTTLConfig(
-  env: Env,
-  clientId?: string
-): Promise<CacheTTLConfig> {
+export async function getCacheTTLConfig(env: Env, clientId?: string): Promise<CacheTTLConfig> {
   const mode = await getCacheMode(env, clientId);
   return mode === 'maintenance' ? MAINTENANCE_MODE_TTL : FIXED_MODE_TTL;
 }
@@ -266,10 +263,7 @@ export async function setClientCacheMode(
  * @param clientId - Client ID
  * @returns Client-specific mode, or null if not set
  */
-export async function getClientCacheMode(
-  env: Env,
-  clientId: string
-): Promise<CacheMode | null> {
+export async function getClientCacheMode(env: Env, clientId: string): Promise<CacheMode | null> {
   const kv = env.AUTHRIM_CONFIG;
   if (!kv) {
     return null;

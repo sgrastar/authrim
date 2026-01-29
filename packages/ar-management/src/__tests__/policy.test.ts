@@ -979,7 +979,9 @@ describe('Policy API - Client Profile', () => {
       const mockResolver = {
         validateClientAgainstTenant: vi.fn().mockResolvedValue({
           valid: false,
-          errors: [{ field: 'oauth.grantTypes', message: 'Grant type not allowed by tenant policy' }],
+          errors: [
+            { field: 'oauth.grantTypes', message: 'Grant type not allowed by tenant policy' },
+          ],
           warnings: [],
         }),
       };
@@ -1512,7 +1514,9 @@ describe('Policy API - Error Handling', () => {
   });
 
   it('should not expose internal error details in responses', async () => {
-    mockD1AdapterQueryOne.mockRejectedValue(new Error('Internal database connection string: user:pass@host'));
+    mockD1AdapterQueryOne.mockRejectedValue(
+      new Error('Internal database connection string: user:pass@host')
+    );
 
     const mockKV = createMockKV({});
     const { app } = createApp({ kv: mockKV });

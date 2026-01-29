@@ -222,24 +222,26 @@ async function getResponseData(response: Response | void): Promise<{ body: any; 
   return { body, status: response.status };
 }
 
-function createWebhookEntry(overrides: Partial<{
-  id: string;
-  tenantId: string;
-  clientId: string | null;
-  scope: 'tenant' | 'client';
-  name: string;
-  url: string;
-  events: string[];
-  secretEncrypted: string | null;
-  headers: Record<string, string> | null;
-  retryPolicy: object;
-  timeoutMs: number;
-  active: boolean;
-  createdAt: string;
-  updatedAt: string;
-  lastSuccessAt: string | null;
-  lastFailureAt: string | null;
-}> = {}) {
+function createWebhookEntry(
+  overrides: Partial<{
+    id: string;
+    tenantId: string;
+    clientId: string | null;
+    scope: 'tenant' | 'client';
+    name: string;
+    url: string;
+    events: string[];
+    secretEncrypted: string | null;
+    headers: Record<string, string> | null;
+    retryPolicy: object;
+    timeoutMs: number;
+    active: boolean;
+    createdAt: string;
+    updatedAt: string;
+    lastSuccessAt: string | null;
+    lastFailureAt: string | null;
+  }> = {}
+) {
   return {
     id: overrides.id ?? 'webhook-1',
     tenantId: overrides.tenantId ?? 'test-tenant',
@@ -250,7 +252,12 @@ function createWebhookEntry(overrides: Partial<{
     events: overrides.events ?? ['user.created', 'user.updated'],
     secretEncrypted: overrides.secretEncrypted ?? null,
     headers: overrides.headers ?? null,
-    retryPolicy: overrides.retryPolicy ?? { maxRetries: 3, initialDelayMs: 1000, backoffMultiplier: 2, maxDelayMs: 60000 },
+    retryPolicy: overrides.retryPolicy ?? {
+      maxRetries: 3,
+      initialDelayMs: 1000,
+      backoffMultiplier: 2,
+      maxDelayMs: 60000,
+    },
     timeoutMs: overrides.timeoutMs ?? 30000,
     active: overrides.active ?? true,
     createdAt: overrides.createdAt ?? new Date().toISOString(),
@@ -662,10 +669,7 @@ describe('Webhook Admin API - Get Webhook', () => {
 
       await getWebhook(c);
 
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'not_found' }),
-        404
-      );
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
     });
 
     it('should not expose secretEncrypted in response', async () => {
@@ -693,10 +697,7 @@ describe('Webhook Admin API - Get Webhook', () => {
 
       await getWebhook(c);
 
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'not_found' }),
-        404
-      );
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
     });
   });
 });
@@ -743,10 +744,7 @@ describe('Webhook Admin API - Update Webhook', () => {
 
       await updateWebhook(c);
 
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'not_found' }),
-        404
-      );
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
     });
 
     it('should reject invalid JSON body', async () => {
@@ -865,10 +863,7 @@ describe('Webhook Admin API - Delete Webhook', () => {
 
       await deleteWebhook(c);
 
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'not_found' }),
-        404
-      );
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
     });
 
     it('should create audit log with warning level', async () => {
@@ -934,10 +929,7 @@ describe('Webhook Admin API - Test Webhook', () => {
 
       await testWebhook(c);
 
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'not_found' }),
-        404
-      );
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
     });
 
     it('should send test webhook and return success', async () => {
@@ -1130,10 +1122,7 @@ describe('Webhook Admin API - List Deliveries', () => {
 
       await listWebhookDeliveries(c);
 
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'not_found' }),
-        404
-      );
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
     });
 
     it('should reject page-based pagination (page parameter)', async () => {
@@ -1273,10 +1262,7 @@ describe('Webhook Admin API - Replay Delivery', () => {
 
       await replayWebhookDelivery(c);
 
-      expect(c.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'not_found' }),
-        404
-      );
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
     });
 
     it('should only allow replay of failed or retrying deliveries', async () => {
@@ -1305,7 +1291,9 @@ describe('Webhook Admin API - Replay Delivery', () => {
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           error: 'invalid_request',
-          error_description: expect.stringContaining("Cannot replay delivery with status 'success'"),
+          error_description: expect.stringContaining(
+            "Cannot replay delivery with status 'success'"
+          ),
         }),
         400
       );
@@ -1436,8 +1424,12 @@ describe('Webhook Security - HMAC Signature', () => {
     expect(calls.length).toBe(2);
 
     // Extract signatures
-    const signature1 = (calls[0][1] as RequestInit).headers?.['X-Webhook-Signature' as keyof HeadersInit];
-    const signature2 = (calls[1][1] as RequestInit).headers?.['X-Webhook-Signature' as keyof HeadersInit];
+    const signature1 = (calls[0][1] as RequestInit).headers?.[
+      'X-Webhook-Signature' as keyof HeadersInit
+    ];
+    const signature2 = (calls[1][1] as RequestInit).headers?.[
+      'X-Webhook-Signature' as keyof HeadersInit
+    ];
 
     // Same secret should produce same signature for same payload
     expect(signature1).toBe(signature2);
@@ -1467,8 +1459,12 @@ describe('Webhook Security - HMAC Signature', () => {
     await testWebhook(c);
 
     const calls = vi.mocked(fetch).mock.calls;
-    const signature1 = (calls[0][1] as RequestInit).headers?.['X-Webhook-Signature' as keyof HeadersInit];
-    const signature2 = (calls[1][1] as RequestInit).headers?.['X-Webhook-Signature' as keyof HeadersInit];
+    const signature1 = (calls[0][1] as RequestInit).headers?.[
+      'X-Webhook-Signature' as keyof HeadersInit
+    ];
+    const signature2 = (calls[1][1] as RequestInit).headers?.[
+      'X-Webhook-Signature' as keyof HeadersInit
+    ];
 
     expect(signature1).not.toBe(signature2);
   });
@@ -1488,7 +1484,9 @@ describe('Webhook Security - HMAC Signature', () => {
     await testWebhook(c);
 
     const calls = vi.mocked(fetch).mock.calls;
-    const signature = (calls[0][1] as RequestInit).headers?.['X-Webhook-Signature' as keyof HeadersInit];
+    const signature = (calls[0][1] as RequestInit).headers?.[
+      'X-Webhook-Signature' as keyof HeadersInit
+    ];
 
     expect(signature).toMatch(/^sha256=[a-f0-9]{64}$/);
   });
@@ -1601,10 +1599,7 @@ describe('Webhook Security - Tenant Isolation', () => {
     await getWebhook(c);
 
     expect(mockWebhookRegistry.get).toHaveBeenCalledWith('tenant-a', 'webhook-123');
-    expect(c.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'not_found' }),
-      404
-    );
+    expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
   });
 
   it('should enforce tenant isolation on update', async () => {
@@ -1621,10 +1616,7 @@ describe('Webhook Security - Tenant Isolation', () => {
     await updateWebhook(c);
 
     expect(mockWebhookRegistry.get).toHaveBeenCalledWith('tenant-a', 'webhook-123');
-    expect(c.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'not_found' }),
-      404
-    );
+    expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
   });
 
   it('should enforce tenant isolation on delete', async () => {
@@ -1640,10 +1632,7 @@ describe('Webhook Security - Tenant Isolation', () => {
     await deleteWebhook(c);
 
     expect(mockWebhookRegistry.get).toHaveBeenCalledWith('tenant-a', 'webhook-123');
-    expect(c.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'not_found' }),
-      404
-    );
+    expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'not_found' }), 404);
   });
 
   it('should enforce tenant isolation on list', async () => {
@@ -1754,10 +1743,7 @@ describe('Webhook Event Pattern Validation', () => {
     await createWebhook(c);
 
     expect(mockValidateEventPattern).toHaveBeenCalledTimes(2);
-    expect(c.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'invalid_request' }),
-      400
-    );
+    expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'invalid_request' }), 400);
   });
 });
 
@@ -1785,10 +1771,7 @@ describe('Webhook API - Error Handling', () => {
 
     await createWebhook(c);
 
-    expect(c.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'server_error' }),
-      500
-    );
+    expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'server_error' }), 500);
   });
 
   it('should handle registry.list errors gracefully', async () => {
@@ -1798,10 +1781,7 @@ describe('Webhook API - Error Handling', () => {
 
     await listWebhooks(c);
 
-    expect(c.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'server_error' }),
-      500
-    );
+    expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'server_error' }), 500);
   });
 
   it('should handle registry.get errors gracefully', async () => {
@@ -1813,10 +1793,7 @@ describe('Webhook API - Error Handling', () => {
 
     await getWebhook(c);
 
-    expect(c.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'server_error' }),
-      500
-    );
+    expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'server_error' }), 500);
   });
 
   it('should handle registry.update errors gracefully', async () => {
@@ -1831,10 +1808,7 @@ describe('Webhook API - Error Handling', () => {
 
     await updateWebhook(c);
 
-    expect(c.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'server_error' }),
-      500
-    );
+    expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'server_error' }), 500);
   });
 
   it('should handle registry.remove errors gracefully', async () => {
@@ -1848,9 +1822,6 @@ describe('Webhook API - Error Handling', () => {
 
     await deleteWebhook(c);
 
-    expect(c.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'server_error' }),
-      500
-    );
+    expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'server_error' }), 500);
   });
 });

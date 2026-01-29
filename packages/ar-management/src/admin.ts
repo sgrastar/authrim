@@ -2251,7 +2251,10 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
     try {
       await invalidateClientCacheOnDelete(c.env, clientId);
     } catch (error) {
-      log.warn('Failed to invalidate client cache on delete', { action: 'cache_invalidate', clientId });
+      log.warn('Failed to invalidate client cache on delete', {
+        action: 'cache_invalidate',
+        clientId,
+      });
       // Cache invalidation failure should not block the response
     }
 

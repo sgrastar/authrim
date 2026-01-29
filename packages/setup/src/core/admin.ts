@@ -114,7 +114,17 @@ export async function isSetupCompleted(env: string, configPath: string = '.'): P
     // Use npx to ensure wrangler is found regardless of Volta/npm/pnpm environment
     const result = await execa(
       'npx',
-      ['wrangler', 'kv', 'key', 'get', 'setup:completed', '--env', env, '--binding', 'AUTHRIM_CONFIG'],
+      [
+        'wrangler',
+        'kv',
+        'key',
+        'get',
+        'setup:completed',
+        '--env',
+        env,
+        '--binding',
+        'AUTHRIM_CONFIG',
+      ],
       {
         cwd: workerDir,
         reject: false,
@@ -193,7 +203,15 @@ function resolveSetupTokenPath(options: {
  * Store setup token in KV for initial admin creation
  */
 export async function storeSetupToken(options: SetupTokenOptions): Promise<SetupInfo> {
-  const { env, baseDir = process.cwd(), keysDir, keysBaseDir, legacy, ttlSeconds = 3600, onProgress } = options;
+  const {
+    env,
+    baseDir = process.cwd(),
+    keysDir,
+    keysBaseDir,
+    legacy,
+    ttlSeconds = 3600,
+    onProgress,
+  } = options;
 
   validateEnv(env);
 
@@ -411,7 +429,15 @@ export async function completeInitialSetup(options: {
   keysBaseDir?: string;
   onProgress?: (message: string) => void;
 }): Promise<SetupInfo> {
-  const { env, baseUrl, baseDir = process.cwd(), keysDir, keysBaseDir, legacy, onProgress } = options;
+  const {
+    env,
+    baseUrl,
+    baseDir = process.cwd(),
+    keysDir,
+    keysBaseDir,
+    legacy,
+    onProgress,
+  } = options;
 
   // Store setup token in KV
   const result = await storeSetupToken({

@@ -133,7 +133,10 @@ describe('saveKeysToDirectory with external keys', () => {
 
   beforeEach(() => {
     // Use project-relative directory to avoid keys.ts dangerous path validation blocking /var, /tmp
-    testDir = join(process.cwd(), `.test-keys-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testDir = join(
+      process.cwd(),
+      `.test-keys-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
     mkdirSync(testDir, { recursive: true });
   });
 
@@ -173,7 +176,10 @@ describe('keysExistForEnvironment with external keys', () => {
   let testDir: string;
 
   beforeEach(() => {
-    testDir = join(process.cwd(), `.test-keys-exist-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testDir = join(
+      process.cwd(),
+      `.test-keys-exist-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
     mkdirSync(testDir, { recursive: true });
   });
 

@@ -23,34 +23,31 @@ import type { Env } from '../../types/env';
  * Create a mock D1Database that responds to SQL queries
  * based on the query content (matching table names).
  */
-function createMockDB(options: {
-  session?: {
-    id: string;
-    tenant_id: string;
-    admin_user_id: string;
-    expires_at: number;
-    mfa_verified: number;
-  } | null;
-  adminUser?: {
-    id: string;
-    tenant_id: string;
-    email: string;
-    is_active: number;
-    status: string;
-  } | null;
-  roles?: Array<{
-    name: string;
-    permissions_json: string;
-    hierarchy_level: number;
-  }>;
-  shouldThrow?: boolean;
-} = {}): D1Database {
-  const {
-    session = null,
-    adminUser = null,
-    roles = [],
-    shouldThrow = false,
-  } = options;
+function createMockDB(
+  options: {
+    session?: {
+      id: string;
+      tenant_id: string;
+      admin_user_id: string;
+      expires_at: number;
+      mfa_verified: number;
+    } | null;
+    adminUser?: {
+      id: string;
+      tenant_id: string;
+      email: string;
+      is_active: number;
+      status: string;
+    } | null;
+    roles?: Array<{
+      name: string;
+      permissions_json: string;
+      hierarchy_level: number;
+    }>;
+    shouldThrow?: boolean;
+  } = {}
+): D1Database {
+  const { session = null, adminUser = null, roles = [], shouldThrow = false } = options;
 
   return {
     prepare: vi.fn().mockImplementation((sql: string) => ({
@@ -578,8 +575,7 @@ describe('adminAuthMiddleware', () => {
       // Cookie with multiple values
       const request = new Request('http://localhost/api/admin/test', {
         headers: {
-          Cookie:
-            `other_cookie=value; authrim_admin_session=${VALID_SESSION_ID}; another=thing`,
+          Cookie: `other_cookie=value; authrim_admin_session=${VALID_SESSION_ID}; another=thing`,
         },
       });
 

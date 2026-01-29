@@ -427,7 +427,9 @@ describe('paths module', () => {
     });
 
     it('should reject invalid env name', () => {
-      expect(() => getExternalKeysPathForConfig('PROD', '/home/user')).toThrow('must be lowercase alphanumeric');
+      expect(() => getExternalKeysPathForConfig('PROD', '/home/user')).toThrow(
+        'must be lowercase alphanumeric'
+      );
     });
   });
 
@@ -519,15 +521,15 @@ describe('paths module', () => {
     });
 
     it('should reject env with null byte', () => {
-      expect(() =>
-        findKeysDirectory({ env: 'prod\0', sourceDir: testDir })
-      ).toThrow('path traversal');
+      expect(() => findKeysDirectory({ env: 'prod\0', sourceDir: testDir })).toThrow(
+        'path traversal'
+      );
     });
 
     it('should reject invalid env format', () => {
-      expect(() =>
-        findKeysDirectory({ env: 'PROD', sourceDir: testDir })
-      ).toThrow('must be lowercase alphanumeric');
+      expect(() => findKeysDirectory({ env: 'PROD', sourceDir: testDir })).toThrow(
+        'must be lowercase alphanumeric'
+      );
     });
   });
 

@@ -79,7 +79,8 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
     default: true,
     envKey: 'PLUGIN_NOTIFIER_RESEND_ENABLED',
     label: 'Resend Email Plugin',
-    description: 'Enable the Resend Email notifier plugin for sending OTP codes and transactional emails',
+    description:
+      'Enable the Resend Email notifier plugin for sending OTP codes and transactional emails',
     visibility: 'admin',
     dependsOn: [{ key: 'plugin.enabled', value: true }],
   },
@@ -89,7 +90,8 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
     default: false,
     envKey: 'PLUGIN_NOTIFIER_CONSOLE_ENABLED',
     label: 'Console Notifier Plugin',
-    description: 'Enable the Console notifier plugin (development only, logs notifications to console)',
+    description:
+      'Enable the Console notifier plugin (development only, logs notifications to console)',
     visibility: 'admin',
     dependsOn: [{ key: 'plugin.enabled', value: true }],
   },

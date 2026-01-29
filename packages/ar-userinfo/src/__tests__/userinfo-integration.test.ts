@@ -19,7 +19,11 @@ import type { Env } from '@authrim/ar-lib-core';
 // Mock all functions at module level using vi.hoisted to survive vi.restoreAllMocks()
 const mockGetClient = vi.hoisted(() => vi.fn());
 const mockGetClientCached = vi.hoisted(() =>
-  vi.fn().mockImplementation((_c: unknown, env: unknown, clientId: string) => mockGetClient(env, clientId))
+  vi
+    .fn()
+    .mockImplementation((_c: unknown, env: unknown, clientId: string) =>
+      mockGetClient(env, clientId)
+    )
 );
 const mockIntrospectTokenFromContext = vi.hoisted(() => vi.fn());
 const mockEncryptJWT = vi.hoisted(() => vi.fn());

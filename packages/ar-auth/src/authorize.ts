@@ -3838,7 +3838,12 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   // Profile-based session management (Human Auth / AI Ephemeral Auth two-layer model)
   // For AI Ephemeral profile (uses_do_for_state=false), skip session creation.
   // AI agents typically don't maintain browser sessions - they use tokens directly.
-  const sessionTenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
+  const sessionTenantProfile = await loadTenantProfileCached(
+    c,
+    c.env.AUTHRIM_CONFIG,
+    c.env,
+    tenantId
+  );
 
   if (sessionTenantProfile.uses_do_for_state) {
     // Human profile: Create session using sharded SessionStore

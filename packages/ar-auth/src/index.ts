@@ -82,9 +82,7 @@ app.use('*', requestContextMiddleware());
 // Plugin Context - provides access to notifiers, idp handlers, authenticators
 // Plugins are loaded lazily on first request and cached per Worker lifecycle
 // Configuration resolved: KV → env → configSchema defaults
-const loadPlugins = createPluginLoader([
-  { plugin: resendEmailPlugin },
-]);
+const loadPlugins = createPluginLoader([{ plugin: resendEmailPlugin }]);
 app.use('*', pluginContextMiddleware({ loadPlugins }));
 
 // Enhanced security headers

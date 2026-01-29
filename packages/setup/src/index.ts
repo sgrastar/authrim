@@ -92,9 +92,8 @@ program
     const { deployWorker, deployPagesComponent, buildApiPackages, PAGES_COMPONENTS } =
       await import('./core/deploy.js');
     const { loadLockFileAuto, saveLockFile } = await import('./core/lock.js');
-    const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths } = await import(
-      './core/paths.js'
-    );
+    const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths } =
+      await import('./core/paths.js');
 
     console.log(chalk.bold('\n🔧 Authrim Component Upgrade\n'));
 

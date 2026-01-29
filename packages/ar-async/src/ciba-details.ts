@@ -7,12 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
-import {
-  createErrorResponse,
-  AR_ERROR_CODES,
-  getLogger,
-  getClient,
-} from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger, getClient } from '@authrim/ar-lib-core';
 
 /**
  * GET /api/ciba/request/:auth_req_id

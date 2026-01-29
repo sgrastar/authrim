@@ -73,8 +73,20 @@ export interface ProviderTemplateInfo {
  * Available provider templates
  */
 export const PROVIDER_TEMPLATES: ProviderTemplateInfo[] = [
-	{ id: 'google', name: 'Google', description: 'Google Sign-In (OIDC)', providerType: 'oidc', icon: 'i-ph-google-logo' },
-	{ id: 'github', name: 'GitHub', description: 'GitHub OAuth 2.0', providerType: 'oauth2', icon: 'i-ph-github-logo' },
+	{
+		id: 'google',
+		name: 'Google',
+		description: 'Google Sign-In (OIDC)',
+		providerType: 'oidc',
+		icon: 'i-ph-google-logo'
+	},
+	{
+		id: 'github',
+		name: 'GitHub',
+		description: 'GitHub OAuth 2.0',
+		providerType: 'oauth2',
+		icon: 'i-ph-github-logo'
+	},
 	{
 		id: 'microsoft',
 		name: 'Microsoft',
@@ -89,9 +101,27 @@ export const PROVIDER_TEMPLATES: ProviderTemplateInfo[] = [
 		providerType: 'oidc',
 		icon: 'i-ph-linkedin-logo'
 	},
-	{ id: 'facebook', name: 'Facebook', description: 'Facebook OAuth 2.0', providerType: 'oauth2', icon: 'i-ph-meta-logo' },
-	{ id: 'twitter', name: 'Twitter', description: 'Twitter OAuth 2.0', providerType: 'oauth2', icon: 'i-ph-x-logo' },
-	{ id: 'apple', name: 'Apple', description: 'Sign in with Apple (OIDC)', providerType: 'oidc', icon: 'i-ph-apple-logo' }
+	{
+		id: 'facebook',
+		name: 'Facebook',
+		description: 'Facebook OAuth 2.0',
+		providerType: 'oauth2',
+		icon: 'i-ph-meta-logo'
+	},
+	{
+		id: 'twitter',
+		name: 'Twitter',
+		description: 'Twitter OAuth 2.0',
+		providerType: 'oauth2',
+		icon: 'i-ph-x-logo'
+	},
+	{
+		id: 'apple',
+		name: 'Apple',
+		description: 'Sign in with Apple (OIDC)',
+		providerType: 'oidc',
+		icon: 'i-ph-apple-logo'
+	}
 ];
 
 /**

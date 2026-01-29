@@ -163,9 +163,7 @@ function getKeyFilePaths(keysDir: string): KeyFilePaths {
 export function getEnvironmentPaths(config: PathConfig): EnvironmentPaths {
   const { baseDir, env, keysBaseDir } = config;
   const root = join(baseDir, AUTHRIM_DIR, env);
-  const keysDir = keysBaseDir
-    ? join(keysBaseDir, AUTHRIM_KEYS_DIR, env)
-    : join(root, KEYS_DIR);
+  const keysDir = keysBaseDir ? join(keysBaseDir, AUTHRIM_KEYS_DIR, env) : join(root, KEYS_DIR);
   const wranglerDir = join(root, WRANGLER_DIR);
 
   return {
@@ -232,14 +230,20 @@ export function findAuthrimBaseDir(startDir: string): string {
   }
 
   // Check for legacy structure in startDir
-  if (existsSync(join(startDir, LEGACY_CONFIG_FILE)) || existsSync(join(startDir, LEGACY_LOCK_FILE))) {
+  if (
+    existsSync(join(startDir, LEGACY_CONFIG_FILE)) ||
+    existsSync(join(startDir, LEGACY_LOCK_FILE))
+  ) {
     return startDir;
   }
 
   // Check legacy structure in subdirectories
   for (const subdir of COMMON_SUBDIRS) {
     const subdirPath = join(startDir, subdir);
-    if (existsSync(join(subdirPath, LEGACY_CONFIG_FILE)) || existsSync(join(subdirPath, LEGACY_LOCK_FILE))) {
+    if (
+      existsSync(join(subdirPath, LEGACY_CONFIG_FILE)) ||
+      existsSync(join(subdirPath, LEGACY_LOCK_FILE))
+    ) {
       return subdirPath;
     }
   }
@@ -620,7 +624,9 @@ function validateEnvForPath(env: string): void {
     throw new Error('Invalid environment name: path traversal characters not allowed');
   }
   if (!/^[a-z][a-z0-9-]*$/.test(env)) {
-    throw new Error('Invalid environment name: must be lowercase alphanumeric with hyphens, starting with a letter');
+    throw new Error(
+      'Invalid environment name: must be lowercase alphanumeric with hyphens, starting with a letter'
+    );
   }
 }
 

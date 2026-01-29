@@ -149,9 +149,7 @@ export async function setPlatformCacheModeHandler(
  * GET /api/admin/clients/:clientId/cache-mode
  * Get client-specific cache mode configuration
  */
-export async function getClientCacheModeHandler(
-  c: Context<{ Bindings: Env }>
-): Promise<Response> {
+export async function getClientCacheModeHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
     const clientId = c.req.param('clientId');
 
@@ -196,9 +194,7 @@ export async function getClientCacheModeHandler(
  * Setting mode to null removes the client-specific override,
  * causing the client to use the platform default.
  */
-export async function setClientCacheModeHandler(
-  c: Context<{ Bindings: Env }>
-): Promise<Response> {
+export async function setClientCacheModeHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   try {
     const clientId = c.req.param('clientId');
 
@@ -269,9 +265,7 @@ export async function setClientCacheModeHandler(
  * GET /api/admin/settings/cache-mode/info
  * Get information about cache mode configuration options
  */
-export async function getCacheModeInfoHandler(
-  c: Context<{ Bindings: Env }>
-): Promise<Response> {
+export async function getCacheModeInfoHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
   return c.json({
     modes: {
       maintenance: {

@@ -127,8 +127,7 @@ const ko: Translations = {
   'env.workers': 'Workers: {{count}}',
   'env.d1Databases': 'D1 데이터베이스: {{count}}',
   'env.kvNamespaces': 'KV 네임스페이스: {{count}}',
-  'env.chooseAnother':
-    '다른 이름을 선택하거나 "{{command}} manage"를 사용하여 먼저 삭제하세요.',
+  'env.chooseAnother': '다른 이름을 선택하거나 "{{command}} manage"를 사용하여 먼저 삭제하세요.',
   'env.available': '환경 이름 사용 가능',
   'env.checkFailed': '기존 환경을 확인할 수 없습니다 (계속 진행)',
   'env.noEnvFound': 'Authrim 환경을 찾을 수 없습니다.',

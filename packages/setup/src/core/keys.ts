@@ -293,7 +293,11 @@ export function getLegacyKeysDirectory(baseDir: string, env: string): string {
  * @param env - Environment name
  * @param keysBaseDir - Optional base directory for external keys
  */
-export function keysExistForEnvironment(baseDir: string, env: string, keysBaseDir?: string): boolean {
+export function keysExistForEnvironment(
+  baseDir: string,
+  env: string,
+  keysBaseDir?: string
+): boolean {
   // Check external structure
   if (keysBaseDir) {
     const externalDir = getExternalKeysDir(env, keysBaseDir);

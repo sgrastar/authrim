@@ -38,7 +38,12 @@ import {
   getWorkersSubdomain,
 } from '../../core/cloudflare.js';
 import { createLockFile, saveLockFile, loadLockFile } from '../../core/lock.js';
-import { getEnvironmentPaths, getExternalKeysDir, getExternalKeysPathForConfig, AUTHRIM_DIR } from '../../core/paths.js';
+import {
+  getEnvironmentPaths,
+  getExternalKeysDir,
+  getExternalKeysPathForConfig,
+  AUTHRIM_DIR,
+} from '../../core/paths.js';
 import {
   downloadSource,
   verifySourceStructure,
@@ -245,7 +250,9 @@ async function ensureAuthrimSource(options: InitOptions): Promise<string> {
   // If running from source repository (pnpm setup), skip update check entirely
   if (isRunningFromSource(currentDir)) {
     const localVersion = await getLocalVersion(currentDir);
-    console.log(chalk.green(`✓ Using Authrim source (v${localVersion || 'unknown'}) [from source]`));
+    console.log(
+      chalk.green(`✓ Using Authrim source (v${localVersion || 'unknown'}) [from source]`)
+    );
     return currentDir;
   }
 
@@ -1036,7 +1043,9 @@ async function runLoadConfig(): Promise<boolean> {
     console.log(chalk.yellow('No configuration found in current directory.'));
     console.log('');
     console.log(chalk.gray('💡 Tip: You can specify a config file with:'));
-    console.log(chalk.cyan(`   ${getCommandPrefix()} --config /path/to/.authrim/{env}/config.json`));
+    console.log(
+      chalk.cyan(`   ${getCommandPrefix()} --config /path/to/.authrim/{env}/config.json`)
+    );
     console.log('');
 
     const action = await select({

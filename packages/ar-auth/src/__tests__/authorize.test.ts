@@ -11,7 +11,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ...actual,
     getClient: mockGetClient,
     // getClientCached wraps getClient, so we need to mock it too
-    getClientCached: vi.fn().mockImplementation((_c, env, clientId) => mockGetClient(env, clientId)),
+    getClientCached: vi
+      .fn()
+      .mockImplementation((_c, env, clientId) => mockGetClient(env, clientId)),
   };
 });
 
