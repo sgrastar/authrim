@@ -28,7 +28,6 @@ import {
   checkRateLimit,
   type RateLimitConfig,
   isAllowedOriginForClient,
-  getClientCached,
 } from '@authrim/ar-lib-core';
 
 export async function handleHandoffVerify(c: Context<{ Bindings: Env }>): Promise<Response> {
@@ -97,9 +96,8 @@ export async function handleHandoffVerify(c: Context<{ Bindings: Env }>): Promis
 
     // client_idに紐づくallowedRedirectUrisからoriginを抽出して検証
     const tenantId = getTenantIdFromContext(c);
-
-    // Use cached client metadata for better performance
-    const client = await getClientCached(c, c.env, client_id);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const client = await authCtx.repositories.client.findByClientId(client_id);
 
     if (!client) {
       log.error('Client not found', {
@@ -110,13 +108,37 @@ export async function handleHandoffVerify(c: Context<{ Bindings: Env }>): Promis
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_CLIENT_NOT_FOUND);
     }
 
-    // getClientCached returns normalized ClientMetadata with redirect_uris as string[]
-    const redirectUris = client.redirect_uris;
+    // Parse redirect_uris from JSON string or plain string
+    let redirectUris: string[];
+    try {
+      // Check if redirect_uris exists
+      if (!client.redirect_uris) {
+        throw new Error('redirect_uris is missing or null');
+      }
 
-    if (!redirectUris || redirectUris.length === 0) {
-      log.error('Client has no redirect_uris configured', {
+      // Check if redirect_uris is already an array (shouldn't happen, but defensive)
+      if (Array.isArray(client.redirect_uris)) {
+        redirectUris = client.redirect_uris;
+      } else if (typeof client.redirect_uris === 'string') {
+        // Try to parse as JSON array first
+        if (client.redirect_uris.trim().startsWith('[')) {
+          redirectUris = JSON.parse(client.redirect_uris);
+          if (!Array.isArray(redirectUris)) {
+            throw new Error('redirect_uris is not an array after parsing');
+          }
+        } else {
+          // Treat as single URL string (legacy format or misconfigured client)
+          redirectUris = [client.redirect_uris];
+        }
+      } else {
+        throw new Error(`redirect_uris has unexpected type: ${typeof client.redirect_uris}`);
+      }
+    } catch (parseError) {
+      log.error('Invalid redirect_uris format', {
         client_id,
-        ip: clientIp,
+        redirect_uris_type: typeof client.redirect_uris,
+        redirect_uris_length: client.redirect_uris?.length || 0,
+        error: parseError instanceof Error ? parseError.message : 'Unknown',
       });
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_METADATA_INVALID);
     }
@@ -203,7 +225,7 @@ export async function handleHandoffVerify(c: Context<{ Bindings: Env }>): Promis
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
 
-    // 6. AS SSOセッション検証 & ユーザー情報取得（並列化で高速化）
+    // 6. AS SSOセッション検証
     const asSessionId = handoffData.challenge;
 
     if (!isShardedSessionId(asSessionId)) {
@@ -211,23 +233,8 @@ export async function handleHandoffVerify(c: Context<{ Bindings: Env }>): Promis
     }
 
     const { stub: asSessionStore } = getSessionStoreBySessionId(c.env, asSessionId);
+    const asSessionResult = await asSessionStore.getSessionRpc(asSessionId);
 
-    // Parallelize AS Session, UserCore, and UserPII fetches for better performance
-    // All are read-only operations after handoff token consumption
-    const authCtx = createAuthContextFromHono(c, tenantId);
-
-    const [asSessionResult, userCore, piiResult] = await Promise.all([
-      asSessionStore.getSessionRpc(asSessionId),
-      authCtx.repositories.userCore.findById(handoffData.userId),
-      c.env.DB_PII
-        ? (async () => {
-            const piiCtx = createPIIContextFromHono(c, tenantId);
-            return await piiCtx.piiRepositories.userPII.findById(handoffData.userId);
-          })()
-        : Promise.resolve(null),
-    ]);
-
-    // Validate AS Session
     if (!asSessionResult) {
       log.warn('AS SSO session expired', {
         sessionId: asSessionId,
@@ -236,9 +243,12 @@ export async function handleHandoffVerify(c: Context<{ Bindings: Env }>): Promis
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
 
+    // Use explicit type annotation after null check
     const asSession: Session = asSessionResult;
 
-    // Validate UserCore
+    // 7. ユーザー情報取得
+    const userCore = await authCtx.repositories.userCore.findById(handoffData.userId);
+
     if (!userCore || !userCore.is_active) {
       log.warn('User not found or inactive', {
         userId: handoffData.userId,
@@ -247,10 +257,14 @@ export async function handleHandoffVerify(c: Context<{ Bindings: Env }>): Promis
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
-    // Process UserPII
-    const userPII: { email: string | null; name: string | null } = piiResult
-      ? { email: piiResult.email, name: piiResult.name || null }
-      : { email: null, name: null };
+    let userPII: { email: string | null; name: string | null } = { email: null, name: null };
+    if (c.env.DB_PII) {
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiResult = await piiCtx.piiRepositories.userPII.findById(handoffData.userId);
+      if (piiResult) {
+        userPII = { email: piiResult.email, name: piiResult.name || null };
+      }
+    }
 
     // 8. RP専用のAccess Token（Session）を新規発行
     // ⚠️ 重要: AS SessionIDを直接返さない（XSS対策）
