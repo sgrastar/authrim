@@ -171,6 +171,14 @@ const ja: Translations = {
   'domain.customPrompt': 'カスタムドメインを入力（例: auth.example.com）',
   'domain.customValidation': '有効なドメインを入力してください（例: auth.example.com）',
   'domain.issuerUrl': 'Issuer URL: {{url}}',
+  'domain.checkingZone': '{{domain}} のCloudflareゾーンを確認中...',
+  'domain.zoneFound': "ゾーン '{{zone}}' が見つかりました（ステータス: {{status}}）",
+  'domain.zoneNotFound': "ゾーン '{{zone}}' がCloudflareアカウントに見つかりません",
+  'domain.zoneNotFoundHint': 'カスタムドメインルーティングにはCloudflareへのゾーン追加が必要です。',
+  'domain.zoneCheckFailed': 'ゾーンを確認できませんでした',
+  'domain.zoneCheckSkipped': 'ゾーン確認をスキップしてセットアップを続行します...',
+  'domain.continueWithoutZone': 'ゾーン確認なしで続行しますか？',
+  'domain.configureBinding': 'Workersのカスタムドメインバインディングを設定する',
   'domain.apiDomain': 'API / Issuerドメイン（例: auth.example.com）',
   'domain.loginUiDomain': 'ログインUIドメイン（Enterでスキップ）',
   'domain.adminUiDomain': '管理UIドメイン（Enterでスキップ）',
@@ -979,6 +987,14 @@ const ja: Translations = {
   'web.envDetail.updateProgress': '更新状況:',
   'web.envDetail.updatesAvailable': '{{count}}件の更新があります',
   'web.envDetail.allUpToDate': 'すべて最新です',
+
+  'web.envDetail.action': '操作',
+
+  // Web UI Update Section
+  'web.envDetail.uiUpdate': 'UI を更新（Pages）',
+  'web.envDetail.uiUpdateDesc':
+    'Admin UI または Login UI を個別に更新します。これらは Cloudflare Pages にデプロイされます。',
+  'web.envDetail.updateNow': '更新',
 
   // Web UI Delete Section
   'web.delete.title': '環境を削除',

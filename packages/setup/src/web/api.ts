@@ -191,6 +191,34 @@ export function createApiRoutes(): Hono {
   api.use('/deploy', validateSession);
   api.use('/reset', validateSession);
   api.use('/admin/*', validateSession);
+  api.use('/cloudflare/*', validateSession);
+
+  // ==========================================================================
+  // Cloudflare Zone Check
+  // ==========================================================================
+
+  api.post('/cloudflare/check-zone', async (c) => {
+    try {
+      const body = (await c.req.json()) as { domain?: string };
+      const { domain } = body;
+
+      if (!domain || typeof domain !== 'string') {
+        return c.json({ found: false, error: 'domain is required' }, 400);
+      }
+      if (
+        !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/.test(domain)
+      ) {
+        return c.json({ found: false, error: 'Invalid domain format' }, 400);
+      }
+
+      const { checkZoneExists } = await import('../core/cloudflare.js');
+      const result = await checkZoneExists(domain);
+      return c.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return c.json({ found: false, error: message }, 500);
+    }
+  });
 
   // Get current state (no auth required - read-only)
   api.get('/state', (c) => {
@@ -357,7 +385,16 @@ export function createApiRoutes(): Hono {
     return withLock(async () => {
       try {
         const body = await c.req.json();
-        const { env = 'prod', apiDomain, loginUiDomain, adminUiDomain, tenant, components } = body;
+        const {
+          env = 'prod',
+          apiDomain,
+          loginUiDomain,
+          adminUiDomain,
+          tenant,
+          components,
+          zoneId,
+          customDomainBinding,
+        } = body;
 
         const config = createDefaultConfig(env);
 
@@ -369,6 +406,7 @@ export function createApiRoutes(): Hono {
             multiTenant: tenant.multiTenant || false,
             userIdFormat: tenant.userIdFormat || 'nanoid',
             baseDomain: tenant.baseDomain,
+            primaryTenant: tenant.primaryTenant,
           };
         }
 
@@ -377,6 +415,8 @@ export function createApiRoutes(): Hono {
           api: {
             custom: apiDomain || null,
             auto: `https://${env}-ar-router.workers.dev`,
+            zoneId: zoneId || null,
+            customDomainBinding: customDomainBinding ?? false,
           },
           loginUi: {
             custom: loginUiDomain || null,

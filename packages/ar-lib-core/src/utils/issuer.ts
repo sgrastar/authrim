@@ -1,12 +1,19 @@
 /**
- * Issuer URL Builder
+ * Issuer URL construction for multi-tenant Authrim
  *
- * Supports both single-tenant and multi-tenant modes:
- * - Single-tenant: returns ISSUER_URL from environment as-is
- * - Multi-tenant: builds dynamic issuer URL from subdomain + BASE_DOMAIN
+ * Architecture:
+ * - Each environment (test, staging, prod) runs as a separate Workers instance
+ * - Each instance has its own BASE_DOMAIN (e.g., test.authrim.com, authrim.com)
+ * - Within an instance, multiple tenants are managed via subdomain
  *
- * Multi-tenant issuer format: iss = https://{tenant}.{BASE_DOMAIN}
- * Example: https://acme.authrim.com
+ * Domain patterns:
+ * - Single tenant: example.com → default tenant
+ * - Multi-tenant: tenant.example.com → "tenant"
+ * - Complex: tenant-xyz.example.com → "tenant-xyz"
+ *
+ * Naked domain routing:
+ * - If PRIMARY_TENANT_ID is set: example.com → specified tenant
+ * - Otherwise: example.com → DEFAULT_TENANT_ID (default: "default")
  *
  * Security: Issuer determination is based on Host header (trusted),
  * NOT tenant_hint (untrusted UX hint).
@@ -28,38 +35,45 @@ export interface HostValidationResult {
 /**
  * Build the OIDC issuer URL for a tenant.
  *
- * In single-tenant mode (BASE_DOMAIN not set), returns ISSUER_URL.
- * In multi-tenant mode (BASE_DOMAIN set), constructs issuer from subdomain.
+ * Multi-tenant mode is always enabled. Constructs dynamic issuer URL
+ * from subdomain and BASE_DOMAIN.
  *
  * @param env - Cloudflare Workers environment bindings
- * @param tenantSubdomain - Tenant subdomain (required in multi-tenant mode)
+ * @param tenantSubdomain - Tenant subdomain (optional)
  * @returns The issuer URL string
  *
  * @example
- * // Single-tenant
- * buildIssuerUrl(env) // => 'https://auth.example.com'
+ * // With BASE_DOMAIN = "authrim.com"
+ * buildIssuerUrl(env)               // => 'https://default.authrim.com' (or primary tenant)
+ * buildIssuerUrl(env, 'acme')       // => 'https://acme.authrim.com'
+ * buildIssuerUrl(env, 'acme-test')  // => 'https://acme-test.authrim.com'
  *
- * // Multi-tenant
- * buildIssuerUrl(env, 'acme') // => 'https://acme.authrim.com'
+ * // Legacy fallback (ISSUER_URL set, no BASE_DOMAIN)
+ * buildIssuerUrl(env)               // => 'https://auth.example.com' (ISSUER_URL)
  */
-export function buildIssuerUrl(env: Env, tenantSubdomain: string = DEFAULT_TENANT_ID): string {
+export function buildIssuerUrl(env: Env, tenantSubdomain?: string): string {
   // Multi-tenant mode: construct from subdomain + BASE_DOMAIN
-  if (env.BASE_DOMAIN && env.ENABLE_TENANT_ISOLATION === 'true') {
-    return `https://${tenantSubdomain}.${env.BASE_DOMAIN}`;
+  if (env.BASE_DOMAIN) {
+    const sub = tenantSubdomain || env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+    return `https://${sub}.${env.BASE_DOMAIN}`;
   }
 
-  // Single-tenant mode: use configured ISSUER_URL
+  // Legacy single-tenant mode: use configured ISSUER_URL
   return env.ISSUER_URL;
 }
 
 /**
  * Check if multi-tenant mode is enabled
  *
+ * @deprecated Multi-tenant mode is always enabled when BASE_DOMAIN is set.
+ * This function is kept for backward compatibility with legacy code.
+ *
  * @param env - Environment bindings
  * @returns true if multi-tenant mode is enabled
  */
 export function isMultiTenantEnabled(env: Partial<Env>): boolean {
-  return !!env.BASE_DOMAIN && env.ENABLE_TENANT_ISOLATION === 'true';
+  // Multi-tenant mode is enabled when BASE_DOMAIN is set
+  return !!env.BASE_DOMAIN;
 }
 
 /**
@@ -71,14 +85,14 @@ export function isMultiTenantEnabled(env: Partial<Env>): boolean {
  *
  * @param host - Host header value
  * @param env - Environment bindings
- * @returns Validation result with tenant ID or error
+ * @returns Validation result with tenant ID
  */
 export function validateHostHeader(
   host: string | undefined,
   env: Partial<Env>
 ): HostValidationResult {
-  // Single-tenant mode: always valid with default tenant
-  if (!isMultiTenantEnabled(env)) {
+  // Single-tenant mode (no BASE_DOMAIN): always valid with default tenant
+  if (!env.BASE_DOMAIN) {
     return {
       valid: true,
       tenantId: env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID,
@@ -105,11 +119,21 @@ export function validateHostHeader(
     };
   }
 
-  // Extract tenant subdomain
-  const tenantId = extractSubdomain(host, env.BASE_DOMAIN!);
+  // Extract tenant subdomain or use PRIMARY_TENANT_ID for naked domain
+  const hostname = host.split(':')[0]; // Remove port
 
-  if (!tenantId) {
-    // No subdomain found - could be apex domain access
+  // Check if hostname matches BASE_DOMAIN
+  if (hostname === env.BASE_DOMAIN) {
+    // Naked domain access
+    const tenantId = env.PRIMARY_TENANT_ID || env.DEFAULT_TENANT_ID || DEFAULT_TENANT_ID;
+    return {
+      valid: true,
+      tenantId,
+    };
+  }
+
+  // Check if hostname ends with .BASE_DOMAIN
+  if (!hostname.endsWith(`.${env.BASE_DOMAIN}`)) {
     return {
       valid: false,
       tenantId: null,
@@ -118,11 +142,34 @@ export function validateHostHeader(
     };
   }
 
-  // Tenant ID extracted successfully
-  // Note: Actual tenant existence check should be done in middleware
+  // Extract subdomain
+  const subdomain = hostname.slice(0, -(env.BASE_DOMAIN.length + 1));
+
+  if (!subdomain) {
+    // Empty subdomain (should not happen due to above checks, but handle gracefully)
+    return {
+      valid: false,
+      tenantId: null,
+      error: 'tenant_not_found',
+      statusCode: 404,
+    };
+  }
+
+  // Reject sub-subdomains (e.g., dev.acme.authrim.com)
+  // Only single-level subdomains are allowed (e.g., acme.authrim.com)
+  if (subdomain.includes('.')) {
+    return {
+      valid: false,
+      tenantId: null,
+      error: 'invalid_format',
+      statusCode: 400,
+    };
+  }
+
+  // Multi-tenant subdomain
   return {
     valid: true,
-    tenantId,
+    tenantId: subdomain,
   };
 }
 
@@ -144,7 +191,9 @@ function isValidHostFormat(host: string): boolean {
 
 /**
  * Extract the tenant subdomain from a full hostname.
- * For future multi-tenant use.
+ *
+ * @deprecated Use validateHostHeader() instead for validation and tenant extraction.
+ * This function is kept for backward compatibility with legacy code.
  *
  * @param hostname - Full hostname (e.g., 'acme.authrim.app')
  * @param baseDomain - Base domain to strip (e.g., 'authrim.app')
@@ -170,6 +219,12 @@ export function extractSubdomain(hostname: string, baseDomain: string): string |
 
   // Return null if no subdomain or if it's empty
   if (!subdomain || subdomain === '') {
+    return null;
+  }
+
+  // Reject sub-subdomains (e.g., dev.acme.authrim.com)
+  // Only single-level subdomains are allowed
+  if (subdomain.includes('.')) {
     return null;
   }
 

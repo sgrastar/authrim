@@ -174,6 +174,15 @@ const fr: Translations = {
   'domain.customDesc': 'Utiliser votre propre domaine',
   'domain.customPrompt': 'Entrez le domaine personnalisé (ex : auth.exemple.com)',
   'domain.customValidation': 'Veuillez entrer un domaine valide (ex : auth.exemple.com)',
+  'domain.checkingZone': 'Vérification de la zone Cloudflare pour {{domain}}...',
+  'domain.zoneFound': "Zone '{{zone}}' trouvée (statut : {{status}})",
+  'domain.zoneNotFound': "Zone '{{zone}}' introuvable dans votre compte Cloudflare",
+  'domain.zoneNotFoundHint':
+    "Le routage de domaine personnalisé nécessite que la zone soit d'abord ajoutée à Cloudflare.",
+  'domain.zoneCheckFailed': 'Impossible de vérifier la zone',
+  'domain.zoneCheckSkipped': 'Vérification de zone ignorée, poursuite de la configuration...',
+  'domain.continueWithoutZone': 'Continuer sans vérification de zone ?',
+  'domain.configureBinding': 'Configurer la liaison de domaine personnalisé pour Workers',
   'domain.issuerUrl': "URL de l'émetteur : {{url}}",
   'domain.apiDomain': 'Domaine API / Émetteur (ex : auth.exemple.com)',
   'domain.loginUiDomain': 'Domaine UI de connexion (Entrée pour ignorer)',
@@ -1013,6 +1022,14 @@ const fr: Translations = {
   'web.envDetail.updateProgress': 'Progression de la mise à jour :',
   'web.envDetail.updatesAvailable': '{{count}} mise(s) à jour disponible(s)',
   'web.envDetail.allUpToDate': 'Tout est à jour',
+
+  'web.envDetail.action': 'Action',
+
+  // Web UI Update Section
+  'web.envDetail.uiUpdate': 'Mettre à jour UI (Pages)',
+  'web.envDetail.uiUpdateDesc':
+    'Mettre à jour Admin UI ou Login UI individuellement. Ils sont déployés sur Cloudflare Pages.',
+  'web.envDetail.updateNow': 'Mettre à jour',
 
   // Web UI Delete Section
   'web.delete.title': "Supprimer l'Environnement",

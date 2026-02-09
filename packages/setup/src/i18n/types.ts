@@ -146,6 +146,14 @@ export interface Translations {
   'domain.customPrompt': string;
   'domain.customValidation': string;
   'domain.issuerUrl': string;
+  'domain.checkingZone': string;
+  'domain.zoneFound': string;
+  'domain.zoneNotFound': string;
+  'domain.zoneNotFoundHint': string;
+  'domain.zoneCheckFailed': string;
+  'domain.zoneCheckSkipped': string;
+  'domain.continueWithoutZone': string;
+  'domain.configureBinding': string;
 
   // UI deployment
   'ui.prompt': string;

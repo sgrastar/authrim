@@ -29,17 +29,6 @@ describe('Issuer URL Builder', () => {
         expect(issuer).toBe('https://auth.example.com');
       });
 
-      it('should return ISSUER_URL when ENABLE_TENANT_ISOLATION is not "true"', () => {
-        const env = {
-          ISSUER_URL: 'https://auth.example.com',
-          BASE_DOMAIN: 'authrim.com',
-          ENABLE_TENANT_ISOLATION: 'false',
-        } as Env;
-
-        const issuer = buildIssuerUrl(env);
-        expect(issuer).toBe('https://auth.example.com');
-      });
-
       it('should ignore tenantSubdomain parameter in single-tenant mode', () => {
         const env = {
           ISSUER_URL: 'https://auth.example.com',
@@ -54,7 +43,6 @@ describe('Issuer URL Builder', () => {
       const mtEnv = {
         ISSUER_URL: 'https://auth.example.com',
         BASE_DOMAIN: 'authrim.com',
-        ENABLE_TENANT_ISOLATION: 'true',
       } as Env;
 
       it('should build issuer from subdomain + BASE_DOMAIN', () => {
@@ -74,7 +62,7 @@ describe('Issuer URL Builder', () => {
       });
 
       it('should handle complex tenant subdomains', () => {
-        // Tenant ID can include environment suffix
+        // Tenant ID can include hyphens
         expect(buildIssuerUrl(mtEnv, 'acme-prod')).toBe('https://acme-prod.authrim.com');
         expect(buildIssuerUrl(mtEnv, 'acme-staging')).toBe('https://acme-staging.authrim.com');
       });
@@ -82,52 +70,22 @@ describe('Issuer URL Builder', () => {
   });
 
   describe('isMultiTenantEnabled', () => {
-    it('should return true when BASE_DOMAIN and ENABLE_TENANT_ISOLATION are set', () => {
+    it('should return true when BASE_DOMAIN is set', () => {
       const env = {
         BASE_DOMAIN: 'authrim.com',
-        ENABLE_TENANT_ISOLATION: 'true',
       };
 
       expect(isMultiTenantEnabled(env)).toBe(true);
     });
 
     it('should return false when BASE_DOMAIN is not set', () => {
-      const env = {
-        ENABLE_TENANT_ISOLATION: 'true',
-      };
-
-      expect(isMultiTenantEnabled(env)).toBe(false);
-    });
-
-    it('should return false when ENABLE_TENANT_ISOLATION is not "true"', () => {
-      const env = {
-        BASE_DOMAIN: 'authrim.com',
-        ENABLE_TENANT_ISOLATION: 'false',
-      };
-
-      expect(isMultiTenantEnabled(env)).toBe(false);
-    });
-
-    it('should return false when ENABLE_TENANT_ISOLATION is undefined', () => {
-      const env = {
-        BASE_DOMAIN: 'authrim.com',
-      };
+      const env = {};
 
       expect(isMultiTenantEnabled(env)).toBe(false);
     });
 
     it('should return false for empty env', () => {
       expect(isMultiTenantEnabled({})).toBe(false);
-    });
-
-    it('should be case-sensitive for ENABLE_TENANT_ISOLATION', () => {
-      const env = {
-        BASE_DOMAIN: 'authrim.com',
-        ENABLE_TENANT_ISOLATION: 'TRUE', // Capital letters
-      };
-
-      // Only exactly "true" enables MT mode
-      expect(isMultiTenantEnabled(env)).toBe(false);
     });
   });
 
@@ -166,7 +124,6 @@ describe('Issuer URL Builder', () => {
     describe('multi-tenant mode', () => {
       const mtEnv = {
         BASE_DOMAIN: 'authrim.com',
-        ENABLE_TENANT_ISOLATION: 'true',
       };
 
       it('should extract tenant from valid subdomain', () => {
@@ -202,13 +159,21 @@ describe('Issuer URL Builder', () => {
         expect(result.statusCode).toBe(400);
       });
 
-      it('should return error for apex domain (no subdomain)', () => {
-        const result = validateHostHeader('authrim.com', mtEnv);
+      it('should handle naked domain with DEFAULT_TENANT_ID', () => {
+        const result = validateHostHeader('authrim.com', { ...mtEnv, DEFAULT_TENANT_ID: 'main' });
 
-        expect(result.valid).toBe(false);
-        expect(result.tenantId).toBeNull();
-        expect(result.error).toBe('tenant_not_found');
-        expect(result.statusCode).toBe(404);
+        expect(result.valid).toBe(true);
+        expect(result.tenantId).toBe('main');
+      });
+
+      it('should handle naked domain with PRIMARY_TENANT_ID', () => {
+        const result = validateHostHeader('authrim.com', {
+          ...mtEnv,
+          PRIMARY_TENANT_ID: 'primary',
+        });
+
+        expect(result.valid).toBe(true);
+        expect(result.tenantId).toBe('primary');
       });
 
       it('should return error for different base domain', () => {
@@ -226,12 +191,27 @@ describe('Issuer URL Builder', () => {
         expect(result.valid).toBe(true);
         expect(result.tenantId).toBe('acme-prod');
       });
+
+      it('should reject sub-subdomain (multi-level)', () => {
+        const result = validateHostHeader('dev.acme.authrim.com', mtEnv);
+
+        expect(result.valid).toBe(false);
+        expect(result.error).toBe('invalid_format');
+        expect(result.statusCode).toBe(400);
+      });
+
+      it('should reject sub-subdomain with port', () => {
+        const result = validateHostHeader('api.tenant.authrim.com:8080', mtEnv);
+
+        expect(result.valid).toBe(false);
+        expect(result.error).toBe('invalid_format');
+        expect(result.statusCode).toBe(400);
+      });
     });
 
     describe('Host format validation', () => {
       const mtEnv = {
         BASE_DOMAIN: 'authrim.com',
-        ENABLE_TENANT_ISOLATION: 'true',
       };
 
       it('should reject Host starting with hyphen', () => {
@@ -296,10 +276,10 @@ describe('Issuer URL Builder', () => {
       expect(subdomain).toBeNull();
     });
 
-    it('should handle multi-level subdomain', () => {
-      // dev.acme.authrim.com should extract "dev.acme"
+    it('should reject multi-level subdomain (sub-subdomain)', () => {
+      // dev.acme.authrim.com should be rejected (sub-subdomain not allowed)
       const subdomain = extractSubdomain('dev.acme.authrim.com', 'authrim.com');
-      expect(subdomain).toBe('dev.acme');
+      expect(subdomain).toBeNull();
     });
 
     it('should return null for empty hostname', () => {

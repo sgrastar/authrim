@@ -1,5 +1,68 @@
 import { describe, it, expect } from 'vitest';
-import { remapShardIndex } from '../tenant-context';
+import { remapShardIndex, getTenantIdFromHost, resolveTenantFromRequest } from '../tenant-context';
+import type { Env } from '../../types/env';
+
+describe('getTenantIdFromHost', () => {
+  describe('multi-tenant mode', () => {
+    const multiTenantEnv: Partial<Env> = {
+      BASE_DOMAIN: 'authrim.com',
+      DEFAULT_TENANT_ID: 'default',
+    };
+
+    it('should extract tenant from subdomain', () => {
+      const result = getTenantIdFromHost('acme.authrim.com', multiTenantEnv);
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('acme');
+    });
+
+    it('should handle hyphenated tenant names', () => {
+      const result = getTenantIdFromHost('acme-corp.authrim.com', multiTenantEnv);
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('acme-corp');
+    });
+
+    it('should return default tenant for naked domain', () => {
+      const result = getTenantIdFromHost('authrim.com', multiTenantEnv);
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('default');
+    });
+
+    it('should return error for missing host', () => {
+      const result = getTenantIdFromHost(undefined, multiTenantEnv);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('missing_host');
+      expect(result.statusCode).toBe(400);
+    });
+  });
+
+  describe('PRIMARY_TENANT_ID', () => {
+    const envWithPrimary: Partial<Env> = {
+      BASE_DOMAIN: 'authrim.com',
+      DEFAULT_TENANT_ID: 'default',
+      PRIMARY_TENANT_ID: 'tenantA',
+    };
+
+    it('should use PRIMARY_TENANT_ID for naked domain', () => {
+      const result = getTenantIdFromHost('authrim.com', envWithPrimary);
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('tenantA');
+    });
+
+    it('should use explicit tenant over PRIMARY_TENANT_ID', () => {
+      const result = getTenantIdFromHost('widget.authrim.com', envWithPrimary);
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('widget');
+    });
+  });
+
+  describe('single-tenant mode', () => {
+    it('should return default tenant when BASE_DOMAIN is not set', () => {
+      const result = getTenantIdFromHost('any.example.com', {});
+      expect(result.success).toBe(true);
+      expect(result.tenantId).toBe('default');
+    });
+  });
+});
 
 describe('remapShardIndex', () => {
   it('should keep shard index within range', () => {

@@ -198,16 +198,21 @@ export async function getAccountId(): Promise<string | null> {
   }
 }
 
-/**
- * Get the workers.dev subdomain for the account
- * This is needed because workers.dev URLs are: {worker}.{subdomain}.workers.dev
- */
-export async function getWorkersSubdomain(): Promise<string | null> {
-  try {
-    const accountId = await getAccountId();
-    if (!accountId) return null;
+// =============================================================================
+// Cloudflare API Token
+// =============================================================================
 
-    // Read OAuth token from wrangler config
+export interface CloudflareApiToken {
+  token: string;
+  source: 'oauth' | 'env';
+}
+
+/**
+ * Get Cloudflare API token from wrangler config or environment variable.
+ * Searches platform-specific paths for OAuth token, falls back to CLOUDFLARE_API_TOKEN env var.
+ */
+export async function getCloudflareApiToken(): Promise<CloudflareApiToken | null> {
+  try {
     const { readFile } = await import('node:fs/promises');
     const { homedir, platform } = await import('node:os');
     const { join } = await import('node:path');
@@ -218,36 +223,25 @@ export async function getWorkersSubdomain(): Promise<string | null> {
     const configPaths: string[] = [];
 
     if (platform() === 'darwin') {
-      // macOS: ~/Library/Preferences/.wrangler/config/default.toml (XDG-compliant)
       configPaths.push(join(home, 'Library/Preferences/.wrangler/config/default.toml'));
-      // macOS legacy fallback
       configPaths.push(join(home, '.wrangler/config/default.toml'));
     } else if (platform() === 'win32') {
-      // Windows: Multiple possible locations
       const appData = process.env.APPDATA;
       if (appData) {
-        // 1. XDG-compliant: %APPDATA%\xdg.config\.wrangler\config\default.toml (CORRECT PATH)
         configPaths.push(join(appData, 'xdg.config/.wrangler/config/default.toml'));
-        // Also try without xdg.config prefix
         configPaths.push(join(appData, '.wrangler/config/default.toml'));
       }
-      // 2. Legacy: %USERPROFILE%\.wrangler\config\default.toml
       configPaths.push(join(home, '.wrangler/config/default.toml'));
-      // 3. %LOCALAPPDATA%
       const localAppData = process.env.LOCALAPPDATA;
       if (localAppData) {
         configPaths.push(join(localAppData, 'xdg.config/.wrangler/config/default.toml'));
         configPaths.push(join(localAppData, '.wrangler/config/default.toml'));
       }
     } else {
-      // Linux: XDG-compliant path
       const xdgConfigHome = process.env.XDG_CONFIG_HOME || join(home, '.config');
       configPaths.push(join(xdgConfigHome, '.wrangler/config/default.toml'));
-      // Linux legacy fallback
       configPaths.push(join(home, '.wrangler/config/default.toml'));
     }
-
-    let oauthToken: string | null = null;
 
     for (const configPath of configPaths) {
       if (!existsSync(configPath)) continue;
@@ -255,30 +249,42 @@ export async function getWorkersSubdomain(): Promise<string | null> {
         const configContent = await readFile(configPath, 'utf-8');
         const tokenMatch = configContent.match(/oauth_token\s*=\s*"([^"]+)"/);
         if (tokenMatch?.[1]) {
-          oauthToken = tokenMatch[1];
-          break;
+          return { token: tokenMatch[1], source: 'oauth' };
         }
       } catch {
         // Continue to next path
       }
     }
 
-    if (!oauthToken) {
-      // Try using CLOUDFLARE_API_TOKEN environment variable as fallback
-      const apiToken = process.env.CLOUDFLARE_API_TOKEN;
-      if (apiToken) {
-        oauthToken = apiToken;
-      } else {
-        return null;
-      }
+    // Fallback to CLOUDFLARE_API_TOKEN environment variable
+    const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+    if (apiToken) {
+      return { token: apiToken, source: 'env' };
     }
 
-    // Call Cloudflare API to get subdomain
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get the workers.dev subdomain for the account
+ * This is needed because workers.dev URLs are: {worker}.{subdomain}.workers.dev
+ */
+export async function getWorkersSubdomain(): Promise<string | null> {
+  try {
+    const accountId = await getAccountId();
+    if (!accountId) return null;
+
+    const tokenInfo = await getCloudflareApiToken();
+    if (!tokenInfo) return null;
+
     const response = await fetch(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/subdomain`,
       {
         headers: {
-          Authorization: `Bearer ${oauthToken}`,
+          Authorization: `Bearer ${tokenInfo.token}`,
         },
       }
     );
@@ -289,6 +295,517 @@ export async function getWorkersSubdomain(): Promise<string | null> {
     return data.result?.subdomain || null;
   } catch {
     return null;
+  }
+}
+
+// =============================================================================
+// Zone Check
+// =============================================================================
+
+export interface ZoneInfo {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface ZoneCheckResult {
+  found: boolean;
+  zone?: ZoneInfo;
+  error?: string;
+}
+
+/**
+ * Extract zone name (registrable domain) from a hostname.
+ * e.g., "auth.example.com" → "example.com"
+ *       "example.co.jp" → "example.co.jp"
+ */
+export function extractZoneName(hostname: string): string {
+  const parts = hostname.split('.');
+  // Comprehensive two-part TLD list based on the Public Suffix List (PSL).
+  // Only includes patterns commonly used for web hosting on Cloudflare.
+  // Sorted alphabetically by country code.
+  const twoPartTlds = new Set([
+    // ae - United Arab Emirates
+    'ac.ae',
+    'co.ae',
+    'net.ae',
+    'org.ae',
+    // ar - Argentina
+    'com.ar',
+    'net.ar',
+    'org.ar',
+    // at - Austria
+    'co.at',
+    'or.at',
+    // au - Australia
+    'com.au',
+    'net.au',
+    'org.au',
+    // bd - Bangladesh
+    'com.bd',
+    'net.bd',
+    'org.bd',
+    // bh - Bahrain
+    'com.bh',
+    'net.bh',
+    'org.bh',
+    // bn - Brunei
+    'com.bn',
+    'net.bn',
+    'org.bn',
+    // bo - Bolivia
+    'com.bo',
+    'net.bo',
+    'org.bo',
+    // br - Brazil
+    'com.br',
+    'net.br',
+    'org.br',
+    // bw - Botswana
+    'co.bw',
+    'org.bw',
+    // bz - Belize
+    'co.bz',
+    'com.bz',
+    'net.bz',
+    'org.bz',
+    // cn - China
+    'com.cn',
+    'net.cn',
+    'org.cn',
+    // co - Colombia
+    'com.co',
+    'net.co',
+    'org.co',
+    // cr - Costa Rica
+    'co.cr',
+    'or.cr',
+    // cu - Cuba
+    'com.cu',
+    'net.cu',
+    'org.cu',
+    // cy - Cyprus
+    'com.cy',
+    'net.cy',
+    'org.cy',
+    // do - Dominican Republic
+    'com.do',
+    'net.do',
+    'org.do',
+    // dz - Algeria
+    'com.dz',
+    'net.dz',
+    'org.dz',
+    // ec - Ecuador
+    'com.ec',
+    'net.ec',
+    'org.ec',
+    // eg - Egypt
+    'com.eg',
+    'net.eg',
+    'org.eg',
+    // et - Ethiopia
+    'com.et',
+    'net.et',
+    'org.et',
+    // fj - Fiji
+    'com.fj',
+    'net.fj',
+    'org.fj',
+    // ge - Georgia
+    'com.ge',
+    'net.ge',
+    'org.ge',
+    // gh - Ghana
+    'com.gh',
+    'net.gh',
+    'org.gh',
+    // gr - Greece
+    'com.gr',
+    'net.gr',
+    'org.gr',
+    // gt - Guatemala
+    'com.gt',
+    'net.gt',
+    'org.gt',
+    // gy - Guyana
+    'co.gy',
+    'com.gy',
+    'net.gy',
+    'org.gy',
+    // hk - Hong Kong
+    'com.hk',
+    'net.hk',
+    'org.hk',
+    // hn - Honduras
+    'com.hn',
+    'net.hn',
+    'org.hn',
+    // hr - Croatia
+    'com.hr',
+    // id - Indonesia
+    'co.id',
+    'or.id',
+    'web.id',
+    'net.id',
+    // il - Israel
+    'co.il',
+    'net.il',
+    'org.il',
+    // im - Isle of Man
+    'co.im',
+    'com.im',
+    'net.im',
+    'org.im',
+    // in - India
+    'co.in',
+    'net.in',
+    'org.in',
+    // io - British Indian Ocean Territory
+    'com.io',
+    'net.io',
+    'org.io',
+    // iq - Iraq
+    'com.iq',
+    'net.iq',
+    'org.iq',
+    // ir - Iran
+    'co.ir',
+    'net.ir',
+    'org.ir',
+    // je - Jersey
+    'co.je',
+    'net.je',
+    'org.je',
+    // jo - Jordan
+    'com.jo',
+    'net.jo',
+    'org.jo',
+    // jp - Japan
+    'co.jp',
+    'ne.jp',
+    'or.jp',
+    'ac.jp',
+    'go.jp',
+    'gr.jp',
+    'ed.jp',
+    'ad.jp',
+    'lg.jp',
+    // ke - Kenya
+    'co.ke',
+    'or.ke',
+    'ne.ke',
+    // kh - Cambodia (uses .com.kh etc.)
+    'com.kh',
+    'net.kh',
+    'org.kh',
+    // kr - South Korea
+    'co.kr',
+    'or.kr',
+    'ne.kr',
+    // kw - Kuwait
+    'com.kw',
+    'net.kw',
+    'org.kw',
+    // kz - Kazakhstan
+    'com.kz',
+    'net.kz',
+    'org.kz',
+    // lb - Lebanon
+    'com.lb',
+    'net.lb',
+    'org.lb',
+    // lc - Saint Lucia
+    'co.lc',
+    'com.lc',
+    'net.lc',
+    'org.lc',
+    // lk - Sri Lanka
+    'com.lk',
+    'net.lk',
+    'org.lk',
+    // ly - Libya
+    'com.ly',
+    'net.ly',
+    'org.ly',
+    // ma - Morocco
+    'co.ma',
+    'net.ma',
+    'org.ma',
+    // mm - Myanmar
+    'com.mm',
+    'net.mm',
+    'org.mm',
+    // mo - Macau
+    'com.mo',
+    'net.mo',
+    'org.mo',
+    // mt - Malta
+    'com.mt',
+    'net.mt',
+    'org.mt',
+    // mu - Mauritius
+    'co.mu',
+    'com.mu',
+    'net.mu',
+    'org.mu',
+    // mv - Maldives
+    'com.mv',
+    'net.mv',
+    'org.mv',
+    // mx - Mexico
+    'com.mx',
+    'net.mx',
+    'org.mx',
+    // my - Malaysia
+    'com.my',
+    'net.my',
+    'org.my',
+    // mz - Mozambique
+    'co.mz',
+    'net.mz',
+    'org.mz',
+    // na - Namibia
+    'co.na',
+    'com.na',
+    'net.na',
+    'org.na',
+    // ng - Nigeria
+    'com.ng',
+    'net.ng',
+    'org.ng',
+    // ni - Nicaragua
+    'com.ni',
+    'net.ni',
+    'org.ni',
+    // np - Nepal
+    'com.np',
+    'net.np',
+    'org.np',
+    // nz - New Zealand
+    'co.nz',
+    'net.nz',
+    'org.nz',
+    // om - Oman
+    'com.om',
+    'net.om',
+    'org.om',
+    // pa - Panama
+    'com.pa',
+    'net.pa',
+    'org.pa',
+    // pe - Peru
+    'com.pe',
+    'net.pe',
+    'org.pe',
+    // pg - Papua New Guinea
+    'com.pg',
+    'net.pg',
+    'org.pg',
+    // ph - Philippines
+    'com.ph',
+    'net.ph',
+    'org.ph',
+    // pk - Pakistan
+    'com.pk',
+    'net.pk',
+    'org.pk',
+    // pr - Puerto Rico
+    'com.pr',
+    'net.pr',
+    'org.pr',
+    // ps - Palestine
+    'com.ps',
+    'net.ps',
+    'org.ps',
+    // pt - Portugal
+    'com.pt',
+    'net.pt',
+    'org.pt',
+    // py - Paraguay
+    'com.py',
+    'net.py',
+    'org.py',
+    // qa - Qatar
+    'com.qa',
+    'net.qa',
+    'org.qa',
+    // ro - Romania
+    'com.ro',
+    'net.ro',
+    'org.ro',
+    // rs - Serbia
+    'co.rs',
+    'org.rs',
+    // ru - Russia (ru uses direct TLD, but also has some patterns)
+    'com.ru',
+    'net.ru',
+    'org.ru',
+    // rw - Rwanda
+    'co.rw',
+    'net.rw',
+    'org.rw',
+    // sa - Saudi Arabia
+    'com.sa',
+    'net.sa',
+    'org.sa',
+    // sb - Solomon Islands
+    'com.sb',
+    'net.sb',
+    'org.sb',
+    // sc - Seychelles
+    'com.sc',
+    'net.sc',
+    'org.sc',
+    // sd - Sudan
+    'com.sd',
+    'net.sd',
+    'org.sd',
+    // sg - Singapore
+    'com.sg',
+    'net.sg',
+    'org.sg',
+    // sl - Sierra Leone
+    'com.sl',
+    'net.sl',
+    'org.sl',
+    // sv - El Salvador
+    'com.sv',
+    'org.sv',
+    // sy - Syria
+    'com.sy',
+    'net.sy',
+    'org.sy',
+    // th - Thailand
+    'co.th',
+    'in.th',
+    'ac.th',
+    'or.th',
+    'net.th',
+    // tn - Tunisia
+    'com.tn',
+    'net.tn',
+    'org.tn',
+    // tr - Turkey
+    'com.tr',
+    'net.tr',
+    'org.tr',
+    // tt - Trinidad and Tobago
+    'co.tt',
+    'com.tt',
+    'net.tt',
+    'org.tt',
+    // tw - Taiwan
+    'com.tw',
+    'net.tw',
+    'org.tw',
+    // tz - Tanzania
+    'co.tz',
+    'or.tz',
+    'ne.tz',
+    // ua - Ukraine
+    'com.ua',
+    'net.ua',
+    'org.ua',
+    // ug - Uganda
+    'co.ug',
+    'or.ug',
+    'ne.ug',
+    // uk - United Kingdom
+    'co.uk',
+    'org.uk',
+    'me.uk',
+    'net.uk',
+    // uy - Uruguay
+    'com.uy',
+    'net.uy',
+    'org.uy',
+    // uz - Uzbekistan
+    'co.uz',
+    'com.uz',
+    'net.uz',
+    'org.uz',
+    // vc - Saint Vincent and the Grenadines
+    'com.vc',
+    'net.vc',
+    'org.vc',
+    // ve - Venezuela
+    'co.ve',
+    'com.ve',
+    'net.ve',
+    'org.ve',
+    // vn - Vietnam
+    'com.vn',
+    'net.vn',
+    'org.vn',
+    // za - South Africa
+    'co.za',
+    'net.za',
+    'org.za',
+    // zm - Zambia
+    'co.zm',
+    'com.zm',
+    'net.zm',
+    'org.zm',
+    // zw - Zimbabwe
+    'co.zw',
+    'org.zw',
+  ]);
+  const lastTwo = parts.slice(-2).join('.');
+  if (twoPartTlds.has(lastTwo) && parts.length >= 3) {
+    return parts.slice(-3).join('.');
+  }
+  return parts.length >= 2 ? parts.slice(-2).join('.') : hostname;
+}
+
+/**
+ * Check if a Cloudflare zone exists for the given domain.
+ * Gracefully handles authentication failures and network errors.
+ */
+export async function checkZoneExists(domain: string): Promise<ZoneCheckResult> {
+  try {
+    const tokenInfo = await getCloudflareApiToken();
+    if (!tokenInfo) {
+      return { found: false, error: 'Not logged in to Cloudflare (run: wrangler login)' };
+    }
+
+    const zoneName = extractZoneName(domain);
+
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/zones?name=${encodeURIComponent(zoneName)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${tokenInfo.token}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        return { found: false, error: 'Token lacks zone:read permission' };
+      }
+      return { found: false, error: `Cloudflare API returned ${response.status}` };
+    }
+
+    const data = (await response.json()) as {
+      success: boolean;
+      result: Array<{ id: string; name: string; status: string }>;
+    };
+
+    if (!data.success || !data.result || data.result.length === 0) {
+      return { found: false };
+    }
+
+    const zone = data.result[0];
+    return {
+      found: true,
+      zone: { id: zone.id, name: zone.name, status: zone.status },
+    };
+  } catch (error) {
+    return {
+      found: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
   }
 }
 
@@ -1266,6 +1783,55 @@ export async function listPagesProjects(): Promise<Array<{ name: string }>> {
  */
 export async function deletePagesProject(name: string): Promise<boolean> {
   try {
+    // First, remove all custom domains from the Pages project
+    // This is required before the project can be deleted
+    const token = await getCloudflareApiToken();
+    if (token) {
+      try {
+        const accountId = await getAccountId();
+        // Get project details to list custom domains
+        const projectResponse = await fetch(
+          `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${name}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token.token}`,
+            },
+          }
+        );
+
+        if (projectResponse.ok) {
+          const projectData = (await projectResponse.json()) as {
+            result?: { domains?: string[] };
+          };
+          const domains = projectData.result?.domains || [];
+
+          // Remove each custom domain (skip *.pages.dev domains)
+          for (const domain of domains) {
+            if (!domain.endsWith('.pages.dev')) {
+              try {
+                await fetch(
+                  `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${name}/domains/${domain}`,
+                  {
+                    method: 'DELETE',
+                    headers: {
+                      Authorization: `Bearer ${token.token}`,
+                    },
+                  }
+                );
+                // Small delay to let Cloudflare process the deletion
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+              } catch {
+                // Continue even if domain deletion fails
+              }
+            }
+          }
+        }
+      } catch {
+        // Continue even if custom domain cleanup fails
+      }
+    }
+
+    // Now delete the Pages project
     await wrangler(['pages', 'project', 'delete', name, '--yes']);
     return true;
   } catch {

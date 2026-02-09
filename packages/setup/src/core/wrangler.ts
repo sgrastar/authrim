@@ -6,6 +6,7 @@
  */
 
 import type { AuthrimConfig } from './config.js';
+import { extractZoneName } from './cloudflare.js';
 import {
   getWorkerName,
   getDOScriptName,
@@ -387,9 +388,7 @@ export function generateWranglerConfig(
       try {
         const customUrl = new URL(config.urls.api.custom);
         const hostname = customUrl.hostname;
-        // Extract zone name (e.g., "example.com" from "auth.example.com")
-        const parts = hostname.split('.');
-        const zoneName = parts.length >= 2 ? parts.slice(-2).join('.') : hostname;
+        const zoneName = extractZoneName(hostname);
         wranglerConfig.routes = [{ pattern: `${hostname}/*`, zone_name: zoneName }];
       } catch {
         // Invalid URL, skip routes configuration
@@ -403,8 +402,7 @@ export function generateWranglerConfig(
     try {
       const customUrl = new URL(config.urls.api.custom);
       const hostname = customUrl.hostname;
-      const parts = hostname.split('.');
-      const zoneName = parts.length >= 2 ? parts.slice(-2).join('.') : hostname;
+      const zoneName = extractZoneName(hostname);
       const componentRoutes = generateRoutes(component, hostname, zoneName);
       if (componentRoutes.length > 0) {
         wranglerConfig.routes = componentRoutes;
@@ -447,19 +445,20 @@ function generateEnvVars(
   }
 
   // Tenant configuration
-  // Multi-tenant mode: subdomain-based tenant isolation
-  // - BASE_DOMAIN: base domain (e.g., "authrim.com")
-  // - ENABLE_TENANT_ISOLATION: "true" to enable
-  // - Issuer URL: https://{tenant}.{BASE_DOMAIN}
+  // Multi-tenant mode is always enabled when BASE_DOMAIN is set.
+  // Domain pattern: {tenant}-{env}-{prefix}.{baseDomain}
   if (component === 'ar-auth' || component === 'ar-management' || component === 'ar-router') {
     vars['DEFAULT_TENANT_ID'] = config.tenant?.name || 'default';
 
     // User ID format (nanoid or uuid)
     vars['USER_ID_FORMAT'] = config.tenant?.userIdFormat || 'nanoid';
 
-    if (config.tenant?.multiTenant && config.tenant?.baseDomain) {
+    if (config.tenant?.baseDomain) {
       vars['BASE_DOMAIN'] = config.tenant.baseDomain;
-      vars['ENABLE_TENANT_ISOLATION'] = 'true';
+
+      if (config.tenant.primaryTenant) {
+        vars['PRIMARY_TENANT_ID'] = config.tenant.primaryTenant;
+      }
     }
   }
 

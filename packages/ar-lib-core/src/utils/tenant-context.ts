@@ -1,13 +1,11 @@
 /**
  * Tenant Context Utilities
  *
- * Supports both single-tenant and multi-tenant modes:
- * - Single-tenant: always returns DEFAULT_TENANT_ID ('default')
- * - Multi-tenant: resolves tenant from Host header subdomain
+ * Multi-tenant mode is always enabled. Resolves tenant from Host header
+ * using the domain parser (flat subdomain, hyphen-separated parts).
  *
- * Multi-tenant mode is enabled when:
- * - BASE_DOMAIN is set
- * - ENABLE_TENANT_ISOLATION = 'true'
+ * Legacy single-tenant mode is supported for backward compatibility
+ * when new domain parsing configuration is not available.
  *
  * Security: Tenant ID is determined by Host header (trusted),
  * NOT tenant_hint (untrusted UX hint).
@@ -38,7 +36,7 @@ export function getTenantId(): string {
 export interface TenantResolutionResult {
   success: boolean;
   tenantId: string;
-  error?: 'missing_host' | 'invalid_format' | 'tenant_not_found';
+  error?: 'missing_host' | 'invalid_format' | 'tenant_not_found' | 'sub_subdomain_not_allowed';
   statusCode?: 400 | 404;
 }
 

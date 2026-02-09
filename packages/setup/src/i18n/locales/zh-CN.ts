@@ -169,6 +169,14 @@ const zhCN: Translations = {
   'domain.customDesc': '使用您自己的域名',
   'domain.customPrompt': '输入自定义域名（例如：auth.example.com）',
   'domain.customValidation': '请输入有效域名（例如：auth.example.com）',
+  'domain.checkingZone': '正在检查 {{domain}} 的 Cloudflare 区域...',
+  'domain.zoneFound': "找到区域 '{{zone}}'（状态：{{status}}）",
+  'domain.zoneNotFound': "在您的 Cloudflare 账户中未找到区域 '{{zone}}'",
+  'domain.zoneNotFoundHint': '自定义域名路由需要先将区域添加到 Cloudflare。',
+  'domain.zoneCheckFailed': '无法检查区域',
+  'domain.zoneCheckSkipped': '已跳过区域检查，继续设置...',
+  'domain.continueWithoutZone': '不验证区域继续？',
+  'domain.configureBinding': '为 Workers 配置自定义域名绑定',
   'domain.issuerUrl': '发行者 URL：{{url}}',
   'domain.apiDomain': 'API / 发行者域名（例如：auth.example.com）',
   'domain.loginUiDomain': '登录 UI 域名（按回车跳过）',
@@ -965,6 +973,13 @@ const zhCN: Translations = {
   'web.envDetail.updateProgress': '更新进度：',
   'web.envDetail.updatesAvailable': '{{count}} 个更新可用',
   'web.envDetail.allUpToDate': '全部最新',
+
+  'web.envDetail.action': '操作',
+
+  // Web UI Update Section
+  'web.envDetail.uiUpdate': '更新 UI（Pages）',
+  'web.envDetail.uiUpdateDesc': '单独更新 Admin UI 或 Login UI。这些部署在 Cloudflare Pages 上。',
+  'web.envDetail.updateNow': '更新',
 
   // Web UI Delete Section
   'web.delete.title': '删除环境',

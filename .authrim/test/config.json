@@ -1,0 +1,91 @@
+{
+  "version": "1.0.0",
+  "createdAt": "2026-02-08T15:07:39.487Z",
+  "updatedAt": "2026-02-08T15:07:39.487Z",
+  "environment": {
+    "prefix": "test"
+  },
+  "tenant": {
+    "name": "default",
+    "displayName": "Default Tenant",
+    "multiTenant": true,
+    "userIdFormat": "nanoid",
+    "baseDomain": "authrim.com"
+  },
+  "components": {
+    "api": true,
+    "loginUi": true,
+    "adminUi": true,
+    "saml": true,
+    "async": true,
+    "vc": true,
+    "bridge": true,
+    "policy": true
+  },
+  "profile": "basic-op",
+  "oidc": {
+    "accessTokenTtl": 3600,
+    "refreshTokenTtl": 604800,
+    "authCodeTtl": 600,
+    "pkceRequired": true,
+    "responseTypes": [
+      "code"
+    ],
+    "grantTypes": [
+      "authorization_code",
+      "refresh_token"
+    ]
+  },
+  "sharding": {
+    "authCodeShards": 4,
+    "refreshTokenShards": 4,
+    "sessionShards": 4,
+    "challengeShards": 4,
+    "flowStateShards": 32
+  },
+  "features": {
+    "queue": {
+      "enabled": false
+    },
+    "r2": {
+      "enabled": false
+    },
+    "email": {
+      "provider": "none",
+      "configured": false
+    }
+  },
+  "keys": {
+    "secretsPath": "./keys/",
+    "includeSecrets": false,
+    "storageType": "external"
+  },
+  "cloudflare": {},
+  "database": {
+    "core": {
+      "location": "auto",
+      "jurisdiction": "none"
+    },
+    "pii": {
+      "location": "auto",
+      "jurisdiction": "none"
+    }
+  },
+  "security": {
+    "piiEncryptionEnabled": true,
+    "domainHashEnabled": true
+  },
+  "urls": {
+    "api": {
+      "auto": "https://test-ar-router.sgrastar.workers.dev"
+    },
+    "loginUi": {
+      "sameAsApi": false,
+      "auto": "https://test-ar-login-ui.pages.dev"
+    },
+    "adminUi": {
+      "sameAsApi": false,
+      "auto": "https://test-ar-admin-ui.pages.dev"
+    }
+  }
+}
