@@ -2086,8 +2086,8 @@ export function getHtmlTemplate(
         <div id="tenant-fields">
           <div class="form-group" style="margin-bottom: 0.5rem;">
             <label for="tenant-name" data-i18n="web.form.tenantId">Default Tenant ID</label>
-            <input type="text" id="tenant-name" placeholder="default" value="default" data-i18n-placeholder="web.form.tenantIdPlaceholder">
-            <small style="color: var(--text-muted)" data-i18n="web.form.tenantIdHint">First tenant identifier (lowercase, no spaces)</small>
+            <input type="text" id="tenant-name" placeholder="default" value="" data-i18n-placeholder="web.form.tenantIdPlaceholder">
+            <small style="color: var(--text-muted)" data-i18n="web.form.tenantIdHint">First tenant identifier (lowercase, no spaces). Leave empty to use "default".</small>
             <small id="tenant-workers-note" style="color: #6b7280; display: none;" data-i18n="web.form.tenantIdWorkerNote">
               (Tenant ID is used internally. URL subdomain requires custom domain.)
             </small>
@@ -2096,7 +2096,7 @@ export function getHtmlTemplate(
 
         <div class="form-group" style="margin-bottom: 0;">
           <label for="tenant-display" data-i18n="web.form.tenantDisplay">Tenant Display Name</label>
-          <input type="text" id="tenant-display" placeholder="My Company" value="Default Tenant" data-i18n-placeholder="web.form.tenantDisplayPlaceholder">
+          <input type="text" id="tenant-display" placeholder="My Company" value="" data-i18n-placeholder="web.form.tenantDisplayPlaceholder">
           <small style="color: var(--text-muted)" data-i18n="web.form.tenantDisplayHint">Name shown on login page and consent screen</small>
         </div>
 
@@ -3417,11 +3417,17 @@ export function getHtmlTemplate(
         components,
       };
 
+      // Helper to remove https:// prefix for display in input fields
+      const stripProtocol = (url: string | null | undefined): string => {
+        if (!url) return '';
+        return url.replace(/^https?:[/][/]/, '');
+      };
+
       // Set form values
       document.getElementById('env').value = config.env;
-      document.getElementById('base-domain').value = config.tenant?.baseDomain || config.apiDomain || '';
-      document.getElementById('login-domain').value = config.loginUiDomain || '';
-      document.getElementById('admin-domain').value = config.adminUiDomain || '';
+      document.getElementById('base-domain').value = stripProtocol(config.tenant?.baseDomain || config.apiDomain);
+      document.getElementById('login-domain').value = stripProtocol(config.loginUiDomain);
+      document.getElementById('admin-domain').value = stripProtocol(config.adminUiDomain);
       document.getElementById('tenant-name').value = config.tenant?.name || 'default';
       document.getElementById('tenant-display').value = config.tenant?.displayName || 'Default Tenant';
       document.getElementById('naked-domain').checked = config.tenant?.nakedDomain || false;
@@ -3475,7 +3481,7 @@ export function getHtmlTemplate(
       const env = document.getElementById('env').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || '{env}';
       const baseDomain = document.getElementById('base-domain').value.trim();
       const nakedDomain = document.getElementById('naked-domain').checked;
-      const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
+      const tenantName = document.getElementById('tenant-name').value.trim();
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
 
@@ -3512,7 +3518,9 @@ export function getHtmlTemplate(
         if (nakedDomain) {
           document.getElementById('preview-issuer').textContent = 'https://' + baseDomain;
         } else {
-          document.getElementById('preview-issuer').textContent = 'https://' + tenantName + '.' + baseDomain;
+          // Multi-tenant: show placeholder or actual tenant name
+          const tenantDisplay = tenantName || '{tenant}';
+          document.getElementById('preview-issuer').textContent = 'https://' + tenantDisplay + '.' + baseDomain;
         }
       } else {
         // Workers.dev - no tenant prefix (wildcard subdomains not supported)
@@ -3752,12 +3760,9 @@ export function getHtmlTemplate(
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
 
-      // API domain = base domain or null (workers.dev fallback)
-      const apiDomain = baseDomain || null;
-
       config = {
         env,
-        apiDomain,
+        apiDomain: baseDomain || null,
         loginUiDomain: loginDomain || null,
         adminUiDomain: adminDomain || null,
         tenant: {
@@ -3787,13 +3792,13 @@ export function getHtmlTemplate(
         method: 'POST',
         body: {
           env,
-          apiDomain,
+          apiDomain: config.apiDomain,
           loginUiDomain: loginDomain,
           adminUiDomain: adminDomain,
           tenant: config.tenant,
           components: config.components,
           zoneId: domainZoneId || null,
-          customDomainBinding: apiDomain ? customDomainBinding : false,
+          customDomainBinding: config.apiDomain ? customDomainBinding : false,
         },
       });
 
@@ -4588,6 +4593,7 @@ export function getHtmlTemplate(
           displayName: config.tenant?.displayName || 'Default Tenant',
           multiTenant: config.tenant?.multiTenant || false,
           baseDomain: config.tenant?.baseDomain || undefined,
+          nakedDomain: config.tenant?.nakedDomain ?? false,
           userIdFormat: config.tenant?.userIdFormat || 'nanoid',
           primaryTenant: config.tenant?.primaryTenant || undefined,
         },
@@ -5440,28 +5446,37 @@ export function getHtmlTemplate(
           return;
         }
 
-        // Find router worker to construct base URL
-        const router = selectedEnvForDetail.workers.find(w =>
-          w.name.toLowerCase().includes('router')
-        );
-
+        // Determine base URL: prefer custom domain from config, fallback to workers.dev
         let baseUrl = '';
-        if (router && router.name) {
-          // Construct URL from worker name with subdomain
-          // Format: https://{worker-name}.{subdomain}.workers.dev
-          if (workersSubdomain) {
-            baseUrl = 'https://' + router.name + '.' + workersSubdomain + '.workers.dev';
-          } else {
-            // Fallback without subdomain (shouldn't happen in practice)
-            baseUrl = 'https://' + router.name + '.workers.dev';
+
+        // Try to load config to get custom API domain
+        try {
+          const configResponse = await api('/config?env=' + encodeURIComponent(selectedEnvForDetail.env));
+          if (configResponse.success && configResponse.config) {
+            baseUrl = configResponse.config.urls?.api?.custom || configResponse.config.urls?.api?.auto || '';
           }
-        } else {
-          // Fallback - ask for URL
-          baseUrl = prompt('Enter the base URL for the router (e.g., https://myenv-ar-router.subdomain.workers.dev):');
-          if (!baseUrl) {
-            btn.disabled = false;
-            btn.textContent = '🔐 Start Admin Account Setup with Passkey';
-            return;
+        } catch (e) {
+          // Config not available, will fallback to workers.dev
+        }
+
+        // Fallback to workers.dev URL if no config URL found
+        if (!baseUrl) {
+          const router = selectedEnvForDetail.workers.find(w =>
+            w.name.toLowerCase().includes('router')
+          );
+          if (router && router.name) {
+            if (workersSubdomain) {
+              baseUrl = 'https://' + router.name + '.' + workersSubdomain + '.workers.dev';
+            } else {
+              baseUrl = 'https://' + router.name + '.workers.dev';
+            }
+          } else {
+            baseUrl = prompt('Enter the base URL for the router (e.g., https://myenv-ar-router.subdomain.workers.dev):');
+            if (!baseUrl) {
+              btn.disabled = false;
+              btn.textContent = '🔐 Start Admin Account Setup with Passkey';
+              return;
+            }
           }
         }
 
@@ -5471,6 +5486,7 @@ export function getHtmlTemplate(
           body: JSON.stringify({
             kvNamespaceId: configKv.id,
             baseUrl: baseUrl,
+            env: selectedEnvForDetail.env,
           }),
         });
 

@@ -120,7 +120,8 @@ export function validateHostHeader(
   }
 
   // Extract tenant subdomain or use PRIMARY_TENANT_ID for naked domain
-  const hostname = host.split(':')[0]; // Remove port
+  // Normalize to lowercase per RFC 7230 (Host header is case-insensitive)
+  const hostname = host.split(':')[0].toLowerCase(); // Remove port, normalize case
 
   // Check if hostname matches BASE_DOMAIN
   if (hostname === env.BASE_DOMAIN) {

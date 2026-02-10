@@ -116,6 +116,12 @@ export const TenantConfigSchema = z.object({
     .max(63)
     .regex(/^[a-z0-9-]+$/)
     .optional(),
+  /**
+   * Use naked domain as issuer URL.
+   * When true: https://example.com (no tenant subdomain)
+   * When false: https://tenant.example.com (with tenant subdomain)
+   */
+  nakedDomain: z.boolean().default(false).optional(),
 });
 
 // =============================================================================

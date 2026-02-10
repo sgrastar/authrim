@@ -1,115 +1,115 @@
 {
   "version": "1.0.0",
-  "createdAt": "2026-02-08T15:07:39.486Z",
-  "updatedAt": "2026-02-08T15:11:53.955Z",
+  "createdAt": "2026-02-09T11:19:40.787Z",
+  "updatedAt": "2026-02-09T11:23:29.112Z",
   "env": "test",
   "d1": {
     "DB": {
       "name": "test-authrim-core-db",
-      "id": "f040dae3-fbef-4133-9d52-437d16e98485"
+      "id": "687149ce-cff8-4f54-b831-4cfa978f5151"
     },
     "DB_PII": {
       "name": "test-authrim-pii-db",
-      "id": "329db58a-fa9e-4ecc-a6a8-2926a3f3d3f7"
+      "id": "e6164b63-e081-4b94-a01b-c727a86b01a6"
     },
     "DB_ADMIN": {
       "name": "test-authrim-admin-db",
-      "id": "41be882a-9e95-4f35-89ab-9b2724056acb"
+      "id": "5db02377-41a6-4b3a-9fbd-73be37d55d18"
     }
   },
   "kv": {
     "CLIENTS_CACHE": {
       "name": "TEST-CLIENTS_CACHE",
-      "id": "121437d24a344062a675d4a16fa51641"
+      "id": "f92272af7afe4038be7de8f2e80add25"
     },
     "INITIAL_ACCESS_TOKENS": {
       "name": "TEST-INITIAL_ACCESS_TOKENS",
-      "id": "73cdf3e3a0844e5baac3fab162932fd2"
+      "id": "04c0f993a6024d04abc474fb5f8a4075"
     },
     "SETTINGS": {
       "name": "TEST-SETTINGS",
-      "id": "97615b695ef54883864d825b84fbe7b8"
+      "id": "f2fee92e071a4f0baddf5bfa234d4372"
     },
     "REBAC_CACHE": {
       "name": "TEST-REBAC_CACHE",
-      "id": "03b1d257e1b64c02b94b03ab4eb4aafc"
+      "id": "ce1400b907fc4f5fa18351103c772906"
     },
     "USER_CACHE": {
       "name": "TEST-USER_CACHE",
-      "id": "d1f17d31f5f044eeac58ede7322c1c2b"
+      "id": "ac677830a44d4b1ebc513715096b26f7"
     },
     "AUTHRIM_CONFIG": {
       "name": "TEST-AUTHRIM_CONFIG",
-      "id": "7ef781d26ce3416fb0b1ed205b0df9b0"
+      "id": "314d328eff7f4601aa1160459e60e351"
     },
     "STATE_STORE": {
       "name": "TEST-STATE_STORE",
-      "id": "c5296a82c3ef4ad98ed7dd22f533cb7f"
+      "id": "67314570b76740eb894ee09d2b20d12d"
     },
     "CONSENT_CACHE": {
       "name": "TEST-CONSENT_CACHE",
-      "id": "15051161ee134d888f0fab4938627991"
+      "id": "9b8e995906224e7da965cf41ad7e766e"
     }
   },
   "workers": {
     "ar-lib-core": {
       "name": "test-ar-lib-core",
-      "deployedAt": "2026-02-08T15:09:42.662Z",
+      "deployedAt": "2026-02-09T11:21:14.756Z",
       "version": "0.1.10"
     },
     "ar-discovery": {
       "name": "test-ar-discovery",
-      "deployedAt": "2026-02-08T15:09:48.011Z",
+      "deployedAt": "2026-02-09T11:21:20.099Z",
       "version": "0.1.10"
     },
     "ar-auth": {
       "name": "test-ar-auth",
-      "deployedAt": "2026-02-08T15:09:55.916Z",
+      "deployedAt": "2026-02-09T11:21:30.530Z",
       "version": "0.1.10"
     },
     "ar-token": {
       "name": "test-ar-token",
-      "deployedAt": "2026-02-08T15:10:09.960Z",
+      "deployedAt": "2026-02-09T11:21:39.591Z",
       "version": "0.1.10"
     },
     "ar-userinfo": {
       "name": "test-ar-userinfo",
-      "deployedAt": "2026-02-08T15:10:17.163Z",
+      "deployedAt": "2026-02-09T11:21:45.794Z",
       "version": "0.1.10"
     },
     "ar-management": {
       "name": "test-ar-management",
-      "deployedAt": "2026-02-08T15:10:26.101Z",
+      "deployedAt": "2026-02-09T11:21:55.715Z",
       "version": "0.1.10"
     },
     "ar-async": {
       "name": "test-ar-async",
-      "deployedAt": "2026-02-08T15:10:30.527Z",
+      "deployedAt": "2026-02-09T11:22:01.935Z",
       "version": "0.1.10"
     },
     "ar-policy": {
       "name": "test-ar-policy",
-      "deployedAt": "2026-02-08T15:10:35.620Z",
+      "deployedAt": "2026-02-09T11:22:07.967Z",
       "version": "0.1.10"
     },
     "ar-saml": {
       "name": "test-ar-saml",
-      "deployedAt": "2026-02-08T15:10:41.187Z",
+      "deployedAt": "2026-02-09T11:22:14.408Z",
       "version": "0.1.10"
     },
     "ar-bridge": {
       "name": "test-ar-bridge",
-      "deployedAt": "2026-02-08T15:10:47.129Z",
+      "deployedAt": "2026-02-09T11:22:23.617Z",
       "version": "0.1.10"
     },
     "ar-vc": {
       "name": "test-ar-vc",
-      "deployedAt": "2026-02-08T15:10:53.207Z",
+      "deployedAt": "2026-02-09T11:22:29.395Z",
       "version": "0.1.10"
     },
     "ar-router": {
       "name": "test-ar-router",
-      "deployedAt": "2026-02-08T15:11:00.219Z",
+      "deployedAt": "2026-02-09T11:22:37.273Z",
       "version": "0.1.10"
     }
   }

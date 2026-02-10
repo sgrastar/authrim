@@ -1,16 +1,16 @@
 {
   "version": "1.0.0",
-  "createdAt": "2026-02-08T15:07:39.487Z",
-  "updatedAt": "2026-02-08T15:07:39.487Z",
+  "createdAt": "2026-02-09T11:19:40.788Z",
+  "updatedAt": "2026-02-09T11:19:40.788Z",
   "environment": {
     "prefix": "test"
   },
   "tenant": {
     "name": "default",
-    "displayName": "Default Tenant",
+    "displayName": "TEST",
     "multiTenant": true,
     "userIdFormat": "nanoid",
-    "baseDomain": "authrim.com"
+    "baseDomain": "test.authrim.com"
   },
   "components": {
     "api": true,
@@ -84,6 +84,7 @@
       "auto": "https://test-ar-login-ui.pages.dev"
     },
     "adminUi": {
+      "custom": "https://test-admin.authrim.com",
       "sameAsApi": false,
       "auto": "https://test-ar-admin-ui.pages.dev"
     }

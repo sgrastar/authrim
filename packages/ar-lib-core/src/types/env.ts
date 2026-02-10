@@ -178,6 +178,7 @@ export interface Env {
   BASE_DOMAIN?: string; // Base domain for multi-tenant mode (e.g., "authrim.com", "example.com")
   DEFAULT_TENANT_ID?: string; // Default tenant ID (default: "default")
   PRIMARY_TENANT_ID?: string; // Tenant ID for naked domain access (e.g., example.com → tenantA)
+  NAKED_DOMAIN_AS_ISSUER?: string; // "true" to use naked domain as issuer (e.g., https://example.com instead of https://tenant.example.com)
 
   // Check API (Phase 8.3)
   ENABLE_CHECK_API?: string; // "true" to enable Check API endpoints

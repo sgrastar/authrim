@@ -104,7 +104,20 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // =========================================================================
 
   // Build issuer URL for this tenant
-  const issuer = buildIssuerUrl(c.env, tenantId);
+  // Special handling: if NAKED_DOMAIN_AS_ISSUER is enabled and accessing via naked domain,
+  // use naked domain as issuer (e.g., https://test.authrim.com instead of https://default.test.authrim.com)
+  let issuer: string;
+  const host = c.req.header('Host');
+  const hostname = host?.split(':')[0]; // Remove port
+  const useNakedDomainAsIssuer = c.env.NAKED_DOMAIN_AS_ISSUER === 'true';
+
+  if (useNakedDomainAsIssuer && c.env.BASE_DOMAIN && hostname === c.env.BASE_DOMAIN) {
+    // Naked domain access with NAKED_DOMAIN_AS_ISSUER enabled: use naked domain as issuer
+    issuer = `https://${c.env.BASE_DOMAIN}`;
+  } else {
+    // Subdomain access or single-tenant: build from tenant ID
+    issuer = buildIssuerUrl(c.env, tenantId);
+  }
 
   // Load dynamic configuration from SETTINGS KV
   let oidcConfig: OIDCConfig = {};

@@ -407,24 +407,33 @@ export function createApiRoutes(): Hono {
             userIdFormat: tenant.userIdFormat || 'nanoid',
             baseDomain: tenant.baseDomain,
             primaryTenant: tenant.primaryTenant,
+            nakedDomain: tenant.nakedDomain ?? false,
           };
         }
+
+        // Helper function to add https:// if not present
+        const ensureHttps = (domain: string | null): string | null => {
+          if (!domain) return null;
+          return domain.startsWith('http://') || domain.startsWith('https://')
+            ? domain
+            : `https://${domain}`;
+        };
 
         // Update URLs with domain configuration
         config.urls = {
           api: {
-            custom: apiDomain || null,
+            custom: ensureHttps(apiDomain),
             auto: `https://${env}-ar-router.workers.dev`,
             zoneId: zoneId || null,
             customDomainBinding: customDomainBinding ?? false,
           },
           loginUi: {
-            custom: loginUiDomain || null,
+            custom: ensureHttps(loginUiDomain),
             auto: `https://${env}-ar-login-ui.pages.dev`,
             sameAsApi: false,
           },
           adminUi: {
-            custom: adminUiDomain || null,
+            custom: ensureHttps(adminUiDomain),
             auto: `https://${env}-ar-admin-ui.pages.dev`,
             sameAsApi: false,
           },
@@ -673,9 +682,20 @@ export function createApiRoutes(): Hono {
         const adminUiUrl = `https://${env}-ar-admin-ui.pages.dev`;
 
         config.urls = {
-          api: { auto: apiUrl },
-          loginUi: { sameAsApi: false, auto: loginUiUrl },
-          adminUi: { sameAsApi: false, auto: adminUiUrl },
+          api: {
+            ...config.urls?.api,
+            auto: apiUrl,
+          },
+          loginUi: {
+            sameAsApi: false,
+            ...config.urls?.loginUi,
+            auto: loginUiUrl,
+          },
+          adminUi: {
+            sameAsApi: false,
+            ...config.urls?.adminUi,
+            auto: adminUiUrl,
+          },
         };
         addProgress(`Configured URLs: API=${apiUrl}`);
 
@@ -1100,24 +1120,13 @@ export function createApiRoutes(): Hono {
 
             const { saveUiEnv } = await import('../core/ui-env.js');
             try {
-              if (useDirectMode) {
-                await saveUiEnv(uiEnvPath, {
-                  PUBLIC_API_BASE_URL: apiBaseUrl, // Frontend sends directly to backend
-                  API_BACKEND_URL: '', // Proxy disabled
-                  PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
-                  PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
-                });
-                addProgress(`ui.env synced (direct mode: ${apiBaseUrl})`);
-                addProgress(`Custom domains detected - Safari ITP proxy disabled`);
-              } else {
-                await saveUiEnv(uiEnvPath, {
-                  PUBLIC_API_BASE_URL: '', // Empty for proxy mode (same-origin)
-                  API_BACKEND_URL: apiBaseUrl, // Server-side proxy target
-                  PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
-                  PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
-                });
-                addProgress(`ui.env synced (proxy mode: ${apiBaseUrl})`);
-              }
+              await saveUiEnv(uiEnvPath, {
+                PUBLIC_API_BASE_URL: apiBaseUrl,
+                API_BACKEND_URL: useDirectMode ? '' : apiBaseUrl,
+                PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
+                PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
+              });
+              addProgress(`ui.env synced (API: ${apiBaseUrl})`);
             } catch (syncError) {
               addProgress(`⚠️  Could not sync ui.env: ${syncError}`);
             }
@@ -1370,7 +1379,7 @@ export function createApiRoutes(): Hono {
     return withLock(async () => {
       try {
         const body = await c.req.json();
-        const { kvNamespaceId, baseUrl } = body;
+        const { kvNamespaceId, baseUrl, env: envName } = body;
 
         if (!kvNamespaceId || !/^[a-f0-9]{32}$/i.test(kvNamespaceId)) {
           return c.json({ success: false, error: 'Invalid KV namespace ID' }, 400);
@@ -1399,8 +1408,30 @@ export function createApiRoutes(): Hono {
           return c.json({ success: false, error: result.error || 'Failed to generate token' }, 500);
         }
 
+        // Resolve the best base URL: prefer custom API domain from config
+        let resolvedBaseUrl = baseUrl;
+        if (envName) {
+          try {
+            const baseDir = findAuthrimBaseDir(process.cwd());
+            const resolved = resolvePaths({ baseDir, env: envName });
+            const configPath =
+              resolved.type === 'new'
+                ? (resolved.paths as EnvironmentPaths).config
+                : (resolved.paths as LegacyPaths).config;
+            if (existsSync(configPath)) {
+              const cfg = JSON.parse(await readFile(configPath, 'utf-8'));
+              const configBaseUrl = cfg?.urls?.api?.custom || cfg?.urls?.api?.auto;
+              if (configBaseUrl) {
+                resolvedBaseUrl = configBaseUrl;
+              }
+            }
+          } catch {
+            // Config not available, use the provided baseUrl
+          }
+        }
+
         // Construct setup URL
-        const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
+        const cleanBaseUrl = resolvedBaseUrl.replace(/\/+$/, '');
         const setupUrl = `${cleanBaseUrl}/admin-init-setup?token=${result.token}`;
 
         return c.json({
@@ -1908,21 +1939,12 @@ export function createApiRoutes(): Hono {
 
               const { saveUiEnv } = await import('../core/ui-env.js');
               try {
-                if (useDirectMode) {
-                  await saveUiEnv(uiEnvPath, {
-                    PUBLIC_API_BASE_URL: apiBaseUrl,
-                    API_BACKEND_URL: '',
-                    PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
-                    PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
-                  });
-                } else {
-                  await saveUiEnv(uiEnvPath, {
-                    PUBLIC_API_BASE_URL: '',
-                    API_BACKEND_URL: apiBaseUrl,
-                    PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
-                    PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
-                  });
-                }
+                await saveUiEnv(uiEnvPath, {
+                  PUBLIC_API_BASE_URL: apiBaseUrl,
+                  API_BACKEND_URL: useDirectMode ? '' : apiBaseUrl,
+                  PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
+                  PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
+                });
                 addProgress(`ui.env synced for ${componentName}`);
               } catch {
                 addProgress(`Warning: Could not sync ui.env`);
