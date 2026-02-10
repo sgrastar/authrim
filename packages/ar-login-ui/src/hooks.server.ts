@@ -7,8 +7,25 @@
  * - Accept-Language based locale detection
  */
 
+import { PUBLIC_API_BASE_URL } from '$env/static/public';
 import type { Handle } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
+
+/**
+ * Build connect-src directive with API origin if cross-origin
+ */
+function buildConnectSrc(): string {
+	const apiBaseUrl = PUBLIC_API_BASE_URL;
+	if (apiBaseUrl) {
+		try {
+			const apiOrigin = new URL(apiBaseUrl).origin;
+			return `connect-src 'self' ${apiOrigin}`;
+		} catch {
+			// Invalid URL, fall back to self only
+		}
+	}
+	return "connect-src 'self'";
+}
 
 /**
  * Security headers hook
@@ -19,7 +36,7 @@ const securityHeaders: Handle = async ({ event, resolve }) => {
 
 	// Content Security Policy
 	// - 'unsafe-inline' required for SvelteKit style injection and inline scripts
-	// - connect-src 'self' allows API calls to same origin
+	// - connect-src includes API origin for cross-origin API calls
 	// - img-src allows HTTPS and data: URIs (QR codes, dynamic images)
 	response.headers.set(
 		'Content-Security-Policy',
@@ -28,7 +45,7 @@ const securityHeaders: Handle = async ({ event, resolve }) => {
 			"script-src 'self' 'unsafe-inline'",
 			"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
 			"img-src 'self' https: data:",
-			"connect-src 'self'",
+			buildConnectSrc(),
 			"font-src 'self' https://fonts.gstatic.com",
 			"frame-ancestors 'self'",
 			"base-uri 'self'",

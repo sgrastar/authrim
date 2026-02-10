@@ -172,6 +172,15 @@ const ru: Translations = {
   'domain.customDesc': 'Использовать свой домен',
   'domain.customPrompt': 'Введите собственный домен (например, auth.example.com)',
   'domain.customValidation': 'Пожалуйста, введите корректный домен (например, auth.example.com)',
+  'domain.checkingZone': 'Проверка зоны Cloudflare для {{domain}}...',
+  'domain.zoneFound': "Зона '{{zone}}' найдена (статус: {{status}})",
+  'domain.zoneNotFound': "Зона '{{zone}}' не найдена в вашем аккаунте Cloudflare",
+  'domain.zoneNotFoundHint':
+    'Маршрутизация пользовательского домена требует, чтобы зона была сначала добавлена в Cloudflare.',
+  'domain.zoneCheckFailed': 'Не удалось проверить зону',
+  'domain.zoneCheckSkipped': 'Проверка зоны пропущена, продолжение настройки...',
+  'domain.continueWithoutZone': 'Продолжить без проверки зоны?',
+  'domain.configureBinding': 'Настроить привязку пользовательского домена для Workers',
   'domain.issuerUrl': 'URL издателя: {{url}}',
   'domain.apiDomain': 'Домен API / издателя (например, auth.example.com)',
   'domain.loginUiDomain': 'Домен UI для входа (Enter для пропуска)',
@@ -993,6 +1002,14 @@ const ru: Translations = {
   'web.envDetail.updateProgress': 'Прогресс обновления:',
   'web.envDetail.updatesAvailable': '{{count}} обновление(й) доступно',
   'web.envDetail.allUpToDate': 'Всё актуально',
+
+  'web.envDetail.action': 'Действие',
+
+  // Web UI Update Section
+  'web.envDetail.uiUpdate': 'Обновить UI (Pages)',
+  'web.envDetail.uiUpdateDesc':
+    'Обновить Admin UI или Login UI по отдельности. Они развёрнуты на Cloudflare Pages.',
+  'web.envDetail.updateNow': 'Обновить',
 
   // Web UI Delete Section
   'web.delete.title': 'Удаление окружения',

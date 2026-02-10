@@ -207,17 +207,10 @@ program
 
           const { saveUiEnv } = await import('./core/ui-env.js');
           try {
-            if (useDirectMode) {
-              await saveUiEnv(uiEnvPath, {
-                PUBLIC_API_BASE_URL: apiBaseUrl,
-                API_BACKEND_URL: '',
-              });
-            } else {
-              await saveUiEnv(uiEnvPath, {
-                PUBLIC_API_BASE_URL: '',
-                API_BACKEND_URL: apiBaseUrl,
-              });
-            }
+            await saveUiEnv(uiEnvPath, {
+              PUBLIC_API_BASE_URL: apiBaseUrl,
+              API_BACKEND_URL: useDirectMode ? '' : apiBaseUrl,
+            });
           } catch {
             console.log(chalk.yellow('  Warning: Could not sync ui.env'));
           }

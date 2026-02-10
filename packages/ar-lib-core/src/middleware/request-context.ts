@@ -6,9 +6,7 @@
  * - Tenant ID (resolved from Host header in multi-tenant mode)
  * - Structured logger instance
  *
- * Multi-tenant mode is enabled when:
- * - BASE_DOMAIN is set
- * - ENABLE_TENANT_ISOLATION = 'true'
+ * Multi-tenant mode is enabled when BASE_DOMAIN is set.
  *
  * Should be added early in the middleware chain so all subsequent
  * handlers have access to the context.

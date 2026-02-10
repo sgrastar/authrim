@@ -94,9 +94,10 @@ deploy_package() {
     pnpm --filter="@authrim/$pkg" build
     echo ""
 
-    # Deploy to Cloudflare Pages
-    echo "📤 Deploying to Cloudflare Pages..."
-    wrangler pages deploy "packages/$pkg/.svelte-kit/cloudflare" --project-name="$project_name" --commit-dirty=true
+    # Deploy to Cloudflare Pages (--branch=main ensures Production deployment
+    # regardless of the current git branch, so custom domains work correctly)
+    echo "📤 Deploying to Cloudflare Pages (Production)..."
+    wrangler pages deploy "packages/$pkg/.svelte-kit/cloudflare" --project-name="$project_name" --commit-dirty=true --branch=main
 
     echo ""
     echo "✅ $pkg deployment complete!"

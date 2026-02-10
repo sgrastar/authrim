@@ -2060,6 +2060,16 @@ export function getHtmlTemplate(
           <label for="base-domain" data-i18n="web.form.baseDomain">Base Domain (API Domain)</label>
           <input type="text" id="base-domain" placeholder="oidc.example.com" data-i18n-placeholder="web.form.baseDomainPlaceholder">
           <small style="color: var(--text-muted)" data-i18n="web.form.baseDomainHint">Custom domain for Authrim. Leave empty to use workers.dev</small>
+          <div id="domain-check-row" style="display: none; margin-top: 0.5rem; align-items: center; gap: 0.5rem;">
+            <button type="button" id="check-domain-btn" class="btn btn-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.85rem;" data-i18n="domain.checkingZone" data-i18n-skip="true">
+              Check Domain
+            </button>
+            <span id="domain-check-status" style="font-size: 0.85rem;"></span>
+          </div>
+          <label class="checkbox-item" id="custom-domain-binding-row" style="display: none; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
+            <input type="checkbox" id="custom-domain-binding" checked>
+            <span data-i18n="domain.configureBinding">Configure custom domain binding for Workers</span>
+          </label>
           <label class="checkbox-item" id="naked-domain-label" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
             <input type="checkbox" id="naked-domain">
             <span data-i18n="web.form.nakedDomain">Exclude tenant name from URL</span>
@@ -2076,8 +2086,8 @@ export function getHtmlTemplate(
         <div id="tenant-fields">
           <div class="form-group" style="margin-bottom: 0.5rem;">
             <label for="tenant-name" data-i18n="web.form.tenantId">Default Tenant ID</label>
-            <input type="text" id="tenant-name" placeholder="default" value="default" data-i18n-placeholder="web.form.tenantIdPlaceholder">
-            <small style="color: var(--text-muted)" data-i18n="web.form.tenantIdHint">First tenant identifier (lowercase, no spaces)</small>
+            <input type="text" id="tenant-name" placeholder="default" value="" data-i18n-placeholder="web.form.tenantIdPlaceholder">
+            <small style="color: var(--text-muted)" data-i18n="web.form.tenantIdHint">First tenant identifier (lowercase, no spaces). Leave empty to use "default".</small>
             <small id="tenant-workers-note" style="color: #6b7280; display: none;" data-i18n="web.form.tenantIdWorkerNote">
               (Tenant ID is used internally. URL subdomain requires custom domain.)
             </small>
@@ -2086,8 +2096,15 @@ export function getHtmlTemplate(
 
         <div class="form-group" style="margin-bottom: 0;">
           <label for="tenant-display" data-i18n="web.form.tenantDisplay">Tenant Display Name</label>
-          <input type="text" id="tenant-display" placeholder="My Company" value="Default Tenant" data-i18n-placeholder="web.form.tenantDisplayPlaceholder">
+          <input type="text" id="tenant-display" placeholder="My Company" value="" data-i18n-placeholder="web.form.tenantDisplayPlaceholder">
           <small style="color: var(--text-muted)" data-i18n="web.form.tenantDisplayHint">Name shown on login page and consent screen</small>
+        </div>
+
+        <!-- Primary Tenant (for naked domain) -->
+        <div class="form-group" style="margin-bottom: 0.75rem;">
+          <label for="primary-tenant">Primary Tenant (for naked domain)</label>
+          <input type="text" id="primary-tenant" placeholder="Leave empty to use default tenant">
+          <small style="color: var(--text-muted)">Tenant ID to use when accessing the naked domain (e.g., example.com). Leave empty to use the default tenant above.</small>
         </div>
 
         <div class="form-group" style="margin-bottom: 0;">
@@ -3400,16 +3417,25 @@ export function getHtmlTemplate(
         components,
       };
 
+      // Helper to remove https:// prefix for display in input fields
+      const stripProtocol = (url: string | null | undefined): string => {
+        if (!url) return '';
+        return url.replace(/^https?:[/][/]/, '');
+      };
+
       // Set form values
       document.getElementById('env').value = config.env;
-      document.getElementById('base-domain').value = config.tenant?.baseDomain || config.apiDomain || '';
-      document.getElementById('login-domain').value = config.loginUiDomain || '';
-      document.getElementById('admin-domain').value = config.adminUiDomain || '';
+      document.getElementById('base-domain').value = stripProtocol(config.tenant?.baseDomain || config.apiDomain);
+      document.getElementById('login-domain').value = stripProtocol(config.loginUiDomain);
+      document.getElementById('admin-domain').value = stripProtocol(config.adminUiDomain);
       document.getElementById('tenant-name').value = config.tenant?.name || 'default';
       document.getElementById('tenant-display').value = config.tenant?.displayName || 'Default Tenant';
       document.getElementById('naked-domain').checked = config.tenant?.nakedDomain || false;
       if (document.getElementById('user-id-format')) {
         document.getElementById('user-id-format').value = config.tenant?.userIdFormat || 'nanoid';
+      }
+      if (document.getElementById('primary-tenant')) {
+        document.getElementById('primary-tenant').value = config.tenant?.primaryTenant || '';
       }
 
       // Set component checkboxes
@@ -3427,6 +3453,14 @@ export function getHtmlTemplate(
       }
       if (document.getElementById('comp-vc')) {
         document.getElementById('comp-vc').checked = components.vc === true;
+      }
+
+      // Restore domain check UI if custom domain is set
+      const loadedBaseDomain = document.getElementById('base-domain').value.trim();
+      if (loadedBaseDomain && /^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$/i.test(loadedBaseDomain)) {
+        document.getElementById('domain-check-row').style.display = 'flex';
+        // Auto-trigger zone check for loaded domain
+        setTimeout(() => document.getElementById('check-domain-btn').click(), 300);
       }
 
       // Trigger env input to update preview/default labels
@@ -3447,7 +3481,7 @@ export function getHtmlTemplate(
       const env = document.getElementById('env').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || '{env}';
       const baseDomain = document.getElementById('base-domain').value.trim();
       const nakedDomain = document.getElementById('naked-domain').checked;
-      const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
+      const tenantName = document.getElementById('tenant-name').value.trim();
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
 
@@ -3484,7 +3518,9 @@ export function getHtmlTemplate(
         if (nakedDomain) {
           document.getElementById('preview-issuer').textContent = 'https://' + baseDomain;
         } else {
-          document.getElementById('preview-issuer').textContent = 'https://' + tenantName + '.' + baseDomain;
+          // Multi-tenant: show placeholder or actual tenant name
+          const tenantDisplay = tenantName || '{tenant}';
+          document.getElementById('preview-issuer').textContent = 'https://' + tenantDisplay + '.' + baseDomain;
         }
       } else {
         // Workers.dev - no tenant prefix (wildcard subdomains not supported)
@@ -3568,6 +3604,68 @@ export function getHtmlTemplate(
     document.getElementById('base-domain').addEventListener('input', () => {
       updateBaseDomainUI();
       updatePreview();
+      // Show/hide domain check row
+      const domainCheckRow = document.getElementById('domain-check-row');
+      const baseDomain = document.getElementById('base-domain').value.trim();
+      if (baseDomain && /^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$/i.test(baseDomain)) {
+        domainCheckRow.style.display = 'flex';
+      } else {
+        domainCheckRow.style.display = 'none';
+        document.getElementById('domain-check-status').textContent = '';
+        document.getElementById('custom-domain-binding-row').style.display = 'none';
+      }
+    });
+
+    // Check Domain button handler
+    let domainZoneId = null;
+    document.getElementById('check-domain-btn').addEventListener('click', async () => {
+      const domain = document.getElementById('base-domain').value.trim();
+      if (!domain) return;
+
+      const statusEl = document.getElementById('domain-check-status');
+      const bindingRow = document.getElementById('custom-domain-binding-row');
+      statusEl.textContent = t('domain.checkingZone', { domain });
+      statusEl.style.color = 'var(--text-muted)';
+      domainZoneId = null;
+
+      try {
+        const result = await api('/cloudflare/check-zone', {
+          method: 'POST',
+          body: { domain },
+        });
+
+        if (result.found) {
+          statusEl.textContent = '✓ ' + t('domain.zoneFound', { zone: result.zone.name, status: result.zone.status });
+          statusEl.style.color = 'var(--success, #22c55e)';
+          bindingRow.style.display = 'flex';
+          domainZoneId = result.zone.id;
+        } else {
+          const errorMsg = result.error
+            ? '⚠ ' + t('domain.zoneCheckFailed') + ': ' + result.error
+            : '⚠ ' + t('domain.zoneNotFound', { zone: domain });
+          statusEl.textContent = errorMsg;
+          statusEl.style.color = 'var(--warning, #d97706)';
+          bindingRow.style.display = 'none';
+          domainZoneId = null;
+        }
+      } catch (e) {
+        statusEl.textContent = '⚠ ' + t('domain.zoneCheckFailed');
+        statusEl.style.color = 'var(--warning, #d97706)';
+        bindingRow.style.display = 'none';
+        domainZoneId = null;
+      }
+    });
+
+    // Auto-check domain on blur (debounced)
+    let domainCheckTimer;
+    document.getElementById('base-domain').addEventListener('blur', () => {
+      clearTimeout(domainCheckTimer);
+      domainCheckTimer = setTimeout(() => {
+        const domain = document.getElementById('base-domain').value.trim();
+        if (domain && /^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$/i.test(domain)) {
+          document.getElementById('check-domain-btn').click();
+        }
+      }, 500);
     });
 
     // Initial UI state
@@ -3658,24 +3756,23 @@ export function getHtmlTemplate(
       const tenantName = document.getElementById('tenant-name').value.trim() || 'default';
       const tenantDisplayName = document.getElementById('tenant-display').value.trim() || 'Default Tenant';
       const userIdFormat = document.getElementById('user-id-format').value || 'nanoid';
+      const primaryTenant = document.getElementById('primary-tenant').value.trim() || undefined;
       const loginDomain = document.getElementById('login-domain').value.trim();
       const adminDomain = document.getElementById('admin-domain').value.trim();
 
-      // API domain = base domain or null (workers.dev fallback)
-      const apiDomain = baseDomain || null;
-
       config = {
         env,
-        apiDomain,
+        apiDomain: baseDomain || null,
         loginUiDomain: loginDomain || null,
         adminUiDomain: adminDomain || null,
         tenant: {
           name: nakedDomain ? null : tenantName,  // null for naked domain
           displayName: tenantDisplayName,
-          multiTenant: baseDomain ? true : false,  // Only multi-tenant with custom domain
+          multiTenant: baseDomain ? true : false,  // Always multi-tenant when baseDomain is set
           baseDomain: baseDomain || undefined,
           nakedDomain: baseDomain ? nakedDomain : false,
           userIdFormat: userIdFormat,
+          primaryTenant: primaryTenant,
         },
         components: {
           api: true,
@@ -3690,15 +3787,18 @@ export function getHtmlTemplate(
       };
 
       // Create default config with component settings
+      const customDomainBinding = document.getElementById('custom-domain-binding')?.checked ?? false;
       await api('/config/default', {
         method: 'POST',
         body: {
           env,
-          apiDomain,
+          apiDomain: config.apiDomain,
           loginUiDomain: loginDomain,
           adminUiDomain: adminDomain,
           tenant: config.tenant,
           components: config.components,
+          zoneId: domainZoneId || null,
+          customDomainBinding: config.apiDomain ? customDomainBinding : false,
         },
       });
 
@@ -4493,7 +4593,9 @@ export function getHtmlTemplate(
           displayName: config.tenant?.displayName || 'Default Tenant',
           multiTenant: config.tenant?.multiTenant || false,
           baseDomain: config.tenant?.baseDomain || undefined,
+          nakedDomain: config.tenant?.nakedDomain ?? false,
           userIdFormat: config.tenant?.userIdFormat || 'nanoid',
+          primaryTenant: config.tenant?.primaryTenant || undefined,
         },
         components: config.components || {
           api: true,
@@ -4526,6 +4628,9 @@ export function getHtmlTemplate(
       // Remove undefined values for cleaner output
       if (!configToSave.tenant.baseDomain) {
         delete configToSave.tenant.baseDomain;
+      }
+      if (!configToSave.tenant.primaryTenant) {
+        delete configToSave.tenant.primaryTenant;
       }
       if (!configToSave.features.email.fromAddress) {
         delete configToSave.features.email.fromAddress;
@@ -5341,28 +5446,37 @@ export function getHtmlTemplate(
           return;
         }
 
-        // Find router worker to construct base URL
-        const router = selectedEnvForDetail.workers.find(w =>
-          w.name.toLowerCase().includes('router')
-        );
-
+        // Determine base URL: prefer custom domain from config, fallback to workers.dev
         let baseUrl = '';
-        if (router && router.name) {
-          // Construct URL from worker name with subdomain
-          // Format: https://{worker-name}.{subdomain}.workers.dev
-          if (workersSubdomain) {
-            baseUrl = 'https://' + router.name + '.' + workersSubdomain + '.workers.dev';
-          } else {
-            // Fallback without subdomain (shouldn't happen in practice)
-            baseUrl = 'https://' + router.name + '.workers.dev';
+
+        // Try to load config to get custom API domain
+        try {
+          const configResponse = await api('/config?env=' + encodeURIComponent(selectedEnvForDetail.env));
+          if (configResponse.success && configResponse.config) {
+            baseUrl = configResponse.config.urls?.api?.custom || configResponse.config.urls?.api?.auto || '';
           }
-        } else {
-          // Fallback - ask for URL
-          baseUrl = prompt('Enter the base URL for the router (e.g., https://myenv-ar-router.subdomain.workers.dev):');
-          if (!baseUrl) {
-            btn.disabled = false;
-            btn.textContent = '🔐 Start Admin Account Setup with Passkey';
-            return;
+        } catch (e) {
+          // Config not available, will fallback to workers.dev
+        }
+
+        // Fallback to workers.dev URL if no config URL found
+        if (!baseUrl) {
+          const router = selectedEnvForDetail.workers.find(w =>
+            w.name.toLowerCase().includes('router')
+          );
+          if (router && router.name) {
+            if (workersSubdomain) {
+              baseUrl = 'https://' + router.name + '.' + workersSubdomain + '.workers.dev';
+            } else {
+              baseUrl = 'https://' + router.name + '.workers.dev';
+            }
+          } else {
+            baseUrl = prompt('Enter the base URL for the router (e.g., https://myenv-ar-router.subdomain.workers.dev):');
+            if (!baseUrl) {
+              btn.disabled = false;
+              btn.textContent = '🔐 Start Admin Account Setup with Passkey';
+              return;
+            }
           }
         }
 
@@ -5372,6 +5486,7 @@ export function getHtmlTemplate(
           body: JSON.stringify({
             kvNamespaceId: configKv.id,
             baseUrl: baseUrl,
+            env: selectedEnvForDetail.env,
           }),
         });
 

@@ -695,24 +695,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       //   - API_BACKEND_URL is empty (proxy disabled)
       const { saveUiEnv } = await import('../../core/ui-env.js');
       try {
-        if (useDirectMode) {
-          await saveUiEnv(uiEnvPath, {
-            PUBLIC_API_BASE_URL: apiBaseUrl, // Frontend sends directly to backend
-            API_BACKEND_URL: '', // Proxy disabled
-            PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
-            PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
-          });
-          console.log(chalk.gray(`  ui.env synced (direct mode: ${apiBaseUrl})`));
-          console.log(chalk.gray(`  Custom domains detected - Safari ITP proxy disabled`));
-        } else {
-          await saveUiEnv(uiEnvPath, {
-            PUBLIC_API_BASE_URL: '', // Empty for proxy mode (same-origin)
-            API_BACKEND_URL: apiBaseUrl, // Server-side proxy target
-            PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
-            PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
-          });
-          console.log(chalk.gray(`  ui.env synced (proxy mode: ${apiBaseUrl})`));
-        }
+        await saveUiEnv(uiEnvPath, {
+          PUBLIC_API_BASE_URL: apiBaseUrl,
+          API_BACKEND_URL: useDirectMode ? '' : apiBaseUrl,
+          PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
+          PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
+        });
+        console.log(chalk.gray(`  ui.env synced (API: ${apiBaseUrl})`));
       } catch (syncError) {
         console.log(chalk.yellow(`  ⚠️  Could not sync ui.env: ${syncError}`));
       }

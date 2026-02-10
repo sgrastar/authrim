@@ -16,6 +16,10 @@ export const UrlConfigSchema = z.object({
   custom: z.string().url().nullable().optional(),
   /** Auto-generated URL (workers.dev or pages.dev) */
   auto: z.string().url().optional(),
+  /** Cloudflare zone ID for custom domain (populated during setup) */
+  zoneId: z.string().nullable().optional(),
+  /** Whether to configure Workers custom domain binding */
+  customDomainBinding: z.boolean().optional(),
 });
 
 export const UiUrlConfigSchema = z.object({
@@ -79,19 +83,18 @@ export const EnvironmentConfigSchema = z.object({
 export const UserIdFormatSchema = z.enum(['nanoid', 'uuid']).default('nanoid');
 
 export const TenantConfigSchema = z.object({
-  /** Default tenant identifier (used in single-tenant mode) */
+  /** Default tenant identifier */
   name: z.string().default('default'),
   /** Human-readable tenant/organization name */
   displayName: z.string().default('Default Tenant'),
   /**
-   * Multi-tenant mode with subdomain-based tenant isolation
-   * - true: issuer = https://{tenant}.{baseDomain}
-   * - false: issuer = ISSUER_URL (single-tenant)
+   * @deprecated Multi-tenant mode is always enabled.
+   * Kept for backward compatibility during migration.
    */
   multiTenant: z.boolean().default(false),
   /**
-   * Base domain for multi-tenant mode (e.g., "authrim.com")
-   * Issuer URL will be: https://{tenant}.{baseDomain}
+   * Base domain (root domain only, e.g., "authrim.com", "example.com")
+   * All tenant domains are subdomains of this: {tenant}.{baseDomain}
    */
   baseDomain: z.string().optional(),
   /**
@@ -102,6 +105,23 @@ export const TenantConfigSchema = z.object({
    * Note: This setting cannot be changed after users are created.
    */
   userIdFormat: UserIdFormatSchema,
+  /**
+   * Primary tenant ID for naked domain access.
+   * When set, naked domain (e.g., example.com) routes to this tenant.
+   * When unset, naked domain routes to the default tenant (name field).
+   */
+  primaryTenant: z
+    .string()
+    .min(1)
+    .max(63)
+    .regex(/^[a-z0-9-]+$/)
+    .optional(),
+  /**
+   * Use naked domain as issuer URL.
+   * When true: https://example.com (no tenant subdomain)
+   * When false: https://tenant.example.com (with tenant subdomain)
+   */
+  nakedDomain: z.boolean().default(false).optional(),
 });
 
 // =============================================================================
