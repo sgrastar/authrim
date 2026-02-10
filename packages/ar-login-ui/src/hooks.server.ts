@@ -16,6 +16,7 @@ import { sequence } from '@sveltejs/kit/hooks';
  */
 function buildConnectSrc(): string {
 	const apiBaseUrl = env.PUBLIC_API_BASE_URL;
+
 	if (apiBaseUrl) {
 		try {
 			const apiOrigin = new URL(apiBaseUrl).origin;
