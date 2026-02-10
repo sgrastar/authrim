@@ -173,6 +173,15 @@ const es: Translations = {
   'domain.customDesc': 'Usar tu propio dominio',
   'domain.customPrompt': 'Ingresa dominio personalizado (ej: auth.ejemplo.com)',
   'domain.customValidation': 'Por favor ingresa un dominio válido (ej: auth.ejemplo.com)',
+  'domain.checkingZone': 'Verificando zona de Cloudflare para {{domain}}...',
+  'domain.zoneFound': "Zona '{{zone}}' encontrada (estado: {{status}})",
+  'domain.zoneNotFound': "Zona '{{zone}}' no encontrada en su cuenta de Cloudflare",
+  'domain.zoneNotFoundHint':
+    'El enrutamiento de dominio personalizado requiere que la zona se agregue primero a Cloudflare.',
+  'domain.zoneCheckFailed': 'No se pudo verificar la zona',
+  'domain.zoneCheckSkipped': 'Verificación de zona omitida, continuando con la configuración...',
+  'domain.continueWithoutZone': '¿Continuar sin verificación de zona?',
+  'domain.configureBinding': 'Configurar enlace de dominio personalizado para Workers',
   'domain.issuerUrl': 'URL del emisor: {{url}}',
   'domain.apiDomain': 'Dominio API / Emisor (ej: auth.ejemplo.com)',
   'domain.loginUiDomain': 'Dominio UI de inicio de sesión (Enter para omitir)',
@@ -1002,6 +1011,14 @@ const es: Translations = {
   'web.envDetail.updateProgress': 'Progreso de actualización:',
   'web.envDetail.updatesAvailable': '{{count}} actualización(es) disponible(s)',
   'web.envDetail.allUpToDate': 'Todo actualizado',
+
+  'web.envDetail.action': 'Acción',
+
+  // Web UI Update Section
+  'web.envDetail.uiUpdate': 'Actualizar UI (Pages)',
+  'web.envDetail.uiUpdateDesc':
+    'Actualizar Admin UI o Login UI individualmente. Estos se despliegan en Cloudflare Pages.',
+  'web.envDetail.updateNow': 'Actualizar',
 
   // Web UI Delete Section
   'web.delete.title': 'Eliminar Entorno',

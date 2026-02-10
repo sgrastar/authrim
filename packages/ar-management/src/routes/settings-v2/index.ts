@@ -199,7 +199,7 @@ const settingsV2 = new Hono<{
 function getSettingsManager(env: Env): SettingsManager {
   const manager = createSettingsManager({
     env: env as unknown as Record<string, string | undefined>,
-    kv: env.AUTHRIM_CONFIG ?? null,
+    kv: env.SETTINGS ?? null,
     cacheTTL: 5000, // 5 seconds (as per plan)
     auditCallback: async (event) => {
       // Log audit event (can be extended to write to KV/R2)

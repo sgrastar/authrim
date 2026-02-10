@@ -34,7 +34,7 @@
 		display: flex;
 		align-items: center;
 		gap: 14px;
-		padding: 8px 12px;
+		padding: 4px 12px;
 		margin-bottom: 1px;
 		border-radius: var(--radius-md);
 		color: var(--nav-text, rgba(255, 255, 255, 0.6));

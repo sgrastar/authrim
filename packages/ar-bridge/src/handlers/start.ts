@@ -58,6 +58,7 @@ const DEFAULT_RATE_LIMIT: RateLimitConfig = {
  * - login_hint: Optional email hint for provider
  * - max_age: Optional maximum authentication age in seconds (OIDC)
  * - acr_values: Optional authentication context class reference values (OIDC)
+ * - handoff: "true" to enable Session Token Handoff SSO (page-level navigation)
  */
 export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('START');
@@ -89,6 +90,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     const clientId = c.req.query('client_id');
     const codeChallenge = c.req.query('code_challenge');
     const codeChallengeMethod = c.req.query('code_challenge_method');
+    const stateParam = c.req.query('state');
 
     // Parse max_age parameter (OIDC Core)
     const maxAge = maxAgeParam ? parseInt(maxAgeParam, 10) : undefined;
@@ -235,9 +237,13 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       expiresAt: getStateExpiresAt(),
     });
 
-    // 9. Silent Auth処理 (prompt=none)
+    // 9. Silent Auth処理 (prompt=none) + Session Token Handoff SSO (handoff=true)
     // OIDC Core 3.1.2.1: prompt=none時、認証済みの場合は成功、未認証の場合はerror=login_requiredを返す
     // ⚠️ 注意: prompt は複数値可能（スペース区切り）、例: "none login"
+    // 📝 handoff=true: SDK → External IdP Start直接呼び出し（サードパーティクッキーブロック対応）
+    //    - Top-level navigationでセッション確認
+    //    - Handoff tokenを返してRP callbackにリダイレクト
+    //    - 既存のprompt=noneフローと同じロジック（後方互換性維持）
     const promptValues = (prompt ?? '').split(' ').filter(Boolean);
     const isSilentAuth = promptValues.includes('none');
 
@@ -272,6 +278,88 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         errorRedirectUrl.searchParams.set('error', 'invalid_request');
         errorRedirectUrl.searchParams.set('error_description', 'code_challenge is required');
         errorRedirectUrl.searchParams.set('state', state);
+
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: errorRedirectUrl.toString(),
+            'Cache-Control': 'no-store',
+          },
+        });
+      }
+
+      // SSO設定チェック
+      // Priority: Client KV > Tenant KV > Client ENV > Tenant ENV > Default (provider.enableSso)
+      let ssoEnabled = provider.enableSso !== false; // Default from provider config
+
+      try {
+        const { createSettingsManager, CLIENT_CATEGORY_META, OAUTH_CATEGORY_META } =
+          await import('@authrim/ar-lib-core');
+        const settingsManager = createSettingsManager({
+          env: c.env as unknown as Record<string, string | undefined>,
+          kv: c.env.SETTINGS ?? null,
+        });
+
+        // Register category metadata
+        settingsManager.registerCategory(CLIENT_CATEGORY_META);
+        settingsManager.registerCategory(OAUTH_CATEGORY_META);
+
+        // 1. Try client-level setting first (highest priority)
+        if (clientId) {
+          try {
+            const clientSsoSetting = await settingsManager.get('client.sso_enabled', {
+              type: 'client',
+              id: clientId,
+            });
+            if (typeof clientSsoSetting === 'boolean') {
+              ssoEnabled = clientSsoSetting;
+              log.debug('SSO setting from client config', { clientId, ssoEnabled });
+            }
+          } catch (error) {
+            // Client setting not found or error - continue to tenant level
+            log.debug('Client SSO setting not found, trying tenant level', {
+              clientId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        // 2. If client setting not found, try tenant-level setting
+        if (ssoEnabled === (provider.enableSso !== false)) {
+          try {
+            const tenantSsoSetting = await settingsManager.get('oauth.sso_enabled', {
+              type: 'tenant',
+              id: tenantId,
+            });
+            if (typeof tenantSsoSetting === 'boolean') {
+              ssoEnabled = tenantSsoSetting;
+              log.debug('SSO setting from tenant config', { tenantId, ssoEnabled });
+            }
+          } catch (error) {
+            // Tenant setting not found - use provider default
+            log.debug('Tenant SSO setting not found, using provider default', {
+              tenantId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      } catch (error) {
+        log.warn('Failed to load SSO settings, using provider default', {
+          action: 'sso_check_error',
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Keep provider default
+      }
+
+      if (!ssoEnabled) {
+        // SSO無効 → login_required
+        log.info('Silent Auth: SSO disabled', { clientId, tenantId });
+        const errorRedirectUrl = new URL(redirectUri);
+        errorRedirectUrl.searchParams.set('error', 'login_required');
+        errorRedirectUrl.searchParams.set('error_description', 'SSO is disabled for this client');
+        if (stateParam) {
+          errorRedirectUrl.searchParams.set('state', stateParam);
+        }
 
         return new Response(null, {
           status: 302,

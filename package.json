@@ -7,7 +7,7 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "build": "turbo run build",
-    "build:api": "turbo run build --filter=!@authrim/ar-ui --filter=!@authrim/ar-admin-ui --filter=!@authrim/ar-login-ui",
+    "build:api": "turbo run build --filter=!@authrim/ar-admin-ui --filter=!@authrim/ar-login-ui",
     "build:admin-ui": "turbo run build --filter=@authrim/ar-admin-ui",
     "build:login-ui": "turbo run build --filter=@authrim/ar-login-ui",
     "dev": "turbo run dev --parallel",

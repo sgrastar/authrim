@@ -173,9 +173,12 @@ export interface Env {
   INTROSPECTION_CACHE_TTL?: string; // Cache TTL in seconds (default: 60)
 
   // Multi-tenant Configuration
-  BASE_DOMAIN?: string; // Base domain for subdomain tenant isolation (e.g., authrim.com)
-  DEFAULT_TENANT_ID?: string; // Default tenant ID for single-tenant mode (default: "default")
-  ENABLE_TENANT_ISOLATION?: string; // "true" to enable tenant isolation
+  // Multi-tenant mode is always enabled when BASE_DOMAIN is set.
+  // Each environment runs as a separate Workers instance with its own BASE_DOMAIN.
+  BASE_DOMAIN?: string; // Base domain for multi-tenant mode (e.g., "authrim.com", "example.com")
+  DEFAULT_TENANT_ID?: string; // Default tenant ID (default: "default")
+  PRIMARY_TENANT_ID?: string; // Tenant ID for naked domain access (e.g., example.com → tenantA)
+  NAKED_DOMAIN_AS_ISSUER?: string; // "true" to use naked domain as issuer (e.g., https://example.com instead of https://tenant.example.com)
 
   // Check API (Phase 8.3)
   ENABLE_CHECK_API?: string; // "true" to enable Check API endpoints

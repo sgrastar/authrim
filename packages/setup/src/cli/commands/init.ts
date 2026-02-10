@@ -36,6 +36,8 @@ import {
   getAccountId,
   detectEnvironments,
   getWorkersSubdomain,
+  checkZoneExists,
+  extractZoneName,
 } from '../../core/cloudflare.js';
 import { createLockFile, saveLockFile, loadLockFile } from '../../core/lock.js';
 import {
@@ -51,6 +53,66 @@ import {
   getLocalVersion,
 } from '../../core/source.js';
 import { saveUiEnv } from '../../core/ui-env.js';
+
+// =============================================================================
+// Zone Check Helper
+// =============================================================================
+
+interface ZoneDomainConfig {
+  zoneId?: string | null;
+  customDomainBinding?: boolean;
+}
+
+/**
+ * Check Cloudflare zone for a domain and prompt user for binding configuration.
+ * Never blocks setup - all errors are handled gracefully.
+ */
+async function checkAndPromptZone(domain: string, domainConfig: ZoneDomainConfig): Promise<void> {
+  const spinner = ora(t('domain.checkingZone', { domain })).start();
+
+  try {
+    const result = await checkZoneExists(domain);
+    spinner.stop();
+
+    if (result.error) {
+      console.log(chalk.yellow(`  ⚠ ${t('domain.zoneCheckFailed')}: ${result.error}`));
+      console.log(chalk.gray(`    ${t('domain.zoneCheckSkipped')}`));
+      return;
+    }
+
+    if (!result.found) {
+      const zoneName = extractZoneName(domain);
+      console.log(chalk.yellow(`  ⚠ ${t('domain.zoneNotFound', { zone: zoneName })}`));
+      console.log(chalk.gray(`    ${t('domain.zoneNotFoundHint')}`));
+      console.log('');
+      const ok = await confirm({ message: t('domain.continueWithoutZone'), default: true });
+      if (!ok) {
+        throw new Error('USER_CANCELLED_DOMAIN');
+      }
+      return;
+    }
+
+    // Zone found
+    console.log(
+      chalk.green(
+        `  ✓ ${t('domain.zoneFound', { zone: result.zone!.name, status: result.zone!.status })}`
+      )
+    );
+    domainConfig.zoneId = result.zone!.id;
+    console.log('');
+
+    const bind = await confirm({ message: t('domain.configureBinding'), default: true });
+    domainConfig.customDomainBinding = bind;
+  } catch (error) {
+    spinner.stop();
+    if (error instanceof Error && error.message === 'USER_CANCELLED_DOMAIN') {
+      throw error;
+    }
+    // Unexpected error - don't block setup
+    console.log(chalk.yellow(`  ⚠ ${t('domain.zoneCheckFailed')}`));
+    console.log(chalk.gray(`    ${t('domain.zoneCheckSkipped')}`));
+  }
+}
 
 // =============================================================================
 // WSL Detection
@@ -1154,6 +1216,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   let apiDomain: string | null = null;
   let loginUiDomain: string | null = null;
   let adminUiDomain: string | null = null;
+  const quickDomainConfig: ZoneDomainConfig = {};
 
   if (useCustomDomain) {
     console.log('');
@@ -1170,6 +1233,18 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
         return true;
       },
     });
+
+    // Check Cloudflare zone for the domain
+    if (apiDomain) {
+      console.log('');
+      try {
+        await checkAndPromptZone(apiDomain, quickDomainConfig);
+      } catch {
+        // User cancelled - clear domain and continue
+        apiDomain = null;
+      }
+      console.log('');
+    }
 
     loginUiDomain = await input({
       message: t('domain.loginUiDomain'),
@@ -1313,6 +1388,8 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     api: {
       custom: apiDomain || null,
       auto: getWorkersDevUrl(envPrefix + '-ar-router'),
+      zoneId: quickDomainConfig.zoneId ?? null,
+      customDomainBinding: quickDomainConfig.customDomainBinding ?? false,
     },
     loginUi: {
       custom: loginUiDomain || null,
@@ -1493,201 +1570,138 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log(chalk.blue('━━━ ' + t('tenant.title') + ' ━━━'));
   console.log('');
 
-  const multiTenant = await confirm({
-    message: t('tenant.multiTenantPrompt'),
-    default: false,
-  });
+  // Multi-tenant mode is always enabled - ask for base domain
+  const multiTenant = true; // Always enabled (kept as variable for backward compatibility)
 
   let tenantName = 'default';
   let tenantDisplayName = 'Default Tenant';
   let baseDomain: string | undefined;
+  let primaryTenant: string | undefined;
   let userIdFormat: 'nanoid' | 'uuid' = 'nanoid';
 
-  // Step 6: URL configuration (depends on tenant mode)
+  // Step 6: URL configuration
   let apiDomain: string | null = null;
   let loginUiDomain: string | null = null;
   let adminUiDomain: string | null = null;
+  const fullDomainConfig: ZoneDomainConfig = {};
 
-  if (multiTenant) {
-    // Multi-tenant mode: base domain is required, becomes the issuer base
-    console.log('');
-    console.log(chalk.blue('━━━ ' + t('tenant.multiTenantTitle') + ' ━━━'));
-    console.log('');
-    console.log(chalk.gray('  ' + t('tenant.multiTenantNote1')));
-    console.log(chalk.gray('    • ' + t('tenant.multiTenantNote2')));
-    console.log(chalk.gray('    • ' + t('tenant.multiTenantNote3')));
-    console.log(chalk.gray('    • ' + t('tenant.multiTenantNote4')));
-    console.log('');
+  // Base domain configuration
+  console.log('');
+  console.log(chalk.blue('━━━ ' + t('tenant.multiTenantTitle') + ' ━━━'));
+  console.log('');
+  console.log(chalk.gray('  Domain pattern: {tenant}-{env}-{prefix}.{baseDomain}'));
+  console.log(chalk.gray('    • example.com (naked domain → primary tenant)'));
+  console.log(chalk.gray('    • acme.example.com (tenant subdomain)'));
+  console.log(chalk.gray('    • acme-test-auth.example.com (full pattern)'));
+  console.log('');
 
-    baseDomain = await input({
-      message: t('tenant.baseDomainPrompt'),
-      validate: (value) => {
-        if (!value) return t('tenant.baseDomainRequired');
-        if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(value)) {
-          return t('tenant.baseDomainValidation');
-        }
-        return true;
-      },
-    });
+  baseDomain = await input({
+    message: t('tenant.baseDomainPrompt'),
+    validate: (value) => {
+      if (!value) return t('tenant.baseDomainRequired');
+      if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(value)) {
+        return t('tenant.baseDomainValidation');
+      }
+      return true;
+    },
+  });
 
-    console.log('');
-    console.log(chalk.green('  ✓ ' + t('tenant.issuerFormat', { domain: baseDomain })));
-    console.log(chalk.gray('    ' + t('tenant.issuerExample', { domain: baseDomain })));
-    console.log('');
+  console.log('');
+  console.log(chalk.green('  ✓ Base domain: ' + baseDomain));
 
-    // API domain in multi-tenant is the base domain (or custom apex)
-    apiDomain = baseDomain;
+  // Check Cloudflare zone for the base domain
+  try {
+    await checkAndPromptZone(baseDomain, fullDomainConfig);
+  } catch {
+    // User cancelled - this is non-fatal, continue with setup
+  }
+  console.log('');
 
-    tenantName = await input({
-      message: t('tenant.defaultTenantPrompt'),
-      default: 'default',
+  // API domain is the base domain
+  apiDomain = baseDomain;
+
+  tenantName = await input({
+    message: t('tenant.defaultTenantPrompt'),
+    default: 'default',
+    validate: (value) => {
+      if (!/^[a-z][a-z0-9-]*$/.test(value)) {
+        return t('tenant.defaultTenantValidation');
+      }
+      return true;
+    },
+  });
+
+  tenantDisplayName = await input({
+    message: t('tenant.displayNamePrompt'),
+    default: 'Default Tenant',
+  });
+
+  // Primary tenant for naked domain
+  const usePrimaryTenant = await confirm({
+    message: 'Use naked domain for a specific tenant?',
+    default: false,
+  });
+
+  if (usePrimaryTenant) {
+    primaryTenant = await input({
+      message: 'Primary tenant ID for naked domain',
+      default: tenantName,
       validate: (value) => {
         if (!/^[a-z][a-z0-9-]*$/.test(value)) {
-          return t('tenant.defaultTenantValidation');
+          return 'Tenant ID must start with a letter and contain only lowercase letters, numbers, and hyphens';
         }
         return true;
       },
     });
+  }
 
-    tenantDisplayName = await input({
-      message: t('tenant.displayNamePrompt'),
-      default: 'Default Tenant',
+  // User ID format selection
+  console.log('');
+  console.log(chalk.blue('━━━ ' + t('userId.title') + ' ━━━'));
+  console.log('');
+  console.log(chalk.gray('  ' + t('userId.note')));
+  console.log('');
+
+  userIdFormat = await select<'nanoid' | 'uuid'>({
+    message: t('userId.prompt'),
+    choices: [
+      {
+        name: t('userId.nanoid'),
+        value: 'nanoid' as const,
+        description: t('userId.nanoidDesc'),
+      },
+      {
+        name: t('userId.uuid'),
+        value: 'uuid' as const,
+        description: t('userId.uuidDesc'),
+      },
+    ],
+    default: 'nanoid',
+  });
+
+  console.log('');
+  console.log(chalk.green('  ✓ ' + t('userId.selected', { format: userIdFormat })));
+
+  // UI domains
+  console.log('');
+  console.log(chalk.blue('━━━ ' + t('tenant.uiDomainTitle') + ' ━━━'));
+  console.log('');
+
+  const useCustomUiDomain = await confirm({
+    message: t('tenant.customUiDomainPrompt'),
+    default: false,
+  });
+
+  if (useCustomUiDomain) {
+    loginUiDomain = await input({
+      message: t('tenant.loginUiDomain'),
+      default: '',
     });
 
-    // User ID format selection
-    console.log('');
-    console.log(chalk.blue('━━━ ' + t('userId.title') + ' ━━━'));
-    console.log('');
-    console.log(chalk.gray('  ' + t('userId.note')));
-    console.log('');
-
-    userIdFormat = await select<'nanoid' | 'uuid'>({
-      message: t('userId.prompt'),
-      choices: [
-        {
-          name: t('userId.nanoid'),
-          value: 'nanoid' as const,
-          description: t('userId.nanoidDesc'),
-        },
-        {
-          name: t('userId.uuid'),
-          value: 'uuid' as const,
-          description: t('userId.uuidDesc'),
-        },
-      ],
-      default: 'nanoid',
+    adminUiDomain = await input({
+      message: t('tenant.adminUiDomain'),
+      default: '',
     });
-
-    console.log('');
-    console.log(chalk.green('  ✓ ' + t('userId.selected', { format: userIdFormat })));
-
-    // UI domains for multi-tenant
-    console.log('');
-    console.log(chalk.blue('━━━ ' + t('tenant.uiDomainTitle') + ' ━━━'));
-    console.log('');
-
-    const useCustomUiDomain = await confirm({
-      message: t('tenant.customUiDomainPrompt'),
-      default: false,
-    });
-
-    if (useCustomUiDomain) {
-      loginUiDomain = await input({
-        message: t('tenant.loginUiDomain'),
-        default: '',
-      });
-
-      adminUiDomain = await input({
-        message: t('tenant.adminUiDomain'),
-        default: '',
-      });
-    }
-  } else {
-    // Single-tenant mode
-    console.log('');
-    console.log(chalk.blue('━━━ ' + t('tenant.singleTenantTitle') + ' ━━━'));
-    console.log('');
-    console.log(chalk.gray('  ' + t('tenant.singleTenantNote1')));
-    console.log(chalk.gray('    • ' + t('tenant.singleTenantNote2')));
-    console.log(chalk.gray('    • ' + t('tenant.singleTenantNote3')));
-    console.log('');
-
-    tenantDisplayName = await input({
-      message: t('tenant.organizationName'),
-      default: 'Default Tenant',
-    });
-
-    // User ID format selection
-    console.log('');
-    console.log(chalk.blue('━━━ ' + t('userId.title') + ' ━━━'));
-    console.log('');
-    console.log(chalk.gray('  ' + t('userId.note')));
-    console.log('');
-
-    userIdFormat = await select<'nanoid' | 'uuid'>({
-      message: t('userId.prompt'),
-      choices: [
-        {
-          name: t('userId.nanoid'),
-          value: 'nanoid' as const,
-          description: t('userId.nanoidDesc'),
-        },
-        {
-          name: t('userId.uuid'),
-          value: 'uuid' as const,
-          description: t('userId.uuidDesc'),
-        },
-      ],
-      default: 'nanoid',
-    });
-
-    console.log('');
-    console.log(chalk.green('  ✓ ' + t('userId.selected', { format: userIdFormat })));
-
-    const useCustomDomain = await confirm({
-      message: t('domain.prompt'),
-      default: false,
-    });
-
-    if (useCustomDomain) {
-      console.log('');
-      console.log(chalk.gray('  ' + t('domain.enterDomains')));
-      console.log('');
-
-      apiDomain = await input({
-        message: t('domain.apiDomain'),
-        validate: (value) => {
-          if (!value) return true;
-          if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(value)) {
-            return t('domain.customValidation');
-          }
-          return true;
-        },
-      });
-
-      loginUiDomain = await input({
-        message: t('domain.loginUiDomain'),
-        default: '',
-      });
-
-      adminUiDomain = await input({
-        message: t('domain.adminUiDomain'),
-        default: '',
-      });
-    }
-
-    if (apiDomain) {
-      console.log('');
-      console.log(chalk.green('  ✓ ' + t('domain.issuerUrl', { url: 'https://' + apiDomain })));
-    } else {
-      console.log('');
-      console.log(
-        chalk.green(
-          '  ✓ ' + t('domain.issuerUrl', { url: getWorkersDevUrl(envPrefix + '-ar-router') })
-        )
-      );
-      console.log(chalk.gray('    ' + t('domain.usingWorkersDev')));
-    }
   }
 
   // Step 5: Optional components
@@ -1985,6 +1999,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     multiTenant,
     baseDomain,
     userIdFormat,
+    primaryTenant,
   };
   config.components = {
     ...config.components,
@@ -1998,6 +2013,8 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     api: {
       custom: apiDomain || null,
       auto: getWorkersDevUrl(envPrefix + '-ar-router'),
+      zoneId: fullDomainConfig.zoneId ?? null,
+      customDomainBinding: fullDomainConfig.customDomainBinding ?? false,
     },
     loginUi: {
       custom: loginUiDomain || null,
@@ -2055,15 +2072,16 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
   // Tenant mode and Issuer
   console.log(chalk.bold('Tenant & Issuer:'));
-  console.log(
-    `  Mode:          ${multiTenant ? chalk.cyan('Multi-tenant') : chalk.cyan('Single-tenant')}`
-  );
-  if (multiTenant && baseDomain) {
+  console.log(`  Mode:          ${chalk.cyan('Multi-tenant (always enabled)')}`);
+  if (baseDomain) {
     console.log(`  Base Domain:   ${chalk.cyan(baseDomain)}`);
-    console.log(`  Issuer Format: ${chalk.cyan('https://{tenant}.' + baseDomain)}`);
-    console.log(`  Example:       ${chalk.gray('https://acme.' + baseDomain)}`);
+    console.log(`  Domain Pattern: ${chalk.cyan('{tenant}-{env}-{prefix}.' + baseDomain)}`);
+    console.log(`  Example:       ${chalk.gray('https://acme-test-auth.' + baseDomain)}`);
+    if (primaryTenant) {
+      console.log(`  Primary Tenant: ${chalk.cyan(primaryTenant)} ${chalk.gray('(naked domain)')}`);
+    }
   } else {
-    const issuerUrl = config.urls.api.custom || config.urls.api.auto;
+    const issuerUrl = config.urls?.api?.custom || config.urls?.api?.auto;
     console.log(`  Issuer URL:    ${chalk.cyan(issuerUrl)}`);
   }
   console.log(`  Default Tenant: ${chalk.cyan(tenantName)}`);
@@ -2072,7 +2090,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
   // Public URLs
   console.log(chalk.bold('Public URLs:'));
-  if (multiTenant && baseDomain) {
+  if (baseDomain) {
     console.log(
       `  API Router:    ${chalk.cyan('*.' + baseDomain)} → ${chalk.gray(envPrefix + '-ar-router')}`
     );
@@ -2791,6 +2809,18 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
     },
   });
 
+  // Check Cloudflare zone for the domain
+  const updateDomainConfig: ZoneDomainConfig = {};
+  if (apiDomain) {
+    console.log('');
+    try {
+      await checkAndPromptZone(apiDomain, updateDomainConfig);
+    } catch {
+      // User cancelled - non-fatal
+    }
+    console.log('');
+  }
+
   const loginUiDomain = await input({
     message: 'Login UI domain (leave empty for pages.dev)',
     default: config.urls.loginUi?.custom || '',
@@ -2804,6 +2834,9 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
   config.urls.api = {
     custom: apiDomain || null,
     auto: config.urls.api?.auto || getWorkersDevUrl(env + '-ar-router'),
+    zoneId: updateDomainConfig.zoneId ?? config.urls.api?.zoneId ?? null,
+    customDomainBinding:
+      updateDomainConfig.customDomainBinding ?? config.urls.api?.customDomainBinding ?? false,
   };
   config.urls.loginUi = {
     custom: loginUiDomain || null,

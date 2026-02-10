@@ -172,6 +172,15 @@ const en: Translations = {
   'domain.customPrompt': 'Enter custom domain (e.g., auth.example.com)',
   'domain.customValidation': 'Please enter a valid domain (e.g., auth.example.com)',
   'domain.issuerUrl': 'Issuer URL: {{url}}',
+  'domain.checkingZone': 'Checking Cloudflare zone for {{domain}}...',
+  'domain.zoneFound': "Zone '{{zone}}' found (status: {{status}})",
+  'domain.zoneNotFound': "Zone '{{zone}}' not found in your Cloudflare account",
+  'domain.zoneNotFoundHint':
+    'Custom domain routing requires the zone to be added to Cloudflare first.',
+  'domain.zoneCheckFailed': 'Could not check zone',
+  'domain.zoneCheckSkipped': 'Zone check skipped, continuing with setup...',
+  'domain.continueWithoutZone': 'Continue without zone verification?',
+  'domain.configureBinding': 'Configure custom domain binding for Workers',
   'domain.apiDomain': 'API / Issuer domain (e.g., auth.example.com)',
   'domain.loginUiDomain': 'Login UI domain (Enter to skip)',
   'domain.adminUiDomain': 'Admin UI domain (Enter to skip)',
@@ -986,6 +995,14 @@ const en: Translations = {
   'web.envDetail.updateProgress': 'Update Progress:',
   'web.envDetail.updatesAvailable': '{{count}} update(s) available',
   'web.envDetail.allUpToDate': 'All up to date',
+
+  'web.envDetail.action': 'Action',
+
+  // Web UI Update Section
+  'web.envDetail.uiUpdate': 'Update UI (Pages)',
+  'web.envDetail.uiUpdateDesc':
+    'Update Admin UI or Login UI individually. These are deployed to Cloudflare Pages.',
+  'web.envDetail.updateNow': 'Update',
 
   // Web UI Delete Section
   'web.delete.title': 'Delete Environment',

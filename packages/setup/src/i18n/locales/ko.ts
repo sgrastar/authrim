@@ -169,6 +169,15 @@ const ko: Translations = {
   'domain.customDesc': '자체 도메인 사용',
   'domain.customPrompt': '사용자 정의 도메인 입력 (예: auth.example.com)',
   'domain.customValidation': '유효한 도메인을 입력하세요 (예: auth.example.com)',
+  'domain.checkingZone': '{{domain}}의 Cloudflare 영역을 확인하는 중...',
+  'domain.zoneFound': "'{{zone}}' 영역을 찾았습니다 (상태: {{status}})",
+  'domain.zoneNotFound': "Cloudflare 계정에서 '{{zone}}' 영역을 찾을 수 없습니다",
+  'domain.zoneNotFoundHint':
+    '사용자 정의 도메인 라우팅을 위해서는 먼저 Cloudflare에 영역을 추가해야 합니다.',
+  'domain.zoneCheckFailed': '영역을 확인할 수 없습니다',
+  'domain.zoneCheckSkipped': '영역 확인을 건너뛰고 설정을 계속합니다...',
+  'domain.continueWithoutZone': '영역 확인 없이 계속하시겠습니까?',
+  'domain.configureBinding': 'Workers에 대한 사용자 정의 도메인 바인딩 구성',
   'domain.issuerUrl': '발급자 URL: {{url}}',
   'domain.apiDomain': 'API / 발급자 도메인 (예: auth.example.com)',
   'domain.loginUiDomain': '로그인 UI 도메인 (건너뛰려면 Enter)',
@@ -978,6 +987,14 @@ const ko: Translations = {
   'web.envDetail.updateProgress': '업데이트 진행:',
   'web.envDetail.updatesAvailable': '{{count}}개 업데이트 가능',
   'web.envDetail.allUpToDate': '모두 최신입니다',
+
+  'web.envDetail.action': '작업',
+
+  // Web UI Update Section
+  'web.envDetail.uiUpdate': 'UI 업데이트 (Pages)',
+  'web.envDetail.uiUpdateDesc':
+    'Admin UI 또는 Login UI를 개별적으로 업데이트합니다. 이들은 Cloudflare Pages에 배포됩니다.',
+  'web.envDetail.updateNow': '업데이트',
 
   // Web UI Delete Section
   'web.delete.title': '환경 삭제',

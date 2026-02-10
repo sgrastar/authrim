@@ -52,6 +52,10 @@ import {
   resolveConsentRequirements,
   checkUserConsentSatisfaction,
   getUserClaimsForRules,
+  // Settings Manager
+  createSettingsManager,
+  CLIENT_CATEGORY_META,
+  OAUTH_CATEGORY_META,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
 import type { Session, PARRequestData } from '@authrim/ar-lib-core';
@@ -94,6 +98,43 @@ import { type FAL } from '@authrim/ar-lib-core';
 let cachedSigningKey: { privateKey: CryptoKey; kid: string } | null = null;
 let cachedKeyTimestamp = 0;
 const KEY_CACHE_TTL = 60000; // 60 seconds
+
+// ===== SettingsManager Caching for Performance Optimization =====
+// Cache SettingsManager instance to avoid recreating it on every request
+// This reduces ~133ms (2x KV reads) to near-zero for cached requests
+let cachedSettingsManager: ReturnType<typeof createSettingsManager> | null = null;
+let cachedSettingsTimestamp = 0;
+const SETTINGS_CACHE_TTL = 60000; // 60 seconds
+
+/**
+ * Get or create cached SettingsManager instance
+ * Reuses the same instance for SETTINGS_CACHE_TTL (60s) to improve performance
+ */
+function getSettingsManager(env: Env): ReturnType<typeof createSettingsManager> {
+  const now = Date.now();
+
+  // Return cached instance if valid
+  if (cachedSettingsManager && now - cachedSettingsTimestamp < SETTINGS_CACHE_TTL) {
+    return cachedSettingsManager;
+  }
+
+  // Create new instance with extended cache TTL
+  const settingsManager = createSettingsManager({
+    env: env as unknown as Record<string, string | undefined>,
+    kv: env.SETTINGS ?? null,
+    cacheTTL: 60000, // 60 seconds (increased from 5s)
+  });
+
+  // Register required categories
+  settingsManager.registerCategory(CLIENT_CATEGORY_META);
+  settingsManager.registerCategory(OAUTH_CATEGORY_META);
+
+  // Update cache
+  cachedSettingsManager = settingsManager;
+  cachedSettingsTimestamp = now;
+
+  return settingsManager;
+}
 
 // ===== Module-level Logger for Helper Functions =====
 const moduleLogger = createLogger().module('AUTHORIZE');
@@ -214,6 +255,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let display: string | undefined;
   let ui_locales: string | undefined;
   let login_hint: string | undefined;
+  let handoff: string | undefined; // Authrim Extension: Session Token Handoff SSO
   let _confirmed: string | undefined;
   let _auth_time: string | undefined;
   let _session_user_id: string | undefined;
@@ -294,6 +336,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     display = c.req.query('display');
     ui_locales = c.req.query('ui_locales');
     login_hint = c.req.query('login_hint');
+    handoff = c.req.query('handoff');
     _confirmed = c.req.query('_confirmed');
     _auth_time = c.req.query('_auth_time');
     _session_user_id = c.req.query('_session_user_id');
@@ -1930,59 +1973,47 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // ============================================================
   // SSO Configuration Retrieval and Application
   // ============================================================
+  // Priority: Client KV > Tenant KV > Client ENV > Tenant ENV > Default (false)
   let ssoEnabled = false; // Default: disabled for security
 
   try {
-    // Get SSO setting from KV or environment variables
-    // Priority: Client KV > Tenant KV > Client ENV > Tenant ENV > Default (false)
+    // Use cached SettingsManager for better performance
+    const settingsManager = getSettingsManager(c.env);
 
-    let tenantSsoSetting: boolean | null = null;
     let clientSsoSetting: boolean | null = null;
+    let tenantSsoSetting: boolean | null = null;
 
-    // 1. Try to get client-level setting from KV
-    if (c.env.AUTHRIM_CONFIG) {
-      const clientKvKey = `settings:client:${validClientId}:client`;
-      const clientKvData = await c.env.AUTHRIM_CONFIG.get(clientKvKey);
-      if (clientKvData) {
-        try {
-          const clientData = JSON.parse(clientKvData);
-          if (typeof clientData['client.sso_enabled'] === 'boolean') {
-            clientSsoSetting = clientData['client.sso_enabled'];
-          }
-        } catch (parseError) {
-          log.warn('Failed to parse client KV data for SSO setting', {
-            action: 'sso_config_parse_error',
-            clientId: validClientId,
-          });
-        }
+    // Fetch client and tenant settings in parallel for better performance
+    // Priority: Client setting > Tenant setting > Default (false)
+    try {
+      const [clientSso, tenantSso] = await Promise.all([
+        settingsManager
+          .get('client.sso_enabled', {
+            type: 'client',
+            id: validClientId,
+          })
+          .catch(() => null),
+        settingsManager
+          .get('oauth.sso_enabled', {
+            type: 'tenant',
+            id: tenantId,
+          })
+          .catch(() => null),
+      ]);
+
+      if (typeof clientSso === 'boolean') {
+        clientSsoSetting = clientSso;
       }
-    }
-
-    // 2. Try to get tenant-level setting from KV
-    if (c.env.AUTHRIM_CONFIG && clientSsoSetting === null) {
-      const tenantKvKey = `settings:tenant:${tenantId}:oauth`;
-      const tenantKvData = await c.env.AUTHRIM_CONFIG.get(tenantKvKey);
-      if (tenantKvData) {
-        try {
-          const tenantData = JSON.parse(tenantKvData);
-          if (typeof tenantData['oauth.sso_enabled'] === 'boolean') {
-            tenantSsoSetting = tenantData['oauth.sso_enabled'];
-          }
-        } catch (parseError) {
-          log.warn('Failed to parse tenant KV data for SSO setting', {
-            action: 'sso_config_parse_error',
-            tenantId,
-          });
-        }
+      if (typeof tenantSso === 'boolean') {
+        tenantSsoSetting = tenantSso;
       }
-    }
-
-    // 3. Fallback to environment variables
-    if (clientSsoSetting === null && c.env.CLIENT_SSO_ENABLED !== undefined) {
-      clientSsoSetting = c.env.CLIENT_SSO_ENABLED === 'true';
-    }
-    if (tenantSsoSetting === null && c.env.OAUTH_SSO_ENABLED !== undefined) {
-      tenantSsoSetting = c.env.OAUTH_SSO_ENABLED === 'true';
+    } catch (error) {
+      // Both settings failed - use default
+      log.debug('Failed to fetch SSO settings, using default', {
+        clientId: validClientId,
+        tenantId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     // Priority: Client setting > Tenant setting > Default (false)
@@ -2218,6 +2249,49 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           );
         }
       }
+
+      // Handoff Token SSO (Authrim Extension)
+      // When handoff=true, return handoff_token instead of authorization code
+      // This enables SSO in third-party cookie blocked environments
+      if (handoff === 'true') {
+        // redirect_uri is required and validated at this point
+        if (!redirect_uri) {
+          return sendError('invalid_request', 'redirect_uri is required for handoff flow');
+        }
+
+        log.info('Handoff SSO: Issuing handoff token', {
+          action: 'handoff_sso',
+          sessionId,
+          userId: sessionUserId,
+        });
+
+        // Generate handoff token
+        const handoffToken = crypto.randomUUID();
+        const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken);
+
+        await handoffStore.storeChallengeRpc({
+          id: `handoff:${handoffToken}`,
+          type: 'handoff',
+          userId: sessionUserId!,
+          challenge: sessionId!,
+          ttl: 30, // 30 seconds
+          metadata: {
+            client_id: validClientId,
+            state,
+            aud: 'handoff',
+            created_at: Date.now(),
+          },
+        });
+
+        // Redirect to callback with handoff_token
+        const callbackUrl = new URL(redirect_uri);
+        callbackUrl.searchParams.set('handoff_token', handoffToken);
+        if (state) {
+          callbackUrl.searchParams.set('state', state);
+        }
+
+        return c.redirect(callbackUrl.toString(), 302);
+      }
     }
 
     // Note: prompt=login is handled in the OIDC compliance section above
@@ -2374,12 +2448,61 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // Check if consent is required (unless already confirmed)
   // Note: _consent_confirmed is already parsed at the top of this function
   if (_consent_confirmed !== 'true') {
-    // Get client metadata to check if it's a trusted client (request-level cached)
+    // Get client metadata for logging (request-level cached)
     const clientMetadata = await getClientCached(c, c.env, validClientId);
 
-    // Check if this is a trusted client that can skip consent
-    const isTrustedClient =
-      clientMetadata && clientMetadata.is_trusted && clientMetadata.skip_consent;
+    // Get client settings from KV (replaces legacy D1 is_trusted/skip_consent fields)
+    let consentRequired = true; // Default: require consent (security-first)
+    let firstParty = false;
+
+    try {
+      // Use cached SettingsManager for better performance
+      const settingsManager = getSettingsManager(c.env);
+
+      // Get consent_required setting (KV > env > default)
+      const consentRequiredSetting = await settingsManager.get('client.consent_required', {
+        type: 'client',
+        id: validClientId,
+      });
+      consentRequired = (consentRequiredSetting as boolean | undefined) ?? true;
+
+      // Get first_party setting (informational)
+      const firstPartySetting = await settingsManager.get('client.first_party', {
+        type: 'client',
+        id: validClientId,
+      });
+      firstParty = (firstPartySetting as boolean | undefined) ?? false;
+    } catch (error) {
+      log.error('Failed to get client settings, defaulting to consent required', {
+        action: 'consent_settings_error',
+        clientId: validClientId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      consentRequired = true; // Fail-safe: require consent
+    }
+
+    // Debug: Log consent decision factors
+    log.info('Consent check - settings', {
+      action: 'consent_check_settings',
+      clientId: validClientId,
+      consentRequired,
+      firstParty,
+      // Legacy D1 fields (for migration tracking)
+      legacy_is_trusted: clientMetadata?.is_trusted,
+      legacy_skip_consent: clientMetadata?.skip_consent,
+    });
+
+    // Trusted client: consent_required=false allows skipping consent
+    // (unless prompt=consent is explicitly specified)
+    const isTrustedClient = !consentRequired;
+
+    log.info('Consent check - decision', {
+      action: 'consent_check_decision',
+      clientId: validClientId,
+      isTrustedClient,
+      promptIncludesConsent: prompt?.includes('consent'),
+      willSkipConsent: isTrustedClient && !prompt?.includes('consent'),
+    });
 
     // Trusted clients skip consent (unless prompt=consent is explicitly specified)
     if (isTrustedClient && !prompt?.includes('consent')) {

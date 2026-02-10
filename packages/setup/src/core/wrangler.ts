@@ -6,6 +6,7 @@
  */
 
 import type { AuthrimConfig } from './config.js';
+import { extractZoneName } from './cloudflare.js';
 import {
   getWorkerName,
   getDOScriptName,
@@ -160,7 +161,7 @@ const COMPONENT_ENTRY_POINTS: Record<WorkerComponent, string> = {
  *
  * @see https://developers.cloudflare.com/workers/configuration/routing/workers-dev/
  */
-function normalizeWorkersDevUrl(url: string, workersSubdomain?: string): string {
+export function normalizeWorkersDevUrl(url: string, workersSubdomain?: string): string {
   try {
     const parsed = new URL(url);
 
@@ -202,7 +203,7 @@ function addOriginWithSubdomain(
  * Workers.dev URLs are normalized to the correct format:
  *   {name}.{subdomain}.workers.dev
  */
-function deriveAllowedOrigins(config: AuthrimConfig, workersSubdomain?: string): string[] {
+export function deriveAllowedOrigins(config: AuthrimConfig, workersSubdomain?: string): string[] {
   const origins = new Set<string>();
 
   // API origin (the issuer URL / router)
@@ -213,13 +214,19 @@ function deriveAllowedOrigins(config: AuthrimConfig, workersSubdomain?: string):
   }
 
   // LoginUI origin
-  const loginUiUrl = config.urls?.loginUi?.custom || config.urls?.loginUi?.auto;
+  // When sameAsApi=true, the actual origin is the API domain (UI is proxied)
+  const loginUiUrl = config.urls?.loginUi?.sameAsApi
+    ? apiUrl
+    : (config.urls?.loginUi?.custom || config.urls?.loginUi?.auto);
   if (loginUiUrl) {
     addOriginWithSubdomain(origins, loginUiUrl, workersSubdomain);
   }
 
   // AdminUI origin
-  const adminUiUrl = config.urls?.adminUi?.custom || config.urls?.adminUi?.auto;
+  // When sameAsApi=true, the actual origin is the API domain (UI is proxied)
+  const adminUiUrl = config.urls?.adminUi?.sameAsApi
+    ? apiUrl
+    : (config.urls?.adminUi?.custom || config.urls?.adminUi?.auto);
   if (adminUiUrl) {
     addOriginWithSubdomain(origins, adminUiUrl, workersSubdomain);
   }
@@ -387,9 +394,7 @@ export function generateWranglerConfig(
       try {
         const customUrl = new URL(config.urls.api.custom);
         const hostname = customUrl.hostname;
-        // Extract zone name (e.g., "example.com" from "auth.example.com")
-        const parts = hostname.split('.');
-        const zoneName = parts.length >= 2 ? parts.slice(-2).join('.') : hostname;
+        const zoneName = extractZoneName(hostname);
         wranglerConfig.routes = [{ pattern: `${hostname}/*`, zone_name: zoneName }];
       } catch {
         // Invalid URL, skip routes configuration
@@ -403,8 +408,7 @@ export function generateWranglerConfig(
     try {
       const customUrl = new URL(config.urls.api.custom);
       const hostname = customUrl.hostname;
-      const parts = hostname.split('.');
-      const zoneName = parts.length >= 2 ? parts.slice(-2).join('.') : hostname;
+      const zoneName = extractZoneName(hostname);
       const componentRoutes = generateRoutes(component, hostname, zoneName);
       if (componentRoutes.length > 0) {
         wranglerConfig.routes = componentRoutes;
@@ -424,16 +428,29 @@ export function generateWranglerConfig(
  * @param config - Authrim configuration
  * @param workersSubdomain - Account subdomain for workers.dev (e.g., "sgrastar")
  */
-function generateEnvVars(
+export function generateEnvVars(
   component: WorkerComponent,
   config: AuthrimConfig,
   workersSubdomain?: string
 ): Record<string, string> {
   const vars: Record<string, string> = {};
 
-  // Common variables
-  const issuerUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
-  const uiUrl = config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl;
+  // Determine issuer URL
+  // In multi-tenant mode with BASE_DOMAIN: issuer is dynamically built from {tenant}.{baseDomain}
+  // Otherwise: use workers.dev or custom API domain
+  let issuerUrl: string;
+  if (config.tenant?.baseDomain) {
+    // Multi-tenant mode: use BASE_DOMAIN (ISSUER_URL is not used, kept for fallback)
+    issuerUrl = config.urls?.api?.auto || '';
+  } else {
+    // Single-tenant or workers.dev mode: use explicit issuer URL
+    issuerUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
+  }
+  // UI_URL: when sameAsApi=true, UI is proxied through the API domain
+  const apiUrlForUi = config.urls?.api?.custom || config.urls?.api?.auto || '';
+  const uiUrl = config.urls?.loginUi?.sameAsApi
+    ? apiUrlForUi
+    : (config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl);
 
   // Issuer URL (single-tenant mode uses this directly)
   // In multi-tenant mode, issuer is dynamically built from subdomain + BASE_DOMAIN
@@ -447,19 +464,30 @@ function generateEnvVars(
   }
 
   // Tenant configuration
-  // Multi-tenant mode: subdomain-based tenant isolation
-  // - BASE_DOMAIN: base domain (e.g., "authrim.com")
-  // - ENABLE_TENANT_ISOLATION: "true" to enable
-  // - Issuer URL: https://{tenant}.{BASE_DOMAIN}
-  if (component === 'ar-auth' || component === 'ar-management' || component === 'ar-router') {
+  // Multi-tenant mode is always enabled when BASE_DOMAIN is set.
+  // Domain pattern: {tenant}.{baseDomain}
+  if (
+    component === 'ar-auth' ||
+    component === 'ar-management' ||
+    component === 'ar-router' ||
+    component === 'ar-discovery'
+  ) {
     vars['DEFAULT_TENANT_ID'] = config.tenant?.name || 'default';
 
     // User ID format (nanoid or uuid)
     vars['USER_ID_FORMAT'] = config.tenant?.userIdFormat || 'nanoid';
 
-    if (config.tenant?.multiTenant && config.tenant?.baseDomain) {
+    if (config.tenant?.baseDomain) {
       vars['BASE_DOMAIN'] = config.tenant.baseDomain;
-      vars['ENABLE_TENANT_ISOLATION'] = 'true';
+
+      if (config.tenant.primaryTenant) {
+        vars['PRIMARY_TENANT_ID'] = config.tenant.primaryTenant;
+      }
+
+      // Naked domain as issuer (use naked domain instead of tenant subdomain)
+      if (config.tenant.nakedDomain) {
+        vars['NAKED_DOMAIN_AS_ISSUER'] = 'true';
+      }
     }
   }
 
@@ -474,7 +502,9 @@ function generateEnvVars(
     vars['COOKIE_SAME_SITE'] = loginUiSameOrigin ? 'Lax' : 'None';
 
     // Admin UI URL and cookie configuration
-    const adminUiUrl = config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
+    const adminUiUrl = config.urls?.adminUi?.sameAsApi
+      ? apiUrlForUi
+      : (config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl);
     vars['ADMIN_UI_URL'] = adminUiUrl;
     const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
     vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';
@@ -483,7 +513,9 @@ function generateEnvVars(
   // ar-management also needs cookie configuration for admin sessions
   if (component === 'ar-management') {
     // Admin UI URL and cookie configuration (same logic as ar-auth)
-    const adminUiUrl = config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
+    const adminUiUrl = config.urls?.adminUi?.sameAsApi
+      ? apiUrlForUi
+      : (config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl);
     vars['ADMIN_UI_URL'] = adminUiUrl;
     const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
     vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';

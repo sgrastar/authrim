@@ -1,0 +1,48 @@
+name: Deploy to Test Environment
+
+on:
+  push:
+    branches:
+      - develop
+
+# Restrict GITHUB_TOKEN permissions (OpenSSF Scorecard)
+permissions:
+  contents: read
+
+jobs:
+  deploy-test:
+    name: Deploy to test.authrim.com
+    runs-on: ubuntu-latest
+
+    # Only run on the main repository (skip forks)
+    if: github.repository == 'sgrastar/authrim'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy to test environment
+        run: ./scripts/deploy-with-retry.sh --env=test --api-only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deployment summary
+        if: success()
+        run: |
+          echo "✅ Successfully deployed to test.authrim.com"
+          echo "Environment: test"

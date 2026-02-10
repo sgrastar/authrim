@@ -380,16 +380,16 @@ describe('JWT Verification Properties', () => {
 
         const token = await createIDToken(claims, privateKey, kid, 3600);
 
-        // Generate a different key
+        // Generate a different key (RSA key generation is slow, so limit numRuns)
         const differentKeySet = await generateKeySet('different-key');
 
         await expect(
           verifyToken(token, differentKeySet.publicKey, issuer, { audience: clientId })
         ).rejects.toThrow();
       }),
-      { numRuns: 10 }
+      { numRuns: 5 }
     );
-  });
+  }, 15_000);
 });
 
 // =============================================================================

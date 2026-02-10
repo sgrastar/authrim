@@ -1,0 +1,116 @@
+{
+  "version": "1.0.0",
+  "createdAt": "2026-02-09T11:19:40.787Z",
+  "updatedAt": "2026-02-09T11:23:29.112Z",
+  "env": "test",
+  "d1": {
+    "DB": {
+      "name": "test-authrim-core-db",
+      "id": "687149ce-cff8-4f54-b831-4cfa978f5151"
+    },
+    "DB_PII": {
+      "name": "test-authrim-pii-db",
+      "id": "e6164b63-e081-4b94-a01b-c727a86b01a6"
+    },
+    "DB_ADMIN": {
+      "name": "test-authrim-admin-db",
+      "id": "5db02377-41a6-4b3a-9fbd-73be37d55d18"
+    }
+  },
+  "kv": {
+    "CLIENTS_CACHE": {
+      "name": "TEST-CLIENTS_CACHE",
+      "id": "f92272af7afe4038be7de8f2e80add25"
+    },
+    "INITIAL_ACCESS_TOKENS": {
+      "name": "TEST-INITIAL_ACCESS_TOKENS",
+      "id": "04c0f993a6024d04abc474fb5f8a4075"
+    },
+    "SETTINGS": {
+      "name": "TEST-SETTINGS",
+      "id": "f2fee92e071a4f0baddf5bfa234d4372"
+    },
+    "REBAC_CACHE": {
+      "name": "TEST-REBAC_CACHE",
+      "id": "ce1400b907fc4f5fa18351103c772906"
+    },
+    "USER_CACHE": {
+      "name": "TEST-USER_CACHE",
+      "id": "ac677830a44d4b1ebc513715096b26f7"
+    },
+    "AUTHRIM_CONFIG": {
+      "name": "TEST-AUTHRIM_CONFIG",
+      "id": "314d328eff7f4601aa1160459e60e351"
+    },
+    "STATE_STORE": {
+      "name": "TEST-STATE_STORE",
+      "id": "67314570b76740eb894ee09d2b20d12d"
+    },
+    "CONSENT_CACHE": {
+      "name": "TEST-CONSENT_CACHE",
+      "id": "9b8e995906224e7da965cf41ad7e766e"
+    }
+  },
+  "workers": {
+    "ar-lib-core": {
+      "name": "test-ar-lib-core",
+      "deployedAt": "2026-02-09T11:21:14.756Z",
+      "version": "0.1.10"
+    },
+    "ar-discovery": {
+      "name": "test-ar-discovery",
+      "deployedAt": "2026-02-09T11:21:20.099Z",
+      "version": "0.1.10"
+    },
+    "ar-auth": {
+      "name": "test-ar-auth",
+      "deployedAt": "2026-02-09T11:21:30.530Z",
+      "version": "0.1.10"
+    },
+    "ar-token": {
+      "name": "test-ar-token",
+      "deployedAt": "2026-02-09T11:21:39.591Z",
+      "version": "0.1.10"
+    },
+    "ar-userinfo": {
+      "name": "test-ar-userinfo",
+      "deployedAt": "2026-02-09T11:21:45.794Z",
+      "version": "0.1.10"
+    },
+    "ar-management": {
+      "name": "test-ar-management",
+      "deployedAt": "2026-02-09T11:21:55.715Z",
+      "version": "0.1.10"
+    },
+    "ar-async": {
+      "name": "test-ar-async",
+      "deployedAt": "2026-02-09T11:22:01.935Z",
+      "version": "0.1.10"
+    },
+    "ar-policy": {
+      "name": "test-ar-policy",
+      "deployedAt": "2026-02-09T11:22:07.967Z",
+      "version": "0.1.10"
+    },
+    "ar-saml": {
+      "name": "test-ar-saml",
+      "deployedAt": "2026-02-09T11:22:14.408Z",
+      "version": "0.1.10"
+    },
+    "ar-bridge": {
+      "name": "test-ar-bridge",
+      "deployedAt": "2026-02-09T11:22:23.617Z",
+      "version": "0.1.10"
+    },
+    "ar-vc": {
+      "name": "test-ar-vc",
+      "deployedAt": "2026-02-09T11:22:29.395Z",
+      "version": "0.1.10"
+    },
+    "ar-router": {
+      "name": "test-ar-router",
+      "deployedAt": "2026-02-09T11:22:37.273Z",
+      "version": "0.1.10"
+    }
+  }
+}

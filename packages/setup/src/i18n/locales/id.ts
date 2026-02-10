@@ -172,6 +172,15 @@ const id: Translations = {
   'domain.customDesc': 'Gunakan domain Anda sendiri',
   'domain.customPrompt': 'Masukkan domain kustom (contoh: auth.example.com)',
   'domain.customValidation': 'Silakan masukkan domain yang valid (contoh: auth.example.com)',
+  'domain.checkingZone': 'Memeriksa zona Cloudflare untuk {{domain}}...',
+  'domain.zoneFound': "Zona '{{zone}}' ditemukan (status: {{status}})",
+  'domain.zoneNotFound': "Zona '{{zone}}' tidak ditemukan di akun Cloudflare Anda",
+  'domain.zoneNotFoundHint':
+    'Routing domain kustom memerlukan zona untuk ditambahkan ke Cloudflare terlebih dahulu.',
+  'domain.zoneCheckFailed': 'Tidak dapat memeriksa zona',
+  'domain.zoneCheckSkipped': 'Pemeriksaan zona dilewati, melanjutkan pengaturan...',
+  'domain.continueWithoutZone': 'Lanjutkan tanpa verifikasi zona?',
+  'domain.configureBinding': 'Konfigurasi binding domain kustom untuk Workers',
   'domain.issuerUrl': 'URL Issuer: {{url}}',
   'domain.apiDomain': 'Domain API / Issuer (contoh: auth.example.com)',
   'domain.loginUiDomain': 'Domain UI Login (Enter untuk lewati)',
@@ -990,6 +999,14 @@ const id: Translations = {
   'web.envDetail.updateProgress': 'Progres pembaruan:',
   'web.envDetail.updatesAvailable': '{{count}} pembaruan tersedia',
   'web.envDetail.allUpToDate': 'Semua terkini',
+
+  'web.envDetail.action': 'Tindakan',
+
+  // Web UI Update Section
+  'web.envDetail.uiUpdate': 'Perbarui UI (Pages)',
+  'web.envDetail.uiUpdateDesc':
+    'Perbarui Admin UI atau Login UI secara individual. Ini dideploy ke Cloudflare Pages.',
+  'web.envDetail.updateNow': 'Perbarui',
 
   // Web UI Delete Section
   'web.delete.title': 'Hapus Environment',

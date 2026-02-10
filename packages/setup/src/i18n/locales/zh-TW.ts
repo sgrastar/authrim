@@ -169,6 +169,14 @@ const zhTW: Translations = {
   'domain.customDesc': '使用您自己的網域',
   'domain.customPrompt': '輸入自訂網域（例如：auth.example.com）',
   'domain.customValidation': '請輸入有效的網域（例如：auth.example.com）',
+  'domain.checkingZone': '正在檢查 {{domain}} 的 Cloudflare 區域...',
+  'domain.zoneFound': "找到區域 '{{zone}}'（狀態：{{status}}）",
+  'domain.zoneNotFound': "在您的 Cloudflare 帳戶中未找到區域 '{{zone}}'",
+  'domain.zoneNotFoundHint': '自訂網域路由需要先將區域新增至 Cloudflare。',
+  'domain.zoneCheckFailed': '無法檢查區域',
+  'domain.zoneCheckSkipped': '已跳過區域檢查，繼續設定...',
+  'domain.continueWithoutZone': '不驗證區域繼續？',
+  'domain.configureBinding': '為 Workers 設定自訂網域綁定',
   'domain.issuerUrl': '發行者 URL：{{url}}',
   'domain.apiDomain': 'API / 發行者網域（例如：auth.example.com）',
   'domain.loginUiDomain': '登入 UI 網域（按 Enter 跳過）',
@@ -965,6 +973,13 @@ const zhTW: Translations = {
   'web.envDetail.updateProgress': '更新進度：',
   'web.envDetail.updatesAvailable': '{{count}} 個更新可用',
   'web.envDetail.allUpToDate': '全部最新',
+
+  'web.envDetail.action': '操作',
+
+  // Web UI Update Section
+  'web.envDetail.uiUpdate': '更新 UI（Pages）',
+  'web.envDetail.uiUpdateDesc': '單獨更新 Admin UI 或 Login UI。這些部署在 Cloudflare Pages 上。',
+  'web.envDetail.updateNow': '更新',
 
   // Web UI Delete Section
   'web.delete.title': '刪除環境',

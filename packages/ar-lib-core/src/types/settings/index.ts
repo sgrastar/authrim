@@ -90,6 +90,9 @@ import { DCR_CATEGORY_META } from './dcr';
 import { LOGIN_UI_CATEGORY_META } from './login-ui';
 import { DIAGNOSTIC_LOGGING_CATEGORY_META } from './diagnostic-logging';
 
+// Export commonly used category metadata
+export { CLIENT_CATEGORY_META, OAUTH_CATEGORY_META };
+
 /**
  * All category metadata for easy registration
  */
