@@ -7,7 +7,7 @@
  * - Accept-Language based locale detection
  */
 
-import { PUBLIC_API_BASE_URL } from '$env/static/public';
+import { env } from '$env/dynamic/public';
 import type { Handle } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 
@@ -15,7 +15,7 @@ import { sequence } from '@sveltejs/kit/hooks';
  * Build connect-src directive with API origin if cross-origin
  */
 function buildConnectSrc(): string {
-	const apiBaseUrl = PUBLIC_API_BASE_URL;
+	const apiBaseUrl = env.PUBLIC_API_BASE_URL;
 	if (apiBaseUrl) {
 		try {
 			const apiOrigin = new URL(apiBaseUrl).origin;
