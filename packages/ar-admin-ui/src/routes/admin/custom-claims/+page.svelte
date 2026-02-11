@@ -813,6 +813,9 @@
 				<label class="form-label">
 					<input type="checkbox" bind:checked={createForm.include_in_introspection} />
 					Introspection
+					<small style="color: var(--color-warning, #b08800); display: block; font-size: 0.75rem;"
+						>現在、Introspectionレスポンスへのカスタムクレーム埋め込みは無効です。UserInfoエンドポイントをご利用ください。</small
+					>
 				</label>
 			</div>
 		</div>
@@ -991,6 +994,9 @@
 					<label class="form-label">
 						<input type="checkbox" bind:checked={editForm.include_in_introspection} />
 						Introspection
+						<small style="color: var(--color-warning, #b08800); display: block; font-size: 0.75rem;"
+							>現在、Introspectionレスポンスへのカスタムクレーム埋め込みは無効です。UserInfoエンドポイントをご利用ください。</small
+						>
 					</label>
 				</div>
 			</div>

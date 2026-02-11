@@ -1,0 +1,94 @@
+/**
+ * Schema Loader
+ *
+ * Loads active custom claim schemas with KV caching.
+ * Falls back to D1 database when cache is unavailable or corrupted.
+ */
+
+import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import { createLogger } from '../../utils/logger';
+import type { CustomClaimSchema } from './resolver';
+
+const log = createLogger().module('CUSTOM-CLAIMS-SCHEMA-LOADER');
+
+const DEFAULT_CACHE_TTL_SECONDS = 300; // 5 minutes
+const CACHE_KEY_PREFIX = 'custom_claim_schemas:';
+
+interface CachedSchemaData {
+  schemas: CustomClaimSchema[];
+  fetched_at: number;
+  schema_version_max: number;
+}
+
+export class SchemaLoader {
+  private db: D1Database;
+  private cache: KVNamespace | null;
+  private cacheTtl: number;
+
+  constructor(db: D1Database, cache: KVNamespace | null, cacheTtlSeconds?: number) {
+    this.db = db;
+    this.cache = cache;
+    this.cacheTtl = cacheTtlSeconds ?? DEFAULT_CACHE_TTL_SECONDS;
+  }
+
+  async loadActiveSchemas(tenantId: string): Promise<CustomClaimSchema[]> {
+    const cacheKey = `${CACHE_KEY_PREFIX}${tenantId}`;
+
+    // Try KV cache first
+    if (this.cache) {
+      try {
+        const cached = await this.cache.get(cacheKey);
+        if (cached) {
+          const data: CachedSchemaData = JSON.parse(cached);
+          if (data && Array.isArray(data.schemas)) {
+            return data.schemas;
+          }
+          log.warn('Schema cache corrupted, falling back to DB', { tenantId });
+        }
+      } catch {
+        log.warn('Schema cache corrupted, falling back to DB', { tenantId });
+      }
+    }
+
+    // Load from DB
+    const schemas = await this.loadFromDb(tenantId);
+
+    // Update cache
+    if (this.cache && schemas.length > 0) {
+      try {
+        const maxVersion = Math.max(...schemas.map((s) => s.schema_version ?? 1));
+        const cacheData: CachedSchemaData = {
+          schemas,
+          fetched_at: Date.now(),
+          schema_version_max: maxVersion,
+        };
+        await this.cache.put(cacheKey, JSON.stringify(cacheData), {
+          expirationTtl: this.cacheTtl,
+        });
+      } catch {
+        // Cache write failure is non-critical
+      }
+    }
+
+    return schemas;
+  }
+
+  async invalidateCache(tenantId: string): Promise<void> {
+    if (!this.cache) return;
+    try {
+      await this.cache.delete(`${CACHE_KEY_PREFIX}${tenantId}`);
+    } catch {
+      // Best-effort
+    }
+  }
+
+  private async loadFromDb(tenantId: string): Promise<CustomClaimSchema[]> {
+    const stmt = this.db.prepare(
+      `SELECT * FROM custom_claim_schemas
+       WHERE tenant_id = ? AND is_active = 1 AND operation_status = 'active'
+       ORDER BY display_order ASC`
+    );
+    const result = await stmt.bind(tenantId).all();
+    return (result.results ?? []) as unknown as CustomClaimSchema[];
+  }
+}

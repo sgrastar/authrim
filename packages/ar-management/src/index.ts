@@ -187,6 +187,8 @@ import {
   adminCustomClaimDeleteHandler,
   adminCustomClaimRenameHandler,
   adminCustomClaimRetryHandler,
+  adminCustomClaimHistoryListHandler,
+  adminCustomClaimHistoryVersionHandler,
 } from './admin-custom-claims';
 import {
   adminPoliciesListHandler,
@@ -1407,6 +1409,11 @@ app.put('/api/admin/custom-claims/:id', adminCustomClaimUpdateHandler);
 app.delete('/api/admin/custom-claims/:id', adminCustomClaimDeleteHandler);
 app.patch('/api/admin/custom-claims/:id/rename', adminCustomClaimRenameHandler);
 app.post('/api/admin/custom-claims/:id/retry', adminCustomClaimRetryHandler);
+app.get('/api/admin/custom-claims/:schemaId/history', adminCustomClaimHistoryListHandler);
+app.get(
+  '/api/admin/custom-claims/:schemaId/history/:version',
+  adminCustomClaimHistoryVersionHandler
+);
 
 // =============================================================================
 // Policy Rules Management (Visual Policy Builder)

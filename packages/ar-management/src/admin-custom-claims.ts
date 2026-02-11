@@ -22,6 +22,8 @@ import {
   AR_ERROR_CODES,
   generateId,
   createAuditLogFromContext,
+  SchemaLoader,
+  CustomClaimSchemaHistoryManager,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -130,7 +132,8 @@ function isSafeRegex(pattern: string): boolean {
   // Detect overlapping alternation with quantifiers: (a|a)+
   if (/\([^)]*\|[^)]*\)[+*{]/.test(pattern)) return false;
   // Detect adjacent quantifiers: a**,  a++, a+*
-  if (/[+*?}\]]\s*[+*{]/.test(pattern)) return false;
+  // Note: ] is excluded because it ends a character class (e.g. [a-z]+)
+  if (/[+*?}]\s*[+*{]/.test(pattern)) return false;
   // Try to compile the regex
   try {
     new RegExp(pattern);
@@ -266,6 +269,21 @@ async function invalidateStatsCache(c: AdminContext, tenantId: string): Promise<
   }
 }
 
+/**
+ * Invalidate the schema resolver KV cache after CUD operations
+ */
+async function invalidateSchemaCache(c: AdminContext, tenantId: string): Promise<void> {
+  try {
+    const kv = c.env.AUTHRIM_CONFIG || null;
+    if (kv) {
+      const loader = new SchemaLoader(c.env.DB, kv);
+      await loader.invalidateCache(tenantId);
+    }
+  } catch {
+    // Cache invalidation failure is non-critical
+  }
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -384,6 +402,17 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
           reason: `'${field_key}' is a reserved OIDC claim name`,
         },
       });
+    }
+
+    // Block creating system claims via admin API
+    if (body.is_system) {
+      return c.json(
+        {
+          error: 'forbidden',
+          error_description: 'System claims can only be created via migration',
+        },
+        403
+      );
     }
 
     if (!display_label || typeof display_label !== 'string') {
@@ -550,7 +579,26 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
       is_pii: body.is_pii ? 1 : 0,
     });
 
+    // Record history
+    try {
+      const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+      const adminAuth = c.get('adminAuth');
+      await historyManager.recordChange({
+        schemaId: id,
+        tenantId,
+        operation: 'create',
+        previousSnapshot: null,
+        newSnapshot: created[0] as Record<string, unknown>,
+        actorId: adminAuth?.userId,
+        actorType: 'admin',
+        changeSource: 'admin_api',
+      });
+    } catch {
+      // History recording failure is non-critical
+    }
+
     await invalidateStatsCache(c, tenantId);
+    await invalidateSchemaCache(c, tenantId);
 
     return c.json({ schema: created[0] }, 201);
   } catch (error) {
@@ -758,6 +806,27 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       });
     }
 
+    // Block protected field changes for system claims
+    if (schema.is_system === 1) {
+      const protectedFields = ['field_key', 'field_type', 'is_pii'];
+      for (const f of protectedFields) {
+        if (body[f] !== undefined && body[f] !== schema[f]) {
+          return c.json(
+            { error: 'forbidden', error_description: `Cannot modify ${f} on system claims` },
+            403
+          );
+        }
+      }
+    }
+
+    // Block changing is_system via admin API
+    if (body.is_system !== undefined) {
+      return c.json(
+        { error: 'forbidden', error_description: 'is_system flag cannot be changed via admin API' },
+        403
+      );
+    }
+
     // Reject is_pii changes
     if (body.is_pii !== undefined && (body.is_pii ? 1 : 0) !== schema.is_pii) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
@@ -950,7 +1019,26 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       changes: Object.keys(body).filter((k) => k !== 'is_pii' && k !== 'field_key'),
     });
 
+    // Record history
+    try {
+      const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+      const adminAuth = c.get('adminAuth');
+      await historyManager.recordChange({
+        schemaId: id,
+        tenantId,
+        operation: 'update',
+        previousSnapshot: existing[0] as Record<string, unknown>,
+        newSnapshot: updated[0] as Record<string, unknown>,
+        actorId: adminAuth?.userId,
+        actorType: 'admin',
+        changeSource: 'admin_api',
+      });
+    } catch {
+      // History recording failure is non-critical
+    }
+
     await invalidateStatsCache(c, tenantId);
+    await invalidateSchemaCache(c, tenantId);
 
     return c.json({ schema: updated[0] });
   } catch (error) {
@@ -980,6 +1068,14 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
     }
 
     const schema = existing[0];
+
+    // Block deletion of system claims
+    if (schema.is_system === 1) {
+      return c.json(
+        { error: 'forbidden', error_description: 'System claims cannot be deleted' },
+        403
+      );
+    }
 
     // Block if already in operation
     if (schema.operation_status !== 'active' && schema.operation_status !== 'error') {
@@ -1093,7 +1189,26 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
         is_pii: isPii,
       });
 
+      // Record history
+      try {
+        const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+        const adminAuth = c.get('adminAuth');
+        await historyManager.recordChange({
+          schemaId: id,
+          tenantId,
+          operation: 'delete',
+          previousSnapshot: schema as Record<string, unknown>,
+          newSnapshot: { deleted: true, field_key: fieldKey },
+          actorId: adminAuth?.userId,
+          actorType: 'admin',
+          changeSource: 'admin_api',
+        });
+      } catch {
+        // History recording failure is non-critical
+      }
+
       await invalidateStatsCache(c, tenantId);
+      await invalidateSchemaCache(c, tenantId);
 
       return c.json({ success: true, deleted_id: id });
     } catch (error) {
@@ -1164,6 +1279,14 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
     }
 
     const schema = existing[0];
+
+    // Block renaming of system claims
+    if (schema.is_system === 1) {
+      return c.json(
+        { error: 'forbidden', error_description: 'System claims cannot be renamed' },
+        403
+      );
+    }
 
     if (schema.operation_status !== 'active') {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
@@ -1311,9 +1434,28 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
       });
 
       await invalidateStatsCache(c, tenantId);
+      await invalidateSchemaCache(c, tenantId);
 
       // Fetch updated schema
       const updated = await adapter.query('SELECT * FROM custom_claim_schemas WHERE id = ?', [id]);
+
+      // Record history
+      try {
+        const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+        const adminAuth = c.get('adminAuth');
+        await historyManager.recordChange({
+          schemaId: id,
+          tenantId,
+          operation: 'rename',
+          previousSnapshot: schema as Record<string, unknown>,
+          newSnapshot: updated[0] as Record<string, unknown>,
+          actorId: adminAuth?.userId,
+          actorType: 'admin',
+          changeSource: 'admin_api',
+        });
+      } catch {
+        // History recording failure is non-critical
+      }
 
       return c.json({
         schema: updated[0],
@@ -1588,6 +1730,61 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
     return c.json({ success: true, action: 'reset_to_active' });
   } catch (error) {
     console.error('Failed to retry custom claim operation:', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+// =============================================================================
+// History Endpoints
+// =============================================================================
+
+/**
+ * GET /api/admin/custom-claims/:schemaId/history
+ * List version history for a schema
+ */
+export async function adminCustomClaimHistoryListHandler(c: AdminContext) {
+  try {
+    const tenantId = getTenantIdFromContext(asBaseContext(c));
+    const schemaId = c.req.param('schemaId');
+    const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
+    const offset = parseInt(c.req.query('offset') || '0', 10);
+
+    const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+    const result = await historyManager.listVersions(tenantId, schemaId, limit, offset);
+
+    return c.json(result);
+  } catch (error) {
+    console.error('Failed to list schema history:', error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/**
+ * GET /api/admin/custom-claims/:schemaId/history/:version
+ * Get specific version details
+ */
+export async function adminCustomClaimHistoryVersionHandler(c: AdminContext) {
+  try {
+    const tenantId = getTenantIdFromContext(asBaseContext(c));
+    const schemaId = c.req.param('schemaId');
+    const version = parseInt(c.req.param('version'), 10);
+
+    if (!Number.isFinite(version) || version < 1) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: { field: 'version', reason: 'Must be a positive integer' },
+      });
+    }
+
+    const historyManager = new CustomClaimSchemaHistoryManager(c.env.DB);
+    const entry = await historyManager.getVersion(tenantId, schemaId, version);
+
+    if (!entry) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    return c.json({ history: entry });
+  } catch (error) {
+    console.error('Failed to get schema history version:', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
