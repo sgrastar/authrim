@@ -2,7 +2,12 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
-import { createLogger, isAllowedOrigin, parseAllowedOrigins, csrfProtectionMiddleware } from '@authrim/ar-lib-core';
+import {
+  createLogger,
+  isAllowedOrigin,
+  parseAllowedOrigins,
+  csrfProtectionMiddleware,
+} from '@authrim/ar-lib-core';
 
 // Module-level logger for router (no Hono context available in error handler)
 const log = createLogger().module('ROUTER');

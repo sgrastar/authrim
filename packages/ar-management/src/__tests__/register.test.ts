@@ -15,7 +15,10 @@ vi.mock('@authrim/ar-lib-core/utils/crypto', async (importOriginal) => {
     hashClientSecret: vi.fn(async (secret: string) => {
       const encoder = new TextEncoder();
       const data = encoder.encode(secret);
-      const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', data);
+      const hashBuffer = await (globalThis as unknown as { crypto: Crypto }).crypto.subtle.digest(
+        'SHA-256',
+        data
+      );
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
     }),
