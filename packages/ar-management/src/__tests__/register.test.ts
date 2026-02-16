@@ -6,6 +6,22 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
+
+// Mock crypto utils to handle ESM barrel export resolution issues in Vitest
+vi.mock('@authrim/ar-lib-core/utils/crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core/utils/crypto')>();
+  return {
+    ...actual,
+    hashClientSecret: vi.fn(async (secret: string) => {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(secret);
+      const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+    }),
+  };
+});
+
 import { registerHandler } from '../register';
 
 // Helper to create mock D1Database

@@ -10,12 +10,39 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
-// Mock scheduleAuditLogFromContext and generateUserIdFromSettings to avoid ESM import issues
-import * as arLibCore from '@authrim/ar-lib-core';
-vi.spyOn(arLibCore, 'scheduleAuditLogFromContext').mockImplementation(() => {});
-vi.spyOn(arLibCore, 'generateUserIdFromSettings').mockImplementation(
-  async () => `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
-);
+// Mock specific submodules to avoid ESM barrel export resolution issues
+// Vite's barrel export resolution can't handle deep `export *` chains with vi.spyOn,
+// so we mock the specific source modules directly.
+vi.mock('@authrim/ar-lib-core/utils/audit-log', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core/utils/audit-log')>();
+  return {
+    ...actual,
+    scheduleAuditLogFromContext: vi.fn(() => {}),
+  };
+});
+vi.mock('@authrim/ar-lib-core/utils/id', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core/utils/id')>();
+  return {
+    ...actual,
+    generateUserIdFromSettings: vi.fn(
+      async () => `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
+    ),
+  };
+});
+vi.mock('@authrim/ar-lib-core/utils/crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core/utils/crypto')>();
+  return {
+    ...actual,
+    hashClientSecret: vi.fn(async (secret: string) => {
+      // Simple hash mock for testing - return hex string of consistent length
+      const encoder = new TextEncoder();
+      const data = encoder.encode(secret);
+      const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+    }),
+  };
+});
 
 import {
   adminStatsHandler,

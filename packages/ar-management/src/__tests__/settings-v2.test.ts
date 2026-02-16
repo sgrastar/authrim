@@ -75,8 +75,11 @@ function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string>
   app.route('/api/admin', settingsV2);
 
   // Create mock env
+  // SETTINGS KV is used by SettingsManager for reading/writing settings
+  // AUTHRIM_CONFIG KV is used for other config lookups (client data, etc.)
   const mockEnv = {
     AUTHRIM_CONFIG: mockKV,
+    SETTINGS: mockKV,
     ...options.env,
   } as unknown as Env;
 

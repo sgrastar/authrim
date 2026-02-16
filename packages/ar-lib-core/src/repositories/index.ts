@@ -40,17 +40,10 @@ export {
   type RepositoryConfig,
 } from './base';
 
-// User ID generation utilities
-export {
-  generateUserId,
-  isValidUserId,
-  getUserIdFormatFromSettings,
-  generateUserIdFromSettings,
-  DEFAULT_USER_ID_FORMAT,
-  type UserIdFormat,
-} from '../utils/id';
-
 // Core repositories (Non-PII)
+// Note: User ID generation utilities (generateUserId, generateUserIdFromSettings, etc.)
+// are exported from '../utils/id' via the main index.ts barrel export.
+// They are NOT re-exported here to avoid ESM ambiguous star export conflicts.
 export {
   UserCoreRepository,
   type UserCore,
