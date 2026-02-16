@@ -198,6 +198,23 @@ CREATE TABLE "ciba_requests" (
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
 );
 
+CREATE TABLE client_consent_overrides (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  client_id TEXT NOT NULL,
+  statement_id TEXT NOT NULL,
+  requirement TEXT NOT NULL DEFAULT 'inherit', -- 'required'|'optional'|'hidden'|'inherit'
+  min_version TEXT,                      -- null = use tenant default
+  enforcement TEXT,                      -- null = use tenant default
+  conditional_rules_json TEXT,           -- null = use tenant default
+  display_order INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  FOREIGN KEY (statement_id) REFERENCES consent_statements(id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, client_id, statement_id)
+);
+
 CREATE TABLE compliance_reports (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -230,6 +247,24 @@ CREATE TABLE consent_history (
   FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
 );
 
+CREATE TABLE consent_item_history (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  user_id TEXT NOT NULL,
+  statement_id TEXT NOT NULL,
+  action TEXT NOT NULL,                  -- 'granted'|'denied'|'withdrawn'|'version_upgraded'|'expired'
+  version_before TEXT,
+  version_after TEXT,
+  status_before TEXT,
+  status_after TEXT,
+  ip_address_hash TEXT,
+  user_agent TEXT,
+  client_id TEXT,
+  metadata_json TEXT,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE
+);
+
 CREATE TABLE consent_policy_versions (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -240,6 +275,51 @@ CREATE TABLE consent_policy_versions (
   effective_at INTEGER NOT NULL,  -- Unix timestamp when this version becomes effective
   created_at INTEGER NOT NULL,
   UNIQUE (tenant_id, policy_type, version)
+);
+
+CREATE TABLE consent_statement_localizations (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  version_id TEXT NOT NULL,
+  language TEXT NOT NULL,                -- BCP 47: 'en', 'ja', 'de'
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  document_url TEXT,                     -- External document URL (content_type='url')
+  inline_content TEXT,                   -- Inline text (content_type='inline')
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (version_id) REFERENCES consent_statement_versions(id) ON DELETE CASCADE,
+  UNIQUE (version_id, language)
+);
+
+CREATE TABLE consent_statement_versions (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  statement_id TEXT NOT NULL,
+  version TEXT NOT NULL,                 -- YYYYMMDD fixed: '20250206'
+  content_type TEXT NOT NULL DEFAULT 'url', -- 'url' | 'inline'
+  effective_at INTEGER NOT NULL,
+  content_hash TEXT,                     -- SHA-256 integrity hash
+  is_current INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'draft',  -- 'draft'|'active'|'archived'
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (statement_id) REFERENCES consent_statements(id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, statement_id, version)
+);
+
+CREATE TABLE consent_statements (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  slug TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'custom',
+  legal_basis TEXT NOT NULL DEFAULT 'consent',
+  processing_purpose TEXT,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE (tenant_id, slug)
 );
 
 CREATE TABLE credential_configurations (
@@ -286,6 +366,11 @@ CREATE TABLE credential_offers (
     issued_credential_id TEXT REFERENCES issued_credentials(id)
 );
 
+CREATE TABLE d1_migrations(
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		name       TEXT UNIQUE,
+		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
 
 CREATE TABLE data_export_requests (
   id TEXT PRIMARY KEY,
@@ -330,13 +415,13 @@ CREATE TABLE did_document_cache (
 CREATE TABLE external_idp_auth_states (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
-  client_id TEXT,                        -- Authrim client ID initiating flow
+  client_id TEXT,                        -- Client ID from the original auth request
   provider_id TEXT NOT NULL,             -- References upstream_providers(id)
   state TEXT UNIQUE NOT NULL,            -- OAuth state parameter
   nonce TEXT,                            -- OIDC nonce for ID token validation
-  code_verifier TEXT,                    -- PKCE code verifier
-  code_challenge TEXT,                   -- PKCE code challenge (client-side)
-  flow_id TEXT,                          -- Diagnostic flow correlation ID
+  code_verifier TEXT,                    -- PKCE code verifier for Authrim ↔ External IdP
+  code_challenge TEXT,                   -- PKCE code challenge from client ↔ Authrim
+  flow_id TEXT,                          -- Flow ID for diagnostic logging correlation
   redirect_uri TEXT NOT NULL,            -- Where to redirect after auth
 
   -- For linking flow
@@ -349,6 +434,10 @@ CREATE TABLE external_idp_auth_states (
   -- OIDC Core 1.0 parameters (for validation in callback)
   max_age INTEGER,                       -- max_age parameter for auth_time validation
   acr_values TEXT,                       -- acr_values parameter for acr validation
+
+  -- Silent Auth & SSO control (Phase 1 & 2)
+  prompt TEXT,                           -- OIDC prompt parameter (none, login, consent, select_account)
+  enable_sso INTEGER NOT NULL DEFAULT 1, -- 1 = SSO enabled (handoff), 0 = SSO disabled (Direct Auth)
 
   -- Timestamps
   expires_at INTEGER NOT NULL,
@@ -502,7 +591,7 @@ CREATE TABLE oauth_clients (
   default_audience TEXT,  -- Default audience for Client Credentials
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
-, is_trusted INTEGER DEFAULT 0, skip_consent INTEGER DEFAULT 0, allow_claims_without_scope INTEGER DEFAULT 0, backchannel_token_delivery_mode TEXT, backchannel_client_notification_endpoint TEXT, backchannel_authentication_request_signing_alg TEXT, backchannel_user_code_parameter INTEGER DEFAULT 0, tenant_id TEXT NOT NULL DEFAULT 'default', jwks TEXT, jwks_uri TEXT, userinfo_signed_response_alg TEXT, post_logout_redirect_uris TEXT, allowed_redirect_origins TEXT, backchannel_logout_uri TEXT, backchannel_logout_session_required INTEGER DEFAULT 0, frontchannel_logout_uri TEXT, frontchannel_logout_session_required INTEGER DEFAULT 0, logout_webhook_uri TEXT, logout_webhook_secret_encrypted TEXT, registration_access_token_hash TEXT, initiate_login_uri TEXT, id_token_signed_response_alg TEXT, request_object_signing_alg TEXT, client_secret_hash TEXT, software_id TEXT, software_version TEXT, requestable_scopes TEXT, require_pkce INTEGER DEFAULT 0);
+, is_trusted INTEGER DEFAULT 0, skip_consent INTEGER DEFAULT 0, allow_claims_without_scope INTEGER DEFAULT 0, backchannel_token_delivery_mode TEXT, backchannel_client_notification_endpoint TEXT, backchannel_authentication_request_signing_alg TEXT, backchannel_user_code_parameter INTEGER DEFAULT 0, tenant_id TEXT NOT NULL DEFAULT 'default', jwks TEXT, jwks_uri TEXT, userinfo_signed_response_alg TEXT, post_logout_redirect_uris TEXT, allowed_redirect_origins TEXT, backchannel_logout_uri TEXT, backchannel_logout_session_required INTEGER DEFAULT 0, frontchannel_logout_uri TEXT, frontchannel_logout_session_required INTEGER DEFAULT 0, logout_webhook_uri TEXT, logout_webhook_secret_encrypted TEXT, registration_access_token_hash TEXT, initiate_login_uri TEXT, login_ui_url TEXT, id_token_signed_response_alg TEXT, request_object_signing_alg TEXT, client_secret_hash TEXT, software_id TEXT, software_version TEXT, requestable_scopes TEXT, require_pkce INTEGER DEFAULT 0);
 
 CREATE TABLE operational_logs (
     id TEXT PRIMARY KEY,
@@ -1091,6 +1180,23 @@ CREATE TABLE suspicious_activities (
   resolved_at TEXT              -- When resolved/dismissed
 );
 
+CREATE TABLE tenant_consent_requirements (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  statement_id TEXT NOT NULL,
+  is_required INTEGER NOT NULL DEFAULT 0,
+  min_version TEXT,
+  enforcement TEXT NOT NULL DEFAULT 'block',
+  show_deletion_link INTEGER NOT NULL DEFAULT 0,
+  deletion_url TEXT,
+  conditional_rules_json TEXT,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (statement_id) REFERENCES consent_statements(id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, statement_id)
+);
+
 CREATE TABLE token_claim_rules (
   -- Primary key
   id TEXT PRIMARY KEY,
@@ -1192,7 +1298,30 @@ CREATE TABLE upstream_providers (
   -- Metadata
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
-, slug TEXT, token_endpoint_auth_method TEXT DEFAULT 'client_secret_post', always_fetch_userinfo INTEGER DEFAULT 0, use_request_object INTEGER DEFAULT 0, request_object_signing_alg TEXT, private_key_jwk_encrypted TEXT, public_key_jwk TEXT);
+, slug TEXT, token_endpoint_auth_method TEXT DEFAULT 'client_secret_post', always_fetch_userinfo INTEGER DEFAULT 0, enable_sso INTEGER NOT NULL DEFAULT 1, use_request_object INTEGER DEFAULT 0, request_object_signing_alg TEXT, private_key_jwk_encrypted TEXT, public_key_jwk TEXT);
+
+CREATE TABLE user_consent_records (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  user_id TEXT NOT NULL,
+  statement_id TEXT NOT NULL,
+  version_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'granted',
+  granted_at INTEGER,
+  withdrawn_at INTEGER,
+  expires_at INTEGER,
+  client_id TEXT,
+  ip_address_hash TEXT,
+  user_agent TEXT,
+  receipt_id TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE,
+  FOREIGN KEY (statement_id) REFERENCES consent_statements(id),
+  FOREIGN KEY (version_id) REFERENCES consent_statement_versions(id),
+  UNIQUE (tenant_id, user_id, statement_id)
+);
 
 CREATE TABLE "user_custom_fields" (
   user_id TEXT NOT NULL,
@@ -1473,8 +1602,6 @@ CREATE INDEX idx_audit_log_created_at ON audit_log(created_at);
 
 CREATE INDEX idx_audit_log_resource ON audit_log(resource_type, resource_id);
 
-CREATE INDEX idx_audit_log_severity ON audit_log(severity);
-
 CREATE INDEX idx_audit_log_tenant_id ON audit_log(tenant_id);
 
 CREATE INDEX idx_audit_log_user_id ON audit_log(user_id);
@@ -1527,6 +1654,14 @@ CREATE INDEX idx_compliance_reports_tenant ON compliance_reports(tenant_id);
 
 CREATE INDEX idx_compliance_reports_type ON compliance_reports(tenant_id, type);
 
+CREATE INDEX idx_cco_client ON client_consent_overrides(tenant_id, client_id);
+
+CREATE INDEX idx_cih_statement ON consent_item_history(statement_id, created_at);
+
+CREATE INDEX idx_cih_tenant ON consent_item_history(tenant_id, created_at);
+
+CREATE INDEX idx_cih_user ON consent_item_history(user_id, created_at);
+
 CREATE INDEX idx_consent_history_action
   ON consent_history(action, created_at);
 
@@ -1544,6 +1679,16 @@ CREATE INDEX idx_consent_policy_versions_effective
 
 CREATE INDEX idx_consent_policy_versions_tenant
   ON consent_policy_versions(tenant_id, policy_type);
+
+CREATE INDEX idx_consent_statements_tenant ON consent_statements(tenant_id, is_active);
+
+CREATE INDEX idx_csl_version ON consent_statement_localizations(version_id, language);
+
+CREATE INDEX idx_csv_effective ON consent_statement_versions(effective_at);
+
+CREATE INDEX idx_csv_statement ON consent_statement_versions(statement_id, is_current);
+
+CREATE UNIQUE INDEX idx_csv_unique_current ON consent_statement_versions(tenant_id, statement_id) WHERE is_current = 1;
 
 CREATE INDEX idx_consents_client ON oauth_client_consents(client_id);
 
@@ -1857,6 +2002,8 @@ CREATE INDEX idx_suspicious_activities_type ON suspicious_activities(tenant_id, 
 
 CREATE INDEX idx_suspicious_activities_user ON suspicious_activities(tenant_id, user_id);
 
+CREATE INDEX idx_tcr_tenant ON tenant_consent_requirements(tenant_id);
+
 CREATE INDEX idx_tcr_evaluation ON token_claim_rules(
   tenant_id,
   token_type,
@@ -1886,15 +2033,22 @@ CREATE UNIQUE INDEX idx_upstream_providers_tenant_slug
   ON upstream_providers(tenant_id, slug)
   WHERE slug IS NOT NULL;
 
+CREATE INDEX idx_upstream_providers_enable_sso
+  ON upstream_providers(tenant_id, enable_sso);
+
+CREATE INDEX idx_ucr_expires ON user_consent_records(expires_at) WHERE expires_at IS NOT NULL;
+
+CREATE INDEX idx_ucr_statement ON user_consent_records(tenant_id, statement_id);
+
+CREATE INDEX idx_ucr_status ON user_consent_records(status);
+
+CREATE INDEX idx_ucr_user ON user_consent_records(tenant_id, user_id);
+
 CREATE INDEX idx_user_verified_attributes_name ON user_verified_attributes(tenant_id, attribute_name);
 
 CREATE INDEX idx_user_verified_attributes_user ON user_verified_attributes(tenant_id, user_id);
 
-CREATE INDEX idx_users_core_active ON users_core(is_active);
-
 CREATE INDEX idx_users_core_email_domain ON users_core(email_domain_hash);
-
-CREATE INDEX idx_users_core_hash_version ON users_core(email_domain_hash_version);
 
 CREATE INDEX idx_users_core_partition ON users_core(pii_partition);
 
@@ -1962,3 +2116,4 @@ CREATE INDEX idx_ws_subs_connection
 
 CREATE INDEX idx_ws_subs_subject
     ON websocket_subscriptions(subject_id, is_active);
+
