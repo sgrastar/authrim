@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
-import { createLogger, isAllowedOrigin, parseAllowedOrigins } from '@authrim/ar-lib-core';
+import { createLogger, isAllowedOrigin, parseAllowedOrigins, csrfProtectionMiddleware } from '@authrim/ar-lib-core';
 
 // Module-level logger for router (no Hono context available in error handler)
 const log = createLogger().module('ROUTER');
@@ -237,6 +237,35 @@ app.use('*', async (c, next) => {
     credentials: allowCredentials,
   })(c, next);
 });
+
+// CSRF protection (defense-in-depth at the router level)
+// Validates Origin/Referer on state-changing requests before forwarding to workers.
+// Each worker also has its own CSRF protection for additional security.
+// Excluded paths: server-to-server OAuth protocol endpoints that use client credentials,
+// not cookies, and may be called from server environments without Origin headers.
+app.use(
+  '*',
+  csrfProtectionMiddleware({
+    excludePaths: [
+      '/authorize', // OAuth authorization endpoint (form_post from login UI or RP redirects)
+      '/token', // OAuth token endpoint (client_secret auth)
+      '/par', // Pushed Authorization Request (client auth)
+      '/introspect', // Token introspection (client auth)
+      '/revoke', // Token revocation (client auth)
+      '/register', // Dynamic Client Registration (initial access token)
+      '/userinfo', // UserInfo endpoint (Bearer token auth, not cookies)
+      '/logout/backchannel', // Back-channel logout (RP server-to-server)
+      '/device_authorization', // Device flow (client auth)
+      '/device', // Device verification page (form submission, CSRF handled by device code)
+      '/bc-authorize', // CIBA (client auth)
+      '/scim/v2', // SCIM provisioning (Bearer token)
+      '/api/internal', // Internal API (Bearer token)
+      '/saml', // SAML endpoints (XML-based protocol, not browser fetch)
+      '/.well-known', // Discovery endpoints (read-only, GET only)
+      '/jwks.json', // JWKS endpoint (read-only)
+    ],
+  })
+);
 
 // Health check endpoints
 app.get('/api/health', (c) => {

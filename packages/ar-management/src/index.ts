@@ -29,6 +29,7 @@ import {
   createLogger,
   isAllowedOrigin,
   parseAllowedOrigins,
+  csrfProtectionMiddleware,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
@@ -802,6 +803,11 @@ app.post('/revoke', revokeHandler);
 
 // Batch Token Revocation endpoint (RFC 7009 extension)
 app.post('/revoke/batch', batchRevokeHandler);
+
+// CSRF protection for Admin API - validates Origin/Referer on state-changing requests
+// Applied before auth to reject CSRF attempts early (defense-in-depth with SameSite cookies + CORS)
+// Skips Bearer token requests (server-to-server API calls are not vulnerable to CSRF)
+app.use('/api/admin/*', csrfProtectionMiddleware());
 
 // Admin authentication middleware - applies to ALL /api/admin/* routes
 // Supports both Bearer token (for headless/API usage) and session-based auth (for UI)
@@ -1960,6 +1966,9 @@ app.get('/api/admin/data-retention/cleanup/:runId', getCleanupRunStatus);
 // User-facing endpoints for viewing and revoking consents.
 // Supports both access token (Bearer) and session-based authentication.
 // Rate limit: moderate profile.
+
+// CSRF protection for User API - validates Origin/Referer on state-changing requests
+app.use('/api/user/*', csrfProtectionMiddleware());
 
 // Rate limiting for User consent endpoints
 app.use('/api/user/consents', async (c, next) => {

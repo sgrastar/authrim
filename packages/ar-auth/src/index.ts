@@ -20,6 +20,8 @@ import {
   // Plugin Context (Phase 9 - Plugin Architecture)
   pluginContextMiddleware,
   createPluginLoader,
+  // CSRF Protection
+  csrfProtectionMiddleware,
   // Logger
   getLogger,
 } from '@authrim/ar-lib-core';
@@ -227,6 +229,22 @@ app.use('/api/auth/upgrade/*', async (c, next) => {
     endpoints: ['/api/auth/upgrade/complete', '/api/auth/upgrade/status'],
   })(c, next);
 });
+
+// CSRF protection for browser-facing API endpoints
+// Validates Origin/Referer on state-changing requests (POST/PUT/PATCH/DELETE)
+// Skips Bearer token requests (server-to-server calls are not vulnerable to CSRF)
+//
+// Note: /authorize and /flow/* are NOT CSRF-protected here because:
+// - /authorize POST can receive form_post responses from RPs (cross-origin HTML form auto-submit)
+// - /authorize has its own CSRF protection via the state parameter (RFC 6749 §10.12)
+// - /flow/* endpoints handle login form submissions from the Login UI
+//
+// Note: /par, /logout/backchannel are server-to-server endpoints (use client auth, not cookies)
+app.use('/api/auth/*', csrfProtectionMiddleware());
+app.use('/api/sessions/*', csrfProtectionMiddleware());
+app.use('/api/v1/auth/direct/*', csrfProtectionMiddleware());
+app.use('/auth/consent', csrfProtectionMiddleware());
+app.use('/api/flow/*', csrfProtectionMiddleware());
 
 // Health check endpoint (accessible via /api/auth/health due to route pattern)
 app.get('/api/auth/health', (c) => {
