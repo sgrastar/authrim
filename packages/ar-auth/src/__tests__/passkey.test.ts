@@ -97,6 +97,17 @@ vi.mock('@simplewebauthn/server/helpers', () => ({
   isoBase64URL: mockIsoBase64URL,
 }));
 
+// Mock @authrim/ar-lib-core specific submodules for ESM barrel export resolution
+vi.mock('@authrim/ar-lib-core/utils/id', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core/utils/id')>();
+  return {
+    ...actual,
+    generateUserIdFromSettings: vi.fn(
+      async () => `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
+    ),
+  };
+});
+
 // Mock @authrim/ar-lib-core module
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');

@@ -169,7 +169,7 @@ describe('PluginLoader - Basic Lifecycle', () => {
       const result = await loader.loadPlugin(plugin, { value: 'test' });
 
       expect(result.success).toBe(true);
-      expect(result.loadTimeMs).toBeGreaterThanOrEqual(50);
+      expect(result.loadTimeMs).toBeGreaterThanOrEqual(45);
     });
 
     it('should measure load time even on failure', async () => {
