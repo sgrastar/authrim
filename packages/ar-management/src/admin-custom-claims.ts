@@ -112,6 +112,9 @@ const STATS_CACHE_PREFIX = 'custom_claim_stats:';
 /** Stats cache TTL in seconds */
 const STATS_CACHE_TTL = 300; // 5 minutes
 
+/** Valid operation statuses for filtering */
+const VALID_OPERATION_STATUSES = new Set(['active', 'deleting', 'renaming', 'error']);
+
 /** Batch size for PII user data operations */
 const PII_BATCH_SIZE = 500;
 
@@ -332,7 +335,7 @@ export async function adminCustomClaimsListHandler(c: AdminContext) {
       params.push(parseInt(isActive));
     }
 
-    if (operationStatus) {
+    if (operationStatus && VALID_OPERATION_STATUSES.has(operationStatus)) {
       whereConditions.push('operation_status = ?');
       params.push(operationStatus);
     }
@@ -1092,8 +1095,8 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
 
     // Phase 1: Mark as deleting (CAS: only if still active/error)
     const casResult = await adapter.execute(
-      "UPDATE custom_claim_schemas SET operation_status = 'deleting', updated_at = ? WHERE id = ? AND operation_status IN ('active', 'error')",
-      [Math.floor(Date.now() / 1000), id]
+      "UPDATE custom_claim_schemas SET operation_status = 'deleting', updated_at = ? WHERE id = ? AND tenant_id = ? AND operation_status IN ('active', 'error')",
+      [Math.floor(Date.now() / 1000), id, tenantId]
     );
     if (!casResult?.rowsAffected) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
@@ -1151,7 +1154,7 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
           console.warn(`PII delete: ${failedDeleteUsers} user(s) failed out of ${totalProcessed}`);
           // Partial failure - transition to error state instead of deleting schema
           await adapter.execute(
-            "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ?",
+            "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
             [
               JSON.stringify({
                 operation: 'delete',
@@ -1162,6 +1165,7 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
               }),
               Math.floor(Date.now() / 1000),
               id,
+              tenantId,
             ]
           );
           await invalidateStatsCache(c, tenantId);
@@ -1182,7 +1186,10 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
       }
 
       // Phase 3: Delete schema record (only reached on full success)
-      await adapter.execute('DELETE FROM custom_claim_schemas WHERE id = ?', [id]);
+      await adapter.execute('DELETE FROM custom_claim_schemas WHERE id = ? AND tenant_id = ?', [
+        id,
+        tenantId,
+      ]);
 
       await createAuditLogFromContext(asBaseContext(c), 'delete', 'custom_claim_schema', id, {
         field_key: fieldKey,
@@ -1215,11 +1222,12 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
       // Operation failed - mark as error
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       await adapter.execute(
-        "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ?",
+        "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
         [
           JSON.stringify({ operation: 'delete', field_key: fieldKey, error: errorMsg }),
           Math.floor(Date.now() / 1000),
           id,
+          tenantId,
         ]
       );
       console.error('Failed to cascade delete custom claim schema:', error);
@@ -1327,8 +1335,8 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
 
     // Phase 1: Mark as renaming (CAS: only if still active)
     const casResult = await adapter.execute(
-      "UPDATE custom_claim_schemas SET operation_status = 'renaming', operation_detail = ?, updated_at = ? WHERE id = ? AND operation_status = 'active'",
-      [JSON.stringify({ old_key: oldKey, new_key: newKey }), now, id]
+      "UPDATE custom_claim_schemas SET operation_status = 'renaming', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND operation_status = 'active'",
+      [JSON.stringify({ old_key: oldKey, new_key: newKey }), now, id, tenantId]
     );
     if (!casResult?.rowsAffected) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
@@ -1387,7 +1395,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
           console.warn(`PII rename: ${failedPiiUsers} user(s) failed`);
           // Partial failure - transition to error state, keep old field_key for consistency
           await adapter.execute(
-            "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ?",
+            "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
             [
               JSON.stringify({
                 operation: 'rename',
@@ -1397,6 +1405,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
               }),
               Math.floor(Date.now() / 1000),
               id,
+              tenantId,
             ]
           );
           await invalidateStatsCache(c, tenantId);
@@ -1422,8 +1431,8 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
         `UPDATE custom_claim_schemas
          SET field_key = ?, schema_version = schema_version + 1,
              operation_status = 'active', operation_detail = NULL, updated_at = ?
-         WHERE id = ? AND operation_status = 'renaming'`,
-        [newKey, Math.floor(Date.now() / 1000), id]
+         WHERE id = ? AND tenant_id = ? AND operation_status = 'renaming'`,
+        [newKey, Math.floor(Date.now() / 1000), id, tenantId]
       );
 
       await createAuditLogFromContext(asBaseContext(c), 'update', 'custom_claim_schema', id, {
@@ -1467,7 +1476,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
       // Operation failed - mark as error (field_key remains old_key for read consistency)
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       await adapter.execute(
-        "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ?",
+        "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
         [
           JSON.stringify({
             operation: 'rename',
@@ -1477,6 +1486,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
           }),
           Math.floor(Date.now() / 1000),
           id,
+          tenantId,
         ]
       );
       await invalidateStatsCache(c, tenantId);
@@ -1527,8 +1537,8 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
     } catch {
       // If detail is unparseable, reset to active
       await adapter.execute(
-        "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ?",
-        [Math.floor(Date.now() / 1000), id]
+        "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ? AND tenant_id = ?",
+        [Math.floor(Date.now() / 1000), id, tenantId]
       );
       return c.json({ success: true, action: 'reset_to_active' });
     }
@@ -1539,8 +1549,8 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
       // Re-run delete by calling the delete handler logic
       // First reset to active, then the user can retry delete
       await adapter.execute(
-        "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ?",
-        [Math.floor(Date.now() / 1000), id]
+        "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ? AND tenant_id = ?",
+        [Math.floor(Date.now() / 1000), id, tenantId]
       );
 
       await createAuditLogFromContext(asBaseContext(c), 'update', 'custom_claim_schema', id, {
@@ -1561,8 +1571,8 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
 
       if (!oldKey || !newKey) {
         await adapter.execute(
-          "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ?",
-          [Math.floor(Date.now() / 1000), id]
+          "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ? AND tenant_id = ?",
+          [Math.floor(Date.now() / 1000), id, tenantId]
         );
         return c.json({ success: true, action: 'reset_to_active' });
       }
@@ -1572,8 +1582,8 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
       const now = Math.floor(Date.now() / 1000);
 
       const retryCas = await adapter.execute(
-        "UPDATE custom_claim_schemas SET operation_status = 'renaming', updated_at = ? WHERE id = ? AND operation_status = 'error'",
-        [now, id]
+        "UPDATE custom_claim_schemas SET operation_status = 'renaming', updated_at = ? WHERE id = ? AND tenant_id = ? AND operation_status = 'error'",
+        [now, id, tenantId]
       );
       if (!retryCas?.rowsAffected) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
@@ -1631,7 +1641,7 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
             console.warn(`PII rename retry: ${failedRetryUsers} user(s) failed`);
             // Partial failure - keep error state
             await adapter.execute(
-              "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ?",
+              "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
               [
                 JSON.stringify({
                   operation: 'rename',
@@ -1642,6 +1652,7 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
                 }),
                 Math.floor(Date.now() / 1000),
                 id,
+                tenantId,
               ]
             );
             await invalidateStatsCache(c, tenantId);
@@ -1676,8 +1687,8 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
           `UPDATE custom_claim_schemas
            SET field_key = ?, schema_version = schema_version + 1,
                operation_status = 'active', operation_detail = NULL, updated_at = ?
-           WHERE id = ? AND operation_status = 'renaming'`,
-          [newKey, Math.floor(Date.now() / 1000), id]
+           WHERE id = ? AND tenant_id = ? AND operation_status = 'renaming'`,
+          [newKey, Math.floor(Date.now() / 1000), id, tenantId]
         );
 
         await createAuditLogFromContext(asBaseContext(c), 'update', 'custom_claim_schema', id, {
@@ -1702,7 +1713,7 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
         await adapter.execute(
-          "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ?",
+          "UPDATE custom_claim_schemas SET operation_status = 'error', operation_detail = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
           [
             JSON.stringify({
               operation: 'rename',
@@ -1713,6 +1724,7 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
             }),
             Math.floor(Date.now() / 1000),
             id,
+            tenantId,
           ]
         );
         await invalidateStatsCache(c, tenantId);
@@ -1723,8 +1735,8 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
 
     // Unknown operation - reset to active
     await adapter.execute(
-      "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ?",
-      [Math.floor(Date.now() / 1000), id]
+      "UPDATE custom_claim_schemas SET operation_status = 'active', operation_detail = NULL, updated_at = ? WHERE id = ? AND tenant_id = ?",
+      [Math.floor(Date.now() / 1000), id, tenantId]
     );
 
     return c.json({ success: true, action: 'reset_to_active' });

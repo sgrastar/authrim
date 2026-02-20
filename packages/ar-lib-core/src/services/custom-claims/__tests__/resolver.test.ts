@@ -442,9 +442,9 @@ describe('loadFeatureConfig', () => {
   it('reads values from KV', async () => {
     const kv = {
       get: vi.fn().mockImplementation((key: string) => {
-        if (key === 'custom_claims.enabled') return 'true';
-        if (key === 'custom_claims.introspection_enabled') return 'true';
-        if (key === 'custom_claims.max_claims_per_token') return '30';
+        if (key === 'policy:flags:ENABLE_CUSTOM_CLAIMS') return 'true';
+        if (key === 'policy:flags:ENABLE_CUSTOM_CLAIMS_INTROSPECTION') return 'true';
+        if (key === 'policy:flags:CUSTOM_CLAIMS_MAX_PER_TOKEN') return '30';
         return null;
       }),
     };

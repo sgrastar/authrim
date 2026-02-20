@@ -53,10 +53,11 @@ export class SchemaLoader {
     // Load from DB
     const schemas = await this.loadFromDb(tenantId);
 
-    // Update cache
-    if (this.cache && schemas.length > 0) {
+    // Update cache (including empty results to avoid repeated D1 queries)
+    if (this.cache) {
       try {
-        const maxVersion = Math.max(...schemas.map((s) => s.schema_version ?? 1));
+        const maxVersion =
+          schemas.length > 0 ? Math.max(...schemas.map((s) => s.schema_version ?? 1)) : 0;
         const cacheData: CachedSchemaData = {
           schemas,
           fetched_at: Date.now(),

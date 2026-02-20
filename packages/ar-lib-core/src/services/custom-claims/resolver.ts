@@ -88,13 +88,13 @@ export async function loadFeatureConfig(
 
   try {
     const [enabled, introspection, maxClaims] = await Promise.all([
-      cache.get('custom_claims.enabled'),
-      cache.get('custom_claims.introspection_enabled'),
-      cache.get('custom_claims.max_claims_per_token'),
+      cache.get('policy:flags:ENABLE_CUSTOM_CLAIMS'),
+      cache.get('policy:flags:ENABLE_CUSTOM_CLAIMS_INTROSPECTION'),
+      cache.get('policy:flags:CUSTOM_CLAIMS_MAX_PER_TOKEN'),
     ]);
 
-    config.enabled = enabled === 'true' || enabled === '1';
-    config.introspectionEnabled = introspection === 'true' || introspection === '1';
+    config.enabled = enabled?.toLowerCase() === 'true' || enabled === '1';
+    config.introspectionEnabled = introspection?.toLowerCase() === 'true' || introspection === '1';
     if (maxClaims) {
       const n = parseInt(maxClaims, 10);
       if (Number.isFinite(n) && n > 0) {

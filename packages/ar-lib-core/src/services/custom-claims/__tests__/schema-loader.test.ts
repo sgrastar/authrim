@@ -81,13 +81,17 @@ describe('SchemaLoader', () => {
       });
     });
 
-    it('does not cache empty results', async () => {
+    it('caches empty results to avoid repeated D1 queries', async () => {
       mockDb.all.mockResolvedValue({ results: [] });
 
       const loader = new SchemaLoader(mockDb as any, mockKV as any);
       await loader.loadActiveSchemas('default');
 
-      expect(mockKV.put).not.toHaveBeenCalled();
+      expect(mockKV.put).toHaveBeenCalledWith(
+        'custom_claim_schemas:default',
+        expect.stringContaining('"schemas":[]'),
+        { expirationTtl: 300 }
+      );
     });
   });
 
