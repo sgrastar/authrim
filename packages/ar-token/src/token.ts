@@ -98,6 +98,8 @@ import {
 } from '@authrim/ar-lib-core';
 import { parseDeviceCodeId, getDeviceCodeStoreById } from '@authrim/ar-lib-core';
 import { parseCIBARequestId, getCIBARequestStoreById } from '@authrim/ar-lib-core';
+// Custom Claim Schema Resolver
+import { loadFeatureConfig, createCustomClaimSchemaResolver } from '@authrim/ar-lib-core';
 // Event System
 import { publishEvent, TOKEN_EVENTS, type TokenEventData } from '@authrim/ar-lib-core';
 // ID-JAG (Identity Assertion Authorization Grant)
@@ -1228,11 +1230,36 @@ async function handleAuthorizationCodeGrant(
     }
   }
 
+  // Custom Claim Schema: resolve claims for ID Token
+  let idTokenCustomClaims: Record<string, unknown> = {};
+  try {
+    const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
+    if (ccFeatureConfig.enabled) {
+      const ccResolver = createCustomClaimSchemaResolver(
+        c.env.DB,
+        c.env.DB_PII || null,
+        c.env.AUTHRIM_CONFIG || null,
+        ccFeatureConfig
+      );
+      const ccScopes = (authCodeData.scope || '').split(' ').filter(Boolean);
+      const ccResult = await ccResolver.resolveClaimsForTarget(
+        tenantId,
+        authCodeData.sub,
+        ccScopes,
+        'id_token'
+      );
+      idTokenCustomClaims = ccResult.claims;
+    }
+  } catch (ccError) {
+    log.error('Failed to resolve custom claims for ID token', {}, ccError as Error);
+  }
+
   // Generate ID Token with at_hash and auth_time
   // Phase 1 RBAC: Include RBAC claims in ID Token
   // Note: sid is required for RP-Initiated Logout per OIDC Session Management 1.0
   // Note: ds_hash is included when Native SSO is enabled (OIDC Native SSO 1.0)
   const idTokenClaims = {
+    ...idTokenCustomClaims, // Custom claims (first, so standard claims override on collision)
     iss: c.env.ISSUER_URL,
     sub: authCodeData.sub,
     aud: client_id,

@@ -12,6 +12,8 @@ import {
   getLogger,
   type JWEAlgorithm,
   type JWEEncryption,
+  loadFeatureConfig,
+  createCustomClaimSchemaResolver,
 } from '@authrim/ar-lib-core';
 import { SignJWT } from 'jose';
 
@@ -307,6 +309,25 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     }
   }
   // else: Strict mode - do not return phone claims without phone scope
+
+  // Custom Claim Schema: add custom claims from schema resolver
+  try {
+    const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
+    if (ccFeatureConfig.enabled) {
+      const ccResolver = createCustomClaimSchemaResolver(
+        c.env.DB,
+        c.env.DB_PII || null,
+        c.env.AUTHRIM_CONFIG || null,
+        ccFeatureConfig
+      );
+      const ccResult = await ccResolver.resolveClaimsForTarget('default', sub, scopes, 'userinfo');
+      for (const [key, value] of Object.entries(ccResult.claims)) {
+        if (!(key in userClaims)) userClaims[key] = value; // Prevent overwriting standard claims
+      }
+    }
+  } catch (ccError) {
+    log.error('Failed to resolve custom claims for userinfo', {}, ccError as Error);
+  }
 
   // JWE: Check if client requires UserInfo encryption (RFC 7516)
   if (!client_id || !clientMetadata) {
