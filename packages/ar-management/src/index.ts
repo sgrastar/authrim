@@ -179,6 +179,19 @@ import {
   adminAttributeNamesHandler,
 } from './admin-attributes';
 import {
+  adminCustomClaimsListHandler,
+  adminCustomClaimCreateHandler,
+  adminCustomClaimsReservedNamesHandler,
+  adminCustomClaimsStatsHandler,
+  adminCustomClaimGetHandler,
+  adminCustomClaimUpdateHandler,
+  adminCustomClaimDeleteHandler,
+  adminCustomClaimRenameHandler,
+  adminCustomClaimRetryHandler,
+  adminCustomClaimHistoryListHandler,
+  adminCustomClaimHistoryVersionHandler,
+} from './admin-custom-claims';
+import {
   adminPoliciesListHandler,
   adminPolicyGetHandler,
   adminPolicyCreateHandler,
@@ -1375,6 +1388,38 @@ app.post('/api/admin/attributes', adminAttributeCreateHandler);
 app.put('/api/admin/attributes/:id', adminAttributeUpdateHandler);
 app.delete('/api/admin/attributes/:id', adminAttributeDeleteHandler);
 app.delete('/api/admin/attributes/expired', adminDeleteExpiredAttributesHandler);
+
+// =============================================================================
+// Custom Claim Schemas Management
+// =============================================================================
+// Defines and manages custom claim field schemas.
+// Controls field types, validation rules, PII classification,
+// and OIDC token/endpoint inclusion settings.
+// RBAC: Requires tenant_admin or higher role.
+
+app.use(
+  '/api/admin/custom-claims',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+app.use(
+  '/api/admin/custom-claims/*',
+  requireAnyRole(['system_admin', 'distributor_admin', 'tenant_admin'])
+);
+
+app.get('/api/admin/custom-claims', adminCustomClaimsListHandler);
+app.post('/api/admin/custom-claims', adminCustomClaimCreateHandler);
+app.get('/api/admin/custom-claims/reserved-names', adminCustomClaimsReservedNamesHandler);
+app.get('/api/admin/custom-claims/stats', adminCustomClaimsStatsHandler);
+app.get('/api/admin/custom-claims/:id', adminCustomClaimGetHandler);
+app.put('/api/admin/custom-claims/:id', adminCustomClaimUpdateHandler);
+app.delete('/api/admin/custom-claims/:id', adminCustomClaimDeleteHandler);
+app.patch('/api/admin/custom-claims/:id/rename', adminCustomClaimRenameHandler);
+app.post('/api/admin/custom-claims/:id/retry', adminCustomClaimRetryHandler);
+app.get('/api/admin/custom-claims/:schemaId/history', adminCustomClaimHistoryListHandler);
+app.get(
+  '/api/admin/custom-claims/:schemaId/history/:version',
+  adminCustomClaimHistoryVersionHandler
+);
 
 // =============================================================================
 // Policy Rules Management (Visual Policy Builder)

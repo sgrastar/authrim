@@ -82,8 +82,9 @@
 	// Navigation structure - Platform scope (managed by system admins)
 	// Note: Admin management is for admin operators (not end users)
 	const platformNavItems = {
-		// Identity Schema (SCIM only)
+		// Identity Schema
 		identitySchema: [
+			{ path: '/admin/custom-claims', label: 'Custom Claims', icon: 'i-ph-tag' },
 			{ path: '/admin/scim-tokens', label: 'SCIM Tokens', icon: 'i-ph-identification-card' }
 		],
 		// Security & Compliance

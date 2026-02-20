@@ -16,6 +16,10 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  loadFeatureConfig,
+  createCustomClaimSchemaResolver,
+  SchemaLoader,
+  ClaimNameResolver,
 } from '@authrim/ar-lib-core';
 import { generateSecureNonce } from '../../utils/crypto';
 import { importPKCS8 } from 'jose';
@@ -177,6 +181,42 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // Get user claims from token result
     const claims = tokenResult.claims || {};
 
+    // Custom Claim Schema: merge is_vc_claim=1 claims + collect PII names for SD-JWT
+    let vcPiiClaimNames: string[] = [];
+    try {
+      const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
+      if (ccFeatureConfig.enabled && tokenResult.userId) {
+        const dbPii =
+          'DB_PII' in c.env ? (c.env as unknown as { DB_PII: D1Database }).DB_PII : null;
+        const ccResolver = createCustomClaimSchemaResolver(
+          c.env.DB,
+          dbPii,
+          c.env.AUTHRIM_CONFIG || null,
+          ccFeatureConfig
+        );
+        const vcResult = await ccResolver.resolveClaimsForTarget(
+          tokenResult.tenantId,
+          tokenResult.userId,
+          [],
+          'vc'
+        );
+        Object.assign(claims, vcResult.claims);
+
+        // Collect PII claim names for SD-JWT selective disclosure
+        if (vcResult.pii_accessed) {
+          const schemaLoader = new SchemaLoader(c.env.DB, c.env.AUTHRIM_CONFIG || null);
+          const allSchemas = await schemaLoader.loadActiveSchemas(tokenResult.tenantId);
+          const nameResolver = new ClaimNameResolver();
+          vcPiiClaimNames = allSchemas
+            .filter((s) => s.is_vc_claim === 1 && s.is_pii === 1)
+            .map((s) => nameResolver.resolve(s))
+            .filter((name) => name in vcResult.claims);
+        }
+      }
+    } catch (ccError) {
+      log.error('Failed to resolve VC custom claims', {}, ccError as Error);
+    }
+
     // Get issuer key from KeyManager
     const issuerKey = await getIssuerKey(c.env);
 
@@ -214,7 +254,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // Create SD-JWT VC with credentialStatus
     const options: SDJWTVCCreateOptions = {
       vct,
-      selectiveDisclosureClaims: getSDClaims(vct),
+      selectiveDisclosureClaims: getSDClaims(vct, vcPiiClaimNames),
       holderBinding,
     };
 
@@ -303,7 +343,7 @@ async function getIssuerKey(env: Env): Promise<{ privateKey: CryptoKey; kid: str
 /**
  * Get selective disclosure claims for a VCT
  */
-function getSDClaims(vct: string): string[] {
+function getSDClaims(vct: string, additionalPiiClaimNames: string[] = []): string[] {
   const sdClaimsMap: Record<string, string[]> = {
     'https://authrim.com/credentials/identity/v1': [
       'given_name',
@@ -314,5 +354,10 @@ function getSDClaims(vct: string): string[] {
     'https://authrim.com/credentials/age-verification/v1': ['age_over_18', 'age_over_21'],
   };
 
-  return sdClaimsMap[vct] || [];
+  const baseClaims = sdClaimsMap[vct] || [];
+  if (additionalPiiClaimNames.length === 0) return baseClaims;
+
+  // Deduplicate
+  const combined = new Set([...baseClaims, ...additionalPiiClaimNames]);
+  return Array.from(combined);
 }

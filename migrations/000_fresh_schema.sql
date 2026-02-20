@@ -1602,8 +1602,6 @@ CREATE INDEX idx_audit_log_created_at ON audit_log(created_at);
 
 CREATE INDEX idx_audit_log_resource ON audit_log(resource_type, resource_id);
 
-CREATE INDEX idx_audit_log_severity ON audit_log(severity);
-
 CREATE INDEX idx_audit_log_tenant_id ON audit_log(tenant_id);
 
 CREATE INDEX idx_audit_log_user_id ON audit_log(user_id);
@@ -2050,11 +2048,7 @@ CREATE INDEX idx_user_verified_attributes_name ON user_verified_attributes(tenan
 
 CREATE INDEX idx_user_verified_attributes_user ON user_verified_attributes(tenant_id, user_id);
 
-CREATE INDEX idx_users_core_active ON users_core(is_active);
-
 CREATE INDEX idx_users_core_email_domain ON users_core(email_domain_hash);
-
-CREATE INDEX idx_users_core_hash_version ON users_core(email_domain_hash_version);
 
 CREATE INDEX idx_users_core_partition ON users_core(pii_partition);
 

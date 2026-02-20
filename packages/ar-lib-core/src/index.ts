@@ -232,6 +232,8 @@ export * from './services/backchannel-logout-sender';
 export * from './services/frontchannel-logout';
 export * from './services/logout-webhook-sender';
 export * from './services/policy-resolver';
+export * from './services/custom-claims';
+export * from './services/custom-claim-schema-history';
 
 // Audit Logging (Phase 10 - Unified Audit System)
 export * from './services/audit';
