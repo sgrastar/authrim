@@ -54,7 +54,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "hono": "^4.11.7",
+    "hono": "^4.11.10",
     "jose": "^6.1.2"
   },
   "devDependencies": {
