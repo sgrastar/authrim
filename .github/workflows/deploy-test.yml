@@ -20,15 +20,9 @@ jobs:
     name: Deploy to test.authrim.com
     runs-on: ubuntu-latest
 
-    # Only run on the main repository (skip forks) and only when all required
-    # secrets are present. The `secrets` context evaluates to empty string when
-    # a secret is not configured, so this acts as a safe guard.
-    if: |
-      github.repository == 'sgrastar/authrim' &&
-      secrets.CLOUDFLARE_API_TOKEN != '' &&
-      secrets.CLOUDFLARE_ACCOUNT_ID != '' &&
-      secrets.AUTHRIM_TEST_CONFIG != '' &&
-      secrets.AUTHRIM_TEST_LOCK != ''
+    # Only run on the main repository (skip forks).
+    # Deployment steps will fail gracefully if secrets are not configured.
+    if: github.repository == 'sgrastar/authrim'
 
     steps:
       - name: Checkout code
