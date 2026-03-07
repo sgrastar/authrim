@@ -1,17 +1,15 @@
 #!/usr/bin/env node
-/**
- * CI Wrangler Config Generator
- *
- * Generates packages/*/wrangler.toml files from .authrim/{env}/config.json
- * and .authrim/{env}/lock.json, which are restored from GitHub Secrets in CI.
- *
- * Usage:
- *   DEPLOY_ENV=test node scripts/ci-generate-wrangler.mjs
- *
- * Required files (restored from GitHub Secrets before running this script):
- *   .authrim/{env}/config.json  → AUTHRIM_{ENV}_CONFIG secret
- *   .authrim/{env}/lock.json    → AUTHRIM_{ENV}_LOCK secret
- */
+// CI Wrangler Config Generator
+//
+// Generates packages/<component>/wrangler.toml files from .authrim/{env}/config.json
+// and .authrim/{env}/lock.json, which are restored from GitHub Secrets in CI.
+//
+// Usage:
+//   DEPLOY_ENV=test node scripts/ci-generate-wrangler.mjs
+//
+// Required files (restored from GitHub Secrets before running this script):
+//   .authrim/{env}/config.json  -> AUTHRIM_{ENV}_CONFIG secret
+//   .authrim/{env}/lock.json    -> AUTHRIM_{ENV}_LOCK secret
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
