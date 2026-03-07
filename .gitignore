@@ -44,10 +44,16 @@ playwright/.cache/
 
 # Cloudflare Workers
 wrangler.toml.bak
-**/wrangler.toml  # Contains account-specific KV namespace IDs
+**/wrangler.toml
 packages/*/wrangler.toml
 packages/*/wrangler.*.toml
 worker/
+
+# Authrim environment config and lock files (contain KV/D1 resource IDs)
+# These are restored from GitHub Secrets in CI/CD.
+# NEVER commit these — use the setup tool to export them as GitHub Secrets.
+# See docs/ci-cd-deployment.md for details.
+.authrim/
 
 # Logs
 logs/

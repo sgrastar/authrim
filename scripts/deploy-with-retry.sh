@@ -749,15 +749,17 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     fi
 
     # Register versions in VersionManager DO
-    if [ -n "$ISSUER_URL" ] && [ -n "$ADMIN_API_SECRET" ]; then
-        # Wait a moment for workers to be fully available
-        echo "⏳ Waiting 15 seconds for workers to be available..."
-        sleep 15
-        register_versions "$ISSUER_URL" "$ADMIN_API_SECRET"
-        verify_versions_registered "$ISSUER_URL" "$ADMIN_API_SECRET" "$VERSION_UUID"
-    else
-        echo "⚠️  Skipping version registration: ISSUER_URL or ADMIN_API_SECRET not found"
-    fi
+    # NOTE: VersionManager is deprecated. versionCheckMiddleware has been removed from all Workers.
+    # Cloudflare Versions Deploy (--gradual) is used instead. These calls are kept for reference only.
+    # if [ -n "$ISSUER_URL" ] && [ -n "$ADMIN_API_SECRET" ]; then
+    #     # Wait a moment for workers to be fully available
+    #     echo "⏳ Waiting 15 seconds for workers to be available..."
+    #     sleep 15
+    #     register_versions "$ISSUER_URL" "$ADMIN_API_SECRET"
+    #     verify_versions_registered "$ISSUER_URL" "$ADMIN_API_SECRET" "$VERSION_UUID"
+    # else
+    #     echo "⚠️  Skipping version registration: ISSUER_URL or ADMIN_API_SECRET not found"
+    # fi
 
     # Set PUBLIC_JWK_JSON secret for workers that need JWT verification
     # This ensures tokens can be verified even when KeyManager DO is slow
