@@ -713,6 +713,11 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     echo "✅ All packages deployed successfully!"
     echo ""
 
+    # Post-deployment steps are best-effort.
+    # Disable set -e so that non-critical failures (JWKS fetch, secret update)
+    # do not cause the deployment to report as failed.
+    set +e
+
     # Get ISSUER_URL and ADMIN_API_SECRET
     # Priority: 1. .authrim/{env}/config.json, 2. wrangler.toml [env.xxx.vars]
     ISSUER_URL=""
