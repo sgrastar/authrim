@@ -16,7 +16,7 @@
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
     "@xmldom/xmldom": "^0.9.6",
-    "hono": "^4.11.7",
+    "hono": "^4.11.10",
     "jose": "^6.1.2",
     "pako": "^2.1.0",
     "xml-crypto": "^6.0.0"
