@@ -102,9 +102,6 @@ async function main() {
   console.log('D1 Database Table Size Check');
   console.log('==========================================');
   console.log(`Database: ${DB_NAME}`);
-  // Intentionally logging only first 8 chars of IDs for diagnostics (not sensitive)
-  console.log(`Database ID: ${DB_ID.slice(0, 8)}...`); // lgtm[js/clear-text-logging]
-  console.log(`Account ID: ${ACCOUNT_ID.slice(0, 8)}...`); // lgtm[js/clear-text-logging]
   console.log('');
   console.log(`Table count: ${TABLES.length}`);
   console.log('');
