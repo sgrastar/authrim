@@ -67,6 +67,7 @@ export interface CustomClaimSchema {
 	include_in_introspection: number;
 	required_scopes: string | null;
 	scope_mode: ScopeMode;
+	is_system: number;
 	is_searchable: number;
 	is_exportable: number;
 	is_vc_claim: number;
