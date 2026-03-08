@@ -77,7 +77,8 @@
   },
   "urls": {
     "api": {
-      "auto": "https://test-ar-router.sgrastar.workers.dev"
+      "auto": "https://test-ar-router.sgrastar.workers.dev",
+      "custom": "https://test.authrim.com"
     },
     "loginUi": {
       "sameAsApi": false,
