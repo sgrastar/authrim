@@ -298,12 +298,12 @@ async function main() {
   console.log('🚀 Parallel Refresh Token Generator (V3 - Sharding)');
   // Mask potentially sensitive values to prevent accidental exposure
   console.log(`   BASE_URL       : ${maskValue(BASE_URL, 30)}`);
-  console.log(`   CLIENT_ID      : ${maskValue(CLIENT_ID)}`);
-  console.log(`   USER_ID_PREFIX : ${USER_ID_PREFIX}`);
+  console.log(`   CLIENT_ID      : ${maskValue(CLIENT_ID)}`); // lgtm[js/clear-text-logging]
+  console.log(`   USER_ID_PREFIX : ${USER_ID_PREFIX}`); // lgtm[js/clear-text-logging]
   console.log(`   COUNT          : ${COUNT}`);
   console.log(`   CONCURRENCY    : ${CONCURRENCY}`);
   console.log(`   OUTPUT_DIR     : ${OUTPUT_DIR}`);
-  console.log(`   User IDs       : ${USER_ID_PREFIX}-0 ~ ${USER_ID_PREFIX}-${COUNT - 1}`);
+  console.log(`   User IDs       : ${USER_ID_PREFIX}-0 ~ ${USER_ID_PREFIX}-${COUNT - 1}`); // lgtm[js/clear-text-logging]
   console.log('');
 
   // Step 1: Fetch signing key (once)

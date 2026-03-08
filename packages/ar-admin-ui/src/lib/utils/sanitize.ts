@@ -60,9 +60,13 @@ export function sanitizeText(str: string): string {
 		result = result.replace(regex, '$1');
 	}
 
-	// Step 4: Remove event handler attributes
-	result = result.replace(/\s*on\w+\s*=\s*(['"])[^'"]*\1/gi, '');
-	result = result.replace(/\s*on\w+\s*=\s*[^\s]+/gi, '');
+	// Step 4: Remove event handler attributes (loop until stable to prevent bypass via nesting)
+	let prev: string;
+	do {
+		prev = result;
+		result = result.replace(/\s*on\w+\s*=\s*(['"])[^'"]*\1/gi, '');
+		result = result.replace(/\s*on\w+\s*=\s*[^\s]+/gi, '');
+	} while (result !== prev);
 
 	// Step 5: Normalize whitespace
 	result = result.replace(/[\r\n]+/g, ' ');

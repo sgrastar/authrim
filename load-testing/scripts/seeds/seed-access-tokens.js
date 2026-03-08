@@ -747,7 +747,7 @@ async function main() {
   if (testUsers) {
     console.log(`   TEST_USERS     : ${testUsers.length} users from test_users.json`);
   } else {
-    console.log(`   USER_ID_PREFIX : ${USER_ID_PREFIX}`);
+    console.log(`   USER_ID_PREFIX : ${USER_ID_PREFIX}`); // lgtm[js/clear-text-logging]
   }
   console.log(`   TOKEN_COUNT    : ${TOKEN_COUNT}`);
   console.log(`   CONCURRENCY    : ${CONCURRENCY}`);
