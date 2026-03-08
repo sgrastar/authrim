@@ -75,6 +75,17 @@ jobs:
           # bindings:" output, which would expose KV namespace IDs in public logs.
           WRANGLER_LOG: warn
 
+      # Run D1 database migrations after deployment.
+      # Uses the migration tracking table (authrim_migrations) in each D1 database
+      # to skip already-applied files, making this step idempotent.
+      - name: Run database migrations
+        run: node scripts/ci-run-migrations.mjs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_ENV: test
+          WRANGLER_LOG: warn
+
       - name: Deployment summary
         if: success()
         env:
