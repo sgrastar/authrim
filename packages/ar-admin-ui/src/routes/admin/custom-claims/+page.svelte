@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import {
 		adminCustomClaimsAPI,
 		type CustomClaimSchema,
@@ -8,9 +9,7 @@
 		type ScopeMode,
 		type ValidationRules,
 		getFieldTypeLabel,
-		getOperationStatusInfo,
-		parseValidationRules,
-		parseRequiredScopes
+		getOperationStatusInfo
 	} from '$lib/api/admin-custom-claims';
 	import { Modal } from '$lib/components';
 
@@ -49,27 +48,6 @@
 		include_in_introspection: false,
 		required_scopes_text: '',
 		scope_mode: 'any' as ScopeMode,
-		claim_namespace: ''
-	});
-
-	// Edit dialog
-	let showEditDialog = $state(false);
-	let editing = $state(false);
-	let editError = $state('');
-	let editSchema: CustomClaimSchema | null = $state(null);
-	let editForm = $state({
-		display_label: '',
-		field_type: 'string' as FieldType,
-		is_required: false,
-		is_active: true,
-		description: '',
-		validation_rules_json: '',
-		include_in_id_token: false,
-		include_in_userinfo: false,
-		include_in_introspection: false,
-		required_scopes_text: '',
-		scope_mode: 'any' as ScopeMode,
-		display_order: 0,
 		claim_namespace: ''
 	});
 
@@ -227,87 +205,6 @@
 	}
 
 	// =========================================================================
-	// Edit
-	// =========================================================================
-
-	function openEditDialog(schema: CustomClaimSchema) {
-		editSchema = schema;
-		const rules = parseValidationRules(schema.validation_rules);
-		const scopes = parseRequiredScopes(schema.required_scopes);
-		editForm = {
-			display_label: schema.display_label,
-			field_type: schema.field_type,
-			is_required: !!schema.is_required,
-			is_active: !!schema.is_active,
-			description: schema.description || '',
-			validation_rules_json: rules ? JSON.stringify(rules, null, 2) : '',
-			include_in_id_token: !!schema.include_in_id_token,
-			include_in_userinfo: !!schema.include_in_userinfo,
-			include_in_introspection: !!schema.include_in_introspection,
-			required_scopes_text: scopes ? scopes.join(', ') : '',
-			scope_mode: schema.scope_mode,
-			display_order: schema.display_order,
-			claim_namespace: schema.claim_namespace || ''
-		};
-		editError = '';
-		showEditDialog = true;
-	}
-
-	async function submitEdit() {
-		if (!editSchema) return;
-
-		editing = true;
-		editError = '';
-
-		try {
-			let validationRules: ValidationRules | null = null;
-			if (editForm.validation_rules_json.trim()) {
-				try {
-					validationRules = JSON.parse(editForm.validation_rules_json);
-				} catch {
-					editError = 'Invalid JSON in validation rules';
-					editing = false;
-					return;
-				}
-			}
-
-			let requiredScopes: string[] | null = null;
-			if (editForm.required_scopes_text.trim()) {
-				requiredScopes = editForm.required_scopes_text
-					.split(',')
-					.map((s) => s.trim())
-					.filter((s) => s.length > 0);
-			}
-
-			await adminCustomClaimsAPI.updateSchema(editSchema.id, {
-				display_label: editForm.display_label,
-				field_type: editForm.field_type,
-				is_required: editForm.is_required,
-				is_active: editForm.is_active,
-				description: editForm.description || null,
-				validation_rules: validationRules,
-				include_in_id_token: editForm.include_in_id_token,
-				include_in_userinfo: editForm.include_in_userinfo,
-				include_in_introspection: editForm.include_in_introspection,
-				required_scopes: requiredScopes,
-				scope_mode: editForm.scope_mode,
-				display_order: editForm.display_order,
-				claim_namespace: editForm.claim_namespace || null
-			});
-
-			showEditDialog = false;
-			editSchema = null;
-			loadSchemas();
-			loadStats();
-		} catch (err) {
-			console.error('Failed to update schema:', err);
-			editError = err instanceof Error ? err.message : 'Failed to update schema';
-		} finally {
-			editing = false;
-		}
-	}
-
-	// =========================================================================
 	// Delete
 	// =========================================================================
 
@@ -423,16 +320,6 @@
 		return badges;
 	}
 
-	function formatDate(timestamp: number): string {
-		return new Date(timestamp * 1000).toLocaleDateString('en-US', {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit'
-		});
-	}
-
 	onMount(() => {
 		loadSchemas();
 		loadStats();
@@ -452,8 +339,8 @@
 				<div class="flex-1">
 					<h3 class="font-semibold text-red-900 mb-1">Operation Errors Detected</h3>
 					<p class="text-sm text-red-800">
-						{stats.error_count} schema(s) have failed operations that require attention.
-						Filter by "Error" status to review and retry.
+						{stats.error_count} schema(s) have failed operations that require attention. Filter by "Error"
+						status to review and retry.
 					</p>
 				</div>
 			</div>
@@ -590,7 +477,7 @@
 						<tr
 							class="cursor-pointer hover:bg-gray-50"
 							class:opacity-50={!schema.is_active}
-							onclick={() => openEditDialog(schema)}
+							onclick={() => goto(`/admin/custom-claims/${schema.id}`)}
 						>
 							<td>
 								<div class="flex items-center gap-2">
@@ -793,8 +680,8 @@
 				bind:value={createForm.validation_rules_json}
 			></textarea>
 			<p class="form-hint">
-				String: min_length, max_length, pattern. Number: min, max. Enum: enum_values (array).
-				Date: min_date, max_date (ISO 8601).
+				String: min_length, max_length, pattern. Number: min, max. Enum: enum_values (array). Date:
+				min_date, max_date (ISO 8601).
 			</p>
 		</div>
 
@@ -856,185 +743,6 @@
 		<button class="btn btn-secondary" onclick={() => (showCreateDialog = false)}>Cancel</button>
 		<button class="btn btn-primary" onclick={submitCreate} disabled={creating}>
 			{creating ? 'Creating...' : 'Create'}
-		</button>
-	{/snippet}
-</Modal>
-
-<!-- Edit Modal -->
-<Modal
-	open={showEditDialog}
-	onClose={() => {
-		showEditDialog = false;
-		editSchema = null;
-		editError = '';
-		editForm = {
-			display_label: '',
-			field_type: 'string' as FieldType,
-			is_required: false,
-			is_active: true,
-			description: '',
-			validation_rules_json: '',
-			include_in_id_token: false,
-			include_in_userinfo: false,
-			include_in_introspection: false,
-			required_scopes_text: '',
-			scope_mode: 'any' as ScopeMode,
-			display_order: 0,
-			claim_namespace: ''
-		};
-	}}
-	title="Edit Custom Claim Schema"
-	size="lg"
->
-	{#if editError}
-		<div class="alert alert-error alert-sm mb-4">{editError}</div>
-	{/if}
-
-	{#if editSchema}
-		<!-- Read-only fields -->
-		<div class="mb-4 bg-gray-50 rounded-lg p-3">
-			<div class="grid grid-cols-2 gap-2 text-sm">
-				<div>
-					<span class="text-gray-500">Field Key:</span>
-					<code class="ml-1 font-mono">{editSchema.field_key}</code>
-				</div>
-				<div>
-					<span class="text-gray-500">PII:</span>
-					<span class="ml-1">{editSchema.is_pii ? 'Yes (PII)' : 'No (Non-PII)'}</span>
-				</div>
-				<div>
-					<span class="text-gray-500">Version:</span>
-					<span class="ml-1">{editSchema.schema_version}</span>
-				</div>
-				<div>
-					<span class="text-gray-500">Created:</span>
-					<span class="ml-1">{formatDate(editSchema.created_at)}</span>
-				</div>
-			</div>
-		</div>
-
-		<div class="form-grid">
-			<div class="form-group">
-				<label class="form-label" for="edit-display-label">Display Label</label>
-				<input
-					id="edit-display-label"
-					type="text"
-					class="form-input"
-					bind:value={editForm.display_label}
-				/>
-			</div>
-
-			<div class="form-group">
-				<label class="form-label" for="edit-field-type">Field Type</label>
-				<select id="edit-field-type" class="form-select" bind:value={editForm.field_type}>
-					<option value="string">String</option>
-					<option value="number">Number</option>
-					<option value="boolean">Boolean</option>
-					<option value="date">Date</option>
-					<option value="enum">Enum</option>
-				</select>
-			</div>
-
-			<div class="form-group">
-				<label class="form-label">
-					<input type="checkbox" bind:checked={editForm.is_required} />
-					Required field
-				</label>
-			</div>
-
-			<div class="form-group">
-				<label class="form-label">
-					<input type="checkbox" bind:checked={editForm.is_active} />
-					Active
-				</label>
-			</div>
-
-			<div class="form-group">
-				<label class="form-label" for="edit-display-order">Display Order</label>
-				<input
-					id="edit-display-order"
-					type="number"
-					class="form-input"
-					bind:value={editForm.display_order}
-				/>
-			</div>
-
-			<div class="form-group col-span-2">
-				<label class="form-label" for="edit-description">Description</label>
-				<textarea
-					id="edit-description"
-					class="form-input"
-					rows="2"
-					bind:value={editForm.description}
-				></textarea>
-			</div>
-
-			<div class="form-group col-span-2">
-				<label class="form-label" for="edit-validation">Validation Rules (JSON)</label>
-				<textarea
-					id="edit-validation"
-					class="form-input font-mono text-sm"
-					rows="3"
-					bind:value={editForm.validation_rules_json}
-				></textarea>
-			</div>
-
-			<!-- Token Integration -->
-			<div class="form-group col-span-2">
-				<h4 class="font-semibold text-sm mb-2">Token / Endpoint Integration</h4>
-				<div class="flex gap-4 flex-wrap">
-					<label class="form-label">
-						<input type="checkbox" bind:checked={editForm.include_in_id_token} />
-						ID Token
-					</label>
-					<label class="form-label">
-						<input type="checkbox" bind:checked={editForm.include_in_userinfo} />
-						UserInfo
-					</label>
-					<label class="form-label">
-						<input type="checkbox" bind:checked={editForm.include_in_introspection} />
-						Introspection
-						<small style="color: var(--color-warning, #b08800); display: block; font-size: 0.75rem;"
-							>現在、Introspectionレスポンスへのカスタムクレーム埋め込みは無効です。UserInfoエンドポイントをご利用ください。</small
-						>
-					</label>
-				</div>
-			</div>
-
-			<div class="form-group">
-				<label class="form-label" for="edit-scopes">Required Scopes (comma-separated)</label>
-				<input
-					id="edit-scopes"
-					type="text"
-					class="form-input"
-					bind:value={editForm.required_scopes_text}
-				/>
-			</div>
-
-			<div class="form-group">
-				<label class="form-label" for="edit-scope-mode">Scope Mode</label>
-				<select id="edit-scope-mode" class="form-select" bind:value={editForm.scope_mode}>
-					<option value="any">Any</option>
-					<option value="all">All</option>
-				</select>
-			</div>
-
-			<div class="form-group col-span-2">
-				<label class="form-label" for="edit-namespace">Claim Namespace</label>
-				<input
-					id="edit-namespace"
-					type="text"
-					class="form-input"
-					bind:value={editForm.claim_namespace}
-				/>
-			</div>
-		</div>
-	{/if}
-
-	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={() => (showEditDialog = false)}>Cancel</button>
-		<button class="btn btn-primary" onclick={submitEdit} disabled={editing}>
-			{editing ? 'Saving...' : 'Save Changes'}
 		</button>
 	{/snippet}
 </Modal>
@@ -1162,11 +870,7 @@
 
 	{#snippet footer()}
 		<button class="btn btn-secondary" onclick={() => (showRenameDialog = false)}>Cancel</button>
-		<button
-			class="btn btn-warning"
-			onclick={confirmRename}
-			disabled={renaming || !renameNewKey}
-		>
+		<button class="btn btn-warning" onclick={confirmRename} disabled={renaming || !renameNewKey}>
 			{renaming ? 'Renaming...' : 'Rename Field Key'}
 		</button>
 	{/snippet}
