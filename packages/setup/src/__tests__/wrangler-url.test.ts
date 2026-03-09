@@ -116,6 +116,29 @@ describe('generateEnvVars - ar-router', () => {
     expect(vars['ALLOWED_ORIGINS'].split(',').sort()).toEqual(
       expected.ALLOWED_ORIGINS.split(',').sort()
     );
+
+    // UI proxy flags — always present on ar-router
+    const adminSameAsApi = scenario.config.adminUiSameAsApi;
+    const loginSameAsApi = scenario.config.loginUiSameAsApi;
+
+    expect(vars['ENABLE_ADMIN_UI_PROXY']).toBe(adminSameAsApi ? 'true' : 'false');
+    expect(vars['ENABLE_LOGIN_UI_PROXY']).toBe(loginSameAsApi ? 'true' : 'false');
+
+    // AR_ADMIN_UI_URL is set only when adminSameAsApi=true
+    if (adminSameAsApi) {
+      const adminPagesUrl = scenario.config.adminUiAuto ?? scenario.config.adminUiCustom;
+      expect(vars['AR_ADMIN_UI_URL']).toBe(adminPagesUrl ?? undefined);
+    } else {
+      expect(vars['AR_ADMIN_UI_URL']).toBeUndefined();
+    }
+
+    // AR_LOGIN_UI_URL is set only when loginSameAsApi=true
+    if (loginSameAsApi) {
+      const loginPagesUrl = scenario.config.loginUiAuto ?? scenario.config.loginUiCustom;
+      expect(vars['AR_LOGIN_UI_URL']).toBe(loginPagesUrl ?? undefined);
+    } else {
+      expect(vars['AR_LOGIN_UI_URL']).toBeUndefined();
+    }
   });
 });
 

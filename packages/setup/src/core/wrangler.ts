@@ -571,6 +571,28 @@ export function generateEnvVars(
     vars['ADMIN_API_SECRET'] = ''; // Set via secret
   }
 
+  // ar-router: UI proxy configuration
+  // When sameAsApi=true, the router proxies /admin/* and /login/* to the Pages projects
+  if (component === 'ar-router') {
+    const adminSameAsApi = config.urls?.adminUi?.sameAsApi === true;
+    vars['ENABLE_ADMIN_UI_PROXY'] = adminSameAsApi ? 'true' : 'false';
+    if (adminSameAsApi) {
+      const adminPagesUrl = config.urls?.adminUi?.auto || config.urls?.adminUi?.custom || '';
+      if (adminPagesUrl) {
+        vars['AR_ADMIN_UI_URL'] = adminPagesUrl;
+      }
+    }
+
+    const loginSameAsApi = config.urls?.loginUi?.sameAsApi === true;
+    vars['ENABLE_LOGIN_UI_PROXY'] = loginSameAsApi ? 'true' : 'false';
+    if (loginSameAsApi) {
+      const loginPagesUrl = config.urls?.loginUi?.auto || config.urls?.loginUi?.custom || '';
+      if (loginPagesUrl) {
+        vars['AR_LOGIN_UI_URL'] = loginPagesUrl;
+      }
+    }
+  }
+
   // CORS allowed origins for workers that handle cross-origin requests
   // Workers.dev URLs are normalized to correct format: {name}.{subdomain}.workers.dev
   if (['ar-auth', 'ar-management', 'ar-router'].includes(component)) {
