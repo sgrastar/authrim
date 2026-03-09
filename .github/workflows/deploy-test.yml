@@ -1,7 +1,13 @@
 name: Deploy to Test Environment
 
+# Triggers: push or PR targeting the `deploy` branch.
+# Deployment is skipped when required secrets are not configured,
+# allowing forks and contributors to open PRs without needing Cloudflare access.
 on:
   push:
+    branches:
+      - develop
+  pull_request:
     branches:
       - develop
 
@@ -14,20 +20,21 @@ jobs:
     name: Deploy to test.authrim.com
     runs-on: ubuntu-latest
 
-    # Only run on the main repository (skip forks)
+    # Only run on the main repository (skip forks).
+    # Deployment steps will fail gracefully if secrets are not configured.
     if: github.repository == 'sgrastar/authrim'
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
         with:
           version: 9.0.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -35,14 +42,56 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build setup package
+        run: pnpm --filter @authrim/setup build
+
+      # Restore environment config and lock files from GitHub Secrets.
+      # These files contain KV namespace IDs, D1 database IDs, and other
+      # Cloudflare resource references needed to generate wrangler.toml.
+      # They are intentionally excluded from git — see .gitignore and
+      # docs/ci-cd-deployment.md for how to export and set these secrets.
+      - name: Restore deployment config from secrets
+        env:
+          AUTHRIM_TEST_CONFIG: ${{ secrets.AUTHRIM_TEST_CONFIG }}
+          AUTHRIM_TEST_LOCK: ${{ secrets.AUTHRIM_TEST_LOCK }}
+        run: |
+          mkdir -p .authrim/test
+          printf '%s' "$AUTHRIM_TEST_CONFIG" > .authrim/test/config.json
+          printf '%s' "$AUTHRIM_TEST_LOCK" > .authrim/test/lock.json
+
+      # Generate packages/*/wrangler.toml from the restored config and lock files.
+      # This replaces the need to commit wrangler.toml to git.
+      - name: Generate wrangler.toml files
+        run: node scripts/ci-generate-wrangler.mjs
+        env:
+          DEPLOY_ENV: test
+
       - name: Deploy to test environment
         run: ./scripts/deploy-with-retry.sh --env=test --api-only
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # Use warn level to suppress the "Your Worker has access to the following
+          # bindings:" output, which would expose KV namespace IDs in public logs.
+          WRANGLER_LOG: warn
+
+      # Run D1 database migrations after deployment.
+      # Uses the migration tracking table (authrim_migrations) in each D1 database
+      # to skip already-applied files, making this step idempotent.
+      - name: Run database migrations
+        run: node scripts/ci-run-migrations.mjs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_ENV: test
+          WRANGLER_LOG: warn
 
       - name: Deployment summary
         if: success()
+        env:
+          GIT_REF: ${{ github.ref_name }}
+          GIT_SHA: ${{ github.sha }}
         run: |
           echo "✅ Successfully deployed to test.authrim.com"
-          echo "Environment: test"
+          echo "Branch: $GIT_REF"
+          echo "Commit: $GIT_SHA"

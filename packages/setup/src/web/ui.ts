@@ -3418,7 +3418,7 @@ export function getHtmlTemplate(
       };
 
       // Helper to remove https:// prefix for display in input fields
-      const stripProtocol = (url: string | null | undefined): string => {
+      const stripProtocol = (url) => {
         if (!url) return '';
         return url.replace(/^https?:[/][/]/, '');
       };

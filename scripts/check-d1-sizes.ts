@@ -102,9 +102,6 @@ async function main() {
   console.log('D1 Database Table Size Check');
   console.log('==========================================');
   console.log(`Database: ${DB_NAME}`);
-  // Mask sensitive IDs to prevent accidental exposure in logs
-  console.log(`Database ID: ${DB_ID.slice(0, 8)}...`);
-  console.log(`Account ID: ${ACCOUNT_ID.slice(0, 8)}...`);
   console.log('');
   console.log(`Table count: ${TABLES.length}`);
   console.log('');

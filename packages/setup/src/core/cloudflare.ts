@@ -993,14 +993,88 @@ export async function executeD1Migration(
   }
 }
 
+/** SQL to create the migration tracking table (idempotent) */
+const CREATE_MIGRATIONS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS authrim_migrations (
+  filename TEXT PRIMARY KEY,
+  applied_at INTEGER NOT NULL
+);
+`.trim();
+
 /**
- * Run all D1 migrations for a database
+ * Ensure the authrim_migrations tracking table exists in the target database.
+ * Returns true on success, false on failure.
+ */
+async function ensureMigrationsTable(
+  dbName: string,
+  onProgress?: (message: string) => void
+): Promise<boolean> {
+  try {
+    await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      CREATE_MIGRATIONS_TABLE_SQL,
+    ]);
+    return true;
+  } catch (error) {
+    onProgress?.(
+      `  ⚠️  Could not create migrations table: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * Return the set of migration filenames already recorded in authrim_migrations.
+ * Falls back to an empty set on error so we never skip migrations when unsure.
+ */
+async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
+  try {
+    const { stdout } = await wrangler([
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      'SELECT filename FROM authrim_migrations;',
+      '--json',
+    ]);
+    const rows = JSON.parse(stdout);
+    const results: Array<{ filename: string }> = rows?.[0]?.results ?? [];
+    return new Set(results.map((r) => r.filename));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Record a migration filename as applied.
+ */
+async function recordMigration(dbName: string, filename: string): Promise<void> {
+  const sql = `INSERT OR IGNORE INTO authrim_migrations (filename, applied_at) VALUES ('${filename.replace(/'/g, "''")}', ${Date.now()});`;
+  try {
+    await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
+  } catch {
+    // Non-fatal: tracking failure should not abort the migration run
+  }
+}
+
+/**
+ * Run all D1 migrations for a database.
+ *
+ * Uses an `authrim_migrations` tracking table inside the D1 database to skip
+ * files that have already been applied, making repeated runs idempotent.
  */
 export async function runD1Migrations(
   dbName: string,
   migrationsDir: string,
   onProgress?: (message: string) => void
-): Promise<{ success: boolean; appliedCount: number; error?: string }> {
+): Promise<{ success: boolean; appliedCount: number; skippedCount: number; error?: string }> {
   const { existsSync, readdirSync } = await import('node:fs');
   const { join } = await import('node:path');
 
@@ -1008,6 +1082,7 @@ export async function runD1Migrations(
     return {
       success: false,
       appliedCount: 0,
+      skippedCount: 0,
       error: `Migrations directory not found: ${migrationsDir}`,
     };
   }
@@ -1019,21 +1094,41 @@ export async function runD1Migrations(
 
   if (sqlFiles.length === 0) {
     onProgress?.(`  No migration files found in ${migrationsDir}`);
-    return { success: true, appliedCount: 0 };
+    return { success: true, appliedCount: 0, skippedCount: 0 };
   }
 
   onProgress?.(`  Found ${sqlFiles.length} migration files`);
 
+  // Ensure tracking table exists; if it fails we continue without tracking
+  await ensureMigrationsTable(dbName, onProgress);
+  const applied = await getAppliedMigrations(dbName);
+  onProgress?.(`  ${applied.size} migration(s) already recorded as applied`);
+
   let appliedCount = 0;
+  let skippedCount = 0;
+
   for (const sqlFile of sqlFiles) {
+    if (applied.has(sqlFile)) {
+      onProgress?.(`  ⏭  Skipping (already applied): ${sqlFile}`);
+      skippedCount++;
+      continue;
+    }
+
     const result = await executeD1Migration(dbName, join(migrationsDir, sqlFile), onProgress);
     if (!result.success) {
-      return { success: false, appliedCount, error: `Failed on ${sqlFile}: ${result.error}` };
+      return {
+        success: false,
+        appliedCount,
+        skippedCount,
+        error: `Failed on ${sqlFile}: ${result.error}`,
+      };
     }
+
+    await recordMigration(dbName, sqlFile);
     appliedCount++;
   }
 
-  return { success: true, appliedCount };
+  return { success: true, appliedCount, skippedCount };
 }
 
 /**
@@ -1054,9 +1149,9 @@ export async function runMigrationsForEnvironment(
   onProgress?: (message: string) => void
 ): Promise<{
   success: boolean;
-  core: { success: boolean; appliedCount: number; error?: string };
-  pii: { success: boolean; appliedCount: number; error?: string };
-  admin: { success: boolean; appliedCount: number; error?: string };
+  core: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+  pii: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
+  admin: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
 }> {
   const { existsSync } = await import('node:fs');
   const { join, resolve } = await import('node:path');
@@ -1092,9 +1187,9 @@ export async function runMigrationsForEnvironment(
     onProgress?.(`  ❌ ${errorMsg}`);
     return {
       success: false,
-      core: { success: false, appliedCount: 0, error: errorMsg },
-      pii: { success: false, appliedCount: 0, error: errorMsg },
-      admin: { success: false, appliedCount: 0, error: errorMsg },
+      core: { success: false, appliedCount: 0, skippedCount: 0, error: errorMsg },
+      pii: { success: false, appliedCount: 0, skippedCount: 0, error: errorMsg },
+      admin: { success: false, appliedCount: 0, skippedCount: 0, error: errorMsg },
     };
   }
 
@@ -1104,23 +1199,27 @@ export async function runMigrationsForEnvironment(
   if (!coreResult.success) {
     onProgress?.(`  ❌ Core migration failed: ${coreResult.error}`);
   } else {
-    onProgress?.(`  ✅ Applied ${coreResult.appliedCount} core migrations`);
+    onProgress?.(
+      `  ✅ Applied ${coreResult.appliedCount} core migrations (${coreResult.skippedCount} skipped)`
+    );
   }
 
   // Run PII database migrations
   const piiMigrationsDir = join(migrationsRoot, 'pii');
   onProgress?.(`📜 Running migrations for ${piiDbName}...`);
 
-  let piiResult: { success: boolean; appliedCount: number; error?: string };
+  let piiResult: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
   if (!existsSync(piiMigrationsDir)) {
     onProgress?.(`  ⚠️ PII migrations directory not found: ${piiMigrationsDir}`);
-    piiResult = { success: true, appliedCount: 0 };
+    piiResult = { success: true, appliedCount: 0, skippedCount: 0 };
   } else {
     piiResult = await runD1Migrations(piiDbName, piiMigrationsDir, onProgress);
     if (!piiResult.success) {
       onProgress?.(`  ❌ PII migration failed: ${piiResult.error}`);
     } else {
-      onProgress?.(`  ✅ Applied ${piiResult.appliedCount} PII migrations`);
+      onProgress?.(
+        `  ✅ Applied ${piiResult.appliedCount} PII migrations (${piiResult.skippedCount} skipped)`
+      );
     }
   }
 
@@ -1128,16 +1227,18 @@ export async function runMigrationsForEnvironment(
   const adminMigrationsDir = join(migrationsRoot, 'admin');
   onProgress?.(`📜 Running migrations for ${adminDbName}...`);
 
-  let adminResult: { success: boolean; appliedCount: number; error?: string };
+  let adminResult: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
   if (!existsSync(adminMigrationsDir)) {
     onProgress?.(`  ⚠️ Admin migrations directory not found: ${adminMigrationsDir}`);
-    adminResult = { success: true, appliedCount: 0 };
+    adminResult = { success: true, appliedCount: 0, skippedCount: 0 };
   } else {
     adminResult = await runD1Migrations(adminDbName, adminMigrationsDir, onProgress);
     if (!adminResult.success) {
       onProgress?.(`  ❌ Admin migration failed: ${adminResult.error}`);
     } else {
-      onProgress?.(`  ✅ Applied ${adminResult.appliedCount} admin migrations`);
+      onProgress?.(
+        `  ✅ Applied ${adminResult.appliedCount} admin migrations (${adminResult.skippedCount} skipped)`
+      );
     }
   }
 

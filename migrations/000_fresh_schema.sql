@@ -2117,3 +2117,64 @@ CREATE INDEX idx_ws_subs_connection
 CREATE INDEX idx_ws_subs_subject
     ON websocket_subscriptions(subject_id, is_active);
 
+
+-- =============================================================================
+-- From 053: Custom Claim Schemas
+-- =============================================================================
+
+CREATE TABLE custom_claim_schemas (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  field_key TEXT NOT NULL,
+  display_label TEXT NOT NULL,
+  field_type TEXT NOT NULL DEFAULT 'string',
+  is_pii INTEGER NOT NULL DEFAULT 0,
+  is_required INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  validation_rules TEXT CHECK(validation_rules IS NULL OR json_valid(validation_rules)),
+  include_in_id_token INTEGER NOT NULL DEFAULT 0,
+  include_in_userinfo INTEGER NOT NULL DEFAULT 0,
+  include_in_introspection INTEGER NOT NULL DEFAULT 0,
+  required_scopes TEXT CHECK(required_scopes IS NULL OR json_valid(required_scopes)),
+  scope_mode TEXT NOT NULL DEFAULT 'any' CHECK(scope_mode IN ('all', 'any')),
+  is_searchable INTEGER NOT NULL DEFAULT 1,
+  is_exportable INTEGER NOT NULL DEFAULT 1,
+  is_vc_claim INTEGER NOT NULL DEFAULT 0,
+  claim_namespace TEXT,
+  description TEXT,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  schema_version INTEGER NOT NULL DEFAULT 1,
+  operation_status TEXT NOT NULL DEFAULT 'active',
+  operation_detail TEXT,
+  is_system INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX uniq_ccs_active_key ON custom_claim_schemas(tenant_id, field_key) WHERE is_active = 1;
+CREATE INDEX idx_ccs_tenant_active ON custom_claim_schemas(tenant_id, is_active, display_order);
+CREATE INDEX idx_ccs_tenant_key ON custom_claim_schemas(tenant_id, field_key);
+CREATE INDEX idx_ccs_operation ON custom_claim_schemas(operation_status) WHERE operation_status != 'active';
+
+-- =============================================================================
+-- From 054: Custom Claim Schema History
+-- =============================================================================
+
+CREATE TABLE custom_claim_schema_history (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  schema_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  operation TEXT NOT NULL CHECK(operation IN ('create','update','delete','rename','toggle_active')),
+  snapshot TEXT NOT NULL,
+  changes TEXT NOT NULL,
+  actor_id TEXT,
+  actor_type TEXT CHECK(actor_type IN ('user','admin','system','api')),
+  change_source TEXT CHECK(change_source IN ('admin_api','admin_ui','migration','rollback')),
+  created_at INTEGER NOT NULL,
+  UNIQUE(tenant_id, schema_id, version)
+);
+
+CREATE INDEX idx_ccsh_schema ON custom_claim_schema_history(tenant_id, schema_id, version DESC);
+CREATE INDEX idx_ccsh_cleanup ON custom_claim_schema_history(tenant_id, created_at);

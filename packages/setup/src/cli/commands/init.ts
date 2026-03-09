@@ -273,6 +273,26 @@ function getWorkersDevUrl(workerName: string): string {
 }
 
 /**
+ * Ensure a domain string has an https:// scheme.
+ * The CLI prompts collect bare domain names (e.g. "example.com") but the
+ * config schema requires a full URL (z.string().url()).
+ */
+function ensureHttps(domain: string | null | undefined): string | null {
+  if (!domain) return null;
+  return domain.startsWith('http://') || domain.startsWith('https://')
+    ? domain
+    : `https://${domain}`;
+}
+
+/**
+ * Strip the protocol from a URL for display in domain-only prompts.
+ */
+function stripProtocol(url: string | null | undefined): string {
+  if (!url) return '';
+  return url.replace(/^https?:\/\//, '');
+}
+
+/**
  * Get the correct pages.dev URL
  * Note: Pages uses {project}.pages.dev format (no account subdomain, unlike Workers)
  */
@@ -1386,18 +1406,18 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   };
   config.urls = {
     api: {
-      custom: apiDomain || null,
+      custom: ensureHttps(apiDomain),
       auto: getWorkersDevUrl(envPrefix + '-ar-router'),
       zoneId: quickDomainConfig.zoneId ?? null,
       customDomainBinding: quickDomainConfig.customDomainBinding ?? false,
     },
     loginUi: {
-      custom: loginUiDomain || null,
+      custom: ensureHttps(loginUiDomain),
       auto: getPagesDevUrl(envPrefix + '-ar-login-ui'),
       sameAsApi: false,
     },
     adminUi: {
-      custom: adminUiDomain || null,
+      custom: ensureHttps(adminUiDomain),
       auto: getPagesDevUrl(envPrefix + '-ar-admin-ui'),
       sameAsApi: false,
     },
@@ -2011,18 +2031,18 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   };
   config.urls = {
     api: {
-      custom: apiDomain || null,
+      custom: ensureHttps(apiDomain),
       auto: getWorkersDevUrl(envPrefix + '-ar-router'),
       zoneId: fullDomainConfig.zoneId ?? null,
       customDomainBinding: fullDomainConfig.customDomainBinding ?? false,
     },
     loginUi: {
-      custom: loginUiDomain || null,
+      custom: ensureHttps(loginUiDomain),
       auto: getPagesDevUrl(envPrefix + '-ar-login-ui'),
       sameAsApi: false,
     },
     adminUi: {
-      custom: adminUiDomain || null,
+      custom: ensureHttps(adminUiDomain),
       auto: getPagesDevUrl(envPrefix + '-ar-admin-ui'),
       sameAsApi: false,
     },
@@ -2799,7 +2819,7 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
 
   const apiDomain = await input({
     message: 'API (issuer) domain (leave empty for workers.dev)',
-    default: config.urls.api?.custom || '',
+    default: stripProtocol(config.urls.api?.custom),
     validate: (value) => {
       if (!value) return true;
       if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(value)) {
@@ -2823,28 +2843,28 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
 
   const loginUiDomain = await input({
     message: 'Login UI domain (leave empty for pages.dev)',
-    default: config.urls.loginUi?.custom || '',
+    default: stripProtocol(config.urls.loginUi?.custom),
   });
 
   const adminUiDomain = await input({
     message: 'Admin UI domain (leave empty for pages.dev)',
-    default: config.urls.adminUi?.custom || '',
+    default: stripProtocol(config.urls.adminUi?.custom),
   });
 
   config.urls.api = {
-    custom: apiDomain || null,
+    custom: ensureHttps(apiDomain),
     auto: config.urls.api?.auto || getWorkersDevUrl(env + '-ar-router'),
     zoneId: updateDomainConfig.zoneId ?? config.urls.api?.zoneId ?? null,
     customDomainBinding:
       updateDomainConfig.customDomainBinding ?? config.urls.api?.customDomainBinding ?? false,
   };
   config.urls.loginUi = {
-    custom: loginUiDomain || null,
+    custom: ensureHttps(loginUiDomain),
     auto: config.urls.loginUi?.auto || getPagesDevUrl(env + '-ar-login-ui'),
     sameAsApi: config.urls.loginUi?.sameAsApi ?? false,
   };
   config.urls.adminUi = {
-    custom: adminUiDomain || null,
+    custom: ensureHttps(adminUiDomain),
     auto: config.urls.adminUi?.auto || getPagesDevUrl(env + '-ar-admin-ui'),
     sameAsApi: config.urls.adminUi?.sameAsApi ?? false,
   };
