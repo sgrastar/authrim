@@ -1011,12 +1011,19 @@ async function ensureMigrationsTable(
 ): Promise<boolean> {
   try {
     await wrangler([
-      'd1', 'execute', dbName, '--remote', '--yes',
-      '--command', CREATE_MIGRATIONS_TABLE_SQL,
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      CREATE_MIGRATIONS_TABLE_SQL,
     ]);
     return true;
   } catch (error) {
-    onProgress?.(`  ⚠️  Could not create migrations table: ${error instanceof Error ? error.message : String(error)}`);
+    onProgress?.(
+      `  ⚠️  Could not create migrations table: ${error instanceof Error ? error.message : String(error)}`
+    );
     return false;
   }
 }
@@ -1028,8 +1035,13 @@ async function ensureMigrationsTable(
 async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
   try {
     const { stdout } = await wrangler([
-      'd1', 'execute', dbName, '--remote', '--yes',
-      '--command', 'SELECT filename FROM authrim_migrations;',
+      'd1',
+      'execute',
+      dbName,
+      '--remote',
+      '--yes',
+      '--command',
+      'SELECT filename FROM authrim_migrations;',
       '--json',
     ]);
     const rows = JSON.parse(stdout);
@@ -1104,7 +1116,12 @@ export async function runD1Migrations(
 
     const result = await executeD1Migration(dbName, join(migrationsDir, sqlFile), onProgress);
     if (!result.success) {
-      return { success: false, appliedCount, skippedCount, error: `Failed on ${sqlFile}: ${result.error}` };
+      return {
+        success: false,
+        appliedCount,
+        skippedCount,
+        error: `Failed on ${sqlFile}: ${result.error}`,
+      };
     }
 
     await recordMigration(dbName, sqlFile);
@@ -1182,7 +1199,9 @@ export async function runMigrationsForEnvironment(
   if (!coreResult.success) {
     onProgress?.(`  ❌ Core migration failed: ${coreResult.error}`);
   } else {
-    onProgress?.(`  ✅ Applied ${coreResult.appliedCount} core migrations (${coreResult.skippedCount} skipped)`);
+    onProgress?.(
+      `  ✅ Applied ${coreResult.appliedCount} core migrations (${coreResult.skippedCount} skipped)`
+    );
   }
 
   // Run PII database migrations
@@ -1198,7 +1217,9 @@ export async function runMigrationsForEnvironment(
     if (!piiResult.success) {
       onProgress?.(`  ❌ PII migration failed: ${piiResult.error}`);
     } else {
-      onProgress?.(`  ✅ Applied ${piiResult.appliedCount} PII migrations (${piiResult.skippedCount} skipped)`);
+      onProgress?.(
+        `  ✅ Applied ${piiResult.appliedCount} PII migrations (${piiResult.skippedCount} skipped)`
+      );
     }
   }
 
@@ -1215,7 +1236,9 @@ export async function runMigrationsForEnvironment(
     if (!adminResult.success) {
       onProgress?.(`  ❌ Admin migration failed: ${adminResult.error}`);
     } else {
-      onProgress?.(`  ✅ Applied ${adminResult.appliedCount} admin migrations (${adminResult.skippedCount} skipped)`);
+      onProgress?.(
+        `  ✅ Applied ${adminResult.appliedCount} admin migrations (${adminResult.skippedCount} skipped)`
+      );
     }
   }
 

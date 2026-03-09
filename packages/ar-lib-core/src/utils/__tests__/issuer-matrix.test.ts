@@ -24,25 +24,19 @@ import {
 // =============================================================================
 
 describe('buildIssuerUrl - default tenant', () => {
-  it.each(SCENARIOS.map(s => [scenarioLabel(s), s] as const))(
-    '%s',
-    (_label, scenario) => {
-      const env = buildEnvFromScenario(scenario) as Partial<Env>;
-      const result = buildIssuerUrl(env as Env);
-      expect(result).toBe(scenario.expected.issuerUrl);
-    }
-  );
+  it.each(SCENARIOS.map((s) => [scenarioLabel(s), s] as const))('%s', (_label, scenario) => {
+    const env = buildEnvFromScenario(scenario) as Partial<Env>;
+    const result = buildIssuerUrl(env as Env);
+    expect(result).toBe(scenario.expected.issuerUrl);
+  });
 });
 
 describe('buildIssuerUrl - with tenant "acme"', () => {
-  it.each(SCENARIOS.map(s => [scenarioLabel(s), s] as const))(
-    '%s',
-    (_label, scenario) => {
-      const env = buildEnvFromScenario(scenario) as Partial<Env>;
-      const result = buildIssuerUrl(env as Env, 'acme');
-      expect(result).toBe(scenario.expected.issuerUrlWithTenant);
-    }
-  );
+  it.each(SCENARIOS.map((s) => [scenarioLabel(s), s] as const))('%s', (_label, scenario) => {
+    const env = buildEnvFromScenario(scenario) as Partial<Env>;
+    const result = buildIssuerUrl(env as Env, 'acme');
+    expect(result).toBe(scenario.expected.issuerUrlWithTenant);
+  });
 });
 
 // =============================================================================
@@ -59,9 +53,9 @@ describe.skip('SPEC GAP: buildIssuerUrl should use naked domain when NAKED_DOMAI
   // If buildIssuerUrl is updated to respect NAKED_DOMAIN_AS_ISSUER, these
   // tests should be unskipped and the expected values in SCENARIOS updated.
 
-  const n3Scenarios = SCENARIOS.filter(s => s.naked === 'N3');
+  const n3Scenarios = SCENARIOS.filter((s) => s.naked === 'N3');
 
-  it.each(n3Scenarios.map(s => [scenarioLabel(s), s] as const))(
+  it.each(n3Scenarios.map((s) => [scenarioLabel(s), s] as const))(
     '%s - should return https://{baseDomain} for default tenant',
     (_label, scenario) => {
       const env = buildEnvFromScenario(scenario) as Partial<Env>;
@@ -80,7 +74,7 @@ describe('validateHostHeader', () => {
   describe('single-tenant mode (no BASE_DOMAIN)', () => {
     const singleTenantScenarios = getScenariosWithoutBaseDomain();
 
-    it.each(singleTenantScenarios.map(s => [scenarioLabel(s), s] as const))(
+    it.each(singleTenantScenarios.map((s) => [scenarioLabel(s), s] as const))(
       '%s - returns default tenant regardless of host',
       (_label, scenario) => {
         const env = buildEnvFromScenario(scenario) as Partial<Env>;
@@ -95,7 +89,7 @@ describe('validateHostHeader', () => {
     const multiTenantScenarios = getScenariosWithBaseDomain();
 
     describe('tenant subdomain access', () => {
-      it.each(multiTenantScenarios.map(s => [scenarioLabel(s), s] as const))(
+      it.each(multiTenantScenarios.map((s) => [scenarioLabel(s), s] as const))(
         '%s - extracts tenant from subdomain',
         (_label, scenario) => {
           const env = buildEnvFromScenario(scenario) as Partial<Env>;
@@ -108,7 +102,7 @@ describe('validateHostHeader', () => {
     });
 
     describe('naked domain access', () => {
-      it.each(multiTenantScenarios.map(s => [scenarioLabel(s), s] as const))(
+      it.each(multiTenantScenarios.map((s) => [scenarioLabel(s), s] as const))(
         '%s - resolves correct tenant for naked domain',
         (_label, scenario) => {
           const env = buildEnvFromScenario(scenario) as Partial<Env>;
@@ -125,7 +119,7 @@ describe('validateHostHeader', () => {
     });
 
     describe('invalid host rejection', () => {
-      it.each(multiTenantScenarios.map(s => [scenarioLabel(s), s] as const))(
+      it.each(multiTenantScenarios.map((s) => [scenarioLabel(s), s] as const))(
         '%s - rejects unrelated domain',
         (_label, scenario) => {
           const env = buildEnvFromScenario(scenario) as Partial<Env>;
@@ -137,7 +131,7 @@ describe('validateHostHeader', () => {
     });
 
     describe('missing host header', () => {
-      it.each(multiTenantScenarios.map(s => [scenarioLabel(s), s] as const))(
+      it.each(multiTenantScenarios.map((s) => [scenarioLabel(s), s] as const))(
         '%s - rejects missing host',
         (_label, scenario) => {
           const env = buildEnvFromScenario(scenario) as Partial<Env>;

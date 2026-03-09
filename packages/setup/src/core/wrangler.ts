@@ -217,7 +217,7 @@ export function deriveAllowedOrigins(config: AuthrimConfig, workersSubdomain?: s
   // When sameAsApi=true, the actual origin is the API domain (UI is proxied)
   const loginUiUrl = config.urls?.loginUi?.sameAsApi
     ? apiUrl
-    : (config.urls?.loginUi?.custom || config.urls?.loginUi?.auto);
+    : config.urls?.loginUi?.custom || config.urls?.loginUi?.auto;
   if (loginUiUrl) {
     addOriginWithSubdomain(origins, loginUiUrl, workersSubdomain);
   }
@@ -226,7 +226,7 @@ export function deriveAllowedOrigins(config: AuthrimConfig, workersSubdomain?: s
   // When sameAsApi=true, the actual origin is the API domain (UI is proxied)
   const adminUiUrl = config.urls?.adminUi?.sameAsApi
     ? apiUrl
-    : (config.urls?.adminUi?.custom || config.urls?.adminUi?.auto);
+    : config.urls?.adminUi?.custom || config.urls?.adminUi?.auto;
   if (adminUiUrl) {
     addOriginWithSubdomain(origins, adminUiUrl, workersSubdomain);
   }
@@ -450,7 +450,7 @@ export function generateEnvVars(
   const apiUrlForUi = config.urls?.api?.custom || config.urls?.api?.auto || '';
   const uiUrl = config.urls?.loginUi?.sameAsApi
     ? apiUrlForUi
-    : (config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl);
+    : config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || issuerUrl;
 
   // Issuer URL (single-tenant mode uses this directly)
   // In multi-tenant mode, issuer is dynamically built from subdomain + BASE_DOMAIN
@@ -504,7 +504,7 @@ export function generateEnvVars(
     // Admin UI URL and cookie configuration
     const adminUiUrl = config.urls?.adminUi?.sameAsApi
       ? apiUrlForUi
-      : (config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl);
+      : config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
     vars['ADMIN_UI_URL'] = adminUiUrl;
     const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
     vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';
@@ -515,7 +515,7 @@ export function generateEnvVars(
     // Admin UI URL and cookie configuration (same logic as ar-auth)
     const adminUiUrl = config.urls?.adminUi?.sameAsApi
       ? apiUrlForUi
-      : (config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl);
+      : config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl;
     vars['ADMIN_UI_URL'] = adminUiUrl;
     const adminUiSameOrigin = config.urls?.adminUi?.sameAsApi === true;
     vars['ADMIN_COOKIE_SAME_SITE'] = adminUiSameOrigin ? 'Lax' : 'None';
