@@ -172,6 +172,7 @@ const en: Translations = {
   'domain.customPrompt': 'Enter custom domain (e.g., auth.example.com)',
   'domain.customValidation': 'Please enter a valid domain (e.g., auth.example.com)',
   'domain.issuerUrl': 'Issuer URL: {{url}}',
+  'domain.checkZoneButton': 'Check Zone',
   'domain.checkingZone': 'Checking Cloudflare zone for {{domain}}...',
   'domain.zoneFound': "Zone '{{zone}}' found (status: {{status}})",
   'domain.zoneNotFound': "Zone '{{zone}}' not found in your Cloudflare account",

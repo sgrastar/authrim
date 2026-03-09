@@ -171,6 +171,7 @@ const ja: Translations = {
   'domain.customPrompt': 'カスタムドメインを入力（例: auth.example.com）',
   'domain.customValidation': '有効なドメインを入力してください（例: auth.example.com）',
   'domain.issuerUrl': 'Issuer URL: {{url}}',
+  'domain.checkZoneButton': 'ゾーンを確認',
   'domain.checkingZone': '{{domain}} のCloudflareゾーンを確認中...',
   'domain.zoneFound': "ゾーン '{{zone}}' が見つかりました（ステータス: {{status}}）",
   'domain.zoneNotFound': "ゾーン '{{zone}}' がCloudflareアカウントに見つかりません",

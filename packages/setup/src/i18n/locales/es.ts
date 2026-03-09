@@ -173,6 +173,7 @@ const es: Translations = {
   'domain.customDesc': 'Usar tu propio dominio',
   'domain.customPrompt': 'Ingresa dominio personalizado (ej: auth.ejemplo.com)',
   'domain.customValidation': 'Por favor ingresa un dominio válido (ej: auth.ejemplo.com)',
+  'domain.checkZoneButton': 'Verificar zona',
   'domain.checkingZone': 'Verificando zona de Cloudflare para {{domain}}...',
   'domain.zoneFound': "Zona '{{zone}}' encontrada (estado: {{status}})",
   'domain.zoneNotFound': "Zona '{{zone}}' no encontrada en su cuenta de Cloudflare",

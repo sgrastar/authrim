@@ -169,6 +169,7 @@ const zhTW: Translations = {
   'domain.customDesc': '使用您自己的網域',
   'domain.customPrompt': '輸入自訂網域（例如：auth.example.com）',
   'domain.customValidation': '請輸入有效的網域（例如：auth.example.com）',
+  'domain.checkZoneButton': '檢查區域',
   'domain.checkingZone': '正在檢查 {{domain}} 的 Cloudflare 區域...',
   'domain.zoneFound': "找到區域 '{{zone}}'（狀態：{{status}}）",
   'domain.zoneNotFound': "在您的 Cloudflare 帳戶中未找到區域 '{{zone}}'",

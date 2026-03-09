@@ -169,6 +169,7 @@ const ko: Translations = {
   'domain.customDesc': '자체 도메인 사용',
   'domain.customPrompt': '사용자 정의 도메인 입력 (예: auth.example.com)',
   'domain.customValidation': '유효한 도메인을 입력하세요 (예: auth.example.com)',
+  'domain.checkZoneButton': '영역 확인',
   'domain.checkingZone': '{{domain}}의 Cloudflare 영역을 확인하는 중...',
   'domain.zoneFound': "'{{zone}}' 영역을 찾았습니다 (상태: {{status}})",
   'domain.zoneNotFound': "Cloudflare 계정에서 '{{zone}}' 영역을 찾을 수 없습니다",

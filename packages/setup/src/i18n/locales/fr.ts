@@ -174,6 +174,7 @@ const fr: Translations = {
   'domain.customDesc': 'Utiliser votre propre domaine',
   'domain.customPrompt': 'Entrez le domaine personnalisé (ex : auth.exemple.com)',
   'domain.customValidation': 'Veuillez entrer un domaine valide (ex : auth.exemple.com)',
+  'domain.checkZoneButton': 'Vérifier la zone',
   'domain.checkingZone': 'Vérification de la zone Cloudflare pour {{domain}}...',
   'domain.zoneFound': "Zone '{{zone}}' trouvée (statut : {{status}})",
   'domain.zoneNotFound': "Zone '{{zone}}' introuvable dans votre compte Cloudflare",

@@ -172,6 +172,7 @@ const ru: Translations = {
   'domain.customDesc': 'Использовать свой домен',
   'domain.customPrompt': 'Введите собственный домен (например, auth.example.com)',
   'domain.customValidation': 'Пожалуйста, введите корректный домен (например, auth.example.com)',
+  'domain.checkZoneButton': 'Проверить зону',
   'domain.checkingZone': 'Проверка зоны Cloudflare для {{domain}}...',
   'domain.zoneFound': "Зона '{{zone}}' найдена (статус: {{status}})",
   'domain.zoneNotFound': "Зона '{{zone}}' не найдена в вашем аккаунте Cloudflare",

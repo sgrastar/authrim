@@ -2061,8 +2061,8 @@ export function getHtmlTemplate(
           <input type="text" id="base-domain" placeholder="oidc.example.com" data-i18n-placeholder="web.form.baseDomainPlaceholder">
           <small style="color: var(--text-muted)" data-i18n="web.form.baseDomainHint">Custom domain for Authrim. Leave empty to use workers.dev</small>
           <div id="domain-check-row" style="display: none; margin-top: 0.5rem; align-items: center; gap: 0.5rem;">
-            <button type="button" id="check-domain-btn" class="btn btn-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.85rem;" data-i18n="domain.checkingZone" data-i18n-skip="true">
-              Check Domain
+            <button type="button" id="check-domain-btn" class="btn btn-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.85rem;" data-i18n="domain.checkZoneButton">
+              Check Zone
             </button>
             <span id="domain-check-status" style="font-size: 0.85rem;"></span>
           </div>

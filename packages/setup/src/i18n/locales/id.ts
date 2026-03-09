@@ -172,6 +172,7 @@ const id: Translations = {
   'domain.customDesc': 'Gunakan domain Anda sendiri',
   'domain.customPrompt': 'Masukkan domain kustom (contoh: auth.example.com)',
   'domain.customValidation': 'Silakan masukkan domain yang valid (contoh: auth.example.com)',
+  'domain.checkZoneButton': 'Periksa zona',
   'domain.checkingZone': 'Memeriksa zona Cloudflare untuk {{domain}}...',
   'domain.zoneFound': "Zona '{{zone}}' ditemukan (status: {{status}})",
   'domain.zoneNotFound': "Zona '{{zone}}' tidak ditemukan di akun Cloudflare Anda",

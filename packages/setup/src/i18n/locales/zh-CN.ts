@@ -169,6 +169,7 @@ const zhCN: Translations = {
   'domain.customDesc': '使用您自己的域名',
   'domain.customPrompt': '输入自定义域名（例如：auth.example.com）',
   'domain.customValidation': '请输入有效域名（例如：auth.example.com）',
+  'domain.checkZoneButton': '检查区域',
   'domain.checkingZone': '正在检查 {{domain}} 的 Cloudflare 区域...',
   'domain.zoneFound': "找到区域 '{{zone}}'（状态：{{status}}）",
   'domain.zoneNotFound': "在您的 Cloudflare 账户中未找到区域 '{{zone}}'",
