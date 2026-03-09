@@ -174,6 +174,7 @@ const fr: Translations = {
   'domain.customDesc': 'Utiliser votre propre domaine',
   'domain.customPrompt': 'Entrez le domaine personnalisé (ex : auth.exemple.com)',
   'domain.customValidation': 'Veuillez entrer un domaine valide (ex : auth.exemple.com)',
+  'domain.checkZoneButton': 'Vérifier la zone',
   'domain.checkingZone': 'Vérification de la zone Cloudflare pour {{domain}}...',
   'domain.zoneFound': "Zone '{{zone}}' trouvée (statut : {{status}})",
   'domain.zoneNotFound': "Zone '{{zone}}' introuvable dans votre compte Cloudflare",
@@ -795,6 +796,17 @@ const fr: Translations = {
   'web.complete.backToMain': "Retour à l'Accueil",
   'web.complete.canClose':
     'La configuration est terminée. Vous pouvez fermer cette fenêtre en toute sécurité.',
+  'web.complete.adminAccountTitle': 'Configuration du compte administrateur',
+  'web.complete.adminAccountImportant': 'IMPORTANT',
+  'web.complete.adminAccountDesc':
+    "Enregistrez votre premier compte administrateur avec l'authentification Passkey\u00a0:",
+  'web.complete.copy': '📋 Copier',
+  'web.complete.copied': '✓ Copié',
+  'web.complete.openSetup': '🔑 Ouvrir la configuration',
+  'web.complete.urlWarning':
+    "Cette URL ne peut être utilisée qu'<strong>une seule fois</strong> et expire le <strong>{{date}}</strong>.",
+  'web.complete.adminSetupUnavailable':
+    "URL de configuration non disponible. Vous pouvez configurer l'accès administrateur depuis l'interface d'administration plus tard.",
 
   // Web UI Environment Management
   'web.env.title': 'Environnements',

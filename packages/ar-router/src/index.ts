@@ -672,6 +672,15 @@ app.all('/admin/*', async (c) => {
   );
 });
 
+// Admin UI proxy - /setup/* (initial admin setup completion flow)
+// After passkey registration, ar-auth redirects to /setup/complete
+app.all('/setup/*', async (c) => {
+  if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
+    return proxyToPages(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path);
+  }
+  return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
+});
+
 // Admin UI proxy - exact /admin path (redirect to /admin/)
 app.get('/admin', async (c) => {
   if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {

@@ -169,6 +169,7 @@ const ko: Translations = {
   'domain.customDesc': '자체 도메인 사용',
   'domain.customPrompt': '사용자 정의 도메인 입력 (예: auth.example.com)',
   'domain.customValidation': '유효한 도메인을 입력하세요 (예: auth.example.com)',
+  'domain.checkZoneButton': '영역 확인',
   'domain.checkingZone': '{{domain}}의 Cloudflare 영역을 확인하는 중...',
   'domain.zoneFound': "'{{zone}}' 영역을 찾았습니다 (상태: {{status}})",
   'domain.zoneNotFound': "Cloudflare 계정에서 '{{zone}}' 영역을 찾을 수 없습니다",
@@ -770,6 +771,16 @@ const ko: Translations = {
   'web.complete.saveConfig': '구성 저장',
   'web.complete.backToMain': '메인으로 돌아가기',
   'web.complete.canClose': '설정이 완료되었습니다. 이 창을 안전하게 닫을 수 있습니다.',
+  'web.complete.adminAccountTitle': '관리자 계정 설정',
+  'web.complete.adminAccountImportant': '중요',
+  'web.complete.adminAccountDesc': '패스키 인증으로 첫 번째 관리자 계정을 등록하세요:',
+  'web.complete.copy': '📋 복사',
+  'web.complete.copied': '✓ 복사됨',
+  'web.complete.openSetup': '🔑 설정 열기',
+  'web.complete.urlWarning':
+    '이 URL은 <strong>한 번만</strong> 사용할 수 있으며 <strong>{{date}}</strong>에 만료됩니다.',
+  'web.complete.adminSetupUnavailable':
+    '설정 URL을 사용할 수 없습니다. 나중에 관리 UI에서 관리자 액세스를 구성할 수 있습니다.',
 
   // Web UI Environment Management
   'web.env.title': '환경',

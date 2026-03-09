@@ -1403,7 +1403,14 @@ export async function createKVNamespace(
  */
 export async function deleteKVNamespace(namespaceId: string): Promise<boolean> {
   try {
-    await wrangler(['kv', 'namespace', 'delete', '--namespace-id', namespaceId]);
+    await wrangler([
+      'kv',
+      'namespace',
+      'delete',
+      '--namespace-id',
+      namespaceId,
+      '--skip-confirmation',
+    ]);
     return true;
   } catch {
     return false;
@@ -1792,11 +1799,19 @@ export interface DeleteOptions {
  */
 export async function listWorkers(): Promise<Array<{ name: string; id?: string }>> {
   try {
-    const { stdout: _stdout } = await wrangler(['deployments', 'list', '--json']);
-    // Note: wrangler deployments list doesn't give us what we need
-    // We'll use wrangler whoami to get account and then list workers differently
-    // For now, return empty - we'll detect workers from D1/KV patterns
-    return [];
+    const accountId = await getAccountId();
+    if (!accountId) return [];
+    const tokenInfo = await getCloudflareApiToken();
+    if (!tokenInfo) return [];
+
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`,
+      { headers: { Authorization: `Bearer ${tokenInfo.token}` } }
+    );
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as { result?: Array<{ id: string }> };
+    return (data.result || []).map((w) => ({ name: w.id }));
   } catch {
     return [];
   }
@@ -1950,13 +1965,43 @@ export async function detectEnvironments(
 
   const progress = onProgress || (() => {});
 
+  // Scan Workers first — environments are only valid if Workers or D1 exist
+  progress('Scanning Workers...');
+  const workerEnvs = new Set<string>();
+  try {
+    const workers = await listWorkers();
+    for (const w of workers) {
+      const match = w.name.match(AUTHRIM_PATTERNS.worker);
+      if (match) {
+        const env = match[1].toLowerCase();
+        workerEnvs.add(env);
+        if (!environments.has(env)) {
+          environments.set(env, {
+            env,
+            workers: [],
+            d1: [],
+            kv: [],
+            queues: [],
+            r2: [],
+            pages: [],
+          });
+        }
+        environments.get(env)!.workers.push({ name: w.name });
+      }
+    }
+  } catch (error) {
+    progress(`  ⚠️ Could not scan Workers: ${error instanceof Error ? error.message : error}`);
+  }
+
   progress('Scanning D1 databases...');
+  const d1Envs = new Set<string>();
   try {
     const databases = await listD1Databases();
     for (const db of databases) {
       const match = db.name.match(AUTHRIM_PATTERNS.d1);
       if (match) {
         const env = match[1].toLowerCase();
+        d1Envs.add(env);
         if (!environments.has(env)) {
           environments.set(env, {
             env,
@@ -1982,18 +2027,10 @@ export async function detectEnvironments(
       const match = ns.title.match(AUTHRIM_PATTERNS.kv);
       if (match) {
         const env = match[1].toLowerCase();
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
+        // Only attach KV to environments that already have Workers or D1
+        if (environments.has(env)) {
+          environments.get(env)!.kv.push({ name: ns.title, id: ns.id });
         }
-        environments.get(env)!.kv.push({ name: ns.title, id: ns.id });
       }
     }
   } catch (error) {
@@ -2007,18 +2044,10 @@ export async function detectEnvironments(
       const match = q.name.match(AUTHRIM_PATTERNS.queue);
       if (match) {
         const env = match[1].toLowerCase();
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
+        // Only attach Queues to environments that already have Workers or D1
+        if (environments.has(env)) {
+          environments.get(env)!.queues.push({ name: q.name, id: q.id });
         }
-        environments.get(env)!.queues.push({ name: q.name, id: q.id });
       }
     }
   } catch (error) {
@@ -2032,18 +2061,10 @@ export async function detectEnvironments(
       const match = bucket.name.match(AUTHRIM_PATTERNS.r2);
       if (match) {
         const env = match[1].toLowerCase();
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
+        // Only attach R2 to environments that already have Workers or D1
+        if (environments.has(env)) {
+          environments.get(env)!.r2.push({ name: bucket.name });
         }
-        environments.get(env)!.r2.push({ name: bucket.name });
       }
     }
   } catch (error) {
@@ -2057,43 +2078,20 @@ export async function detectEnvironments(
       const match = project.name.match(AUTHRIM_PATTERNS.pages);
       if (match) {
         const env = match[1].toLowerCase();
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
+        // Only attach Pages to environments that already have Workers or D1
+        if (environments.has(env)) {
+          environments.get(env)!.pages.push({ name: project.name });
         }
-        environments.get(env)!.pages.push({ name: project.name });
       }
     }
   } catch (error) {
     progress(`  ⚠️ Could not scan Pages: ${error instanceof Error ? error.message : error}`);
   }
 
-  // Infer workers from detected environments
-  const workerComponents = [
-    'ar-lib-core',
-    'ar-auth',
-    'ar-token',
-    'ar-userinfo',
-    'ar-discovery',
-    'ar-management',
-    'ar-router',
-    'ar-async',
-    'ar-saml',
-    'ar-bridge',
-    'ar-vc',
-    'ar-policy',
-  ];
-
+  // Filter: only keep environments that have actual Workers or D1 databases
   for (const [env, info] of environments) {
-    for (const comp of workerComponents) {
-      info.workers.push({ name: `${env}-${comp}` });
+    if (info.workers.length === 0 && info.d1.length === 0) {
+      environments.delete(env);
     }
   }
 

@@ -2061,8 +2061,8 @@ export function getHtmlTemplate(
           <input type="text" id="base-domain" placeholder="oidc.example.com" data-i18n-placeholder="web.form.baseDomainPlaceholder">
           <small style="color: var(--text-muted)" data-i18n="web.form.baseDomainHint">Custom domain for Authrim. Leave empty to use workers.dev</small>
           <div id="domain-check-row" style="display: none; margin-top: 0.5rem; align-items: center; gap: 0.5rem;">
-            <button type="button" id="check-domain-btn" class="btn btn-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.85rem;" data-i18n="domain.checkingZone" data-i18n-skip="true">
-              Check Domain
+            <button type="button" id="check-domain-btn" class="btn btn-secondary" style="padding: 0.3rem 0.75rem; font-size: 0.85rem;" data-i18n="domain.checkZoneButton">
+              Check Zone
             </button>
             <span id="domain-check-status" style="font-size: 0.85rem;"></span>
           </div>
@@ -4345,7 +4345,7 @@ export function getHtmlTemplate(
         apiUrl = 'https://' + workersDomain;
       }
       const loginUrl = config.loginUiDomain ? 'https://' + config.loginUiDomain : 'https://' + loginPagesDomain;
-      const adminUrl = config.adminUiDomain ? 'https://' + config.adminUiDomain : 'https://' + adminPagesDomain;
+      const adminUrl = (config.adminUiDomain ? 'https://' + config.adminUiDomain : 'https://' + adminPagesDomain) + '/admin';
 
       // Clear and rebuild URLs section safely
       urlsEl.textContent = '';
@@ -4371,50 +4371,113 @@ export function getHtmlTemplate(
           const day = expiresDate.getDate();
           const hours = expiresDate.getHours().toString().padStart(2, '0');
           const minutes = expiresDate.getMinutes().toString().padStart(2, '0');
-          expiresText = \`on \${month}/\${day} at \${hours}:\${minutes}\`;
+          expiresText = \`\${month}/\${day} \${hours}:\${minutes}\`;
         }
 
-        adminSetupSection.innerHTML = \`
-          <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
-            <span style="font-size: 1.5rem;">🔐</span>
-            <h4 style="margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--primary);">Admin Account Setup</h4>
-            <span style="background: var(--warning); color: white; font-size: 0.7rem; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: 600;">IMPORTANT</span>
-          </div>
-          <p style="margin: 0 0 0.75rem; font-size: 0.9rem; color: var(--text-muted);">
-            Register your first administrator account with Passkey authentication:
-          </p>
-          <div style="display: flex; gap: 0.5rem; align-items: center;">
-            <input type="text" value="\${result.setupUrl}" readonly style="flex: 1; min-width: 200px; padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; background: var(--card-bg); color: var(--text);">
-            <button class="btn-secondary" onclick="navigator.clipboard.writeText('\${result.setupUrl}'); this.textContent='✓ Copied'; setTimeout(() => this.textContent='📋 Copy', 2000);" style="white-space: nowrap;">📋 Copy</button>
-          </div>
-          <div style="text-align: center; margin-top: 1rem;">
-            <a href="\${result.setupUrl}" target="_blank" class="btn-primary">🔑 Open Setup</a>
-          </div>
-          <div class="hint-box" style="margin-top: 0.75rem;">
-            ⚠️ This URL can only be used <strong>once</strong> and expires <strong>\${expiresText}</strong>.
-          </div>
-        \`;
+        // Header row
+        const headerDiv = document.createElement('div');
+        headerDiv.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;';
+        const iconSpan = document.createElement('span');
+        iconSpan.style.fontSize = '1.5rem';
+        iconSpan.textContent = '🔐';
+        const titleH4 = document.createElement('h4');
+        titleH4.style.cssText = 'margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--primary);';
+        titleH4.textContent = t('web.complete.adminAccountTitle');
+        const importantBadge = document.createElement('span');
+        importantBadge.style.cssText = 'background: var(--warning); color: white; font-size: 0.7rem; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: 600;';
+        importantBadge.textContent = t('web.complete.adminAccountImportant');
+        headerDiv.appendChild(iconSpan);
+        headerDiv.appendChild(titleH4);
+        headerDiv.appendChild(importantBadge);
+
+        // Description
+        const descP = document.createElement('p');
+        descP.style.cssText = 'margin: 0 0 0.75rem; font-size: 0.9rem; color: var(--text-muted);';
+        descP.textContent = t('web.complete.adminAccountDesc');
+
+        // URL input + copy button row
+        const inputRow = document.createElement('div');
+        inputRow.style.cssText = 'display: flex; gap: 0.5rem; align-items: center;';
+        const urlInput = document.createElement('input');
+        urlInput.type = 'text';
+        urlInput.value = result.setupUrl;
+        urlInput.readOnly = true;
+        urlInput.style.cssText = 'flex: 1; min-width: 200px; padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-family: var(--font-mono); font-size: 0.8rem; background: var(--card-bg); color: var(--text);';
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn-secondary';
+        copyBtn.style.whiteSpace = 'nowrap';
+        copyBtn.textContent = t('web.complete.copy');
+        const setupUrlForCopy = result.setupUrl;
+        const copyLabel = t('web.complete.copy');
+        const copiedLabel = t('web.complete.copied');
+        copyBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(setupUrlForCopy);
+          copyBtn.textContent = copiedLabel;
+          setTimeout(() => { copyBtn.textContent = copyLabel; }, 2000);
+        });
+        inputRow.appendChild(urlInput);
+        inputRow.appendChild(copyBtn);
+
+        // Open Setup button
+        const openDiv = document.createElement('div');
+        openDiv.style.cssText = 'text-align: center; margin-top: 1rem;';
+        const openLink = document.createElement('a');
+        openLink.href = result.setupUrl;
+        openLink.target = '_blank';
+        openLink.className = 'btn-primary';
+        openLink.textContent = t('web.complete.openSetup');
+        openDiv.appendChild(openLink);
+
+        // Warning hint
+        const hintDiv = document.createElement('div');
+        hintDiv.className = 'hint-box';
+        hintDiv.style.marginTop = '0.75rem';
+        const warningTemplate = t('web.complete.urlWarning', { date: expiresText });
+        // warningTemplate may contain <strong> tags — parse safely
+        const warningPrefix = document.createTextNode('⚠️ ');
+        hintDiv.appendChild(warningPrefix);
+        const warningSpan = document.createElement('span');
+        warningSpan.innerHTML = warningTemplate; // safe: value from our own translation strings only
+        hintDiv.appendChild(warningSpan);
+
+        adminSetupSection.appendChild(headerDiv);
+        adminSetupSection.appendChild(descP);
+        adminSetupSection.appendChild(inputRow);
+        adminSetupSection.appendChild(openDiv);
+        adminSetupSection.appendChild(hintDiv);
       } else {
-        // Show message when setup URL is missing
-        let debugInfo = '';
+        // Header row
+        const headerDiv = document.createElement('div');
+        headerDiv.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;';
+        const iconSpan = document.createElement('span');
+        iconSpan.style.fontSize = '1.5rem';
+        iconSpan.textContent = '🔐';
+        const titleH4 = document.createElement('h4');
+        titleH4.style.cssText = 'margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--text-muted);';
+        titleH4.textContent = t('web.complete.adminAccountTitle');
+        headerDiv.appendChild(iconSpan);
+        headerDiv.appendChild(titleH4);
+
+        const descP = document.createElement('p');
+        descP.style.cssText = 'margin: 0; font-size: 0.9rem; color: var(--text-muted);';
+        descP.textContent = t('web.complete.adminSetupUnavailable');
+
+        adminSetupSection.appendChild(headerDiv);
+        adminSetupSection.appendChild(descP);
+
         if (result && result.adminSetupDebug) {
           const debug = result.adminSetupDebug;
+          const debugP = document.createElement('p');
+          debugP.style.cssText = 'margin: 0.5rem 0 0; font-size: 0.85rem;';
           if (debug.alreadyCompleted) {
-            debugInfo = '<p style="margin: 0.5rem 0 0; font-size: 0.85rem; color: var(--text-muted);">Admin setup has already been completed for this environment.</p>';
+            debugP.style.color = 'var(--text-muted)';
+            debugP.textContent = t('web.complete.adminSetupUnavailable');
           } else if (debug.error) {
-            debugInfo = '<p style="margin: 0.5rem 0 0; font-size: 0.85rem; color: var(--error);">Error: ' + debug.error + '</p>';
+            debugP.style.color = 'var(--error)';
+            debugP.textContent = 'Error: ' + debug.error;
           }
+          if (debugP.textContent) adminSetupSection.appendChild(debugP);
         }
-        adminSetupSection.innerHTML = \`
-          <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-            <span style="font-size: 1.5rem;">🔐</span>
-            <h4 style="margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--text-muted);">Admin Account Setup</h4>
-          </div>
-          <p style="margin: 0; font-size: 0.9rem; color: var(--text-muted);">
-            Setup URL not available. You can configure admin access from the Admin UI later.
-          </p>
-          \${debugInfo}
-        \`;
       }
       urlsEl.parentNode.insertBefore(adminSetupSection, urlsEl.nextSibling);
 

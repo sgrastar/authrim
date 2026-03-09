@@ -169,6 +169,7 @@ const zhTW: Translations = {
   'domain.customDesc': '使用您自己的網域',
   'domain.customPrompt': '輸入自訂網域（例如：auth.example.com）',
   'domain.customValidation': '請輸入有效的網域（例如：auth.example.com）',
+  'domain.checkZoneButton': '檢查區域',
   'domain.checkingZone': '正在檢查 {{domain}} 的 Cloudflare 區域...',
   'domain.zoneFound': "找到區域 '{{zone}}'（狀態：{{status}}）",
   'domain.zoneNotFound': "在您的 Cloudflare 帳戶中未找到區域 '{{zone}}'",
@@ -764,6 +765,15 @@ const zhTW: Translations = {
   'web.complete.saveConfig': '儲存配置',
   'web.complete.backToMain': '返回主頁',
   'web.complete.canClose': '設定完成。您可以安全地關閉此視窗。',
+  'web.complete.adminAccountTitle': '管理員帳戶設定',
+  'web.complete.adminAccountImportant': '重要',
+  'web.complete.adminAccountDesc': '使用 Passkey 身份驗證註冊您的第一個管理員帳戶:',
+  'web.complete.copy': '📋 複製',
+  'web.complete.copied': '✓ 已複製',
+  'web.complete.openSetup': '🔑 開啟設定',
+  'web.complete.urlWarning':
+    '此 URL 只能使用<strong>一次</strong>，將於 <strong>{{date}}</strong> 失效。',
+  'web.complete.adminSetupUnavailable': '設定 URL 不可用。您可以稍後從管理 UI 設定管理員存取權限。',
 
   // Web UI Environment Management
   'web.env.title': '環境',
