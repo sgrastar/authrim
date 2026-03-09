@@ -784,6 +784,17 @@ const pt: Translations = {
   'web.complete.backToMain': 'Voltar ao Início',
   'web.complete.canClose':
     'A configuração está completa. Você pode fechar esta janela com segurança.',
+  'web.complete.adminAccountTitle': 'Configuração da conta de administrador',
+  'web.complete.adminAccountImportant': 'IMPORTANTE',
+  'web.complete.adminAccountDesc':
+    'Registre sua primeira conta de administrador com autenticação Passkey:',
+  'web.complete.copy': '📋 Copiar',
+  'web.complete.copied': '✓ Copiado',
+  'web.complete.openSetup': '🔑 Abrir configuração',
+  'web.complete.urlWarning':
+    'Este URL só pode ser usado <strong>uma vez</strong> e expira em <strong>{{date}}</strong>.',
+  'web.complete.adminSetupUnavailable':
+    'URL de configuração não disponível. Você pode configurar o acesso de administrador na UI de Administração mais tarde.',
 
   // Web UI Environment Management
   'web.env.title': 'Ambientes',

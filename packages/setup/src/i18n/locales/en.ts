@@ -775,6 +775,17 @@ const en: Translations = {
   'web.complete.saveConfig': 'Save Configuration',
   'web.complete.backToMain': 'Back to Main',
   'web.complete.canClose': 'Setup is complete. You can safely close this window.',
+  'web.complete.adminAccountTitle': 'Admin Account Setup',
+  'web.complete.adminAccountImportant': 'IMPORTANT',
+  'web.complete.adminAccountDesc':
+    'Register your first administrator account with Passkey authentication:',
+  'web.complete.copy': '📋 Copy',
+  'web.complete.copied': '✓ Copied',
+  'web.complete.openSetup': '🔑 Open Setup',
+  'web.complete.urlWarning':
+    'This URL can only be used <strong>once</strong> and expires <strong>{{date}}</strong>.',
+  'web.complete.adminSetupUnavailable':
+    'Setup URL not available. You can configure admin access from the Admin UI later.',
 
   // Web UI Environment Management
   'web.env.title': 'Environments',

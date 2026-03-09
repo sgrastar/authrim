@@ -777,6 +777,17 @@ const id: Translations = {
   'web.complete.saveConfig': 'Simpan Konfigurasi',
   'web.complete.backToMain': 'Kembali ke Utama',
   'web.complete.canClose': 'Pengaturan selesai. Anda dapat menutup jendela ini dengan aman.',
+  'web.complete.adminAccountTitle': 'Pengaturan Akun Admin',
+  'web.complete.adminAccountImportant': 'PENTING',
+  'web.complete.adminAccountDesc':
+    'Daftarkan akun administrator pertama Anda dengan autentikasi Passkey:',
+  'web.complete.copy': '📋 Salin',
+  'web.complete.copied': '✓ Tersalin',
+  'web.complete.openSetup': '🔑 Buka Pengaturan',
+  'web.complete.urlWarning':
+    'URL ini hanya dapat digunakan <strong>sekali</strong> dan kedaluwarsa pada <strong>{{date}}</strong>.',
+  'web.complete.adminSetupUnavailable':
+    'URL pengaturan tidak tersedia. Anda dapat mengonfigurasi akses admin dari UI Admin nanti.',
 
   // Web UI Environment Management
   'web.env.title': 'Environment',

@@ -765,6 +765,15 @@ const zhCN: Translations = {
   'web.complete.saveConfig': '保存配置',
   'web.complete.backToMain': '返回主页',
   'web.complete.canClose': '安装完成。您可以安全关闭此窗口。',
+  'web.complete.adminAccountTitle': '管理员账户设置',
+  'web.complete.adminAccountImportant': '重要',
+  'web.complete.adminAccountDesc': '使用 Passkey 身份验证注册您的第一个管理员账户:',
+  'web.complete.copy': '📋 复制',
+  'web.complete.copied': '✓ 已复制',
+  'web.complete.openSetup': '🔑 打开设置',
+  'web.complete.urlWarning':
+    '此 URL 只能使用<strong>一次</strong>，将于 <strong>{{date}}</strong> 失效。',
+  'web.complete.adminSetupUnavailable': '设置 URL 不可用。您可以稍后从管理 UI 配置管理员访问权限。',
 
   // Web UI Environment Management
   'web.env.title': '环境',

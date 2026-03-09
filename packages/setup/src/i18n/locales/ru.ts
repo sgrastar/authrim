@@ -779,6 +779,17 @@ const ru: Translations = {
   'web.complete.saveConfig': 'Сохранить конфигурацию',
   'web.complete.backToMain': 'Вернуться на главную',
   'web.complete.canClose': 'Настройка завершена. Вы можете безопасно закрыть это окно.',
+  'web.complete.adminAccountTitle': 'Настройка учётной записи администратора',
+  'web.complete.adminAccountImportant': 'ВАЖНО',
+  'web.complete.adminAccountDesc':
+    'Зарегистрируйте первую учётную запись администратора с помощью Passkey:',
+  'web.complete.copy': '📋 Копировать',
+  'web.complete.copied': '✓ Скопировано',
+  'web.complete.openSetup': '🔑 Открыть настройку',
+  'web.complete.urlWarning':
+    'Этот URL можно использовать только <strong>один раз</strong>, он истекает <strong>{{date}}</strong>.',
+  'web.complete.adminSetupUnavailable':
+    'URL настройки недоступен. Вы можете настроить доступ администратора в интерфейсе администрирования позже.',
 
   // Web UI Environment Management
   'web.env.title': 'Окружения',

@@ -771,6 +771,16 @@ const ko: Translations = {
   'web.complete.saveConfig': '구성 저장',
   'web.complete.backToMain': '메인으로 돌아가기',
   'web.complete.canClose': '설정이 완료되었습니다. 이 창을 안전하게 닫을 수 있습니다.',
+  'web.complete.adminAccountTitle': '관리자 계정 설정',
+  'web.complete.adminAccountImportant': '중요',
+  'web.complete.adminAccountDesc': '패스키 인증으로 첫 번째 관리자 계정을 등록하세요:',
+  'web.complete.copy': '📋 복사',
+  'web.complete.copied': '✓ 복사됨',
+  'web.complete.openSetup': '🔑 설정 열기',
+  'web.complete.urlWarning':
+    '이 URL은 <strong>한 번만</strong> 사용할 수 있으며 <strong>{{date}}</strong>에 만료됩니다.',
+  'web.complete.adminSetupUnavailable':
+    '설정 URL을 사용할 수 없습니다. 나중에 관리 UI에서 관리자 액세스를 구성할 수 있습니다.',
 
   // Web UI Environment Management
   'web.env.title': '환경',

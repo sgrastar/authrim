@@ -783,6 +783,17 @@ const de: Translations = {
   'web.complete.saveConfig': 'Konfiguration speichern',
   'web.complete.backToMain': 'Zurück zur Startseite',
   'web.complete.canClose': 'Einrichtung abgeschlossen. Sie können dieses Fenster sicher schließen.',
+  'web.complete.adminAccountTitle': 'Admin-Konto einrichten',
+  'web.complete.adminAccountImportant': 'WICHTIG',
+  'web.complete.adminAccountDesc':
+    'Registrieren Sie Ihr erstes Administratorkonto mit Passkey-Authentifizierung:',
+  'web.complete.copy': '📋 Kopieren',
+  'web.complete.copied': '✓ Kopiert',
+  'web.complete.openSetup': '🔑 Setup öffnen',
+  'web.complete.urlWarning':
+    'Diese URL kann nur <strong>einmal</strong> verwendet werden und läuft am <strong>{{date}}</strong> ab.',
+  'web.complete.adminSetupUnavailable':
+    'Setup-URL nicht verfügbar. Sie können den Administratorzugang später über die Admin-UI konfigurieren.',
 
   // Web UI Environment Management
   'web.env.title': 'Umgebungen',

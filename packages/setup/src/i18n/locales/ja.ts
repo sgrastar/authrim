@@ -771,6 +771,16 @@ const ja: Translations = {
   'web.complete.saveConfig': '設定を保存',
   'web.complete.backToMain': 'メインに戻る',
   'web.complete.canClose': 'セットアップが完了しました。このウィンドウを閉じても問題ありません。',
+  'web.complete.adminAccountTitle': '管理者アカウント設定',
+  'web.complete.adminAccountImportant': '重要',
+  'web.complete.adminAccountDesc': 'パスキー認証で最初の管理者アカウントを登録してください:',
+  'web.complete.copy': '📋 コピー',
+  'web.complete.copied': '✓ コピー済み',
+  'web.complete.openSetup': '🔑 セットアップを開く',
+  'web.complete.urlWarning':
+    'このURLは<strong>1回のみ</strong>使用可能で、<strong>{{date}}</strong>に失効します。',
+  'web.complete.adminSetupUnavailable':
+    'セットアップURLが利用できません。後で管理UIから管理者アクセスを設定できます。',
 
   // Web UI Environment Management
   'web.env.title': '環境',
