@@ -90,7 +90,9 @@ describe('generateUiEnvContent - escapeEnvValue edge cases', () => {
       PUBLIC_API_BASE_URL: 'https://api.example.com/path\\with\\backslash',
     });
 
-    expect(content).toContain('PUBLIC_API_BASE_URL="https://api.example.com/path\\\\with\\\\backslash"');
+    expect(content).toContain(
+      'PUBLIC_API_BASE_URL="https://api.example.com/path\\\\with\\\\backslash"'
+    );
   });
 
   it('quotes values containing hash (#)', () => {
@@ -117,9 +119,9 @@ describe('generateUiEnvContent - escapeEnvValue edge cases', () => {
 // =============================================================================
 
 describe('generateUiEnvContent - integration with generateEnvVars', () => {
-  const scenariosWithLoginUi = SCENARIOS.filter(s => s.config.hasLoginUi);
+  const scenariosWithLoginUi = SCENARIOS.filter((s) => s.config.hasLoginUi);
 
-  it.each(scenariosWithLoginUi.map(s => [scenarioLabel(s), s] as const))(
+  it.each(scenariosWithLoginUi.map((s) => [scenarioLabel(s), s] as const))(
     '%s - UI env content uses correct API base URL from wrangler',
     (_label, scenario) => {
       const config = buildAuthrimConfig(scenario) as AuthrimConfig;
@@ -136,7 +138,9 @@ describe('generateUiEnvContent - integration with generateEnvVars', () => {
 
       // Verify serialized content contains the expected values
       expect(content).toContain(`PUBLIC_API_BASE_URL=${scenario.expected.arAuthEnvVars.UI_URL}`);
-      expect(content).toContain(`PUBLIC_AUTHRIM_ISSUER=${scenario.expected.arAuthEnvVars.ISSUER_URL}`);
+      expect(content).toContain(
+        `PUBLIC_AUTHRIM_ISSUER=${scenario.expected.arAuthEnvVars.ISSUER_URL}`
+      );
     }
   );
 });

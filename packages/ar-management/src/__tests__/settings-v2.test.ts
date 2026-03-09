@@ -75,8 +75,10 @@ function createTestApp(options: { kv?: KVNamespace; env?: Record<string, string>
   app.route('/api/admin', settingsV2);
 
   // Create mock env
+  // Note: settings-v2 routes use env.SETTINGS (not AUTHRIM_CONFIG) for KV storage
   const mockEnv = {
     AUTHRIM_CONFIG: mockKV,
+    SETTINGS: mockKV,
     ...options.env,
   } as unknown as Env;
 
