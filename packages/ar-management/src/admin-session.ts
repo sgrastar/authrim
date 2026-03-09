@@ -174,21 +174,63 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN-SESSION');
 
   try {
-    // Origin check for CSRF protection
+    // Origin/Referer check for CSRF protection
+    // Legitimate browser POST requests always include Origin or Referer headers.
+    // Skipping this check when headers are absent would allow CSRF attacks.
     const origin = c.req.header('Origin');
     const allowedOriginsEnv = c.env.ALLOWED_ORIGINS || c.env.ISSUER_URL;
     const allowedOrigins = parseAllowedOrigins(allowedOriginsEnv);
 
-    // Only check origin if it's provided (some browsers may not send it)
-    if (origin && !isAllowedOrigin(origin, allowedOrigins)) {
-      log.warn('Admin logout rejected: Origin not allowed', { origin });
-      return c.json(
-        {
-          error: 'forbidden',
-          error_description: 'Origin not allowed',
-        },
-        403
-      );
+    if (origin) {
+      // Primary: validate Origin header
+      if (!isAllowedOrigin(origin, allowedOrigins)) {
+        log.warn('Admin logout rejected: Origin not allowed', { origin });
+        return c.json(
+          {
+            error: 'forbidden',
+            error_description: 'Origin not allowed',
+          },
+          403
+        );
+      }
+    } else {
+      // Fallback: validate Referer header when Origin is absent
+      const referer = c.req.header('Referer');
+      if (referer) {
+        try {
+          const refererOrigin = new URL(referer).origin;
+          if (!isAllowedOrigin(refererOrigin, allowedOrigins)) {
+            log.warn('Admin logout rejected: Referer origin not allowed', { referer });
+            return c.json(
+              {
+                error: 'forbidden',
+                error_description: 'Referer origin not allowed',
+              },
+              403
+            );
+          }
+        } catch {
+          log.warn('Admin logout rejected: Invalid Referer header', { referer });
+          return c.json(
+            {
+              error: 'forbidden',
+              error_description: 'Invalid Referer header',
+            },
+            403
+          );
+        }
+      } else {
+        // Neither Origin nor Referer present - reject
+        // Browser POST requests always include at least one of these headers
+        log.warn('Admin logout rejected: Missing Origin and Referer headers');
+        return c.json(
+          {
+            error: 'forbidden',
+            error_description: 'Origin or Referer header is required',
+          },
+          403
+        );
+      }
     }
 
     // Get session from admin-specific cookie (separate from regular user sessions)
