@@ -1403,7 +1403,14 @@ export async function createKVNamespace(
  */
 export async function deleteKVNamespace(namespaceId: string): Promise<boolean> {
   try {
-    await wrangler(['kv', 'namespace', 'delete', '--namespace-id', namespaceId]);
+    await wrangler([
+      'kv',
+      'namespace',
+      'delete',
+      '--namespace-id',
+      namespaceId,
+      '--skip-confirmation',
+    ]);
     return true;
   } catch {
     return false;
