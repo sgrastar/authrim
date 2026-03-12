@@ -4362,6 +4362,16 @@ export function getHtmlTemplate(
       urlsEl.appendChild(createUrlItem('Login UI:', loginUrl));
       urlsEl.appendChild(createUrlItem('Admin UI:', adminUrl));
 
+      // Show custom domain propagation note when any custom domain is set
+      if (config.apiDomain || config.loginUiDomain || config.adminUiDomain) {
+        const domainNoteDiv = document.createElement('div');
+        domainNoteDiv.className = 'hint-box';
+        domainNoteDiv.style.marginTop = '0.75rem';
+        domainNoteDiv.setAttribute('data-i18n', 'web.complete.customDomainNote');
+        domainNoteDiv.textContent = t('web.complete.customDomainNote');
+        urlsEl.appendChild(domainNoteDiv);
+      }
+
       // Create Admin Setup section (separate, prominent box)
       const adminSetupSection = document.createElement('div');
       adminSetupSection.style.cssText = 'margin-top: 1.5rem; padding: 1.25rem; background: linear-gradient(135deg, rgba(37, 99, 235, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%); border: 2px solid var(--primary); border-radius: 12px;';
@@ -4387,9 +4397,11 @@ export function getHtmlTemplate(
         const titleH4 = document.createElement('h4');
         titleH4.style.cssText = 'margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--primary);';
         titleH4.textContent = t('web.complete.adminAccountTitle');
+        titleH4.setAttribute('data-i18n', 'web.complete.adminAccountTitle');
         const importantBadge = document.createElement('span');
         importantBadge.style.cssText = 'background: var(--warning); color: white; font-size: 0.7rem; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: 600;';
         importantBadge.textContent = t('web.complete.adminAccountImportant');
+        importantBadge.setAttribute('data-i18n', 'web.complete.adminAccountImportant');
         headerDiv.appendChild(iconSpan);
         headerDiv.appendChild(titleH4);
         headerDiv.appendChild(importantBadge);
@@ -4398,6 +4410,7 @@ export function getHtmlTemplate(
         const descP = document.createElement('p');
         descP.style.cssText = 'margin: 0 0 0.75rem; font-size: 0.9rem; color: var(--text-muted);';
         descP.textContent = t('web.complete.adminAccountDesc');
+        descP.setAttribute('data-i18n', 'web.complete.adminAccountDesc');
 
         // URL input + copy button row
         const inputRow = document.createElement('div');
@@ -4411,13 +4424,16 @@ export function getHtmlTemplate(
         copyBtn.className = 'btn-secondary';
         copyBtn.style.whiteSpace = 'nowrap';
         copyBtn.textContent = t('web.complete.copy');
+        copyBtn.setAttribute('data-i18n', 'web.complete.copy');
         const setupUrlForCopy = result.setupUrl;
-        const copyLabel = t('web.complete.copy');
-        const copiedLabel = t('web.complete.copied');
         copyBtn.addEventListener('click', () => {
           navigator.clipboard.writeText(setupUrlForCopy);
-          copyBtn.textContent = copiedLabel;
-          setTimeout(() => { copyBtn.textContent = copyLabel; }, 2000);
+          copyBtn.removeAttribute('data-i18n'); // prevent updateAllTranslations from overwriting "Copied"
+          copyBtn.textContent = t('web.complete.copied');
+          setTimeout(() => {
+            copyBtn.textContent = t('web.complete.copy');
+            copyBtn.setAttribute('data-i18n', 'web.complete.copy');
+          }, 2000);
         });
         inputRow.appendChild(urlInput);
         inputRow.appendChild(copyBtn);
@@ -4430,9 +4446,10 @@ export function getHtmlTemplate(
         openLink.target = '_blank';
         openLink.className = 'btn-primary';
         openLink.textContent = t('web.complete.openSetup');
+        openLink.setAttribute('data-i18n', 'web.complete.openSetup');
         openDiv.appendChild(openLink);
 
-        // Warning hint
+        // Warning hint (uses innerHTML for <strong> tags — not updated on language change)
         const hintDiv = document.createElement('div');
         hintDiv.className = 'hint-box';
         hintDiv.style.marginTop = '0.75rem';
@@ -4459,12 +4476,14 @@ export function getHtmlTemplate(
         const titleH4 = document.createElement('h4');
         titleH4.style.cssText = 'margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--text-muted);';
         titleH4.textContent = t('web.complete.adminAccountTitle');
+        titleH4.setAttribute('data-i18n', 'web.complete.adminAccountTitle');
         headerDiv.appendChild(iconSpan);
         headerDiv.appendChild(titleH4);
 
         const descP = document.createElement('p');
         descP.style.cssText = 'margin: 0; font-size: 0.9rem; color: var(--text-muted);';
         descP.textContent = t('web.complete.adminSetupUnavailable');
+        descP.setAttribute('data-i18n', 'web.complete.adminSetupUnavailable');
 
         adminSetupSection.appendChild(headerDiv);
         adminSetupSection.appendChild(descP);
@@ -4476,6 +4495,7 @@ export function getHtmlTemplate(
           if (debug.alreadyCompleted) {
             debugP.style.color = 'var(--text-muted)';
             debugP.textContent = t('web.complete.adminSetupUnavailable');
+            debugP.setAttribute('data-i18n', 'web.complete.adminSetupUnavailable');
           } else if (debug.error) {
             debugP.style.color = 'var(--error)';
             debugP.textContent = 'Error: ' + debug.error;

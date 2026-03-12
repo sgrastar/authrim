@@ -788,6 +788,8 @@ const id: Translations = {
     'URL ini hanya dapat digunakan <strong>sekali</strong> dan kedaluwarsa pada <strong>{{date}}</strong>.',
   'web.complete.adminSetupUnavailable':
     'URL pengaturan tidak tersedia. Anda dapat mengonfigurasi akses admin dari UI Admin nanti.',
+  'web.complete.customDomainNote':
+    'ℹ️ Domain kustom: propagasi DNS mungkin membutuhkan beberapa menit hingga beberapa jam. Jika URL di atas belum dapat diakses, harap tunggu.',
 
   // Web UI Environment Management
   'web.env.title': 'Environment',

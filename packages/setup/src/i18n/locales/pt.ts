@@ -795,6 +795,8 @@ const pt: Translations = {
     'Este URL só pode ser usado <strong>uma vez</strong> e expira em <strong>{{date}}</strong>.',
   'web.complete.adminSetupUnavailable':
     'URL de configuração não disponível. Você pode configurar o acesso de administrador na UI de Administração mais tarde.',
+  'web.complete.customDomainNote':
+    'ℹ️ Domínio personalizado: a propagação DNS pode levar de minutos a horas. Se a URL acima ainda não estiver acessível, aguarde e tente novamente.',
 
   // Web UI Environment Management
   'web.env.title': 'Ambientes',

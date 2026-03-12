@@ -781,6 +781,8 @@ const ja: Translations = {
     'このURLは<strong>1回のみ</strong>使用可能で、<strong>{{date}}</strong>に失効します。',
   'web.complete.adminSetupUnavailable':
     'セットアップURLが利用できません。後で管理UIから管理者アクセスを設定できます。',
+  'web.complete.customDomainNote':
+    'ℹ️ カスタムドメインのDNS反映には数分〜数時間かかることがあります。上記URLにまだアクセスできない場合は、しばらくお待ちください。',
 
   // Web UI Environment Management
   'web.env.title': '環境',

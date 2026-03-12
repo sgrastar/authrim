@@ -790,6 +790,8 @@ const ru: Translations = {
     'Этот URL можно использовать только <strong>один раз</strong>, он истекает <strong>{{date}}</strong>.',
   'web.complete.adminSetupUnavailable':
     'URL настройки недоступен. Вы можете настроить доступ администратора в интерфейсе администрирования позже.',
+  'web.complete.customDomainNote':
+    'ℹ️ Пользовательский домен: распространение DNS может занять от нескольких минут до нескольких часов. Если URL ещё недоступен, подождите.',
 
   // Web UI Environment Management
   'web.env.title': 'Окружения',

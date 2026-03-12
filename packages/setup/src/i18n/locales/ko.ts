@@ -781,6 +781,8 @@ const ko: Translations = {
     '이 URL은 <strong>한 번만</strong> 사용할 수 있으며 <strong>{{date}}</strong>에 만료됩니다.',
   'web.complete.adminSetupUnavailable':
     '설정 URL을 사용할 수 없습니다. 나중에 관리 UI에서 관리자 액세스를 구성할 수 있습니다.',
+  'web.complete.customDomainNote':
+    'ℹ️ 커스텀 도메인: DNS 전파에 몇 분에서 몇 시간이 걸릴 수 있습니다. 위 URL에 아직 접근할 수 없는 경우 잠시 기다려 주세요.',
 
   // Web UI Environment Management
   'web.env.title': '환경',

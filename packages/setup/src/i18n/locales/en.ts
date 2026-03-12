@@ -786,6 +786,8 @@ const en: Translations = {
     'This URL can only be used <strong>once</strong> and expires <strong>{{date}}</strong>.',
   'web.complete.adminSetupUnavailable':
     'Setup URL not available. You can configure admin access from the Admin UI later.',
+  'web.complete.customDomainNote':
+    'ℹ️ Custom domain: DNS propagation may take a few minutes to a few hours. If the URL above is not accessible yet, please wait and try again.',
 
   // Web UI Environment Management
   'web.env.title': 'Environments',

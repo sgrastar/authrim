@@ -794,6 +794,8 @@ const de: Translations = {
     'Diese URL kann nur <strong>einmal</strong> verwendet werden und läuft am <strong>{{date}}</strong> ab.',
   'web.complete.adminSetupUnavailable':
     'Setup-URL nicht verfügbar. Sie können den Administratorzugang später über die Admin-UI konfigurieren.',
+  'web.complete.customDomainNote':
+    'ℹ️ Benutzerdefinierte Domain: DNS-Weitergabe kann einige Minuten bis Stunden dauern. Falls die obige URL noch nicht erreichbar ist, warten Sie bitte.',
 
   // Web UI Environment Management
   'web.env.title': 'Umgebungen',
