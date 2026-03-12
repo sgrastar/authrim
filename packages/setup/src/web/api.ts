@@ -70,8 +70,8 @@ import {
 import { completeInitialSetup } from '../core/admin.js';
 import { resolveUiDeploymentSettings } from '../core/ui-deployment.js';
 import { saveUiEnv, buildInitialUiEnvConfig } from '../core/ui-env.js';
-import { writeFile, chmod } from 'node:fs/promises';
-import { join } from 'node:path';
+import { writeFile, chmod, mkdir } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
 
 // =============================================================================
 // Session & Security
@@ -366,7 +366,6 @@ export function createApiRoutes(): Hono {
         const envPaths = getEnvironmentPaths({ baseDir, env });
 
         // Ensure directory exists
-        const { mkdir } = await import('node:fs/promises');
         await mkdir(envPaths.root, { recursive: true });
 
         // Save config
@@ -533,7 +532,6 @@ export function createApiRoutes(): Hono {
         const envPaths = getEnvironmentPaths({ baseDir, env, keysBaseDir });
 
         // Ensure directory exists with restrictive permissions
-        const { mkdir } = await import('node:fs/promises');
         await mkdir(keysDir, { recursive: true, mode: 0o700 });
 
         // Save API key with restrictive permissions
@@ -643,6 +641,8 @@ export function createApiRoutes(): Hono {
         addProgress('Creating lock file...');
         const lock = createLockFile(env, resources);
         const rootDir = findAuthrimBaseDir(process.cwd());
+        const envPaths = getEnvironmentPaths({ baseDir: rootDir, env });
+        addProgress(`Saving lock.json to ${envPaths.lock} ...`);
         await saveLockFile(lock, { env, baseDir: rootDir });
 
         // Save config.json
@@ -687,7 +687,9 @@ export function createApiRoutes(): Hono {
         });
         addProgress(`Configured URLs: API=${apiUrl}`);
 
-        const envPaths = getEnvironmentPaths({ baseDir: rootDir, env });
+        // Explicitly ensure directory exists (defense in depth; saveLockFile also creates it)
+        await mkdir(dirname(envPaths.config), { recursive: true });
+        addProgress(`Saving config.json to ${envPaths.config} ...`);
         await writeFile(envPaths.config, JSON.stringify(config, null, 2), 'utf-8');
         const initialUiEnv = buildInitialUiEnvConfig(config);
         if (initialUiEnv) {
@@ -733,12 +735,19 @@ export function createApiRoutes(): Hono {
 
         state.status = 'configuring';
         addProgress('Provisioning complete!');
+        addProgress(`📁 Config saved: ${envPaths.config}`);
+        addProgress(`📁 Lock saved:   ${envPaths.lock}`);
 
         return c.json({
           success: true,
           resources,
           lock,
           config,
+          savedPaths: {
+            config: envPaths.config,
+            lock: envPaths.lock,
+            root: envPaths.root,
+          },
         });
       } catch (error) {
         state.status = 'error';
@@ -1168,14 +1177,22 @@ export function createApiRoutes(): Hono {
         // Update lock file with deployed workers information
         if (workersSuccess && !dryRun && summary.successCount > 0) {
           try {
-            const { loadLockFileAuto, saveLockFile: saveLock } = await import('../core/lock.js');
+            const {
+              loadLockFileAuto,
+              saveLockFile: saveLock,
+              AuthrimLockSchema,
+            } = await import('../core/lock.js');
             const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
 
-            if (currentLock && lockPath) {
+            if (lockPath) {
+              // Use existing lock or create minimal one (recovery scenario: lock deleted/missing)
+              const now = new Date().toISOString();
+              const baseLock = currentLock ?? AuthrimLockSchema.parse({ env, createdAt: now });
+
               const workers: Record<
                 string,
                 { name: string; deployedAt?: string; version?: string }
-              > = { ...currentLock.workers };
+              > = { ...baseLock.workers };
 
               for (const result of summary.results) {
                 if (result.success && result.deployedAt) {
@@ -1188,9 +1205,9 @@ export function createApiRoutes(): Hono {
               }
 
               const updatedLock = {
-                ...currentLock,
+                ...baseLock,
                 workers,
-                updatedAt: new Date().toISOString(),
+                updatedAt: now,
               };
 
               await saveLock(updatedLock, lockPath);

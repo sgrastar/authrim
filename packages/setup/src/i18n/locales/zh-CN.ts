@@ -774,6 +774,8 @@ const zhCN: Translations = {
   'web.complete.urlWarning':
     '此 URL 只能使用<strong>一次</strong>，将于 <strong>{{date}}</strong> 失效。',
   'web.complete.adminSetupUnavailable': '设置 URL 不可用。您可以稍后从管理 UI 配置管理员访问权限。',
+  'web.complete.customDomainNote':
+    'ℹ️ 自定义域名：DNS 传播可能需要几分钟到几小时。如果上面的 URL 暂时无法访问，请稍候再试。',
 
   // Web UI Environment Management
   'web.env.title': '环境',
