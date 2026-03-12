@@ -78,7 +78,11 @@ export function resolveUiDeploymentSettings(
     normalizeUrl(config.urls?.api?.custom) ||
     normalizeUrl(config.urls?.api?.auto) ||
     `https://${env}-ar-router.workers.dev`;
-  const runtimeApiBackendUrl = normalizeUrl(config.urls?.api?.auto) || apiBaseUrl;
+  // Use apiBaseUrl (prefers custom domain over workers.dev) as the runtime backend URL.
+  // When a custom domain is set, workers_dev is false (disabled), so the workers.dev
+  // URL is unreachable. apiBaseUrl already resolves to the best available URL:
+  // custom domain → auto (workers.dev) → fallback.
+  const runtimeApiBackendUrl = apiBaseUrl;
 
   const uiConfig = getUiConfig(config, component);
   const uiUrl = uiConfig?.sameAsApi

@@ -1177,14 +1177,20 @@ export function createApiRoutes(): Hono {
         // Update lock file with deployed workers information
         if (workersSuccess && !dryRun && summary.successCount > 0) {
           try {
-            const { loadLockFileAuto, saveLockFile: saveLock } = await import('../core/lock.js');
+            const { loadLockFileAuto, saveLockFile: saveLock, AuthrimLockSchema } = await import(
+              '../core/lock.js'
+            );
             const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
 
-            if (currentLock && lockPath) {
+            if (lockPath) {
+              // Use existing lock or create minimal one (recovery scenario: lock deleted/missing)
+              const now = new Date().toISOString();
+              const baseLock = currentLock ?? AuthrimLockSchema.parse({ env, createdAt: now });
+
               const workers: Record<
                 string,
                 { name: string; deployedAt?: string; version?: string }
-              > = { ...currentLock.workers };
+              > = { ...baseLock.workers };
 
               for (const result of summary.results) {
                 if (result.success && result.deployedAt) {
@@ -1197,9 +1203,9 @@ export function createApiRoutes(): Hono {
               }
 
               const updatedLock = {
-                ...currentLock,
+                ...baseLock,
                 workers,
-                updatedAt: new Date().toISOString(),
+                updatedAt: now,
               };
 
               await saveLock(updatedLock, lockPath);

@@ -135,24 +135,22 @@ describe('resolveUiDeploymentSettings', () => {
     expect(login.needsProxy).toBe(true);
     expect(login.serviceBindingName).toBe('AR_ROUTER');
     expect(login.uiEnv.PUBLIC_API_BASE_URL).toBe('');
-    expect(login.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBe(
-      'https://test-ar-router.example.workers.dev'
-    );
-    expect(login.uiEnv.API_BACKEND_URL).toBe('https://test-ar-router.example.workers.dev');
+    // When custom domain is set, workers_dev is false so workers.dev is unreachable.
+    // runtimeApiBackendUrl should use the custom domain (apiBaseUrl), not the disabled workers.dev URL.
+    expect(login.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBe('https://test.authrim.com');
+    expect(login.uiEnv.API_BACKEND_URL).toBe('https://test.authrim.com');
     expect(login.uiEnv.PUBLIC_AUTHRIM_ISSUER).toBe('https://test.authrim.com');
     expect(login.uiEnv.PUBLIC_LOGIN_UI_CLIENT_ID).toBe('login-ui-client');
-    expect(login.runtimeApiBackendUrl).toBe('https://test-ar-router.example.workers.dev');
+    expect(login.runtimeApiBackendUrl).toBe('https://test.authrim.com');
 
     expect(admin.useRelativeApi).toBe(true);
     expect(admin.needsProxy).toBe(true);
     expect(admin.serviceBindingName).toBe('AR_ROUTER');
     expect(admin.uiEnv.PUBLIC_API_BASE_URL).toBe('');
-    expect(admin.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBe(
-      'https://test-ar-router.example.workers.dev'
-    );
-    expect(admin.uiEnv.API_BACKEND_URL).toBe('https://test-ar-router.example.workers.dev');
+    expect(admin.uiEnv.PUBLIC_API_PROXY_BACKEND_URL).toBe('https://test.authrim.com');
+    expect(admin.uiEnv.API_BACKEND_URL).toBe('https://test.authrim.com');
     expect(admin.uiEnv.PUBLIC_AUTHRIM_ISSUER).toBe('https://test.authrim.com');
-    expect(admin.runtimeApiBackendUrl).toBe('https://test-ar-router.example.workers.dev');
+    expect(admin.runtimeApiBackendUrl).toBe('https://test.authrim.com');
   });
 
   it('uses direct cross-origin API calls for same-site custom domains', () => {
