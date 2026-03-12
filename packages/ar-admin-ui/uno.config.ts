@@ -4,7 +4,6 @@ import {
 	presetIcons,
 	presetTypography,
 	presetUno,
-	presetWebFonts,
 	transformerDirectives,
 	transformerVariantGroup
 } from 'unocss';
@@ -27,17 +26,10 @@ export default defineConfig({
 			}
 		}),
 		presetTypography(), // Typography utilities
-		presetWebFonts({
-			provider: 'google',
-			fonts: {
-				// Display font for headings
-				display: 'Plus Jakarta Sans:400,500,600,700,800',
-				// Body font for general text
-				sans: ['DM Sans:400,500,600', 'Inter:400,500,600,700'],
-				// Monospace font for code
-				mono: 'Fira Code:400,500'
-			}
-		})
+		// Google Fonts removed: using system fonts instead (avoids CSP font-src issues)
+		// display → system-ui / -apple-system (geometric sans on macOS/Windows)
+		// sans   → system-ui / -apple-system (standard UI sans-serif)
+		// mono   → ui-monospace / Cascadia Code / SF Mono (system monospace)
 	],
 	transformers: [
 		transformerDirectives(), // Enables @apply, @screen directives
