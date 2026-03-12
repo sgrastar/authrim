@@ -294,6 +294,7 @@ These are configured in `.authrim/{env}/ui.env` and set in Cloudflare Pages:
 | Variable | Type | Description |
 |----------|------|-------------|
 | `PUBLIC_API_BASE_URL` | string | Frontend API base URL (empty for proxy mode) |
+| `PUBLIC_API_PROXY_BACKEND_URL` | string | Public fallback backend URL for the Pages proxy |
 | `API_BACKEND_URL` | string | Backend URL for server-side proxy |
 
 ### Configuration Modes
@@ -305,6 +306,7 @@ Used when Admin UI and API are on different registrable domains (e.g., `pages.de
 ```env
 # .authrim/{env}/ui.env
 PUBLIC_API_BASE_URL=
+PUBLIC_API_PROXY_BACKEND_URL=https://xxx-ar-router.workers.dev
 API_BACKEND_URL=https://xxx-ar-router.workers.dev
 ```
 

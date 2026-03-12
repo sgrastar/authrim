@@ -3,12 +3,14 @@ import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
+  buildInitialUiEnvConfig,
   generateUiEnvContent,
   saveUiEnv,
   copyUiEnvToPackage,
   cleanupPackageEnv,
   uiEnvExists,
 } from '../core/ui-env.js';
+import { createDefaultConfig } from '../core/config.js';
 
 describe('ui-env module', () => {
   let testDir: string;
@@ -107,6 +109,45 @@ describe('ui-env module', () => {
       // Should NOT have quotes around the value
       expect(content).toContain('PUBLIC_API_BASE_URL=https://example.com/simple-path');
       expect(content).not.toContain('"https://example.com/simple-path"');
+    });
+  });
+
+  describe('buildInitialUiEnvConfig', () => {
+    it('should prefer custom API domain', () => {
+      const config = createDefaultConfig('test');
+      config.urls = {
+        api: { custom: 'https://api.example.com', auto: 'https://test-ar-router.workers.dev' },
+        loginUi: { custom: null, auto: 'https://test-ar-login-ui.pages.dev', sameAsApi: false },
+        adminUi: { custom: null, auto: 'https://test-ar-admin-ui.pages.dev', sameAsApi: false },
+      };
+
+      expect(buildInitialUiEnvConfig(config)).toEqual({
+        PUBLIC_API_BASE_URL: 'https://api.example.com',
+      });
+    });
+
+    it('should fall back to auto API URL and normalize bare domains', () => {
+      const config = createDefaultConfig('test');
+      config.urls = {
+        api: { custom: null, auto: 'test.authrim.com' },
+        loginUi: { custom: null, auto: 'https://test-ar-login-ui.pages.dev', sameAsApi: false },
+        adminUi: { custom: null, auto: 'https://test-ar-admin-ui.pages.dev', sameAsApi: false },
+      };
+
+      expect(buildInitialUiEnvConfig(config)).toEqual({
+        PUBLIC_API_BASE_URL: 'https://test.authrim.com',
+      });
+    });
+
+    it('should return null when no API URL is configured', () => {
+      const config = createDefaultConfig('test');
+      config.urls = {
+        api: { custom: null },
+        loginUi: { custom: null, auto: 'https://test-ar-login-ui.pages.dev', sameAsApi: false },
+        adminUi: { custom: null, auto: 'https://test-ar-admin-ui.pages.dev', sameAsApi: false },
+      };
+
+      expect(buildInitialUiEnvConfig(config)).toBeNull();
     });
   });
 

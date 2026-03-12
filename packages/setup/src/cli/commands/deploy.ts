@@ -42,6 +42,7 @@ import { type WorkerComponent, CORE_WORKER_COMPONENTS } from '../../core/naming.
 import { generateWranglerConfig, toToml, type ResourceIds } from '../../core/wrangler.js';
 import { completeInitialSetup, displaySetupInstructions } from '../../core/admin.js';
 import { ensureLoginUiClient } from '../../core/login-ui-client.js';
+import { resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
 import type { SyncAction } from '../../core/wrangler-sync.js';
 
 // =============================================================================
@@ -645,70 +646,64 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       }
     }
 
-    // Get ui.env path for new structure (preferred method for Vite builds)
-    // Always regenerate ui.env from config to ensure sync
-    let uiEnvPath: string | undefined;
-    if (structureType === 'new') {
-      const envPaths = getEnvironmentPaths({ baseDir, env });
-      uiEnvPath = envPaths.uiEnv;
+    let loginUiClientId: string | undefined;
+    if (config.components.loginUi && !options.dryRun && structureType === 'new') {
+      const envPaths = getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() });
+      const loginUiUrl =
+        config.urls?.loginUi?.custom ||
+        config.urls?.loginUi?.auto ||
+        `https://${env}-ar-login-ui.pages.dev`;
 
-      // Regenerate ui.env from config.json to ensure they are in sync
-      // Detect if custom domains are used (same registrable domain = no need for proxy)
-      const apiHasCustomDomain = !!config.urls?.api?.custom;
-      const adminUiHasCustomDomain = !!config.urls?.adminUi?.custom;
-      const useDirectMode = apiHasCustomDomain && adminUiHasCustomDomain;
+      const clientResult = await ensureLoginUiClient({
+        apiBaseUrl,
+        loginUiUrl,
+        adminApiSecretPath: envPaths.keyFiles.adminApiSecret,
+        onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
+      });
 
-      // Auto-create Login UI OAuth client (idempotent)
-      let loginUiClientId: string | undefined;
-      if (config.components.loginUi && !options.dryRun) {
-        const loginUiUrl =
-          config.urls?.loginUi?.custom ||
-          config.urls?.loginUi?.auto ||
-          `https://${env}-ar-login-ui.pages.dev`;
-
-        const clientResult = await ensureLoginUiClient({
-          apiBaseUrl,
-          loginUiUrl,
-          adminApiSecretPath: envPaths.keyFiles.adminApiSecret,
-          onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
-        });
-
-        if (clientResult.success && clientResult.clientId) {
-          loginUiClientId = clientResult.clientId;
-          if (clientResult.alreadyExists) {
-            console.log(chalk.gray(`  ✓ Login UI client exists: ${loginUiClientId}`));
-          } else {
-            console.log(chalk.green(`  ✓ Login UI client created: ${loginUiClientId}`));
-          }
+      if (clientResult.success && clientResult.clientId) {
+        loginUiClientId = clientResult.clientId;
+        if (clientResult.alreadyExists) {
+          console.log(chalk.gray(`  ✓ Login UI client exists: ${loginUiClientId}`));
         } else {
-          console.log(
-            chalk.yellow(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`)
-          );
+          console.log(chalk.green(`  ✓ Login UI client created: ${loginUiClientId}`));
         }
-      }
-
-      // Safari ITP Proxy Mode (default for workers.dev/pages.dev):
-      //   - PUBLIC_API_BASE_URL is empty (frontend sends to same-origin /api/*)
-      //   - API_BACKEND_URL is set (server-side proxy forwards to backend)
-      // Direct Mode (for custom domains on same registrable domain):
-      //   - PUBLIC_API_BASE_URL is set (frontend sends directly to backend)
-      //   - API_BACKEND_URL is empty (proxy disabled)
-      const { saveUiEnv } = await import('../../core/ui-env.js');
-      try {
-        await saveUiEnv(uiEnvPath, {
-          PUBLIC_API_BASE_URL: apiBaseUrl,
-          API_BACKEND_URL: useDirectMode ? '' : apiBaseUrl,
-          PUBLIC_AUTHRIM_ISSUER: apiBaseUrl,
-          PUBLIC_LOGIN_UI_CLIENT_ID: loginUiClientId,
-        });
-        console.log(chalk.gray(`  ui.env synced (API: ${apiBaseUrl})`));
-      } catch (syncError) {
-        console.log(chalk.yellow(`  ⚠️  Could not sync ui.env: ${syncError}`));
+      } else {
+        console.log(chalk.yellow(`  ⚠️  Login UI client creation skipped: ${clientResult.error}`));
       }
     }
 
+    const loginUiSettings = resolveUiDeploymentSettings({
+      component: 'ar-login-ui',
+      config,
+      apiBaseUrl,
+      loginUiClientId,
+    });
+    const adminUiSettings = resolveUiDeploymentSettings({
+      component: 'ar-admin-ui',
+      config,
+      apiBaseUrl,
+    });
+
     const pagesResult = await deployAllPages(
-      { ...deployOptions, apiBaseUrl, uiEnvPath },
+      {
+        ...deployOptions,
+        apiBaseUrl,
+        perComponent: {
+          'ar-login-ui': {
+            apiBaseUrl: loginUiSettings.apiBaseUrl,
+            runtimeApiBackendUrl: loginUiSettings.runtimeApiBackendUrl,
+            uiEnvConfig: loginUiSettings.uiEnv,
+            serviceBindingName: loginUiSettings.serviceBindingName,
+          },
+          'ar-admin-ui': {
+            apiBaseUrl: adminUiSettings.apiBaseUrl,
+            runtimeApiBackendUrl: adminUiSettings.runtimeApiBackendUrl,
+            uiEnvConfig: adminUiSettings.uiEnv,
+            serviceBindingName: adminUiSettings.serviceBindingName,
+          },
+        },
+      },
       {
         loginUi: config.components.loginUi ?? true,
         adminUi: config.components.adminUi ?? true,

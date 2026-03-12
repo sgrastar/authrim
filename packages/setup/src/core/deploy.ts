@@ -8,6 +8,7 @@
 import { execa, type ExecaError } from 'execa';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import {
   getWorkerName,
   getDeploymentOrder,
@@ -16,7 +17,15 @@ import {
   type WorkerComponent,
 } from './naming.js';
 import type { AuthrimLock, WorkerEntry } from './lock.js';
-import { copyUiEnvToPackage, cleanupPackageEnv, uiEnvExists } from './ui-env.js';
+import {
+  saveUiEnv,
+  copyUiEnvToPackage,
+  cleanupPackageEnv,
+  uiEnvExists,
+  type UiEnvConfig,
+} from './ui-env.js';
+import { DISABLED_API_BACKEND_URL } from './ui-deployment.js';
+import { generatePagesWranglerConfig } from './wrangler.js';
 import { getPackageVersion } from './version.js';
 
 // =============================================================================
@@ -81,6 +90,39 @@ export interface BuildOptions {
 export interface BuildResult {
   success: boolean;
   error?: string;
+}
+
+const UI_BUILD_ENV_KEYS = [
+  'PUBLIC_API_BASE_URL',
+  'PUBLIC_API_PROXY_BACKEND_URL',
+  'PUBLIC_AUTHRIM_ISSUER',
+  'PUBLIC_LOGIN_UI_CLIENT_ID',
+  'API_BACKEND_URL',
+] as const;
+
+/**
+ * Prepare build-time env for Pages UIs.
+ * When a package-local .env exists, strip conflicting PUBLIC_* variables from
+ * the parent process so Vite uses the generated file instead of leaked shell/CI values.
+ */
+export function buildPagesUiBuildEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  options: {
+    apiBaseUrl?: string;
+    preferPackageEnv: boolean;
+  }
+): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
+
+  for (const key of UI_BUILD_ENV_KEYS) {
+    delete env[key];
+  }
+
+  if (!options.preferPackageEnv && options.apiBaseUrl) {
+    env.PUBLIC_API_BASE_URL = options.apiBaseUrl;
+  }
+
+  return env;
 }
 
 // =============================================================================
@@ -497,6 +539,12 @@ export interface PagesDeployOptions extends DeployOptions {
   apiBaseUrl?: string;
   /** Path to ui.env file (.authrim/{env}/ui.env) - preferred over apiBaseUrl */
   uiEnvPath?: string;
+  /** Component-specific UI env generated at deploy time */
+  uiEnvConfig?: UiEnvConfig;
+  /** Runtime backend URL for the Pages proxy (or a disable marker) */
+  runtimeApiBackendUrl?: string;
+  /** Service Binding name for Pages → Worker communication (e.g., 'AR_ROUTER') */
+  serviceBindingName?: string;
 }
 
 /**
@@ -506,7 +554,18 @@ export async function deployPagesComponent(
   component: PagesComponent,
   options: PagesDeployOptions
 ): Promise<PagesDeployResult> {
-  const { env, rootDir, projectName, onProgress, dryRun, apiBaseUrl, uiEnvPath } = options;
+  const {
+    env,
+    rootDir,
+    projectName,
+    onProgress,
+    dryRun,
+    apiBaseUrl,
+    uiEnvPath,
+    uiEnvConfig,
+    runtimeApiBackendUrl,
+    serviceBindingName,
+  } = options;
 
   // Security: Validate environment name
   if (!isValidEnv(env)) {
@@ -536,15 +595,43 @@ export async function deployPagesComponent(
 
   // Track if we copied ui.env so we know to clean up
   let copiedUiEnv = false;
+  let wrotePackageEnv = false;
 
   try {
     // Build the UI first
     onProgress?.(`Building ${component}...`);
 
     if (!dryRun) {
+      // Generate wrangler.toml for this environment before building.
+      // This ensures the correct project name and Service Binding are applied
+      // when wrangler reads the file during `wrangler pages deploy`.
+      const wranglerContent = generatePagesWranglerConfig({
+        component,
+        env,
+        needsProxy: !!serviceBindingName,
+      });
+      await writeFile(join(uiDir, 'wrangler.toml'), wranglerContent, 'utf-8');
+      if (serviceBindingName) {
+        onProgress?.(`  Generated wrangler.toml with Service Binding: ${serviceBindingName}`);
+      } else {
+        onProgress?.(`  Generated wrangler.toml for ${env}-${component}`);
+      }
+
+      // Prefer a component-specific env generated from config at deploy time.
+      if (uiEnvConfig) {
+        try {
+          await saveUiEnv(join(uiDir, '.env'), uiEnvConfig);
+          wrotePackageEnv = true;
+          onProgress?.(`  Using generated env for ${component}`);
+        } catch (writeError) {
+          onProgress?.(`  ⚠️  Warning: Could not write generated env: ${writeError}`);
+          onProgress?.(`  Falling back to file/environment variable approach`);
+        }
+      }
+
       // Copy ui.env to package's .env for Vite to read during build
-      // Priority: uiEnvPath (file) > apiBaseUrl (legacy env var approach)
-      if (uiEnvPath && (await uiEnvExists(uiEnvPath))) {
+      // Priority: generated config > uiEnvPath (file) > apiBaseUrl (legacy env var approach)
+      if (!wrotePackageEnv && uiEnvPath && (await uiEnvExists(uiEnvPath))) {
         try {
           await copyUiEnvToPackage(uiEnvPath, uiDir);
           copiedUiEnv = true;
@@ -568,15 +655,20 @@ export async function deployPagesComponent(
       }
 
       try {
+        const buildEnv = buildPagesUiBuildEnv(process.env, {
+          apiBaseUrl,
+          preferPackageEnv: wrotePackageEnv || copiedUiEnv,
+        });
+
         await execa('pnpm', ['run', 'build'], {
           cwd: uiDir,
-          // Note: We still pass apiBaseUrl as env var for backwards compatibility,
-          // but Vite will primarily read from .env file
-          env: apiBaseUrl ? { ...process.env, PUBLIC_API_BASE_URL: apiBaseUrl } : process.env,
+          // Strip conflicting PUBLIC_* vars when a generated/copied .env exists.
+          // Otherwise, inject PUBLIC_API_BASE_URL as the legacy fallback.
+          env: buildEnv,
         });
       } finally {
         // Always clean up .env after build (success or failure)
-        if (copiedUiEnv) {
+        if (copiedUiEnv || wrotePackageEnv) {
           await cleanupPackageEnv(uiDir);
         }
       }
@@ -609,9 +701,13 @@ export async function deployPagesComponent(
       }
     );
 
-    // Set API_BACKEND_URL secret for Admin UI (Safari ITP cookie proxy)
-    // This enables the server-side proxy in hooks.server.ts
-    if (component === 'ar-admin-ui' && apiBaseUrl) {
+    // Set API_BACKEND_URL secret to control the Pages-side proxy explicitly.
+    // When Service Binding is used, disable HTTP fetch fallback (AR_ROUTER handles it).
+    // A valid URL enables the HTTP proxy; __DISABLED__ or other markers disable it.
+    const secretValue = serviceBindingName
+      ? DISABLED_API_BACKEND_URL
+      : (runtimeApiBackendUrl ?? DISABLED_API_BACKEND_URL);
+    if (runtimeApiBackendUrl !== undefined || serviceBindingName !== undefined) {
       onProgress?.(`Setting API_BACKEND_URL secret for ${pagesProjectName}...`);
       const secretResult = await execa(
         'npx',
@@ -626,23 +722,45 @@ export async function deployPagesComponent(
         ],
         {
           cwd: uiDir,
-          input: apiBaseUrl,
+          input: secretValue,
           reject: false,
         }
       );
       if (secretResult.exitCode === 0) {
-        onProgress?.(`✓ API_BACKEND_URL secret set for Safari ITP compatibility`);
+        onProgress?.(`✓ API_BACKEND_URL secret set for ${component}`);
       } else {
-        onProgress?.(
-          `⚠️ Could not set API_BACKEND_URL secret: ${secretResult.stderr || 'Unknown error'}`
-        );
+        const secretError = secretResult.stderr || secretResult.stdout || 'Unknown error';
+        onProgress?.(`⚠️ Could not set API_BACKEND_URL secret: ${secretError}`);
+        return {
+          component,
+          projectName: pagesProjectName,
+          success: false,
+          error:
+            secretValue === DISABLED_API_BACKEND_URL
+              ? `Failed to disable API_BACKEND_URL secret: ${secretError}`
+              : `Failed to set API_BACKEND_URL secret: ${secretError}`,
+          duration: Date.now() - startTime,
+        };
       }
     }
 
     // Deploy to Pages
+    // --branch=main ensures Production deployment regardless of current git branch
+    // --commit-dirty=true allows deployment even with uncommitted changes
     const result = await execa(
       'npx',
-      ['wrangler', 'pages', 'deploy', distDir, '--project-name', pagesProjectName],
+      [
+        'wrangler',
+        'pages',
+        'deploy',
+        distDir,
+        '--project-name',
+        pagesProjectName,
+        '--branch',
+        'main',
+        '--commit-dirty',
+        'true',
+      ],
       {
         cwd: uiDir,
         reject: false, // Don't throw on non-zero exit
@@ -696,18 +814,41 @@ export interface PagesDeploymentSummary {
  * Deploy all enabled UI packages to Cloudflare Pages
  */
 export async function deployAllPages(
-  options: DeployOptions & { apiBaseUrl?: string; uiEnvPath?: string },
+  options: DeployOptions & {
+    apiBaseUrl?: string;
+    uiEnvPath?: string;
+    perComponent?: Partial<
+      Record<
+        PagesComponent,
+        Pick<
+          PagesDeployOptions,
+          | 'apiBaseUrl'
+          | 'projectName'
+          | 'runtimeApiBackendUrl'
+          | 'uiEnvConfig'
+          | 'uiEnvPath'
+          | 'serviceBindingName'
+        >
+      >
+    >;
+  },
   enabledComponents: { loginUi: boolean; adminUi: boolean }
 ): Promise<PagesDeploymentSummary> {
   const results: PagesDeployResult[] = [];
 
   if (enabledComponents.loginUi) {
-    const loginResult = await deployPagesComponent('ar-login-ui', options);
+    const loginResult = await deployPagesComponent('ar-login-ui', {
+      ...options,
+      ...(options.perComponent?.['ar-login-ui'] || {}),
+    });
     results.push(loginResult);
   }
 
   if (enabledComponents.adminUi) {
-    const adminResult = await deployPagesComponent('ar-admin-ui', options);
+    const adminResult = await deployPagesComponent('ar-admin-ui', {
+      ...options,
+      ...(options.perComponent?.['ar-admin-ui'] || {}),
+    });
     results.push(adminResult);
   }
 

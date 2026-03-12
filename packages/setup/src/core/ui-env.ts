@@ -14,6 +14,8 @@
 import { writeFile, copyFile, unlink, access, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { constants } from 'node:fs';
+import type { AuthrimConfig } from './config.js';
+import { ensureHttps } from './url-config.js';
 
 // =============================================================================
 // Types
@@ -22,6 +24,11 @@ import { constants } from 'node:fs';
 export interface UiEnvConfig {
   /** API base URL for UI to connect to (e.g., https://prod-ar-router.workers.dev) */
   PUBLIC_API_BASE_URL: string;
+  /**
+   * Public fallback backend URL for the Pages proxy.
+   * Used when the runtime API_BACKEND_URL secret is missing or stale.
+   */
+  PUBLIC_API_PROXY_BACKEND_URL?: string;
   /**
    * Backend API URL for server-side proxy (Safari ITP compatibility)
    * Used by SvelteKit hooks.server.ts to proxy /api/* requests
@@ -77,6 +84,21 @@ export function generateUiEnvContent(config: UiEnvConfig): string {
   }
 
   return lines.join('\n') + '\n';
+}
+
+/**
+ * Build the minimal UI env used before component-specific deploy-time env exists.
+ * This keeps CLI init and Web setup bootstrap behavior identical.
+ */
+export function buildInitialUiEnvConfig(config: AuthrimConfig): UiEnvConfig | null {
+  const apiUrl = ensureHttps(config.urls?.api?.custom || config.urls?.api?.auto);
+  if (!apiUrl) {
+    return null;
+  }
+
+  return {
+    PUBLIC_API_BASE_URL: apiUrl,
+  };
 }
 
 // =============================================================================
