@@ -172,6 +172,7 @@ const ru: Translations = {
   'domain.customDesc': 'Использовать свой домен',
   'domain.customPrompt': 'Введите собственный домен (например, auth.example.com)',
   'domain.customValidation': 'Пожалуйста, введите корректный домен (например, auth.example.com)',
+  'domain.checkZoneButton': 'Проверить зону',
   'domain.checkingZone': 'Проверка зоны Cloudflare для {{domain}}...',
   'domain.zoneFound': "Зона '{{zone}}' найдена (статус: {{status}})",
   'domain.zoneNotFound': "Зона '{{zone}}' не найдена в вашем аккаунте Cloudflare",
@@ -778,6 +779,19 @@ const ru: Translations = {
   'web.complete.saveConfig': 'Сохранить конфигурацию',
   'web.complete.backToMain': 'Вернуться на главную',
   'web.complete.canClose': 'Настройка завершена. Вы можете безопасно закрыть это окно.',
+  'web.complete.adminAccountTitle': 'Настройка учётной записи администратора',
+  'web.complete.adminAccountImportant': 'ВАЖНО',
+  'web.complete.adminAccountDesc':
+    'Зарегистрируйте первую учётную запись администратора с помощью Passkey:',
+  'web.complete.copy': '📋 Копировать',
+  'web.complete.copied': '✓ Скопировано',
+  'web.complete.openSetup': '🔑 Открыть настройку',
+  'web.complete.urlWarning':
+    'Этот URL можно использовать только <strong>один раз</strong>, он истекает <strong>{{date}}</strong>.',
+  'web.complete.adminSetupUnavailable':
+    'URL настройки недоступен. Вы можете настроить доступ администратора в интерфейсе администрирования позже.',
+  'web.complete.customDomainNote':
+    'ℹ️ Пользовательский домен: распространение DNS может занять от нескольких минут до нескольких часов. Если URL ещё недоступен, подождите.',
 
   // Web UI Environment Management
   'web.env.title': 'Окружения',

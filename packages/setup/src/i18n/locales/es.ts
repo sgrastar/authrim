@@ -173,6 +173,7 @@ const es: Translations = {
   'domain.customDesc': 'Usar tu propio dominio',
   'domain.customPrompt': 'Ingresa dominio personalizado (ej: auth.ejemplo.com)',
   'domain.customValidation': 'Por favor ingresa un dominio válido (ej: auth.ejemplo.com)',
+  'domain.checkZoneButton': 'Verificar zona',
   'domain.checkingZone': 'Verificando zona de Cloudflare para {{domain}}...',
   'domain.zoneFound': "Zona '{{zone}}' encontrada (estado: {{status}})",
   'domain.zoneNotFound': "Zona '{{zone}}' no encontrada en su cuenta de Cloudflare",
@@ -785,6 +786,19 @@ const es: Translations = {
   'web.complete.backToMain': 'Volver al Inicio',
   'web.complete.canClose':
     'La configuración está completa. Puedes cerrar esta ventana de forma segura.',
+  'web.complete.adminAccountTitle': 'Configuración de cuenta de administrador',
+  'web.complete.adminAccountImportant': 'IMPORTANTE',
+  'web.complete.adminAccountDesc':
+    'Registre su primera cuenta de administrador con autenticación Passkey:',
+  'web.complete.copy': '📋 Copiar',
+  'web.complete.copied': '✓ Copiado',
+  'web.complete.openSetup': '🔑 Abrir configuración',
+  'web.complete.urlWarning':
+    'Esta URL solo se puede usar <strong>una vez</strong> y expira el <strong>{{date}}</strong>.',
+  'web.complete.adminSetupUnavailable':
+    'URL de configuración no disponible. Puede configurar el acceso de administrador desde la UI de administración más tarde.',
+  'web.complete.customDomainNote':
+    'ℹ️ Dominio personalizado: la propagación DNS puede tardar de minutos a horas. Si la URL no está accesible todavía, espere e intente de nuevo.',
 
   // Web UI Environment Management
   'web.env.title': 'Entornos',

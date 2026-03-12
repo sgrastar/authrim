@@ -172,6 +172,7 @@ const id: Translations = {
   'domain.customDesc': 'Gunakan domain Anda sendiri',
   'domain.customPrompt': 'Masukkan domain kustom (contoh: auth.example.com)',
   'domain.customValidation': 'Silakan masukkan domain yang valid (contoh: auth.example.com)',
+  'domain.checkZoneButton': 'Periksa zona',
   'domain.checkingZone': 'Memeriksa zona Cloudflare untuk {{domain}}...',
   'domain.zoneFound': "Zona '{{zone}}' ditemukan (status: {{status}})",
   'domain.zoneNotFound': "Zona '{{zone}}' tidak ditemukan di akun Cloudflare Anda",
@@ -776,6 +777,19 @@ const id: Translations = {
   'web.complete.saveConfig': 'Simpan Konfigurasi',
   'web.complete.backToMain': 'Kembali ke Utama',
   'web.complete.canClose': 'Pengaturan selesai. Anda dapat menutup jendela ini dengan aman.',
+  'web.complete.adminAccountTitle': 'Pengaturan Akun Admin',
+  'web.complete.adminAccountImportant': 'PENTING',
+  'web.complete.adminAccountDesc':
+    'Daftarkan akun administrator pertama Anda dengan autentikasi Passkey:',
+  'web.complete.copy': '📋 Salin',
+  'web.complete.copied': '✓ Tersalin',
+  'web.complete.openSetup': '🔑 Buka Pengaturan',
+  'web.complete.urlWarning':
+    'URL ini hanya dapat digunakan <strong>sekali</strong> dan kedaluwarsa pada <strong>{{date}}</strong>.',
+  'web.complete.adminSetupUnavailable':
+    'URL pengaturan tidak tersedia. Anda dapat mengonfigurasi akses admin dari UI Admin nanti.',
+  'web.complete.customDomainNote':
+    'ℹ️ Domain kustom: propagasi DNS mungkin membutuhkan beberapa menit hingga beberapa jam. Jika URL di atas belum dapat diakses, harap tunggu.',
 
   // Web UI Environment Management
   'web.env.title': 'Environment',

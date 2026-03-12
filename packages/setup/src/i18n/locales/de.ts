@@ -173,6 +173,7 @@ const de: Translations = {
   'domain.customDesc': 'Eigene Domain verwenden',
   'domain.customPrompt': 'Benutzerdefinierte Domain eingeben (z.B. auth.beispiel.de)',
   'domain.customValidation': 'Bitte geben Sie eine gültige Domain ein (z.B. auth.beispiel.de)',
+  'domain.checkZoneButton': 'Zone prüfen',
   'domain.checkingZone': 'Cloudflare-Zone für {{domain}} wird überprüft...',
   'domain.zoneFound': "Zone '{{zone}}' gefunden (Status: {{status}})",
   'domain.zoneNotFound': "Zone '{{zone}}' nicht in Ihrem Cloudflare-Konto gefunden",
@@ -782,6 +783,19 @@ const de: Translations = {
   'web.complete.saveConfig': 'Konfiguration speichern',
   'web.complete.backToMain': 'Zurück zur Startseite',
   'web.complete.canClose': 'Einrichtung abgeschlossen. Sie können dieses Fenster sicher schließen.',
+  'web.complete.adminAccountTitle': 'Admin-Konto einrichten',
+  'web.complete.adminAccountImportant': 'WICHTIG',
+  'web.complete.adminAccountDesc':
+    'Registrieren Sie Ihr erstes Administratorkonto mit Passkey-Authentifizierung:',
+  'web.complete.copy': '📋 Kopieren',
+  'web.complete.copied': '✓ Kopiert',
+  'web.complete.openSetup': '🔑 Setup öffnen',
+  'web.complete.urlWarning':
+    'Diese URL kann nur <strong>einmal</strong> verwendet werden und läuft am <strong>{{date}}</strong> ab.',
+  'web.complete.adminSetupUnavailable':
+    'Setup-URL nicht verfügbar. Sie können den Administratorzugang später über die Admin-UI konfigurieren.',
+  'web.complete.customDomainNote':
+    'ℹ️ Benutzerdefinierte Domain: DNS-Weitergabe kann einige Minuten bis Stunden dauern. Falls die obige URL noch nicht erreichbar ist, warten Sie bitte.',
 
   // Web UI Environment Management
   'web.env.title': 'Umgebungen',

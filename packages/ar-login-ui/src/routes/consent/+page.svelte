@@ -5,7 +5,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { brandingStore } from '$lib/stores/branding.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { consentAPI, type ConsentSubmission } from '$lib/api/client';
+	import { API_BASE_URL, consentAPI, type ConsentSubmission } from '$lib/api/client';
 	import { isValidRedirectUrl, isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
 
 	// ---------------------------------------------------------------------------
@@ -235,7 +235,8 @@
 		// Only preserve challenge_id to prevent parameter injection
 		const cid = new URLSearchParams(window.location.search).get('challenge_id');
 		const returnPath = cid ? `/consent?challenge_id=${encodeURIComponent(cid)}` : '/consent';
-		window.location.href = '/logout?redirect_uri=' + encodeURIComponent(returnPath);
+		const returnUrl = new URL(returnPath, window.location.origin).toString();
+		window.location.href = `${API_BASE_URL}/logout?redirect_uri=${encodeURIComponent(returnUrl)}`;
 	}
 
 	function handleOrgChange(event: Event) {

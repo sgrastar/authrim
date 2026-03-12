@@ -107,7 +107,22 @@ export function resolveTenantFromRequest(
   env: Partial<Env>
 ): TenantResolutionResult {
   const host = request.headers.get('Host') ?? undefined;
-  return getTenantIdFromHost(host, env);
+  const hostResult = getTenantIdFromHost(host, env);
+  if (hostResult.success) {
+    return hostResult;
+  }
+
+  const forwardedHost =
+    request.headers.get('X-Authrim-Forwarded-Host')?.split(',')[0]?.trim() ||
+    request.headers.get('X-Forwarded-Host')?.split(',')[0]?.trim();
+  if (forwardedHost) {
+    const forwardedHostResult = getTenantIdFromHost(forwardedHost, env);
+    if (forwardedHostResult.success) {
+      return forwardedHostResult;
+    }
+  }
+
+  return hostResult;
 }
 
 /**

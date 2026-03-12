@@ -112,7 +112,9 @@ app.use('*', async (c, next) => {
   // Skip secure headers for /authorize and /flow endpoints (handled by op-auth worker with nonce-based CSP)
   // Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)
   // Skip for /logout endpoint (OIDC Front-Channel Logout needs to embed iframes)
+  // Skip for /logged-out and /logout-error (ar-auth returns inline-styled HTML pages)
   // Skip for /admin-init-setup (needs unpkg.com CDN for WebAuthn library)
+  // Skip for /api/ciba/test (development test page with inline scripts/styles)
   // Skip for UI proxy paths (SvelteKit uses inline styles/scripts and CDN fonts)
   const path = c.req.path;
   if (
@@ -121,8 +123,12 @@ app.use('*', async (c, next) => {
     path.startsWith('/flow/') ||
     path === '/session/check' ||
     path === '/logout' ||
+    path === '/logged-out' ||
+    path === '/logout-error' ||
     path.startsWith('/admin-init-setup') ||
+    path === '/api/ciba/test' ||
     // UI proxy paths - Pages handles its own headers
+    path.startsWith('/setup') ||
     path.startsWith('/admin') ||
     path.startsWith('/login') ||
     path.startsWith('/signup') ||
@@ -670,6 +676,15 @@ app.all('/admin/*', async (c) => {
     },
     404
   );
+});
+
+// Admin UI proxy - /setup/* (initial admin setup completion flow)
+// After passkey registration, ar-auth redirects to /setup/complete
+app.all('/setup/*', async (c) => {
+  if (c.env.ENABLE_ADMIN_UI_PROXY === 'true' && c.env.AR_ADMIN_UI_URL) {
+    return proxyToPages(c.req.raw, c.env.AR_ADMIN_UI_URL, c.req.path);
+  }
+  return c.json({ error: 'not_found', message: 'Admin UI proxy is not enabled' }, 404);
 });
 
 // Admin UI proxy - exact /admin path (redirect to /admin/)

@@ -172,7 +172,7 @@
 	);
 
 	// Build diff items for dialog
-	let diffItems = $derived(() => {
+	let diffItems = $derived.by(() => {
 		const items: DiffItem[] = [];
 		if (scaleState.unifiedScale !== initialScaleState.unifiedScale) {
 			items.push({
@@ -684,7 +684,7 @@
 		<p class="dialog-subtitle">You are about to change:</p>
 
 		<ul class="diff-list">
-			{#each diffItems() as item (item.label)}
+			{#each diffItems as item (item.label)}
 				<li>
 					<span class="diff-label">{item.label}:</span>
 					<span class="diff-old">{item.oldValue}</span>

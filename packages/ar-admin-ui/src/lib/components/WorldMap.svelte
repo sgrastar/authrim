@@ -612,7 +612,7 @@
 			<!-- World map countries -->
 			{#if geoData}
 				<g class="countries">
-					{#each geoData.features as feature (feature.properties?.ISO_A3 || Math.random())}
+					{#each geoData.features as feature, i (feature.properties?.ISO_A3 && feature.properties.ISO_A3 !== '-99' ? feature.properties.ISO_A3 : `unknown-${i}`)}
 						{@const region = getRegionFromFeature(feature as Feature<Geometry, CountryProperties>)}
 						{@const isSelected = isRegionSelected(region)}
 						{@const isDoCapable = DO_CAPABLE_REGIONS.includes(region)}

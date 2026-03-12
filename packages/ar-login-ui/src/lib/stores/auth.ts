@@ -5,7 +5,7 @@
 
 import { writable, derived } from 'svelte/store';
 import { browser } from '$app/environment';
-import { buildDiagnosticHeaders } from '$lib/api/client';
+import { API_BASE_URL, buildDiagnosticHeaders } from '$lib/api/client';
 
 export interface AuthUser {
 	userId: string;
@@ -29,7 +29,8 @@ async function fetchUserInfoFromSession(): Promise<{
 	name?: string;
 } | null> {
 	try {
-		const response = await fetch('/api/sessions/status', {
+		const url = `${API_BASE_URL}/api/sessions/status`;
+		const response = await fetch(url, {
 			credentials: 'include', // Send session cookie
 			headers: buildDiagnosticHeaders()
 		});
@@ -114,7 +115,7 @@ function createAuthStore() {
 
 				// Call logout endpoint to clear server-side session and cookie
 				try {
-					await fetch('/logout', {
+					await fetch(`${API_BASE_URL}/logout`, {
 						method: 'GET',
 						credentials: 'include',
 						headers: buildDiagnosticHeaders()

@@ -52,7 +52,13 @@ import {
   checkForUpdate,
   getLocalVersion,
 } from '../../core/source.js';
-import { saveUiEnv } from '../../core/ui-env.js';
+import { saveUiEnv, buildInitialUiEnvConfig } from '../../core/ui-env.js';
+import {
+  buildUrlsConfig,
+  ensureHttps,
+  getPagesDevUrl,
+  getWorkersDevUrl,
+} from '../../core/url-config.js';
 
 // =============================================================================
 // Zone Check Helper
@@ -262,42 +268,11 @@ function printBanner(): void {
 let workersSubdomain: string | null = null;
 
 /**
- * Get the correct workers.dev URL with account subdomain
- * Format: {worker}.{subdomain}.workers.dev
- */
-function getWorkersDevUrl(workerName: string): string {
-  if (workersSubdomain) {
-    return `https://${workerName}.${workersSubdomain}.workers.dev`;
-  }
-  return `https://${workerName}.workers.dev`;
-}
-
-/**
- * Ensure a domain string has an https:// scheme.
- * The CLI prompts collect bare domain names (e.g. "example.com") but the
- * config schema requires a full URL (z.string().url()).
- */
-function ensureHttps(domain: string | null | undefined): string | null {
-  if (!domain) return null;
-  return domain.startsWith('http://') || domain.startsWith('https://')
-    ? domain
-    : `https://${domain}`;
-}
-
-/**
  * Strip the protocol from a URL for display in domain-only prompts.
  */
 function stripProtocol(url: string | null | undefined): string {
   if (!url) return '';
   return url.replace(/^https?:\/\//, '');
-}
-
-/**
- * Get the correct pages.dev URL
- * Note: Pages uses {project}.pages.dev format (no account subdomain, unlike Workers)
- */
-function getPagesDevUrl(projectName: string): string {
-  return `https://${projectName}.pages.dev`;
 }
 
 // =============================================================================
@@ -1404,24 +1379,15 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
       configured: emailConfig.provider === 'resend',
     },
   };
-  config.urls = {
-    api: {
-      custom: ensureHttps(apiDomain),
-      auto: getWorkersDevUrl(envPrefix + '-ar-router'),
-      zoneId: quickDomainConfig.zoneId ?? null,
-      customDomainBinding: quickDomainConfig.customDomainBinding ?? false,
-    },
-    loginUi: {
-      custom: ensureHttps(loginUiDomain),
-      auto: getPagesDevUrl(envPrefix + '-ar-login-ui'),
-      sameAsApi: false,
-    },
-    adminUi: {
-      custom: ensureHttps(adminUiDomain),
-      auto: getPagesDevUrl(envPrefix + '-ar-admin-ui'),
-      sameAsApi: false,
-    },
-  };
+  config.urls = buildUrlsConfig({
+    env: envPrefix,
+    apiDomain,
+    loginUiDomain,
+    adminUiDomain,
+    zoneId: quickDomainConfig.zoneId ?? null,
+    customDomainBinding: quickDomainConfig.customDomainBinding ?? false,
+    workersSubdomain,
+  });
 
   // Show summary
   console.log('');
@@ -2029,24 +1995,15 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     bridge: true, // Standard component
     policy: true, // Standard component
   };
-  config.urls = {
-    api: {
-      custom: ensureHttps(apiDomain),
-      auto: getWorkersDevUrl(envPrefix + '-ar-router'),
-      zoneId: fullDomainConfig.zoneId ?? null,
-      customDomainBinding: fullDomainConfig.customDomainBinding ?? false,
-    },
-    loginUi: {
-      custom: ensureHttps(loginUiDomain),
-      auto: getPagesDevUrl(envPrefix + '-ar-login-ui'),
-      sameAsApi: false,
-    },
-    adminUi: {
-      custom: ensureHttps(adminUiDomain),
-      auto: getPagesDevUrl(envPrefix + '-ar-admin-ui'),
-      sameAsApi: false,
-    },
-  };
+  config.urls = buildUrlsConfig({
+    env: envPrefix,
+    apiDomain,
+    loginUiDomain,
+    adminUiDomain,
+    zoneId: fullDomainConfig.zoneId ?? null,
+    customDomainBinding: fullDomainConfig.customDomainBinding ?? false,
+    workersSubdomain,
+  });
   config.oidc = {
     ...config.oidc,
     accessTokenTtl,
@@ -2367,11 +2324,9 @@ async function executeSetup(
   // Step 4.5: Generate ui.env for UI builds
   const uiEnvSpinner = ora('Generating UI environment file...').start();
   try {
-    const apiBaseUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
-    if (apiBaseUrl) {
-      await saveUiEnv(envPaths.uiEnv, {
-        PUBLIC_API_BASE_URL: apiBaseUrl,
-      });
+    const initialUiEnv = buildInitialUiEnvConfig(config);
+    if (initialUiEnv) {
+      await saveUiEnv(envPaths.uiEnv, initialUiEnv);
       uiEnvSpinner.succeed(`UI env saved (${envPaths.uiEnv})`);
     } else {
       uiEnvSpinner.warn('Skipped ui.env generation (no API URL configured)');
@@ -2851,23 +2806,16 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
     default: stripProtocol(config.urls.adminUi?.custom),
   });
 
-  config.urls.api = {
-    custom: ensureHttps(apiDomain),
-    auto: config.urls.api?.auto || getWorkersDevUrl(env + '-ar-router'),
-    zoneId: updateDomainConfig.zoneId ?? config.urls.api?.zoneId ?? null,
-    customDomainBinding:
-      updateDomainConfig.customDomainBinding ?? config.urls.api?.customDomainBinding ?? false,
-  };
-  config.urls.loginUi = {
-    custom: ensureHttps(loginUiDomain),
-    auto: config.urls.loginUi?.auto || getPagesDevUrl(env + '-ar-login-ui'),
-    sameAsApi: config.urls.loginUi?.sameAsApi ?? false,
-  };
-  config.urls.adminUi = {
-    custom: ensureHttps(adminUiDomain),
-    auto: config.urls.adminUi?.auto || getPagesDevUrl(env + '-ar-admin-ui'),
-    sameAsApi: config.urls.adminUi?.sameAsApi ?? false,
-  };
+  config.urls = buildUrlsConfig({
+    env,
+    apiDomain,
+    loginUiDomain,
+    adminUiDomain,
+    zoneId: updateDomainConfig.zoneId,
+    customDomainBinding: updateDomainConfig.customDomainBinding,
+    workersSubdomain,
+    existingUrls: config.urls,
+  });
 
   return true;
 }
