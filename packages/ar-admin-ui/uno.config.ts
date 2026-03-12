@@ -25,7 +25,7 @@ export default defineConfig({
 				ph: () => import('@iconify-json/ph/icons.json').then((i) => i.default)
 			}
 		}),
-		presetTypography(), // Typography utilities
+		presetTypography() // Typography utilities
 		// Google Fonts removed: using system fonts instead (avoids CSP font-src issues)
 		// display → system-ui / -apple-system (geometric sans on macOS/Windows)
 		// sans   → system-ui / -apple-system (standard UI sans-serif)
