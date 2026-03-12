@@ -4098,6 +4098,10 @@ export function getHtmlTemplate(
           // Final progress update
           updateProgressUI('provision', totalResources, totalResources, '✅ Provisioning complete!');
           output.textContent += '\\n✅ Provisioning complete!\\n';
+          if (result.savedPaths) {
+            output.textContent += '📁 Config: ' + result.savedPaths.config + '\\n';
+            output.textContent += '📁 Lock:   ' + result.savedPaths.lock + '\\n';
+          }
           scrollToBottom(log);
           status.textContent = t('web.status.complete');
           status.className = 'status-badge status-success';
