@@ -1177,9 +1177,11 @@ export function createApiRoutes(): Hono {
         // Update lock file with deployed workers information
         if (workersSuccess && !dryRun && summary.successCount > 0) {
           try {
-            const { loadLockFileAuto, saveLockFile: saveLock, AuthrimLockSchema } = await import(
-              '../core/lock.js'
-            );
+            const {
+              loadLockFileAuto,
+              saveLockFile: saveLock,
+              AuthrimLockSchema,
+            } = await import('../core/lock.js');
             const { lock: currentLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
 
             if (lockPath) {
